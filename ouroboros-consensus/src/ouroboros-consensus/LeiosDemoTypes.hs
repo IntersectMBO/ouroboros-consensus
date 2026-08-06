@@ -102,6 +102,7 @@ import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
+import LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
@@ -1065,6 +1066,39 @@ traceLeiosKernelToObject = \case
       , "table" .= table
       , "key" .= key
       ]
+  TraceLeiosDb
+    TraceLeiosDbVolatileStats{volatileEbs, volatileEbTxs, volatileTxs, dbFileBytes, walBytes} ->
+      mconcat
+        [ "kind" .= Aeson.String "LeiosDbVolatileStats"
+        , "volatileEbs" .= volatileEbs
+        , "volatileEbTxs" .= volatileEbTxs
+        , "volatileTxs" .= volatileTxs
+        , "dbFileBytes" .= dbFileBytes
+        , "walBytes" .= walBytes
+        ]
+  TraceLeiosDb
+    TraceLeiosDbImmutableStats
+      { immutableEbs
+      , immutableEbTxs
+      , immutableTxs
+      } ->
+      mconcat
+        [ "kind" .= Aeson.String "LeiosDbImmutableStats"
+        , "immutableEbs" .= immutableEbs
+        , "immutableEbTxs" .= immutableEbTxs
+        , "immutableTxs" .= immutableTxs
+        ]
+  TraceLeiosDb TraceLeiosDbCopiedToImmutable{copiedEbs, copiedEbTxs, copiedTxs} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopiedToImmutable"
+      , "copiedEbs" .= copiedEbs
+      , "copiedEbTxs" .= copiedEbTxs
+      , "copiedTxs" .= copiedTxs
+      ]
+  -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
+  -- the forge loop's call traces, so one dashboard query shape covers both.
+  TraceLeiosDb (TraceLeiosDbCall (SomeJsonCallTrace ct)) ->
+    callTraceToObject ct
   TraceLeiosCertifiedAndAnnounced slotNo rbHash ->
     mconcat
       [ "kind" .= Aeson.String "LeiosCertifiedAndAnnounced"

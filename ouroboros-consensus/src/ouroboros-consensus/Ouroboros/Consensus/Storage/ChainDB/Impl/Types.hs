@@ -402,8 +402,8 @@ data ChainDbEnv m blk = CDB
   --       'leiosDbScanCompleteEbClosuresNotOlderThanSlot';
   --     * grow 'cdbAcquiredLeiosEbs' from closure-completion notifications
   --       ('subscribeEbNotifications'), in @leiosAcquiredEbsRunner@;
-  --     * promote a copied cert-RB's certified EB into immutable storage
-  --       ('leiosDbPromoteToImmutable'), in @copyToImmutableDB@;
+  --     * mark a just-copied cert-RB's certified EB as immutable
+  --       ('leiosDbMarkAsImmutable'), in @copyToImmutableDB@;
   --     * garbage-collect volatile LeiosDb data as the immutable tip advances
   --       ('leiosDbGarbageCollect'), in @garbageCollectBlocks@.
   }
