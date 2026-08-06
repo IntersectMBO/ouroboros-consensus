@@ -199,6 +199,8 @@ instance
   injectVotingCommitteeError = WrapPerasError . injectVotingCommitteeError
   injectConversionError = WrapPerasError . injectConversionError
   injectQuorumNotReachedError = WrapPerasError . injectQuorumNotReachedError
+  injectCertificateTooLargeError sz1 sz2 =
+    WrapPerasError $ injectCertificateTooLargeError sz1 sz2
 
 newtype WrapPerasCrypto blk
   = WrapPerasCrypto

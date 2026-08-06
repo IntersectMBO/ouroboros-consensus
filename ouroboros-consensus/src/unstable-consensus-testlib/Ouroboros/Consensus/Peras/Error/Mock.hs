@@ -33,6 +33,7 @@ data MockPerasError blk
   | PerasQuorumNotReachedError
       VoteWeight
   | InputStakeDistrIsEmpty
+  | PerasCertificateTooLargeError
 
 deriving instance
   Show (PerasVotingCommitteeError blk) =>
@@ -55,3 +56,4 @@ instance IsPerasError (MockPerasError blk) blk where
   injectVotingCommitteeError = PerasVotingCommitteeError
   injectConversionError = PerasVotingConversionError
   injectQuorumNotReachedError = PerasQuorumNotReachedError
+  injectCertificateTooLargeError _ _ = PerasCertificateTooLargeError

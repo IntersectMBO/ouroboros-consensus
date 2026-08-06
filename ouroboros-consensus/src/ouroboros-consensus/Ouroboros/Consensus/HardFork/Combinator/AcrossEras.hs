@@ -311,6 +311,9 @@ data HardForkPerasError xs
   | -- | Should never be produced in practice, since we dispatch to a concrete
     -- era before calling any fallible operation.
     HardForkPerasErrorCommitteeError
+  | -- | Should never be produced in practice, since we dispatch to a concrete
+    -- era before calling any fallible operation.
+    HardForkPerasErrorCertificateTooLargeError
 
 deriving instance
   Show (OneEraPerasError xs) =>

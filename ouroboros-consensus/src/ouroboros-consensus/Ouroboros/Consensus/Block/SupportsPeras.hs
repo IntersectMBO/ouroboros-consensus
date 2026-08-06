@@ -77,6 +77,7 @@ import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (Point, StandardHash)
@@ -519,6 +520,7 @@ class IsPerasError err blk | err -> blk where
   injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
   injectConversionError :: PerasConversionError -> err
   injectQuorumNotReachedError :: VoteWeight -> err
+  injectCertificateTooLargeError :: Word32 -> Word32 -> err
 
 instance IsPerasError (VoidPerasError blk) blk where
   injectVotingCommitteeError _ =
@@ -527,6 +529,8 @@ instance IsPerasError (VoidPerasError blk) blk where
     error "injectConversionError: VoidPerasError cannot be inhabited"
   injectQuorumNotReachedError _ =
     error "injectQuorumNotReachedError: VoidPerasError cannot be inhabited"
+  injectCertificateTooLargeError _ _ =
+    error "injectCertificateTooLargeError: VoidPerasError cannot be inhabited"
 
 -- * Types and functions related to Peras vote collection and quorum checking
 

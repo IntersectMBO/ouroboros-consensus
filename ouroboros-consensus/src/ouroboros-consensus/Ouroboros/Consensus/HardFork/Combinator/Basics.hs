@@ -808,6 +808,9 @@ instance
   -- NOTE: in practice this is never produced at the HFC level
   injectQuorumNotReachedError _ = HardForkPerasErrorQuorumNotReachedError
 
+  -- NOTE: in practice this is never produced at the HFC level
+  injectCertificateTooLargeError _ _ = HardForkPerasErrorCertificateTooLargeError
+
 -- ** 'BlockSupportsPeras' instance for 'HardForkBlock'
 
 class
