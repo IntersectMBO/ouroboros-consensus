@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Mempool.Update
   ) where
 
 import Cardano.Slotting.Slot
+import Control.Monad (when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
 import Control.Tracer
@@ -466,6 +467,12 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               (isLastTicketNo is)
               toKeep
               toRemove
+      -- Signal any in-flight sync that its snapshot is now stale (see
+      -- 'mpEnvRemovalGen'). Only bump when a tx actually left, so a no-op
+      -- removal does not force a needless restart. Done under the state lock, so
+      -- it is ordered against the sync's commit re-check.
+      let nRemoved = length (TxSeq.toList (isTxs is)) - length (TxSeq.toList (isTxs is'))
+      when (nRemoved > 0) $ atomically $ modifyTVar removalGen (+ 1)
       traceWith trcr t
       pure ((), is')
  where
@@ -475,6 +482,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
     , mpEnvTracer = trcr
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride
+    , mpEnvRemovalGen = removalGen
     } = mpEnv
 
 -- | Craft a 'RemoveTxs' that manually removes the given transactions from the

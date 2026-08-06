@@ -58,6 +58,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Typeable
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -279,6 +280,13 @@ data MempoolEnv m blk = MempoolEnv
   , mpEnvTracer :: Tracer m (TraceEventMempool blk)
   , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
   , mpEnvTimeoutConfig :: Maybe MempoolTimeoutConfig
+  , mpEnvRemovalGen :: StrictTVar m Word64
+  -- ^ A monotonic counter bumped (under the state lock) whenever
+  -- 'implRemoveTxsEvenIfValid' actually drops a transaction. A sync captures it
+  -- alongside its snapshot and re-checks it before committing: a removal in that
+  -- window means the sync's candidate is stale (it may still contain a dropped
+  -- tx), so the sync restarts rather than resurrecting it. See
+  -- 'implSyncWithLedger'.
   }
 
 initMempoolEnv ::
@@ -307,6 +315,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
       isVar <- newTMVarIO is0
       addTxRemoteFifo <- newMVar ()
       addTxAllFifo <- newMVar ()
+      removalGen <- newTVarIO 0
       return
         MempoolEnv
           { mpEnvLedger = ledgerInterface
@@ -318,6 +327,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
           , mpEnvTracer = tracer
           , mpEnvCapacityOverride = capacityOverride
           , mpEnvTimeoutConfig = mbTimeoutConfig
+          , mpEnvRemovalGen = removalGen
           }
 
 {-------------------------------------------------------------------------------
