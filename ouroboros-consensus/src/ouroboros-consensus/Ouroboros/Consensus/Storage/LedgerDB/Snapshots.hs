@@ -4,7 +4,6 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -80,6 +79,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , SnapshotSelectorContext (..)
   , SnapshotFrequency (..)
   , SnapshotFrequencyArgs (..)
+  , SnapshotInterval (..)
+  , resolveSnapshotInterval
   , defaultSnapshotPolicy
   , mithrilEpochSize
   , sanityCheckSnapshotPolicyArgs
@@ -124,6 +125,7 @@ import Data.Word
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Util (Flag (..), lastMaybe)
@@ -595,7 +597,7 @@ data SnapshotSelectorContext = SnapshotSelectorContext
 -- 'sfaRateLimit' to something significantly smaller than the wall-clock duration
 -- of 'sfaInterval'.
 data SnapshotFrequencyArgs = SnapshotFrequencyArgs
-  { sfaInterval :: NonZero Word64
+  { sfaInterval :: SnapshotInterval
   -- ^ Try to write snapshots every 'sfaInterval' many slots.
   , sfaOffset :: SlotNo
   -- ^ An offset for when to write snapshots, see 'SnapshotFrequency'.
@@ -612,6 +614,23 @@ data SnapshotFrequency
   | DisableSnapshots
   deriving stock (Show, Eq)
 
+-- | How many slots to leave between snapshots, see 'SnapshotFrequencyArgs'.
+--
+-- The interval is only resolved into a concrete number of slots once the
+-- 'SecurityParam' is known, see 'resolveSnapshotInterval'.
+data SnapshotInterval
+  = -- | @40k@ slots, see 'mithrilSnapshotPolicyArgs'.
+    DefaultSnapshotInterval
+  | -- | An explicit number of slots.
+    RequestedSnapshotInterval (NonZero Word64)
+  deriving stock (Show, Eq)
+
+-- | Resolve a 'SnapshotInterval' into a concrete number of slots.
+resolveSnapshotInterval :: SecurityParam -> SnapshotInterval -> NonZero Word64
+resolveSnapshotInterval k = \case
+  DefaultSnapshotInterval -> unsafeNonZero $ 40 * unNonZero (maxRollbacks k)
+  RequestedSnapshotInterval interval -> interval
+
 data SnapshotPolicyArgs = SnapshotPolicyArgs
   { spaFrequency :: SnapshotFrequency
   , spaNum :: NumOfDiskSnapshots
@@ -626,24 +645,20 @@ defaultSnapshotPolicyArgs = mithrilSnapshotPolicyArgs
 -- | Snapshot Policy arguments to be used by Mithril
 --
 -- The snapshot interval is derived as follows:
---   * The epoch in Shelley is 432,000 slots long.
+--   * The epoch in Shelley is 432,000 (10k/f) slots long, which corresponds to 5 days.
+--   * We want to take a snapshot a day, so that is 40*k.
 --
--- The snapshot offset is derived as follows:
---   * 21,600 slots per epoch in Byron
---   * The Byron era was 208 epochs long
---   * The Shelley era starts at 208 * 21,600 = 4,492,800 slots
---   * Half of a Shelley epoch is 432,000 / 2 = 216,000
---   * The resulting offset of the first snapshot in Shelley is 4,492,800 + 216,000 = 4,708,800
---   * Finally, if we want to start taking snapshot while still syncing Byron,
---     we must start at slot 4,708,800 % 432,000 = 388,800
+-- Note that we will take a snapshot at the beginning of each epoch too, but we
+-- won't write it immediately, instead we will write it 5 - 10 minutes later, so
+-- we don't risk imposing more work on the epoch boundary.
 mithrilSnapshotPolicyArgs :: SnapshotPolicyArgs
 mithrilSnapshotPolicyArgs =
   SnapshotPolicyArgs
     { spaFrequency =
         SnapshotFrequency $
           SnapshotFrequencyArgs
-            { sfaInterval = unsafeNonZero 432_000
-            , sfaOffset = 388_800
+            { sfaInterval = DefaultSnapshotInterval
+            , sfaOffset = 0
             , sfaRateLimit = secondsToDiffTime $ 10 * 60
             , sfaDelaySnapshotRange = SnapshotDelayRange fiveMinutes tenMinutes
             }
@@ -658,9 +673,10 @@ mithrilSnapshotPolicyArgs =
 
 -- | Default on-disk policy suitable to use with cardano-node
 defaultSnapshotPolicy ::
+  SecurityParam ->
   SnapshotPolicyArgs ->
   SnapshotPolicy
-defaultSnapshotPolicy args =
+defaultSnapshotPolicy k args =
   SnapshotPolicy
     { onDiskNumSnapshots = spaNum
     , onDiskSnapshotSelector
@@ -692,6 +708,8 @@ defaultSnapshotPolicy args =
                   (sscSnapshotSlots ctx)
                   (drop 1 (sscSnapshotSlots ctx))
            where
+            interval = unNonZero $ resolveSnapshotInterval k sfaInterval
+
             -- Test whether there is a non-negative integer @n@ such that
             --
             -- > candidateSlot < offset + n * interval <= nextSlot
@@ -703,10 +721,10 @@ defaultSnapshotPolicy args =
               Maybe SlotNo
             shouldTakeSnapshot candidateSlot nextSlot
               | nextSlot < sfaOffset = Nothing
-              | candidateSlot < sfaOffset + n * SlotNo (unNonZero sfaInterval) = Just candidateSlot
+              | candidateSlot < sfaOffset + n * SlotNo interval = Just candidateSlot
               | otherwise = Nothing
              where
-              n = SlotNo $ unSlotNo (nextSlot - sfaOffset) `div` (unNonZero sfaInterval)
+              n = SlotNo $ unSlotNo (nextSlot - sfaOffset) `div` interval
 
             -- When rate limiting is enabled, only return at most one (the last)
             -- of the slots satisfying 'shouldTakeSnapshot'.
@@ -737,8 +755,8 @@ mithrilEpochSize = 432000
 -- Only 'Override' values are checked — 'UseDefault' values are known-good and
 -- are never flagged. Checks that are specific to 'SnapshotFrequency' are
 -- skipped entirely when 'spaFrequency' is 'DisableSnapshots'.
-sanityCheckSnapshotPolicyArgs :: SnapshotPolicyArgs -> [SanityCheckIssue]
-sanityCheckSnapshotPolicyArgs SnapshotPolicyArgs{spaFrequency, spaNum} =
+sanityCheckSnapshotPolicyArgs :: SecurityParam -> SnapshotPolicyArgs -> [SanityCheckIssue]
+sanityCheckSnapshotPolicyArgs k SnapshotPolicyArgs{spaFrequency, spaNum} =
   catMaybes $
     checkNumZero spaNum
       : case spaFrequency of
@@ -768,10 +786,12 @@ sanityCheckSnapshotPolicyArgs SnapshotPolicyArgs{spaFrequency, spaNum} =
     | rl > 86400 = Just (SnapshotRateLimitSuspiciouslyLarge rl)
     | otherwise = Nothing
 
-  checkMithrilDivisibility interval
-    | mithrilEpochSize `mod` unNonZero interval /= 0 =
-        Just (SnapshotIntervalNotDivisorOfEpoch (unNonZero interval))
+  checkMithrilDivisibility sfaInterval
+    | mithrilEpochSize `mod` interval /= 0 =
+        Just (SnapshotIntervalNotDivisorOfEpoch interval)
     | otherwise = Nothing
+   where
+    interval = unNonZero $ resolveSnapshotInterval k sfaInterval
 
 {-------------------------------------------------------------------------------
   Tracing snapshot events

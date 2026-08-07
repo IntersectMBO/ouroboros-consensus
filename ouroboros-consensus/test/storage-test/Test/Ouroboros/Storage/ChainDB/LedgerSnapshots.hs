@@ -269,7 +269,7 @@ tsSnapshotPolicyArgs TestSetup{tsTestSnapshotPolicyArgs} =
   spaFrequency =
     SnapshotFrequency
       SnapshotFrequencyArgs
-        { sfaInterval = tspaInterval tsTestSnapshotPolicyArgs
+        { sfaInterval = RequestedSnapshotInterval $ tspaInterval tsTestSnapshotPolicyArgs
         , sfaOffset = tspaOffset tsTestSnapshotPolicyArgs
         , sfaRateLimit = tspaRateLimit tsTestSnapshotPolicyArgs
         , sfaDelaySnapshotRange = tspaDelaySnapshotRange tsTestSnapshotPolicyArgs
