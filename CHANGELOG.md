@@ -6,6 +6,22 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-4.1.0.0'></a>
+## 4.1.0.0 -- 2026-08-07
+
+### Breaking
+
+- The Mithril snapshot policy (which is also the default policy) now takes a
+  snapshot every `40 * k` slots with no offset, instead of every 432,000 slots
+  with an offset of 388,800. On mainnet this is one snapshot a day, one of every
+  five landing on a Shelley epoch boundary.
+- `sfaInterval` is now a `SnapshotInterval`, which is either
+  `DefaultSnapshotInterval` (`40 * k` slots, resolved via
+  `resolveSnapshotInterval` once the `SecurityParam` is known) or an explicit
+  `RequestedSnapshotInterval`.
+- `defaultSnapshotPolicy` and `sanityCheckSnapshotPolicyArgs` now take a
+  `SecurityParam`.
+
 <a id='changelog-4.0.0.0'></a>
 ## 4.0.0.0 -- 2026-07-30
 
