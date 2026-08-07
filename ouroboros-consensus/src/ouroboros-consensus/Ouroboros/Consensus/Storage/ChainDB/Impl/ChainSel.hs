@@ -376,7 +376,14 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddBlock bta) =
     "chain-sel-add-block"
     (show $ blockHash $ blockToAdd bta)
     (\childCCtx -> chainSelAddBlock cdb childCCtx bta)
-chainSelSync cdb _cctx (ChainSelAddPerasCert cert varProcessed) = chainSelAddPerasCert cdb cert varProcessed
+chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddPerasCert cert varProcessed) =
+  callTraceSameThreadVia
+    id
+    (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
+    cctx
+    "chain-sel-add-peras-cert"
+    (show $ getPerasCertRound cert)
+    (\_ -> chainSelAddPerasCert cdb cert varProcessed)
 
 -- | Add a block to the ChainDB.
 --
