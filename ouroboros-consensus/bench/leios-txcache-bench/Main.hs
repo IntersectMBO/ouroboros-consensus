@@ -28,17 +28,26 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
-import Data.List (sort, transpose)
+import Data.List (isPrefixOf, partition, sort, stripPrefix, transpose)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
+import Foreign.C.Types (CInt (..))
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats
 import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
 import LeiosTxCache
+import LeiosTxCache.Bench.SQLite
+  ( newSQLiteLeiosTxCacheForPopulation
+  , newSQLiteLeiosTxCacheForQueries
+  )
 import Numeric (showFFloat)
+import System.Directory (doesFileExist, removeFile)
 import System.Environment (getArgs)
-import System.IO (hFlush, stdout)
+import System.Exit (die)
+import System.IO (IOMode (ReadMode, ReadWriteMode), hFlush, openFile, stdout)
 import System.Mem (performMajorGC)
+import System.Posix.IO (closeFd, handleToFd)
+import System.Posix.Types (COff (..))
 
 -- * Configuration
 
@@ -96,24 +105,156 @@ main = do
       , "  txs per EB   : " <> show txsPerEb
       , "  total txs    : " <> show (numEbs * txsPerEb)
       ]
+  printPrivilegeReminder
   args <- getArgs
+  -- CLI: an optional variant (pure | ht | sqlite; default all three) plus the
+  -- SQLite-only knobs --cache=small|big and --cycle-connection=yes|no. The knobs
+  -- error if a non-sqlite variant is named.
+  let (flags, positionals) = partition ("--" `isPrefixOf`) args
+      flagValue name = case [v | f <- flags, Just v <- [stripPrefix (name <> "=") f]] of
+        [] -> Nothing
+        (v : _) -> Just v
+  forM_ flags $ \f ->
+    when (not (any (`isPrefixOf` f) ["--cache=", "--cycle-connection="])) $
+      die ("unknown flag: " <> f)
+  cache <- case flagValue "--cache" of
+    Nothing -> pure BigCache
+    Just "small" -> pure SmallCache
+    Just "big" -> pure BigCache
+    Just v -> die ("--cache must be small|big, got: " <> v)
+  cycleConn <- case flagValue "--cycle-connection" of
+    Nothing -> pure CycleYes
+    Just "yes" -> pure CycleYes
+    Just "no" -> pure CycleNo
+    Just v -> die ("--cycle-connection must be yes|no, got: " <> v)
+  variant <- case positionals of
+    [] -> pure Nothing
+    [v] | v `elem` ["pure", "ht", "sqlite"] -> pure (Just v)
+    _ -> die "expected at most one of: pure | ht | sqlite"
+  when (not (null flags) && maybe False (/= "sqlite") variant) $
+    die "--cache / --cycle-connection apply only to the sqlite variant"
   let salt0, salt1 :: Word64
       salt0 = 0xD1CED00DFEEDFACE
       salt1 = 0x0123456789ABCDEF
-      runs :: [(String, IO BenchCache)]
-      runs = case args of
-        ["pure"] -> [("pure-wrapped index", newPureLeiosTxCache)]
-        ["ht"] -> [("hash-table (shift 22)", newHashTableLeiosTxCache 22 salt0 salt1)]
-        _ ->
-          [ ("pure-wrapped index", newPureLeiosTxCache)
-          , ("hash-table (shift 22)", newHashTableLeiosTxCache 22 salt0 salt1)
-          ]
-  mapM_ (uncurry runBench) runs
+      -- In-memory variants use one handle for both phases and need no cooling.
+      mkInMem nm mk = do
+        h <- mk
+        pure (BenchTarget nm h h (pure ()) (pure ()))
+      -- SQLite populates through a fast, unsafe connection and reads through a
+      -- separate, coolable one; the fsync between makes its pages evictable.
+      -- --cache sizes the query connection's private cache; --cycle-connection
+      -- reopens it per batch (cold private cache) — together with the OS-cache
+      -- eviction that is what makes a batch genuinely cold.
+      mkSqlite = do
+        exists <- doesFileExist sqliteDbPath
+        when exists $ removeFile sqliteDbPath
+        popCache <- newSQLiteLeiosTxCacheForPopulation sqliteDbPath
+        (queryCache, reopenQuery) <-
+          newSQLiteLeiosTxCacheForQueries (cacheSizePragma cache) txsPerEb sqliteDbPath
+        let coolBatch = case cycleConn of
+              CycleYes -> reopenQuery >> coolFile sqliteDbPath
+              CycleNo -> coolFile sqliteDbPath
+        pure $
+          BenchTarget
+            (sqliteName cache cycleConn)
+            popCache
+            queryCache
+            (syncFile sqliteDbPath)
+            coolBatch
+      mkPure = mkInMem "pure-wrapped index" newPureLeiosTxCache
+      mkHt = mkInMem "hash-table (shift 22)" (newHashTableLeiosTxCache 22 salt0 salt1)
+      targets :: [IO BenchTarget]
+      targets = case variant of
+        Just "pure" -> [mkPure]
+        Just "ht" -> [mkHt]
+        Just "sqlite" -> [mkSqlite]
+        _ -> [mkPure, mkHt, mkSqlite]
+  mapM_ (>>= runBench) targets
 
-runBench :: String -> IO BenchCache -> IO ()
-runBench name mkCache = do
-  cache <- mkCache
+-- | A benchmark subject: the two cache handles (the same one twice for the
+-- in-memory variants; distinct connections for SQLite), the post-population sync
+-- that makes SQLite's pages evictable, and the per-batch cooling.
+-- Positional (see the pattern in 'runBench'): name, population handle, query
+-- handle, post-population sync, per-batch cooling.
+data BenchTarget
+  = BenchTarget String BenchCache BenchCache (IO ()) (IO ())
 
+-- | Where the SQLite variant keeps its database (removed and recreated per run).
+sqliteDbPath :: FilePath
+sqliteDbPath = "leios-txcache-bench.sqlite"
+
+-- | The query connection's private page-cache size (@--cache@).
+data Cache = SmallCache | BigCache
+
+-- | Whether to reopen the query connection before each batch (@--cycle-connection@),
+-- giving a cold private cache per batch.
+data Cycle = CycleYes | CycleNo
+
+-- | The @PRAGMA cache_size@ value: 16 pages (~512 kB, far too small to hold the
+-- index) vs -262144 (~256 MB, holds the whole batch working set).
+cacheSizePragma :: Cache -> Int
+cacheSizePragma SmallCache = 16
+cacheSizePragma BigCache = -262144
+
+sqliteName :: Cache -> Cycle -> String
+sqliteName c y =
+  "sqlite (cache="
+    <> (case c of SmallCache -> "small"; BigCache -> "big")
+    <> ", cycle="
+    <> (case y of CycleYes -> "yes"; CycleNo -> "no")
+    <> ")"
+
+-- | The SQLite variant only reaches its cold-cache worst case if the db file's
+-- pages can be evicted from the OS page cache. 'coolFile' does that best-effort
+-- via @posix_fadvise@, but a guaranteed cold cache needs privilege to drop the
+-- page cache. Always shown, so the caveat is never silently lost.
+printPrivilegeReminder :: IO ()
+printPrivilegeReminder =
+  putStr $
+    unlines
+      [ ""
+      , "NOTE: the SQLite variant's cold-cache worst case relies on evicting its"
+      , "db file from the OS page cache before each batch. posix_fadvise(DONTNEED)"
+      , "is best-effort; for a guaranteed cold cache, run with elevated privileges"
+      , "(so the OS page cache can be dropped). Otherwise the reported SQLite"
+      , "latency may understate the true worst case."
+      ]
+
+-- * OS page-cache cooling (SQLite variant)
+
+foreign import ccall unsafe "posix_fadvise"
+  c_posix_fadvise :: CInt -> COff -> COff -> CInt -> IO CInt
+
+-- | @POSIX_FADV_DONTNEED@ (Linux).
+posixFadvDontneed :: CInt
+posixFadvDontneed = 4
+
+-- | Evict a file's pages from the OS page cache, so subsequent reads fault from
+-- disk. Best-effort: only clean (flushed) pages are dropped, and it does nothing
+-- for pages pinned by an active mmap — which is why the SQLite cache opens with
+-- @mmap_size = 0@.
+coolFile :: FilePath -> IO ()
+coolFile path = do
+  h <- openFile path ReadMode
+  fd <- handleToFd h
+  _ <- c_posix_fadvise (fromIntegral fd) 0 0 posixFadvDontneed
+  closeFd fd
+
+foreign import ccall unsafe "fsync"
+  c_fsync :: CInt -> IO CInt
+
+-- | Flush a file's dirty pages to disk so a subsequent 'coolFile' can evict them
+-- (posix_fadvise drops only clean pages). Run once after the fast, unsafe
+-- population — which uses @synchronous = OFF@ and so never fsyncs on its own.
+syncFile :: FilePath -> IO ()
+syncFile path = do
+  h <- openFile path ReadWriteMode
+  fd <- handleToFd h
+  _ <- c_fsync (fromIntegral fd)
+  closeFd fd
+
+runBench :: BenchTarget -> IO ()
+runBench (BenchTarget name popCache queryCache syncAfterPop coolBatch) = do
   -- Pre-generate all EB data (hashes fully forced) OUTSIDE the timed region, so
   -- the measured population allocation is index-op churn, not hash generation.
   putStr "\ngenerating data... " >> hFlush stdout
@@ -125,17 +266,21 @@ runBench name mkCache = do
   _ <- evaluate (length ebData)
   putStrLn "done"
 
-  -- Populate the index (timed). Exactly 'numEbs' announcements, so no eviction.
+  -- Populate the index (timed) via the population handle. Exactly 'numEbs'
+  -- announcements, so no eviction.
   putStr "populating index... " >> hFlush stdout
   allocBefore <- bytesAllocated
   (_, popNs) <-
     timedNs $
       forM_ ebData $ \(ebh, rbh, slot, txhs, bs) -> do
-        _ <- insertAnnouncement cache slot rbh ebh
-        _ <- insertBody cache ebh (BenchBody bs)
-        withLockedInsertUnappliedTx cache $ \z step ->
+        _ <- insertAnnouncement popCache slot rbh ebh
+        _ <- insertBody popCache ebh (BenchBody bs)
+        withLockedInsertUnappliedTx popCache $ \z step ->
           foldM (\ !acc txh -> step acc txh ()) z txhs
   allocAfter <- bytesAllocated
+  -- Flush population to disk (a no-op for the in-memory variants) so the query
+  -- handle reads durable, coolable pages.
+  syncAfterPop
   putStrLn "done"
 
   -- Residency (post-major-GC live set); ebData is now dead and collectable.
@@ -171,11 +316,18 @@ runBench name mkCache = do
   cols <- forM ratios $ \pct -> do
     probe <- evaluate $ force $ mkProbe pct
     let lookupBatch =
-          withLookupTx cache $ \look ->
+          withLookupTx queryCache $ \look ->
             foldM (\ !hits txh -> (\r -> hits + maybe 0 (const 1) r) <$> look txh) (0 :: Int) probe
+    coolBatch
     hits <- lookupBatch -- warmup, and the actual resident count
     laBefore <- bytesAllocated
-    times <- forM [1 .. numLookupRuns] $ \_ -> snd <$> timedNs lookupBatch
+    -- 'coolBatch' runs OUTSIDE 'timedNs' so cooling is excluded from the latency;
+    -- for the SQLite variant it evicts the db file so each batch reads cold. It is
+    -- a no-op for the in-memory variants. (Its own tiny allocation does fall inside
+    -- the 'lookupAlloc' bracket below.)
+    times <- forM [1 .. numLookupRuns] $ \_ -> do
+      coolBatch
+      snd <$> timedNs lookupBatch
     laAfter <- bytesAllocated
     let avgNs = sum times `div` fromIntegral numLookupRuns
         perTxNs = fromIntegral avgNs / fromIntegral txsPerEb :: Double
