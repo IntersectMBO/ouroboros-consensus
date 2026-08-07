@@ -49,7 +49,17 @@ import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
 import LeiosDemoDb (LeiosDbConnection, leiosDbLookupEbBody)
-import LeiosDemoTypes (BytesSize, EbHash, LeiosPoint, leiosMempoolSize, pointEbHash)
+import LeiosDemoTypes
+  ( BytesSize
+  , EbHash
+  , HasLeiosVoting (..)
+  , LeiosExtValidationError (..)
+  , LeiosPoint
+  , leiosMempoolSize
+  , minCertificationThreshold
+  , pointEbHash
+  , verifyLeiosCert
+  )
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -65,8 +75,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
   ( ApplyBlock (getBlockKeySets, reapplyBlockLedgerResult)
   , applyBlockLedgerResult
-  , tickThenApply
-  , tickThenReapply
   )
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
@@ -86,16 +94,14 @@ import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
-  ( Forker'
-  , LeiosClosureApplied (..)
-  , ResolveLeiosBlock
+  ( ResolveLeiosBlock
+  , announcingRbHash
   , applyLeiosClosure
   , blockLeiosCert
   , headerLeiosAnnouncement
   , inlineLeiosClosure
   , leiosClosureTxKeySets
   , protocolStateLeiosAnnouncement
-  , resolveAndApplyLeiosClosure
   , resolveLeiosClosure
   )
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
@@ -115,6 +121,7 @@ runAnalysis ::
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   AnalysisName -> SomeAnalysis blk
@@ -532,6 +539,7 @@ storeLedgerStateAt ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , HasAnalysis blk
   ) =>
   SlotNo ->
@@ -545,12 +553,18 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
   FromLedgerState ldb internal = startFrom
 
   process :: () -> blk -> IO (NextStep, ())
-  process _ blk = do
-    oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
+  process _ blk =
     LedgerDB.withTipForker
       ldb
       ( \frk -> do
-          result <- applyBlockLeios leiosDb ledgerAppMode OmitLedgerEvents cfg frk oldLedger blk
+          result <-
+            LedgerDB.applyBlock
+              leiosDb
+              OmitLedgerEvents
+              (ExtLedgerCfg cfg)
+              (apForMode ledgerAppMode blk)
+              frk
+              noBlockResolution
           case result of
             Right newLedger -> do
               LedgerDB.forkerPush frk newLedger
@@ -566,7 +580,8 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
               when (blockSlot blk >= slotNo) storeLedgerState
               return (continue blk, ())
             Left err -> do
-              traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
+              traceWith tracer $
+                LedgerErrorEvent (blockPoint blk) (LedgerDB.annLedgerErr err)
               storeLedgerState
               pure (Stop, ())
       )
@@ -612,6 +627,7 @@ checkNoThunksEvery ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   Word64 ->
@@ -663,6 +679,7 @@ traceLedgerProcessing ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
@@ -711,6 +728,7 @@ benchmarkLedgerOps ::
   ( LedgerSupportsProtocol blk
   , HasAnalysis blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Maybe FilePath ->
   LedgerApplicationMode ->
@@ -760,6 +778,22 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
       ) <-
       LedgerDB.withTipForker ledgerDB $ \frk -> do
         st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
+        -- Verify the certificate before the EB it names is read, which is where
+        -- 'LedgerDB.applyBlock' verifies it. The closure below applies without
+        -- validation, so this is the only check its txs ever get.
+        --
+        -- The check runs inside the RTS-stats window, so its cost lands in
+        -- 'DP.totalTime' and 'DP.mut'. It has no column of its own.
+        case ledgerAppMode of
+          LedgerReapply -> pure ()
+          LedgerApply -> case verifyCertRb st blk of
+            Left err ->
+              fail $
+                "benchmark doesn't support invalid certificates: "
+                  <> show rp
+                  <> " "
+                  <> show err
+            Right () -> pure ()
         -- A cert-RB has an empty body. It applies the txs of the EB that its
         -- parent announced. Read those txs from the LeiosDb. A block that
         -- certifies no EB skips the read, so its EB figures stay 0. A 'clock'
@@ -928,6 +962,7 @@ getBlockApplicationMetrics ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   NumberOfBlocks -> Maybe FilePath -> Analysis blk StartFromLedgerState
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
@@ -983,6 +1018,7 @@ reproMempoolForge ::
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Int ->
   Analysis blk StartFromLedgerState
@@ -1249,6 +1285,44 @@ parentAnnouncement ::
 parentAnnouncement =
   protocolStateLeiosAnnouncement @blk . headerStateChainDep . headerState
 
+-- | Verify the Leios certificate of a cert-RB against the committee of the
+-- parent ledger state. 'Right ()' for a block that carries no certificate.
+--
+-- This repeats what 'LedgerDB.applyBlock' does on its 'LedgerDB.ApplyVal' path,
+-- and it returns the same four rejection reasons. An analysis that calls
+-- 'LedgerDB.applyBlock' gets the check from there and must not call this.
+-- 'benchmarkLedgerOps' times each phase of block application on its own, so it
+-- cannot call 'LedgerDB.applyBlock', and it calls this instead.
+--
+-- The check matters because 'applyLeiosClosure' applies the txs of the EB
+-- without validation: no signatures, no scripts, no balances.
+verifyCertRb ::
+  forall blk.
+  ( ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  ) =>
+  -- | The unticked parent state
+  ExtLedgerState blk EmptyMK ->
+  blk ->
+  Either LeiosExtValidationError ()
+verifyCertRb parent blk = case blockLeiosCert blk of
+  Nothing -> Right ()
+  Just cert -> case parentAnnouncement parent of
+    -- A cert-RB certifies the EB that its predecessor announced. If the parent
+    -- announced none, there is nothing to certify.
+    Nothing -> Left (LeiosCertificateWithoutAnnouncement cert)
+    Just (announcedPoint, _size) -> case getLeiosCommittee (ledgerState parent) of
+      -- A cert-RB in an era with no Leios committee is a protocol violation.
+      Nothing -> Left (LeiosMissingCommittee announcedPoint cert)
+      Just committee -> case announcingRbHash blk of
+        -- A cert-RB always has a non-genesis announcing parent.
+        Nothing -> Left (LeiosCertificateAfterGenesis cert announcedPoint)
+        Just rbHash ->
+          case verifyLeiosCert committee minCertificationThreshold rbHash cert of
+            Left invalid ->
+              Left (LeiosInvalidCertificate cert announcedPoint rbHash invalid)
+            Right _weight -> Right ()
+
 -- | The EB that this block certifies. 'Nothing' for a block that carries no
 -- Leios certificate.
 certifiedEbHash ::
@@ -1394,66 +1468,31 @@ applyClosure lcfg closureTxs parent tables =
  where
   stateBeforeEb = ledgerState parent `ltwith` castLedgerTables tables
 
--- | Apply one block against the tip forker. For a CertRB, fold the EB closure
--- its parent announced onto the ledger state before applying the (empty) CertRB,
--- as 'Forker.applyBlock' does; other blocks apply as before.
-applyBlockLeios ::
-  forall blk.
-  ( LedgerSupportsProtocol blk
-  , ResolveLeiosBlock blk
-  ) =>
-  LeiosDbConnection IO ->
-  LedgerApplicationMode ->
-  ComputeLedgerEvents ->
-  TopLevelConfig blk ->
-  Forker' IO blk ->
-  -- | Parent tip
-  ExtLedgerState blk EmptyMK ->
-  blk ->
-  IO (Either (ExtValidationError blk) (ExtLedgerState blk DiffMK))
-applyBlockLeios leiosConn mode evs cfg frk parent blk =
-  case blockLeiosCert blk of
-    Nothing -> do
-      -- Ordinary block: read its inputs, apply its body.
-      values <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-      pure $ applyInMode (parent `withLedgerTables` values)
-    Just{} ->
-      case parentAnnouncement parent of
-        Nothing ->
-          -- A CertRB's parent always announced an EB; its absence is a bug.
-          error "applyBlockLeios: CertRB whose parent announced no EB"
-        Just (announcedPoint, _size) -> do
-          res <-
-            resolveAndApplyLeiosClosure
-              leiosConn
-              (configLedger cfg)
-              (pointEbHash announcedPoint)
-              (fmap castLedgerTables . LedgerDB.forkerReadTables frk . castLedgerTables)
-              (castLedgerTables (getBlockKeySets blk :: LedgerTables (ExtLedgerState blk) KeysMK)) -- the RB body's own input keys
-              (ledgerState parent)
-          pure $ case res of
-            Left lerr ->
-              Left (ExtValidationErrorLedger lerr)
-            Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} ->
-              -- Apply the CertRB (empty body) on the post-EB state, then prepend
-              -- the closure diff so the pushed diff covers both.
-              prependDiffs lcaClosureDiff
-                <$> applyInMode (parent{ledgerState = lcaStateAfterEB})
- where
-  -- Apply 'blk' to the given ledger state, reapplying or fully applying per 'mode'.
-  applyInMode ::
-    ExtLedgerState blk ValuesMK ->
-    Either (ExtValidationError blk) (ExtLedgerState blk DiffMK)
-  applyInMode st = case mode of
-    LedgerReapply -> Right (tickThenReapply evs (ExtLedgerCfg cfg) blk st)
-    LedgerApply -> runExcept (tickThenApply evs (ExtLedgerCfg cfg) blk st)
+-- | The 'Ap' that a 'LedgerApplicationMode' selects.
+--
+-- The difference is not only the cost. On 'LedgerApply' the node verifies the
+-- Leios certificate of a cert-RB, and on 'LedgerReapply' it does not. See
+-- 'verifyCertRb'.
+apForMode :: LedgerApplicationMode -> blk -> LedgerDB.Ap IO (ExtLedgerState blk) blk
+apForMode = \case
+  LedgerApply -> LedgerDB.ApplyVal
+  LedgerReapply -> LedgerDB.ReapplyVal
 
--- | Read the ledger state at the tip (with the UTxOs this block consumes) and
--- apply the block to it via 'applyBlockLeios'. Fails loudly on any error: an
--- invalid block, or an EB closure that is missing or won't apply.
+-- | 'LedgerDB.applyBlock' resolves a block only for its @*Ref@ constructors, and
+-- every caller here passes @*Val@. So no analysis ever reaches this.
+noBlockResolution :: LedgerDB.ResolveBlock IO blk
+noBlockResolution _ =
+  error "db-analyser: applyBlock asked to resolve a block, but every Ap is a *Val"
+
+-- | Read the ledger state at the tip (with the UTxOs this block
+-- consumes) and apply the block to it via the node's own
+-- 'LedgerDB.applyBlock'. Fails on any error: an invalid block, an
+-- invalid Leios certificate, or an EB closure that is missing or
+-- won't apply.
 applyBlockAtTip ::
   ( LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   LeiosDbConnection IO ->
   LedgerApplicationMode ->
@@ -1467,8 +1506,14 @@ applyBlockAtTip leiosConn mode cfg ldb blk =
     oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
     let preState = oldLedgerSt `withLedgerTables` oldLedgerTbs
     applied <-
-      either (error . show) id
-        <$> applyBlockLeios leiosConn mode OmitLedgerEvents cfg frk oldLedgerSt blk
+      either (error . show . LedgerDB.annLedgerErr) id
+        <$> LedgerDB.applyBlock
+          leiosConn
+          OmitLedgerEvents
+          (ExtLedgerCfg cfg)
+          (apForMode mode blk)
+          frk
+          noBlockResolution
     pure (preState, applied)
 
 {-------------------------------------------------------------------------------
