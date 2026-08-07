@@ -79,6 +79,7 @@ import Data.List (nubBy, sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Ord (Down (..))
 import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -674,23 +675,22 @@ decodeLeiosEb = do
 
 -- * Voting
 
--- | Create a 'LeiosCommittee' from a mapping of verification keys and some
--- associated weight. Duplicate entries by verification key are ignored. The
--- final 'Weight' in the committee is normalized by the total of the input map.
--- TODO: The total can only be calculated here in "everyone votes" scheme.
-mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> LeiosCommittee
--- NOTE: Bypasses 'mkLeiosCommittee' as the inputs carry no proofs of
--- possession. Only used by tests; the ledger-driven path uses
--- 'mkLeiosCommittee'.
-mkCommitteeEveryoneVotes inputs =
-  UnsafeLeiosCommittee
-    . V.fromList
-    . sortOn seatWeight
-    $ [ LeiosSeat{seatWeight = toRational weight / totalWeight, seatVKey = SJust vk}
-      | (vk, weight) <- nubBy ((==) `on` fst) inputs
-      ]
+-- | Select the voting committee from a stake (weight) distribution per CIP-164:
+-- order by stake descending and take the shortest prefix whose cumulative stake
+-- reaches @target@ (σ_c).
+selectCommitteeByStake ::
+  -- | The target coverage of weights / stake.
+  Weight ->
+  -- | All available voters weights.
+  [(a, Weight)] ->
+  -- | The selected committee weights.
+  [(a, Weight)]
+selectCommitteeByStake target = go 0 . sortOn (Down . snd)
  where
-  totalWeight = toRational . sum $ snd <$> inputs
+  go _ [] = []
+  go acc (p : ps)
+    | acc >= target = []
+    | otherwise = p : go (acc + snd p) ps
 
 -- ** Vote
 
