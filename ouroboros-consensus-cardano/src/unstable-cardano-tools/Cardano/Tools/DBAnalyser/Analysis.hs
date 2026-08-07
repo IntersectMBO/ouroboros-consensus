@@ -48,6 +48,7 @@ import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
 import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes (pointEbHash)
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -64,7 +65,6 @@ import Ouroboros.Consensus.Ledger.Abstract
   ( ApplyBlock (getBlockKeySets, reapplyBlockLedgerResult)
   , applyBlockLedgerResult
   , tickThenApply
-  , tickThenApplyLedgerResult
   , tickThenReapply
   )
 import Ouroboros.Consensus.Ledger.Basics
@@ -84,6 +84,14 @@ import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( Forker'
+  , LeiosClosureApplied (..)
+  , ResolveLeiosBlock
+  , blockLeiosCert
+  , protocolStateLeiosAnnouncement
+  , resolveAndApplyLeiosClosure
+  )
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.SizeInBytes
@@ -100,6 +108,7 @@ runAnalysis ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   AnalysisName -> SomeAnalysis blk
@@ -427,6 +436,7 @@ showEBBs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
 storeLedgerStateAt ::
   forall blk.
   ( LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   , HasAnalysis blk
   ) =>
   SlotNo ->
@@ -436,18 +446,17 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
   void $ processAllUntil db registry GetBlock startFrom limit () process
   pure Nothing
  where
-  AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = env
+  AnalysisEnv{db, registry, startFrom, cfg, limit, tracer, leiosDb} = env
   FromLedgerState ldb internal = startFrom
 
   process :: () -> blk -> IO (NextStep, ())
   process _ blk = do
-    let ledgerCfg = ExtLedgerCfg cfg
     oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
     LedgerDB.withTipForker
       ldb
       ( \frk -> do
-          tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-          case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
+          result <- applyBlockLeios leiosDb ledgerAppMode OmitLedgerEvents cfg frk oldLedger blk
+          case result of
             Right newLedger -> do
               LedgerDB.forkerPush frk newLedger
               join $ IOLike.atomically $ LedgerDB.forkerCommit frk
@@ -466,10 +475,6 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
               storeLedgerState
               pure (Stop, ())
       )
-
-  tickThenXApply = case ledgerAppMode of
-    LedgerReapply -> pure ...: tickThenReapply
-    LedgerApply -> tickThenApply
 
   continue :: blk -> NextStep
   continue blk
@@ -511,13 +516,14 @@ checkNoThunksEvery ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   Word64 ->
   Analysis blk StartFromLedgerState
 checkNoThunksEvery
   nBlocks
-  (AnalysisEnv{db, registry, startFrom, cfg, limit}) = do
+  (AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb}) = do
     putStrLn $
       "Checking for thunks in each block where blockNo === 0 (mod " <> show nBlocks <> ")."
     void $ processAll db registry GetBlock startFrom limit () process
@@ -527,16 +533,8 @@ checkNoThunksEvery
 
     process :: () -> blk -> IO ()
     process _ blk = do
-      oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
-      tbs <-
-        LedgerDB.withTipForker
-          ldb
-          (\frk -> LedgerDB.forkerReadTables frk (getBlockKeySets blk))
-      let oldLedger' = oldLedger `withLedgerTables` tbs
-      let ledgerCfg = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger'
-          newLedger = either (error . show) lrResult $ runExcept appliedResult
-          newLedger' = applyDiffs oldLedger' newLedger
+      (oldLedger', newLedger) <- applyBlockAtTip leiosDb LedgerApply cfg ldb blk
+      let newLedger' = applyDiffs oldLedger' newLedger
           bn = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0) $ do
         -- Check the new ledger state with new values stowed. This checks that
@@ -569,10 +567,11 @@ traceLedgerProcessing ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
-  (AnalysisEnv{db, registry, startFrom, cfg, limit}) = do
+  (AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb}) = do
     void $ processAll db registry GetBlock startFrom limit () process
     pure Nothing
    where
@@ -583,19 +582,8 @@ traceLedgerProcessing
       blk ->
       IO ()
     process _ blk = do
-      oldLedger <-
-        LedgerDB.withTipForker
-          ldb
-          ( \frk -> do
-              oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-              oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-              pure $ oldLedgerSt `withLedgerTables` oldLedgerTbs
-          )
-
-      let ledgerCfg = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger
-          newLedger = either (error . show) lrResult $ runExcept appliedResult
-          newLedger' = applyDiffs oldLedger newLedger
+      (oldLedger, newLedger) <- applyBlockAtTip leiosDb LedgerApply cfg ldb blk
+      let newLedger' = applyDiffs oldLedger newLedger
           traces =
             ( HasAnalysis.emitTraces $
                 HasAnalysis.WithLedgerState blk (ledgerState oldLedger) (ledgerState newLedger')
@@ -791,6 +779,7 @@ getBlockApplicationMetrics ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   ) =>
   NumberOfBlocks -> Maybe FilePath -> Analysis blk StartFromLedgerState
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
@@ -802,7 +791,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
  where
   separator = ", "
 
-  AnalysisEnv{db, registry, startFrom, cfg, limit} = env
+  AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb} = env
   FromLedgerState ldb intLedgerDB = startFrom
 
   process ::
@@ -811,16 +800,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
     blk ->
     IO ()
   process outFileHandle _ blk = do
-    oldLedger <-
-      LedgerDB.withTipForker
-        ldb
-        ( \frk -> do
-            oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-            oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-            pure $ oldLedgerSt `withLedgerTables` oldLedgerTbs
-        )
-
-    let nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedger
+    (oldLedger, nextLedgerSt) <- applyBlockAtTip leiosDb LedgerReapply cfg ldb blk
     when (unBlockNo (blockNo blk) `mod` nrBlocks == 0) $ do
       let blockApplication =
             HasAnalysis.WithLedgerState
@@ -995,6 +975,87 @@ reproMempoolForge numBlks env = do
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain
           void $ Mempool.testSyncWithLedger mempool
+
+{-------------------------------------------------------------------------------
+  Leios-aware block application
+-------------------------------------------------------------------------------}
+
+-- | Apply one block against the tip forker. For a CertRB, fold the EB closure
+-- its parent announced onto the ledger state before applying the (empty) CertRB,
+-- as 'Forker.applyBlock' does; other blocks apply as before.
+applyBlockLeios ::
+  forall blk.
+  ( LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  ) =>
+  LeiosDbConnection IO ->
+  LedgerApplicationMode ->
+  ComputeLedgerEvents ->
+  TopLevelConfig blk ->
+  Forker' IO blk ->
+  -- | Parent tip
+  ExtLedgerState blk EmptyMK ->
+  blk ->
+  IO (Either (ExtValidationError blk) (ExtLedgerState blk DiffMK))
+applyBlockLeios leiosConn mode evs cfg frk parent blk =
+  case blockLeiosCert blk of
+    Nothing -> do
+      -- Ordinary block: read its inputs, apply its body.
+      values <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
+      pure $ applyInMode (parent `withLedgerTables` values)
+    Just{} ->
+      case protocolStateLeiosAnnouncement @blk (headerStateChainDep (headerState parent)) of
+        Nothing ->
+          -- A CertRB's parent always announced an EB; its absence is a bug.
+          error "applyBlockLeios: CertRB whose parent announced no EB"
+        Just (announcedPoint, _size) -> do
+          res <-
+            resolveAndApplyLeiosClosure
+              leiosConn
+              (configLedger cfg)
+              (pointEbHash announcedPoint)
+              (fmap castLedgerTables . LedgerDB.forkerReadTables frk . castLedgerTables)
+              (castLedgerTables (getBlockKeySets blk :: LedgerTables (ExtLedgerState blk) KeysMK)) -- the RB body's own input keys
+              (ledgerState parent)
+          pure $ case res of
+            Left lerr ->
+              Left (ExtValidationErrorLedger lerr)
+            Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} ->
+              -- Apply the CertRB (empty body) on the post-EB state, then prepend
+              -- the closure diff so the pushed diff covers both.
+              prependDiffs lcaClosureDiff
+                <$> applyInMode (parent{ledgerState = lcaStateAfterEB})
+ where
+  -- Apply 'blk' to the given ledger state, reapplying or fully applying per 'mode'.
+  applyInMode ::
+    ExtLedgerState blk ValuesMK ->
+    Either (ExtValidationError blk) (ExtLedgerState blk DiffMK)
+  applyInMode st = case mode of
+    LedgerReapply -> Right (tickThenReapply evs (ExtLedgerCfg cfg) blk st)
+    LedgerApply -> runExcept (tickThenApply evs (ExtLedgerCfg cfg) blk st)
+
+-- | Read the ledger state at the tip (with the UTxOs this block consumes) and
+-- apply the block to it via 'applyBlockLeios'. Fails loudly on any error: an
+-- invalid block, or an EB closure that is missing or won't apply.
+applyBlockAtTip ::
+  ( LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  ) =>
+  LeiosDbConnection IO ->
+  LedgerApplicationMode ->
+  TopLevelConfig blk ->
+  LedgerDB.LedgerDB' IO blk ->
+  blk ->
+  IO (ExtLedgerState blk ValuesMK, ExtLedgerState blk DiffMK)
+applyBlockAtTip leiosConn mode cfg ldb blk =
+  LedgerDB.withTipForker ldb $ \frk -> do
+    oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
+    oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
+    let preState = oldLedgerSt `withLedgerTables` oldLedgerTbs
+    applied <-
+      either (error . show) id
+        <$> applyBlockLeios leiosConn mode OmitLedgerEvents cfg frk oldLedgerSt blk
+    pure (preState, applied)
 
 {-------------------------------------------------------------------------------
   Auxiliary: processing all blocks in the DB
