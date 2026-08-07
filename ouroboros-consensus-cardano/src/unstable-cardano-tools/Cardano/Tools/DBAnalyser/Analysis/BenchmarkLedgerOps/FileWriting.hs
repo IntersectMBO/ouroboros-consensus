@@ -109,6 +109,8 @@ dataPointCsvBuilder =
   , ("gc", decimal . DP.gc)
   , ("tableReadTime", decimal . DP.tableReadTime)
   , ("mut_tableRead", decimal . DP.mut_tableRead)
+  , ("ebReadTime", decimal . DP.ebReadTime)
+  , ("mut_ebRead", decimal . DP.mut_ebRead)
   , ("majGcCount", decimal . DP.majGcCount)
   , ("minGcCount", decimal . DP.minGcCount)
   , ("allocatedBytes", decimal . DP.allocatedBytes)
@@ -118,5 +120,8 @@ dataPointCsvBuilder =
   , ("mut_blockTick", decimal . DP.mut_blockTick)
   , ("mut_blockApply", decimal . DP.mut_blockApply)
   , ("blockBytes", decimal . DP.blockByteSize)
+  , ("ebBytes", decimal . DP.ebByteSize)
+  , ("ebTxsBytes", decimal . DP.ebTxsByteSize)
+  , ("ebNumTxs", decimal . DP.ebNumTxs)
   , ("...era-specific stats", Builder.intercalate csvSeparator . DP.unBlockStats . DP.blockStats)
   ]
