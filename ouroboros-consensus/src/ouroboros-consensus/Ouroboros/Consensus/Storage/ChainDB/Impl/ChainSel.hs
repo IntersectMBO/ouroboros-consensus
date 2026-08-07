@@ -332,14 +332,9 @@ triggerChainSelectionAsync ::
 triggerChainSelectionAsync CDB{cdbTracer, cdbChainSelQueue} =
   addReprocessLoEBlocks (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
--- | Add a block to the ChainDB, /synchronously/.
+-- | Process ChainSelection message
 --
--- This is the only operation that actually changes the ChainDB. It will store
--- the block on disk and trigger chain selection, possibly switching to a
--- fork.
---
--- When the slot of the block is > the current slot, a chain selection will be
--- scheduled in the slot of the block.
+-- This is the only operation that actually changes the ChainDB.
 chainSelSync ::
   forall m blk.
   ( IOLike m
@@ -357,6 +352,14 @@ chainSelSync cdb (ChainSelReprocessLeiosEb ebHash) = chainSelReprocessLeiosEb cd
 chainSelSync cdb (ChainSelAddBlock blockToAdd) = chainSelAddBlock cdb blockToAdd
 chainSelSync cdb (ChainSelAddPerasCert cert varProcessed) = chainSelAddPerasCert cdb cert varProcessed
 
+-- | Add a block to the ChainDB, /synchronously/.
+--
+-- This is the only operation that actually changes the ChainDB. It will store
+-- the block on disk and trigger chain selection, possibly switching to a
+-- fork.
+--
+-- When the slot of the block is > the current slot, a chain selection will be
+-- scheduled in the slot of the block.
 chainSelAddBlock ::
   forall m blk.
   ( IOLike m
