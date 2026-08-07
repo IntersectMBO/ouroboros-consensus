@@ -46,9 +46,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
     -- * Validation
   , AnnLedgerError (..)
   , AnnLedgerError'
+  , Ap (..)
   , ResolveBlock
   , LeiosClosureApplied (..)
   , ResolveLeiosBlock (..)
+  , applyBlock
   , resolveAndApplyLeiosClosure
   , resolveLeiosBlock
   , SuccessForkerAction (..)
