@@ -1008,25 +1008,18 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
     Just everyoneVotes
    where
     -- Every pool in the (snapshotted) stake distribution gets a committee seat
-    -- weighted by its stake fraction; a pool that has not registered a Leios key
-    -- gets a keyless seat (an invalid proof of possession is dropped to keyless
-    -- by 'mkLeiosCommittee'). Keeping every pool as a seat — rather than
-    -- filtering keyless ones out — is what makes voter indices stable as keys
-    -- come and go.
+    -- weighted by its stake fraction; a pool that has not registered a Leios
+    -- key gets a keyless seat (an invalid proof of possession is dropped to
+    -- keyless by 'mkLeiosCommittee').
     --
-    -- Weights are the raw stake fractions and are deliberately NOT normalised:
-    -- the committee is a stake-based selection (eventually with a cutoff, so a
-    -- strict subset of pools), so there is no meaningful total to divide by. The
-    -- certification threshold is therefore an absolute fraction of the total
-    -- active stake, and keyless / cut-off stake simply lowers the reachable
-    -- maximum.
+    -- Weights are the raw stake fractions and are deliberately NOT normalised
+    -- as we have fractions of active stake already in the
+    -- 'individualPoolStake'.
     --
-    -- TODO: apply the stake-based cutoff and move this to the era boundary (to
-    -- cache the computation).
+    -- TODO: Move this to the era boundary (to cache the computation).
     everyoneVotes =
-      mkLeiosCommittee $
-        V.fromList
-          -- TODO: order by stake descending
+      mkLeiosCommittee . V.fromList $
+        selectCommitteeByStake
           [ (seatKey ips, ips.individualPoolStake)
           | ips <- Map.elems stakeDistribution
           ]
