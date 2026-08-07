@@ -352,7 +352,14 @@ chainSelSync ::
   CallCtx m ->
   ChainSelMessage m blk ->
   Electric m ()
-chainSelSync cdb _cctx (ChainSelReprocessLoEBlocks varProcessed) = chainSelReprocessLoEBlocks cdb varProcessed
+chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLoEBlocks varProcessed) =
+  callTraceSameThreadVia
+    id
+    (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
+    cctx
+    "chain-sel-reprocess-loe-blocks"
+    ()
+    (\_ -> chainSelReprocessLoEBlocks cdb varProcessed)
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLeiosEb ebHash) =
   callTraceSameThreadVia
     id
