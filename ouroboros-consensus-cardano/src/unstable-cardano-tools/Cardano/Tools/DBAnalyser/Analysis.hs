@@ -49,7 +49,7 @@ import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
 import LeiosDemoDb (LeiosDbConnection, leiosDbLookupEbBody)
-import LeiosDemoTypes (BytesSize, EbHash, LeiosPoint, pointEbHash)
+import LeiosDemoTypes (BytesSize, EbHash, LeiosPoint, leiosMempoolSize, pointEbHash)
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -238,25 +238,8 @@ data TraceEvent blk
     --   it holds:
     --   * block number
     --   * slot number when the block was forged
-    --   * number of transactions in the block
-    --   * total size of transactions in the block
-    --   * monotonic time to tick ledger state
-    --   * total time spent in the mutator when ticking the ledger state
-    --   * total time spent in gc when ticking the ledger state
-    --   * monotonic time to call 'Mempool.getSnapshotFor'
-    --   * total time spent in the mutator when calling 'Mempool.getSnapshotFor'
-    --   * total time spent in gc when calling 'Mempool.getSnapshotFor'
-    BlockMempoolAndForgeRepro
-      BlockNo
-      SlotNo
-      Int
-      SizeInBytes
-      IOLike.DiffTime
-      Int64
-      Int64
-      IOLike.DiffTime
-      Int64
-      Int64
+    --   * what the repro measured on that block
+    BlockMempoolAndForgeRepro BlockNo SlotNo MempoolAndForgeRepro
 
 -- | How many transaction outputs a block holds, and how many the chain holds up
 -- to and including that block.
@@ -272,6 +255,42 @@ data BlockTxSizes = BlockTxSizes
   , blockTxsSize :: SizeInBytes
   , numEbTxs :: Int
   , ebTxsSize :: SizeInBytes
+  }
+
+-- | What the MempoolAndForgeRepro analysis measured on one block.
+data MempoolAndForgeRepro = MempoolAndForgeRepro
+  { numTxs :: Int
+  -- ^ Number of transactions in the block.
+  , txsSize :: SizeInBytes
+  -- ^ Total size of transactions in the block.
+  , ebNumTxs :: Int
+  -- ^ Number of transactions in the EB that the block certifies.
+  , ebTxsByteSize :: SizeInBytes
+  -- ^ Total size of transactions in the EB that the block certifies.
+  , durEbRead :: IOLike.DiffTime
+  -- ^ Monotonic time to read the closure of the certified EB
+  , mutEbRead :: Int64
+  -- ^ Total time spent in the mutator when reading the closure of the certified EB
+  , gcEbRead :: Int64
+  -- ^ Total time spent in gc when reading the closure of the certified EB
+  , durEbApply :: IOLike.DiffTime
+  -- ^ Monotonic time to apply the closure of the certified EB
+  , mutEbApply :: Int64
+  -- ^ Total time spent in the mutator when applying the closure of the certified EB
+  , gcEbApply :: Int64
+  -- ^ Total time spent in gc when applying the closure of the certified EB
+  , durTick :: IOLike.DiffTime
+  -- ^ Monotonic time to tick ledger state.
+  , mutTick :: Int64
+  -- ^ Total time spent in the mutator when ticking the ledger state.
+  , gcTick :: Int64
+  -- ^ Total time spent in gc when ticking the ledger state.
+  , durSnap :: IOLike.DiffTime
+  -- ^ Monotonic time to call 'Mempool.getSnapshotFor'.
+  , mutSnap :: Int64
+  -- ^ Total time spent in the mutator when calling 'Mempool.getSnapshotFor'.
+  , gcSnap :: Int64
+  -- ^ Total time spent in gc when calling 'Mempool.getSnapshotFor'.
   }
 
 instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) where
@@ -327,20 +346,50 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
       , "Num txs in EB = " <> show numEbTxs
       , "Total size of txs in EB = " <> show ebTxsSize
       ]
-  show (BlockMempoolAndForgeRepro bno slot txsCount txsSize durTick mutTick gcTick durSnap mutSnap gcSnap) =
-    intercalate
-      "\t"
-      [ show bno
-      , show slot
-      , "txsCount " <> show txsCount
-      , "txsSize " <> show txsSize
-      , "durTick " <> show durTick
-      , "mutTick " <> show mutTick
-      , "gcTick " <> show gcTick
-      , "durSnap " <> show durSnap
-      , "mutSnap " <> show mutSnap
-      , "gcSnap " <> show gcSnap
-      ]
+  show
+    ( BlockMempoolAndForgeRepro
+        bno
+        slot
+        MempoolAndForgeRepro
+          { numTxs
+          , txsSize
+          , ebNumTxs
+          , ebTxsByteSize
+          , durEbRead
+          , mutEbRead
+          , gcEbRead
+          , durEbApply
+          , mutEbApply
+          , gcEbApply
+          , durTick
+          , mutTick
+          , gcTick
+          , durSnap
+          , mutSnap
+          , gcSnap
+          }
+      ) =
+      intercalate
+        "\t"
+        [ show bno
+        , show slot
+        , "txsCount " <> show numTxs
+        , "txsSize " <> show txsSize
+        , "ebNumTxs " <> show ebNumTxs
+        , "ebTxsByteSize " <> show ebTxsByteSize
+        , "durEbRead " <> show durEbRead
+        , "mutEbRead " <> show mutEbRead
+        , "gcEbRead " <> show gcEbRead
+        , "durEbApply " <> show durEbApply
+        , "mutEbApply " <> show mutEbApply
+        , "gcEbApply " <> show gcEbApply
+        , "durTick " <> show durTick
+        , "mutTick " <> show mutTick
+        , "gcTick " <> show gcTick
+        , "durSnap " <> show durSnap
+        , "mutSnap " <> show mutSnap
+        , "gcSnap " <> show gcSnap
+        ]
 
 {-------------------------------------------------------------------------------
   Analysis: show block and slot number and hash for all blocks
@@ -933,6 +982,7 @@ reproMempoolForge ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   ) =>
   Int ->
   Analysis blk StartFromLedgerState
@@ -959,15 +1009,25 @@ reproMempoolForge numBlks env = do
                 )
         }
       lCfg
-      -- one mebibyte should generously accomodate two blocks' worth of txs
-      ( Mempool.MempoolCapacityBytesOverride $
-          LedgerSupportsMempool.ByteSize32 $
-            1024 * 1024
-      )
+      -- This pass models the mempool of a forging node, so the capacity must
+      -- match. A Leios node holds a whole EB closure, and a closure reaches
+      -- 12 MB ('leiosEBMaxClosureSize'). One mebibyte is not enough.
+      --
+      -- The capacity is a ceiling, not a target. This pass adds the
+      -- transactions of one or two blocks, then it flushes them after each
+      -- block. So a larger capacity does not change the measured cost.
+      (Mempool.MempoolCapacityBytesOverride leiosMempoolSize)
       (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
       nullTracer
 
-  void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks mempool)
+  -- The EB that the block at the start point announced, or 'Nothing' if that
+  -- block announced no EB. The stream starts after that block, so that block is
+  -- the predecessor of the first block in the fold.
+  seedAnnouncement <- announcementAtPoint db =<< startFromPoint startFrom
+
+  void $
+    processAll db registry GetBlock startFrom limit Nothing $
+      process howManyBlocks mempool seedAnnouncement
   pure Nothing
  where
   AnalysisEnv
@@ -977,6 +1037,7 @@ reproMempoolForge numBlks env = do
     , registry
     , limit
     , tracer
+    , leiosDb
     } = env
 
   lCfg :: LedgerConfig blk
@@ -999,14 +1060,34 @@ reproMempoolForge numBlks env = do
   process ::
     ReproMempoolForgeHowManyBlks ->
     Mempool.Mempool IO blk ->
+    -- The EB that the block at the start point announced, if it announced one
+    Maybe (LeiosPoint, BytesSize) ->
     Maybe blk ->
     blk ->
     IO (Maybe blk)
-  process howManyBlocks mempool mbBlk blk' =
+  process howManyBlocks mempool seedAnnouncement mbBlk blk' =
     (\() -> Just blk') <$> do
       -- add this block's transactions to the mempool
       do
-        results <- Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk'
+        -- A block that certifies an EB has an empty body, so 'extractTxs'
+        -- returns nothing for such a block. The forge thread of such a block
+        -- held the transactions of the EB in its mempool. It took them from
+        -- there at the announcing slot, and it dropped them when it applied the
+        -- certificate. Add them here, so that the mempool of this pass holds
+        -- what the mempool of the forge thread held.
+        --
+        -- 'mbBlk' is the predecessor of 'blk'', because the blocks arrive in
+        -- chain order.
+        let prevAnnouncement = case mbBlk of
+              -- The fold never sees the predecessor of the first streamed
+              -- block, so the seed gives its announcement.
+              Nothing -> seedAnnouncement
+              Just prevBlk -> headerLeiosAnnouncement (getHeader prevBlk)
+        ebTxs <- case certifiedEbHash prevAnnouncement blk' of
+          Nothing -> pure []
+          Just ebHash -> fst <$> readEbClosure leiosDb ebHash
+        results <-
+          Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk' <> ebTxs
         let rejs =
               [ (LedgerSupportsMempool.txId tx, rej)
               | rej@(Mempool.MempoolTxRejected tx _) <- results
@@ -1031,18 +1112,66 @@ reproMempoolForge numBlks env = do
           LedgerDB.withTipForker ledgerDB $ \forker -> do
             st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState forker
 
+            -- A block that certifies an EB has an empty body. The transactions
+            -- that such a block puts on the chain are the transactions of the
+            -- EB, and the LeiosDb holds them. The forge thread of such a block
+            -- reads that closure, so time the read. A block that certifies no
+            -- EB skips the read, and its EB figures stay 0.
+            --
+            -- 'timed' forces its result to WHNF only, and
+            -- 'resolveLeiosClosure' deserialises each transaction lazily. So
+            -- this figure covers the two LeiosDb queries, and not the
+            -- deserialisation.
+            let mCertifiedEb = certifiedEbHash (parentAnnouncement st) blk
+            ((closureTxs, ebTxsBytes), durEbRead, mutEbRead, gcEbRead) <-
+              case mCertifiedEb of
+                Nothing -> pure (([], 0), 0, 0, 0)
+                Just ebHash -> timed $ readEbClosure leiosDb ebHash
+
+            -- The forge thread of a certifying block applies the closure of the
+            -- certified EB to the parent, and it ticks the result. Read the
+            -- values that the closure consumes, then apply it. 'applyClosure'
+            -- forces every transaction, so this figure holds the
+            -- deserialisation that the read above left as thunks.
+            --
+            -- On a block that certifies no EB the closure is empty.
+            -- 'applyClosure' then returns the parent unchanged, and the read of
+            -- the values is a read of no keys.
+            tables <- LedgerDB.forkerReadTables forker (closureKeySets closureTxs)
+            (ClosureApplied{caStateAfterEb, caClosureDiff}, durEbApply, mutEbApply, gcEbApply) <-
+              timed $ applyClosure lCfg closureTxs st tables
+
             -- time the suspected slow parts of the forge thread that created
             -- this block
             --
             -- Primary caveat: that thread's mempool may have had more transactions in it.
             let slot = blockSlot blk
+            -- The tick runs on the state after the EB, and the diff of the
+            -- closure goes in front of the diff of the tick. Both diffs are
+            -- then relative to the parent, which is where 'forkerReadTables'
+            -- below reads its values.
             (ticked, durTick, mutTick, gcTick) <-
               timed $
                 IOLike.evaluate $
-                  applyChainTick OmitLedgerEvents lCfg slot (ledgerState st)
+                  maybe id prependDiffs caClosureDiff $
+                    applyChainTick OmitLedgerEvents lCfg slot (ledgerState caStateAfterEb)
+            -- The forge thread of a certifying block calls
+            -- 'getSnapshotForNoCache'. See 'partitionMempool' in
+            -- Ouroboros.Consensus.NodeKernel.Forge, which makes both calls:
+            -- 'getSnapshotForNoCache' on the certifying branch, and
+            -- 'getSnapshotFor' on the other one.
+            --
+            -- Applying the EB closure changes neither
+            -- the tip hash nor the slot, so 'getSnapshotFor' treats its cache
+            -- as valid: it reuses the cached values, and it returns the cached
+            -- snapshot outright when the slot matches. Pick the call that the
+            -- forge thread makes.
+            let getSnapshot = case mCertifiedEb of
+                  Nothing -> Mempool.getSnapshotFor
+                  Just{} -> Mempool.getSnapshotForNoCache
             ((), durSnap, mutSnap, gcSnap) <- timed $ do
               snap <-
-                Mempool.getSnapshotFor mempool slot ticked $
+                getSnapshot mempool slot ticked $
                   fmap castLedgerTables . LedgerDB.forkerReadTables forker . castLedgerTables
 
               pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotStateHash snap `seq` ()
@@ -1052,16 +1181,29 @@ reproMempoolForge numBlks env = do
               BlockMempoolAndForgeRepro
                 (blockNo blk)
                 slot
-                (length sizes)
-                (sum sizes)
-                durTick
-                mutTick
-                gcTick
-                durSnap
-                mutSnap
-                gcSnap
+                MempoolAndForgeRepro
+                  { numTxs = length sizes
+                  , txsSize = sum sizes
+                  , ebNumTxs = length closureTxs
+                  , ebTxsByteSize = SizeInBytes ebTxsBytes
+                  , durEbRead
+                  , mutEbRead
+                  , gcEbRead
+                  , durEbApply
+                  , mutEbApply
+                  , gcEbApply
+                  , durTick
+                  , mutTick
+                  , gcTick
+                  , durSnap
+                  , mutSnap
+                  , gcSnap
+                  }
 
           -- advance the ledger state to include this block
+          --
+          -- 'applyBlockAtTip' applies the EB closure on a certifying block, and
+          -- on that block alone.
           --
           -- TODO We could inline/reuse parts of the IsLedger ExtLedgerState
           -- instance here as an optimization that avoids repeating the
@@ -1069,7 +1211,8 @@ reproMempoolForge numBlks env = do
           -- since it currently matches the call in the forging thread, which is
           -- the primary intention of this Analysis. Maybe GHC's CSE is already
           -- doing this sharing optimization?
-          LedgerDB.reapplyThenPushNOW intLedgerDB blk
+          (_, nextLedgerSt) <- applyBlockAtTip leiosDb LedgerReapply cfg ledgerDB blk
+          LedgerDB.push intLedgerDB nextLedgerSt
           LedgerDB.tryFlush ledgerDB
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain
