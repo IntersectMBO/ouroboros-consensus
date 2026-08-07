@@ -78,6 +78,20 @@ The user can use snapshots created by the node or they can create their own snap
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
+#### --leios-db
+
+```
+[--leios-db PATH]
+```
+
+Path to the node's SQLite Leios database, usually `DB_PATH/leios.db`.
+
+A Leios ranking block that carries a certificate has an empty body on the wire.
+Its transactions are in the endorser block (EB) that it certifies, and those live in the Leios database, not in the ImmutableDB.
+Pass this flag to analyse such a chain.
+Without it, an analysis stops at the first certifying block.
+Omit it for a chain that predates Leios, which has no such blocks.
+
 ### Database validation, via --db-validation
 
 The tool provides two database validation policies:
@@ -98,12 +112,14 @@ Lastly the user can provide the analysis that should be run on the chain:
 
 * `--count-tx-outputs` prints the block and slot number, tx out output for given
   block and the cumulative tx out output for all the blocks seen so far.
+  For a Leios certifying block the first count is 0, and a separate column reports the outputs of the EB it certifies.
 
 * `--show-block-header-size` shows block header size for each block and also the
   maximum head size it has seen in the whole chain it processed.
 
 * `--show-block-txs-size` prints number of transactions and transactions size
   per each block.
+  For a Leios certifying block those are 0, and two more columns report the count and size of the transactions in the EB it certifies.
 
 * `--show-ebbs` prints all EBB blocks including their hash, previous block hash
   and a boolean value whether it is a known EBB (list of known EBBs stored in
@@ -160,11 +176,15 @@ Lastly the user can provide the analysis that should be run on the chain:
 * `--repro-mempool-and-forge NUM` populates the mempool with the transactions
   from NUM blocks every time and then runs the forging loop. Useful to inspect
   regressions in the forging loop or in the mempool adding/snapshotting logic.
-  The output shows the time spent on ticking and snapshotting the mempool broken
+  The output shows the time spent on each step of the forging loop broken
   down into:
   - real monotonic measured time
   - time spent in the mutator in microseconds
   - time spent in GC in microseconds
+
+  The steps are: the read of the certified EB closure, the application of that
+  closure, the tick of the ledger state, and the mempool snapshot.
+  The first two steps read 0 on a block that certifies no EB.
 
   Currently, only NUM=1 or NUM=2 are supported. Note that with NUM=2, even for a
   fully valid chain (like mainnet), you might get an error like this:
@@ -175,6 +195,17 @@ Lastly the user can provide the analysis that should be run on the chain:
 
   Therefore, it is recommended to start with NUM=1, and only use NUM=2 when you
   want to test the performance impact of a more filled mempool.
+
+  On a Leios chain, pass `--leios-db`.
+  A block that certifies an EB has an empty body, so its transactions are in the Leios database.
+  This pass adds them to the mempool, and it reports their count and their total size in the `ebNumTxs` and `ebTxsByteSize` columns.
+
+  On such a block the pass follows the forge thread.
+  It applies the closure of the certified EB to the parent, it ticks that result, and it takes the snapshot without the cache of the mempool.
+
+  This pass does not build an EB.
+  It measures the tick and the snapshot, and it never calls the forge function itself.
+  So it reports no cost for the serialisation of a new EB, and none for the write of that EB to the Leios database.
 
 * `--get-block-application-metrics NUM` computes different block application metrics every `NUM` blocks.
 It currently outputs block number, slot number, UTxO size in MB, and UTxO map size.
@@ -194,6 +225,41 @@ save the location to the working directory from which it was run. Eg:
 
 ```sh
 export NODE_HOME=/path/to/local/copy/of/cardano-node/working/dir/
+```
+
+#### Checking the Leios analyses
+
+`scripts/check-leios-analysis` runs `--count-tx-outputs` and `--show-block-txs-size` against a real Leios chain and checks their output.
+It needs a node data directory that holds `config.json` and `db/`, and it derives the rest from that.
+
+```sh
+check-leios-analysis $NODE_HOME
+```
+
+The development shell puts the script on `PATH`. Outside the shell:
+
+```sh
+nix run .#check-leios-analysis -- $NODE_HOME
+```
+
+The two analyses read the Leios database by different paths, so their agreement on which blocks certify an EB is the main check.
+The script also fails if the chain has no certifying block, because then it proves nothing.
+
+A full chain takes a few minutes. `--num-blocks-to-process` shortens it, at the risk of stopping before the first certifying block.
+
+`--benchmark` adds `--benchmark-ledger-ops` to the run, and checks the EB columns of its output against `--show-block-txs-size`.
+That analysis maintains a ledger state, so it applies every block from the start of the chain, and the two analyses above only read blocks.
+So the check costs more time than every other check in the script.
+
+```sh
+check-leios-analysis $NODE_HOME --benchmark
+```
+
+`--repro` adds `--repro-mempool-and-forge 1` to the run, and checks the EB columns of its output against `--show-block-txs-size`.
+That pass also applies every block from the start of the chain, and it fills a mempool as well.
+
+```sh
+check-leios-analysis $NODE_HOME --repro
 ```
 
 #### Saving a snapshot

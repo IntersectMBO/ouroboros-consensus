@@ -1,0 +1,718 @@
+#!/usr/bin/env python3
+
+"""
+Check that db-analyser reports the transactions of a certified EB.
+
+The script runs `--count-tx-outputs` and `--show-block-txs-size` against a
+node's Leios database, then reads their output.
+
+A Leios ranking block (RB) that carries a certificate has an empty body on the
+wire. Such a block is a certifying block, or cert-RB. A certifying block carries
+no transactions of its own. The transactions that it puts on the chain are those
+of the endorser block (EB) that it certifies.
+
+The ImmutableDB holds ranking blocks. Each analysis prints one row per ranking
+block, and never a row for an EB. On the row of a certifying block, the RB
+columns must read 0, and the EB columns must hold the transactions of the
+certified EB.
+
+`run_checks` compares the two outputs against each other and against themselves:
+
+- Both outputs report an EB on the same slots. This check is the strongest one,
+  because the two analyses reach the EB by different reads of the LeiosDb. One
+  takes the sizes from `ebTxs`. The other joins `txs` and decodes every
+  transaction.
+- Both outputs cover the same number of ranking blocks.
+- No certifying block reports transactions of its own.
+- An EB transaction count above 0 comes with a byte size above 0.
+- The cumulative column is the running sum of the block and EB columns.
+- The chain holds at least one certifying block. This check stops a vacuous
+  pass. Without such a block, every check above holds and nothing is proven.
+
+With `--benchmark`, `check_benchmark` also runs `--benchmark-ledger-ops` and reads
+its CSV. That pass maintains a ledger state, so it applies every block from the
+start of the chain. `--count-tx-outputs` and `--show-block-txs-size` only read
+blocks. So this check costs more time than every other check here, which is why
+the caller must explicitly ask for it.
+
+- Its row count matches the count of `--count-tx-outputs` and
+  `--show-block-txs-size`.
+- It reports an EB on the same slots as `--show-block-txs-size`.
+- On each of those slots, the two passes agree on the count and the size of the
+  EB's transactions. The two reach the EB by different reads. One counts the rows
+  of the EB body, and the other counts the closure, which joins the `txs` table.
+- A certified EB has a body size.
+- A block that certifies no EB reports 0 in every EB column.
+
+With `--repro`, the script also runs `--repro-mempool-and-forge 1` and reads its
+rows. That pass maintains a ledger state and it fills a mempool, so it costs
+more time than `--count-tx-outputs` and `--show-block-txs-size`.
+
+`check_repro` compares that output against `--show-block-txs-size` and against
+itself:
+
+- Its row count matches the count of `--show-block-txs-size`.
+- It reports an EB on the same slots as `--show-block-txs-size`.
+- On each of those slots, the two passes agree on the count and the size of the
+  EB's transactions. The two reach the EB by different reads.
+- No certifying block reports transactions of its own.
+- A block that certifies no EB reports 0 in every EB column.
+
+`check_leios_db` reads the SQLite database directly:
+
+- The certified EBs are not more than the rows in the `ebs` table.
+- The EB transactions are not more than the rows in the `ebTxs` table.
+
+Both numbers are upper bounds. An announced EB is not always certified, and the
+same transaction is in several EBs.
+
+`check_missing_leios_db` runs one analysis again without `--leios-db`:
+
+- That run fails.
+- Its message names the flag, so a caller who omits it learns what to do.
+
+Every check holds on any Leios chain, so the script is not tied to one fixture.
+The checks show that the two analyses agree, and that each one is consistent
+with itself. They do not show that the numbers are right. Nothing here gives an
+independent count of the outputs in an EB.
+
+This is a manual test. It needs a real Leios chain and does not run on CI.
+"""
+
+import argparse
+import csv
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+from collections import namedtuple
+
+OutputRow = namedtuple("OutputRow", "block_no slot cumulative block_outputs eb_outputs")
+SizeRow = namedtuple("SizeRow", "slot block_txs block_bytes eb_txs eb_bytes")
+
+COUNT_RE = re.compile(
+    r"^\[[\d.]+s\] BlockNo (\d+)\tSlotNo (\d+)\t"
+    r"cumulative: (\d+)\tcount: (\d+)\tEB count: (\d+)$"
+)
+
+SIZE_RE = re.compile(
+    r"^\[[\d.]+s\] SlotNo (\d+)\t"
+    r"Num txs in block = (\d+)\tTotal size of txs in block = SizeInBytes (\d+)\t"
+    r"Num txs in EB = (\d+)\tTotal size of txs in EB = SizeInBytes (\d+)$"
+)
+
+ReproRow = namedtuple("ReproRow", "block_no slot block_txs block_bytes eb_txs eb_bytes")
+
+# The pattern matches all eighteen columns but captures the six size ones, which
+# are the ones the checks compare. If db-analyser renames, drops, adds or
+# reorders a column, no row matches and 'parse' fails.
+REPRO_RE = re.compile(
+    r"^\[[\d.]+s\] BlockNo (\d+)\t"
+    r"SlotNo (\d+)\t"
+    r"txsCount (\d+)\t"
+    r"txsSize SizeInBytes (\d+)\t"
+    r"ebNumTxs (\d+)\t"
+    r"ebTxsByteSize SizeInBytes (\d+)\t"
+    r"durEbRead [\d.]+s\t"
+    r"mutEbRead -?\d+\t"
+    r"gcEbRead -?\d+\t"
+    r"durEbApply [\d.]+s\t"
+    r"mutEbApply -?\d+\t"
+    r"gcEbApply -?\d+\t"
+    r"durTick [\d.]+s\t"
+    r"mutTick -?\d+\t"
+    r"gcTick -?\d+\t"
+    r"durSnap [\d.]+s\t"
+    r"mutSnap -?\d+\t"
+    r"gcSnap -?\d+$"
+)
+
+# The two lines that every analysis prints around its rows. 'parse' skips them.
+# The text after "Started " is the analysis name, and a name carries its own
+# argument, as in "Started ReproMempoolAndForge 1".
+SKIP_RE = re.compile(r"^\[[\d.]+s\] (Started .+|Done)$")
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("node_dir", help="node data directory, holding config.json and db/")
+    p.add_argument("--db-analyser", help="path to the db-analyser binary")
+    p.add_argument(
+        "--num-blocks-to-process",
+        type=int,
+        help="stop after this many blocks (the whole chain by default)",
+    )
+    p.add_argument("--out-dir", help="where to write the analyser output")
+    p.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="also check --benchmark-ledger-ops. That pass maintains a ledger "
+        "state, so it applies every block from the start of the chain. "
+        "--count-tx-outputs and --show-block-txs-size only read blocks, so this "
+        "check costs more time than every other check here.",
+    )
+    p.add_argument(
+        "--repro",
+        action="store_true",
+        help="also check --repro-mempool-and-forge 1. That pass maintains a "
+        "ledger state and it fills a mempool, so it costs more time than "
+        "--count-tx-outputs and --show-block-txs-size.",
+    )
+    return p.parse_args()
+
+
+def node_paths(node_dir):
+    """The three inputs db-analyser needs, taken from the node data directory."""
+    db = os.path.join(node_dir, "db")
+    paths = {
+        "db": db,
+        "config": os.path.join(node_dir, "config.json"),
+        "leios_db": os.path.join(db, "leios.db"),
+    }
+    missing = [p for p in paths.values() if not os.path.exists(p)]
+    if missing:
+        fail("not found under the node directory: " + ", ".join(missing))
+    return paths
+
+
+def resolve_db_analyser(given):
+    """Find the db-analyser binary.
+
+    Prefers a cabal build over the one nix supplies, so a run from inside the
+    development shell tests what the caller just compiled.
+    """
+    if given:
+        if not os.access(given, os.X_OK):
+            fail(f"--db-analyser {given} is not executable")
+        return given
+
+    if shutil.which("cabal"):
+        result = subprocess.run(
+            ["cabal", "list-bin", "db-analyser"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+
+    fallback = os.environ.get("DB_ANALYSER_FALLBACK")
+    if fallback:
+        return fallback
+
+    fail(
+        "cannot find db-analyser. Pass --db-analyser PATH, or run inside "
+        "`nix develop` so that `cabal list-bin db-analyser` works, or set "
+        "DB_ANALYSER_FALLBACK."
+    )
+
+
+def run_analysis(
+    db_analyser,
+    paths,
+    out_dir,
+    analysis,
+    limit,
+    analysis_arg=None,
+    with_leios_db=True,
+    out_name=None,
+    expect_failure=False,
+):
+    """Run one db-analyser pass. Return its output path and its exit code.
+
+    The tracer writes to stderr, so that is what the file captures. Whatever
+    db-analyser writes to stdout stays on the terminal.
+
+    A non-zero exit ends the script, unless the caller wants one.
+    """
+    out_path = os.path.join(out_dir, (out_name or analysis) + ".txt")
+    cmd = [db_analyser, "--db", paths["db"], "--config", paths["config"]]
+    if with_leios_db:
+        cmd += ["--leios-db", paths["leios_db"]]
+    cmd += ["--in-mem", "--" + analysis]
+    if analysis_arg is not None:
+        cmd += [str(analysis_arg)]
+    if limit:
+        cmd += ["--num-blocks-to-process", str(limit)]
+
+    print(f"running --{analysis} ...")
+    start = time.monotonic()
+    with open(out_path, "w") as out:
+        result = subprocess.run(cmd, stderr=out)
+    elapsed = time.monotonic() - start
+
+    if result.returncode != 0 and not expect_failure:
+        print(tail(out_path, 20), file=sys.stderr)
+        fail(f"--{analysis} exited with {result.returncode}")
+
+    print(f"  done in {elapsed:.1f}s")
+    return out_path, result.returncode
+
+
+def parse(path, row_re, row_type):
+    """Read the rows of one analysis output.
+
+    Fails on any line it does not recognise. A silent skip would let a change to
+    the output format empty the checks while the script still reports success.
+    """
+    rows = []
+    with open(path) as f:
+        for number, line in enumerate(f, start=1):
+            line = line.rstrip("\n")
+            match = row_re.match(line)
+            if match:
+                rows.append(row_type(*(int(g) for g in match.groups())))
+            elif not SKIP_RE.match(line):
+                fail(f"{path}:{number}: unrecognised line: {line}")
+    return rows
+
+
+def run_benchmark(db_analyser, paths, out_dir, limit):
+    """Run --benchmark-ledger-ops and return the path of its CSV.
+
+    That pass writes its rows to the file that --out-file names, not to stderr,
+    so 'run_analysis' does not fit.
+    """
+    out_path = os.path.join(out_dir, "benchmark-ledger-ops.csv")
+    cmd = [
+        db_analyser,
+        "--db",
+        paths["db"],
+        "--config",
+        paths["config"],
+        "--leios-db",
+        paths["leios_db"],
+        "--in-mem",
+        "--benchmark-ledger-ops",
+        "--out-file",
+        out_path,
+    ]
+    if limit:
+        cmd += ["--num-blocks-to-process", str(limit)]
+
+    print("running --benchmark-ledger-ops ...")
+    start = time.monotonic()
+    result = subprocess.run(cmd)
+    elapsed = time.monotonic() - start
+
+    if result.returncode != 0:
+        fail(f"--benchmark-ledger-ops exited with {result.returncode}")
+
+    print(f"  done in {elapsed:.1f}s")
+    return out_path
+
+
+# The columns of a benchmark row that name the EB that the block certifies.
+BENCHMARK_EB_COLUMNS = ("ebBytes", "ebTxsBytes", "ebNumTxs", "ebReadTime", "mut_ebRead")
+
+
+def parse_benchmark(path):
+    """Read the benchmark CSV as a list of dicts, keyed by column name.
+
+    The era-specific columns share one header, so 'DictReader' collects the
+    extras under 'restkey'. The checks read named columns and ignore those.
+    """
+    with open(path) as f:
+        reader = csv.DictReader(f, delimiter="\t", restkey="era")
+        rows = list(reader)
+
+    if not rows:
+        fail(f"{path}: no rows")
+    for column in ("slot",) + BENCHMARK_EB_COLUMNS:
+        if column not in rows[0]:
+            fail(f"{path}: no {column} column. Its header holds: {list(rows[0])}")
+    return rows
+
+
+def check_benchmark(size_rows, bench_rows):
+    """Check the benchmark output against --show-block-txs-size and itself.
+
+    Returns the number of failures.
+    """
+    results = []
+
+    results.append(
+        check(
+            "benchmark row count matches",
+            len(bench_rows) == len(size_rows),
+            f"{len(bench_rows)} against {len(size_rows)}",
+        )
+    )
+
+    # The two passes reach the EB by different reads. --show-block-txs-size counts
+    # the rows of the EB body, and --benchmark-ledger-ops counts the closure,
+    # which joins the txs table. So a tx that the txs table lacks breaks this.
+    size_by_slot = {r.slot: r for r in size_rows if r.eb_txs > 0}
+    bench_by_slot = {
+        int(r["slot"]): r for r in bench_rows if int(r["ebNumTxs"]) > 0
+    }
+    results.append(
+        check(
+            "benchmark and size agree on which blocks certify an EB",
+            set(size_by_slot) == set(bench_by_slot),
+            f"{len(bench_by_slot)} certifying blocks"
+            + (
+                ""
+                if set(size_by_slot) == set(bench_by_slot)
+                else f", {len(set(size_by_slot) ^ set(bench_by_slot))} slots differ"
+            ),
+        )
+    )
+
+    disagree = [
+        slot
+        for slot, row in bench_by_slot.items()
+        if slot in size_by_slot
+        and (
+            int(row["ebNumTxs"]) != size_by_slot[slot].eb_txs
+            or int(row["ebTxsBytes"]) != size_by_slot[slot].eb_bytes
+        )
+    ]
+    results.append(
+        check(
+            "benchmark and size agree on the count and the size of the EB's txs",
+            not disagree,
+            ""
+            if not disagree
+            else f"{len(disagree)} differ, first at slot {min(disagree)}",
+        )
+    )
+
+    sizeless = [slot for slot, row in bench_by_slot.items() if int(row["ebBytes"]) == 0]
+    results.append(
+        check(
+            "a certified EB has a body size",
+            not sizeless,
+            "" if not sizeless else f"{len(sizeless)} without one",
+        )
+    )
+
+    # A block that certifies no EB reads no EB, so it reports nothing about one.
+    leaks = [
+        int(r["slot"])
+        for r in bench_rows
+        if int(r["ebNumTxs"]) == 0
+        and any(int(r[column]) != 0 for column in BENCHMARK_EB_COLUMNS)
+    ]
+    results.append(
+        check(
+            "a block that certifies no EB reports 0 in every EB column",
+            not leaks,
+            "" if not leaks else f"{len(leaks)} do, first at slot {min(leaks)}",
+        )
+    )
+
+    return results.count(False)
+
+
+def check_repro(size_rows, repro_rows):
+    """Check the repro output against --show-block-txs-size and itself.
+
+    Returns the number of failures.
+    """
+    results = []
+
+    results.append(
+        check(
+            "repro row count matches",
+            len(repro_rows) == len(size_rows),
+            f"{len(repro_rows)} against {len(size_rows)}",
+        )
+    )
+
+    # The two passes reach the EB by different reads. --show-block-txs-size counts
+    # the rows of the EB body, and --repro-mempool-and-forge counts the closure,
+    # which joins the txs table. So a tx that the txs table lacks breaks this.
+    size_by_slot = {r.slot: r for r in size_rows if r.eb_txs > 0}
+    repro_by_slot = {r.slot: r for r in repro_rows if r.eb_txs > 0}
+    results.append(
+        check(
+            "repro and size agree on which blocks certify an EB",
+            set(size_by_slot) == set(repro_by_slot),
+            f"{len(repro_by_slot)} certifying blocks"
+            + (
+                ""
+                if set(size_by_slot) == set(repro_by_slot)
+                else f", {len(set(size_by_slot) ^ set(repro_by_slot))} slots differ"
+            ),
+        )
+    )
+
+    disagree = [
+        slot
+        for slot, row in repro_by_slot.items()
+        if slot in size_by_slot
+        and (
+            row.eb_txs != size_by_slot[slot].eb_txs
+            or row.eb_bytes != size_by_slot[slot].eb_bytes
+        )
+    ]
+    results.append(
+        check(
+            "repro and size agree on the count and the size of the EB's txs",
+            not disagree,
+            ""
+            if not disagree
+            else f"{len(disagree)} differ, first at slot {min(disagree)}",
+        )
+    )
+
+    # A certifying block has an empty body, so it feeds the mempool with the
+    # transactions of the EB alone.
+    own_txs = [slot for slot, row in repro_by_slot.items() if row.block_txs > 0]
+    results.append(
+        check(
+            "no certifying block reports txs of its own",
+            not own_txs,
+            "" if not own_txs else f"{len(own_txs)} do, first at slot {min(own_txs)}",
+        )
+    )
+
+    # A block that certifies no EB reads no EB, so it reports nothing about one.
+    leaks = [r.slot for r in repro_rows if r.eb_txs == 0 and r.eb_bytes != 0]
+    results.append(
+        check(
+            "a block that certifies no EB reports 0 in every EB column",
+            not leaks,
+            "" if not leaks else f"{len(leaks)} do, first at slot {min(leaks)}",
+        )
+    )
+
+    return results.count(False)
+
+
+def check(name, ok, detail=""):
+    """Report one check. Returns whether it passed, so the caller can count."""
+    print(f"{'ok  ' if ok else 'FAIL'}  {name}{': ' + detail if detail else ''}")
+    return ok
+
+
+def run_checks(count_rows, size_rows):
+    """Check the two outputs against each other and against themselves.
+
+    Returns the number of failures.
+    """
+    results = []
+
+    results.append(
+        check(
+            "row counts match",
+            len(count_rows) == len(size_rows),
+            f"{len(count_rows)} against {len(size_rows)}",
+        )
+    )
+
+    # A cert-RB is a block that reports transactions from the EB it certifies.
+    # The two analyses find them by different reads of the LeiosDb, so their
+    # agreement is the main check.
+    count_certs = {r.slot for r in count_rows if r.eb_outputs > 0}
+    size_certs = {r.slot for r in size_rows if r.eb_txs > 0}
+    results.append(
+        check(
+            "cert-RB slots agree",
+            count_certs == size_certs,
+            f"{len(count_certs)} cert-RBs"
+            + (
+                ""
+                if count_certs == size_certs
+                else f", {len(count_certs ^ size_certs)} slots differ"
+            ),
+        )
+    )
+
+    # A cert-RB carries an empty wire body.
+    with_own = [r.slot for r in count_rows if r.eb_outputs > 0 and r.block_outputs > 0]
+    with_own += [r.slot for r in size_rows if r.eb_txs > 0 and r.block_txs > 0]
+    results.append(
+        check(
+            "cert-RBs carry no transactions of their own",
+            not with_own,
+            "" if not with_own else f"{len(with_own)} do, first at slot {with_own[0]}",
+        )
+    )
+
+    sizeless = [r.slot for r in size_rows if r.eb_txs > 0 and r.eb_bytes == 0]
+    results.append(
+        check(
+            "EB transactions have a size",
+            not sizeless,
+            "" if not sizeless else f"{len(sizeless)} without one",
+        )
+    )
+
+    running = 0
+    bad_sum = None
+    for row in count_rows:
+        running += row.block_outputs + row.eb_outputs
+        if running != row.cumulative and bad_sum is None:
+            bad_sum = row.slot
+    results.append(
+        check(
+            "cumulative is the running sum",
+            bad_sum is None,
+            f"{running} outputs" if bad_sum is None else f"first differs at slot {bad_sum}",
+        )
+    )
+
+    # Without a cert-RB the checks above all hold on a pre-Leios chain, and this
+    # script would report success while proving nothing.
+    results.append(
+        check(
+            "the chain has cert-RBs",
+            len(count_certs) > 0,
+            "" if count_certs else "none found, so nothing was proven",
+        )
+    )
+
+    return results.count(False)
+
+
+def check_leios_db(leios_db, certified_ebs, eb_txs_found):
+    """Compare what the analyses found against what the LeiosDb holds.
+
+    Both are upper bounds. An announced EB is not always certified, and the same
+    transaction appears in several EBs.
+    """
+    connection = sqlite3.connect(f"file:{leios_db}?mode=ro", uri=True)
+    try:
+        eb_rows = connection.execute("select count(*) from ebs").fetchone()[0]
+        eb_tx_rows = connection.execute("select count(*) from ebTxs").fetchone()[0]
+    finally:
+        connection.close()
+
+    results = [
+        check(
+            "certified EBs fit in the LeiosDb",
+            certified_ebs <= eb_rows,
+            f"{certified_ebs} of {eb_rows} rows in ebs",
+        ),
+        check(
+            "EB transactions fit in the LeiosDb",
+            eb_txs_found <= eb_tx_rows,
+            f"{eb_txs_found} of {eb_tx_rows} rows in ebTxs",
+        ),
+    ]
+    return results.count(False)
+
+
+def check_missing_leios_db(db_analyser, paths, out_dir, limit):
+    """A run without --leios-db must stop at the first cert-RB and say why."""
+    out_path, code = run_analysis(
+        db_analyser,
+        paths,
+        out_dir,
+        "count-tx-outputs",
+        limit,
+        with_leios_db=False,
+        out_name="no-leios-db",
+        expect_failure=True,
+    )
+    message = tail(out_path, 20)
+
+    results = [
+        check("a run without --leios-db fails", code != 0, f"exit code {code}"),
+        check(
+            "and its message names --leios-db",
+            "--leios-db" in message,
+            "" if "--leios-db" in message else "it does not",
+        ),
+    ]
+    return results.count(False)
+
+
+def tail(path, n):
+    with open(path) as f:
+        return "".join(f.readlines()[-n:])
+
+
+def fail(message):
+    print(f"FAIL: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def main():
+    # Keep our lines in order with the ones db-analyser writes to stdout.
+    sys.stdout.reconfigure(line_buffering=True)
+
+    args = parse_args()
+
+    paths = node_paths(args.node_dir)
+    db_analyser = resolve_db_analyser(args.db_analyser)
+    # Not TMPDIR: `nix develop` points it at a directory that it deletes when
+    # the shell exits, and the caller has to be able to read the output after a
+    # failure.
+    out_dir = args.out_dir or tempfile.mkdtemp(
+        prefix="check-leios-analysis-", dir="/tmp"
+    )
+    os.makedirs(out_dir, exist_ok=True)
+
+    print(f"db-analyser: {db_analyser}")
+    print(f"db:          {paths['db']}")
+    print(f"config:      {paths['config']}")
+    print(f"leios db:    {paths['leios_db']}")
+    print(f"output dir:  {out_dir}")
+
+    count_out, _ = run_analysis(
+        db_analyser, paths, out_dir, "count-tx-outputs", args.num_blocks_to_process
+    )
+
+    size_out, _ = run_analysis(
+        db_analyser, paths, out_dir, "show-block-txs-size", args.num_blocks_to_process
+    )
+
+    count_rows = parse(count_out, COUNT_RE, OutputRow)
+    size_rows = parse(size_out, SIZE_RE, SizeRow)
+    print()
+
+    failures = run_checks(count_rows, size_rows)
+
+    if args.benchmark:
+        print()
+        bench_out = run_benchmark(
+            db_analyser, paths, out_dir, args.num_blocks_to_process
+        )
+        print()
+        failures += check_benchmark(size_rows, parse_benchmark(bench_out))
+
+    if args.repro:
+        print()
+        repro_out, _ = run_analysis(
+            db_analyser,
+            paths,
+            out_dir,
+            "repro-mempool-and-forge",
+            args.num_blocks_to_process,
+            analysis_arg=1,
+        )
+        print()
+        failures += check_repro(size_rows, parse(repro_out, REPRO_RE, ReproRow))
+
+    failures += check_leios_db(
+        paths["leios_db"],
+        sum(1 for r in count_rows if r.eb_outputs > 0),
+        sum(r.eb_txs for r in size_rows),
+    )
+
+    # Stop this run at the first cert-RB, so it costs a fraction of a full pass.
+    first_cert = next((i for i, r in enumerate(count_rows) if r.eb_outputs > 0), None)
+    print()
+    if first_cert is None:
+        print("skip  the --leios-db check needs a cert-RB")
+    else:
+        failures += check_missing_leios_db(
+            db_analyser, paths, out_dir, first_cert + 1
+        )
+
+    print()
+    if failures:
+        print(f"{failures} check(s) failed. The analyser output is in {out_dir}")
+        return 1
+    print("all checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
