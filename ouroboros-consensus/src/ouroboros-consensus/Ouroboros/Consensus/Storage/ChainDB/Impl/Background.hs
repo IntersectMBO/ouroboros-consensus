@@ -735,13 +735,21 @@ addBlockRunner fuse cdb@CDB{..} = do
       rootCCtx
       "process-chain-sel-message"
       ()
-      ( \_ -> do
+      ( \pcsCCtx -> do
           trace PoppingFromQueue
           -- if the `chainSelSync` does not complete because it was killed by an async
           -- exception (or it errored), notify the blocked thread
           withFuse fuse $
             bracketOnError
-              (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
+              ( lift
+                  $ CallTrace.callTraceSameThreadVia
+                    (const ())
+                    ctrace
+                    pcsCCtx
+                    "get-chain-sel-message"
+                    ()
+                  $ \_ -> getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue
+              )
               ( \message -> lift $ atomically $ do
                   case message of
                     ChainSelReprocessLoEBlocks varProcessed ->
