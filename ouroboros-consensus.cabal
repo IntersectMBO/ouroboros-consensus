@@ -1045,13 +1045,19 @@ benchmark leios-txcache-bench
   type: exitcode-stdio-1.0
   hs-source-dirs: ouroboros-consensus/bench/leios-txcache-bench
   main-is: Main.hs
+  other-modules: LeiosTxCache.Bench.SQLite
   ghc-options: -with-rtsopts=-T
   build-depends:
     base,
     bytestring,
     cardano-slotting,
+    containers,
     deepseq,
+    direct-sqlite,
+    directory,
     ouroboros-consensus,
+    text,
+    unix,
     vector,
 
 test-suite doctest
