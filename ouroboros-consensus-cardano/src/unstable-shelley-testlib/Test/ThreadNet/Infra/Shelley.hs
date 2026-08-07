@@ -103,7 +103,7 @@ import Ouroboros.Consensus.Protocol.Praos.AgentClient
   , KESAgentContext
   )
 import Ouroboros.Consensus.Protocol.Praos.Common
-  ( PraosCanBeLeader (PraosCanBeLeader)
+  ( PraosCanBeLeader (..)
   , PraosCredentialsSource (..)
   , praosCanBeLeaderColdVerKey
   , praosCanBeLeaderCredentialsSource
@@ -257,7 +257,7 @@ mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert} =
           { praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
           , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
           , praosCanBeLeaderSignKeyVRF = cnVRF
-          , praosCanBeLeaderSignKeyBLS = Nothing
+          , praosCanBeLeaderSignKeyBLS = Nothing -- FIXME: This will result in no votes in threadnet!?
           }
     , shelleyLeaderCredentialsLabel = "ThreadNet"
     }

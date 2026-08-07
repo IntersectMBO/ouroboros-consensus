@@ -21,7 +21,7 @@
       flake = false;
     };
     CHaP = {
-      url = "github:intersectmbo/cardano-haskell-packages?ref=repo";
+      url = "github:intersectmbo/cardano-haskell-packages?ref=index-only";
       flake = false;
     };
     iohkNix = {
@@ -47,7 +47,8 @@
       flake = false;
     };
   };
-  outputs = inputs:
+  outputs =
+    inputs:
     let
       supportedSystems = [
         "x86_64-linux"
@@ -88,7 +89,10 @@
           agda-spec = pkgs.agda-spec.shell;
 
           website = pkgs.mkShell {
-            packages = [ pkgs.nodejs pkgs.yarn ];
+            packages = [
+              pkgs.nodejs
+              pkgs.yarn
+            ];
           };
         };
         inherit hydraJobs;
