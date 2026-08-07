@@ -98,6 +98,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import LeiosDemoDb.Common (LeiosDbHandle)
 import LeiosDemoTypes (AcquiredLeiosEbs, EbHash)
+import LeiosUtils.CallTrace (SomeJsonCallTrace)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -826,7 +827,6 @@ data TraceEvent blk
   | TraceLastShutdownUnclean
   | TraceChainSelStarvationEvent (TraceChainSelStarvationEvent blk)
   | TraceAddPerasCertEvent (TraceAddPerasCertEvent blk)
-  deriving Generic
 
 deriving instance
   ( Show (Header blk)
@@ -978,7 +978,8 @@ data TraceAddBlockEvent blk
   | -- | Herald of 'AddedToCurrentChain' or 'SwitchedToAFork'. Lists the tip of
     -- the new chain.
     ChangingSelection (Point blk)
-  deriving Generic
+  | -- | A call-trace event emitted by the 'addBlockRunner' thread.
+    TraceAddBlockCall SomeJsonCallTrace
 
 deriving instance
   ( Eq (Header blk)
