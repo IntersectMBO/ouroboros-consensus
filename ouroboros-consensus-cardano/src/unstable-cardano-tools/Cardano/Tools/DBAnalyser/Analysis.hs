@@ -47,8 +47,8 @@ import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
-import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (pointEbHash)
+import LeiosDemoDb (LeiosDbConnection, leiosDbLookupEbBody)
+import LeiosDemoTypes (BytesSize, EbHash, LeiosPoint, pointEbHash)
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -89,8 +89,11 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   , LeiosClosureApplied (..)
   , ResolveLeiosBlock
   , blockLeiosCert
+  , headerLeiosAnnouncement
+  , inlineLeiosClosure
   , protocolStateLeiosAnnouncement
   , resolveAndApplyLeiosClosure
+  , resolveLeiosClosure
   )
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -196,9 +199,8 @@ data TraceEvent blk
   | -- | triggered when block has been found, it holds:
     --   * block's number
     --   * slot number when the block was forged
-    --   * cumulative tx output
-    --   * count tx output
-    CountTxOutputsEvent BlockNo SlotNo Int Int
+    --   * the transaction output counts of that block
+    CountTxOutputsEvent BlockNo SlotNo TxOutputCounts
   | -- | triggered when EBB block has been found, it holds:
     --   * its hash,
     --   * hash of previous block
@@ -227,9 +229,8 @@ data TraceEvent blk
   | -- | triggered for all blocks during ShowBlockTxsSize analysis,
     --   it holds:
     --   * slot number when the block was forged
-    --   * number of transactions in the block
-    --   * total size of transactions in the block
-    BlockTxSizeEvent SlotNo Int SizeInBytes
+    --   * the transaction counts and sizes of that block
+    BlockTxSizeEvent SlotNo BlockTxSizes
   | -- | triggered for all blocks during MempoolAndForgeRepro analysis,
     --   it holds:
     --   * block number
@@ -254,6 +255,22 @@ data TraceEvent blk
       Int64
       Int64
 
+-- | How many transaction outputs a block holds, and how many the chain holds up
+-- to and including that block.
+data TxOutputCounts = TxOutputCounts
+  { numBlockTxOutputs :: Int
+  , numEbTxOutputs :: Int
+  , cumulativeTxOutputs :: Int
+  }
+
+-- | How many transactions a block holds, and how many bytes they take.
+data BlockTxSizes = BlockTxSizes
+  { numBlockTxs :: Int
+  , blockTxsSize :: SizeInBytes
+  , numEbTxs :: Int
+  , ebTxsSize :: SizeInBytes
+  }
+
 instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) where
   show (StartedEvent analysisName) = "Started " <> (show analysisName)
   show DoneEvent = "Done"
@@ -263,12 +280,13 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
       , show sn
       , show h
       ]
-  show (CountTxOutputsEvent bn sn cumulative count) =
+  show (CountTxOutputsEvent bn sn TxOutputCounts{numBlockTxOutputs, numEbTxOutputs, cumulativeTxOutputs}) =
     intercalate "\t" $
       [ show bn
       , show sn
-      , "cumulative: " <> show cumulative
-      , "count: " <> show count
+      , "cumulative: " <> show cumulativeTxOutputs
+      , "count: " <> show numBlockTxOutputs
+      , "EB count: " <> show numEbTxOutputs
       ]
   show (EbbEvent ebb previous known) =
     intercalate
@@ -297,12 +315,14 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
       <> show requested
   show (LedgerErrorEvent pt err) =
     "Applying block at " <> show pt <> " failed: " <> show err
-  show (BlockTxSizeEvent slot numBlocks txsSize) =
+  show (BlockTxSizeEvent slot BlockTxSizes{numBlockTxs, blockTxsSize, numEbTxs, ebTxsSize}) =
     intercalate
       "\t"
       [ show slot
-      , "Num txs in block = " <> show numBlocks
-      , "Total size of txs in block = " <> show txsSize
+      , "Num txs in block = " <> show numBlockTxs
+      , "Total size of txs in block = " <> show blockTxsSize
+      , "Num txs in EB = " <> show numEbTxs
+      , "Total size of txs in EB = " <> show ebTxsSize
       ]
   show (BlockMempoolAndForgeRepro bno slot txsCount txsSize durTick mutTick gcTick durSnap mutSnap gcSnap) =
     intercalate
@@ -337,24 +357,33 @@ showSlotBlockNo AnalysisEnv{db, registry, startFrom, limit, tracer} =
   Analysis: show total number of tx outputs per block
 -------------------------------------------------------------------------------}
 
-countTxOutputs :: forall blk. HasAnalysis blk => Analysis blk StartFromPoint
-countTxOutputs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
-  void $ processAll db registry GetBlock startFrom limit 0 process
+-- | A cert-RB has an empty wire body, so its own count is 0. Its txs are in the
+-- EB it certifies, which the EB count reports.
+countTxOutputs ::
+  forall blk.
+  (HasAnalysis blk, ResolveLeiosBlock blk) =>
+  Analysis blk StartFromPoint
+countTxOutputs AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDb} = do
+  seed <- announcementAtPoint db =<< startFromPoint startFrom
+  void $ processAll db registry GetBlock startFrom limit (0, seed) process
   pure Nothing
  where
-  process :: Int -> blk -> IO Int
-  process cumulative blk = do
-    let cumulative' = cumulative + count
-        event =
-          CountTxOutputsEvent
-            (blockNo blk)
-            (blockSlot blk)
-            cumulative'
-            count
-    traceWith tracer event
-    return cumulative'
-   where
-    count = HasAnalysis.countTxOutputs blk
+  process ::
+    -- The count so far, and the EB that the previous block announced
+    (Int, Maybe (LeiosPoint, BytesSize)) ->
+    blk ->
+    IO (Int, Maybe (LeiosPoint, BytesSize))
+  process (cumulative, prevAnnouncement) blk = do
+    ebBlk <- blockWithCertifiedEbTxs leiosDb prevAnnouncement blk
+    let numBlockTxOutputs = HasAnalysis.countTxOutputs blk
+        numEbTxOutputs = maybe 0 HasAnalysis.countTxOutputs ebBlk
+        cumulativeTxOutputs = cumulative + numBlockTxOutputs + numEbTxOutputs
+    traceWith tracer $
+      CountTxOutputsEvent
+        (blockNo blk)
+        (blockSlot blk)
+        TxOutputCounts{numBlockTxOutputs, numEbTxOutputs, cumulativeTxOutputs}
+    pure (cumulativeTxOutputs, headerLeiosAnnouncement (getHeader blk))
 
 {-------------------------------------------------------------------------------
   Analysis: show the header size in bytes for all blocks
@@ -389,23 +418,37 @@ showHeaderSize AnalysisEnv{db, registry, startFrom, limit, tracer} = do
   Analysis: show the total transaction sizes in bytes per block
 -------------------------------------------------------------------------------}
 
-showBlockTxsSize :: forall blk. HasAnalysis blk => Analysis blk StartFromPoint
-showBlockTxsSize AnalysisEnv{db, registry, startFrom, limit, tracer} = do
-  processAll_ db registry GetBlock startFrom limit process
+-- | A cert-RB has an empty wire body, so its own tx columns are 0. Its txs are
+-- in the EB it certifies, which the EB columns report.
+showBlockTxsSize ::
+  forall blk.
+  (HasAnalysis blk, ResolveLeiosBlock blk) =>
+  Analysis blk StartFromPoint
+showBlockTxsSize AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDb} = do
+  seed <- announcementAtPoint db =<< startFromPoint startFrom
+  void $ processAll db registry GetBlock startFrom limit seed process
   pure Nothing
  where
-  process :: blk -> IO ()
-  process blk =
-    traceWith tracer $ BlockTxSizeEvent (blockSlot blk) numBlockTxs blockTxsSize
+  process ::
+    -- The EB that the previous block announced
+    Maybe (LeiosPoint, BytesSize) ->
+    blk ->
+    IO (Maybe (LeiosPoint, BytesSize))
+  process prevAnnouncement blk = do
+    ebTxSizes <- certifiedEbTxSizes leiosDb prevAnnouncement blk
+    traceWith tracer $
+      BlockTxSizeEvent
+        (blockSlot blk)
+        BlockTxSizes
+          { numBlockTxs = length txSizes
+          , blockTxsSize = sum txSizes
+          , numEbTxs = length ebTxSizes
+          , ebTxsSize = sum ebTxSizes
+          }
+    pure $ headerLeiosAnnouncement (getHeader blk)
    where
     txSizes :: [SizeInBytes]
     txSizes = HasAnalysis.blockTxSizes blk
-
-    numBlockTxs :: Int
-    numBlockTxs = length txSizes
-
-    blockTxsSize :: SizeInBytes
-    blockTxsSize = sum txSizes
 
 {-------------------------------------------------------------------------------
   Analysis: show EBBs and their predecessors
@@ -979,6 +1022,94 @@ reproMempoolForge numBlks env = do
 {-------------------------------------------------------------------------------
   Leios-aware block application
 -------------------------------------------------------------------------------}
+
+-- | The EB that the block at the given point announces. The analysis stream
+-- starts /after/ that point, so this is the announcement that the first
+-- streamed block sees.
+announcementAtPoint ::
+  (ResolveLeiosBlock blk, HasHeader blk) =>
+  ImmutableDB IO blk ->
+  Point blk ->
+  IO (Maybe (LeiosPoint, BytesSize))
+announcementAtPoint db = \case
+  GenesisPoint -> pure Nothing
+  BlockPoint slot hash ->
+    headerLeiosAnnouncement
+      <$> ImmutableDB.getKnownBlockComponent db GetHeader (RealPoint slot hash)
+
+-- | The EB that this block certifies. 'Nothing' for a block that carries no
+-- Leios certificate.
+certifiedEbHash ::
+  ResolveLeiosBlock blk =>
+  -- | The EB that the previous block announced
+  Maybe (LeiosPoint, BytesSize) ->
+  blk ->
+  Maybe EbHash
+certifiedEbHash prevAnnouncement blk =
+  case blockLeiosCert blk of
+    Nothing -> Nothing
+    Just{} -> case prevAnnouncement of
+      -- A CertRB's parent always announced an EB; its absence is a bug.
+      Nothing -> error "certifiedEbHash: CertRB whose parent announced no EB"
+      Just (announcedPoint, _size) -> Just (pointEbHash announcedPoint)
+
+-- | The sizes of the txs in the EB that this block certifies. Empty for a block
+-- that carries no Leios certificate.
+--
+-- Reads the EB body listing, which holds the size of every tx. The tx bytes stay
+-- on disk and no tx is deserialised.
+certifiedEbTxSizes ::
+  ResolveLeiosBlock blk =>
+  LeiosDbConnection IO ->
+  -- | The EB that the previous block announced
+  Maybe (LeiosPoint, BytesSize) ->
+  blk ->
+  IO [SizeInBytes]
+certifiedEbTxSizes leiosConn prevAnnouncement blk =
+  case certifiedEbHash prevAnnouncement blk of
+    Nothing -> pure []
+    Just ebHash ->
+      leiosDbLookupEbBody leiosConn ebHash >>= \case
+        -- 'leiosDbLookupEbBody' returns a bare list, so an absent EB and an EB
+        -- with no txs both give []. Here the EB is a certified one, and a
+        -- certified EB holds at least one tx: a committee member votes for an
+        -- EB only when it is not empty (CIP-0164). So [] means absent.
+        [] -> error (missingEbBodyError ebHash)
+        ebBody -> pure [SizeInBytes size | (_txHash, size) <- ebBody]
+
+-- | This block with the txs of the EB that it certifies in its body. 'Nothing'
+-- for a block that carries no Leios certificate.
+--
+-- A cert-RB has an empty body, so the returned block holds the EB's txs and
+-- nothing else. The caller then counts those txs with the 'HasAnalysis'
+-- functions. Those functions take a block, and 'HasAnalysis' has no per-tx
+-- counterpart, so the txs go back into a block rather than stay a list.
+--
+-- The header is untouched, so 'blockMatchesHeader' on the returned block is
+-- False.
+blockWithCertifiedEbTxs ::
+  ResolveLeiosBlock blk =>
+  LeiosDbConnection IO ->
+  -- | The EB that the previous block announced
+  Maybe (LeiosPoint, BytesSize) ->
+  blk ->
+  IO (Maybe blk)
+blockWithCertifiedEbTxs leiosConn prevAnnouncement blk =
+  case certifiedEbHash prevAnnouncement blk of
+    Nothing -> pure Nothing
+    Just ebHash -> do
+      -- Check that the EB is here before resolving it. On an absent EB
+      -- 'resolveLeiosClosure' raises a node-side error that blames chain
+      -- selection, which is the wrong diagnosis for a run of this tool.
+      ebBody <- leiosDbLookupEbBody leiosConn ebHash
+      when (null ebBody) $ error (missingEbBodyError ebHash)
+      Just . inlineLeiosClosure blk <$> resolveLeiosClosure leiosConn ebHash
+
+missingEbBodyError :: EbHash -> String
+missingEbBodyError ebHash =
+  "The LeiosDb holds no EB body for "
+    <> show ebHash
+    <> ". Pass --leios-db with the path to the node's leios.db."
 
 -- | Apply one block against the tip forker. For a CertRB, fold the EB closure
 -- its parent announced onto the ledger state before applying the (empty) CertRB,
