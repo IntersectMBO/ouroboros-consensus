@@ -646,7 +646,7 @@ instance ApplyBlock LedgerState TestBlock where
    where
     -- The round number of the Peras certificate stored in this block, if any
     perasCertRoundInBlock =
-      getPerasCertRound <$> getPerasCertInBlock tb
+      either (const Nothing) (fmap getPerasCertRound) (getPerasCertInBlock tb)
     -- The highest Peras certificate round number we've seen so far
     latestPerasCertRound' =
       case (perasCertRoundInBlock, latestPerasCertRound) of
@@ -756,7 +756,7 @@ instance BlockSupportsPeras TestBlock where
   type PerasVote TestBlock = MockPerasVote TestBlock
   type PerasCert TestBlock = MockPerasCert TestBlock
   type PerasError TestBlock = MockPerasError TestBlock
-  getPerasCertInBlock = tbPerasCert . testBody
+  getPerasCertInBlock = Right . tbPerasCert . testBody
 
   readPerasPrivateKeyFromEnv _proxy = Right ()
 

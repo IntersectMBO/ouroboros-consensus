@@ -416,9 +416,9 @@ class
   -- if the block is from an era that does not support Peras certificates.
   getPerasCertInBlock ::
     blk ->
-    Maybe (PerasCert blk)
+    Either (PerasError blk) (Maybe (PerasCert blk))
   getPerasCertInBlock _ =
-    Nothing
+    Right Nothing
 
   -- | Read the private key for Peras voting from the env vars.
   --

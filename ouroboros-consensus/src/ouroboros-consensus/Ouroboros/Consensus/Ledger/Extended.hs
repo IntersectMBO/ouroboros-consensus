@@ -67,6 +67,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , IsPerasCert (..)
   , PerasRoundNo
+  , ValidatedPerasCert
   )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (HardForkIndices))
@@ -306,45 +307,58 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
 
   -- Update the latest Peras certificate round if the new block contains a
   -- certificate from a round more recent than the currently cached one.
-  latestPerasCertOnChainRound <-
-    case getPerasCertInBlock blk of
-      -- The block does not contain a Peras certificate => keep the previous one
-      Nothing -> do
-        pure tickedLatestPerasCertOnChainRound
-      -- The block contains a Peras certificate => make sure it is valid,
-      -- extract its round number, and compare it with the previously stored one
-      Just certInBlock -> do
-        certInBlockRound <-
-          validatePerasCertAndExtractRoundNo
-            perasResolver
-            certInBlock
-        case tickedLatestPerasCertOnChainRound of
-          SNothing ->
-            pure (SJust certInBlockRound)
-          SJust prevLatestCertOnChainRound ->
-            pure (SJust (certInBlockRound `max` prevLatestCertOnChainRound))
+  mbPerasCert <- extractAndValidatePerasCertFromBlock perasResolver blk
+  let latestPerasCertOnChainRound =
+        case getPerasCertRound <$> mbPerasCert of
+          -- The block does not contain a Peras certificate => keep the old one
+          Nothing -> do
+            tickedLatestPerasCertOnChainRound
+          -- The block contains a Peras certificate => compare it with the old one
+          Just certInBlockRound -> do
+            case tickedLatestPerasCertOnChainRound of
+              SNothing ->
+                SJust certInBlockRound
+              SJust prevLatestCertOnChainRound ->
+                SJust (certInBlockRound `max` prevLatestCertOnChainRound)
   pure $
     (\l -> ExtLedgerState l hdr perasResolver latestPerasCertOnChainRound)
       <$> castLedgerResult ledgerResult
 
--- | Validate a given Peras certificate and extract its round number.
-validatePerasCertAndExtractRoundNo ::
+-- | Extract and validate a Peras certificate from a block, if it exists.
+--
+-- This can fail in several ways:
+-- 1. The block contains an opaque Peras certificate that cannot be deserialized.
+-- 2. The certificate claims to be from a round we cannot resolve.
+-- 3. The certificate is invalid in the epoch resolved for its round.
+extractAndValidatePerasCertFromBlock ::
   forall blk.
   BlockSupportsPeras blk =>
   PerasEpochContextResolver blk ->
-  PerasCert blk ->
-  Except (LedgerErr ExtLedgerState blk) PerasRoundNo
-validatePerasCertAndExtractRoundNo perasResolver cert = do
-  let roundNo = getPerasCertRound cert
-  context <-
-    withExcept ExtValidationErrorPerasEpochContextResolver $
-      except $
-        resolveRoundNo perasResolver roundNo
-  validatedCert <-
-    withExcept ExtValidationErrorPerasCertInBlock $
-      except $
-        verifyPerasCert context cert
-  pure (getPerasCertRound validatedCert)
+  blk ->
+  Except (LedgerErr ExtLedgerState blk) (Maybe (ValidatedPerasCert blk))
+extractAndValidatePerasCertFromBlock perasResolver blk = do
+  getPerasCertInBlockOrFail blk >>= \case
+    Nothing ->
+      pure Nothing
+    Just cert -> do
+      let roundNo = getPerasCertRound cert
+      context <- resolveRoundNoOrFail roundNo
+      Just <$> verifyPerasCertOrFail context cert
+ where
+  getPerasCertInBlockOrFail =
+    withExcept ExtValidationErrorPerasCertInBlock
+      . except
+      . getPerasCertInBlock
+
+  resolveRoundNoOrFail =
+    withExcept ExtValidationErrorPerasEpochContextResolver
+      . except
+      . resolveRoundNo perasResolver
+
+  verifyPerasCertOrFail context =
+    withExcept ExtValidationErrorPerasCertInBlock
+      . except
+      . verifyPerasCert context
 
 instance
   ( GetBlockKeySets blk

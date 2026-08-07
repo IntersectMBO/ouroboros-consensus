@@ -82,19 +82,19 @@ instance
   type PerasCrypto (ShelleyBlock proto DijkstraEra) = BLS.PerasBLSCrypto
   type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = V1.PerasVotingCommitteeScheme
 
-  getPerasCertInBlock blk = do
+  getPerasCertInBlock blk =
     let blockBody = SL.blockBody (shelleyBlockRaw blk)
-    case extractPerasCertFromShelleyBlockBody blockBody of
-      Left _err ->
-        -- NOTE: for now, we just ignore any conversion error between the
-        -- (opaque) Peras certificate stored in the block body and the one
-        -- expected here. This is to avoid propagating errors cases caused by
-        -- an implementation detail that will eventually disappear when Ledger
-        -- becomes aware of the Peras types used by Consensus. Until then,
-        -- discarding invalid Peras certificates should be safe enough here.
-        Nothing
-      Right mbCert ->
-        mbCert
+     in case extractPerasCertFromShelleyBlockBody blockBody of
+          Left _err ->
+            -- NOTE: for now, we just ignore any conversion error between the
+            -- (opaque) Peras certificate stored in the block body and the one
+            -- expected here. This is to avoid propagating errors cases caused by
+            -- an implementation detail that will eventually disappear when Ledger
+            -- becomes aware of the Peras types used by Consensus. Until then,
+            -- discarding invalid Peras certificates should be safe enough here.
+            Right Nothing
+          Right mbCert ->
+            Right mbCert
 
   readPerasPrivateKeyFromEnv _proxy =
     unsafePerasBLSPrivateKeyFromEnv

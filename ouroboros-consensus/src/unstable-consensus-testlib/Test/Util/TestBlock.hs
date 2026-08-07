@@ -744,7 +744,7 @@ instance
   type PerasError (TestBlockWith ptype) = MockPerasError (TestBlockWith ptype)
 
   -- No certs are stored in 'TestBlockWith'
-  getPerasCertInBlock _ = Nothing
+  getPerasCertInBlock _ = Right Nothing
 
   readPerasPrivateKeyFromEnv _proxy = Right ()
 

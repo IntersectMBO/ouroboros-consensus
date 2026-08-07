@@ -336,7 +336,7 @@ instance BlockSupportsPeras BlockA where
   type PerasError BlockA = MockPerasError BlockA
 
   -- No certs are stored in 'TestBlockWith'
-  getPerasCertInBlock _ = Nothing
+  getPerasCertInBlock _ = Right Nothing
 
   readPerasPrivateKeyFromEnv _proxy = Right ()
 
