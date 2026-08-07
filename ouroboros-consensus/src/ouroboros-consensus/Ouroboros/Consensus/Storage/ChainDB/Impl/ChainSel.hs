@@ -332,7 +332,7 @@ triggerChainSelectionAsync ::
 triggerChainSelectionAsync CDB{cdbTracer, cdbChainSelQueue} =
   addReprocessLoEBlocks (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
--- | Process ChainSelection message
+-- | Process ChainSelection message, /synchronously/.
 --
 -- This is the only operation that actually changes the ChainDB.
 chainSelSync ::
@@ -352,11 +352,10 @@ chainSelSync cdb (ChainSelReprocessLeiosEb ebHash) = chainSelReprocessLeiosEb cd
 chainSelSync cdb (ChainSelAddBlock blockToAdd) = chainSelAddBlock cdb blockToAdd
 chainSelSync cdb (ChainSelAddPerasCert cert varProcessed) = chainSelAddPerasCert cdb cert varProcessed
 
--- | Add a block to the ChainDB, /synchronously/.
+-- | Add a block to the ChainDB.
 --
--- This is the only operation that actually changes the ChainDB. It will store
--- the block on disk and trigger chain selection, possibly switching to a
--- fork.
+-- This operation will store the block on disk and trigger chain selection,
+-- possibly switching to a fork.
 --
 -- When the slot of the block is > the current slot, a chain selection will be
 -- scheduled in the slot of the block.
@@ -439,7 +438,7 @@ chainSelAddBlock cdb@CDB{..} BlockToAdd{blockToAdd = b, ..} = do
     atomically $
       putTMVar varBlockProcessed (SuccesfullyAddedBlock tip)
 
--- Process a Peras certificate by adding it to the PerasCertDB and potentially
+-- | Process a Peras certificate by adding it to the PerasCertDB and potentially
 -- performing chain selection if a candidate is now better than our selection.
 chainSelAddPerasCert ::
   forall m blk.
@@ -512,8 +511,9 @@ chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
   boostedBlock :: Point blk
   boostedBlock = getPerasCertBoostedBlock cert
 
--- Reprocess the cert-RBs parked on a now-acquired EB closure: the Leios
--- analogue of the LoE reprocess above. While the closure was missing, the
+-- | Reprocess the cert-RBs parked on a now-acquired EB closure.
+--
+-- This is the Leios analogue of the LoE reprocess. While the closure was missing, the
 -- cert-carrying successors of the RBs that announced this EB were hidden from
 -- candidate construction by the cert-filter ('ignoreUnacquiredCertRB' /
 -- 'ignoreUnacquiredCertRBSuc'). Now that it is present, find them via the
@@ -571,7 +571,8 @@ chainSelReprocessLeiosEb cdb@CDB{..} ebHash = lift $ do
           switchTo cdb weights Nothing
     Nothing -> pure ()
 
--- Reprocess headers that were postponed by the LoE.
+-- | Reprocess headers that were postponed by the LoE.
+--
 -- When we try to extend the current chain with a new block beyond the LoE
 -- limit, the block will be added to the DB without modifying the chain.
 -- When the LoE fragment advances later, these blocks have to be scheduled
