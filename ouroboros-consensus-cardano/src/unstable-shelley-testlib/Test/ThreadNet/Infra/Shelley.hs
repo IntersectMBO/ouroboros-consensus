@@ -37,10 +37,14 @@ module Test.ThreadNet.Infra.Shelley
   ) where
 
 import Cardano.Crypto.DSIGN
-  ( DSIGNAlgorithm (..)
+  ( BLS12381MinSigDSIGN
+  , DSIGNAlgorithm (..)
   , SignKeyDSIGN
+  , createPossessionProofDSIGN
   , seedSizeDSIGN
   )
+import Cardano.Crypto.Leios (leiosSignContext)
+import Cardano.Ledger.State (LeiosKey (..), LeiosPossessionProof (..), LeiosPubKey (..))
 import Cardano.Crypto.KES
   ( KESAlgorithm (..)
   , UnsoundPureKESAlgorithm (..)
@@ -175,6 +179,7 @@ data CoreNode c = CoreNode
   -- ^ The hash of the corresponding verification (public) key will be
   -- used as the staking credential.
   , cnVRF :: !(SignKeyVRF (VRF c))
+  , cnBLS :: !(Maybe (SignKeyDSIGN BLS12381MinSigDSIGN))
   , cnKES :: !(UnsoundPureSignKeyKES (KES c))
   , cnOCert :: !(SL.OCert c)
   }
@@ -218,6 +223,7 @@ genCoreNode startKESPeriod = do
   delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
   stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
   vrfKey <- genKeyVRF <$> genSeed (seedSizeVRF (Proxy @(VRF c)))
+  blsKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @BLS12381MinSigDSIGN))
   kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES (Proxy @(KES c)))
   let kesPub = unsoundPureDeriveVerKeyKES kesKey
       sigma =
@@ -237,6 +243,7 @@ genCoreNode startKESPeriod = do
       , cnDelegateKey = delKey
       , cnStakingKey = stkKey
       , cnVRF = vrfKey
+      , cnBLS = Just blsKey
       , cnKES = kesKey
       , cnOCert = ocert
       }
@@ -250,14 +257,16 @@ genCoreNode startKESPeriod = do
   genSeed = fmap mkSeedFromBytes . genBytes
 
 mkLeaderCredentials :: CoreNode c -> ShelleyLeaderCredentials c
-mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert} =
+mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert, cnBLS} =
   ShelleyLeaderCredentials
     { shelleyLeaderCredentialsCanBeLeader =
         PraosCanBeLeader
           { praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
           , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
           , praosCanBeLeaderSignKeyVRF = cnVRF
-          , praosCanBeLeaderSignKeyBLS = Nothing -- FIXME: This will result in no votes in threadnet!?
+          , -- Vote with the node's Leios (BLS) key; must be the key whose verification
+            -- key is registered as the pool's 'sppLeiosKey' (see mkGenesisConfig).
+            praosCanBeLeaderSignKeyBLS = cnBLS
           }
     , shelleyLeaderCredentialsLabel = "ThreadNet"
     }
@@ -462,15 +471,26 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
               , SL.sppOwners = Set.singleton poolOwnerHash
               , SL.sppRelays = Seq.empty
               , SL.sppMetadata = SL.SNothing
-              , SL.sppLeiosKey = SL.SNothing
+              , SL.sppLeiosKey = leiosKey
               }
           )
-        | CoreNode{cnDelegateKey, cnStakingKey, cnVRF} <- coreNodes
+        | CoreNode{cnDelegateKey, cnStakingKey, cnVRF, cnBLS} <- coreNodes
         , -- The pool and owner hashes are derived from the same key, but
         -- use different hashing schemes
         let poolHash = SL.hashKey . SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , let poolOwnerHash = SL.hashKey . SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , let vrfHash = hashVerKeyVRF @c $ deriveVerKeyVRF cnVRF
+        , -- Register the node's Leios verification key + a valid proof of possession
+          -- so its committee seat is keyed. The vk must equal the voter's
+          -- 'deriveVerKeyDSIGN' of its 'praosCanBeLeaderSignKeyBLS' (same 'cnBLS'),
+          -- else 'getLeiosSeatId' won't match; an invalid PoP is dropped to keyless.
+          let leiosKey = case cnBLS of
+                Nothing -> SL.SNothing
+                Just blsSk ->
+                  SL.SJust $
+                    LeiosKey
+                      (LeiosPubKey (deriveVerKeyDSIGN blsSk))
+                      (LeiosPossessionProof (createPossessionProofDSIGN leiosSignContext blsSk))
         ]
 
 mkProtocolShelley ::

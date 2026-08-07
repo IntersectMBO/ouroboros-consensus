@@ -1620,6 +1620,7 @@ library unstable-shelley-testlib
     base,
     bytestring,
     cardano-crypto-class,
+    cardano-crypto-leios,
     cardano-data,
     cardano-ledger-allegra:cardano-ledger-allegra,
     cardano-ledger-alonzo-test,
