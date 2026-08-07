@@ -89,9 +89,11 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( Forker'
   , LeiosClosureApplied (..)
   , ResolveLeiosBlock
+  , applyLeiosClosure
   , blockLeiosCert
   , headerLeiosAnnouncement
   , inlineLeiosClosure
+  , leiosClosureTxKeySets
   , protocolStateLeiosAnnouncement
   , resolveAndApplyLeiosClosure
   , resolveLeiosClosure
@@ -659,11 +661,12 @@ benchmarkLedgerOps ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , HasAnalysis blk
+  , ResolveLeiosBlock blk
   ) =>
   Maybe FilePath ->
   LedgerApplicationMode ->
   Analysis blk StartFromLedgerState
-benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, cfg, limit} = do
+benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb} = do
   -- We default to CSV when the no output file is provided (and thus the results are output to stdout).
   outFormat <- F.getOutputFormat mOutfile
 
@@ -697,19 +700,45 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     IO ()
   process ledgerDB intLedgerDB outFileHandle outFormat _ (blk, sz) = do
     prevRtsStats <- GC.getRTSStats
-    (((prevLedgerState, tables), tTableReadMut), tTableReadElapsed) <- clock $ LedgerDB.withTipForker ledgerDB $ \frk -> do
-      st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-      tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-      pure (st, tbs)
+    ( prevLedgerState
+      , closureTxs
+      , ebTxsBytes
+      , tables
+      , tEbReadMut
+      , tEbReadElapsed
+      , tTableReadMut
+      , tTableReadElapsed
+      ) <-
+      LedgerDB.withTipForker ledgerDB $ \frk -> do
+        st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
+        -- A cert-RB has an empty body. It applies the txs of the EB that its
+        -- parent announced. Read those txs from the LeiosDb. A block that
+        -- certifies no EB skips the read, so its EB figures stay 0. A 'clock'
+        -- around a read of nothing reports the cost of the two RTS-stats calls.
+        ((txs, txsBytes), ebReadMut, ebReadElapsed) <-
+          case certifiedEbHash (parentAnnouncement st) blk of
+            Nothing -> pure (([], 0), 0, 0)
+            Just ebHash -> clock $ readEbClosure leiosDb ebHash
+        -- Read the values that the block and those txs consume.
+        (tbs, tableReadMut, tableReadElapsed) <-
+          clock $ LedgerDB.forkerReadTables frk (closureKeySets txs <> getBlockKeySets blk)
+        pure (st, txs, txsBytes, tbs, ebReadMut, ebReadElapsed, tableReadMut, tableReadElapsed)
+
+    -- Apply the EB closure on the parent state, as Forker.applyBlock does.
+    -- 'applyLeiosClosure' needs an unticked state, so this runs before the tick
+    -- below. For a block that carries no certificate, 'applyClosure' returns the
+    -- parent state and its tables unchanged.
+    (ClosureApplied{caStateAfterEb, caTablesAfterEb, caClosureDiff}, tEbApply) <-
+      time $ applyClosure lcfg closureTxs prevLedgerState tables
 
     let slot = blockSlot blk
     -- We do not use strictness annotation on the resulting tuples since
     -- 'time' takes care of forcing the evaluation of its argument's result.
-    (ldgrView, tForecast) <- time $ forecast slot prevLedgerState
-    (tkHdrSt, tHdrTick) <- time $ tickTheHeaderState slot prevLedgerState ldgrView
+    (ldgrView, tForecast) <- time $ forecast slot caStateAfterEb
+    (tkHdrSt, tHdrTick) <- time $ tickTheHeaderState slot caStateAfterEb ldgrView
     (!newHeader, tHdrApp) <- time $ applyTheHeader ldgrView tkHdrSt
-    (tkLdgrSt, tBlkTick) <- time $ tickTheLedgerState slot prevLedgerState
-    let !tkLdgrSt' = applyDiffs (prevLedgerState `withLedgerTables` tables) tkLdgrSt
+    (tkLdgrSt, tBlkTick) <- time $ tickTheLedgerState slot caStateAfterEb
+    let !tkLdgrSt' = applyDiffs (caStateAfterEb `withLedgerTables` caTablesAfterEb) tkLdgrSt
     (!newLedger, tBlkApp) <- time $ applyTheBlock tkLdgrSt'
 
     currentRtsStats <- GC.getRTSStats
@@ -717,15 +746,24 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
       currentMinusPrevious :: Num a => (GC.RTSStats -> a) -> a
       currentMinusPrevious f = f currentRtsStats - f prevRtsStats
       major_gcs = currentMinusPrevious GC.major_gcs
+      -- The size of the body of the EB that this block certifies. The parent's
+      -- announcement carries it, and 'closureTxs' is empty for a block that
+      -- certifies no EB, so it stands for the same decision that
+      -- 'readCertifiedClosure' made.
+      ebBytes
+        | null closureTxs = 0
+        | otherwise = maybe 0 snd (parentAnnouncement prevLedgerState)
       slotDataPoint =
         DP.SlotDataPoint
           { DP.slot = realPointSlot rp
-          , DP.slotGap = slot `slotCount` getTipSlot prevLedgerState
+          , DP.slotGap = slot `slotCount` getTipSlot caStateAfterEb
           , DP.totalTime = currentMinusPrevious GC.elapsed_ns `div` 1000
           , DP.mut = currentMinusPrevious GC.mutator_elapsed_ns `div` 1000
           , DP.gc = currentMinusPrevious GC.gc_elapsed_ns `div` 1000
           , DP.tableReadTime = tTableReadElapsed `div` 1000
           , DP.mut_tableRead = tTableReadMut `div` 1000
+          , DP.ebReadTime = tEbReadElapsed `div` 1000
+          , DP.mut_ebRead = tEbReadMut `div` 1000
           , DP.majGcCount = major_gcs
           , DP.minGcCount = currentMinusPrevious GC.gcs - major_gcs
           , DP.allocatedBytes = currentMinusPrevious GC.allocated_bytes
@@ -733,8 +771,14 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
           , DP.mut_headerTick = tHdrTick `div` 1000
           , DP.mut_headerApply = tHdrApp `div` 1000
           , DP.mut_blockTick = tBlkTick `div` 1000
-          , DP.mut_blockApply = tBlkApp `div` 1000
+          , -- The cert-RB and the EB it certifies are one logical block, so this
+            -- covers the EB txs and the cert-RB body. The tick between the two
+            -- applications has its own figure in 'DP.mut_blockTick'.
+            DP.mut_blockApply = (tEbApply + tBlkApp) `div` 1000
           , DP.blockByteSize = getSizeInBytes sz
+          , DP.ebByteSize = ebBytes
+          , DP.ebTxsByteSize = ebTxsBytes
+          , DP.ebNumTxs = fromIntegral (length closureTxs)
           , DP.blockStats = DP.BlockStats $ HasAnalysis.blockStats blk
           }
 
@@ -744,7 +788,13 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
-    LedgerDB.push intLedgerDB $ ExtLedgerState (prependDiffs tkLdgrSt newLedger) newHeader
+    -- The EB txs apply before the tick, so their diff goes first. Without it the
+    -- LedgerDB never receives the EB's change and the next blocks read stale
+    -- tables.
+    LedgerDB.push intLedgerDB $
+      ExtLedgerState
+        (maybe id prependDiffs caClosureDiff (prependDiffs tkLdgrSt newLedger))
+        newHeader
     LedgerDB.tryFlush ledgerDB
    where
     rp = blockRealPoint blk
@@ -754,13 +804,13 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
       (tMutPrev, tPrev) <- bimap GC.mutator_elapsed_ns GC.elapsed_ns . dup <$> GC.getRTSStats
       !r <- act
       (tMutNow, tNow) <- bimap GC.mutator_elapsed_ns GC.elapsed_ns . dup <$> GC.getRTSStats
-      pure ((r, tMutNow - tMutPrev), tNow - tPrev)
+      pure (r, tMutNow - tMutPrev, tNow - tPrev)
 
     -- Compute how many nanoseconds the mutator used from the last
     -- recorded 'elapsedTime' till the end of the execution of the given
     -- action. This function forces the evaluation of its argument's
     -- result.
-    time act = fst <$> clock act
+    time act = (\(r, tMut, _) -> (r, tMut)) <$> clock act
 
     forecast ::
       SlotNo ->
@@ -1043,6 +1093,19 @@ announcementAtPoint db = \case
     headerLeiosAnnouncement
       <$> ImmutableDB.getKnownBlockComponent db GetHeader (RealPoint slot hash)
 
+-- | The EB that the block at the given tip announces.
+--
+-- An analysis that holds a ledger state reads the announcement from here.
+-- 'announcementAtPoint' answers the same question from a header, for an analysis
+-- that builds no ledger state.
+parentAnnouncement ::
+  forall blk mk.
+  ResolveLeiosBlock blk =>
+  ExtLedgerState blk mk ->
+  Maybe (LeiosPoint, BytesSize)
+parentAnnouncement =
+  protocolStateLeiosAnnouncement @blk . headerStateChainDep . headerState
+
 -- | The EB that this block certifies. 'Nothing' for a block that carries no
 -- Leios certificate.
 certifiedEbHash ::
@@ -1062,8 +1125,8 @@ certifiedEbHash prevAnnouncement blk =
 -- | The sizes of the txs in the EB that this block certifies. Empty for a block
 -- that carries no Leios certificate.
 --
--- Reads the EB body listing, which holds the size of every tx. The tx bytes stay
--- on disk and no tx is deserialised.
+-- Reads the EB body, which holds the size of every tx. The tx bytes stay on disk
+-- and no tx is deserialised.
 certifiedEbTxSizes ::
   ResolveLeiosBlock blk =>
   LeiosDbConnection IO ->
@@ -1103,19 +1166,90 @@ blockWithCertifiedEbTxs ::
 blockWithCertifiedEbTxs leiosConn prevAnnouncement blk =
   case certifiedEbHash prevAnnouncement blk of
     Nothing -> pure Nothing
-    Just ebHash -> do
-      -- Check that the EB is here before resolving it. On an absent EB
-      -- 'resolveLeiosClosure' raises a node-side error that blames chain
-      -- selection, which is the wrong diagnosis for a run of this tool.
-      ebBody <- leiosDbLookupEbBody leiosConn ebHash
-      when (null ebBody) $ error (missingEbBodyError ebHash)
-      Just . inlineLeiosClosure blk <$> resolveLeiosClosure leiosConn ebHash
+    Just ebHash -> Just . inlineLeiosClosure blk . fst <$> readEbClosure leiosConn ebHash
+
+-- | The txs of the EB with the given hash, in the order they appear in the EB,
+-- and their total size in bytes.
+--
+-- The EB body holds the size of every tx, and this function reads that body
+-- anyway, so the total size costs no further read of the LeiosDb.
+readEbClosure ::
+  ResolveLeiosBlock blk =>
+  LeiosDbConnection IO ->
+  EbHash ->
+  IO ([LedgerSupportsMempool.GenTx blk], BytesSize)
+readEbClosure leiosConn ebHash = do
+  -- Check that the EB is here before resolving it. On an absent EB
+  -- 'resolveLeiosClosure' errors with "chain-sel selected a cert-RB without its
+  -- EB closure". Report the absence here.
+  ebBody <- leiosDbLookupEbBody leiosConn ebHash
+  when (null ebBody) $ error (missingEbBodyError ebHash)
+  txs <- resolveLeiosClosure leiosConn ebHash
+  pure (txs, sum (snd <$> ebBody))
 
 missingEbBodyError :: EbHash -> String
 missingEbBodyError ebHash =
   "The LeiosDb holds no EB body for "
     <> show ebHash
-    <> ". Pass --leios-db with the path to the node's leios.db."
+    <> ". Either the --leios-db path is wrong, or the chain and the LeiosDb do "
+    <> "not match: the node that applied the certifying block held that EB."
+
+-- | The ledger keys that the given EB txs read.
+closureKeySets ::
+  ( ResolveLeiosBlock blk
+  , HasLedgerTables (LedgerState blk)
+  ) =>
+  [LedgerSupportsMempool.GenTx blk] ->
+  LedgerTables (ExtLedgerState blk) KeysMK
+closureKeySets = castLedgerTables . foldMap leiosClosureTxKeySets
+
+-- | What 'applyClosure' produces.
+data ClosureApplied blk = ClosureApplied
+  { caStateAfterEb :: ExtLedgerState blk EmptyMK
+  -- ^ The ledger state after applying the EB txs, without its tables.
+  , caTablesAfterEb :: LedgerTables (ExtLedgerState blk) ValuesMK
+  -- ^ The tables of that state.
+  , caClosureDiff :: Maybe (LedgerState blk DiffMK)
+  -- ^ The change that applying the EB txs makes. The caller prepends this to
+  -- the diff that it pushes to the LedgerDB. 'Nothing' when the block carries
+  -- no certificate.
+  }
+
+-- | Apply the given EB txs to the parent tip. Returns the ledger
+-- state after applying those txs, as a state with no tables plus the
+-- tables themselves. Returns the parent tip and its tables unchanged
+-- when the list is empty.
+--
+-- The returned action applies every tx before it returns. So a caller that times
+-- the action measures the whole application.
+applyClosure ::
+  ( ResolveLeiosBlock blk
+  , HasLedgerTables (LedgerState blk)
+  , Show (LedgerErr (LedgerState blk))
+  ) =>
+  LedgerCfg (LedgerState blk) ->
+  [LedgerSupportsMempool.GenTx blk] ->
+  -- | Parent tip
+  ExtLedgerState blk EmptyMK ->
+  LedgerTables (ExtLedgerState blk) ValuesMK ->
+  IO (ClosureApplied blk)
+applyClosure _lcfg [] parent tables = pure (ClosureApplied parent tables Nothing)
+applyClosure lcfg closureTxs parent tables =
+  -- The pattern match forces 'applyLeiosClosure', so every tx applies before this
+  -- function returns.
+  case applyLeiosClosure lcfg closureTxs stateBeforeEb of
+    -- 'applyLeiosClosure' applies the closure without validation: each tx passed
+    -- validation when the node wrote it to the LeiosDb. So a failure here is
+    -- unexpected, and the message carries the ledger error itself.
+    Left err -> error ("applyClosure: " <> show err)
+    Right stateAfterEb ->
+      pure $
+        ClosureApplied
+          (parent{ledgerState = forgetLedgerTables stateAfterEb})
+          (ltprj stateAfterEb)
+          (Just (trackingToDiffs (calculateDifference stateBeforeEb stateAfterEb)))
+ where
+  stateBeforeEb = ledgerState parent `ltwith` castLedgerTables tables
 
 -- | Apply one block against the tip forker. For a CertRB, fold the EB closure
 -- its parent announced onto the ledger state before applying the (empty) CertRB,
@@ -1141,7 +1275,7 @@ applyBlockLeios leiosConn mode evs cfg frk parent blk =
       values <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       pure $ applyInMode (parent `withLedgerTables` values)
     Just{} ->
-      case protocolStateLeiosAnnouncement @blk (headerStateChainDep (headerState parent)) of
+      case parentAnnouncement parent of
         Nothing ->
           -- A CertRB's parent always announced an EB; its absence is a bug.
           error "applyBlockLeios: CertRB whose parent announced no EB"
