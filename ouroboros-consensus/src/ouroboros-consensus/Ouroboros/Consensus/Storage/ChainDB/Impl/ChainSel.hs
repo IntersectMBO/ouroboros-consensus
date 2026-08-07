@@ -50,6 +50,7 @@ import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( AcquiredLeiosEbsSet
+  , EbHash
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsSetMember
   , pointEbHash
@@ -351,108 +352,8 @@ chainSelSync ::
   ChainDbEnv m blk ->
   ChainSelMessage m blk ->
   Electric m ()
--- Reprocess headers that were postponed by the LoE.
--- When we try to extend the current chain with a new block beyond the LoE
--- limit, the block will be added to the DB without modifying the chain.
--- When the LoE fragment advances later, these blocks have to be scheduled
--- for ChainSel again, but this does not happen automatically.
--- So we fetch all direct successors of each of the chain's blocks, construct
--- all candidates involving these blocks and select the best one.
--- We run a background thread that polls the candidate fragments and sends
--- 'ChainSelReprocessLoEBlocks' whenever we receive a new header or lose a
--- peer.
---
--- Note that we do this even when we are caught-up, as we might want to select
--- blocks that were originally postponed by the LoE, but can be adopted once we
--- conclude that we are caught-up (and hence are longer bound by the LoE).
-chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
-  (succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
-    invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,,,)
-      <$> ( ignoreInvalidSuc cdbVolatileDB invalid
-              <$> VolatileDB.filterByPredecessor cdbVolatileDB
-          )
-      <*> VolatileDB.getBlockInfo cdbVolatileDB
-      <*> Query.getCurrentChain cdb
-      <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
-  let
-    -- All immediate successor blocks of blocks on the current chain (including
-    -- the anchor), excluding those on the current chain.
-    loePoints :: [RealPoint blk]
-    loePoints =
-      [ castRealPoint loePt
-      | curChainPt <-
-          AF.anchorPoint curChain : (blockPoint <$> AF.toOldestFirst curChain)
-      , loeHash <- Set.toList $ succsOf $ castHash (pointHash curChainPt)
-      , Just bi <- [lookupBlockInfo loeHash]
-      , let loePt = RealPoint (VolatileDB.biSlotNo bi) loeHash
-      , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
-      ]
-
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
-
-  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
-    for
-      loePoints
-      $ constructPreferableCandidates cdb weights curChain Map.empty
-
-  -- Consider all candidates at once, to avoid transient chain switches.
-  case NE.nonEmpty $ concat chainDiffs of
-    Just chainDiffs' ->
-      -- Find the best valid candidate. On LoE reprocess we don't log the reason
-      -- for a switch, hence the 'void'.
-      void $
-        chainSelection chainSelEnv chainDiffs' $
-          switchTo cdb weights Nothing
-    Nothing -> pure ()
-
-  atomically $ putTMVar varProcessed ()
--- Reprocess the cert-RBs parked on a now-acquired EB closure: the Leios
--- analogue of the LoE reprocess above. While the closure was missing, the
--- cert-carrying successors of the RBs that announced this EB were hidden from
--- candidate construction by the cert-filter ('ignoreUnacquiredCertRB' /
--- 'ignoreUnacquiredCertRBSuc'). Now that it is present, find them via the
--- VolatileDB announcer index and run candidate construction over them; the
--- cert-filter inside 'constructPreferableCandidates' now lets them through.
--- Enqueued by @leiosAcquiredEbsRunner@ when the closure is acquired.
-chainSelSync cdb@CDB{..} (ChainSelReprocessLeiosEb ebHash) = lift $ do
-  (getAnnouncers, succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
-    invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,,,,)
-      <$> VolatileDB.getLeiosAnnouncers cdbVolatileDB
-      <*> ( ignoreInvalidSuc cdbVolatileDB invalid
-              <$> VolatileDB.filterByPredecessor cdbVolatileDB
-          )
-      <*> VolatileDB.getBlockInfo cdbVolatileDB
-      <*> Query.getCurrentChain cdb
-      <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
-  let
-    -- The cert-RBs parked on this EB are the cert-carrying successors of the
-    -- RBs that announced it.
-    reprocessPoints :: [RealPoint blk]
-    reprocessPoints =
-      [ RealPoint (VolatileDB.biSlotNo bi) succHash
-      | annPoint <- Set.toList (getAnnouncers ebHash)
-      , succHash <- Set.toList (succsOf (pointHash annPoint))
-      , Just bi <- [lookupBlockInfo succHash]
-      , VolatileDB.biHasLeiosCert bi
-      ]
-
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
-
-  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
-    for
-      reprocessPoints
-      $ constructPreferableCandidates cdb weights curChain Map.empty
-
-  -- Consider all candidates at once, to avoid transient chain switches.
-  case NE.nonEmpty $ concat chainDiffs of
-    Just chainDiffs' ->
-      -- As on LoE reprocess, we don't log the reason for a switch, hence 'void'.
-      void $
-        chainSelection chainSelEnv chainDiffs' $
-          switchTo cdb weights Nothing
-    Nothing -> pure ()
+chainSelSync cdb (ChainSelReprocessLoEBlocks varProcessed) = chainSelReprocessLoEBlocks cdb varProcessed
+chainSelSync cdb (ChainSelReprocessLeiosEb ebHash) = chainSelReprocessLeiosEb cdb ebHash
 chainSelSync cdb (ChainSelAddBlock blockToAdd) = chainSelAddBlock cdb blockToAdd
 chainSelSync cdb (ChainSelAddPerasCert cert varProcessed) = chainSelAddPerasCert cdb cert varProcessed
 
@@ -607,6 +508,134 @@ chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
 
   boostedBlock :: Point blk
   boostedBlock = getPerasCertBoostedBlock cert
+
+-- Reprocess the cert-RBs parked on a now-acquired EB closure: the Leios
+-- analogue of the LoE reprocess above. While the closure was missing, the
+-- cert-carrying successors of the RBs that announced this EB were hidden from
+-- candidate construction by the cert-filter ('ignoreUnacquiredCertRB' /
+-- 'ignoreUnacquiredCertRBSuc'). Now that it is present, find them via the
+-- VolatileDB announcer index and run candidate construction over them; the
+-- cert-filter inside 'constructPreferableCandidates' now lets them through.
+-- Enqueued by @leiosAcquiredEbsRunner@ when the closure is acquired.
+chainSelReprocessLeiosEb ::
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , HasCallStack
+  ) =>
+  ChainDbEnv m blk ->
+  EbHash ->
+  Electric m ()
+chainSelReprocessLeiosEb cdb@CDB{..} ebHash = lift $ do
+  (getAnnouncers, succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
+    invalid <- forgetFingerprint <$> readTVar cdbInvalid
+    (,,,,)
+      <$> VolatileDB.getLeiosAnnouncers cdbVolatileDB
+      <*> ( ignoreInvalidSuc cdbVolatileDB invalid
+              <$> VolatileDB.filterByPredecessor cdbVolatileDB
+          )
+      <*> VolatileDB.getBlockInfo cdbVolatileDB
+      <*> Query.getCurrentChain cdb
+      <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+  let
+    -- The cert-RBs parked on this EB are the cert-carrying successors of the
+    -- RBs that announced it.
+    reprocessPoints :: [RealPoint blk]
+    reprocessPoints =
+      [ RealPoint (VolatileDB.biSlotNo bi) succHash
+      | annPoint <- Set.toList (getAnnouncers ebHash)
+      , succHash <- Set.toList (succsOf (pointHash annPoint))
+      , Just bi <- [lookupBlockInfo succHash]
+      , VolatileDB.biHasLeiosCert bi
+      ]
+
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+
+  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
+    for
+      reprocessPoints
+      $ constructPreferableCandidates cdb weights curChain Map.empty
+
+  -- Consider all candidates at once, to avoid transient chain switches.
+  case NE.nonEmpty $ concat chainDiffs of
+    Just chainDiffs' ->
+      -- As on LoE reprocess, we don't log the reason for a switch, hence 'void'.
+      void $
+        chainSelection chainSelEnv chainDiffs' $
+          switchTo cdb weights Nothing
+    Nothing -> pure ()
+
+-- Reprocess headers that were postponed by the LoE.
+-- When we try to extend the current chain with a new block beyond the LoE
+-- limit, the block will be added to the DB without modifying the chain.
+-- When the LoE fragment advances later, these blocks have to be scheduled
+-- for ChainSel again, but this does not happen automatically.
+-- So we fetch all direct successors of each of the chain's blocks, construct
+-- all candidates involving these blocks and select the best one.
+-- We run a background thread that polls the candidate fragments and sends
+-- 'ChainSelReprocessLoEBlocks' whenever we receive a new header or lose a
+-- peer.
+--
+-- Note that we do this even when we are caught-up, as we might want to select
+-- blocks that were originally postponed by the LoE, but can be adopted once we
+-- conclude that we are caught-up (and hence are longer bound by the LoE).
+chainSelReprocessLoEBlocks ::
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , HasCallStack
+  ) =>
+  ChainDbEnv m blk ->
+  StrictTMVar m () ->
+  Electric m ()
+chainSelReprocessLoEBlocks cdb@CDB{..} varProcessed = lift $ do
+  (succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
+    invalid <- forgetFingerprint <$> readTVar cdbInvalid
+    (,,,)
+      <$> ( ignoreInvalidSuc cdbVolatileDB invalid
+              <$> VolatileDB.filterByPredecessor cdbVolatileDB
+          )
+      <*> VolatileDB.getBlockInfo cdbVolatileDB
+      <*> Query.getCurrentChain cdb
+      <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+  let
+    -- All immediate successor blocks of blocks on the current chain (including
+    -- the anchor), excluding those on the current chain.
+    loePoints :: [RealPoint blk]
+    loePoints =
+      [ castRealPoint loePt
+      | curChainPt <-
+          AF.anchorPoint curChain : (blockPoint <$> AF.toOldestFirst curChain)
+      , loeHash <- Set.toList $ succsOf $ castHash (pointHash curChainPt)
+      , Just bi <- [lookupBlockInfo loeHash]
+      , let loePt = RealPoint (VolatileDB.biSlotNo bi) loeHash
+      , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
+      ]
+
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+
+  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
+    for
+      loePoints
+      $ constructPreferableCandidates cdb weights curChain Map.empty
+
+  -- Consider all candidates at once, to avoid transient chain switches.
+  case NE.nonEmpty $ concat chainDiffs of
+    Just chainDiffs' ->
+      -- Find the best valid candidate. On LoE reprocess we don't log the reason
+      -- for a switch, hence the 'void'.
+      void $
+        chainSelection chainSelEnv chainDiffs' $
+          switchTo cdb weights Nothing
+    Nothing -> pure ()
+
+  atomically $ putTMVar varProcessed ()
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain
