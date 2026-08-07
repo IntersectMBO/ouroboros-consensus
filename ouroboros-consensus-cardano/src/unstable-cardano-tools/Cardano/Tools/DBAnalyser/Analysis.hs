@@ -47,6 +47,7 @@ import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
+import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -144,6 +145,9 @@ data AnalysisEnv m blk startFrom = AnalysisEnv
   , registry :: ResourceRegistry IO
   , limit :: Limit
   , tracer :: Tracer m (TraceEvent blk)
+  , leiosDb :: LeiosDbConnection IO
+  -- ^ Connection to the node's LeiosDb. For pre-Leios chains this is
+  -- a connection to the empty in-memory stub and is never consulted.
   }
 
 -- | Whether the db-analyser pass needs access to a ledger state.
