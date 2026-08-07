@@ -230,14 +230,13 @@ The LedgerDB periodically writes a **snapshot** of the ledger state to disk so
 that a restarting node can resume from a recent state instead of replaying the
 whole chain. Only states that are older than `k` blocks (i.e. immutable) are
 snapshotted. The policy is configured by `SnapshotPolicyArgs`
-(`srnSnapshotPolicyArgs`); every field can be left as `UseDefault` or
-overridden. Defaults from `defaultSnapshotPolicy` in
+(`srnSnapshotPolicyArgs`). Defaults from `defaultSnapshotPolicyArgs` in
 `Ouroboros.Consensus.Storage.LedgerDB.Snapshots`:
 
 | Knob | Default | Meaning / implication |
 |---|---|---|
 | `spaNum` (snapshots kept on disk) | **2** | When a new snapshot is written, the oldest is deleted, always leaving one intact snapshot in case the write is interrupted (snapshot files are not `fsync`ed). `1` is dangerous for that reason; `0` would delete the snapshot right after writing it. |
-| `sfaInterval` | **`2·k` slots** (43,200 on mainnet ≈ 72 min of slots) | Snapshots are taken for the most recent immutable state before each slot in `offset, offset + interval, offset + 2·interval, …`. Nodes with the same interval/offset therefore snapshot *the same slots*, which matters for tools like Mithril that compare snapshots across nodes. Smaller interval = less replay on restart, more snapshot I/O. |
+| `sfaInterval` | **`DefaultSnapshotInterval` = `40·k` slots** (86,400 on mainnet ≈ one day of slots) | Snapshots are taken for the most recent immutable state before each slot in `offset, offset + interval, offset + 2·interval, …`. Nodes with the same interval/offset therefore snapshot *the same slots*, which matters for tools like Mithril that compare snapshots across nodes. Smaller interval = less replay on restart, more snapshot I/O. A `RequestedSnapshotInterval` gives an explicit number of slots instead; either way the interval is turned into slots by `resolveSnapshotInterval`, using the `SecurityParam` of the LedgerDB configuration. |
 | `sfaOffset` | **0** | Shifts the grid of snapshot slots, see above. |
 | `sfaRateLimit` | **10 minutes** | Skip a snapshot if less than this much time passed since the previous one finished. Mainly relevant while syncing, when eligible slots stream past quickly. Non-positive values disable the limit. Should be well below the wall-clock duration of the interval, or snapshots get skipped even when caught up. |
 | `sfaDelaySnapshotRange` | **5–10 minutes** | Once a snapshot is due, the node waits a random delay drawn from this range before writing it, so that the network's nodes don't all hit the disk (and slow down) simultaneously. |
@@ -245,15 +244,23 @@ overridden. Defaults from `defaultSnapshotPolicy` in
 Additional points:
 
 - `spaFrequency = DisableSnapshots` turns snapshotting off entirely.
-- `mithrilSnapshotPolicyArgs` is a ready-made policy for Mithril: interval
-  **432,000** (one Shelley epoch) and offset **388,800**, chosen so that
-  snapshots land on Shelley epoch boundaries even while still syncing Byron.
+- `mithrilSnapshotPolicyArgs` is a ready-made policy for Mithril, and is what
+  `defaultSnapshotPolicyArgs` is defined to be: interval `40·k` and offset
+  **0**. On mainnet that is 86,400 slots, one fifth of the 432,000-slot Shelley
+  epoch, so one snapshot a day and one of every five landing exactly on an
+  epoch boundary (86,400 divides both 432,000 and the 4,492,800-slot start of
+  Shelley). The epoch boundary itself is not made busier by this: only
+  immutable states are snapshotted, so the write happens once the state is `k`
+  blocks deep, and `sfaDelaySnapshotRange` defers it by a further 5–10 minutes.
 - Snapshots whose directory name carries a suffix (e.g. `4492799_last_Byron`)
   are **never deleted** by the retention policy — useful for pinning a state.
 - `sanityCheckSnapshotPolicyArgs` runs at startup and traces a warning for
-  suspicious overrides: 0 snapshots on disk, a negative or inverted delay
+  suspicious configurations: 0 snapshots on disk, a negative or inverted delay
   range, a disabled or very large rate limit, or an interval incompatible with
-  Mithril (not dividing the 432,000-slot epoch).
+  Mithril (not dividing the 432,000-slot epoch). The interval check is applied
+  to the *resolved* interval, so it depends on `k`: `40·k` divides 432,000 for
+  mainnet's `k = 2160` and for the usual testnet values, but a network whose
+  `k` does not divide 10,800 will be warned about even with the default.
 
 ## Mempool
 

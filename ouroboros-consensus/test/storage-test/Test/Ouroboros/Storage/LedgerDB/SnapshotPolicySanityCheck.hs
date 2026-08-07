@@ -1,9 +1,10 @@
 module Test.Ouroboros.Storage.LedgerDB.SnapshotPolicySanityCheck (tests) where
 
-import Cardano.Ledger.BaseTypes (unsafeNonZero)
+import Cardano.Ledger.BaseTypes (unNonZero, unsafeNonZero)
 import Data.Time.Clock (DiffTime, secondsToDiffTime)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block.SupportsSanityCheck
+import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Test.QuickCheck
 import Test.Tasty
@@ -27,6 +28,8 @@ tests =
         $ prop_rate_limit_large_iff
     , testProperty "SnapshotIntervalNotDivisorOfEpoch fires iff 432000 mod interval /= 0" $
         prop_mithril_divisibility_iff
+    , testProperty "DefaultSnapshotInterval resolves to 40k" $
+        prop_default_interval_is_40k
     , testProperty "no frequency issues emitted under DisableSnapshots" $
         prop_disable_snapshots_no_frequency_issues
     ]
@@ -42,6 +45,7 @@ prop_num_zero_iff =
   forAll (arbitrary :: Gen Word) $ \n ->
     let issues =
           sanityCheckSnapshotPolicyArgs
+            testSecurityParam
             SnapshotPolicyArgs{spaFrequency = DisableSnapshots, spaNum = NumOfDiskSnapshots n}
      in (SnapshotNumZero `elem` issues) === (n == 0)
 
@@ -51,7 +55,7 @@ prop_delay_range_inverted_iff :: Property
 prop_delay_range_inverted_iff =
   forAll genNonNegativeDiffTime $ \mn ->
     forAll genDiffTime $ \mx ->
-      let issues = sanityCheckSnapshotPolicyArgs (withDelayRange (SnapshotDelayRange mn mx))
+      let issues = sanityCheckSnapshotPolicyArgs testSecurityParam (withDelayRange (SnapshotDelayRange mn mx))
           fired = any isInverted issues
        in fired === (mn > mx)
  where
@@ -62,7 +66,7 @@ prop_delay_range_inverted_iff =
 prop_delay_range_negative_minimum_iff :: Property
 prop_delay_range_negative_minimum_iff =
   forAll genDiffTime $ \mn ->
-    let issues = sanityCheckSnapshotPolicyArgs (withDelayRange (SnapshotDelayRange mn 0))
+    let issues = sanityCheckSnapshotPolicyArgs testSecurityParam (withDelayRange (SnapshotDelayRange mn 0))
         fired = any isNegativeMin issues
      in fired === (mn < 0)
  where
@@ -74,7 +78,7 @@ prop_delay_range_negative_minimum_iff =
 prop_rate_limit_disabled_iff :: Property
 prop_rate_limit_disabled_iff =
   forAll genDiffTime $ \rl ->
-    let issues = sanityCheckSnapshotPolicyArgs (withRateLimit rl)
+    let issues = sanityCheckSnapshotPolicyArgs testSecurityParam (withRateLimit rl)
      in (SnapshotRateLimitDisabled `elem` issues) === (rl <= 0)
 
 -- | 'SnapshotRateLimitSuspiciouslyLarge' fires if and only if 'sfaRateLimit' is
@@ -83,7 +87,7 @@ prop_rate_limit_disabled_iff =
 prop_rate_limit_large_iff :: Property
 prop_rate_limit_large_iff =
   forAll genPositiveDiffTime $ \rl ->
-    let issues = sanityCheckSnapshotPolicyArgs (withRateLimit rl)
+    let issues = sanityCheckSnapshotPolicyArgs testSecurityParam (withRateLimit rl)
         fired = any isLarge issues
      in fired === (rl > 86400)
  where
@@ -95,12 +99,19 @@ prop_rate_limit_large_iff =
 prop_mithril_divisibility_iff :: Property
 prop_mithril_divisibility_iff =
   forAll genNonZeroWord64 $ \n ->
-    let issues = sanityCheckSnapshotPolicyArgs (withInterval n)
+    let issues = sanityCheckSnapshotPolicyArgs testSecurityParam (withInterval n)
         fired = any isMithrilIssue issues
      in fired === (mithrilEpochSize `mod` n /= 0)
  where
   isMithrilIssue (SnapshotIntervalNotDivisorOfEpoch _) = True
   isMithrilIssue _ = False
+
+-- | 'DefaultSnapshotInterval' resolves to @40k@ slots.
+prop_default_interval_is_40k :: Property
+prop_default_interval_is_40k =
+  forAll genNonZeroWord64 $ \k ->
+    let secParam = SecurityParam (unsafeNonZero k)
+     in unNonZero (resolveSnapshotInterval secParam DefaultSnapshotInterval) === 40 * k
 
 -- | With 'DisableSnapshots', no frequency-related issues are ever emitted,
 -- regardless of what 'spaNum' is set to.
@@ -109,6 +120,7 @@ prop_disable_snapshots_no_frequency_issues =
   forAll (arbitrary :: Gen Word) $ \n ->
     let issues =
           sanityCheckSnapshotPolicyArgs
+            testSecurityParam
             SnapshotPolicyArgs{spaFrequency = DisableSnapshots, spaNum = NumOfDiskSnapshots n}
      in filter isFrequencyIssue issues === []
  where
@@ -142,6 +154,11 @@ genNonZeroWord64 = getPositive <$> arbitrary
 -- Helpers
 -------------------------------------------------------------------------------
 
+-- | Cardano mainnet @k@. As @40k = 86,400@ divides 'mithrilEpochSize',
+-- 'DefaultSnapshotInterval' never contributes an issue of its own here.
+testSecurityParam :: SecurityParam
+testSecurityParam = SecurityParam (unsafeNonZero 2160)
+
 -- | Build a 'SnapshotPolicyArgs' with a specific 'SnapshotDelayRange' override.
 withDelayRange :: SnapshotDelayRange -> SnapshotPolicyArgs
 withDelayRange sdr =
@@ -166,5 +183,5 @@ withInterval n =
   defaultSnapshotPolicyArgs
     { spaFrequency = case spaFrequency defaultSnapshotPolicyArgs of
         DisableSnapshots -> DisableSnapshots
-        SnapshotFrequency sfa -> SnapshotFrequency (sfa{sfaInterval = unsafeNonZero n})
+        SnapshotFrequency sfa -> SnapshotFrequency (sfa{sfaInterval = RequestedSnapshotInterval (unsafeNonZero n)})
     }

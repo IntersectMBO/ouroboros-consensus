@@ -110,7 +110,10 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 { ldbSeq = varDB
                 , ldbPrevApplied = prevApplied
                 , ldbNextForkerKey = nextForkerKey
-                , ldbSnapshotPolicy = defaultSnapshotPolicy lgrSnapshotPolicyArgs
+                , ldbSnapshotPolicy =
+                    defaultSnapshotPolicy
+                      (ledgerDbCfgSecParam lgrConfig)
+                      lgrSnapshotPolicyArgs
                 , ldbTracer = tr
                 , ldbCfg = lgrConfig
                 , ldbHasFS = lgrHasFS
