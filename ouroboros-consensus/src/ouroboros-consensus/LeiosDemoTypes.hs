@@ -28,10 +28,9 @@ import Cardano.Binary
   , toStrictByteString
   )
 import qualified Cardano.Binary as CBOR
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.DSIGN
-  ( decodeSigDSIGN
-  , encodeSigDSIGN
-  , signDSIGN
+  ( signDSIGN
   , verifyDSIGN
   )
 import qualified Cardano.Crypto.Hash as Hash
@@ -40,20 +39,18 @@ import Cardano.Crypto.Leios
   , LeiosCert (..)
   , LeiosCommittee (..)
   , LeiosDSIGN
+  , LeiosSeat (..)
+  , LeiosSeatId (..)
   , LeiosSignature
   , LeiosSigningKey
   , LeiosVerificationKey
-  , LeiosVoter (..)
-  , LeiosVoterId (..)
   , VerificationError
   , Weight
   , aggregateLeiosCert
-  , decodeLeiosVoterId
-  , encodeLeiosVoterId
-  , getLeiosVoterId
+  , getLeiosSeatId
   , leiosCommitteeSize
   , leiosSignContext
-  , resolveLeiosVoter
+  , resolveLeiosSeat
   , verifyLeiosCert
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
@@ -75,12 +72,13 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
-import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (nubBy, sortOn)
+import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Ord (Down (..))
 import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -676,20 +674,22 @@ decodeLeiosEb = do
 
 -- * Voting
 
--- | Create a 'LeiosCommittee' from a mapping of verification keys and some
--- associated weight. Duplicate entries by verification key are ignored. The
--- final 'Weight' in the committee is normalized by the total of the input map.
--- TODO: The total can only be calculated here in "everyone votes" scheme.
-mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> LeiosCommittee
-mkCommitteeEveryoneVotes inputs =
-  LeiosCommittee
-    . V.fromList
-    . sortOn voterWeight
-    $ [ LeiosVoter{voterWeight = toRational weight / totalWeight, voterVKey = vk}
-      | (vk, weight) <- nubBy ((==) `on` fst) inputs
-      ]
+-- | Select the voting committee from a stake (weight) distribution per CIP-164:
+-- order by stake descending and take the shortest prefix whose cumulative stake
+-- reaches @target@ (σ_c).
+selectCommitteeByStake ::
+  -- | The target coverage of weights / stake.
+  Weight ->
+  -- | All available voters weights.
+  [(a, Weight)] ->
+  -- | The selected committee weights.
+  [(a, Weight)]
+selectCommitteeByStake target = go 0 . sortOn (Down . snd)
  where
-  totalWeight = toRational . sum $ snd <$> inputs
+  go _ [] = []
+  go acc (p : ps)
+    | acc >= target = []
+    | otherwise = p : go (acc + snd p) ps
 
 -- ** Vote
 
@@ -698,7 +698,7 @@ data LeiosVote = MkLeiosVote
   { announcingRbHash :: RbHash
   -- ^ The message that gets signed, the hash of the ranking block
   --   that announced an endorser block.
-  , voterId :: LeiosVoterId
+  , voterId :: LeiosSeatId
   -- ^ Identity within a 'LeiosCommittee' who signed this vote.
   , voteSignature :: LeiosSignature
   -- ^ The cryptographic signature of the vote.
@@ -718,16 +718,16 @@ encodeLeiosVote :: LeiosVote -> Encoding
 encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
   CBOR.encodeListLen 3
     <> encodeRbHash announcingRbHash
-    <> encodeLeiosVoterId voterId
-    <> encodeSigDSIGN voteSignature
+    <> CBOR.encodeWord16 voterId.leiosSeatIndex
+    <> encodeFixedSized voteSignature
 
 -- | Dedoe a 'LeiosVote' from CBOR.
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do
   enforceSize (fromString "LeiosVote") 3
   pointRbHash <- decodeRbHash
-  voterId <- decodeLeiosVoterId
-  voteSignature <- decodeSigDSIGN
+  voterId <- LeiosSeatId <$> CBOR.decodeWord16
+  voteSignature <- decodeFixedSized
   pure
     MkLeiosVote
       { announcingRbHash = pointRbHash
@@ -739,11 +739,11 @@ voteToObject :: LeiosVote -> Aeson.Object
 voteToObject MkLeiosVote{announcingRbHash, voterId} =
   mconcat
     [ "rbHash" .= prettyRbHash announcingRbHash
-    , "voterId" .= voterId.leiosVoterIndex
+    , "voterId" .= voterId.leiosSeatIndex
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.
-signLeiosVote :: LeiosSigningKey -> LeiosVoterId -> RbHash -> LeiosVote
+signLeiosVote :: LeiosSigningKey -> LeiosSeatId -> RbHash -> LeiosVote
 signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
     { announcingRbHash
@@ -754,16 +754,20 @@ signLeiosVote sk voterId announcingRbHash =
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: LeiosCommittee -> LeiosVote -> Either VoteInvalid Weight
 validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature} =
-  case resolveLeiosVoter committee voterId of
+  case resolveLeiosSeat committee voterId of
     Nothing -> Left SignerNotInCommittee
-    Just voter ->
-      case verifyDSIGN leiosSignContext voter.voterVKey announcingRbHash voteSignature of
-        Left _ -> Left InvalidSignature
-        Right () -> Right voter.voterWeight
+    Just seat ->
+      case seat.seatVKey of
+        SNothing -> Left SignerHasNoKey
+        SJust vk ->
+          case verifyDSIGN leiosSignContext vk announcingRbHash voteSignature of
+            Left _ -> Left InvalidSignature
+            Right () -> Right seat.seatWeight
 
 data VoteInvalid
   = InvalidSignature
   | SignerNotInCommittee
+  | SignerHasNoKey
   deriving (Eq, Show)
 
 -- | Why a CertRB was rejected during ledger validation of its Leios
@@ -1144,6 +1148,9 @@ maxTxsPerEb =
   msgOverhead = 1 + 1 -- short list len + small word
   sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
 
+maxEBClosureSize :: ByteSize32
+maxEBClosureSize = ByteSize32 12_000_000
+
 minCertificationGap :: Word64
 minCertificationGap = 10
 
@@ -1151,15 +1158,9 @@ minCertificationGap = 10
 minCertificationThreshold :: Rational
 minCertificationThreshold = 3 % 4
 
-leiosMempoolSize :: ByteSize32
-leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
-
--- TODO: dry with maxMsgLeiosBlockBytesSize
-leiosEBMaxSize :: ByteSize32
-leiosEBMaxSize = ByteSize32 512_000
-
-leiosEBMaxClosureSize :: ByteSize32
-leiosEBMaxClosureSize = ByteSize32 12_000_000
+-- | Stake to be covered when selecting the committee.
+committeeStakeCoverage :: Weight
+committeeStakeCoverage = 99 % 100
 
 -- * Utilities for prototyping
 

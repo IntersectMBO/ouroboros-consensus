@@ -23,7 +23,7 @@ import LeiosDemoTypes
   , LeiosCommittee
   , LeiosSignature
   , LeiosVote (..)
-  , LeiosVoterId
+  , LeiosSeatId
   , RbHash
   , VoteInvalid (..)
   , Weight
@@ -61,7 +61,7 @@ data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m Leios
 -- Holds the contributing voters plus a memoised certificate once the
 -- threshold is crossed.
 data PointState = PointState
-  { psVoters :: !(Map LeiosVoterId (Weight, LeiosSignature))
+  { psVoters :: !(Map LeiosSeatId (Weight, LeiosSignature))
   , psCert :: !(Maybe LeiosCert)
   -- ^ Assembled once when this point's total weight first reaches
   -- 'minCertificationThreshold'; reused for subsequent post-threshold

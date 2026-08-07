@@ -37,7 +37,8 @@ module Test.ThreadNet.Infra.Shelley
   ) where
 
 import Cardano.Crypto.DSIGN
-  ( DSIGNAlgorithm (..)
+  ( BLS12381MinSigDSIGN
+  , DSIGNAlgorithm (..)
   , SignKeyDSIGN
   , seedSizeDSIGN
   )
@@ -103,7 +104,7 @@ import Ouroboros.Consensus.Protocol.Praos.AgentClient
   , KESAgentContext
   )
 import Ouroboros.Consensus.Protocol.Praos.Common
-  ( PraosCanBeLeader (PraosCanBeLeader)
+  ( PraosCanBeLeader (..)
   , PraosCredentialsSource (..)
   , praosCanBeLeaderColdVerKey
   , praosCanBeLeaderCredentialsSource
@@ -175,6 +176,7 @@ data CoreNode c = CoreNode
   -- ^ The hash of the corresponding verification (public) key will be
   -- used as the staking credential.
   , cnVRF :: !(SignKeyVRF (VRF c))
+  , cnBLS :: !(Maybe (SignKeyDSIGN BLS12381MinSigDSIGN))
   , cnKES :: !(UnsoundPureSignKeyKES (KES c))
   , cnOCert :: !(SL.OCert c)
   }
@@ -218,6 +220,7 @@ genCoreNode startKESPeriod = do
   delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
   stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
   vrfKey <- genKeyVRF <$> genSeed (seedSizeVRF (Proxy @(VRF c)))
+  blsKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @BLS12381MinSigDSIGN))
   kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES (Proxy @(KES c)))
   let kesPub = unsoundPureDeriveVerKeyKES kesKey
       sigma =
@@ -237,6 +240,7 @@ genCoreNode startKESPeriod = do
       , cnDelegateKey = delKey
       , cnStakingKey = stkKey
       , cnVRF = vrfKey
+      , cnBLS = Just blsKey
       , cnKES = kesKey
       , cnOCert = ocert
       }
@@ -257,6 +261,7 @@ mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert} =
           { praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
           , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
           , praosCanBeLeaderSignKeyVRF = cnVRF
+          , praosCanBeLeaderSignKeyBLS = Nothing -- FIXME: This will result in no votes in threadnet!?
           }
     , shelleyLeaderCredentialsLabel = "ThreadNet"
     }

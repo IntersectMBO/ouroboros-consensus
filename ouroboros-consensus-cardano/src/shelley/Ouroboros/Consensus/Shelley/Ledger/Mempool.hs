@@ -753,7 +753,7 @@ leiosEndorserBlockMeasure st =
     DijkstraMeasure
       { conwayMeasure =
           conway
-            { alonzoMeasure = alonzo{byteSize = IgnoringOverflow Leios.leiosEBMaxClosureSize}
+            { alonzoMeasure = alonzo{byteSize = IgnoringOverflow Leios.maxEBClosureSize}
             , refScriptsSize =
                 IgnoringOverflow $
                   ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)

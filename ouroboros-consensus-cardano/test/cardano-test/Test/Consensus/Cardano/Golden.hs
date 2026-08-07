@@ -11,7 +11,7 @@ module Test.Consensus.Cardano.Golden (tests) where
 import qualified Data.ByteString as BS
 import LeiosDemoTypes
   ( LeiosVote
-  , LeiosVoterId (..)
+  , LeiosSeatId (..)
   , RbHash (..)
   , encodeLeiosVote
   , signLeiosVote
@@ -57,7 +57,7 @@ tests =
 -- key. Pinned by the corresponding golden file.
 typicalVote :: LeiosVote
 typicalVote =
-  signLeiosVote (generateWith genLeiosSigningKey 42) (LeiosVoterId 1000) rbHash
+  signLeiosVote (generateWith genLeiosSigningKey 42) (LeiosSeatId 1000) rbHash
  where
   rbHash = MkRbHash (BS.pack [0 .. 31])
 

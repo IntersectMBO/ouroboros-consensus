@@ -17,8 +17,10 @@ module Ouroboros.Consensus.Shelley.Node.Common
   , ShelleyEraWithCrypto
   , ShelleyLeaderCredentials (..)
   , shelleyBlockIssuerVKey
+  , shelleyLeaderVotingKey
   ) where
 
+import Cardano.Crypto.Leios (LeiosSigningKey)
 import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -35,7 +37,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Node.InitStorage
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos.Common
-  ( PraosCanBeLeader (praosCanBeLeaderColdVerKey)
+  ( PraosCanBeLeader (praosCanBeLeaderColdVerKey, praosCanBeLeaderSignKeyBLS)
   )
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyBlock
@@ -68,6 +70,14 @@ shelleyBlockIssuerVKey ::
   ShelleyLeaderCredentials c -> SL.VKey SL.BlockIssuer
 shelleyBlockIssuerVKey =
   praosCanBeLeaderColdVerKey . shelleyLeaderCredentialsCanBeLeader
+
+-- | The BLS voting signing key for this set of credentials, if one was provided
+-- (via @--shelley-bls-key@). Used as the Leios/Peras voting key; 'Nothing'
+-- disables voting for this node.
+shelleyLeaderVotingKey ::
+  ShelleyLeaderCredentials c -> Maybe LeiosSigningKey
+shelleyLeaderVotingKey =
+  praosCanBeLeaderSignKeyBLS . shelleyLeaderCredentialsCanBeLeader
 
 {-------------------------------------------------------------------------------
   BlockForging
