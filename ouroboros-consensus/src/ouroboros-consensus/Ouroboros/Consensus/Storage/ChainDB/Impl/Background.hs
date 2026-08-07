@@ -48,6 +48,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
+import qualified Data.Aeson as Aeson
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (strictMaybeToMaybe)
@@ -66,6 +67,12 @@ import LeiosDemoDb.Common
   )
 import LeiosDemoTypes (LeiosPoint, pointEbHash)
 import qualified LeiosDemoTypes
+import LeiosUtils.CallTrace
+  ( CallTrace
+  , SomeJsonCallTrace (SomeJsonCallTrace)
+  , rootCallCtx
+  )
+import qualified LeiosUtils.CallTrace as CallTrace
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -701,6 +708,7 @@ dumpGcSchedule (GcSchedule varQueue) = toList <$> readTVar varQueue
 -- | Read blocks from 'cdbChainSelQueue' and add them synchronously to the
 -- ChainDB.
 addBlockRunner ::
+  forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
@@ -711,47 +719,63 @@ addBlockRunner ::
   Fuse m ->
   ChainDbEnv m blk ->
   m Void
-addBlockRunner fuse cdb@CDB{..} = forever $ do
-  let trace = traceWith cdbTracer . TraceAddBlockEvent
-  trace PoppingFromQueue
-  -- if the `chainSelSync` does not complete because it was killed by an async
-  -- exception (or it errored), notify the blocked thread
-  withFuse fuse $
-    bracketOnError
-      (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
-      ( \message -> lift $ atomically $ do
-          case message of
-            ChainSelReprocessLoEBlocks varProcessed ->
-              void $ tryPutTMVar varProcessed ()
-            -- Fire-and-forget: no promise to fulfil.
-            ChainSelReprocessLeiosEb _ -> pure ()
-            ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
-              _ <-
-                tryPutTMVar
-                  varBlockWrittenToDisk
-                  False
-              _ <-
-                tryPutTMVar
-                  varBlockProcessed
-                  (FailedToAddBlock "Failed to add block synchronously")
-              pure ()
-            ChainSelAddPerasCert _cert varProcessed ->
-              void $ tryPutTMVar varProcessed ()
-          closeChainSelQueue cdbChainSelQueue
-      )
-      ( \message -> do
-          lift $ case message of
-            ChainSelReprocessLoEBlocks _ ->
-              trace PoppedReprocessLoEBlocksFromQueue
-            ChainSelReprocessLeiosEb _ -> pure ()
-            ChainSelAddBlock BlockToAdd{blockToAdd} ->
-              trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
-            ChainSelAddPerasCert cert _varProcessed ->
-              traceWith cdbTracer $
-                TraceAddPerasCertEvent $
-                  PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
-          chainSelSync cdb message
-          lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
+addBlockRunner fuse cdb@CDB{..} = do
+  rootCCtx <- rootCallCtx "ChainSel"
+
+  let
+    trace = traceWith cdbTracer . TraceAddBlockEvent
+    ctrace :: (Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace a r -> m ()
+    ctrace = trace . TraceAddBlockCall . SomeJsonCallTrace
+
+  forever $
+    -- TODO(bladyjoker): This CallTrace will not emit an End event in the case of an error/exception.
+    CallTrace.callTraceSameThreadVia
+      id
+      ctrace
+      rootCCtx
+      "process-chain-sel-message"
+      ()
+      ( \_ -> do
+          trace PoppingFromQueue
+          -- if the `chainSelSync` does not complete because it was killed by an async
+          -- exception (or it errored), notify the blocked thread
+          withFuse fuse $
+            bracketOnError
+              (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
+              ( \message -> lift $ atomically $ do
+                  case message of
+                    ChainSelReprocessLoEBlocks varProcessed ->
+                      void $ tryPutTMVar varProcessed ()
+                    -- Fire-and-forget: no promise to fulfil.
+                    ChainSelReprocessLeiosEb _ -> pure ()
+                    ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
+                      _ <-
+                        tryPutTMVar
+                          varBlockWrittenToDisk
+                          False
+                      _ <-
+                        tryPutTMVar
+                          varBlockProcessed
+                          (FailedToAddBlock "Failed to add block synchronously")
+                      pure ()
+                    ChainSelAddPerasCert _cert varProcessed ->
+                      void $ tryPutTMVar varProcessed ()
+                  closeChainSelQueue cdbChainSelQueue
+              )
+              ( \message -> do
+                  lift $ case message of
+                    ChainSelReprocessLoEBlocks _ ->
+                      trace PoppedReprocessLoEBlocksFromQueue
+                    ChainSelReprocessLeiosEb _ -> pure ()
+                    ChainSelAddBlock BlockToAdd{blockToAdd} ->
+                      trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
+                    ChainSelAddPerasCert cert _varProcessed ->
+                      traceWith cdbTracer $
+                        TraceAddPerasCertEvent $
+                          PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
+                  chainSelSync cdb message
+                  lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
+              )
       )
  where
   starvationTracer = TraceChainSelStarvationEvent >$< cdbTracer
