@@ -70,6 +70,12 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosTxCache
+  ( LeiosTxCache
+  , evictOlderThan
+  , maxAnnouncementCount
+  , newHashTableLeiosTxCache
+  )
 import LeiosUtils.CallTrace
   ( SomeJsonCallTrace (SomeJsonCallTrace)
   , callTraceSameThread
@@ -171,7 +177,7 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
   )
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
-import System.Random (StdGen)
+import System.Random (StdGen, splitGen, uniform)
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -249,6 +255,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosCentralState ::
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   -- ^ Node-wide EB-announcement state
+  , getLeiosTxCache ::
+      LeiosTxCache m () () Leios.SerializedEbBody
+  -- ^ Shadow in-memory tx-cache (see 'LeiosTxCache'); maintained but
+  -- not yet consulted, so it changes no observable behavior.
   }
 
 -- | Arguments required when initializing a node
@@ -320,7 +330,12 @@ initNodeKernel
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
-    st <- initInternalState args
+    -- Split the per-node generator: 'txCacheSaltRng' (an independent child) seeds
+    -- the LeiosTxCache SipHash salt inside 'initInternalState'; 'peerSharingRng''
+    -- continues to peer-sharing below. They must not share a SplitMix stream, since
+    -- its state (hence the salt) is recoverable from observed outputs.
+    let (peerSharingRng', txCacheSaltRng) = splitGen peerSharingRng
+    st <- initInternalState txCacheSaltRng args
     let IS
           { blockFetchInterface
           , fetchClientRegistry
@@ -331,6 +346,7 @@ initNodeKernel
           , leiosOutstanding = getLeiosOutstanding
           , leiosReady = getLeiosReady
           , leiosCentralState = getLeiosCentralState
+          , leiosTxCache = getLeiosTxCache
           , leiosPeersVars = getLeiosPeersVars
           , leiosVoteState
           } = st
@@ -399,7 +415,7 @@ initNodeKernel
     peerSharingAPI <-
       newPeerSharingAPI
         publicPeerSelectionStateVar
-        peerSharingRng
+        peerSharingRng'
         ps_POLICY_PEER_SHARE_STICKY_TIME
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
@@ -558,6 +574,27 @@ initNodeKernel
                   pure . Announcements.pruneCentralState immTipSlot
           }
 
+    -- Keep the LeiosTxCache within the youngest @1 + maxAnnouncementCount@ RBs of
+    -- the current selection, evicting older EBs regardless of the EB arrival rate,
+    -- so that every EB it retains is far younger than the immutable tip and hence
+    -- still in the LeiosDb (see the invariant in "LeiosTxCache"). Complements the
+    -- count-driven eviction that 'insertAnnouncement' performs. Dropping the
+    -- youngest 'maxAnnouncementCount' headers leaves the @1 + maxAnnouncementCount@th
+    -- youngest as the boundary; @dropNewest@ is @O(log n)@.
+    void $
+      forkLinkedWatcher registry "NodeKernel.leiosEvictStaleTxCacheEbs" $
+        Watcher
+          { wFingerprint = id
+          , wInitial = Nothing
+          , wReader =
+              AF.headSlot . AF.dropNewest maxAnnouncementCount
+                <$> ChainDB.getCurrentChain chainDB
+          , wNotify = \case
+              Origin -> pure ()
+              NotOrigin boundary ->
+                void $ evictOlderThan getLeiosTxCache boundary
+          }
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -586,6 +623,7 @@ initNodeKernel
         , getLeiosOutstanding = getLeiosOutstanding
         , getLeiosReady = getLeiosReady
         , getLeiosCentralState = getLeiosCentralState
+        , getLeiosTxCache = getLeiosTxCache
         }
    where
     blockForgingController ::
@@ -638,6 +676,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosReady :: MVar.MVar m ()
   , leiosCentralState ::
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
+  , leiosTxCache ::
+      LeiosTxCache m () () Leios.SerializedEbBody
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m
@@ -654,9 +694,12 @@ initInternalState ::
   , Typeable addrNTN
   , RunNode blk
   ) =>
+  -- | An independent generator for the LeiosTxCache SipHash salt.
+  StdGen ->
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (InternalState m addrNTN addrNTC blk)
 initInternalState
+  txCacheSaltRng
   NodeKernelArgs
     { tracers
     , chainDB
@@ -697,6 +740,23 @@ initInternalState
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
+    -- The Optimized (mutable hash-table) LeiosTxCache at production size: 2^22
+    -- slots (~4.19M) leaves ample headroom over the ~1.9M worst case, so the
+    -- table never fills. This preallocates a fixed ~168 MiB table regardless of
+    -- load (the bounded-footprint tradeoff vs the pure Map).
+    --
+    -- The SipHash salt is a per-node secret drawn from 'txCacheSaltRng' (an
+    -- independent split of the node's generator, passed in). tx hashes are adversarial
+    -- (grindable), so an unpredictable, never-exposed salt is what prevents
+    -- hash-flooding the table.
+    let (salt0, txCacheSaltRng') = uniform txCacheSaltRng
+        (salt1, _) = uniform txCacheSaltRng'
+        nshift = 22   -- 2^22 = ~4M entries in the hash table, which is ~2x the
+                      -- maximum number of txs that 128 EB could possibly
+                      -- references, which is enough EBs that a group of pools
+                      -- with 15% cumulative stake has a ~0.85^128 = ~1e-9
+                      -- chance of not being able to issue one of those 128
+    leiosTxCache <- newHashTableLeiosTxCache nshift salt0 salt1
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
@@ -769,6 +829,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     leiosVoteState
                     bf
                     leiosConn
+                    leiosTxCache
                     announceForgedBlock
                     currentSlot
     )
@@ -776,25 +837,25 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   label :: String
   label = "NodeKernel.blockForging"
 
-  -- Concurrently (fire-and-forget) relay this node's own freshly-forged EB
-  -- announcement, if any, to downstream peers via LeiosNotify. 'forge' invokes
-  -- this right after forging and before adoption, so adoption never gates
-  -- getting the announcement onto the wire.
+  -- Relay this node's own freshly-forged EB announcement, if any, to downstream
+  -- peers via LeiosNotify. 'forge' invokes this right after forging and before
+  -- adoption — and, crucially, before persisting the EB body to the LeiosDb.
+  -- The relay is synchronous: writing the body is what offers the EB to peers,
+  -- so the announcement must be enqueued first, else a peer could receive the
+  -- offer before the announcement.
   announceForgedBlock :: Header blk -> m ()
   announceForgedBlock forgedHeader =
     whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
-      void $
-        async $
-          MVar.modifyMVar_ leiosCentralState $ \cst ->
-            Announcements.onAnnouncementCentral
-              (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
-              Leios.ancElId
-              (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
-              cst
-              Nothing -- the source is this node, not an upstream peer
-              Announcements.DoRelay -- our newly forged block can't be too old
-              Nothing -- no wall-clock lateness for a locally-forged announcement
-              anc
+      MVar.modifyMVar_ leiosCentralState $ \cst ->
+        Announcements.onAnnouncementCentral
+          (contramap (Leios.traceNewAnnouncement Leios.ForgedLocally) (leiosKernelTracer tracers))
+          Leios.ancElId
+          (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
+          cst
+          Nothing -- the source is this node, not an upstream peer
+          Announcements.DoRelay -- our newly forged block can't be too old
+          Nothing -- no wall-clock lateness for a locally-forged announcement
+          anc
 
   -- 'LeiosDbConnection' is not thread-safe, so we open one per
   -- forge-credentials thread (and close it when the thread exits).

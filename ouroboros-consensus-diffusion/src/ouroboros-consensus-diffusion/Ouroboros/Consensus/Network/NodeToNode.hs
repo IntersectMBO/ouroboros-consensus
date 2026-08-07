@@ -136,6 +136,10 @@ import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( diffRelTime
+  , systemTimeCurrent
+  )
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -157,7 +161,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
   )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
-import Ouroboros.Consensus.Util (ShowProxy)
+import Ouroboros.Consensus.Util (ShowProxy, whenJust)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block
@@ -351,6 +355,7 @@ mkHandlers ::
   ( IOLike m
   , MonadTime m
   , MonadTimer m
+  , ConvertRawHash blk
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , LedgerSupportsProtocol blk
@@ -397,8 +402,29 @@ mkHandlers
               , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
-              , CsClient.leiosCertRbCallback =
-                  Leios.leiosCertRbCallback (getLeiosOutstanding, getLeiosReady) peerVars
+              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime cds -> do
+                  Leios.checkMsgRollForwardForLeiosOffers
+                    (getLeiosOutstanding, getLeiosReady)
+                    peerVars
+                    hdr
+                    cds
+                  -- Feed any EB this header announces into the central
+                  -- announcement state (relay + dedup + txCache), central-only:
+                  -- a roll-forward is not this peer announcing over LeiosNotify,
+                  -- so no PeerState is touched. Date it from the header slot's
+                  -- onset (its ChainSync arrival latency).
+                  whenJust (Leios.mkAnnouncingHeader hdr) $ \ancHdr -> do
+                    now <- systemTimeCurrent systemTime
+                    Leios.processAnnouncementCentrally
+                      (Node.leiosKernelTracer tracers)
+                      getLeiosCentralState
+                      (getLeiosOutstanding, getLeiosReady)
+                      getLeiosTxCache
+                      (Just peer)
+                      Leios.ReceivedViaChainSync
+                      Announcements.DoRelay
+                      (Just (diffRelTime now hdrSlotTime))
+                      ancHdr
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -493,23 +519,20 @@ mkHandlers
                                 (Leios.ancHeader ancH)
                           )
                           -- central part of the processing
-                          ( \ancHdr (shouldRelay, age, anc'@(p, _sz)) -> do
+                          ( \ancHdr (shouldRelay, age, (p, _sz)) -> do
                               traceWith tracer $
                                 MkTraceLeiosPeer $
                                   "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
-                              MVar.modifyMVar_ getLeiosCentralState $ \cst ->
-                                -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
-                                Announcements.onAnnouncementCentral
-                                  (contramap Leios.traceNewAnnouncement kernelTracer)
-                                  Leios.ancElId
-                                  ( \_elSt ->
-                                      Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
-                                  )
-                                  cst
-                                  (Just peer)
-                                  shouldRelay
-                                  (Just age)
-                                  ancHdr
+                              Leios.processAnnouncementCentrally
+                                kernelTracer
+                                getLeiosCentralState
+                                (getLeiosOutstanding, getLeiosReady)
+                                getLeiosTxCache
+                                (Just peer)
+                                Leios.ReceivedViaLeiosNotify
+                                shouldRelay
+                                (Just age)
+                                ancHdr
                           )
                           peerSt0
                           anc
@@ -666,6 +689,7 @@ mkHandlers
                   (leiosPeerTracer peer)
                   ((== Terminate) <$> controlMessageSTM)
                   (getLeiosOutstanding, getLeiosReady)
+                  getLeiosTxCache
                   leiosConn
                   (Leios.MkPeerId peer)
                   reqVar
@@ -684,6 +708,7 @@ mkHandlers
       , getLeiosOutstanding
       , getLeiosReady
       , getLeiosCentralState
+      , getLeiosTxCache
       } = nodeKernel
 
     leiosPeerTracer peer = TraceLabelPeer peer `contramap` Node.leiosPeerTracer tracers

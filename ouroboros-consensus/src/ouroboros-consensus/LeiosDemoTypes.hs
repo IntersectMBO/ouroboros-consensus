@@ -674,6 +674,15 @@ decodeLeiosEb = do
   fmap MkLeiosEb $ V.generateM n $ \_i -> do
     (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
 
+-- | An EB body as its canonical CBOR bytes: the @b@ stored in the
+-- 'LeiosTxCache' index. Its 'LeiosTxCache.API.ReferencesTxsByHash' instance
+-- (defined alongside the class in "LeiosTxCache.API") decodes it to enumerate the
+-- referenced txs.
+newtype SerializedEbBody = MkSerializedEbBody SBS.ShortByteString
+
+serializeEbBody :: LeiosEb -> SerializedEbBody
+serializeEbBody = MkSerializedEbBody . SBS.toShort . toStrictByteString . encodeLeiosEb
+
 -- * Voting
 
 -- | Create a 'LeiosCommittee' from a mapping of verification keys and some
@@ -890,6 +899,25 @@ messageLeiosFetchToObject = \case
   LeiosFetch.MsgDone ->
     "kind" .= Aeson.String "MsgDone"
 
+-- | Summary of an EB body inserted into the LeiosTxCache, for observability (see
+-- 'TraceLeiosTxCacheEbBody'). The counts nest:
+-- @ibsTxsInEb >= ibsTracked >= ibsAcquired >= ibsValidated@.
+data InsertBodySummary = InsertBodySummary
+  { ibsTxsInEb :: !Int
+  -- ^ txs the EB body references
+  , ibsTracked :: !Int
+  -- ^ of those, how many the cache already tracked
+  , ibsAcquired :: !Int
+  -- ^ of those tracked, how many were already acquired (inserted or validated)
+  , ibsValidated :: !Int
+  -- ^ of those acquired, how many were already validated
+  , ibsCacheTxCount :: !Int
+  -- ^ total txs the cache tracks after this insert
+  , ibsCacheLoad :: !Double
+  -- ^ 'ibsCacheTxCount' as a fraction of the worst-case cache capacity
+  }
+  deriving (Eq, Show)
+
 data TraceLeiosKernel
   = MkTraceLeiosKernel String
   | TraceLeiosBlockAcquired LeiosPoint
@@ -897,6 +925,8 @@ data TraceLeiosKernel
     -- unexpected as the point should have been inserted during announcement handling.
     TraceLeiosBlockPointMissing LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
+  | -- | An EB body was inserted into the LeiosTxCache; carries the insertion summary.
+    TraceLeiosTxCacheEbBody LeiosPoint InsertBodySummary
   | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
       , eb :: LeiosEb
@@ -956,9 +986,14 @@ data AnnouncementEquivocation
   | Equivocation
   deriving (Eq, Show)
 
--- | Whether the node accepted an EB announcement it forged itself or one
--- relayed by an upstream peer.
-data AnnouncementSource = ForgedLocally | ReceivedFromPeer
+-- | How the node came to accept an EB announcement.
+data AnnouncementSource
+  = -- | The node forged the EB itself.
+    ForgedLocally
+  | -- | An upstream peer relayed it over the LeiosNotify mini-protocol.
+    ReceivedViaLeiosNotify
+  | -- | It rode in on a ChainSync 'MsgRollForward' header (the announcing RB).
+    ReceivedViaChainSync
   deriving (Eq, Show)
 
 -- | Reasons 'runLeiosVoting' may decline to cast a vote after acquiring an
@@ -1001,6 +1036,18 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
+      ]
+  TraceLeiosTxCacheEbBody (MkLeiosPoint (SlotNo ebSlot) ebHash) ibs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosTxCacheEbBody"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "txsInEb" .= ibsTxsInEb ibs
+      , "tracked" .= ibsTracked ibs
+      , "acquired" .= ibsAcquired ibs
+      , "validated" .= ibsValidated ibs
+      , "cacheTxCount" .= ibsCacheTxCount ibs
+      , "cacheLoad" .= ibsCacheLoad ibs
       ]
   TraceLeiosBlockForged{slot, eb, ebMeasure, mempoolRestMeasure} ->
     mconcat
@@ -1098,7 +1145,8 @@ announcementEquivocationToObject = \case
 announcementSourceText :: AnnouncementSource -> Aeson.Value
 announcementSourceText = \case
   ForgedLocally -> Aeson.String "forgedLocally"
-  ReceivedFromPeer -> Aeson.String "receivedFromPeer"
+  ReceivedViaLeiosNotify -> Aeson.String "receivedViaLeiosNotify"
+  ReceivedViaChainSync -> Aeson.String "receivedViaChainSync"
 
 notVotedReasonText :: LeiosNotVotedReason -> Aeson.Value
 notVotedReasonText = \case

@@ -24,18 +24,16 @@ import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
-import Control.Monad (void, when)
+import Control.Monad (when)
 import Control.Tracer (traceWith)
 import Data.ByteString.Short (fromShort)
 import Data.Maybe (isJust)
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
-import LeiosDemoDb (LeiosDbConnection (..))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
-  , LeiosPoint (..)
   , RbHash (..)
   , TraceLeiosKernel (..)
   , forgeLeiosEb
@@ -73,7 +71,7 @@ forgeShelleyBlock ::
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
   ForgeBlockArgs m (ShelleyBlock proto era) ->
-  m (ShelleyBlock proto era)
+  m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
 forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- Forge an RB and attempt to announce an EB and/or certify a previously announced one:
   --
@@ -85,7 +83,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   --    been rebased onto the post-certificate ledger state.
   mayEbAnn <-
     case Typeable.eqT @era @DijkstraEra of
-      Just Refl -> mkAndStoreEb
+      Just Refl -> mkEb
       Nothing -> pure Nothing
   let rbBody = mkBody fbMayLeiosCert
       actualRbBodySize = SL.blockBodySize protocolVersion rbBody
@@ -122,9 +120,10 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
         traceWith fbLeiosTracer $
           TraceLeiosCertifiedAndAnnounced{atSlot = fbCurrentSlotNo, rbHash = MkRbHash announcingRbHashBytes}
     Nothing -> pure ()
-  return $
-    assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
-      blk
+  return
+    ( assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) blk
+    , fst <$> mayEbAnn
+    )
  where
   protocolVersion = shelleyProtocolVersion $ configBlock fbConfig
 
@@ -154,16 +153,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       . getTipHash
       $ fbCurrentTickedLedgerState
 
-  -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
-  -- announcement to embed in the header. An honest forger only emits an
-  -- EB when it has txs to put in it; empty mempool ⇒ no EB ⇒ no
-  -- announcement (matches the original prototype). Persists the EB into
-  -- 'LeiosDb' before returning, so the closure is available locally
-  -- before the header carrying the announcement is finalised and
-  -- diffused — a peer that fetches our header will be able to pull the
-  -- closure from us in the same round-trip.
-  mkAndStoreEb :: m (Maybe (ForgedLeiosEb, EbAnnouncement))
-  mkAndStoreEb = case nonEmpty (fmap extractTx fbEbTxs) of
+  -- Produce an EB from 'fbEbTxs' and return it together with the announcement
+  -- to embed in the header. An honest forger only emits an EB when it has txs
+  -- to put in it; empty mempool ⇒ no EB ⇒ no announcement (matches the original
+  -- prototype).
+  mkEb :: m (Maybe (ForgedLeiosEb, EbAnnouncement))
+  mkEb = case nonEmpty (fmap extractTx fbEbTxs) of
     Nothing -> pure Nothing
     Just ebTxs -> do
       let forgedEb = forgeLeiosEb fbCurrentSlotNo ebTxs
@@ -174,24 +169,11 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
               { ebAnnouncementHash = ebHash
               , ebAnnouncementSize = ebSize
               }
-          ebPoint =
-            MkLeiosPoint
-              { pointSlotNo = fbCurrentSlotNo
-              , pointEbHash = ebHash
-              }
       traceWith fbLeiosTracer $
         TraceLeiosBlockForged
           { slot = fbCurrentSlotNo
           , eb = forgedEb.body
           , ebMeasure = ByteSize32 ebSize
           , mempoolRestMeasure = ByteSize32 0
-          }
-      leiosDbInsertEbPoint fbLeiosDb ebPoint ebSize
-      void $ leiosDbInsertEbBody fbLeiosDb ebPoint forgedEb.body
-      void $ leiosDbInsertTxs fbLeiosDb forgedEb.txClosure
-      traceWith fbLeiosTracer $
-        TraceLeiosBlockStored
-          { slot = fbCurrentSlotNo
-          , eb = forgedEb.body
           }
       pure (Just (forgedEb, ebAnn))

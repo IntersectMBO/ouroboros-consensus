@@ -27,6 +27,9 @@ import qualified Test.LeiosDemoDb (tests)
 import qualified Test.LeiosDemoLogic (tests)
 import qualified Test.LeiosDemoLogic.Announcements (tests)
 import qualified Test.LeiosDemoTypes (tests)
+import qualified Test.LeiosTxCache.Optimized (tests)
+import qualified Test.LeiosTxCache.Optimized.MutableHashTable (tests)
+import qualified Test.LeiosTxCache.Reference (tests)
 import qualified Test.LeiosUtils.CallTrace (tests)
 import qualified Test.LeiosVoteState (tests)
 import Test.Tasty
@@ -84,6 +87,9 @@ tests =
         , Test.LeiosDemoDb.tests
         , Test.LeiosDemoLogic.tests
         , Test.LeiosDemoLogic.Announcements.tests
+        , Test.LeiosTxCache.Optimized.tests
+        , Test.LeiosTxCache.Optimized.MutableHashTable.tests
+        , Test.LeiosTxCache.Reference.tests
         , Test.LeiosVoteState.tests
         , Test.LeiosUtils.CallTrace.tests
         ]

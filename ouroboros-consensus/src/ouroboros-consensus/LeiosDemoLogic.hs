@@ -19,11 +19,11 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Monad (forM_, when)
+import Control.Monad (foldM, forM_, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
-import Control.Tracer (Tracer, traceWith)
+import Control.Tracer (Tracer, contramap, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.DList (DList)
@@ -35,6 +35,7 @@ import qualified Data.IntSet as IntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -76,6 +77,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , LeiosTx (..)
   , PeerId (..)
+  , SerializedEbBody
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   , TxHash (..)
@@ -83,14 +85,20 @@ import LeiosDemoTypes
   , hashLeiosTx
   , leiosEbBytesSize
   , maxTxsPerEb
+  , leiosEbTxs
+  , RbHash (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosTxCache (LeiosTxCache (..))
 import Ouroboros.Consensus.Block
   ( BlockProtocol
+  , ConvertRawHash
   , HasHeader
   , Header
   , WithOrigin (NotOrigin)
+  , blockSlot
   , headerHash
+  , toRawHash
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( SystemTime
@@ -112,6 +120,54 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 traceException :: (IOLike m, Exception e) => Tracer m a -> (e -> a) -> m b -> m b
 traceException tracer toTrace action =
   action `catch` \e -> traceWith tracer (toTrace e) >> throwIO e
+
+{-------------------------------------------------------------------------------
+  Shadow LeiosTxCache wiring
+
+  The 'LeiosTxCache' handle is maintained (announcements, bodies, and txs inserted
+  at the same sites as the LeiosDb) but not yet consulted, so it changes no
+  observable behavior. The node's handle is
+  @'LeiosTxCache' m () () 'SerializedEbBody'@: only presence (@()@) is recorded
+  per tx, and the serialized body is the @b@.
+-------------------------------------------------------------------------------}
+
+-- | Insert an EB announcement into the tx-cache index, keyed by the announced
+-- slot, the announcing RB header's hash, and the announced EB hash. Evicted
+-- bodies\/txs are discarded; they can be useful for debugging/etc.
+recordAnnouncementInTxCache ::
+  forall blk m.
+  (ConvertRawHash blk, HasHeader (Header blk), IOLike m) =>
+  LeiosTxCache m () () SerializedEbBody ->
+  AnnouncingHeader blk ->
+  LeiosPoint ->
+  m ()
+recordAnnouncementInTxCache txCache ancHdr point =
+  void $ txCache.insertAnnouncement point.pointSlotNo rbh point.pointEbHash
+ where
+  rbh = MkRbHash (toRawHash (Proxy @blk) (headerHash (ancHeader ancHdr)))
+
+-- | Register a locally-forged EB in the tx-cache: its announcement, its
+-- body, and each of its txs as already-applied (the forger drew them from its
+-- validated mempool, so they are known-valid). This mirrors the receive side,
+-- which splits the same inserts between announcement handling
+-- ('recordAnnouncementInTxCache') and body acquisition. The applied-tagging must
+-- follow 'insertBody', which creates the per-tx entries that the tagging upgrades.
+recordForgedEbAndClosureInTxCache ::
+  Monad m =>
+  Tracer m TraceLeiosKernel ->
+  LeiosTxCache m () () SerializedEbBody ->
+  RbHash ->
+  Leios.ForgedLeiosEb ->
+  m ()
+recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
+  _ <- txCache.insertAnnouncement point.pointSlotNo rbh point.pointEbHash
+  mSummary <- txCache.insertBody point.pointEbHash (Leios.serializeEbBody eb)
+  forM_ mSummary $ traceWith tracer . TraceLeiosTxCacheEbBody point
+  withLockedInsertAppliedTx txCache $ \w0 step ->
+    foldM (\w (txh, _sz) -> step w txh ()) w0 (leiosEbTxs eb)
+ where
+  point = forgedEb.point
+  eb = forgedEb.body
 
 -----
 
@@ -560,6 +616,7 @@ nextLeiosFetchClientCommand ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
+  LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
   PeerId pid ->
   StrictTVar m (Seq LeiosFetchRequest) ->
@@ -573,7 +630,7 @@ nextLeiosFetchClientCommand ::
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar responseQ = do
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db peerId reqsVar responseQ = do
   drainResponses
   StrictSTM.atomically checkOrPeek >>= \case
     Right result -> pure $ Right result
@@ -585,9 +642,9 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar 
     pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
     forM_ pending $ \case
       PendingBlockResponse req eb ->
-        msgLeiosBlock ktracer tracer kernelVars db peerId req eb
+        msgLeiosBlock ktracer tracer kernelVars txCache db peerId req eb
       PendingBlockTxsResponse req txs ->
-        msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
+        msgLeiosBlockTxs ktracer tracer kernelVars txCache db peerId req txs
 
   -- Non-blocking: return 'Right result' if stop or a request is available,
   -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
@@ -655,12 +712,13 @@ msgLeiosBlock ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
+  LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
   PeerId pid ->
   LeiosBlockRequest ->
   LeiosEb ->
   m ()
-msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
+msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb = do
   -- validate it
   let MkLeiosBlockRequest point ebBytesSize = req
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
@@ -693,6 +751,8 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         traceWith ktracer $ TraceLeiosBlockPointMissing point
         leiosDbInsertEbPoint db point ebBytesSize
         completedByBody <- leiosDbInsertEbBody db point eb
+        mSummary <- txCache.insertBody ebHash (Leios.serializeEbBody eb)
+        forM_ mSummary $ traceWith ktracer . TraceLeiosTxCacheEbBody point
         traceWith ktracer $ TraceLeiosBlockAcquired point
         forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
     -- update NodeKernel state
@@ -831,12 +891,13 @@ msgLeiosBlockTxs ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
+  LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
   PeerId pid ->
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->
   m ()
-msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = do
+msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
   -- TODO: could validate the returned point + bitmaps too (added to response recently)
@@ -864,6 +925,10 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
   traceException tracer TraceLeiosPeerDbException $ do
     completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
     forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+    -- crucially: add the txs to the TxCacheIndex _after_ they've been written
+    -- to the LeiosDb, since it's currently what the TxCacheIndex is indexing
+    withLockedInsertUnappliedTx txCache $ \z step ->
+      foldM (\acc txh -> step acc txh ()) z txHashes
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let (requestedTxPeers', reverseEbIndexByTx', txsBytesSize) =
@@ -928,7 +993,7 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
 -- peer as offering both the body and its txs, then wake the fetch logic. (The
 -- block-aware decision of /whether/ to call this — recognising the CertRB,
 -- extracting its announcement, and waiting for the peer's LeiosNotify vars to
--- register — stays in the ChainSync client's @leiosCertRbCallback@.)
+-- register — stays in 'checkMsgRollForwardForLeiosOffers'.)
 leiosCertRbOffer ::
   IOLike m =>
   ( MVar m (LeiosOutstanding pid)
@@ -960,16 +1025,13 @@ leiosCertRbOffer (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
 
 -----
 
--- | When a CertRB header arrives via ChainSync, update this peer's LeiosFetch
--- state as if its LeiosNotify client had offered the EB that the CertRB
--- certifies. The block-aware entry point: recognise the CertRB
--- ('headerContainsLeiosCert') and read the EB it certifies — the announcement
--- still recorded in the predecessor's chain-dep state, which the CertRB's own
--- transition would overwrite ('chainDepStateLeiosAnnouncement'). A no-op when
--- the header is not a CertRB or no announcement is recorded; otherwise the
--- LeiosFetch-side effect is recorded via 'leiosCertRbOffer' against the peer's
--- (already-resolved) LeiosNotify vars.
-leiosCertRbCallback ::
+-- | The offer-side handling of a 'MsgRollForward': when the header is a CertRB
+-- ('headerContainsLeiosCert'), record this peer as offering the EB it certifies
+-- (via 'leiosCertRbOffer'), reading that EB from the predecessor's chain-dep
+-- state ('chainDepStateLeiosAnnouncement'), which the CertRB's own transition
+-- would overwrite. A no-op otherwise. The announcement-side handling of the same
+-- header is separate; see the ChainSync client's 'leiosMsgRollForwardCallback'.
+checkMsgRollForwardForLeiosOffers ::
   forall blk pid m.
   (IOLike m, ResolveLeiosBlock blk) =>
   ( MVar m (LeiosOutstanding pid)
@@ -979,7 +1041,7 @@ leiosCertRbCallback ::
   Header blk ->
   ChainDepState (BlockProtocol blk) ->
   m ()
-leiosCertRbCallback kernelVars peerVars hdr cds =
+checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
       leiosCertRbOffer kernelVars peerVars announcement
@@ -1017,6 +1079,54 @@ mkAnnouncingHeader h =
 -- | The election of an 'AnnouncingHeader'.
 ancElId :: AnnouncingHeader blk -> ElId
 ancElId = announcementElection . ancAnnouncementFields
+
+-- | The central-state handling shared by an incoming LeiosNotify
+-- 'MsgLeiosBlockAnnouncement' and a ChainSync 'MsgRollForward' that announces an
+-- EB: run 'Announcements.onAnnouncementCentral' (relay + dedup) and, for a
+-- genuinely new announcement, record the EB as awaited ('recordAnnouncedEb') and
+-- in the tx-cache ('recordAnnouncementInTxCache'). Central-only: no per-peer
+-- state is touched.
+processAnnouncementCentrally ::
+  forall blk peer pid m.
+  (IOLike m, ConvertRawHash blk, HasHeader (Header blk), Ord peer) =>
+  Tracer m TraceLeiosKernel ->
+  MVar m (Announcements.CentralState m peer (AnnouncingHeader blk)) ->
+  (MVar m (LeiosOutstanding pid), MVar m ()) ->
+  LeiosTxCache m () () SerializedEbBody ->
+  Maybe peer ->
+  AnnouncementSource ->
+  Announcements.ShouldRelay ->
+  Maybe NominalDiffTime ->
+  AnnouncingHeader blk ->
+  m ()
+processAnnouncementCentrally
+  kernelTracer
+  centralVar
+  kernelVars
+  txCache
+  source
+  provenance
+  shouldRelay
+  age
+  ancHdr =
+    MVar.modifyMVar_ centralVar $ \cst ->
+      Announcements.onAnnouncementCentral
+        (contramap (traceNewAnnouncement provenance) kernelTracer)
+        ancElId
+        ( \_elSt -> do
+            recordAnnouncedEb kernelVars (point, Leios.announcementEbBodySize fields)
+            recordAnnouncementInTxCache txCache ancHdr point
+        )
+        cst
+        source
+        shouldRelay
+        age
+        ancHdr
+ where
+  fields = ancAnnouncementFields ancHdr
+  -- The announced EB's slot is the announcing header's own slot (see
+  -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
+  point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
@@ -1159,17 +1269,16 @@ tracePeerAnnouncement (Announcements.TracePeerAnnouncement elSt) =
    in TraceLeiosPeerAnnouncement equivocation fields
 
 -- | Render an 'Announcements' node-wide announcement event as a
--- 'TraceLeiosKernel'.
+-- 'TraceLeiosKernel'. The 'AnnouncementSource' is supplied by the caller (only
+-- it knows which path delivered the announcement); the event's own @mbPeer@
+-- cannot distinguish LeiosNotify from ChainSync, as both carry a peer.
 traceNewAnnouncement ::
+  AnnouncementSource ->
   Announcements.TraceLeiosNotifyEvent peer (AnnouncingHeader blk) ->
   TraceLeiosKernel
-traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt age) =
+traceNewAnnouncement source (Announcements.TraceNewAnnouncement _mbPeer _elId elSt age) =
   let (equivocation, fields) = announcementTraceFields elSt
-   in TraceLeiosAnnouncementAccepted
-        (maybe ForgedLocally (const ReceivedFromPeer) mbPeer)
-        equivocation
-        fields
-        age
+   in TraceLeiosAnnouncementAccepted source equivocation fields age
 
 -- | Do not relay (to downstream peers) an announcement whose slot's wall-clock
 -- onset is older than this. See 'Announcements.ShouldRelay'.

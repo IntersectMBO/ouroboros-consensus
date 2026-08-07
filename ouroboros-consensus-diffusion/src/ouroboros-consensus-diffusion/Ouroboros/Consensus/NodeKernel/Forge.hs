@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -27,11 +28,16 @@ import Data.Proxy
 import LeiosDemoDb
   ( LeiosDbConnection (..)
   )
+import LeiosDemoLogic (recordForgedEbAndClosureInTxCache)
 import LeiosDemoTypes
   ( LeiosCert
+  , RbHash (MkRbHash)
+  , SerializedEbBody
   , TraceLeiosKernel (..)
+  , leiosEbBytesSize
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosTxCache (LeiosTxCache)
 import LeiosUtils.CallTrace
   ( CallCtx
   , CallName
@@ -97,13 +103,14 @@ forge ::
   LeiosVoteState m ->
   BlockForging m blk ->
   LeiosDbConnection m ->
+  LeiosTxCache m () () SerializedEbBody ->
   -- | Invoked with the freshly-forged block's header, after forging and
   -- /before/ adoption, so the caller can act on the new block (e.g. concurrently
   -- announce its EB) without adoption gating it.
   (Header blk -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn afterForge currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn leiosTxCache afterForge currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -235,7 +242,6 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
               , Block.fbIsLeader = proof
               , Block.fbChainDepState = Just (headerStateChainDep (headerState unticked))
               , Block.fbMayLeiosCert = fst <$> mayLeiosCertAndAnnouncement
-              , Block.fbLeiosDb = leiosConn
               , Block.fbLeiosTracer = leiosTracer
               , Block.fbLeiosVoteState = leiosVoteState
               }
@@ -244,8 +250,8 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
           , rbTxsSize
           )
 
-  -- Actually produce the block
-  newBlock <-
+  -- Actually produce the block (and the EB it announces, if any)
+  (newBlock, mForgedEb) <-
     forgeTrace'Via
       (const ())
       "forge-block"
@@ -262,8 +268,28 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       rbTxsSize
 
   -- Hand the freshly-forged block's header to the caller before adoption, so it
-  -- can act on it (e.g. concurrently announce its EB) without adoption gating it.
+  -- can act on it (e.g. relay its EB announcement) without adoption gating it.
   lift $ afterForge (getHeader newBlock)
+
+  -- Persist the forged EB, but only /after/ 'afterForge' has relayed the
+  -- announcement: writing the body to the LeiosDb ('leiosDbInsertEbBody') is
+  -- what makes the EB offerable to peers, so deferring it past the relay
+  -- guarantees a downstream peer never receives the body offer before the
+  -- announcement.
+  --
+  -- Also register the body in the LeiosTxCache.
+  lift $ forM_ mForgedEb $ \forgedEb -> do
+    let ebPoint = forgedEb.point
+        ebSize = leiosEbBytesSize forgedEb.body
+    leiosDbInsertEbPoint leiosConn ebPoint ebSize
+    void $ leiosDbInsertEbBody leiosConn ebPoint forgedEb.body
+    void $ leiosDbInsertTxs leiosConn forgedEb.txClosure
+    traceWith leiosTracer $ TraceLeiosBlockStored{slot = currentSlot, eb = forgedEb.body}
+    recordForgedEbAndClosureInTxCache
+      leiosTracer
+      leiosTxCache
+      (MkRbHash (toRawHash (Proxy @blk) (blockHash newBlock)))
+      forgedEb
 
   forgeTrace'Via
     (const ())
