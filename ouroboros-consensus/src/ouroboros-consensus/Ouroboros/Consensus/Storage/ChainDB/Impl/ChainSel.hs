@@ -353,7 +353,14 @@ chainSelSync ::
   ChainSelMessage m blk ->
   Electric m ()
 chainSelSync cdb _cctx (ChainSelReprocessLoEBlocks varProcessed) = chainSelReprocessLoEBlocks cdb varProcessed
-chainSelSync cdb _cctx (ChainSelReprocessLeiosEb ebHash) = chainSelReprocessLeiosEb cdb ebHash
+chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLeiosEb ebHash) =
+  callTraceSameThreadVia
+    id
+    (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
+    cctx
+    "chain-sel-reprocess-leios-eb"
+    (show ebHash)
+    (\_ -> chainSelReprocessLeiosEb cdb ebHash)
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddBlock bta) =
   callTraceSameThreadVia
     id
