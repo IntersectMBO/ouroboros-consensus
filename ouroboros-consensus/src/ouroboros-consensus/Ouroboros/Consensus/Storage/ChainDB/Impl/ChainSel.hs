@@ -55,6 +55,10 @@ import LeiosDemoTypes
   , acquiredLeiosEbsSetMember
   , pointEbHash
   )
+import LeiosUtils.CallTrace
+  ( CallCtx
+  , SomeJsonCallTrace (SomeJsonCallTrace)
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
@@ -345,12 +349,20 @@ chainSelSync ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   ChainSelMessage m blk ->
   Electric m ()
-chainSelSync cdb (ChainSelReprocessLoEBlocks varProcessed) = chainSelReprocessLoEBlocks cdb varProcessed
-chainSelSync cdb (ChainSelReprocessLeiosEb ebHash) = chainSelReprocessLeiosEb cdb ebHash
-chainSelSync cdb (ChainSelAddBlock blockToAdd) = chainSelAddBlock cdb blockToAdd
-chainSelSync cdb (ChainSelAddPerasCert cert varProcessed) = chainSelAddPerasCert cdb cert varProcessed
+chainSelSync cdb _cctx (ChainSelReprocessLoEBlocks varProcessed) = chainSelReprocessLoEBlocks cdb varProcessed
+chainSelSync cdb _cctx (ChainSelReprocessLeiosEb ebHash) = chainSelReprocessLeiosEb cdb ebHash
+chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddBlock bta) =
+  callTraceSameThreadVia
+    id
+    (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
+    cctx
+    "chain-sel-add-block"
+    (show $ blockHash $ blockToAdd bta)
+    (\childCCtx -> chainSelAddBlock cdb childCCtx bta)
+chainSelSync cdb _cctx (ChainSelAddPerasCert cert varProcessed) = chainSelAddPerasCert cdb cert varProcessed
 
 -- | Add a block to the ChainDB.
 --
@@ -369,9 +381,10 @@ chainSelAddBlock ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   BlockToAdd m blk ->
   Electric m ()
-chainSelAddBlock cdb@CDB{..} BlockToAdd{blockToAdd = b, ..} = do
+chainSelAddBlock cdb@CDB{..} _cctx BlockToAdd{blockToAdd = b, ..} = do
   (isMember, invalid, curChain) <-
     lift $
       atomically $
