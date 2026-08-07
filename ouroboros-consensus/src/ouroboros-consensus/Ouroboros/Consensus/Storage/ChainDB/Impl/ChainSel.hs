@@ -454,65 +454,7 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLeiosEb ebHash) = lift $ do
           switchTo cdb weights Nothing
     Nothing -> pure ()
 chainSelSync cdb (ChainSelAddBlock blockToAdd) = chainSelAddBlock cdb blockToAdd
--- Process a Peras certificate by adding it to the PerasCertDB and potentially
--- performing chain selection if a candidate is now better than our selection.
-chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
-  curChain <- lift $ atomically $ Query.getCurrentChain cdb
-  let immTip = AF.castAnchor $ AF.anchor curChain
-
-  withEarlyExit_ $ do
-    -- Ignore the certificate if it boosts a block that is so old that it can't
-    -- influence our selection.
-    when (pointSlot boostedBlock < AF.anchorToSlotNo immTip) $ do
-      lift $ lift $ traceWith tracer $ IgnorePerasCertTooOld certRound boostedBlock immTip
-      exitEarly
-
-    -- Add the certificate to the PerasCertDB.
-    lift (lift $ PerasCertDB.addCert cdbPerasCertDB cert) >>= \case
-      PerasCertDB.AddedPerasCertToDB -> pure ()
-      -- If it already is in the PerasCertDB, we are done.
-      PerasCertDB.PerasCertAlreadyInDB -> exitEarly
-
-    -- If the certificate boosts a block on our current chain (including the
-    -- anchor), then it just makes our selection even stronger.
-    when (AF.withinFragmentBounds (castPoint boostedBlock) curChain) $ do
-      lift $ lift $ traceWith tracer $ PerasCertBoostsCurrentChain certRound boostedBlock
-      exitEarly
-
-    boostedHash <- case pointHash boostedBlock of
-      -- If the certificate boosts the Genesis point, then it can not influence
-      -- chain selection as all chains contain it.
-      GenesisHash -> do
-        lift $ lift $ traceWith tracer $ PerasCertBoostsGenesis certRound
-        exitEarly
-      -- Otherwise, the certificate boosts a block potentially on a (future)
-      -- candidate.
-      BlockHash boostedHash -> pure boostedHash
-    boostedHdr <-
-      lift (lift $ VolatileDB.getBlockComponent cdbVolatileDB GetHeader boostedHash) >>= \case
-        -- If we have not (yet) received the boosted block, we don't need to do
-        -- anything further for now regarding chain selection. Once we receive
-        -- it, the additional weight of the certificate is taken into account.
-        Nothing -> do
-          lift $ lift $ traceWith tracer $ PerasCertBoostsBlockNotYetReceived certRound boostedBlock
-          exitEarly
-        Just boostedHdr -> pure boostedHdr
-
-    -- Trigger chain selection for the boosted block.
-    lift $ lift $ traceWith tracer $ ChainSelectionForBoostedBlock certRound boostedBlock
-    lift $ chainSelectionForBlock cdb BlockCache.empty boostedHdr noPunishment
-
-  -- Deliver promise indicating that we processed the cert.
-  lift $ atomically $ putTMVar varProcessed ()
- where
-  tracer :: Tracer m (TraceAddPerasCertEvent blk)
-  tracer = TraceAddPerasCertEvent >$< cdbTracer
-
-  certRound :: PerasRoundNo
-  certRound = getPerasCertRound cert
-
-  boostedBlock :: Point blk
-  boostedBlock = getPerasCertBoostedBlock cert
+chainSelSync cdb (ChainSelAddPerasCert cert varProcessed) = chainSelAddPerasCert cdb cert varProcessed
 
 chainSelAddBlock ::
   forall m blk.
@@ -592,6 +534,79 @@ chainSelAddBlock cdb@CDB{..} BlockToAdd{blockToAdd = b, ..} = do
   deliverProcessed tip =
     atomically $
       putTMVar varBlockProcessed (SuccesfullyAddedBlock tip)
+
+-- Process a Peras certificate by adding it to the PerasCertDB and potentially
+-- performing chain selection if a candidate is now better than our selection.
+chainSelAddPerasCert ::
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , HasCallStack
+  ) =>
+  ChainDbEnv m blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
+  StrictTMVar m () ->
+  Electric m ()
+chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
+  curChain <- lift $ atomically $ Query.getCurrentChain cdb
+  let immTip = AF.castAnchor $ AF.anchor curChain
+
+  withEarlyExit_ $ do
+    -- Ignore the certificate if it boosts a block that is so old that it can't
+    -- influence our selection.
+    when (pointSlot boostedBlock < AF.anchorToSlotNo immTip) $ do
+      lift $ lift $ traceWith tracer $ IgnorePerasCertTooOld certRound boostedBlock immTip
+      exitEarly
+
+    -- Add the certificate to the PerasCertDB.
+    lift (lift $ PerasCertDB.addCert cdbPerasCertDB cert) >>= \case
+      PerasCertDB.AddedPerasCertToDB -> pure ()
+      -- If it already is in the PerasCertDB, we are done.
+      PerasCertDB.PerasCertAlreadyInDB -> exitEarly
+
+    -- If the certificate boosts a block on our current chain (including the
+    -- anchor), then it just makes our selection even stronger.
+    when (AF.withinFragmentBounds (castPoint boostedBlock) curChain) $ do
+      lift $ lift $ traceWith tracer $ PerasCertBoostsCurrentChain certRound boostedBlock
+      exitEarly
+
+    boostedHash <- case pointHash boostedBlock of
+      -- If the certificate boosts the Genesis point, then it can not influence
+      -- chain selection as all chains contain it.
+      GenesisHash -> do
+        lift $ lift $ traceWith tracer $ PerasCertBoostsGenesis certRound
+        exitEarly
+      -- Otherwise, the certificate boosts a block potentially on a (future)
+      -- candidate.
+      BlockHash boostedHash -> pure boostedHash
+    boostedHdr <-
+      lift (lift $ VolatileDB.getBlockComponent cdbVolatileDB GetHeader boostedHash) >>= \case
+        -- If we have not (yet) received the boosted block, we don't need to do
+        -- anything further for now regarding chain selection. Once we receive
+        -- it, the additional weight of the certificate is taken into account.
+        Nothing -> do
+          lift $ lift $ traceWith tracer $ PerasCertBoostsBlockNotYetReceived certRound boostedBlock
+          exitEarly
+        Just boostedHdr -> pure boostedHdr
+
+    -- Trigger chain selection for the boosted block.
+    lift $ lift $ traceWith tracer $ ChainSelectionForBoostedBlock certRound boostedBlock
+    lift $ chainSelectionForBlock cdb BlockCache.empty boostedHdr noPunishment
+
+  -- Deliver promise indicating that we processed the cert.
+  lift $ atomically $ putTMVar varProcessed ()
+ where
+  tracer :: Tracer m (TraceAddPerasCertEvent blk)
+  tracer = TraceAddPerasCertEvent >$< cdbTracer
+
+  certRound :: PerasRoundNo
+  certRound = getPerasCertRound cert
+
+  boostedBlock :: Point blk
+  boostedBlock = getPerasCertBoostedBlock cert
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain
