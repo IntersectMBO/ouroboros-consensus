@@ -44,6 +44,9 @@ hsPkgs.shellFor {
 
   shellHook = ''
     export LANG="en_US.UTF-8"
+    # Put the repo's helper scripts on PATH, so they run by name.
+    repoRoot="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+    export PATH="$repoRoot/ouroboros-consensus-cardano/scripts:$PATH"
   '' + lib.optionalString
     (pkgs.glibcLocales != null && pkgs.stdenv.hostPlatform.libc == "glibc") ''
     export LOCALE_ARCHIVE="${pkgs.glibcLocales}/lib/locale/locale-archive"

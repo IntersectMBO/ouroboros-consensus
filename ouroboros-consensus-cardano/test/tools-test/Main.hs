@@ -71,6 +71,9 @@ testAnalyserConfig =
     , validation = Just ValidateAllBlocks
     , analysis = CountBlocks
     , confLimit = Unlimited
+    , -- The synthesized chain holds no certifying block, so the empty
+      -- in-memory LeiosDb stub is enough.
+      leiosDbPath = Nothing
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
