@@ -21,7 +21,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
-import LeiosDemoDb (newLeiosDBInMemory)
+import LeiosDemoDb (newLeiosDBInMemory, newLeiosDBSQLite, withLeiosDb)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -151,7 +151,12 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
-    leiosDbHandle <- newLeiosDBInMemory
+    -- Open the SQLite LeiosDb when a path was given, so cert-RB
+    -- closures can be resolved during replay; otherwise keep the empty
+    -- in-memory stub (correct for pre-Leios chains, which have no cert-RBs).
+    leiosDbHandle <- case leiosDbPath of
+      Nothing -> newLeiosDBInMemory
+      Just path -> newLeiosDBSQLite nullTracer path
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -223,19 +228,24 @@ analyse dbaConfig args =
           Debug.traceMarkerIO "SNAPSHOT_LOADED"
           pure $ FromLedgerState ledgerDB intLedgerDB
 
-      result <-
-        ana
-          AnalysisEnv
-            { cfg
-            , startFrom
-            , db = immutableDB
-            , registry
-            , limit = confLimit
-            , tracer = analysisTracer
-            }
-      tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
-      putStrLn $ "ImmutableDB tip: " ++ show tipPoint
-      pure result
+      -- Open one LeiosDb connection for the whole analysis run: the analysis
+      -- loop is single-threaded, so a single bracketed connection is the right
+      -- lifetime.
+      withLeiosDb leiosDbHandle $ \leiosConn -> do
+        result <-
+          ana
+            AnalysisEnv
+              { cfg
+              , startFrom
+              , db = immutableDB
+              , registry
+              , limit = confLimit
+              , tracer = analysisTracer
+              , leiosDb = leiosConn
+              }
+        tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
+        putStrLn $ "ImmutableDB tip: " ++ show tipPoint
+        pure result
  where
   DBAnalyserConfig
     { analysis
@@ -245,6 +255,7 @@ analyse dbaConfig args =
     , validation
     , verbose
     , ldbBackend
+    , leiosDbPath
     } = dbaConfig
 
   SelectImmutableDB startSlot = selectDB

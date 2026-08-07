@@ -59,6 +59,21 @@ parseDBAnalyserConfig =
             , help "use v2 LSM backend"
             ]
       ]
+    <*> parseLeiosDbPath
+
+-- | Path to the node's SQLite LeiosDb. Optional: omit it for pre-Leios chains.
+parseLeiosDbPath :: Parser (Maybe FilePath)
+parseLeiosDbPath =
+  optional $
+    strOption $
+      mconcat
+        [ long "leios-db"
+        , metavar "PATH"
+        , help $
+            "Path to the node's SQLite LeiosDb (leios.db). Required to replay a "
+              <> "Dijkstra chain with Leios support; (omit for "
+              <> "pre-Leios chains)."
+        ]
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =

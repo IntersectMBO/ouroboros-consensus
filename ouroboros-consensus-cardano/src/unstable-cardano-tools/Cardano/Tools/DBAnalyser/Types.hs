@@ -17,6 +17,10 @@ data DBAnalyserConfig = DBAnalyserConfig
   , analysis :: AnalysisName
   , confLimit :: Limit
   , ldbBackend :: LedgerDBBackend
+  , leiosDbPath :: Maybe FilePath
+  -- ^ Path to the node's SQLite LeiosDb (@leios.db@). 'Nothing' keeps the
+  -- empty in-memory stub, which is correct for pre-Leios chains (no cert-RBs
+  -- to resolve).
   }
 
 data AnalysisName
