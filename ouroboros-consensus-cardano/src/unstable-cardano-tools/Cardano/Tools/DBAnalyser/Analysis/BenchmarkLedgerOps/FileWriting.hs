@@ -107,6 +107,8 @@ dataPointCsvBuilder =
   , ("totalTime", decimal . DP.totalTime)
   , ("mut", decimal . DP.mut)
   , ("gc", decimal . DP.gc)
+  , ("tableReadTime", decimal . DP.tableReadTime)
+  , ("mut_tableRead", decimal . DP.mut_tableRead)
   , ("majGcCount", decimal . DP.majGcCount)
   , ("minGcCount", decimal . DP.minGcCount)
   , ("allocatedBytes", decimal . DP.allocatedBytes)
