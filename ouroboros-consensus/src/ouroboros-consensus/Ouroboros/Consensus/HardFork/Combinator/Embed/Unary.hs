@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -68,6 +69,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
@@ -361,14 +363,32 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ project $ Flip ledgerState
         , headerState = project headerState
+        , perasEpochContextResolver = projectPerasEpochContextResolver perasEpochContextResolver
+        , latestPerasCertOnChainRound = latestPerasCertOnChainRound
         }
+   where
+    projectPerasEpochContextResolver = \case
+      PerasEpochContextResolverError err ->
+        PerasEpochContextResolverError err
+      PerasEpochContextResolver hfcCurrentBoundedContext hfcPrevBoundedContext ->
+        let currentBoundedContext = fromZ . projectHFCBoundedPerasEpochContext <$> hfcCurrentBoundedContext
+            prevBoundedContext = fromZ . projectHFCBoundedPerasEpochContext <$> hfcPrevBoundedContext
+         in PerasEpochContextResolver currentBoundedContext prevBoundedContext
+
+    fromZ :: NS f '[a] -> f a
+    fromZ (Z x) = x
 
   inject (Flip ExtLedgerState{..}) =
     Flip $
       ExtLedgerState
         { ledgerState = unFlip $ inject $ Flip ledgerState
         , headerState = inject headerState
+        , perasEpochContextResolver = injectHFCPerasEpochContextResolver . toZ $ perasEpochContextResolver
+        , latestPerasCertOnChainRound = latestPerasCertOnChainRound
         }
+   where
+    toZ :: f a -> NS f '[a]
+    toZ x = Z x
 
 instance Isomorphic AnnTip where
   project :: forall blk. NoHardForks blk => AnnTip (HardForkBlock '[blk]) -> AnnTip blk
@@ -459,17 +479,21 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
+      , forgeBlock = \cfg bno sno mbPerasCert tickedLgrSt txs isLeader ->
           project' (Proxy @(I blk))
             <$> forgeBlock
               (inject cfg)
               bno
               sno
+              (injectPerasCert mbPerasCert)
               (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
               (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
       }
    where
+    injectPerasCert :: Maybe (PerasCert blk) -> Maybe (PerasCert (HardForkBlock '[blk]))
+    injectPerasCert = fmap (OneEraPerasCert . Z . WrapPerasCert)
+
     injTickedChainDepSt ::
       EpochInfo (Except PastHorizonException) ->
       Ticked (ChainDepState (BlockProtocol blk)) ->
@@ -505,17 +529,21 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
+      , forgeBlock = \cfg bno sno mbPerasCert tickedLgrSt txs isLeader ->
           inject' (Proxy @(I blk))
             <$> forgeBlock
               (project cfg)
               bno
               sno
+              (projectPerasCert mbPerasCert)
               (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
               (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
       }
    where
+    projectPerasCert :: Maybe (PerasCert (HardForkBlock '[blk])) -> Maybe (PerasCert blk)
+    projectPerasCert = fmap (unwrapPerasCert . unZ . getOneEraPerasCert)
+
     projTickedChainDepSt ::
       Ticked (ChainDepState (HardForkProtocol '[blk])) ->
       Ticked (ChainDepState (BlockProtocol blk))

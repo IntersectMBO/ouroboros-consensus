@@ -18,7 +18,6 @@ import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Cardano.Slotting.EpochInfo
 import Control.Monad (replicateM)
 import Data.Coerce (coerce)
-import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -225,7 +224,6 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> pure (LedgerTables EmptyMK)
-      <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
@@ -237,7 +235,6 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> (LedgerTables . ValuesMK <$> arbitrary)
-      <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
 
 deriving newtype instance Arbitrary BigEndianTxIn
 

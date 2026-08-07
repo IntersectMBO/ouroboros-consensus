@@ -231,6 +231,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
           cfg
           bcBlockNo
           currentSlot
+          Nothing -- [TODO PERAS CERT INCLUSION] determine whether we need this
           (forgetLedgerTables tickedLedgerState)
           txs
           proof

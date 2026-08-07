@@ -12,7 +12,7 @@ module Test.Ouroboros.Storage.PerasVoteDB.StateMachine
 
     -- * Reusable generators
   , genPerasSeatIndex
-  , genVoteStake
+  , genVoteWeight
   ) where
 
 import Control.Concurrent.Class.MonadSTM (MonadSTM (..))
@@ -36,23 +36,24 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( BlockSupportsPeras (..)
-  , HasPerasVoteBlock (..)
-  , HasPerasVoteRound (..)
+  ( IsPerasVote (..)
+  , PerasEpochContext (..)
+  , PerasParams
   , PerasRoundNo (..)
   , PerasSeatIndex (..)
-  , PerasVote' (..)
   , PerasVoteId
-  , PerasVoteStake (..)
   , PerasVoteTarget (..)
   , ValidatedPerasCert
   , ValidatedPerasVote (..)
+  , VoteWeight (..)
   , defaultPerasParams
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Context (mockPerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
@@ -85,7 +86,11 @@ import Test.QuickCheck.StateModel
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
-import Test.Util.TestBlock (TestBlock, TestHash (..))
+import Test.Util.Peras (genMockPerasVotingCommittee)
+import Test.Util.TestBlock
+  ( TestBlock
+  , TestHash (..)
+  )
 import Test.Util.TestEnv (adjustQuickCheckMaxSize, adjustQuickCheckTests)
 
 tests :: TestTree
@@ -98,8 +103,8 @@ tests =
             prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = defaultPerasParams
+perasTestParams :: PerasParams blk
+perasTestParams = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = monadic runActualImplemMonad resultAsPropertyM
@@ -129,6 +134,7 @@ newtype Model = Model (Model.Model TestBlock)
 instance StateModel Model where
   data Action Model a where
     CreateDB ::
+      PerasEpochContext TestBlock ->
       Action Model ()
     AddVote ::
       WithArrivalTime (ValidatedPerasVote TestBlock) ->
@@ -168,24 +174,31 @@ instance StateModel Model where
           ]
    where
     genCreateDB = do
-      pure CreateDB
+      committee <- genMockPerasVotingCommittee
+      let params = perasTestParams
+      pure $
+        CreateDB $
+          PerasEpochContext
+            { pecCommittee = committee
+            , pecParams = params
+            }
 
     genAddVote = do
       roundNo <- genRoundNo
       point <- genPoint
       seatIndex <- genPerasSeatIndex
-      stake <- genVoteStake
+      weight <- genVoteWeight
       now <- genRelativeTime
       let voteWithTime =
             WithArrivalTime now $
               ValidatedPerasVote
                 { vpvVote =
-                    PerasVote
-                      { pvVoteRound = roundNo
-                      , pvVoteBlock = point
-                      , pvVoteVoterId = seatIndex
+                    MockPerasVote
+                      { mockVoteRound = roundNo
+                      , mockVoteBlock = point
+                      , mockVoteSeatIndex = seatIndex
                       }
-                , vpvVoteStake = stake
+                , vpvVoteWeight = weight
                 }
       return (AddVote voteWithTime)
 
@@ -228,11 +241,11 @@ instance StateModel Model where
       pure (RelativeTime time)
 
   initialState =
-    Model (Model.initModel perasTestCfg)
+    Model (Model.initModel perasTestParams)
 
   nextState (Model m) action _ =
     case action of
-      CreateDB -> Model $ Model.openDB m
+      CreateDB _context -> Model $ Model.openDB m
       AddVote vote -> Model $ snd $ Model.addVote vote m
       GetVoteIds -> Model $ m
       GetVotesAfter _ -> Model $ m
@@ -241,7 +254,7 @@ instance StateModel Model where
 
   precondition (Model m) action =
     case action of
-      CreateDB -> not (Model.open m)
+      CreateDB _context -> not (Model.open m)
       AddVote _ -> Model.open m
       GetVoteIds -> Model.open m
       GetVotesAfter _ -> Model.open m
@@ -257,8 +270,9 @@ instance HasVariables (Action Model a) where
 instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
   perform _ action _ =
     case action of
-      CreateDB -> do
-        let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestCfg
+      CreateDB context -> do
+        resolverHandle <- lift $ mockPerasEpochContextResolverHandle context
+        let args = PerasVoteDB.PerasVoteDbArgs nullTracer resolverHandle
         voteDB <- lift $ PerasVoteDB.createDB args
         put voteDB
       AddVote vote -> do
@@ -353,15 +367,15 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
 genPerasSeatIndex :: Gen PerasSeatIndex
 genPerasSeatIndex = PerasSeatIndex <$> choose (0, 99)
 
--- | Generate a random 'PerasVoteStake'.
+-- | Generate a random 'VoteWeight'.
 --
 -- Make it so that we always require multiple votes to reach a quorum.
 -- This is assuming a quorum threshold strictly larger than 50%, which is
 -- a very conservative assumption for Peras.
-genVoteStake :: Gen PerasVoteStake
-genVoteStake = do
-  stake <- (1 %) <$> choose (2, 10) -- stake between 1/2 and 1/10
-  pure (PerasVoteStake stake)
+genVoteWeight :: Gen VoteWeight
+genVoteWeight = do
+  weight <- (1 %) <$> choose (2, 10) -- weight between 1/2 and 1/10
+  pure (VoteWeight weight)
 
 -- * Helpers
 
@@ -372,6 +386,8 @@ perasVoteDBErrorTag err =
       "MultipleWinnersInRound"
     ForgingCertError{} ->
       "ForgingCertError"
+    EpochContextNotFoundForRound{} ->
+      "EpochContextNotFoundForRound"
 
 addVoteResultTag :: AddPerasVoteResult TestBlock -> String
 addVoteResultTag res =
@@ -400,6 +416,6 @@ votesToReachQuorum model vote res =
       Set.empty
       PerasVoteTarget
         { pvtRoundNo = getPerasVoteRound vote
-        , pvtBlock = getPerasVoteBlock vote
+        , pvtBlock = getPerasVotePoint vote
         }
       (Model.votes model)

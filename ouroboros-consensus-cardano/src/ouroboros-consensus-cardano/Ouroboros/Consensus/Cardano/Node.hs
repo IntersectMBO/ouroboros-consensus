@@ -50,6 +50,7 @@ import Cardano.Binary (DecoderError (..), enforceSize)
 import Cardano.Chain.Slotting (EpochSlots)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Prelude (cborError)
@@ -83,12 +84,34 @@ import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.Cardano.QueryHF ()
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
+  ( ConsensusConfig
+      ( HardForkConsensusConfig
+      , hardForkConsensusConfigK
+      , hardForkConsensusConfigPerEra
+      , hardForkConsensusConfigShape
+      )
+  , HardForkLedgerConfig
+    ( HardForkLedgerConfig
+    , hardForkLedgerConfigPerEra
+    , hardForkLedgerConfigShape
+    )
+  , HasPartialConsensusConfig (PartialConsensusConfig)
+  , HasPartialLedgerConfig (PartialLedgerConfig)
+  , LedgerState (HardForkLedgerState)
+  , NestedCtxt_ (NCS, NCZ)
+  , PerEraConsensusConfig (PerEraConsensusConfig)
+  , PerEraLedgerConfig (PerEraLedgerConfig)
+  , WrapPartialConsensusConfig (WrapPartialConsensusConfig)
+  , WrapPartialLedgerConfig (WrapPartialLedgerConfig)
+  , hardForkBlockForging
+  )
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -863,6 +886,23 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
           :* K (Shelley.shelleyEraParams genesisShelley (Proxy @DijkstraEra))
           :* Nil
 
+  ledgerConfig =
+    HardForkLedgerConfig
+      { hardForkLedgerConfigShape = shape
+      , hardForkLedgerConfigPerEra =
+          PerEraLedgerConfig
+            ( WrapPartialLedgerConfig partialLedgerConfigByron
+                :* WrapPartialLedgerConfig partialLedgerConfigShelley
+                :* WrapPartialLedgerConfig partialLedgerConfigAllegra
+                :* WrapPartialLedgerConfig partialLedgerConfigMary
+                :* WrapPartialLedgerConfig partialLedgerConfigAlonzo
+                :* WrapPartialLedgerConfig partialLedgerConfigBabbage
+                :* WrapPartialLedgerConfig partialLedgerConfigConway
+                :* WrapPartialLedgerConfig partialLedgerConfigDijkstra
+                :* Nil
+            )
+      }
+
   cfg :: TopLevelConfig (CardanoBlock c)
   cfg =
     TopLevelConfig
@@ -884,21 +924,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
                   )
             }
       , topLevelConfigLedger =
-          HardForkLedgerConfig
-            { hardForkLedgerConfigShape = shape
-            , hardForkLedgerConfigPerEra =
-                PerEraLedgerConfig
-                  ( WrapPartialLedgerConfig partialLedgerConfigByron
-                      :* WrapPartialLedgerConfig partialLedgerConfigShelley
-                      :* WrapPartialLedgerConfig partialLedgerConfigAllegra
-                      :* WrapPartialLedgerConfig partialLedgerConfigMary
-                      :* WrapPartialLedgerConfig partialLedgerConfigAlonzo
-                      :* WrapPartialLedgerConfig partialLedgerConfigBabbage
-                      :* WrapPartialLedgerConfig partialLedgerConfigConway
-                      :* WrapPartialLedgerConfig partialLedgerConfigDijkstra
-                      :* Nil
-                  )
-            }
+          ledgerConfig
       , topLevelConfigBlock =
           CardanoBlockConfig
             blockConfigByron
@@ -940,15 +966,25 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   mkInitExtLedgerStateCardano = do
     let HardForkLedgerState st = initLedgerState
     st' <- hsequence' (hap perEraInjections st)
+    let ledgerState = HardForkLedgerState st'
+    let headerState = initHeaderState
+    let perasEpochContextResolver =
+          initPerasEpochContextResolver
+            ledgerConfig
+            (forgetLedgerTables ledgerState)
+            headerState
+    let latestPerasCertOnChainRound = SNothing
     pure
       ExtLedgerState
-        { headerState = initHeaderState
-        , ledgerState = HardForkLedgerState st'
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        , latestPerasCertOnChainRound
         }
    where
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
-    ExtLedgerState initLedgerState initHeaderState =
+    ExtLedgerState initLedgerState initHeaderState _ _ =
       injectInitialExtLedgerState cfg $
         initExtLedgerStateByron
 

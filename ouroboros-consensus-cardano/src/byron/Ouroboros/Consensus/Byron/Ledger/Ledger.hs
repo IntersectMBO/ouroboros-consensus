@@ -56,7 +56,7 @@ import qualified Cardano.Chain.Update.Validation.Endorsement as UPE
 import qualified Cardano.Chain.Update.Validation.Interface as UPI
 import qualified Cardano.Chain.ValidationMode as CC
 import Cardano.Ledger.BaseTypes (unNonZero)
-import Cardano.Ledger.Binary (fromByronCBOR, toByronCBOR)
+import Cardano.Ledger.Binary (ToCBOR (..), fromByronCBOR, toByronCBOR)
 import Cardano.Ledger.Binary.Plain (encodeListLen, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -91,6 +91,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -472,6 +473,7 @@ encodeByronExtLedgerState =
     encodeByronLedgerState
     encodeByronChainDepState
     encodeByronAnnTip
+    toCBOR
 
 encodeByronHeaderState :: HeaderState ByronBlock -> Encoding
 encodeByronHeaderState =
@@ -579,6 +581,16 @@ instance CanUpgradeLedgerTables LedgerState ByronBlock where
   Peras
 -------------------------------------------------------------------------------}
 
+-- | Default instances with no Peras support
 instance LedgerStateSupportsPeras (LedgerState ByronBlock)
 
 instance LedgerStateSupportsPeras (Ticked LedgerState ByronBlock)
+
+-- | Byron does not support Peras, so we use the default (empty) epoch context.
+--
+-- NOTE: this instance lives here rather than in
+-- 'Ouroboros.Consensus.Byron.Node.Peras' because its superclasses require the
+-- 'HasHardForkHistory' and 'LedgerStateSupportsPeras' instances defined in this
+-- module, while 'Byron.Node.Peras' is imported (transitively) by
+-- 'Byron.Ledger.PBFT' and so cannot depend on this module.
+instance StateSupportsPerasEpochContext ByronBlock
