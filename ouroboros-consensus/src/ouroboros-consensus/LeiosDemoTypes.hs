@@ -72,10 +72,9 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
-import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (nubBy, sortOn)
+import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -1149,6 +1148,9 @@ maxTxsPerEb =
   msgOverhead = 1 + 1 -- short list len + small word
   sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
 
+maxEBClosureSize :: ByteSize32
+maxEBClosureSize = ByteSize32 12_000_000
+
 minCertificationGap :: Word64
 minCertificationGap = 10
 
@@ -1156,15 +1158,9 @@ minCertificationGap = 10
 minCertificationThreshold :: Rational
 minCertificationThreshold = 3 % 4
 
-leiosMempoolSize :: ByteSize32
-leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
-
--- TODO: dry with maxMsgLeiosBlockBytesSize
-leiosEBMaxSize :: ByteSize32
-leiosEBMaxSize = ByteSize32 512_000
-
-leiosEBMaxClosureSize :: ByteSize32
-leiosEBMaxClosureSize = ByteSize32 12_000_000
+-- | Stake to be covered when selecting the committee.
+committeeStakeCoverage :: Weight
+committeeStakeCoverage = 99 % 100
 
 -- * Utilities for prototyping
 

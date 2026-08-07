@@ -123,6 +123,7 @@ import qualified Data.Text as Text
 import qualified Data.Vector.Strict as V
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoTypes (committeeStakeCoverage, selectCommitteeByStake)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -1020,6 +1021,7 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
     everyoneVotes =
       mkLeiosCommittee . V.fromList $
         selectCommitteeByStake
+          committeeStakeCoverage -- TODO: take from pparams
           [ (seatKey ips, ips.individualPoolStake)
           | ips <- Map.elems stakeDistribution
           ]
