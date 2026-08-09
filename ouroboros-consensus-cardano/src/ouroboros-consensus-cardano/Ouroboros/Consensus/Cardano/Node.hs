@@ -50,8 +50,11 @@ import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import Cardano.Ledger.Shelley.LedgerState (NewEpochState, esSnapshotsL, nesEsL)
+import Cardano.Ledger.State (ssStakeGoL, ssStakeMarkL, ssStakeSetL)
 import Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
+import Cardano.Slotting.Slot (EpochNo (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -69,7 +72,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Word (Word16, Word64)
-import Lens.Micro ((^.))
+import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.ByronHFC
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
@@ -500,6 +503,30 @@ toTriggerHardFork = \case
       SL.getVersion (L.eraProtVerLow @(ShelleyBlockLedgerEra blk))
   CardanoTriggerHardForkAtEpoch epochNo ->
     TriggerHardForkAtEpoch epochNo
+
+-- | Warm the initial stake snapshots for early-bootstrap (test) networks, so the
+-- stake distribution -- and hence anything reading it at genesis, e.g. the Leios
+-- committee via @nesPd@ -- is active from the first epochs instead of only after
+-- the ~2-epoch snapshot pipeline has run. @ssStakeMark@ is already seeded from
+-- genesis staking by the ledger's 'L.injectIntoTestState'; here we backfill
+-- set\/go by how early the era boots. Only fires for
+-- 'CardanoTriggerHardForkAtEpoch' (test-only; real networks use
+-- 'CardanoTriggerHardForkAtDefaultVersion' and are left untouched):
+--
+--   * hard fork at epoch 0   -> go = set = mark
+--   * hard fork at epoch 1   -> set = mark
+--   * hard fork at epoch >=2 -> unchanged
+seedInitialStakeSnapshots ::
+  TriggerHardFork ->
+  NewEpochState era ->
+  NewEpochState era
+seedInitialStakeSnapshots trigger nes = case trigger of
+  TriggerHardForkAtEpoch (EpochNo 0) -> nes & setSnap ssStakeSetL & setSnap ssStakeGoL
+  TriggerHardForkAtEpoch (EpochNo 1) -> nes & setSnap ssStakeSetL
+  _ -> nes
+ where
+  mark = nes ^. nesEsL . esSnapshotsL . ssStakeMarkL
+  setSnap l = (nesEsL . esSnapshotsL . l) .~ mark
 
 newtype CardanoHardForkTriggers = CardanoHardForkTriggers
   { getCardanoHardForkTriggers ::
@@ -983,15 +1010,34 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
         (CardanoEras c)
     perEraInjections =
       fn (Comp . pure)
-        :* hcmap (Proxy @IsShelleyBlock) shelleyInjection shelleyTcfgs
+        :* hczipWith
+          (Proxy @IsShelleyBlock)
+          (\(K trigger) -> shelleyInjection trigger)
+          perEraTriggers
+          shelleyTcfgs
+
+    -- Crypto-erased triggers per Shelley-based era, so 'shelleyInjection' can
+    -- warm the initial stake snapshots on an early ('AtEpoch') bootstrap. A K-NP
+    -- avoids the @c ~ StandardCrypto@ mismatch of the raw 'CardanoHardForkTriggers'.
+    perEraTriggers :: NP (K TriggerHardFork) (CardanoShelleyEras c)
+    perEraTriggers =
+      K (toTriggerHardFork triggerHardForkShelley)
+        :* K (toTriggerHardFork triggerHardForkAllegra)
+        :* K (toTriggerHardFork triggerHardForkMary)
+        :* K (toTriggerHardFork triggerHardForkAlonzo)
+        :* K (toTriggerHardFork triggerHardForkBabbage)
+        :* K (toTriggerHardFork triggerHardForkConway)
+        :* K (toTriggerHardFork triggerHardForkDijkstra)
+        :* Nil
 
     shelleyInjection ::
       forall proto era.
       Shelley.ShelleyCompatible proto era =>
+      TriggerHardFork ->
       WrapTransitionConfig (ShelleyBlock proto era) ->
       (Flip LedgerState ValuesMK -.-> (m :.: Flip LedgerState ValuesMK))
         (ShelleyBlock proto era)
-    shelleyInjection (WrapTransitionConfig tcfg) = fn $ \(Flip stIn) -> Comp $ do
+    shelleyInjection trigger (WrapTransitionConfig tcfg) = fn $ \(Flip stIn) -> Comp $ do
       let stowed = stowLedgerTables stIn
       newNES <-
         L.injectIntoTestState
@@ -999,7 +1045,10 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
           tcfg
           (Shelley.shelleyLedgerState stowed)
       pure . Flip . unstowLedgerTables $
-        stowed{Shelley.shelleyLedgerState = newNES}
+        stowed
+          { Shelley.shelleyLedgerState =
+              seedInitialStakeSnapshots trigger newNES
+          }
 
     shelleyTcfgs :: NP WrapTransitionConfig (CardanoShelleyEras c)
     shelleyTcfgs =
