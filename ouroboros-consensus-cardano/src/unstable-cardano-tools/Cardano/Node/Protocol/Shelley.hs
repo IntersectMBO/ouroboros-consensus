@@ -234,6 +234,7 @@ mkPraosLeaderCredentials
           PraosCanBeLeader
             { praosCanBeLeaderColdVerKey = coerceKeyRole vkey
             , praosCanBeLeaderSignKeyVRF = vrfKey
+            , praosCanBeLeaderSignKeyBLS = Nothing
             , praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound opcert kesKey
             }
       , shelleyLeaderCredentialsLabel = "Shelley"

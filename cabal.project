@@ -13,10 +13,8 @@ repository cardano-haskell-packages
 -- See CONTRIBUTING for some Nix commands you will need to run if you
 -- update either of these.
 index-state:
-  -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2026-05-26T19:31:06Z
-  -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-06-29T12:05:19Z
+  , hackage.haskell.org 2026-07-15T21:58:35Z
+  , cardano-haskell-packages 2026-07-27T20:44:57Z
 
 -- TODO: needed to drop because newer cuddle on hackage would have not been seen
 -- active-repositories:
@@ -45,6 +43,12 @@ if os (windows)
   constraints:
     bitvec -simd
 
+-- TODO: bump packages instead of this
+allow-newer:
+  , cardano-crypto-class
+constraints:
+  , any.crypton < 1.1
+
 -- Points to ouroboros-network/leios-prototype
 source-repository-package
   type: git
@@ -69,8 +73,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: fb8d6f8a83b0efb86281e0b80e7ffba160dad8b1
-  --sha256: sha256-U/vpyZNerL1YXiQg1TIAOL5L438NNE3XkuIYD0HPTJw=
+  tag: f3104f00f9819ba94de119c38bc3e0109982821f
+  --sha256: sha256-PESnjqXXQTD5C9tvE6AfADSkymvj+edu3BhX3sQYjRk=
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api
@@ -97,3 +101,15 @@ source-repository-package
   subdir:
     kes-agent
     kes-agent-crypto
+
+-- cardano-base ch1bo/mk-committee (Leios committee/BLS + crypton memory revert).
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base
+  tag: 9c6078d9c39c542abcb5912d0d7c222b7ba8a03d
+  --sha256: sha256-FfzoMXitbX/pzEJDQExQikGef6FcantzGWvqu2g19ho=
+  subdir:
+    cardano-binary
+    cardano-crypto-class
+    cardano-crypto-leios
+    cardano-crypto-praos

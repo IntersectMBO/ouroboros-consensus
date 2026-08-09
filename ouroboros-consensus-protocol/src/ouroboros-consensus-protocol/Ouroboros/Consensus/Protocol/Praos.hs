@@ -637,7 +637,7 @@ doValidateVRFSignature ::
 doValidateVRFSignature eta0 pd f b = do
   case Map.lookup hk pd of
     Nothing -> throwError $ VRFKeyUnknown hk
-    Just (SL.IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
+    Just (SL.IndividualPoolStake sigma _totalPoolStake vrfHK _leiosKey) -> do
       let vrfHKStake = SL.fromVRFVerKeyHash vrfHK
           vrfHKBlock = VRF.hashVerKeyVRF vrfK
       vrfHKStake

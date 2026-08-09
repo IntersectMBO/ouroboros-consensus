@@ -36,7 +36,7 @@ import LeiosDemoTypes
   , LeiosSigningKey
   , RbHash (..)
   , TraceLeiosKernel (..)
-  , getLeiosVoterId
+  , getLeiosSeatId
   , signLeiosVote
   )
 import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..))
@@ -169,7 +169,7 @@ runLeiosVoting tracer chainDB btime leiosDB voteState = \case
           let SlotNo aw = pointSlotNo point
               deadlineSlot = SlotNo (aw + lHdrWaitSlots + lVoteWindowSlots)
               notVoted r = traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason = r}
-              mVoterId = getLeiosCommittee (ledgerState extLedger) >>= getLeiosVoterId vk
+              mVoterId = getLeiosCommittee (ledgerState extLedger) >>= getLeiosSeatId vk
               mAnnouncer = tipAnnouncerFor @blk (headerState extLedger) point
           case (currentSlot > deadlineSlot, mAnnouncer, mVoterId) of
             (True, _, _) -> notVoted TooLate

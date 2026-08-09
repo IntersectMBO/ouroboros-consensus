@@ -6,8 +6,6 @@ module Test.LeiosVoteState (tests) where
 
 import Cardano.Crypto.DSIGN
   ( DSIGNAlgorithm (deriveVerKeyDSIGN)
-  , genKeyDSIGN
-  , seedSizeDSIGN
   )
 import Control.Concurrent.Class.MonadSTM.Strict
   ( atomically
@@ -18,18 +16,14 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
-import Data.Data (Proxy (..))
 import Data.Maybe (fromJust, isNothing)
 import LeiosDemoTypes
-  ( LeiosCommittee (..)
-  , LeiosDSIGN
+  ( LeiosSeatId (..)
   , LeiosSigningKey
   , LeiosVote (..)
-  , LeiosVoterId (..)
   , VoteInvalid (..)
-  , getLeiosVoterId
+  , getLeiosSeatId
   , leiosCommitteeSize
-  , mkCommitteeEveryoneVotes
   , signLeiosVote
   )
 import LeiosVoteState
@@ -39,19 +33,17 @@ import LeiosVoteState
   , newLeiosVoteState
   , subscribeVotes
   )
-import Test.Crypto.Util (arbitrarySeedOfSize)
+import Test.Cardano.Crypto.Leios.Gen (TestCommittee (..), genCommittee, genLeiosSigningKey)
 import Test.LeiosDemoDb (genRbHash)
 import Test.QuickCheck
   ( Gen
   , Property
-  , chooseInt
   , counterexample
   , elements
   , forAll
   , listOf1
   , property
   , suchThat
-  , vectorOf
   , (.&&.)
   , (===)
   )
@@ -72,29 +64,6 @@ tests =
     , testProperty "vote signed with key not on committee is rejected" prop_signerNotInCommittee
     ]
 
-genLeiosSigningKey :: Gen LeiosSigningKey
-genLeiosSigningKey = do
-  seed <- arbitrarySeedOfSize (seedSizeDSIGN (Proxy @LeiosDSIGN))
-  pure $ genKeyDSIGN seed
-
-data TestCommittee = TestCommittee
-  { committee :: LeiosCommittee
-  , allKeys :: [LeiosSigningKey]
-  }
-  deriving Show
-
--- | A non-empty committee.
-genCommittee :: Gen TestCommittee
-genCommittee = do
-  n <- chooseInt (1, 10)
-  allKeys <- vectorOf n genLeiosSigningKey
-  weights <- vectorOf n (chooseInt (1, 100))
-  pure
-    TestCommittee
-      { committee = mkCommitteeEveryoneVotes $ zip (deriveVerKeyDSIGN <$> allKeys) weights
-      , allKeys
-      }
-
 -- | A 'VotingKey' that is *not* a member of the given committee.
 genKeyNotIn :: TestCommittee -> Gen LeiosSigningKey
 genKeyNotIn c = do
@@ -106,7 +75,7 @@ genKeyNotIn c = do
 genVoteFor :: TestCommittee -> Gen LeiosVote
 genVoteFor c = do
   key <- elements c.allKeys
-  let vid = fromJust $ getLeiosVoterId (deriveVerKeyDSIGN key) c.committee
+  let vid = fromJust $ getLeiosSeatId (deriveVerKeyDSIGN key) c.committee
   signLeiosVote key vid <$> genRbHash
 
 -- | A subscriber should receive a vote that was added after subscribing.
@@ -219,7 +188,7 @@ prop_signerNotInCommittee =
       forAll genRbHash $ \announcingRbHash -> property $ runSimOrThrow $ do
         -- VoterId must be outside of committe, otherwise this is just a bad signature
         let n = leiosCommitteeSize testCommittee.committee
-        let vote = signLeiosVote key (LeiosVoterId $ fromIntegral n) announcingRbHash
+        let vote = signLeiosVote key (LeiosSeatId $ fromIntegral n) announcingRbHash
         st <- newLeiosVoteState (pure (Just testCommittee.committee))
         sub <- subscribeVotes st
         r <- addVote st vote
