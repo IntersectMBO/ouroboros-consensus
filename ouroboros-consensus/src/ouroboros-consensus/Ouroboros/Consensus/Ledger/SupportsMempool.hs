@@ -323,11 +323,19 @@ deriving instance (Eq (TxMeasurePhase1 blk), Eq (TxMeasurePhase2 blk)) => Eq (Tx
 
 deriving instance (Show (TxMeasurePhase1 blk), Show (TxMeasurePhase2 blk)) => Show (TxMeasure blk)
 
-deriving via
-  InstantiatedAt Generic (TxMeasure blk)
-  instance
-    (Measure (TxMeasurePhase1 blk), Measure (TxMeasurePhase2 blk)) =>
-    Measure (TxMeasure blk)
+-- | Hand-written rather than @deriving via InstantiatedAt Generic@: 'plus'
+-- here runs on every 'Mempool.TxSeq' fingertree rebalance, so it is worth
+-- keeping off the generic 'GHC.Generics' dispatch path on principle, the same
+-- way 'Ouroboros.Network.Tx.HasRawTxId' is hand-instanced per block type
+-- rather than derived.
+instance
+  (Measure (TxMeasurePhase1 blk), Measure (TxMeasurePhase2 blk)) =>
+  Measure (TxMeasure blk)
+  where
+  zero = TxMeasure M.zero M.zero
+  plus (TxMeasure a1 b1) (TxMeasure a2 b2) = TxMeasure (M.plus a1 a2) (M.plus b1 b2)
+  min (TxMeasure a1 b1) (TxMeasure a2 b2) = TxMeasure (M.min a1 a2) (M.min b1 b2)
+  max (TxMeasure a1 b1) (TxMeasure a2 b2) = TxMeasure (M.max a1 a2) (M.max b1 b2)
 
 instance HasByteSize (TxMeasurePhase1 blk) => HasByteSize (TxMeasure blk) where
   txMeasureByteSize = txMeasureByteSize . tmPhase1

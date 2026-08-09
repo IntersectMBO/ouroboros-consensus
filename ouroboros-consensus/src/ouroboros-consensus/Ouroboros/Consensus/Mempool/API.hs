@@ -478,20 +478,17 @@ forgetTxMeasureWithDiffTime (MkTxMeasureWithDiffTime x _) = x
 
 deriving instance NoThunks (TxMeasure blk) => NoThunks (TxMeasureWithDiffTime blk)
 
-binopViaTuple ::
-  ((TxMeasure x, DiffTimeMeasure) -> (TxMeasure y, DiffTimeMeasure) -> (TxMeasure z, DiffTimeMeasure)) ->
-  TxMeasureWithDiffTime x ->
-  TxMeasureWithDiffTime y ->
-  TxMeasureWithDiffTime z
-binopViaTuple f (MkTxMeasureWithDiffTime a b) (MkTxMeasureWithDiffTime p q) =
-  let (x, y) = f (a, b) (p, q)
-   in MkTxMeasureWithDiffTime x y
-
+-- | Hand-written rather than routed through the generic tuple instance via
+-- @binopViaTuple@: this is on the same 'Mempool.TxSeq' fingertree hot path as
+-- 'Measure (TxMeasure blk)', for the same reason.
 instance Measure (TxMeasure blk) => Measure (TxMeasureWithDiffTime blk) where
   zero = MkTxMeasureWithDiffTime Data.Measure.zero Data.Measure.zero
-  plus = binopViaTuple Data.Measure.plus
-  min = binopViaTuple Data.Measure.min
-  max = binopViaTuple Data.Measure.max
+  plus (MkTxMeasureWithDiffTime a1 d1) (MkTxMeasureWithDiffTime a2 d2) =
+    MkTxMeasureWithDiffTime (Data.Measure.plus a1 a2) (Data.Measure.plus d1 d2)
+  min (MkTxMeasureWithDiffTime a1 d1) (MkTxMeasureWithDiffTime a2 d2) =
+    MkTxMeasureWithDiffTime (Data.Measure.min a1 a2) (Data.Measure.min d1 d2)
+  max (MkTxMeasureWithDiffTime a1 d1) (MkTxMeasureWithDiffTime a2 d2) =
+    MkTxMeasureWithDiffTime (Data.Measure.max a1 a2) (Data.Measure.max d1 d2)
 
 instance HasByteSize (TxMeasure blk) => HasByteSize (TxMeasureWithDiffTime blk) where
   txMeasureByteSize = txMeasureByteSize . forgetTxMeasureWithDiffTime
