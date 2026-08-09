@@ -41,8 +41,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -56,6 +54,7 @@ import Ouroboros.Consensus.Protocol.TPraos
   )
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
+import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim (splitUTxO)
 import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
@@ -90,19 +89,21 @@ import Test.Util.Serialisation.SomeResult (SomeResult (..))
 codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
+-- | Build example UTxO values. The result type @Map SL.TxIn (LC.TxOut era)@ is
+-- definitionally @'Values' ('ShelleyBlock' proto era)@ for any @proto@, so it
+-- unifies with the @exampleLedgerTables@ field at each call site without
+-- mentioning (and thus without an ambiguous) @proto@.
 mkLedgerTables ::
-  forall proto era.
-  ShelleyCompatible proto era =>
+  forall era.
+  LC.EraTx era =>
   LC.Tx LC.TopTx era ->
-  LedgerTables (ShelleyBlock proto era) ValuesMK
+  Map.Map SL.TxIn (LC.TxOut era)
 mkLedgerTables tx =
-  LedgerTables $
-    ValuesMK $
-      Map.fromList $
-        zip exampleTxIns exampleTxOuts
+  Map.fromList $
+    zip exampleTxIns exampleTxOuts
  where
-  exampleTxIns :: [BigEndianTxIn]
-  exampleTxIns = map BigEndianTxIn $ toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF))
+  exampleTxIns :: [SL.TxIn]
+  exampleTxIns = toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF))
 
   exampleTxOuts :: [LC.TxOut era]
   exampleTxOuts = toList (tx ^. (LC.bodyTxL . LC.outputsTxBodyL))
@@ -208,9 +209,8 @@ fromShelleyLedgerExamples
                 , shelleyTipBlockNo = BlockNo 3
                 , shelleyTipHash = hash
                 }
-        , shelleyLedgerState = leNewEpochState
+        , shelleyLedgerStateNoUTxO = fst (splitUTxO leNewEpochState)
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-        , shelleyLedgerTables = LedgerTables EmptyMK
         , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
@@ -346,9 +346,8 @@ fromShelleyLedgerExamplesPraos
                 , shelleyTipBlockNo = BlockNo 3
                 , shelleyTipHash = hash
                 }
-        , shelleyLedgerState = leNewEpochState
+        , shelleyLedgerStateNoUTxO = fst (splitUTxO leNewEpochState)
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-        , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState =

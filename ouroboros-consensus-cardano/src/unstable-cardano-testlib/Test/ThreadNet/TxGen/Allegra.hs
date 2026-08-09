@@ -14,4 +14,6 @@ import Test.ThreadNet.TxGen (TxGen (..))
 instance TxGen (ShelleyBlock (TPraos c) AllegraEra) where
   type TxGenExtra _ = ()
 
-  testGenTxs _ _ _ _ _ _ = pure []
+  testReadAllValues _ _ = pure mempty
+
+  testGenTxs _ _ _ _ _ _ _ = pure []

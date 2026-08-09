@@ -216,6 +216,8 @@ protocolInfoByron
               ledgerState = initByronLedgerState genesisConfig Nothing
             , headerState = genesisHeaderState S.empty
             }
+      , -- Byron has no on-disk tables.
+        pInfoInitLedgerTables = ()
       }
    where
     compactedGenesisConfig = compactGenesisConfig genesisConfig

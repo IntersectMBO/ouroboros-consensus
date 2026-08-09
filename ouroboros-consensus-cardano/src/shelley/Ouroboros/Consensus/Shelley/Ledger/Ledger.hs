@@ -1,4 +1,9 @@
 {-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -12,10 +17,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
@@ -24,14 +27,15 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
-  , LedgerTables (..)
   , ShelleyBasedEra
   , ShelleyTip (..)
   , ShelleyTransition (..)
   , Ticked (..)
   , castShelleyTip
+  , shelleyLedgerState
   , shelleyLedgerTipPoint
   , shelleyTipToPoint
+  , tickedShelleyLedgerState
 
     -- * Ledger config
   , ShelleyLedgerConfig (..)
@@ -54,7 +58,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , encodeShelleyLedgerState
 
     -- * Low-level UTxO manipulations
-  , slUtxoL
   , BigEndianTxIn (..)
   ) where
 
@@ -94,14 +97,18 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
-import Control.Arrow (left, second)
+import Control.Arrow (left)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import Data.Coerce
 import Data.Functor.Identity
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MemPack
+import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
@@ -123,14 +130,20 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
-import Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
+import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
+  ( NewEpochStateNoUTxOs
+  , applyBlockShim
+  , applyTickShim
+  , mkNewEpochStateNoUTxOs
+  , newEpochStateWithEmptyUTxO
+  )
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( EnvelopeCheckError
-  , ShelleyProtocolHeader
   , envelopeChecks
   )
 import Ouroboros.Consensus.Util
@@ -139,8 +152,8 @@ import Ouroboros.Consensus.Util.CBOR
   , decodeWithOrigin
   , encodeStrictMaybe
   , encodeWithOrigin
+  , unpackEither
   )
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Versioned
 
 {-------------------------------------------------------------------------------
@@ -277,24 +290,72 @@ castShelleyTip (ShelleyTip sn bn hh) =
     , shelleyTipHash = coerce hh
     }
 
+-- | The UTxO is not stored in the Shelley ledger state: it lives outside,
+-- threaded as the @'Values'@\/@'Diff'@ of 'BlockSupportsUTxOHD'. The wrapped
+-- 'SL.NewEpochState' has a UTxO field which we hold empty here (the entries live
+-- in the backend); 'applyBlockLedgerResultWithValidation' injects the read
+-- values, runs the ledger rules, and extracts the resulting diff.
 data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
-  , shelleyLedgerState :: !(SL.NewEpochState era)
+  , shelleyLedgerStateNoUTxO :: !(NewEpochStateNoUTxOs era)
+  -- ^ The new-epoch state with its UTxO field held empty; the UTxO lives in
+  -- the backend (see 'Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim'). Use
+  -- the 'shelleyLedgerState' accessor for the (UTxO-free) 'SL.NewEpochState'.
   , shelleyLedgerTransition :: !ShelleyTransition
   , shelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , shelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
 
+-- | The Shelley 'SL.NewEpochState'.
+--
+-- ⚠️  Its UTxO field is EMPTY by design: under UTxO-HD the live UTxO lives in the
+-- ledger tables (the LedgerDB backend), not the ledger state. Use this for the
+-- /non-UTxO/ parts only (protocol parameters, stake distribution, pools, …); to
+-- read the UTxO, go through the LedgerDB forker \/ ledger tables. See
+-- 'newEpochStateWithEmptyUTxO'.
+shelleyLedgerState ::
+  LedgerState (ShelleyBlock proto era) mk -> SL.NewEpochState era
+shelleyLedgerState = newEpochStateWithEmptyUTxO . shelleyLedgerStateNoUTxO
+
+#if __GLASGOW_HASKELL__ >= 910
+{-# WARNING in "x-shelley-empty-utxo" shelleyLedgerState "This NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state, so reading its UTxO yields an empty map. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#else
+{-# WARNING shelleyLedgerState "This NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state, so reading its UTxO yields an empty map. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#endif
+
 deriving instance
-  (ShelleyBasedEra era, EqMK mk) =>
+  (ShelleyBasedEra era, Eq (LedgerTables (ShelleyBlock proto era) mk)) =>
   Eq (LedgerState (ShelleyBlock proto era) mk)
 deriving instance
-  (ShelleyBasedEra era, NoThunksMK mk) =>
+  (ShelleyBasedEra era, NoThunks (LedgerTables (ShelleyBlock proto era) mk)) =>
   NoThunks (LedgerState (ShelleyBlock proto era) mk)
 deriving instance
-  (ShelleyBasedEra era, ShowMK mk) =>
+  (ShelleyBasedEra era, Show (LedgerTables (ShelleyBlock proto era) mk)) =>
   Show (LedgerState (ShelleyBlock proto era) mk)
+
+-- | The skin's 'LedgerTables' wrapper and its map-kind payloads carry no
+-- derived instances (@main@ derives them via the @EqMK@\/@ShowMK@\/@NoThunksMK@
+-- machinery, which the single-arg skin cannot reproduce). The Shelley ledger
+-- state holds a 'LedgerTables' field, so we provide the (transparent) instances
+-- it needs at the map-kinds that actually appear in a Shelley state value
+-- position — i.e. 'EmptyMK', the live UTxO being threaded externally as the
+-- @'Values'@\/@'Diff'@ of 'BlockSupportsUTxOHD'.
+deriving newtype instance
+  Eq (mk (ShelleyBlock proto era)) =>
+  Eq (LedgerTables (ShelleyBlock proto era) mk)
+deriving newtype instance
+  Show (mk (ShelleyBlock proto era)) =>
+  Show (LedgerTables (ShelleyBlock proto era) mk)
+deriving newtype instance
+  NoThunks (mk (ShelleyBlock proto era)) =>
+  NoThunks (LedgerTables (ShelleyBlock proto era) mk)
+
+deriving stock instance Eq (EmptyMK (ShelleyBlock proto era))
+deriving stock instance Show (EmptyMK (ShelleyBlock proto era))
+instance NoThunks (EmptyMK (ShelleyBlock proto era)) where
+  showTypeOf _ = "EmptyMK"
+  wNoThunks _ EmptyMK = return Nothing
 
 -- | Information required to determine the hard fork point from Shelley to the
 -- next ledger
@@ -355,25 +416,44 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
-type instance TxIn (ShelleyBlock proto era) = BigEndianTxIn
+-- | The Shelley @TxIn@ is the plain ledger 'SL.TxIn'. Big-endian serialisation
+-- (needed so the on-disk\/streamed entries sort the same as the Haskell 'Ord')
+-- is applied only at the (de)serialisation boundary, by casting the map keys
+-- through 'BigEndianTxIn'. See 'encodeValues'\/'decodeValues'.
+type instance TxIn (ShelleyBlock proto era) = SL.TxIn
+
 type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
 
 instance
-  (txout ~ Core.TxOut era, MemPack txout) =>
-  IndexedMemPack LedgerState (ShelleyBlock proto era) txout
-  where
-  indexedTypeName _ _ = typeName @txout
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
-instance
   ShelleyCompatible proto era =>
-  SerializeTablesWithHint LedgerState (ShelleyBlock proto era)
+  BlockSupportsUTxOHD (ShelleyBlock proto era)
   where
-  encodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
-    toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
-  decodeTablesWithHint st =
+  type Keys (ShelleyBlock proto era) = Set (TxIn (ShelleyBlock proto era))
+  type
+    Values (ShelleyBlock proto era) =
+      Map (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
+  type
+    Diff (ShelleyBlock proto era) =
+      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
+
+  blockKeys = Core.neededTxInsForBlock . shelleyBlockRaw
+
+  -- One era ⇒ no translation. Replay the in-flight diffs in chain order; the
+  -- 'Diff' 'Monoid' composes them so later ones win.
+  forward diffs vals = Diff.applyDiff vals (mconcat diffs)
+
+  restrictValues keys vals = vals `Map.restrictKeys` keys
+
+  valuesSize = Map.size
+
+  -- The keys are cast through 'BigEndianTxIn' so the serialised entries sort the
+  -- same as the Haskell 'Ord' on 'SL.TxIn' (the streaming-order invariant).
+  encodeValues tbs =
+    toPlainEncoding (Core.eraProtVerLow @era) $
+      encodeMap (encodeMemPack . BigEndianTxIn) encodeMemPack tbs
+
+  -- The state is the era hint: it supplies the credential interns for sharing.
+  decodeValues st =
     let certInterns =
           internsFromMap $
             shelleyLedgerState st
@@ -383,136 +463,37 @@ instance
                 . SL.certDStateL
                 . SL.accountsL
                 . SL.accountsMapL
-     in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
+     in eraDecoder @era $
+          decodeMap (getOriginalTxIn <$> decodeMemPack) (decShareCBOR certInterns)
 
 instance
-  ShelleyBasedEra era =>
-  HasLedgerTables LedgerState (ShelleyBlock proto era)
+  ShelleyCompatible proto era =>
+  SingleEraUTxOHDBlock (ShelleyBlock proto era)
   where
-  projectLedgerTables = shelleyLedgerTables
-  withLedgerTables st tables =
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      , shelleyLedgerTables = tables
-      , shelleyLedgerLatestPerasCertRound
-      }
-   where
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      , shelleyLedgerLatestPerasCertRound
-      } = st
+  emptyValues = Map.empty
+  emptyDiffs = mempty
 
 instance
-  ShelleyBasedEra era =>
-  HasLedgerTables (Ticked LedgerState) (ShelleyBlock proto era)
+  ShelleyCompatible proto era =>
+  SingleEraBlockSupportsUTxOHD (ShelleyBlock proto era)
   where
-  projectLedgerTables = tickedShelleyLedgerTables
-  withLedgerTables st tables =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = tables
-      , tickedShelleyLedgerLatestPerasCertRound
-      }
-   where
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      , tickedShelleyLedgerLatestPerasCertRound
-      } = st
+  rangeReadValues (mbPrev, n) vals =
+    let toRead = case mbPrev of
+          Nothing -> vals
+          Just prev -> snd (Map.split prev vals)
+        page = Map.take n toRead
+     in (page, fst <$> Map.lookupMax page)
+  keysToList = Set.toList
+  valuesToList = Map.toList
+  valuesFromList = Map.fromList
+  diffToList (Diff.Diff m) = Map.toList m
 
-instance
-  ShelleyBasedEra era =>
-  CanStowLedgerTables (LedgerState (ShelleyBlock proto era))
-  where
-  stowLedgerTables st =
-    ShelleyLedgerState
-      { shelleyLedgerTip = shelleyLedgerTip
-      , shelleyLedgerState = shelleyLedgerState'
-      , shelleyLedgerTransition = shelleyLedgerTransition
-      , shelleyLedgerTables = emptyLedgerTables
-      , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound
-      }
-   where
-    (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys m)
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      , shelleyLedgerTables = LedgerTables (ValuesMK m)
-      , shelleyLedgerLatestPerasCertRound
-      } = st
-  unstowLedgerTables st =
-    ShelleyLedgerState
-      { shelleyLedgerTip = shelleyLedgerTip
-      , shelleyLedgerState = shelleyLedgerState'
-      , shelleyLedgerTransition = shelleyLedgerTransition
-      , shelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys $ SL.unUTxO tbs))
-      , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound
-      }
-   where
-    (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
-    ShelleyLedgerState
-      { shelleyLedgerTip
-      , shelleyLedgerState
-      , shelleyLedgerTransition
-      , shelleyLedgerLatestPerasCertRound
-      } = st
-
-instance
-  ShelleyBasedEra era =>
-  CanStowLedgerTables (Ticked LedgerState (ShelleyBlock proto era))
-  where
-  stowLedgerTables st =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip = untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState = tickedShelleyLedgerState'
-      , tickedShelleyLedgerTables = emptyLedgerTables
-      , tickedShelleyLedgerLatestPerasCertRound = tickedShelleyLedgerLatestPerasCertRound
-      }
-   where
-    (_, tickedShelleyLedgerState') =
-      tickedShelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys tbs)
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = LedgerTables (ValuesMK tbs)
-      , tickedShelleyLedgerLatestPerasCertRound
-      } = st
-
-  unstowLedgerTables st =
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip = untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState = tickedShelleyLedgerState'
-      , tickedShelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys (SL.unUTxO tbs)))
-      , tickedShelleyLedgerLatestPerasCertRound = tickedShelleyLedgerLatestPerasCertRound
-      }
-   where
-    (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
-    TickedShelleyLedgerState
-      { untickedShelleyLedgerTip
-      , tickedShelleyLedgerTransition
-      , tickedShelleyLedgerState
-      , tickedShelleyLedgerLatestPerasCertRound
-      } = st
-
-slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState era)
-slUtxoL st vals =
-  st
-    & SL.nesEsL
-      . SL.esLStateL
-      . SL.lsUTxOStateL
-      . SL.utxoL
-      <<.~ vals
+  -- The on-disk key bytes are cast through 'BigEndianTxIn' so they sort the same
+  -- as the Haskell 'Ord' on 'SL.TxIn' (the range-read\/streaming-order
+  -- invariant); ledger's own 'MemPack' on 'SL.TxIn' is little-endian on the
+  -- 'TxIx' and would sort differently. Mirrors 'encodeValues'\/'decodeValues'.
+  packTxInBytes = packByteArray True . BigEndianTxIn
+  unpackTxInBytes = fmap getOriginalTxIn . unpackEither
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -537,11 +518,27 @@ data instance Ticked LedgerState (ShelleyBlock proto era) mk = TickedShelleyLedg
   -- 1. We are only incrementing this when /applying/ a block, not when ticking.
   -- 2. However, we count within an epoch, which is slot-based. So the count
   --    must be reset when /ticking/, not when applying a block.
-  , tickedShelleyLedgerState :: !(SL.NewEpochState era)
+  , tickedShelleyLedgerStateNoUTxO :: !(NewEpochStateNoUTxOs era)
+  -- ^ Like 'shelleyLedgerStateNoUTxO': the UTxO field is held empty. Use the
+  -- 'tickedShelleyLedgerState' accessor for the (UTxO-free) 'SL.NewEpochState'.
   , tickedShelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , tickedShelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
+
+-- | The ticked Shelley 'SL.NewEpochState'.
+--
+-- ⚠️  Its UTxO field is EMPTY by design (see 'shelleyLedgerState'): the live
+-- UTxO lives in the ledger tables, not the state.
+tickedShelleyLedgerState ::
+  Ticked LedgerState (ShelleyBlock proto era) mk -> SL.NewEpochState era
+tickedShelleyLedgerState = newEpochStateWithEmptyUTxO . tickedShelleyLedgerStateNoUTxO
+
+#if __GLASGOW_HASKELL__ >= 910
+{-# WARNING in "x-shelley-empty-utxo" tickedShelleyLedgerState "This ticked NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#else
+{-# WARNING tickedShelleyLedgerState "This ticked NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#endif
 
 untickedShelleyLedgerTipPoint ::
   TickedLedgerState (ShelleyBlock proto era) mk ->
@@ -550,7 +547,7 @@ untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
 type instance AuxLedgerEvent (ShelleyBlock proto era) = ShelleyLedgerEvent era
 
-instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) where
+instance ShelleyCompatible proto era => IsLedger LedgerState (ShelleyBlock proto era) where
   type LedgerErr LedgerState (ShelleyBlock proto era) = SL.BlockTransitionError era
 
   applyChainTickLedgerResult
@@ -559,40 +556,37 @@ instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) wh
     slotNo
     ShelleyLedgerState
       { shelleyLedgerTip
-      , shelleyLedgerState
+      , shelleyLedgerStateNoUTxO
       , shelleyLedgerTransition
       , shelleyLedgerLatestPerasCertRound
       } =
-      appTick globals shelleyLedgerState slotNo <&> \l' ->
-        TickedShelleyLedgerState
-          { untickedShelleyLedgerTip = shelleyLedgerTip
-          , tickedShelleyLedgerTransition =
-              -- The voting resets each epoch
-              if isNewEpoch ei (shelleyTipSlotNo <$> shelleyLedgerTip) slotNo
-                then
-                  ShelleyTransitionInfo{shelleyAfterVoting = 0}
-                else
-                  shelleyLedgerTransition
-          , tickedShelleyLedgerState = l'
-          , -- The UTxO set is only mutated by block/transaction execution and
-            -- era translations, that is why we put empty tables here.
-            tickedShelleyLedgerTables = emptyLedgerTables
-          , tickedShelleyLedgerLatestPerasCertRound =
-              shelleyLedgerLatestPerasCertRound
-          }
+      let (tickedNoUTxO, events) =
+            applyTickShim evs globals slotNo shelleyLedgerStateNoUTxO
+       in LedgerResult
+            (map ShelleyLedgerEventTICK events)
+            ( TickedShelleyLedgerState
+                { untickedShelleyLedgerTip = shelleyLedgerTip
+                , tickedShelleyLedgerTransition =
+                    -- The voting resets each epoch
+                    if isNewEpoch ei (shelleyTipSlotNo <$> shelleyLedgerTip) slotNo
+                      then ShelleyTransitionInfo{shelleyAfterVoting = 0}
+                      else shelleyLedgerTransition
+                , tickedShelleyLedgerStateNoUTxO = tickedNoUTxO
+                , tickedShelleyLedgerTables = emptyLedgerTables
+                , tickedShelleyLedgerLatestPerasCertRound =
+                    shelleyLedgerLatestPerasCertRound
+                }
+            , -- Within a single era, ticking does not mutate the UTxO (the UTxO
+              -- is only changed by block/transaction execution and by era
+              -- translations, which happen at the hard-fork level), so it
+              -- produces no diff.
+              mempty
+            )
      where
       globals = shelleyLedgerGlobals cfg
 
       ei :: EpochInfo Identity
       ei = SL.epochInfoPure globals
-
-      appTick =
-        uncurry (flip LedgerResult) ..: case evs of
-          ComputeLedgerEvents ->
-            second (map ShelleyLedgerEventTICK)
-              ..: SL.applyTick STS.EPReturn
-          OmitLedgerEvents ->
-            (,[]) ..: SL.applyTickNoEvents
 
 -- | All events emitted by the Shelley ledger API
 data ShelleyLedgerEvent era
@@ -616,33 +610,12 @@ instance
   -- + 'applyBlockLedgerResult': executes the @BBODY@ transition
   --
   applyBlockLedgerResultWithValidation doValidate evs =
-    liftEither ..: applyHelper appBlk
-   where
-    -- Apply the BBODY transition using the ticked state
-    appBlk =
-      fmap (uncurry (flip LedgerResult)) ..: case evs of
-        ComputeLedgerEvents ->
-          fmap (second (map ShelleyLedgerEventBBODY))
-            ..: SL.applyBlockEither STS.EPReturn doValidate
-        OmitLedgerEvents ->
-          fmap (,[])
-            ..: SL.applyBlockEitherNoEvents doValidate
+    liftEither ...: applyHelper evs doValidate
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (\err -> Exception.throw $! ShelleyReapplyException @era err)
-
-instance
-  ShelleyCompatible proto era =>
-  GetBlockKeySets (ShelleyBlock proto era)
-  where
-  getBlockKeySets =
-    LedgerTables
-      . KeysMK
-      . coerceSet
-      . Core.neededTxInsForBlock
-      . shelleyBlockRaw
 
 data ShelleyReapplyException
   = forall era.
@@ -657,69 +630,56 @@ instance Exception.Exception ShelleyReapplyException
 applyHelper ::
   forall proto era.
   ShelleyCompatible proto era =>
-  ( SL.Globals ->
-    SL.NewEpochState era ->
-    SL.Block (ShelleyProtocolHeader proto) era ->
-    Either
-      (SL.BlockTransitionError era)
-      ( LedgerResult
-          (ShelleyBlock proto era)
-          (SL.NewEpochState era)
-      )
-  ) ->
+  ComputeLedgerEvents ->
+  STS.ValidationPolicy ->
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
-  Ticked LedgerState (ShelleyBlock proto era) ValuesMK ->
+  Values (ShelleyBlock proto era) ->
+  Ticked LedgerState (ShelleyBlock proto era) EmptyMK ->
   Either
     (SL.BlockTransitionError era)
     ( LedgerResult
         (ShelleyBlock proto era)
-        (LedgerState (ShelleyBlock proto era) DiffMK)
+        (LedgerState (ShelleyBlock proto era) EmptyMK, Diff (ShelleyBlock proto era))
     )
-applyHelper f cfg blk stBefore = do
+applyHelper evs doValidate cfg blk values stBefore = do
   let TickedShelleyLedgerState
         { tickedShelleyLedgerTransition
-        , tickedShelleyLedgerState
-        } = stowLedgerTables stBefore
+        , tickedShelleyLedgerStateNoUTxO
+        } = stBefore
 
-  ledgerResult <-
-    f
-      globals
-      tickedShelleyLedgerState
-      (shelleyBlockRaw blk)
+  -- The shim stows the read values, runs BBODY, and clears+diffs the field; the
+  -- stored state carries no UTxO (the entries live in the backend) and the diff
+  -- against the read values is what the storage layer threads on. The raw
+  -- protocol-header block is handed straight to the ledger (as prepare-11.1
+  -- does); the ledger's BBODY rule extracts the header view it needs.
+  (nesOut, diff, events) <-
+    applyBlockShim evs doValidate globals (shelleyBlockRaw blk) values tickedShelleyLedgerStateNoUTxO
 
-  let track ::
-        LedgerState (ShelleyBlock proto era) ValuesMK ->
-        LedgerState (ShelleyBlock proto era) TrackingMK
-      track = calculateDifference stBefore
-
-  return $
-    ledgerResult <&> \newNewEpochState ->
-      trackingToDiffs $
-        track $
-          unstowLedgerTables $
-            ShelleyLedgerState
-              { shelleyLedgerTip =
-                  NotOrigin
-                    ShelleyTip
-                      { shelleyTipBlockNo = blockNo blk
-                      , shelleyTipSlotNo = blockSlot blk
-                      , shelleyTipHash = blockHash blk
-                      }
-              , shelleyLedgerState =
-                  newNewEpochState
-              , shelleyLedgerTransition =
-                  ShelleyTransitionInfo
-                    { shelleyAfterVoting =
-                        -- We count the number of blocks that have been applied after the
-                        -- voting deadline has passed.
-                        (if blockSlot blk >= votingDeadline then succ else id) $
-                          shelleyAfterVoting tickedShelleyLedgerTransition
-                    }
-              , shelleyLedgerTables = emptyLedgerTables
-              , shelleyLedgerLatestPerasCertRound =
-                  shelleyLedgerLatestPerasCertRound'
-              }
+  let st' =
+        ShelleyLedgerState
+          { shelleyLedgerTip =
+              NotOrigin
+                ShelleyTip
+                  { shelleyTipBlockNo = blockNo blk
+                  , shelleyTipSlotNo = blockSlot blk
+                  , shelleyTipHash = blockHash blk
+                  }
+          , shelleyLedgerStateNoUTxO =
+              nesOut
+          , shelleyLedgerTransition =
+              ShelleyTransitionInfo
+                { shelleyAfterVoting =
+                    -- We count the number of blocks that have been applied after the
+                    -- voting deadline has passed.
+                    (if blockSlot blk >= votingDeadline then succ else id) $
+                      shelleyAfterVoting tickedShelleyLedgerTransition
+                }
+          , shelleyLedgerTables = emptyLedgerTables
+          , shelleyLedgerLatestPerasCertRound =
+              shelleyLedgerLatestPerasCertRound'
+          }
+  pure $ LedgerResult (map ShelleyLedgerEventBBODY events) (st', diff)
  where
   globals = shelleyLedgerGlobals cfg
   swindow = SL.stabilityWindow globals
@@ -870,7 +830,7 @@ encodeShelleyLedgerState ::
 encodeShelleyLedgerState
   ShelleyLedgerState
     { shelleyLedgerTip
-    , shelleyLedgerState
+    , shelleyLedgerStateNoUTxO
     , shelleyLedgerTransition
     , shelleyLedgerLatestPerasCertRound
     } =
@@ -878,7 +838,7 @@ encodeShelleyLedgerState
       mconcat $
         [ CBOR.encodeListLen 4
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
-        , toCBOR shelleyLedgerState
+        , toCBOR (newEpochStateWithEmptyUTxO shelleyLedgerStateNoUTxO)
         , encodeShelleyTransition shelleyLedgerTransition
         , encodeStrictMaybe toCBOR shelleyLedgerLatestPerasCertRound
         ]
@@ -896,20 +856,19 @@ decodeShelleyLedgerState =
   decodeShelleyLedgerState2 = do
     enforceSize "ShelleyLedgerState" 4
     shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
-    shelleyLedgerState <- fromCBOR
+    -- The snapshot stores the state with an empty UTxO field (the tables are
+    -- serialised separately); 'mkNewEpochStateNoUTxOs' clears it regardless.
+    shelleyLedgerStateNoUTxO <- mkNewEpochStateNoUTxOs <$> fromCBOR
     shelleyLedgerTransition <- decodeShelleyTransition
     shelleyLedgerLatestPerasCertRound <- decodeStrictMaybe fromCBOR
     return
       ShelleyLedgerState
         { shelleyLedgerTip
-        , shelleyLedgerState
+        , shelleyLedgerStateNoUTxO
         , shelleyLedgerTransition
         , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLatestPerasCertRound
         }
-
-instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
-  upgradeTables _ _ = id
 
 {-------------------------------------------------------------------------------
   LedgerSupportsPeras

@@ -1,3 +1,9 @@
+{-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -51,7 +57,7 @@ instance
   ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
     if
       | NotOrigin for == at ->
-          return $ SL.forecastToTPraosLedgerView (SL.currentForecast shelleyLedgerState)
+          return $ SL.forecastToTPraosLedgerView (SL.currentForecast nes)
       | for < maxFor ->
           return $ futureLedgerView for
       | otherwise ->
@@ -62,7 +68,7 @@ instance
               , outsideForecastFor = for
               }
    where
-    ShelleyLedgerState{shelleyLedgerState} = ledgerState
+    nes = shelleyLedgerState ledgerState
     globals = shelleyLedgerGlobals cfg
     swindow = SL.stabilityWindow globals
     at = ledgerTipSlot ledgerState
@@ -70,7 +76,7 @@ instance
     futureLedgerView :: SlotNo -> SL.TPraosLedgerView
     futureLedgerView for =
       SL.forecastToTPraosLedgerView $
-        SL.futureForecast globals for shelleyLedgerState
+        SL.futureForecast globals for nes
 
     -- Exclusive upper bound
     maxFor :: SlotNo
@@ -101,7 +107,7 @@ instance
     if
       | NotOrigin for == at ->
           return $
-            Praos.forecastToPraosLedgerView (SL.currentForecast shelleyLedgerState)
+            Praos.forecastToPraosLedgerView (SL.currentForecast nes)
       | for < maxFor ->
           return $ futureLedgerView for
       | otherwise ->
@@ -112,7 +118,7 @@ instance
               , outsideForecastFor = for
               }
    where
-    ShelleyLedgerState{shelleyLedgerState} = ledgerState
+    nes = shelleyLedgerState ledgerState
     globals = shelleyLedgerGlobals cfg
     swindow = SL.stabilityWindow globals
     at = ledgerTipSlot ledgerState
@@ -120,7 +126,7 @@ instance
     futureLedgerView :: SlotNo -> Praos.PraosLedgerView
     futureLedgerView for =
       Praos.forecastToPraosLedgerView $
-        SL.futureForecast globals for shelleyLedgerState
+        SL.futureForecast globals for nes
 
     -- Exclusive upper bound
     maxFor :: SlotNo

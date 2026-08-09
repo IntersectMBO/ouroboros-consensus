@@ -37,11 +37,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , Except
   ) where
 
+import Data.SOP.Functors (Flip (..))
 import Cardano.Slotting.EpochInfo
 import Data.Kind (Type)
 import Data.SOP (K (..))
 import Data.SOP.Constraint
-import Data.SOP.Functors
 import Data.SOP.Strict
 import Data.Typeable
 import GHC.Generics (Generic)
@@ -78,17 +78,17 @@ type instance BlockProtocol (HardForkBlock xs) = HardForkProtocol xs
 type instance HeaderHash (HardForkBlock xs) = OneEraHash xs
 
 newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState
-  { hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState mk) xs
+  { hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState EmptyMK) xs
   }
 
 deriving stock instance
-  (ShowMK mk, CanHardFork xs) =>
+  CanHardFork xs =>
   Show (LedgerState (HardForkBlock xs) mk)
 deriving stock instance
-  (EqMK mk, CanHardFork xs) =>
+  CanHardFork xs =>
   Eq (LedgerState (HardForkBlock xs) mk)
 deriving newtype instance
-  (NoThunksMK mk, CanHardFork xs) =>
+  CanHardFork xs =>
   NoThunks (LedgerState (HardForkBlock xs) mk)
 
 {-------------------------------------------------------------------------------

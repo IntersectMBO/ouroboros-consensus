@@ -218,7 +218,7 @@ forgeDualByronBlock ::
   -- | Current slot number
   SlotNo ->
   -- | Ledger
-  TickedLedgerState DualByronBlock mk ->
+  TickedLedgerState DualByronBlock ->
   -- | Txs to add in the block
   [Validated (GenTx DualByronBlock)] ->
   -- | Leader proof ('IsLeader')

@@ -1,11 +1,14 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test that ledger snapshots are performed at /predictable/ points on the
 -- immutable chain (modulo rate limiting).
@@ -40,6 +43,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM (BlockSupportsLSM (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util (dropLast)
 import Ouroboros.Consensus.Util.Args
@@ -59,6 +63,14 @@ import Test.Util.Orphans.IOLike ()
 import Test.Util.QuickCheck
 import Test.Util.TestBlock
 import Test.Util.Tracer (recordingTracerTVar)
+
+-- | The trivial-tables chaindb 'TestBlock' dispatches the LSM backend's
+-- era-tagged operations straight to itself. Orphan because the class is an
+-- LSM-backend concern and 'TestBlock' lives in the testlib.
+instance BlockSupportsLSM (TestBlockWith ()) where
+  withKeysEra keys k = k (Proxy @TestBlock) keys id
+  withDiffEra d k = k (Proxy @TestBlock) d
+  withValuesEra v k = k (Proxy @TestBlock) v
 
 tests :: TestTree
 tests =
@@ -166,6 +178,7 @@ runAddBlocks lgrDbBackendArgs testSetup = withRegistry \registry -> do
                 , mcdbNodeDBs
                 , mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
                 , mcdbInitLedger = testInitExtLedger
+                , mcdbInitLedgerTables = mempty
                 , mcdbRegistry = registry
                 }
           updLgrDbArgs a =
@@ -390,6 +403,7 @@ runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
                 , mcdbNodeDBs
                 , mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
                 , mcdbInitLedger = testInitExtLedger
+                , mcdbInitLedgerTables = mempty
                 , mcdbRegistry = registry
                 }
           updLgrDbArgs a =

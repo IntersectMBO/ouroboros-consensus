@@ -108,7 +108,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
-import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, Values)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
@@ -531,7 +531,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
             openChainDB
               registry
               cfg
-              initLedger
+              (initLedger, initLedgerTables)
               llrnMkImmutableHasFS
               llrnMkVolatileHasFS
               snapshotDelayRng
@@ -662,6 +662,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   ProtocolInfo
     { pInfoConfig = cfg
     , pInfoInitLedger = initLedger
+    , pInfoInitLedgerTables = initLedgerTables
     } = rnProtocolInfo
 
   codecConfig :: CodecConfig blk
@@ -848,8 +849,8 @@ openChainDB ::
   (RunNode blk, IOLike m) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
-  -- | Initial ledger
-  ExtLedgerState blk ValuesMK ->
+  -- | Initial ledger (the pure state together with its genesis values)
+  (ExtLedgerState blk EmptyMK, Values blk) ->
   -- | Immutable FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile FS, see 'NodeDatabasePaths'

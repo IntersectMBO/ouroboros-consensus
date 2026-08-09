@@ -56,7 +56,7 @@ mkCapacityBytesOverride = MempoolCapacityBytesOverride
 computeMempoolCapacity ::
   LedgerSupportsMempool blk =>
   LedgerConfig blk ->
-  TickedLedgerState blk mk ->
+  TickedLedgerState blk EmptyMK ->
   MempoolCapacityBytesOverride ->
   TxMeasure blk
 computeMempoolCapacity cfg st override =

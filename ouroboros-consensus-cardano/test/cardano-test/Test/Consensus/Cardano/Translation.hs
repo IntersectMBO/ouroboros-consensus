@@ -1,10 +1,18 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
@@ -26,18 +34,18 @@ import Cardano.Ledger.Shelley.API
   , translateCompactTxOutByronToShelley
   , translateTxIdByronToShelley
   )
-import Cardano.Ledger.Shelley.LedgerState
-  ( esLState
-  , lsUTxOState
-  , nesEs
-  , utxosUtxo
-  )
 import Cardano.Ledger.Shelley.Translation
 import Cardano.Ledger.Shelley.UTxO (UTxO (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Slot (EpochNo (..))
+import Codec.CBOR.Decoding (decodeListLenOf)
+import Codec.CBOR.Encoding (encodeListLen)
+import qualified Codec.CBOR.Read as CBOR
+import qualified Codec.CBOR.Write as CBOR
+import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.Map.Strict as Map
 import Data.SOP.InPairs (RequiringBoth (..), provideBoth)
+import Data.Void (Void)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( slotLengthFromSec
   )
@@ -48,33 +56,34 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( InPairs (..)
   , hardForkEraTranslation
   , translateLedgerState
+  , translateValues
   )
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( TranslateLedgerState (..)
+  , TranslateValues (..)
   )
 import Ouroboros.Consensus.Ledger.Basics
-  ( LedgerCfg
+  ( BlockSupportsUTxOHD (Diff, decodeValues, encodeValues)
+  , LedgerCfg
   , LedgerConfig
   , LedgerState
   )
-import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
-import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
-  ( BigEndianTxIn (..)
-  , ShelleyBlock
+  ( ShelleyBlock
+  , ShelleyCompatible
   , ShelleyLedgerConfig
   , mkShelleyLedgerConfig
   , shelleyLedgerState
-  , shelleyLedgerTables
+  , shelleyLedgerTranslationContext
   )
+import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim (splitUTxO)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util
 import Test.Cardano.Ledger.Alonzo.Binary.Twiddle ()
 import Test.Cardano.Ledger.Babbage.Binary.Twiddle ()
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
@@ -95,6 +104,27 @@ type Proto = TPraos Crypto
 
 tests :: TestTree
 tests =
+  testGroup
+    "Translation"
+    [ updateTablesOnEraTransition
+    , valuesCodecRoundtrip
+    ]
+
+valuesCodecRoundtrip :: TestTree
+valuesCodecRoundtrip =
+  testGroup
+    "LedgerTables values codec roundtrip"
+    [ testValuesRoundtrip @(TPraos Crypto) @ShelleyEra "Shelley"
+    , testValuesRoundtrip @(TPraos Crypto) @AllegraEra "Allegra"
+    , testValuesRoundtrip @(TPraos Crypto) @MaryEra "Mary"
+    , testValuesRoundtrip @(TPraos Crypto) @AlonzoEra "Alonzo"
+    , testValuesRoundtrip @(Praos Crypto) @BabbageEra "Babbage"
+    , testValuesRoundtrip @(Praos Crypto) @ConwayEra "Conway"
+    , testValuesRoundtrip @(Praos Crypto) @DijkstraEra "Dijkstra"
+    ]
+
+updateTablesOnEraTransition :: TestTree
+updateTablesOnEraTransition =
   testGroup
     "UpdateTablesOnEraTransition"
     [ testTablesTranslation
@@ -117,31 +147,29 @@ tests =
         shelleyToAllegraLedgerStateTranslation
         shelleyAvvmAddressesAreDeletesInUtxoDiff
         (\st -> cover 50 (nonEmptyAvvmAddresses st) "AVVM set is not empty")
-    , testTablesTranslation
+    , testValuesUpgrade
+        "Shelley to Allegra (value upgrade)"
+        shelleyToAllegraValuesTranslation
+    , testUtxoUpgradeTranslation
         "Allegra to Mary"
         allegraToMaryLedgerStateTranslation
-        utxoTablesAreEmpty
-        (\st -> cover 50 (nonEmptyUtxosShelley st) "UTxO set is not empty")
-    , testTablesTranslation
+        allegraToMaryValuesTranslation
+    , testUtxoUpgradeTranslation
         "Mary to Alonzo"
         maryToAlonzoLedgerStateTranslation
-        utxoTablesAreEmpty
-        (\st -> cover 50 (nonEmptyUtxosShelley st) "UTxO set is not empty")
-    , testTablesTranslation
+        maryToAlonzoValuesTranslation
+    , testUtxoUpgradeTranslation
         "Alonzo to Babbage"
         alonzoToBabbageLedgerStateTranslation
-        utxoTablesAreEmpty
-        (\st -> cover 50 (nonEmptyUtxosShelley st) "UTxO set is not empty")
-    , testTablesTranslation
+        alonzoToBabbageValuesTranslation
+    , testUtxoUpgradeTranslation
         "Babbage to Conway"
         babbageToConwayLedgerStateTranslation
-        utxoTablesAreEmpty
-        (\st -> cover 50 (nonEmptyUtxosShelley st) "UTxO set is not empty")
-    , testTablesTranslation
+        babbageToConwayValuesTranslation
+    , testUtxoUpgradeTranslation
         "Conway to Dijkstra"
         conwayToDijkstraLedgerStateTranslation
-        utxoTablesAreEmpty
-        (\st -> cover 50 (nonEmptyUtxosShelley st) "UTxO set is not empty")
+        conwayToDijkstraValuesTranslation
     ]
 
 {-------------------------------------------------------------------------------
@@ -220,13 +248,70 @@ PCons
         (CardanoEras Crypto)
     tls = translateLedgerState hardForkEraTranslation
 
+-- | The per-boundary on-disk value translations, exactly as wired into the
+-- production 'EraTranslation'. We assert these against the expected 'TxOut'
+-- upgrade so that a mis-wired 'translateValues' (e.g. 'id', the wrong upgrade,
+-- or a dropped boundary) is caught — this is the path the node actually uses to
+-- promote on-disk values across an era transition.
+shelleyToAllegraValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (TPraos Crypto) ShelleyEra)
+    (ShelleyBlock (TPraos Crypto) AllegraEra)
+allegraToMaryValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (TPraos Crypto) AllegraEra)
+    (ShelleyBlock (TPraos Crypto) MaryEra)
+maryToAlonzoValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (TPraos Crypto) MaryEra)
+    (ShelleyBlock (TPraos Crypto) AlonzoEra)
+alonzoToBabbageValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (TPraos Crypto) AlonzoEra)
+    (ShelleyBlock (Praos Crypto) BabbageEra)
+babbageToConwayValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (Praos Crypto) BabbageEra)
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+conwayToDijkstraValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+    (ShelleyBlock (Praos Crypto) DijkstraEra)
+PCons
+  -- Byron->Shelley moves the Byron UTxO into the Shelley tables via the diff
+  -- (tested by 'byronUtxosAreInsertsInShelleyUtxoDiff'); its value translation
+  -- is @const mempty@, so there is nothing to assert here.
+  _
+  ( PCons
+      shelleyToAllegraValuesTranslation
+      ( PCons
+          allegraToMaryValuesTranslation
+          ( PCons
+              maryToAlonzoValuesTranslation
+              ( PCons
+                  alonzoToBabbageValuesTranslation
+                  ( PCons
+                      babbageToConwayValuesTranslation
+                      ( PCons
+                          conwayToDijkstraValuesTranslation
+                          PNil
+                        )
+                    )
+                )
+            )
+        )
+    ) = tvs
+   where
+    tvs :: InPairs TranslateValues (CardanoEras Crypto)
+    tvs = translateValues hardForkEraTranslation
+
 -- | Check that the tables are correctly translated from one era to the next.
 testTablesTranslation ::
   forall srcBlk dstBlk.
   ( Arbitrary (TestSetup srcBlk dstBlk)
   , Show (LedgerCfg LedgerState srcBlk)
   , Show (LedgerCfg LedgerState dstBlk)
-  , Show (LedgerState srcBlk EmptyMK)
+  , Show (LedgerState srcBlk)
   ) =>
   -- | Property label
   String ->
@@ -235,9 +320,9 @@ testTablesTranslation ::
     TranslateLedgerState
     srcBlk
     dstBlk ->
-  (LedgerState srcBlk EmptyMK -> LedgerState dstBlk DiffMK -> Bool) ->
+  (LedgerState srcBlk -> Diff dstBlk -> Bool) ->
   -- | Coverage testing function
-  (LedgerState srcBlk EmptyMK -> Property -> Property) ->
+  (LedgerState srcBlk -> Property -> Property) ->
   TestTree
 testTablesTranslation propLabel translateWithConfig translationShouldSatisfy ledgerStateShouldCover =
   testProperty propLabel withTestSetup
@@ -247,10 +332,13 @@ testTablesTranslation propLabel translateWithConfig translationShouldSatisfy led
     checkCoverage $
       ledgerStateShouldCover tsSrcLedgerState $
         property $
-          translationShouldSatisfy tsSrcLedgerState destState
+          translationShouldSatisfy tsSrcLedgerState destDiff
    where
     TestSetup{tsSrcLedgerConfig, tsDestLedgerConfig, tsSrcLedgerState, tsEpochNo} = ts
-    destState = translateLedgerStateWith translation tsEpochNo tsSrcLedgerState
+    -- The translation now returns the new state paired with the @'Diff'@ that
+    -- records the table changes induced by the era transition; we only test the
+    -- diff here.
+    destDiff = snd $ translateLedgerStateWith translation tsEpochNo tsSrcLedgerState
      where
       translation :: TranslateLedgerState srcBlk dstBlk
       translation =
@@ -259,20 +347,155 @@ testTablesTranslation propLabel translateWithConfig translationShouldSatisfy led
           (WrapLedgerConfig tsSrcLedgerConfig)
           (WrapLedgerConfig tsDestLedgerConfig)
 
+-- | Check a pure-upgrade era boundary by /injecting/ a populated UTxO and
+-- /ejecting/ it again around the translation.
+--
+-- The mk-free canonical ledger state is UTxO-free (the values live in the
+-- backend), so we cannot read a meaningful UTxO out of @'tsSrcLedgerState'@.
+-- Instead we generate a source-era 'NewEpochState' that /does/ carry a UTxO,
+-- run the ledger's cross-era translation on it (the same 'SL.translateEra'' the
+-- consensus layer uses), and split the resulting UTxO back out. We assert that
+-- every entry survives with its 'TxOut' upgraded (the 'TxIn' key is era-stable),
+-- which is precisely what the on-disk values translation must reproduce.
+--
+-- We additionally assert that the consensus state translation itself emits no
+-- table diff for these boundaries (the values are upgraded lazily when read,
+-- not folded into a diff).
+testUtxoUpgradeTranslation ::
+  forall srcProto srcEra dstProto dstEra.
+  ( Arbitrary (TestSetup (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra))
+  , Arbitrary (NewEpochState srcEra)
+  , Show (LedgerState (ShelleyBlock srcProto srcEra))
+  , Show (LedgerConfig (ShelleyBlock srcProto srcEra))
+  , Show (LedgerConfig (ShelleyBlock dstProto dstEra))
+  , Show (NewEpochState srcEra)
+  , Core.EraTxOut srcEra
+  , Core.EraTxOut dstEra
+  , Core.TranslateEra dstEra NewEpochState
+  , Core.TranslationError dstEra NewEpochState ~ Void
+  , Core.PreviousEra dstEra ~ srcEra
+  ) =>
+  String ->
+  RequiringBoth
+    WrapLedgerConfig
+    TranslateLedgerState
+    (ShelleyBlock srcProto srcEra)
+    (ShelleyBlock dstProto dstEra) ->
+  -- | The on-disk value translation as wired in the production 'EraTranslation'.
+  TranslateValues (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra) ->
+  TestTree
+testUtxoUpgradeTranslation propLabel translateWithConfig valuesTranslation =
+  testProperty propLabel $
+    \(ts :: TestSetup (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra))
+     (srcNes :: NewEpochState srcEra) ->
+        let TestSetup{tsSrcLedgerConfig, tsDestLedgerConfig, tsSrcLedgerState, tsEpochNo} = ts
+            translation :: TranslateLedgerState (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra)
+            translation =
+              provideBoth
+                translateWithConfig
+                (WrapLedgerConfig tsSrcLedgerConfig)
+                (WrapLedgerConfig tsDestLedgerConfig)
+            -- The consensus state translation must emit no UTxO table diff.
+            destDiff :: Diff (ShelleyBlock dstProto dstEra)
+            destDiff = snd $ translateLedgerStateWith translation tsEpochNo tsSrcLedgerState
+            -- Inject a populated UTxO, translate, eject.
+            (_, srcValues) = splitUTxO srcNes
+            dstNes :: NewEpochState dstEra
+            dstNes = Core.translateEra' (shelleyLedgerTranslationContext tsDestLedgerConfig) srcNes
+            (_, dstValues) = splitUTxO dstNes
+            expected = Map.map Core.upgradeTxOut srcValues
+         in checkCoverage $
+              cover 50 (not (Map.null srcValues)) "UTxO set is not empty" $
+                conjoin
+                  [ -- The consensus state translation emits no table diff here.
+                    property (Diff.null destDiff)
+                  , -- The ledger's era translation upgrades the UTxO entries.
+                    dstValues === expected
+                  , -- The production on-disk value translation does the same: this
+                    -- is the path the node uses to promote values across the era.
+                    translateValuesWith valuesTranslation srcValues === expected
+                  ]
+
+-- | Assert only that a boundary's on-disk value translation upgrades each
+-- 'TxOut' (the 'TxIn' key is era-stable). Unlike 'testUtxoUpgradeTranslation'
+-- this makes no claim about the state-level diff, so it also fits boundaries
+-- that carry diff-level changes (e.g. Shelley->Allegra deletes the AVVM
+-- addresses) yet still upgrade the surviving values.
+testValuesUpgrade ::
+  forall srcProto srcEra dstProto dstEra.
+  ( Arbitrary (NewEpochState srcEra)
+  , Show (NewEpochState srcEra)
+  , Core.EraTxOut srcEra
+  , Core.EraTxOut dstEra
+  , Core.PreviousEra dstEra ~ srcEra
+  ) =>
+  String ->
+  TranslateValues (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra) ->
+  TestTree
+testValuesUpgrade propLabel valuesTranslation =
+  testProperty propLabel $ \(srcNes :: NewEpochState srcEra) ->
+    let (_, srcValues) = splitUTxO srcNes
+     in checkCoverage $
+          cover 50 (not (Map.null srcValues)) "UTxO set is not empty" $
+            translateValuesWith valuesTranslation srcValues
+              === Map.map Core.upgradeTxOut srcValues
+
+-- | Round-trip the on-disk values codec ('encodeValues'\/'decodeValues') for a
+-- single era on a /populated/ UTxO. The canonical example tables are empty, so
+-- without this the @BigEndianTxIn@-keyed, credential-shared 'TxOut' codec was
+-- never exercised on real entries. We obtain values by splitting an arbitrary
+-- 'NewEpochState'; 'decodeValues' takes a ledger state as the era hint (it
+-- supplies credential interns for sharing), but decoding is value-preserving
+-- for any state, so an arbitrary one suffices.
+testValuesRoundtrip ::
+  forall proto era.
+  ( ShelleyCompatible proto era
+  , Arbitrary (NewEpochState era)
+  , Show (NewEpochState era)
+  , Arbitrary (LedgerState (ShelleyBlock proto era))
+  , Show (LedgerState (ShelleyBlock proto era))
+  ) =>
+  String ->
+  TestTree
+testValuesRoundtrip propLabel =
+  testProperty propLabel $
+    \(nes :: NewEpochState era)
+     (st :: LedgerState (ShelleyBlock proto era)) ->
+        let values = snd (splitUTxO nes)
+            -- V2: the bare map that writers now emit.
+            v2 =
+              CBOR.deserialiseFromBytes
+                (decodeValues @(ShelleyBlock proto era) st)
+                (CBOR.toLazyByteString (encodeValues @(ShelleyBlock proto era) values))
+            -- V1: the legacy one-element-list wrapper, read by consuming the list
+            -- header first (mirrors 'loadSnapshot's TablesCodecVersion1 path).
+            v1 =
+              CBOR.deserialiseFromBytes
+                (decodeListLenOf 1 *> decodeValues @(ShelleyBlock proto era) st)
+                (CBOR.toLazyByteString (encodeListLen 1 <> encodeValues @(ShelleyBlock proto era) values))
+            ok lbl res = case res of
+              Right (leftover, decoded) ->
+                counterexample (lbl <> ": leftover bytes after decoding") (Lazy.null leftover)
+                  .&&. counterexample lbl (decoded === values)
+              Left err -> counterexample (lbl <> ": " <> show err) (property False)
+         in checkCoverage $
+              cover 50 (not (Map.null values)) "UTxO set is not empty" $
+                conjoin [ok "V2" v2, ok "V1" v1]
+
 {-------------------------------------------------------------------------------
     Specific predicates
 -------------------------------------------------------------------------------}
 
 byronUtxosAreInsertsInShelleyUtxoDiff ::
-  LedgerState ByronBlock EmptyMK ->
-  LedgerState (ShelleyBlock Proto ShelleyEra) DiffMK ->
+  LedgerState ByronBlock ->
+  Diff (ShelleyBlock Proto ShelleyEra) ->
   Bool
-byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
-  toNextUtxoDiff srcLedgerState == extractUtxoDiff destLedgerState
+byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destDiff =
+  toNextUtxoDiff srcLedgerState == destDiff
  where
   toNextUtxoDiff ::
-    LedgerState ByronBlock mk ->
-    Diff.Diff BigEndianTxIn (Core.TxOut ShelleyEra)
+    LedgerState ByronBlock ->
+    Diff.Diff TxIn (Core.TxOut ShelleyEra)
   toNextUtxoDiff ledgerState =
     let
       Byron.UTxO utxo = Byron.cvsUtxo $ byronLedgerState ledgerState
@@ -281,58 +504,39 @@ byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
      in
       Diff.Diff $ Map.map valFn $ Map.mapKeys keyFn utxo
 
-  translateTxInByronToShelley :: Byron.TxIn -> BigEndianTxIn
+  translateTxInByronToShelley :: Byron.TxIn -> TxIn
   translateTxInByronToShelley byronTxIn =
     let
       Byron.TxInUtxo txId txIx = byronTxIn
       shelleyTxId' = translateTxIdByronToShelley txId
      in
-      BigEndianTxIn $ TxIn shelleyTxId' (TxIx txIx)
+      TxIn shelleyTxId' (TxIx txIx)
 
 shelleyAvvmAddressesAreDeletesInUtxoDiff ::
-  LedgerState (ShelleyBlock Proto ShelleyEra) EmptyMK ->
-  LedgerState (ShelleyBlock Proto AllegraEra) DiffMK ->
+  LedgerState (ShelleyBlock Proto ShelleyEra) ->
+  Diff (ShelleyBlock Proto AllegraEra) ->
   Bool
-shelleyAvvmAddressesAreDeletesInUtxoDiff srcLedgerState destLedgerState =
-  toNextUtxoDiff srcLedgerState == extractUtxoDiff destLedgerState
+shelleyAvvmAddressesAreDeletesInUtxoDiff srcLedgerState destDiff =
+  toNextUtxoDiff srcLedgerState == destDiff
  where
   toNextUtxoDiff ::
-    LedgerState (ShelleyBlock Proto ShelleyEra) EmptyMK ->
-    Diff.Diff BigEndianTxIn (Core.TxOut AllegraEra)
+    LedgerState (ShelleyBlock Proto ShelleyEra) ->
+    Diff.Diff TxIn (Core.TxOut AllegraEra)
   toNextUtxoDiff = avvmAddressesToUtxoDiff . stashedAVVMAddresses . shelleyLedgerState
-  avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ coerceMapKeys $ Map.map (\_ -> Diff.Delete) m
+  -- The AVVM addresses are deleted on the Shelley->Allegra transition; their
+  -- 'TxOut's are upgraded to Allegra so the diff types line up (the 'Delete'
+  -- itself carries no value).
+  avvmAddressesToUtxoDiff (UTxO m) = Diff.fromMapDeletes $ Map.map Core.upgradeTxOut m
 
-utxoTablesAreEmpty ::
-  LedgerState (ShelleyBlock srcProto srcEra) EmptyMK ->
-  LedgerState (ShelleyBlock destProto destEra) DiffMK ->
-  Bool
-utxoTablesAreEmpty _ destLedgerState = Diff.null $ extractUtxoDiff destLedgerState
-
-nonEmptyUtxosByron :: LedgerState ByronBlock EmptyMK -> Bool
+nonEmptyUtxosByron :: LedgerState ByronBlock -> Bool
 nonEmptyUtxosByron ledgerState =
   let Byron.UTxO utxo = Byron.cvsUtxo $ byronLedgerState ledgerState
    in not $ Map.null utxo
 
-nonEmptyUtxosShelley :: LedgerState (ShelleyBlock proto era) EmptyMK -> Bool
-nonEmptyUtxosShelley ledgerState =
-  let UTxO m = utxosUtxo $ lsUTxOState $ esLState $ nesEs $ shelleyLedgerState ledgerState
-   in not $ Map.null m
-
-nonEmptyAvvmAddresses :: LedgerState (ShelleyBlock Proto ShelleyEra) EmptyMK -> Bool
+nonEmptyAvvmAddresses :: LedgerState (ShelleyBlock Proto ShelleyEra) -> Bool
 nonEmptyAvvmAddresses ledgerState =
   let UTxO m = stashedAVVMAddresses $ shelleyLedgerState ledgerState
    in not $ Map.null m
-
-{-------------------------------------------------------------------------------
-    Utilities
--------------------------------------------------------------------------------}
-
-extractUtxoDiff ::
-  LedgerState (ShelleyBlock proto era) DiffMK ->
-  Diff BigEndianTxIn (Core.TxOut era)
-extractUtxoDiff shelleyLedgerState =
-  let DiffMK tables = getLedgerTables $ shelleyLedgerTables shelleyLedgerState
-   in tables
 
 {-------------------------------------------------------------------------------
     TestSetup
@@ -341,14 +545,14 @@ extractUtxoDiff shelleyLedgerState =
 data TestSetup src dest = TestSetup
   { tsSrcLedgerConfig :: LedgerConfig src
   , tsDestLedgerConfig :: LedgerConfig dest
-  , tsSrcLedgerState :: LedgerState src EmptyMK
+  , tsSrcLedgerState :: LedgerState src
   , tsEpochNo :: EpochNo
   }
 
 deriving instance
   ( Show (LedgerConfig src)
   , Show (LedgerConfig dest)
-  , Show (LedgerState src EmptyMK)
+  , Show (LedgerState src)
   ) =>
   Show (TestSetup src dest)
 

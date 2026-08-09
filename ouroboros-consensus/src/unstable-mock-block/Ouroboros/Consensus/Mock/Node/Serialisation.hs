@@ -63,10 +63,10 @@ instance
   where
   decodeDisk _ = const <$> decode
 
-instance Typeable ext => EncodeDisk (MockBlock ext) (LedgerState (MockBlock ext) EmptyMK) where
+instance Typeable ext => EncodeDisk (MockBlock ext) (LedgerState (MockBlock ext)) where
   encodeDisk _ = encode . simpleLedgerState
-instance Typeable ext => DecodeDisk (MockBlock ext) (LedgerState (MockBlock ext) EmptyMK) where
-  decodeDisk _ = flip SimpleLedgerState (LedgerTables EmptyMK) <$> decode
+instance Typeable ext => DecodeDisk (MockBlock ext) (LedgerState (MockBlock ext)) where
+  decodeDisk _ = SimpleLedgerState <$> decode
 
 instance Typeable ext => EncodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
   encodeDisk _ = defaultEncodeAnnTip encode

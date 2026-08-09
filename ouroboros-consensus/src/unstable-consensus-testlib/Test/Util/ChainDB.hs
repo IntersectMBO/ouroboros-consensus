@@ -72,8 +72,11 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs
   { mcdbTopLevelConfig :: TopLevelConfig blk
   , mcdbChunkInfo :: ImmutableDB.ChunkInfo
   -- ^ Specifies the layout of the ImmutableDB on disk.
-  , mcdbInitLedger :: ExtLedgerState blk ValuesMK
+  , mcdbInitLedger :: ExtLedgerState blk
   -- ^ The initial ledger state.
+  , mcdbInitLedgerTables :: Values blk
+  -- ^ The initial ledger tables (the genesis @'Values'@, threaded alongside the
+  -- state now that it is @mk@-free).
   , mcdbRegistry :: ResourceRegistry m
   -- ^ Keeps track of non-lexically scoped resources.
   , mcdbNodeDBs :: NodeDBs (StrictTMVar m MockFS)
@@ -90,7 +93,6 @@ fromMinimalChainDbArgs ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
-  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   MinimalChainDbArgs m blk -> Complete ChainDbArgs m blk
 fromMinimalChainDbArgs MinimalChainDbArgs{..} =
@@ -126,7 +128,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           { lgrSnapshotPolicyArgs = LedgerDB.defaultSnapshotPolicyArgs
           , -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
             -- k seconds, where k is the security parameter.
-            lgrGenesis = return mcdbInitLedger
+            lgrGenesis = return (mcdbInitLedger, mcdbInitLedgerTables)
           , lgrHasFS = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
           , lgrTracer = nullTracer
           , lgrConfig = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents

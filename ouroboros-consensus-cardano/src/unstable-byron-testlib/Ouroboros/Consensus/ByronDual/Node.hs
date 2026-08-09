@@ -43,7 +43,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
-import Ouroboros.Consensus.Util ((.....:))
+import Ouroboros.Consensus.Util ((.....:), (.:))
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Delegation as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -123,10 +123,15 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                 DualLedgerState
                   { dualLedgerStateMain = initConcreteState
                   , dualLedgerStateAux = initAbstractState
+                  , -- ByronSpec has no on-disk tables (trivial @()@ values).
+                    dualLedgerStateAuxValues = ()
                   , dualLedgerStateBridge = initBridge
                   }
             , headerState = genesisHeaderState S.empty
             }
+      , -- Byron has no on-disk tables; its UTxO lives inside the (concrete)
+        -- ledger state, so the genesis HD tables are empty.
+        pInfoInitLedgerTables = ()
       }
   , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
   )
@@ -156,8 +161,8 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
     configGenesisData = Impl.configGenesisData translated
     protocolParameters = Impl.gdProtocolParameters configGenesisData
 
-  initAbstractState :: LedgerState ByronSpecBlock ValuesMK
-  initConcreteState :: LedgerState ByronBlock ValuesMK
+  initAbstractState :: LedgerState ByronSpecBlock
+  initConcreteState :: LedgerState ByronBlock
 
   initAbstractState = initByronSpecLedgerState abstractGenesis
   initConcreteState = initByronLedgerState concreteGenesis (Just initUtxo)

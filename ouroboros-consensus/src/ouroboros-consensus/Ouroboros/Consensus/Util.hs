@@ -99,7 +99,6 @@ module Ouroboros.Consensus.Util
 
     -- * Unsafe coercions or maps
   , coerceMapKeys
-  , coerceSet
   ) where
 
 import Cardano.Crypto.Hash
@@ -535,18 +534,5 @@ newtype Flag (name :: Symbol) = Flag {getFlag :: Bool}
 #endif
 coerceMapKeys :: forall k1 k2 v. Coercible k1 k2 => Map k1 v -> Map k2 v
 coerceMapKeys = unsafeCoerce
- where
-  _ = keepRedundantConstraint (Proxy @(Coercible k1 k2))
-
-#if __GLASGOW_HASKELL__ >= 908
-{-# WARNING in "x-ord-preserving-coercions"
-  coerceSet
-  [ "This function expects the types of the keys to have exactly the same Ord ordering."
-  , "If you are certain this is the case, ignore this warning with `-Wno-x-ord-preserving-coercions`."
-  ]
-  #-}
-#endif
-coerceSet :: forall k1 k2. Coercible k1 k2 => Set k1 -> Set k2
-coerceSet = unsafeCoerce
  where
   _ = keepRedundantConstraint (Proxy @(Coercible k1 k2))

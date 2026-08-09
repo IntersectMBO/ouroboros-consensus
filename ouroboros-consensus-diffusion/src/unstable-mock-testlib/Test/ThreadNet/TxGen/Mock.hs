@@ -8,7 +8,6 @@ import Control.Monad (replicateM)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Mock.Ledger
 import Test.QuickCheck
 import Test.ThreadNet.TxGen
@@ -18,7 +17,7 @@ import Test.ThreadNet.TxGen
 -------------------------------------------------------------------------------}
 
 instance TxGen (SimpleBlock SimpleMockCrypto ext) where
-  testGenTxs _coreNodeId numCoreNodes curSlotNo _cfg () ledgerState = do
+  testGenTxs _coreNodeId numCoreNodes curSlotNo _cfg () _ledgerState values = do
     n <- choose (0, 20)
     -- We don't update the UTxO after each transaction, so some of the
     -- generated transactions could very well be invalid.
@@ -28,8 +27,10 @@ instance TxGen (SimpleBlock SimpleMockCrypto ext) where
     addrs :: [Addr]
     addrs = Map.keys $ mkAddrDist numCoreNodes
 
+    -- The full UTxO is the values read for the block (the @mk@-free state no
+    -- longer carries the tables).
     utxo :: Utxo
-    utxo = mockUtxo $ simpleLedgerState $ stowLedgerTables ledgerState
+    utxo = values
 
 genSimpleTx :: SlotNo -> [Addr] -> Utxo -> Gen Tx
 genSimpleTx curSlotNo addrs u = do

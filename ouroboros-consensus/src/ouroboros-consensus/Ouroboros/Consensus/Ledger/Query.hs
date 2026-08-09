@@ -184,6 +184,9 @@ class
     MonadSTM m =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFTraverseTables result ->
+    -- | Provider of the current-era range reader, used to page the on-disk
+    -- tables (range reads are era-level and not exposed through the forker).
+    EraRangeReaderProvider m blk ->
     ReadOnlyForker' m blk ->
     m result
 
@@ -251,10 +254,13 @@ answerQuery ::
   forall blk m result.
   (BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk, MonadSTM m) =>
   ExtLedgerCfg blk ->
+  -- | Provider of the current-era range reader for the same forker, used to
+  -- answer @QFTraverseTables@ queries.
+  EraRangeReaderProvider m blk ->
   ReadOnlyForker' m blk ->
   Query blk result ->
   m result
-answerQuery config forker query = case query of
+answerQuery config provider forker query = case query of
   BlockQuery (blockQuery :: BlockQuery blk footprint result) ->
     case sing :: Sing footprint of
       SQFNoTables ->
@@ -263,7 +269,7 @@ answerQuery config forker query = case query of
       SQFLookupTables ->
         answerBlockQueryLookup config blockQuery forker
       SQFTraverseTables ->
-        answerBlockQueryTraverse config blockQuery forker
+        answerBlockQueryTraverse config blockQuery provider forker
   GetSystemStart ->
     pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
   GetChainBlockNo ->

@@ -209,7 +209,7 @@ module Ouroboros.Consensus.Cardano.Block
 
 import Data.Kind
 import Data.SOP.BasicFunctors
-import Data.SOP.Functors
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.Strict
 import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
@@ -220,7 +220,7 @@ import Ouroboros.Consensus.HeaderValidation
   ( OtherHeaderEnvelopeError
   , TipInfo
   )
-import Ouroboros.Consensus.Ledger.Abstract (LedgerError)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerError)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
@@ -1341,8 +1341,8 @@ pattern CardanoLedgerConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfg
 type CardanoLedgerState c mk = LedgerState (CardanoBlock c) mk
 
 pattern LedgerStateByron ::
-  LedgerState ByronBlock mk ->
-  CardanoLedgerState c mk
+  LedgerState ByronBlock EmptyMK ->
+  CardanoLedgerState c EmptyMK
 pattern LedgerStateByron st <-
   HardForkLedgerState
     ( State.HardForkState
@@ -1350,8 +1350,8 @@ pattern LedgerStateByron st <-
       )
 
 pattern LedgerStateShelley ::
-  LedgerState (ShelleyBlock (TPraos c) ShelleyEra) mk ->
-  CardanoLedgerState c mk
+  LedgerState (ShelleyBlock (TPraos c) ShelleyEra) EmptyMK ->
+  CardanoLedgerState c EmptyMK
 pattern LedgerStateShelley st <-
   HardForkLedgerState
     ( State.HardForkState
@@ -1359,8 +1359,8 @@ pattern LedgerStateShelley st <-
       )
 
 pattern LedgerStateAllegra ::
-  LedgerState (ShelleyBlock (TPraos c) AllegraEra) mk ->
-  CardanoLedgerState c mk
+  LedgerState (ShelleyBlock (TPraos c) AllegraEra) EmptyMK ->
+  CardanoLedgerState c EmptyMK
 pattern LedgerStateAllegra st <-
   HardForkLedgerState
     ( State.HardForkState
@@ -1368,8 +1368,8 @@ pattern LedgerStateAllegra st <-
       )
 
 pattern LedgerStateMary ::
-  LedgerState (ShelleyBlock (TPraos c) MaryEra) mk ->
-  CardanoLedgerState c mk
+  LedgerState (ShelleyBlock (TPraos c) MaryEra) EmptyMK ->
+  CardanoLedgerState c EmptyMK
 pattern LedgerStateMary st <-
   HardForkLedgerState
     ( State.HardForkState
@@ -1377,8 +1377,8 @@ pattern LedgerStateMary st <-
       )
 
 pattern LedgerStateAlonzo ::
-  LedgerState (ShelleyBlock (TPraos c) AlonzoEra) mk ->
-  CardanoLedgerState c mk
+  LedgerState (ShelleyBlock (TPraos c) AlonzoEra) EmptyMK ->
+  CardanoLedgerState c EmptyMK
 pattern LedgerStateAlonzo st <-
   HardForkLedgerState
     ( State.HardForkState
@@ -1386,8 +1386,8 @@ pattern LedgerStateAlonzo st <-
       )
 
 pattern LedgerStateBabbage ::
-  LedgerState (ShelleyBlock (Praos c) BabbageEra) mk ->
-  CardanoLedgerState c mk
+  LedgerState (ShelleyBlock (Praos c) BabbageEra) EmptyMK ->
+  CardanoLedgerState c EmptyMK
 pattern LedgerStateBabbage st <-
   HardForkLedgerState
     ( State.HardForkState
@@ -1395,8 +1395,8 @@ pattern LedgerStateBabbage st <-
       )
 
 pattern LedgerStateConway ::
-  LedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
-  CardanoLedgerState c mk
+  LedgerState (ShelleyBlock (Praos c) ConwayEra) EmptyMK ->
+  CardanoLedgerState c EmptyMK
 pattern LedgerStateConway st <-
   HardForkLedgerState
     ( State.HardForkState
@@ -1404,8 +1404,8 @@ pattern LedgerStateConway st <-
       )
 
 pattern LedgerStateDijkstra ::
-  LedgerState (ShelleyBlock (Praos c) DijkstraEra) mk ->
-  CardanoLedgerState c mk
+  LedgerState (ShelleyBlock (Praos c) DijkstraEra) EmptyMK ->
+  CardanoLedgerState c EmptyMK
 pattern LedgerStateDijkstra st <-
   HardForkLedgerState
     ( State.HardForkState

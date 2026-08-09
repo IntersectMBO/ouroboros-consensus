@@ -31,7 +31,7 @@ localStateQueryServer ::
   ) =>
   ExtLedgerCfg blk ->
   ( Target (Point blk) ->
-    m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk))
+    m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk, EraRangeReaderProvider m blk))
   ) ->
   LocalStateQueryServer blk (Point blk) (Query blk) m ()
 localStateQueryServer cfg getView =
@@ -50,7 +50,7 @@ localStateQueryServer cfg getView =
   handleAcquire mpt = do
     eForker <- getView mpt
     case eForker of
-      Right (rk, forker) -> pure $ SendMsgAcquired $ acquired rk forker
+      Right (rk, forker, provider) -> pure $ SendMsgAcquired $ acquired rk forker provider
       Left e -> do
         pure $ case e of
           PointTooOld{} ->
@@ -61,10 +61,11 @@ localStateQueryServer cfg getView =
   acquired ::
     ResourceKey m ->
     ReadOnlyForker' m blk ->
+    EraRangeReaderProvider m blk ->
     ServerStAcquired blk (Point blk) (Query blk) m ()
-  acquired rk forker =
+  acquired rk forker provider =
     ServerStAcquired
-      { recvMsgQuery = handleQuery rk forker
+      { recvMsgQuery = handleQuery rk forker provider
       , recvMsgReAcquire = \mp -> do close; handleAcquire mp
       , recvMsgRelease = do close; return idle
       }
@@ -74,8 +75,9 @@ localStateQueryServer cfg getView =
   handleQuery ::
     ResourceKey m ->
     ReadOnlyForker' m blk ->
+    EraRangeReaderProvider m blk ->
     Query blk result ->
     m (ServerStQuerying blk (Point blk) (Query blk) m () result)
-  handleQuery rk forker query = do
-    result <- Query.answerQuery cfg forker query
-    return $ SendMsgResult result (acquired rk forker)
+  handleQuery rk forker provider query = do
+    result <- Query.answerQuery cfg provider forker query
+    return $ SendMsgResult result (acquired rk forker provider)

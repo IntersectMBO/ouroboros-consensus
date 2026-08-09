@@ -32,6 +32,9 @@ module Ouroboros.Consensus.Util.CBOR
   , encodeSeq
   , encodeWithOrigin
   , encodeStrictMaybe
+
+    -- * MemPack
+  , unpackEither
   ) where
 
 import Cardano.Binary (DecoderError (..), decodeMaybe, encodeMaybe)
@@ -49,6 +52,8 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.ST
 import qualified Control.Monad.ST.Lazy as ST.Lazy
+import Control.Monad.Trans.Fail (runFailAgg)
+import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder.Extra (defaultChunkSize)
@@ -56,6 +61,9 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Foldable (toList)
 import Data.IORef
 import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe, strictMaybeToMaybe)
+import Data.MemPack (MemPack, unpackFail)
+import Data.MemPack.Buffer (Buffer)
+import Data.MemPack.Error (SomeError, fromMultipleErrors)
 import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Text as Text
@@ -352,3 +360,15 @@ encodeStrictMaybe f = encodeMaybe f . strictMaybeToMaybe
 
 decodeStrictMaybe :: CBOR.D.Decoder s a -> CBOR.D.Decoder s (StrictMaybe a)
 decodeStrictMaybe f = maybeToStrictMaybe <$> decodeMaybe f
+
+{-------------------------------------------------------------------------------
+  MemPack
+-------------------------------------------------------------------------------}
+
+-- | Decode a 'MemPack' value from a buffer, returning the error on failure
+-- rather than throwing.
+unpackEither ::
+  forall a b.
+  (MemPack a, Buffer b, HasCallStack) => b -> Either SomeError a
+unpackEither = first fromMultipleErrors . runFailAgg . unpackFail
+{-# INLINEABLE unpackEither #-}

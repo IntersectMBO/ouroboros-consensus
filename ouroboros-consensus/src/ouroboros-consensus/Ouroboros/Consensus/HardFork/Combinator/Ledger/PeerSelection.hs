@@ -2,8 +2,8 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection () where
 
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.BasicFunctors
-import Data.SOP.Functors
 import Data.SOP.Strict
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Basics

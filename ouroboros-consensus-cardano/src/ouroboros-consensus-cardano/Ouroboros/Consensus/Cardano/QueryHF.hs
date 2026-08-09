@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -12,7 +11,6 @@
 
 module Ouroboros.Consensus.Cardano.QueryHF () where
 
-import Data.Coerce
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -20,15 +18,14 @@ import Data.SOP.Index
 import Data.SOP.Strict
 import Data.Singletons
 import NoThunks.Class
-import Ouroboros.Consensus.Byron.Ledger
+import Ouroboros.Consensus.Byron.Ledger ()
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
-import Ouroboros.Consensus.Cardano.Ledger
 import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.Ledger.Basics (Values)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node ()
@@ -75,49 +72,53 @@ answerCardanoQueryHF f idx cfg q dlv =
           )
           (injectNS idx (Pair cfg (FlipBlockQuery q)))
 
-shelleyCardanoFilter ::
-  forall proto era c result.
-  ( CardanoHardForkConstraints c
-  , ShelleyCompatible proto era
-  ) =>
-  BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  TxOut (HardForkBlock (CardanoEras c)) ->
-  Bool
-shelleyCardanoFilter q = eliminateCardanoTxOut (\_ -> shelleyQFTraverseTablesPredicate q)
+-- | Project the current era's values out of the hard-fork @NS@. The forker read
+-- returns values tagged with the era we injected the keys at (the current era),
+-- so the requested arm is guaranteed present.
+projectShelleyValues ::
+  forall c blk.
+  Index (CardanoEras c) blk ->
+  Values (HardForkBlock (CardanoEras c)) ->
+  Values blk
+projectShelleyValues idx0 =
+  maybe (error "answerCardanoQueryHF: values in unexpected era") unwrapValues
+    . go idx0
+ where
+  go :: Index xs x -> NS WrapValues xs -> Maybe (WrapValues x)
+  go IZ (Z x) = Just x
+  go (IS idx) (S ns) = go idx ns
+  go _ _ = Nothing
 
 instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras c) where
-  answerBlockQueryHFLookup =
+  answerBlockQueryHFLookup idx cfg q forker =
     answerCardanoQueryHF
-      ( \idx ->
+      ( \idx' cfg' q' forker' ->
           answerShelleyLookupQueries
-            (injectLedgerTables idx)
-            (ejectHardForkTxOut idx)
-            (coerce . ejectCanonicalTxIn idx)
+            (injectNS idx' . WrapKeys)
+            (projectShelleyValues idx')
+            cfg'
+            q'
+            forker'
       )
-  answerBlockQueryHFTraverse =
+      idx
+      cfg
+      q
+      forker
+
+  -- The traverse loop reads through the era-level range reader obtained from the
+  -- provider, so the forker itself is unused here. The filter is era-typed: the
+  -- per-era predicate applied to the current era's @TxOut@.
+  answerBlockQueryHFTraverse idx cfg q provider forker =
     answerCardanoQueryHF
-      ( \idx ->
+      ( \idx' cfg' q' _forker' ->
           answerShelleyTraversingQueries
-            (ejectHardForkTxOut idx)
-            (coerce . ejectCanonicalTxIn idx)
-            (queryLedgerGetTraversingFilter idx)
+            (projectShelleyValues idx')
+            shelleyQFTraverseTablesPredicate
+            cfg'
+            q'
+            provider
       )
-
-  queryLedgerGetTraversingFilter idx q = case idx of
-    -- Byron
-    IZ -> byronCardanoFilter q
-    -- Shelley based
-    IS IZ -> shelleyCardanoFilter q
-    IS (IS IZ) -> shelleyCardanoFilter q
-    IS (IS (IS IZ)) -> shelleyCardanoFilter q
-    IS (IS (IS (IS IZ))) -> shelleyCardanoFilter q
-    IS (IS (IS (IS (IS IZ)))) -> shelleyCardanoFilter q
-    IS (IS (IS (IS (IS (IS IZ))))) -> shelleyCardanoFilter q
-    IS (IS (IS (IS (IS (IS (IS IZ)))))) -> shelleyCardanoFilter q
-    IS (IS (IS (IS (IS (IS (IS (IS idx'))))))) -> case idx' of {}
-
-byronCardanoFilter ::
-  BlockQuery ByronBlock QFTraverseTables result ->
-  TxOut (HardForkBlock (CardanoEras c)) ->
-  Bool
-byronCardanoFilter = \case {}
+      idx
+      cfg
+      q
+      forker

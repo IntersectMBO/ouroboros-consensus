@@ -45,7 +45,7 @@ import Ouroboros.Consensus.Block.Abstract
 --
 -- @Ticked@ is used mainly in two ways:
 --
--- * @Ticked (Ext)LedgerState@ where its kind gets concretized to @StateKind -> StateKind@
+-- * @Ticked (Ext)LedgerState@ where its kind gets concretized to @(Type -> Type) -> (Type -> Type)@
 -- * @Ticked (HeaderState blk)@ where its kind gets concretized to @Type -> Type@
 type Ticked :: k -> k
 data family Ticked st

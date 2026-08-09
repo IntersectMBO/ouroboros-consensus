@@ -51,7 +51,7 @@
 --     - __Chain sync client__: To validate headers of a chain that intersects
 --        with any of the past \(k\) blocks.
 --
--- - __Providing 'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTable's at any of the last \(k\) ledger states__: To apply blocks or transactions on top
+-- - __Providing the on-disk ledger tables (the @Values@ of 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsUTxOHD') at any of the last \(k\) ledger states__: To apply blocks or transactions on top
 --     of ledger states, the LedgerDB must be able to provide the appropriate
 --     ledger tables at any of those ledger states.
 --
@@ -173,8 +173,7 @@
 -- >>> :}
 module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
-    CanUpgradeLedgerTables (..)
-  , LedgerDB (..)
+    LedgerDB (..)
   , LedgerDB'
   , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
@@ -228,7 +227,6 @@ import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
-import Data.MemPack
 import Data.Proxy
 import Data.Set (Set)
 import Data.Word
@@ -251,7 +249,6 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -272,9 +269,7 @@ type LedgerDbSerialiseConstraints blk =
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , IndexedMemPack LedgerState blk (TxOut blk)
-  , MemPack (TxIn blk)
-  , SerializeTablesWithHint LedgerState blk
+  , BlockSupportsUTxOHD blk
   )
 
 -- | The core API of the LedgerDB component
@@ -300,6 +295,19 @@ data LedgerDB m l blk = LedgerDB
   --
   -- Note this will allocate resources; see the "'Forker' management
   -- in the running node" comment above.
+  , getReadOnlyForkerWithRangeAtPoint ::
+      l ~ ExtLedgerState =>
+      Target (Point blk) ->
+      m (Either GetForkerError (ReadOnlyForker' m blk, EraRangeReaderProvider m blk))
+  -- ^ Acquire a read-only 'Forker' at the requested point together with the
+  -- 'EraRangeReaderProvider' for that forker's tables handle.
+  --
+  -- This is used /only/ by the LocalStateQuery server, to answer
+  -- @QFTraverseTables@ queries: range reads are a query-only, era-level concern
+  -- that lives on the storage backend's tables handle (see 'EraRangeReader'),
+  -- so they cannot be exposed through the abstract 'ReadOnlyForker'. The
+  -- provider is valid only for as long as the returned forker is open (it
+  -- captures the same handle).
   , validateFork ::
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
@@ -359,8 +367,9 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l blk DiffMK -> m ()
-  -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
+  , push :: l blk EmptyMK -> Diff blk -> m ()
+  -- ^ Push a ledger state (together with the diff it produced), and prune the
+  -- 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
   , reapplyThenPushNOW :: blk -> m ()

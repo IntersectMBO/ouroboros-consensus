@@ -125,7 +125,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
@@ -357,11 +356,12 @@ type AllComponents blk =
 type TestConstraints blk =
   ( ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
+  , SingleEraUTxOHDBlock blk
   , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
-  , Eq (LedgerState blk EmptyMK)
+  , Eq (LedgerState blk)
   , Eq blk
   , Show blk
   , HasHeader blk
@@ -373,9 +373,7 @@ type TestConstraints blk =
   , ConvertRawHash blk
   , HasHardForkHistory blk
   , SerialiseDiskConstraints blk
-  , Show (LedgerState blk EmptyMK)
-  , LedgerTablesAreTrivial LedgerState blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , Show (LedgerState blk)
   , ImmutableEraParams blk
   )
 
@@ -947,7 +945,7 @@ initModel ::
   HasHeader blk =>
   LoE () ->
   TopLevelConfig blk ->
-  ExtLedgerState blk EmptyMK ->
+  ExtLedgerState blk ->
   Model blk m r
 initModel loe cfg initLedger =
   Model
@@ -1623,7 +1621,7 @@ sm ::
   (Model blk IO Symbolic -> Gen (blk, Persistent [blk])) ->
   (Model blk IO Symbolic -> Gen (blk, Persistent [blk])) ->
   TopLevelConfig blk ->
-  ExtLedgerState blk EmptyMK ->
+  ExtLedgerState blk ->
   StateMachine
     (Model blk IO)
     (At Cmd blk IO)
@@ -1659,7 +1657,7 @@ deriving instance
   , ToExpr (HeaderHash blk)
   , ToExpr (ChainDepState (BlockProtocol blk))
   , ToExpr (TipInfo blk)
-  , ToExpr (LedgerState blk EmptyMK)
+  , ToExpr (LedgerState blk)
   , ToExpr (ExtValidationError blk)
   , StandardHash blk
   , Show blk
@@ -2304,7 +2302,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
           mkArgs
             testCfg
             chunkInfo
-            (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+            testInitExtLedger
             threadRegistry
             nodeDBs
             tracer
@@ -2470,7 +2468,7 @@ mkArgs ::
   IOLike m =>
   TopLevelConfig Blk ->
   ImmutableDB.ChunkInfo ->
-  ExtLedgerState Blk ValuesMK ->
+  ExtLedgerState Blk ->
   ResourceRegistry m ->
   NodeDBs (StrictTMVar m MockFS) ->
   CT.Tracer m (TraceEvent Blk) ->
@@ -2483,6 +2481,7 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
             { mcdbTopLevelConfig = cfg
             , mcdbChunkInfo = chunkInfo
             , mcdbInitLedger = initLedger
+            , mcdbInitLedgerTables = emptyValues @Blk
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDBs
             }

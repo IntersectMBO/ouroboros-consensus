@@ -22,7 +22,6 @@ import qualified Ouroboros.Consensus.ByronSpec.Ledger.GenTx as GenTx
 import Ouroboros.Consensus.ByronSpec.Ledger.Ledger
 import Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 
 newtype instance GenTx ByronSpecBlock = ByronSpecGenTx
   { unByronSpecGenTx :: ByronSpecGenTx
@@ -40,23 +39,25 @@ newtype instance Validated (GenTx ByronSpecBlock) = ValidatedByronSpecGenTx
 type instance ApplyTxErr ByronSpecBlock = ByronSpecGenTxErr
 
 instance LedgerSupportsMempool ByronSpecBlock where
-  applyTx cfg _wti _slot tx (TickedByronSpecLedgerState tip st) =
+  applyTx cfg _wti _slot tx _values (TickedByronSpecLedgerState tip st) =
     fmap
       ( \st' ->
           ( TickedByronSpecLedgerState tip st'
+          , () -- ByronSpec has no on-disk tables, so applying produces no diff
           , ValidatedByronSpecGenTx tx
           )
       )
       $ GenTx.apply cfg (unByronSpecGenTx tx) st
 
   -- Byron spec doesn't have multiple validation modes
-  reapplyTx cfg slot vtx st =
-    applyDiffs st . fst
-      <$> applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
+  reapplyTx cfg slot vtx values st = do
+    (st', diff, _vtx) <-
+      applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) values st
+    pure (st', diff)
 
   txForgetValidated = forgetValidatedByronSpecGenTx
 
-  getTransactionKeySets _ = emptyLedgerTables
+  getTransactionKeySets _ = ()
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
@@ -69,4 +70,4 @@ instance TxLimits ByronSpecBlock where
   blockCapacityTxMeasure _cfg _st = TxMeasure (IgnoringOverflow $ ByteSize32 1) TrivialTxMeasurePhase2
 
   txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
-  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  txMeasurePhase2 _cfg _values _st _tx = pure TrivialTxMeasurePhase2

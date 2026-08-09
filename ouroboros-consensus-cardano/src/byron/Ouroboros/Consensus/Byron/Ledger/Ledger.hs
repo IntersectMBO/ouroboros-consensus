@@ -12,6 +12,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -39,7 +40,6 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger
     -- * Type family instances
   , BlockQuery (..)
   , LedgerState (..)
-  , LedgerTables (..)
   , Ticked (..)
 
     -- * Auxiliary
@@ -89,9 +89,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
-import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -188,53 +186,52 @@ instance IsLedger LedgerState ByronBlock where
   type LedgerErr LedgerState ByronBlock = CC.ChainValidationError
 
   applyChainTickLedgerResult _ cfg slotNo ByronLedgerState{..} =
-    pureLedgerResult $
-      TickedByronLedgerState
-        { tickedByronLedgerState =
-            CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
-        , untickedByronLedgerTransition =
-            byronLedgerTransition
-        }
+    pureLedgerResult
+      ( TickedByronLedgerState
+          { tickedByronLedgerState =
+              CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
+          , untickedByronLedgerTransition =
+              byronLedgerTransition
+          }
+      , () -- Byron has no on-disk tables, so ticking produces no diff
+      )
 
 type instance TxIn ByronBlock = Void
 type instance TxOut ByronBlock = Void
 
-instance LedgerTablesAreTrivial LedgerState ByronBlock where
-  convertMapKind ByronLedgerState{..} = ByronLedgerState{..}
+-- | Byron has no on-disk tables: its 'Keys'\/'Values'\/'Diff' are all trivial
+-- (@()@), so every operation is a no-op.
+instance BlockSupportsUTxOHD ByronBlock where
+  type Keys ByronBlock = ()
+  type Values ByronBlock = ()
+  type Diff ByronBlock = ()
+  blockKeys _ = ()
+  forward _ = id
+  restrictValues _ = id
+  valuesSize _ = 0
+  encodeValues _ = mempty
+  decodeValues _ = pure ()
 
-instance LedgerTablesAreTrivial (Ticked LedgerState) ByronBlock where
-  convertMapKind TickedByronLedgerState{..} = TickedByronLedgerState{..}
+instance SingleEraUTxOHDBlock ByronBlock where
+  emptyValues = ()
+  emptyDiffs = ()
 
-instance HasLedgerTables LedgerState ByronBlock where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-
-instance HasLedgerTables (Ticked LedgerState) ByronBlock where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-
-instance CanStowLedgerTables (LedgerState ByronBlock) where
-  stowLedgerTables = trivialStowLedgerTables
-  unstowLedgerTables = trivialUnstowLedgerTables
-
-instance SerializeTablesWithHint LedgerState ByronBlock where
-  encodeTablesWithHint = trivialEncodeTablesWithHint
-  decodeTablesWithHint = trivialDecodeTablesWithHint
-
-deriving via Void instance IndexedMemPack LedgerState ByronBlock Void
+instance SingleEraBlockSupportsUTxOHD ByronBlock where
+  rangeReadValues _ _ = ((), Nothing)
+  keysToList _ = []
+  valuesToList _ = []
+  valuesFromList _ = ()
+  diffToList _ = []
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock LedgerState ByronBlock where
-  applyBlockLedgerResultWithValidation doValidation opts =
-    fmap pureLedgerResult ..: applyByronBlock doValidation opts
+  applyBlockLedgerResultWithValidation doValidation opts cfg blk _values ticked =
+    fmap (pureLedgerResult . (,())) (applyByronBlock doValidation opts cfg blk ticked)
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
-
-instance GetBlockKeySets ByronBlock where
-  getBlockKeySets _ = emptyLedgerTables
 
 data instance BlockQuery ByronBlock fp result where
   GetUpdateInterfaceState :: BlockQuery ByronBlock QFNoTables UPI.State
@@ -570,6 +567,3 @@ decodeByronResult ::
   Decoder s result
 decodeByronResult query = case query of
   GetUpdateInterfaceState -> fromByronCBOR
-
-instance CanUpgradeLedgerTables LedgerState ByronBlock where
-  upgradeTables _ _ = id

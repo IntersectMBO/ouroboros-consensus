@@ -4,9 +4,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 -- TODO: Ledger has a few deprecations that we are ignoring for now
 {-# OPTIONS_GHC -Wno-deprecations #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Eras
   ( -- * Eras based on the Shelley ledger

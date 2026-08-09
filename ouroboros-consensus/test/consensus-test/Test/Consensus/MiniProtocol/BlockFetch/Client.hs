@@ -288,6 +288,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 { mcdbTopLevelConfig = topLevelConfig
                 , mcdbChunkInfo = mkTestChunkInfo topLevelConfig
                 , mcdbInitLedger = testInitExtLedger
+                , mcdbInitLedgerTables = mempty
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
                 }

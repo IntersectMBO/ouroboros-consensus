@@ -1,7 +1,6 @@
 module Main (main) where
 
 import qualified Test.Consensus.Ledger.Mock (tests)
-import qualified Test.Consensus.Ledger.Mock.LedgerTables (tests)
 import Test.Tasty
 import qualified Test.ThreadNet.BFT (tests)
 import qualified Test.ThreadNet.LeaderSchedule (tests)
@@ -20,7 +19,6 @@ tests =
   testGroup
     "ouroboros-consensus"
     [ Test.Consensus.Ledger.Mock.tests
-    , Test.Consensus.Ledger.Mock.LedgerTables.tests
     , Test.ThreadNet.BFT.tests
     , Test.ThreadNet.LeaderSchedule.tests
     , Test.ThreadNet.PBFT.tests

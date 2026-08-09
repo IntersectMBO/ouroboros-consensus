@@ -18,7 +18,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( CSJConfig (..)
   , CSJEnabledConfig (..)
@@ -128,10 +127,11 @@ runTest TestSetup = withRegistry $ \registry -> do
                 HeaderStateHistory.fromChain
                   topLevelCfg
                   testInitExtLedger
+                  mempty
                   MockChain.Genesis
           , getPastLedger =
               pure . \case
-                GenesisPoint -> Just $ forgetLedgerTables testInitExtLedger
+                GenesisPoint -> Just testInitExtLedger
                 BlockPoint{} -> Nothing
           , getIsInvalidBlock =
               pure $ WithFingerprint (\_hash -> Nothing) (Fingerprint 0)

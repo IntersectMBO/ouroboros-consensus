@@ -262,7 +262,7 @@ roundtrip_all ::
   , Arbitrary' blk
   , Arbitrary' (Header blk)
   , Arbitrary' (HeaderHash blk)
-  , Arbitrary' (LedgerState blk EmptyMK)
+  , Arbitrary' (LedgerState blk)
   , Arbitrary' (AnnTip blk)
   , Arbitrary' (ChainDepState (BlockProtocol blk))
   , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (Coherent blk)
@@ -306,7 +306,7 @@ roundtrip_all_skipping ::
   , Arbitrary' blk
   , Arbitrary' (Header blk)
   , Arbitrary' (HeaderHash blk)
-  , Arbitrary' (LedgerState blk EmptyMK)
+  , Arbitrary' (LedgerState blk)
   , Arbitrary' (AnnTip blk)
   , Arbitrary' (ChainDepState (BlockProtocol blk))
   , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (Coherent blk)
@@ -351,7 +351,7 @@ roundtrip_SerialiseDisk ::
   ( SerialiseDiskConstraints blk
   , Arbitrary' blk
   , Arbitrary' (Header blk)
-  , Arbitrary' (LedgerState blk EmptyMK)
+  , Arbitrary' (LedgerState blk)
   , Arbitrary' (AnnTip blk)
   , Arbitrary' (ChainDepState (BlockProtocol blk))
   ) =>
@@ -373,7 +373,7 @@ roundtrip_SerialiseDisk ccfg dictNestedHdr =
   , -- Since the 'LedgerState' is a large data structure, we lower the
     -- number of tests to avoid slowing down the testsuite too much
     adjustQuickCheckTests (`div` 10) $
-      rt (Proxy @(LedgerState blk EmptyMK)) "LedgerState"
+      rt (Proxy @(LedgerState blk)) "LedgerState"
   , rt (Proxy @(AnnTip blk)) "AnnTip"
   , rt (Proxy @(ChainDepState (BlockProtocol blk))) "ChainDepState"
   ]

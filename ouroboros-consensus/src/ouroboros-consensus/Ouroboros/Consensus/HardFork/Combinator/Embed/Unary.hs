@@ -41,7 +41,7 @@ import Data.Coerce
 import Data.Kind (Constraint, Type)
 import Data.Proxy
 import Data.SOP.BasicFunctors
-import Data.SOP.Functors
+import Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
@@ -180,9 +180,9 @@ deriving via IsomorphicUnary NS WrapTipInfo instance Isomorphic WrapTipInfo
 deriving via IsomorphicUnary NS WrapValidatedGenTx instance Isomorphic WrapValidatedGenTx
 
 deriving via
-  IsomorphicUnary HardForkState (Flip LedgerState mk)
+  IsomorphicUnary HardForkState (Flip LedgerState EmptyMK)
   instance
-    Isomorphic (Flip LedgerState mk)
+    Isomorphic (Flip LedgerState EmptyMK)
 deriving via
   IsomorphicUnary HardForkState WrapChainDepState
   instance
@@ -340,7 +340,7 @@ instance Isomorphic HeaderState where
       , headerStateChainDep = inject' (Proxy @(WrapChainDepState blk)) headerStateChainDep
       }
 
-instance Isomorphic (FlipTickedLedgerState mk) where
+instance Isomorphic (FlipTickedLedgerState EmptyMK) where
   project =
     State.currentState
       . Telescope.fromTZ
@@ -355,7 +355,7 @@ instance Isomorphic (FlipTickedLedgerState mk) where
       . Telescope.TZ
       . State.Current History.initBound
 
-instance Isomorphic (Flip ExtLedgerState mk) where
+instance Isomorphic (Flip ExtLedgerState EmptyMK) where
   project (Flip ExtLedgerState{..}) =
     Flip $
       ExtLedgerState
@@ -540,6 +540,9 @@ instance Isomorphic ProtocolInfo where
     ProtocolInfo
       { pInfoConfig = project pInfoConfig
       , pInfoInitLedger = unFlip $ project $ Flip pInfoInitLedger
+      , -- @Values (HardForkBlock '[blk]) = NS WrapValues '[blk]@; project the
+        -- single era arm.
+        pInfoInitLedgerTables = unwrapValues (unZ pInfoInitLedgerTables)
       }
 
   inject ::
@@ -550,6 +553,7 @@ instance Isomorphic ProtocolInfo where
     ProtocolInfo
       { pInfoConfig = inject pInfoConfig
       , pInfoInitLedger = unFlip $ inject $ Flip pInfoInitLedger
+      , pInfoInitLedgerTables = Z (WrapValues pInfoInitLedgerTables)
       }
 
 {-------------------------------------------------------------------------------

@@ -95,5 +95,6 @@ instance a ~ () => HasPointScheduleTestParams (TestBlockWith a) where
     ProtocolInfo
       { pInfoConfig = defaultCfg k forecast window
       , pInfoInitLedger = testInitExtLedger
+      , pInfoInitLedgerTables = mempty
       }
   getChunkInfoFromTopLevelConfig = mkTestChunkInfo

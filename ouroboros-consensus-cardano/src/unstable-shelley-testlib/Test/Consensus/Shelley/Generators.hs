@@ -29,6 +29,7 @@ import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
+import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim (splitUTxO)
 import Ouroboros.Consensus.Shelley.Node.Common ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
@@ -217,26 +218,15 @@ instance Arbitrary ShelleyTransition where
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
-  Arbitrary (LedgerState (ShelleyBlock proto era) EmptyMK)
+  Arbitrary (LedgerState (ShelleyBlock proto era))
   where
   arbitrary =
     ShelleyLedgerState
       <$> arbitrary
+      -- The state is @mk@-free; its UTxO field is held empty (the values live
+      -- in the backend), so split a random NES and keep the UTxO-free part.
+      <*> (fst . splitUTxO <$> arbitrary)
       <*> arbitrary
-      <*> arbitrary
-      <*> pure (LedgerTables EmptyMK)
-      <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
-
-instance
-  (Arbitrary (InstantStake era), CanMock proto era) =>
-  Arbitrary (LedgerState (ShelleyBlock proto era) ValuesMK)
-  where
-  arbitrary =
-    ShelleyLedgerState
-      <$> arbitrary
-      <*> arbitrary
-      <*> arbitrary
-      <*> (LedgerTables . ValuesMK <$> arbitrary)
       <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
 
 deriving newtype instance Arbitrary BigEndianTxIn

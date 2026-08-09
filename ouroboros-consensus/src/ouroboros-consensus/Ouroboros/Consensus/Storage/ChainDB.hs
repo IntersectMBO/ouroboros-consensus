@@ -22,8 +22,9 @@
 --
 -- * The __[Ledger DB]("Ouroboros.Consensus.Storage.LedgerDB")__, stores the
 --   \(k\) last ledger states corresponding to the blocks on the current chain
---   (which are part of the volatile DB), and means to read
---   'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTables' for
+--   (which are part of the volatile DB), and means to read the on-disk ledger
+--   tables (the @Values@ of
+--   'Ouroboros.Consensus.Ledger.Basics.BlockSupportsUTxOHD') for
 --   them. 'Ouroboros.Consensus.Storage.LedgerDB.LedgerDB' defines the ledger DB
 --   API.
 --

@@ -36,7 +36,7 @@ newtype ForgeExt c ext = ForgeExt
   }
 
 forgeSimple ::
-  forall c ext mk.
+  forall c ext.
   (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext) =>
   ForgeExt c ext ->
   TopLevelConfig (SimpleBlock c ext) ->
@@ -45,7 +45,7 @@ forgeSimple ::
   -- | Current slot number
   SlotNo ->
   -- | Current ledger
-  TickedLedgerState (SimpleBlock c ext) mk ->
+  TickedLedgerState (SimpleBlock c ext) ->
   -- | Txs to include
   [GenTx (SimpleBlock c ext)] ->
   IsLeader (BlockProtocol (SimpleBlock c ext)) ->

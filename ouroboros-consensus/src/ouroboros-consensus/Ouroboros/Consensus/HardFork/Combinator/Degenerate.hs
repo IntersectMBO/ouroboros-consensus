@@ -171,11 +171,11 @@ pattern DegenBlockConfig x <- (project -> x)
 
 pattern DegenLedgerState ::
   NoHardForks b =>
-  LedgerState b mk ->
-  LedgerState (HardForkBlock '[b]) mk
+  LedgerState b EmptyMK ->
+  LedgerState (HardForkBlock '[b]) EmptyMK
 pattern DegenLedgerState x <- (unFlip . project . Flip -> x)
- where
-  DegenLedgerState x = unFlip $ inject $ Flip x
+  where
+    DegenLedgerState x = unFlip $ inject $ Flip x
 
 {-------------------------------------------------------------------------------
   Dealing with the config

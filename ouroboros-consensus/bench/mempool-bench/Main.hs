@@ -151,6 +151,7 @@ openMempoolWithCapacity capacity =
     Tracer.nullTracer
     Mocked.MempoolAndModelParams
       { Mocked.immpInitialState = TestBlock.initialLedgerState
+      , Mocked.immpInitialValues = TestBlock.initialLedgerTables
       , Mocked.immpLedgerConfig = TestBlock.sampleLedgerConfig
       }
 
