@@ -55,7 +55,7 @@ module LeiosTxCache.Reference
   , maxAnnouncementCount
   ) where
 
-import Cardano.Slotting.Slot (SlotNo)
+import Cardano.Slotting.Slot (SlotNo (..))
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
@@ -99,6 +99,9 @@ data LeiosTxCacheIndex a v b = MkLeiosTxCacheIndex
   , txState :: !(Map TxHash (TxState a v))
   -- ^ INVARIANT: each 'RefCount' equals the number of 'BodyAlreadyInserted's in
   -- 'bodyState' that reference this tx.
+  , prunedSlot :: !SlotNo
+  -- ^ The greatest slot 'evictOlderThan' has pruned to (monotonically
+  -- non-decreasing; 'SlotNo' @0@ until the first prune)
   }
 
 emptyLeiosTxCacheIndex :: LeiosTxCacheIndex a v b
@@ -108,6 +111,7 @@ emptyLeiosTxCacheIndex =
     , announcementCount = 0
     , bodyState = Map.empty
     , txState = Map.empty
+    , prunedSlot = SlotNo 0
     }
 
 {-------------------------------------------------------------------------------
@@ -162,7 +166,8 @@ decRefCount (MkRefCount n)
 
 -- | Insert an EB announcement (identified by its slot and announcing RB header),
 -- bumping the announced EB's body refcount. Re-inserting the same announcement
--- is a no-op.
+-- is a no-op, as is inserting an EB whose slot is strictly older than
+-- 'prunedSlot' (one the cache has already been pruned past; see 'evictOlderThan').
 --
 -- If this pushes 'announcementCount' past 'maxAnnouncementCount', the oldest
 -- announcement (least slot, then least RB header) is evicted; that cascades
@@ -176,6 +181,7 @@ insertAnnouncement ::
   LeiosTxCacheIndex a v b ->
   (LeiosTxCacheIndex a v b, Set EbHash, Set TxHash)
 insertAnnouncement slot rbh ebh idx
+  | slot < prunedSlot idx = (idx, Set.empty, Set.empty)
   | alreadyPresent = (idx, Set.empty, Set.empty)
   | otherwise = evictIfNeeded inserted
  where
@@ -197,6 +203,7 @@ insertAnnouncement slot rbh ebh idx
             ebh
             (bodyState idx)
       , txState = txState idx
+      , prunedSlot = prunedSlot idx
       }
 
 -- | Repeatedly 'evictOldest' while @shouldEvict@ holds of the index: the shared
@@ -226,20 +233,19 @@ evictIfNeeded = evictWhile ((> maxAnnouncementCount) . announcementCount)
 
 -- | Evict every retained announcement whose slot is strictly older than the
 -- boundary, cascading through the bodies and txs like 'insertAnnouncement'.
--- Returns the evicted bodies and txs.
---
--- This is the tip-driven eviction entrypoint (see "LeiosTxCache"): a Watcher
--- feeds it the slot of the youngest @X@th RB on the current selection, so the
--- cache retains no EB older than that regardless of the EB arrival rate.
+-- Returns the evicted bodies and txs. Advances 'prunedSlot' to the boundary
+-- (monotonically), after which 'insertAnnouncement' refuses any EB that old.
 evictOlderThan ::
   ReferencesTxsByHash b =>
   SlotNo ->
   LeiosTxCacheIndex a v b ->
   (LeiosTxCacheIndex a v b, Set EbHash, Set TxHash)
-evictOlderThan boundary = evictWhile oldestIsStale
+evictOlderThan boundary idx =
+  evictWhile oldestIsStale idx'
  where
-  oldestIsStale idx = case Map.lookupMin (announcementState idx) of
-    Just (slotMin, _) -> slotMin < boundary
+  idx' = idx{prunedSlot = max (prunedSlot idx) boundary}
+  oldestIsStale i = case Map.lookupMin (announcementState i) of
+    Just (slotMin, _) -> slotMin < prunedSlot idx'
     Nothing -> False
 
 evictOldest ::
@@ -252,6 +258,7 @@ evictOldest idx =
       , announcementCount = announcementCount idx - 1
       , bodyState = bodyState'
       , txState = txState'
+      , prunedSlot = prunedSlot idx
       }
   , evEbs
   , evTxs
@@ -319,6 +326,7 @@ insertBody ebh body idx = case Map.lookup ebh (bodyState idx) of
             , announcementCount = announcementCount idx
             , bodyState = Map.insert ebh (BodyAlreadyInserted rc body) (bodyState idx)
             , txState = txState'
+            , prunedSlot = prunedSlot idx
             }
      in (idx', Just (mkInsertBodySummary n tracked acquired validated (Map.size txState')))
  where
@@ -346,6 +354,7 @@ insertUnappliedTx txh a idx =
     , announcementCount = announcementCount idx
     , bodyState = bodyState idx
     , txState = Map.alter upd txh (txState idx)
+    , prunedSlot = prunedSlot idx
     }
  where
   upd Nothing = Nothing
@@ -360,6 +369,7 @@ insertAppliedTx txh v idx =
     , announcementCount = announcementCount idx
     , bodyState = bodyState idx
     , txState = Map.alter upd txh (txState idx)
+    , prunedSlot = prunedSlot idx
     }
  where
   upd Nothing = Nothing

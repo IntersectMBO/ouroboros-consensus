@@ -110,6 +110,8 @@ import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoTypes (SerializedEbBody)
+import LeiosTxCache (LeiosTxCache, evictOlderThan, newHashTableLeiosTxCache)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -193,7 +195,7 @@ import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
 import System.FilePath ((</>))
-import System.Random (StdGen, newStdGen, randomIO, splitGen)
+import System.Random (StdGen, newStdGen, randomIO, splitGen, uniform)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -535,6 +537,12 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           forM_ (sanityCheckConfig cfg) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
+          -- Created before the ChainDB so its GC thread can prune the cache to
+          -- each GC slot just before GCing the LeiosDb (the ordering contract in
+          -- "LeiosTxCache"). 2^22 slots (~168 MiB) is ~2x the ~1.9M worst case
+          -- (128 EBs x maxTxsPerEb), so the table never fills.
+          leiosTxCache <- newHashTableLeiosTxCache 22 leiosTxCacheSalt0 leiosTxCacheSalt1
+
           (chainDB, finalArgs) <-
             openChainDB
               registry
@@ -544,6 +552,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnMkVolatileHasFS
               llrnLdbFlavorArgs
               rnLeiosDb
+              (\slot -> void (evictOlderThan leiosTxCache slot))
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
                   . maybeValidateAll
@@ -607,6 +616,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
                   rnLeiosDb
+                  leiosTxCache
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO (ChurnMode (PraosFetchMode FetchModeDeadline))
@@ -667,7 +677,13 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
  where
   (gsmAntiThunderingHerd, rng') = splitGen llrnRng
   (peerSelectionRng, rng'') = splitGen rng'
-  (keepAliveRng, ntnAppsRng) = splitGen rng''
+  (keepAliveRng, rng''') = splitGen rng''
+  -- 'leiosTxCacheSaltRng' seeds the LeiosTxCache SipHash salt: a per-node secret,
+  -- an independent split of the node generator, never exposed (tx hashes are
+  -- grindable, so an unpredictable salt is what prevents hash-flooding the table).
+  (ntnAppsRng, leiosTxCacheSaltRng) = splitGen rng'''
+  (leiosTxCacheSalt0, leiosTxCacheSaltRng') = uniform leiosTxCacheSaltRng
+  (leiosTxCacheSalt1, _) = uniform leiosTxCacheSaltRng'
 
   ProtocolInfo
     { pInfoConfig = cfg
@@ -869,12 +885,15 @@ openChainDB ::
   LedgerDbBackendArgs m blk ->
   -- | Leios demo DB handle
   LeiosDbHandle m ->
+  -- | Prune the LeiosTxCache to a slot; the ChainDB GC runs this just before it
+  -- GCs the LeiosDb at the same slot (the "LeiosTxCache" ordering contract).
+  (SlotNo -> m ()) ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb leiosEvictTxCache defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -887,6 +906,7 @@ openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb defArgs custo
             fsVol
             flavorArgs
             leiosDb
+            leiosEvictTxCache
             defArgs
    in (,args) <$> ChainDB.openDB args
 
@@ -915,6 +935,7 @@ mkNodeKernelArgs ::
   Maybe Mempool.MempoolTimeoutConfig ->
   TxSubmissionInitDelay ->
   LeiosDbHandle m ->
+  LeiosTxCache m () () SerializedEbBody ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -938,7 +959,8 @@ mkNodeKernelArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
   txSubmissionInitDelay
-  leiosDB =
+  leiosDB
+  leiosTxCache =
     do
       let (kaRng, rng') = splitGen rng
           (psRng, _) = splitGen rng'
@@ -974,6 +996,7 @@ mkNodeKernelArgs
           , getDiffusionPipeliningSupport
           , txSubmissionInitDelay
           , leiosDB
+          , leiosTxCache
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'

@@ -393,6 +393,9 @@ data ChainDbEnv m blk = CDB
   -- notifications (which also enqueue a 'ChainSelReprocessLeiosEb'), and pruned
   -- by age as a GC is scheduled.
   , cdbLeiosDb :: !(LeiosDbHandle m)
+  , cdbLeiosEvictTxCache :: !(SlotNo -> m ())
+  -- ^ Prune the LeiosTxCache to a slot; run just before 'leiosDbGarbageCollect'
+  -- at the same slot. See 'Args.cdbsLeiosEvictTxCache'.
   -- ^ The LeiosDb handle. The LeiosDb is one of the stores the ChainDB owns and
   -- orchestrates -- alongside the ImmutableDB, VolatileDB, LedgerDB and
   -- PerasCertDB -- so, like them, the ChainDB drives its lifecycle. Concretely

@@ -71,6 +71,9 @@ tests =
         , testCase "evictOlderThan keeps EBs at the boundary slot (exclusive)" test_evictOlderThanExclusive
         , testCase "evictOlderThan below every slot evicts nothing" test_evictOlderThanNone
         , testCase "evictOlderThan clears every EB in a stale slot" test_evictOlderThanWholeSlot
+        , testCase "insert below the pruned slot is ignored" test_prunedIgnoresOlderInsert
+        , testCase "insert at the pruned slot is admitted (exclusive)" test_prunedAllowsBoundaryInsert
+        , testCase "a lower evictOlderThan boundary does not lower the pruned slot" test_prunedSlotMonotone
         ]
     , testProperty "announcementCount = sum of per-slot sizes" prop_countInvariant
     , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 100)) $
@@ -251,6 +254,33 @@ test_evictOlderThanWholeSlot = do
   let base = ann 2 3 3 (ann 1 2 2 (ann 1 1 1 empty))
       (idx', evEbs, _) = evictOlderThan (SlotNo 2) base
   (evEbs, bodyRC 3 idx') @?= (Set.fromList [mkEbHash 1, mkEbHash 2], Just (MkRefCount 1))
+
+-- | 'evictOlderThan' records the boundary; a later announcement strictly below it
+-- is silently ignored (the cache has already been pruned past that slot).
+test_prunedIgnoresOlderInsert :: Assertion
+test_prunedIgnoresOlderInsert = do
+  let (pruned, _, _) = evictOlderThan (SlotNo 5) (annN 10 empty)
+      (idx', evEbs, evTxs) = insertAnnouncement (SlotNo 4) (mkRbHash 40) (mkEbHash 40) pruned
+  (announcementCount idx', bodyRC 40 idx', evEbs, evTxs)
+    @?= (announcementCount pruned, Nothing, Set.empty, Set.empty)
+
+-- | The boundary is exclusive on insertion too: an announcement /at/ the pruned
+-- slot is admitted, matching 'evictOlderThan' retaining EBs at the boundary slot.
+test_prunedAllowsBoundaryInsert :: Assertion
+test_prunedAllowsBoundaryInsert = do
+  let (pruned, _, _) = evictOlderThan (SlotNo 5) (annN 10 empty)
+      (idx', _, _) = insertAnnouncement (SlotNo 5) (mkRbHash 55) (mkEbHash 55) pruned
+  bodyRC 55 idx' @?= Just (MkRefCount 1)
+
+-- | The pruned slot is monotone: a later, lower 'evictOlderThan' boundary does not
+-- lower it, so an insert below the earlier (higher) boundary stays ignored.
+test_prunedSlotMonotone :: Assertion
+test_prunedSlotMonotone = do
+  let (p1, _, _) = evictOlderThan (SlotNo 5) (annN 10 empty)
+      (p2, _, _) = evictOlderThan (SlotNo 3) p1
+      (idx', evEbs, evTxs) = insertAnnouncement (SlotNo 4) (mkRbHash 40) (mkEbHash 40) p2
+  (announcementCount idx', bodyRC 40 idx', evEbs, evTxs)
+    @?= (announcementCount p2, Nothing, Set.empty, Set.empty)
 
 {-------------------------------------------------------------------------------
   Invariant
