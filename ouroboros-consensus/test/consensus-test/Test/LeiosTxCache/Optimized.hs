@@ -57,6 +57,7 @@ type H = LeiosTxCache IO () () TestBody
 
 -- | A body carrying its tx hashes.
 newtype TestBody = TestBody [TxHash]
+  deriving (Eq, Show)
 
 instance ReferencesTxsByHash TestBody where
   foldTxReferences f z (TestBody hs) = List.foldl' f z hs
@@ -96,6 +97,14 @@ applyOp h op = case op of
 sweepLookup :: H -> [Word8] -> IO [Maybe (Either () ())]
 sweepLookup h txs = withLookupTx h (\look -> mapM (look . txhOf) txs)
 
+sweepBody :: H -> [Word8] -> IO [Maybe TestBody]
+sweepBody h ebs = mapM (lookupBody h . ebhOf) ebs
+
+-- | The EB-hash domain the generators draw from (see 'genOps'): announcements
+-- and bodies use ebs @1..20@.
+ebDomain :: [Word8]
+ebDomain = [1 .. 20]
+
 genOps :: Int -> Gen [Op]
 genOps txDomain = do
   n <- chooseInt (0, 400)
@@ -123,7 +132,9 @@ prop_equiv =
       resM <- mapM (applyOp hm) ops
       sweepP <- sweepLookup hp (allTxs (cfgDomain cfg))
       sweepM <- sweepLookup hm (allTxs (cfgDomain cfg))
-      pure (resP === resM .&&. sweepP === sweepM)
+      sweepBodyP <- sweepBody hp ebDomain
+      sweepBodyM <- sweepBody hm ebDomain
+      pure (resP === resM .&&. sweepP === sweepM .&&. sweepBodyP === sweepBodyM)
  where
   allTxs txDomain = [0 .. fromIntegral (txDomain - 1)]
 
@@ -140,7 +151,9 @@ prop_equivEvict =
     resM <- mapM (applyOp hm) ops
     sweepP <- sweepLookup hp allTxs
     sweepM <- sweepLookup hm allTxs
-    pure (resP === resM .&&. sweepP === sweepM)
+    sweepBodyP <- sweepBody hp ebDomain
+    sweepBodyM <- sweepBody hm ebDomain
+    pure (resP === resM .&&. sweepP === sweepM .&&. sweepBodyP === sweepBodyM)
  where
   tableShift = 8 :: Int -- 256 slots; load factor is deliberately not the point here
   txDomain = 40 :: Int -- << 256, so the table never fills

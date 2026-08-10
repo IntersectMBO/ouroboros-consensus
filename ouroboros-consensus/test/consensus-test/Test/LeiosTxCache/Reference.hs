@@ -54,6 +54,10 @@ tests =
         [ testCase "insertBody references its txs (NotYetInserted rc=1)" test_body
         , testCase "insertBody on an unannounced EB is a no-op" test_bodyUnannounced
         , testCase "insertBody is idempotent" test_bodyIdempotent
+        , testCase "lookupBody on an untracked EB is Nothing" test_lookupBodyUntracked
+        , testCase "lookupBody on an announced-only EB is Nothing" test_lookupBodyAnnouncedOnly
+        , testCase "lookupBody after insertBody returns the body" test_lookupBodyInserted
+        , testCase "lookupBody after eviction is Nothing" test_lookupBodyEvicted
         ]
     , testGroup
         "txs"
@@ -89,6 +93,7 @@ type Idx = LeiosTxCacheIndex Int Int TestBody
 
 -- | A mock EB body: just the list of tx hashes it references.
 newtype TestBody = TestBody [TxHash]
+  deriving (Eq, Show)
 
 instance ReferencesTxsByHash TestBody where
   foldTxReferences f z (TestBody hs) = List.foldl' f z hs
@@ -161,6 +166,25 @@ test_bodyUnannounced = txRC 10 (body 1 [10] empty) @?= Nothing
 
 test_bodyIdempotent :: Assertion
 test_bodyIdempotent = txRC 10 (body 1 [10] (body 1 [10] (ann 1 1 1 empty))) @?= Just (MkRefCount 1)
+
+test_lookupBodyUntracked :: Assertion
+test_lookupBodyUntracked = lookupBody (mkEbHash 1) empty @?= Nothing
+
+-- | Announced but body not inserted ('BodyNotYetInserted') reads as 'Nothing'.
+test_lookupBodyAnnouncedOnly :: Assertion
+test_lookupBodyAnnouncedOnly = lookupBody (mkEbHash 1) (ann 1 1 1 empty) @?= Nothing
+
+test_lookupBodyInserted :: Assertion
+test_lookupBodyInserted =
+  lookupBody (mkEbHash 1) (body 1 [10, 11] (ann 1 1 1 empty))
+    @?= Just (TestBody [mkTxHash 10, mkTxHash 11])
+
+-- | Evicting the EB (its slot falls below the boundary) drops its body too.
+test_lookupBodyEvicted :: Assertion
+test_lookupBodyEvicted = do
+  let base = body 1 [10] (ann 1 1 1 empty)
+      (idx', _, _) = evictOlderThan (SlotNo 2) base
+  lookupBody (mkEbHash 1) idx' @?= Nothing
 
 {-------------------------------------------------------------------------------
   Txs

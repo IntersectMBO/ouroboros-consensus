@@ -44,6 +44,7 @@ module LeiosTxCache.Reference
   , insertUnappliedTx
   , insertAppliedTx
   , lookupTx
+  , lookupBody
 
     -- * Internal state (exposed for testing)
   , TxState (..)
@@ -384,3 +385,8 @@ lookupTx txh idx = case Map.lookup txh (txState idx) of
   Just (TxNotYetInserted _) -> Nothing
   Just (TxAlreadyInserted _ a) -> Just (Left a)
   Just (TxAlreadyValidated _ v) -> Just (Right v)
+
+lookupBody :: EbHash -> LeiosTxCacheIndex a v b -> Maybe b
+lookupBody ebh idx = case Map.lookup ebh (bodyState idx) of
+  Just (BodyAlreadyInserted _ b) -> Just b
+  _ -> Nothing
