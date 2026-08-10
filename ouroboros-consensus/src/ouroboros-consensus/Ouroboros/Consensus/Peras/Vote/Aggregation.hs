@@ -46,7 +46,7 @@
 --
 -- = Quorum Threshold and Multiple Winners
 --
--- The quorum threshold is parameterized via 'PerasCfg'. Depending on this
+-- The quorum threshold is parameterized via 'PerasParams'. Depending on this
 -- configuration and the stake distribution, it may be theoretically possible
 -- for multiple targets to exceed the threshold within the same round.
 --
@@ -200,10 +200,10 @@ updatePerasRoundVoteState ::
   forall blk.
   StandardHash blk =>
   WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasCfg blk ->
+  PerasParams blk ->
   PerasRoundVoteState blk ->
   Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk)
-updatePerasRoundVoteState vote cfg roundState =
+updatePerasRoundVoteState vote params roundState =
   assert (getPerasVoteRound vote == getPerasVoteRound roundState) $ do
     case roundState of
       -- Quorum not yet reached
@@ -220,7 +220,7 @@ updatePerasRoundVoteState vote cfg roundState =
                   (getPerasVoteBlock vote)
                   candidateStates
           candidateOrWinnerState <-
-            updateCandidateVoteState cfg vote oldCandidateState
+            updateCandidateVoteState params vote oldCandidateState
               `onErr` \err ->
                 RoundVoteStateForgingCertError err
           case candidateOrWinnerState of
@@ -294,7 +294,7 @@ updatePerasRoundVoteState vote cfg roundState =
                     fromMaybe (freshLoserVoteState (getPerasVoteTarget vote))
                   updateMaybeLoserVoteState mState =
                     fmap Just $
-                      updateLoserVoteState cfg vote (existingOrFreshLoserVoteState mState)
+                      updateLoserVoteState params vote (existingOrFreshLoserVoteState mState)
                         `onErr` \err ->
                           RoundVoteStateLoserAboveQuorum winnerState err
               loserStates' <- Map.alterF updateMaybeLoserVoteState votePoint loserStates
@@ -320,12 +320,12 @@ updatePerasRoundVoteStates ::
   forall blk.
   StandardHash blk =>
   WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasCfg blk ->
+  PerasParams blk ->
   Map PerasRoundNo (PerasRoundVoteState blk) ->
   Either
     (UpdateRoundVoteStateError blk)
     (PerasRoundVoteState blk, Map PerasRoundNo (PerasRoundVoteState blk))
-updatePerasRoundVoteStates vote cfg =
+updatePerasRoundVoteStates vote params =
   alterMapAndReturnUpdatedValue
     updateMaybePerasRoundVoteState
     (getPerasVoteRound vote)
@@ -358,7 +358,7 @@ updatePerasRoundVoteStates vote cfg =
       (PerasRoundVoteState blk, PerasRoundVoteState blk)
   updateMaybePerasRoundVoteState mRoundState = do
     let roundState = existingOrFreshRoundVoteState mRoundState
-    newRoundState <- updatePerasRoundVoteState vote cfg roundState
+    newRoundState <- updatePerasRoundVoteState vote params roundState
     pure (newRoundState, newRoundState)
 
 {-------------------------------------------------------------------------------
@@ -568,7 +568,7 @@ data PerasVoteStateCandidateOrWinner blk
 -- May fail if the candidate is elected winner but forging the certificate fails.
 updateCandidateVoteState ::
   StandardHash blk =>
-  PerasCfg blk ->
+  PerasParams blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Candidate ->
   Either
@@ -593,7 +593,7 @@ updateCandidateVoteState cfg vote oldState =
 -- May fail if the loser goes above quorum by adding the vote.
 updateLoserVoteState ::
   StandardHash blk =>
-  PerasCfg blk ->
+  PerasParams blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Loser ->
   Either (PerasTargetVoteState blk 'Loser) (PerasTargetVoteState blk 'Loser)

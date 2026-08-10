@@ -55,8 +55,8 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = defaultPerasParams
+perasTestParams :: PerasParams TestBlock
+perasTestParams = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = QC.monadic f $ property () <$ runActions actions
@@ -100,7 +100,7 @@ instance StateModel Model where
                       { pcCertRound = roundNo
                       , pcCertBoostedBlock = boostedBlock
                       }
-                , vpcCertBoost = perasWeight perasTestCfg
+                , vpcCertBoost = perasWeight perasTestParams
                 }
       pure (AddCert certWithTime)
 

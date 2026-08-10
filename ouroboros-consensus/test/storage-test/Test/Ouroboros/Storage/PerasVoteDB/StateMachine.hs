@@ -36,9 +36,9 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( BlockSupportsPeras (..)
-  , HasPerasVoteBlock (..)
+  ( HasPerasVoteBlock (..)
   , HasPerasVoteRound (..)
+  , PerasParams
   , PerasRoundNo (..)
   , PerasSeatIndex (..)
   , PerasVote' (..)
@@ -98,8 +98,8 @@ tests =
             prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = defaultPerasParams
+perasTestParams :: PerasParams TestBlock
+perasTestParams = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = monadic runActualImplemMonad resultAsPropertyM
@@ -228,7 +228,7 @@ instance StateModel Model where
       pure (RelativeTime time)
 
   initialState =
-    Model (Model.initModel perasTestCfg)
+    Model (Model.initModel perasTestParams)
 
   nextState (Model m) action _ =
     case action of
@@ -258,7 +258,7 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
   perform _ action _ =
     case action of
       CreateDB -> do
-        let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestCfg
+        let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestParams
         voteDB <- lift $ PerasVoteDB.createDB args
         put voteDB
       AddVote vote -> do

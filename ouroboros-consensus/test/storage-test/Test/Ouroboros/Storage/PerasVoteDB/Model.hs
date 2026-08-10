@@ -27,7 +27,6 @@ import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasVoteBlock (..)
   , HasPerasVoteRound (..)
   , PerasCert' (..)
-  , PerasCfg
   , PerasParams (..)
   , PerasRoundNo
   , PerasVoteId (..)
@@ -80,11 +79,11 @@ data Model blk = Model
 instance StandardHash blk => ToExpr (Model blk) where
   toExpr = defaultExprViaShow
 
-initModel :: PerasCfg blk -> Model blk
-initModel cfg =
+initModel :: PerasParams blk -> Model blk
+initModel perasParams =
   Model
     { open = False
-    , params = cfg
+    , params = perasParams
     , lastTicketNo = zeroPerasVoteTicketNo
     , votes = Map.empty
     , certs = Map.empty

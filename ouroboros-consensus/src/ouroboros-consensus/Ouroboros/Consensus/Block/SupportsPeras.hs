@@ -45,7 +45,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , ValidatedPerasVotesWithQuorum
     ( vpvqTarget
     , vpvqVotes
-    , vpvqPerasCfg
+    , vpvqPerasParams
     )
   , lookupPerasVoteStake
   , votesReachQuorum
@@ -254,13 +254,13 @@ data ValidatedPerasVote blk = ValidatedPerasVote
 
 -- | A collection of validated Peras votes that:
 -- 1. are all for the same target, and
--- 2. have total stake above the quorum threshold for a given 'PerasCfg'.
+-- 2. have total stake above the quorum threshold for a given 'PerasParams'.
 data ValidatedPerasVotesWithQuorum blk = ValidatedPerasVotesWithQuorum
   { vpvqTarget :: !(PerasVoteTarget blk)
   -- ^ The target that all the votes are for
   , vpvqVotes :: !(NonEmpty (ValidatedPerasVote blk))
   -- ^ The votes that reached quorum for the given target
-  , vpvqPerasCfg :: !(PerasCfg blk)
+  , vpvqPerasParams :: !(PerasParams blk)
   -- ^ The Peras configuration used to validate that the votes reach quorum
   }
   deriving stock (Show, Eq, Generic)
@@ -269,14 +269,14 @@ data ValidatedPerasVotesWithQuorum blk = ValidatedPerasVotesWithQuorum
 -- | Smart constructor for 'ValidatedPerasVotesReachingQuorum'.
 --
 -- This function checks that all votes are for the same target, and that their
--- total stake is above the quorum threshold defined in the given 'PerasCfg'.
+-- total stake is above the quorum threshold defined in the given 'PerasParams'.
 -- It returns 'Nothing' if either of these conditions is not met.
 votesReachQuorum ::
   StandardHash blk =>
-  PerasCfg blk ->
+  PerasParams blk ->
   [ValidatedPerasVote blk] ->
   Maybe (ValidatedPerasVotesWithQuorum blk)
-votesReachQuorum cfg votes =
+votesReachQuorum params votes =
   case votes of
     -- We need at least one vote to determine who these votes are for, so we
     -- can't vacuously reach a quorum, even if the quorum threshold is 0.
@@ -293,13 +293,13 @@ votesReachQuorum cfg votes =
             ValidatedPerasVotesWithQuorum
               { vpvqTarget = getPerasVoteTarget v0
               , vpvqVotes = v0 :| vs
-              , vpvqPerasCfg = cfg
+              , vpvqPerasParams = params
               }
  where
   totalVoteStake =
     mconcat (vpvVoteStake <$> votes)
   votesHaveEnoughStake =
-    stakeAboveThreshold cfg totalVoteStake
+    stakeAboveThreshold params totalVoteStake
   allVotesMatchTarget target =
     all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
 
@@ -308,7 +308,7 @@ votesReachQuorum cfg votes =
 -------------------------------------------------------------------------------}
 
 class
-  ( Show (PerasCfg blk)
+  ( Show (PerasParams blk)
   , NoThunks (PerasCert blk)
   ) =>
   BlockSupportsPeras blk
@@ -342,9 +342,6 @@ class
 
   type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
 
-  -- NOTE: to be removed in favor of 'PerasParams'.
-  type PerasCfg blk
-
   -- NOTE: to be removed in favor of 'PerasError'.
   data PerasValidationErr blk
 
@@ -352,18 +349,18 @@ class
   data PerasForgeErr blk
 
   validatePerasCert ::
-    PerasCfg blk ->
+    PerasParams blk ->
     PerasCert blk ->
     Either (PerasValidationErr blk) (ValidatedPerasCert blk)
 
   validatePerasVote ::
-    PerasCfg blk ->
+    PerasParams blk ->
     PerasVoteStakeDistr ->
     PerasVote blk ->
     Either (PerasValidationErr blk) (ValidatedPerasVote blk)
 
   forgePerasCert ::
-    PerasCfg blk ->
+    PerasParams blk ->
     ValidatedPerasVotesWithQuorum blk ->
     Either (PerasForgeErr blk) (ValidatedPerasCert blk)
 
@@ -382,7 +379,6 @@ instance StandardHash blk => BlockSupportsPeras blk where
   type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
   type PerasError blk = VoidPerasError blk
 
-  type PerasCfg blk = PerasParams blk
   type PerasCert blk = PerasCert' blk
   type PerasVote blk = PerasVote' blk
 
