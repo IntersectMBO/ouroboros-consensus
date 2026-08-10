@@ -96,7 +96,10 @@ newtype TestBody = TestBody [TxHash]
   deriving (Eq, Show)
 
 instance ReferencesTxsByHash TestBody where
-  foldTxReferences f z (TestBody hs) = List.foldl' f z hs
+  foldTxReferences f z (TestBody hs) =
+      List.foldl' (\acc txh -> f acc txh dummySize) z hs
+    where
+      dummySize = 0
 
 empty :: Idx
 empty = emptyLeiosTxCacheIndex
@@ -115,7 +118,7 @@ ann :: Word64 -> Word8 -> Word8 -> Idx -> Idx
 ann s r e idx = let (idx', _, _) = insertAnnouncement (SlotNo s) (mkRbHash r) (mkEbHash e) idx in idx'
 
 body :: Word8 -> [Word8] -> Idx -> Idx
-body e ts idx = fst (insertBody (mkEbHash e) (TestBody (map mkTxHash ts)) idx)
+body e ts idx = fst (insertBody (mkEbHash e) (TestBody (map mkTxHash ts)) () (\() _ _ _ -> ()) idx)
 
 -- | Announce EBs 1..n, each at its own slot and with its own RB hash.
 annN :: Int -> Idx -> Idx
@@ -375,7 +378,7 @@ rcInt :: RefCount -> Int
 rcInt (MkRefCount w) = fromIntegral w
 
 txHashesOf :: ReferencesTxsByHash b => b -> [TxHash]
-txHashesOf = foldTxReferences (flip (:)) []
+txHashesOf = foldTxReferences (\acc txh _sz -> txh : acc) []
 
 -- | After any sequence of ops the maintained refcounts agree with the refcounts
 -- recomputed from first principles: a body's refcount is the number of retained

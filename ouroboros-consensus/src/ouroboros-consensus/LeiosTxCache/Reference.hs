@@ -64,7 +64,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import LeiosDemoTypes (EbHash, RbHash, TxHash)
+import LeiosDemoTypes (BytesSize, EbHash, RbHash, TxHash)
 import LeiosTxCache.API
   ( BodyState (..)
   , InsertBodySummary
@@ -290,7 +290,8 @@ decBody ebh bs ts = case Map.lookup ebh bs of
     SNothing ->
       let (ts', evTxs) = case b of
             BodyNotYetInserted _ -> (ts, Set.empty)
-            BodyAlreadyInserted _ body -> foldTxReferences decTx (ts, Set.empty) body
+            BodyAlreadyInserted _ body ->
+              foldTxReferences (\acc txh _sz -> decTx acc txh) (ts, Set.empty) body
        in (Map.delete ebh bs, ts', Set.singleton ebh, evTxs)
 
 decTx ::
@@ -313,14 +314,16 @@ insertBody ::
   ReferencesTxsByHash b =>
   EbHash ->
   b ->
+  w ->
+  (w -> Int -> TxHash -> BytesSize -> w) ->
   LeiosTxCacheIndex a v b ->
-  (LeiosTxCacheIndex a v b, Maybe InsertBodySummary)
-insertBody ebh body idx = case Map.lookup ebh (bodyState idx) of
+  (LeiosTxCacheIndex a v b, Maybe (InsertBodySummary, w))
+insertBody ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
   Nothing -> (idx, Nothing)
   Just BodyAlreadyInserted{} -> (idx, Nothing)
   Just (BodyNotYetInserted rc) ->
-    let ((n, tracked, acquired, validated), txState') =
-          foldTxReferences bumpTx ((0, 0, 0, 0), txState idx) body
+    let ((n, tracked, acquired, validated, w), txState') =
+          foldTxReferences bumpTx ((0, 0, 0, 0, nil), txState idx) body
         idx' =
           MkLeiosTxCacheIndex
             { announcementState = announcementState idx
@@ -329,22 +332,25 @@ insertBody ebh body idx = case Map.lookup ebh (bodyState idx) of
             , txState = txState'
             , prunedSlot = prunedSlot idx
             }
-     in (idx', Just (mkInsertBodySummary n tracked acquired validated (Map.size txState')))
+     in (idx', Just (mkInsertBodySummary n tracked acquired validated (Map.size txState'), w))
  where
-  -- Bump each tx's refcount and, in the same pass, classify its /prior/ state so
-  -- the summary needs no second traversal.
-  bumpTx ((!nn, !tt, !aa, !vv), ts) txh =
-    let (dt, da, dv) = case Map.lookup txh ts of
-          Nothing -> (0, 0, 0) -- new: not yet tracked
-          Just (TxNotYetInserted _) -> (1, 0, 0) -- tracked, not acquired
-          Just (TxAlreadyInserted _ _) -> (1, 1, 0) -- acquired, not validated
-          Just (TxAlreadyValidated _ _) -> (1, 1, 1) -- acquired and validated
+  -- Bump each tx's refcount and, in the same pass, classify its /prior/ state:
+  -- the counts feed the summary, and every not-yet-acquired tx (a "miss") is
+  -- snoc'd onto the caller's accumulator at its body offset ('nn'), so no second
+  -- traversal is needed.
+  bumpTx ((!nn, !tt, !aa, !vv, !w), ts) txh sz =
+    let (dt, da, dv, miss) = case Map.lookup txh ts of
+          Nothing -> (0, 0, 0, True) -- new: not yet tracked
+          Just (TxNotYetInserted _) -> (1, 0, 0, True) -- tracked, not acquired
+          Just (TxAlreadyInserted _ _) -> (1, 1, 0, False) -- acquired, not validated
+          Just (TxAlreadyValidated _ _) -> (1, 1, 1, False) -- acquired and validated
         ts' =
           Map.alter
             (Just . maybe (TxNotYetInserted (MkRefCount 1)) (L.over txRefCountL incRefCount))
             txh
             ts
-     in ((nn + 1, tt + dt, aa + da, vv + dv), ts')
+        w' = if miss then snoc w nn txh sz else w
+     in ((nn + 1, tt + dt, aa + da, vv + dv, w'), ts')
 
 -- | Record the payload of a fetched-but-not-yet-applied tx, without changing its
 -- refcount. A no-op if no inserted body references this tx.

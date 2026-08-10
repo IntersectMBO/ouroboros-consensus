@@ -87,25 +87,28 @@ newHashTableLeiosTxCache nshift k0 k1 = do
           MVar.modifyMVar stateVar $ \st ->
             let st' = st{hsPrunedSlot = max (hsPrunedSlot st) boundary}
              in evictWhile ht (oldestIsStale (hsPrunedSlot st')) st' Set.empty Set.empty
-      , insertBody = \ebh b ->
+      , insertBody = \ebh b nil snoc ->
           MVar.modifyMVar stateVar $ \st ->
             case Map.lookup ebh (hsBodies st) of
               Nothing -> pure (st, Nothing)
               Just BodyAlreadyInserted{} -> pure (st, Nothing)
               Just (BodyNotYetInserted rc) -> do
-                -- bump each tx's refcount and classify its prior state in one pass
-                (n, tracked, acquired, validated) <-
+                -- bump each tx's refcount and classify its prior state in one
+                -- pass; snoc every not-yet-acquired tx (@da == 0@, a "miss") onto
+                -- the caller's accumulator at its body offset (@nn@)
+                (n, tracked, acquired, validated, w) <-
                   foldTxReferences
-                    ( \acc txh -> do
-                        (!nn, !tt, !aa, !vv) <- acc
+                    ( \acc txh sz -> do
+                        (!nn, !tt, !aa, !vv, !w) <- acc
                         (dt, da, dv) <- priorClass <$> bumpTx ht txh
-                        pure (nn + 1, tt + dt, aa + da, vv + dv)
+                        let w' = if da == 0 then snoc w nn txh sz else w
+                        pure (nn + 1, tt + dt, aa + da, vv + dv, w')
                     )
-                    (pure (0, 0, 0, 0))
+                    (pure (0, 0, 0, 0, nil))
                     b
                 cacheTxCount <- HT.size ht
                 let st' = st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)}
-                pure (st', Just (mkInsertBodySummary n tracked acquired validated cacheTxCount))
+                pure (st', Just (mkInsertBodySummary n tracked acquired validated cacheTxCount, w))
       , lookupBody = \ebh ->
           MVar.withMVar stateVar $ \st ->
             pure $ case Map.lookup ebh (hsBodies st) of
@@ -249,7 +252,7 @@ decBodyTxs ::
   #-}
 decBodyTxs ht =
   foldTxReferences
-    ( \act txh -> do
+    ( \act txh _sz -> do
         s <- act
         evicted <- decTx ht txh
         pure (if evicted then Set.insert txh s else s)

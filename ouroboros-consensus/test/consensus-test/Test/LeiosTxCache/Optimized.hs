@@ -60,7 +60,10 @@ newtype TestBody = TestBody [TxHash]
   deriving (Eq, Show)
 
 instance ReferencesTxsByHash TestBody where
-  foldTxReferences f z (TestBody hs) = List.foldl' f z hs
+  foldTxReferences f z (TestBody hs) =
+      List.foldl' (\acc txh -> f acc txh dummySize) z hs
+    where
+      dummySize = 0
 
 -- A 32-byte tx hash (the mutable table reads exactly 32 bytes).
 txhOf :: Word8 -> TxHash
@@ -86,7 +89,7 @@ applyOp :: H -> Op -> IO (Maybe (Set EbHash, Set TxHash))
 applyOp h op = case op of
   OpAnnounce s r e -> Just <$> insertAnnouncement h (SlotNo s) (rbhOf r) (ebhOf e)
   OpEvict boundary -> Just <$> evictOlderThan h (SlotNo boundary)
-  OpBody e ts -> insertBody h (ebhOf e) (TestBody (map txhOf ts)) >> pure Nothing
+  OpBody e ts -> insertBody h (ebhOf e) (TestBody (map txhOf ts)) () (\() _ _ _ -> ()) >> pure Nothing
   OpUnapplied ts ->
     withLockedInsertUnappliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) ()) z ts)
       >> pure Nothing
