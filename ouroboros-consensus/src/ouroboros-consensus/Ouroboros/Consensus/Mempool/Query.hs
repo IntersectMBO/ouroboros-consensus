@@ -28,17 +28,17 @@ implGetSnapshotFor ::
   m (MempoolSnapshot blk)
 implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
   is <- atomically $ readTMVar istate
-  let txs =
-        [ TxSeq.TxTicket tx tn tz
-        | TxSeq.TxTicket (ValidatedTxWithDiffs tx _) tn tz <- TxSeq.toList $ isTxs is
-        ]
   if pointHash (isTip is) == castHash (getTipHash ticked)
     && isSlotNo is == slot
     then
       -- We are looking for a snapshot exactly for the ledger state we already
       -- have cached, then just return it.
-      pure $ snapshotFromValidTxs txs (castPoint $ isTip is) (isSlotNo is)
+      pure $ snapshotFromIS is
     else do
+      let txs =
+            [ TxSeq.TxTicket tx tn tz
+            | TxSeq.TxTicket (ValidatedTxWithDiffs tx _) tn tz <- TxSeq.toList $ isTxs is
+            ]
       values <-
         if pointHash (isTip is) == castHash (getTipHash ticked)
           -- We are looking for a snapshot at the same state ticked
