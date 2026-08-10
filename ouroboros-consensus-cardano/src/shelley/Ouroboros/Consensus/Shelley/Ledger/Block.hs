@@ -110,6 +110,8 @@ class
   ( ShelleyBasedEra era
   , ShelleyProtocol proto
   , EncCBORGroup (SL.BlockBody era)
+  , EncCBOR (SL.Block (ShelleyProtocolHeader proto) era)
+  , DecCBOR (Annotator (SL.Block (ShelleyProtocolHeader proto) era))
   , -- Header constraints
     Eq (ShelleyProtocolHeader proto)
   , Show (ShelleyProtocolHeader proto)
