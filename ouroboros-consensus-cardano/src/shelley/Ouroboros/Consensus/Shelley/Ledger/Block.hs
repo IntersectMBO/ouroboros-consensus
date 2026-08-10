@@ -108,6 +108,9 @@ class
   ( ShelleyBasedEra era
   , ShelleyProtocol proto
   , EncCBORGroup (SL.BlockBody era)
+  , -- Block serialisation constraints (per-era instances no longer have a general form)
+    EncCBOR (SL.Block (ShelleyProtocolHeader proto) era)
+  , DecCBOR (Annotator (SL.Block (ShelleyProtocolHeader proto) era))
   , -- Header constraints
     Eq (ShelleyProtocolHeader proto)
   , Show (ShelleyProtocolHeader proto)
