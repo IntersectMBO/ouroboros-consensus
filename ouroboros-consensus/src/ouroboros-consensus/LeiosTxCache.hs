@@ -159,6 +159,9 @@ newPureLeiosTxCache = do
              in pure (idx', (evEbs, evTxs))
       , insertBody = \ebh b ->
           MVar.modifyMVar var $ \idx -> pure (Pure.insertBody ebh b idx)
+      , lookupBody = \ebh -> do
+          idx <- MVar.readMVar var
+          pure $! Pure.lookupBody ebh idx
       , withLockedInsertUnappliedTx = \k ->
           MVar.modifyMVar_ var $ \idx ->
             k idx (\idx' txh a -> pure $! Pure.insertUnappliedTx txh a idx')
@@ -180,6 +183,7 @@ nullLeiosTxCache =
     { insertAnnouncement = \_slot _rbh _ebh -> pure (Set.empty, Set.empty)
     , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
     , insertBody = \_ebh _b -> pure Nothing
+    , lookupBody = \_ebh -> pure Nothing
     , withLockedInsertUnappliedTx = \k -> k () (\w _txh _a -> pure w)
     , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)
     , withLookupTx = \k -> k (\_txh -> pure Nothing)

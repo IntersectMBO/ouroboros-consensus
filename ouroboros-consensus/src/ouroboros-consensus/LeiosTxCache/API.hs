@@ -60,6 +60,11 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- has already dropped. Reverse the order and you arm the hit-prune hazard: a
   -- false hit ⇒ a skipped fetch ⇒ a silently-incomplete EB closure.
   , insertBody :: EbHash -> b -> m (Maybe InsertBodySummary)
+  , lookupBody :: EbHash -> m (Maybe b)
+  -- ^ The EB's body if we hold it (its 'BodyState' is 'BodyAlreadyInserted');
+  -- 'Nothing' if the EB is untracked or only announced. Unlike a tx, an EB body
+  -- pins itself: a hit means it is in the LeiosDb and stays there until the EB is
+  -- pruned, so no cross-object reasoning is needed.
   , withLockedInsertUnappliedTx :: (forall w. w -> (w -> TxHash -> a -> m w) -> m w) -> m ()
   -- ^ Has exclusive write-access
   , withLockedInsertAppliedTx :: (forall w. w -> (w -> TxHash -> v -> m w) -> m w) -> m ()

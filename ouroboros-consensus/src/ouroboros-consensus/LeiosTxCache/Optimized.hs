@@ -106,6 +106,11 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                 cacheTxCount <- HT.size ht
                 let st' = st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)}
                 pure (st', Just (mkInsertBodySummary n tracked acquired validated cacheTxCount))
+      , lookupBody = \ebh ->
+          MVar.withMVar stateVar $ \st ->
+            pure $ case Map.lookup ebh (hsBodies st) of
+              Just (BodyAlreadyInserted _ b) -> Just b
+              _ -> Nothing
       , withLockedInsertUnappliedTx = \k ->
           MVar.modifyMVar_ stateVar $ \st -> do
             _ <- k () (\_ txh _ -> setTag ht tagAlreadyInserted txh)
