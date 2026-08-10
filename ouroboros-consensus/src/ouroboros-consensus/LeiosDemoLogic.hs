@@ -365,7 +365,7 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
           goEb2 acc accNew targets point ebBytesSize peerIds
     Right (point, txBytesSize, txHash) : targets ->
       let !txOffsets = case Map.lookup txHash (Leios.reverseEbIndexByTx acc) of
-            Nothing -> error "impossible!"
+            Nothing -> error "impossible! leiosFetchLogicIteration go1"
             Just x -> x
           peerIds :: Set (PeerId pid)
           peerIds = Map.findWithDefault Set.empty txHash (Leios.requestedTxPeers acc)
@@ -525,7 +525,7 @@ packRequests env =
         -- something simple and sufficient for the demo
         let (ebId, txOffset) =
               case Map.lookupMax txOffsets of
-                Nothing -> error "impossible!"
+                Nothing -> error "impossible! packRequests goPrioTx"
                 Just x -> x
         ]
 
@@ -705,6 +705,15 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
     let ebHash' = hashLeiosEb eb
     when (ebHash' /= ebHash) $ do
       error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
+    -- Every referenced tx must be unique: 'reverseEbIndexByTx' records one
+    -- offset per (tx, EB), so a duplicate desyncs it from 'missingEbTxs'.
+    let MkLeiosEb v = eb
+        duplicateTxHashes =
+          Map.keys $
+            Map.filter (> (1 :: Int)) $
+              Map.fromListWith (+) [(txh, 1) | (txh, _) <- V.toList v]
+    when (not (null duplicateTxHashes)) $ do
+      error $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
   -- ingest it
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     -- Skip if we already hold this EB's body (a 'lookupBody' hit); otherwise
