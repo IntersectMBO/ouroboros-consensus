@@ -8,11 +8,10 @@
 -- by the LeiosVoting thread).
 --
 -- The index is in-memory so that latency-critical consumers (LeiosFetch,
--- LeiosVoting) can query it with constantly low latency; its eventual purpose is
--- to /supplant/ the by-hash membership check that @filterMissingWork@ does
--- against the LeiosDb. The size of the LeiosTxCache is bounded first and foremost
--- by the requirement that its index fits comfortably in-memory, even in a worst
--- case.
+-- LeiosVoting) can query it with constantly low latency; it /supplants/ the
+-- by-hash membership check that the fetch logic would otherwise do against the
+-- LeiosDb. The size of the LeiosTxCache is bounded first and foremost by the
+-- requirement that its index fits comfortably in-memory, even in a worst case.
 --
 -- This module is the umbrella: it re-exports the "LeiosTxCache.API" interface
 -- and both handle factories, 'newPureLeiosTxCache' from

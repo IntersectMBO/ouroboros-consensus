@@ -567,7 +567,6 @@ mkHandlers
                           Just{} -> outstanding -- we already hold this EB's body
                           Nothing ->
                             if ebBytesSize == 0
-                              || Set.member ebHash (Leios.acquiredEbBodies outstanding)
                               || any
                                 ((== ebHash) . pointEbHash)
                                 (Map.keys (Leios.missingEbBodies outstanding))

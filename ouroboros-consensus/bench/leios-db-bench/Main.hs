@@ -6,9 +6,6 @@
 --
 -- The following roles run concurrently against the same SQLite handle:
 --
--- * __Fetch logic__ (1 thread): configurable rounds of
---   'leiosDbFilterMissingEbBodies' + 'leiosDbFilterMissingTxs'.
---
 -- * __Fetch clients__ (configurable, default 3 threads): each inserts 20 fresh
 --   EBs via 'leiosDbInsertEbPoint' → 'leiosDbInsertEbBody' → 'leiosDbInsertTxs'.
 --
@@ -36,7 +33,7 @@ module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
-import Control.Monad (forM, forM_, replicateM_, when)
+import Control.Monad (forM, forM_, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (debugTracer, (>$<))
 import qualified Data.ByteString as BS
@@ -48,8 +45,6 @@ import LeiosDemoDb
   ( LeiosDbConnection
   , LeiosDbHandle (..)
   , leiosDbBatchRetrieveTxs
-  , leiosDbFilterMissingEbBodies
-  , leiosDbFilterMissingTxs
   , leiosDbGarbageCollect
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
@@ -82,9 +77,6 @@ main = do
       , "  Total TXs         : " <> show (numPrePopulatedEbs * txsPerEb)
       , ""
       , "Concurrent workload per iteration:"
-      , "  Fetch logic     (×1): "
-          <> show numFetchLogicRounds
-          <> " rounds of filterMissingEbBodies (200+200) + filterMissingTxs (500+500)"
       , "  Fetch clients   (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
       , "  Fetch servers   (×" <> show numFetchServers <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
       , "  Chain-sel reader(×1): " <> show numChainSelReads <> " lookupEbClosure calls"
@@ -115,10 +107,6 @@ numFetchClients = 3
 numFetchServers :: Int
 numFetchServers = 3
 
--- | Number of rounds the fetch logic thread performs per iteration.
-numFetchLogicRounds :: Int
-numFetchLogicRounds = 100
-
 -- | Number of chain-sel-shaped reader calls per iteration.
 numChainSelReads :: Int
 numChainSelReads = 50
@@ -140,12 +128,11 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
     atomicModifyIORef'
       writerIdxRef
       (\n -> (n + numFetchClients * ebsPerClient, n))
-  fl <- async (fetchLogic db points)
   cs <- async (chainSelReader db points)
   gc <- async (gcTicker db)
   clients <- forM (clientRanges startIdx) $ \range -> async (fetchClient db range)
   mapConcurrently_ (fetchServer db points) [0 .. numFetchServers - 1]
-  wait fl >> wait cs >> wait gc
+  wait cs >> wait gc
   forM_ clients wait
  where
   ebsPerClient = 20
@@ -153,20 +140,6 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
     [ [startIdx + i * ebsPerClient .. startIdx + (i + 1) * ebsPerClient - 1]
     | i <- [0 .. numFetchClients - 1]
     ]
-
--- | Mirrors the fetch logic loop: filters for missing EB bodies and TXs.
-fetchLogic :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
-fetchLogic db points =
-  withLeiosDb db $ \c ->
-    replicateM_ numFetchLogicRounds $ do
-      _ <- leiosDbFilterMissingEbBodies c (existingPoints ++ missingPoints)
-      _ <- leiosDbFilterMissingTxs c (existingHashes ++ missingHashes)
-      pure ()
- where
-  existingPoints = take 200 points
-  missingPoints = [genPoint i | i <- [10_000 .. 10_199]]
-  existingHashes = [genTxHash 0 i | i <- [0 .. 499]]
-  missingHashes = [genTxHash 10_000 i | i <- [0 .. 499]]
 
 -- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
 fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()

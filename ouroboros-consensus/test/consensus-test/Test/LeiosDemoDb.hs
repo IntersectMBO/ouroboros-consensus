@@ -31,8 +31,6 @@ import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosEbNotification (..)
   , leiosDbBatchRetrieveTxs
-  , leiosDbFilterMissingEbBodies
-  , leiosDbFilterMissingTxs
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
@@ -142,16 +140,6 @@ mkTestGroups impl =
           withFreshDb impl test_noReNotifyOnRelatedTxReinsert
       , testCase "same EB hash at multiple slots notifies each completion" $
           withFreshDb impl test_multipleSlotsSameHash
-      ]
-  , testGroup
-      "filterMissingEbBodies"
-      [ testProperty "empty input returns empty" $ prop_filterEbBodiesEmpty impl
-      , testProperty "returns only missing EBs" $ prop_filterEbBodiesCorrect impl
-      ]
-  , testGroup
-      "filterMissingTxs"
-      [ testProperty "empty input returns empty" $ prop_filterTxsEmpty impl
-      , testProperty "returns only missing TXs" $ prop_filterTxsCorrect impl
       ]
   , testGroup
       "lookupEbClosure"
@@ -738,76 +726,6 @@ assertOfferBlockTxs expectedPoint = \case
     actualPoint @?= expectedPoint
   AcquiredEb _ _ ->
     assertFailure "expected AcquiredEbTxs, got AcquiredEb"
-
--- * Property tests for filterHaveEbBodies
-
--- | Property: filtering empty list returns empty list.
-prop_filterEbBodiesEmpty :: DbImpl -> Property
-prop_filterEbBodiesEmpty impl =
-  ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-    result <- leiosDbFilterMissingEbBodies con []
-    pure $ result === []
-
--- | Property: filter returns exactly the EBs whose bodies are missing.
-prop_filterEbBodiesCorrect :: DbImpl -> Property
-prop_filterEbBodiesCorrect impl =
-  forAll (chooseInt (1, 20)) $ \numEbs ->
-    forAll (replicateM numEbs (genPointAndEb 5)) $ \pointsAndEbs ->
-      forAllBlind (sublistOf pointsAndEbs) $ \toInsert ->
-        ioProperty $
-          withFreshDb impl $ \db ->
-            withLeiosDb db $ \con -> do
-              -- Insert some EBs (those in toInsert will have bodies)
-              forM_ toInsert $ \(point, eb) -> do
-                leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-                void $ leiosDbInsertEbBody con point eb
-              -- Also insert points without bodies for the rest
-              let withoutBodies = filter (`notElem` toInsert) pointsAndEbs
-              forM_ withoutBodies $ \(point, eb) ->
-                leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-              -- Filter should return the ones WITHOUT bodies
-              let allPoints = [p | (p, _) <- pointsAndEbs]
-                  expectedMissing = [p | (p, _) <- withoutBodies]
-              (result, filterTime) <- timed $ leiosDbFilterMissingEbBodies con allPoints
-              pure $
-                conjoin
-                  [ length result === length expectedMissing
-                  , all (`elem` expectedMissing) result === True
-                  , all (`elem` result) expectedMissing === True
-                  ]
-                  & tabulate "filterMissingEbBodies" [timeBucket filterTime]
-                  & tabulate "numEbs" [magnitudeBucket numEbs]
-
--- * Property tests for filterMissingTxs
-
--- | Property: filtering empty list returns empty list.
-prop_filterTxsEmpty :: DbImpl -> Property
-prop_filterTxsEmpty impl =
-  ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-    result <- leiosDbFilterMissingTxs con []
-    pure $ result === []
-
--- | Property: filter returns exactly the TXs we do NOT have.
-prop_filterTxsCorrect :: DbImpl -> Property
-prop_filterTxsCorrect impl =
-  forAll (chooseInt (1, 50)) $ \numTxs ->
-    forAllBlind (replicateM numTxs genTxHash) $ \txHashes ->
-      forAllBlind (sublistOf txHashes) $ \toInsert ->
-        ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-          -- Insert some TXs
-          forM_ toInsert $ \txHash ->
-            leiosDbInsertTxs con [(txHash, maxTxBytesZero)]
-          -- Filter should return the ones NOT inserted
-          let expectedMissing = filter (`notElem` toInsert) txHashes
-          (result, filterTime) <- timed $ leiosDbFilterMissingTxs con txHashes
-          pure $
-            conjoin
-              [ length result === length expectedMissing
-              , all (`elem` expectedMissing) result === True
-              , all (`elem` result) expectedMissing === True
-              ]
-              & tabulate "filterMissingTxs" [timeBucket filterTime]
-              & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- * Property tests for lookupEbClosure
 
