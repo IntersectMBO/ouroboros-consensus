@@ -173,8 +173,12 @@ recordForgedEbAndClosureInTxCache ::
   m ()
 recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
   _ <- txCache.insertAnnouncement point.pointSlotNo rbh point.pointEbHash
-  mSummary <- txCache.insertBody point.pointEbHash (Leios.serializeEbBody eb)
-  forM_ mSummary $ traceWith tracer . TraceLeiosTxCacheEbBody point
+  -- The forge path does not fetch, so it discards the miss set: a unit
+  -- accumulator and a no-op snoc.
+  mbSummary <-
+      fmap (fmap @Maybe (\(x, ()) -> x))
+    $ insertBody txCache point.pointEbHash (Leios.serializeEbBody eb) () (\() _ _ _ -> ())
+  forM_ mbSummary $ traceWith tracer . TraceLeiosTxCacheEbBody point
   withLockedInsertAppliedTx txCache $ \w0 step ->
     foldM (\w (txh, _sz) -> step w txh ()) w0 (leiosEbTxs eb)
  where
@@ -703,14 +707,13 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
       error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
   -- ingest it
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    -- Persist the EB (LeiosDb before cache) and classify its txs against the
-    -- cache, unless we already hold this EB's body (a 'lookupBody' hit). Since
-    -- 'insertBody' has run, a tx cache hit means that tx is already in the
-    -- LeiosDb pinned by this EB -- enqueue only the misses ('Nothing').
+    -- Skip if we already hold this EB's body (a 'lookupBody' hit); otherwise
+    -- persist it (LeiosDb before cache) and enqueue only the txs we still need to
+    -- fetch (the misses).
     novel <- isNothing <$> txCache.lookupBody ebHash
     mbMisses <- if not novel then pure Nothing else do
       -- TODO don't hold the outstanding mvar during this IO
-      traceException tracer TraceLeiosPeerDbException $ do
+      mbMisses <- traceException tracer TraceLeiosPeerDbException $ do
         -- FIXME: Once proper EB announcements are wired in, the point
         -- MUST already be present here (announcement handling inserts
         -- it) and this should become an assertion. Today we still tolerate
@@ -719,22 +722,35 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
         traceWith ktracer $ TraceLeiosBlockPointMissing point
         leiosDbInsertEbPoint db point ebBytesSize
         completedByBody <- leiosDbInsertEbBody db point eb
-        mSummary <- txCache.insertBody ebHash (Leios.serializeEbBody eb)
-        forM_ mSummary $ traceWith ktracer . TraceLeiosTxCacheEbBody point
+        mbSummaryMisses <-
+          insertBody
+            txCache
+            ebHash
+            (Leios.serializeEbBody eb)
+            IntMap.empty
+            (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
+        forM_ mbSummaryMisses $ traceWith ktracer . TraceLeiosTxCacheEbBody point . fst
         traceWith ktracer $ TraceLeiosBlockAcquired point
         forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-      let MkLeiosEb v = eb
-      misses <- withLookupTx txCache $ \look ->
-        V.ifoldM
-          ( \acc i (txh, sz) -> do
-              r <- look txh
-              pure $ case r of
-                Just{} -> acc
-                Nothing -> IntMap.insert i (txh, sz) acc
-          )
-          IntMap.empty
-          v
-      pure (Just misses)
+        pure $ fmap snd mbSummaryMisses
+      case mbMisses of
+        Just misses -> pure (Just misses)
+        Nothing -> do
+          -- Backstop: body whose announcement is not in the LeiosTxCache (and
+          -- so its insert into the cache was a no-op). Classify its txs
+          -- directly.
+          let MkLeiosEb v = eb
+          misses <- withLookupTx txCache $ \look ->
+            V.ifoldM
+              ( \acc i (txh, sz) -> do
+                  r <- look txh
+                  pure $ case r of
+                    Just{} -> acc
+                    Nothing -> IntMap.insert i (txh, sz) acc
+              )
+              IntMap.empty
+              v
+          pure (Just misses)
     -- update NodeKernel state
     --
     -- 'refundEbRequest' reverses this peer's per-request accounting (but skips

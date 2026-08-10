@@ -87,7 +87,11 @@ instance ReferencesTxsByHash BenchBody where
     n = BS.length bs `div` 32
     go !acc i
       | i >= n = acc
-      | otherwise = go (f acc (MkTxHash (BS.copy (BS.take 32 (BS.drop (i * 32) bs))))) (i + 1)
+      | otherwise =
+        go
+          (f acc (MkTxHash (BS.copy (BS.take 32 (BS.drop (i * 32) bs)))) dummySize)
+          (i + 1)
+    dummySize = 0
 
 type BenchCache = LeiosTxCache IO () () BenchBody
 
@@ -274,7 +278,7 @@ runBench (BenchTarget name popCache queryCache syncAfterPop coolBatch) = do
     timedNs $
       forM_ ebData $ \(ebh, rbh, slot, txhs, bs) -> do
         _ <- insertAnnouncement popCache slot rbh ebh
-        _ <- insertBody popCache ebh (BenchBody bs)
+        _ <- insertBody popCache ebh (BenchBody bs) () (\() _ _ _ -> ())
         withLockedInsertUnappliedTx popCache $ \z step ->
           foldM (\ !acc txh -> step acc txh ()) z txhs
   allocAfter <- bytesAllocated

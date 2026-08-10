@@ -29,7 +29,8 @@ import Data.Set (Set)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word8)
 import LeiosDemoTypes
-  ( EbHash
+  ( BytesSize
+  , EbHash
   , InsertBodySummary (..)
   , RbHash
   , SerializedEbBody (..)
@@ -59,7 +60,20 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- index first is what guarantees it can never report a hit for a tx the LeiosDb
   -- has already dropped. Reverse the order and you arm the hit-prune hazard: a
   -- false hit ⇒ a skipped fetch ⇒ a silently-incomplete EB closure.
-  , insertBody :: EbHash -> b -> m (Maybe InsertBodySummary)
+  , insertBody ::
+      forall w.
+      EbHash ->
+      b ->
+      w ->
+      (w -> Int -> TxHash -> BytesSize -> w) ->
+      m (Maybe (InsertBodySummary, w))
+  -- ^ Record that we hold this EB's body, bumping the refcount of each tx it
+  -- references. In the same pass, fold a caller-supplied accumulator over the
+  -- referenced txs that are /not yet acquired/ (the "misses"): starting from the
+  -- nil @w@ and extending it with the snoc @w -> offset -> 'TxHash' -> 'BytesSize'
+  -- -> w@, where @offset@ is the tx's position in the body. Returns the summary
+  -- and the built @w@, or 'Nothing' when the EB is unannounced or its body is
+  -- already inserted (a no-op, so nothing is folded).
   , lookupBody :: EbHash -> m (Maybe b)
   -- ^ The EB's body if we hold it (its 'BodyState' is 'BodyAlreadyInserted');
   -- 'Nothing' if the EB is untracked or only announced. Unlike a tx, an EB body
@@ -73,20 +87,22 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- ^ Does not not hold the lock
   }
 
--- | A body @b@ from which the referenced txs can be enumerated by hash.
+-- | A body @b@ from which the referenced txs can be enumerated, each paired with
+-- its on-the-wire size, in body order.
 --
 -- The fold must visit each referenced 'TxHash' at most once per body (a valid EB
 -- body references a tx at most once), so that a body contributes exactly one to
--- each of its txs' refcounts.
+-- each of its txs' refcounts. Visiting in body order lets a consumer recover each
+-- tx's offset from its position in the fold.
 class ReferencesTxsByHash b where
-  foldTxReferences :: (r -> TxHash -> r) -> r -> b -> r
+  foldTxReferences :: (r -> TxHash -> BytesSize -> r) -> r -> b -> r
 
 -- | The production body type: 'SerializedEbBody' is decoded to enumerate its
 -- referenced txs. (The type lives in "LeiosDemoTypes"; the instance lives here,
 -- with the class, to keep it non-orphan.)
 instance ReferencesTxsByHash SerializedEbBody where
   foldTxReferences f z (MkSerializedEbBody sbs) =
-    V.foldl' (\acc (txh, _sz) -> f acc txh) z (leiosEbTxs eb)
+    V.foldl' (\acc (txh, sz) -> f acc txh sz) z (leiosEbTxs eb)
    where
     eb = case deserialiseFromBytes decodeLeiosEb (LBS.fromStrict (fromShort sbs)) of
       Right (_leftover, decoded) -> decoded
