@@ -126,6 +126,7 @@ import LeiosDemoTypes
   , TraceLeiosPeer (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosTxCache (lookupBody)
 import LeiosVoteState
   ( AddVoteResult (..)
   , LeiosVoteState (..)
@@ -404,6 +405,7 @@ mkHandlers
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
               , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime cds -> do
                   Leios.checkMsgRollForwardForLeiosOffers
+                    getLeiosTxCache
                     (getLeiosOutstanding, getLeiosReady)
                     peerVars
                     hdr
@@ -558,19 +560,23 @@ mkHandlers
                     -- the same content hash, so the first-seen (slot, size)
                     -- wins. The per-peer 'offerings' below is still updated so
                     -- the peer remains a valid serving candidate.
+                    mBody <- lookupBody getLeiosTxCache ebHash
                     MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
                       pure $
-                        if ebBytesSize == 0
-                          || Set.member ebHash (Leios.acquiredEbBodies outstanding)
-                          || any
-                            ((== ebHash) . pointEbHash)
-                            (Map.keys (Leios.missingEbBodies outstanding))
-                          then outstanding
-                          else
-                            outstanding
-                              { Leios.missingEbBodies =
-                                  Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-                              }
+                        case mBody of
+                          Just{} -> outstanding -- we already hold this EB's body
+                          Nothing ->
+                            if ebBytesSize == 0
+                              || Set.member ebHash (Leios.acquiredEbBodies outstanding)
+                              || any
+                                ((== ebHash) . pointEbHash)
+                                (Map.keys (Leios.missingEbBodies outstanding))
+                              then outstanding
+                              else
+                                outstanding
+                                  { Leios.missingEbBodies =
+                                      Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+                                  }
                     MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                       let !offers1' = Set.insert ebHash offers1
                       pure (offers1', offers2)
