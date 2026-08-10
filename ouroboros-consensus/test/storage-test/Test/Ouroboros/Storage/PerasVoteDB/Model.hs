@@ -24,8 +24,7 @@ import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
 import Ouroboros.Consensus.Block.Abstract (StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasVoteBlock (..)
-  , HasPerasVoteRound (..)
+  ( IsPerasVote (..)
   , PerasCert' (..)
   , PerasParams (..)
   , PerasRoundNo
@@ -33,10 +32,8 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasVoteStake (..)
   , PerasVoteTarget (..)
   , ValidatedPerasCert (..)
-  , ValidatedPerasVote
-  , getPerasCertBoostedBlock
-  , getPerasVoteStake
-  , getPerasVoteVoterId
+  , ValidatedPerasVote (..)
+  , getPerasCertPoint
   , stakeAboveThreshold
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -158,7 +155,7 @@ addVote vote model
   -- block in this round => integrity violation (shouldn't happen in practice)
   | reachedQuorum
   , Just existingCert <- certAtRound
-  , getPerasCertBoostedBlock freshCert /= getPerasCertBoostedBlock existingCert =
+  , getPerasCertPoint freshCert /= getPerasCertPoint existingCert =
       ( Left $
           MultipleWinnersInRound roundNo
       , model
@@ -200,7 +197,7 @@ addVote vote model
   votedBlock =
     getPerasVoteBlock vote
   voter =
-    getPerasVoteVoterId vote
+    getPerasVoteSeatIndex vote
   -- Compute the next ticket number associated to this vote.
   -- NOTE: This is a 64-bit counter, so there's no practical risk of overflow.
   nextTicketNo =
@@ -227,7 +224,7 @@ addVote vote model
       . sum
       . fmap
         ( unPerasVoteStake
-            . getPerasVoteStake
+            . vpvVoteStake
             . forgetArrivalTime
             . veVote
         )

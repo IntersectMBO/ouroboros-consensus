@@ -1307,7 +1307,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
             (+)
             [ ( pvtRoundNo target
               , sum
-                  [ unPerasVoteStake (getPerasVoteStake (PerasVoteDBModel.veVote ve))
+                  [ unPerasVoteStake (vpvVoteStake (forgetArrivalTime (PerasVoteDBModel.veVote ve)))
                   | ve <- Set.toList entries
                   ]
               )
@@ -1812,7 +1812,7 @@ addPerasCertOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasCert certWithTime _ ->
-      let targetPt = pcCertBoostedBlock (vpcCert (forgetArrivalTime certWithTime))
+      let targetPt = getPerasCertPoint (vpcCert (forgetArrivalTime certWithTime))
        in case (isBlockConnected targetPt (dbModel (eventBefore ev))) of
             False ->
               assert (chainSelOutcome ev == "no chain selection change") $
@@ -1830,7 +1830,7 @@ addPerasVoteOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasVote voteWithTime _ ->
-      let targetPt = pvVoteBlock (vpvVote (forgetArrivalTime voteWithTime))
+      let targetPt = getPerasVotePoint (vpvVote (forgetArrivalTime voteWithTime))
           certsBefore = numCerts (eventBefore ev)
           certsAfter = numCerts (eventAfter ev)
           certProduced = certsAfter > certsBefore

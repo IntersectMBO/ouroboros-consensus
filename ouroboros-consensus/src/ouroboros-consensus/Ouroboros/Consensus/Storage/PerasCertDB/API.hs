@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -200,7 +201,7 @@ prop_garbageCollectRemovesOldCerts db slotNo = do
     _ <- garbageCollect db slotNo
     getCertsAfter db zeroPerasCertTicketNo
   allCertValues <- sequence (Map.elems allCertActions)
-  let targetSlots = pointSlot . getPerasCertBoostedBlock <$> allCertValues
+  let targetSlots = pointSlot . getPerasCertPoint <$> allCertValues
   pure $
     all (>= NotOrigin slotNo) targetSlots
 

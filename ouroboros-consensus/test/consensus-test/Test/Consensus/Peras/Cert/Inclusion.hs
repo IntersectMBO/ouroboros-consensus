@@ -1,8 +1,11 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test that the Peras certificate inclusion rules can correctly decide when
@@ -17,11 +20,11 @@ module Test.Consensus.Peras.Cert.Inclusion (tests) where
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Block (WithOrigin (..))
+import Ouroboros.Consensus.Block (Point (..), WithOrigin (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
+  ( BoostedBlock
+  , IsPerasCert (..)
   , PerasRoundNo (..)
-  , getPerasCertRound
   )
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( LatestCertOnChainView (..)
@@ -50,6 +53,7 @@ import Test.Tasty.QuickCheck
   , testProperty
   )
 import Test.Util.QuickCheck (geometric)
+import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 {-------------------------------------------------------------------------------
@@ -235,8 +239,13 @@ data TestCert
   }
   deriving (Show, Eq, Generic)
 
-instance HasPerasCertRound TestCert where
+type instance BoostedBlock TestCert = Point TestBlock
+
+instance IsPerasCert TestCert TestBlock where
   getPerasCertRound = tcRoundNo
+
+  -- We don't really care about the block being boosted for the inclusion rules
+  getPerasCertBlock = const GenesisPoint
 
 -- | Generate a test certificate
 --

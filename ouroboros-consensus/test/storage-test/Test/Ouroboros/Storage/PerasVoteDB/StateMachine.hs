@@ -36,8 +36,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasVoteBlock (..)
-  , HasPerasVoteRound (..)
+  ( IsPerasVote (..)
   , PerasParams
   , PerasRoundNo (..)
   , PerasSeatIndex (..)
@@ -400,6 +399,6 @@ votesToReachQuorum model vote res =
       Set.empty
       PerasVoteTarget
         { pvtRoundNo = getPerasVoteRound vote
-        , pvtBlock = getPerasVoteBlock vote
+        , pvtBlock = getPerasVotePoint vote
         }
       (Model.votes model)

@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -41,10 +42,10 @@ import Ouroboros.Consensus.Block.Abstract
   , castPoint
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
+  ( BlockSupportsPeras (..)
+  , IsPerasCert (..)
   , PerasRoundNo (..)
   , ValidatedPerasCert
-  , getPerasCertBoostedBlock
   , getPerasCertRound
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -211,6 +212,7 @@ data PerasVotingView cert blk = PerasVotingView
 mkPerasVotingView ::
   ( cert ~ WithArrivalTime (ValidatedPerasCert blk)
   , GetHeader blk
+  , IsPerasCert (PerasCert blk) blk
   ) =>
   -- | Peras protocol parameters
   PerasParams blk ->
@@ -281,5 +283,5 @@ mkPerasVotingView
       -- VolatileDB, so we can check whether it is within the bounds of the
       -- anchored fragment leading to the candidate block.
       AF.withinFragmentBounds
-        (castPoint (getPerasCertBoostedBlock cert))
+        (castPoint (getPerasCertPoint cert))
         chainAtCandidateBlock

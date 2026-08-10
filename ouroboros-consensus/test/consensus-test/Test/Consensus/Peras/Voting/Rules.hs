@@ -1,7 +1,10 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test that the Peras voting rules can correctly decide when to vote.
@@ -14,13 +17,14 @@ module Test.Consensus.Peras.Voting.Rules (tests) where
 
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract
-  ( SlotNo (..)
+  ( Point (..)
+  , SlotNo (..)
   , WithOrigin (..)
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
+  ( BoostedBlock
+  , IsPerasCert (..)
   , PerasRoundNo (..)
-  , getPerasCertRound
   , onPerasRoundNo
   )
 import Ouroboros.Consensus.BlockchainTime
@@ -256,8 +260,13 @@ data TestCert
   }
   deriving (Show, Eq, Generic)
 
-instance HasPerasCertRound TestCert where
+type instance BoostedBlock (TestCert) = Point TestBlock
+
+instance IsPerasCert TestCert TestBlock where
   getPerasCertRound = tcRoundNo
+
+  -- We don't really care about the block being boosted for the voting rules
+  getPerasCertBlock = const GenesisPoint
 
 -- | Generate a test certificate
 --
