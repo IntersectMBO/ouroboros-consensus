@@ -32,14 +32,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
     -- * To be removed in favor of using a 'PerasEpochContext' directly
   , PerasVoteStakeDistr (..)
 
-    -- * To be removed in favor of 'PerasVoteCollection(WithQuorum)'
-  , ValidatedPerasVotesWithQuorum
-    ( vpvqTarget
-    , vpvqVotes
-    , vpvqPerasParams
-    )
-  , votesReachQuorum
-
     -- * Validated types
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
@@ -180,9 +172,7 @@ deriving instance
 deriving instance
   Generic (PerasEpochContext blk)
 
-{-------------------------------------------------------------------------------
 -- * Peras types
--------------------------------------------------------------------------------}
 
 -- TODO: to be removed in favor of using a 'PerasEpochContext' directly.
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
@@ -191,64 +181,7 @@ newtype PerasVoteStakeDistr = PerasVoteStakeDistr
   deriving newtype NoThunks
   deriving stock (Show, Eq, Generic)
 
--- ** Votes with enough stake to reach quorum for a given target
-
--- | A collection of validated Peras votes that:
--- 1. are all for the same target, and
--- 2. have total stake above the quorum threshold for a given 'PerasParams'.
-data ValidatedPerasVotesWithQuorum blk = ValidatedPerasVotesWithQuorum
-  { vpvqTarget :: !(PerasVoteTarget blk)
-  -- ^ The target that all the votes are for
-  , vpvqVotes :: !(NonEmpty (ValidatedPerasVote blk))
-  -- ^ The votes that reached quorum for the given target
-  , vpvqPerasParams :: !(PerasParams blk)
-  -- ^ The Peras configuration used to validate that the votes reach quorum
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
-
--- | Smart constructor for 'ValidatedPerasVotesReachingQuorum'.
---
--- This function checks that all votes are for the same target, and that their
--- total stake is above the quorum threshold defined in the given 'PerasParams'.
--- It returns 'Nothing' if either of these conditions is not met.
-votesReachQuorum ::
-  ( StandardHash blk
-  , IsPerasVote (PerasVote blk) blk
-  ) =>
-  PerasParams blk ->
-  [ValidatedPerasVote blk] ->
-  Maybe (ValidatedPerasVotesWithQuorum blk)
-votesReachQuorum params votes =
-  case votes of
-    -- We need at least one vote to determine who these votes are for, so we
-    -- can't vacuously reach a quorum, even if the quorum threshold is 0.
-    [] -> Nothing
-    -- If we have at least one vote, we must check that all votes are for the
-    -- same target, and that their total stake of is above the quorum threshold.
-    (v0 : vs)
-      | not (allVotesMatchTarget v0 vs) ->
-          Nothing
-      | not votesHaveEnoughWeight ->
-          Nothing
-      | otherwise ->
-          Just
-            ValidatedPerasVotesWithQuorum
-              { vpvqTarget = getPerasVoteTarget v0
-              , vpvqVotes = v0 :| vs
-              , vpvqPerasParams = params
-              }
- where
-  totalVoteStake =
-    mconcat (vpvVoteWeight <$> votes)
-  votesHaveEnoughWeight =
-    weightAboveThreshold params totalVoteStake
-  allVotesMatchTarget target =
-    all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
-
-{-------------------------------------------------------------------------------
 -- * BlockSupportsPeras class
--------------------------------------------------------------------------------}
 
 class
   ( Show (PerasParams blk)
@@ -298,7 +231,7 @@ class
 
   forgePerasCert ::
     PerasParams blk ->
-    ValidatedPerasVotesWithQuorum blk ->
+    PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
 
   -- | Extract a Peras certificate optionally stored in a block.
@@ -338,8 +271,8 @@ instance StandardHash blk => BlockSupportsPeras blk where
       ValidatedPerasCert
         { vpcCert =
             PerasCert
-              { pcCertRound = pvtRoundNo (vpvqTarget votes)
-              , pcCertBoostedBlock = pvtBlock (vpvqTarget votes)
+              { pcCertRound = pvtRoundNo (pvcTarget (forgetQuorum votes))
+              , pcCertBoostedBlock = pvtBlock (pvcTarget (forgetQuorum votes))
               }
         , vpcCertBoost = perasWeight params
         }
