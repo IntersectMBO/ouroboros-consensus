@@ -355,7 +355,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      SL.PoolDistr
+      SL.QueryResultPoolDistr
   -- | This gets the stake distribution, but not in terms of _active_ stake
   -- (which we need for the leader schedule), but rather in terms of _total_
   -- stake, which is relevant for rewards. It is used by the wallet to show
@@ -448,7 +448,7 @@ instance
       GetStakeSnapshots mPoolIds ->
         SL.queryStakeSnapshots st mPoolIds
       GetPoolDistr mPoolIds ->
-        fromLedgerPoolDistr $ answerPureBlockQuery cfg (GetPoolDistr2 mPoolIds) ext
+        fromQueryResultPoolDistr $ answerPureBlockQuery cfg (GetPoolDistr2 mPoolIds) ext
       GetStakeDelegDeposits stakeCreds ->
         SL.queryAccountsDeposits st stakeCreds
       GetConstitution ->
