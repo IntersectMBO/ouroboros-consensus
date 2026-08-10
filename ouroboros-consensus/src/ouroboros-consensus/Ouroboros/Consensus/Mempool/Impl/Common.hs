@@ -37,6 +37,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , jsonMempoolRejectionDetails
 
     -- * Conversions
+  , snapshotFromIS
   , snapshotFromValidTxs
 
     -- * Ticking a ledger state
@@ -487,6 +488,30 @@ computeSnapshot cfg slot st values txTickets =
 -------------------------------------------------------------------------------}
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
+--
+-- The internal state already maintains both the sequence of transactions
+-- ('isTxs') and the set of their ids ('isTxIds'), so this is @O(1)@: it only
+-- wraps the structures that are there, without recomputing either of them.
+snapshotFromIS ::
+  forall blk.
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  InternalState blk ->
+  MempoolSnapshot blk
+snapshotFromIS is =
+  snapshotFromTxSeq
+    validatedTx
+    (isTxs is)
+    (isTxIds is)
+    (isTip is)
+    (isSlotNo is)
+
+-- | Create a Mempool Snapshot from a list of validated transactions.
+--
+-- Unlike 'snapshotFromIS' this has to build the transaction sequence and the
+-- set of transaction ids, so it is @O(n)@ in the number of transactions and
+-- computes the txid of every one of them. Only use it when there is no internal
+-- state to take those from, for example after revalidating transactions in
+-- 'computeSnapshot'.
 snapshotFromValidTxs ::
   forall blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
@@ -494,7 +519,29 @@ snapshotFromValidTxs ::
   Point blk ->
   SlotNo ->
   MempoolSnapshot blk
-snapshotFromValidTxs validTxs tipPoint slot =
+snapshotFromValidTxs validTxs =
+  snapshotFromTxSeq
+    id
+    (TxSeq.fromList validTxs)
+    (Set.fromList $ map (txId . txForgetValidated . txTicketTx) validTxs)
+
+-- | Create a Mempool Snapshot from an already built transaction sequence and
+-- the ids of the transactions in it.
+--
+-- The sequence is generic in its element so that callers holding something
+-- richer than a validated transaction (like the internal state, which keeps
+-- the diffs alongside) can pass their sequence as it is instead of rebuilding
+-- it; @prj@ projects the validated transaction out of an element.
+snapshotFromTxSeq ::
+  forall blk tx.
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (tx -> Validated (GenTx blk)) ->
+  TxSeq (TxMeasureWithDiffTime blk) tx ->
+  Set (GenTxId blk) ->
+  Point blk ->
+  SlotNo ->
+  MempoolSnapshot blk
+snapshotFromTxSeq prj txs txIds tipPoint slot =
   MempoolSnapshot
     { snapshotTxs = implSnapshotGetTxs
     , snapshotTxsAfter = implSnapshotGetTxsAfter
@@ -507,9 +554,6 @@ snapshotFromValidTxs validTxs tipPoint slot =
     , snapshotPoint = castPoint tipPoint
     }
  where
-  txs = TxSeq.fromList validTxs
-  txIds = Set.fromList $ map (txId . txForgetValidated . txTicketTx) validTxs
-
   implSnapshotGetTxs ::
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxs = implSnapshotGetTxsAfter TxSeq.zeroTicketNo
@@ -518,7 +562,7 @@ snapshotFromValidTxs validTxs tipPoint slot =
     TicketNo ->
     [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter =
-    (\x -> [(a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x])
+    (\x -> [(prj a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x])
       . TxSeq.toTuples
       . snd
       . TxSeq.splitAfterTicketNo txs
@@ -527,14 +571,14 @@ snapshotFromValidTxs validTxs tipPoint slot =
     TxMeasure blk ->
     ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
   implSnapshotTake limit =
-    (map TxSeq.txTicketTx (TxSeq.toList x), TxSeq.toSize x)
+    (map (prj . TxSeq.txTicketTx) (TxSeq.toList x), TxSeq.toSize x)
    where
     (x, _y) = TxSeq.splitAfterTxSize txs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
 
   implSnapshotGetTx ::
     TicketNo ->
     Maybe (Validated (GenTx blk))
-  implSnapshotGetTx = (txs `TxSeq.lookupByTicketNo`)
+  implSnapshotGetTx = fmap prj . (txs `TxSeq.lookupByTicketNo`)
 
   implSnapshotHasTx ::
     GenTxId blk ->
