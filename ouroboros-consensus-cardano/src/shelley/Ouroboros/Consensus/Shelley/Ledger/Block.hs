@@ -46,7 +46,6 @@ import Cardano.Ledger.Binary
   , FullByteString (..)
   , serialize
   )
-import Cardano.Ledger.Binary.Group (EncCBORGroup)
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Cardano.Ledger.Block as SL (EraBlockHeader)
 import Cardano.Ledger.Core as SL
@@ -107,7 +106,6 @@ type instance BlockProtocol (ShelleyBlock proto era) = proto
 class
   ( ShelleyBasedEra era
   , ShelleyProtocol proto
-  , EncCBORGroup (SL.BlockBody era)
   , -- Block serialisation constraints (per-era instances no longer have a general form)
     EncCBOR (SL.Block (ShelleyProtocolHeader proto) era)
   , DecCBOR (Annotator (SL.Block (ShelleyProtocolHeader proto) era))
