@@ -94,9 +94,9 @@ import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
 import Data.ByteString.Short (ShortByteString)
-import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Measure (Measure)
+import qualified Data.Measure as Measure
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import Data.Word (Word32)
@@ -551,9 +551,19 @@ data AlonzoMeasure = AlonzoMeasure
   }
   deriving stock (Eq, Generic, Show)
   deriving anyclass NoThunks
-  deriving
-    Measure
-    via (InstantiatedAt Generic AlonzoMeasure)
+
+-- | Hand-written rather than @deriving via InstantiatedAt Generic@, and
+-- deliberately combining the 'ExUnits'' components directly: 'plus' runs on
+-- every 'TxSeq' fingertree rebalance, and routing through @ExUnits'@'s own
+-- 'Measure' instance would put the upstream generic dispatch path back on it.
+instance Measure AlonzoMeasure where
+  zero = AlonzoMeasure Measure.zero (ExUnits' 0 0)
+  plus (AlonzoMeasure b1 (ExUnits' m1 s1)) (AlonzoMeasure b2 (ExUnits' m2 s2)) =
+    AlonzoMeasure (Measure.plus b1 b2) (ExUnits' (m1 + m2) (s1 + s2))
+  min (AlonzoMeasure b1 (ExUnits' m1 s1)) (AlonzoMeasure b2 (ExUnits' m2 s2)) =
+    AlonzoMeasure (Measure.min b1 b2) (ExUnits' (Prelude.min m1 m2) (Prelude.min s1 s2))
+  max (AlonzoMeasure b1 (ExUnits' m1 s1)) (AlonzoMeasure b2 (ExUnits' m2 s2)) =
+    AlonzoMeasure (Measure.max b1 b2) (ExUnits' (Prelude.max m1 m2) (Prelude.max s1 s2))
 
 instance HasByteSize AlonzoMeasure where
   txMeasureByteSize = unIgnoringOverflow . byteSize
