@@ -91,11 +91,11 @@ data AddPerasVoteResult blk
 -------------------------------------------------------------------------------}
 
 newtype ExistingPerasRoundWinner blk
-  = ExistingPerasRoundWinner (Point blk, PerasVoteStake)
+  = ExistingPerasRoundWinner (Point blk, VoteWeight)
   deriving stock (Show, Eq)
 
 newtype BlockedPerasRoundWinner blk
-  = BlockedPerasRoundWinner (Point blk, PerasVoteStake)
+  = BlockedPerasRoundWinner (Point blk, VoteWeight)
   deriving stock (Show, Eq)
 
 data PerasVoteDbError blk

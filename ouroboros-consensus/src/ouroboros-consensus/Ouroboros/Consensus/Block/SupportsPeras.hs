@@ -29,14 +29,12 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasVote' (..)
 
     -- * Types and functions related to Peras vote collection and quorum checking
-  , PerasVoteStake (..)
   , PerasVoteStakeDistr (..)
   , ValidatedPerasVotesWithQuorum
     ( vpvqTarget
     , vpvqVotes
     , vpvqPerasParams
     )
-  , lookupPerasVoteStake
   , votesReachQuorum
 
     -- * Validated types
@@ -47,7 +45,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , IsPerasError (..)
 
     -- * Helpers
-  , stakeAboveThreshold
+  , weightAboveThreshold
 
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Cert.Class
@@ -63,9 +61,7 @@ import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.Map as Map
 import Data.Map.Strict (Map)
-import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -82,7 +78,6 @@ import Ouroboros.Consensus.Peras.Void
 import Ouroboros.Consensus.Peras.Vote.Class
 import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
 import Ouroboros.Consensus.Util
-import Quiet (Quiet (..))
 
 -- * Voting committee types for Peras
 
@@ -160,62 +155,12 @@ deriving instance
 -- * Peras types
 -------------------------------------------------------------------------------}
 
--- ** Stake pool distributions
-
--- NOTE: At the moment there is no consensus from researchers/engineers on how
--- we go from the absolute stake of a voter in the ledger to the relative stake
--- of their vote in the voting commitee (given that the quorum is expressed as
--- a relative value of the voting commitee total stake).
---
--- So, for now you can consider this 'Rational' as the best approximation we
--- have at the moment of the concrete type for a relative vote stake that can be
--- compared to the quorum threshold value (also currently a 'Rational').
-newtype PerasVoteStake = PerasVoteStake
-  { unPerasVoteStake :: Rational
-  }
-  deriving newtype (Eq, Ord, Num, Fractional, NoThunks, Serialise)
-  deriving stock Generic
-  deriving Show via Quiet PerasVoteStake
-  deriving Semigroup via Sum Rational
-  deriving Monoid via Sum Rational
-
--- | Check whether a given vote stake is above the quorum threshold.
---
--- TODO: this function assumes that the 'PerasVoteStake' and the quorum
--- threshold used in 'PerasParams' are expressed in the same units. That is,
--- both are either absolute or relative (normalized) values. Under the current
--- current implementation of 'PerasParams', this function only makes sense when
--- both values are relative (normalized) values, so we should either normalize
--- the 'PerasVoteStake' before calling this function, or change this function to
--- accept a stake distribution and perform the normalization internally.
-stakeAboveThreshold :: PerasParams blk -> PerasVoteStake -> Bool
-stakeAboveThreshold params voteStake =
-  stake >= quorumThreshold + safetyMargin
- where
-  stake =
-    unPerasVoteStake voteStake
-  quorumThreshold =
-    unPerasQuorumWeightThreshold
-      (perasQuorumWeightThreshold params)
-  safetyMargin =
-    unPerasQuorumWeightThresholdSafetyMargin
-      (perasQuorumWeightThresholdSafetyMargin params)
-
+-- TODO: to be removed in favor of using a 'PerasEpochContext' directly.
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
-  { unPerasVoteStakeDistr :: Map PerasSeatIndex PerasVoteStake
+  { unPerasVoteStakeDistr :: Map PerasSeatIndex VoteWeight
   }
   deriving newtype NoThunks
   deriving stock (Show, Eq, Generic)
-
--- | Lookup the stake of a vote cast by a member of a given stake distribution.
-lookupPerasVoteStake ::
-  PerasVote blk ->
-  PerasVoteStakeDistr ->
-  Maybe PerasVoteStake
-lookupPerasVoteStake vote distr =
-  Map.lookup
-    (pvVoteVoterId vote)
-    (unPerasVoteStakeDistr distr)
 
 -- ** Votes with enough stake to reach quorum for a given target
 
@@ -255,7 +200,7 @@ votesReachQuorum params votes =
     (v0 : vs)
       | not (allVotesMatchTarget v0 vs) ->
           Nothing
-      | not votesHaveEnoughStake ->
+      | not votesHaveEnoughWeight ->
           Nothing
       | otherwise ->
           Just
@@ -266,9 +211,9 @@ votesReachQuorum params votes =
               }
  where
   totalVoteStake =
-    mconcat (vpvVoteStake <$> votes)
-  votesHaveEnoughStake =
-    stakeAboveThreshold params totalVoteStake
+    mconcat (vpvVoteWeight <$> votes)
+  votesHaveEnoughWeight =
+    weightAboveThreshold params totalVoteStake
   allVotesMatchTarget target =
     all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
 
@@ -356,7 +301,7 @@ instance StandardHash blk => BlockSupportsPeras blk where
     Right
       ValidatedPerasVote
         { vpvVote = vote
-        , vpvVoteStake = PerasVoteStake 0
+        , vpvVoteWeight = VoteWeight 0
         }
 
   forgePerasCert params votes =
@@ -438,7 +383,7 @@ instance IsPerasVote (PerasVote' blk) blk where
 data ValidatedPerasVote blk
   = ValidatedPerasVote
   { vpvVote :: !(PerasVote blk)
-  , vpvVoteStake :: !PerasVoteStake
+  , vpvVoteWeight :: !VoteWeight
   }
 
 deriving instance Show (PerasVote blk) => Show (ValidatedPerasVote blk)
@@ -489,3 +434,25 @@ class IsPerasError err blk | err -> blk where
   injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
   injectConversionError :: PerasConversionError -> err
   injectQuorumNotReachedError :: VoteWeight -> err
+
+-- * Helpers
+
+-- | Check whether a given vote weight is above the quorum threshold.
+--
+-- NOTE: this function assumes that the 'VoteWeight' and the quorum
+-- threshold used in 'PerasParams' are expressed in the same units. That is,
+-- both are either absolute or relative (normalized) values. Under the current
+-- current implementation of 'PerasParams', this function only makes sense when
+-- both values are relative (normalized) values.
+weightAboveThreshold :: PerasParams blk -> VoteWeight -> Bool
+weightAboveThreshold params voteWeight =
+  weight >= quorumThreshold + safetyMargin
+ where
+  weight =
+    unVoteWeight voteWeight
+  quorumThreshold =
+    unPerasQuorumWeightThreshold
+      (perasQuorumWeightThreshold params)
+  safetyMargin =
+    unPerasQuorumWeightThresholdSafetyMargin
+      (perasQuorumWeightThresholdSafetyMargin params)

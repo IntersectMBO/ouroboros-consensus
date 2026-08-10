@@ -5,7 +5,7 @@
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
   ( tests
-  , genPerasVoteStake
+  , genPerasVoteWeight
   , genPerasVote
   , genValidatedPerasVote
   ) where
@@ -63,10 +63,10 @@ tests =
 genPerasSeatIndex :: Gen PerasSeatIndex
 genPerasSeatIndex = PerasSeatIndex <$> choose (0, 99)
 
-genPerasVoteStake :: Gen PerasVoteStake
-genPerasVoteStake = do
-  stake <- (1 %) <$> choose (2, 10)
-  pure (PerasVoteStake stake)
+genPerasVoteWeight :: Gen VoteWeight
+genPerasVoteWeight = do
+  weight <- (1 %) <$> choose (2, 10)
+  pure (VoteWeight weight)
 
 genPerasVote :: Gen (PerasVote TestBlock)
 genPerasVote = do
@@ -85,7 +85,7 @@ genValidatedPerasVote :: Gen (ValidatedPerasVote TestBlock)
 genValidatedPerasVote =
   ValidatedPerasVote
     <$> genPerasVote
-    <*> genPerasVoteStake
+    <*> genPerasVoteWeight
 
 newVoteDB ::
   (IOLike m, StandardHash blk, Typeable blk) =>
@@ -124,7 +124,7 @@ prop_smoke =
                 stakeDistr =
                   PerasVoteStakeDistr $
                     Map.fromList
-                      [ (pvVoteVoterId (vpvVote v), vpvVoteStake v)
+                      [ (pvVoteVoterId (vpvVote v), vpvVoteWeight v)
                       | WithArrivalTime _ v <- watValidatedVotes
                       ]
                 inboundPoolWriter =

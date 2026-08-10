@@ -12,7 +12,7 @@ module Test.Ouroboros.Storage.PerasVoteDB.StateMachine
 
     -- * Reusable generators
   , genPerasSeatIndex
-  , genVoteStake
+  , genVoteWeight
   ) where
 
 import Control.Concurrent.Class.MonadSTM (MonadSTM (..))
@@ -42,10 +42,10 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasSeatIndex (..)
   , PerasVote' (..)
   , PerasVoteId
-  , PerasVoteStake (..)
   , PerasVoteTarget (..)
   , ValidatedPerasCert
   , ValidatedPerasVote (..)
+  , VoteWeight (..)
   , defaultPerasParams
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -173,7 +173,7 @@ instance StateModel Model where
       roundNo <- genRoundNo
       point <- genPoint
       seatIndex <- genPerasSeatIndex
-      stake <- genVoteStake
+      weight <- genVoteWeight
       now <- genRelativeTime
       let voteWithTime =
             WithArrivalTime now $
@@ -184,7 +184,7 @@ instance StateModel Model where
                       , pvVoteBlock = point
                       , pvVoteVoterId = seatIndex
                       }
-                , vpvVoteStake = stake
+                , vpvVoteWeight = weight
                 }
       return (AddVote voteWithTime)
 
@@ -352,15 +352,15 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
 genPerasSeatIndex :: Gen PerasSeatIndex
 genPerasSeatIndex = PerasSeatIndex <$> choose (0, 99)
 
--- | Generate a random 'PerasVoteStake'.
+-- | Generate a random 'VoteWeight'.
 --
 -- Make it so that we always require multiple votes to reach a quorum.
 -- This is assuming a quorum threshold strictly larger than 50%, which is
 -- a very conservative assumption for Peras.
-genVoteStake :: Gen PerasVoteStake
-genVoteStake = do
-  stake <- (1 %) <$> choose (2, 10) -- stake between 1/2 and 1/10
-  pure (PerasVoteStake stake)
+genVoteWeight :: Gen VoteWeight
+genVoteWeight = do
+  weight <- (1 %) <$> choose (2, 10) -- weight between 1/2 and 1/10
+  pure (VoteWeight weight)
 
 -- * Helpers
 

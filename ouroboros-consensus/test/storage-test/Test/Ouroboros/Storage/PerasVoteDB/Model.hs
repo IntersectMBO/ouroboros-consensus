@@ -29,12 +29,12 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasParams (..)
   , PerasRoundNo
   , PerasVoteId (..)
-  , PerasVoteStake (..)
   , PerasVoteTarget (..)
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
+  , VoteWeight (..)
   , getPerasCertPoint
-  , stakeAboveThreshold
+  , weightAboveThreshold
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
@@ -220,11 +220,11 @@ addVote vote model
     Set.insert voteEntry existingVotes
   -- Get the total stake of a set of votes
   getTotalStake =
-    PerasVoteStake
+    VoteWeight
       . sum
       . fmap
-        ( unPerasVoteStake
-            . vpvVoteStake
+        ( unVoteWeight
+            . vpvVoteWeight
             . forgetArrivalTime
             . veVote
         )
@@ -237,10 +237,10 @@ addVote vote model
     getTotalStake extendedVotes
   -- Did we already have a quorum before adding this new vote?
   hadQuorum =
-    stakeAboveThreshold (params model) existingVotesStake
+    weightAboveThreshold (params model) existingVotesStake
   -- Did we reach the quorum threshold with this new vote?
   reachedQuorum =
-    stakeAboveThreshold (params model) extendedVotesStake
+    weightAboveThreshold (params model) extendedVotesStake
   -- The existing certificate (if any) for this round
   certAtRound =
     Map.lookup roundNo (certs model)
