@@ -474,8 +474,7 @@ initNodeKernel
     -- announcements, LeiosFetch clients on response, etc.) 'tryPutMVar' on
     -- 'getLeiosReady' to schedule another iteration.
     void $
-      forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ do
-        leiosConn <- snd <$> allocate registry (const (LeiosDb.open leiosDB)) LeiosDb.close
+      forkLinkedThread registry "NodeKernel.leiosFetchLogic" $
         forever $ do
           let leiosTr = leiosKernelTracer tracers
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
@@ -493,13 +492,11 @@ initNodeKernel
             -- that just disconnected, since the replies would never arrive /AND/
             -- those requests would then remain in 'getLeiosOutstanding' forever.
             stillLivePeers <- LazySTM.readTVarIO getLeiosPeersVars
-            filteredOutstanding <-
-              Leios.filterMissingWork leiosConn outstanding
             -- FIXME(bladyjoker): Capping these 2 traces because they grow in tens of MBs. Let's make a separate event for them and use Cardano config to silence/voice them.
             traceWith leiosTr $
               MkTraceLeiosKernel $
                 "leiosFetchLogic: outstanding "
-                  <> take 1000 (Leios.prettyLeiosOutstanding filteredOutstanding)
+                  <> take 1000 (Leios.prettyLeiosOutstanding outstanding)
             traceWith leiosTr $
               MkTraceLeiosKernel $
                 "leiosFetchLogic: offerings "
@@ -513,7 +510,7 @@ initNodeKernel
                     Leios.demoLeiosFetchStaticEnv
                     mbCurrentSlot
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
-                    filteredOutstanding
+                    outstanding
             pure (outstanding', decisions)
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"
           let newRequests =

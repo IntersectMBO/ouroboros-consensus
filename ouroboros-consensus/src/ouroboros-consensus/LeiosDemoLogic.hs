@@ -35,6 +35,7 @@ import qualified Data.IntSet as IntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing)
 import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -47,8 +48,6 @@ import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbConnection
   , leiosDbBatchRetrieveTxs
-  , leiosDbFilterMissingEbBodies
-  , leiosDbFilterMissingTxs
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
@@ -303,54 +302,6 @@ newtype LeiosFetchDecisions pid
 
 emptyLeiosFetchDecisions :: LeiosFetchDecisions pid
 emptyLeiosFetchDecisions = MkLeiosFetchDecisions Map.empty
-
--- | Filter outstanding work against the database.
--- Removes EB bodies and TXs that we already have in the DB.
--- This should be called before leiosFetchLogicIteration to avoid re-fetching.
---
--- NOTE: This is the minimal integration of DB filtering into the fetch logic.
--- The outstanding state tracks what we think is missing, but the DB is the
--- source of truth. This function reconciles the two by filtering out items
--- that have been acquired (possibly from other sources like forging).
-filterMissingWork ::
-  IOLike m =>
-  LeiosDbConnection m ->
-  LeiosOutstanding pid ->
-  m (LeiosOutstanding pid)
-filterMissingWork db outstanding = do
-  -- Ask DB which of our "missing" EBs are actually still missing
-  let ebPoints = Map.keys (Leios.missingEbBodies outstanding)
-  stillMissingPoints <- leiosDbFilterMissingEbBodies db ebPoints
-  let stillMissingPointSet = Set.fromList stillMissingPoints
-      filteredMissingEbBodies = Map.restrictKeys (Leios.missingEbBodies outstanding) stillMissingPointSet
-      acquiredEbHashes = [p.pointEbHash | p <- ebPoints, Set.notMember p stillMissingPointSet]
-  -- Ask DB which of our "missing" TXs are actually still missing
-  let allTxHashes =
-        Set.toList $
-          Set.fromList
-            [ txHash
-            | txs <- Map.elems (Leios.missingEbTxs outstanding)
-            , (txHash, _) <- IntMap.elems txs
-            ]
-  stillMissingTxs <- leiosDbFilterMissingTxs db allTxHashes
-  let stillMissingTxSet = Set.fromList stillMissingTxs
-      filteredMissingEbTxs =
-        Map.filter (not . IntMap.null) $
-          Map.map
-            (IntMap.filter (\(txHash, _) -> Set.member txHash stillMissingTxSet))
-            (Leios.missingEbTxs outstanding)
-      filteredReverseEbIndexByTx =
-        Map.filterWithKey
-          (\txHash _ -> Set.member txHash stillMissingTxSet)
-          (Leios.reverseEbIndexByTx outstanding)
-  pure $
-    outstanding
-      { Leios.missingEbBodies = filteredMissingEbBodies
-      , Leios.missingEbTxs = filteredMissingEbTxs
-      , Leios.reverseEbIndexByTx = filteredReverseEbIndexByTx
-      , Leios.acquiredEbBodies =
-          Leios.acquiredEbBodies outstanding `Set.union` Set.fromList acquiredEbHashes
-      }
 
 leiosFetchLogicIteration ::
   forall pid.
@@ -739,10 +690,11 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
       error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
   -- ingest it
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    let novel = not $ Set.member ebHash (Leios.acquiredEbBodies outstanding)
-    -- When novel, persist the EB (LeiosDb before cache) and classify its txs
-    -- against the cache: 'insertBody' has run, so a cache hit is a tx already in
-    -- the LeiosDb pinned by this EB -- enqueue only the misses ('Nothing').
+    -- Persist the EB (LeiosDb before cache) and classify its txs against the
+    -- cache, unless we already hold this EB's body (a 'lookupBody' hit). Since
+    -- 'insertBody' has run, a tx cache hit means that tx is already in the
+    -- LeiosDb pinned by this EB -- enqueue only the misses ('Nothing').
+    novel <- isNothing <$> txCache.lookupBody ebHash
     mbMisses <- if not novel then pure Nothing else do
       -- TODO don't hold the outstanding mvar during this IO
       traceException tracer TraceLeiosPeerDbException $ do
@@ -782,8 +734,7 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
               Nothing -> outstanding
               Just misses ->
                 outstanding
-                  { Leios.acquiredEbBodies = Set.insert ebHash (Leios.acquiredEbBodies outstanding)
-                  , Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
+                  { Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
                   , Leios.blockingPerEb =
                       Map.insert point (IntMap.size misses) (Leios.blockingPerEb outstanding)
                   , Leios.missingEbTxs =
@@ -1018,13 +969,11 @@ leiosCertRbOffer txCache (outstandingVar, readyVar) peerVars (point, ebBytesSize
     pure $
       case mBody of
         Just{} -> outstanding
-        Nothing
-          | Set.member ebHash (Leios.acquiredEbBodies outstanding) -> outstanding
-          | otherwise ->
-              outstanding
-                { Leios.missingEbBodies =
-                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-                }
+        Nothing ->
+          outstanding
+            { Leios.missingEbBodies =
+                Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+            }
   -- As if 'MsgLeiosBlockOffer' (body) and 'MsgLeiosBlockTxsOffer' (txs): record
   -- this peer as offering both.
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
@@ -1242,8 +1191,7 @@ recordAnnouncedEb txCache (outstandingVar, readyVar) (point, ebBytesSize) =
   MkLeiosPoint _ebSlot ebHash = point
 
   upd outstanding =
-    if Set.member ebHash (Leios.acquiredEbBodies outstanding)
-      || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
+    if any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
       then (outstanding, False)
       else
         flip (,) True $

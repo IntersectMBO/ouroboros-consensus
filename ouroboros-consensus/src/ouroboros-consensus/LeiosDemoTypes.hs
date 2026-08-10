@@ -383,24 +383,14 @@ newLeiosPeerVars = do
 --
 -- TODO: Potential simplifications once we have better test coverage:
 --
--- 1. With filterMissingWork now querying the DB before each fetch iteration,
---    we could simplify this structure to only track "offers" from peers rather
---    than "missing" items. The DB would be the source of truth for what we have,
---    and we'd filter offers against DB to find what to fetch.
---
--- 2. The acquiredEbBodies set is now redundant with DB - we update it in
---    filterMissingWork but could remove it entirely once we trust DB filtering.
---
--- 3. The reverseEbIndexByTx inverse index could be computed on-demand from missingEbTxs
+-- 1. The reverseEbIndexByTx inverse index could be computed on-demand from missingEbTxs
 --    rather than maintained incrementally, simplifying state updates.
 --
--- 4. Consider separating "offer tracking" from "request tracking" into distinct
+-- 2. Consider separating "offer tracking" from "request tracking" into distinct
 --    data structures for clarity.
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
-    acquiredEbBodies :: !(Set EbHash)
-  -- ^ EB bodies we've successfully received/stored
-  , missingEbBodies :: !(Map LeiosPoint BytesSize)
+    missingEbBodies :: !(Map LeiosPoint BytesSize)
   -- ^ EB bodies still needed to be fetched (indexed by point and size)
   -- Request tracking
   , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
@@ -442,8 +432,8 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --
   -- TODO: 'blockingPerEb' can go permanently stale for txs shared across EBs.
   -- 'msgLeiosBlockTxs' only decrements the entry for the EB it was requesting;
-  -- a tx that also belongs to another EB B is then in the DB, so 'filterMissingWork'
-  -- drops it from B's missing set and B never fetches it itself -- so B's
+  -- a tx that also belongs to another EB B can reach the DB via a fetch
+  -- attributed to a different EB, so B never fetches it itself -- and B's
   -- 'blockingPerEb' is never decremented for that tx and stays > 0. This is
   -- currently harmless only because nothing reads 'blockingPerEb' as a gate: the
   -- downstream @MsgLeiosBlockTxsOffer@ is actually driven by the DB emitting
@@ -455,8 +445,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
 emptyLeiosOutstanding :: LeiosOutstanding pid
 emptyLeiosOutstanding =
   MkLeiosOutstanding
-    { acquiredEbBodies = Set.empty
-    , missingEbBodies = Map.empty
+    { missingEbBodies = Map.empty
     , requestedEbPeers = Map.empty
     , requestedTxPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
@@ -492,8 +481,7 @@ prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
   unlines $
     map ("    [leios] " ++) $
-      [ "acquiredEbBodies = " ++ show (Set.size acquiredEbBodies)
-      , "missingEbBodies = " ++ show (Map.size missingEbBodies)
+      [ "missingEbBodies = " ++ show (Map.size missingEbBodies)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
       , "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
@@ -506,8 +494,7 @@ prettyLeiosOutstanding x =
       ]
  where
   MkLeiosOutstanding
-    { acquiredEbBodies
-    , missingEbBodies
+    { missingEbBodies
     , requestedEbPeers
     , requestedTxPeers
     , requestedBytesSizePerPeer

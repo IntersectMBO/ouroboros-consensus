@@ -36,7 +36,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
-import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.String (fromString)
 import Database.SQLite3
@@ -129,7 +128,6 @@ data Stmts = Stmts
   , stMarkNotifiedEbs :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
-  , stFilterMissingEbBodies :: !DB.Statement
   , stFilterMissingTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
@@ -154,7 +152,6 @@ prepareStmts db = do
   stMarkNotifiedEbs <- dbPrepare db (fromString sql_mark_notified_ebs)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
-  stFilterMissingEbBodies <- dbPrepare db (fromString sql_filter_missing_eb_bodies_json)
   stFilterMissingTxs <- dbPrepare db (fromString sql_filter_missing_txs_json)
   stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
@@ -175,7 +172,6 @@ finalizeStmts Stmts{..} = do
   dbFinalize stMarkNotifiedEbs
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
-  dbFinalize stFilterMissingEbBodies
   dbFinalize stFilterMissingTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince
@@ -217,8 +213,6 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
       , leiosDbInsertTxs = sqlInsertTxs tracer conn notify
       , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs conn
-      , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies conn
-      , leiosDbFilterMissingTxs = sqlFilterMissingTxs conn
       , leiosDbLookupEbClosure = sqlLookupEbClosure conn
       }
 
@@ -420,28 +414,10 @@ sqlBatchRetrieveTxs conn ebHash offsets =
         let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
         loop ((offset, txHash, mbTxBytes) : acc)
 
--- | Batch-filter EB points against @ebTxs@. Passes ebHashes as a JSON
--- array of hex strings; SQL decodes with @unhex()@ so index lookups on
--- @ebTxs.ebHashBytes@ still fire.
-sqlFilterMissingEbBodies :: Conn -> [LeiosPoint] -> IO [LeiosPoint]
-sqlFilterMissingEbBodies conn points =
-  dbWithTransaction db $ useStmt stmt $ do
-    dbBindUtf8 stmt 1 (jsonHexArray (map ebHashBytes (Map.keys pointsByHash)))
-    loop []
- where
-  Conn{connDb = db, connStmts = Stmts{stFilterMissingEbBodies = stmt}} = conn
-  pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
-  loop acc =
-    dbStep stmt >>= \case
-      DB.Done -> pure (reverse acc)
-      DB.Row -> do
-        ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-        case Map.lookup ebHash pointsByHash of
-          Just p -> loop (p : acc)
-          Nothing -> loop acc
-
--- | Batch-filter tx hashes against @txs@. Same idiom as
--- 'sqlFilterMissingEbBodies'.
+-- | Batch-filter tx hashes against @txs@: passes txHashes as a JSON array
+-- of hex strings; SQL decodes with @unhex()@ so index lookups on
+-- @txs.txHashBytes@ still fire. Used internally by 'sqlInsertTxs' to skip
+-- already-persisted txs.
 sqlFilterMissingTxs :: Conn -> [TxHash] -> IO [TxHash]
 sqlFilterMissingTxs conn txHashes =
   dbWithTransaction db $ useStmt stmt $ do
@@ -578,17 +554,9 @@ sql_insert_tx =
   "INSERT INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
   \"
 
--- | Batch-filter ebHashes via JSON1. Parameter is a JSON array of hex
+-- | Batch-filter txHashes via JSON1. Parameter is a JSON array of hex
 -- strings; 'unhex(je.value)' decodes back into a BLOB comparable against
--- the indexed @ebTxs.ebHashBytes@ column.
-sql_filter_missing_eb_bodies_json :: String
-sql_filter_missing_eb_bodies_json =
-  "SELECT unhex(je.value) FROM json_each(?) je\n\
-  \WHERE NOT EXISTS (SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = unhex(je.value))\n\
-  \"
-
--- | Batch-filter txHashes via JSON1. Same shape as
--- 'sql_filter_missing_eb_bodies_json'.
+-- the indexed @txs.txHashBytes@ column.
 sql_filter_missing_txs_json :: String
 sql_filter_missing_txs_json =
   "SELECT unhex(je.value) FROM json_each(?) je\n\
