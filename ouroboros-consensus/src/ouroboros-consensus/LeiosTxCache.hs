@@ -24,9 +24,6 @@
 -- (TODO This is written as if LeiosNotify writes announcements to the LeiosDb,
 -- but it doesn't already... and I'm not sure it will?)
 --
--- (This is written as if LeiosFetch already reads the LeiosTxCache, but it
--- doesn't yet. Remove this warning once it does.)
---
 -- - INVARIANT: an EB announcement in the LeiosTxCacheIndex is in the LeiosDb
 --
 -- - INVARIANT: 'LeiosTxCache.API.BodyAlreadyInserted' EbBody is in the LeiosDb
