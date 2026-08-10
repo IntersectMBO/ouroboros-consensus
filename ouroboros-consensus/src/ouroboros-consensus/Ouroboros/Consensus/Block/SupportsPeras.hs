@@ -29,8 +29,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasVote' (..)
 
     -- * Types and functions related to Peras vote collection and quorum checking
-  , PerasVoteId (..)
-  , PerasVoterId (..)
   , PerasVoteStake (..)
   , PerasVoteStakeDistr (..)
   , ValidatedPerasVotesWithQuorum
@@ -60,7 +58,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
@@ -164,14 +161,6 @@ deriving instance
 -------------------------------------------------------------------------------}
 
 -- ** Stake pool distributions
-
--- NOTE: to be removed in favor of the one in 'Ouroboros.Consensus.Peras.Types'
-newtype PerasVoterId = PerasVoterId
-  { unPerasVoterId :: KeyHash StakePool
-  }
-  deriving newtype NoThunks
-  deriving stock (Eq, Ord, Generic)
-  deriving Show via Quiet PerasVoterId
 
 -- NOTE: At the moment there is no consensus from researchers/engineers on how
 -- we go from the absolute stake of a voter in the ledger to the relative stake

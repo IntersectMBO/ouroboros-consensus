@@ -37,7 +37,6 @@ module Ouroboros.Consensus.Node.Serialisation
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import qualified Cardano.Binary as KeyHash
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (Serialise (decode, encode))
@@ -227,10 +226,6 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote' blk) where
     pvVoteBlock <- decodeNodeToNode ccfg version
     pvVoteVoterId <- decodeNodeToNode ccfg version
     pure $ PerasVote pvVoteRound pvVoteBlock pvVoteVoterId
-
-instance SerialiseNodeToNode blk PerasVoterId where
-  encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasVoterId
-  decodeNodeToNode _ccfg _version = PerasVoterId <$> KeyHash.fromCBOR
 
 instance SerialiseNodeToNode blk PerasVoteId where
   -- Consistent with the 'Serialise' instance for 'PerasVoteId' defined in Ouroboros.Consensus.Block.SupportsPeras
