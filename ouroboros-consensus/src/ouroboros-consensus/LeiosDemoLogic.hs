@@ -740,7 +740,10 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
   -- ingest it
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let novel = not $ Set.member ebHash (Leios.acquiredEbBodies outstanding)
-    when novel $ do
+    -- When novel, persist the EB (LeiosDb before cache) and classify its txs
+    -- against the cache: 'insertBody' has run, so a cache hit is a tx already in
+    -- the LeiosDb pinned by this EB -- enqueue only the misses ('Nothing').
+    mbMisses <- if not novel then pure Nothing else do
       -- TODO don't hold the outstanding mvar during this IO
       traceException tracer TraceLeiosPeerDbException $ do
         -- FIXME: Once proper EB announcements are wired in, the point
@@ -755,6 +758,18 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
         forM_ mSummary $ traceWith ktracer . TraceLeiosTxCacheEbBody point
         traceWith ktracer $ TraceLeiosBlockAcquired point
         forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+      let MkLeiosEb v = eb
+      misses <- withLookupTx txCache $ \look ->
+        V.ifoldM
+          ( \acc i (txh, sz) -> do
+              r <- look txh
+              pure $ case r of
+                Just{} -> acc
+                Nothing -> IntMap.insert i (txh, sz) acc
+          )
+          IntMap.empty
+          v
+      pure (Just misses)
     -- update NodeKernel state
     --
     -- 'refundEbRequest' reverses this peer's per-request accounting (but skips
@@ -763,34 +778,24 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
     -- receive the EB.
     let !outstanding' =
           refundEbRequest peerId ebHash ebBytesSize $
-            if novel
-              then
+            case mbMisses of
+              Nothing -> outstanding
+              Just misses ->
                 outstanding
                   { Leios.acquiredEbBodies = Set.insert ebHash (Leios.acquiredEbBodies outstanding)
                   , Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
                   , Leios.blockingPerEb =
-                      Map.insert
-                        point
-                        (let MkLeiosEb v = eb in V.length v)
-                        (Leios.blockingPerEb outstanding)
+                      Map.insert point (IntMap.size misses) (Leios.blockingPerEb outstanding)
                   , Leios.missingEbTxs =
-                      Map.insert
-                        point
-                        ( V.ifoldl
-                            (\acc i x -> IntMap.insert i x acc)
-                            IntMap.empty
-                            (let MkLeiosEb v = eb in v)
-                        )
-                        (Leios.missingEbTxs outstanding)
+                      Map.insert point misses (Leios.missingEbTxs outstanding)
                   , Leios.reverseEbIndexByTx =
-                      V.ifoldl
-                        ( \acc i (txHash, txBytesSize) ->
+                      IntMap.foldrWithKey
+                        ( \i (txHash, txBytesSize) acc ->
                             Map.insertWith Map.union txHash (Map.singleton ebHash (i, txBytesSize)) acc
                         )
                         (Leios.reverseEbIndexByTx outstanding)
-                        (let MkLeiosEb v = eb in v)
+                        misses
                   }
-              else outstanding
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
