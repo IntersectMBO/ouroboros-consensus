@@ -996,6 +996,7 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
 -- register — stays in 'checkMsgRollForwardForLeiosOffers'.)
 leiosCertRbOffer ::
   IOLike m =>
+  LeiosTxCache m () () SerializedEbBody ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -1003,18 +1004,22 @@ leiosCertRbOffer ::
   -- | The EB the CertRB certifies: its point and on-the-wire body size.
   (LeiosPoint, BytesSize) ->
   m ()
-leiosCertRbOffer (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
+leiosCertRbOffer txCache (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
   let MkLeiosPoint _ebSlot ebHash = point
-  -- As if 'MsgLeiosBlockOffer': record the EB body as missing.
+  -- As if 'MsgLeiosBlockOffer': record the EB body as missing, unless we already
+  -- hold it.
+  mBody <- txCache.lookupBody ebHash
   MVar.modifyMVar_ outstandingVar $ \outstanding ->
     pure $
-      if Set.member ebHash (Leios.acquiredEbBodies outstanding)
-        then outstanding
-        else
-          outstanding
-            { Leios.missingEbBodies =
-                Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-            }
+      case mBody of
+        Just{} -> outstanding
+        Nothing
+          | Set.member ebHash (Leios.acquiredEbBodies outstanding) -> outstanding
+          | otherwise ->
+              outstanding
+                { Leios.missingEbBodies =
+                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+                }
   -- As if 'MsgLeiosBlockOffer' (body) and 'MsgLeiosBlockTxsOffer' (txs): record
   -- this peer as offering both.
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
@@ -1034,6 +1039,7 @@ leiosCertRbOffer (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
 checkMsgRollForwardForLeiosOffers ::
   forall blk pid m.
   (IOLike m, ResolveLeiosBlock blk) =>
+  LeiosTxCache m () () SerializedEbBody ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -1041,10 +1047,10 @@ checkMsgRollForwardForLeiosOffers ::
   Header blk ->
   ChainDepState (BlockProtocol blk) ->
   m ()
-checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
+checkMsgRollForwardForLeiosOffers txCache kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
-      leiosCertRbOffer kernelVars peerVars announcement
+      leiosCertRbOffer txCache kernelVars peerVars announcement
 
 -----
 
@@ -1114,7 +1120,7 @@ processAnnouncementCentrally
         (contramap (traceNewAnnouncement provenance) kernelTracer)
         ancElId
         ( \_elSt -> do
-            recordAnnouncedEb kernelVars (point, Leios.announcementEbBodySize fields)
+            recordAnnouncedEb txCache kernelVars (point, Leios.announcementEbBodySize fields)
             recordAnnouncementInTxCache txCache ancHdr point
         )
         cst
@@ -1215,14 +1221,18 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
 -- already acquired or already recorded.
 recordAnnouncedEb ::
   IOLike m =>
+  LeiosTxCache m () () SerializedEbBody ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
   (LeiosPoint, BytesSize) ->
   m ()
-recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
-  changed <- MVar.modifyMVar outstandingVar (pure . upd)
-  when changed $ void $ MVar.tryPutMVar readyVar ()
+recordAnnouncedEb txCache (outstandingVar, readyVar) (point, ebBytesSize) =
+  txCache.lookupBody ebHash >>= \case
+    Just{} -> pure () -- we already hold this EB's body; nothing to fetch
+    Nothing -> do
+      changed <- MVar.modifyMVar outstandingVar (pure . upd)
+      when changed $ void $ MVar.tryPutMVar readyVar ()
  where
   MkLeiosPoint _ebSlot ebHash = point
 
