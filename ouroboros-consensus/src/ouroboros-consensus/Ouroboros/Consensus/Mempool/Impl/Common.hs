@@ -469,13 +469,12 @@ computeSnapshot ::
   TicketNo ->
   [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
   MempoolSnapshot blk
-computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
+computeSnapshot capacityOverride cfg slot tickedStDiff values lastTicketNo txTickets =
   let inputTxs = map wrap txTickets
       inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
 
-      ReapplyTxsResult _ validatedTxs st' =
-        reapplyTxs @blk @Discard cfg slot inputTxs $
-          applyMempoolDiffs values inputKeys st
+      tickedSt = applyMempoolDiffs values inputKeys tickedStDiff
+      ReapplyTxsResult _ validatedTxs tickedStEmptyAfterTxs' = reapplyTxs @blk @Discard cfg slot inputTxs tickedSt
    in snapshotFromIS $
         IS
           { isTxs = TxSeq.fromList $ map unwrap validatedTxs
@@ -487,11 +486,11 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
           , isTxValues = emptyLedgerTables
           , -- This one can use the empty tables because we don't use the
             -- resulting ledger state except for its point
-            isLedgerState = st' `withLedgerTables` emptyLedgerTables
-          , isTip = castPoint $ getTip st
+            isLedgerState = tickedStEmptyAfterTxs' `withLedgerTables` emptyLedgerTables
+          , isTip = castPoint $ getTip tickedStDiff
           , isSlotNo = slot
           , isLastTicketNo = lastTicketNo
-          , isCapacity = computeMempoolCapacity cfg st' capacityOverride
+          , isCapacity = computeMempoolCapacity cfg tickedStEmptyAfterTxs' capacityOverride
           }
  where
   fst3 (x, _, _) = x

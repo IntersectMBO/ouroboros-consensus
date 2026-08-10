@@ -1,4 +1,7 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Queries to the mempool
 module Ouroboros.Consensus.Mempool.Query
@@ -6,10 +9,19 @@ module Ouroboros.Consensus.Mempool.Query
   , implGetSnapshotForNoCache
   ) where
 
+import Control.Monad.Except (runExcept)
+import Data.Foldable (Foldable (foldMap', foldl'))
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils
+  ( emptyLedgerTables
+  , restrictValues'
+  , unionValues
+  )
 import Ouroboros.Consensus.Mempool.API
+import Ouroboros.Consensus.Mempool.Capacity (MempoolCapacityBytesOverride, computeMempoolCapacity)
 import Ouroboros.Consensus.Mempool.Impl.Common
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Util.IOLike
@@ -94,26 +106,147 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
       -- have cached, then just return it.
       pure $ snapshotFromIS is
     else do
-      values <-
-        if canUseCache
-          -- We are looking for a snapshot at the same state ticked
-          -- to a different slot, so we can reuse the cached values
-          then pure (isTxValues is)
-          -- We are looking for a snapshot at a different state, so we
-          -- need to read the values from the ledgerdb.
-          else readUntickedTables (isTxKeys is)
-      pure $
-        computeSnapshot
-          capacityOverride
-          cfg
-          slot
-          ticked
-          values
-          (isLastTicketNo is)
-          (TxSeq.toList $ isTxs is)
+      let resolveValues =
+            if canUseCache
+              -- We are looking for a snapshot at the same state ticked
+              -- to a different slot, so we can reuse the cached values
+              then mkResolveValues $ Left (isTxValues is)
+              -- We are looking for a snapshot at a different state, so we
+              -- need to read the values from the ledgerdb.
+              else mkResolveValues $ Right readUntickedTables
+
+      computeSnapshot2
+        resolveValues
+        capacityOverride
+        cfg
+        slot
+        ticked
+        (isLastTicketNo is)
+        (TxSeq.toList $ isTxs is)
  where
   MempoolEnv
     { mpEnvStateVar = istate
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride
     } = mpEnv
+
+mkResolveValues ::
+  (Monad m, LedgerSupportsMempool blk) =>
+  Either
+    (LedgerTables (LedgerState blk) ValuesMK)
+    (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  LedgerTables (LedgerState blk) KeysMK ->
+  m (LedgerTables (LedgerState blk) ValuesMK)
+mkResolveValues (Left cachedValues) keys = return $ restrictValues' cachedValues keys
+mkResolveValues (Right readTables) keys = readTables keys
+
+computeSnapshot2 ::
+  forall blk m.
+  (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  MempoolCapacityBytesOverride ->
+  LedgerConfig blk ->
+  SlotNo ->
+  TickedLedgerState blk DiffMK ->
+  TicketNo ->
+  [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
+  m (MempoolSnapshot blk)
+computeSnapshot2 resolveValues capacityOverride cfg slot tickedStDiff lastTicketNo txTickets = do
+  let tickedSt = tickedStDiff `withLedgerTables` emptyLedgerTables
+  ((tickedSt', _, _, applied), _) <-
+    callWithinBudget
+      0.1
+      (tickedSt, txTickets, [], [])
+      (computeSnapshot3 resolveValues cfg slot tickedStDiff)
+  return $
+    snapshotFromIS $
+      IS
+        { isTxs = TxSeq.fromList applied
+        , isTxIds = Set.fromList $ map (txId . txForgetValidated . validatedTx . TxSeq.txTicketTx) applied
+        , isTxKeys = emptyLedgerTables
+        , isTxValues = emptyLedgerTables
+        , isLedgerState = tickedSt' `withLedgerTables` emptyLedgerTables
+        , isTip = castPoint $ getTip tickedStDiff
+        , isSlotNo = slot
+        , isLastTicketNo = lastTicketNo
+        , isCapacity = computeMempoolCapacity cfg tickedSt' capacityOverride
+        }
+
+type Y blk =
+  ( TickedLedgerState blk ValuesMK
+  , [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)]
+  , [Invalidated blk]
+  , [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)]
+  )
+
+computeSnapshot3 ::
+  forall blk m.
+  (LedgerSupportsMempool blk, Monad m) =>
+  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  LedgerConfig blk ->
+  SlotNo ->
+  TickedLedgerState blk DiffMK ->
+  Y blk ->
+  m (Bool, Y blk)
+computeSnapshot3 _ _ _ _ (tickedSt, [], unapplicable, applied) = return (True, (tickedSt, [], unapplicable, applied))
+computeSnapshot3 resolveValues cfg slot tickedStDiffBase (tickedSt, txsToApply, unapplicable, applied) = do
+  let (tickets, txsToApply') = splitAt 100 txsToApply
+      inputKeys = foldMap' (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx) tickets
+
+  inputValues <- resolveValues inputKeys
+
+  let !tickedSt' =
+        tickedSt
+          `withLedgerTables` ltliftA2
+            unionValues
+            (projectLedgerTables tickedSt)
+            (projectLedgerTables (applyMempoolDiffs inputValues inputKeys tickedStDiffBase))
+
+      (!tickedSt'', !unapplicable', !applied') = reapplyTxs2 cfg slot tickets tickedSt'
+
+  return
+    ( False
+    , (tickedSt'', txsToApply', unapplicable <> reverse unapplicable', applied <> reverse applied')
+    )
+
+type X blk =
+  ( TickedLedgerState blk ValuesMK
+  , [Invalidated blk]
+  , [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)]
+  )
+
+reapplyTxs2 ::
+  LedgerSupportsMempool blk =>
+  LedgerConfig blk ->
+  SlotNo ->
+  [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
+  TickedLedgerState blk ValuesMK ->
+  X blk
+reapplyTxs2 cfg slot toApplyTickets tickedSt =
+  foldl'
+    ( \(tickedSt', unapplicable, applied) ticket ->
+        let tx = validatedTx (TxSeq.txTicketTx ticket)
+         in case runExcept (reapplyTx cfg slot tx tickedSt') of
+              Left err -> (tickedSt', Invalidated tx err : unapplicable, applied)
+              Right !tickedSt'' -> (tickedSt'', unapplicable, ticket : applied)
+    )
+    (tickedSt, [], [])
+    toApplyTickets
+
+data CallDoneType = TimerDone | StepperDone
+
+callWithinBudget ::
+  IOLike m => DiffTime -> a -> (a -> m (Bool, a)) -> m (a, CallDoneType)
+callWithinBudget delay initSt stepAction = do
+  stVar <- uncheckedNewTVarM initSt
+
+  raceRes <- race (threadDelay delay) (goStepper stVar)
+
+  lastSt <- atomically $ readTVar stVar
+  return (lastSt, either (const TimerDone) (const StepperDone) raceRes)
+ where
+  goStepper stVar = do
+    stVal <- atomically $ readTVar stVar
+    (isDone, stVal') <- stepAction stVal
+    atomically $ writeTVar stVar stVal'
+    if isDone then return () else goStepper stVar
