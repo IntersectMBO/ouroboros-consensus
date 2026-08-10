@@ -110,7 +110,7 @@ forge ::
   (Header blk -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn leiosTxCache afterForge currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn leiosTxCache afterForgeBeforeInsert currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -269,13 +269,13 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
 
   -- Hand the freshly-forged block's header to the caller before adoption, so it
   -- can act on it (e.g. relay its EB announcement) without adoption gating it.
-  lift $ afterForge (getHeader newBlock)
+  lift $ afterForgeBeforeInsert (getHeader newBlock)
 
-  -- Persist the forged EB, but only /after/ 'afterForge' has relayed the
-  -- announcement: writing the body to the LeiosDb ('leiosDbInsertEbBody') is
-  -- what makes the EB offerable to peers, so deferring it past the relay
-  -- guarantees a downstream peer never receives the body offer before the
-  -- announcement.
+  -- Persist the forged EB, but only /after/ 'afterForgeBeforeInsert' has
+  -- relayed the announcement: writing the body to the LeiosDb
+  -- ('leiosDbInsertEbBody') is what makes the EB offerable to peers, so
+  -- deferring it past the relay guarantees a downstream peer never receives the
+  -- body offer before the announcement.
   --
   -- Also register the body in the LeiosTxCache.
   lift $ forM_ mForgedEb $ \forgedEb -> do
