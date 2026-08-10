@@ -322,27 +322,21 @@ class
 
   type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
 
-  -- NOTE: to be removed in favor of 'PerasError'.
-  data PerasValidationErr blk
-
-  -- NOTE: to be removed in favor of 'PerasError'.
-  data PerasForgeErr blk
-
   validatePerasCert ::
     PerasParams blk ->
     PerasCert blk ->
-    Either (PerasValidationErr blk) (ValidatedPerasCert blk)
+    Either (PerasError blk) (ValidatedPerasCert blk)
 
   validatePerasVote ::
     PerasParams blk ->
     PerasVoteStakeDistr ->
     PerasVote blk ->
-    Either (PerasValidationErr blk) (ValidatedPerasVote blk)
+    Either (PerasError blk) (ValidatedPerasVote blk)
 
   forgePerasCert ::
     PerasParams blk ->
     ValidatedPerasVotesWithQuorum blk ->
-    Either (PerasForgeErr blk) (ValidatedPerasCert blk)
+    Either (PerasError blk) (ValidatedPerasCert blk)
 
   -- | Extract a Peras certificate optionally stored in a block.
   --
@@ -362,21 +356,6 @@ instance StandardHash blk => BlockSupportsPeras blk where
   type PerasCert blk = PerasCert' blk
   type PerasVote blk = PerasVote' blk
 
-  -- TODO: enrich with actual error types
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  data PerasValidationErr blk
-    = PerasValidationErr
-    deriving stock (Show, Eq)
-
-  -- TODO: enrich with actual error types
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  data PerasForgeErr blk
-    = PerasForgeErr
-    deriving stock (Show, Eq)
-
-  -- TODO: perform actual validation against all
-  -- possible 'PerasValidationErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
   validatePerasCert params cert =
     Right
       ValidatedPerasCert
@@ -384,24 +363,15 @@ instance StandardHash blk => BlockSupportsPeras blk where
         , vpcCertBoost = perasWeight params
         }
 
-  -- TODO: perform actual validation against all
-  -- possible 'PerasValidationErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  validatePerasVote _params stakeDistr vote
-    | Just stake <- lookupPerasVoteStake vote stakeDistr =
-        Right
-          ValidatedPerasVote
-            { vpvVote = vote
-            , vpvVoteStake = stake
-            }
-    | otherwise =
-        Left PerasValidationErr
+  validatePerasVote _params _stakeDistr vote =
+    Right
+      ValidatedPerasVote
+        { vpvVote = vote
+        , vpvVoteStake = PerasVoteStake 0
+        }
 
-  -- TODO: perform actual validation against all
-  -- possible 'PerasForgeErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
   forgePerasCert params votes =
-    return $
+    Right $
       ValidatedPerasCert
         { vpcCert =
             PerasCert
@@ -411,8 +381,6 @@ instance StandardHash blk => BlockSupportsPeras blk where
         , vpcCertBoost = perasWeight params
         }
 
-  -- TODO: extract actual Peras certificates from blocks when the HFC plumbing
-  -- is in place.
   getPerasCertInBlock _ = Nothing
 
 -- | NOTE: to be removed in favor of using per-blk definitions.

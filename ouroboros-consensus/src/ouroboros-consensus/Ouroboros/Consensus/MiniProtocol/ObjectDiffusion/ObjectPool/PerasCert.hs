@@ -137,7 +137,7 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
     }
 
 data PerasCertInboundException
-  = forall blk. PerasCertValidationError [PerasValidationErr blk]
+  = forall blk. PerasCertValidationError [PerasError blk]
 
 deriving instance Show PerasCertInboundException
 
@@ -157,7 +157,7 @@ processCerts ::
   MonadSTM m =>
   SystemTime m ->
   STM m (Set PerasRoundNo) ->
-  (PerasCert blk -> Either (PerasValidationErr blk) (ValidatedPerasCert blk)) ->
+  (PerasCert blk -> Either (PerasError blk) (ValidatedPerasCert blk)) ->
   (WithArrivalTime (ValidatedPerasCert blk) -> m ()) ->
   [PerasCert blk] ->
   m ()

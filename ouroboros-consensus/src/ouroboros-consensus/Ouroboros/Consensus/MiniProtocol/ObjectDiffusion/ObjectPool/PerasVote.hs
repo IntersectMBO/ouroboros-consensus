@@ -152,7 +152,7 @@ makePerasVotePoolWriterFromChainDB systemTime getStakeDistrSTM chainDB =
     }
 
 data PerasVoteInboundException
-  = forall blk. PerasVoteValidationError [PerasValidationErr blk]
+  = forall blk. PerasVoteValidationError [PerasError blk]
 
 deriving instance Show PerasVoteInboundException
 
@@ -171,7 +171,7 @@ processVotes ::
   MonadSTM m =>
   SystemTime m ->
   STM m (Set PerasVoteId) ->
-  (PerasVote blk -> STM m (Either (PerasValidationErr blk) (ValidatedPerasVote blk))) ->
+  (PerasVote blk -> STM m (Either (PerasError blk) (ValidatedPerasVote blk))) ->
   (WithArrivalTime (ValidatedPerasVote blk) -> m ()) ->
   [PerasVote blk] ->
   m ()

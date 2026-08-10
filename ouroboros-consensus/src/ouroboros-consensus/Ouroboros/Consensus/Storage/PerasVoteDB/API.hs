@@ -106,7 +106,7 @@ data PerasVoteDbError blk
       (ExistingPerasRoundWinner blk)
       (BlockedPerasRoundWinner blk)
   | -- | An error occurred while forging a certificate
-    ForgingCertError (PerasForgeErr blk)
+    ForgingCertError (PerasError blk)
   deriving stock Show
   deriving anyclass Exception
 

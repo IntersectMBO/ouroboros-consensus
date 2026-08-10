@@ -192,7 +192,7 @@ data UpdateRoundVoteStateError blk
       (PerasTargetVoteState blk 'Winner)
       (PerasTargetVoteState blk 'Loser)
   | RoundVoteStateForgingCertError
-      (PerasForgeErr blk)
+      (PerasError blk)
 
 -- | Add a vote to an existing round vote aggregate.
 --
@@ -574,7 +574,7 @@ updateCandidateVoteState ::
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Candidate ->
   Either
-    (PerasForgeErr blk)
+    (PerasError blk)
     (PerasVoteStateCandidateOrWinner blk)
 updateCandidateVoteState cfg vote oldState =
   let
