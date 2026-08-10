@@ -43,12 +43,22 @@ import LeiosDemoTypes
 -- state update in @m@.
 data LeiosTxCache m a v b = LeiosTxCache
   { insertAnnouncement :: SlotNo -> RbHash -> EbHash -> m (Set EbHash, Set TxHash)
-  -- ^ Insert an announcement; returns the bodies and txs it evicted, if any.
+  -- ^ Insert an announcement; returns the bodies and txs it evicted, if any. A
+  -- no-op for an EB whose slot is strictly older than the latest 'evictOlderThan'
+  -- boundary — the cache has already been pruned past it.
   , evictOlderThan :: SlotNo -> m (Set EbHash, Set TxHash)
   -- ^ Evict every retained announcement whose slot is strictly older than the
   -- given boundary; returns the bodies and txs it evicted, if any. The tip-driven
   -- eviction entrypoint (see "LeiosTxCache"), complementing the count-driven
-  -- eviction that 'insertAnnouncement' performs.
+  -- eviction that 'insertAnnouncement' performs. Also records the boundary, after
+  -- which 'insertAnnouncement' ignores any EB that old.
+  --
+  -- ORDERING CONTRACT — MUST HOLD: prune this in-memory cache to a slot @X@
+  -- /strictly before/ the LeiosDb is pruned to that same @X@ — never after, never
+  -- concurrently. This cache is only an index of the LeiosDb, so evicting from the
+  -- index first is what guarantees it can never report a hit for a tx the LeiosDb
+  -- has already dropped. Reverse the order and you arm the hit-prune hazard: a
+  -- false hit ⇒ a skipped fetch ⇒ a silently-incomplete EB closure.
   , insertBody :: EbHash -> b -> m (Maybe InsertBodySummary)
   , withLockedInsertUnappliedTx :: (forall w. w -> (w -> TxHash -> a -> m w) -> m w) -> m ()
   -- ^ Has exclusive write-access

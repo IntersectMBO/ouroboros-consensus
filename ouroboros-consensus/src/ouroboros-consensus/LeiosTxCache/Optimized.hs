@@ -17,7 +17,7 @@ module LeiosTxCache.Optimized
   ( newHashTableLeiosTxCache
   ) where
 
-import Cardano.Slotting.Slot (SlotNo)
+import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Bits (unsafeShiftL, unsafeShiftR, (.&.), (.|.))
@@ -46,10 +46,13 @@ data HtState b = HtState
   { hsAnnouncements :: !(Map SlotNo (NEMap RbHash EbHash))
   , hsCount :: !Int
   , hsBodies :: !(Map EbHash (BodyState b))
+  , hsPrunedSlot :: !SlotNo
+  -- ^ Greatest slot 'evictOlderThan' has pruned to; 'insertAnnouncement' ignores
+  -- any EB strictly older. Mirrors 'LeiosTxCache.Reference.prunedSlot'.
   }
 
 emptyHtState :: HtState b
-emptyHtState = HtState Map.empty 0 Map.empty
+emptyHtState = HtState Map.empty 0 Map.empty (SlotNo 0)
 
 -- | A hash-table-backed handle. @nshift@ sizes the table (@2 ^ nshift@ slots; use
 -- 22 for the ~1.9M worst case) and @k0@\/@k1@ are the SipHash salt (feed a
@@ -71,7 +74,7 @@ newHashTableLeiosTxCache nshift k0 k1 = do
     LeiosTxCache
       { insertAnnouncement = \slot rbh ebh ->
           MVar.modifyMVar stateVar $ \st ->
-            if announcementPresent slot rbh st
+            if slot < hsPrunedSlot st || announcementPresent slot rbh st
               then pure (st, (Set.empty, Set.empty))
               else
                 evictWhile
@@ -82,7 +85,8 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                   Set.empty
       , evictOlderThan = \boundary ->
           MVar.modifyMVar stateVar $ \st ->
-            evictWhile ht (oldestIsStale boundary) st Set.empty Set.empty
+            let st' = st{hsPrunedSlot = max (hsPrunedSlot st) boundary}
+             in evictWhile ht (oldestIsStale (hsPrunedSlot st')) st' Set.empty Set.empty
       , insertBody = \ebh b ->
           MVar.modifyMVar stateVar $ \st ->
             case Map.lookup ebh (hsBodies st) of
@@ -136,6 +140,7 @@ addAnnouncement slot rbh ebh st =
           (Just . maybe (BodyNotYetInserted (MkRefCount 1)) incBodyRc)
           ebh
           (hsBodies st)
+    , hsPrunedSlot = hsPrunedSlot st
     }
 
 -- | Repeatedly 'evictOldest' while @shouldEvict@ holds of the state: the shared
@@ -194,7 +199,12 @@ evictOldest ht st = do
         Just nem' -> Map.insert slotMin nem' (hsAnnouncements st)
   (bodies', evEbs, evTxs) <- decBody ht ebhEvicted (hsBodies st)
   pure
-    ( HtState{hsAnnouncements = announcements', hsCount = hsCount st - 1, hsBodies = bodies'}
+    ( HtState
+        { hsAnnouncements = announcements'
+        , hsCount = hsCount st - 1
+        , hsBodies = bodies'
+        , hsPrunedSlot = hsPrunedSlot st
+        }
     , evEbs
     , evTxs
     )

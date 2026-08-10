@@ -96,6 +96,14 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   , cdbsLeiosDb :: HKD f (LeiosDemoDb.Common.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
   -- its own per-thread 'LeiosDbConnection' from this handle.
+  , cdbsLeiosEvictTxCache :: HKD f (SlotNo -> m ())
+  -- ^ Prune the LeiosTxCache to the given slot. Invoked immediately BEFORE
+  -- 'LeiosDemoDb.Common.leiosDbGarbageCollect' at the same slot (see
+  -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.Background.garbageCollectBlocks'):
+  -- the cache is an in-memory index of the LeiosDb, so pruning it first is what
+  -- keeps it from ever reporting a hit for a tx the LeiosDb has already dropped.
+  -- Mandatory (no default): the node wires it to the cache's 'evictOlderThan';
+  -- callers without a cache pass an explicit no-op.
   }
 
 -- | Default arguments
@@ -131,6 +139,7 @@ defaultSpecificArgs =
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
     , cdbsLeiosDb = noDefault
+    , cdbsLeiosEvictTxCache = noDefault
     }
 
 -- | Default arguments
@@ -186,6 +195,9 @@ completeChainDbArgs ::
   LedgerDbBackendArgs m blk ->
   -- | Leios demo DB handle
   LeiosDemoDb.Common.LeiosDbHandle m ->
+  -- | Prune the LeiosTxCache to a slot; run before 'leiosDbGarbageCollect' at the
+  -- same slot (the "LeiosTxCache" ordering contract).
+  (SlotNo -> m ()) ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -199,6 +211,7 @@ completeChainDbArgs
   mkVolFS
   flavorArgs
   leiosDb
+  leiosEvictTxCache
   defArgs =
     defArgs
       { cdbImmDbArgs =
@@ -236,6 +249,7 @@ completeChainDbArgs
             , cdbsTopLevelConfig
             , cdbsHasFSGsmDB = mkVolFS $ RelativeMountPoint "gsm"
             , cdbsLeiosDb = leiosDb
+            , cdbsLeiosEvictTxCache = leiosEvictTxCache
             }
       }
 

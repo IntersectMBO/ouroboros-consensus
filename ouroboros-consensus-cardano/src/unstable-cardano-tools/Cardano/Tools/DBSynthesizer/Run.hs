@@ -170,6 +170,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           (Node.stdMkChainDbHasFS confDbDir)
           flavargs
           leiosDbHandle
+          (\_ -> pure ()) -- no LeiosTxCache in this tool
           $ ChainDB.defaultArgs
 
     mbfs <- mkForgers nullTracer
