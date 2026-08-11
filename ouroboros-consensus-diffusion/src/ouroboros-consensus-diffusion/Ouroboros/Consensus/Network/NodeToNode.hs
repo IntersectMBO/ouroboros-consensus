@@ -560,10 +560,16 @@ mkHandlers
                     -- the same content hash, so the first-seen (slot, size)
                     -- wins. The per-peer 'offerings' below is still updated so
                     -- the peer remains a valid serving candidate.
-                    mBody <- lookupBody getLeiosTxCache ebHash
+                    mbBody <- lookupBody getLeiosTxCache ebHash
                     MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
                       pure $
-                        case mBody of
+                        case mbBody of
+                          -- TODO this prevents a greater-slotted offer for the
+                          -- same EbHash from increasing the effective priority
+                          --
+                          -- That's acceptable, since it's the announcement
+                          -- handler that should be setting priority, not the
+                          -- offer handler.
                           Just{} -> outstanding -- we already hold this EB's body
                           Nothing ->
                             if ebBytesSize == 0
