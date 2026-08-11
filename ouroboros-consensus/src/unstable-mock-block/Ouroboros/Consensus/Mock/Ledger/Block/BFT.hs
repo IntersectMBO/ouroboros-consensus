@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block.BFT
   ) where
 
 import Cardano.Binary (ToCBOR (..))
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.DSIGN
 import Cardano.Crypto.Hash (HashAlgorithm)
 import Cardano.Crypto.Util
@@ -156,10 +157,10 @@ forgeBftExt = ForgeExt $ \cfg _ SimpleBlock{..} ->
 instance BftCrypto c' => Serialise (SimpleBftExt c c') where
   encode (SimpleBftExt BftFields{..}) =
     mconcat
-      [ encodeSignedDSIGN bftSignature
+      [ encodeFixedSized bftSignature
       ]
   decode = do
-    bftSignature <- decodeSignedDSIGN
+    bftSignature <- decodeFixedSized
     return $ SimpleBftExt BftFields{..}
 
 instance (HashAlgorithm (SimpleHash c), Typeable c, Typeable c') => Serialise (SignedSimpleBft c c')

@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block.Praos
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize')
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.KES
 import Cardano.Crypto.Util
 import qualified Codec.CBOR.Decoding as CBOR
@@ -172,11 +173,11 @@ forgePraosExt hotKey = ForgeExt $ \_cfg isLeader SimpleBlock{..} ->
 instance PraosCrypto c' => Serialise (SimplePraosExt c c') where
   encode (SimplePraosExt PraosFields{..}) =
     mconcat
-      [ encodeSignedKES praosSignature
+      [ encodeFixedSized praosSignature
       , encodePraosExtraFields praosExtraFields
       ]
   decode = do
-    praosSignature <- decodeSignedKES
+    praosSignature <- decodeFixedSized
     praosExtraFields <- decodePraosExtraFields
     return $ SimplePraosExt PraosFields{..}
 

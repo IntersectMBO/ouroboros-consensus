@@ -54,7 +54,6 @@ import Cardano.Ledger.Shelley.LedgerState (NewEpochState, esSnapshotsL, nesEsL)
 import Cardano.Ledger.State (ssStakeGoL, ssStakeMarkL, ssStakeSetL)
 import Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
-import Cardano.Slotting.Slot (EpochNo (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
