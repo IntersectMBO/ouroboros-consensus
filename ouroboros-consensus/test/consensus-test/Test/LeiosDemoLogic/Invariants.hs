@@ -230,10 +230,10 @@ referencedEbs o =
 forceDecisions :: LeiosFetchDecisions pid -> Int
 forceDecisions (MkLeiosFetchDecisions m) =
   sum
-    [ fromIntegral sz + sum (Map.elems ebOffsets)
+    [ offset + fromIntegral sz
     | slotMap <- Map.elems m
     , (txs, _ebs) <- Map.elems slotMap
-    , (_txHash, sz, ebOffsets) <- DList.toList txs
+    , (_txHash, sz, _ebHash, offset) <- DList.toList txs
     ]
 
 ------------------------------------------------------------
