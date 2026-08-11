@@ -1,4 +1,8 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -16,6 +20,7 @@
 -- do not denote ignored variables.
 module Ouroboros.Consensus.Peras.Voting.Rules
   ( isPerasVotingAllowed
+  , isPerasVotingAllowedWithHandle
   , PerasVotingRule (..)
   , PerasVotingRulesDecision (..)
   , perasVR1A
@@ -28,27 +33,32 @@ module Ouroboros.Consensus.Peras.Voting.Rules
   )
 where
 
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (WithOrigin (..))
 import Ouroboros.Consensus.Block.Abstract
-  ( SlotNo (..)
+  ( Point
+  , SlotNo (..)
+  , StandardHash
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( IsPerasCert
-  , PerasRoundNo (..)
-  , getPerasCertRound
-  , onPerasRoundNo
-  )
-import Ouroboros.Consensus.Peras.Params
-  ( PerasCertArrivalThreshold (..)
+  ( IsPerasCert (..)
+  , PerasCertArrivalThreshold (..)
   , PerasCooldownRounds (..)
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
+  , PerasRoundNo (..)
+  , ValidatedPerasCert
+  , onPerasRoundNo
   )
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Voting.View
   ( LatestCertOnChainView (..)
   , LatestCertSeenView (..)
   , PerasVotingView (..)
+  , PerasVotingViewHandle (..)
   )
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 import Ouroboros.Consensus.Util.Pred
   ( Evidence (..)
   , Explainable (..)
@@ -64,26 +74,36 @@ import Ouroboros.Consensus.Util.Pred
 -- | Whether we are allowed to vote according to the rules.
 --
 -- This type additionally carries the evidence for the decision taken.
-data PerasVotingRulesDecision
-  = Vote (Evidence True PerasVotingRule)
+data PerasVotingRulesDecision blk
+  = Vote (Evidence True PerasVotingRule) (Point blk)
   | NoVote (Evidence False PerasVotingRule)
-  deriving Show
+  deriving (Show, Eq, Generic, NoThunks)
 
-instance Explainable PerasVotingRulesDecision where
+instance StandardHash blk => Explainable (PerasVotingRulesDecision blk) where
   explain mode = \case
-    Vote (ETrue e) -> "Vote(" <> explain mode e <> ")"
-    NoVote (EFalse e) -> "NoVote(" <> explain mode e <> ")"
+    Vote (ETrue e) candidate ->
+      "Vote(" <> show candidate <> "," <> explain mode e <> ")"
+    NoVote (EFalse e) ->
+      "NoVote(" <> explain mode e <> ")"
 
 -- | Evaluate whether voting is allowed or not according to the voting rules
 isPerasVotingAllowed ::
   IsPerasCert cert blk =>
   PerasVotingView cert blk ->
-  PerasVotingRulesDecision
+  PerasVotingRulesDecision blk
 isPerasVotingAllowed pvv =
   evalPred (perasVotingRules pvv) $ \e ->
     case e of
-      ETrue{} -> Vote e
+      ETrue{} -> Vote e (candidateBlock pvv)
       EFalse{} -> NoVote e
+
+isPerasVotingAllowedWithHandle ::
+  (IsPerasCert (WithArrivalTime (ValidatedPerasCert blk)) blk, MonadSTM m) =>
+  PerasVotingViewHandle m blk ->
+  PerasRoundNo ->
+  STM m (PerasVotingRulesDecision blk)
+isPerasVotingAllowedWithHandle (PerasVotingViewHandle getPerasVotingView) =
+  fmap isPerasVotingAllowed . getPerasVotingView
 
 -- | Voting rules
 --
@@ -223,7 +243,6 @@ perasVR2A
 -- This enforces chain quality and common prefix before leaving a cooldown
 -- period.
 perasVR2B ::
-  IsPerasCert cert blk =>
   PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR2B
@@ -239,10 +258,10 @@ perasVR2B
         -- There is a certificate on chain ==> we must check its round number
         NotOrigin cert ->
           -- The certificate comes from a round older than the current one
-          (currRoundNo :>: getPerasCertRound (lcocCert cert))
+          (currRoundNo :>: lcocCertRoundNo cert)
             -- The certificate round is c⋅K rounds away from the current one
             :/\: ( (currRoundNo `rmod` _K)
-                     :==: (getPerasCertRound (lcocCert cert) `rmod` _K)
+                     :==: (lcocCertRoundNo cert `rmod` _K)
                  )
         -- There is no certificate on chain ==> check if we are recovering
         -- from an initial cooldown after having initially failed to

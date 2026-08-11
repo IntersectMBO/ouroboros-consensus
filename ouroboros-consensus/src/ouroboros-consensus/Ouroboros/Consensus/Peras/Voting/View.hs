@@ -27,7 +27,9 @@ module Ouroboros.Consensus.Peras.Voting.View
   , LatestCertSeenView (..)
   , LatestCertOnChainView (..)
   , PerasVotingView (..)
+  , WithBoostedBlockStatus (..)
   , mkPerasVotingView
+  , PerasVotingViewHandle (..)
   )
 where
 
@@ -38,6 +40,7 @@ import Control.Monad.Reader (MonadReader (..), Reader, runReader)
 import Ouroboros.Consensus.Block.Abstract
   ( GetHeader (..)
   , Header
+  , Point
   , SlotNo (..)
   , castPoint
   )
@@ -46,7 +49,6 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , IsPerasCert (..)
   , PerasRoundNo (..)
   , ValidatedPerasCert
-  , getPerasCertRound
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
@@ -65,6 +67,7 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( WithBoostedBlockStatus (..)
   , forgetBoostedBlockStatus
   )
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -155,7 +158,7 @@ perasChainAtCandidateBlock blockMinSlots currRoundNo currChain = do
   Voting interface
 -------------------------------------------------------------------------------}
 
--- | View of the latest certificate seen by the voter
+-- | View of the latest certificate seen by the voter.
 --
 -- NOTE: the voting rules depend on the candidate block indirectly. This is
 -- reflected in the fact that the voting view does not contain the candidate
@@ -175,24 +178,24 @@ data LatestCertSeenView cert
   }
   deriving Show
 
--- | View of the latest certificate present in our preferred chain
+-- | View of the latest certificate present in our preferred chain.
 --
 -- NOTE: if we add more fields here in the future, do not forget to add
 -- strictness annotations as needed.
 newtype LatestCertOnChainView cert
   = LatestCertOnChainView
-  { lcocCert :: cert
-  -- ^ Latest certificate present in our preferred chain
+  { lcocCertRoundNo :: PerasRoundNo
+  -- ^ 'PerasRoundNo' of the latest certificate present in our preferred chain
+  -- (we don't actually need the whole certificate here).
   }
   deriving Show
 
 -- | Interface needed to evaluate the Peras voting rules
 --
--- NOTE: the voting rules depend on the candidate block indirectly. This is
--- reflected in the fact that the voting view does not contain the candidate
--- block or its point, but only whether the candidate block extends the block
--- boosted by the most recent certificate seen by the voter, which is provided
--- to the rules via 'lcsCandidateBlockExtendsCert' inside 'latestCertSeen'.
+-- NOTE: the voting rules depend on the candidate block only indirectly. The
+-- only reason to include the point of the block being voted for
+-- ('candidateBlock') here is to be able to return it as part of the result of
+-- 'isPerasVotingAllowed' in the positive case.
 data PerasVotingView cert blk = PerasVotingView
   { perasParams :: !(PerasParams blk)
   -- ^ Peras protocol parameters
@@ -202,6 +205,11 @@ data PerasVotingView cert blk = PerasVotingView
   -- ^ The most recent certificate seen by the voter
   , latestCertOnChain :: !(WithOrigin (LatestCertOnChainView cert))
   -- ^ The most recent certificate present in our preferred chain
+  , candidateBlock :: Point blk
+  -- ^ The candidate block being voted for.
+  --
+  -- NOTE: this is the tip of the 'chainAtCandidateBlock' used to initialize
+  -- the voting view.
   }
   deriving Show
 
@@ -220,8 +228,9 @@ mkPerasVotingView ::
   PerasRoundNo ->
   -- | Most recent certificate seen by the voter
   WithOrigin (WithBoostedBlockStatus cert) ->
-  -- | Most recent certificate included in some block in our preferred chain
-  WithOrigin cert ->
+  -- | 'PerasRoundNo' of the most recent certificate included in some block in
+  -- our preferred chain
+  WithOrigin PerasRoundNo ->
   -- | Prefix leading to the candidate block in the volatile suffix of our
   -- preferred chain
   AnchoredFragment (Header blk) ->
@@ -231,16 +240,17 @@ mkPerasVotingView
   perasParams
   currRoundNo
   latestCertSeen
-  latestCertOnChain
+  latestCertOnChainRoundNo
   chainAtCandidateBlock = do
     latestCertSeenView <- traverse mkLatestCertSeenView latestCertSeen
-    latestCertOnChainView <- traverse mkLatestCertOnChainView latestCertOnChain
+    latestCertOnChainView <- traverse mkLatestCertOnChainView latestCertOnChainRoundNo
     pure $
       PerasVotingView
         { perasParams = perasParams
         , currRoundNo = currRoundNo
         , latestCertSeen = latestCertSeenView
         , latestCertOnChain = latestCertOnChainView
+        , candidateBlock = candidateBlock
         }
    where
     mkLatestCertSeenView certWithProvenance = do
@@ -256,10 +266,10 @@ mkPerasVotingView
           , lcsCandidateBlockExtendsCert
           }
 
-    mkLatestCertOnChainView lcocCert =
+    mkLatestCertOnChainView lcocCertRoundNo =
       pure $
         LatestCertOnChainView
-          { lcocCert
+          { lcocCertRoundNo
           }
 
     -- Does the candidate block extend the one boosted by a certificate?
@@ -285,3 +295,16 @@ mkPerasVotingView
       AF.withinFragmentBounds
         (castPoint (getPerasCertPoint cert))
         chainAtCandidateBlock
+
+    candidateBlock =
+      AF.anchorToPoint
+        . AF.castAnchor
+        . AF.headAnchor
+        $ chainAtCandidateBlock
+
+-- | Handle for querying the Peras voting view via STM.
+newtype PerasVotingViewHandle m blk
+  = PerasVotingViewHandle
+      ( PerasRoundNo ->
+        STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+      )

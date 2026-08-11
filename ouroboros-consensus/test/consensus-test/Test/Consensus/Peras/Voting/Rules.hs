@@ -15,6 +15,7 @@
 -- do not denote ignored variables.
 module Test.Consensus.Peras.Voting.Rules (tests) where
 
+import Data.Maybe (isJust)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract
   ( Point (..)
@@ -24,19 +25,17 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BoostedBlock
   , IsPerasCert (..)
-  , PerasRoundNo (..)
-  , onPerasRoundNo
-  )
-import Ouroboros.Consensus.BlockchainTime
-  ( RelativeTime (..)
-  )
-import Ouroboros.Consensus.Peras.Params
-  ( PerasBlockMinSlots (..)
+  , PerasBlockMinSlots (..)
   , PerasCertArrivalThreshold (..)
   , PerasCooldownRounds (..)
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
+  , PerasRoundNo (..)
   , defaultPerasParams
+  , onPerasRoundNo
+  )
+import Ouroboros.Consensus.BlockchainTime
+  ( RelativeTime (..)
   )
 import Ouroboros.Consensus.Peras.Voting.Rules
   ( PerasVotingRulesDecision (..)
@@ -62,6 +61,7 @@ import Test.Tasty.QuickCheck
   , testProperty
   )
 import Test.Util.Orphans.Arbitrary (genNominalDiffTime50Years)
+import Test.Util.Peras (genPointTestBlock)
 import Test.Util.QuickCheck (geometric)
 import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv (adjustQuickCheckTests)
@@ -84,7 +84,7 @@ tests =
 
 data PerasVotingRulesDecisionModel
   = PerasVotingDecisionModel
-  { shouldVote :: Bool
+  { shouldVote :: Maybe (Point TestBlock)
   , vr1a :: Bool
   , vr1b :: Bool
   , vr2a :: Bool
@@ -106,15 +106,20 @@ isPerasVotingAllowedModel
     , currRoundNo
     , latestCertSeen
     , latestCertOnChain
+    , candidateBlock
     } =
     PerasVotingDecisionModel
-      { shouldVote = vr1a && vr1b || vr2a && vr2b
-      , vr1a = vr1a
-      , vr1b = vr1b
-      , vr2a = vr2a
-      , vr2b = vr2b
+      { shouldVote
+      , vr1a
+      , vr1b
+      , vr2a
+      , vr2b
       }
    where
+    shouldVote
+      | (vr1a && vr1b) || (vr2a && vr2b) = Just candidateBlock
+      | otherwise = Nothing
+
     vr1a =
       vr1a1 && vr1a2
     vr1a1 =
@@ -144,9 +149,9 @@ isPerasVotingAllowedModel
     vr2b =
       case latestCertOnChain of
         NotOrigin cert ->
-          (currRoundNo > getPerasCertRound (lcocCert cert))
+          (currRoundNo > lcocCertRoundNo cert)
             && ( (currRoundNo `rmod` _K)
-                   == (getPerasCertRound (lcocCert cert) `rmod` _K)
+                   == (lcocCertRoundNo cert `rmod` _K)
                )
         Origin ->
           currRoundNo `rmod` _K == _K - 1
@@ -185,7 +190,7 @@ prop_isPerasVotingAllowed = forAll genPerasVotingView $ \pvv -> do
           , tabulate "VR-2A" [show vr2a]
           , tabulate "VR-2B" [show vr2b]
           , tabulate "VR-(1A|1B|2A|2B)" [show (vr1a, vr1b, vr2a, vr2b)]
-          , tabulate "Should vote according to model" [show shouldVote]
+          , tabulate "Should vote according to model" [show (isJust shouldVote)]
           , tabulate "Actual result" [desc]
           ]
           $ property True
@@ -195,13 +200,21 @@ prop_isPerasVotingAllowed = forAll genPerasVotingView $ \pvv -> do
   -- Now check that the real implementation agrees with the model
   let votingDecision = isPerasVotingAllowed pvv
   case votingDecision of
-    Vote (ETrue voteReason)
-      | shouldVote ->
-          ok $ "Vote(" <> explainShallow voteReason <> ")"
+    Vote (ETrue voteReason) actualCandidate
+      | Just expectedCandidate <- shouldVote ->
+          if expectedCandidate == actualCandidate
+            then
+              ok $ "Vote(Point{..}," <> explainShallow voteReason <> ")"
+            else
+              failure $
+                "Expected to vote for "
+                  <> show expectedCandidate
+                  <> ", but got: "
+                  <> show actualCandidate
       | otherwise ->
           failure $ "Expected not to vote, but got: " <> show votingDecision
     NoVote (EFalse noVoteReason)
-      | not shouldVote ->
+      | Nothing <- shouldVote ->
           ok $ "NoVote(" <> explainShallow noVoteReason <> ")"
       | otherwise ->
           failure $ "Expected to vote, but got: " <> show votingDecision
@@ -290,8 +303,8 @@ genTestCert roundNo = do
 
 -- * Certificate and voting views
 
-genLatestCertSeen :: PerasRoundNo -> Gen (LatestCertSeenView TestCert)
-genLatestCertSeen roundNo = do
+genLatestCertSeenView :: PerasRoundNo -> Gen (LatestCertSeenView TestCert)
+genLatestCertSeenView roundNo = do
   cert <- genTestCert roundNo
   arrivalSlot <- genSlotNo
   roundStartSlot <- genSlotNo
@@ -304,26 +317,28 @@ genLatestCertSeen roundNo = do
       , lcsCandidateBlockExtendsCert = candidateBlockExtendsCert
       }
 
-genLatestCertOnChain :: PerasRoundNo -> Gen (LatestCertOnChainView TestCert)
-genLatestCertOnChain roundNo = do
+genLatestCertOnChainView :: PerasRoundNo -> Gen (LatestCertOnChainView TestCert)
+genLatestCertOnChainView roundNo = do
   cert <- genTestCert roundNo
   pure $
     LatestCertOnChainView
-      { lcocCert = cert
+      { lcocCertRoundNo = getPerasCertRound cert
       }
 
 genPerasVotingView :: Gen (PerasVotingView TestCert TestBlock)
 genPerasVotingView = do
   perasParams <- genPerasParams
   currRoundNo <- genPerasRoundNo
-  latestCertSeen <- genWithOrigin (genLatestCertSeen currRoundNo)
-  latestCertOnChain <- genWithOrigin (genLatestCertOnChain currRoundNo)
+  latestCertSeen <- genWithOrigin (genLatestCertSeenView currRoundNo)
+  latestCertOnChain <- genWithOrigin (genLatestCertOnChainView currRoundNo)
+  candidateBlock <- genPointTestBlock
   pure
     PerasVotingView
       { perasParams
       , currRoundNo
-      , latestCertSeen = latestCertSeen
-      , latestCertOnChain = latestCertOnChain
+      , latestCertSeen
+      , latestCertOnChain
+      , candidateBlock
       }
  where
   genWithOrigin gen =
