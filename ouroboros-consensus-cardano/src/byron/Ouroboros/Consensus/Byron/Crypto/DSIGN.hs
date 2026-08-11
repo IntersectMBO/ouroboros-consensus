@@ -19,7 +19,6 @@ module Ouroboros.Consensus.Byron.Crypto.DSIGN
   , VerKeyDSIGN (..)
   ) where
 
-import Cardano.Binary.FixedSizeCodec (FixedSizeCodec (..))
 import qualified Cardano.Chain.Block as CC.Block
 import qualified Cardano.Chain.UTxO as CC.UTxO
 import Cardano.Crypto

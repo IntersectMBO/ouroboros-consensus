@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block.PBFT
   ) where
 
 import Cardano.Binary (ToCBOR (..))
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.DSIGN
 import Cardano.Crypto.Hash (HashAlgorithm)
 import Cardano.Crypto.Util
@@ -173,14 +174,14 @@ forgePBftExt = ForgeExt $ \_cfg isLeader SimpleBlock{..} ->
 instance PBftCrypto c' => Serialise (SimplePBftExt c c') where
   encode (SimplePBftExt PBftFields{..}) =
     mconcat
-      [ encodeVerKeyDSIGN pbftIssuer
-      , encodeVerKeyDSIGN pbftGenKey
-      , encodeSignedDSIGN pbftSignature
+      [ encodeFixedSized pbftIssuer
+      , encodeFixedSized pbftGenKey
+      , encodeFixedSized pbftSignature
       ]
   decode = do
-    pbftIssuer <- decodeVerKeyDSIGN
-    pbftGenKey <- decodeVerKeyDSIGN
-    pbftSignature <- decodeSignedDSIGN
+    pbftIssuer <- decodeFixedSized
+    pbftGenKey <- decodeFixedSized
+    pbftSignature <- decodeFixedSized
     return $ SimplePBftExt PBftFields{..}
 
 instance (HashAlgorithm (SimpleHash c), Typeable c, Typeable c') => Serialise (SignedSimplePBft c c')
