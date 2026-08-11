@@ -1,14 +1,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
   ( tests
-  , genPerasCert
-  , genValidatedPerasCert
   ) where
 
 import Control.Monad (join)
@@ -38,19 +35,20 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionOutboundPeer)
 import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
-  ( ListWithUniqueIds (..)
-  , WithId
-  , genListWithUniqueIds
-  , genPointTestBlock
-  , genProtocolConstants
-  , genWithArrivalTime
-  , getId
-  , mockSystemTime
+  ( genProtocolConstants
   , prop_smoke_object_diffusion
   )
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Peras
+  ( ListWithUniqueIds (..)
+  , genListWithUniqueIds
+  , genPointTestBlock
+  , genRoundNo
+  , genWithArrivalTime
+  , mockSystemTime
+  )
 import Test.Util.TestBlock
 
 tests :: TestTree
@@ -60,23 +58,19 @@ tests =
     [ testProperty "PerasCertDiffusion smoke test" prop_smoke
     ]
 
-genPerasCert :: Gen (PerasCert TestBlock)
-genPerasCert = do
-  pcCertRound <- PerasRoundNo <$> arbitrary
-  pcCertBoostedBlock <- genPointTestBlock
-  pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
-
-instance WithId (PerasCert' blk) PerasRoundNo where
-  getId = pcCertRound
-
-instance WithId (WithArrivalTime (ValidatedPerasCert blk)) PerasRoundNo where
-  getId = pcCertRound . vpcCert . forgetArrivalTime
-
 genValidatedPerasCert :: Gen (ValidatedPerasCert TestBlock)
 genValidatedPerasCert =
   ValidatedPerasCert
     <$> genPerasCert
-    <*> pure (perasWeight defaultPerasParams)
+    <*> genPerasWeight
+ where
+  genPerasCert =
+    PerasCert
+      <$> genRoundNo
+      <*> genPointTestBlock
+  genPerasWeight =
+    PerasWeight
+      <$> choose (1, 15)
 
 newCertDB ::
   (IOLike m, StandardHash blk) => [WithArrivalTime (ValidatedPerasCert blk)] -> m (PerasCertDB m blk)
@@ -95,7 +89,7 @@ newCertDB certs = do
 prop_smoke :: Property
 prop_smoke =
   forAll genProtocolConstants $ \protocolConstants ->
-    forAll (genListWithUniqueIds (genWithArrivalTime genValidatedPerasCert)) $
+    forAll (genListWithUniqueIds getPerasCertRound (genWithArrivalTime genValidatedPerasCert)) $
       \(ListWithUniqueIds watValidatedCerts) ->
         let
           mkPoolInterfaces ::
