@@ -989,10 +989,12 @@ leiosCertRbOffer txCache (outstandingVar, readyVar) peerVars (point, ebBytesSize
   let MkLeiosPoint _ebSlot ebHash = point
   -- As if 'MsgLeiosBlockOffer': record the EB body as missing, unless we already
   -- hold it.
-  mBody <- txCache.lookupBody ebHash
+  mbBody <- txCache.lookupBody ebHash
   MVar.modifyMVar_ outstandingVar $ \outstanding ->
     pure $
-      case mBody of
+      case mbBody of
+        -- TODO this is the same concern as in the MsgLeiosBlockOffer handler
+        -- about ignoring a greater slot
         Just{} -> outstanding
         Nothing ->
           outstanding
@@ -1208,6 +1210,17 @@ recordAnnouncedEb ::
   m ()
 recordAnnouncedEb txCache (outstandingVar, readyVar) (point, ebBytesSize) =
   txCache.lookupBody ebHash >>= \case
+    -- TODO once LeiosFetch is announcement-sensitive: a fresher announcement for
+    -- an EB we already hold should still raise its freshest-first priority, which
+    -- this branch drops.
+    --
+    -- Note that that priority applies to the diffusion of this EB's closure
+    -- too.
+    --
+    -- We're accepting that infelicity for now; the imminent LeiosFetch rewrite
+    -- will address this. But this handler will be what takes care of it:
+    -- updating an EB closure's priority is the reponsibility of the
+    -- announcement handler.
     Just{} -> pure () -- we already hold this EB's body; nothing to fetch
     Nothing -> do
       changed <- MVar.modifyMVar outstandingVar (pure . upd)
