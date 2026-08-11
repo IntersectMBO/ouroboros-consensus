@@ -584,8 +584,8 @@ demoLeiosFetchStaticEnv =
     { maxRequestedBytesSize = 50 * million
     , maxRequestedBytesSizePerPeer = 5 * million
     , maxRequestBytesSize = 500 * thousand
-    , maxRequestsPerEb = 2
-    , maxRequestsPerTx = 2
+    , maxRequestsPerEb = 1
+    , maxRequestsPerTx = 1
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
     , maxLeiosFetchIngressQueue = 50 * millionBase2
     }
