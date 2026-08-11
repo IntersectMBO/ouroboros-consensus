@@ -412,8 +412,11 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --   will be a no-op for all except the first to arrive carrying this EbTx.
   --
   -- TODO this is far too big for the heap
-  , reverseEbIndexByTx :: !(Map TxHash (Map EbHash (Int, BytesSize)))
-  -- ^ Inverse of missingEbTxs - for each TX, which EBs (and offsets) need it
+  , reverseEbIndexByTx :: !(Map TxHash (Map EbHash (NESet SlotNo, Int, BytesSize)))
+  -- ^ Inverse of 'missingEbTxs': for each TX, the referencing EBs; per EB, its
+  -- offset+size (content, so stored once) and the 'NESet' of slots it was
+  -- announced at. On delivery a tx is removed entirely -- from here and from the
+  -- 'missingEbTxs' of every point that referenced it -- so the two stay in step.
   --
   -- TODO this is far too big for the heap
   , blockingPerEb :: !(Map LeiosPoint Int)

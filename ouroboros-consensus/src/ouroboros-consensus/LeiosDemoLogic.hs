@@ -41,6 +41,8 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Set.NonEmpty (NESet)
+import qualified Data.Set.NonEmpty as NESet
 import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
@@ -422,7 +424,7 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
     LeiosPoint ->
     BytesSize ->
     TxHash ->
-    Map EbHash (Int, BytesSize) ->
+    Map EbHash (NESet SlotNo, Int, BytesSize) ->
     Set (PeerId pid) ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
   goTx2 !acc !accNew targets point txBytesSize txHash txOffsets peerIds
@@ -436,7 +438,7 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
         -- there's a peer offering this EB's tx closure and we haven't already
         -- requested it from them
         let txOffset = case Map.lookup point.pointEbHash txOffsets of
-              Just (o, _) -> o
+              Just (_slots, o, _) -> o
               Nothing -> error "impossible! goTx2: target EB absent from its own reverse entry"
             accNew' =
               MkLeiosFetchDecisions $
@@ -770,7 +772,11 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
                   , Leios.reverseEbIndexByTx =
                       IntMap.foldrWithKey
                         ( \i (txHash, txBytesSize) acc ->
-                            Map.insertWith Map.union txHash (Map.singleton ebHash (i, txBytesSize)) acc
+                            Map.insertWith
+                              (Map.unionWith (\(s1, i1, z1) (s2, _, _) -> (s1 <> s2, i1, z1)))
+                              txHash
+                              (Map.singleton ebHash (NESet.singleton point.pointSlotNo, i, txBytesSize))
+                              acc
                         )
                         (Leios.reverseEbIndexByTx outstanding)
                         misses
@@ -886,8 +892,7 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
   -- validate it
   -- TODO: could validate the returned point + bitmaps too (added to response recently)
   let MkLeiosBlockTxsRequest point bitmaps txHashes = req
-  let ebHash = point.pointEbHash
-      txBytess = V.map cbor txs
+  let txBytess = V.map cbor txs
   do
     when (V.length txs /= V.length txHashes) $ do
       error $ "MsgLeiosBlockTxs length mismatch: " ++ show (V.length txs, V.length txHashes)
@@ -915,23 +920,41 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
       foldM (\acc txh -> step acc txh ()) z txHashes
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    let (requestedTxPeers', reverseEbIndexByTx', txsBytesSize) =
-          ( \f ->
-              V.foldl
-                f
-                ( Leios.requestedTxPeers outstanding
-                , Leios.reverseEbIndexByTx outstanding
-                , 0
+    let removeTxFromMissing txHash mtxs =
+          case Map.lookup txHash (Leios.reverseEbIndexByTx outstanding) of
+            Nothing -> mtxs
+            Just ebsWithThisTx ->
+              Map.foldrWithKey
+                ( \ebHash (slotsWithThisEb, offset, _sz) acc ->
+                    foldr
+                      (\ebSlot ->
+                         Map.update
+                           (delIf IntMap.null . IntMap.delete offset)
+                           (MkLeiosPoint ebSlot ebHash)
+                      )
+                      acc
+                      slotsWithThisEb
                 )
-                (txHashes `V.zip` txBytess)
-          )
-            $ \(!accReqs, !accOffsetss, !accSz) (txHash, txBytes) ->
-              ( Map.update (delIf Set.null . Set.delete peerId) txHash accReqs
-              , Map.update (delIf Map.null . Map.delete ebHash) txHash accOffsetss
-              , accSz + BS.length txBytes
-              )
+                mtxs
+                ebsWithThisTx
+    let (requestedTxPeers', reverseEbIndexByTx', missingEbTxs', txsBytesSize) =
+          V.foldl'
+            ( \(!accReqs, !accRev, !accMtxs, !accSz) (txHash, txBytes) ->
+                ( Map.update (delIf Set.null . Set.delete peerId) txHash accReqs
+                , Map.delete txHash accRev   -- full delete from reverseEbIndexByTx
+                , removeTxFromMissing txHash accMtxs   -- full delete from missingEbTxs
+                , accSz + BS.length txBytes
+                )
+            )
+            ( Leios.requestedTxPeers outstanding
+            , Leios.reverseEbIndexByTx outstanding
+            , Leios.missingEbTxs outstanding
+            , 0
+            )
+            (txHashes `V.zip` txBytess)
     let offsetsSet = IntSet.fromList offsets
-        -- the requests that this MsgLeiosBlockTxs was the first to resolve
+        -- the requests this MsgLeiosBlockTxs was the first to resolve for this
+        -- point (kept only to keep the best-effort 'blockingPerEb' roughly current)
         beatOtherPeers =
           (`IntMap.restrictKeys` offsetsSet) $
             Map.findWithDefault IntMap.empty point (Leios.missingEbTxs outstanding)
@@ -942,11 +965,7 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
     let !outstanding' =
           refundTxRequest peerId requestedTxPeers' (fromIntegral txsBytesSize) $
             outstanding
-              { Leios.missingEbTxs =
-                  Map.update
-                    (delIf IntMap.null . (`IntMap.withoutKeys` offsetsSet))
-                    point
-                    (Leios.missingEbTxs outstanding)
+              { Leios.missingEbTxs = missingEbTxs'
               , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
               , Leios.blockingPerEb =
                   if IntMap.null beatOtherPeers

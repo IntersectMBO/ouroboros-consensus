@@ -41,6 +41,7 @@ import qualified Data.DList as DList
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word64)
 import LeiosDemoDb (withLeiosDb)
@@ -74,7 +75,7 @@ import LeiosTxCache (LeiosTxCache, nullLeiosTxCache)
 import Ouroboros.Consensus.Util.IOLike (evaluate)
 import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Orphans.IOLike ()
 
@@ -87,12 +88,7 @@ tests =
         [ testCase "same EB hash at two slots: delivery clears both" $
             runCmds reproMultiSlot @?= Right ()
         , testCase "tx shared across two EBs: delivery discharges both" $
-            case runCmds' reproSharedTx of
-              Left msg -> assertFailure msg
-              Right o ->
-                assertBool
-                  "shared tx still tracked as missing after delivery"
-                  (not (txStillMissing (txHashOf 1) o))
+            runCmds reproSharedTx @?= Right ()
         ]
     , testProperty
         "missingEbTxs stays in sync with reverseEbIndexByTx across arbitrary sequences"
@@ -149,12 +145,11 @@ pointOf ids slot = MkLeiosPoint (fromIntegral slot) (hashLeiosEb (ebOf ids))
 ------------------------------------------------------------
 
 -- | Run a command sequence in 'IOSim' against in-memory dependencies, checking
--- the sync invariant after each command. 'Left' names the first failing
--- command; 'Right' returns the final outstanding state (for extra assertions).
-runCmds' :: [Cmd] -> Either String (LeiosOutstanding Int)
-runCmds' cmds = runSimOrThrow (go cmds)
+-- the invariant after each command. 'Left' names the first failing command.
+runCmds :: [Cmd] -> Either String ()
+runCmds cmds = runSimOrThrow (go cmds)
  where
-  go :: forall s. [Cmd] -> IOSim s (Either String (LeiosOutstanding Int))
+  go :: forall s. [Cmd] -> IOSim s (Either String ())
   go cs0 = do
     dbHandle <- LeiosDb.newLeiosDBInMemory
     withLeiosDb dbHandle $ \conn -> do
@@ -163,7 +158,7 @@ runCmds' cmds = runSimOrThrow (go cmds)
       let kv = (outstandingVar, readyVar)
           txCache = nullLeiosTxCache
           peerId = MkPeerId (0 :: Int)
-          loop [] = Right <$> readMVar outstandingVar
+          loop [] = pure (Right ())
           loop (c : cs) = do
             r <-
               try (applyCmd conn txCache kv peerId c)
@@ -176,10 +171,6 @@ runCmds' cmds = runSimOrThrow (go cmds)
                   Left msg -> pure (Left (msg <> " (after " <> show c <> ")"))
                   Right () -> loop cs
       loop cs0
-
--- | As 'runCmds'', but discarding the final state.
-runCmds :: [Cmd] -> Either String ()
-runCmds = fmap (const ()) . runCmds'
 
 applyCmd ::
   forall s.
@@ -261,16 +252,9 @@ checkInvariant o =
         Left ("missingEbTxs tx absent from reverseEbIndexByTx: " <> show (p.pointSlotNo, off))
       Just ebm -> case Map.lookup (pointEbHash p) ebm of
         Nothing -> Left ("reverseEbIndexByTx lacks this EB for a missing tx: " <> show p.pointSlotNo)
-        Just (off', _sz')
-          | off' == off -> Right ()
-          | otherwise -> Left ("reverseEbIndexByTx offset mismatch at " <> show p.pointSlotNo)
-
--- | Is this tx still tracked as missing for any point? After a tx is delivered
--- the deduping LeiosDb should discharge it for every EB that referenced it, so
--- this is 'False' for a delivered tx.
-txStillMissing :: TxHash -> LeiosOutstanding Int -> Bool
-txStillMissing txHash o =
-  any (elem txHash . map fst . IntMap.elems) (Map.elems (Leios.missingEbTxs o))
+        Just (slots, off', _sz')
+          | p.pointSlotNo `NESet.member` slots && off' == off -> Right ()
+          | otherwise -> Left ("reverseEbIndexByTx slot/offset mismatch at " <> show p.pointSlotNo)
 
 ------------------------------------------------------------
 -- Curated repros

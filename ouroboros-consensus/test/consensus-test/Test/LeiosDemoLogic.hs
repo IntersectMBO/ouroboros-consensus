@@ -26,6 +26,7 @@ import Data.Function ((&))
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import LeiosDemoLogic
   ( LeiosFetchDecisions (..)
   , leiosFetchLogicIteration
@@ -169,7 +170,7 @@ test_txTwoEbsSinglePeerOffer :: IO ()
 test_txTwoEbsSinglePeerOffer =
   empty
     & withMissingTx (point 1 'a') 0 (tx 'x') 100
-    & alsoReferencedInEb (tx 'x') (eb 'b') 7 100 -- same recorded size in B
+    & alsoReferencedInEb (tx 'x') (point 2 'b') 7 100 -- same recorded size in B
     & offersTxs peerA [eb 'a']
     & runIteration
     & assertTxRequest peerA (point 1 'a') (tx 'x')
@@ -189,7 +190,7 @@ test_txTwoEbsDifferentSize :: IO ()
 test_txTwoEbsDifferentSize =
   empty
     & withMissingTx (point 1 'a') 0 (tx 'x') 100
-    & alsoReferencedInEb (tx 'x') (eb 'b') 7 200 -- different recorded size
+    & alsoReferencedInEb (tx 'x') (point 2 'b') 7 200 -- different recorded size
     & offersTxs peerA [eb 'a', eb 'b']
     & runIteration
     & assertTxRequest peerA (point 1 'a') (tx 'x')
@@ -239,7 +240,7 @@ withMissingTx p offset h size =
           Map.insertWith
             Map.union
             h
-            (Map.singleton p.pointEbHash (offset, size))
+            (Map.singleton p.pointEbHash (NESet.singleton p.pointSlotNo, offset, size))
             (reverseEbIndexByTx o)
       }
 
@@ -267,21 +268,21 @@ alreadyRequestedTxFrom txHash pids =
             (requestedTxPeers o)
       }
 
--- | Tag a tx as also referenced by another EB at the given offset
--- and recorded size, without adding the EB to 'missingEbTxs'.
+-- | Tag a tx as also referenced by another EB point at the given
+-- offset and recorded size, without adding the EB to 'missingEbTxs'.
 -- 'choosePeerTx' consults 'reverseEbIndexByTx' for "which EBs does
 -- this tx appear in?" when evaluating peer offerings; this helper
 -- lets us seed that cross-reference.
 alsoReferencedInEb ::
-  TxHash -> EbHash -> Int -> BytesSize -> Scenario pid -> Scenario pid
-alsoReferencedInEb txHash ebHash offset size =
+  TxHash -> LeiosPoint -> Int -> BytesSize -> Scenario pid -> Scenario pid
+alsoReferencedInEb txHash p offset size =
   onOutstanding $ \o ->
     o
       { reverseEbIndexByTx =
           Map.insertWith
             Map.union
             txHash
-            (Map.singleton ebHash (offset, size))
+            (Map.singleton p.pointEbHash (NESet.singleton p.pointSlotNo, offset, size))
             (reverseEbIndexByTx o)
       }
 
