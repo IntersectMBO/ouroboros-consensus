@@ -485,6 +485,10 @@ library unstable-consensus-testlib
     Test.Util.Orphans.SignableRepresentation
     Test.Util.Orphans.ToExpr
     Test.Util.Paths
+    Test.Util.Peras
+    Test.Util.Peras.Common
+    Test.Util.Peras.Mock
+    Test.Util.Peras.V1
     Test.Util.QSM
     Test.Util.QuickCheck
     Test.Util.Range
@@ -688,7 +692,6 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
     Test.Consensus.Peras.Cert.Inclusion
     Test.Consensus.Peras.Serialisation
-    Test.Consensus.Peras.Util
     Test.Consensus.Peras.Voting.Adapter
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
