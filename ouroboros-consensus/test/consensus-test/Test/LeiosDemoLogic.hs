@@ -339,11 +339,38 @@ onOutstanding ::
 onOutstanding f sc = sc{scOutstanding = f (scOutstanding sc)}
 
 -- | Run the iteration and project the decisions.
+--
+-- Enforces a soundness invariant on the way out: every emitted tx decision must
+-- name a /real/ (slot, EB hash) for its tx -- one the scenario actually lists
+-- as missing that tx. A priority slot paired with an unrelated EB hash would be
+-- a \"Frankenstein\" point. The original Leios diffusion demo included that on
+-- purpose, but subsequent design has ruled that out, so this property bans it.
 runIteration :: Ord pid => Scenario pid -> LeiosFetchDecisions pid
 runIteration sc =
+  case unrealDecisions sc.scOutstanding decs of
+    [] -> decs
+    bad -> error $ "runIteration: decisions name a non-real (slot, EB, tx): " <> show bad
+ where
   -- A known current slot selects freshest-first (i.e. youngest-first), which is
   -- the ordering these scenarios were written against.
-  snd $ leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
+  decs = snd $ leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
+
+-- | Emitted tx decisions whose (slot, EB hash) the scenario does not list as
+-- missing that tx. 'runIteration' requires this to be empty.
+unrealDecisions ::
+  LeiosOutstanding pid -> LeiosFetchDecisions pid -> [(SlotNo, EbHash, TxHash)]
+unrealDecisions o (MkLeiosFetchDecisions m) =
+  [ (slot, ebHash, txHash)
+  | (_peer, slotMap) <- Map.toList m
+  , (slot, (txs, _bodies)) <- Map.toList slotMap
+  , (txHash, _sz, ebHash, _off) <- DList.toList txs
+  , txHash `notElem` txsMissingAt slot ebHash
+  ]
+ where
+  txsMissingAt slot ebHash =
+    map fst $
+      IntMap.elems $
+        Map.findWithDefault IntMap.empty (MkLeiosPoint slot ebHash) (missingEbTxs o)
 
 ------------------------------------------------------------
 -- Assertions
@@ -377,7 +404,7 @@ assertTxRequest pid p txHash (MkLeiosFetchDecisions m) =
     Just slotMap -> case Map.lookup p.pointSlotNo slotMap of
       Nothing -> assertFailure "no request at expected slot"
       Just (txs, _bodies) -> case DList.toList txs of
-        [(h, _size, _offsets)] -> h @?= txHash
+        [(h, _size, _ebHash, _offset)] -> h @?= txHash
         xs -> assertFailure $ "expected one tx request, got " <> show (length xs)
 
 assertNoRequests :: (Ord pid, Show pid) => LeiosFetchDecisions pid -> IO ()

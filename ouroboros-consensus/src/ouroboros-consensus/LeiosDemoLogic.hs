@@ -302,7 +302,7 @@ popLeftmostOffset = \case
 
 newtype LeiosFetchDecisions pid
   = MkLeiosFetchDecisions
-      (Map (PeerId pid) (Map SlotNo (DList (TxHash, BytesSize, Map EbHash Int), DList (EbHash, BytesSize))))
+      (Map (PeerId pid) (Map SlotNo (DList (TxHash, BytesSize, EbHash, Int), DList (EbHash, BytesSize))))
 
 emptyLeiosFetchDecisions :: LeiosFetchDecisions pid
 emptyLeiosFetchDecisions = MkLeiosFetchDecisions Map.empty
@@ -419,14 +419,18 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
     | Set.size peerIds < Leios.maxRequestsPerTx env -- we would like to request it from an additional peer
     -- TODO if requests list priority, does this limit apply even if the
     -- tx has only been requested at lower priorities?
-    , Just (peerId, txOffsets') <- choosePeerTx peerIds acc txOffsets txBytesSize =
-        -- there's a peer who offered it and we haven't already requested it from them
-        let accNew' =
+    , Just peerId <- choosePeerTx peerIds acc point.pointEbHash =
+        -- there's a peer offering this EB's tx closure and we haven't already
+        -- requested it from them
+        let txOffset = case Map.lookup point.pointEbHash txOffsets of
+              Just (o, _) -> o
+              Nothing -> error "impossible! goTx2: target EB absent from its own reverse entry"
+            accNew' =
               MkLeiosFetchDecisions $
                 Map.insertWith
                   (Map.unionWith (<>))
                   peerId
-                  (Map.singleton point.pointSlotNo (DList.singleton (txHash, txBytesSize, txOffsets'), DList.empty))
+                  (Map.singleton point.pointSlotNo (DList.singleton (txHash, txBytesSize, point.pointEbHash, txOffset), DList.empty))
                   (let MkLeiosFetchDecisions x = accNew in x)
             acc' =
               acc
@@ -444,30 +448,19 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
   choosePeerTx ::
     Set (PeerId pid) ->
     LeiosOutstanding pid ->
-    Map EbHash (Int, BytesSize) ->
-    BytesSize ->
-    Maybe (PeerId pid, Map EbHash Int)
-  choosePeerTx peerIds acc txOffsets targetTxBytesSize =
+    EbHash ->
+    Maybe (PeerId pid)
+  choosePeerTx peerIds acc ebHash =
     foldr (\a _ -> Just a) Nothing $
-      [ (peerId, Map.map fst txOffsetsMatching)
-      | (peerId, (_ebIds, ebIds)) <-
+      [ peerId
+      | (peerId, (_bodies, closures)) <-
           Map.toList $ -- TODO prioritize/shuffle?
             (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
               offerings
       , Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc)
           <= Leios.maxRequestedBytesSizePerPeer env
       , -- peer can be sent more requests
-      let txOffsets' = txOffsets `Map.restrictKeys` ebIds
-          -- Filter to entries whose recorded tx size matches the target's
-          -- authority. The recorded size in 'reverseEbIndexByTx' can disagree
-          -- across EBs (e.g. a malformed body delivered under a different EB
-          -- hash); a single tx hash uniquely determines content, so any entry
-          -- with a different size is bogus and must not carry the request.
-          txOffsetsMatching =
-            Map.filter (\(_, txBytesSize) -> txBytesSize == targetTxBytesSize) txOffsets'
-      , -- peer has offered at least one EB closure recording this
-      -- tx at the authoritative size
-      not (Map.null txOffsetsMatching)
+      ebHash `Set.member` closures -- peer has offered this EB's tx closure
       ]
 
 packRequests ::
@@ -504,16 +497,13 @@ packRequests env =
             <> acc
       )
       Seq.empty
-      -- group by EbId, sort by offset ascending
+      -- group by EbHash, sort by offset ascending. 'prio' is the target point's
+      -- own slot and 'ebHash' its own EbHash (both filed by 'goTx2' from the same
+      -- point), so 'MkLeiosPoint prio ebHash' is a real point -- slot and hash
+      -- from the same EB.
       $ Map.fromListWith IntMap.union
-      $ [ (,) ebId $ IntMap.singleton txOffset (txHash, txBytesSize)
-        | (txHash, txBytesSize, txOffsets) <- DList.toList txs
-        , -- TODO somewhat arbitrarily choosing the freshest EbId here; merely
-        -- something simple and sufficient for the demo
-        let (ebId, txOffset) =
-              case Map.lookupMax txOffsets of
-                Nothing -> error "impossible! packRequests goPrioTx"
-                Just x -> x
+      $ [ (ebHash, IntMap.singleton txOffset (txHash, txBytesSize))
+        | (txHash, txBytesSize, ebHash, txOffset) <- DList.toList txs
         ]
 
   goEb ::
