@@ -6,6 +6,43 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-4.1.0.0'></a>
+## 4.1.0.0 -- 2026-08-11
+
+### Breaking
+
+- Added `hardForkEqGenTxId` and `hardForkCompareGenTxId` to the `CanHardFork`
+  class. The `Eq` and `Ord` instances for `OneEraGenTxId` (and hence for
+  `TxId (GenTx (HardForkBlock xs))`) now delegate to them, so each hard fork
+  chooses how to compare its transaction ids. The methods have no default, so
+  existing `CanHardFork` instances must supply them; the exported `rawHashNS`
+  is the raw-hash implementation the non-optimizing instances reuse.
+- The Mithril snapshot policy (which is also the default policy) now takes a
+  snapshot every `40 * k` slots with no offset, instead of every 432,000 slots
+  with an offset of 388,800. On mainnet this is one snapshot a day, one of every
+  five landing on a Shelley epoch boundary.
+- `sfaInterval` is now a `SnapshotInterval`, which is either
+  `DefaultSnapshotInterval` (`40 * k` slots, resolved via
+  `resolveSnapshotInterval` once the `SecurityParam` is known) or an explicit
+  `RequestedSnapshotInterval`.
+- `defaultSnapshotPolicy` and `sanityCheckSnapshotPolicyArgs` now take a
+  `SecurityParam`.
+
+### Non-Breaking
+
+- Added `snapshotFromIS`, which builds a `MempoolSnapshot` from the mempool's
+  internal state in constant time by reusing the transaction sequence
+  (`isTxs`) and the cached transaction ids (`isTxIds`) it already maintains.
+
+### Patch
+
+- Made those `Eq`/`Ord` comparisons allocation-free for the Cardano eras, on
+  every comparison rather than only same-era ones. The Cardano instance reads
+  the transaction id hash as four machine words and compares them in registers,
+  instead of serialising both ids to their raw hash. The ordering is unchanged.
+- `getSnapshot` and the fast path of `getSnapshotFor` no longer rebuild the
+  mempool contents on every call. This was quadratic in the size of the mempool.
+
 <a id='changelog-4.0.0.0'></a>
 ## 4.0.0.0 -- 2026-07-30
 
