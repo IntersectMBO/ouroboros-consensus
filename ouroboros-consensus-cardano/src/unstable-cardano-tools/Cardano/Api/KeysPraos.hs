@@ -31,7 +31,7 @@ import qualified Cardano.Crypto.DSIGN.Class as Crypto
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.KES.Class as Crypto
 import qualified Cardano.Crypto.VRF.Class as Crypto
-import Cardano.Ledger.Binary (fromPlainDecoder)
+import Cardano.Ledger.Binary (fromPlainDecoder, rawDecodeFixedSized, rawEncodeFixedSized)
 import Cardano.Ledger.Hashes (HASH)
 import Cardano.Protocol.Crypto (Crypto (..), StandardCrypto)
 import Data.String (IsString (..))
@@ -85,18 +85,18 @@ instance DecCBOR (SigningKey UnsoundPureKesKey) where
 
 instance SerialiseAsRawBytes (VerificationKey UnsoundPureKesKey) where
   serialiseToRawBytes (KesVerificationKey vk) =
-    Crypto.rawSerialiseVerKeyKES vk
+    rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsUnsoundPureKesKey) bs =
     KesVerificationKey
-      <$> Crypto.rawDeserialiseVerKeyKES bs
+      <$> rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey UnsoundPureKesKey) where
   serialiseToRawBytes (KesSigningKey sk) =
-    Crypto.rawSerialiseUnsoundPureSignKeyKES sk
+    rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsUnsoundPureKesKey) bs =
-    KesSigningKey <$> Crypto.rawDeserialiseUnsoundPureSignKeyKES bs
+    KesSigningKey <$> rawDecodeFixedSized bs
 
 instance SerialiseAsBech32 (VerificationKey UnsoundPureKesKey) where
   bech32PrefixFor _ = "kes_vk"
@@ -185,17 +185,17 @@ instance Key VrfKey where
 
 instance SerialiseAsRawBytes (VerificationKey VrfKey) where
   serialiseToRawBytes (VrfVerificationKey vk) =
-    Crypto.rawSerialiseVerKeyVRF vk
+    rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsVrfKey) bs =
-    VrfVerificationKey <$> Crypto.rawDeserialiseVerKeyVRF bs
+    VrfVerificationKey <$> rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey VrfKey) where
   serialiseToRawBytes (VrfSigningKey sk) =
-    Crypto.rawSerialiseSignKeyVRF sk
+    rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsVrfKey) bs =
-    VrfSigningKey <$> Crypto.rawDeserialiseSignKeyVRF bs
+    VrfSigningKey <$> rawDecodeFixedSized bs
 
 instance SerialiseAsBech32 (VerificationKey VrfKey) where
   bech32PrefixFor _ = "vrf_vk"
