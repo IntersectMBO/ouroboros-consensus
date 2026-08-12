@@ -80,6 +80,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.Serialisation (Some (..))
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -217,7 +218,7 @@ instance
   answerPureBlockQuery
     (ExtLedgerCfg cfg)
     query
-    ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _) =
+    ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _ _) =
       case query of
         QueryIfCurrent queryIfCurrent ->
           interpretQueryIfCurrent
@@ -294,12 +295,33 @@ answerBlockQueryHelper
 distribExtLedgerState ::
   All SingleEraBlock xs =>
   ExtLedgerState (HardForkBlock xs) mk -> NS (Flip ExtLedgerState mk) xs
-distribExtLedgerState (ExtLedgerState ledgerState headerState) =
-  hmap (\(Pair hst lst) -> Flip $ ExtLedgerState (unFlip lst) hst) $
-    mustMatchNS
-      "HeaderState"
-      (distribHeaderState headerState)
-      (State.tip (hardForkLedgerStatePerEra ledgerState))
+distribExtLedgerState
+  ( ExtLedgerState
+      ledgerState
+      headerState
+      perasState
+    ) =
+    himap
+      ( \idx (Pair hst lst) ->
+          Flip $
+            ExtLedgerState
+              { ledgerState = unFlip lst
+              , headerState = hst
+              , perasState =
+                  PerasState
+                    { perasEpochContextResolver =
+                        castHFCPerasEpochContextResolverAtIndex
+                          idx
+                          (perasEpochContextResolver perasState)
+                    , latestPerasCertOnChainRound =
+                        latestPerasCertOnChainRound perasState
+                    }
+              }
+      )
+      $ mustMatchNS
+        "HeaderState"
+        (distribHeaderState headerState)
+        (State.tip (hardForkLedgerStatePerEra ledgerState))
 
 -- | Precondition: the 'headerStateTip' and 'headerStateChainDep' should be from
 -- the same era. In practice, this is _always_ the case, unless the
