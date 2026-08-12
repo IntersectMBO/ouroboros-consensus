@@ -112,7 +112,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
@@ -233,11 +232,11 @@ getBlockComponentByPoint blockComponent pt m =
     (`getBlockComponent` blockComponent) <$> getBlockByPoint pt m
 
 getLatestPerasCertOnChainRound ::
-  LedgerSupportsPeras blk =>
   Model blk ->
   Maybe PerasRoundNo
-getLatestPerasCertOnChainRound m = do
-  getLatestPerasCertRound (ledgerState (currentLedger m))
+getLatestPerasCertOnChainRound _ = do
+  -- Placeholder until we finish rewiring this into the extended ledger state
+  Nothing
 
 hasBlockByPoint ::
   HasHeader blk =>
