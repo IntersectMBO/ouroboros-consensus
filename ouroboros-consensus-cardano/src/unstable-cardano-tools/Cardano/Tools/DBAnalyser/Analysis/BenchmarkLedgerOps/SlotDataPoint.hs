@@ -45,14 +45,15 @@ data SlotDataPoint
   , slotGap :: !Word64
   -- ^ Gap to the previous slot.
   , totalTime :: !Int64
-  -- ^ Elapsed time spent on the tables read and the 5 ledger
-  -- operations at 'slot'. Taken from GC.elapsed_ns.
+  -- ^ Elapsed time spent on the EB read, the tables read and the 5
+  -- ledger operations at 'slot'. Taken from GC.elapsed_ns.
   , mut :: !Int64
-  -- ^ Time the mutator ran during the tables read and the 5 ledger
-  -- operations at 'slot'. Taken from GC.mutator_elapsed_ns.
+  -- ^ Time the mutator ran during the EB read, the tables read and the
+  -- 5 ledger operations at 'slot'. Taken from GC.mutator_elapsed_ns.
   , gc :: !Int64
-  -- ^ Time spent in garbage collection during the tables read and the
-  -- 5 ledger operations at 'slot'. Taken from GC.gc_elapsed_ns.
+  -- ^ Time spent in garbage collection during the EB read, the tables
+  -- read and the 5 ledger operations at 'slot'. Taken from
+  -- GC.gc_elapsed_ns.
   , tableReadTime :: !Int64
   -- ^ Elapsed time spent on the tables read. 'totalTime' already
   -- counts this time. To get the time the 5 operations took on their
@@ -71,13 +72,15 @@ data SlotDataPoint
   -- GC.mutator_elapsed_ns, as 'mut_tableRead' is.
   , majGcCount :: !Word32
   -- ^ Total number of __major__ garbage collections that took place
-  -- during the tables read and the 5 ledger operations at 'slot'.
+  -- during the EB read, the tables read and the 5 ledger operations at
+  -- 'slot'.
   , minGcCount :: !Word32
   -- ^ Total number of __minor__ garbage collections that took place
-  -- during the tables read and the 5 ledger operations at 'slot'.
+  -- during the EB read, the tables read and the 5 ledger operations at
+  -- 'slot'.
   , allocatedBytes :: !Word64
-  -- ^ Allocated bytes during the tables read and the 5 ledger
-  -- operations at 'slot'.
+  -- ^ Allocated bytes during the EB read, the tables read and the 5
+  -- ledger operations at 'slot'.
   , mut_forecast :: !Int64
   -- ^ Difference of the GC.mutator_elapsed_ns field when computing the
   -- forecast.
