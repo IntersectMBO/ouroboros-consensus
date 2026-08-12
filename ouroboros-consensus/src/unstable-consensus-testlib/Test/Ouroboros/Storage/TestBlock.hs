@@ -108,10 +108,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras
-  ( LedgerStateSupportsPeras (..)
-  , LedgerSupportsPeras (..)
-  )
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -724,9 +721,6 @@ instance ValidateEnvelope TestBlock where
 instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
-
-instance LedgerSupportsPeras TestBlock where
-  getLatestPerasCertRound = latestPerasCertRound
 
 instance LedgerStateSupportsPeras (LedgerState TestBlock)
 

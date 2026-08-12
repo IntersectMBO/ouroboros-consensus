@@ -79,7 +79,6 @@ import Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , ledgerViewForecastAt
@@ -167,7 +166,6 @@ instance
 instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , LedgerSupportsPeras (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
   ) =>
