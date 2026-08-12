@@ -29,9 +29,8 @@ module Cardano.Tools.DBAnalyser.Leios
   , closureKeySets
 
     -- * Applying a whole block
-  , apForMode
   , applyBlockAtTip
-  , noBlockResolution
+  , applyBlockToTipForker
   , verifyCertRb
   ) where
 
@@ -286,25 +285,19 @@ applyClosure lcfg closureTxs parent tables =
  where
   stateBeforeEb = ledgerState parent `ltwith` castLedgerTables tables
 
--- | The 'Ap' that a 'LedgerApplicationMode' selects.
+-- | The 'LedgerDB.BlockApplicationMode' that a 'LedgerApplicationMode' selects.
 --
 -- The difference is not only the cost. On 'LedgerApply' the node verifies the
 -- Leios certificate of a cert-RB, and on 'LedgerReapply' it does not. See
 -- 'verifyCertRb'.
-apForMode :: LedgerApplicationMode -> blk -> LedgerDB.Ap IO (ExtLedgerState blk) blk
-apForMode = \case
-  LedgerApply -> LedgerDB.ApplyVal
-  LedgerReapply -> LedgerDB.ReapplyVal
-
--- | 'LedgerDB.applyBlock' resolves a block only for its @*Ref@ constructors, and
--- every caller here passes @*Val@. So no analysis ever reaches this.
-noBlockResolution :: LedgerDB.ResolveBlock IO blk
-noBlockResolution _ =
-  error "db-analyser: applyBlock asked to resolve a block, but every Ap is a *Val"
+blockApplicationMode :: LedgerApplicationMode -> LedgerDB.BlockApplicationMode
+blockApplicationMode = \case
+  LedgerApply -> LedgerDB.ValidateBlock
+  LedgerReapply -> LedgerDB.ReapplyBlock
 
 -- | Read the ledger state at the tip (with the UTxOs this block
 -- consumes) and apply the block to it via the node's own
--- 'LedgerDB.applyBlock'. Fails on any error: an invalid block, an
+-- 'LedgerDB.applyBlockToForker'. Fails on any error: an invalid block, an
 -- invalid Leios certificate, or an EB closure that is missing or
 -- won't apply.
 applyBlockAtTip ::
@@ -325,11 +318,30 @@ applyBlockAtTip leiosConn mode cfg ldb blk =
     let preState = oldLedgerSt `withLedgerTables` oldLedgerTbs
     applied <-
       either (error . show . LedgerDB.annLedgerErr) id
-        <$> LedgerDB.applyBlock
-          leiosConn
-          OmitLedgerEvents
-          (ExtLedgerCfg cfg)
-          (apForMode mode blk)
-          frk
-          noBlockResolution
+        <$> applyBlockToTipForker leiosConn mode cfg frk blk
     pure (preState, applied)
+
+-- | Apply the block to the given forker, in the given mode.
+applyBlockToTipForker ::
+  ( LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  ) =>
+  LeiosDbConnection IO ->
+  LedgerApplicationMode ->
+  TopLevelConfig blk ->
+  LedgerDB.Forker' IO blk ->
+  blk ->
+  IO
+    ( Either
+        (LedgerDB.AnnLedgerError (ExtLedgerState blk) blk)
+        (ExtLedgerState blk DiffMK)
+    )
+applyBlockToTipForker leiosConn mode cfg frk blk =
+  LedgerDB.applyBlockToForker
+    leiosConn
+    (blockApplicationMode mode)
+    OmitLedgerEvents
+    (ExtLedgerCfg cfg)
+    frk
+    blk

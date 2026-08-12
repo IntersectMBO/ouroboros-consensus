@@ -38,14 +38,13 @@ import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
 import Cardano.Tools.DBAnalyser.Leios
   ( ClosureApplied (..)
   , announcementAtPoint
-  , apForMode
   , applyBlockAtTip
+  , applyBlockToTipForker
   , applyClosure
   , blockWithCertifiedEbTxs
   , certifiedEbHash
   , certifiedEbTxSizes
   , closureKeySets
-  , noBlockResolution
   , parentAnnouncement
   , readEbClosure
   , verifyCertRb
@@ -575,14 +574,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
     LedgerDB.withTipForker
       ldb
       ( \frk -> do
-          result <-
-            LedgerDB.applyBlock
-              leiosDb
-              OmitLedgerEvents
-              (ExtLedgerCfg cfg)
-              (apForMode ledgerAppMode blk)
-              frk
-              noBlockResolution
+          result <- applyBlockToTipForker leiosDb ledgerAppMode cfg frk blk
           case result of
             Right newLedger -> do
               LedgerDB.forkerPush frk newLedger

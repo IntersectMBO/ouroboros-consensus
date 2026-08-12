@@ -46,11 +46,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
     -- * Validation
   , AnnLedgerError (..)
   , AnnLedgerError'
-  , Ap (..)
+  , BlockApplicationMode (..)
   , ResolveBlock
   , LeiosClosureApplied (..)
   , ResolveLeiosBlock (..)
-  , applyBlock
+  , applyBlockToForker
   , resolveAndApplyLeiosClosure
   , resolveLeiosBlock
   , SuccessForkerAction (..)
@@ -484,6 +484,45 @@ toRealPoint (ReapplyVal blk) = blockRealPoint blk
 toRealPoint (ApplyVal blk) = blockRealPoint blk
 toRealPoint (ReapplyRef rp) = rp
 toRealPoint (ApplyRef rp) = rp
+
+-- | Whether 'applyBlockToForker' validates the block, or reapplies a block that
+-- passed validation before.
+data BlockApplicationMode
+  = ValidateBlock
+  | ReapplyBlock
+
+-- | Apply one block to the given forker.
+--
+-- This is the entry point for a caller that holds the block itself. 'applyBlock'
+-- also takes a block by reference, and it is internal for that reason: a
+-- reference needs a 'ResolveBlock', and this function passes one that never runs.
+applyBlockToForker ::
+  forall m l blk.
+  ( ApplyBlock l blk
+  , MonadSTM m
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  , HasLedgerTables (LedgerState blk)
+  , l ~ ExtLedgerState blk
+  ) =>
+  LeiosDbConnection m ->
+  BlockApplicationMode ->
+  ComputeLedgerEvents ->
+  LedgerCfg l ->
+  Forker m l ->
+  blk ->
+  m (Either (AnnLedgerError l blk) (l DiffMK))
+applyBlockToForker leiosDb mode evs cfg fo blk =
+  applyBlock leiosDb evs cfg ap fo noResolution
+ where
+  ap = case mode of
+    ValidateBlock -> ApplyVal blk
+    ReapplyBlock -> ReapplyVal blk
+
+  -- 'applyBlock' resolves a block for its @*Ref@ constructors alone, and both
+  -- constructors above are @*Val@ ones.
+  noResolution _ =
+    error "applyBlockToForker: applyBlock asked to resolve a block"
 
 -- | Apply blocks to the given forker
 applyBlock ::
