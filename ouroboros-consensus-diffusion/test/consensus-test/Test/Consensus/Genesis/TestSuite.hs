@@ -42,7 +42,6 @@ import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -183,7 +182,6 @@ toTestTree ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk

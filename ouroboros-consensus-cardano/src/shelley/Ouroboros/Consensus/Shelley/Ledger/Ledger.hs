@@ -101,7 +101,7 @@ import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import Data.Coerce
 import Data.Functor.Identity
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.MemPack
 import qualified Data.Text as T
 import qualified Data.Text as Text
@@ -123,10 +123,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras
-  ( LedgerStateSupportsPeras (..)
-  , LedgerSupportsPeras (..)
-  )
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (..))
@@ -924,11 +921,6 @@ instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
 {-------------------------------------------------------------------------------
   LedgerSupportsPeras
 -------------------------------------------------------------------------------}
-
-instance LedgerSupportsPeras (ShelleyBlock proto era) where
-  getLatestPerasCertRound =
-    strictMaybeToMaybe
-      . shelleyLedgerLatestPerasCertRound
 
 instance LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era)) where
   getPoolDistr =
