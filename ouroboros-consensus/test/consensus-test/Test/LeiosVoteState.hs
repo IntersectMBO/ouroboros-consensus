@@ -1,6 +1,4 @@
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Test.LeiosVoteState (tests) where
 
