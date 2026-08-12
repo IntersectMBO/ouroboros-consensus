@@ -86,7 +86,7 @@ The user can limit the maximum number of blocks that db-analyser will process.
 
 Path to the node's SQLite Leios database, usually `DB_PATH/leios.db`.
 
-A Leios ranking block that carries a certificate has an empty body on the wire.
+A Praos block (a Leios ranking block) that carries a certificate has an empty body on the wire.
 Its transactions are in the endorser block (EB) that it certifies, and those live in the Leios database, not in the ImmutableDB.
 Pass this flag to analyse such a chain.
 Without it, an analysis stops at the first certifying block.
