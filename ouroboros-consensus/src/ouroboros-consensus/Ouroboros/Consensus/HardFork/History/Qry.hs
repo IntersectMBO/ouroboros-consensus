@@ -386,14 +386,12 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
   go (ERelSlotToPerasRoundNo expr) = runPerasEnabledT $ do
     SlotInEra relSlot <- lift $ go expr
     PerasEnabledT $
-      Just $
-        case eraPerasRoundLength of
-          NoPerasEnabled ->
-            NoPerasEnabled
-          PerasEnabled (PerasRoundLength roundLength) ->
-            PerasEnabled $
-              bimap PerasRoundNoInEra SlotInPerasRound $
-                relSlot `divMod` roundLength
+      case eraPerasRoundLength of
+        NoPerasEnabled -> Nothing
+        PerasEnabled (PerasRoundLength roundLength) ->
+          Just $ PerasEnabled $
+            bimap PerasRoundNoInEra SlotInPerasRound $
+              relSlot `divMod` roundLength
 
   -- Get era parameters
   --
