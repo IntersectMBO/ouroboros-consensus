@@ -118,7 +118,7 @@ newHashTableLeiosTxCache nshift k0 k1 = do
               _ -> Nothing
       , withLockedInsertUnappliedTx = \k ->
           MVar.modifyMVar stateVar $ \st -> do
-            fab <- k mempty (\fab txh sz () -> setTag ht tagAlreadyValidated fab txh sz)
+            fab <- k mempty (\fab txh sz () -> setTag ht tagAlreadyInserted fab txh sz)
             pure (st, fab)
       , withLockedInsertAppliedTx = \k ->
           MVar.modifyMVar_ stateVar $ \st -> do

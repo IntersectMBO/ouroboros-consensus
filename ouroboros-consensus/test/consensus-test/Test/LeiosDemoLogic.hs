@@ -57,7 +57,7 @@ tests =
             test_bodyNoOffer
         , testCase "per-EB request cap blocks further selection" $
             test_bodyPerEbCap
-        , testCase "two offering peers both selected (up to cap)" $
+        , testCase "offering peers selected up to the per-EB cap" $
             test_bodyTwoPeersOffer
         , testCase "global byte budget exhausted blocks further selection" $
             test_globalByteBudget
@@ -86,10 +86,10 @@ tests =
 -- meaning beyond identity.
 type Pid = Int
 
-peerA, peerB, peerC :: Pid
+peerA, peerB, _peerC :: Pid
 peerA = 0
 peerB = 1
-peerC = 2
+_peerC = 2
 
 test_singleMissingBody :: IO ()
 test_singleMissingBody =
@@ -111,10 +111,12 @@ test_bodyPerEbCap :: IO ()
 test_bodyPerEbCap =
   empty
     & withMissingBody (point 1 'a') 1024
-    & alreadyRequestedEbFrom (eb 'a') [peerA, peerB] -- default cap = 2
-    & offersBody peerC [eb 'a']
+    & alreadyRequestedEbFrom (eb 'a') [0 .. ebCap - 1] -- the per-EB cap is used up
+    & offersBody ebCap [eb 'a'] -- so this additional peer is not selected
     & runIteration
     & assertNoRequests
+ where
+  ebCap = maxRequestsPerEb demoLeiosFetchStaticEnv
 
 test_singleMissingTx :: IO ()
 test_singleMissingTx =
@@ -128,10 +130,12 @@ test_txPerTxCap :: IO ()
 test_txPerTxCap =
   empty
     & withMissingTx (point 1 'a') 0 (tx 'x') 500
-    & alreadyRequestedTxFrom (tx 'x') [peerA, peerB] -- default cap = 2
-    & offersTxs peerC [eb 'a']
+    & alreadyRequestedTxFrom (tx 'x') [0 .. txCap - 1] -- the per-tx cap is used up
+    & offersTxs txCap [eb 'a'] -- so this additional peer is not selected
     & runIteration
     & assertNoRequests
+ where
+  txCap = maxRequestsPerTx demoLeiosFetchStaticEnv
 
 test_bodyTwoPeersOffer :: IO ()
 test_bodyTwoPeersOffer =
@@ -140,7 +144,8 @@ test_bodyTwoPeersOffer =
     & offersBody peerA [eb 'a']
     & offersBody peerB [eb 'a']
     & runIteration
-    & assertRequestPeers [peerA, peerB]
+    -- two peers offer; the fetch logic selects up to the per-EB cap of them
+    & assertRequestPeerCount (min 2 (maxRequestsPerEb demoLeiosFetchStaticEnv))
 
 test_globalByteBudget :: IO ()
 test_globalByteBudget =
@@ -418,6 +423,13 @@ assertRequestPeers ::
   [pid] -> LeiosFetchDecisions pid -> IO ()
 assertRequestPeers expected (MkLeiosFetchDecisions m) =
   Set.fromList (Map.keys m) @?= Set.fromList (map MkPeerId expected)
+
+-- | Assert how many distinct peers received a request. Order-independent, so it
+-- holds for any 'maxRequestsPerEb' \/ 'maxRequestsPerTx': at a cap below the
+-- number of offering peers, /which/ peers win is a selection-order detail, but
+-- the count is not.
+assertRequestPeerCount :: Int -> LeiosFetchDecisions pid -> IO ()
+assertRequestPeerCount n (MkLeiosFetchDecisions m) = Map.size m @?= n
 
 ------------------------------------------------------------
 -- Fixture helpers
