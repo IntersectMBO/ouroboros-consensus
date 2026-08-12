@@ -226,28 +226,33 @@ in the immutable and volatile databases will be validated (see
 
 ### Examples
 
-The use of this tool requires a chain database together with the configuration
-files that were used (by `cadano-node`) to populate it (by means of chain
-syncing). Assuming you ran `cardano-node` on your machine, it is quite handy to
-save the location to the working directory from which it was run. Eg:
+The tool needs a chain database and the configuration files that
+`cardano-node` used to populate it. Both live in the data directory of
+the node.
+
+It is handy to save the path to that directory. For example:
 
 ```sh
-export NODE_HOME=/path/to/local/copy/of/cardano-node/working/dir/
+export NODE_DIR="/path/to/cardano-node-data/db-leios"
 ```
+
+That directory holds `config.json`, the genesis files, and `db/`.
+`db/` is the chain database. It holds `immutable/`, `volatile/`, `ledger/`, and,
+on a Leios chain, `leios.db`.
 
 #### Checking the Leios analyses
 
 `scripts/check-leios-analysis` runs `--count-tx-outputs` and `--show-block-txs-size` against a real Leios chain and checks their output.
-It needs a node data directory that holds `config.json` and `db/`, and it derives the rest from that.
+It takes `$NODE_DIR`, and it derives every other path from that.
 
 ```sh
-check-leios-analysis $NODE_HOME
+check-leios-analysis $NODE_DIR
 ```
 
 The development shell puts the script on `PATH`. Outside the shell:
 
 ```sh
-nix run .#check-leios-analysis -- $NODE_HOME
+nix run .#check-leios-analysis -- $NODE_DIR
 ```
 
 The two analyses read the Leios database by different paths, so their agreement on which blocks certify an EB is the main check.
@@ -260,25 +265,25 @@ That analysis maintains a ledger state, so it applies every block from the start
 So the check costs more time than every other check in the script.
 
 ```sh
-check-leios-analysis $NODE_HOME --benchmark
+check-leios-analysis $NODE_DIR --benchmark
 ```
 
 `--repro` adds `--repro-mempool-and-forge 1` to the run, and checks the EB columns of its output against `--show-block-txs-size`.
 That pass also applies every block from the start of the chain, and it fills a mempool as well.
 
 ```sh
-check-leios-analysis $NODE_HOME --repro
+check-leios-analysis $NODE_DIR --repro
 ```
 
 #### Saving a snapshot
 
-Suppose we have a local chain database in reachable from `$NODE_HOME`, and we
+Suppose we have a local chain database in reachable from `$NODE_DIR`, and we
 want to take a snapshot of the ledger state for slot `100`. Then we can run:
 
 ```sh
 cabal run exe:db-analyser -- \
-    --config $NODE_HOME/configuration/cardano/mainnet-config.json \
-    --db $NODE_HOME/mainnet/db \
+    --config $NODE_DIR/config.json \
+    --db $NODE_DIR/db \
     --store-ledger 100
 ```
 
@@ -287,8 +292,8 @@ If we had a previous snapshot of the ledger state, say corresponding to slot
 
 ```sh
 cabal run exe:db-analyser -- \
-    --config $NODE_HOME/configuration/cardano/mainnet-config.json \
-    --db $NODE_HOME/mainnet/db \
+    --config $NODE_DIR/config.json \
+    --db $NODE_DIR/db \
     --analyse-from 50 \
     --store-ledger 100
 ```
@@ -300,8 +305,8 @@ examples, one could run the tool as follows:
 
 ```sh
 cabal run exe:db-analyser -- \
-    --config $NODE_HOME/configuration/cardano/mainnet-config.json \
-    --db $NODE_HOME/mainnet/db \
+    --config $NODE_DIR/config.json \
+    --db $NODE_DIR/db \
     --analyse-from 100 \
     --benchmark-ledger-ops \
     --out-file ledger-ops-cost.csv
@@ -312,8 +317,8 @@ specify the application of how many blocks we want to process. Eg:
 
 ```sh
 cabal run exe:db-analyser -- \
-    --config $NODE_HOME/configuration/cardano/mainnet-config.json \
-    --db $NODE_HOME/mainnet/db \
+    --config $NODE_DIR/config.json \
+    --db $NODE_DIR/db \
     --analyse-from 100 \
     --benchmark-ledger-ops \
     --out-file ledger-ops-cost.csv \
