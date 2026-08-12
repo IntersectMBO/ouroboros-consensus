@@ -280,6 +280,13 @@ data MempoolAndForgeRepro = MempoolAndForgeRepro
   -- ^ Total time spent in the mutator when reading the closure of the certified EB
   , gcEbRead :: Int64
   -- ^ Total time spent in gc when reading the closure of the certified EB
+  , durEbTableRead :: IOLike.DiffTime
+  -- ^ Monotonic time of the value read. That read gets the ledger values that
+  -- the transactions of the closure consume. 'durEbApply' excludes it.
+  , mutEbTableRead :: Int64
+  -- ^ Total time spent in the mutator during the value read
+  , gcEbTableRead :: Int64
+  -- ^ Total time spent in gc during the value read
   , durEbApply :: IOLike.DiffTime
   -- ^ Monotonic time to apply the closure of the certified EB
   , mutEbApply :: Int64
@@ -365,6 +372,9 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
           , durEbRead
           , mutEbRead
           , gcEbRead
+          , durEbTableRead
+          , mutEbTableRead
+          , gcEbTableRead
           , durEbApply
           , mutEbApply
           , gcEbApply
@@ -387,6 +397,9 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
         , "durEbRead " <> show durEbRead
         , "mutEbRead " <> show mutEbRead
         , "gcEbRead " <> show gcEbRead
+        , "durEbTableRead " <> show durEbTableRead
+        , "mutEbTableRead " <> show mutEbTableRead
+        , "gcEbTableRead " <> show gcEbTableRead
         , "durEbApply " <> show durEbApply
         , "mutEbApply " <> show mutEbApply
         , "gcEbApply " <> show gcEbApply
@@ -1175,16 +1188,21 @@ reproMempoolForge numBlks env = do
                 Nothing -> pure (([], 0), 0, 0, 0)
                 Just ebHash -> timed $ readEbClosure leiosDb ebHash
 
-            -- The forge thread of a certifying block applies the closure of the
-            -- certified EB to the parent, and it ticks the result. Read the
-            -- values that the closure consumes, then apply it. 'applyClosure'
-            -- forces every transaction, so this figure holds the
-            -- deserialisation that the read above left as thunks.
+            -- The forge thread of a certifying block reads the ledger
+            -- values that the txs of the certified EB consume. Then
+            -- it applies the closure of that EB to 'st' (the ledger
+            -- state at the parent block) before the tick. Last it
+            -- ticks the result.
             --
-            -- On a block that certifies no EB the closure is empty.
-            -- 'applyClosure' then returns the parent unchanged, and the read of
-            -- the values is a read of no keys.
-            tables <- LedgerDB.forkerReadTables forker (closureKeySets closureTxs)
+            -- 'resolveAndApplyLeiosClosure' makes the value read and the
+            -- application. This pass measures each one, so each one has its own
+            -- columns. 'applyClosure' forces every tx. Its figure holds the
+            -- deserialisation that the LeiosDb read above left as thunks.
+            --
+            -- On a block that certifies no EB the closure is empty. The value
+            -- read then asks for no keys. 'applyClosure' returns 'st' unchanged.
+            (tables, durEbTableRead, mutEbTableRead, gcEbTableRead) <-
+              timed $ LedgerDB.forkerReadTables forker (closureKeySets closureTxs)
             (ClosureApplied{caStateAfterEb, caClosureDiff}, durEbApply, mutEbApply, gcEbApply) <-
               timed $ applyClosure lCfg closureTxs st tables
 
@@ -1236,6 +1254,9 @@ reproMempoolForge numBlks env = do
                   , durEbRead
                   , mutEbRead
                   , gcEbRead
+                  , durEbTableRead
+                  , mutEbTableRead
+                  , gcEbTableRead
                   , durEbApply
                   , mutEbApply
                   , gcEbApply

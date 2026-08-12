@@ -182,9 +182,16 @@ Lastly the user can provide the analysis that should be run on the chain:
   - time spent in the mutator in microseconds
   - time spent in GC in microseconds
 
-  The steps are: the read of the certified EB closure, the application of that
-  closure, the tick of the ledger state, and the mempool snapshot.
-  The first two steps read 0 on a block that certifies no EB.
+  The steps are:
+  - the read of the certified EB closure from the Leios database
+  - the read of the ledger values that the transactions of that closure consume
+  - the application of that closure
+  - the tick of the ledger state
+  - the mempool snapshot
+
+  Each step has its own columns.
+  So the figure for the application covers the application alone.
+  The first three steps read 0 on a block that certifies no EB.
 
   Currently, only NUM=1 or NUM=2 are supported. Note that with NUM=2, even for a
   fully valid chain (like mainnet), you might get an error like this:
