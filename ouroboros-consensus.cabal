@@ -189,6 +189,7 @@ library
     Ouroboros.Consensus.Ledger.Dual
     Ouroboros.Consensus.Ledger.Extended
     Ouroboros.Consensus.Ledger.Inspect
+    Ouroboros.Consensus.Ledger.Peras
     Ouroboros.Consensus.Ledger.Query
     Ouroboros.Consensus.Ledger.Query.Version
     Ouroboros.Consensus.Ledger.SupportsMempool
