@@ -367,7 +367,7 @@ instance
   SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto)
   where
   translateEra ctxt (Comp (Flip st)) = do
-    let ShelleyLedgerState tip state _transition tables latestPerasCertRound = st
+    let ShelleyLedgerState tip state _transition tables = st
     tip' <- mapM (SL.translateEra ctxt) tip
     state' <- SL.translateEra ctxt state
     return $
@@ -378,7 +378,6 @@ instance
             , shelleyLedgerState = state'
             , shelleyLedgerTransition = ShelleyTransitionInfo 0
             , shelleyLedgerTables = translateShelleyTables tables
-            , shelleyLedgerLatestPerasCertRound = latestPerasCertRound
             }
 
 translateShelleyTables ::
