@@ -429,8 +429,9 @@ showSlotBlockNo AnalysisEnv{db, registry, startFrom, limit, tracer} =
   Analysis: show total number of tx outputs per block
 -------------------------------------------------------------------------------}
 
--- | A cert-RB has an empty wire body, so its own count is 0. Its txs are in the
--- EB it certifies, which the EB count reports.
+-- | A cert-RB has an empty wire body, so its own count is 0. The txs that it
+-- causes the ledger to apply are in the EB that it certifies. The EB count
+-- reports those.
 countTxOutputs ::
   forall blk.
   (HasAnalysis blk, ResolveLeiosBlock blk) =>
@@ -490,8 +491,9 @@ showHeaderSize AnalysisEnv{db, registry, startFrom, limit, tracer} = do
   Analysis: show the total transaction sizes in bytes per block
 -------------------------------------------------------------------------------}
 
--- | A cert-RB has an empty wire body, so its own tx columns are 0. Its txs are
--- in the EB it certifies, which the EB columns report.
+-- | A cert-RB has an empty wire body, so its own tx columns are 0. The txs that
+-- it causes the ledger to apply are in the EB that it certifies. The EB columns
+-- report those.
 showBlockTxsSize ::
   forall blk.
   (HasAnalysis blk, ResolveLeiosBlock blk) =>
@@ -791,9 +793,10 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
       ) <-
       LedgerDB.withTipForker ledgerDB $ \frk -> do
         st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-        -- Verify the certificate before the EB it names is read, which is where
-        -- 'LedgerDB.applyBlock' verifies it. The closure below applies without
-        -- validation, so this is the only check its txs ever get.
+        -- Verify the certificate before the read of the EB that it names, which
+        -- is where 'LedgerDB.applyBlock' verifies it. The closure below applies
+        -- without validation, so the certificate is the only check that the EB
+        -- txs get in this pass.
         --
         -- The check runs inside the RTS-stats window, so its cost lands in
         -- 'DP.totalTime' and 'DP.mut'. It has no column of its own.

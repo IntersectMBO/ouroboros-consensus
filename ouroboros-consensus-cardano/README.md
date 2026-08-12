@@ -204,7 +204,8 @@ Lastly the user can provide the analysis that should be run on the chain:
   want to test the performance impact of a more filled mempool.
 
   On a Leios chain, pass `--leios-db`.
-  A block that certifies an EB has an empty body, so its transactions are in the Leios database.
+  A block that certifies an EB has an empty body.
+  The txs that it causes the ledger to apply are in the EB that it certifies, and the Leios database holds them.
   This pass adds them to the mempool, and it reports their count and their total size in the `ebNumTxs` and `ebTxsByteSize` columns.
 
   On such a block the pass follows the forge thread.
