@@ -55,7 +55,7 @@ import LeiosDemoTypes
   , HasLeiosVoting (..)
   , LeiosExtValidationError (..)
   , LeiosPoint
-  , leiosMempoolSize
+  , maxEBClosureSize
   , minCertificationThreshold
   , pointEbHash
   , verifyLeiosCert
@@ -1010,6 +1010,17 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
 
 data ReproMempoolForgeHowManyBlks = ReproMempoolForgeOneBlk | ReproMempoolForgeTwoBlks
 
+-- | Mempool capacity override for 'reproMempoolForge' on a Leios chain.
+--
+-- 'Mempool.computeMempoolCapacity' reads this as a number of blocks, not as a
+-- byte budget: it divides by the ranking-block capacity and rounds up. So the
+-- value only has to exceed one EB closure, which is what two closures give.
+--
+-- 'LeiosDemoTypes' exported a constant for this until the node stopped
+-- overriding the mempool capacity, so the tool now owns it.
+leiosMempoolSize :: LedgerSupportsMempool.ByteSize32
+leiosMempoolSize = maxEBClosureSize <> maxEBClosureSize
+
 reproMempoolForge ::
   forall blk.
   ( HasAnalysis blk
@@ -1047,7 +1058,7 @@ reproMempoolForge numBlks env = do
       lCfg
       -- This pass models the mempool of a forging node, so the capacity must
       -- match. A Leios node holds a whole EB closure, and a closure reaches
-      -- 12 MB ('leiosEBMaxClosureSize'). One mebibyte is not enough.
+      -- 12 MB ('maxEBClosureSize'). One mebibyte is not enough.
       --
       -- The capacity is a ceiling, not a target. This pass adds the
       -- transactions of one or two blocks, then it flushes them after each
