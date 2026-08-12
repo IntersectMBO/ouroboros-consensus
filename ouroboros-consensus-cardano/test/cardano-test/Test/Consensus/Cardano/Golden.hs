@@ -10,8 +10,8 @@ module Test.Consensus.Cardano.Golden (tests) where
 
 import qualified Data.ByteString as BS
 import LeiosDemoTypes
-  ( LeiosVote
-  , LeiosSeatId (..)
+  ( LeiosSeatId (..)
+  , LeiosVote
   , RbHash (..)
   , encodeLeiosVote
   , signLeiosVote
