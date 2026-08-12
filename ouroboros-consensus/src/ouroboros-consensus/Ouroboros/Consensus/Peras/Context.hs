@@ -17,6 +17,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 -- TODO: remove this after getting rid of the degenerate 'BlockSupportsPeras'
 -- instance that renders some of the constraints here redundant.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
@@ -498,7 +499,8 @@ withResolvedRoundNo handle roundNo k = do
 -- not support Peras and never try to resolve a 'PerasRoundNo' into a
 -- 'PerasEpochContext'.
 class
-  ( HasHardForkHistory blk
+  ( All Top (HardForkIndices blk)
+  , HasHardForkHistory blk
   , LedgerStateSupportsPeras (LedgerState blk)
   , LedgerStateSupportsPeras (Ticked LedgerState blk)
   , ChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk))
@@ -549,7 +551,6 @@ class
   -- | Inject an era-indexed 'EpochToPerasRoundInfo' into an opaque
   -- 'MaybeEraIndexedEpochToPerasRoundInfo' of this block.
   toMaybeEraIndexedEpochToPerasRoundInfo ::
-    All Top (HardForkIndices blk) =>
     proxy blk ->
     EraIndexed (HardForkIndices blk) EpochToPerasRoundInfo ->
     MaybeEraIndexedEpochToPerasRoundInfo blk
@@ -661,9 +662,7 @@ mkBoundedPerasEpochContextWith
 --      and only create a 'BoundedPerasEpochContext' from 'Ticked LedgerState'
 --      and 'Ticked HeaderState'.
 initPerasEpochContextResolver ::
-  ( All Top (HardForkIndices blk)
-  , StateSupportsPerasEpochContext blk
-  ) =>
+  StateSupportsPerasEpochContext blk =>
   LedgerConfig blk ->
   LedgerState blk EmptyMK ->
   HeaderState blk ->
@@ -706,9 +705,7 @@ initPerasEpochContextResolver ledgerConfig ledgerState headerState =
 --      need to carry exactly the same information. We tried, and it didn't
 --      improve readability.
 tickPerasEpochContextResolver ::
-  ( All Top (HardForkIndices blk)
-  , StateSupportsPerasEpochContext blk
-  ) =>
+  StateSupportsPerasEpochContext blk =>
   LedgerConfig blk ->
   -- | The fields needed from the previous 'ExtLedgerState' (before ticking)
   (PerasEpochContextResolver blk, LedgerState blk EmptyMK, HeaderState blk) ->
@@ -769,8 +766,7 @@ tickPerasEpochContextResolver
 -- ticking ('tickPerasEpochContextResolver').
 embedBoundedEpochContext ::
   forall blk ledgerState chainDepState.
-  ( All Top (HardForkIndices blk)
-  , LedgerStateSupportsPeras ledgerState
+  ( LedgerStateSupportsPeras ledgerState
   , ChainDepStateSupportsPeras chainDepState
   , StateSupportsPerasEpochContext blk
   ) =>
