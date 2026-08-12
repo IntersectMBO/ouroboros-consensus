@@ -91,7 +91,7 @@ import tempfile
 import time
 from collections import namedtuple
 
-OutputRow = namedtuple("OutputRow", "block_no slot cumulative block_outputs eb_outputs")
+CountRow = namedtuple("CountRow", "block_no slot cumulative block_outputs eb_outputs")
 SizeRow = namedtuple("SizeRow", "slot block_txs block_bytes eb_txs eb_bytes")
 
 COUNT_RE = re.compile(
@@ -182,31 +182,29 @@ def node_paths(node_dir):
 def resolve_db_analyser(given):
     """Find the db-analyser binary.
 
-    Prefers a cabal build over the one nix supplies, so a run from inside the
-    development shell tests what the caller just compiled.
+    Reads the --db-analyser flag, then the DB_ANALYSER variable, then PATH. This
+    script runs db-analyser and it never builds one. To test a build of your own,
+    put it first: `cabal list-bin db-analyser` names the binary that a build in
+    the development shell produced.
     """
     if given:
         if not os.access(given, os.X_OK):
             fail(f"--db-analyser {given} is not executable")
         return given
 
-    if shutil.which("cabal"):
-        result = subprocess.run(
-            ["cabal", "list-bin", "db-analyser"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
+    from_env = os.environ.get("DB_ANALYSER")
+    if from_env:
+        if not os.access(from_env, os.X_OK):
+            fail(f"DB_ANALYSER {from_env} is not executable")
+        return from_env
 
-    fallback = os.environ.get("DB_ANALYSER_FALLBACK")
-    if fallback:
-        return fallback
+    on_path = shutil.which("db-analyser")
+    if on_path:
+        return on_path
 
     fail(
-        "cannot find db-analyser. Pass --db-analyser PATH, or run inside "
-        "`nix develop` so that `cabal list-bin db-analyser` works, or set "
-        "DB_ANALYSER_FALLBACK."
+        "cannot find db-analyser. Pass --db-analyser PATH, set DB_ANALYSER, or "
+        "put db-analyser on PATH. `nix run .#check-leios-analysis` supplies one."
     )
 
 
@@ -663,7 +661,7 @@ def main():
         db_analyser, paths, out_dir, "show-block-txs-size", args.num_blocks_to_process
     )
 
-    count_rows = parse(count_out, COUNT_RE, OutputRow)
+    count_rows = parse(count_out, COUNT_RE, CountRow)
     size_rows = parse(size_out, SIZE_RE, SizeRow)
     print()
 

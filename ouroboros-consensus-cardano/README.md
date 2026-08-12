@@ -245,11 +245,18 @@ on a Leios chain, `leios.db`.
 `scripts/check-leios-analysis` runs `--count-tx-outputs` and `--show-block-txs-size` against a real Leios chain and checks their output.
 It takes `$NODE_DIR`, and it derives every other path from that.
 
+The script runs `db-analyser` and it never builds one.
+It reads the `--db-analyser` flag, then the `DB_ANALYSER` variable, then `PATH`.
+
+The development shell puts the script on `PATH`, and it puts no `db-analyser` there.
+So name the binary that your own build produced:
+
 ```sh
+export DB_ANALYSER="$(cabal list-bin db-analyser)"
 check-leios-analysis $NODE_DIR
 ```
 
-The development shell puts the script on `PATH`. Outside the shell:
+Outside the shell, `nix run` supplies a `db-analyser` on `PATH`:
 
 ```sh
 nix run .#check-leios-analysis -- $NODE_DIR
