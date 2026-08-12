@@ -173,6 +173,7 @@ library
     Ouroboros.Consensus.HardFork.Combinator.State.Lift
     Ouroboros.Consensus.HardFork.Combinator.State.Types
     Ouroboros.Consensus.HardFork.Combinator.Translation
+    Ouroboros.Consensus.HardFork.Combinator.Util
     Ouroboros.Consensus.HardFork.History
     Ouroboros.Consensus.HardFork.History.Caching
     Ouroboros.Consensus.HardFork.History.EpochInfo
