@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE Rank2Types #-}
 
 -- | The LeiosTxCache tracks txs that were acquired because a /recent/ EB
@@ -98,8 +99,11 @@ newPureLeiosTxCache = do
           idx <- MVar.readMVar var
           pure $! Pure.lookupBody ebh idx
       , withLockedInsertUnappliedTx = \k ->
-          MVar.modifyMVar_ var $ \idx ->
-            k idx (\idx' txh a -> pure $! Pure.insertUnappliedTx txh a idx')
+          MVar.modifyMVar var $ \idx ->
+            k (idx, mempty) (\(!idx', !fab) txh sz a ->
+              let (idx'', prior) = Pure.insertUnappliedTx txh a idx'
+                  fab' = fab <> bucketTxArrival prior sz
+               in idx'' `seq` fab' `seq` pure (idx'', fab'))
       , withLockedInsertAppliedTx = \k ->
           MVar.modifyMVar_ var $ \idx ->
             k idx (\idx' txh v -> pure $! Pure.insertAppliedTx txh v idx')
@@ -119,7 +123,7 @@ nullLeiosTxCache =
     , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
     , insertBody = \_ebh _b _nil _snoc -> pure Nothing
     , lookupBody = \_ebh -> pure Nothing
-    , withLockedInsertUnappliedTx = \k -> k () (\w _txh _a -> pure w)
+    , withLockedInsertUnappliedTx = \k -> k mempty (\fab _txh sz _a -> pure (fab <> bucketTxArrival TxWasUntracked sz))
     , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)
     , withLookupTx = \k -> k (\_txh -> pure Nothing)
     }

@@ -29,12 +29,14 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoTypes (EbHash, RbHash, TxHash (..))
+import LeiosDemoTypes (BytesSize, EbHash, FetchArrivalBytes, RbHash, TxHash (..))
 import LeiosTxCache.API
   ( BodyState (..)
   , LeiosTxCache (..)
   , RefCount (..)
   , ReferencesTxsByHash (..)
+  , TxArrivalPrior (..)
+  , bucketTxArrival
   , maxAnnouncementCount
   , mkInsertBodySummary
   )
@@ -114,12 +116,12 @@ newHashTableLeiosTxCache nshift k0 k1 = do
               Just (BodyAlreadyInserted _ b) -> Just b
               _ -> Nothing
       , withLockedInsertUnappliedTx = \k ->
-          MVar.modifyMVar_ stateVar $ \st -> do
-            _ <- k () (\_ txh _ -> setTag ht tagAlreadyInserted txh)
-            pure st
+          MVar.modifyMVar stateVar $ \st -> do
+            fab <- k mempty (\fab txh sz () -> setTag ht tagAlreadyValidated fab txh sz)
+            pure (st, fab)
       , withLockedInsertAppliedTx = \k ->
           MVar.modifyMVar_ stateVar $ \st -> do
-            _ <- k () (\_ txh _ -> setTag ht tagAlreadyValidated txh)
+            () <- k () (\() txh () -> setTag_ ht tagAlreadyValidated txh)
             pure st
       , withLookupTx = \k ->
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
@@ -330,14 +332,27 @@ decTx ht txh = do
       | otherwise -> HT.insert ht key (mkVal (valRefcount w - 1) (valTag w)) >> pure False
 
 -- | Set a present tx's state tag, preserving its refcount; no-op if absent.
-setTag :: PrimMonad m => HT.MutableHashTable (PrimState m) -> Word64 -> TxHash -> m ()
-{-# SPECIALIZE setTag :: HT.MutableHashTable (PrimState IO) -> Word64 -> TxHash -> IO () #-}
-setTag ht tag txh = do
+setTag_ :: PrimMonad m => HT.MutableHashTable (PrimState m) -> Word64 -> TxHash -> m ()
+{-# SPECIALISE setTag_ :: HT.MutableHashTable (PrimState IO) -> Word64 -> TxHash -> IO () #-}
+setTag_ ht tag txh = do
   let key = toKey txh
   mv <- HT.lookup ht key
   case mv of
     Nothing -> pure ()
     Just w -> HT.insert ht key (mkVal (valRefcount w) tag)
+
+-- | Like 'setTag', but also maintains a 'FetchArrivalBytes'
+setTag :: PrimMonad m => HT.MutableHashTable (PrimState m) -> Word64 -> FetchArrivalBytes -> TxHash -> BytesSize -> m FetchArrivalBytes
+{-# SPECIALISE setTag :: HT.MutableHashTable (PrimState IO) -> Word64 -> FetchArrivalBytes -> TxHash -> BytesSize -> IO FetchArrivalBytes #-}
+setTag ht tag fab txh sz = do
+  let key = toKey txh
+  mv <- HT.lookup ht key
+  case mv of
+    Nothing -> pure $! fab <> bucketTxArrival TxWasUntracked sz
+    Just w -> do
+      HT.insert ht key (mkVal (valRefcount w) tag)
+      let !cls = if valTag w == tagNotYetInserted then TxWasNotYetInserted else TxWasAlreadyHeld
+      pure $! fab <> bucketTxArrival cls sz
 
 lookupOne :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m (Maybe (Either () ()))
 {-# SPECIALIZE lookupOne ::

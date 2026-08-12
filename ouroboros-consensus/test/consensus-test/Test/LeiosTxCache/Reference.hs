@@ -195,7 +195,7 @@ test_lookupBodyEvicted = do
 
 test_unapplied :: Assertion
 test_unapplied =
-  lookupTx (mkTxHash 10) (insertUnappliedTx (mkTxHash 10) 7 (body 1 [10] (ann 1 1 1 empty)))
+  lookupTx (mkTxHash 10) (fst (insertUnappliedTx (mkTxHash 10) 7 (body 1 [10] (ann 1 1 1 empty))))
     @?= Just (Left 7)
 
 test_applied :: Assertion
@@ -205,12 +205,12 @@ test_applied =
 
 test_txUnreferenced :: Assertion
 test_txUnreferenced =
-  lookupTx (mkTxHash 10) (insertUnappliedTx (mkTxHash 10) 7 empty) @?= Nothing
+  lookupTx (mkTxHash 10) (fst (insertUnappliedTx (mkTxHash 10) 7 empty)) @?= Nothing
 
 test_preserveRc :: Assertion
 test_preserveRc = do
   let idx0 = body 2 [10] (body 1 [10] (ann 2 2 2 (ann 1 1 1 empty)))
-      idx = insertUnappliedTx (mkTxHash 10) 7 idx0
+      idx = fst (insertUnappliedTx (mkTxHash 10) 7 idx0)
   (txRC 10 idx, lookupTx (mkTxHash 10) idx) @?= (Just (MkRefCount 2), Just (Left 7))
 
 {-------------------------------------------------------------------------------
@@ -339,7 +339,7 @@ applyOp :: Op -> Idx -> Idx
 applyOp op = case op of
   OpAnn s r e -> ann s r e
   OpBody e ts -> body e ts
-  OpUnappliedTx t -> insertUnappliedTx (mkTxHash t) 0
+  OpUnappliedTx t -> fst . insertUnappliedTx (mkTxHash t) 0
   OpAppliedTx t -> insertAppliedTx (mkTxHash t) 0
 
 genW :: Num a => Int -> Int -> Gen a

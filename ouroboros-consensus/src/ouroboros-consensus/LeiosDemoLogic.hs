@@ -95,6 +95,10 @@ import LeiosDemoTypes
   , TxHash (..)
   , hashLeiosEb
   , hashLeiosTx
+  , fetchArrivalEvicted
+  , fetchArrivalExtra
+  , fetchArrivalGood
+  , fetchArrivalInvalid
   , leiosEbBytesSize
   , leiosEbTxs
   , maxTxsPerEb
@@ -683,6 +687,11 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
   let MkLeiosBlockRequest point ebBytesSize = req
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   let MkLeiosPoint _ebSlot ebHash = point
+  let ebBytesSize' = leiosEbBytesSize eb
+  -- A failed-validation body: attribute the whole body to 'fabInvalid'.
+  let invalidReply reason =
+        traceWith ktracer (TraceLeiosFetchBodyArrival (fetchArrivalInvalid ebBytesSize'))
+          >> error reason
   do
     -- FIXME: 'ebBytesSize' here is the size we recorded from the peer
     -- offer at 'MsgLeiosBlockOffer' time (carried through the request),
@@ -691,12 +700,11 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
     -- implemented; once they are, validate against the announced size
     -- so that a peer cannot poison this check by sending a bad-size
     -- offer first.
-    let ebBytesSize' = leiosEbBytesSize eb
     when (ebBytesSize' /= ebBytesSize) $ do
-      error $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
+      invalidReply $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
     let ebHash' = hashLeiosEb eb
     when (ebHash' /= ebHash) $ do
-      error $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
+      invalidReply $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
     -- Every referenced tx must be unique: 'reverseEbIndexByTx' records one
     -- offset per (tx, EB), so a duplicate desyncs it from 'missingEbTxs'.
     let MkLeiosEb v = eb
@@ -705,16 +713,13 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
             Map.filter (> (1 :: Int)) $
               Map.fromListWith (+) [(txh, 1) | (txh, _) <- V.toList v]
     when (not (null duplicateTxHashes)) $ do
-      error $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
+      invalidReply $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
   -- ingest it
-  MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    -- Skip if we already hold this EB's body (a 'lookupBody' hit); otherwise
-    -- persist it (LeiosDb before cache) and enqueue only the txs we still need to
-    -- fetch (the misses).
+  bodyClass <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     novel <- isNothing <$> txCache.lookupBody ebHash
-    mbMisses <- if not novel then pure Nothing else do
+    (bodyClass, mbMisses) <- if not novel then pure (fetchArrivalExtra ebBytesSize', Nothing) else do
       -- TODO don't hold the outstanding mvar during this IO
-      mbMisses <- traceException tracer TraceLeiosPeerDbException $ do
+      mbMissesFromBody <- traceException tracer TraceLeiosPeerDbException $ do
         -- FIXME: Once proper EB announcements are wired in, the point
         -- MUST already be present here (announcement handling inserts
         -- it) and this should become an assertion. Today we still tolerate
@@ -734,12 +739,13 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
         forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
         pure $ fmap snd mbSummaryMisses
-      case mbMisses of
-        Just misses -> pure (Just misses)
+      case mbMissesFromBody of
+        -- 'BodyNotYetInserted': the announcement was present and we filled it.
+        Just misses -> pure (fetchArrivalGood ebBytesSize', Just misses)
         Nothing -> do
-          -- Backstop: body whose announcement is not in the LeiosTxCache (and
-          -- so its insert into the cache was a no-op). Classify its txs
-          -- directly.
+          -- Announcement absent (assumed present once, since evicted): the
+          -- cache insert was a no-op. Backstop: classify the txs directly to
+          -- build the misses.
           let MkLeiosEb v = eb
           misses <- withLookupTx txCache $ \look ->
             V.ifoldM
@@ -751,7 +757,7 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
               )
               IntMap.empty
               v
-          pure (Just misses)
+          pure (fetchArrivalEvicted ebBytesSize', Just misses)
     -- update NodeKernel state
     --
     -- 'refundEbRequest' reverses this peer's per-request accounting (but skips
@@ -781,8 +787,9 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
                         (Leios.reverseEbIndexByTx outstanding)
                         misses
                   }
-    pure outstanding'
+    pure (outstanding', bodyClass)
   void $ MVar.tryPutMVar readyVar ()
+  traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
 
 -----
@@ -893,16 +900,21 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
   -- TODO: could validate the returned point + bitmaps too (added to response recently)
   let MkLeiosBlockTxsRequest point bitmaps txHashes = req
   let txBytess = V.map cbor txs
+  let batchBytes = V.sum (V.map BS.length txBytess)
+  -- A failed-validation batch: attribute the whole batch to 'fabInvalid'.
+  let invalidReply reason =
+        traceWith ktracer (TraceLeiosFetchTxsArrival (fetchArrivalInvalid (fromIntegral batchBytes)))
+          >> error reason
   do
     when (V.length txs /= V.length txHashes) $ do
-      error $ "MsgLeiosBlockTxs length mismatch: " ++ show (V.length txs, V.length txHashes)
+      invalidReply $ "MsgLeiosBlockTxs length mismatch: " ++ show (V.length txs, V.length txHashes)
     let txHashes' = V.map hashLeiosTx txs
     when (txHashes' /= txHashes) $ do
       let mismatches =
             V.toList $
               V.findIndices id $
                 V.zipWith (/=) txHashes txHashes'
-      error $ "MsgLeiosBlockTxs hash mismatches: " ++ show mismatches
+      invalidReply $ "MsgLeiosBlockTxs hash mismatches: " ++ show mismatches
   let nextOffset = \case
         [] -> Nothing
         (idx, bitmap) : k -> case popLeftmostOffset bitmap of
@@ -911,13 +923,20 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
             Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
       offsets = unfoldr nextOffset bitmaps
   -- ingest
-  traceException tracer TraceLeiosPeerDbException $ do
+  txArrival <- traceException tracer TraceLeiosPeerDbException $ do
     completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
     forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-    -- crucially: add the txs to the TxCacheIndex _after_ they've been written
-    -- to the LeiosDb, since it's currently what the TxCacheIndex is indexing
-    withLockedInsertUnappliedTx txCache $ \z step ->
-      foldM (\acc txh -> step acc txh ()) z txHashes
+    -- crucially: insert the txs into the TxCacheIndex _after_ they've been
+    -- written to the LeiosDb, since that's what the TxCacheIndex currently
+    -- indexes. The handle buckets each tx's bytes by its prior state in the same
+    -- locked pass -- coherent under concurrent duplicate deliveries; the returned
+    -- partition sums to the batch size.
+    withLockedInsertUnappliedTx txCache $ \w0 step ->
+      V.foldM'
+        (\w (txh, sz) -> step w txh sz ())
+        w0
+        (V.zip txHashes (V.map (fromIntegral . BS.length) txBytess))
+  traceWith ktracer $ TraceLeiosFetchTxsArrival txArrival
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let removeTxFromMissing txHash mtxs =

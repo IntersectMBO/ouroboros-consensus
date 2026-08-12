@@ -70,6 +70,7 @@ import LeiosTxCache.API
   , InsertBodySummary
   , RefCount (..)
   , ReferencesTxsByHash (..)
+  , TxArrivalPrior (..)
   , maxAnnouncementCount
   , mkInsertBodySummary
   )
@@ -352,18 +353,16 @@ insertBody ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
         w' = if miss then snoc w nn txh sz else w
      in ((nn + 1, tt + dt, aa + da, vv + dv, w'), ts')
 
--- | Record the payload of a fetched-but-not-yet-applied tx, without changing its
--- refcount. A no-op if no inserted body references this tx.
-insertUnappliedTx :: TxHash -> a -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
-insertUnappliedTx txh a idx =
-  MkLeiosTxCacheIndex
-    { announcementState = announcementState idx
-    , announcementCount = announcementCount idx
-    , bodyState = bodyState idx
-    , txState = Map.alter upd txh (txState idx)
-    , prunedSlot = prunedSlot idx
-    }
+-- | Record the payload of a fetched-but-not-yet-applied tx
+insertUnappliedTx ::
+  TxHash -> a -> LeiosTxCacheIndex a v b -> (LeiosTxCacheIndex a v b, TxArrivalPrior)
+insertUnappliedTx txh a idx = (idx{txState = txState'}, prior)
  where
+  (prior, txState') = Map.alterF (\mv -> (classify mv, upd mv)) txh (txState idx)
+  classify = \case
+    Nothing -> TxWasUntracked
+    Just (TxNotYetInserted _) -> TxWasNotYetInserted
+    Just _ -> TxWasAlreadyHeld
   upd Nothing = Nothing
   upd (Just tx) = Just (TxAlreadyInserted (L.view txRefCountL tx) a)
 

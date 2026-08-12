@@ -123,7 +123,7 @@ newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
           , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
           , insertBody = \_ebh _body _nil _snoc -> pure Nothing
           , lookupBody = \_ebh -> pure Nothing
-          , withLockedInsertUnappliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()
+          , withLockedInsertUnappliedTx = \k -> do _ <- k () (\w _txh _sz _ -> pure w); pure mempty
           , withLockedInsertAppliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()
           , withLookupTx = \k -> do
               (_, stmt) <- readIORef connRef
@@ -167,7 +167,7 @@ newSQLiteLeiosTxCacheWith pragmas path = do
           DB.exec db "COMMIT;"
           pure Nothing
       , lookupBody = \_ebh -> pure Nothing
-      , withLockedInsertUnappliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()
+      , withLockedInsertUnappliedTx = \k -> do _ <- k () (\w _txh _sz _ -> pure w); pure mempty
       , withLockedInsertAppliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()
       , withLookupTx = \k -> k lookupOne
       }

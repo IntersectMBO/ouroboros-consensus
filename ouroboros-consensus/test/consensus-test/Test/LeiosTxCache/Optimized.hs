@@ -20,7 +20,7 @@ import qualified Data.ByteString as BS
 import qualified Data.List as List
 import Data.Set (Set)
 import Data.Word (Word64, Word8)
-import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
+import LeiosDemoTypes (BytesSize, EbHash (..), FetchArrivalBytes, RbHash (..), TxHash (..))
 import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..), newPureLeiosTxCache)
 import LeiosTxCache.Optimized (newHashTableLeiosTxCache)
 import Test.LeiosTxCache.Optimized.MutableHashTable (Config (..), genConfig, salt0, salt1)
@@ -83,19 +83,29 @@ data Op
   | OpEvict !Word64
   deriving Show
 
--- | Apply an op, returning the eviction sets (the only observable output of an
--- op) when it is an announcement or an 'evictOlderThan'.
-applyOp :: H -> Op -> IO (Maybe (Set EbHash, Set TxHash))
+-- | Apply an op, returning its observable output: the eviction sets for an
+-- announcement or 'evictOlderThan', and the 'FetchArrivalBytes' for an unapplied
+-- insert. Both impls must agree on both (see 'prop_equiv').
+applyOp :: H -> Op -> IO (Maybe (Set EbHash, Set TxHash), Maybe FetchArrivalBytes)
 applyOp h op = case op of
-  OpAnnounce s r e -> Just <$> insertAnnouncement h (SlotNo s) (rbhOf r) (ebhOf e)
-  OpEvict boundary -> Just <$> evictOlderThan h (SlotNo boundary)
-  OpBody e ts -> insertBody h (ebhOf e) (TestBody (map txhOf ts)) () (\() _ _ _ -> ()) >> pure Nothing
+  OpAnnounce s r e -> evicted <$> insertAnnouncement h (SlotNo s) (rbhOf r) (ebhOf e)
+  OpEvict boundary -> evicted <$> evictOlderThan h (SlotNo boundary)
+  OpBody e ts ->
+    insertBody h (ebhOf e) (TestBody (map txhOf ts)) () (\() _ _ _ -> ()) >> pure (Nothing, Nothing)
   OpUnapplied ts ->
-    withLockedInsertUnappliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) ()) z ts)
-      >> pure Nothing
+    arrival
+      <$> withLockedInsertUnappliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) (szOf t) ()) z ts)
   OpApplied ts ->
     withLockedInsertAppliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) ()) z ts)
-      >> pure Nothing
+      >> pure (Nothing, Nothing)
+ where
+  evicted x = (Just x, Nothing)
+  arrival fab = (Nothing, Just fab)
+
+-- | A deterministic per-tx size, so both impls bucket identical bytes into the
+-- 'FetchArrivalBytes' and any classification mismatch shows up as a difference.
+szOf :: Word8 -> BytesSize
+szOf t = 1 + fromIntegral t
 
 sweepLookup :: H -> [Word8] -> IO [Maybe (Either () ())]
 sweepLookup h txs = withLookupTx h (\look -> mapM (look . txhOf) txs)

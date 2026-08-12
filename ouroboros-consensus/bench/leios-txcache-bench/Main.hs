@@ -280,7 +280,7 @@ runBench (BenchTarget name popCache queryCache syncAfterPop coolBatch) = do
         _ <- insertAnnouncement popCache slot rbh ebh
         _ <- insertBody popCache ebh (BenchBody bs) () (\() _ _ _ -> ())
         withLockedInsertUnappliedTx popCache $ \z step ->
-          foldM (\ !acc txh -> step acc txh ()) z txhs
+          foldM (\ !acc txh -> step acc txh 0 ()) z txhs
   allocAfter <- bytesAllocated
   -- Flush population to disk (a no-op for the in-memory variants) so the query
   -- handle reads durable, coolable pages.
