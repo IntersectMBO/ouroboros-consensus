@@ -959,6 +959,10 @@ data TraceLeiosKernel
       -- wall-clock onset to when this node counted it — when known (relayed
       -- announcements carry it; a locally-forged one does not).
       !(Maybe NominalDiffTime)
+  | -- | An arriving 'MsgLeiosBlock' (EB body) from an upstream peer
+    TraceLeiosFetchBodyArrival !FetchArrivalBytes
+  | -- | An arriving 'MsgLeiosBlockTxs' (tx batch) from an upstream peer
+    TraceLeiosFetchTxsArrival !FetchArrivalBytes
 
 -- | The data of a relayed EB announcement, shared by 'TraceLeiosPeerAnnouncement'
 -- and 'TraceLeiosAnnouncementAccepted'. A separate record so its selectors are
@@ -969,6 +973,38 @@ data AnnouncementFields = MkAnnouncementFields
   , announcementEbBodySize :: !BytesSize
   }
   deriving (Eq, Show)
+
+-- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
+-- partitioned by the arriving item's /prior/ state in the LeiosTxCache. The four
+-- fields sum to the message's total size.
+--
+-- See 'TraceLeiosFetchBodyArrival' and 'TraceLeiosFetchTxsArrival'.
+data FetchArrivalBytes = MkFetchArrivalBytes
+  { fabInvalid :: !BytesSize
+  -- ^ Bytes of an invalid message (the whole message).
+  , fabEvicted :: !BytesSize
+  -- ^ Bytes whose prior cache state was absent (assumed present once, since evicted).
+  , fabGood :: !BytesSize
+  -- ^ Bytes in the expected not-yet-inserted state.
+  , fabExtra :: !BytesSize
+  -- ^ Bytes already inserted (redundant).
+  }
+  deriving (Eq, Show)
+
+instance Semigroup FetchArrivalBytes where
+  MkFetchArrivalBytes a1 b1 c1 d1 <> MkFetchArrivalBytes a2 b2 c2 d2 =
+    MkFetchArrivalBytes (a1 + a2) (b1 + b2) (c1 + c2) (d1 + d2)
+
+instance Monoid FetchArrivalBytes where
+  mempty = MkFetchArrivalBytes 0 0 0 0
+
+-- | The message's whole size attributed to a single bucket, the rest zero.
+fetchArrivalInvalid, fetchArrivalEvicted, fetchArrivalGood, fetchArrivalExtra ::
+  BytesSize -> FetchArrivalBytes
+fetchArrivalInvalid n = mempty{fabInvalid = n}
+fetchArrivalEvicted n = mempty{fabEvicted = n}
+fetchArrivalGood n = mempty{fabGood = n}
+fetchArrivalExtra n = mempty{fabExtra = n}
 
 -- | Whether the accepted announcement equivocates: a second, distinct header
 -- announcing an election that a prior header already announced. (The two
@@ -1008,6 +1044,16 @@ deriving instance Show TraceLeiosKernel
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
+  TraceLeiosFetchBodyArrival fab ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosFetchBodyArrival"
+      , fabObject fab
+      ]
+  TraceLeiosFetchTxsArrival fab ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosFetchTxsArrival"
+      , fabObject fab
+      ]
   MkTraceLeiosKernel s ->
     mconcat
       [ "kind" .= Aeson.String "LeiosKernelMsg"
@@ -1120,6 +1166,14 @@ traceLeiosKernelToObject = \case
       , announcementEquivocationToObject equivocation
       ]
         ++ foldMap (\age -> ["announcementAgeSeconds" .= (realToFrac age :: Double)]) mbAge
+  where
+    fabObject fab =
+      mconcat
+        [ "invalidBytes" .= fabInvalid fab
+        , "evictedBytes" .= fabEvicted fab
+        , "goodBytes" .= fabGood fab
+        , "extraBytes" .= fabExtra fab
+        ]
 
 announcementFieldsToObject :: AnnouncementFields -> Aeson.Object
 announcementFieldsToObject

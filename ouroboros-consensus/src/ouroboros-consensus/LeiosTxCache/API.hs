@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE Rank2Types #-}
 
 -- | The LeiosTxCache interface: the handle type and the small set of types
@@ -19,6 +20,10 @@ module LeiosTxCache.API
   , InsertBodySummary (..)
   , mkInsertBodySummary
   , worstCaseCacheTxCount
+
+    -- * Arrival classification
+  , TxArrivalPrior (..)
+  , bucketTxArrival
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
@@ -31,11 +36,15 @@ import Data.Word (Word8)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
+  , FetchArrivalBytes
   , InsertBodySummary (..)
   , RbHash
   , SerializedEbBody (..)
   , TxHash
   , decodeLeiosEb
+  , fetchArrivalEvicted
+  , fetchArrivalExtra
+  , fetchArrivalGood
   , leiosEbTxs
   , maxTxsPerEb
   )
@@ -79,8 +88,12 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- 'Nothing' if the EB is untracked or only announced. Unlike a tx, an EB body
   -- pins itself: a hit means it is in the LeiosDb and stays there until the EB is
   -- pruned, so no cross-object reasoning is needed.
-  , withLockedInsertUnappliedTx :: (forall w. w -> (w -> TxHash -> a -> m w) -> m w) -> m ()
+  , withLockedInsertUnappliedTx ::
+      (forall w. w -> (w -> TxHash -> BytesSize -> a -> m w) -> m w) -> m FetchArrivalBytes
   -- ^ Has exclusive write-access
+  --
+  -- The 'BytesSize' argument is only used to accumulate the
+  -- 'FetchArrivalBytes', which is only used for observability.
   , withLockedInsertAppliedTx :: (forall w. w -> (w -> TxHash -> v -> m w) -> m w) -> m ()
   -- ^ Has exclusive write-access
   , withLookupTx :: forall r. ((TxHash -> m (Maybe (Either a v))) -> m r) -> m r
@@ -123,6 +136,24 @@ data BodyState b
   = -- | An announcement of this EB has been inserted, but not its body.
     BodyNotYetInserted {-# UNPACK #-} !RefCount
   | BodyAlreadyInserted {-# UNPACK #-} !RefCount !b
+
+-- | A tx's state in the cache /before/ an unapplied insert, surfaced by the
+-- 'withLockedInsertUnappliedTx' step so a caller can classify an arriving tx.
+data TxArrivalPrior
+  = -- | Untracked: no held body references it (assumed present once, since evicted).
+    TxWasUntracked
+  | -- | Referenced by a held body but not yet acquired (the expected case).
+    TxWasNotYetInserted
+  | -- | Already acquired (inserted or validated); a redundant delivery.
+    TxWasAlreadyHeld
+  deriving (Eq, Show)
+
+-- | Bucket an arriving tx's bytes by its prior state (for 'FetchArrivalBytes').
+bucketTxArrival :: TxArrivalPrior -> BytesSize -> FetchArrivalBytes
+bucketTxArrival = \case
+  TxWasUntracked -> fetchArrivalEvicted
+  TxWasNotYetInserted -> fetchArrivalGood
+  TxWasAlreadyHeld -> fetchArrivalExtra
 
 -- | The worst-case number of txs the cache can hold: a full 'maxAnnouncementCount'
 -- window of EBs, each referencing the maximum 'maxTxsPerEb' distinct txs. The fixed
