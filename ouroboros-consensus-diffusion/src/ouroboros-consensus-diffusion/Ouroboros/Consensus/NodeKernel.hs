@@ -119,7 +119,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -555,16 +554,18 @@ initNodeKernel
           (topLevelConfigVotingKey cfg)
 
     void $
-      forkLinkedWatcher registry "NodeKernel.leiosPruneAnnouncements" $
+      forkLinkedWatcher registry "NodeKernel.leiosImmTipPrune" $
         Watcher
           { wFingerprint = id
           , wInitial = Nothing
           , wReader = getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
           , wNotify = \case
               Origin -> pure ()
-              NotOrigin immTipSlot ->
+              NotOrigin immTipSlot -> do
                 MVar.modifyMVar_ getLeiosCentralState $
                   pure . Announcements.pruneCentralState immTipSlot
+                MVar.modifyMVar_ getLeiosOutstanding $
+                  pure . Leios.pruneOutstandingToImmTip immTipSlot
           }
 
     return
@@ -707,7 +708,14 @@ initInternalState
     fetchClientRegistry <- newFetchClientRegistry
 
     leiosPeersVars <- LazySTM.newTVarIO Map.empty
-    leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
+    -- Seed 'acquiredEbBodiesPrunedSlot' from the immutable tip: everything at or
+    -- below it is already final, so an EB that old must read as 'tooOld' from the
+    -- outset -- not only once the first 'pruneOutstandingToImmTip' fires.
+    immTip <- getTipSlot . ledgerState <$> atomically (ChainDB.getImmutableLedger chainDB)
+    let !immTipSlot = case immTip of
+          Origin -> SlotNo 0
+          NotOrigin s -> s
+    leiosOutstanding <- MVar.newMVar (Leios.emptyLeiosOutstanding immTipSlot)
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
 
@@ -783,32 +791,16 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     bf
                     leiosConn
                     leiosTxCache
-                    announceForgedBlock
+                    ( Leios.processForgedAnnouncement
+                        (leiosKernelTracer tracers)
+                        leiosCentralState
+                        leiosOutstanding
+                    )
                     currentSlot
     )
  where
   label :: String
   label = "NodeKernel.blockForging"
-
-  -- Relay this node's own freshly-forged EB announcement, if any, to downstream
-  -- peers via LeiosNotify. 'forge' invokes this right after forging and before
-  -- adoption — and, crucially, before persisting the EB body to the LeiosDb.
-  -- The relay is synchronous: writing the body is what offers the EB to peers,
-  -- so the announcement must be enqueued first, else a peer could receive the
-  -- offer before the announcement.
-  announceForgedBlock :: Header blk -> m ()
-  announceForgedBlock forgedHeader =
-    whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
-      MVar.modifyMVar_ leiosCentralState $ \cst ->
-        Announcements.onAnnouncementCentral
-          (contramap (Leios.traceNewAnnouncement Leios.ForgedLocally) (leiosKernelTracer tracers))
-          Leios.ancElId
-          (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
-          cst
-          Nothing -- the source is this node, not an upstream peer
-          Announcements.DoRelay -- our newly forged block can't be too old
-          Nothing -- no wall-clock lateness for a locally-forged announcement
-          anc
 
   -- 'LeiosDbConnection' is not thread-safe, so we open one per
   -- forge-credentials thread (and close it when the thread exits).

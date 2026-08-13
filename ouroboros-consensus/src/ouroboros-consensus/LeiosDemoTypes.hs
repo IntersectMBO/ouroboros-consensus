@@ -390,7 +390,20 @@ newLeiosPeerVars = do
 --    data structures for clarity.
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
-    missingEbBodies :: !(Map LeiosPoint BytesSize)
+    acquiredEbBodies :: !(Map EbHash SlotNo)
+  -- ^ The EB bodies we have already received, recorded by 'msgLeiosBlock' at
+  -- the moment of receipt, so that we neither re-fetch nor re-list one we
+  -- already hold. The 'SlotNo' is the EB's election slot; an entry is dropped
+  -- once that slot falls before the immutable tip (see
+  -- 'pruneOutstandingToImmTip'), below which the EB can never be requested
+  -- again, which keeps this bounded to the volatile window.
+  , acquiredEbBodiesPrunedSlot :: !SlotNo
+  -- ^ The slot 'acquiredEbBodies' has most recently been pruned up to (see
+  -- 'pruneOutstandingToImmTip'): entries below it have been dropped. Used as
+  -- the "too old" boundary by 'msgLeiosBlock' and the offer handler, so that
+  -- test agrees with what has actually been pruned (it reads this under the
+  -- same lock) rather than racing a separate read of the immutable tip.
+  , missingEbBodies :: !(Map LeiosPoint BytesSize)
   -- ^ EB bodies still needed to be fetched (indexed by point and size)
   -- Request tracking
   , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
@@ -445,10 +458,16 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- anything, reconcile it against shared-tx arrivals (or derive it from the DB).
   }
 
-emptyLeiosOutstanding :: LeiosOutstanding pid
-emptyLeiosOutstanding =
+-- | The empty outstanding state, given the slot 'acquiredEbBodies' is
+-- considered already pruned up to. The caller supplies the immutable-tip slot at
+-- startup so that a body at or below it reads as too old from the outset (see
+-- 'acquiredEbBodiesPrunedSlot' / 'pruneOutstandingToImmTip').
+emptyLeiosOutstanding :: SlotNo -> LeiosOutstanding pid
+emptyLeiosOutstanding prunedSlot =
   MkLeiosOutstanding
-    { missingEbBodies = Map.empty
+    { acquiredEbBodies = Map.empty
+    , acquiredEbBodiesPrunedSlot = prunedSlot
+    , missingEbBodies = Map.empty
     , requestedEbPeers = Map.empty
     , requestedTxPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
@@ -456,6 +475,27 @@ emptyLeiosOutstanding =
     , missingEbTxs = Map.empty
     , reverseEbIndexByTx = Map.empty
     , blockingPerEb = Map.empty
+    }
+
+-- | Drop 'acquiredEbBodies' entries whose EB election slot is before the
+-- immutable tip. Such an EB can never be requested again, so the record of
+-- having it is no longer needed to suppress a fetch; this is what bounds
+-- 'acquiredEbBodies' to the volatile window. Safe only because the offer/
+-- announcement paths ignore an EB that old (so a pruned entry cannot be
+-- re-listed).
+--
+-- TODO this scans the whole map (potentially ~20k entries) on every
+-- immutable-tip advance. Maintain a slot-keyed reverse index (e.g.
+-- 'Map SlotNo (Set EbHash)') alongside 'acquiredEbBodies' so pruning drops the
+-- below-tip prefix directly instead of filtering the entire map.
+--
+-- TODO only prunes acqiuredEbBodies for now; there's plenty more for it to be
+-- pruning
+pruneOutstandingToImmTip :: SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
+pruneOutstandingToImmTip immTipSlot outstanding =
+  outstanding
+    { acquiredEbBodies = Map.filter (>= immTipSlot) (acquiredEbBodies outstanding)
+    , acquiredEbBodiesPrunedSlot = max (acquiredEbBodiesPrunedSlot outstanding) immTipSlot
     }
 
 -- | Pretty-print the per-peer 'offerings' map (one tuple per peer: the EB-body
@@ -484,7 +524,8 @@ prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
   unlines $
     map ("    [leios] " ++) $
-      [ "missingEbBodies = " ++ show (Map.size missingEbBodies)
+      [ "acquiredEbBodies = " ++ show (Map.size acquiredEbBodies)
+      , "missingEbBodies = " ++ show (Map.size missingEbBodies)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
       , "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
@@ -497,7 +538,8 @@ prettyLeiosOutstanding x =
       ]
  where
   MkLeiosOutstanding
-    { missingEbBodies
+    { acquiredEbBodies
+    , missingEbBodies
     , requestedEbPeers
     , requestedTxPeers
     , requestedBytesSizePerPeer

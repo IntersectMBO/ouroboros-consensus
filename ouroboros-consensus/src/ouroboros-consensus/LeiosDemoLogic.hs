@@ -35,7 +35,6 @@ import qualified Data.IntSet as IntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing)
 import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -716,78 +715,94 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
       invalidReply $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
   -- ingest it
   bodyClass <- MVar.modifyMVar outstandingVar $ \outstanding -> do
-    novel <- isNothing <$> txCache.lookupBody ebHash
-    (bodyClass, mbMisses) <- if not novel then pure (fetchArrivalExtra ebBytesSize', Nothing) else do
-      -- TODO don't hold the outstanding mvar during this IO
-      mbMissesFromBody <- traceException tracer TraceLeiosPeerDbException $ do
-        -- FIXME: Once proper EB announcements are wired in, the point
-        -- MUST already be present here (announcement handling inserts
-        -- it) and this should become an assertion. Today we still tolerate
-        -- receiving an EB body without a prior announcement, so we insert
-        -- the point idempotently as a stop-gap and trace a warning.
-        traceWith ktracer $ TraceLeiosBlockPointMissing point
-        leiosDbInsertEbPoint db point ebBytesSize
-        completedByBody <- leiosDbInsertEbBody db point eb
-        mbSummaryMisses <-
-          insertBody
-            txCache
-            ebHash
-            (Leios.serializeEbBody eb)
-            IntMap.empty
-            (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
-        forM_ mbSummaryMisses $ traceWith ktracer . TraceLeiosTxCacheEbBody point . fst
-        traceWith ktracer $ TraceLeiosBlockAcquired point
-        forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-        pure $ fmap snd mbSummaryMisses
-      case mbMissesFromBody of
-        -- 'BodyNotYetInserted': the announcement was present and we filled it.
-        Just misses -> pure (fetchArrivalGood ebBytesSize', Just misses)
-        Nothing -> do
-          -- Announcement absent (assumed present once, since evicted): the
-          -- cache insert was a no-op. Backstop: classify the txs directly to
-          -- build the misses.
-          let MkLeiosEb v = eb
-          misses <- withLookupTx txCache $ \look ->
-            V.ifoldM
-              ( \acc i (txh, sz) -> do
-                  r <- look txh
-                  pure $ case r of
-                    Just{} -> acc
-                    Nothing -> IntMap.insert i (txh, sz) acc
-              )
-              IntMap.empty
-              v
-          pure (fetchArrivalEvicted ebBytesSize', Just misses)
-    -- update NodeKernel state
-    --
-    -- 'refundEbRequest' reverses this peer's per-request accounting (but skips
-    -- it if the peer has already been cancelled in bulk by a disconnect); the
-    -- global acquisition state below is updated unconditionally, since we did
-    -- receive the EB.
-    let !outstanding' =
+    let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
+        novel = not $ Map.member ebHash (Leios.acquiredEbBodies outstanding)
+        -- Always: this request is no longer in flight and we now have the body,
+        -- so drop the body-fetch bookkeeping ('refundEbRequest' reverses the
+        -- per-request accounting -- skipped if a disconnect already cancelled it
+        -- in bulk -- and we delete the point from 'missingEbBodies'); and unless
+        -- the EB is too old to matter, remember we have it so we neither
+        -- re-fetch nor re-offer it.
+        !outstandingCleaned =
           refundEbRequest peerId ebHash ebBytesSize $
-            case mbMisses of
-              Nothing -> outstanding
-              Just misses ->
-                outstanding
-                  { Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
-                  , Leios.blockingPerEb =
-                      Map.insert point (IntMap.size misses) (Leios.blockingPerEb outstanding)
-                  , Leios.missingEbTxs =
-                      Map.insert point misses (Leios.missingEbTxs outstanding)
-                  , Leios.reverseEbIndexByTx =
-                      IntMap.foldrWithKey
-                        ( \i (txHash, txBytesSize) acc ->
-                            Map.insertWith
-                              (Map.unionWith (\(s1, i1, z1) (s2, _, _) -> (s1 <> s2, i1, z1)))
-                              txHash
-                              (Map.singleton ebHash (NESet.singleton point.pointSlotNo, i, txBytesSize))
-                              acc
-                        )
-                        (Leios.reverseEbIndexByTx outstanding)
-                        misses
-                  }
-    pure (outstanding', bodyClass)
+            outstanding
+              { Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
+              , Leios.acquiredEbBodies =
+                  if tooOld
+                    then Leios.acquiredEbBodies outstanding
+                    else Map.insert ebHash point.pointSlotNo (Leios.acquiredEbBodies outstanding)
+              }
+    -- Persist and classify only a genuinely novel, still-relevant body. A
+    -- duplicate (already in 'acquiredEbBodies') or a too-old arrival (its
+    -- 'acquiredEbBodies' slot has been pruned, so 'novel' can't be trusted) is
+    -- left at the bookkeeping above -- in particular no second
+    -- 'leiosDbInsertEbBody', hence no duplicate 'AcquiredEb'/re-offer.
+    if tooOld || not novel
+      then
+        pure
+          ( outstandingCleaned
+          , (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
+          )
+      else do
+        -- TODO don't hold the outstanding mvar during this IO
+        mbMissesFromBody <- traceException tracer TraceLeiosPeerDbException $ do
+          -- FIXME: Once proper EB announcements are wired in, the point
+          -- MUST already be present here (announcement handling inserts
+          -- it) and this should become an assertion. Today we still tolerate
+          -- receiving an EB body without a prior announcement, so we insert
+          -- the point idempotently as a stop-gap and trace a warning.
+          traceWith ktracer $ TraceLeiosBlockPointMissing point
+          leiosDbInsertEbPoint db point ebBytesSize
+          completedByBody <- leiosDbInsertEbBody db point eb
+          mbSummaryMisses <-
+            insertBody
+              txCache
+              ebHash
+              (Leios.serializeEbBody eb)
+              IntMap.empty
+              (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
+          forM_ mbSummaryMisses $ traceWith ktracer . TraceLeiosTxCacheEbBody point . fst
+          traceWith ktracer $ TraceLeiosBlockAcquired point
+          forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+          pure $ fmap snd mbSummaryMisses
+        (bodyClass, misses) <- case mbMissesFromBody of
+          -- 'BodyNotYetInserted': the announcement was present and we filled it.
+          Just ms -> pure (fetchArrivalGood ebBytesSize', ms)
+          Nothing -> do
+            -- Announcement absent (assumed present once, since evicted): the
+            -- cache insert was a no-op. Backstop: classify the txs directly to
+            -- build the misses.
+            let MkLeiosEb v = eb
+            ms <- withLookupTx txCache $ \look ->
+              V.ifoldM
+                ( \acc i (txh, sz) -> do
+                    r <- look txh
+                    pure $ case r of
+                      Just{} -> acc
+                      Nothing -> IntMap.insert i (txh, sz) acc
+                )
+                IntMap.empty
+                v
+            pure (fetchArrivalEvicted ebBytesSize', ms)
+        let !outstanding' =
+              outstandingCleaned
+                { Leios.blockingPerEb =
+                    Map.insert point (IntMap.size misses) (Leios.blockingPerEb outstandingCleaned)
+                , Leios.missingEbTxs =
+                    Map.insert point misses (Leios.missingEbTxs outstandingCleaned)
+                , Leios.reverseEbIndexByTx =
+                    IntMap.foldrWithKey
+                      ( \i (txHash, txBytesSize) acc ->
+                          Map.insertWith
+                            (Map.unionWith (\(s1, i1, z1) (s2, _, _) -> (s1 <> s2, i1, z1)))
+                            txHash
+                            (Map.singleton ebHash (NESet.singleton point.pointSlotNo, i, txBytesSize))
+                            acc
+                      )
+                      (Leios.reverseEbIndexByTx outstandingCleaned)
+                      misses
+                }
+        pure (outstanding', bodyClass)
   void $ MVar.tryPutMVar readyVar ()
   traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
@@ -1004,49 +1019,55 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
 
 -----
 
--- | Update a peer's LeiosFetch state as if its LeiosNotify client had offered
--- the given EB — i.e. as a 'MsgLeiosBlockOffer' (EB body) plus a
--- 'MsgLeiosBlockTxsOffer' (EB txs).
+-- | Whether an EB offer also implies its tx-closure is on offer. A CertRB does
+-- (it certifies the whole EB); a bare 'MsgLeiosBlockOffer' does not — the closure
+-- is offered separately, as a 'MsgLeiosBlockTxsOffer'.
+data AlsoOfferedTxsClosure = TxsClosureAlsoOffered | TxsClosureNotAlsoOffered
+
+-- | Record an offered EB body: mark it as something to fetch and mark the peer
+-- as a serving candidate, then wake the fetch logic. Shared by the explicit
+-- 'MsgLeiosBlockOffer' handler and by the CertRB roll-forward path in
+-- 'checkMsgRollForwardForLeiosOffers'.
 --
--- This is the LeiosFetch-side effect of a CertRB header arriving via ChainSync:
--- given the peer's (already-resolved) LeiosNotify vars and the EB the CertRB
--- certifies (the announcement recorded in the predecessor's chain-dep state,
--- plus the EB's on-the-wire body size), we record the body as missing and this
--- peer as offering both the body and its txs, then wake the fetch logic. (The
--- block-aware decision of /whether/ to call this — recognising the CertRB,
--- extracting its announcement, and waiting for the peer's LeiosNotify vars to
--- register — stays in 'checkMsgRollForwardForLeiosOffers'.)
-leiosCertRbOffer ::
+-- The body is /not/ added to 'missingEbBodies' if it is: too old (at or below
+-- the slot 'acquiredEbBodies' has been pruned to), already recorded in
+-- 'acquiredEbBodies' (received or forged — the only "do we have it" test now,
+-- read in-lock with no cache lookup), already listed under this content hash, or
+-- zero-sized.
+-- The offered size is not chain-authoritative (there are no EB announcements
+-- yet), so refusing to overwrite an existing same-hash entry makes the first-seen
+-- (slot, size) win, and a zero-sized offer — which no honest forger produces — is
+-- dropped. The per-peer offerings are updated regardless, so the peer stays a
+-- serving candidate.
+recordEbBodyOffer ::
   IOLike m =>
-  LeiosTxCache m () () SerializedEbBody ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
   LeiosPeerVars m ->
-  -- | The EB the CertRB certifies: its point and on-the-wire body size.
+  AlsoOfferedTxsClosure ->
+  -- | The offered EB: its point and on-the-wire body size.
   (LeiosPoint, BytesSize) ->
   m ()
-leiosCertRbOffer txCache (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
-  let MkLeiosPoint _ebSlot ebHash = point
-  -- As if 'MsgLeiosBlockOffer': record the EB body as missing, unless we already
-  -- hold it.
-  mbBody <- txCache.lookupBody ebHash
+recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebBytesSize) = do
+  let MkLeiosPoint ebSlot ebHash = point
   MVar.modifyMVar_ outstandingVar $ \outstanding ->
     pure $
-      case mbBody of
-        -- TODO this is the same concern as in the MsgLeiosBlockOffer handler
-        -- about ignoring a greater slot
-        Just{} -> outstanding
-        Nothing ->
+      if ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
+        || ebBytesSize == 0 -- malformed offer
+        || Map.member ebHash (Leios.acquiredEbBodies outstanding) -- already have it
+        || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding)) -- already listed
+        then outstanding
+        else
           outstanding
             { Leios.missingEbBodies =
                 Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
             }
-  -- As if 'MsgLeiosBlockOffer' (body) and 'MsgLeiosBlockTxsOffer' (txs): record
-  -- this peer as offering both.
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
     let !offers1' = Set.insert ebHash offers1
-        !offers2' = Set.insert ebHash offers2
+        !offers2' = case offeredClosure of
+          TxsClosureAlsoOffered -> Set.insert ebHash offers2
+          TxsClosureNotAlsoOffered -> offers2
     pure (offers1', offers2')
   void $ MVar.tryPutMVar readyVar ()
 
@@ -1054,14 +1075,14 @@ leiosCertRbOffer txCache (outstandingVar, readyVar) peerVars (point, ebBytesSize
 
 -- | The offer-side handling of a 'MsgRollForward': when the header is a CertRB
 -- ('headerContainsLeiosCert'), record this peer as offering the EB it certifies
--- (via 'leiosCertRbOffer'), reading that EB from the predecessor's chain-dep
+-- (via 'recordEbBodyOffer', offering both its body and tx-closure), reading
+-- that EB from the predecessor's chain-dep
 -- state ('chainDepStateLeiosAnnouncement'), which the CertRB's own transition
 -- would overwrite. A no-op otherwise. The announcement-side handling of the same
 -- header is separate; see the ChainSync client's 'leiosMsgRollForwardCallback'.
 checkMsgRollForwardForLeiosOffers ::
   forall blk pid m.
   (IOLike m, ResolveLeiosBlock blk) =>
-  LeiosTxCache m () () SerializedEbBody ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -1069,10 +1090,10 @@ checkMsgRollForwardForLeiosOffers ::
   Header blk ->
   ChainDepState (BlockProtocol blk) ->
   m ()
-checkMsgRollForwardForLeiosOffers txCache kernelVars peerVars hdr cds =
+checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
-      leiosCertRbOffer txCache kernelVars peerVars announcement
+      recordEbBodyOffer kernelVars peerVars TxsClosureAlsoOffered announcement
 
 -----
 
@@ -1155,6 +1176,44 @@ processAnnouncementCentrally
     -- The announced EB's slot is the announcing header's own slot (see
     -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
     point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
+
+-- | Process this node's own freshly-forged EB announcement: relay it centrally
+-- (as 'ForgedLocally', before the forge inserts the EB body — writing the body
+-- is what offers it, so a downstream peer never gets the offer before the
+-- announcement) and record the EB as acquired, so we neither re-fetch nor
+-- re-offer the body we just forged. A no-op for a forged block that announces no
+-- EB. 'forge' invokes this right after forging and before adoption (its
+-- 'afterForgeBeforeInsert' callback).
+processForgedAnnouncement ::
+  forall blk peer pid m.
+  (IOLike m, ResolveLeiosBlock blk, HasHeader (Header blk), Ord peer) =>
+  Tracer m TraceLeiosKernel ->
+  MVar m (Announcements.CentralState m peer (AnnouncingHeader blk)) ->
+  MVar m (LeiosOutstanding pid) ->
+  Header blk ->
+  m ()
+processForgedAnnouncement kernelTracer centralVar outstandingVar forgedHeader =
+  forM_ (mkAnnouncingHeader forgedHeader) $ \anc -> do
+    MVar.modifyMVar_ centralVar $ \cst ->
+      Announcements.onAnnouncementCentral
+        (contramap (traceNewAnnouncement ForgedLocally) kernelTracer)
+        ancElId
+        (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
+        cst
+        Nothing -- the source is this node, not an upstream peer
+        Announcements.DoRelay -- our newly forged block can't be too old
+        Nothing -- no wall-clock lateness for a locally-forged announcement
+        anc
+    -- Record the forged EB as acquired: don't fetch the body we're about to
+    -- insert, and don't re-offer it when an offer or its CertRB comes back.
+    MVar.modifyMVar_ outstandingVar $ \outstanding ->
+      let ebSlot = blockSlot (ancHeader anc)
+          ebHash = announcementEbHash (ancAnnouncementFields anc)
+       in pure $
+            outstanding
+              { Leios.acquiredEbBodies =
+                  Map.insert ebHash ebSlot (Leios.acquiredEbBodies outstanding)
+              }
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
@@ -1271,7 +1330,8 @@ recordAnnouncedEb txCache (outstandingVar, readyVar) (point, ebBytesSize) =
   MkLeiosPoint _ebSlot ebHash = point
 
   upd outstanding =
-    if any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
+    if Map.member ebHash (Leios.acquiredEbBodies outstanding)
+      || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
       then (outstanding, False)
       else
         flip (,) True $
