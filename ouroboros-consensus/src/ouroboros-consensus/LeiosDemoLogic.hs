@@ -723,9 +723,10 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
                             slots
               , Leios.reverseSlotIndexByEbHash =
                   Map.delete ebHash (Leios.reverseSlotIndexByEbHash outstanding)
-              -- BUG INJECTION (temporary, revert me): 'acquiredEbBodies' is no
-              -- longer updated here. The acquisition is deferred to a second lock
-              -- grab below, so the purge and the acquire are no longer atomic.
+              , Leios.acquiredEbBodies =
+                  if tooOld
+                    then Leios.acquiredEbBodies outstanding
+                    else Map.insert ebHash point.pointSlotNo (Leios.acquiredEbBodies outstanding)
               }
     -- Persist and classify only a genuinely novel, still-relevant body. A
     -- duplicate (already in 'acquiredEbBodies') or a too-old arrival (its
@@ -798,13 +799,6 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
                       misses
                 }
         pure (outstanding', bodyClass)
-  -- BUG INJECTION (temporary, revert me): grab #2, the deferred acquire. Between
-  -- the purge in grab #1 and this insert, a concurrent offer sees the hash
-  -- neither held nor listed and relists it; then this marks it held, leaving it
-  -- held-and-listed. ('tooOld' never fires in these tests, so the unconditional
-  -- insert matches the original behaviour there.)
-  MVar.modifyMVar_ outstandingVar $ \o ->
-    pure $ o {Leios.acquiredEbBodies = Map.insert ebHash point.pointSlotNo (Leios.acquiredEbBodies o)}
   void $ MVar.tryPutMVar readyVar ()
   traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
