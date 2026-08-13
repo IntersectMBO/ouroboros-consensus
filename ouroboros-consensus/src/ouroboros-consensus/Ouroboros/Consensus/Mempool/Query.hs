@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 -- | Queries to the mempool
 module Ouroboros.Consensus.Mempool.Query
@@ -10,6 +11,7 @@ module Ouroboros.Consensus.Mempool.Query
   ) where
 
 import Control.Monad (unless)
+import Control.Monad.Class.MonadTimer.SI (MonadTimer (timeout))
 import Control.Monad.Except (runExcept)
 import Data.Foldable (Foldable (foldMap', foldl'))
 import Data.Measure (Measure)
@@ -48,6 +50,7 @@ implGetSnapshotFor ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , MonadTimer m
   ) =>
   MempoolEnv m blk ->
   -- | Get snapshot for this slot number (usually the current slot)
@@ -71,6 +74,7 @@ implGetSnapshotForNoCache ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , MonadTimer m
   ) =>
   MempoolEnv m blk ->
   -- | Get snapshot for this slot number (usually the current slot)
@@ -88,6 +92,7 @@ getSnapshotUsingPolicyFor ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , MonadTimer m
   ) =>
   SnapshotCachePolicy ->
   MempoolEnv m blk ->
@@ -153,7 +158,7 @@ mkResolveValues (Right readTables) keys = readTables keys
 
 computeSnapshot2 ::
   forall blk m.
-  (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk), MonadTimer m) =>
   (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
   LedgerConfig blk ->
   SlotNo ->
@@ -164,7 +169,7 @@ computeSnapshot2 resolveValues cfg slot tickedStDiff txTickets = do
   !tickedSt <- raceWithError "a" 0.2 $ return $ tickedStDiff `withLedgerTables` emptyLedgerTables
 
   res <- raceWithError "cwb" 0.2 $ do
-    iterateUntilOrTimeoutNaive
+    iterateUntilOrTimeoutNaive2
       0.1
       (tickedSt, txTickets, [], TxSeq.Empty, Set.empty, mempty)
       (computeSnapshot3 resolveValues cfg slot tickedStDiff)
@@ -215,6 +220,8 @@ computeSnapshot3 ::
 computeSnapshot3 _ _ _ _ (tickedSt, TxSeq.Empty, unapplicable, applied, txIds, mempoolSize) =
   return (True, (tickedSt, TxSeq.Empty, unapplicable, applied, txIds, mempoolSize))
 computeSnapshot3 resolveValues cfg slot tickedStDiffBase (!tickedSt, !txsToApply, !unapplicable, !applied, !txIds, !mempoolSize) = do
+  startX <- getMonotonicTime
+
   let (!tickets, !txsToApply') = txSeqTake 100 txsToApply
       inputKeys =
         foldMap'
@@ -242,6 +249,8 @@ computeSnapshot3 resolveValues cfg slot tickedStDiffBase (!tickedSt, !txsToApply
   endA <- getMonotonicTime
   _ <- Debug.trace ("reapplyTxs: " <> show (endA `diffTime` startA)) $ return ()
 
+  endX <- getMonotonicTime
+  _ <- Debug.trace ("cs3-inner: " <> show (endX `diffTime` startX)) $ return ()
   return
     ( False
     ,
@@ -359,13 +368,13 @@ iterateUntilOrTimeoutNaive delay initSt stepAction = do
   raceRes <-
     race
       (threadDelay delay)
-      (goStepper stVar)
+      (goStepper stVar [])
   endR <- getMonotonicTime
   _ <-
     Debug.trace
       ( case raceRes of
           Left _ -> "timer-done " <> show (endR `diffTime` startR)
-          Right _ -> "stepper-done " <> show (endR `diffTime` startR)
+          Right steps -> "stepper-done " <> show (endR `diffTime` startR) <> " " <> show (length steps)
       )
       (return ())
 
@@ -373,11 +382,52 @@ iterateUntilOrTimeoutNaive delay initSt stepAction = do
 
   return (lastSt, either (const TimerDone) (const StepperDone) raceRes)
  where
-  goStepper stVar = do
+  goStepper stVar acc = do
     stVal <- atomically $ readTVar stVar
     start <- getMonotonicTime
     (isDone, stVal') <- stepAction stVal
     end <- getMonotonicTime
     _ <- Debug.trace ("stepper-act " <> show (end `diffTime` start)) $ return ()
     atomically $ writeTVar stVar stVal'
-    if isDone then return () else goStepper stVar
+    if isDone then return acc else goStepper stVar (() : acc)
+
+iterateUntilOrTimeoutNaive2 ::
+  (IOLike m, MonadTimer m) => DiffTime -> a -> (a -> m (Bool, a)) -> m (a, CallDoneType)
+iterateUntilOrTimeoutNaive2 delay initSt stepAction = do
+  ms <- getMaskingState
+  Debug.traceM ("masking " <> show ms)
+
+  stVar <- uncheckedNewTVarM initSt
+
+  startR <- getMonotonicTime
+
+  raceRes <-
+    timeout
+      delay
+      ( asyncWithUnmask $ do
+          ms <- getMaskingState
+          Debug.traceM ("masking " <> show ms)
+          goStepper stVar []
+      )
+
+  endR <- getMonotonicTime
+  _ <-
+    Debug.trace
+      ( case raceRes of
+          Nothing -> "timer-done " <> show (endR `diffTime` startR)
+          Just steps -> "stepper-done " <> show (endR `diffTime` startR) <> " " <> show (length steps)
+      )
+      (return ())
+
+  lastSt <- atomically $ readTVar stVar
+
+  return (lastSt, maybe TimerDone (const StepperDone) raceRes)
+ where
+  goStepper stVar acc = do
+    stVal <- atomically $ readTVar stVar
+    start <- getMonotonicTime
+    (isDone, stVal') <- stepAction stVal
+    end <- getMonotonicTime
+    _ <- Debug.trace ("stepper-act " <> show (end `diffTime` start)) $ return ()
+    atomically $ writeTVar stVar stVal'
+    if isDone then return acc else goStepper stVar (() : acc)

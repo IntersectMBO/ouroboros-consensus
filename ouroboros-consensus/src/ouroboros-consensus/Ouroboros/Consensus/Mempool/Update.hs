@@ -24,6 +24,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import qualified Debug.Trace as Debug
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -199,6 +200,9 @@ doAddTx mpEnv caller wti tx = do
 
   doAddTx' :: Maybe MempoolSize -> m (f (TransactionProcessed blk))
   doAddTx' mbPrevSize = do
+    ms <- getMaskingState
+    Debug.traceM ("masking addTx " <> show ms)
+
     traceWith trcr $ TraceMempoolAttemptingAdd tx
 
     -- If retrying, wait until the mempool size changes before attempting to
