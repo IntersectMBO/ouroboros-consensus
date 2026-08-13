@@ -6,7 +6,7 @@
 --
 -- The sibling "Test.LeiosDemoLogic" checks that the /pure/ decision function
 -- makes the right choice at a single instant. This module instead drives the
--- /real, effectful/ handlers ('msgLeiosBlock', 'msgLeiosBlockTxs',
+-- /real, effectful/ handlers ('processLeiosBlock', 'processLeiosBlockTxs',
 -- 'recordAnnouncedEb', 'leiosFetchLogicIteration') over sequences of interleaved
 -- message arrivals and decisions, in 'IOSim' against an in-memory 'LeiosDb', a
 -- 'nullLeiosTxCache', and plain 'MVar's — then asserts that a state invariant
@@ -54,10 +54,12 @@ import LeiosDemoDb (withLeiosDb)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
   ( AlsoOfferedTxsClosure (..)
+  , LeiosBlockSource (..)
+  , LeiosBlockTxsSource (..)
   , LeiosFetchDecisions (..)
   , leiosFetchLogicIteration
-  , msgLeiosBlock
-  , msgLeiosBlockTxs
+  , processLeiosBlock
+  , processLeiosBlockTxs
   , recordAnnouncedEb
   , recordEbBodyOffer
   )
@@ -99,6 +101,10 @@ tests =
             runCmds reproMultiSlot @?= Right ()
         , testCase "tx shared across two EBs: delivery discharges both" $
             runCmds reproSharedTx @?= Right ()
+        , testCase "forge purges a body it already holds (offered first)" $
+            runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
+        , testCase "forge discharges a tx a peer EB still needs" $
+            runCmds reproForgeSharedTx @?= Right ()
         ]
     , testProperty
         "missingEbTxs stays in sync with reverseEbIndexByTx across arbitrary sequences"
@@ -125,12 +131,16 @@ data Cmd
     Announce TestEb Word
   | -- | @recordEbBodyOffer@: a peer offers this EB body at this slot.
     Offer TestEb Word
-  | -- | @msgLeiosBlock@: the EB body arrives for that point.
+  | -- | @processLeiosBlock@: the EB body arrives for that point.
     ArriveBody TestEb Word
-  | -- | @msgLeiosBlockTxs@: deliver the tx at this /index within the EB/.
+  | -- | @processLeiosBlockTxs@: deliver the tx at this /index within the EB/.
     ArriveTx TestEb Word Int
   | -- | @leiosFetchLogicIteration@ at this current slot.
     Decide Word
+  | -- | The forge produces this EB: drives 'processLeiosBlock'/'processLeiosBlockTxs'
+    -- with 'ForgedBlock'/'ForgedTxs' (as 'onForgedLeiosEb' does), reconciling the
+    -- outstanding state exactly as a remote acquisition would.
+    Forge TestEb Word
   deriving (Eq, Show)
 
 ------------------------------------------------------------
@@ -213,7 +223,7 @@ applyCmd ::
   IOSim s [EbHash]
 applyCmd conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
-    recordAnnouncedEb txCache kv (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+    recordAnnouncedEb kv (pointOf ids slot, leiosEbBytesSize (ebOf ids))
     pure []
   Offer ids slot -> do
     recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (pointOf ids slot, leiosEbBytesSize (ebOf ids))
@@ -221,7 +231,7 @@ applyCmd conn txCache kv peerVars peerId = \case
   ArriveBody ids slot -> do
     let eb = ebOf ids
         req = MkLeiosBlockRequest (pointOf ids slot) (leiosEbBytesSize eb)
-    msgLeiosBlock nullTracer nullTracer kv txCache conn peerId req eb
+    processLeiosBlock nullTracer nullTracer kv txCache conn (ReceivedBlockFrom peerId req) eb
     pure []
   ArriveTx ids slot idx -> do
     let txId = ids !! idx
@@ -230,7 +240,15 @@ applyCmd conn txCache kv peerVars peerId = \case
             (pointOf ids slot)
             (offsetsToBitmaps [idx])
             (V.singleton (txHashOf txId))
-    msgLeiosBlockTxs nullTracer nullTracer kv txCache conn peerId req (V.singleton (leiosTxOf txId))
+    processLeiosBlockTxs nullTracer nullTracer kv txCache conn (ReceivedTxsFrom peerId req) (V.singleton (leiosTxOf txId))
+    pure []
+  Forge ids slot -> do
+    let eb = ebOf ids
+        point = pointOf ids slot
+    -- The outstanding-state half of 'onForgedLeiosEb'; the announcement it also
+    -- makes doesn't touch 'outstanding' for a 'ForgedLocally' source.
+    processLeiosBlock nullTracer nullTracer kv txCache conn (ForgedBlock point) eb
+    processLeiosBlockTxs nullTracer nullTracer kv txCache conn (ForgedTxs point eb) (V.fromList (map leiosTxOf ids))
     pure []
   Decide slot -> do
     outstanding <- readMVar (fst kv)
@@ -333,6 +351,28 @@ reproSharedTx =
   , Decide 12
   ]
 
+-- | A peer offers an EB body; we forge the same EB before the offered body
+-- arrives. Forging must purge the offered body from 'missingEbBodies' (it now
+-- lives in 'acquiredEbBodies'), so the fetch logic never re-requests a body we
+-- already hold. Pre-fix the forge recorded the body as acquired without purging,
+-- so the 'Decide' re-fetched it.
+reproForgeAfterOffer :: [Cmd]
+reproForgeAfterOffer =
+  [ Offer [0, 1] 10
+  , Forge [0, 1] 12
+  , Decide 13
+  ]
+
+-- | A peer's EB still needs a tx that our own forged EB's closure supplies.
+-- Forging must discharge it from that EB's 'missingEbTxs' (as delivering it via
+-- 'ArriveTx' would), keeping the missing sets consistent.
+reproForgeSharedTx :: [Cmd]
+reproForgeSharedTx =
+  [ ArriveBody [1, 2] 10
+  , Forge [0, 1] 12
+  , Decide 13
+  ]
+
 ------------------------------------------------------------
 -- Property
 ------------------------------------------------------------
@@ -352,6 +392,7 @@ genCmd = do
     , pure (Offer ids slot)
     , pure (ArriveBody ids slot)
     , ArriveTx ids slot <$> choose (0, length ids - 1)
+    , pure (Forge ids slot)
     , Decide <$> elements worldSlots
     ]
 
@@ -447,15 +488,14 @@ raceSameHashMultiSlot = do
     concurrently_
       (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
       ( concurrently_
-          (recordAnnouncedEb txCache kv (announcePoint, ebBytesSize))
-          ( msgLeiosBlock
+          (recordAnnouncedEb kv (announcePoint, ebBytesSize))
+          ( processLeiosBlock
               nullTracer
               nullTracer
               kv
               txCache
               conn
-              peerId
-              (MkLeiosBlockRequest arrivalPoint ebBytesSize)
+              (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize))
               eb
           )
       )
