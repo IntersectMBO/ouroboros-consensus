@@ -113,6 +113,7 @@ library
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
     LeiosUtils.CallTrace
+    LeiosUtils.TimeBoundedLoop
     LeiosVoteState
     LeiosVoting
     Ouroboros.Consensus.Block
@@ -729,6 +730,7 @@ test-suite consensus-test
     Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoTypes
     Test.LeiosUtils.CallTrace
+    Test.LeiosUtils.TimeBoundedLoop
     Test.LeiosVoteState
 
   build-depends:
