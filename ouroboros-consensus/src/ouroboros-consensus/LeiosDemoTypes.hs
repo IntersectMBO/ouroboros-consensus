@@ -405,6 +405,14 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- same lock) rather than racing a separate read of the immutable tip.
   , missingEbBodies :: !(Map LeiosPoint BytesSize)
   -- ^ EB bodies still needed to be fetched (indexed by point and size)
+  , reverseSlotIndexByEbHash :: !(Map EbHash (NESet SlotNo))
+  -- ^ Inverse of 'missingEbBodies' grouped by content hash: for each EbHash
+  -- listed there, the slots of the 'LeiosPoint's listing it. An EbHash is not
+  -- 1-to-1 with slots, so one body can be listed at several points; on acquiring
+  -- the body (keyed by hash) 'msgLeiosBlock' must clear every such point, and
+  -- this index makes that a direct lookup rather than a scan of 'missingEbBodies'
+  -- (it likewise backs the "already listed?" check on the offer/announcement
+  -- paths). Kept in step with 'missingEbBodies' at every insert and delete.
   -- Request tracking
   , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   -- ^ Which peers we've requested each EB from
@@ -468,6 +476,7 @@ emptyLeiosOutstanding prunedSlot =
     { acquiredEbBodies = Map.empty
     , acquiredEbBodiesPrunedSlot = prunedSlot
     , missingEbBodies = Map.empty
+    , reverseSlotIndexByEbHash = Map.empty
     , requestedEbPeers = Map.empty
     , requestedTxPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
@@ -526,6 +535,7 @@ prettyLeiosOutstanding x =
     map ("    [leios] " ++) $
       [ "acquiredEbBodies = " ++ show (Map.size acquiredEbBodies)
       , "missingEbBodies = " ++ show (Map.size missingEbBodies)
+      , "reverseSlotIndexByEbHash = " ++ show (Map.size reverseSlotIndexByEbHash)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
       , "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
@@ -540,6 +550,7 @@ prettyLeiosOutstanding x =
   MkLeiosOutstanding
     { acquiredEbBodies
     , missingEbBodies
+    , reverseSlotIndexByEbHash
     , requestedEbPeers
     , requestedTxPeers
     , requestedBytesSizePerPeer

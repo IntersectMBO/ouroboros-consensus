@@ -720,13 +720,22 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
         -- Always: this request is no longer in flight and we now have the body,
         -- so drop the body-fetch bookkeeping ('refundEbRequest' reverses the
         -- per-request accounting -- skipped if a disconnect already cancelled it
-        -- in bulk -- and we delete the point from 'missingEbBodies'); and unless
-        -- the EB is too old to matter, remember we have it so we neither
-        -- re-fetch nor re-offer it.
+        -- in bulk -- and we delete every point listing this body from
+        -- 'missingEbBodies'); and unless the EB is too old to matter, remember we
+        -- have it so we neither re-fetch nor re-offer it.
         !outstandingCleaned =
           refundEbRequest peerId ebHash ebBytesSize $
             outstanding
-              { Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
+              { Leios.missingEbBodies =
+                  case Map.lookup ebHash (Leios.reverseSlotIndexByEbHash outstanding) of
+                        Nothing -> Leios.missingEbBodies outstanding
+                        Just slots ->
+                          foldr
+                            (\slot -> Map.delete (MkLeiosPoint slot ebHash))
+                            (Leios.missingEbBodies outstanding)
+                            slots
+              , Leios.reverseSlotIndexByEbHash =
+                  Map.delete ebHash (Leios.reverseSlotIndexByEbHash outstanding)
               , Leios.acquiredEbBodies =
                   if tooOld
                     then Leios.acquiredEbBodies outstanding
@@ -1056,12 +1065,18 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
       if ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
         || ebBytesSize == 0 -- malformed offer
         || Map.member ebHash (Leios.acquiredEbBodies outstanding) -- already have it
-        || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding)) -- already listed
+        || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
         then outstanding
         else
           outstanding
             { Leios.missingEbBodies =
                 Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+            , Leios.reverseSlotIndexByEbHash =
+                Map.insertWith
+                  NESet.union
+                  ebHash
+                  (NESet.singleton ebSlot)
+                  (Leios.reverseSlotIndexByEbHash outstanding)
             }
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
     let !offers1' = Set.insert ebHash offers1
@@ -1327,17 +1342,23 @@ recordAnnouncedEb txCache (outstandingVar, readyVar) (point, ebBytesSize) =
       changed <- MVar.modifyMVar outstandingVar (pure . upd)
       when changed $ void $ MVar.tryPutMVar readyVar ()
  where
-  MkLeiosPoint _ebSlot ebHash = point
+  MkLeiosPoint ebSlot ebHash = point
 
   upd outstanding =
     if Map.member ebHash (Leios.acquiredEbBodies outstanding)
-      || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
+      || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding)
       then (outstanding, False)
       else
         flip (,) True $
           outstanding
             { Leios.missingEbBodies =
                 Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+            , Leios.reverseSlotIndexByEbHash =
+                Map.insertWith
+                  NESet.union
+                  ebHash
+                  (NESet.singleton ebSlot)
+                  (Leios.reverseSlotIndexByEbHash outstanding)
             }
 
 prunePeerStateToImmTip ::
