@@ -119,6 +119,7 @@ library
     LeiosTxCache.Optimized.MutableHashTable
     LeiosTxCache.Reference
     LeiosUtils.CallTrace
+    LeiosUtils.TimeBoundedLoop
     LeiosVoteState
     LeiosVoting
     Ouroboros.Consensus.Block
@@ -769,6 +770,7 @@ test-suite consensus-test
     Test.LeiosTxCache.Optimized.MutableHashTable
     Test.LeiosTxCache.Reference
     Test.LeiosUtils.CallTrace
+    Test.LeiosUtils.TimeBoundedLoop
     Test.LeiosVoteState
     Test.LeiosVoting
 
