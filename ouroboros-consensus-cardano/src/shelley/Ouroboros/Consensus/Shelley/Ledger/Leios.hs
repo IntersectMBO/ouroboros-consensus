@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -105,7 +106,7 @@ instance
   ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
   where
   resolveLeiosClosure leiosDb ebHash = do
-    mAnnouncedEb <-
+    !mAnnouncedEb <-
       leiosDbLookupEbClosure
         leiosDb
         ebHash
@@ -129,8 +130,8 @@ instance
             <> show ebHash
             <> "; chain-sel selected a cert-RB without its EB closure. "
             <> "Refusing to apply as empty (would diverge UTxO)."
-      Just closureEntries ->
-        pure $ mkShelleyTx . deserialiseLeiosTx . snd <$> closureEntries
+      Just !closureEntries ->
+        pure $! (\(_a, !b) -> mkShelleyTx . deserialiseLeiosTx $ b) <$> closureEntries
 
   leiosClosureTxKeySets = getTransactionKeySets
 
@@ -145,10 +146,10 @@ instance
   -- ledger API only sees the in-state UTxO, not the consensus
   -- 'shelleyLedgerTables') and unstowed back afterwards.
   applyLeiosClosure cfg txs lst = do
-    ms' <-
+    (!ms') <-
       first (SL.BlockTransitionError . fmap injectFailure) $
         foldM (applyOne env) ms0 innerTxs
-    let nes' = nes{SL.nesEs = (SL.nesEs nes){SL.esLState = ms'}}
+    let !nes' = nes{SL.nesEs = (SL.nesEs nes){SL.esLState = ms'}}
         -- Mirror the bookkeeping the Shelley ledger update does on
         -- rb-body txs (see 'shelleyCumulativeTxBytes' update in
         -- 'updateShelleyLedgerState'): the counter has to account for EB
@@ -157,25 +158,25 @@ instance
         -- 'applyLeiosClosure' — silently drops them from
         -- 'shelleyCumulativeTxBytes'. The immutable-DB replay path
         -- already sums them via 'inlineLeiosClosure' → block body.
-        closureBytes =
+        !closureBytes =
           sum (fromIntegral . (^. Core.sizeTxF) <$> innerTxs)
-        lst' =
+        !lst' =
           stowed
             { shelleyLedgerState = nes'
             , shelleyCumulativeTxBytes =
                 shelleyCumulativeTxBytes stowed + closureBytes
             }
-    pure (unstowLedgerTables lst')
+    pure $! unstowLedgerTables lst'
    where
-    globals = shelleyLedgerGlobals cfg
-    innerTxs = [tx | ShelleyTx _ tx <- txs]
-    stowed = stowLedgerTables lst
-    nes = shelleyLedgerState stowed
-    env = SL.mkMempoolEnv nes (fromWithOrigin (SlotNo 0) (getTipSlot lst))
-    ms0 = SL.mkMempoolState nes
+    !globals = shelleyLedgerGlobals cfg
+    !innerTxs = [tx | ShelleyTx _ !tx <- txs]
+    !stowed = stowLedgerTables lst
+    !nes = shelleyLedgerState stowed
+    !env = SL.mkMempoolEnv nes (fromWithOrigin (SlotNo 0) (getTipSlot lst))
+    !ms0 = SL.mkMempoolState nes
 
     -- TODO: Ask ledger for an 'applyTxNoValidation' to replace this
-    applyOne envv ms tx =
+    applyOne envv !ms !tx =
       fmap fst
         . SL.ruleApplyTxValidation @"LEDGER" STS.ValidateNone globals envv ms
         $ SL.mkStAnnTx

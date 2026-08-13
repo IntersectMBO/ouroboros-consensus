@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
@@ -642,7 +643,7 @@ getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked = do
           currentSlot
           (ledgerState unticked)
 
-  _ <- evaluate tickedLedgerState
+  _ <- evaluate $ projectLedgerTables tickedLedgerState
   trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
   pure tickedLedgerState
 
@@ -719,8 +720,8 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
         currentSlot
         (headerState unticked)
 
-  let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-      ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+  let !rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+      !ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
   (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot) <-
     case mayLeiosCertAndAnnouncement of
       Nothing -> do
@@ -772,7 +773,10 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
                       (configLedger cfg)
                       currentSlot
                       (forgetLedgerTables lcaStateAfterEB)
-                evaluate $ lcaClosureDiff `prependDiffs` lcaStateAfterEBTicked
+                _ <- evaluate $ projectLedgerTables lcaStateAfterEBTicked
+                let x = lcaClosureDiff `prependDiffs` lcaStateAfterEBTicked
+                _ <- evaluate $ getTipHash x
+                return x
 
             snap <-
               pmTrace'Via (const ()) "mempool-get-snapshot-for-no-cache" currentSlot $
