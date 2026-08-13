@@ -19,10 +19,13 @@
 -- force a 'Decide' through the real fetch logic so a stray @impossible!@
 -- surfaces even if the structural check missed a shape.
 --
--- NOTE. Offers are deliberately not a command, for now. A 'MsgLeiosBlockOffer'
--- does two things: record the EB as missing (covered here by 'Announce') and
--- populate the per-peer offerings map. It's simply not required for the current
--- scope of these tests.
+-- NOTE. A second regression lives here too: the fetch logic must never request
+-- an EB body it already holds. That storm — a held body being re-listed and
+-- re-requested — is what 'prop_neverRefetchesHeldBody' guards against; after each
+-- 'Decide' it checks that no body just requested is already in 'acquiredEbBodies'.
+-- Phrasing it as "already held" rather than a request count keeps it correct if
+-- 'maxRequestsPerEb' rises above 1: requesting a not-yet-held body from several
+-- peers is fine; re-requesting a held one is not.
 module Test.LeiosDemoLogic.Invariants (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
@@ -33,8 +36,10 @@ import Control.Concurrent.Class.MonadMVar
   , newMVar
   , readMVar
   )
+import Control.Monad.Class.MonadAsync (concurrently_)
+import Control.Monad.Class.MonadTest (exploreRaces)
 import Control.Monad.Class.MonadThrow (SomeException, try)
-import Control.Monad.IOSim (IOSim, runSimOrThrow)
+import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
@@ -48,11 +53,13 @@ import Data.Word (Word16, Word64)
 import LeiosDemoDb (withLeiosDb)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
-  ( LeiosFetchDecisions (..)
+  ( AlsoOfferedTxsClosure (..)
+  , LeiosFetchDecisions (..)
   , leiosFetchLogicIteration
   , msgLeiosBlock
   , msgLeiosBlockTxs
   , recordAnnouncedEb
+  , recordEbBodyOffer
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -61,6 +68,7 @@ import LeiosDemoTypes
   , LeiosBlockTxsRequest (..)
   , LeiosEb (..)
   , LeiosOutstanding (..)
+  , LeiosPeerVars
   , LeiosPoint (..)
   , LeiosTx (..)
   , PeerId (..)
@@ -70,10 +78,11 @@ import LeiosDemoTypes
   , hashLeiosEb
   , hashLeiosTx
   , leiosEbBytesSize
+  , newLeiosPeerVars
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosTxCache (LeiosTxCache, nullLeiosTxCache)
-import Ouroboros.Consensus.Util.IOLike (evaluate)
+import LeiosTxCache (LeiosTxCache, newPureLeiosTxCache, nullLeiosTxCache)
+import Ouroboros.Consensus.Util.IOLike (IOLike, evaluate)
 import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
@@ -94,6 +103,12 @@ tests =
     , testProperty
         "missingEbTxs stays in sync with reverseEbIndexByTx across arbitrary sequences"
         prop_invariants
+    , testProperty
+        "the fetch logic never requests an already-held EB body"
+        prop_neverRefetchesHeldBody
+    , testProperty
+        "a concurrent offer and body arrival never leave a held EB body listed (IOSimPOR)"
+        prop_neverRefetchesHeldBodyConcurrent
     ]
 
 ------------------------------------------------------------
@@ -106,8 +121,10 @@ tests =
 type TestEb = [Int]
 
 data Cmd
-  = -- | @recordAnnouncedEb@: announce/offer this EB at this slot.
+  = -- | @recordAnnouncedEb@: announce this EB at this slot.
     Announce TestEb Word
+  | -- | @recordEbBodyOffer@: a peer offers this EB body at this slot.
+    Offer TestEb Word
   | -- | @msgLeiosBlock@: the EB body arrives for that point.
     ArriveBody TestEb Word
   | -- | @msgLeiosBlockTxs@: deliver the tx at this /index within the EB/.
@@ -148,46 +165,64 @@ pointOf ids slot = MkLeiosPoint (fromIntegral slot) (hashLeiosEb (ebOf ids))
 -- | Run a command sequence in 'IOSim' against in-memory dependencies, checking
 -- the invariant after each command. 'Left' names the first failing command.
 runCmds :: [Cmd] -> Either String ()
-runCmds cmds = runSimOrThrow (go cmds)
+runCmds = (() <$) . runCmdsReFetchViolations
+
+-- | Like 'runCmds', but on success also return the EB bodies that the fetch
+-- logic requested despite already holding them (i.e. despite being in
+-- 'acquiredEbBodies'), gathered across all 'Decide's. That list is the
+-- re-fetch-storm regression signal: it must be empty. See
+-- 'prop_neverRefetchesHeldBody'.
+runCmdsReFetchViolations :: [Cmd] -> Either String [EbHash]
+runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
  where
-  go :: forall s. [Cmd] -> IOSim s (Either String ())
+  go :: forall s. [Cmd] -> IOSim s (Either String [EbHash])
   go cs0 = do
     dbHandle <- LeiosDb.newLeiosDBInMemory
     withLeiosDb dbHandle $ \conn -> do
       outstandingVar <- newMVar (emptyLeiosOutstanding (SlotNo 0))
       readyVar <- newEmptyMVar
+      peerVars <- newLeiosPeerVars
       let kv = (outstandingVar, readyVar)
           txCache = nullLeiosTxCache
           peerId = MkPeerId (0 :: Int)
-          loop [] = pure (Right ())
-          loop (c : cs) = do
+          loop acc [] = pure (Right acc)
+          loop acc (c : cs) = do
             r <-
-              try (applyCmd conn txCache kv peerId c)
-                :: IOSim s (Either SomeException ())
+              try (applyCmd conn txCache kv peerVars peerId c)
+                :: IOSim s (Either SomeException [EbHash])
             case r of
               Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
-              Right () -> do
+              Right violations -> do
                 outstanding <- readMVar outstandingVar
                 case checkInvariant outstanding of
                   Left msg -> pure (Left (msg <> " (after " <> show c <> ")"))
-                  Right () -> loop cs
-      loop cs0
+                  Right () -> loop (acc <> violations) cs
+      loop [] cs0
 
+-- | Apply a command, returning any EB bodies it requested that are already held
+-- (in 'acquiredEbBodies') — the re-fetch-storm violation. Empty for everything
+-- but a misbehaving 'Decide'.
 applyCmd ::
   forall s.
   LeiosDb.LeiosDbConnection (IOSim s) ->
   LeiosTxCache (IOSim s) () () Leios.SerializedEbBody ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
+  LeiosPeerVars (IOSim s) ->
   PeerId Int ->
   Cmd ->
-  IOSim s ()
-applyCmd conn txCache kv peerId = \case
-  Announce ids slot ->
+  IOSim s [EbHash]
+applyCmd conn txCache kv peerVars peerId = \case
+  Announce ids slot -> do
     recordAnnouncedEb txCache kv (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+    pure []
+  Offer ids slot -> do
+    recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+    pure []
   ArriveBody ids slot -> do
     let eb = ebOf ids
         req = MkLeiosBlockRequest (pointOf ids slot) (leiosEbBytesSize eb)
     msgLeiosBlock nullTracer nullTracer kv txCache conn peerId req eb
+    pure []
   ArriveTx ids slot idx -> do
     let txId = ids !! idx
         req =
@@ -196,6 +231,7 @@ applyCmd conn txCache kv peerId = \case
             (offsetsToBitmaps [idx])
             (V.singleton (txHashOf txId))
     msgLeiosBlockTxs nullTracer nullTracer kv txCache conn peerId req (V.singleton (leiosTxOf txId))
+    pure []
   Decide slot -> do
     outstanding <- readMVar (fst kv)
     let ebs = referencedEbs outstanding
@@ -208,6 +244,10 @@ applyCmd conn txCache kv peerId = \case
     _ <- evaluate out'
     _ <- evaluate (forceDecisions decs)
     modifyMVar_ (fst kv) (\_ -> pure out')
+    -- Regression: the fetch logic must not request a body already in
+    -- 'acquiredEbBodies'. Return any it did (empty when well-behaved).
+    let held = Leios.acquiredEbBodies outstanding
+    pure (filter (\h -> Map.member h held) (ebBodyRequestHashes decs))
 
 -- | Every EbHash currently referenced by the outstanding state (bodies + txs),
 -- as an all-offering peer's body\/closure sets.
@@ -227,6 +267,16 @@ forceDecisions (MkLeiosFetchDecisions m) =
     , (txs, _ebs) <- Map.elems slotMap
     , (_txHash, sz, _ebHash, offset) <- DList.toList txs
     ]
+
+-- | The 'EbHash'es a decision set issues an EB-body fetch request for (one entry
+-- per request; the fetch logic caps this at 'maxRequestsPerEb' per EB).
+ebBodyRequestHashes :: LeiosFetchDecisions pid -> [EbHash]
+ebBodyRequestHashes (MkLeiosFetchDecisions m) =
+  [ ebHash
+  | slotMap <- Map.elems m
+  , (_txs, ebReqs) <- Map.elems slotMap
+  , (ebHash, _sz) <- DList.toList ebReqs
+  ]
 
 ------------------------------------------------------------
 -- The invariant
@@ -299,6 +349,7 @@ genCmd = do
   slot <- elements worldSlots
   oneof
     [ pure (Announce ids slot)
+    , pure (Offer ids slot)
     , pure (ArriveBody ids slot)
     , ArriveTx ids slot <$> choose (0, length ids - 1)
     , Decide <$> elements worldSlots
@@ -308,6 +359,115 @@ prop_invariants :: Property
 prop_invariants =
   forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
     runCmds cmds === Right ()
+
+-- | Regression for the EB-body re-fetch storm: over any interleaving of
+-- announces, offers, and body/tx arrivals, the fetch logic must never request an
+-- EB body it already holds (one in 'acquiredEbBodies'). The storm was precisely
+-- this — a held body re-listed and re-requested indefinitely.
+--
+-- Stated as "already held" rather than a request count, so it stays correct if
+-- 'maxRequestsPerEb' rises above 1: requesting a not-yet-held body from several
+-- peers is fine; re-requesting a held one is not. (With 'nullLeiosTxCache', the
+-- old LeiosTxCache-based "do we have it?" check would see nothing held and
+-- re-list/re-request endlessly; the 'acquiredEbBodies' check is cache-independent.)
+prop_neverRefetchesHeldBody :: Property
+prop_neverRefetchesHeldBody =
+  forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
+    case runCmdsReFetchViolations cmds of
+      Left msg -> counterexample msg (property False)
+      Right violations ->
+        counterexample
+          ("fetch requested already-held EB bodies: " ++ show violations)
+          (null violations)
+
+------------------------------------------------------------
+-- Concurrent (IOSimPOR) regression
+------------------------------------------------------------
+
+-- Unlike the rest of this module, this scenario calls the handlers directly
+-- rather than through the 'Cmd' interpreter ('applyCmd'). Two reasons: a race
+-- has no use for 'Decide' -- we assert on the state directly -- and 'applyCmd'
+-- runs 'Decide' as a read-then-blind-overwrite that is only sound
+-- single-threaded (a concurrent write would be silently clobbered); and spelling
+-- the handlers out keeps the two-lock structure this test exists to probe -- the
+-- shared cache, and the announcement path's cross-lock 'lookupBody' -- in plain
+-- view at the race site.
+
+-- | The sequential 'prop_neverRefetchesHeldBody' generates event /sequences/ but
+-- runs each handler to completion, so it can't reproduce a cross-lock race
+-- straddling a concurrent body insert. This scenario runs three handlers for the
+-- /same EB hash at three different slots/ as genuinely concurrent threads over
+-- the shared MVars — an offer (slot 10), an announcement (slot 11, whose "do we
+-- already hold it?" read hits the pure 'newPureLeiosTxCache', a lock distinct
+-- from the outstanding lock, before it touches the outstanding state), and a body
+-- arrival (slot 12, different from both) — and uses IOSimPOR to explore every
+-- interleaving.
+--
+-- An 'EbHash' is not 1-to-1 with slots, so this is exactly the shape that armed
+-- the storm: whichever listing wins is recorded at its own slot, and the arrival
+-- (at yet another slot) must clear it /by hash/, not by point. In every
+-- interleaving the state invariant "a held EB body is never still listed for
+-- fetching" must hold, which is what stops a later decision from re-requesting
+-- it.
+--
+-- With the shipped fix each handler's "held?"/"listed?" test and its state update
+-- are one 'outstandingVar' critical section, and acquisition purges every point
+-- sharing the hash via 'reverseSlotIndexByEbHash', so no interleaving can violate
+-- this; the test guards against regressing either half (moving a check back out
+-- of the lock, or reverting to a delete-by-point that misses the other slots).
+prop_neverRefetchesHeldBodyConcurrent :: Property
+prop_neverRefetchesHeldBodyConcurrent =
+  exploreSimTrace id (exploreRaces *> raceSameHashMultiSlot) $ \_ tr ->
+    case traceResult False tr of
+      Right prop -> prop
+      Left e -> counterexample ("Failure: " <> show e) False
+
+-- | An offer, an announcement, and a body arrival walk into a bar...
+--
+-- All for the same EB hash but at three distinct slots, run concurrently over
+-- shared state; the returned 'Property' is the invariant "no held EB body is
+-- still listed for fetching".
+raceSameHashMultiSlot :: forall m. IOLike m => m Property
+raceSameHashMultiSlot = do
+  dbHandle <- LeiosDb.newLeiosDBInMemory
+  withLeiosDb dbHandle $ \conn -> do
+    outstandingVar <- newMVar (emptyLeiosOutstanding (SlotNo 0))
+    readyVar <- newEmptyMVar
+    peerVars <- newLeiosPeerVars
+    txCache <- newPureLeiosTxCache
+    let kv = (outstandingVar, readyVar)
+        peerId = MkPeerId (0 :: Int)
+        ids = [0, 1] :: TestEb
+        eb = ebOf ids
+        ebBytesSize = leiosEbBytesSize eb
+        -- One hash (same ids), three different slots.
+        offerPoint = pointOf ids 10
+        announcePoint = pointOf ids 11
+        arrivalPoint = pointOf ids 12
+    concurrently_
+      (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
+      ( concurrently_
+          (recordAnnouncedEb txCache kv (announcePoint, ebBytesSize))
+          ( msgLeiosBlock
+              nullTracer
+              nullTracer
+              kv
+              txCache
+              conn
+              peerId
+              (MkLeiosBlockRequest arrivalPoint ebBytesSize)
+              eb
+          )
+      )
+    outstanding <- readMVar outstandingVar
+    let held = Map.keysSet (Leios.acquiredEbBodies outstanding)
+        listed =
+          Set.fromList (map (.pointEbHash) (Map.keys (Leios.missingEbBodies outstanding)))
+        heldAndListed = Set.toList (Set.intersection held listed)
+    pure $
+      counterexample
+        ("held EB body still listed for fetching: " <> show heldAndListed)
+        (null heldAndListed)
 
 offsetsToBitmaps :: [Int] -> [(Word16, Word64)]
 offsetsToBitmaps offs =
