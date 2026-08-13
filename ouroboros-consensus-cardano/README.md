@@ -245,61 +245,9 @@ on a Leios chain, `leios.db`.
 
 #### Checking the Leios analyses
 
-`scripts/check-leios-analysis` runs `--count-tx-outputs` and `--show-block-txs-size` against a real Leios chain and checks their output.
-It takes `$NODE_DIR`, and it derives every other path from that.
-
-The script runs `db-analyser` and it never builds one.
-It reads the `--db-analyser` flag, then the `DB_ANALYSER` variable, then `PATH`.
-
-The development shell puts the script on `PATH`, and it puts no `db-analyser` there.
-So name the binary that your own build produced:
-
-```sh
-export DB_ANALYSER="$(cabal list-bin db-analyser)"
-check-leios-analysis $NODE_DIR
-```
-
-Outside the shell, `nix run` supplies a `db-analyser` on `PATH`:
-
-```sh
-nix run .#check-leios-analysis -- $NODE_DIR
-```
-
-`--count-tx-outputs` and `--show-block-txs-size` read the Leios database by different paths.
-The main check is that both name the same blocks as certifying an EB.
-The script also fails if the chain has no certifying block, because then the run cannot perform any substantial leios checks.
-
-A full chain takes a few minutes. `--num-blocks-to-process` shortens it, at the risk of stopping before the first certifying block.
-
-`--benchmark` adds `--benchmark-ledger-ops` to the run. The script checks that:
-
-- `--benchmark-ledger-ops` and `--show-block-txs-size` report the same number of rows
-- `--benchmark-ledger-ops` and `--show-block-txs-size` name the same blocks as certifying an EB
-- for each of those blocks, the `ebNumTxs` and `ebTxsBytes` of `--benchmark-ledger-ops` equal the EB tx count and the EB tx size of `--show-block-txs-size`
-- `--benchmark-ledger-ops` reports a non-zero `ebBytes` for each of those blocks
-- `--benchmark-ledger-ops` reports 0 in `ebBytes`, `ebTxsBytes`, `ebNumTxs`, `ebReadTime`, and `mut_ebRead` for every other block
-
-`--show-block-txs-size` reads the rows of the EB body.
-`--benchmark-ledger-ops` resolves the EB closure, which joins the txs table.
-So a tx that the txs table lacks breaks the third check above.
-
-`--benchmark-ledger-ops` maintains a ledger state, so it applies every block from the start of the chain.
-`--count-tx-outputs` and `--show-block-txs-size` only read blocks.
-So `--benchmark` costs more time than every other check in the script.
-
-```sh
-check-leios-analysis $NODE_DIR --benchmark
-```
-
-`--repro` adds `--repro-mempool-and-forge 1` to the run. The script runs the same checks against `--repro-mempool-and-forge`, except the `ebBytes` one, and one more:
-
-- `--repro-mempool-and-forge` reports 0 txs of the block itself for every block that certifies an EB, because such a block has an empty body
-
-`--repro-mempool-and-forge` also applies every block from the start of the chain, and it fills a mempool as well.
-
-```sh
-check-leios-analysis $NODE_DIR --repro
-```
+`check-leios-analysis` runs several analyses against a real Leios chain and checks that they agree on the transactions of each certified EB.
+It is a manual test: it needs such a chain, and it does not run on CI.
+It lives on the `leios-prototype` branch of [ouroboros-consensus-tools](https://github.com/input-output-hk/ouroboros-consensus-tools/tree/leios-prototype/check-leios-analysis), which documents how to run it.
 
 #### Saving a snapshot
 

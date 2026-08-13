@@ -97,21 +97,7 @@
         };
         inherit hydraJobs;
         legacyPackages = pkgs;
-        packages = hydraJobs.native.haskell96.exesNoAsserts // {
-          # Runs without the development shell, so it needs a db-analyser of its
-          # own. runtimeInputs puts that db-analyser on PATH, which is where the
-          # script looks for it.
-          check-leios-analysis = pkgs.writeShellApplication {
-            name = "check-leios-analysis";
-            runtimeInputs = [
-              pkgs.python3
-              hydraJobs.native.haskell96.exesNoAsserts.db-analyser
-            ];
-            text = ''
-              exec python3 ${./ouroboros-consensus-cardano/scripts/check-leios-analysis} "$@"
-            '';
-          };
-        };
+        packages = hydraJobs.native.haskell96.exesNoAsserts;
       }
     );
 }
