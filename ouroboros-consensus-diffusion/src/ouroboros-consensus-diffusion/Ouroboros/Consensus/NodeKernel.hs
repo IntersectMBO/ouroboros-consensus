@@ -790,11 +790,17 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     leiosVoteState
                     bf
                     leiosConn
-                    leiosTxCache
-                    ( Leios.processForgedAnnouncement
-                        (leiosKernelTracer tracers)
-                        leiosCentralState
-                        leiosOutstanding
+                    ( \forgedHeader forgedEb ->
+                        Leios.onForgedLeiosEb
+                          (leiosKernelTracer tracers)
+                          leiosCentralState
+                          (leiosOutstanding, leiosReady)
+                          leiosTxCache
+                          leiosConn
+                          -- Safe here: the forge hands us a corresponding header
+                          -- and closure.
+                          (Leios.mkForgedAnnouncingHeader forgedHeader forgedEb)
+                          forgedEb
                     )
                     currentSlot
     )

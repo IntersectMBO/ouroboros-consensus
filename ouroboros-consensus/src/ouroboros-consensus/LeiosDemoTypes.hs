@@ -391,7 +391,7 @@ newLeiosPeerVars = do
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
     acquiredEbBodies :: !(Map EbHash SlotNo)
-  -- ^ The EB bodies we have already received, recorded by 'msgLeiosBlock' at
+  -- ^ The EB bodies we have already received, recorded by 'processLeiosBlock' at
   -- the moment of receipt, so that we neither re-fetch nor re-list one we
   -- already hold. The 'SlotNo' is the EB's election slot; an entry is dropped
   -- once that slot falls before the immutable tip (see
@@ -400,7 +400,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   , acquiredEbBodiesPrunedSlot :: !SlotNo
   -- ^ The slot 'acquiredEbBodies' has most recently been pruned up to (see
   -- 'pruneOutstandingToImmTip'): entries below it have been dropped. Used as
-  -- the "too old" boundary by 'msgLeiosBlock' and the offer handler, so that
+  -- the "too old" boundary by 'processLeiosBlock' and the offer handler, so that
   -- test agrees with what has actually been pruned (it reads this under the
   -- same lock) rather than racing a separate read of the immutable tip.
   , missingEbBodies :: !(Map LeiosPoint BytesSize)
@@ -409,7 +409,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- ^ Inverse of 'missingEbBodies' grouped by content hash: for each EbHash
   -- listed there, the slots of the 'LeiosPoint's listing it. An EbHash is not
   -- 1-to-1 with slots, so one body can be listed at several points; on acquiring
-  -- the body (keyed by hash) 'msgLeiosBlock' must clear every such point, and
+  -- the body (keyed by hash) 'processLeiosBlock' must clear every such point, and
   -- this index makes that a direct lookup rather than a scan of 'missingEbBodies'
   -- (it likewise backs the "already listed?" check on the offer/announcement
   -- paths). Kept in step with 'missingEbBodies' at every insert and delete.
@@ -455,7 +455,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --   into the DB (via @MsgLeiosBlockTxs@ handling).
   --
   -- TODO: 'blockingPerEb' can go permanently stale for txs shared across EBs.
-  -- 'msgLeiosBlockTxs' only decrements the entry for the EB it was requesting;
+  -- 'processLeiosBlockTxs' only decrements the entry for the EB it was requesting;
   -- a tx that also belongs to another EB B can reach the DB via a fetch
   -- attributed to a different EB, so B never fetches it itself -- and B's
   -- 'blockingPerEb' is never decremented for that tx and stays > 0. This is

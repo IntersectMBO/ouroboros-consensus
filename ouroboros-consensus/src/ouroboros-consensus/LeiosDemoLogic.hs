@@ -23,7 +23,7 @@ import Control.Monad (foldM, forM_, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
-import Control.Tracer (Tracer, contramap, traceWith)
+import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.DList (DList)
@@ -592,9 +592,9 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db peerId 
     pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
     forM_ pending $ \case
       PendingBlockResponse req eb ->
-        msgLeiosBlock ktracer tracer kernelVars txCache db peerId req eb
+        processLeiosBlock ktracer tracer kernelVars txCache db (ReceivedBlockFrom peerId req) eb
       PendingBlockTxsResponse req txs ->
-        msgLeiosBlockTxs ktracer tracer kernelVars txCache db peerId req txs
+        processLeiosBlockTxs ktracer tracer kernelVars txCache db (ReceivedTxsFrom peerId req) txs
 
   -- Non-blocking: return 'Right result' if stop or a request is available,
   -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
@@ -653,7 +653,28 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db peerId 
 
 -----
 
-msgLeiosBlock ::
+-- | Where an EB body being ingested came from. 'processLeiosBlock' and
+-- 'processLeiosBlockTxs' serve both a fetch response from a peer (carrying the
+-- request we are fulfilling) and our own forge; the arrival-specific behaviour a
+-- local forge skips is: refunding the peer's request budget, classifying/listing
+-- the missing txs (a forge holds its whole closure, so nothing is missing), and
+-- emitting fetch-arrival telemetry (which would otherwise pollute the arrival
+-- panels with self-produced data).
+data LeiosBlockSource pid
+  = ReceivedBlockFrom (PeerId pid) LeiosBlockRequest
+  | -- | A locally-forged EB, carrying the point the forge assigned it.
+    ForgedBlock !LeiosPoint
+
+-- | Like 'LeiosBlockSource', for a batch of EB txs. The tx bytes are the
+-- 'V.Vector LeiosTx' argument; 'ForgedTxs' additionally carries the forged EB's
+-- point and body so the tx hashes come from the body's 'leiosEbTxs' (aligned by
+-- position with the 'V.Vector LeiosTx') rather than being re-derived. Some of the
+-- carried fields are currently unused.
+data LeiosBlockTxsSource pid
+  = ReceivedTxsFrom (PeerId pid) LeiosBlockTxsRequest
+  | ForgedTxs !LeiosPoint !LeiosEb
+
+processLeiosBlock ::
   ( Ord pid
   , IOLike m
   ) =>
@@ -664,13 +685,14 @@ msgLeiosBlock ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
-  PeerId pid ->
-  LeiosBlockRequest ->
+  LeiosBlockSource pid ->
   LeiosEb ->
   m ()
-msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb = do
+processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb = do
   -- validate it
-  let MkLeiosBlockRequest point ebBytesSize = req
+  let (mbPeer, point, ebBytesSize) = case source of
+        ReceivedBlockFrom peerId (MkLeiosBlockRequest p sz) -> (Just peerId, p, sz)
+        ForgedBlock p -> (Nothing, p, leiosEbBytesSize eb)
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   let MkLeiosPoint _ebSlot ebHash = point
   let ebBytesSize' = leiosEbBytesSize eb
@@ -678,28 +700,32 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
   let invalidReply reason =
         traceWith ktracer (TraceLeiosFetchBodyArrival (fetchArrivalInvalid ebBytesSize'))
           >> error reason
-  do
-    -- FIXME: 'ebBytesSize' here is the size we recorded from the peer
-    -- offer at 'MsgLeiosBlockOffer' time (carried through the request),
-    -- not the chain-authoritative 'leiosEbBytesSize' from the parent
-    -- RB's 'headerLeiosAnnouncement'. EB announcements are not yet
-    -- implemented; once they are, validate against the announced size
-    -- so that a peer cannot poison this check by sending a bad-size
-    -- offer first.
-    when (ebBytesSize' /= ebBytesSize) $ do
-      invalidReply $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
-    let ebHash' = hashLeiosEb eb
-    when (ebHash' /= ebHash) $ do
-      invalidReply $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
-    -- Every referenced tx must be unique: 'reverseEbIndexByTx' records one
-    -- offset per (tx, EB), so a duplicate desyncs it from 'missingEbTxs'.
-    let MkLeiosEb v = eb
-        duplicateTxHashes =
-          Map.keys $
-            Map.filter (> (1 :: Int)) $
-              Map.fromListWith (+) [(txh, 1) | (txh, _) <- V.toList v]
-    when (not (null duplicateTxHashes)) $ do
-      invalidReply $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
+  case source of
+    -- A forge's body is self-produced; never validate it (so no 'error' path is
+    -- ever reachable for a locally-forged EB).
+    ForgedBlock{} -> pure ()
+    ReceivedBlockFrom{} -> do
+      -- FIXME: 'ebBytesSize' here is the size we recorded from the peer
+      -- offer at 'MsgLeiosBlockOffer' time (carried through the request),
+      -- not the chain-authoritative 'leiosEbBytesSize' from the parent
+      -- RB's 'headerLeiosAnnouncement'. EB announcements are not yet
+      -- implemented; once they are, validate against the announced size
+      -- so that a peer cannot poison this check by sending a bad-size
+      -- offer first.
+      when (ebBytesSize' /= ebBytesSize) $ do
+        invalidReply $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
+      let ebHash' = hashLeiosEb eb
+      when (ebHash' /= ebHash) $ do
+        invalidReply $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
+      -- Every referenced tx must be unique: 'reverseEbIndexByTx' records one
+      -- offset per (tx, EB), so a duplicate desyncs it from 'missingEbTxs'.
+      let MkLeiosEb v = eb
+          duplicateTxHashes =
+            Map.keys $
+              Map.filter (> (1 :: Int)) $
+                Map.fromListWith (+) [(txh, 1) | (txh, _) <- V.toList v]
+      when (not (null duplicateTxHashes)) $ do
+        invalidReply $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
   -- ingest it
   bodyClass <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
@@ -711,8 +737,11 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
         -- 'missingEbBodies'); and unless the EB is too old to matter, remember we
         -- have it so we neither re-fetch nor re-offer it.
         !outstandingCleaned =
-          refundEbRequest peerId ebHash ebBytesSize $
-            outstanding
+          ( case mbPeer of
+              Just peerId -> refundEbRequest peerId ebHash ebBytesSize
+              Nothing -> id
+          )
+            $ outstanding
               { Leios.missingEbBodies =
                   case Map.lookup ebHash (Leios.reverseSlotIndexByEbHash outstanding) of
                         Nothing -> Leios.missingEbBodies outstanding
@@ -761,25 +790,30 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
           traceWith ktracer $ TraceLeiosBlockAcquired point
           forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
           pure $ fmap snd mbSummaryMisses
-        (bodyClass, misses) <- case mbMissesFromBody of
-          -- 'BodyNotYetInserted': the announcement was present and we filled it.
-          Just ms -> pure (fetchArrivalGood ebBytesSize', ms)
-          Nothing -> do
-            -- Announcement absent (assumed present once, since evicted): the
-            -- cache insert was a no-op. Backstop: classify the txs directly to
-            -- build the misses.
-            let MkLeiosEb v = eb
-            ms <- withLookupTx txCache $ \look ->
-              V.ifoldM
-                ( \acc i (txh, sz) -> do
-                    r <- look txh
-                    pure $ case r of
-                      Just{} -> acc
-                      Nothing -> IntMap.insert i (txh, sz) acc
-                )
-                IntMap.empty
-                v
-            pure (fetchArrivalEvicted ebBytesSize', ms)
+        (bodyClass, misses) <- case source of
+          -- A forge holds its whole closure, so nothing is missing. Its txs are
+          -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
+          -- 'insertBody' above only served to register the cache entries.
+          ForgedBlock{} -> pure (fetchArrivalGood ebBytesSize', IntMap.empty)
+          ReceivedBlockFrom{} -> case mbMissesFromBody of
+            -- 'BodyNotYetInserted': the announcement was present and we filled it.
+            Just ms -> pure (fetchArrivalGood ebBytesSize', ms)
+            Nothing -> do
+              -- Announcement absent (assumed present once, since evicted): the
+              -- cache insert was a no-op. Backstop: classify the txs directly to
+              -- build the misses.
+              let MkLeiosEb v = eb
+              ms <- withLookupTx txCache $ \look ->
+                V.ifoldM
+                  ( \acc i (txh, sz) -> do
+                      r <- look txh
+                      pure $ case r of
+                        Just{} -> acc
+                        Nothing -> IntMap.insert i (txh, sz) acc
+                  )
+                  IntMap.empty
+                  v
+              pure (fetchArrivalEvicted ebBytesSize', ms)
         let !outstanding' =
               outstandingCleaned
                 { Leios.blockingPerEb =
@@ -800,7 +834,9 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
                 }
         pure (outstanding', bodyClass)
   void $ MVar.tryPutMVar readyVar ()
-  traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
+  case source of
+    ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
+    ReceivedBlockFrom{} -> traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
 
 -----
@@ -890,7 +926,7 @@ refundTxRequest peerId requestedTxPeers' txsBytesSize o
 
 -----
 
-msgLeiosBlockTxs ::
+processLeiosBlockTxs ::
   ( Ord pid
   , IOLike m
   ) =>
@@ -901,53 +937,57 @@ msgLeiosBlockTxs ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
-  PeerId pid ->
-  LeiosBlockTxsRequest ->
+  LeiosBlockTxsSource pid ->
   V.Vector LeiosTx ->
   m ()
-msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req txs = do
-  traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
-  -- validate it
-  -- TODO: could validate the returned point + bitmaps too (added to response recently)
-  let MkLeiosBlockTxsRequest point bitmaps txHashes = req
+processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source txs = do
   let txBytess = V.map cbor txs
-  let batchBytes = V.sum (V.map BS.length txBytess)
-  -- A failed-validation batch: attribute the whole batch to 'fabInvalid'.
-  let invalidReply reason =
-        traceWith ktracer (TraceLeiosFetchTxsArrival (fetchArrivalInvalid (fromIntegral batchBytes)))
-          >> error reason
-  do
-    when (V.length txs /= V.length txHashes) $ do
-      invalidReply $ "MsgLeiosBlockTxs length mismatch: " ++ show (V.length txs, V.length txHashes)
-    let txHashes' = V.map hashLeiosTx txs
-    when (txHashes' /= txHashes) $ do
-      let mismatches =
-            V.toList $
-              V.findIndices id $
-                V.zipWith (/=) txHashes txHashes'
-      invalidReply $ "MsgLeiosBlockTxs hash mismatches: " ++ show mismatches
-  let nextOffset = \case
-        [] -> Nothing
-        (idx, bitmap) : k -> case popLeftmostOffset bitmap of
-          Nothing -> nextOffset k
-          Just (i, bitmap') ->
-            Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
-      offsets = unfoldr nextOffset bitmaps
-  -- ingest
-  txArrival <- traceException tracer TraceLeiosPeerDbException $ do
+      batchBytes = V.sum (V.map BS.length txBytess)
+      -- The tx hashes: taken from the request for an arrival (and validated
+      -- below), derived from the txs themselves for a forge.
+      txHashes = case source of
+        ReceivedTxsFrom _ (MkLeiosBlockTxsRequest _ _ txHs) -> txHs
+        -- The body's tx list is position-aligned with the 'txs' vector, so use
+        -- its hashes rather than re-hashing the bytes we already hashed to forge.
+        ForgedTxs _ eb -> V.map fst (leiosEbTxs eb)
+  -- validate it (an arrival only; a forge's data is self-produced)
+  -- TODO: could validate the returned point + bitmaps too
+  case source of
+    ForgedTxs{} -> pure ()
+    ReceivedTxsFrom _ req -> do
+      traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
+      let invalidReply reason =
+            traceWith ktracer (TraceLeiosFetchTxsArrival (fetchArrivalInvalid (fromIntegral batchBytes)))
+              >> error reason
+      when (V.length txs /= V.length txHashes) $
+        invalidReply $ "MsgLeiosBlockTxs length mismatch: " ++ show (V.length txs, V.length txHashes)
+      let txHashes' = V.map hashLeiosTx txs
+      when (txHashes' /= txHashes) $ do
+        let mismatches = V.toList $ V.findIndices id $ V.zipWith (/=) txHashes txHashes'
+        invalidReply $ "MsgLeiosBlockTxs hash mismatches: " ++ show mismatches
+  -- ingest: write to the LeiosDb, then the tx-cache. A forge tags its txs applied
+  -- (drawn from its validated mempool, so known-valid) and emits no fetch-arrival
+  -- telemetry; a peer's delivery tags them unapplied and is attributed to the
+  -- arrival panels. The cache insert follows the LeiosDb write, which is what the
+  -- index currently reflects.
+  traceException tracer TraceLeiosPeerDbException $ do
     completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
     forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-    -- crucially: insert the txs into the TxCacheIndex _after_ they've been
-    -- written to the LeiosDb, since that's what the TxCacheIndex currently
-    -- indexes. The handle buckets each tx's bytes by its prior state in the same
-    -- locked pass -- coherent under concurrent duplicate deliveries; the returned
-    -- partition sums to the batch size.
-    withLockedInsertUnappliedTx txCache $ \w0 step ->
-      V.foldM'
-        (\w (txh, sz) -> step w txh sz ())
-        w0
-        (V.zip txHashes (V.map (fromIntegral . BS.length) txBytess))
-  traceWith ktracer $ TraceLeiosFetchTxsArrival txArrival
+    case source of
+      ForgedTxs{} ->
+        withLockedInsertAppliedTx txCache $ \w0 step ->
+          V.foldM' (\w txh -> step w txh ()) w0 txHashes
+      ReceivedTxsFrom{} -> do
+        -- The handle buckets each tx's bytes by its prior state in the same
+        -- locked pass -- coherent under concurrent duplicate deliveries; the
+        -- returned partition sums to the batch size.
+        txArrival <-
+          withLockedInsertUnappliedTx txCache $ \w0 step ->
+            V.foldM'
+              (\w (txh, sz) -> step w txh sz ())
+              w0
+              (V.zip txHashes (V.map (fromIntegral . BS.length) txBytess))
+        traceWith ktracer $ TraceLeiosFetchTxsArrival txArrival
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let removeTxFromMissing txHash mtxs =
@@ -957,43 +997,61 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
               Map.foldrWithKey
                 ( \ebHash (slotsWithThisEb, offset, _sz) acc ->
                     foldr
-                      (\ebSlot ->
-                         Map.update
-                           (delIf IntMap.null . IntMap.delete offset)
-                           (MkLeiosPoint ebSlot ebHash)
+                      ( \ebSlot ->
+                          Map.update
+                            (delIf IntMap.null . IntMap.delete offset)
+                            (MkLeiosPoint ebSlot ebHash)
                       )
                       acc
                       slotsWithThisEb
                 )
                 mtxs
                 ebsWithThisTx
-    let (requestedTxPeers', reverseEbIndexByTx', missingEbTxs', txsBytesSize) =
+        -- Discharge the acquired txs by identity: remove each from 'missingEbTxs'
+        -- (every referencing point) and from 'reverseEbIndexByTx'. Shared by
+        -- arrivals and forges.
+        (reverseEbIndexByTx', missingEbTxs') =
           V.foldl'
-            ( \(!accReqs, !accRev, !accMtxs, !accSz) (txHash, txBytes) ->
-                ( Map.update (delIf Set.null . Set.delete peerId) txHash accReqs
-                , Map.delete txHash accRev   -- full delete from reverseEbIndexByTx
-                , removeTxFromMissing txHash accMtxs   -- full delete from missingEbTxs
-                , accSz + BS.length txBytes
+            ( \(!accRev, !accMtxs) txHash ->
+                ( Map.delete txHash accRev
+                , removeTxFromMissing txHash accMtxs
                 )
             )
-            ( Leios.requestedTxPeers outstanding
-            , Leios.reverseEbIndexByTx outstanding
-            , Leios.missingEbTxs outstanding
-            , 0
-            )
-            (txHashes `V.zip` txBytess)
-    let offsetsSet = IntSet.fromList offsets
-        -- the requests this MsgLeiosBlockTxs was the first to resolve for this
-        -- point (kept only to keep the best-effort 'blockingPerEb' roughly current)
-        beatOtherPeers =
-          (`IntMap.restrictKeys` offsetsSet) $
-            Map.findWithDefault IntMap.empty point (Leios.missingEbTxs outstanding)
-    -- 'refundTxRequest' reverses this peer's per-request accounting (but skips
-    -- it if the peer has already been cancelled in bulk by a disconnect); the
-    -- global state below is updated unconditionally, since we did receive the
-    -- txs.
-    let !outstanding' =
-          refundTxRequest peerId requestedTxPeers' (fromIntegral txsBytesSize) $
+            (Leios.reverseEbIndexByTx outstanding, Leios.missingEbTxs outstanding)
+            txHashes
+    case source of
+      -- A forge answered no request and holds the whole closure, so there is no
+      -- peer budget to refund and no 'blockingPerEb' beat to record.
+      ForgedTxs{} ->
+        pure $
+          outstanding
+            { Leios.missingEbTxs = missingEbTxs'
+            , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
+            }
+      ReceivedTxsFrom peerId (MkLeiosBlockTxsRequest point bitmaps _) -> do
+        let nextOffset = \case
+              [] -> Nothing
+              (idx, bitmap) : k -> case popLeftmostOffset bitmap of
+                Nothing -> nextOffset k
+                Just (i, bitmap') -> Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
+            offsets = unfoldr nextOffset bitmaps
+            -- Remove this peer from each delivered tx's requested-peers set.
+            requestedTxPeers' =
+              V.foldl'
+                (\acc txHash -> Map.update (delIf Set.null . Set.delete peerId) txHash acc)
+                (Leios.requestedTxPeers outstanding)
+                txHashes
+            offsetsSet = IntSet.fromList offsets
+            -- the requests this MsgLeiosBlockTxs was the first to resolve for this
+            -- point (kept only to keep the best-effort 'blockingPerEb' roughly current)
+            beatOtherPeers =
+              (`IntMap.restrictKeys` offsetsSet) $
+                Map.findWithDefault IntMap.empty point (Leios.missingEbTxs outstanding)
+        -- 'refundTxRequest' reverses this peer's per-request accounting (but skips
+        -- it if the peer was already cancelled in bulk by a disconnect); the global
+        -- state below is updated unconditionally, since we did receive the txs.
+        pure $
+          refundTxRequest peerId requestedTxPeers' (fromIntegral batchBytes) $
             outstanding
               { Leios.missingEbTxs = missingEbTxs'
               , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
@@ -1009,9 +1067,11 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
                         point
                         (Leios.blockingPerEb outstanding)
               }
-    pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
-  traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
+  case source of
+    ForgedTxs{} -> pure ()
+    ReceivedTxsFrom _ req ->
+      traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
 
 -----
 
@@ -1127,6 +1187,17 @@ mkAnnouncingHeader h =
   headerLeiosAnnouncement h <&> \(MkLeiosPoint _ebSlot ebHash, ebBodySize) ->
     UnsafeMkAnnouncingHeader h (MkAnnouncementFields (headerElId h) ebHash ebBodySize)
 
+-- | The other safe constructor of an 'AnnouncingHeader': for a header we already
+-- know announces a specific EB because we forged it. Unlike 'mkAnnouncingHeader'
+-- it is total -- no parse of the header's announcement is needed, since the
+-- announcement fields come straight from the 'ForgedLeiosEb' whose EB the header
+-- announces by construction.
+mkForgedAnnouncingHeader ::
+  ResolveLeiosBlock blk => Header blk -> Leios.ForgedLeiosEb -> AnnouncingHeader blk
+mkForgedAnnouncingHeader h forgedEb =
+  UnsafeMkAnnouncingHeader h $
+    MkAnnouncementFields (headerElId h) forgedEb.point.pointEbHash (leiosEbBytesSize forgedEb.body)
+
 -- | The election of an 'AnnouncingHeader'.
 ancElId :: AnnouncingHeader blk -> ElId
 ancElId = announcementElection . ancAnnouncementFields
@@ -1165,7 +1236,14 @@ processAnnouncementCentrally
         (contramap (traceNewAnnouncement provenance) kernelTracer)
         ancElId
         ( \_elSt -> do
-            recordAnnouncedEb txCache kernelVars (point, Leios.announcementEbBodySize fields)
+            -- Only a received announcement lists the EB for fetching; one we
+            -- forged is already held (the forge stores it via 'processLeiosBlock').
+            -- (A peer echoing our announcement back never re-enters this
+            -- first-sight callback -- our ForgedLocally sight already claimed it.)
+            case provenance of
+              ForgedLocally -> pure ()
+              ReceivedViaChainSync -> recordAnnounced
+              ReceivedViaLeiosNotify -> recordAnnounced
             recordAnnouncementInTxCache txCache ancHdr point
         )
         cst
@@ -1178,44 +1256,7 @@ processAnnouncementCentrally
   -- The announced EB's slot is the announcing header's own slot (see
   -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
   point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
-
--- | Process this node's own freshly-forged EB announcement: relay it centrally
--- (as 'ForgedLocally', before the forge inserts the EB body — writing the body
--- is what offers it, so a downstream peer never gets the offer before the
--- announcement) and record the EB as acquired, so we neither re-fetch nor
--- re-offer the body we just forged. A no-op for a forged block that announces no
--- EB. 'forge' invokes this right after forging and before adoption (its
--- 'afterForgeBeforeInsert' callback).
-processForgedAnnouncement ::
-  forall blk peer pid m.
-  (IOLike m, ResolveLeiosBlock blk, HasHeader (Header blk), Ord peer) =>
-  Tracer m TraceLeiosKernel ->
-  MVar m (Announcements.CentralState m peer (AnnouncingHeader blk)) ->
-  MVar m (LeiosOutstanding pid) ->
-  Header blk ->
-  m ()
-processForgedAnnouncement kernelTracer centralVar outstandingVar forgedHeader =
-  forM_ (mkAnnouncingHeader forgedHeader) $ \anc -> do
-    MVar.modifyMVar_ centralVar $ \cst ->
-      Announcements.onAnnouncementCentral
-        (contramap (traceNewAnnouncement ForgedLocally) kernelTracer)
-        ancElId
-        (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
-        cst
-        Nothing -- the source is this node, not an upstream peer
-        Announcements.DoRelay -- our newly forged block can't be too old
-        Nothing -- no wall-clock lateness for a locally-forged announcement
-        anc
-    -- Record the forged EB as acquired: don't fetch the body we're about to
-    -- insert, and don't re-offer it when an offer or its CertRB comes back.
-    MVar.modifyMVar_ outstandingVar $ \outstanding ->
-      let ebSlot = blockSlot (ancHeader anc)
-          ebHash = announcementEbHash (ancAnnouncementFields anc)
-       in pure $
-            outstanding
-              { Leios.acquiredEbBodies =
-                  Map.insert ebHash ebSlot (Leios.acquiredEbBodies outstanding)
-              }
+  recordAnnounced = recordAnnouncedEb kernelVars (point, Leios.announcementEbBodySize fields)
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
@@ -1301,38 +1342,27 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
--- already acquired or already recorded.
+-- already acquired, already recorded, or too old (its slot is at or below the
+-- slot 'acquiredEbBodies' has been pruned to).
 recordAnnouncedEb ::
   IOLike m =>
-  LeiosTxCache m () () SerializedEbBody ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
   (LeiosPoint, BytesSize) ->
   m ()
-recordAnnouncedEb txCache (outstandingVar, readyVar) (point, ebBytesSize) =
-  txCache.lookupBody ebHash >>= \case
-    -- TODO once LeiosFetch is announcement-sensitive: a fresher announcement for
-    -- an EB we already hold should still raise its freshest-first priority, which
-    -- this branch drops.
-    --
-    -- Note that that priority applies to the diffusion of this EB's closure
-    -- too.
-    --
-    -- We're accepting that infelicity for now; the imminent LeiosFetch rewrite
-    -- will address this. But this handler will be what takes care of it:
-    -- updating an EB closure's priority is the reponsibility of the
-    -- announcement handler.
-    Just{} -> pure () -- we already hold this EB's body; nothing to fetch
-    Nothing -> do
-      changed <- MVar.modifyMVar outstandingVar (pure . upd)
-      when changed $ void $ MVar.tryPutMVar readyVar ()
+recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
+  changed <- MVar.modifyMVar outstandingVar (pure . upd)
+  when changed $ void $ MVar.tryPutMVar readyVar ()
  where
   MkLeiosPoint ebSlot ebHash = point
 
+  -- The same in-lock guard as 'recordEbBodyOffer' (too old / already held /
+  -- already listed). No cache lookup: 'acquiredEbBodies' is authoritative here.
   upd outstanding =
-    if Map.member ebHash (Leios.acquiredEbBodies outstanding)
-      || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding)
+    if ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
+      || Map.member ebHash (Leios.acquiredEbBodies outstanding) -- already have it
+      || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
       then (outstanding, False)
       else
         flip (,) True $
@@ -1413,3 +1443,59 @@ maxAnnouncementAgeSend = 300 -- 5 minutes
 -- parameter?
 maxAnnouncementAgeRecv :: NominalDiffTime
 maxAnnouncementAgeRecv = 600 -- 10 minutes
+
+-----
+
+-- | The forge's counterpart to receiving an EB from an upstream peer: hand our
+-- own freshly-forged EB to the same three handlers a remote acquisition uses---
+-- announcement ('processAnnouncementCentrally', as 'ForgedLocally'), body
+-- ('processLeiosBlock'), then closure ('processLeiosBlockTxs')---with no peer.
+-- Keeping this similarity explicit is what makes forging an EB reconcile the
+-- outstanding fetch state exactly as receiving one does.
+onForgedLeiosEb ::
+  ( IOLike m
+  , ConvertRawHash blk
+  , HasHeader (Header blk)
+  , Ord pid
+  ) =>
+  Tracer m TraceLeiosKernel ->
+  MVar m (Announcements.CentralState m pid (AnnouncingHeader blk)) ->
+  ( MVar m (LeiosOutstanding pid)
+  , MVar m ()
+  ) ->
+  LeiosTxCache m () () SerializedEbBody ->
+  LeiosDbConnection m ->
+  -- | Built by the caller (see 'mkForgedAnnouncingHeader'), at the call site
+  -- nearest the forge where its correspondence to the closure is evident.
+  AnnouncingHeader blk ->
+  Leios.ForgedLeiosEb ->
+  m ()
+onForgedLeiosEb kernelTracer centralVar kv txCache db anc forgedEb = do
+  processAnnouncementCentrally
+    kernelTracer
+    centralVar
+    kv
+    txCache
+    Nothing
+    ForgedLocally
+    Announcements.DoRelay
+    Nothing
+    anc
+  processLeiosBlock
+    kernelTracer
+    nullTracer
+    kv
+    txCache
+    db
+    (ForgedBlock forgedEb.point)
+    forgedEb.body
+  processLeiosBlockTxs
+    kernelTracer
+    nullTracer
+    kv
+    txCache
+    db
+    (ForgedTxs forgedEb.point forgedEb.body)
+    (V.fromList (map (MkLeiosTx . snd) forgedEb.txClosure))
+  traceWith kernelTracer $
+    TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
