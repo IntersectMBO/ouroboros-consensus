@@ -66,10 +66,21 @@ itself:
 Both numbers are upper bounds. An announced EB is not always certified, and the
 same transaction is in several EBs.
 
-`check_missing_leios_db` runs one analysis again without `--leios-db`:
+`check_stubbed_leios_db` runs one analysis again with `--stubbed-leios-db`:
 
-- That run fails.
-- Its message names the flag, so a caller who omits it learns what to do.
+- That run fails, because the flag puts an empty in-memory Leios database in
+  place of the node's one, and this chain holds a certifying block.
+- Its message names the flag, so a caller who passes it by mistake learns why
+  the analysis stopped.
+
+`check_absent_leios_db` runs one analysis against a directory that holds no
+`leios.db`, and passes no flag:
+
+- That run fails before it reads a block.
+- Its message names the flag, so a caller who analyses a pre-Leios chain learns
+  what to do.
+- It writes no `leios.db`. The SQLite backend creates the file that it does not
+  find, so the tool has to refuse before it opens one.
 
 Every check holds on any Leios chain, so the script is not tied to one fixture.
 The checks show that the two analyses agree, and that each one is consistent
@@ -215,7 +226,7 @@ def run_analysis(
     analysis,
     limit,
     analysis_arg=None,
-    with_leios_db=True,
+    stubbed_leios_db=False,
     out_name=None,
     expect_failure=False,
 ):
@@ -224,12 +235,15 @@ def run_analysis(
     The tracer writes to stderr, so that is what the file captures. Whatever
     db-analyser writes to stdout stays on the terminal.
 
+    db-analyser reads leios.db from under the --db path, so no flag names it.
+    'stubbed_leios_db' asks for the empty in-memory database instead.
+
     A non-zero exit ends the script, unless the caller wants one.
     """
     out_path = os.path.join(out_dir, (out_name or analysis) + ".txt")
     cmd = [db_analyser, "--db", paths["db"], "--config", paths["config"]]
-    if with_leios_db:
-        cmd += ["--leios-db", paths["leios_db"]]
+    if stubbed_leios_db:
+        cmd += ["--stubbed-leios-db"]
     cmd += ["--in-mem", "--" + analysis]
     if analysis_arg is not None:
         cmd += [str(analysis_arg)]
@@ -281,8 +295,6 @@ def run_benchmark(db_analyser, paths, out_dir, limit):
         paths["db"],
         "--config",
         paths["config"],
-        "--leios-db",
-        paths["leios_db"],
         "--in-mem",
         "--benchmark-ledger-ops",
         "--out-file",
@@ -596,26 +608,74 @@ def check_leios_db(leios_db, certified_ebs, eb_txs_found):
     return results.count(False)
 
 
-def check_missing_leios_db(db_analyser, paths, out_dir, limit):
-    """A run without --leios-db must stop at the first cert-RB and say why."""
+def check_stubbed_leios_db(db_analyser, paths, out_dir, limit):
+    """A run with --stubbed-leios-db must stop at the first cert-RB and say why."""
     out_path, code = run_analysis(
         db_analyser,
         paths,
         out_dir,
         "count-tx-outputs",
         limit,
-        with_leios_db=False,
-        out_name="no-leios-db",
+        stubbed_leios_db=True,
+        out_name="stubbed-leios-db",
         expect_failure=True,
     )
     message = tail(out_path, 20)
+    flag = "--stubbed-leios-db"
 
     results = [
-        check("a run without --leios-db fails", code != 0, f"exit code {code}"),
+        check(f"a run with {flag} fails", code != 0, f"exit code {code}"),
         check(
-            "and its message names --leios-db",
-            "--leios-db" in message,
-            "" if "--leios-db" in message else "it does not",
+            f"and its message names {flag}",
+            flag in message,
+            "" if flag in message else "it does not",
+        ),
+    ]
+    return results.count(False)
+
+
+def check_absent_leios_db(db_analyser, paths, out_dir):
+    """With no leios.db and no --stubbed-leios-db, the tool must refuse to start.
+
+    Points --db at an empty directory, because the node directory does hold a
+    leios.db. The tool looks for that file before it opens the ImmutableDB, so
+    an empty directory reaches the check and the run costs no block reads.
+    """
+    empty_db = os.path.join(out_dir, "empty-db")
+    os.makedirs(empty_db, exist_ok=True)
+    out_path = os.path.join(out_dir, "absent-leios-db.txt")
+    cmd = [
+        db_analyser,
+        "--db",
+        empty_db,
+        "--config",
+        paths["config"],
+        "--in-mem",
+        "--count-blocks",
+    ]
+
+    print("running --count-blocks against a directory with no leios.db ...")
+    with open(out_path, "w") as out:
+        result = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT)
+    message = tail(out_path, 20)
+    flag = "--stubbed-leios-db"
+    created = os.path.exists(os.path.join(empty_db, "leios.db"))
+
+    results = [
+        check(
+            "a run with no leios.db fails to start",
+            result.returncode != 0,
+            f"exit code {result.returncode}",
+        ),
+        check(
+            f"and its message names {flag}",
+            flag in message,
+            "" if flag in message else "it does not",
+        ),
+        check(
+            "and it writes no leios.db",
+            not created,
+            "" if not created else "it wrote one",
         ),
     ]
     return results.count(False)
@@ -694,13 +754,16 @@ def main():
         sum(r.eb_txs for r in size_rows),
     )
 
+    print()
+    failures += check_absent_leios_db(db_analyser, paths, out_dir)
+
     # Stop this run at the first cert-RB, so it costs a fraction of a full pass.
     first_cert = next((i for i, r in enumerate(count_rows) if r.eb_outputs > 0), None)
     print()
     if first_cert is None:
-        print("skip  the --leios-db check needs a cert-RB")
+        print("skip  the --stubbed-leios-db check needs a cert-RB")
     else:
-        failures += check_missing_leios_db(
+        failures += check_stubbed_leios_db(
             db_analyser, paths, out_dir, first_cert + 1
         )
 

@@ -17,10 +17,13 @@ data DBAnalyserConfig = DBAnalyserConfig
   , analysis :: AnalysisName
   , confLimit :: Limit
   , ldbBackend :: LedgerDBBackend
-  , leiosDbPath :: Maybe FilePath
-  -- ^ Path to the node's SQLite LeiosDb (@leios.db@). 'Nothing' keeps the
-  -- empty in-memory stub, which is correct for pre-Leios chains (no cert-RBs
-  -- to resolve).
+  , stubbedLeiosDb :: Bool
+  -- ^ Use an empty in-memory LeiosDb instead of @leios.db@ under 'dbDir'.
+  --
+  -- The tool cannot tell a pre-Leios chain from a Leios one before it reads
+  -- the chain, so it cannot decide on its own whether an absent @leios.db@ is
+  -- a problem. It therefore needs the file, and this flag is how the caller
+  -- says that the chain holds no cert-RB and that the empty stub is enough.
   }
 
 data AnalysisName

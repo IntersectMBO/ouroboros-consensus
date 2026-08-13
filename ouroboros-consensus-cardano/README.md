@@ -78,19 +78,22 @@ The user can use snapshots created by the node or they can create their own snap
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
-#### --leios-db
+#### --stubbed-leios-db
 
 ```
-[--leios-db PATH]
+[--stubbed-leios-db]
 ```
 
-Path to the node's SQLite Leios database, usually `DB_PATH/leios.db`.
+Run with an empty in-memory Leios database, rather than the `leios.db` file under the `--db` path.
 
 A Praos block (a Leios ranking block) that carries a certificate has an empty body on the wire.
 Its transactions are in the endorser block (EB) that it certifies, and those live in the Leios database, not in the ImmutableDB.
-Pass this flag to analyse such a chain.
-Without it, an analysis stops at the first certifying block.
-Omit it for a chain that predates Leios, which has no such blocks.
+So the tool reads `DB_PATH/leios.db`, which is where the node writes that database, and it refuses to start when that file is absent.
+If your node writes the file elsewhere, symlink it into `DB_PATH`.
+
+Pass this flag for a chain that holds no certifying block, such as a chain that predates Leios.
+The tool cannot tell such a chain from a Leios one before it reads the chain, so it cannot make that call itself.
+If you pass the flag on a chain that does hold a certifying block, the analysis stops at that block.
 
 ### Database validation, via --db-validation
 
@@ -203,7 +206,7 @@ Lastly the user can provide the analysis that should be run on the chain:
   Therefore, it is recommended to start with NUM=1, and only use NUM=2 when you
   want to test the performance impact of a more filled mempool.
 
-  On a Leios chain, pass `--leios-db`.
+  On a Leios chain, this pass reads the Leios database, so do not pass `--stubbed-leios-db`.
   A block that certifies an EB has an empty body.
   The txs that it causes the ledger to apply are in the EB that it certifies, and the Leios database holds them.
   This pass adds them to the mempool, and it reports their count and their total size in the `ebNumTxs` and `ebTxsByteSize` columns.

@@ -223,10 +223,12 @@ readEbClosure leiosConn ebHash = do
 
 missingEbBodyError :: EbHash -> String
 missingEbBodyError ebHash =
-  "The LeiosDb holds no EB body for "
+  "Could not resolve the EB "
     <> show ebHash
-    <> ". Either the --leios-db path is wrong, or the chain and the LeiosDb do "
-    <> "not match: the node that applied the certifying block held that EB."
+    <> ", because the LeiosDb holds no body for it. Either the analysis ran "
+    <> "with --stubbed-leios-db, which uses an empty in-memory LeiosDb, or the "
+    <> "chain and the node's leios.db do not match: the node that applied the "
+    <> "certifying block held that EB."
 
 -- | The ledger keys that the given EB txs read.
 closureKeySets ::

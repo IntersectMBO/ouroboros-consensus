@@ -14,6 +14,7 @@ import Cardano.Ledger.BaseTypes
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
+import Control.Monad (unless)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), emit, nullTracer)
@@ -56,7 +57,10 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
+import qualified System.Directory as Directory
+import System.Exit (die)
 import System.FS.API
+import qualified System.FilePath as FilePath
 import System.IO
 import System.Random
 import Text.Printf (printf)
@@ -151,12 +155,7 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
-    -- Open the SQLite LeiosDb when a path was given, so cert-RB
-    -- closures can be resolved during replay; otherwise keep the empty
-    -- in-memory stub (correct for pre-Leios chains, which have no cert-RBs).
-    leiosDbHandle <- case leiosDbPath of
-      Nothing -> newLeiosDBInMemory
-      Just path -> newLeiosDBSQLite nullTracer path
+    leiosDbHandle <- openLeiosDb
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -255,10 +254,36 @@ analyse dbaConfig args =
     , validation
     , verbose
     , ldbBackend
-    , leiosDbPath
+    , stubbedLeiosDb
     } = dbaConfig
 
   SelectImmutableDB startSlot = selectDB
+
+  -- The node writes its LeiosDb next to the other ChainDB files, so the tool
+  -- derives that path from --db rather than take one of its own. An operator
+  -- who puts the file elsewhere can symlink it into place.
+  --
+  -- A missing file is fatal, because the tool cannot tell whether the chain
+  -- holds a cert-RB before it reads the chain.
+  --
+  -- Hence this check, rather than a check inside the SQLite backend: that
+  -- backend opens with 'SQLOpenCreate' and it creates the schema when it finds
+  -- no file. So without this check the tool would write an empty leios.db into
+  -- the node's directory and fail only at the first cert-RB.
+  openLeiosDb
+    | stubbedLeiosDb = newLeiosDBInMemory
+    | otherwise = do
+        let leiosDbPath = dbDir FilePath.</> "leios.db"
+        exists <- Directory.doesFileExist leiosDbPath
+        unless exists $
+          die $
+            "No LeiosDb at "
+              <> leiosDbPath
+              <> ". A block that carries a Leios certificate has an empty body, "
+              <> "and the transactions that it puts on the chain are in the "
+              <> "endorser block that it certifies, which the LeiosDb holds. "
+              <> "Pass --stubbed-leios-db if this chain holds no such block."
+        newLeiosDBSQLite nullTracer leiosDbPath
 
   withImmutableDB immutableDbArgs =
     bracket

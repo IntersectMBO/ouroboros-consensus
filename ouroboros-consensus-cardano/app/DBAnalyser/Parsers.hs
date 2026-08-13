@@ -59,21 +59,21 @@ parseDBAnalyserConfig =
             , help "use v2 LSM backend"
             ]
       ]
-    <*> parseLeiosDbPath
+    <*> parseStubbedLeiosDb
 
--- | Path to the node's SQLite LeiosDb. Optional: omit it for pre-Leios chains.
-parseLeiosDbPath :: Parser (Maybe FilePath)
-parseLeiosDbPath =
-  optional $
-    strOption $
-      mconcat
-        [ long "leios-db"
-        , metavar "PATH"
-        , help $
-            "Path to the node's SQLite LeiosDb (leios.db). Required to replay a "
-              <> "Dijkstra chain with Leios support; (omit for "
-              <> "pre-Leios chains)."
-        ]
+-- | Run with an empty in-memory LeiosDb, rather than the node's @leios.db@.
+parseStubbedLeiosDb :: Parser Bool
+parseStubbedLeiosDb =
+  switch $
+    mconcat
+      [ long "stubbed-leios-db"
+      , help $
+          "Use an empty in-memory LeiosDb, rather than the leios.db file under "
+            <> "the --db path. Pass this for a chain that holds no block with a "
+            <> "Leios certificate, and hence no endorser block to resolve. "
+            <> "Without this flag, the tool refuses to start when it finds no "
+            <> "such file."
+      ]
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =
