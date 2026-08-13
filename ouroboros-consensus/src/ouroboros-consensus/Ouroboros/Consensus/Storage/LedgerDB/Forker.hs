@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -424,7 +425,7 @@ validate evs args = do
 -- new blocks.
 switch ::
   ( ApplyBlock l blk
-  , MonadSTM m
+  , IOLike m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
@@ -487,7 +488,7 @@ toRealPoint (ApplyRef rp) = rp
 applyBlock ::
   forall m l blk.
   ( ApplyBlock l blk
-  , MonadSTM m
+  , IOLike m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
@@ -671,7 +672,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
 -- push the resulting ledger state to the forker.
 applyThenPush ::
   ( ApplyBlock l blk
-  , MonadSTM m
+  , IOLike m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
@@ -693,7 +694,7 @@ applyThenPush leiosDb evs cfg ap fo doResolve = do
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
   ( ApplyBlock l blk
-  , MonadSTM m
+  , IOLike m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
@@ -754,7 +755,7 @@ class ResolveLeiosBlock blk where
   -- Praos block's body txs would be applied — but sourced from the
   -- LeiosDB rather than the block body.
   resolveLeiosClosure ::
-    Monad m =>
+    IOLike m =>
     LeiosDbConnection m ->
     EbHash ->
     m [GenTx blk]
@@ -860,7 +861,7 @@ class ResolveLeiosBlock blk where
 -- header. NOTE: This produces a block that would fail full validation.
 resolveLeiosBlock ::
   forall blk m.
-  Monad m =>
+  IOLike m =>
   ResolveLeiosBlock blk =>
   LeiosDbConnection m ->
   ChainDepState (BlockProtocol blk) ->
@@ -876,9 +877,9 @@ resolveLeiosBlock leiosDb cds b =
 
 -- | The result of resolving an announced EB's closure and applying it a ledger state.
 data LeiosClosureApplied blk = LeiosClosureApplied
-  { lcaStateAfterEB :: LedgerState blk ValuesMK
+  { lcaStateAfterEB :: !(LedgerState blk ValuesMK)
   -- ^ The ledger state with the EB's transactions applied.
-  , lcaClosureDiff :: LedgerState blk DiffMK
+  , lcaClosureDiff :: !(LedgerState blk DiffMK)
   -- ^ The closure diff relative to the parent. Callers must 'prependDiffs'
   -- this onto whatever diff they produce on top of 'lcaStateAfterEB'.
   }
@@ -887,7 +888,7 @@ data LeiosClosureApplied blk = LeiosClosureApplied
 -- apply it onto the given ledger state.
 resolveAndApplyLeiosClosure ::
   forall m blk.
-  ( Monad m
+  ( IOLike m
   , ResolveLeiosBlock blk
   , HasLedgerTables (LedgerState blk)
   ) =>
@@ -902,20 +903,38 @@ resolveAndApplyLeiosClosure ::
   -- | The base ledger state to apply the EB on top of.
   LedgerState blk EmptyMK ->
   m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
-resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
+resolveAndApplyLeiosClosure leiosDb lcfg !ebHash readValues extraKeys !lsBeforeEBEmpty = do
   -- Load EB txs from disk
-  closureTxs <- resolveLeiosClosure leiosDb ebHash
+  !closureTxs <- resolveLeiosClosure leiosDb ebHash
   -- UTXO-HD of the whole closure
-  let closureKeys = foldMap leiosClosureTxKeySets closureTxs <> extraKeys
-  closureVals <- readValues closureKeys
-  let lsBeforeEB = lsBase `withLedgerTables` closureVals
-  -- apply the closure and return the result in case there was not errors
-  pure $
-    applyLeiosClosure lcfg closureTxs lsBeforeEB <&> \lsAfterEB ->
-      LeiosClosureApplied
-        { lcaStateAfterEB = lsAfterEB
-        , lcaClosureDiff = trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB)
-        }
+  let !closureKeys = foldMap leiosClosureTxKeySets closureTxs <> extraKeys
+  !closureVals <- readValues closureKeys
+  let !lsBeforeEB = lsBeforeEBEmpty `withLedgerTables` closureVals
+  -- apply the closure and return the result in case there was not errors.
+  -- Use return $! to force the Either to WHNF here, so that applyLeiosClosure,
+  -- unstowLedgerTables, calculateDifference and projectLedgerTables all run
+  -- inside this monadic action (and therefore inside the caller's trace span),
+  -- rather than deferring as a thunk that Forge.hs forces via 'case res of'
+  -- outside the "resolve-and-apply-leios-closure" trace.
+  ledgerErrOrState <- evaluate (applyLeiosClosure lcfg closureTxs lsBeforeEB)
+  case ledgerErrOrState of
+    Left !err -> return (Left err)
+    Right !lsAfterEB -> do
+      diff <- evaluate (trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB))
+      -- Force the HardFork per-era elements inside diff's telescope.
+      -- evaluate (trackingToDiffs ...) only forces the outer HardForkLedgerState
+      -- constructor; the per-era slot (TZ era_thunk) stays lazy. projectLedgerTables
+      -- forces it via hcollapse, triggering: ejectLedgerTables -> ltliftA2
+      -- rawCalculateDifference -> TrackingMK strict fields -> Diff.diff.
+      -- Without this, Diff.diff is deferred into computeSnapshot3 inside
+      -- callWithinBudget, causing heavy allocation -> GC -> "cwb" timeout.
+      _ <- evaluate $ projectLedgerTables diff
+      return $
+        Right
+          LeiosClosureApplied
+            { lcaStateAfterEB = lsAfterEB
+            , lcaClosureDiff = diff
+            }
 
 {-------------------------------------------------------------------------------
   Validation

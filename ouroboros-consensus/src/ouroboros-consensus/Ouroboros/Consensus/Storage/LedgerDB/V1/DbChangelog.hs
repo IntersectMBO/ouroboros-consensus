@@ -381,7 +381,7 @@ reapplyThenPush cfg ap ksReader db =
 -- 'ExtLedgerState') and so cannot satisfy the 'l ~ ExtLedgerState blk'
 -- constraint that 'headerStateChainDep' requires.
 reapplyThenPushLeios ::
-  ( Monad m
+  ( IOLike m
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
   , l ~ ExtLedgerState blk

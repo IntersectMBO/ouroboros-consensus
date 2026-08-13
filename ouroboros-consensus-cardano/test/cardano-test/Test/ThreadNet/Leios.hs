@@ -117,6 +117,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS
@@ -215,7 +216,7 @@ prop_leios seed =
         & counterexample "[failed] propConsistentChains"
     , ( certificationGapIsCorrect
           .||. length certificateBlocks
-            <= 1
+          <= 1
       )
         & counterexample "[failed] certificationGap"
     , propVoting
@@ -643,7 +644,7 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
 -- LEDGERS rule sees an empty body and 'shelleyCumulativeTxBytes' is not
 -- bumped for closure txs.
 foldWithResolution ::
-  Monad m =>
+  IOLike m =>
   LeiosDbConnection m ->
   LedgerCfg (ExtLedgerState (CardanoBlock StandardCrypto)) ->
   [CardanoBlock StandardCrypto] ->
