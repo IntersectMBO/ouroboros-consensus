@@ -90,10 +90,12 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Orphans.IOLike ()
+import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
-  testGroup
+  -- 10x whatever '--quickcheck-tests' supplies, for every property below.
+  adjustQuickCheckTests (* 10) $ testGroup
     "LeiosDemoLogic.Invariants"
     [ testGroup
         "curated sequences"
@@ -396,10 +398,63 @@ genCmd = do
     , Decide <$> elements worldSlots
     ]
 
+------------------------------------------------------------
+-- Coverage
+------------------------------------------------------------
+
+isForge :: Cmd -> Bool
+isForge Forge{} = True
+isForge _ = False
+
+cmdName :: Cmd -> String
+cmdName = \case
+  Announce{} -> "Announce"
+  Offer{} -> "Offer"
+  ArriveBody{} -> "ArriveBody"
+  ArriveTx{} -> "ArriveTx"
+  Forge{} -> "Forge"
+  Decide{} -> "Decide"
+
+-- | An EB made known (offer \/ announce \/ body arrival) and later forged: the
+-- body forge hazard, where forging must purge the earlier listing.
+listedThenForged :: [Cmd] -> Bool
+listedThenForged cmds =
+  or
+    [ Just ids `elem` map listing (take i cmds)
+    | (i, Forge ids _) <- zip [0 :: Int ..] cmds
+    ]
+ where
+  listing = \case
+    Offer x _ -> Just x
+    Announce x _ -> Just x
+    ArriveBody x _ -> Just x
+    _ -> Nothing
+
+-- | A peer EB body arrived, then a /different/ EB sharing one of its txs is
+-- forged: the tx forge hazard, where forging must discharge the shared tx.
+arrivedThenForgedSharingTx :: [Cmd] -> Bool
+arrivedThenForgedSharingTx cmds =
+  or
+    [ arrivedIds /= ids && any (`elem` ids) arrivedIds
+    | (i, Forge ids _) <- zip [0 :: Int ..] cmds
+    , ArriveBody arrivedIds _ <- take i cmds
+    ]
+
+-- | Coverage shared by the generated properties: the command mix, and whether
+-- the two forge hazards were actually generated -- so the properties are visibly
+-- non-vacuous.
+coverage :: Testable prop => [Cmd] -> prop -> Property
+coverage cmds prop =
+  tabulate "commands" (map cmdName cmds) $
+    classify (any isForge cmds) "has a Forge" $
+      cover 15 (listedThenForged cmds) "listed then forged (body hazard)" $
+        cover 10 (arrivedThenForgedSharingTx cmds) "arrived then forged, shared tx (tx hazard)" $
+          property prop
+
 prop_invariants :: Property
 prop_invariants =
   forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
-    runCmds cmds === Right ()
+    coverage cmds (runCmds cmds === Right ())
 
 -- | Regression for the EB-body re-fetch storm: over any interleaving of
 -- announces, offers, and body/tx arrivals, the fetch logic must never request an
@@ -414,12 +469,13 @@ prop_invariants =
 prop_neverRefetchesHeldBody :: Property
 prop_neverRefetchesHeldBody =
   forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
-    case runCmdsReFetchViolations cmds of
-      Left msg -> counterexample msg (property False)
-      Right violations ->
-        counterexample
-          ("fetch requested already-held EB bodies: " ++ show violations)
-          (null violations)
+    coverage cmds $
+      case runCmdsReFetchViolations cmds of
+        Left msg -> counterexample msg (property False)
+        Right violations ->
+          counterexample
+            ("fetch requested already-held EB bodies: " ++ show violations)
+            (null violations)
 
 ------------------------------------------------------------
 -- Concurrent (IOSimPOR) regression
