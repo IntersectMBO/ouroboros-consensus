@@ -25,6 +25,7 @@
 -- scope of these tests.
 module Test.LeiosDemoLogic.Invariants (tests) where
 
+import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Control.Concurrent.Class.MonadMVar
   ( MVar
   , modifyMVar_
@@ -153,7 +154,7 @@ runCmds cmds = runSimOrThrow (go cmds)
   go cs0 = do
     dbHandle <- LeiosDb.newLeiosDBInMemory
     withLeiosDb dbHandle $ \conn -> do
-      outstandingVar <- newMVar emptyLeiosOutstanding
+      outstandingVar <- newMVar (emptyLeiosOutstanding (SlotNo 0))
       readyVar <- newEmptyMVar
       let kv = (outstandingVar, readyVar)
           txCache = nullLeiosTxCache

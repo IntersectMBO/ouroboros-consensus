@@ -126,7 +126,6 @@ import LeiosDemoTypes
   , TraceLeiosPeer (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosTxCache (lookupBody)
 import LeiosVoteState
   ( AddVoteResult (..)
   , LeiosVoteState (..)
@@ -405,7 +404,6 @@ mkHandlers
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
               , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime cds -> do
                   Leios.checkMsgRollForwardForLeiosOffers
-                    getLeiosTxCache
                     (getLeiosOutstanding, getLeiosReady)
                     peerVars
                     hdr
@@ -546,46 +544,12 @@ mkHandlers
                     Prim.writeMutVar peerStateVar (latestPruneSlot', peerSt2)
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
-                    let MkLeiosPoint{pointEbHash = ebHash} = point
-                    -- TODO: EB announcements now record the authoritative
-                    -- (forger-signed) size via 'recordAnnouncedEb', but this
-                    -- offer handler is not integrated with them yet: it still
-                    -- builds fetch state directly from peer offers, whose sizes
-                    -- are not authoritative (the authoritative one lives in
-                    -- 'headerLeiosAnnouncement' on the parent RB header). Until
-                    -- the two are reconciled, the sanitisation below is the best
-                    -- we can do against malformed offers: drop a zero-sized
-                    -- offer outright (no honest forger ever announces a 0-byte
-                    -- EB) and refuse to overwrite an existing entry that shares
-                    -- the same content hash, so the first-seen (slot, size)
-                    -- wins. The per-peer 'offerings' below is still updated so
-                    -- the peer remains a valid serving candidate.
-                    mbBody <- lookupBody getLeiosTxCache ebHash
-                    MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
-                      pure $
-                        case mbBody of
-                          -- TODO this prevents a greater-slotted offer for the
-                          -- same EbHash from increasing the effective priority
-                          --
-                          -- That's acceptable, since it's the announcement
-                          -- handler that should be setting priority, not the
-                          -- offer handler.
-                          Just{} -> outstanding -- we already hold this EB's body
-                          Nothing ->
-                            if ebBytesSize == 0
-                              || any
-                                ((== ebHash) . pointEbHash)
-                                (Map.keys (Leios.missingEbBodies outstanding))
-                              then outstanding
-                              else
-                                outstanding
-                                  { Leios.missingEbBodies =
-                                      Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-                                  }
-                    MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                      let !offers1' = Set.insert ebHash offers1
-                      pure (offers1', offers2)
-                    void $ MVar.tryPutMVar getLeiosReady ()
+                    -- TODO punish peer for a too-old offer, modulo clock/immtip skew.
+                    Leios.recordEbBodyOffer
+                      (getLeiosOutstanding, getLeiosReady)
+                      peerVars
+                      Leios.TxsClosureNotAlsoOffered
+                      (point, ebBytesSize)
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
                     let MkLeiosPoint{pointEbHash = ebHash} = p

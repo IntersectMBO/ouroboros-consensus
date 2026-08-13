@@ -216,7 +216,7 @@ empty =
   Scenario
     { scEnv = demoLeiosFetchStaticEnv
     , scOfferings = Map.empty
-    , scOutstanding = emptyLeiosOutstanding
+    , scOutstanding = emptyLeiosOutstanding (SlotNo 0)
     }
 
 -- | Outstanding-work combinators -----------------------------------------
