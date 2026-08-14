@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Mempool.TxSeq
   , toSize
   , toTuples
   , zeroTicketNo
+  , take
 
     -- * Reference implementations for testing
   , splitAfterTxSizeSpec
@@ -39,6 +40,7 @@ import qualified Data.Measure as Measure
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
+import Prelude hiding (take)
 
 {-------------------------------------------------------------------------------
   Mempool transaction sequence as a finger tree
@@ -272,3 +274,16 @@ toSize :: Measure sz => TxSeq sz tx -> sz
 toSize (TxSeq ftree) = mSize
  where
   TxSeqMeasure{mSize} = FingerTree.measure ftree
+
+-- | @txSeqTake n txsT@ takes up to @n@ tickets from the front of @txs@, returning them as a
+-- list in original order alongside the remainder.
+take ::
+  Measure sz =>
+  Int ->
+  TxSeq sz tx ->
+  ([TxTicket sz tx], TxSeq sz tx)
+take = go []
+ where
+  go acc 0 rest = (reverse acc, rest)
+  go acc _ Empty = (reverse acc, Empty)
+  go acc n (t :< rest) = go (t : acc) (n - 1) rest
