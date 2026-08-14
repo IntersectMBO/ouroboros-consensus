@@ -43,6 +43,7 @@ import qualified Cardano.Crypto.DSIGN.Class as Crypto
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.Seed as Crypto
 import qualified Cardano.Crypto.Wallet as Crypto.HD
+import Cardano.Ledger.Binary (rawDecodeFixedSized, rawEncodeFixedSized)
 import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys as Shelley
 import Data.Aeson.Types
@@ -107,18 +108,18 @@ instance Key PaymentKey where
 
 instance SerialiseAsRawBytes (VerificationKey PaymentKey) where
   serialiseToRawBytes (PaymentVerificationKey (Shelley.VKey vk)) =
-    Crypto.rawSerialiseVerKeyDSIGN vk
+    rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsPaymentKey) bs =
     PaymentVerificationKey . Shelley.VKey
-      <$> Crypto.rawDeserialiseVerKeyDSIGN bs
+      <$> rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey PaymentKey) where
   serialiseToRawBytes (PaymentSigningKey sk) =
-    Crypto.rawSerialiseSignKeyDSIGN sk
+    rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsPaymentKey) bs =
-    PaymentSigningKey <$> Crypto.rawDeserialiseSignKeyDSIGN bs
+    PaymentSigningKey <$> rawDecodeFixedSized bs
 
 instance SerialiseAsBech32 (VerificationKey PaymentKey) where
   bech32PrefixFor _ = "addr_vk"
@@ -302,7 +303,7 @@ instance CastVerificationKeyRole PaymentExtendedKey PaymentKey where
     PaymentVerificationKey
       . Shelley.VKey
       . fromMaybe impossible
-      . Crypto.rawDeserialiseVerKeyDSIGN
+      . rawDecodeFixedSized
       . Crypto.HD.xpubPublicKey
       $ vk
    where
@@ -354,18 +355,18 @@ instance Key StakeKey where
 
 instance SerialiseAsRawBytes (VerificationKey StakeKey) where
   serialiseToRawBytes (StakeVerificationKey (Shelley.VKey vk)) =
-    Crypto.rawSerialiseVerKeyDSIGN vk
+    rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsStakeKey) bs =
     StakeVerificationKey . Shelley.VKey
-      <$> Crypto.rawDeserialiseVerKeyDSIGN bs
+      <$> rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey StakeKey) where
   serialiseToRawBytes (StakeSigningKey sk) =
-    Crypto.rawSerialiseSignKeyDSIGN sk
+    rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsStakeKey) bs =
-    StakeSigningKey <$> Crypto.rawDeserialiseSignKeyDSIGN bs
+    StakeSigningKey <$> rawDecodeFixedSized bs
 
 instance SerialiseAsBech32 (VerificationKey StakeKey) where
   bech32PrefixFor _ = "stake_vk"
@@ -549,7 +550,7 @@ instance CastVerificationKeyRole StakeExtendedKey StakeKey where
     StakeVerificationKey
       . Shelley.VKey
       . fromMaybe impossible
-      . Crypto.rawDeserialiseVerKeyDSIGN
+      . rawDecodeFixedSized
       . Crypto.HD.xpubPublicKey
       $ vk
    where
@@ -601,18 +602,18 @@ instance Key GenesisKey where
 
 instance SerialiseAsRawBytes (VerificationKey GenesisKey) where
   serialiseToRawBytes (GenesisVerificationKey (Shelley.VKey vk)) =
-    Crypto.rawSerialiseVerKeyDSIGN vk
+    rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsGenesisKey) bs =
     GenesisVerificationKey . Shelley.VKey
-      <$> Crypto.rawDeserialiseVerKeyDSIGN bs
+      <$> rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey GenesisKey) where
   serialiseToRawBytes (GenesisSigningKey sk) =
-    Crypto.rawSerialiseSignKeyDSIGN sk
+    rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsGenesisKey) bs =
-    GenesisSigningKey <$> Crypto.rawDeserialiseSignKeyDSIGN bs
+    GenesisSigningKey <$> rawDecodeFixedSized bs
 
 newtype instance Hash GenesisKey
   = GenesisKeyHash (Shelley.KeyHash Shelley.GenesisRole)
@@ -777,7 +778,7 @@ instance CastVerificationKeyRole GenesisExtendedKey GenesisKey where
     GenesisVerificationKey
       . Shelley.VKey
       . fromMaybe impossible
-      . Crypto.rawDeserialiseVerKeyDSIGN
+      . rawDecodeFixedSized
       . Crypto.HD.xpubPublicKey
       $ vk
    where
@@ -829,18 +830,18 @@ instance Key GenesisDelegateKey where
 
 instance SerialiseAsRawBytes (VerificationKey GenesisDelegateKey) where
   serialiseToRawBytes (GenesisDelegateVerificationKey (Shelley.VKey vk)) =
-    Crypto.rawSerialiseVerKeyDSIGN vk
+    rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsGenesisDelegateKey) bs =
     GenesisDelegateVerificationKey . Shelley.VKey
-      <$> Crypto.rawDeserialiseVerKeyDSIGN bs
+      <$> rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey GenesisDelegateKey) where
   serialiseToRawBytes (GenesisDelegateSigningKey sk) =
-    Crypto.rawSerialiseSignKeyDSIGN sk
+    rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsGenesisDelegateKey) bs =
-    GenesisDelegateSigningKey <$> Crypto.rawDeserialiseSignKeyDSIGN bs
+    GenesisDelegateSigningKey <$> rawDecodeFixedSized bs
 
 newtype instance Hash GenesisDelegateKey
   = GenesisDelegateKeyHash (Shelley.KeyHash Shelley.GenesisDelegate)
@@ -1013,7 +1014,7 @@ instance CastVerificationKeyRole GenesisDelegateExtendedKey GenesisDelegateKey w
     GenesisDelegateVerificationKey
       . Shelley.VKey
       . fromMaybe impossible
-      . Crypto.rawDeserialiseVerKeyDSIGN
+      . rawDecodeFixedSized
       . Crypto.HD.xpubPublicKey
       $ vk
    where
@@ -1065,18 +1066,18 @@ instance Key GenesisUTxOKey where
 
 instance SerialiseAsRawBytes (VerificationKey GenesisUTxOKey) where
   serialiseToRawBytes (GenesisUTxOVerificationKey (Shelley.VKey vk)) =
-    Crypto.rawSerialiseVerKeyDSIGN vk
+    rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsGenesisUTxOKey) bs =
     GenesisUTxOVerificationKey . Shelley.VKey
-      <$> Crypto.rawDeserialiseVerKeyDSIGN bs
+      <$> rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey GenesisUTxOKey) where
   serialiseToRawBytes (GenesisUTxOSigningKey sk) =
-    Crypto.rawSerialiseSignKeyDSIGN sk
+    rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsGenesisUTxOKey) bs =
-    GenesisUTxOSigningKey <$> Crypto.rawDeserialiseSignKeyDSIGN bs
+    GenesisUTxOSigningKey <$> rawDecodeFixedSized bs
 
 newtype instance Hash GenesisUTxOKey
   = GenesisUTxOKeyHash (Shelley.KeyHash Shelley.Payment)
@@ -1164,18 +1165,18 @@ instance Key StakePoolKey where
 
 instance SerialiseAsRawBytes (VerificationKey StakePoolKey) where
   serialiseToRawBytes (StakePoolVerificationKey (Shelley.VKey vk)) =
-    Crypto.rawSerialiseVerKeyDSIGN vk
+    rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsStakePoolKey) bs =
     StakePoolVerificationKey . Shelley.VKey
-      <$> Crypto.rawDeserialiseVerKeyDSIGN bs
+      <$> rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey StakePoolKey) where
   serialiseToRawBytes (StakePoolSigningKey sk) =
-    Crypto.rawSerialiseSignKeyDSIGN sk
+    rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsStakePoolKey) bs =
-    StakePoolSigningKey <$> Crypto.rawDeserialiseSignKeyDSIGN bs
+    StakePoolSigningKey <$> rawDecodeFixedSized bs
 
 instance SerialiseAsBech32 (VerificationKey StakePoolKey) where
   bech32PrefixFor _ = "pool_vk"

@@ -43,8 +43,6 @@ import Cardano.Crypto.DSIGN
   , createPossessionProofDSIGN
   , seedSizeDSIGN
   )
-import Cardano.Crypto.Leios (leiosSignContext)
-import Cardano.Ledger.State (LeiosKey (..), LeiosPossessionProof (..), LeiosPubKey (..))
 import Cardano.Crypto.KES
   ( KESAlgorithm (..)
   , UnsoundPureKESAlgorithm (..)
@@ -53,6 +51,7 @@ import Cardano.Crypto.KES
   , unsoundPureDeriveVerKeyKES
   , unsoundPureGenKeyKES
   )
+import Cardano.Crypto.Leios (leiosSignContext)
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import Cardano.Crypto.VRF
@@ -72,6 +71,7 @@ import Cardano.Ledger.Hashes
 import qualified Cardano.Ledger.Keys as LK
 import qualified Cardano.Ledger.Mary.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import Cardano.Ledger.State (LeiosKey (..), LeiosPossessionProof (..), LeiosPubKey (..))
 import qualified Cardano.Ledger.Val as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF, hashVerKeyVRF)
 import Cardano.Protocol.TPraos.OCert
@@ -481,16 +481,16 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
         , let poolOwnerHash = SL.hashKey . SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , let vrfHash = hashVerKeyVRF @c $ deriveVerKeyVRF cnVRF
         , -- Register the node's Leios verification key + a valid proof of possession
-          -- so its committee seat is keyed. The vk must equal the voter's
-          -- 'deriveVerKeyDSIGN' of its 'praosCanBeLeaderSignKeyBLS' (same 'cnBLS'),
-          -- else 'getLeiosSeatId' won't match; an invalid PoP is dropped to keyless.
-          let leiosKey = case cnBLS of
-                Nothing -> SL.SNothing
-                Just blsSk ->
-                  SL.SJust $
-                    LeiosKey
-                      (LeiosPubKey (deriveVerKeyDSIGN blsSk))
-                      (LeiosPossessionProof (createPossessionProofDSIGN leiosSignContext blsSk))
+        -- so its committee seat is keyed. The vk must equal the voter's
+        -- 'deriveVerKeyDSIGN' of its 'praosCanBeLeaderSignKeyBLS' (same 'cnBLS'),
+        -- else 'getLeiosSeatId' won't match; an invalid PoP is dropped to keyless.
+        let leiosKey = case cnBLS of
+              Nothing -> SL.SNothing
+              Just blsSk ->
+                SL.SJust $
+                  LeiosKey
+                    (LeiosPubKey (deriveVerKeyDSIGN blsSk))
+                    (LeiosPossessionProof (createPossessionProofDSIGN leiosSignContext blsSk))
         ]
 
 mkProtocolShelley ::

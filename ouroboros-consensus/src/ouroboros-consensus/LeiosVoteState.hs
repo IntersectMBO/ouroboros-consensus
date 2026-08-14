@@ -21,9 +21,9 @@ import qualified Data.Set as Set
 import LeiosDemoTypes
   ( LeiosCert
   , LeiosCommittee
+  , LeiosSeatId
   , LeiosSignature
   , LeiosVote (..)
-  , LeiosSeatId
   , RbHash
   , VoteInvalid (..)
   , Weight
