@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -90,11 +91,11 @@ data AddPerasVoteResult blk
 -------------------------------------------------------------------------------}
 
 newtype ExistingPerasRoundWinner blk
-  = ExistingPerasRoundWinner (Point blk, PerasVoteStake)
+  = ExistingPerasRoundWinner (Point blk, VoteWeight)
   deriving stock (Show, Eq)
 
 newtype BlockedPerasRoundWinner blk
-  = BlockedPerasRoundWinner (Point blk, PerasVoteStake)
+  = BlockedPerasRoundWinner (Point blk, VoteWeight)
   deriving stock (Show, Eq)
 
 data PerasVoteDbError blk
@@ -105,7 +106,7 @@ data PerasVoteDbError blk
       (ExistingPerasRoundWinner blk)
       (BlockedPerasRoundWinner blk)
   | -- | An error occurred while forging a certificate
-    ForgingCertError (PerasForgeErr blk)
+    ForgingCertError (PerasError blk)
   deriving stock Show
   deriving anyclass Exception
 
@@ -168,7 +169,11 @@ prop_garbageCollectRemovesOldVotes db slotNo =
   atomically $ do
     _ <- garbageCollect db slotNo
     allVotes <- getVotesAfter db zeroPerasVoteTicketNo
-    let targetSlots = pointSlot . getPerasVoteBlock . forgetArrivalTime <$> Map.elems allVotes
+    let targetSlots =
+          pointSlot
+            . getPerasVotePoint
+            . forgetArrivalTime
+            <$> Map.elems allVotes
     pure $
       all (>= NotOrigin slotNo) targetSlots
 

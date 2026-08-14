@@ -79,7 +79,8 @@ initialPerasCertDbState =
 
 -- | Check that the fields of 'PerasCertDbState' are in sync.
 invariantForPerasCertDbState ::
-  WithFingerprint (PerasCertDbState blk) -> Either String ()
+  WithFingerprint (PerasCertDbState blk) ->
+  Either String ()
 invariantForPerasCertDbState pcds = do
   checkEqual
     "pcdsCertsByTicket"
@@ -208,14 +209,16 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
     pure addPerasCertRes
 
 implGetWeightSnapshot ::
-  (IOLike m, StandardHash blk) =>
+  ( IOLike m
+  , StandardHash blk
+  ) =>
   PerasCertDbEnv m blk ->
   STM m (WithFingerprint (PerasWeightSnapshot blk))
 implGetWeightSnapshot PerasCertDbEnv{pcdbState} = do
   WithFingerprint pcds fp <- readTVar pcdbState
   let weights =
         mkPerasWeightSnapshot
-          [ (getPerasCertBoostedBlock cert, getPerasCertBoost cert)
+          [ (getPerasCertPoint cert, vpcCertBoost (forgetArrivalTime cert))
           | cert <- Map.elems (pcdsCertsByTicket pcds)
           ]
   pure (WithFingerprint weights fp)
@@ -270,7 +273,7 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
       } =
       let pcdsCertsByTicket' =
             Map.filter
-              (\cert -> pointSlot (getPerasCertBoostedBlock cert) >= NotOrigin slotNo)
+              (\cert -> pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo)
               pcdsCertsByTicket
           pcdsCertIds' =
             Set.fromList (getPerasCertRound <$> Map.elems pcdsCertsByTicket')
@@ -280,7 +283,7 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
           -- Update the latest certificate seen status when its corresponding
           -- boosted block gets garbage collected.
           updateIfBoostingGarbageCollectedBlock cert
-            | pointSlot (getPerasCertBoostedBlock (forgetBoostedBlockStatus cert))
+            | pointSlot (getPerasCertPoint (forgetBoostedBlockStatus cert))
                 < NotOrigin slotNo =
                 CertBoostingBlockNoLongerInVolatileDB (forgetBoostedBlockStatus cert)
             | otherwise =

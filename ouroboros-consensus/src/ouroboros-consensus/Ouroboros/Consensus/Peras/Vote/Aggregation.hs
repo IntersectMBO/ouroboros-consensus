@@ -12,24 +12,25 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
 -- | Peras vote aggregation and certificate forging
 --
 -- This module implements the core voting logic for the Peras protocol, which
--- aggregates stake-weighted votes on chain blocks and forges certificates when
+-- aggregates weighted votes on chain blocks and forges certificates when
 -- quorum is reached.
 --
 -- = Overview
 --
 -- In Peras, validators vote on specific blocks during designated voting rounds.
--- Each vote carries a stake weight, and votes are aggregated by:
+-- Each vote carries a weight, and votes are aggregated by:
 --
 --   * __Round__: each vote belongs to a specific 'PerasRoundNo'
 --   * __Target__: within a round, votes are cast for different block 'Point's
 --
--- As votes arrive, the system tracks the total stake backing each candidate
--- block. When one target accumulates enough stake to exceed the configured
+-- As votes arrive, the system tracks the total weight backing each candidate
+-- block. When one target accumulates enough weight to exceed the configured
 -- quorum threshold, a certificate is automatically forged for that block,
 -- making it a winner for that round.
 --
@@ -38,7 +39,7 @@
 -- For every round being voted for, the aggregation follows a state machine:
 --
 -- 1. __Quorum not reached__: multiple block targets are candidates, each
---    accumulating votes and stake. All targets compete to reach quorum first.
+--    accumulating votes and weight. All targets compete to reach quorum first.
 --
 -- 2. __Quorum reached__: once a target reaches quorum, it becomes the winner
 --    and a certificate is forged. All other targets become losers and continue
@@ -46,8 +47,8 @@
 --
 -- = Quorum Threshold and Multiple Winners
 --
--- The quorum threshold is parameterized via 'PerasCfg'. Depending on this
--- configuration and the stake distribution, it may be theoretically possible
+-- The quorum threshold is parameterized via 'PerasParams'. Depending on this
+-- configuration and the weight distribution, it may be theoretically possible
 -- for multiple targets to exceed the threshold within the same round.
 --
 -- This module treats multiple winners as an error condition and rejects votes
@@ -56,10 +57,10 @@
 --   * The quorum threshold is misconfigured, or that
 --   * We were extremely unlucky when randomly selecting the voting committee.
 --
--- With a correct threshold configuration (e.g., > 3/4 of total stake + a small
+-- With a correct threshold configuration (e.g., > 3/4 of total weight + a small
 -- safety margin to account for an unlucky local sortition when selecting
 -- non-persistent voters during committee selection), multiple winners should be
--- impossible given honest stake distribution.
+-- impossible given honest weight distribution.
 --
 -- = Key Types
 --
@@ -67,7 +68,7 @@
 --      its logically split between separate 'NoQuorum' and 'Quorum' types
 --      representing the two states (1) and (2) described above, respectively.
 --   * 'PerasTargetVoteState': tracks votes for one specific block target
---   * 'PerasTargetVoteTally': raw vote count and stake accumulation
+--   * 'PerasVoteCollection': raw vote count and weight accumulation
 --   * 'PerasTargetVoteStatus': type-level status (Candidate/Winner/Loser)
 --   * 'UpdateRoundVoteStateError': errors from invalid state transitions
 --
@@ -79,25 +80,28 @@
 -- freshly forged (as opposed to voting on an already-won target).
 module Ouroboros.Consensus.Peras.Vote.Aggregation
   ( PerasRoundVoteState
-  , ptvsTotalStake
+  , getPerasRoundVoteStateRound
+  , getPerasRoundVoteStateCertMaybe
+  , getPerasRoundVoteStateMaxTargetedSlot
   , pattern VoteGeneratedNewCert
   , pattern VoteDidntGenerateNewCert
   , updatePerasRoundVoteStates
-  , getPerasRoundVoteStateCertMaybe
-  , getPerasRoundVoteStateMaxTargetedSlot
   , UpdateRoundVoteStateError (..)
+  , PerasTargetVoteState
+  , getPerasTargetVoteStateTotalWeight
+  , getPerasTargetVoteStateBlock
   ) where
 
-import Cardano.Prelude (fromMaybe)
 import Control.Exception (assert)
 import Data.Functor.Compose (Compose (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime (WithArrivalTime, forgetArrivalTime)
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime)
 
 {-------------------------------------------------------------------------------
   Voting state for a given Peras round
@@ -108,18 +112,56 @@ data PerasRoundVoteState blk = PerasRoundVoteState
   { prvsRoundNo :: !PerasRoundNo
   , prvsState :: !(Either (NoQuorum blk) (Quorum blk))
   }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
 
-instance HasPerasVoteRound (PerasRoundVoteState blk) where
-  getPerasVoteRound = prvsRoundNo
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  , Show (PerasVotingCommittee blk)
+  ) =>
+  Show (PerasRoundVoteState blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  , Eq (PerasVotingCommittee blk)
+  ) =>
+  Eq (PerasRoundVoteState blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  , NoThunks (PerasVotingCommittee blk)
+  ) =>
+  NoThunks (PerasRoundVoteState blk)
+deriving instance
+  Generic (PerasRoundVoteState blk)
 
 -- | Current vote state when a quorum has not yet been reached
 data NoQuorum blk = NoQuorum
   { candidateStates :: !(Map (Point blk) (PerasTargetVoteState blk 'Candidate))
   }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (NoQuorum blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (NoQuorum blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (NoQuorum blk)
+deriving instance
+  Generic (NoQuorum blk)
 
 -- | Current vote state when a quorum has been reached
 data Quorum blk = Quorum
@@ -127,8 +169,31 @@ data Quorum blk = Quorum
   , loserStates :: !(Map (Point blk) (PerasTargetVoteState blk 'Loser))
   , winnerState :: !(PerasTargetVoteState blk 'Winner)
   }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (Quorum blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (Quorum blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (Quorum blk)
+deriving instance
+  Generic (Quorum blk)
+
+-- | Get the round number of a round vote state
+getPerasRoundVoteStateRound :: PerasRoundVoteState blk -> PerasRoundNo
+getPerasRoundVoteStateRound = prvsRoundNo
 
 -- | Get the certificate if quorum was reached for the given round
 getPerasRoundVoteStateCertMaybe ::
@@ -161,7 +226,7 @@ getPerasRoundVoteStateMaxTargetedSlot PerasRoundVoteState{prvsState} =
       maximumOrOrigin $ map pointSlot $ Map.keys candidateStates
     Right Quorum{winnerState, loserStates} ->
       maximumOrOrigin $
-        pointSlot (getPerasVoteBlock winnerState)
+        pointSlot (getPerasTargetVoteStateBlock winnerState)
           : (pointSlot <$> Map.keys loserStates)
  where
   maximumOrOrigin [] = Origin
@@ -188,7 +253,7 @@ data UpdateRoundVoteStateError blk
       (PerasTargetVoteState blk 'Winner)
       (PerasTargetVoteState blk 'Loser)
   | RoundVoteStateForgingCertError
-      (PerasForgeErr blk)
+      (PerasError blk)
 
 -- | Add a vote to an existing round vote aggregate.
 --
@@ -200,11 +265,11 @@ updatePerasRoundVoteState ::
   forall blk.
   StandardHash blk =>
   WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasCfg blk ->
+  PerasParams blk ->
   PerasRoundVoteState blk ->
   Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk)
-updatePerasRoundVoteState vote cfg roundState =
-  assert (getPerasVoteRound vote == getPerasVoteRound roundState) $ do
+updatePerasRoundVoteState vote params roundState =
+  assert (getPerasVoteRound vote == prvsRoundNo roundState) $ do
     case roundState of
       -- Quorum not yet reached
       state@PerasRoundVoteState
@@ -214,21 +279,19 @@ updatePerasRoundVoteState vote cfg roundState =
               { candidateStates
               }
         } -> do
-          let oldCandidateState =
-                Map.findWithDefault
-                  (freshCandidateVoteState (getPerasVoteTarget vote))
-                  (getPerasVoteBlock vote)
-                  candidateStates
+          let updateMaybeCandidateState = \case
+                Nothing ->
+                  candidateOrWinnerVoteStateSingleton params vote
+                Just oldCandidateState ->
+                  updateCandidateVoteState params vote oldCandidateState
           candidateOrWinnerState <-
-            updateCandidateVoteState cfg vote oldCandidateState
-              `onErr` \err ->
-                RoundVoteStateForgingCertError err
+            updateMaybeCandidateState (Map.lookup (getPerasVotePoint vote) candidateStates)
           case candidateOrWinnerState of
             RemainedCandidate newCandidateState -> do
               -- Quorum still not reached for this round
               let prvsCandidateStates' =
                     Map.insert
-                      (getPerasVoteBlock vote)
+                      (getPerasVotePoint vote)
                       newCandidateState
                       candidateStates
               pure $
@@ -242,7 +305,7 @@ updatePerasRoundVoteState vote cfg roundState =
             BecameWinner winnerState -> do
               -- Quorum has been reached for the first time here for this round
               let winnerPoint =
-                    pvtBlock (ptvtTarget (ptvsVoteTally winnerState))
+                    pvtBlock (pvcTarget (ptvsVoteCollection winnerState))
                   loserStates =
                     candidateToLoser <$> Map.delete winnerPoint candidateStates
               pure $
@@ -269,9 +332,9 @@ updatePerasRoundVoteState vote cfg roundState =
               }
         } -> do
           let votePoint =
-                getPerasVoteBlock vote
+                getPerasVotePoint vote
               winnerPoint =
-                pvtBlock (ptvtTarget (ptvsVoteTally winnerState))
+                pvtBlock (pvcTarget (ptvsVoteCollection winnerState))
           if votePoint == winnerPoint
             -- The vote ratifies the winner => update winner state
             then do
@@ -290,14 +353,14 @@ updatePerasRoundVoteState vote cfg roundState =
 
             -- The vote is for a loser => update loser state
             else do
-              let existingOrFreshLoserVoteState =
-                    fromMaybe (freshLoserVoteState (getPerasVoteTarget vote))
-                  updateMaybeLoserVoteState mState =
-                    fmap Just $
-                      updateLoserVoteState cfg vote (existingOrFreshLoserVoteState mState)
-                        `onErr` \err ->
-                          RoundVoteStateLoserAboveQuorum winnerState err
-              loserStates' <- Map.alterF updateMaybeLoserVoteState votePoint loserStates
+              let updateMaybeLoserVoteState = \case
+                    Nothing ->
+                      loserVoteStateSingleton params winnerState vote
+                    Just oldLoserState ->
+                      updateLoserVoteState params winnerState vote oldLoserState
+
+              loserStates' <-
+                Map.alterF (\mState -> Just <$> updateMaybeLoserVoteState mState) votePoint loserStates
               pure $
                 state
                   { prvsState =
@@ -320,12 +383,12 @@ updatePerasRoundVoteStates ::
   forall blk.
   StandardHash blk =>
   WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasCfg blk ->
+  PerasParams blk ->
   Map PerasRoundNo (PerasRoundVoteState blk) ->
   Either
     (UpdateRoundVoteStateError blk)
     (PerasRoundVoteState blk, Map PerasRoundNo (PerasRoundVoteState blk))
-updatePerasRoundVoteStates vote cfg =
+updatePerasRoundVoteStates vote params =
   alterMapAndReturnUpdatedValue
     updateMaybePerasRoundVoteState
     (getPerasVoteRound vote)
@@ -358,7 +421,7 @@ updatePerasRoundVoteStates vote cfg =
       (PerasRoundVoteState blk, PerasRoundVoteState blk)
   updateMaybePerasRoundVoteState mRoundState = do
     let roundState = existingOrFreshRoundVoteState mRoundState
-    newRoundState <- updatePerasRoundVoteState vote cfg roundState
+    newRoundState <- updatePerasRoundVoteState vote params roundState
     pure (newRoundState, newRoundState)
 
 {-------------------------------------------------------------------------------
@@ -400,65 +463,6 @@ voteGeneratedCert = \case
     Nothing
 
 {-------------------------------------------------------------------------------
-  Peras target vote tally
--------------------------------------------------------------------------------}
-
--- | Tally of votes for a given target (round number and block point)
-data PerasTargetVoteTally blk = PerasTargetVoteTally
-  { ptvtTarget :: !(PerasVoteTarget blk)
-  -- ^ What we are tallying votes for
-  , ptvtVotes :: !(Map PerasVoteId (WithArrivalTime (ValidatedPerasVote blk)))
-  -- ^ Votes received for this target, indexed by vote ID
-  , ptvtTotalStake :: !PerasVoteStake
-  -- ^ Total stake of the votes received for this target
-  }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
-
-freshTargetVoteTally :: PerasVoteTarget blk -> PerasTargetVoteTally blk
-freshTargetVoteTally target =
-  PerasTargetVoteTally
-    { ptvtTarget = target
-    , ptvtVotes = Map.empty
-    , ptvtTotalStake = PerasVoteStake 0
-    }
-
--- | Add a vote to an existing target tally if it isn't already present,
--- and update the stake accordingly.
---
--- PRECONDITION: the vote's target must match the tally's target.
-updateTargetVoteTally ::
-  StandardHash blk =>
-  WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasTargetVoteTally blk ->
-  PerasTargetVoteTally blk
-updateTargetVoteTally
-  vote
-  ptvt@PerasTargetVoteTally
-    { ptvtVotes
-    , ptvtTarget
-    , ptvtTotalStake
-    } =
-    assert (getPerasVoteTarget vote == ptvtTarget) $ do
-      ptvt
-        { ptvtVotes = pvaVotes'
-        , ptvtTotalStake = pvaTotalStake'
-        }
-   where
-    swapVote =
-      Map.insertLookupWithKey
-        (\_k old _new -> old)
-        (getPerasVoteId vote)
-
-    (pvaVotes', pvaTotalStake')
-      -- key WAS NOT present → vote inserted and stake updated
-      | (Nothing, votes') <- swapVote vote ptvtVotes =
-          (votes', ptvtTotalStake + vpvVoteStake (forgetArrivalTime vote))
-      -- key WAS already present → votes and stake unchanged
-      | otherwise =
-          (ptvtVotes, ptvtTotalStake)
-
-{-------------------------------------------------------------------------------
   Peras target vote status
 -------------------------------------------------------------------------------}
 
@@ -475,36 +479,36 @@ data PerasTargetVoteStatus
 -- We indicate at type level the status of the target w.r.t the voting process.
 data PerasTargetVoteState blk (status :: PerasTargetVoteStatus) where
   PerasTargetVoteCandidate ::
-    !(PerasTargetVoteTally blk) ->
+    !(PerasVoteCollection blk) ->
     PerasTargetVoteState blk 'Candidate
   PerasTargetVoteLoser ::
-    !(PerasTargetVoteTally blk) ->
+    !(PerasVoteCollection blk) ->
     PerasTargetVoteState blk 'Loser
   PerasTargetVoteWinner ::
-    !(PerasTargetVoteTally blk) ->
+    !(PerasVoteCollection blk) ->
     !(ValidatedPerasCert blk) ->
     PerasTargetVoteState blk 'Winner
 
 deriving stock instance
-  ( Eq (PerasTargetVoteTally blk)
+  ( Eq (PerasVoteCollection blk)
   , Eq (ValidatedPerasCert blk)
   ) =>
   Eq (PerasTargetVoteState blk status)
 
 deriving stock instance
-  ( Ord (PerasTargetVoteTally blk)
+  ( Ord (PerasVoteCollection blk)
   , Ord (ValidatedPerasCert blk)
   ) =>
   Ord (PerasTargetVoteState blk status)
 
 deriving stock instance
-  ( Show (PerasTargetVoteTally blk)
+  ( Show (PerasVoteCollection blk)
   , Show (ValidatedPerasCert blk)
   ) =>
   Show (PerasTargetVoteState blk status)
 
 instance
-  ( NoThunks (PerasTargetVoteTally blk)
+  ( NoThunks (PerasVoteCollection blk)
   , NoThunks (ValidatedPerasCert blk)
   ) =>
   NoThunks (PerasTargetVoteState blk status)
@@ -515,37 +519,56 @@ instance
   -- we can just delegate wNoThunks to our custom noThunks
   wNoThunks = noThunks
 
-  noThunks ctx (PerasTargetVoteCandidate tally) =
-    noThunks ctx tally
-  noThunks ctx (PerasTargetVoteLoser tally) =
-    noThunks ctx tally
-  noThunks ctx (PerasTargetVoteWinner tally cert) =
-    noThunks ctx (tally, cert)
+  noThunks ctx (PerasTargetVoteCandidate voteCollection) =
+    noThunks ctx voteCollection
+  noThunks ctx (PerasTargetVoteLoser voteCollection) =
+    noThunks ctx voteCollection
+  noThunks ctx (PerasTargetVoteWinner voteCollection cert) =
+    noThunks ctx (voteCollection, cert)
 
-instance HasPerasVoteRound (PerasTargetVoteState blk status) where
-  getPerasVoteRound = pvtRoundNo . ptvtTarget . ptvsVoteTally
+-- | Extract the total weight from a target vote state
+getPerasTargetVoteStateTotalWeight :: PerasTargetVoteState blk status -> VoteWeight
+getPerasTargetVoteStateTotalWeight = pvcTotalWeight . ptvsVoteCollection
 
-instance HasPerasVoteBlock (PerasTargetVoteState blk status) blk where
-  getPerasVoteBlock = pvtBlock . ptvtTarget . ptvsVoteTally
+-- | Extract the block point from a target vote state
+getPerasTargetVoteStateBlock :: PerasTargetVoteState blk status -> Point blk
+getPerasTargetVoteStateBlock = pvtBlock . pvcTarget . ptvsVoteCollection
 
--- | Extract the underlying vote tally from a target vote state
-ptvsVoteTally :: PerasTargetVoteState blk status -> PerasTargetVoteTally blk
-ptvsVoteTally = \case
-  PerasTargetVoteCandidate tally -> tally
-  PerasTargetVoteLoser tally -> tally
-  PerasTargetVoteWinner tally _ -> tally
+-- | Extract the underlying vote voteCollection from a target vote state
+ptvsVoteCollection :: PerasTargetVoteState blk status -> PerasVoteCollection blk
+ptvsVoteCollection = \case
+  PerasTargetVoteCandidate voteCollection -> voteCollection
+  PerasTargetVoteLoser voteCollection -> voteCollection
+  PerasTargetVoteWinner voteCollection _ -> voteCollection
 
--- | Extract the total stake from a target vote state
-ptvsTotalStake :: PerasTargetVoteState blk status -> PerasVoteStake
-ptvsTotalStake = ptvtTotalStake . ptvsVoteTally
+candidateOrWinnerVoteStateSingleton ::
+  BlockSupportsPeras blk =>
+  PerasParams blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  Either
+    (UpdateRoundVoteStateError blk)
+    (PerasVoteStateCandidateOrWinner blk)
+candidateOrWinnerVoteStateSingleton params vote =
+  let voteCollection = perasVoteCollectionSingleton vote
+   in case perasVoteCollectionCheckQuorum params voteCollection of
+        Just votesWithQuorum -> do
+          cert <- forgePerasCert params votesWithQuorum `onErr` RoundVoteStateForgingCertError
+          pure $ BecameWinner $ PerasTargetVoteWinner voteCollection cert
+        Nothing ->
+          pure $ RemainedCandidate $ PerasTargetVoteCandidate voteCollection
 
-freshCandidateVoteState :: PerasVoteTarget blk -> PerasTargetVoteState blk 'Candidate
-freshCandidateVoteState target =
-  PerasTargetVoteCandidate (freshTargetVoteTally target)
-
-freshLoserVoteState :: PerasVoteTarget blk -> PerasTargetVoteState blk 'Loser
-freshLoserVoteState target =
-  PerasTargetVoteLoser (freshTargetVoteTally target)
+loserVoteStateSingleton ::
+  PerasParams blk ->
+  PerasTargetVoteState blk 'Winner ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  Either (UpdateRoundVoteStateError blk) (PerasTargetVoteState blk 'Loser)
+loserVoteStateSingleton params winnerState vote =
+  let voteCollection = perasVoteCollectionSingleton vote
+   in case perasVoteCollectionCheckQuorum params voteCollection of
+        Just _ ->
+          Left $ RoundVoteStateLoserAboveQuorum winnerState (PerasTargetVoteLoser voteCollection)
+        Nothing ->
+          Right $ PerasTargetVoteLoser voteCollection
 
 -- | Convert a 'Candidate' state to a 'Loser' state.
 --
@@ -554,8 +577,8 @@ freshLoserVoteState target =
 candidateToLoser ::
   PerasTargetVoteState blk 'Candidate ->
   PerasTargetVoteState blk 'Loser
-candidateToLoser (PerasTargetVoteCandidate tally) =
-  PerasTargetVoteLoser tally
+candidateToLoser (PerasTargetVoteCandidate voteCollection) =
+  PerasTargetVoteLoser voteCollection
 
 -- | Subtype of 'PerasTargetVoteState' to indicate whether the target remains a
 -- candidate or has been elected winner
@@ -568,56 +591,59 @@ data PerasVoteStateCandidateOrWinner blk
 -- May fail if the candidate is elected winner but forging the certificate fails.
 updateCandidateVoteState ::
   StandardHash blk =>
-  PerasCfg blk ->
+  PerasParams blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Candidate ->
   Either
-    (PerasForgeErr blk)
+    (UpdateRoundVoteStateError blk)
     (PerasVoteStateCandidateOrWinner blk)
-updateCandidateVoteState cfg vote oldState =
+updateCandidateVoteState params vote oldState =
   let
-    newVoteTally = updateTargetVoteTally vote (ptvsVoteTally oldState)
-    voteList = forgetArrivalTime <$> Map.elems (ptvtVotes newVoteTally)
+    newVoteCollection = perasVoteCollectionAddVote vote (ptvsVoteCollection oldState)
    in
-    case votesReachQuorum cfg voteList of
+    case perasVoteCollectionCheckQuorum params newVoteCollection of
       Just votesWithQuorum -> do
-        cert <- forgePerasCert cfg votesWithQuorum
-        pure $ BecameWinner (PerasTargetVoteWinner newVoteTally cert)
+        cert <- forgePerasCert params votesWithQuorum `onErr` RoundVoteStateForgingCertError
+        pure $ BecameWinner (PerasTargetVoteWinner newVoteCollection cert)
       Nothing -> do
-        pure $ RemainedCandidate (PerasTargetVoteCandidate newVoteTally)
+        pure $ RemainedCandidate (PerasTargetVoteCandidate newVoteCollection)
 
 -- | Add a vote to an existing target vote state if it isn't already present.
 --
--- PRECONDITION: the vote's target must match the underlying tally's target.
+-- PRECONDITION: the vote's target must match the underlying vote collection's target.
 --
 -- May fail if the loser goes above quorum by adding the vote.
 updateLoserVoteState ::
   StandardHash blk =>
-  PerasCfg blk ->
+  PerasParams blk ->
+  PerasTargetVoteState blk 'Winner ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Loser ->
-  Either (PerasTargetVoteState blk 'Loser) (PerasTargetVoteState blk 'Loser)
-updateLoserVoteState cfg vote oldState =
-  assert (getPerasVoteTarget vote == ptvtTarget (ptvsVoteTally oldState)) $ do
-    let newVoteTally = updateTargetVoteTally vote (ptvsVoteTally oldState)
-        aboveQuorum = stakeAboveThreshold cfg (ptvtTotalStake newVoteTally)
-     in if aboveQuorum
-          then Left $ PerasTargetVoteLoser newVoteTally
-          else Right $ PerasTargetVoteLoser newVoteTally
+  Either (UpdateRoundVoteStateError blk) (PerasTargetVoteState blk 'Loser)
+updateLoserVoteState params winnerState vote oldState =
+  assert (getPerasVoteTarget vote == pvcTarget (ptvsVoteCollection oldState)) $ do
+    let newVoteCollection = perasVoteCollectionAddVote vote (ptvsVoteCollection oldState)
+     in case perasVoteCollectionCheckQuorum params newVoteCollection of
+          Just _ ->
+            Left $ RoundVoteStateLoserAboveQuorum winnerState (PerasTargetVoteLoser newVoteCollection)
+          Nothing ->
+            Right $ PerasTargetVoteLoser newVoteCollection
 
 -- | Add a vote to an existing target vote state if it isn't already present.
 --
--- PRECONDITION: the vote's target must match the underlying tally's target.
+-- PRECONDITION: the vote's target must match the underlying vote collection's target.
 updateWinnerVoteState ::
-  StandardHash blk =>
+  ( StandardHash blk
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Winner ->
   PerasTargetVoteState blk 'Winner
 updateWinnerVoteState vote oldState =
-  assert (getPerasVoteTarget vote == ptvtTarget (ptvsVoteTally oldState)) $ do
-    let newVoteTally = updateTargetVoteTally vote (ptvsVoteTally oldState)
+  assert (getPerasVoteTarget vote == pvcTarget (ptvsVoteCollection oldState)) $ do
+    let newVoteCollection = perasVoteCollectionAddVote vote (ptvsVoteCollection oldState)
         (PerasTargetVoteWinner _ cert) = oldState
-     in PerasTargetVoteWinner newVoteTally cert
+     in PerasTargetVoteWinner newVoteCollection cert
 
 {-------------------------------------------------------------------------------
   Helpers

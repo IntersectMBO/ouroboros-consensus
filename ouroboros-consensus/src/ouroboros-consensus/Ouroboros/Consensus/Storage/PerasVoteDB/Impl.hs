@@ -80,7 +80,10 @@ invariantForPerasVoteDbState ::
   WithFingerprint (PerasVoteDbState blk) -> Either String ()
 invariantForPerasVoteDbState pvs = do
   for_ (Map.toList pvdsRoundVoteStates) $ \(roundNo, prvs) ->
-    checkEqual "pvcRoundVoteStates rounds" roundNo (getPerasVoteRound prvs)
+    checkEqual
+      "pvcRoundVoteStates rounds"
+      roundNo
+      (getPerasRoundVoteStateRound prvs)
   checkEqual
     "pvcsVotesByTicket"
     (Set.fromList (getPerasVoteRound <$> Map.elems pvdsVotesByTicket))
@@ -124,14 +127,14 @@ data TraceEvent blk
 type PerasVoteDbArgs :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data PerasVoteDbArgs f m blk = PerasVoteDbArgs
   { pvdbaTracer :: Tracer m (TraceEvent blk)
-  , pvdbaPerasCfg :: HKD f (PerasCfg blk)
+  , pvdbaPerasParams :: HKD f (PerasParams blk)
   }
 
 defaultArgs :: Monad m => Incomplete PerasVoteDbArgs m blk
 defaultArgs =
   PerasVoteDbArgs
     { pvdbaTracer = nullTracer
-    , pvdbaPerasCfg = noDefault
+    , pvdbaPerasParams = noDefault
     }
 
 createDB ::
@@ -142,7 +145,7 @@ createDB ::
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
-createDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
+createDB args@PerasVoteDbArgs{pvdbaPerasParams} = do
   pvdeState <-
     newTVarWithInvariantIO
       (either Just (const Nothing) . invariantForPerasVoteDbState)
@@ -154,7 +157,7 @@ createDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
           }
   pure
     PerasVoteDB
-      { addVote = implAddVote pvdbaPerasCfg env
+      { addVote = implAddVote pvdbaPerasParams env
       , getVoteIds = implGetVoteIds env
       , getVotesAfter = implGetVotesAfter env
       , getForgedCertForRound = implGetForgedCertForRound env
@@ -176,11 +179,11 @@ implAddVote ::
   , StandardHash blk
   , Typeable blk
   ) =>
-  PerasCfg blk ->
+  PerasParams blk ->
   PerasVoteDbEnv m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   STM m (m (AddPerasVoteResult blk))
-implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
+implAddVote perasParams PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
   let voteId = getPerasVoteId vote
   addPerasVoteRes <- do
     WithFingerprint pvds fp <- readTVar pvdeState
@@ -205,7 +208,7 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
         pvsVotesByTicket' = Map.insert pvsLastTicketNo' vote (pvdsVotesByTicket pvds)
 
     (addPerasVoteRes, pvsRoundVoteStates') <-
-      case updatePerasRoundVoteStates vote perasCfg (pvdsRoundVoteStates pvds) of
+      case updatePerasRoundVoteStates vote perasParams (pvdsRoundVoteStates pvds) of
         -- Added vote and reached a quorum, forging a new certificate
         Right (VoteGeneratedNewCert cert, pvsRoundVoteStates') ->
           pure (AddedPerasVoteAndGeneratedNewCert cert, pvsRoundVoteStates')
@@ -221,13 +224,13 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
             MultipleWinnersInRound
               (getPerasVoteRound vote)
               ( ExistingPerasRoundWinner
-                  ( getPerasVoteBlock winnerState
-                  , ptvsTotalStake winnerState
+                  ( getPerasTargetVoteStateBlock winnerState
+                  , getPerasTargetVoteStateTotalWeight winnerState
                   )
               )
               ( BlockedPerasRoundWinner
-                  ( getPerasVoteBlock loserState
-                  , ptvsTotalStake loserState
+                  ( getPerasTargetVoteStateBlock loserState
+                  , getPerasTargetVoteStateTotalWeight loserState
                   )
               )
         -- Reached quorum but failed to forge a certificate

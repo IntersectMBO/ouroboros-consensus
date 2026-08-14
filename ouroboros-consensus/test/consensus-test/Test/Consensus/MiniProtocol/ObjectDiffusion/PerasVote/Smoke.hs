@@ -1,13 +1,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
   ( tests
-  , genPerasVoteStake
-  , genPerasVote
-  , genValidatedPerasVote
   ) where
 
 import Control.Monad (join)
@@ -38,19 +34,21 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   )
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionOutboundPeer)
 import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
-  ( ListWithUniqueIds (..)
-  , WithId
-  , genListWithUniqueIds
-  , genPointTestBlock
-  , genProtocolConstants
-  , genWithArrivalTime
-  , getId
-  , mockSystemTime
+  ( genProtocolConstants
   , prop_smoke_object_diffusion
   )
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Peras
+  ( ListWithUniqueIds (..)
+  , genListWithUniqueIds
+  , genPointTestBlock
+  , genRoundNo
+  , genSeatIndex
+  , genWithArrivalTime
+  , mockSystemTime
+  )
 import Test.Util.TestBlock
 
 tests :: TestTree
@@ -60,32 +58,20 @@ tests =
     [ testProperty "PerasVoteDiffusion smoke test" prop_smoke
     ]
 
-genPerasSeatIndex :: Gen PerasSeatIndex
-genPerasSeatIndex = PerasSeatIndex <$> choose (0, 99)
-
-genPerasVoteStake :: Gen PerasVoteStake
-genPerasVoteStake = do
-  stake <- (1 %) <$> choose (2, 10)
-  pure (PerasVoteStake stake)
-
-genPerasVote :: Gen (PerasVote TestBlock)
-genPerasVote = do
-  pvVoteRound <- PerasRoundNo <$> arbitrary
-  pvVoteBlock <- genPointTestBlock
-  pvVoteVoterId <- genPerasSeatIndex
-  pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
-
-instance WithId (PerasVote' blk) PerasVoteId where
-  getId = getPerasVoteId
-
-instance WithId (WithArrivalTime (ValidatedPerasVote blk)) PerasVoteId where
-  getId = getPerasVoteId . vpvVote . forgetArrivalTime
-
 genValidatedPerasVote :: Gen (ValidatedPerasVote TestBlock)
 genValidatedPerasVote =
   ValidatedPerasVote
     <$> genPerasVote
-    <*> genPerasVoteStake
+    <*> genVoteWeight
+ where
+  genPerasVote =
+    PerasVote
+      <$> genRoundNo
+      <*> genPointTestBlock
+      <*> genSeatIndex
+  genVoteWeight =
+    VoteWeight . (1 %)
+      <$> choose (1, 100)
 
 newVoteDB ::
   (IOLike m, StandardHash blk, Typeable blk) =>
@@ -106,7 +92,7 @@ newVoteDB votes = do
 prop_smoke :: Property
 prop_smoke =
   forAll genProtocolConstants $ \protocolConstants ->
-    forAll (genListWithUniqueIds (genWithArrivalTime genValidatedPerasVote)) $
+    forAll (genListWithUniqueIds getPerasVoteRound (genWithArrivalTime genValidatedPerasVote)) $
       \(ListWithUniqueIds watValidatedVotes) ->
         let
           mkPoolInterfaces ::
@@ -124,7 +110,7 @@ prop_smoke =
                 stakeDistr =
                   PerasVoteStakeDistr $
                     Map.fromList
-                      [ (pvVoteVoterId (vpvVote v), vpvVoteStake v)
+                      [ (pvVoteVoterId (vpvVote v), vpvVoteWeight v)
                       | WithArrivalTime _ v <- watValidatedVotes
                       ]
                 inboundPoolWriter =

@@ -12,7 +12,7 @@ module Test.Ouroboros.Storage.PerasVoteDB.StateMachine
 
     -- * Reusable generators
   , genPerasSeatIndex
-  , genVoteStake
+  , genVoteWeight
   ) where
 
 import Control.Concurrent.Class.MonadSTM (MonadSTM (..))
@@ -36,17 +36,16 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( BlockSupportsPeras (..)
-  , HasPerasVoteBlock (..)
-  , HasPerasVoteRound (..)
+  ( IsPerasVote (..)
+  , PerasParams
   , PerasRoundNo (..)
   , PerasSeatIndex (..)
   , PerasVote' (..)
   , PerasVoteId
-  , PerasVoteStake (..)
   , PerasVoteTarget (..)
   , ValidatedPerasCert
   , ValidatedPerasVote (..)
+  , VoteWeight (..)
   , defaultPerasParams
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -98,8 +97,8 @@ tests =
             prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = defaultPerasParams
+perasTestParams :: PerasParams TestBlock
+perasTestParams = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = monadic runActualImplemMonad resultAsPropertyM
@@ -174,7 +173,7 @@ instance StateModel Model where
       roundNo <- genRoundNo
       point <- genPoint
       seatIndex <- genPerasSeatIndex
-      stake <- genVoteStake
+      weight <- genVoteWeight
       now <- genRelativeTime
       let voteWithTime =
             WithArrivalTime now $
@@ -185,7 +184,7 @@ instance StateModel Model where
                       , pvVoteBlock = point
                       , pvVoteVoterId = seatIndex
                       }
-                , vpvVoteStake = stake
+                , vpvVoteWeight = weight
                 }
       return (AddVote voteWithTime)
 
@@ -228,7 +227,7 @@ instance StateModel Model where
       pure (RelativeTime time)
 
   initialState =
-    Model (Model.initModel perasTestCfg)
+    Model (Model.initModel perasTestParams)
 
   nextState (Model m) action _ =
     case action of
@@ -258,7 +257,7 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
   perform _ action _ =
     case action of
       CreateDB -> do
-        let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestCfg
+        let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestParams
         voteDB <- lift $ PerasVoteDB.createDB args
         put voteDB
       AddVote vote -> do
@@ -353,15 +352,15 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
 genPerasSeatIndex :: Gen PerasSeatIndex
 genPerasSeatIndex = PerasSeatIndex <$> choose (0, 99)
 
--- | Generate a random 'PerasVoteStake'.
+-- | Generate a random 'VoteWeight'.
 --
 -- Make it so that we always require multiple votes to reach a quorum.
 -- This is assuming a quorum threshold strictly larger than 50%, which is
 -- a very conservative assumption for Peras.
-genVoteStake :: Gen PerasVoteStake
-genVoteStake = do
-  stake <- (1 %) <$> choose (2, 10) -- stake between 1/2 and 1/10
-  pure (PerasVoteStake stake)
+genVoteWeight :: Gen VoteWeight
+genVoteWeight = do
+  weight <- (1 %) <$> choose (2, 10) -- weight between 1/2 and 1/10
+  pure (VoteWeight weight)
 
 -- * Helpers
 
@@ -400,6 +399,6 @@ votesToReachQuorum model vote res =
       Set.empty
       PerasVoteTarget
         { pvtRoundNo = getPerasVoteRound vote
-        , pvtBlock = getPerasVoteBlock vote
+        , pvtBlock = getPerasVotePoint vote
         }
       (Model.votes model)

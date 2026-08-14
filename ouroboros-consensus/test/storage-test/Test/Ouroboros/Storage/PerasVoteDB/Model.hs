@@ -24,21 +24,17 @@ import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
 import Ouroboros.Consensus.Block.Abstract (StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasVoteBlock (..)
-  , HasPerasVoteRound (..)
+  ( IsPerasVote (..)
   , PerasCert' (..)
-  , PerasCfg
   , PerasParams (..)
   , PerasRoundNo
   , PerasVoteId (..)
-  , PerasVoteStake (..)
   , PerasVoteTarget (..)
   , ValidatedPerasCert (..)
-  , ValidatedPerasVote
-  , getPerasCertBoostedBlock
-  , getPerasVoteStake
-  , getPerasVoteVoterId
-  , stakeAboveThreshold
+  , ValidatedPerasVote (..)
+  , VoteWeight (..)
+  , getPerasCertPoint
+  , weightAboveThreshold
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
@@ -80,11 +76,11 @@ data Model blk = Model
 instance StandardHash blk => ToExpr (Model blk) where
   toExpr = defaultExprViaShow
 
-initModel :: PerasCfg blk -> Model blk
-initModel cfg =
+initModel :: PerasParams blk -> Model blk
+initModel perasParams =
   Model
     { open = False
-    , params = cfg
+    , params = perasParams
     , lastTicketNo = zeroPerasVoteTicketNo
     , votes = Map.empty
     , certs = Map.empty
@@ -159,7 +155,7 @@ addVote vote model
   -- block in this round => integrity violation (shouldn't happen in practice)
   | reachedQuorum
   , Just existingCert <- certAtRound
-  , getPerasCertBoostedBlock freshCert /= getPerasCertBoostedBlock existingCert =
+  , getPerasCertPoint freshCert /= getPerasCertPoint existingCert =
       ( Left $
           MultipleWinnersInRound roundNo
       , model
@@ -201,7 +197,7 @@ addVote vote model
   votedBlock =
     getPerasVoteBlock vote
   voter =
-    getPerasVoteVoterId vote
+    getPerasVoteSeatIndex vote
   -- Compute the next ticket number associated to this vote.
   -- NOTE: This is a 64-bit counter, so there's no practical risk of overflow.
   nextTicketNo =
@@ -224,11 +220,11 @@ addVote vote model
     Set.insert voteEntry existingVotes
   -- Get the total stake of a set of votes
   getTotalStake =
-    PerasVoteStake
+    VoteWeight
       . sum
       . fmap
-        ( unPerasVoteStake
-            . getPerasVoteStake
+        ( unVoteWeight
+            . vpvVoteWeight
             . forgetArrivalTime
             . veVote
         )
@@ -241,10 +237,10 @@ addVote vote model
     getTotalStake extendedVotes
   -- Did we already have a quorum before adding this new vote?
   hadQuorum =
-    stakeAboveThreshold (params model) existingVotesStake
+    weightAboveThreshold (params model) existingVotesStake
   -- Did we reach the quorum threshold with this new vote?
   reachedQuorum =
-    stakeAboveThreshold (params model) extendedVotesStake
+    weightAboveThreshold (params model) extendedVotesStake
   -- The existing certificate (if any) for this round
   certAtRound =
     Map.lookup roundNo (certs model)

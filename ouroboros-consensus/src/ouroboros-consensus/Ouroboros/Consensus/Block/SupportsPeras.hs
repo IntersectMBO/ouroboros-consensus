@@ -10,6 +10,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
@@ -24,31 +25,12 @@ module Ouroboros.Consensus.Block.SupportsPeras
     -- * BlockSupportsPeras class
   , BlockSupportsPeras (..)
 
-    -- * To be removed in favor of using 'IsPerasCert'/'IsPerasVote'
+    -- * To be removed in favor of using per-blk definitions
   , PerasCert' (..)
   , PerasVote' (..)
-  , HasPerasCertRound (..)
-  , HasPerasCertBoostedBlock (..)
-  , HasPerasCertBoost (..)
-  , HasPerasVoteRound (..)
-  , HasPerasVoteBlock (..)
-  , HasPerasVoteVoterId (..)
-  , HasPerasVoteStake (..)
-  , HasPerasVoteTarget (..)
-  , HasPerasVoteId (..)
 
-    -- * Types and functions related to Peras vote collection and quorum checking
-  , PerasVoteId (..)
-  , PerasVoterId (..)
-  , PerasVoteStake (..)
+    -- * To be removed in favor of using a 'PerasEpochContext' directly
   , PerasVoteStakeDistr (..)
-  , ValidatedPerasVotesWithQuorum
-    ( vpvqTarget
-    , vpvqVotes
-    , vpvqPerasCfg
-    )
-  , lookupPerasVoteStake
-  , votesReachQuorum
 
     -- * Validated types
   , ValidatedPerasCert (..)
@@ -57,25 +39,43 @@ module Ouroboros.Consensus.Block.SupportsPeras
     -- * Peras error types
   , IsPerasError (..)
 
+    -- * Types and functions related to Peras vote collection and quorum checking
+  , PerasVoteCollection
+    ( pvcTarget
+    , pvcVotes
+    , pvcTotalWeight
+    )
+  , perasVoteCollectionSingleton
+  , perasVoteCollectionAddVote
+  , unsafePerasVoteCollection
+  , PerasVoteCollectionWithQuorum
+    ( forgetQuorum
+    )
+  , unsafeAssumeQuorum
+  , perasVoteCollectionCheckQuorum
+  , toUniqueVotesWithSameTarget
+
     -- * Helpers
-  , stakeAboveThreshold
+  , weightAboveThreshold
 
     -- * Convenience re-exports
+  , module Ouroboros.Consensus.Peras.Cert.Class
   , module Ouroboros.Consensus.Peras.Params
   , module Ouroboros.Consensus.Peras.Types
   , module Ouroboros.Consensus.Peras.Void
+  , module Ouroboros.Consensus.Peras.Vote.Class
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
+import Control.Exception (assert)
+import Data.Containers.NonEmpty (HasNonEmpty (..))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.Map as Map
+import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
-import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -84,14 +84,21 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
+  , UniqueVotesWithSameTarget
   , VotingCommittee
+  , unsafeUniqueVotesWithSameTarget
   )
+import Ouroboros.Consensus.Committee.Crypto (VoteCandidate)
+import Ouroboros.Consensus.Peras.Cert.Class
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Peras.Void
-import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
+import Ouroboros.Consensus.Peras.Vote.Class
+import Ouroboros.Consensus.Peras.Voting.Adapter
+  ( PerasConversionError
+  , PerasVoteCompatibleWithVotingCommittee (..)
+  )
 import Ouroboros.Consensus.Util
-import Quiet (Quiet (..))
 
 -- * Voting committee types for Peras
 
@@ -165,150 +172,19 @@ deriving instance
 deriving instance
   Generic (PerasEpochContext blk)
 
-{-------------------------------------------------------------------------------
 -- * Peras types
--------------------------------------------------------------------------------}
 
--- ** Stake pool distributions
-
--- NOTE: to be removed in favor of the one in 'Ouroboros.Consensus.Peras.Types'
-newtype PerasVoterId = PerasVoterId
-  { unPerasVoterId :: KeyHash StakePool
-  }
-  deriving newtype NoThunks
-  deriving stock (Eq, Ord, Generic)
-  deriving Show via Quiet PerasVoterId
-
--- NOTE: At the moment there is no consensus from researchers/engineers on how
--- we go from the absolute stake of a voter in the ledger to the relative stake
--- of their vote in the voting commitee (given that the quorum is expressed as
--- a relative value of the voting commitee total stake).
---
--- So, for now you can consider this 'Rational' as the best approximation we
--- have at the moment of the concrete type for a relative vote stake that can be
--- compared to the quorum threshold value (also currently a 'Rational').
-newtype PerasVoteStake = PerasVoteStake
-  { unPerasVoteStake :: Rational
-  }
-  deriving newtype (Eq, Ord, Num, Fractional, NoThunks, Serialise)
-  deriving stock Generic
-  deriving Show via Quiet PerasVoteStake
-  deriving Semigroup via Sum Rational
-  deriving Monoid via Sum Rational
-
--- | Check whether a given vote stake is above the quorum threshold.
---
--- TODO: this function assumes that the 'PerasVoteStake' and the quorum
--- threshold used in 'PerasParams' are expressed in the same units. That is,
--- both are either absolute or relative (normalized) values. Under the current
--- current implementation of 'PerasParams', this function only makes sense when
--- both values are relative (normalized) values, so we should either normalize
--- the 'PerasVoteStake' before calling this function, or change this function to
--- accept a stake distribution and perform the normalization internally.
-stakeAboveThreshold :: PerasParams blk -> PerasVoteStake -> Bool
-stakeAboveThreshold params voteStake =
-  stake >= quorumThreshold + safetyMargin
- where
-  stake =
-    unPerasVoteStake voteStake
-  quorumThreshold =
-    unPerasQuorumWeightThreshold
-      (perasQuorumWeightThreshold params)
-  safetyMargin =
-    unPerasQuorumWeightThresholdSafetyMargin
-      (perasQuorumWeightThresholdSafetyMargin params)
-
+-- TODO: to be removed in favor of using a 'PerasEpochContext' directly.
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
-  { unPerasVoteStakeDistr :: Map PerasSeatIndex PerasVoteStake
+  { unPerasVoteStakeDistr :: Map PerasSeatIndex VoteWeight
   }
   deriving newtype NoThunks
   deriving stock (Show, Eq, Generic)
 
--- | Lookup the stake of a vote cast by a member of a given stake distribution.
-lookupPerasVoteStake ::
-  PerasVote blk ->
-  PerasVoteStakeDistr ->
-  Maybe PerasVoteStake
-lookupPerasVoteStake vote distr =
-  Map.lookup
-    (pvVoteVoterId vote)
-    (unPerasVoteStakeDistr distr)
-
--- ** Validated types
-
-data ValidatedPerasCert blk = ValidatedPerasCert
-  { vpcCert :: !(PerasCert blk)
-  , vpcCertBoost :: !PerasWeight
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass NoThunks
-
-data ValidatedPerasVote blk = ValidatedPerasVote
-  { vpvVote :: !(PerasVote blk)
-  , vpvVoteStake :: !PerasVoteStake
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass NoThunks
-
--- ** Votes with enough stake to reach quorum for a given target
-
--- | A collection of validated Peras votes that:
--- 1. are all for the same target, and
--- 2. have total stake above the quorum threshold for a given 'PerasCfg'.
-data ValidatedPerasVotesWithQuorum blk = ValidatedPerasVotesWithQuorum
-  { vpvqTarget :: !(PerasVoteTarget blk)
-  -- ^ The target that all the votes are for
-  , vpvqVotes :: !(NonEmpty (ValidatedPerasVote blk))
-  -- ^ The votes that reached quorum for the given target
-  , vpvqPerasCfg :: !(PerasCfg blk)
-  -- ^ The Peras configuration used to validate that the votes reach quorum
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
-
--- | Smart constructor for 'ValidatedPerasVotesReachingQuorum'.
---
--- This function checks that all votes are for the same target, and that their
--- total stake is above the quorum threshold defined in the given 'PerasCfg'.
--- It returns 'Nothing' if either of these conditions is not met.
-votesReachQuorum ::
-  StandardHash blk =>
-  PerasCfg blk ->
-  [ValidatedPerasVote blk] ->
-  Maybe (ValidatedPerasVotesWithQuorum blk)
-votesReachQuorum cfg votes =
-  case votes of
-    -- We need at least one vote to determine who these votes are for, so we
-    -- can't vacuously reach a quorum, even if the quorum threshold is 0.
-    [] -> Nothing
-    -- If we have at least one vote, we must check that all votes are for the
-    -- same target, and that their total stake of is above the quorum threshold.
-    (v0 : vs)
-      | not (allVotesMatchTarget v0 vs) ->
-          Nothing
-      | not votesHaveEnoughStake ->
-          Nothing
-      | otherwise ->
-          Just
-            ValidatedPerasVotesWithQuorum
-              { vpvqTarget = getPerasVoteTarget v0
-              , vpvqVotes = v0 :| vs
-              , vpvqPerasCfg = cfg
-              }
- where
-  totalVoteStake =
-    mconcat (vpvVoteStake <$> votes)
-  votesHaveEnoughStake =
-    stakeAboveThreshold cfg totalVoteStake
-  allVotesMatchTarget target =
-    all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
-
-{-------------------------------------------------------------------------------
 -- * BlockSupportsPeras class
--------------------------------------------------------------------------------}
 
 class
-  ( Show (PerasCfg blk)
+  ( Show (PerasParams blk)
   , NoThunks (PerasCert blk)
   ) =>
   BlockSupportsPeras blk
@@ -342,30 +218,21 @@ class
 
   type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
 
-  -- NOTE: to be removed in favor of 'PerasParams'.
-  type PerasCfg blk
-
-  -- NOTE: to be removed in favor of 'PerasError'.
-  data PerasValidationErr blk
-
-  -- NOTE: to be removed in favor of 'PerasError'.
-  data PerasForgeErr blk
-
   validatePerasCert ::
-    PerasCfg blk ->
+    PerasParams blk ->
     PerasCert blk ->
-    Either (PerasValidationErr blk) (ValidatedPerasCert blk)
+    Either (PerasError blk) (ValidatedPerasCert blk)
 
   validatePerasVote ::
-    PerasCfg blk ->
+    PerasParams blk ->
     PerasVoteStakeDistr ->
     PerasVote blk ->
-    Either (PerasValidationErr blk) (ValidatedPerasVote blk)
+    Either (PerasError blk) (ValidatedPerasVote blk)
 
   forgePerasCert ::
-    PerasCfg blk ->
-    ValidatedPerasVotesWithQuorum blk ->
-    Either (PerasForgeErr blk) (ValidatedPerasCert blk)
+    PerasParams blk ->
+    PerasVoteCollectionWithQuorum blk ->
+    Either (PerasError blk) (ValidatedPerasCert blk)
 
   -- | Extract a Peras certificate optionally stored in a block.
   --
@@ -382,25 +249,9 @@ instance StandardHash blk => BlockSupportsPeras blk where
   type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
   type PerasError blk = VoidPerasError blk
 
-  type PerasCfg blk = PerasParams blk
   type PerasCert blk = PerasCert' blk
   type PerasVote blk = PerasVote' blk
 
-  -- TODO: enrich with actual error types
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  data PerasValidationErr blk
-    = PerasValidationErr
-    deriving stock (Show, Eq)
-
-  -- TODO: enrich with actual error types
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  data PerasForgeErr blk
-    = PerasForgeErr
-    deriving stock (Show, Eq)
-
-  -- TODO: perform actual validation against all
-  -- possible 'PerasValidationErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
   validatePerasCert params cert =
     Right
       ValidatedPerasCert
@@ -408,35 +259,24 @@ instance StandardHash blk => BlockSupportsPeras blk where
         , vpcCertBoost = perasWeight params
         }
 
-  -- TODO: perform actual validation against all
-  -- possible 'PerasValidationErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
-  validatePerasVote _params stakeDistr vote
-    | Just stake <- lookupPerasVoteStake vote stakeDistr =
-        Right
-          ValidatedPerasVote
-            { vpvVote = vote
-            , vpvVoteStake = stake
-            }
-    | otherwise =
-        Left PerasValidationErr
+  validatePerasVote _params _stakeDistr vote =
+    Right
+      ValidatedPerasVote
+        { vpvVote = vote
+        , vpvVoteWeight = VoteWeight 0
+        }
 
-  -- TODO: perform actual validation against all
-  -- possible 'PerasForgeErr' variants
-  -- see https://github.com/tweag/cardano-peras/issues/120
   forgePerasCert params votes =
-    return $
+    Right $
       ValidatedPerasCert
         { vpcCert =
             PerasCert
-              { pcCertRound = pvtRoundNo (vpvqTarget votes)
-              , pcCertBoostedBlock = pvtBlock (vpvqTarget votes)
+              { pcCertRound = pvtRoundNo (pvcTarget (forgetQuorum votes))
+              , pcCertBoostedBlock = pvtBlock (pvcTarget (forgetQuorum votes))
               }
         , vpcCertBoost = perasWeight params
         }
 
-  -- TODO: extract actual Peras certificates from blocks when the HFC plumbing
-  -- is in place.
   getPerasCertInBlock _ = Nothing
 
 -- | NOTE: to be removed in favor of using per-blk definitions.
@@ -488,151 +328,66 @@ instance Serialise (HeaderHash blk) => Serialise (PerasVote' blk) where
     pvVoteVoterId <- fromCBOR
     pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
 
--- | Extract the certificate round from a Peras certificate container
-class HasPerasCertRound cert where
-  getPerasCertRound :: cert -> PerasRoundNo
+type instance BoostedBlock (PerasCert' blk) = Point blk
+type instance BoostedBlock (PerasVote' blk) = Point blk
 
-instance HasPerasCertRound (PerasCert' blk) where
+instance IsPerasCert (PerasCert' blk) blk where
   getPerasCertRound = pcCertRound
+  getPerasCertBlock = pcCertBoostedBlock
 
-instance HasPerasCertRound (ValidatedPerasCert blk) where
-  getPerasCertRound = getPerasCertRound . vpcCert
-
-instance
-  HasPerasCertRound cert =>
-  HasPerasCertRound (WithArrivalTime cert)
-  where
-  getPerasCertRound = getPerasCertRound . forgetArrivalTime
-
--- | Extract the boosted block point from a Peras certificate container
-class HasPerasCertBoostedBlock cert blk | cert -> blk where
-  getPerasCertBoostedBlock :: cert -> Point blk
-
-instance HasPerasCertBoostedBlock (PerasCert' blk) blk where
-  getPerasCertBoostedBlock = pcCertBoostedBlock
-
-instance HasPerasCertBoostedBlock (ValidatedPerasCert blk) blk where
-  getPerasCertBoostedBlock = getPerasCertBoostedBlock . vpcCert
-
-instance
-  HasPerasCertBoostedBlock cert blk =>
-  HasPerasCertBoostedBlock (WithArrivalTime cert) blk
-  where
-  getPerasCertBoostedBlock = getPerasCertBoostedBlock . forgetArrivalTime
-
--- | Extract the certificate boost from a Peras certificate container
-class HasPerasCertBoost cert where
-  getPerasCertBoost :: cert -> PerasWeight
-
-instance HasPerasCertBoost (ValidatedPerasCert blk) where
-  getPerasCertBoost = vpcCertBoost
-
-instance
-  HasPerasCertBoost cert =>
-  HasPerasCertBoost (WithArrivalTime cert)
-  where
-  getPerasCertBoost = getPerasCertBoost . forgetArrivalTime
-
--- | Extract the vote round from a Peras vote container
-class HasPerasVoteRound vote where
-  getPerasVoteRound :: vote -> PerasRoundNo
-
-instance HasPerasVoteRound (PerasVote' blk) where
+instance IsPerasVote (PerasVote' blk) blk where
   getPerasVoteRound = pvVoteRound
-
-instance HasPerasVoteRound (ValidatedPerasVote blk) where
-  getPerasVoteRound = getPerasVoteRound . vpvVote
-
-instance
-  HasPerasVoteRound vote =>
-  HasPerasVoteRound (WithArrivalTime vote)
-  where
-  getPerasVoteRound = getPerasVoteRound . forgetArrivalTime
-
--- | Extract the vote block point from a Peras vote container
-class HasPerasVoteBlock vote blk | vote -> blk where
-  getPerasVoteBlock :: vote -> Point blk
-
-instance HasPerasVoteBlock (PerasVote' blk) blk where
   getPerasVoteBlock = pvVoteBlock
+  getPerasVoteSeatIndex = pvVoteVoterId
 
-instance HasPerasVoteBlock (ValidatedPerasVote blk) blk where
+-- * Validated types
+
+data ValidatedPerasVote blk
+  = ValidatedPerasVote
+  { vpvVote :: !(PerasVote blk)
+  , vpvVoteWeight :: !VoteWeight
+  }
+
+deriving instance Show (PerasVote blk) => Show (ValidatedPerasVote blk)
+deriving instance Eq (PerasVote blk) => Eq (ValidatedPerasVote blk)
+deriving instance Ord (PerasVote blk) => Ord (ValidatedPerasVote blk)
+deriving instance NoThunks (PerasVote blk) => NoThunks (ValidatedPerasVote blk)
+deriving instance Generic (ValidatedPerasVote blk)
+
+data ValidatedPerasCert blk
+  = ValidatedPerasCert
+  { vpcCert :: !(PerasCert blk)
+  , vpcCertBoost :: !PerasWeight
+  }
+
+type instance BoostedBlock (ValidatedPerasVote blk) = BoostedBlock (PerasVote blk)
+
+instance
+  ( IsPerasVote (PerasVote blk) blk
+  , BoostedBlockCompatibleWithPoint (BoostedBlock (PerasVote blk)) blk
+  ) =>
+  IsPerasVote (ValidatedPerasVote blk) blk
+  where
+  getPerasVoteRound = getPerasVoteRound . vpvVote
   getPerasVoteBlock = getPerasVoteBlock . vpvVote
+  getPerasVoteSeatIndex = getPerasVoteSeatIndex . vpvVote
+
+deriving instance Show (PerasCert blk) => Show (ValidatedPerasCert blk)
+deriving instance Eq (PerasCert blk) => Eq (ValidatedPerasCert blk)
+deriving instance Ord (PerasCert blk) => Ord (ValidatedPerasCert blk)
+deriving instance NoThunks (PerasCert blk) => NoThunks (ValidatedPerasCert blk)
+deriving instance Generic (ValidatedPerasCert blk)
+
+type instance BoostedBlock (ValidatedPerasCert blk) = BoostedBlock (PerasCert blk)
 
 instance
-  HasPerasVoteBlock vote blk =>
-  HasPerasVoteBlock (WithArrivalTime vote) blk
+  ( IsPerasCert (PerasCert blk) blk
+  , BoostedBlockCompatibleWithPoint (BoostedBlock (PerasCert blk)) blk
+  ) =>
+  IsPerasCert (ValidatedPerasCert blk) blk
   where
-  getPerasVoteBlock = getPerasVoteBlock . forgetArrivalTime
-
--- | Extract the stake pool ID from a Peras vote container
-class HasPerasVoteVoterId vote where
-  getPerasVoteVoterId :: vote -> PerasSeatIndex
-
-instance HasPerasVoteVoterId (PerasVote' blk) where
-  getPerasVoteVoterId = pvVoteVoterId
-
-instance HasPerasVoteVoterId (ValidatedPerasVote blk) where
-  getPerasVoteVoterId = getPerasVoteVoterId . vpvVote
-
-instance
-  HasPerasVoteVoterId vote =>
-  HasPerasVoteVoterId (WithArrivalTime vote)
-  where
-  getPerasVoteVoterId = getPerasVoteVoterId . forgetArrivalTime
-
--- | Extract the vote stake from a validated Peras vote container
-class HasPerasVoteStake vote where
-  getPerasVoteStake :: vote -> PerasVoteStake
-
-instance HasPerasVoteStake (ValidatedPerasVote blk) where
-  getPerasVoteStake = vpvVoteStake
-
-instance
-  HasPerasVoteStake vote =>
-  HasPerasVoteStake (WithArrivalTime vote)
-  where
-  getPerasVoteStake = getPerasVoteStake . forgetArrivalTime
-
--- | Extract the vote target from a Peras vote container
-class HasPerasVoteTarget vote blk | vote -> blk where
-  getPerasVoteTarget :: vote -> PerasVoteTarget blk
-
-instance HasPerasVoteTarget (PerasVote' blk) blk where
-  getPerasVoteTarget vote =
-    PerasVoteTarget
-      { pvtRoundNo = pvVoteRound vote
-      , pvtBlock = pvVoteBlock vote
-      }
-
-instance HasPerasVoteTarget (ValidatedPerasVote blk) blk where
-  getPerasVoteTarget = getPerasVoteTarget . vpvVote
-
-instance
-  HasPerasVoteTarget vote blk =>
-  HasPerasVoteTarget (WithArrivalTime vote) blk
-  where
-  getPerasVoteTarget = getPerasVoteTarget . forgetArrivalTime
-
--- | Extract the vote ID from a Peras vote container
-class HasPerasVoteId vote blk | vote -> blk where
-  getPerasVoteId :: vote -> PerasVoteId
-
-instance HasPerasVoteId (PerasVote' blk) blk where
-  getPerasVoteId vote =
-    PerasVoteId
-      { pviRoundNo = pvVoteRound vote
-      , pviSeatIndex = pvVoteVoterId vote
-      }
-
-instance HasPerasVoteId (ValidatedPerasVote blk) blk where
-  getPerasVoteId = getPerasVoteId . vpvVote
-
-instance
-  HasPerasVoteId vote blk =>
-  HasPerasVoteId (WithArrivalTime vote) blk
-  where
-  getPerasVoteId = getPerasVoteId . forgetArrivalTime
+  getPerasCertRound = getPerasCertRound . vpcCert
+  getPerasCertBlock = getPerasCertBlock . vpcCert
 
 --- * Peras error types
 
@@ -641,3 +396,217 @@ class IsPerasError err blk | err -> blk where
   injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
   injectConversionError :: PerasConversionError -> err
   injectQuorumNotReachedError :: VoteWeight -> err
+
+-- * Types and functions related to Peras vote collection and quorum checking
+
+-- | Collection of Peras votes for a given target.
+--
+-- NOTE: votes in this collection are uniquely identified by their vote ID.
+data PerasVoteCollection blk
+  = PerasVoteCollection
+  { pvcTarget :: !(PerasVoteTarget blk)
+  -- ^ The target of the votes in this collection
+  , pvcVotes :: !(NE (Map PerasVoteId (WithArrivalTime (ValidatedPerasVote blk))))
+  -- ^ Votes received for this target, indexed by vote ID
+  , pvcTotalWeight :: !VoteWeight
+  -- ^ Total weight of the votes received for this target
+  }
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (PerasVoteCollection blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (PerasVoteCollection blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (PerasVoteCollection blk)
+deriving instance
+  Generic (PerasVoteCollection blk)
+
+-- | Construct a 'PerasVoteCollection' with a single vote.
+perasVoteCollectionSingleton ::
+  IsPerasVote (PerasVote blk) blk =>
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  PerasVoteCollection blk
+perasVoteCollectionSingleton vote =
+  PerasVoteCollection
+    { pvcTarget = getPerasVoteTarget vote
+    , pvcVotes = NEMap.singleton (getPerasVoteId vote) vote
+    , pvcTotalWeight = vpvVoteWeight (forgetArrivalTime vote)
+    }
+
+-- | Add a vote to an existing vote collection if it isn't already present, and
+-- update the total weight accordingly.
+--
+-- PRECONDITION: the vote's target must match the collection's target.
+perasVoteCollectionAddVote ::
+  ( StandardHash blk
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  PerasVoteCollection blk ->
+  PerasVoteCollection blk
+perasVoteCollectionAddVote vote pvc =
+  assert (getPerasVoteTarget vote == pvcTarget pvc) $
+    pvc
+      { pvcVotes = pvcVotes'
+      , pvcTotalWeight = pvcTotalWeight'
+      }
+ where
+  swapVote =
+    NEMap.insertLookupWithKey
+      (\_k old _new -> old)
+      (getPerasVoteId vote)
+
+  (pvcVotes', pvcTotalWeight')
+    -- key WAS NOT present → vote inserted and weight updated
+    | (Nothing, votes') <- swapVote vote (pvcVotes pvc) =
+        ( votes'
+        , pvcTotalWeight pvc + vpvVoteWeight (forgetArrivalTime vote)
+        )
+    -- key WAS already present → votes and weight unchanged
+    | otherwise =
+        ( pvcVotes pvc
+        , pvcTotalWeight pvc
+        )
+
+-- | Unsafe constructor for 'PerasVoteCollection'.
+--
+-- The only recorded use at the moment is in the HFC implementation, to turn an
+-- existing 'PerasVoteCollection' for the HardForkBlock into a
+-- 'PerasVoteCollection' of a concrete era.
+unsafePerasVoteCollection ::
+  ( IsPerasVote (PerasVote blk) blk
+  , StandardHash blk
+  ) =>
+  (NE (Map PerasVoteId (WithArrivalTime (ValidatedPerasVote blk)))) ->
+  PerasVoteCollection blk
+unsafePerasVoteCollection votes =
+  -- NOTE: no need to check for ID uniqueness since the votes are stored in a
+  -- map keyed by vote ID.
+  assert
+    ( all
+        (\vote -> getPerasVoteTarget vote == firstVoteTarget)
+        (NEMap.elems votes)
+    )
+    $ PerasVoteCollection
+      { pvcTarget = firstVoteTarget
+      , pvcVotes = votes
+      , pvcTotalWeight = totalWeight
+      }
+ where
+  ((_, firstVote) :| _) = NEMap.toList votes
+  firstVoteTarget = getPerasVoteTarget firstVote
+  totalWeight = sum (vpvVoteWeight . forgetArrivalTime <$> NEMap.elems votes)
+
+-- | A collection of Peras votes for a given target that has reached quorum
+newtype PerasVoteCollectionWithQuorum blk
+  = PerasVoteCollectionWithQuorum
+  { forgetQuorum :: PerasVoteCollection blk
+  }
+
+deriving newtype instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (PerasVoteCollectionWithQuorum blk)
+deriving newtype instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (PerasVoteCollectionWithQuorum blk)
+deriving newtype instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (PerasVoteCollectionWithQuorum blk)
+deriving newtype instance
+  Generic (PerasVoteCollectionWithQuorum blk)
+
+-- | Transforms a 'PerasVoteCollection' into a 'PerasVoteCollectionWithQuorum'
+-- without actually checking the quorum condition.
+--
+-- NOTE: the only recorded use at the moment is in the HFC implementation, to
+-- turn an existing 'PerasVoteCollectionWithQuorum' for the HardForkBlock into
+-- a 'PerasVoteCollectionWithQuorum' of a concrete era.
+unsafeAssumeQuorum ::
+  PerasVoteCollection blk ->
+  PerasVoteCollectionWithQuorum blk
+unsafeAssumeQuorum =
+  PerasVoteCollectionWithQuorum
+
+-- | Smart constructor for 'PerasVoteCollectionWithQuorum'
+perasVoteCollectionCheckQuorum ::
+  PerasParams blk ->
+  PerasVoteCollection blk ->
+  Maybe (PerasVoteCollectionWithQuorum blk)
+perasVoteCollectionCheckQuorum params pvc =
+  case weightAboveThreshold params (pvcTotalWeight pvc) of
+    True -> Just (PerasVoteCollectionWithQuorum pvc)
+    False -> Nothing
+
+-- | Convert a collection of Peras votes that has reached quorum into the
+-- corresponding abstract representation of votes used by the voting committee
+-- to forge certificates.
+--
+-- 'UniqueVotesWithSameTarget' and 'PerasVoteCollection' enforce the same
+-- invariants, which are:
+-- - The collection is not empty
+-- - All votes have the same target
+-- - All votes have a unique vote ID (or unique seat index, which is equivalent
+--   assuming they also have the same target, see second point)
+-- In addition to that, 'PerasVoteCollectionWithQuorum' guarantees that the
+-- total weight of the votes is above the threshold.
+toUniqueVotesWithSameTarget ::
+  ( vote ~ PerasVote blk
+  , crypto ~ PerasCrypto blk
+  , committee ~ PerasVotingCommitteeScheme blk
+  , PerasVoteCompatibleWithVotingCommittee vote crypto committee
+  , Eq (VoteCandidate crypto)
+  ) =>
+  PerasVoteCollectionWithQuorum blk ->
+  Either
+    PerasConversionError
+    (UniqueVotesWithSameTarget (PerasCrypto blk) (PerasVotingCommitteeScheme blk))
+toUniqueVotesWithSameTarget (PerasVoteCollectionWithQuorum pvc) = do
+  fmap unsafeUniqueVotesWithSameTarget -- Skip redundant checks in production
+    . traverse fromPerasVote
+    . fmap (vpvVote . forgetArrivalTime)
+    . NEMap.elems
+    . pvcVotes
+    $ pvc
+
+-- * Helpers
+
+-- | Check whether a given vote weight is above the quorum threshold.
+--
+-- NOTE: this function assumes that the 'VoteWeight' and the quorum
+-- threshold used in 'PerasParams' are expressed in the same units. That is,
+-- both are either absolute or relative (normalized) values. Under the current
+-- current implementation of 'PerasParams', this function only makes sense when
+-- both values are relative (normalized) values.
+weightAboveThreshold :: PerasParams blk -> VoteWeight -> Bool
+weightAboveThreshold params voteWeight =
+  weight >= quorumThreshold + safetyMargin
+ where
+  weight =
+    unVoteWeight voteWeight
+  quorumThreshold =
+    unPerasQuorumWeightThreshold
+      (perasQuorumWeightThreshold params)
+  safetyMargin =
+    unPerasQuorumWeightThresholdSafetyMargin
+      (perasQuorumWeightThresholdSafetyMargin params)

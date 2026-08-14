@@ -55,8 +55,8 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = defaultPerasParams
+perasTestParams :: PerasParams TestBlock
+perasTestParams = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = QC.monadic f $ property () <$ runActions actions
@@ -100,7 +100,7 @@ instance StateModel Model where
                       { pcCertRound = roundNo
                       , pcCertBoostedBlock = boostedBlock
                       }
-                , vpcCertBoost = perasWeight perasTestCfg
+                , vpcCertBoost = perasWeight perasTestParams
                 }
       pure (AddCert certWithTime)
 
@@ -142,7 +142,7 @@ instance StateModel Model where
           -- So we should enforce: round = round' => boostedBlock = boostedBlock'
           p cert' =
             getPerasCertRound cert /= getPerasCertRound cert'
-              || getPerasCertBoostedBlock cert == getPerasCertBoostedBlock cert'
+              || getPerasCertPoint cert == getPerasCertPoint cert'
         GetWeightSnapshot -> True
         GetLatestCertSeen -> True
         GarbageCollect _slotNo -> True
@@ -197,7 +197,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
         "Certificate block collision"
         [ show $
             Set.member
-              (getPerasCertBoostedBlock cert)
-              (Set.map getPerasCertBoostedBlock model.certs)
+              (getPerasCertPoint cert)
+              (Set.map getPerasCertPoint model.certs)
         ]
   monitoring _ _ _ _ prop = prop
