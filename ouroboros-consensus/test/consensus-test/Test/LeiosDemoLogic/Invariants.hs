@@ -22,7 +22,7 @@
 -- NOTE. A second regression lives here too: the fetch logic must never request
 -- an EB body it already holds. That storm — a held body being re-listed and
 -- re-requested — is what 'prop_neverRefetchesHeldBody' guards against; after each
--- 'Decide' it checks that no body just requested is already in 'acquiredEbBodies'.
+-- 'Decide' it checks that no body just requested is one we already hold.
 -- Phrasing it as "already held" rather than a request count keeps it correct if
 -- 'maxRequestsPerEb' rises above 1: requesting a not-yet-held body from several
 -- peers is fine; re-requesting a held one is not.
@@ -108,6 +108,47 @@ tests =
         , testCase "forge discharges a tx a peer EB still needs" $
             runCmds reproForgeSharedTx @?= Right ()
         ]
+    , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
+        let h = hashLeiosEb (ebOf [0, 1])
+            -- announce at slot 5, then again at the smaller slot 3, and acquire
+            o =
+              Leios.insertAcquiredEbBody h $
+                Leios.recordMaxAnnouncementSlot h (SlotNo 3) $
+                  Leios.recordMaxAnnouncementSlot h (SlotNo 5) $
+                    (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
+        -- the greater slot is retained, not the last-recorded one
+        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) Leios.BodyAcquired)
+        -- kept while the greatest slot (5) is at/above the immutable tip (4)
+        Map.lookup h (Leios.ebState (Leios.pruneOutstandingToImmTip (SlotNo 4) o))
+          @?= Just (Leios.MkEbState (SlotNo 5) Leios.BodyAcquired)
+        -- dropped once the greatest slot (5) is below the immutable tip (6)
+        Map.lookup h (Leios.ebState (Leios.pruneOutstandingToImmTip (SlotNo 6) o))
+          @?= Nothing
+    , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
+        let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
+            hB = hashLeiosEb (ebOf [2, 3]) -- to be listed at slot 3 only
+            pointAt slot h = MkLeiosPoint (SlotNo slot) h
+            o0 :: LeiosOutstanding Int
+            o0 =
+              (emptyLeiosOutstanding (SlotNo 0))
+                { Leios.missingEbBodies =
+                    Map.fromList [(pointAt 3 hA, 10), (pointAt 10 hA, 10), (pointAt 3 hB, 20)]
+                , Leios.reverseSlotIndexByEbHash =
+                    Map.fromList
+                      [ (hA, NESet.insert (SlotNo 3) (NESet.singleton (SlotNo 10)))
+                      , (hB, NESet.singleton (SlotNo 3))
+                      ]
+                }
+            o = Leios.pruneOutstandingToImmTip (SlotNo 5) o0
+        -- hA's slot-3 point is dropped, its slot-10 point kept
+        Map.lookup (pointAt 3 hA) (Leios.missingEbBodies o) @?= Nothing
+        Map.lookup (pointAt 10 hA) (Leios.missingEbBodies o) @?= Just 10
+        -- hB was listed only at slot 3, so it drops out entirely
+        Map.lookup (pointAt 3 hB) (Leios.missingEbBodies o) @?= Nothing
+        Map.size (Leios.missingEbBodies o) @?= 1
+        -- the reverse index stays the exact inverse: hA at slot 10 only, hB gone
+        Map.lookup hA (Leios.reverseSlotIndexByEbHash o) @?= Just (NESet.singleton (SlotNo 10))
+        Map.lookup hB (Leios.reverseSlotIndexByEbHash o) @?= Nothing
     , testProperty
         "missingEbTxs stays in sync with reverseEbIndexByTx across arbitrary sequences"
         prop_invariants
@@ -180,8 +221,8 @@ runCmds :: [Cmd] -> Either String ()
 runCmds = (() <$) . runCmdsReFetchViolations
 
 -- | Like 'runCmds', but on success also return the EB bodies that the fetch
--- logic requested despite already holding them (i.e. despite being in
--- 'acquiredEbBodies'), gathered across all 'Decide's. That list is the
+-- logic requested despite already holding them (i.e. despite 'ebStateHasBody'),
+-- gathered across all 'Decide's. That list is the
 -- re-fetch-storm regression signal: it must be empty. See
 -- 'prop_neverRefetchesHeldBody'.
 runCmdsReFetchViolations :: [Cmd] -> Either String [EbHash]
@@ -212,7 +253,7 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
       loop [] cs0
 
 -- | Apply a command, returning any EB bodies it requested that are already held
--- (in 'acquiredEbBodies') — the re-fetch-storm violation. Empty for everything
+-- (per 'ebStateHasBody') — the re-fetch-storm violation. Empty for everything
 -- but a misbehaving 'Decide'.
 applyCmd ::
   forall s.
@@ -264,10 +305,10 @@ applyCmd conn txCache kv peerVars peerId = \case
     _ <- evaluate out'
     _ <- evaluate (forceDecisions decs)
     modifyMVar_ (fst kv) (\_ -> pure out')
-    -- Regression: the fetch logic must not request a body already in
-    -- 'acquiredEbBodies'. Return any it did (empty when well-behaved).
-    let held = Leios.acquiredEbBodies outstanding
-    pure (filter (\h -> Map.member h held) (ebBodyRequestHashes decs))
+    -- Regression: the fetch logic must not request a body we already hold.
+    -- Return any it did (empty when well-behaved).
+    let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
+    pure (filter (\h -> Set.member h held) (ebBodyRequestHashes decs))
 
 -- | Every EbHash currently referenced by the outstanding state (bodies + txs),
 -- as an all-offering peer's body\/closure sets.
@@ -306,7 +347,8 @@ ebBodyRequestHashes (MkLeiosFetchDecisions m) =
 -- exact (EbHash, slot, offset) 'go1'/'goTx2' will look it up by. Its violation
 -- is what @impossible! leiosFetchLogicIteration go1@ reports.
 checkInvariant :: LeiosOutstanding Int -> Either String ()
-checkInvariant o =
+checkInvariant o = do
+  -- Every tx tracked as missing must be resolvable in the reverse index.
   case
     [ msg
     | (p, txs) <- Map.toList (Leios.missingEbTxs o)
@@ -315,8 +357,23 @@ checkInvariant o =
     ] of
     [] -> Right ()
     (msg : _) -> Left msg
+  -- 'ebsPerMaxAnnouncementSlot' must be the exact inverse of the greatest-slot
+  -- field of 'ebState' (the reverse index 'pruneOutstandingToImmTip' prunes by).
+  if Leios.ebsPerMaxAnnouncementSlot o == inverseOfMax
+    then Right ()
+    else
+      Left
+        ( "ebsPerMaxAnnouncementSlot desynced from ebState: "
+            <> show (Leios.ebsPerMaxAnnouncementSlot o, inverseOfMax)
+        )
  where
   rev = Leios.reverseEbIndexByTx o
+  inverseOfMax =
+    Map.fromListWith
+      NESet.union
+      [ (Leios.ebStateMaxSlot s, NESet.singleton h)
+      | (h, s) <- Map.toList (Leios.ebState o)
+      ]
   resolvable p off txHash =
     case Map.lookup txHash rev of
       Nothing ->
@@ -354,9 +411,9 @@ reproSharedTx =
   ]
 
 -- | A peer offers an EB body; we forge the same EB before the offered body
--- arrives. Forging must purge the offered body from 'missingEbBodies' (it now
--- lives in 'acquiredEbBodies'), so the fetch logic never re-requests a body we
--- already hold. Pre-fix the forge recorded the body as acquired without purging,
+-- arrives. Forging must purge the offered body from 'missingEbBodies' (its
+-- 'ebState' now reads 'BodyAcquired'), so the fetch logic never re-requests a body
+-- we already hold. Pre-fix the forge recorded the body as acquired without purging,
 -- so the 'Decide' re-fetched it.
 reproForgeAfterOffer :: [Cmd]
 reproForgeAfterOffer =
@@ -458,14 +515,14 @@ prop_invariants =
 
 -- | Regression for the EB-body re-fetch storm: over any interleaving of
 -- announces, offers, and body/tx arrivals, the fetch logic must never request an
--- EB body it already holds (one in 'acquiredEbBodies'). The storm was precisely
+-- EB body it already holds (one whose 'ebState' reads 'BodyAcquired'). The storm was precisely
 -- this — a held body re-listed and re-requested indefinitely.
 --
 -- Stated as "already held" rather than a request count, so it stays correct if
 -- 'maxRequestsPerEb' rises above 1: requesting a not-yet-held body from several
 -- peers is fine; re-requesting a held one is not. (With 'nullLeiosTxCache', the
 -- old LeiosTxCache-based "do we have it?" check would see nothing held and
--- re-list/re-request endlessly; the 'acquiredEbBodies' check is cache-independent.)
+-- re-list/re-request endlessly; the 'ebStateHasBody' check is cache-independent.)
 prop_neverRefetchesHeldBody :: Property
 prop_neverRefetchesHeldBody =
   forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
@@ -486,19 +543,20 @@ prop_neverRefetchesHeldBody =
 -- has no use for 'Decide' -- we assert on the state directly -- and 'applyCmd'
 -- runs 'Decide' as a read-then-blind-overwrite that is only sound
 -- single-threaded (a concurrent write would be silently clobbered); and spelling
--- the handlers out keeps the two-lock structure this test exists to probe -- the
--- shared cache, and the announcement path's cross-lock 'lookupBody' -- in plain
--- view at the race site.
+-- the handlers out keeps the lock structure this test exists to probe -- the body
+-- arrival's purge-then-acquire, which must be a single 'outstandingVar' critical
+-- section even though it also touches the separate cache lock -- in plain view at
+-- the race site.
 
 -- | The sequential 'prop_neverRefetchesHeldBody' generates event /sequences/ but
--- runs each handler to completion, so it can't reproduce a cross-lock race
--- straddling a concurrent body insert. This scenario runs three handlers for the
--- /same EB hash at three different slots/ as genuinely concurrent threads over
--- the shared MVars — an offer (slot 10), an announcement (slot 11, whose "do we
--- already hold it?" read hits the pure 'newPureLeiosTxCache', a lock distinct
--- from the outstanding lock, before it touches the outstanding state), and a body
--- arrival (slot 12, different from both) — and uses IOSimPOR to explore every
--- interleaving.
+-- runs each handler to completion, so it can't reproduce an interleaving that
+-- splits one handler's critical section around a concurrent update to the shared
+-- state. This scenario runs three handlers for the /same EB hash at three
+-- different slots/ as genuinely concurrent threads over the shared MVars — an
+-- offer (slot 10), an announcement (slot 11), and a body arrival (slot 12, which
+-- inserts the body into the pure 'newPureLeiosTxCache' -- a lock distinct from the
+-- outstanding lock -- while holding the outstanding lock) — and uses IOSimPOR to
+-- explore every interleaving.
 --
 -- An 'EbHash' is not 1-to-1 with slots, so this is exactly the shape that armed
 -- the storm: whichever listing wins is recorded at its own slot, and the arrival
@@ -556,7 +614,7 @@ raceSameHashMultiSlot = do
           )
       )
     outstanding <- readMVar outstandingVar
-    let held = Map.keysSet (Leios.acquiredEbBodies outstanding)
+    let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
         listed =
           Set.fromList (map (.pointEbHash) (Map.keys (Leios.missingEbBodies outstanding)))
         heldAndListed = Set.toList (Set.intersection held listed)

@@ -390,19 +390,24 @@ newLeiosPeerVars = do
 --    data structures for clarity.
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
-    acquiredEbBodies :: !(Map EbHash SlotNo)
-  -- ^ The EB bodies we have already received, recorded by 'processLeiosBlock' at
-  -- the moment of receipt, so that we neither re-fetch nor re-list one we
-  -- already hold. The 'SlotNo' is the EB's election slot; an entry is dropped
-  -- once that slot falls before the immutable tip (see
-  -- 'pruneOutstandingToImmTip'), below which the EB can never be requested
-  -- again, which keeps this bounded to the volatile window.
+    ebState :: !(Map EbHash EbState)
+  -- ^ Per-EB state for every EB we have seen announced (or offered)
+  --
+  -- TODO once offers are only valid if preceded by an announcement, then
+  -- 'ebState' and the @selfPeer@ field of
+  -- 'LeiosDemoLogic.Announcements.CentralState' are partially redundant
+  , ebsPerMaxAnnouncementSlot :: !(Map SlotNo (NESet EbHash))
+  -- ^ Slot-keyed reverse index of 'ebStateMaxSlot' on 'ebState'
+  --
+  -- Used to accelerate pruning.
+  --
+  -- TODO will also be redundant with by 'CentralState.selfPeer.live' once
+  -- offers are no longer trusted.
   , acquiredEbBodiesPrunedSlot :: !SlotNo
-  -- ^ The slot 'acquiredEbBodies' has most recently been pruned up to (see
-  -- 'pruneOutstandingToImmTip'): entries below it have been dropped. Used as
-  -- the "too old" boundary by 'processLeiosBlock' and the offer handler, so that
-  -- test agrees with what has actually been pruned (it reads this under the
-  -- same lock) rather than racing a separate read of the immutable tip.
+  -- ^ The slot 'ebState' has most recently been pruned up to (see
+  -- 'pruneOutstandingToImmTip').
+  --
+  -- Used to robustly prevent re-inserting what has already been pruned out.
   , missingEbBodies :: !(Map LeiosPoint BytesSize)
   -- ^ EB bodies still needed to be fetched (indexed by point and size)
   , reverseSlotIndexByEbHash :: !(Map EbHash (NESet SlotNo))
@@ -413,6 +418,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- this index makes that a direct lookup rather than a scan of 'missingEbBodies'
   -- (it likewise backs the "already listed?" check on the offer/announcement
   -- paths). Kept in step with 'missingEbBodies' at every insert and delete.
+
   -- Request tracking
   , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   -- ^ Which peers we've requested each EB from
@@ -466,14 +472,15 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- anything, reconcile it against shared-tx arrivals (or derive it from the DB).
   }
 
--- | The empty outstanding state, given the slot 'acquiredEbBodies' is
--- considered already pruned up to. The caller supplies the immutable-tip slot at
--- startup so that a body at or below it reads as too old from the outset (see
+-- | The empty outstanding state, given the slot it has already been pruned up
+-- to. The caller supplies the immutable-tip slot at startup so that a body at
+-- or below it reads as too old from the outset (see
 -- 'acquiredEbBodiesPrunedSlot' / 'pruneOutstandingToImmTip').
 emptyLeiosOutstanding :: SlotNo -> LeiosOutstanding pid
 emptyLeiosOutstanding prunedSlot =
   MkLeiosOutstanding
-    { acquiredEbBodies = Map.empty
+    { ebState = Map.empty
+    , ebsPerMaxAnnouncementSlot = Map.empty
     , acquiredEbBodiesPrunedSlot = prunedSlot
     , missingEbBodies = Map.empty
     , reverseSlotIndexByEbHash = Map.empty
@@ -486,26 +493,126 @@ emptyLeiosOutstanding prunedSlot =
     , blockingPerEb = Map.empty
     }
 
--- | Drop 'acquiredEbBodies' entries whose EB election slot is before the
--- immutable tip. Such an EB can never be requested again, so the record of
--- having it is no longer needed to suppress a fetch; this is what bounds
--- 'acquiredEbBodies' to the volatile window. Safe only because the offer/
--- announcement paths ignore an EB that old (so a pruned entry cannot be
--- re-listed).
+-- | Per-EB state tracked in 'ebState'
+data EbState =
+  -- | the greatest slot at which the EB has been announced (TODO or, for now,
+  -- offered), together with the current progress of fetching it
+  MkEbState !SlotNo !EbFetchState
+  deriving (Eq, Show)
+
+-- | Whether we hold an EB's body.
+data EbFetchState
+  = NoBody
+  | BodyAcquired
+  deriving (Eq, Show)
+
+ebStateMaxSlot :: EbState -> SlotNo
+ebStateMaxSlot (MkEbState slot _fetchState) = slot
+
+-- | Whether we already hold the EB's body (the "do we have it?" test that the
+-- offer/announcement/arrival paths consult before fetching).
+ebStateHasBody :: EbState -> Bool
+ebStateHasBody (MkEbState _slot fetchState) = case fetchState of
+  NoBody -> False
+  BodyAcquired -> True
+
+insertAcquiredEbBody ::
+  EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+insertAcquiredEbBody ebHash =
+  alterEbState ebHash $ \case
+    Nothing ->
+      -- The state must have been pruned before the MsgLeiosBlock
+      -- arrived. (Because we couldn't have sent a MsgLeiosBlockRequest if no
+      -- announcement had arrived.)
+      --
+      -- Because it was previously pruned, it should simply be ignored now.
+      Nothing
+    Just (MkEbState slot fetchState) -> case fetchState of
+      BodyAcquired -> Nothing
+      NoBody -> Just $ MkEbState slot BodyAcquired
+
+-- | Record that the EB with this hash is referenced (announced or offered) at this
+-- slot
 --
--- TODO this scans the whole map (potentially ~20k entries) on every
--- immutable-tip advance. Maintain a slot-keyed reverse index (e.g.
--- 'Map SlotNo (Set EbHash)') alongside 'acquiredEbBodies' so pruning drops the
--- below-tip prefix directly instead of filtering the entire map.
+-- The same EB (hash) can be referenced by several points; we keep the
+-- /greatest/ such slot, so the EB's state isn't pruned prematurely.
+recordMaxAnnouncementSlot ::
+  EbHash -> SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
+recordMaxAnnouncementSlot ebHash slot =
+  alterEbState ebHash $ \mbOld -> case mbOld of
+    Nothing -> Just $ MkEbState slot NoBody
+    Just (MkEbState oldSlot fetchState) ->
+      if slot <= oldSlot then Nothing else Just $ MkEbState slot fetchState
+
+-- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
+-- whenever the entry's max slot moves. The supplied function must be
+-- slot-monotonic (never lower the greatest slot), which both callers are.
+alterEbState ::
+  EbHash ->
+  (Maybe EbState -> Maybe EbState) ->
+  -- ^ REQUIREMENT: must not reduce 'ebStateMaxSlot'
+  LeiosOutstanding pid ->
+  LeiosOutstanding pid
+alterEbState ebHash f outstanding =
+  case Map.alterF upsert1 ebHash (ebState outstanding) of
+    (Nothing, _) -> outstanding
+    (Just (mbOldSlot, newSlot), ebState') ->
+      outstanding
+        { ebState = ebState'
+        , ebsPerMaxAnnouncementSlot =
+            if mbOldSlot == Just newSlot
+              then ebsPerMaxAnnouncementSlot outstanding -- max slot unchanged
+              else
+                Map.insertWith NESet.union newSlot (NESet.singleton ebHash) $
+                  case mbOldSlot of
+                    Nothing ->
+                      ebsPerMaxAnnouncementSlot outstanding
+                    Just oldSlot ->
+                      Map.update
+                        (NESet.nonEmptySet . NESet.delete ebHash)
+                        oldSlot
+                        (ebsPerMaxAnnouncementSlot outstanding)
+        }
+ where
+  -- One traversal of 'ebState': the pair functor carries whether the entry
+  -- changed at all and, if so, the prior and new greatest slots for the
+  -- reverse-index update.
+  upsert1 mbOld = case f mbOld of
+     Nothing -> (Nothing, mbOld)
+     Just new -> (Just (ebStateMaxSlot <$> mbOld, ebStateMaxSlot new), Just new)
+
+-- | Prune 'Outstanding' to the immutable tip
 --
--- TODO only prunes acqiuredEbBodies for now; there's plenty more for it to be
--- pruning
+-- Uses the 'ebsPerMaxAnnouncementSlot' reverse index to drop the below-tip prefix
+-- directly (@spanAntitone@), rather than scanning the whole map.
+--
+-- TODO still more it could prune (e.g. abandoned in-flight EB requests).
 pruneOutstandingToImmTip :: SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
 pruneOutstandingToImmTip immTipSlot outstanding =
   outstanding
-    { acquiredEbBodies = Map.filter (>= immTipSlot) (acquiredEbBodies outstanding)
+    { ebState = ebState outstanding `Map.withoutKeys` prunedHashes
+    , ebsPerMaxAnnouncementSlot = atOrAbove
     , acquiredEbBodiesPrunedSlot = max (acquiredEbBodiesPrunedSlot outstanding) immTipSlot
+    , missingEbBodies = missingEbBodiesAtOrAbove
+    , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
     }
+ where
+  (below, atOrAbove) =
+    Map.spanAntitone (< immTipSlot) (ebsPerMaxAnnouncementSlot outstanding)
+  prunedHashes = Set.unions (map NESet.toSet (Map.elems below))
+
+  -- 'LeiosPoint' orders slot-first, so the below-tip points are a prefix.
+  (belowBodies, missingEbBodiesAtOrAbove) =
+    Map.spanAntitone
+      (\(MkLeiosPoint slot _ebHash) -> slot < immTipSlot)
+      (missingEbBodies outstanding)
+  -- Remove each dropped point's slot from its hash's reverse-index entry (which
+  -- exists, since the index is the exact inverse of 'missingEbBodies').
+  reverseSlotIndexByEbHash' =
+    foldr
+      (\(MkLeiosPoint slot ebHash) -> Map.update (NESet.nonEmptySet . NESet.delete slot) ebHash)
+      (reverseSlotIndexByEbHash outstanding)
+      (Map.keys belowBodies)
 
 -- | Pretty-print the per-peer 'offerings' map (one tuple per peer: the EB-body
 -- offers and the EB-tx-closure offers it has sent). Each offered EB hash is
@@ -533,7 +640,7 @@ prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
   unlines $
     map ("    [leios] " ++) $
-      [ "acquiredEbBodies = " ++ show (Map.size acquiredEbBodies)
+      [ "ebState = " ++ show (Map.size ebState)
       , "missingEbBodies = " ++ show (Map.size missingEbBodies)
       , "reverseSlotIndexByEbHash = " ++ show (Map.size reverseSlotIndexByEbHash)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
@@ -548,7 +655,7 @@ prettyLeiosOutstanding x =
       ]
  where
   MkLeiosOutstanding
-    { acquiredEbBodies
+    { ebState
     , missingEbBodies
     , reverseSlotIndexByEbHash
     , requestedEbPeers

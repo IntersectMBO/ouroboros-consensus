@@ -742,7 +742,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
   -- ingest it
   bodyClass <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
-        novel = not $ Map.member ebHash (Leios.acquiredEbBodies outstanding)
+        novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
         -- so drop the body-fetch bookkeeping ('refundEbRequest' reverses the
         -- per-request accounting -- skipped if a disconnect already cancelled it
@@ -754,6 +754,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
               Just peerId -> refundEbRequest peerId ebHash ebBytesSize
               Nothing -> id
           )
+            $ (if tooOld then id else Leios.insertAcquiredEbBody ebHash)
             $ outstanding
               { Leios.missingEbBodies =
                   case Map.lookup ebHash (Leios.reverseSlotIndexByEbHash outstanding) of
@@ -765,16 +766,12 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
                             slots
               , Leios.reverseSlotIndexByEbHash =
                   Map.delete ebHash (Leios.reverseSlotIndexByEbHash outstanding)
-              , Leios.acquiredEbBodies =
-                  if tooOld
-                    then Leios.acquiredEbBodies outstanding
-                    else Map.insert ebHash point.pointSlotNo (Leios.acquiredEbBodies outstanding)
               }
     -- Persist and classify only a genuinely novel, still-relevant body. A
-    -- duplicate (already in 'acquiredEbBodies') or a too-old arrival (its
-    -- 'acquiredEbBodies' slot has been pruned, so 'novel' can't be trusted) is
-    -- left at the bookkeeping above -- in particular no second
-    -- 'leiosDbInsertEbBody', hence no duplicate 'AcquiredEb'/re-offer.
+    -- duplicate (already held) or a too-old arrival (its slot is below pruned
+    -- watermark, so 'novel' can't be trusted) is left at the bookkeeping above
+    -- -- in particular no second 'leiosDbInsertEbBody', hence no duplicate
+    -- 'AcquiredEb'/re-offer.
     if tooOld || not novel
       then
         pure
@@ -1098,11 +1095,10 @@ data AlsoOfferedTxsClosure = TxsClosureAlsoOffered | TxsClosureNotAlsoOffered
 -- 'MsgLeiosBlockOffer' handler and by the CertRB roll-forward path in
 -- 'checkMsgRollForwardForLeiosOffers'.
 --
--- The body is /not/ added to 'missingEbBodies' if it is: too old (at or below
--- the slot 'acquiredEbBodies' has been pruned to), already recorded in
--- 'acquiredEbBodies' (received or forged — the only "do we have it" test now,
--- read in-lock with no cache lookup), already listed under this content hash, or
--- zero-sized.
+-- The body is /not/ added to 'missingEbBodies' if it is: too old (older than has already been pruned), already held (per
+-- 'ebStateHasBody' — the only "do we have it" test now, read in-lock with no
+-- cache lookup), already listed under this content hash, or zero-sized. Unless it
+-- is too old or zero-sized, the offer slot is folded into 'ebState' regardless.
 -- The offered size is not chain-authoritative (there are no EB announcements
 -- yet), so refusing to overwrite an existing same-hash entry makes the first-seen
 -- (slot, size) win, and a zero-sized offer — which no honest forger produces — is
@@ -1121,22 +1117,32 @@ recordEbBodyOffer ::
 recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebBytesSize) = do
   let MkLeiosPoint ebSlot ebHash = point
   MVar.modifyMVar_ outstandingVar $ \outstanding ->
-    pure $
-      if ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
-        || ebBytesSize == 0 -- malformed offer
-        || Map.member ebHash (Leios.acquiredEbBodies outstanding) -- already have it
-        || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
-        then outstanding
-        else
-          outstanding
+    pure $!
+      let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
+          malformed = ebBytesSize == 0 -- malformed offer
+          -- Offers are currently trusted, so this is evidence that the EB is
+          -- announced in this slot; fold it into 'ebState' regardless of whether
+          -- we go on to list the body for fetching.
+          --
+          -- TODO stop that, once offers are no longer trusted
+          outstanding'
+            | tooOld || malformed = outstanding
+            | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot outstanding
+          skip =
+            tooOld
+            || malformed
+            || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
+            || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
+       in if skip then outstanding' else
+          outstanding'
             { Leios.missingEbBodies =
-                Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+                Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
             , Leios.reverseSlotIndexByEbHash =
                 Map.insertWith
                   NESet.union
                   ebHash
                   (NESet.singleton ebSlot)
-                  (Leios.reverseSlotIndexByEbHash outstanding)
+                  (Leios.reverseSlotIndexByEbHash outstanding')
             }
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
     let !offers1' = Set.insert ebHash offers1
@@ -1354,10 +1360,8 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
               Right (StaleOCIN, _v) -> VerdictIgnore
               Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, age, v)
 
--- | Record a validated, newly-announced EB body as missing, with its
--- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
--- already acquired, already recorded, or too old (its slot is at or below the
--- slot 'acquiredEbBodies' has been pruned to).
+-- | Record a validated, newly-announced EB body as missing, unless its already
+-- pruned\/tracked\/acquired
 recordAnnouncedEb ::
   IOLike m =>
   ( MVar m (LeiosOutstanding pid)
@@ -1372,24 +1376,29 @@ recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
   MkLeiosPoint ebSlot ebHash = point
 
   -- The same in-lock guard as 'recordEbBodyOffer' (too old / already held /
-  -- already listed). No cache lookup: 'acquiredEbBodies' is authoritative here.
+  -- already listed). No cache lookup: 'ebState' is authoritative here.
   upd outstanding =
-    if ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
-      || Map.member ebHash (Leios.acquiredEbBodies outstanding) -- already have it
-      || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
-      then (outstanding, False)
-      else
-        flip (,) True $
-          outstanding
-            { Leios.missingEbBodies =
-                Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-            , Leios.reverseSlotIndexByEbHash =
-                Map.insertWith
-                  NESet.union
-                  ebHash
-                  (NESet.singleton ebSlot)
-                  (Leios.reverseSlotIndexByEbHash outstanding)
-            }
+    let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
+        !outstanding'
+          | tooOld = outstanding
+          | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot outstanding
+        skip =
+          tooOld
+          || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
+          || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
+        !outstanding''
+          | skip = outstanding'
+          | otherwise = outstanding'
+              { Leios.missingEbBodies =
+                  Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
+              , Leios.reverseSlotIndexByEbHash =
+                  Map.insertWith
+                    NESet.union
+                    ebHash
+                    (NESet.singleton ebSlot)
+                    (Leios.reverseSlotIndexByEbHash outstanding')
+              }
+     in (outstanding'', not skip)
 
 prunePeerStateToImmTip ::
   LedgerSupportsProtocol blk =>
