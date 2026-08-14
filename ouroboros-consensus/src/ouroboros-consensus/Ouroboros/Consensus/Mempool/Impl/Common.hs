@@ -5,6 +5,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -29,7 +30,6 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
     -- * Validation
   , RevalidateTxsResult (..)
-  , computeSnapshot
   , revalidateTxsFor
   , revalidateTxsFor'
   , validateNewTransaction
@@ -44,6 +44,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
     -- * Ticking a ledger state
   , tickLedgerState
+  , snapshot
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
@@ -210,10 +211,15 @@ deriving instance
 -- | \( O(1) \). Return the number of transactions in the internal state of
 -- the Mempool paired with their total size in bytes.
 isMempoolSize :: TxLimits blk => InternalState blk -> MempoolSize
-isMempoolSize is =
+isMempoolSize = mempoolSize . isTxs
+
+-- | \( O(1) \). Return the number of transactions paired with their total size in bytes.
+mempoolSize ::
+  TxLimits blk => TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) -> MempoolSize
+mempoolSize txs =
   MempoolSize
-    { msNumTxs = fromIntegral $ length $ isTxs is
-    , msNumBytes = txMeasureByteSize $ forgetTxMeasureWithDiffTime $ TxSeq.toSize $ isTxs is
+    { msNumTxs = fromIntegral . length $ txs
+    , msNumBytes = txMeasureByteSize . forgetTxMeasureWithDiffTime . TxSeq.toSize $ txs
     }
 
 initInternalState ::
@@ -564,118 +570,47 @@ data RevalidateTxsResult blk
   -- ^ The previously valid transactions that were now invalid
   }
 
--- | Compute snapshot is largely the same as revalidate the transactions
--- but we ignore the diffs.
-computeSnapshot ::
-  forall blk.
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  MempoolCapacityBytesOverride ->
-  LedgerConfig blk ->
-  SlotNo ->
-  -- | The ticked ledger state againt which txs will be revalidated
-  TickedLedgerState blk DiffMK ->
-  -- | The tables with all the inputs for the transactions
-  LedgerTables (LedgerState blk) ValuesMK ->
-  TicketNo ->
-  [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
-  MempoolSnapshot blk
-computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
-  let inputTxs = map wrap txTickets
-      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
-
-      ReapplyTxsResult _ validatedTxs st' =
-        reapplyTxs @blk @Discard cfg slot inputTxs $
-          applyMempoolDiffs values inputKeys st
-   in snapshotFromIS $
-        IS
-          { isTxs = TxSeq.fromList $ map unwrap validatedTxs
-          , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validatedTxs
-          , -- The Leios index is read from the committed state, never from a
-            -- 'getSnapshotFor' snapshot, so leave it empty here.
-            isLeiosTxIndex = Map.empty
-          , -- These two can be empty since we don't need the resulting
-            -- values at all when making a snapshot, as we won't update
-            -- the internal state.
-            isTxKeys = emptyLedgerTables
-          , isTxValues = emptyLedgerTables
-          , -- This one can use the empty tables because we don't use the
-            -- resulting ledger state except for its point
-            isLedgerState = st' `withLedgerTables` emptyLedgerTables
-          , isTip = castPoint $ getTip st
-          , isSlotNo = slot
-          , isLastTicketNo = lastTicketNo
-          , -- Irrelevant: this snapshot is transient, never committed.
-            isRemovalGen = 0
-          , isCapacity = computeMempoolCapacity cfg st' capacityOverride
-          }
- where
-  fst3 (x, _, _) = x
-  wrap = (\(TxTicket (ValidatedTxWithDiffs tx df mh) tk tz) -> (tx, (), (df, tk, tz, mh)))
-  unwrap = (\(tx, (), (df, tk, tz, mh)) -> (TxTicket (ValidatedTxWithDiffs tx df mh) tk tz))
-
 {-------------------------------------------------------------------------------
   Conversions
 -------------------------------------------------------------------------------}
 
+-- | Create a Mempool Snapshot from essential precomputed constituents.
+snapshot ::
+  forall blk.
+  (HasTxId (GenTx blk), TxLimits blk) =>
+  SlotNo ->
+  Point blk ->
+  Set (GenTxId blk) ->
+  TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  MempoolSnapshot blk
+snapshot slotNo tipPoint txIds txs =
+  let
+    txsAfter n =
+      [ (validatedTx a, b, forgetTxMeasureWithDiffTime c)
+      | (a, b, c) <- TxSeq.toTuples (snd (TxSeq.splitAfterTicketNo txs n))
+      ]
+   in
+    MempoolSnapshot
+      { snapshotTxs = txsAfter TxSeq.zeroTicketNo
+      , snapshotTxsAfter = txsAfter
+      , snapshotLookupTx = \n -> fmap validatedTx (TxSeq.lookupByTicketNo txs n)
+      , snapshotHasTx = \tid -> Set.member tid txIds
+      , snapshotMempoolSize = mempoolSize txs
+      , snapshotSlotNo = slotNo
+      , snapshotStateHash = pointHash tipPoint
+      , snapshotTake = \limit ->
+          let (x, _) = TxSeq.splitAfterTxSize txs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
+           in (map (validatedTx . TxSeq.txTicketTx) (TxSeq.toList x), TxSeq.toSize x)
+      , snapshotPoint = tipPoint
+      }
+
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
 snapshotFromIS ::
   forall blk.
-  (HasTxId (GenTx blk), TxLimits blk, GetTip (TickedLedgerState blk)) =>
+  (HasTxId (GenTx blk), TxLimits blk) =>
   InternalState blk ->
   MempoolSnapshot blk
-snapshotFromIS is =
-  MempoolSnapshot
-    { snapshotTxs = implSnapshotGetTxs is
-    , snapshotTxsAfter = implSnapshotGetTxsAfter is
-    , snapshotLookupTx = implSnapshotGetTx is
-    , snapshotHasTx = implSnapshotHasTx is
-    , snapshotMempoolSize = implSnapshotGetMempoolSize is
-    , snapshotSlotNo = isSlotNo is
-    , snapshotStateHash = pointHash $ castPoint $ getTip $ isLedgerState is
-    , snapshotTake = implSnapshotTake is
-    , snapshotPoint = castPoint $ getTip $ isLedgerState is
-    }
- where
-  implSnapshotGetTxs ::
-    InternalState blk ->
-    [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
-  implSnapshotGetTxs = flip implSnapshotGetTxsAfter TxSeq.zeroTicketNo
-
-  implSnapshotGetTxsAfter ::
-    InternalState blk ->
-    TicketNo ->
-    [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
-  implSnapshotGetTxsAfter IS{isTxs} =
-    (\x -> [(validatedTx a, b, forgetTxMeasureWithDiffTime c) | (a, b, c) <- x])
-      . TxSeq.toTuples
-      . snd
-      . TxSeq.splitAfterTicketNo isTxs
-
-  implSnapshotTake ::
-    InternalState blk ->
-    TxMeasure blk ->
-    ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
-  implSnapshotTake IS{isTxs} limit =
-    (map (validatedTx . TxSeq.txTicketTx) (TxSeq.toList x), TxSeq.toSize x)
-   where
-    (x, _y) = TxSeq.splitAfterTxSize isTxs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
-
-  implSnapshotGetTx ::
-    InternalState blk ->
-    TicketNo ->
-    Maybe (Validated (GenTx blk))
-  implSnapshotGetTx IS{isTxs} = fmap validatedTx . (isTxs `TxSeq.lookupByTicketNo`)
-
-  implSnapshotHasTx ::
-    InternalState blk ->
-    GenTxId blk ->
-    Bool
-  implSnapshotHasTx IS{isTxIds} = flip Set.member isTxIds
-
-  implSnapshotGetMempoolSize ::
-    InternalState blk ->
-    MempoolSize
-  implSnapshotGetMempoolSize = isMempoolSize
+snapshotFromIS IS{..} = snapshot isSlotNo isTip isTxIds isTxs
 
 {-------------------------------------------------------------------------------
   Tracing support for the mempool operations
