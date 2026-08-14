@@ -91,6 +91,7 @@ import qualified LeiosDemoDb
 import LeiosDemoOnlyTestFetch (LeiosFetch)
 import LeiosDemoOnlyTestNotify (LeiosNotify)
 import qualified LeiosDemoTypes
+import LeiosTxCache (LeiosTxCache, evictOlderThan, newPureLeiosTxCache)
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure
@@ -768,7 +769,7 @@ runThreadNetwork
       NodeDBs (StrictTMVar m MockFS) ->
       LeiosState (MonadSTMStrict.StrictTVar m) ->
       CoreNodeId ->
-      m (LeiosDemoDb.LeiosDbHandle m, ChainDbArgs Identity m blk)
+      m (LeiosDemoDb.LeiosDbHandle m, LeiosTxCache m () () LeiosDemoTypes.SerializedEbBody, ChainDbArgs Identity m blk)
     mkArgs
       registry
       cfg
@@ -782,6 +783,7 @@ runThreadNetwork
       leiosState
       _coreNodeId = do
         leiosDbHandle <- LeiosDemoDb.newLeiosDBInMemoryWith (lsLeiosDb leiosState)
+        leiosTxCache <- newPureLeiosTxCache
         let args =
               fromMinimalChainDbArgs
                 MinimalChainDbArgs
@@ -794,7 +796,7 @@ runThreadNetwork
                   }
         let tr = instrumentationTracer <> nullTracer
         pure $
-          (,) leiosDbHandle $
+          (,,) leiosDbHandle leiosTxCache $
             args
               { cdbImmDbArgs =
                   (cdbImmDbArgs args)
@@ -815,6 +817,7 @@ runThreadNetwork
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
                     , cdbsTracer = instrumentationTracer <> nullTracer
+                    , cdbsLeiosEvictTxCache = \slot -> void (evictOlderThan leiosTxCache slot)
                     }
               }
        where
@@ -892,7 +895,7 @@ runThreadNetwork
           selTracer = wrapTracer $ nodeEventsSelects nodeInfoEvents
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
-      (leiosDbHandle, chainDbArgs) <-
+      (leiosDbHandle, leiosTxCache, chainDbArgs) <-
         mkArgs
           registry
           pInfoConfig
@@ -912,7 +915,7 @@ runThreadNetwork
       let customForgeBlock ::
             BlockForging m blk ->
             ForgeBlockArgs m blk ->
-            m blk
+            m (blk, Maybe LeiosDemoTypes.ForgedLeiosEb)
           customForgeBlock origBlockForging fbArgs = do
             let currentBno = fbCurrentBlockNo fbArgs
                 currentSlot = fbCurrentSlotNo fbArgs
@@ -1145,6 +1148,7 @@ runThreadNetwork
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
               , txSubmissionInitDelay = NoTxSubmissionInitDelay
               , leiosDB = leiosDbHandle
+              , leiosTxCache
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs

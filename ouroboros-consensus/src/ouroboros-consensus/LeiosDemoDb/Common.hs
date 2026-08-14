@@ -123,10 +123,6 @@ data LeiosDbConnection m = LeiosDbConnection
   --
   -- XXX: return type only used for tracing
   , leiosDbBatchRetrieveTxs :: HasCallStack => EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  , leiosDbFilterMissingEbBodies :: HasCallStack => [LeiosPoint] -> m [LeiosPoint]
-  -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
-  , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
-  -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
   , leiosDbLookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
   -- ^ Read the EB "closure": the tx hashes AND their tx bytes. Contrast
   -- with 'leiosDbLookupEbBody' which returns only hashes + sizes.

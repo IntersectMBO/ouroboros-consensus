@@ -121,8 +121,6 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan
               , leiosDbInsertTxs = imInsertTxs stateVar notificationChan
               , leiosDbBatchRetrieveTxs = imBatchRetrieveTxs stateVar
-              , leiosDbFilterMissingEbBodies = imFilterMissingEbBodies stateVar
-              , leiosDbFilterMissingTxs = imFilterMissingTxs stateVar
               , leiosDbLookupEbClosure = imLookupEbClosure stateVar
               }
       }
@@ -290,17 +288,6 @@ imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
         | offset <- offsets
         , Just entry <- [IntMap.lookup offset offsetMap]
         ]
-
-imFilterMissingEbBodies ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> [LeiosPoint] -> m [LeiosPoint]
-imFilterMissingEbBodies stateVar points = atomically $ do
-  state <- readTVar stateVar
-  pure [p | p <- points, not $ Map.member p.pointEbHash (imEbBodies state)]
-
-imFilterMissingTxs :: IOLike m => StrictTVar m InMemoryLeiosDb -> [TxHash] -> m [TxHash]
-imFilterMissingTxs stateVar txHashes = atomically $ do
-  state <- readTVar stateVar
-  pure [txHash | txHash <- txHashes, not $ Map.member txHash (imTxs state)]
 
 imLookupEbClosure ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])

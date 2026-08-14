@@ -26,6 +26,7 @@ import Data.Function ((&))
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import LeiosDemoLogic
   ( LeiosFetchDecisions (..)
   , leiosFetchLogicIteration
@@ -56,7 +57,7 @@ tests =
             test_bodyNoOffer
         , testCase "per-EB request cap blocks further selection" $
             test_bodyPerEbCap
-        , testCase "two offering peers both selected (up to cap)" $
+        , testCase "offering peers selected up to the per-EB cap" $
             test_bodyTwoPeersOffer
         , testCase "global byte budget exhausted blocks further selection" $
             test_globalByteBudget
@@ -85,10 +86,10 @@ tests =
 -- meaning beyond identity.
 type Pid = Int
 
-peerA, peerB, peerC :: Pid
+peerA, peerB, _peerC :: Pid
 peerA = 0
 peerB = 1
-peerC = 2
+_peerC = 2
 
 test_singleMissingBody :: IO ()
 test_singleMissingBody =
@@ -110,10 +111,12 @@ test_bodyPerEbCap :: IO ()
 test_bodyPerEbCap =
   empty
     & withMissingBody (point 1 'a') 1024
-    & alreadyRequestedEbFrom (eb 'a') [peerA, peerB] -- default cap = 2
-    & offersBody peerC [eb 'a']
+    & alreadyRequestedEbFrom (eb 'a') [0 .. ebCap - 1] -- the per-EB cap is used up
+    & offersBody ebCap [eb 'a'] -- so this additional peer is not selected
     & runIteration
     & assertNoRequests
+ where
+  ebCap = maxRequestsPerEb demoLeiosFetchStaticEnv
 
 test_singleMissingTx :: IO ()
 test_singleMissingTx =
@@ -127,10 +130,12 @@ test_txPerTxCap :: IO ()
 test_txPerTxCap =
   empty
     & withMissingTx (point 1 'a') 0 (tx 'x') 500
-    & alreadyRequestedTxFrom (tx 'x') [peerA, peerB] -- default cap = 2
-    & offersTxs peerC [eb 'a']
+    & alreadyRequestedTxFrom (tx 'x') [0 .. txCap - 1] -- the per-tx cap is used up
+    & offersTxs txCap [eb 'a'] -- so this additional peer is not selected
     & runIteration
     & assertNoRequests
+ where
+  txCap = maxRequestsPerTx demoLeiosFetchStaticEnv
 
 test_bodyTwoPeersOffer :: IO ()
 test_bodyTwoPeersOffer =
@@ -139,7 +144,8 @@ test_bodyTwoPeersOffer =
     & offersBody peerA [eb 'a']
     & offersBody peerB [eb 'a']
     & runIteration
-    & assertRequestPeers [peerA, peerB]
+    -- two peers offer; the fetch logic selects up to the per-EB cap of them
+    & assertRequestPeerCount (min 2 (maxRequestsPerEb demoLeiosFetchStaticEnv))
 
 test_globalByteBudget :: IO ()
 test_globalByteBudget =
@@ -169,7 +175,7 @@ test_txTwoEbsSinglePeerOffer :: IO ()
 test_txTwoEbsSinglePeerOffer =
   empty
     & withMissingTx (point 1 'a') 0 (tx 'x') 100
-    & alsoReferencedInEb (tx 'x') (eb 'b') 7 100 -- same recorded size in B
+    & alsoReferencedInEb (tx 'x') (point 2 'b') 7 100 -- same recorded size in B
     & offersTxs peerA [eb 'a']
     & runIteration
     & assertTxRequest peerA (point 1 'a') (tx 'x')
@@ -189,7 +195,7 @@ test_txTwoEbsDifferentSize :: IO ()
 test_txTwoEbsDifferentSize =
   empty
     & withMissingTx (point 1 'a') 0 (tx 'x') 100
-    & alsoReferencedInEb (tx 'x') (eb 'b') 7 200 -- different recorded size
+    & alsoReferencedInEb (tx 'x') (point 2 'b') 7 200 -- different recorded size
     & offersTxs peerA [eb 'a', eb 'b']
     & runIteration
     & assertTxRequest peerA (point 1 'a') (tx 'x')
@@ -210,7 +216,7 @@ empty =
   Scenario
     { scEnv = demoLeiosFetchStaticEnv
     , scOfferings = Map.empty
-    , scOutstanding = emptyLeiosOutstanding
+    , scOutstanding = emptyLeiosOutstanding (SlotNo 0)
     }
 
 -- | Outstanding-work combinators -----------------------------------------
@@ -239,7 +245,7 @@ withMissingTx p offset h size =
           Map.insertWith
             Map.union
             h
-            (Map.singleton p.pointEbHash (offset, size))
+            (Map.singleton p.pointEbHash (NESet.singleton p.pointSlotNo, offset, size))
             (reverseEbIndexByTx o)
       }
 
@@ -267,21 +273,21 @@ alreadyRequestedTxFrom txHash pids =
             (requestedTxPeers o)
       }
 
--- | Tag a tx as also referenced by another EB at the given offset
--- and recorded size, without adding the EB to 'missingEbTxs'.
+-- | Tag a tx as also referenced by another EB point at the given
+-- offset and recorded size, without adding the EB to 'missingEbTxs'.
 -- 'choosePeerTx' consults 'reverseEbIndexByTx' for "which EBs does
 -- this tx appear in?" when evaluating peer offerings; this helper
 -- lets us seed that cross-reference.
 alsoReferencedInEb ::
-  TxHash -> EbHash -> Int -> BytesSize -> Scenario pid -> Scenario pid
-alsoReferencedInEb txHash ebHash offset size =
+  TxHash -> LeiosPoint -> Int -> BytesSize -> Scenario pid -> Scenario pid
+alsoReferencedInEb txHash p offset size =
   onOutstanding $ \o ->
     o
       { reverseEbIndexByTx =
           Map.insertWith
             Map.union
             txHash
-            (Map.singleton ebHash (offset, size))
+            (Map.singleton p.pointEbHash (NESet.singleton p.pointSlotNo, offset, size))
             (reverseEbIndexByTx o)
       }
 
@@ -339,11 +345,38 @@ onOutstanding ::
 onOutstanding f sc = sc{scOutstanding = f (scOutstanding sc)}
 
 -- | Run the iteration and project the decisions.
+--
+-- Enforces a soundness invariant on the way out: every emitted tx decision must
+-- name a /real/ (slot, EB hash) for its tx -- one the scenario actually lists
+-- as missing that tx. A priority slot paired with an unrelated EB hash would be
+-- a \"Frankenstein\" point. The original Leios diffusion demo included that on
+-- purpose, but subsequent design has ruled that out, so this property bans it.
 runIteration :: Ord pid => Scenario pid -> LeiosFetchDecisions pid
 runIteration sc =
+  case unrealDecisions sc.scOutstanding decs of
+    [] -> decs
+    bad -> error $ "runIteration: decisions name a non-real (slot, EB, tx): " <> show bad
+ where
   -- A known current slot selects freshest-first (i.e. youngest-first), which is
   -- the ordering these scenarios were written against.
-  snd $ leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
+  decs = snd $ leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
+
+-- | Emitted tx decisions whose (slot, EB hash) the scenario does not list as
+-- missing that tx. 'runIteration' requires this to be empty.
+unrealDecisions ::
+  LeiosOutstanding pid -> LeiosFetchDecisions pid -> [(SlotNo, EbHash, TxHash)]
+unrealDecisions o (MkLeiosFetchDecisions m) =
+  [ (slot, ebHash, txHash)
+  | (_peer, slotMap) <- Map.toList m
+  , (slot, (txs, _bodies)) <- Map.toList slotMap
+  , (txHash, _sz, ebHash, _off) <- DList.toList txs
+  , txHash `notElem` txsMissingAt slot ebHash
+  ]
+ where
+  txsMissingAt slot ebHash =
+    map fst $
+      IntMap.elems $
+        Map.findWithDefault IntMap.empty (MkLeiosPoint slot ebHash) (missingEbTxs o)
 
 ------------------------------------------------------------
 -- Assertions
@@ -377,7 +410,7 @@ assertTxRequest pid p txHash (MkLeiosFetchDecisions m) =
     Just slotMap -> case Map.lookup p.pointSlotNo slotMap of
       Nothing -> assertFailure "no request at expected slot"
       Just (txs, _bodies) -> case DList.toList txs of
-        [(h, _size, _offsets)] -> h @?= txHash
+        [(h, _size, _ebHash, _offset)] -> h @?= txHash
         xs -> assertFailure $ "expected one tx request, got " <> show (length xs)
 
 assertNoRequests :: (Ord pid, Show pid) => LeiosFetchDecisions pid -> IO ()
@@ -390,6 +423,13 @@ assertRequestPeers ::
   [pid] -> LeiosFetchDecisions pid -> IO ()
 assertRequestPeers expected (MkLeiosFetchDecisions m) =
   Set.fromList (Map.keys m) @?= Set.fromList (map MkPeerId expected)
+
+-- | Assert how many distinct peers received a request. Order-independent, so it
+-- holds for any 'maxRequestsPerEb' \/ 'maxRequestsPerTx': at a cap below the
+-- number of offering peers, /which/ peers win is a selection-order detail, but
+-- the count is not.
+assertRequestPeerCount :: Int -> LeiosFetchDecisions pid -> IO ()
+assertRequestPeerCount n (MkLeiosFetchDecisions m) = Map.size m @?= n
 
 ------------------------------------------------------------
 -- Fixture helpers

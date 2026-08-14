@@ -187,6 +187,7 @@ analyse dbaConfig args =
             shfs
             flavargs
             leiosDbHandle
+            (\_ -> pure ()) -- no LeiosTxCache in this tool
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
         -- go forward so we don't need to account for rollbacks.

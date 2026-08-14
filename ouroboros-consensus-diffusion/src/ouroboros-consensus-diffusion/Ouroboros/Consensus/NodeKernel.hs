@@ -70,6 +70,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosTxCache (LeiosTxCache)
 import LeiosUtils.CallTrace
   ( SomeJsonCallTrace (SomeJsonCallTrace)
   , callTraceSameThread
@@ -118,7 +119,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -249,6 +249,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosCentralState ::
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   -- ^ Node-wide EB-announcement state
+  , getLeiosTxCache ::
+      LeiosTxCache m () () Leios.SerializedEbBody
+  -- ^ Shadow in-memory tx-cache (see 'LeiosTxCache'); maintained but
+  -- not yet consulted, so it changes no observable behavior.
   }
 
 -- | Arguments required when initializing a node
@@ -285,6 +289,10 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- (forge loop, leios fetch logic, LeiosNotify / LeiosFetch handlers)
   -- opens its own connection from this handle. 'LeiosDbConnection' is
   -- documented as not thread-safe, so connections must not be shared.
+  , leiosTxCache :: LeiosTxCache m () () Leios.SerializedEbBody
+  -- ^ The in-memory tx-presence index. Created in "Ouroboros.Consensus.Node"
+  -- (before the ChainDB, so the ChainDB GC can prune it just before the LeiosDb)
+  -- and threaded through here.
   }
 
 initNodeKernel ::
@@ -331,6 +339,7 @@ initNodeKernel
           , leiosOutstanding = getLeiosOutstanding
           , leiosReady = getLeiosReady
           , leiosCentralState = getLeiosCentralState
+          , leiosTxCache = getLeiosTxCache
           , leiosPeersVars = getLeiosPeersVars
           , leiosVoteState
           } = st
@@ -464,8 +473,7 @@ initNodeKernel
     -- announcements, LeiosFetch clients on response, etc.) 'tryPutMVar' on
     -- 'getLeiosReady' to schedule another iteration.
     void $
-      forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ do
-        leiosConn <- snd <$> allocate registry (const (LeiosDb.open leiosDB)) LeiosDb.close
+      forkLinkedThread registry "NodeKernel.leiosFetchLogic" $
         forever $ do
           let leiosTr = leiosKernelTracer tracers
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
@@ -483,13 +491,11 @@ initNodeKernel
             -- that just disconnected, since the replies would never arrive /AND/
             -- those requests would then remain in 'getLeiosOutstanding' forever.
             stillLivePeers <- LazySTM.readTVarIO getLeiosPeersVars
-            filteredOutstanding <-
-              Leios.filterMissingWork leiosConn outstanding
             -- FIXME(bladyjoker): Capping these 2 traces because they grow in tens of MBs. Let's make a separate event for them and use Cardano config to silence/voice them.
             traceWith leiosTr $
               MkTraceLeiosKernel $
                 "leiosFetchLogic: outstanding "
-                  <> take 1000 (Leios.prettyLeiosOutstanding filteredOutstanding)
+                  <> take 1000 (Leios.prettyLeiosOutstanding outstanding)
             traceWith leiosTr $
               MkTraceLeiosKernel $
                 "leiosFetchLogic: offerings "
@@ -503,7 +509,7 @@ initNodeKernel
                     Leios.demoLeiosFetchStaticEnv
                     mbCurrentSlot
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
-                    filteredOutstanding
+                    outstanding
             pure (outstanding', decisions)
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"
           let newRequests =
@@ -548,16 +554,18 @@ initNodeKernel
           (topLevelConfigVotingKey cfg)
 
     void $
-      forkLinkedWatcher registry "NodeKernel.leiosPruneAnnouncements" $
+      forkLinkedWatcher registry "NodeKernel.leiosImmTipPrune" $
         Watcher
           { wFingerprint = id
           , wInitial = Nothing
           , wReader = getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
           , wNotify = \case
               Origin -> pure ()
-              NotOrigin immTipSlot ->
+              NotOrigin immTipSlot -> do
                 MVar.modifyMVar_ getLeiosCentralState $
                   pure . Announcements.pruneCentralState immTipSlot
+                MVar.modifyMVar_ getLeiosOutstanding $
+                  pure . Leios.pruneOutstandingToImmTip immTipSlot
           }
 
     return
@@ -588,6 +596,7 @@ initNodeKernel
         , getLeiosOutstanding = getLeiosOutstanding
         , getLeiosReady = getLeiosReady
         , getLeiosCentralState = getLeiosCentralState
+        , getLeiosTxCache = getLeiosTxCache
         }
    where
     blockForgingController ::
@@ -640,6 +649,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosReady :: MVar.MVar m ()
   , leiosCentralState ::
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
+  , leiosTxCache ::
+      LeiosTxCache m () () Leios.SerializedEbBody
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m
@@ -673,6 +684,7 @@ initInternalState
     , getDiffusionPipeliningSupport
     , genesisArgs
     , leiosDB
+    , leiosTxCache
     } = do
     varGsmState <- do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -696,7 +708,14 @@ initInternalState
     fetchClientRegistry <- newFetchClientRegistry
 
     leiosPeersVars <- LazySTM.newTVarIO Map.empty
-    leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
+    -- Seed 'acquiredEbBodiesPrunedSlot' from the immutable tip: everything at or
+    -- below it is already final, so an EB that old must read as 'tooOld' from the
+    -- outset -- not only once the first 'pruneOutstandingToImmTip' fires.
+    immTip <- getTipSlot . ledgerState <$> atomically (ChainDB.getImmutableLedger chainDB)
+    let !immTipSlot = case immTip of
+          Origin -> SlotNo 0
+          NotOrigin s -> s
+    leiosOutstanding <- MVar.newMVar (Leios.emptyLeiosOutstanding immTipSlot)
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
 
@@ -771,32 +790,23 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     leiosVoteState
                     bf
                     leiosConn
-                    announceForgedBlock
+                    ( \forgedHeader forgedEb ->
+                        Leios.onForgedLeiosEb
+                          (leiosKernelTracer tracers)
+                          leiosCentralState
+                          (leiosOutstanding, leiosReady)
+                          leiosTxCache
+                          leiosConn
+                          -- Safe here: the forge hands us a corresponding header
+                          -- and closure.
+                          (Leios.mkForgedAnnouncingHeader forgedHeader forgedEb)
+                          forgedEb
+                    )
                     currentSlot
     )
  where
   label :: String
   label = "NodeKernel.blockForging"
-
-  -- Concurrently (fire-and-forget) relay this node's own freshly-forged EB
-  -- announcement, if any, to downstream peers via LeiosNotify. 'forge' invokes
-  -- this right after forging and before adoption, so adoption never gates
-  -- getting the announcement onto the wire.
-  announceForgedBlock :: Header blk -> m ()
-  announceForgedBlock forgedHeader =
-    whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
-      void $
-        async $
-          MVar.modifyMVar_ leiosCentralState $ \cst ->
-            Announcements.onAnnouncementCentral
-              (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
-              Leios.ancElId
-              (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
-              cst
-              Nothing -- the source is this node, not an upstream peer
-              Announcements.DoRelay -- our newly forged block can't be too old
-              Nothing -- no wall-clock lateness for a locally-forged announcement
-              anc
 
   -- 'LeiosDbConnection' is not thread-safe, so we open one per
   -- forge-credentials thread (and close it when the thread exits).

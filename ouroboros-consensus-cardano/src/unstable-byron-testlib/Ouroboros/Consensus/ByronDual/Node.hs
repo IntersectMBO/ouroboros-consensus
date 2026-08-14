@@ -67,6 +67,7 @@ dualByronBlockForging creds =
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
+          flip (,) Nothing $
           forgeDualByronBlock
             fbConfig
             fbCurrentBlockNo

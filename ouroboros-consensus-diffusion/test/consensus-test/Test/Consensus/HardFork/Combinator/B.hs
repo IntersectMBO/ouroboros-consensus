@@ -304,6 +304,7 @@ blockForgingB =
     , checkCanForge = \_ _ _ _ _ -> return ()
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
+          flip (,) Nothing $
           forgeBlockB
             fbConfig
             fbCurrentBlockNo

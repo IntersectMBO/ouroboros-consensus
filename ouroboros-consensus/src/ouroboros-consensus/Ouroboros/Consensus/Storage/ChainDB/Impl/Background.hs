@@ -484,7 +484,10 @@ garbageCollectBlocks CDB{..} slotNo = do
   PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   -- Evict LeiosDb EB bodies and closures no longer needed now that everything
   -- up to 'slotNo' is immutable. Driven by the same scheduled slot as the other
-  -- stores; currently a no-op (see 'leiosDbGarbageCollect').
+  -- stores; currently a no-op (see 'leiosDbGarbageCollect'). The LeiosTxCache is
+  -- an in-memory index of the LeiosDb, so it MUST be pruned to 'slotNo' first --
+  -- otherwise it could report a hit for a tx this GC is about to drop.
+  cdbLeiosEvictTxCache slotNo
   leiosDbGarbageCollect cdbLeiosDb slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 

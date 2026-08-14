@@ -156,5 +156,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
           , cdbsLeiosDb = mcdbLeiosDb
+          , cdbsLeiosEvictTxCache = \_slot -> pure ()
           }
     }
