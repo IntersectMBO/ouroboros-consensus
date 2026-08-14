@@ -78,6 +78,23 @@ The user can use snapshots created by the node or they can create their own snap
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
+#### --stubbed-leios-db
+
+```
+[--stubbed-leios-db]
+```
+
+Run with an empty in-memory Leios database, rather than the `leios.db` file under the `--db` path.
+
+A Praos block (a Leios ranking block) that carries a certificate has an empty body on the wire.
+Its transactions are in the endorser block (EB) that it certifies, and those live in the Leios database, not in the ImmutableDB.
+So the tool reads `DB_PATH/leios.db`, which is where the node writes that database, and it refuses to start when that file is absent.
+If your node writes the file elsewhere, symlink it into `DB_PATH`.
+
+Pass this flag for a chain that holds no certifying block, such as a chain that predates Leios.
+The tool cannot tell such a chain from a Leios one before it reads the chain, so it cannot make that call itself.
+If you pass the flag on a chain that does hold a certifying block, the analysis stops at that block.
+
 ### Database validation, via --db-validation
 
 The tool provides two database validation policies:
@@ -98,12 +115,14 @@ Lastly the user can provide the analysis that should be run on the chain:
 
 * `--count-tx-outputs` prints the block and slot number, tx out output for given
   block and the cumulative tx out output for all the blocks seen so far.
+  For a Leios certifying block the first count is 0, and a separate column reports the outputs of the EB it certifies.
 
 * `--show-block-header-size` shows block header size for each block and also the
   maximum head size it has seen in the whole chain it processed.
 
 * `--show-block-txs-size` prints number of transactions and transactions size
   per each block.
+  For a Leios certifying block those are 0, and two more columns report the count and size of the transactions in the EB it certifies.
 
 * `--show-ebbs` prints all EBB blocks including their hash, previous block hash
   and a boolean value whether it is a known EBB (list of known EBBs stored in
@@ -160,11 +179,22 @@ Lastly the user can provide the analysis that should be run on the chain:
 * `--repro-mempool-and-forge NUM` populates the mempool with the transactions
   from NUM blocks every time and then runs the forging loop. Useful to inspect
   regressions in the forging loop or in the mempool adding/snapshotting logic.
-  The output shows the time spent on ticking and snapshotting the mempool broken
+  The output shows the time spent on each step of the forging loop broken
   down into:
   - real monotonic measured time
   - time spent in the mutator in microseconds
   - time spent in GC in microseconds
+
+  The steps are:
+  - the read of the certified EB closure from the Leios database
+  - the read of the ledger values that the transactions of that closure consume
+  - the application of that closure
+  - the tick of the ledger state
+  - the mempool snapshot
+
+  Each step has its own columns.
+  So the figure for the application covers the application alone.
+  The first three steps read 0 on a block that certifies no EB.
 
   Currently, only NUM=1 or NUM=2 are supported. Note that with NUM=2, even for a
   fully valid chain (like mainnet), you might get an error like this:
@@ -175,6 +205,18 @@ Lastly the user can provide the analysis that should be run on the chain:
 
   Therefore, it is recommended to start with NUM=1, and only use NUM=2 when you
   want to test the performance impact of a more filled mempool.
+
+  On a Leios chain, this pass reads the Leios database, so do not pass `--stubbed-leios-db`.
+  A block that certifies an EB has an empty body.
+  The txs that it causes the ledger to apply are in the EB that it certifies, and the Leios database holds them.
+  This pass adds them to the mempool, and it reports their count and their total size in the `ebNumTxs` and `ebTxsByteSize` columns.
+
+  On such a block the pass follows the forge thread.
+  It applies the closure of the certified EB to the parent, it ticks that result, and it takes the snapshot without the cache of the mempool.
+
+  This pass does not build an EB.
+  It measures the tick and the snapshot, and it never calls the forge function itself.
+  So it reports no cost for the serialisation of a new EB, and none for the write of that EB to the Leios database.
 
 * `--get-block-application-metrics NUM` computes different block application metrics every `NUM` blocks.
 It currently outputs block number, slot number, UTxO size in MB, and UTxO map size.
@@ -187,24 +229,35 @@ in the immutable and volatile databases will be validated (see
 
 ### Examples
 
-The use of this tool requires a chain database together with the configuration
-files that were used (by `cadano-node`) to populate it (by means of chain
-syncing). Assuming you ran `cardano-node` on your machine, it is quite handy to
-save the location to the working directory from which it was run. Eg:
+The tool needs a chain database and the configuration files that
+`cardano-node` used to populate it. Both live in the data directory of
+the node.
+
+It is handy to save the path to that directory. For example:
 
 ```sh
-export NODE_HOME=/path/to/local/copy/of/cardano-node/working/dir/
+export NODE_DIR="/path/to/cardano-node-data/db-leios"
 ```
+
+That directory holds `config.json`, the genesis files, and `db/`.
+`db/` is the chain database. It holds `immutable/`, `volatile/`, `ledger/`, and,
+on a Leios chain, `leios.db`.
+
+#### Checking the Leios analyses
+
+`check-leios-analysis` runs several analyses against a real Leios chain and checks that they agree on the transactions of each certified EB.
+It is a manual test: it needs such a chain, and it does not run on CI.
+It lives on the `leios-prototype` branch of [ouroboros-consensus-tools](https://github.com/input-output-hk/ouroboros-consensus-tools/tree/leios-prototype/check-leios-analysis), which documents how to run it.
 
 #### Saving a snapshot
 
-Suppose we have a local chain database in reachable from `$NODE_HOME`, and we
+Suppose we have a local chain database in reachable from `$NODE_DIR`, and we
 want to take a snapshot of the ledger state for slot `100`. Then we can run:
 
 ```sh
 cabal run exe:db-analyser -- \
-    --config $NODE_HOME/configuration/cardano/mainnet-config.json \
-    --db $NODE_HOME/mainnet/db \
+    --config $NODE_DIR/config.json \
+    --db $NODE_DIR/db \
     --store-ledger 100
 ```
 
@@ -213,8 +266,8 @@ If we had a previous snapshot of the ledger state, say corresponding to slot
 
 ```sh
 cabal run exe:db-analyser -- \
-    --config $NODE_HOME/configuration/cardano/mainnet-config.json \
-    --db $NODE_HOME/mainnet/db \
+    --config $NODE_DIR/config.json \
+    --db $NODE_DIR/db \
     --analyse-from 50 \
     --store-ledger 100
 ```
@@ -226,8 +279,8 @@ examples, one could run the tool as follows:
 
 ```sh
 cabal run exe:db-analyser -- \
-    --config $NODE_HOME/configuration/cardano/mainnet-config.json \
-    --db $NODE_HOME/mainnet/db \
+    --config $NODE_DIR/config.json \
+    --db $NODE_DIR/db \
     --analyse-from 100 \
     --benchmark-ledger-ops \
     --out-file ledger-ops-cost.csv
@@ -238,8 +291,8 @@ specify the application of how many blocks we want to process. Eg:
 
 ```sh
 cabal run exe:db-analyser -- \
-    --config $NODE_HOME/configuration/cardano/mainnet-config.json \
-    --db $NODE_HOME/mainnet/db \
+    --config $NODE_DIR/config.json \
+    --db $NODE_DIR/db \
     --analyse-from 100 \
     --benchmark-ledger-ops \
     --out-file ledger-ops-cost.csv \

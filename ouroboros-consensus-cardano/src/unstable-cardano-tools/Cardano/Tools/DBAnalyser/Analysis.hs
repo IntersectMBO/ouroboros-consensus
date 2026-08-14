@@ -35,11 +35,26 @@ import Cardano.Tools.DBAnalyser.CSV
   )
 import Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
+import Cardano.Tools.DBAnalyser.Leios
+  ( ClosureApplied (..)
+  , announcementAtPoint
+  , applyBlockAtTip
+  , applyBlockToTipForker
+  , applyClosure
+  , blockWithCertifiedEbTxs
+  , certifiedEbHash
+  , certifiedEbTxSizes
+  , closureKeySets
+  , parentAnnouncement
+  , readEbClosure
+  , verifyCertRb
+  )
 import Cardano.Tools.DBAnalyser.Types
 import Control.Monad (join, unless, void, when)
 import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), nullTracer, traceWith)
+import Data.Bifunctor (bimap)
 import Data.Int (Int64)
 import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
@@ -47,6 +62,13 @@ import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
+import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes
+  ( BytesSize
+  , HasLeiosVoting (..)
+  , LeiosPoint
+  , maxEBClosureSize
+  )
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -62,9 +84,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
   ( ApplyBlock (getBlockKeySets, reapplyBlockLedgerResult)
   , applyBlockLedgerResult
-  , tickThenApply
-  , tickThenApplyLedgerResult
-  , tickThenReapply
   )
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
@@ -83,6 +102,10 @@ import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( ResolveLeiosBlock
+  , headerLeiosAnnouncement
+  )
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.SizeInBytes
@@ -99,6 +122,8 @@ runAnalysis ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   AnalysisName -> SomeAnalysis blk
@@ -144,6 +169,9 @@ data AnalysisEnv m blk startFrom = AnalysisEnv
   , registry :: ResourceRegistry IO
   , limit :: Limit
   , tracer :: Tracer m (TraceEvent blk)
+  , leiosDb :: LeiosDbConnection IO
+  -- ^ Connection to the node's LeiosDb. For pre-Leios chains this is
+  -- a connection to the empty in-memory stub and is never consulted.
   }
 
 -- | Whether the db-analyser pass needs access to a ledger state.
@@ -183,9 +211,8 @@ data TraceEvent blk
   | -- | triggered when block has been found, it holds:
     --   * block's number
     --   * slot number when the block was forged
-    --   * cumulative tx output
-    --   * count tx output
-    CountTxOutputsEvent BlockNo SlotNo Int Int
+    --   * the transaction output counts of that block
+    CountTxOutputsEvent BlockNo SlotNo TxOutputCounts
   | -- | triggered when EBB block has been found, it holds:
     --   * its hash,
     --   * hash of previous block
@@ -214,32 +241,73 @@ data TraceEvent blk
   | -- | triggered for all blocks during ShowBlockTxsSize analysis,
     --   it holds:
     --   * slot number when the block was forged
-    --   * number of transactions in the block
-    --   * total size of transactions in the block
-    BlockTxSizeEvent SlotNo Int SizeInBytes
+    --   * the transaction counts and sizes of that block
+    BlockTxSizeEvent SlotNo BlockTxSizes
   | -- | triggered for all blocks during MempoolAndForgeRepro analysis,
     --   it holds:
     --   * block number
     --   * slot number when the block was forged
-    --   * number of transactions in the block
-    --   * total size of transactions in the block
-    --   * monotonic time to tick ledger state
-    --   * total time spent in the mutator when ticking the ledger state
-    --   * total time spent in gc when ticking the ledger state
-    --   * monotonic time to call 'Mempool.getSnapshotFor'
-    --   * total time spent in the mutator when calling 'Mempool.getSnapshotFor'
-    --   * total time spent in gc when calling 'Mempool.getSnapshotFor'
-    BlockMempoolAndForgeRepro
-      BlockNo
-      SlotNo
-      Int
-      SizeInBytes
-      IOLike.DiffTime
-      Int64
-      Int64
-      IOLike.DiffTime
-      Int64
-      Int64
+    --   * what the repro measured on that block
+    BlockMempoolAndForgeRepro BlockNo SlotNo MempoolAndForgeRepro
+
+-- | How many transaction outputs a block holds, and how many the chain holds up
+-- to and including that block.
+data TxOutputCounts = TxOutputCounts
+  { numBlockTxOutputs :: Int
+  , numEbTxOutputs :: Int
+  , cumulativeTxOutputs :: Int
+  }
+
+-- | How many transactions a block holds, and how many bytes they take.
+data BlockTxSizes = BlockTxSizes
+  { numBlockTxs :: Int
+  , blockTxsSize :: SizeInBytes
+  , numEbTxs :: Int
+  , ebTxsSize :: SizeInBytes
+  }
+
+-- | What the MempoolAndForgeRepro analysis measured on one block.
+data MempoolAndForgeRepro = MempoolAndForgeRepro
+  { numTxs :: Int
+  -- ^ Number of transactions in the block.
+  , txsSize :: SizeInBytes
+  -- ^ Total size of transactions in the block.
+  , ebNumTxs :: Int
+  -- ^ Number of transactions in the EB that the block certifies.
+  , ebTxsByteSize :: SizeInBytes
+  -- ^ Total size of transactions in the EB that the block certifies.
+  , durEbRead :: IOLike.DiffTime
+  -- ^ Monotonic time to read the closure of the certified EB
+  , mutEbRead :: Int64
+  -- ^ Total time spent in the mutator when reading the closure of the certified EB
+  , gcEbRead :: Int64
+  -- ^ Total time spent in gc when reading the closure of the certified EB
+  , durEbTableRead :: IOLike.DiffTime
+  -- ^ Monotonic time of the value read. That read gets the ledger values that
+  -- the transactions of the closure consume. 'durEbApply' excludes it.
+  , mutEbTableRead :: Int64
+  -- ^ Total time spent in the mutator during the value read
+  , gcEbTableRead :: Int64
+  -- ^ Total time spent in gc during the value read
+  , durEbApply :: IOLike.DiffTime
+  -- ^ Monotonic time to apply the closure of the certified EB
+  , mutEbApply :: Int64
+  -- ^ Total time spent in the mutator when applying the closure of the certified EB
+  , gcEbApply :: Int64
+  -- ^ Total time spent in gc when applying the closure of the certified EB
+  , durTick :: IOLike.DiffTime
+  -- ^ Monotonic time to tick ledger state.
+  , mutTick :: Int64
+  -- ^ Total time spent in the mutator when ticking the ledger state.
+  , gcTick :: Int64
+  -- ^ Total time spent in gc when ticking the ledger state.
+  , durSnap :: IOLike.DiffTime
+  -- ^ Monotonic time to call 'Mempool.getSnapshotFor'.
+  , mutSnap :: Int64
+  -- ^ Total time spent in the mutator when calling 'Mempool.getSnapshotFor'.
+  , gcSnap :: Int64
+  -- ^ Total time spent in gc when calling 'Mempool.getSnapshotFor'.
+  }
 
 instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) where
   show (StartedEvent analysisName) = "Started " <> (show analysisName)
@@ -250,12 +318,13 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
       , show sn
       , show h
       ]
-  show (CountTxOutputsEvent bn sn cumulative count) =
+  show (CountTxOutputsEvent bn sn TxOutputCounts{numBlockTxOutputs, numEbTxOutputs, cumulativeTxOutputs}) =
     intercalate "\t" $
       [ show bn
       , show sn
-      , "cumulative: " <> show cumulative
-      , "count: " <> show count
+      , "cumulative: " <> show cumulativeTxOutputs
+      , "count: " <> show numBlockTxOutputs
+      , "EB count: " <> show numEbTxOutputs
       ]
   show (EbbEvent ebb previous known) =
     intercalate
@@ -284,27 +353,65 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
       <> show requested
   show (LedgerErrorEvent pt err) =
     "Applying block at " <> show pt <> " failed: " <> show err
-  show (BlockTxSizeEvent slot numBlocks txsSize) =
+  show (BlockTxSizeEvent slot BlockTxSizes{numBlockTxs, blockTxsSize, numEbTxs, ebTxsSize}) =
     intercalate
       "\t"
       [ show slot
-      , "Num txs in block = " <> show numBlocks
-      , "Total size of txs in block = " <> show txsSize
+      , "Num txs in block = " <> show numBlockTxs
+      , "Total size of txs in block = " <> show blockTxsSize
+      , "Num txs in EB = " <> show numEbTxs
+      , "Total size of txs in EB = " <> show ebTxsSize
       ]
-  show (BlockMempoolAndForgeRepro bno slot txsCount txsSize durTick mutTick gcTick durSnap mutSnap gcSnap) =
-    intercalate
-      "\t"
-      [ show bno
-      , show slot
-      , "txsCount " <> show txsCount
-      , "txsSize " <> show txsSize
-      , "durTick " <> show durTick
-      , "mutTick " <> show mutTick
-      , "gcTick " <> show gcTick
-      , "durSnap " <> show durSnap
-      , "mutSnap " <> show mutSnap
-      , "gcSnap " <> show gcSnap
-      ]
+  show
+    ( BlockMempoolAndForgeRepro
+        bno
+        slot
+        MempoolAndForgeRepro
+          { numTxs
+          , txsSize
+          , ebNumTxs
+          , ebTxsByteSize
+          , durEbRead
+          , mutEbRead
+          , gcEbRead
+          , durEbTableRead
+          , mutEbTableRead
+          , gcEbTableRead
+          , durEbApply
+          , mutEbApply
+          , gcEbApply
+          , durTick
+          , mutTick
+          , gcTick
+          , durSnap
+          , mutSnap
+          , gcSnap
+          }
+      ) =
+      intercalate
+        "\t"
+        [ show bno
+        , show slot
+        , "txsCount " <> show numTxs
+        , "txsSize " <> show txsSize
+        , "ebNumTxs " <> show ebNumTxs
+        , "ebTxsByteSize " <> show ebTxsByteSize
+        , "durEbRead " <> show durEbRead
+        , "mutEbRead " <> show mutEbRead
+        , "gcEbRead " <> show gcEbRead
+        , "durEbTableRead " <> show durEbTableRead
+        , "mutEbTableRead " <> show mutEbTableRead
+        , "gcEbTableRead " <> show gcEbTableRead
+        , "durEbApply " <> show durEbApply
+        , "mutEbApply " <> show mutEbApply
+        , "gcEbApply " <> show gcEbApply
+        , "durTick " <> show durTick
+        , "mutTick " <> show mutTick
+        , "gcTick " <> show gcTick
+        , "durSnap " <> show durSnap
+        , "mutSnap " <> show mutSnap
+        , "gcSnap " <> show gcSnap
+        ]
 
 {-------------------------------------------------------------------------------
   Analysis: show block and slot number and hash for all blocks
@@ -324,24 +431,34 @@ showSlotBlockNo AnalysisEnv{db, registry, startFrom, limit, tracer} =
   Analysis: show total number of tx outputs per block
 -------------------------------------------------------------------------------}
 
-countTxOutputs :: forall blk. HasAnalysis blk => Analysis blk StartFromPoint
-countTxOutputs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
-  void $ processAll db registry GetBlock startFrom limit 0 process
+-- | A cert-RB has an empty wire body, so its own count is 0. The txs that it
+-- causes the ledger to apply are in the EB that it certifies. The EB count
+-- reports those.
+countTxOutputs ::
+  forall blk.
+  (HasAnalysis blk, ResolveLeiosBlock blk) =>
+  Analysis blk StartFromPoint
+countTxOutputs AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDb} = do
+  seed <- announcementAtPoint db =<< startFromPoint startFrom
+  void $ processAll db registry GetBlock startFrom limit (0, seed) process
   pure Nothing
  where
-  process :: Int -> blk -> IO Int
-  process cumulative blk = do
-    let cumulative' = cumulative + count
-        event =
-          CountTxOutputsEvent
-            (blockNo blk)
-            (blockSlot blk)
-            cumulative'
-            count
-    traceWith tracer event
-    return cumulative'
-   where
-    count = HasAnalysis.countTxOutputs blk
+  process ::
+    -- The count so far, and the EB that the previous block announced
+    (Int, Maybe (LeiosPoint, BytesSize)) ->
+    blk ->
+    IO (Int, Maybe (LeiosPoint, BytesSize))
+  process (cumulative, prevAnnouncement) blk = do
+    ebBlk <- blockWithCertifiedEbTxs leiosDb prevAnnouncement blk
+    let numBlockTxOutputs = HasAnalysis.countTxOutputs blk
+        numEbTxOutputs = maybe 0 HasAnalysis.countTxOutputs ebBlk
+        cumulativeTxOutputs = cumulative + numBlockTxOutputs + numEbTxOutputs
+    traceWith tracer $
+      CountTxOutputsEvent
+        (blockNo blk)
+        (blockSlot blk)
+        TxOutputCounts{numBlockTxOutputs, numEbTxOutputs, cumulativeTxOutputs}
+    pure (cumulativeTxOutputs, headerLeiosAnnouncement (getHeader blk))
 
 {-------------------------------------------------------------------------------
   Analysis: show the header size in bytes for all blocks
@@ -376,23 +493,38 @@ showHeaderSize AnalysisEnv{db, registry, startFrom, limit, tracer} = do
   Analysis: show the total transaction sizes in bytes per block
 -------------------------------------------------------------------------------}
 
-showBlockTxsSize :: forall blk. HasAnalysis blk => Analysis blk StartFromPoint
-showBlockTxsSize AnalysisEnv{db, registry, startFrom, limit, tracer} = do
-  processAll_ db registry GetBlock startFrom limit process
+-- | A cert-RB has an empty wire body, so its own tx columns are 0. The txs that
+-- it causes the ledger to apply are in the EB that it certifies. The EB columns
+-- report those.
+showBlockTxsSize ::
+  forall blk.
+  (HasAnalysis blk, ResolveLeiosBlock blk) =>
+  Analysis blk StartFromPoint
+showBlockTxsSize AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDb} = do
+  seed <- announcementAtPoint db =<< startFromPoint startFrom
+  void $ processAll db registry GetBlock startFrom limit seed process
   pure Nothing
  where
-  process :: blk -> IO ()
-  process blk =
-    traceWith tracer $ BlockTxSizeEvent (blockSlot blk) numBlockTxs blockTxsSize
+  process ::
+    -- The EB that the previous block announced
+    Maybe (LeiosPoint, BytesSize) ->
+    blk ->
+    IO (Maybe (LeiosPoint, BytesSize))
+  process prevAnnouncement blk = do
+    ebTxSizes <- certifiedEbTxSizes leiosDb prevAnnouncement blk
+    traceWith tracer $
+      BlockTxSizeEvent
+        (blockSlot blk)
+        BlockTxSizes
+          { numBlockTxs = length txSizes
+          , blockTxsSize = sum txSizes
+          , numEbTxs = length ebTxSizes
+          , ebTxsSize = sum ebTxSizes
+          }
+    pure $ headerLeiosAnnouncement (getHeader blk)
    where
     txSizes :: [SizeInBytes]
     txSizes = HasAnalysis.blockTxSizes blk
-
-    numBlockTxs :: Int
-    numBlockTxs = length txSizes
-
-    blockTxsSize :: SizeInBytes
-    blockTxsSize = sum txSizes
 
 {-------------------------------------------------------------------------------
   Analysis: show EBBs and their predecessors
@@ -423,6 +555,8 @@ showEBBs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
 storeLedgerStateAt ::
   forall blk.
   ( LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , HasAnalysis blk
   ) =>
   SlotNo ->
@@ -432,18 +566,16 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
   void $ processAllUntil db registry GetBlock startFrom limit () process
   pure Nothing
  where
-  AnalysisEnv{db, registry, startFrom, cfg, limit, tracer} = env
+  AnalysisEnv{db, registry, startFrom, cfg, limit, tracer, leiosDb} = env
   FromLedgerState ldb internal = startFrom
 
   process :: () -> blk -> IO (NextStep, ())
-  process _ blk = do
-    let ledgerCfg = ExtLedgerCfg cfg
-    oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
+  process _ blk =
     LedgerDB.withTipForker
       ldb
       ( \frk -> do
-          tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-          case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
+          result <- applyBlockToTipForker leiosDb ledgerAppMode cfg frk blk
+          case result of
             Right newLedger -> do
               LedgerDB.forkerPush frk newLedger
               join $ IOLike.atomically $ LedgerDB.forkerCommit frk
@@ -458,14 +590,11 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
               when (blockSlot blk >= slotNo) storeLedgerState
               return (continue blk, ())
             Left err -> do
-              traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
+              traceWith tracer $
+                LedgerErrorEvent (blockPoint blk) (LedgerDB.annLedgerErr err)
               storeLedgerState
               pure (Stop, ())
       )
-
-  tickThenXApply = case ledgerAppMode of
-    LedgerReapply -> pure ...: tickThenReapply
-    LedgerApply -> tickThenApply
 
   continue :: blk -> NextStep
   continue blk
@@ -507,13 +636,15 @@ checkNoThunksEvery ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   Word64 ->
   Analysis blk StartFromLedgerState
 checkNoThunksEvery
   nBlocks
-  (AnalysisEnv{db, registry, startFrom, cfg, limit}) = do
+  (AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb}) = do
     putStrLn $
       "Checking for thunks in each block where blockNo === 0 (mod " <> show nBlocks <> ")."
     void $ processAll db registry GetBlock startFrom limit () process
@@ -523,16 +654,8 @@ checkNoThunksEvery
 
     process :: () -> blk -> IO ()
     process _ blk = do
-      oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
-      tbs <-
-        LedgerDB.withTipForker
-          ldb
-          (\frk -> LedgerDB.forkerReadTables frk (getBlockKeySets blk))
-      let oldLedger' = oldLedger `withLedgerTables` tbs
-      let ledgerCfg = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger'
-          newLedger = either (error . show) lrResult $ runExcept appliedResult
-          newLedger' = applyDiffs oldLedger' newLedger
+      (oldLedger', newLedger) <- applyBlockAtTip leiosDb LedgerApply cfg ldb blk
+      let newLedger' = applyDiffs oldLedger' newLedger
           bn = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0) $ do
         -- Check the new ledger state with new values stowed. This checks that
@@ -565,10 +688,12 @@ traceLedgerProcessing ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
-  (AnalysisEnv{db, registry, startFrom, cfg, limit}) = do
+  (AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb}) = do
     void $ processAll db registry GetBlock startFrom limit () process
     pure Nothing
    where
@@ -579,19 +704,8 @@ traceLedgerProcessing
       blk ->
       IO ()
     process _ blk = do
-      oldLedger <-
-        LedgerDB.withTipForker
-          ldb
-          ( \frk -> do
-              oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-              oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-              pure $ oldLedgerSt `withLedgerTables` oldLedgerTbs
-          )
-
-      let ledgerCfg = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger
-          newLedger = either (error . show) lrResult $ runExcept appliedResult
-          newLedger' = applyDiffs oldLedger newLedger
+      (oldLedger, newLedger) <- applyBlockAtTip leiosDb LedgerApply cfg ldb blk
+      let newLedger' = applyDiffs oldLedger newLedger
           traces =
             ( HasAnalysis.emitTraces $
                 HasAnalysis.WithLedgerState blk (ledgerState oldLedger) (ledgerState newLedger')
@@ -623,11 +737,13 @@ benchmarkLedgerOps ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , HasAnalysis blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Maybe FilePath ->
   LedgerApplicationMode ->
   Analysis blk StartFromLedgerState
-benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, cfg, limit} = do
+benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb} = do
   -- We default to CSV when the no output file is provided (and thus the results are output to stdout).
   outFormat <- F.getOutputFormat mOutfile
 
@@ -660,30 +776,63 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     (blk, SizeInBytes) ->
     IO ()
   process ledgerDB intLedgerDB outFileHandle outFormat _ (blk, sz) = do
-    (prevLedgerState, tables) <- LedgerDB.withTipForker ledgerDB $ \frk -> do
-      st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-      tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-      pure (st, tbs)
     prevRtsStats <- GC.getRTSStats
-    let
-      -- Compute how many nanoseconds the mutator used from the last
-      -- recorded 'elapsedTime' till the end of the execution of the given
-      -- action. This function forces the evaluation of its argument's
-      -- result.
-      time act = do
-        tPrev <- GC.mutator_elapsed_ns <$> GC.getRTSStats
-        !r <- act
-        tNow <- GC.mutator_elapsed_ns <$> GC.getRTSStats
-        pure (r, tNow - tPrev)
+    ( prevLedgerState
+      , closureTxs
+      , ebTxsBytes
+      , tables
+      , tEbReadMut
+      , tEbReadElapsed
+      , tTableReadMut
+      , tTableReadElapsed
+      ) <-
+      LedgerDB.withTipForker ledgerDB $ \frk -> do
+        st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
+        -- Verify the certificate before the read of the EB that it names, which
+        -- is where 'LedgerDB.applyBlock' verifies it. The closure below applies
+        -- without validation, so the certificate is the only check that the EB
+        -- txs get in this pass.
+        --
+        -- The check runs inside the RTS-stats window, so its cost lands in
+        -- 'DP.totalTime' and 'DP.mut'. It has no column of its own.
+        case ledgerAppMode of
+          LedgerReapply -> pure ()
+          LedgerApply -> case verifyCertRb st blk of
+            Left err ->
+              fail $
+                "benchmark doesn't support invalid certificates: "
+                  <> show rp
+                  <> " "
+                  <> show err
+            Right () -> pure ()
+        -- A cert-RB has an empty body. It applies the txs of the EB that its
+        -- parent announced. Read those txs from the LeiosDb. A block that
+        -- certifies no EB skips the read, so its EB figures stay 0. A 'clock'
+        -- around a read of nothing reports the cost of the two RTS-stats calls.
+        ((txs, txsBytes), ebReadMut, ebReadElapsed) <-
+          case certifiedEbHash (parentAnnouncement st) blk of
+            Nothing -> pure (([], 0), 0, 0)
+            Just ebHash -> clock $ readEbClosure leiosDb ebHash
+        -- Read the values that the block and those txs consume.
+        (tbs, tableReadMut, tableReadElapsed) <-
+          clock $ LedgerDB.forkerReadTables frk (closureKeySets txs <> getBlockKeySets blk)
+        pure (st, txs, txsBytes, tbs, ebReadMut, ebReadElapsed, tableReadMut, tableReadElapsed)
+
+    -- Apply the EB closure on the parent state, as Forker.applyBlock does.
+    -- 'applyLeiosClosure' needs an unticked state, so this runs before the tick
+    -- below. For a block that carries no certificate, 'applyClosure' returns the
+    -- parent state and its tables unchanged.
+    (ClosureApplied{caStateAfterEb, caTablesAfterEb, caClosureDiff}, tEbApply) <-
+      time $ applyClosure lcfg closureTxs prevLedgerState tables
 
     let slot = blockSlot blk
     -- We do not use strictness annotation on the resulting tuples since
     -- 'time' takes care of forcing the evaluation of its argument's result.
-    (ldgrView, tForecast) <- time $ forecast slot prevLedgerState
-    (tkHdrSt, tHdrTick) <- time $ tickTheHeaderState slot prevLedgerState ldgrView
+    (ldgrView, tForecast) <- time $ forecast slot caStateAfterEb
+    (tkHdrSt, tHdrTick) <- time $ tickTheHeaderState slot caStateAfterEb ldgrView
     (!newHeader, tHdrApp) <- time $ applyTheHeader ldgrView tkHdrSt
-    (tkLdgrSt, tBlkTick) <- time $ tickTheLedgerState slot prevLedgerState
-    let !tkLdgrSt' = applyDiffs (prevLedgerState `withLedgerTables` tables) tkLdgrSt
+    (tkLdgrSt, tBlkTick) <- time $ tickTheLedgerState slot caStateAfterEb
+    let !tkLdgrSt' = applyDiffs (caStateAfterEb `withLedgerTables` caTablesAfterEb) tkLdgrSt
     (!newLedger, tBlkApp) <- time $ applyTheBlock tkLdgrSt'
 
     currentRtsStats <- GC.getRTSStats
@@ -691,13 +840,24 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
       currentMinusPrevious :: Num a => (GC.RTSStats -> a) -> a
       currentMinusPrevious f = f currentRtsStats - f prevRtsStats
       major_gcs = currentMinusPrevious GC.major_gcs
+      -- The size of the body of the EB that this block certifies. The parent's
+      -- announcement carries it, and 'closureTxs' is empty for a block that
+      -- certifies no EB, so it stands for the same decision that
+      -- 'readCertifiedClosure' made.
+      ebBytes
+        | null closureTxs = 0
+        | otherwise = maybe 0 snd (parentAnnouncement prevLedgerState)
       slotDataPoint =
         DP.SlotDataPoint
           { DP.slot = realPointSlot rp
-          , DP.slotGap = slot `slotCount` getTipSlot prevLedgerState
+          , DP.slotGap = slot `slotCount` getTipSlot caStateAfterEb
           , DP.totalTime = currentMinusPrevious GC.elapsed_ns `div` 1000
           , DP.mut = currentMinusPrevious GC.mutator_elapsed_ns `div` 1000
           , DP.gc = currentMinusPrevious GC.gc_elapsed_ns `div` 1000
+          , DP.tableReadTime = tTableReadElapsed `div` 1000
+          , DP.mut_tableRead = tTableReadMut `div` 1000
+          , DP.ebReadTime = tEbReadElapsed `div` 1000
+          , DP.mut_ebRead = tEbReadMut `div` 1000
           , DP.majGcCount = major_gcs
           , DP.minGcCount = currentMinusPrevious GC.gcs - major_gcs
           , DP.allocatedBytes = currentMinusPrevious GC.allocated_bytes
@@ -705,8 +865,14 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
           , DP.mut_headerTick = tHdrTick `div` 1000
           , DP.mut_headerApply = tHdrApp `div` 1000
           , DP.mut_blockTick = tBlkTick `div` 1000
-          , DP.mut_blockApply = tBlkApp `div` 1000
+          , -- The cert-RB and the EB it certifies are one logical block, so this
+            -- covers the EB txs and the cert-RB body. The tick between the two
+            -- applications has its own figure in 'DP.mut_blockTick'.
+            DP.mut_blockApply = (tEbApply + tBlkApp) `div` 1000
           , DP.blockByteSize = getSizeInBytes sz
+          , DP.ebByteSize = ebBytes
+          , DP.ebTxsByteSize = ebTxsBytes
+          , DP.ebNumTxs = fromIntegral (length closureTxs)
           , DP.blockStats = DP.BlockStats $ HasAnalysis.blockStats blk
           }
 
@@ -716,10 +882,29 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
-    LedgerDB.push intLedgerDB $ ExtLedgerState (prependDiffs tkLdgrSt newLedger) newHeader
+    -- The EB txs apply before the tick, so their diff goes first. Without it the
+    -- LedgerDB never receives the EB's change and the next blocks read stale
+    -- tables.
+    LedgerDB.push intLedgerDB $
+      ExtLedgerState
+        (maybe id prependDiffs caClosureDiff (prependDiffs tkLdgrSt newLedger))
+        newHeader
     LedgerDB.tryFlush ledgerDB
    where
     rp = blockRealPoint blk
+
+    clock act = do
+      let dup x = (x, x)
+      (tMutPrev, tPrev) <- bimap GC.mutator_elapsed_ns GC.elapsed_ns . dup <$> GC.getRTSStats
+      !r <- act
+      (tMutNow, tNow) <- bimap GC.mutator_elapsed_ns GC.elapsed_ns . dup <$> GC.getRTSStats
+      pure (r, tMutNow - tMutPrev, tNow - tPrev)
+
+    -- Compute how many nanoseconds the mutator used from the last
+    -- recorded 'elapsedTime' till the end of the execution of the given
+    -- action. This function forces the evaluation of its argument's
+    -- result.
+    time act = (\(r, tMut, _) -> (r, tMut)) <$> clock act
 
     forecast ::
       SlotNo ->
@@ -787,6 +972,8 @@ getBlockApplicationMetrics ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   NumberOfBlocks -> Maybe FilePath -> Analysis blk StartFromLedgerState
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
@@ -798,7 +985,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
  where
   separator = ", "
 
-  AnalysisEnv{db, registry, startFrom, cfg, limit} = env
+  AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb} = env
   FromLedgerState ldb intLedgerDB = startFrom
 
   process ::
@@ -807,16 +994,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
     blk ->
     IO ()
   process outFileHandle _ blk = do
-    oldLedger <-
-      LedgerDB.withTipForker
-        ldb
-        ( \frk -> do
-            oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-            oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-            pure $ oldLedgerSt `withLedgerTables` oldLedgerTbs
-        )
-
-    let nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedger
+    (oldLedger, nextLedgerSt) <- applyBlockAtTip leiosDb LedgerReapply cfg ldb blk
     when (unBlockNo (blockNo blk) `mod` nrBlocks == 0) $ do
       let blockApplication =
             HasAnalysis.WithLedgerState
@@ -843,6 +1021,17 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
 
 data ReproMempoolForgeHowManyBlks = ReproMempoolForgeOneBlk | ReproMempoolForgeTwoBlks
 
+-- | Mempool capacity override for 'reproMempoolForge' on a Leios chain.
+--
+-- 'Mempool.computeMempoolCapacity' reads this as a number of blocks, not as a
+-- byte budget: it divides by the ranking-block capacity and rounds up. So the
+-- value only has to exceed one EB closure, which is what two closures give.
+--
+-- 'LeiosDemoTypes' exported a constant for this until the node stopped
+-- overriding the mempool capacity, so the tool now owns it.
+leiosMempoolSize :: LedgerSupportsMempool.ByteSize32
+leiosMempoolSize = maxEBClosureSize <> maxEBClosureSize
+
 reproMempoolForge ::
   forall blk.
   ( HasAnalysis blk
@@ -850,6 +1039,8 @@ reproMempoolForge ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Int ->
   Analysis blk StartFromLedgerState
@@ -876,15 +1067,25 @@ reproMempoolForge numBlks env = do
                 )
         }
       lCfg
-      -- one mebibyte should generously accomodate two blocks' worth of txs
-      ( Mempool.MempoolCapacityBytesOverride $
-          LedgerSupportsMempool.ByteSize32 $
-            1024 * 1024
-      )
+      -- This pass models the mempool of a forging node, so the capacity must
+      -- match. A Leios node holds a whole EB closure, and a closure reaches
+      -- 12 MB ('maxEBClosureSize'). One mebibyte is not enough.
+      --
+      -- The capacity is a ceiling, not a target. This pass adds the
+      -- transactions of one or two blocks, then it flushes them after each
+      -- block. So a larger capacity does not change the measured cost.
+      (Mempool.MempoolCapacityBytesOverride leiosMempoolSize)
       (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
       nullTracer
 
-  void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks mempool)
+  -- The EB that the block at the start point announced, or 'Nothing' if that
+  -- block announced no EB. The stream starts after that block, so that block is
+  -- the predecessor of the first block in the fold.
+  seedAnnouncement <- announcementAtPoint db =<< startFromPoint startFrom
+
+  void $
+    processAll db registry GetBlock startFrom limit Nothing $
+      process howManyBlocks mempool seedAnnouncement
   pure Nothing
  where
   AnalysisEnv
@@ -894,6 +1095,7 @@ reproMempoolForge numBlks env = do
     , registry
     , limit
     , tracer
+    , leiosDb
     } = env
 
   lCfg :: LedgerConfig blk
@@ -916,14 +1118,34 @@ reproMempoolForge numBlks env = do
   process ::
     ReproMempoolForgeHowManyBlks ->
     Mempool.Mempool IO blk ->
+    -- The EB that the block at the start point announced, if it announced one
+    Maybe (LeiosPoint, BytesSize) ->
     Maybe blk ->
     blk ->
     IO (Maybe blk)
-  process howManyBlocks mempool mbBlk blk' =
+  process howManyBlocks mempool seedAnnouncement mbBlk blk' =
     (\() -> Just blk') <$> do
       -- add this block's transactions to the mempool
       do
-        results <- Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk'
+        -- A block that certifies an EB has an empty body, so 'extractTxs'
+        -- returns nothing for such a block. The forge thread of such a block
+        -- held the transactions of the EB in its mempool. It took them from
+        -- there at the announcing slot, and it dropped them when it applied the
+        -- certificate. Add them here, so that the mempool of this pass holds
+        -- what the mempool of the forge thread held.
+        --
+        -- 'mbBlk' is the predecessor of 'blk'', because the blocks arrive in
+        -- chain order.
+        let prevAnnouncement = case mbBlk of
+              -- The fold never sees the predecessor of the first streamed
+              -- block, so the seed gives its announcement.
+              Nothing -> seedAnnouncement
+              Just prevBlk -> headerLeiosAnnouncement (getHeader prevBlk)
+        ebTxs <- case certifiedEbHash prevAnnouncement blk' of
+          Nothing -> pure []
+          Just ebHash -> fst <$> readEbClosure leiosDb ebHash
+        results <-
+          Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk' <> ebTxs
         let rejs =
               [ (LedgerSupportsMempool.txId tx, rej)
               | rej@(Mempool.MempoolTxRejected tx _) <- results
@@ -948,18 +1170,71 @@ reproMempoolForge numBlks env = do
           LedgerDB.withTipForker ledgerDB $ \forker -> do
             st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState forker
 
+            -- A block that certifies an EB has an empty body. The transactions
+            -- that such a block puts on the chain are the transactions of the
+            -- EB, and the LeiosDb holds them. The forge thread of such a block
+            -- reads that closure, so time the read. A block that certifies no
+            -- EB skips the read, and its EB figures stay 0.
+            --
+            -- 'timed' forces its result to WHNF only, and
+            -- 'resolveLeiosClosure' deserialises each transaction lazily. So
+            -- this figure covers the two LeiosDb queries, and not the
+            -- deserialisation.
+            let mCertifiedEb = certifiedEbHash (parentAnnouncement st) blk
+            ((closureTxs, ebTxsBytes), durEbRead, mutEbRead, gcEbRead) <-
+              case mCertifiedEb of
+                Nothing -> pure (([], 0), 0, 0, 0)
+                Just ebHash -> timed $ readEbClosure leiosDb ebHash
+
+            -- The forge thread of a certifying block reads the ledger
+            -- values that the txs of the certified EB consume. Then
+            -- it applies the closure of that EB to 'st' (the ledger
+            -- state at the parent block) before the tick. Last it
+            -- ticks the result.
+            --
+            -- 'resolveAndApplyLeiosClosure' makes the value read and the
+            -- application. This pass measures each one, so each one has its own
+            -- columns. 'applyClosure' forces every tx. Its figure holds the
+            -- deserialisation that the LeiosDb read above left as thunks.
+            --
+            -- On a block that certifies no EB the closure is empty. The value
+            -- read then asks for no keys. 'applyClosure' returns 'st' unchanged.
+            (tables, durEbTableRead, mutEbTableRead, gcEbTableRead) <-
+              timed $ LedgerDB.forkerReadTables forker (closureKeySets closureTxs)
+            (ClosureApplied{caStateAfterEb, caClosureDiff}, durEbApply, mutEbApply, gcEbApply) <-
+              timed $ applyClosure lCfg closureTxs st tables
+
             -- time the suspected slow parts of the forge thread that created
             -- this block
             --
             -- Primary caveat: that thread's mempool may have had more transactions in it.
             let slot = blockSlot blk
+            -- The tick runs on the state after the EB, and the diff of the
+            -- closure goes in front of the diff of the tick. Both diffs are
+            -- then relative to the parent, which is where 'forkerReadTables'
+            -- below reads its values.
             (ticked, durTick, mutTick, gcTick) <-
               timed $
                 IOLike.evaluate $
-                  applyChainTick OmitLedgerEvents lCfg slot (ledgerState st)
+                  maybe id prependDiffs caClosureDiff $
+                    applyChainTick OmitLedgerEvents lCfg slot (ledgerState caStateAfterEb)
+            -- The forge thread of a certifying block calls
+            -- 'getSnapshotForNoCache'. See 'partitionMempool' in
+            -- Ouroboros.Consensus.NodeKernel.Forge, which makes both calls:
+            -- 'getSnapshotForNoCache' on the certifying branch, and
+            -- 'getSnapshotFor' on the other one.
+            --
+            -- Applying the EB closure changes neither
+            -- the tip hash nor the slot, so 'getSnapshotFor' treats its cache
+            -- as valid: it reuses the cached values, and it returns the cached
+            -- snapshot outright when the slot matches. Pick the call that the
+            -- forge thread makes.
+            let getSnapshot = case mCertifiedEb of
+                  Nothing -> Mempool.getSnapshotFor
+                  Just{} -> Mempool.getSnapshotForNoCache
             ((), durSnap, mutSnap, gcSnap) <- timed $ do
               snap <-
-                Mempool.getSnapshotFor mempool slot ticked $
+                getSnapshot mempool slot ticked $
                   fmap castLedgerTables . LedgerDB.forkerReadTables forker . castLedgerTables
 
               pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotStateHash snap `seq` ()
@@ -969,16 +1244,32 @@ reproMempoolForge numBlks env = do
               BlockMempoolAndForgeRepro
                 (blockNo blk)
                 slot
-                (length sizes)
-                (sum sizes)
-                durTick
-                mutTick
-                gcTick
-                durSnap
-                mutSnap
-                gcSnap
+                MempoolAndForgeRepro
+                  { numTxs = length sizes
+                  , txsSize = sum sizes
+                  , ebNumTxs = length closureTxs
+                  , ebTxsByteSize = SizeInBytes ebTxsBytes
+                  , durEbRead
+                  , mutEbRead
+                  , gcEbRead
+                  , durEbTableRead
+                  , mutEbTableRead
+                  , gcEbTableRead
+                  , durEbApply
+                  , mutEbApply
+                  , gcEbApply
+                  , durTick
+                  , mutTick
+                  , gcTick
+                  , durSnap
+                  , mutSnap
+                  , gcSnap
+                  }
 
           -- advance the ledger state to include this block
+          --
+          -- 'applyBlockAtTip' applies the EB closure on a certifying block, and
+          -- on that block alone.
           --
           -- TODO We could inline/reuse parts of the IsLedger ExtLedgerState
           -- instance here as an optimization that avoids repeating the
@@ -986,7 +1277,8 @@ reproMempoolForge numBlks env = do
           -- since it currently matches the call in the forging thread, which is
           -- the primary intention of this Analysis. Maybe GHC's CSE is already
           -- doing this sharing optimization?
-          LedgerDB.reapplyThenPushNOW intLedgerDB blk
+          (_, nextLedgerSt) <- applyBlockAtTip leiosDb LedgerReapply cfg ledgerDB blk
+          LedgerDB.push intLedgerDB nextLedgerSt
           LedgerDB.tryFlush ledgerDB
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain

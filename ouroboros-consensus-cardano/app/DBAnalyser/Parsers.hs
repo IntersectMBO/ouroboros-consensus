@@ -59,6 +59,21 @@ parseDBAnalyserConfig =
             , help "use v2 LSM backend"
             ]
       ]
+    <*> parseStubbedLeiosDb
+
+-- | Run with an empty in-memory LeiosDb, rather than the node's @leios.db@.
+parseStubbedLeiosDb :: Parser Bool
+parseStubbedLeiosDb =
+  switch $
+    mconcat
+      [ long "stubbed-leios-db"
+      , help $
+          "Use an empty in-memory LeiosDb, rather than the leios.db file under "
+            <> "the --db path. Pass this for a chain that holds no block with a "
+            <> "Leios certificate, and hence no endorser block to resolve. "
+            <> "Without this flag, the tool refuses to start when it finds no "
+            <> "such file."
+      ]
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =
