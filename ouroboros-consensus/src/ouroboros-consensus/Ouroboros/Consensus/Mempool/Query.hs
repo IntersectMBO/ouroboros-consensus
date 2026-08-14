@@ -1,4 +1,6 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Queries to the mempool
 module Ouroboros.Consensus.Mempool.Query
@@ -6,9 +8,14 @@ module Ouroboros.Consensus.Mempool.Query
   , implGetSnapshotForNoCache
   ) where
 
+import Control.Monad.Except (runExcept)
+import Data.Foldable (Foldable (foldMap', foldl'))
+import qualified Data.Set as Set
+import LeiosUtils.TimeBoundedLoop (iterateUntilOrTimeout')
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables, restrictValues', unionValues)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Impl.Common
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
@@ -94,26 +101,133 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
       -- have cached, then just return it.
       pure $ snapshotFromIS is
     else do
-      values <-
-        if canUseCache
-          -- We are looking for a snapshot at the same state ticked
-          -- to a different slot, so we can reuse the cached values
-          then pure (isTxValues is)
-          -- We are looking for a snapshot at a different state, so we
-          -- need to read the values from the ledgerdb.
-          else readUntickedTables (isTxKeys is)
-      pure $
-        computeSnapshot
-          capacityOverride
-          cfg
-          slot
-          ticked
-          values
-          (isLastTicketNo is)
-          (TxSeq.toList $ isTxs is)
+      resolveValues <-
+        return $
+          if canUseCache
+            -- We are looking for a snapshot at the same state ticked
+            -- to a different slot, so we can reuse the cached values
+            then mkResolveValues $ Left (isTxValues is)
+            -- We are looking for a snapshot at a different state, so we
+            -- need to read the values from the ledgerdb.
+            else
+              mkResolveValues $
+                Right
+                  readUntickedTables
+      computeSnapshot
+        resolveValues
+        cfg
+        slot
+        ticked
+        (isTxs is)
  where
   MempoolEnv
     { mpEnvStateVar = istate
     , mpEnvLedgerCfg = cfg
-    , mpEnvCapacityOverride = capacityOverride
     } = mpEnv
+
+computeSnapshot ::
+  forall blk m.
+  (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  LedgerConfig blk ->
+  SlotNo ->
+  TickedLedgerState blk DiffMK ->
+  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  m (MempoolSnapshot blk)
+computeSnapshot resolveValues cfg slot tickedStDiff txTickets = do
+  let !tickedSt = tickedStDiff `withLedgerTables` emptyLedgerTables
+
+  (_, _, _, !applied, !txIds) <-
+    iterateUntilOrTimeout'
+      0.1
+      (\(_, txsToApply, _, _, _) -> null txsToApply)
+      (snapshotStep resolveValues cfg slot tickedStDiff)
+      (tickedSt, txTickets, [], TxSeq.Empty, Set.empty)
+
+  let tip = castPoint $ getTip tickedStDiff
+  return $ snapshot slot tip txIds applied
+
+type SnapshotStepState blk =
+  ( TickedLedgerState blk ValuesMK
+  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
+  , [Invalidated blk]
+  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
+  , Set.Set (GenTxId blk)
+  )
+
+snapshotStep ::
+  forall blk m.
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk), IOLike m) =>
+  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  LedgerConfig blk ->
+  SlotNo ->
+  TickedLedgerState blk DiffMK ->
+  SnapshotStepState blk ->
+  m (SnapshotStepState blk)
+snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedSt, !txsToApply, !unapplicable, !applied, !appliedTxIds) = do
+  let (!tickets, !txsToApply') = TxSeq.take 100 txsToApply
+      !inputKeys =
+        foldMap'
+          (\(!tkt) -> getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx $ tkt)
+          tickets
+
+  -- TODO(bladyjoker): We're fetching inputsKeys many times, introduce a cache
+  -- TODO(bladyjoker): We don't actually need to get values, we just need to check whether the keys are still there. Much cheaper.
+  !inputValues <- resolveValues inputKeys
+
+  let !tickedSt' =
+        tickedSt
+          `withLedgerTables` ltliftA2
+            unionValues
+            (projectLedgerTables tickedSt)
+            (projectLedgerTables (applyMempoolDiffs inputValues inputKeys tickedStDiffBase))
+
+      (!tickedSt'', !unapplicable', !applied', !appliedTxIds') =
+        reapplyTxs' cfg slot tickets tickedSt' applied
+  _ <- evaluate $ projectLedgerTables tickedSt''
+  return
+    ( tickedSt''
+    , txsToApply'
+    , unapplicable <> reverse unapplicable'
+    , applied'
+    , appliedTxIds `Set.union` appliedTxIds'
+    )
+
+type ReApplyState blk =
+  ( TickedLedgerState blk ValuesMK
+  , [Invalidated blk]
+  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
+  , Set.Set (GenTxId blk)
+  )
+
+reapplyTxs' ::
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  LedgerConfig blk ->
+  SlotNo ->
+  [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
+  TickedLedgerState blk ValuesMK ->
+  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  ReApplyState blk
+reapplyTxs' cfg slot toApplyTickets tickedSt applied0 =
+  foldl'
+    ( \(tickedSt', unapplicable, applied, txIds) !ticket ->
+        let tx = validatedTx (TxSeq.txTicketTx ticket)
+         in case runExcept (reapplyTx cfg slot tx tickedSt') of
+              Left err -> (tickedSt', Invalidated tx err : unapplicable, applied, txIds)
+              Right !tickedSt'' ->
+                let !applied' = applied TxSeq.:> ticket
+                    !txIds' = Set.insert (txId (txForgetValidated tx)) txIds
+                 in (tickedSt'', unapplicable, applied', txIds')
+    )
+    (tickedSt, [], applied0, Set.empty)
+    toApplyTickets
+
+mkResolveValues ::
+  (Monad m, LedgerSupportsMempool blk) =>
+  Either
+    (LedgerTables (LedgerState blk) ValuesMK)
+    (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  LedgerTables (LedgerState blk) KeysMK ->
+  m (LedgerTables (LedgerState blk) ValuesMK)
+mkResolveValues (Left cachedValues) keys = return $ restrictValues' cachedValues keys
+mkResolveValues (Right readTables) keys = readTables keys
