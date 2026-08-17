@@ -27,7 +27,6 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -134,7 +133,6 @@ data NodeLifecycle blk m = NodeLifecycle
 mkChainDb ::
   IOLike m =>
   ( LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
@@ -187,7 +185,6 @@ mkChainDb resources = do
 restoreNode ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
@@ -217,7 +214,6 @@ lifecycleStart ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk

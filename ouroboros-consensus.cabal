@@ -189,6 +189,7 @@ library
     Ouroboros.Consensus.Ledger.Dual
     Ouroboros.Consensus.Ledger.Extended
     Ouroboros.Consensus.Ledger.Inspect
+    Ouroboros.Consensus.Ledger.Peras
     Ouroboros.Consensus.Ledger.Query
     Ouroboros.Consensus.Ledger.Query.Version
     Ouroboros.Consensus.Ledger.SupportsMempool
@@ -237,6 +238,7 @@ library
     Ouroboros.Consensus.NodeId
     Ouroboros.Consensus.Peras.Cert.Class
     Ouroboros.Consensus.Peras.Cert.Inclusion
+    Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Context
     Ouroboros.Consensus.Peras.Crypto.BLS
@@ -249,6 +251,7 @@ library
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Adapter
     Ouroboros.Consensus.Peras.Voting.Rules
+    Ouroboros.Consensus.Peras.Voting.Trace
     Ouroboros.Consensus.Peras.Voting.View
     Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract

@@ -24,7 +24,10 @@ import Ouroboros.Consensus.Block (Point (..), WithOrigin (..))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BoostedBlock
   , IsPerasCert (..)
+  , PerasCertMaxRounds (..)
+  , PerasParams (..)
   , PerasRoundNo (..)
+  , defaultPerasParams
   )
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( LatestCertOnChainView (..)
@@ -32,11 +35,6 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
   , PerasCertInclusionRulesDecision (..)
   , PerasCertInclusionView (..)
   , needCert
-  )
-import Ouroboros.Consensus.Peras.Params
-  ( PerasCertMaxRounds (..)
-  , PerasParams (..)
-  , defaultPerasParams
   )
 import Ouroboros.Consensus.Util.Pred (Evidence (..))
 import Test.Tasty (TestTree, testGroup)
@@ -87,7 +85,7 @@ data PerasCertInclusionRulesDecisionModel
 --
 -- NOTE: this predicate could be lifted directly from the agda specification.
 needCertModel ::
-  PerasCertInclusionView TestCert TestBlk ->
+  PerasCertInclusionView TestCert TestBlock ->
   PerasCertInclusionRulesDecisionModel
 needCertModel
   PerasCertInclusionView
@@ -265,13 +263,6 @@ genTestCert roundNo = do
       { tcRoundNo = roundNo'
       }
 
--- * Mocked block type
-
--- | A mocked block type for testing
-data TestBlk
-  = TestBlk
-  deriving (Show, Eq, Generic)
-
 -- * Certificate and inclusion views
 
 genLatestCertSeen :: PerasRoundNo -> Gen (LatestCertSeenView TestCert)
@@ -301,7 +292,7 @@ genPerasCertIds currRoundNo = do
       then Set.singleton (currRoundNo - 2)
       else Set.empty
 
-genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlk)
+genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlock)
 genPerasCertInclusionView = do
   perasParams <- genPerasParams
   currRoundNo <- genPerasRoundNo

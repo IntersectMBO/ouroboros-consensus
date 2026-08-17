@@ -61,7 +61,6 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , takeVolatileSuffix
@@ -406,12 +405,12 @@ waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
     result@Right{} -> pure result
 
 getLatestPerasCertOnChainRound ::
-  (IOLike m, LedgerSupportsPeras blk) =>
+  IOLike m =>
   ChainDbEnv m blk ->
   STM m (Maybe PerasRoundNo)
-getLatestPerasCertOnChainRound CDB{..} = do
-  volatileLedger <- ledgerState <$> LedgerDB.getVolatileTip cdbLedgerDB
-  pure (getLatestPerasCertRound volatileLedger)
+getLatestPerasCertOnChainRound _ = do
+  -- Placeholder until we finish rewiring this into the extended ledger state
+  pure Nothing
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent
