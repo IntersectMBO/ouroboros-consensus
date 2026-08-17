@@ -18,6 +18,7 @@ import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Compactible (toCompact)
 import Cardano.Ledger.Keys (VKey (..), hashKey)
 import Cardano.Ledger.State (IndividualPoolStake (..))
+import Data.Maybe.Strict (StrictMaybe (..))
 import Cardano.Prelude
   ( ExitCode (..)
   , exitWith
@@ -95,7 +96,7 @@ validate context MutatedHeader{header, mutation} =
     } = context
   -- TODO: get these from the context
   coin = fromJust . toCompact . Coin
-  ownsAllStake vrfKey = IndividualPoolStake 1 (coin 1) vrfKey
+  ownsAllStake vrfKey = IndividualPoolStake 1 (coin 1) vrfKey SNothing
   poolDistr = Map.fromList [(poolId, ownsAllStake hashVRFKey)]
   poolId = hashKey $ VKey $ deriveVerKeyDSIGN coldSignKey
   hashVRFKey = hashVerKeyVRF @StandardCrypto $ deriveVerKeyVRF vrfSignKey
