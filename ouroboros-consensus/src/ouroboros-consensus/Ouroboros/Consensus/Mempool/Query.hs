@@ -134,25 +134,28 @@ computeSnapshot ::
   TickedLedgerState blk DiffMK ->
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   m (MempoolSnapshot blk)
-computeSnapshot resolveValues cfg slot tickedStDiff txTickets = do
+computeSnapshot resolveValues cfg slot tickedStDiff txsToApply = do
   let !tickedSt = tickedStDiff `withLedgerTables` emptyLedgerTables
 
-  (_, _, _, !applied, !txIds) <-
+  (_, _, _, !appliedTxs, !appliedTxIds) <-
     iterateUntilOrTimeout'
       0.1
-      (\(_, txsToApply, _, _, _) -> null txsToApply)
+      (\(_, txsToApply', _, _, _) -> null txsToApply')
       (snapshotStep resolveValues cfg slot tickedStDiff)
-      (tickedSt, txTickets, [], TxSeq.Empty, Set.empty)
+      (tickedSt, txsToApply, [], TxSeq.Empty, Set.empty)
 
-  let tip = castPoint $ getTip tickedStDiff
-  return $ snapshot slot tip txIds applied
+  let !tip = castPoint $ getTip tickedStDiff
+  return $ snapshot slot tip appliedTxIds appliedTxs
+
+txsPerStep :: Int
+txsPerStep = 100
 
 type SnapshotStepState blk =
-  ( TickedLedgerState blk ValuesMK
-  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
-  , [Invalidated blk]
-  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
-  , Set.Set (GenTxId blk)
+  ( TickedLedgerState blk ValuesMK -- ledger state to apply on
+  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) -- txs to apply
+  , [Invalidated blk] -- unapplicable txs
+  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) -- applied txs
+  , Set.Set (GenTxId blk) -- applied tx ids
   )
 
 snapshotStep ::
@@ -164,63 +167,75 @@ snapshotStep ::
   TickedLedgerState blk DiffMK ->
   SnapshotStepState blk ->
   m (SnapshotStepState blk)
-snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedSt, !txsToApply, !unapplicable, !applied, !appliedTxIds) = do
-  let (!tickets, !txsToApply') = TxSeq.take 100 txsToApply
-      !inputKeys =
+snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedSt, !txsToApply, !unapplicableTxs, !appliedTxs, !appliedTxIds) = do
+  let (!txsToApplyStep, !txsToApplyRest) = TxSeq.take txsPerStep txsToApply
+      !inputKeysStep =
         foldMap'
-          (\(!tkt) -> getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx $ tkt)
-          tickets
+          (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
+          txsToApplyStep
 
-  -- TODO(bladyjoker): We're fetching inputsKeys many times, introduce a cache
-  -- TODO(bladyjoker): We don't actually need to get values, we just need to check whether the keys are still there. Much cheaper.
-  !inputValues <- resolveValues inputKeys
+  -- TODO(bladyjoker): We're fetching inputsKeys many times, can we introduce a cache? Additionally, we don't actually need to get values,
+  -- we just need to check whether the keys are still there? Should be much cheaper.
+  -- Javier made an important point, we can for UTxOs but not for "updateable state variables" like Accounts and such. So doing this here is
+  -- not future proof as it assumes UTxO like state variables.
+  -- So there's opportunities here to minimize disk access significanly, but to do it in a future proof manner we need to introduce and manage
+  -- distinction between updateable and non-updateable state variables.
+  -- In other words, state variables can be: created, read, updated, deleted...CRUD
+  -- However, some variables like UTxOs can only be: created, read and deleted...CRD
+  -- Whereas, others like Accounts can be: created, read, updated and deleted...CRUD
+  -- Perhaps, there're other types in Cardano?
+  -- Sounds like working with this distinction could be an optimization point!
+  !inputValuesStep <- resolveValues inputKeysStep
 
-  let !tickedSt' =
-        tickedSt
-          `withLedgerTables` ltliftA2
-            unionValues
-            (projectLedgerTables tickedSt)
-            (projectLedgerTables (applyMempoolDiffs inputValues inputKeys tickedStDiffBase))
+  let
+    -- TODO(bladyjoker): Please review. The idea is to construct the LedgerState with values that are necessary for applying the transactions in this step.
+    -- The `applyMempoolDiffs` uses the base LedgerState that contains diffs (I suspect from ticking? What values are affected by ticking?)
+    -- and builds up a LedgerState with values for this step only.
+    -- The lhs starts empty so it begins with only the rhs, after that because of the union the lhs entries override whatever is conflicting in rhs.
+    !inputValuesStep' =
+      ltliftA2
+        unionValues
+        (projectLedgerTables tickedSt)
+        (projectLedgerTables (applyMempoolDiffs inputValuesStep inputKeysStep tickedStDiffBase))
+    !tickedStBeforeStep = tickedSt `withLedgerTables` inputValuesStep'
 
-      (!tickedSt'', !unapplicable', !applied', !appliedTxIds') =
-        reapplyTxs' cfg slot tickets tickedSt' applied
-  _ <- evaluate $ projectLedgerTables tickedSt''
+    (!tickedStAfterStep, !unapplicableTxsStep, !appliedTxsStep) = reapplyTxs' cfg slot txsToApplyStep tickedStBeforeStep
+
+  -- TODO(bladyjoker): Keep? _ <- evaluate $ projectLedgerTables tickedStAfterStep
+
   return
-    ( tickedSt''
-    , txsToApply'
-    , unapplicable <> reverse unapplicable'
-    , applied'
-    , appliedTxIds `Set.union` appliedTxIds'
+    ( tickedStAfterStep
+    , txsToApplyRest
+    , unapplicableTxs <> reverse unapplicableTxsStep
+    , appliedTxs `TxSeq.append` appliedTxsStep
+    , appliedTxIds
+        `Set.union` ( Set.fromList $
+                        txId . txForgetValidated . validatedTx . TxSeq.txTicketTx <$> TxSeq.toList appliedTxsStep
+                    )
     )
 
-type ReApplyState blk =
-  ( TickedLedgerState blk ValuesMK
-  , [Invalidated blk]
-  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
-  , Set.Set (GenTxId blk)
-  )
-
 reapplyTxs' ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  LedgerSupportsMempool blk =>
   LedgerConfig blk ->
   SlotNo ->
   [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
   TickedLedgerState blk ValuesMK ->
-  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
-  ReApplyState blk
-reapplyTxs' cfg slot toApplyTickets tickedSt applied0 =
+  ( TickedLedgerState blk ValuesMK
+  , [Invalidated blk]
+  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
+  )
+reapplyTxs' cfg slot toApplyTxs tickedSt =
   foldl'
-    ( \(tickedSt', unapplicable, applied, txIds) !ticket ->
-        let tx = validatedTx (TxSeq.txTicketTx ticket)
+    ( \(!tickedSt', !unapplicableTxs, !appliedTxs) !tkt ->
+        let tx = validatedTx (TxSeq.txTicketTx tkt)
          in case runExcept (reapplyTx cfg slot tx tickedSt') of
-              Left err -> (tickedSt', Invalidated tx err : unapplicable, applied, txIds)
+              Left !err -> (tickedSt', Invalidated tx err : unapplicableTxs, appliedTxs)
               Right !tickedSt'' ->
-                let !applied' = applied TxSeq.:> ticket
-                    !txIds' = Set.insert (txId (txForgetValidated tx)) txIds
-                 in (tickedSt'', unapplicable, applied', txIds')
+                let !appliedTxs' = appliedTxs TxSeq.:> tkt
+                 in (tickedSt'', unapplicableTxs, appliedTxs')
     )
-    (tickedSt, [], applied0, Set.empty)
-    toApplyTickets
+    (tickedSt, [], TxSeq.Empty)
+    toApplyTxs
 
 mkResolveValues ::
   (Monad m, LedgerSupportsMempool blk) =>

@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Mempool.TxSeq
   , toTuples
   , zeroTicketNo
   , take
+  , append
 
     -- * Reference implementations for testing
   , splitAfterTxSizeSpec
@@ -287,3 +288,6 @@ take = go []
   go acc 0 rest = (reverse acc, rest)
   go acc _ Empty = (reverse acc, Empty)
   go acc n (t :< rest) = go (t : acc) (n - 1) rest
+
+append :: Measure sz => TxSeq sz tx -> TxSeq sz tx -> TxSeq sz tx
+append (TxSeq l) (TxSeq r) = TxSeq (l FingerTree.>< r)
