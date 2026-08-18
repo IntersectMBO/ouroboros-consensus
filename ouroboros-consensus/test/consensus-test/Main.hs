@@ -28,6 +28,7 @@ import qualified Test.LeiosDemoLogic (tests)
 import qualified Test.LeiosDemoLogic.Announcements (tests)
 import qualified Test.LeiosDemoTypes (tests)
 import qualified Test.LeiosUtils.CallTrace (tests)
+import qualified Test.LeiosUtils.TimeBoundedLoop (tests)
 import qualified Test.LeiosVoteState (tests)
 import Test.Tasty
 import Test.Util.TestEnv
@@ -86,5 +87,6 @@ tests =
         , Test.LeiosDemoLogic.Announcements.tests
         , Test.LeiosVoteState.tests
         , Test.LeiosUtils.CallTrace.tests
+        , Test.LeiosUtils.TimeBoundedLoop.tests
         ]
     ]
