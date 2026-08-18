@@ -253,7 +253,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LedgerDB (OCINStaleness (..), ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -1644,7 +1644,7 @@ update ::
   OneEraValidateView xs ->
   SlotNo ->
   Ticked (HardForkChainDepState xs) ->
-  Except (HardForkValidationErr xs) ()
+  Except (HardForkValidationErr xs) OCINStaleness
 update
   HardForkConsensusConfig{..}
   (OneEraValidateView view)
@@ -1675,7 +1675,7 @@ updateEra ::
   Index xs blk ->
   WrapPartialConsensusConfig blk ->
   Product WrapValidateView (Ticked :.: WrapChainDepState) blk ->
-  K (Except (HardForkValidationErr xs) ()) blk
+  K (Except (HardForkValidationErr xs) OCINStaleness) blk
 updateEra
   ei
   slot

@@ -116,7 +116,7 @@ data ErrAnnouncement invalidity
     -- what a client tolerates from an upstream peer). Unlike 'ErrInvalid', this
     -- verdict depends on the wall clock rather than on the announcement itself,
     -- so 'onAnnouncement' cannot decide it directly; it is signalled by the
-    -- validation callback returning @Left Nothing@ (see 'onAnnouncement').
+    -- validation callback returning 'VerdictTooOld' (see 'onAnnouncement').
     ErrTooOld
   deriving Show
 
@@ -158,18 +158,32 @@ extendLive elId anc st =
 data TraceLeiosNotifyPeerEvent anc
   = TracePeerAnnouncement !(ElState anc)
 
+-- | The verdict of 'onAnnouncement'\'s validation callback
+data AnnouncementVerdict invalidity validated
+  = -- | Reject: the election's wall-clock age exceeds what a client tolerates
+    --
+    -- Raised as 'ErrTooOld'. The callback owns this check because only it holds
+    -- the wall clock.
+    VerdictTooOld
+  | -- | Reject: the announcement is invalid; raised as 'ErrInvalid'
+    VerdictInvalid !invalidity
+  | -- | Accept from the peer, but neither process nor relay the announcement
+    --
+    -- Currently only a stale-OCIN announcement (see
+    -- 'LeiosDemoLogic.Announcements.Validate.validateAnnouncementHeader').
+    VerdictIgnore
+  | -- | Accept, process, and relay
+    VerdictProcess !validated
+
 onAnnouncement ::
   (Eq anc, Monad m) =>
   Tracer m (TraceLeiosNotifyPeerEvent anc) ->
   (anc -> ElId) ->
   -- | How to validate the announcement
   --
-  -- Return @Left Nothing@ when the announcement violates the too-old
-  -- restriction (its election's wall-clock age exceeds what a client
-  -- tolerates); 'onAnnouncement' then raises 'ErrTooOld'. This callback owns
-  -- that check because only it holds the wall clock. Return @Left (Just inv)@
-  -- for any other rejection (raised as 'ErrInvalid'), and @Right@ when valid.
-  (anc -> m (Either (Maybe invalidity) validated)) ->
+  -- The peer is disconnected only for a rejecting verdict; both accepting
+  -- verdicts also update its per-peer dedup state.
+  (anc -> m (AnnouncementVerdict invalidity validated)) ->
   -- | How this central logic should react to a new announcement from
   -- this peer
   --
@@ -187,9 +201,12 @@ onAnnouncement tracer getEl validate process st anc = do
   -- do the more expensive validation only after the trivial
   -- counting checks
   lift (validate anc) >>= \case
-    Left Nothing -> throwError ErrTooOld
-    Left (Just err) -> throwError $ ErrInvalid err
-    Right x -> do
+    VerdictTooOld -> throwError ErrTooOld
+    VerdictInvalid err -> throwError $ ErrInvalid err
+    -- The peer's dedup state was already updated by 'extendLive' above, so just
+    -- keep it.
+    VerdictIgnore -> pure st'
+    VerdictProcess x -> do
       lift $ process anc x
       pure st'
 
