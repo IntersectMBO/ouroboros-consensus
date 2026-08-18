@@ -24,6 +24,23 @@ active-repositories:
 
 packages: .
 
+-- TEMPORARY: none of these packages touch `memory`/`crypton` directly, they
+-- just haven't widened their cardano-crypto-class upper bound past <2.6 yet,
+-- so relaxing the bound against their already-published code is safe (unlike
+-- the cardano-ledger-* packages, which would drag in an unreleased, version-
+-- skewed slice of that monorepo if done via a source-repository-package
+-- instead). Remove alongside the source-repository-package at the bottom
+-- of this file once upstream catches up.
+allow-newer:
+  cardano-ledger-mary:cardano-crypto-class,
+  cardano-ledger-shelley:cardano-crypto-class,
+  cardano-ledger-binary:cardano-crypto-class,
+  cardano-ledger-core:cardano-crypto-class,
+  cardano-protocol:cardano-crypto-class,
+  cardano-protocol-tpraos:cardano-crypto-class,
+  kes-agent:cardano-crypto-class,
+  kes-agent-crypto:cardano-crypto-class,
+
 -- We want to always build the test-suites and benchmarks
 tests: true
 benchmarks: true
@@ -46,3 +63,17 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+-- TEMPORARY: pulls in cardano-ledger PR #5999 (erikd/ram, not yet merged)
+-- https://github.com/IntersectMBO/cardano-ledger/pull/5999
+-- which switches cardano-crypto-wrapper from `memory` to `ram` (crypton
+-- >=1.1's replacement for `memory`), so it builds against crypton >=1.1.
+-- This is the only package in the chain that needs an actual source
+-- change; the allow-newer entries above cover everything else, which just
+-- has an overly conservative cardano-crypto-class upper bound. Remove once
+-- this PR (or an equivalent fix) is released.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  tag: 6def84b5ae0033053feda72f32b1dac41c812e0e
+  subdir: eras/byron/crypto
