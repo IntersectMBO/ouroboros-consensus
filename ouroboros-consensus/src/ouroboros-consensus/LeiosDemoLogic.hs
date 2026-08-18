@@ -31,7 +31,6 @@ import qualified Data.DList as DList
 import Data.Functor (void, (<&>))
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import qualified Data.IntSet as IntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -826,9 +825,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
               pure (fetchArrivalEvicted ebBytesSize', ms)
         let !outstanding' =
               outstandingCleaned
-                { Leios.blockingPerEb =
-                    Map.insert point (IntMap.size misses) (Leios.blockingPerEb outstandingCleaned)
-                , Leios.missingEbTxs =
+                { Leios.missingEbTxs =
                     Map.insert point misses (Leios.missingEbTxs outstandingCleaned)
                 , Leios.reverseEbIndexByTx =
                     IntMap.foldrWithKey
@@ -1031,32 +1028,20 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
             txHashes
     case source of
       -- A forge answered no request and holds the whole closure, so there is no
-      -- peer budget to refund and no 'blockingPerEb' beat to record.
+      -- peer budget to refund
       ForgedTxs{} ->
         pure $
           outstanding
             { Leios.missingEbTxs = missingEbTxs'
             , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
             }
-      ReceivedTxsFrom peerId (MkLeiosBlockTxsRequest point bitmaps _) -> do
-        let nextOffset = \case
-              [] -> Nothing
-              (idx, bitmap) : k -> case popLeftmostOffset bitmap of
-                Nothing -> nextOffset k
-                Just (i, bitmap') -> Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
-            offsets = unfoldr nextOffset bitmaps
-            -- Remove this peer from each delivered tx's requested-peers set.
+      ReceivedTxsFrom peerId _req -> do
+        let -- Remove this peer from each delivered tx's requested-peers set.
             requestedTxPeers' =
               V.foldl'
                 (\acc txHash -> Map.update (delIf Set.null . Set.delete peerId) txHash acc)
                 (Leios.requestedTxPeers outstanding)
                 txHashes
-            offsetsSet = IntSet.fromList offsets
-            -- the requests this MsgLeiosBlockTxs was the first to resolve for this
-            -- point (kept only to keep the best-effort 'blockingPerEb' roughly current)
-            beatOtherPeers =
-              (`IntMap.restrictKeys` offsetsSet) $
-                Map.findWithDefault IntMap.empty point (Leios.missingEbTxs outstanding)
         -- 'refundTxRequest' reverses this peer's per-request accounting (but skips
         -- it if the peer was already cancelled in bulk by a disconnect); the global
         -- state below is updated unconditionally, since we did receive the txs.
@@ -1065,17 +1050,6 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
             outstanding
               { Leios.missingEbTxs = missingEbTxs'
               , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
-              , Leios.blockingPerEb =
-                  if IntMap.null beatOtherPeers
-                    then Leios.blockingPerEb outstanding
-                    else
-                      Map.alter
-                        ( \case
-                            Nothing -> Nothing
-                            Just x -> delIf (== 0) $ x - IntMap.size beatOtherPeers
-                        )
-                        point
-                        (Leios.blockingPerEb outstanding)
               }
   void $ MVar.tryPutMVar readyVar ()
   case source of

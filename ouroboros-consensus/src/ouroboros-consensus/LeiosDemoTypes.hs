@@ -446,30 +446,6 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- 'missingEbTxs' of every point that referenced it -- so the two stay in step.
   --
   -- TODO this is far too big for the heap
-  , blockingPerEb :: !(Map LeiosPoint Int)
-  -- ^ How many txs of each EB are not yet in the @txs@ table
-  --
-  -- These missing txs are blocking the node from sending @MsgLeiosBlockTxsOffer@
-  -- to its downstream peers.
-  --
-  -- It's different from 'missingEbTxs' in two ways.
-  --
-  -- * The heap footprint of 'blockingPerEb' doesn't scale with the number of
-  --   EbTxs.
-  --
-  -- * 'blockingPerEb' is only decremented when txs are actually inserted
-  --   into the DB (via @MsgLeiosBlockTxs@ handling).
-  --
-  -- TODO: 'blockingPerEb' can go permanently stale for txs shared across EBs.
-  -- 'processLeiosBlockTxs' only decrements the entry for the EB it was requesting;
-  -- a tx that also belongs to another EB B can reach the DB via a fetch
-  -- attributed to a different EB, so B never fetches it itself -- and B's
-  -- 'blockingPerEb' is never decremented for that tx and stays > 0. This is
-  -- currently harmless only because nothing reads 'blockingPerEb' as a gate: the
-  -- downstream @MsgLeiosBlockTxsOffer@ is actually driven by the DB emitting
-  -- 'AcquiredEbTxs' for every EB its @completed@ computation finds finished
-  -- (cross-EB aware), not by this field. Before using 'blockingPerEb' to gate
-  -- anything, reconcile it against shared-tx arrivals (or derive it from the DB).
   }
 
 -- | The empty outstanding state, given the slot it has already been pruned up
@@ -490,7 +466,6 @@ emptyLeiosOutstanding prunedSlot =
     , requestedBytesSize = 0
     , missingEbTxs = Map.empty
     , reverseEbIndexByTx = Map.empty
-    , blockingPerEb = Map.empty
     }
 
 -- | Per-EB state tracked in 'ebState'
@@ -649,8 +624,6 @@ prettyLeiosOutstanding x =
       , "requestedBytesSize = " ++ show requestedBytesSize
       , "missingEbTxs = "
           ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs]
-      , "blockingPerEb = "
-          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show c) | (k, c) <- Map.toList blockingPerEb]
       , ""
       ]
  where
@@ -663,7 +636,6 @@ prettyLeiosOutstanding x =
     , requestedBytesSizePerPeer
     , requestedBytesSize
     , missingEbTxs
-    , blockingPerEb
     } = x
 
 -- TODO which of these limits are allowed to be exceeded by at most one
