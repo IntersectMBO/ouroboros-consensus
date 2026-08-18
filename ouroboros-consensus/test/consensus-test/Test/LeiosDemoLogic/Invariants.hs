@@ -12,12 +12,11 @@
 -- 'nullLeiosTxCache', and plain 'MVar's — then asserts that a state invariant
 -- holds after every step.
 --
--- NOTE. This test suite initially exists as a specific regression tests: every
--- tx tracked in 'Leios.missingEbTxs' must still be resolvable in
--- 'Leios.reverseEbIndexByTx' (same keying 'leiosFetchLogicIteration' relies
--- on). We check it structurally after each command, and — belt and suspenders —
--- force a 'Decide' through the real fetch logic so a stray @impossible!@
--- surfaces even if the structural check missed a shape.
+-- NOTE. The EbTxs side of the fetch logic is being rewritten from scratch, so the
+-- old missing-tx \/ reverse-index regression is gone. What remains checks the
+-- EB-body side: after each command the 'ebState' reverse-index invariant must
+-- hold, and — belt and suspenders — a 'Decide' is forced through the real fetch
+-- logic so a stray @impossible!@ surfaces.
 --
 -- NOTE. A second regression lives here too: the fetch logic must never request
 -- an EB body it already holds. That storm — a held body being re-listed and
@@ -41,15 +40,13 @@ import Control.Monad.Class.MonadTest (exploreRaces)
 import Control.Monad.Class.MonadThrow (SomeException, try)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
-import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import qualified Data.DList as DList
-import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
-import Data.Word (Word16, Word64)
+import Data.Void (Void, absurd)
 import LeiosDemoDb (withLeiosDb)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
@@ -67,7 +64,6 @@ import LeiosDemoTypes
   ( BytesSize
   , EbHash
   , LeiosBlockRequest (..)
-  , LeiosBlockTxsRequest (..)
   , LeiosEb (..)
   , LeiosOutstanding (..)
   , LeiosPeerVars
@@ -99,14 +95,8 @@ tests =
     "LeiosDemoLogic.Invariants"
     [ testGroup
         "curated sequences"
-        [ testCase "same EB hash at two slots: delivery clears both" $
-            runCmds reproMultiSlot @?= Right ()
-        , testCase "tx shared across two EBs: delivery discharges both" $
-            runCmds reproSharedTx @?= Right ()
-        , testCase "forge purges a body it already holds (offered first)" $
+        [ testCase "forge purges a body it already holds (offered first)" $
             runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
-        , testCase "forge discharges a tx a peer EB still needs" $
-            runCmds reproForgeSharedTx @?= Right ()
         ]
     , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
         let h = hashLeiosEb (ebOf [0, 1])
@@ -150,7 +140,7 @@ tests =
         Map.lookup hA (Leios.reverseSlotIndexByEbHash o) @?= Just (NESet.singleton (SlotNo 10))
         Map.lookup hB (Leios.reverseSlotIndexByEbHash o) @?= Nothing
     , testProperty
-        "missingEbTxs stays in sync with reverseEbIndexByTx across arbitrary sequences"
+        "ebState stays in sync with ebsPerMaxAnnouncementSlot across arbitrary sequences"
         prop_invariants
     , testProperty
         "the fetch logic never requests an already-held EB body"
@@ -176,8 +166,9 @@ data Cmd
     Offer TestEb Word
   | -- | @processLeiosBlock@: the EB body arrives for that point.
     ArriveBody TestEb Word
-  | -- | @processLeiosBlockTxs@: deliver the tx at this /index within the EB/.
-    ArriveTx TestEb Word Int
+  | -- | Disarmed: the EbTxs side is being rewritten from scratch, so tx delivery
+    -- has no command for now (uninhabited).
+    ArriveTx Void
   | -- | @leiosFetchLogicIteration@ at this current slot.
     Decide Word
   | -- | The forge produces this EB: drives 'processLeiosBlock'/'processLeiosBlockTxs'
@@ -276,15 +267,7 @@ applyCmd conn txCache kv peerVars peerId = \case
         req = MkLeiosBlockRequest (pointOf ids slot) (leiosEbBytesSize eb)
     processLeiosBlock nullTracer nullTracer kv txCache conn (ReceivedBlockFrom peerId req) eb
     pure []
-  ArriveTx ids slot idx -> do
-    let txId = ids !! idx
-        req =
-          MkLeiosBlockTxsRequest
-            (pointOf ids slot)
-            (offsetsToBitmaps [idx])
-            (V.singleton (txHashOf txId))
-    processLeiosBlockTxs nullTracer nullTracer kv txCache conn (ReceivedTxsFrom peerId req) (V.singleton (leiosTxOf txId))
-    pure []
+  ArriveTx v -> absurd v
   Forge ids slot -> do
     let eb = ebOf ids
         point = pointOf ids slot
@@ -310,13 +293,12 @@ applyCmd conn txCache kv peerVars peerId = \case
     let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
     pure (filter (\h -> Set.member h held) (ebBodyRequestHashes decs))
 
--- | Every EbHash currently referenced by the outstanding state (bodies + txs),
--- as an all-offering peer's body\/closure sets.
+-- | Every EbHash currently referenced by the outstanding state (bodies only, now
+-- that the EbTxs side is disarmed), as an all-offering peer's body\/closure sets.
 referencedEbs :: LeiosOutstanding Int -> Set.Set EbHash
 referencedEbs o =
   Set.fromList $
     map (.pointEbHash) (Map.keys (Leios.missingEbBodies o))
-      <> map (.pointEbHash) (Map.keys (Leios.missingEbTxs o))
 
 -- | Force the decision structure, including each tx request's resolved offset
 -- (the @goTx2@ lookup), to a scalar.
@@ -343,22 +325,12 @@ ebBodyRequestHashes (MkLeiosFetchDecisions m) =
 -- The invariant
 ------------------------------------------------------------
 
--- | Every tx tracked as missing must be resolvable in the reverse index at the
--- exact (EbHash, slot, offset) 'go1'/'goTx2' will look it up by. Its violation
--- is what @impossible! leiosFetchLogicIteration go1@ reports.
+-- | 'ebsPerMaxAnnouncementSlot' must be the exact inverse of the greatest-slot
+-- field of 'ebState' (the reverse index 'pruneOutstandingToImmTip' prunes by).
+--
+-- (The old missing-tx \/ reverse-index invariant is gone with the EbTxs rewrite.)
 checkInvariant :: LeiosOutstanding Int -> Either String ()
-checkInvariant o = do
-  -- Every tx tracked as missing must be resolvable in the reverse index.
-  case
-    [ msg
-    | (p, txs) <- Map.toList (Leios.missingEbTxs o)
-    , (off, (txHash, _sz)) <- IntMap.toList txs
-    , Left msg <- [resolvable p off txHash]
-    ] of
-    [] -> Right ()
-    (msg : _) -> Left msg
-  -- 'ebsPerMaxAnnouncementSlot' must be the exact inverse of the greatest-slot
-  -- field of 'ebState' (the reverse index 'pruneOutstandingToImmTip' prunes by).
+checkInvariant o =
   if Leios.ebsPerMaxAnnouncementSlot o == inverseOfMax
     then Right ()
     else
@@ -367,48 +339,16 @@ checkInvariant o = do
             <> show (Leios.ebsPerMaxAnnouncementSlot o, inverseOfMax)
         )
  where
-  rev = Leios.reverseEbIndexByTx o
   inverseOfMax =
     Map.fromListWith
       NESet.union
       [ (Leios.ebStateMaxSlot s, NESet.singleton h)
       | (h, s) <- Map.toList (Leios.ebState o)
       ]
-  resolvable p off txHash =
-    case Map.lookup txHash rev of
-      Nothing ->
-        Left ("missingEbTxs tx absent from reverseEbIndexByTx: " <> show (p.pointSlotNo, off))
-      Just ebm -> case Map.lookup (pointEbHash p) ebm of
-        Nothing -> Left ("reverseEbIndexByTx lacks this EB for a missing tx: " <> show p.pointSlotNo)
-        Just (slots, off', _sz')
-          | p.pointSlotNo `NESet.member` slots && off' == off -> Right ()
-          | otherwise -> Left ("reverseEbIndexByTx slot/offset mismatch at " <> show p.pointSlotNo)
 
 ------------------------------------------------------------
 -- Curated repros
 ------------------------------------------------------------
-
--- | The same EB (hash) bodied at two slots; delivering its tx for one slot must
--- clear it for the other too. Pre-fix, the second 'Decide' hits @impossible!@.
-reproMultiSlot :: [Cmd]
-reproMultiSlot =
-  [ ArriveBody [0] 10
-  , ArriveBody [0] 11
-  , Decide 11
-  , ArriveTx [0] 10 0
-  , Decide 11
-  ]
-
--- | A tx shared by two distinct EBs; delivering it via one must discharge it
--- for the other (the deduping-LeiosDb behaviour the fix relies on).
-reproSharedTx :: [Cmd]
-reproSharedTx =
-  [ ArriveBody [0, 1] 10
-  , ArriveBody [1, 2] 11
-  , Decide 12
-  , ArriveTx [0, 1] 10 1 -- deliver the shared tx (id 1)
-  , Decide 12
-  ]
 
 -- | A peer offers an EB body; we forge the same EB before the offered body
 -- arrives. Forging must purge the offered body from 'missingEbBodies' (its
@@ -418,16 +358,6 @@ reproSharedTx =
 reproForgeAfterOffer :: [Cmd]
 reproForgeAfterOffer =
   [ Offer [0, 1] 10
-  , Forge [0, 1] 12
-  , Decide 13
-  ]
-
--- | A peer's EB still needs a tx that our own forged EB's closure supplies.
--- Forging must discharge it from that EB's 'missingEbTxs' (as delivering it via
--- 'ArriveTx' would), keeping the missing sets consistent.
-reproForgeSharedTx :: [Cmd]
-reproForgeSharedTx =
-  [ ArriveBody [1, 2] 10
   , Forge [0, 1] 12
   , Decide 13
   ]
@@ -450,7 +380,6 @@ genCmd = do
     [ pure (Announce ids slot)
     , pure (Offer ids slot)
     , pure (ArriveBody ids slot)
-    , ArriveTx ids slot <$> choose (0, length ids - 1)
     , pure (Forge ids slot)
     , Decide <$> elements worldSlots
     ]
@@ -487,16 +416,6 @@ listedThenForged cmds =
     ArriveBody x _ -> Just x
     _ -> Nothing
 
--- | A peer EB body arrived, then a /different/ EB sharing one of its txs is
--- forged: the tx forge hazard, where forging must discharge the shared tx.
-arrivedThenForgedSharingTx :: [Cmd] -> Bool
-arrivedThenForgedSharingTx cmds =
-  or
-    [ arrivedIds /= ids && any (`elem` ids) arrivedIds
-    | (i, Forge ids _) <- zip [0 :: Int ..] cmds
-    , ArriveBody arrivedIds _ <- take i cmds
-    ]
-
 -- | Coverage shared by the generated properties: the command mix, and whether
 -- the two forge hazards were actually generated -- so the properties are visibly
 -- non-vacuous.
@@ -505,8 +424,7 @@ coverage cmds prop =
   tabulate "commands" (map cmdName cmds) $
     classify (any isForge cmds) "has a Forge" $
       cover 15 (listedThenForged cmds) "listed then forged (body hazard)" $
-        cover 10 (arrivedThenForgedSharingTx cmds) "arrived then forged, shared tx (tx hazard)" $
-          property prop
+        property prop
 
 prop_invariants :: Property
 prop_invariants =
@@ -622,14 +540,3 @@ raceSameHashMultiSlot = do
       counterexample
         ("held EB body still listed for fetching: " <> show heldAndListed)
         (null heldAndListed)
-
-offsetsToBitmaps :: [Int] -> [(Word16, Word64)]
-offsetsToBitmaps offs =
-  [ (fromIntegral q, bm)
-  | (q, bm) <-
-      IntMap.toAscList $
-        foldr
-          (\o -> let (q, r) = o `divMod` 64 in IntMap.insertWith (Bits..|.) q (Bits.bit (63 - r)))
-          IntMap.empty
-          offs
-  ]
