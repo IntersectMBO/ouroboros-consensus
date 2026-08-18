@@ -53,7 +53,16 @@ import LeiosDemoDb
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
   )
-import qualified LeiosDemoLogic.Announcements as Announcements
+import LeiosDemoLogic.Announcements
+  ( AnnouncementVerdict (..)
+  , ElState (..)
+  , ErrAnnouncement
+  , PeerState
+  , ShouldRelay (..)
+  , TraceLeiosNotifyEvent (..)
+  , TraceLeiosNotifyPeerEvent (..)
+  , prunePeerState
+  )
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoLogic.Announcements.Validate
   ( AnnouncementInvalidity
@@ -990,14 +999,14 @@ leiosCertRbCallback kernelVars peerVars hdr cds =
 -----
 
 -- The pure logic for handling an inbound 'MsgLeiosBlockAnnouncement'. The
--- effectful glue (reading the immutable tip, the 'Announcements.PeerState' ref,
+-- effectful glue (reading the immutable tip, the 'PeerState' ref,
 -- 'MVar' updates, tracing, and 'throwIO') lives in the NodeToNode client, which
--- invokes 'Announcements.onAnnouncement' with these pieces.
+-- invokes 'onAnnouncement' with these pieces.
 
 -- | 'Header blk' as a relayed LeiosNotify announcement, paired with the
 -- announcement data parsed from it (see 'mkAnnouncingHeader'). The 'Eq' instance
 -- compares by header hash: that is the one identity used for announcement dedup
--- and equivocation counting (see 'Announcements.onAnnouncement').
+-- and equivocation counting (see 'onAnnouncement').
 data AnnouncingHeader blk
   = -- | INVARIANT: 'ancHeader' includes an announcement whose fields are
     -- 'ancAnnouncementFields'
@@ -1023,13 +1032,13 @@ ancElId = announcementElection . ancAnnouncementFields
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
--- 'Announcements.ErrAnnouncement' verbatim (the @blk@ is existential); every
+-- 'ErrAnnouncement' verbatim (the @blk@ is existential); every
 -- such error is a disconnect, since the only invalidities that used to be
 -- tolerated — opcert issue numbers ahead of the immutable tip — are now
 -- accepted outright by 'validateAnnouncementHeader'.
 data ExnInvalidLeiosAnnouncement
   = forall blk.
-    ReactToAnnouncementError (Announcements.ErrAnnouncement (AnnouncementInvalidity blk))
+    ReactToAnnouncementError (ErrAnnouncement (AnnouncementInvalidity blk))
 
 deriving instance Show ExnInvalidLeiosAnnouncement
 
@@ -1043,7 +1052,7 @@ data ExnLeiosBlockAnnouncementMissing = ExnLeiosBlockAnnouncementMissing
 
 instance Exception ExnLeiosBlockAnnouncementMissing
 
--- | The @validate@ callback for 'Announcements.onAnnouncement'.
+-- | The @validate@ callback for 'onAnnouncement'.
 --
 -- First apply ChainSync's in-future check to the announced slot's wall-clock
 -- onset (reusing the node's own 'InFutureCheck.SomeHeaderInFutureCheck'):
@@ -1052,14 +1061,13 @@ instance Exception ExnLeiosBlockAnnouncementMissing
 -- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
 -- announcement is the peer's fault.
 --
--- If the announcement is valid and 'FreshOCIN', returns its data and whether to
--- relay it downstream (see 'Announcements.ShouldRelay' and
+-- If the announcement is valid and 'FreshOCIN', the verdict carries its data and
+-- whether to relay it downstream (see 'ShouldRelay' and
 -- 'maxAnnouncementAgeSend'). If it is valid but 'StaleOCIN' (its opcert counter
--- was revoked by /our/ immutable tip; see 'validateAnnouncementHeader'),
--- returns @Right Nothing@, so that 'Announcements.onAnnouncement' accepts it
--- from the peer without processing or relaying it. Per that contract, 'Left
--- Nothing' signals the too-old rejection (see 'maxAnnouncementAgeRecv') and
--- 'Left Just' any other invalidity.
+-- was revoked by /our/ immutable tip; see 'validateAnnouncementHeader'), the
+-- verdict is 'VerdictIgnore', so that
+-- 'onAnnouncement' accepts it from the peer without processing or
+-- relaying it.
 announcementValidity ::
   (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
   SystemTime m ->
@@ -1068,9 +1076,9 @@ announcementValidity ::
   ExtLedgerState blk EmptyMK ->
   Header blk ->
   m
-    ( Either
-        (Maybe (AnnouncementInvalidity blk))
-        (Maybe (Announcements.ShouldRelay, NominalDiffTime, (LeiosPoint, BytesSize)))
+    ( AnnouncementVerdict
+        (AnnouncementInvalidity blk)
+        (ShouldRelay, NominalDiffTime, (LeiosPoint, BytesSize))
     )
 announcementValidity systemTime futureCheck cfg immLedger hdr = do
   onset <- case futureCheck of
@@ -1092,20 +1100,18 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
   now <- systemTimeCurrent systemTime
   let age = diffRelTime now onset
   pure $
-    -- 'Left Nothing' signals the too-old rejection to 'Announcements.onAnnouncement'
-    -- (which raises 'Announcements.ErrTooOld'); only this function holds the wall
-    -- clock, so it owns that check.
+    -- Only this function holds the wall clock, so it owns the too-old check.
     if age > maxAnnouncementAgeRecv
-      then Left Nothing
+      then VerdictTooOld
       else
         let shouldRelay =
               if age <= maxAnnouncementAgeSend
-                then Announcements.DoRelay
-                else Announcements.DoNotRelay
+                then DoRelay
+                else DoNotRelay
          in case validateAnnouncementHeader cfg immLedger hdr of
-              Left inv -> Left (Just inv)
-              Right (StaleOCIN, _v) -> Right Nothing
-              Right (FreshOCIN, v) -> Right (Just (shouldRelay, age, v))
+              Left inv -> VerdictInvalid inv
+              Right (StaleOCIN, _v) -> VerdictIgnore
+              Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, age, v)
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
@@ -1138,39 +1144,39 @@ prunePeerStateToImmTip ::
   LedgerSupportsProtocol blk =>
   ExtLedgerState blk EmptyMK ->
   SlotNo ->
-  Announcements.PeerState anc ->
-  (SlotNo, Announcements.PeerState anc)
+  PeerState anc ->
+  (SlotNo, PeerState anc)
 prunePeerStateToImmTip immLedger latestPruneSlot peerSt =
   case getTipSlot (ledgerState immLedger) of
     NotOrigin immTipSlot
-      | latestPruneSlot < immTipSlot -> (immTipSlot, Announcements.prunePeerState immTipSlot peerSt)
+      | latestPruneSlot < immTipSlot -> (immTipSlot, prunePeerState immTipSlot peerSt)
     _ -> (latestPruneSlot, peerSt)
 
 -- | The just-counted announcement's fields, and whether it equivocates a prior
 -- header announcing the same election.
 announcementTraceFields ::
-  Announcements.ElState (AnnouncingHeader blk) ->
+  ElState (AnnouncingHeader blk) ->
   (AnnouncementEquivocation, AnnouncementFields)
 announcementTraceFields = \case
-  Announcements.OneAnnouncement a ->
+  OneAnnouncement a ->
     (NoEquivocation, ancAnnouncementFields a)
-  Announcements.TwoAnnouncements _a1 a2 ->
+  TwoAnnouncements _a1 a2 ->
     (Equivocation, ancAnnouncementFields a2)
 
 -- | Render an 'Announcements' per-peer announcement event as a 'TraceLeiosPeer'.
 tracePeerAnnouncement ::
-  Announcements.TraceLeiosNotifyPeerEvent (AnnouncingHeader blk) ->
+  TraceLeiosNotifyPeerEvent (AnnouncingHeader blk) ->
   TraceLeiosPeer
-tracePeerAnnouncement (Announcements.TracePeerAnnouncement elSt) =
+tracePeerAnnouncement (TracePeerAnnouncement elSt) =
   let (equivocation, fields) = announcementTraceFields elSt
    in TraceLeiosPeerAnnouncement equivocation fields
 
 -- | Render an 'Announcements' node-wide announcement event as a
 -- 'TraceLeiosKernel'.
 traceNewAnnouncement ::
-  Announcements.TraceLeiosNotifyEvent peer (AnnouncingHeader blk) ->
+  TraceLeiosNotifyEvent peer (AnnouncingHeader blk) ->
   TraceLeiosKernel
-traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt age) =
+traceNewAnnouncement (TraceNewAnnouncement mbPeer _elId elSt age) =
   let (equivocation, fields) = announcementTraceFields elSt
    in TraceLeiosAnnouncementAccepted
         (maybe ForgedLocally (const ReceivedFromPeer) mbPeer)
@@ -1179,7 +1185,7 @@ traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt age) 
         age
 
 -- | Do not relay (to downstream peers) an announcement whose slot's wall-clock
--- onset is older than this. See 'Announcements.ShouldRelay'.
+-- onset is older than this. See 'ShouldRelay'.
 --
 -- Must be comfortably less than 'maxAnnouncementAgeRecv', so that an
 -- announcement an honest node relays just before this bound still arrives at
@@ -1191,7 +1197,7 @@ maxAnnouncementAgeSend :: NominalDiffTime
 maxAnnouncementAgeSend = 300 -- 5 minutes
 
 -- | Disconnect an upstream peer that relays an announcement whose slot's
--- wall-clock onset is older than this. See 'Announcements.ErrTooOld'.
+-- wall-clock onset is older than this. See 'ErrTooOld'.
 --
 -- Comfortably greater than 'maxAnnouncementAgeSend', so that an honest peer
 -- (which stops relaying at that smaller bound) is never disconnected on account

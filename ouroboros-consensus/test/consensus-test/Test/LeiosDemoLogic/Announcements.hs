@@ -162,9 +162,9 @@ onAnnouncementTests =
   testGroup
     "onAnnouncement"
     [ testCase "invalid announcement surfaces as ErrInvalid" test_oaInvalid
-    , testCase "too-old announcement (Left Nothing) surfaces as ErrTooOld" test_oaTooOld
+    , testCase "too-old announcement (VerdictTooOld) surfaces as ErrTooOld" test_oaTooOld
     , testCase "valid announcement runs process and returns new state" test_oaProcess
-    , testCase "valid-but-stale (Right Nothing) accepts without running process" test_oaAcceptNoProcess
+    , testCase "valid-but-stale (VerdictIgnore) accepts without running process" test_oaAcceptNoProcess
     , testCase "repeat is rejected without running process" test_oaRepeat
     ]
 
@@ -175,7 +175,7 @@ test_oaInvalid = do
       onAnnouncement
         nullTracer
         ancEl
-        (\_ -> pure (Left (Just "bad")) :: IO (Either (Maybe String) (Maybe ())))
+        (\_ -> pure (VerdictInvalid "bad") :: IO (AnnouncementVerdict String ()))
         (\_ _ -> pure ())
         emptyPeerState
         (Anc el0 0)
@@ -190,7 +190,7 @@ test_oaTooOld = do
       onAnnouncement
         nullTracer
         ancEl
-        (\_ -> pure (Left Nothing) :: IO (Either (Maybe String) (Maybe ())))
+        (\_ -> pure VerdictTooOld :: IO (AnnouncementVerdict String ()))
         (\_ _ -> pure ())
         emptyPeerState
         (Anc el0 0)
@@ -206,7 +206,7 @@ test_oaProcess = do
       onAnnouncement
         nullTracer
         ancEl
-        (\_ -> pure (Right (Just ())))
+        (\_ -> pure (VerdictProcess ()))
         (\a () -> modifyIORef' ref (a :))
         emptyPeerState
         (Anc el0 0)
@@ -223,7 +223,7 @@ test_oaAcceptNoProcess = do
       onAnnouncement
         nullTracer
         ancEl
-        (\_ -> pure (Right Nothing) :: IO (Either (Maybe String) (Maybe ())))
+        (\_ -> pure VerdictIgnore :: IO (AnnouncementVerdict String ()))
         (\a () -> modifyIORef' ref (a :))
         emptyPeerState
         (Anc el0 0)
@@ -235,7 +235,7 @@ test_oaAcceptNoProcess = do
 test_oaRepeat :: Assertion
 test_oaRepeat = do
   ref <- newIORef (0 :: Int)
-  let validate = \_ -> pure (Right (Just ()))
+  let validate = \_ -> pure (VerdictProcess ())
       process = \_ _ -> modifyIORef' ref (+ 1) :: IO ()
       go st = runExceptT $ onAnnouncement nullTracer ancEl validate process st (Anc el0 0)
   Right st1 <- go emptyPeerState
