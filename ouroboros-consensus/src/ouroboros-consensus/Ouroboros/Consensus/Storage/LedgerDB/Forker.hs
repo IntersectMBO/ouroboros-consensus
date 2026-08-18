@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -72,6 +73,7 @@ import Control.Monad.Except
   )
 import Data.Bifunctor (first)
 import qualified Data.ByteString as Strict
+import Data.Foldable (Foldable (foldMap'))
 import Data.Functor ((<&>))
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
@@ -972,9 +974,9 @@ resolveLeiosBlock leiosDb cds b =
 
 -- | The result of resolving an announced EB's closure and applying it a ledger state.
 data LeiosClosureApplied blk = LeiosClosureApplied
-  { lcaStateAfterEB :: LedgerState blk ValuesMK
+  { lcaStateAfterEB :: !(LedgerState blk ValuesMK)
   -- ^ The ledger state with the EB's transactions applied.
-  , lcaClosureDiff :: LedgerState blk DiffMK
+  , lcaClosureDiff :: !(LedgerState blk DiffMK)
   -- ^ The closure diff relative to the parent. Callers must 'prependDiffs'
   -- this onto whatever diff they produce on top of 'lcaStateAfterEB'.
   }
@@ -1002,16 +1004,21 @@ resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
   closureTxs <- map snd <$> resolveLeiosClosure leiosDb ebHash
   -- UTXO-HD of the whole closure
-  let closureKeys = foldMap leiosClosureTxKeySets closureTxs <> extraKeys
+  let !closureKeys = foldMap' leiosClosureTxKeySets closureTxs <> extraKeys
   closureVals <- readValues closureKeys
-  let lsBeforeEB = lsBase `withLedgerTables` closureVals
+  let !lsBeforeEB = lsBase `withLedgerTables` closureVals
   -- apply the closure and return the result in case there was not errors
-  pure $
-    applyLeiosClosure lcfg closureTxs lsBeforeEB <&> \lsAfterEB ->
-      LeiosClosureApplied
-        { lcaStateAfterEB = lsAfterEB
-        , lcaClosureDiff = trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB)
-        }
+  let !ledgerErrOrState = applyLeiosClosure lcfg closureTxs lsBeforeEB
+  case ledgerErrOrState of
+    Left !err -> pure $ Left err
+    Right !lsAfterEB -> do
+      let !lsDiff = calculateDifference lsBeforeEB lsAfterEB
+      pure $
+        Right $
+          LeiosClosureApplied
+            { lcaStateAfterEB = lsAfterEB
+            , lcaClosureDiff = trackingToDiffs lsDiff
+            }
 
 {-------------------------------------------------------------------------------
   Validation
