@@ -459,6 +459,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
               , SL.sppOwners = Set.singleton poolOwnerHash
               , SL.sppRelays = Seq.empty
               , SL.sppMetadata = SL.SNothing
+              , SL.sppBlsKey = SL.SNothing
               }
           )
         | CoreNode{cnDelegateKey, cnStakingKey, cnVRF} <- coreNodes

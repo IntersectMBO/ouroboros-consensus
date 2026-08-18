@@ -44,6 +44,7 @@ source-repository-package
     eras/dijkstra/impl
     eras/mary/impl
     eras/shelley/impl
+    eras/shelley/test-suite
     libs/cardano-data
     libs/cardano-ledger-api
     libs/cardano-ledger-binary
