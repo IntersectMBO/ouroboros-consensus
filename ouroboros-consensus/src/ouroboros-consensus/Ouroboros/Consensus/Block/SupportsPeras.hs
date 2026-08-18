@@ -397,6 +397,14 @@ class IsPerasError err blk | err -> blk where
   injectConversionError :: PerasConversionError -> err
   injectQuorumNotReachedError :: VoteWeight -> err
 
+instance IsPerasError (VoidPerasError blk) blk where
+  injectVotingCommitteeError _ =
+    error "injectVotingCommitteeError: VoidPerasError cannot be inhabited"
+  injectConversionError _ =
+    error "injectConversionError: VoidPerasError cannot be inhabited"
+  injectQuorumNotReachedError _ =
+    error "injectQuorumNotReachedError: VoidPerasError cannot be inhabited"
+
 -- * Types and functions related to Peras vote collection and quorum checking
 
 -- | Collection of Peras votes for a given target.

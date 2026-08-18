@@ -65,6 +65,7 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Forecast
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Condense
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
@@ -87,6 +88,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -310,6 +312,15 @@ instance LedgerSupportsProtocol BlockA where
 instance LedgerStateSupportsPeras (LedgerState BlockA)
 
 instance LedgerStateSupportsPeras (Ticked LedgerState BlockA)
+
+-- NOTE: BlockA is only ever used wrapped in the
+-- hard fork combinator (which implements 'hardForkSummary' directly and never
+-- delegates to the underlying era), so this method is never actually called.
+instance HasHardForkHistory BlockA where
+  type HardForkIndices BlockA = '[BlockA]
+  hardForkSummary = error "BlockA being used as a SingleEraBlock"
+
+instance StateSupportsPerasEpochContext BlockA
 
 instance HasPartialConsensusConfig ProtocolA
 

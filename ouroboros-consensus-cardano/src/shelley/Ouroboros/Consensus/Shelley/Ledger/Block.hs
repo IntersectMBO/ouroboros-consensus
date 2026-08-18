@@ -69,8 +69,10 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
   , LedgerState
   )
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -130,14 +132,12 @@ class
     HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
   , Crypto (ProtoCrypto proto)
+  , -- Peras constraints
+    StateSupportsPerasEpochContext (ShelleyBlock proto era)
+  , MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock proto era) ~ EpochToPerasRoundInfo
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
-  , -- TODO: replace the four constraints below with:
-    -- 'StateSupportsPerasEpochContext (ShelleyBlock proto er)' once that type
-    -- class is in place.
-    ChainDepStateSupportsPeras (ChainDepState (BlockProtocol (ShelleyBlock proto era)))
-  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol (ShelleyBlock proto era))))
   , LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era))
   , LedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era))
   ) =>

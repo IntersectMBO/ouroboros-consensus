@@ -91,6 +91,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -582,3 +583,5 @@ instance CanUpgradeLedgerTables LedgerState ByronBlock where
 instance LedgerStateSupportsPeras (LedgerState ByronBlock)
 
 instance LedgerStateSupportsPeras (Ticked LedgerState ByronBlock)
+
+instance StateSupportsPerasEpochContext ByronBlock

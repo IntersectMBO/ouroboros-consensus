@@ -598,6 +598,7 @@ library unstable-mock-block
     Ouroboros.Consensus.Mock.Node.Abstract
     Ouroboros.Consensus.Mock.Node.BFT
     Ouroboros.Consensus.Mock.Node.PBFT
+    Ouroboros.Consensus.Mock.Node.Peras
     Ouroboros.Consensus.Mock.Node.Praos
     Ouroboros.Consensus.Mock.Node.PraosRule
     Ouroboros.Consensus.Mock.Node.Serialisation
@@ -1381,6 +1382,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common
     Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
+    Ouroboros.Consensus.Shelley.Node.Peras
     Ouroboros.Consensus.Shelley.Node.Praos
     Ouroboros.Consensus.Shelley.Node.Serialisation
     Ouroboros.Consensus.Shelley.Node.TPraos

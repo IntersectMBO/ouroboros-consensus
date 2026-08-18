@@ -136,11 +136,13 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -736,6 +738,22 @@ instance ImmutableEraParams (TestBlockWith ptype) where
   immutableEraParams = tblcHardForkParams . topLevelConfigLedger
 
 {-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+instance LedgerStateSupportsPeras (LedgerState (TestBlockWith ptype))
+
+instance LedgerStateSupportsPeras (Ticked LedgerState (TestBlockWith ptype))
+
+instance HasHardForkHistory (TestBlockWith ptype) where
+  type HardForkIndices (TestBlockWith ptype) = '[TestBlockWith ptype]
+  hardForkSummary = neverForksHardForkSummary tblcHardForkParams
+
+-- TODO: this instance will have a full (mocked) implementation as soon as we
+-- remove the degenerate 'BlockSupportsPeras' instance.
+instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype)
+
+{-------------------------------------------------------------------------------
   Test blocks without payload
 -------------------------------------------------------------------------------}
 
@@ -749,10 +767,6 @@ data instance CodecConfig TestBlock = TestBlockCodecConfig
 -- | The 'TestBlock' does not need any storage config
 data instance StorageConfig TestBlock = TestBlockStorageConfig
   deriving (Show, Generic, NoThunks)
-
-instance HasHardForkHistory TestBlock where
-  type HardForkIndices TestBlock = '[TestBlock]
-  hardForkSummary = neverForksHardForkSummary tblcHardForkParams
 
 data instance BlockQuery TestBlock fp result where
   QueryLedgerTip :: BlockQuery TestBlock QFNoTables (Point TestBlock)
