@@ -125,6 +125,12 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
     , mpEnvLedgerCfg = cfg
     } = mpEnv
 
+snapshotStepTimeLimitSeconds :: DiffTime
+snapshotStepTimeLimitSeconds = 0.1
+
+snapshotStepTxsPerStep :: Int
+snapshotStepTxsPerStep = 100
+
 computeSnapshot ::
   forall blk m.
   (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
@@ -139,16 +145,13 @@ computeSnapshot resolveValues cfg slot tickedStDiff txsToApply = do
 
   (_, _, _, !appliedTxs, !appliedTxIds) <-
     iterateUntilOrTimeout'
-      0.1
+      snapshotStepTimeLimitSeconds
       (\(_, txsToApply', _, _, _) -> null txsToApply')
       (snapshotStep resolveValues cfg slot tickedStDiff)
       (tickedSt, txsToApply, [], TxSeq.Empty, Set.empty)
 
   let !tip = castPoint $ getTip tickedStDiff
   return $ snapshot slot tip appliedTxIds appliedTxs
-
-txsPerStep :: Int
-txsPerStep = 100
 
 type SnapshotStepState blk =
   ( TickedLedgerState blk ValuesMK -- ledger state to apply on
@@ -167,8 +170,8 @@ snapshotStep ::
   TickedLedgerState blk DiffMK ->
   SnapshotStepState blk ->
   m (SnapshotStepState blk)
-snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedSt, !txsToApply, !unapplicableTxs, !appliedTxs, !appliedTxIds) = do
-  let (!txsToApplyStep, !txsToApplyRest) = TxSeq.take txsPerStep txsToApply
+snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedStBeforeStep, !txsToApply, !unapplicableTxs, !appliedTxs, !appliedTxIds) = do
+  let (!txsToApplyStep, !txsToApplyRest) = TxSeq.take snapshotStepTxsPerStep txsToApply
       !inputKeysStep =
         Foldable.foldMap'
           (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
@@ -185,23 +188,22 @@ snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedSt, !txsToApply, !u
   -- Whereas, others like Accounts can be: created, read, updated and deleted...CRUD
   -- Perhaps, there're other types in Cardano?
   -- Sounds like working with this distinction could be an optimization point!
-  !inputValuesStep <- resolveValues inputKeysStep
+  !inputValuesStepForKeys <- resolveValues inputKeysStep
 
   let
     -- TODO(bladyjoker): Please review. The idea is to construct the LedgerState with values that are necessary for applying the transactions in this step.
     -- The `applyMempoolDiffs` uses the base LedgerState that contains diffs (I suspect from ticking? What values are affected by ticking?)
     -- and builds up a LedgerState with values for this step only.
-    -- The lhs starts empty so it begins with only the rhs, after that because of the union the lhs entries override whatever is conflicting in rhs.
-    !inputValuesStep' =
+    -- The `tickedStepBeforeStep` starts empty so it begins with only the values in `tickedStAtBase`, after that because of the union the `tickedStepBeforeStep` entries override whatever is conflicting in `tickedStAtBase`.
+    !tickedStAtBase = applyMempoolDiffs inputValuesStepForKeys inputKeysStep tickedStDiffBase
+    !inputValuesStep =
       ltliftA2
         unionValues
-        (projectLedgerTables tickedSt)
-        (projectLedgerTables (applyMempoolDiffs inputValuesStep inputKeysStep tickedStDiffBase))
-    !tickedStBeforeStep = tickedSt `withLedgerTables` inputValuesStep'
+        (projectLedgerTables tickedStBeforeStep)
+        (projectLedgerTables tickedStAtBase)
+    !tickedStBeforeStepWithValues = tickedStBeforeStep `withLedgerTables` inputValuesStep
 
-    (!tickedStAfterStep, !unapplicableTxsStep, !appliedTxsStep) = reapplyTxs' cfg slot txsToApplyStep tickedStBeforeStep
-
-  -- TODO(bladyjoker): Keep? _ <- evaluate $ projectLedgerTables tickedStAfterStep
+    (!tickedStAfterStep, !unapplicableTxsStep, !appliedTxsStep) = reapplyTxs' cfg slot txsToApplyStep tickedStBeforeStepWithValues
 
   return
     ( tickedStAfterStep
