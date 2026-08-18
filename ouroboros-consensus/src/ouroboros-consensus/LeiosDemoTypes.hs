@@ -72,6 +72,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
+import Data.IntSet.NonEmpty (NEIntSet)
 import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -84,6 +85,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
+import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import Data.String (fromString)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
@@ -421,7 +423,9 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- ^ Running total of bytes requested from each peer
   , requestedBytesSize :: !BytesSize
   -- ^ Total bytes requested across all peers
-
+  , requestedJobs :: !(Map (PeerId pid) (Map EbHash NEIntSet))
+  -- ^ Per peer, per EB, the job ids it currently has in flight -- for
+  -- decrementing those multiplicities on disconnect
   }
 
 -- | The empty outstanding state, given the slot it has already been pruned up
@@ -439,6 +443,7 @@ emptyLeiosOutstanding prunedSlot =
     , requestedEbPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
     , requestedBytesSize = 0
+    , requestedJobs = Map.empty
     }
 
 -- | Per-EB state tracked in 'ebState'
@@ -451,7 +456,13 @@ data EbState =
 -- | Whether we hold an EB's body.
 data EbFetchState
   = NoBody
-  | BodyAcquired
+  | -- | The pool of jobs that have not been /requested/ yet (NB this can be
+    -- empty even before jobs have /arrived/)
+    --
+    -- TODO the 'Jobs.LeiosJobPool' could be an 'MVar m LeiosJobPool' for per-EB
+    -- locking, at the cost of an 'm' parameter on
+    -- EbFetchState/EbState/LeiosOutstanding and a monadic body-acquire; deferred.
+    BodyAcquired !LeiosEb !Jobs.LeiosJobPool
   deriving (Eq, Show)
 
 ebStateMaxSlot :: EbState -> SlotNo
@@ -462,11 +473,11 @@ ebStateMaxSlot (MkEbState slot _fetchState) = slot
 ebStateHasBody :: EbState -> Bool
 ebStateHasBody (MkEbState _slot fetchState) = case fetchState of
   NoBody -> False
-  BodyAcquired -> True
+  BodyAcquired{} -> True
 
 insertAcquiredEbBody ::
-  EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
-insertAcquiredEbBody ebHash =
+  EbHash -> LeiosEb -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
+insertAcquiredEbBody ebHash body pool =
   alterEbState ebHash $ \case
     Nothing ->
       -- The state must have been pruned before the MsgLeiosBlock
@@ -476,8 +487,8 @@ insertAcquiredEbBody ebHash =
       -- Because it was previously pruned, it should simply be ignored now.
       Nothing
     Just (MkEbState slot fetchState) -> case fetchState of
-      BodyAcquired -> Nothing
-      NoBody -> Just $ MkEbState slot BodyAcquired
+      BodyAcquired{} -> Nothing
+      NoBody -> Just $ MkEbState slot (BodyAcquired body pool)
 
 -- | Record that the EB with this hash is referenced (announced or offered) at this
 -- slot
@@ -619,6 +630,10 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   -- ^ At most this many outstanding requests for each EB body
   , maxRequestsPerTx :: Int
   -- ^ At most this many outstanding requests for each individual tx
+  , maxJobBytesSize :: BytesSize
+  -- ^ At most this many bytes of txs per job
+  , maxJobTxCount :: Int
+  -- ^ At most this many txs per job
   , maxLeiosNotifyIngressQueue :: BytesSize
   -- ^ @maximumIngressQueue@ for LeiosNotify
   , maxLeiosFetchIngressQueue :: BytesSize
@@ -633,6 +648,8 @@ demoLeiosFetchStaticEnv =
     , maxRequestBytesSize = 500 * thousand
     , maxRequestsPerEb = 1
     , maxRequestsPerTx = 1
+    , maxJobBytesSize = 64 * thousandBase2
+    , maxJobTxCount = 20000   -- TODO do we want this to be low enough to matter?
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
     , maxLeiosFetchIngressQueue = 50 * millionBase2
     }
@@ -643,6 +660,8 @@ demoLeiosFetchStaticEnv =
   millionBase2 = 2 ^ (20 :: Int)
   thousand :: Num a => a
   thousand = 10 ^ (3 :: Int)
+  thousandBase2 :: Num a => a
+  thousandBase2 = 2 ^ (10 :: Int)
 
 -- * LeiosTx newtype
 

@@ -44,7 +44,7 @@ newtype LeiosJobMultiplicity = MkLeiosJobMultiplicity Int
 data LeiosJobState = MkLeiosJobState !LeiosJob !LeiosJobMultiplicity
   deriving (Eq, Show)
 
--- | The unfinished jobs for one acquired EB, plus a reverse index by
+-- | The not-yet-requested jobs for one acquired EB, plus a reverse index by
 -- multiplicity so a least-requested job is one 'IntMap.lookupMin' away.
 --
 -- INVARIANT: 'jobsByMultiplicity' is the exact inverse of the multiplicities in

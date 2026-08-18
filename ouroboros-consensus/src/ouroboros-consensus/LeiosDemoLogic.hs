@@ -103,6 +103,7 @@ import LeiosDemoTypes
   , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
+import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache (..))
 import Ouroboros.Consensus.Block
   ( BlockProtocol
@@ -744,7 +745,6 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
               Just peerId -> refundEbRequest peerId ebHash ebBytesSize
               Nothing -> id
           )
-            $ (if tooOld then id else Leios.insertAcquiredEbBody ebHash)
             $ outstanding
               { Leios.missingEbBodies =
                   case Map.lookup ebHash (Leios.reverseSlotIndexByEbHash outstanding) of
@@ -790,7 +790,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
           traceWith ktracer $ TraceLeiosBlockAcquired point
           forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
           pure $ fmap snd mbSummaryMisses
-        (bodyClass, _misses) <- case source of
+        (bodyClass, misses) <- case source of
           -- A forge holds its whole closure, so nothing is missing. Its txs are
           -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
           -- 'insertBody' above only served to register the cache entries.
@@ -814,8 +814,15 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
                   IntMap.empty
                   v
               pure (fetchArrivalEvicted ebBytesSize', ms)
-        let !outstanding' =
-              outstandingCleaned
+        let !pool =
+              -- TODO should this calculation be deferred until the first offer
+              -- arrives?
+              Jobs.mkLeiosJobPool
+                -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
+                (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
+                (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
+                (IntMap.map snd misses)
+            !outstanding' = Leios.insertAcquiredEbBody ebHash eb pool outstandingCleaned
         pure (outstanding', bodyClass)
   void $ MVar.tryPutMVar readyVar ()
   case source of

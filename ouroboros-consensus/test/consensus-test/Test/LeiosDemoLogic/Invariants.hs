@@ -79,6 +79,7 @@ import LeiosDemoTypes
   , newLeiosPeerVars
   )
 import qualified LeiosDemoTypes as Leios
+import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, newPureLeiosTxCache, nullLeiosTxCache)
 import Ouroboros.Consensus.Util.IOLike (IOLike, evaluate)
 import Test.QuickCheck
@@ -99,18 +100,20 @@ tests =
             runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
         ]
     , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
-        let h = hashLeiosEb (ebOf [0, 1])
+        let eb = ebOf [0, 1]
+            h = hashLeiosEb eb
+            pool = Jobs.mkLeiosJobPool 1000 10 mempty -- an empty pool suffices here
             -- announce at slot 5, then again at the smaller slot 3, and acquire
             o =
-              Leios.insertAcquiredEbBody h $
+              Leios.insertAcquiredEbBody h eb pool $
                 Leios.recordMaxAnnouncementSlot h (SlotNo 3) $
                   Leios.recordMaxAnnouncementSlot h (SlotNo 5) $
                     (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
         -- the greater slot is retained, not the last-recorded one
-        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) Leios.BodyAcquired)
+        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired eb pool))
         -- kept while the greatest slot (5) is at/above the immutable tip (4)
         Map.lookup h (Leios.ebState (Leios.pruneOutstandingToImmTip (SlotNo 4) o))
-          @?= Just (Leios.MkEbState (SlotNo 5) Leios.BodyAcquired)
+          @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired eb pool))
         -- dropped once the greatest slot (5) is below the immutable tip (6)
         Map.lookup h (Leios.ebState (Leios.pruneOutstandingToImmTip (SlotNo 6) o))
           @?= Nothing
