@@ -125,8 +125,8 @@ pickLeastRequestedJob pool =
 
 -- | Record one fewer in-flight request for a job (on disconnect). A no-op if the
 -- job is no longer in the pool.
-decrementJobMultiplicity :: LeiosJobId -> LeiosJobPool -> LeiosJobPool
-decrementJobMultiplicity (MkLeiosJobId jid) pool =
+unpickJob :: LeiosJobId -> LeiosJobPool -> LeiosJobPool
+unpickJob (MkLeiosJobId jid) pool =
   case IntMap.alterF decrement1 jid (jobs pool) of
     (Nothing, _) -> pool
     (Just (m, m'), jobs') ->

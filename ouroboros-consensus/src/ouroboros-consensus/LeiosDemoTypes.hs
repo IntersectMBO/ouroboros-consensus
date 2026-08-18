@@ -419,11 +419,14 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- Request tracking
   , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   -- ^ Which peers we've requested each EB from
+  --
+  -- TODO add requestedEbsPerPeer :: !(Map (PeerId pid) (NESet EbHash)) to avoid
+  -- linear scan
   , requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
   -- ^ Running total of bytes requested from each peer
   , requestedBytesSize :: !BytesSize
   -- ^ Total bytes requested across all peers
-  , requestedJobs :: !(Map (PeerId pid) (Map EbHash NEIntSet))
+  , requestedJobsPerPeer :: !(Map (PeerId pid) (Map EbHash NEIntSet))
   -- ^ Per peer, per EB, the job ids it currently has in flight -- for
   -- decrementing those multiplicities on disconnect
   }
@@ -443,7 +446,7 @@ emptyLeiosOutstanding prunedSlot =
     , requestedEbPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
     , requestedBytesSize = 0
-    , requestedJobs = Map.empty
+    , requestedJobsPerPeer = Map.empty
     }
 
 -- | Per-EB state tracked in 'ebState'

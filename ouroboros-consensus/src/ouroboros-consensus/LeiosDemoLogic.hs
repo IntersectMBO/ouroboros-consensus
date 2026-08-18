@@ -31,6 +31,7 @@ import qualified Data.DList as DList
 import Data.Functor (void, (<&>))
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -838,14 +839,13 @@ delIf predicate x = if predicate x then Nothing else Just x
 -----
 
 -- | Cancel all of a peer's outstanding fetch requests in bulk, e.g. when it
--- disconnects: refund its share of the request budget and drop it from the
--- per-EB/per-tx request sets, so those items can be re-requested from other
+-- disconnects: refund its share of the request budget, drop it from the per-EB
+-- body request set ('requestedEbPeers'), and -- via the per-peer
+-- 'requestedJobsPerPeer' index -- decrement the multiplicity of every job it
+-- had in flight, so those bodies and jobs become re-requestable from other
 -- peers.
 --
--- Note this is O(size of the request maps): it scans 'requestedEbPeers' /
--- 'requestedTxPeers' for the peer rather than knowing its keys directly. A
--- future optimisation would track a per-peer in-flight set to make this
--- O(that peer's outstanding requests).
+-- TODO eliminate the linear scans
 removePeerFromOutstanding ::
   Ord pid =>
   PeerId pid ->
@@ -858,7 +858,24 @@ removePeerFromOutstanding peerId o =
     , Leios.requestedBytesSizePerPeer = Map.delete peerId (Leios.requestedBytesSizePerPeer o)
     , Leios.requestedEbPeers =
         Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedEbPeers o)
+    , Leios.requestedJobsPerPeer = Map.delete peerId (Leios.requestedJobsPerPeer o)
+    , Leios.ebState =
+        Map.foldrWithKey
+          (\ebHash jobIds -> Map.adjust (releaseJobs jobIds) ebHash)
+          (Leios.ebState o)
+          (Map.findWithDefault Map.empty peerId (Leios.requestedJobsPerPeer o))
     }
+ where
+  -- Decrement, in that EB's pool, the multiplicity of each job this peer held.
+  releaseJobs jobIds (Leios.MkEbState slot fetchState) =
+    Leios.MkEbState slot $ case fetchState of
+      Leios.NoBody -> Leios.NoBody
+      Leios.BodyAcquired body pool ->
+        Leios.BodyAcquired body $!
+          NEIntSet.foldl'
+            (flip $ Jobs.unpickJob . Jobs.MkLeiosJobId)
+            pool
+            jobIds
 
 -----
 
