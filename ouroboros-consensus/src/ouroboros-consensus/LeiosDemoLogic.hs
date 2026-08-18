@@ -44,6 +44,7 @@ import qualified Data.Set.NonEmpty as NESet
 import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
+import Data.Void (absurd, Void)
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbConnection
@@ -339,7 +340,7 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
     go1 acc emptyLeiosFetchDecisions $
       expand $
         prioritize $
-          Map.map Left (Leios.missingEbBodies acc) `Map.union` Map.map Right (Leios.missingEbTxs acc)
+          Map.map Left (Leios.missingEbBodies acc) `Map.union` Map.map Right mempty
  where
   -- Once we know the current slot we fetch freshest-first; until then we are
   -- syncing, so we fetch freshest-last (i.e. oldest-first) to make progress
@@ -351,14 +352,12 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
   expand = \case
     [] -> []
     (point, Left ebBytesSize) : vs -> Left (point, ebBytesSize) : expand vs
-    (point, Right v) : vs ->
-      [Right (point, txBytesSize, txHash) | (_txOffset, (txHash, txBytesSize)) <- IntMap.toAscList v]
-        <> expand vs
+    (_point, Right x) : _vs -> absurd x
 
   go1 ::
     LeiosOutstanding pid ->
     LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) (LeiosPoint, BytesSize, TxHash)] ->
+    [Either (LeiosPoint, BytesSize) Void] ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
   go1 !acc !accNew = \case
     [] ->
@@ -367,13 +366,7 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
       | let peerIds :: Set (PeerId pid)
             peerIds = Map.findWithDefault Set.empty point.pointEbHash (Leios.requestedEbPeers acc) ->
           goEb2 acc accNew targets point ebBytesSize peerIds
-    Right (point, txBytesSize, txHash) : targets ->
-      let !txOffsets = case Map.lookup txHash (Leios.reverseEbIndexByTx acc) of
-            Nothing -> error "impossible! leiosFetchLogicIteration go1"
-            Just x -> x
-          peerIds :: Set (PeerId pid)
-          peerIds = Map.findWithDefault Set.empty txHash (Leios.requestedTxPeers acc)
-       in goTx2 acc accNew targets point txBytesSize txHash txOffsets peerIds
+    Right x : _targets -> absurd x
 
   goEb2 !acc !accNew targets point ebBytesSize peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
@@ -419,24 +412,24 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
       ebHash `Set.member` ebHashes -- peer has offered this EB body
       ]
 
-  goTx2 ::
+  _goTx2 ::
     LeiosOutstanding pid ->
     LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) (LeiosPoint, BytesSize, TxHash)] ->
+    [Either (LeiosPoint, BytesSize) Void] ->
     LeiosPoint ->
     BytesSize ->
     TxHash ->
     Map EbHash (NESet SlotNo, Int, BytesSize) ->
     Set (PeerId pid) ->
     (LeiosOutstanding pid, LeiosFetchDecisions pid)
-  goTx2 !acc !accNew targets point txBytesSize txHash txOffsets peerIds
+  _goTx2 !acc !accNew targets point txBytesSize txHash txOffsets peerIds
     | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
       =
         (acc, accNew)
     | Set.size peerIds < Leios.maxRequestsPerTx env -- we would like to request it from an additional peer
     -- TODO if requests list priority, does this limit apply even if the
     -- tx has only been requested at lower priorities?
-    , Just peerId <- choosePeerTx peerIds acc point.pointEbHash =
+    , Just peerId <- _choosePeerTx peerIds acc point.pointEbHash =
         -- there's a peer offering this EB's tx closure and we haven't already
         -- requested it from them
         let txOffset = case Map.lookup point.pointEbHash txOffsets of
@@ -451,23 +444,21 @@ leiosFetchLogicIteration env mbCurrentSlot offerings =
                   (let MkLeiosFetchDecisions x = accNew in x)
             acc' =
               acc
-                { Leios.requestedTxPeers =
-                    Map.insertWith Set.union txHash (Set.singleton peerId) (Leios.requestedTxPeers acc)
-                , Leios.requestedBytesSizePerPeer =
+                { Leios.requestedBytesSizePerPeer =
                     Map.insertWith (+) peerId txBytesSize (Leios.requestedBytesSizePerPeer acc)
                 , Leios.requestedBytesSize = txBytesSize + Leios.requestedBytesSize acc
                 }
             peerIds' = Set.insert peerId peerIds
-         in goTx2 acc' accNew' targets point txBytesSize txHash txOffsets peerIds'
+         in _goTx2 acc' accNew' targets point txBytesSize txHash txOffsets peerIds'
     | otherwise =
         go1 acc accNew targets
 
-  choosePeerTx ::
+  _choosePeerTx ::
     Set (PeerId pid) ->
     LeiosOutstanding pid ->
     EbHash ->
     Maybe (PeerId pid)
-  choosePeerTx peerIds acc ebHash =
+  _choosePeerTx peerIds acc ebHash =
     foldr (\a _ -> Just a) Nothing $
       [ peerId
       | (peerId, (_bodies, closures)) <-
@@ -515,7 +506,7 @@ packRequests env =
       )
       Seq.empty
       -- group by EbHash, sort by offset ascending. 'prio' is the target point's
-      -- own slot and 'ebHash' its own EbHash (both filed by 'goTx2' from the same
+      -- own slot and 'ebHash' its own EbHash (both filed by '_goTx2' from the same
       -- point), so 'MkLeiosPoint prio ebHash' is a real point -- slot and hash
       -- from the same EB.
       $ Map.fromListWith IntMap.union
@@ -799,7 +790,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
           traceWith ktracer $ TraceLeiosBlockAcquired point
           forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
           pure $ fmap snd mbSummaryMisses
-        (bodyClass, misses) <- case source of
+        (bodyClass, _misses) <- case source of
           -- A forge holds its whole closure, so nothing is missing. Its txs are
           -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
           -- 'insertBody' above only served to register the cache entries.
@@ -825,20 +816,6 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
               pure (fetchArrivalEvicted ebBytesSize', ms)
         let !outstanding' =
               outstandingCleaned
-                { Leios.missingEbTxs =
-                    Map.insert point misses (Leios.missingEbTxs outstandingCleaned)
-                , Leios.reverseEbIndexByTx =
-                    IntMap.foldrWithKey
-                      ( \i (txHash, txBytesSize) acc ->
-                          Map.insertWith
-                            (Map.unionWith (\(s1, i1, z1) (s2, _, _) -> (s1 <> s2, i1, z1)))
-                            txHash
-                            (Map.singleton ebHash (NESet.singleton point.pointSlotNo, i, txBytesSize))
-                            acc
-                      )
-                      (Leios.reverseEbIndexByTx outstandingCleaned)
-                      misses
-                }
         pure (outstanding', bodyClass)
   void $ MVar.tryPutMVar readyVar ()
   case source of
@@ -874,8 +851,6 @@ removePeerFromOutstanding peerId o =
     , Leios.requestedBytesSizePerPeer = Map.delete peerId (Leios.requestedBytesSizePerPeer o)
     , Leios.requestedEbPeers =
         Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedEbPeers o)
-    , Leios.requestedTxPeers =
-        Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedTxPeers o)
     }
 
 -----
@@ -917,17 +892,15 @@ refundEbRequest peerId ebHash ebBytesSize o
 refundTxRequest ::
   Ord pid =>
   PeerId pid ->
-  Map TxHash (Set (PeerId pid)) ->
   BytesSize ->
   LeiosOutstanding pid ->
   LeiosOutstanding pid
-refundTxRequest peerId requestedTxPeers' txsBytesSize o
+refundTxRequest peerId txsBytesSize o
   | Map.member peerId (Leios.requestedBytesSizePerPeer o) =
       o
         { Leios.requestedBytesSize = Leios.requestedBytesSize o - txsBytesSize
         , Leios.requestedBytesSizePerPeer =
             Map.update (\x -> delIf (== 0) (x - txsBytesSize)) peerId (Leios.requestedBytesSizePerPeer o)
-        , Leios.requestedTxPeers = requestedTxPeers'
         }
   | otherwise = o
 
@@ -997,60 +970,17 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
         traceWith ktracer $ TraceLeiosFetchTxsArrival txArrival
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    let removeTxFromMissing txHash mtxs =
-          case Map.lookup txHash (Leios.reverseEbIndexByTx outstanding) of
-            Nothing -> mtxs
-            Just ebsWithThisTx ->
-              Map.foldrWithKey
-                ( \ebHash (slotsWithThisEb, offset, _sz) acc ->
-                    foldr
-                      ( \ebSlot ->
-                          Map.update
-                            (delIf IntMap.null . IntMap.delete offset)
-                            (MkLeiosPoint ebSlot ebHash)
-                      )
-                      acc
-                      slotsWithThisEb
-                )
-                mtxs
-                ebsWithThisTx
-        -- Discharge the acquired txs by identity: remove each from 'missingEbTxs'
-        -- (every referencing point) and from 'reverseEbIndexByTx'. Shared by
-        -- arrivals and forges.
-        (reverseEbIndexByTx', missingEbTxs') =
-          V.foldl'
-            ( \(!accRev, !accMtxs) txHash ->
-                ( Map.delete txHash accRev
-                , removeTxFromMissing txHash accMtxs
-                )
-            )
-            (Leios.reverseEbIndexByTx outstanding, Leios.missingEbTxs outstanding)
-            txHashes
     case source of
-      -- A forge answered no request and holds the whole closure, so there is no
-      -- peer budget to refund
       ForgedTxs{} ->
         pure $
           outstanding
-            { Leios.missingEbTxs = missingEbTxs'
-            , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
-            }
       ReceivedTxsFrom peerId _req -> do
-        let -- Remove this peer from each delivered tx's requested-peers set.
-            requestedTxPeers' =
-              V.foldl'
-                (\acc txHash -> Map.update (delIf Set.null . Set.delete peerId) txHash acc)
-                (Leios.requestedTxPeers outstanding)
-                txHashes
         -- 'refundTxRequest' reverses this peer's per-request accounting (but skips
         -- it if the peer was already cancelled in bulk by a disconnect); the global
         -- state below is updated unconditionally, since we did receive the txs.
         pure $
-          refundTxRequest peerId requestedTxPeers' (fromIntegral batchBytes) $
+          refundTxRequest peerId (fromIntegral batchBytes) $
             outstanding
-              { Leios.missingEbTxs = missingEbTxs'
-              , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
-              }
   void $ MVar.tryPutMVar readyVar ()
   case source of
     ForgedTxs{} -> pure ()

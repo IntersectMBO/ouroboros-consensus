@@ -72,8 +72,6 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
-import Data.IntMap (IntMap)
-import qualified Data.IntMap as IntMap
 import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -383,10 +381,7 @@ newLeiosPeerVars = do
 --
 -- TODO: Potential simplifications once we have better test coverage:
 --
--- 1. The reverseEbIndexByTx inverse index could be computed on-demand from missingEbTxs
---    rather than maintained incrementally, simplifying state updates.
---
--- 2. Consider separating "offer tracking" from "request tracking" into distinct
+-- 1. Consider separating "offer tracking" from "request tracking" into distinct
 --    data structures for clarity.
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
@@ -422,30 +417,11 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- Request tracking
   , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   -- ^ Which peers we've requested each EB from
-  , requestedTxPeers :: !(Map TxHash (Set (PeerId pid)))
-  -- ^ Which peers we've requested each TX from
   , requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
   -- ^ Running total of bytes requested from each peer
   , requestedBytesSize :: !BytesSize
   -- ^ Total bytes requested across all peers
-  -- TX-level tracking
-  , missingEbTxs :: !(Map LeiosPoint (IntMap (TxHash, BytesSize)))
-  -- ^ The txs that still need to be sourced
-  --
-  -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
-  --   been received before.
-  --
-  -- * Every @MsgLeiosBlockTxs@ deletes from 'missingEbTxs', but that delete
-  --   will be a no-op for all except the first to arrive carrying this EbTx.
-  --
-  -- TODO this is far too big for the heap
-  , reverseEbIndexByTx :: !(Map TxHash (Map EbHash (NESet SlotNo, Int, BytesSize)))
-  -- ^ Inverse of 'missingEbTxs': for each TX, the referencing EBs; per EB, its
-  -- offset+size (content, so stored once) and the 'NESet' of slots it was
-  -- announced at. On delivery a tx is removed entirely -- from here and from the
-  -- 'missingEbTxs' of every point that referenced it -- so the two stay in step.
-  --
-  -- TODO this is far too big for the heap
+
   }
 
 -- | The empty outstanding state, given the slot it has already been pruned up
@@ -461,11 +437,8 @@ emptyLeiosOutstanding prunedSlot =
     , missingEbBodies = Map.empty
     , reverseSlotIndexByEbHash = Map.empty
     , requestedEbPeers = Map.empty
-    , requestedTxPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
     , requestedBytesSize = 0
-    , missingEbTxs = Map.empty
-    , reverseEbIndexByTx = Map.empty
     }
 
 -- | Per-EB state tracked in 'ebState'
@@ -619,11 +592,8 @@ prettyLeiosOutstanding x =
       , "missingEbBodies = " ++ show (Map.size missingEbBodies)
       , "reverseSlotIndexByEbHash = " ++ show (Map.size reverseSlotIndexByEbHash)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
-      , "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
       , "requestedBytesSize = " ++ show requestedBytesSize
-      , "missingEbTxs = "
-          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs]
       , ""
       ]
  where
@@ -632,10 +602,8 @@ prettyLeiosOutstanding x =
     , missingEbBodies
     , reverseSlotIndexByEbHash
     , requestedEbPeers
-    , requestedTxPeers
     , requestedBytesSizePerPeer
     , requestedBytesSize
-    , missingEbTxs
     } = x
 
 -- TODO which of these limits are allowed to be exceeded by at most one
