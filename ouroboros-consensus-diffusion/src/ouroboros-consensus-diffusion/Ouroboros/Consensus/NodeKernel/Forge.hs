@@ -729,12 +729,15 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
         snap <-
           pmTrace'Via (const ()) "mempool-get-snapshot-for" currentSlot $
             getSnapshotFor mempool currentSlot tickedLedgerState readTables
-        -- TODO(bladyjoker): Force this to evaluate and instrument as "mempool-snapshot-take"
-        let (rbTxs', rbTxsSize') = snapshotTake snap rbCap
-            ebTxs' =
-              let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
-               in drop (length rbTxs') allTxs
-        pure (rbTxs', ebTxs', rbTxsSize', snap)
+
+        pmTrace'Via (const ()) "take-rb-eb-txs" currentSlot $ do
+          let (rbTxs', rbTxsSize') = snapshotTake snap rbCap
+              ebTxs' =
+                let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
+                 in drop (length rbTxs') allTxs
+          _ <- evaluate (length rbTxs')
+          _ <- evaluate (length ebTxs')
+          pure (rbTxs', ebTxs', rbTxsSize', snap)
       Just (_cert, announcedPoint) -> do
         -- We have a Leios certificate: only take transactions for a new EB, as the RB will
         -- carry the certificate and must not carry additional txs.
@@ -749,6 +752,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
               readTables
               emptyLedgerTables
               (ledgerState unticked)
+
         case res of
           Left err ->
             -- Should not happen: each closure tx was validated
@@ -759,22 +763,24 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
             -- parent) with the tick diff (relative to the
             -- state with the EB closure applied), so the mempool snapshot is revalidated
             -- against parent + closure + tick.
-            -- TODO(bladyjoker): Force this to evaluate and instrument as "tick-ledger-state-after-eb"
-            let tickedLsAfterEB =
-                  lcaClosureDiff
-                    `prependDiffs` applyChainTick
+            tickedLsAfterEB <-
+              pmTrace'Via (const ()) "tick-ledger-state-after-eb" currentSlot $ do
+                lcaStateAfterEBTicked <-
+                  evaluate $
+                    applyChainTick
                       OmitLedgerEvents
                       (configLedger cfg)
                       currentSlot
                       (forgetLedgerTables lcaStateAfterEB)
+                evaluate $ lcaClosureDiff `prependDiffs` lcaStateAfterEBTicked
+
             snap <-
               pmTrace'Via (const ()) "mempool-get-snapshot-for-no-cache" currentSlot $
                 getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
-            let ebTxs' = fst (snapshotTake snap ebCap)
-            pure ([], ebTxs', Data.Measure.zero, snap)
 
-  -- force the mempool's computation before the tracer event
-  _ <- evaluate (length rbTxs)
-  _ <- evaluate (length ebTxs)
+            pmTrace'Via (const ()) "take-eb-txs" currentSlot $ do
+              let ebTxs' = fst (snapshotTake snap ebCap)
+              _ <- evaluate (length ebTxs')
+              pure ([], ebTxs', Data.Measure.zero, snap)
 
   pure (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement)
