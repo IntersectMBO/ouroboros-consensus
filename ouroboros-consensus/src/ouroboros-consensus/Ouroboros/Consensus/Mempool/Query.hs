@@ -9,7 +9,7 @@ module Ouroboros.Consensus.Mempool.Query
   ) where
 
 import Control.Monad.Except (runExcept)
-import Data.Foldable (Foldable (foldMap', foldl'))
+import qualified Data.Foldable as Foldable
 import qualified Data.Set as Set
 import LeiosUtils.TimeBoundedLoop (iterateUntilOrTimeout')
 import Ouroboros.Consensus.Block.Abstract
@@ -170,7 +170,7 @@ snapshotStep ::
 snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedSt, !txsToApply, !unapplicableTxs, !appliedTxs, !appliedTxIds) = do
   let (!txsToApplyStep, !txsToApplyRest) = TxSeq.take txsPerStep txsToApply
       !inputKeysStep =
-        foldMap'
+        Foldable.foldMap'
           (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
           txsToApplyStep
 
@@ -225,7 +225,7 @@ reapplyTxs' ::
   , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
   )
 reapplyTxs' cfg slot toApplyTxs tickedSt =
-  foldl'
+  Foldable.foldl'
     ( \(!tickedSt', !unapplicableTxs, !appliedTxs) !tkt ->
         let tx = validatedTx (TxSeq.txTicketTx tkt)
          in case runExcept (reapplyTx cfg slot tx tickedSt') of
