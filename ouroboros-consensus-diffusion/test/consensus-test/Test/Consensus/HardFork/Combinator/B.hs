@@ -53,9 +53,11 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Forecast
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Condense
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -71,6 +73,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -266,6 +269,19 @@ instance LedgerSupportsProtocol BlockB where
 instance LedgerStateSupportsPeras (LedgerState BlockB)
 
 instance LedgerStateSupportsPeras (Ticked LedgerState BlockB)
+
+-- NOTE: BlockA is only ever used wrapped in the
+-- hard fork combinator (which implements 'hardForkSummary' directly and never
+-- delegates to the underlying era), so this method is never actually called.
+instance HasHardForkHistory BlockB where
+  type HardForkIndices BlockB = '[BlockB]
+  hardForkSummary = error "BlockB being used as a SingleEraBlock"
+
+instance StateSupportsPerasEpochContext BlockB where
+  type MaybeEraIndexedEpochToPerasRoundInfo BlockB = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: BlockB does not support Peras"
 
 instance HasPartialConsensusConfig ProtocolB
 

@@ -90,8 +90,11 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.HardFork.History
   ( Bound (..)
+  , EpochToPerasRoundInfo
+  , EraIndexed
   , EraParams
   , SafeZone (..)
+  , forgetEraIndex
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
@@ -100,6 +103,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
@@ -339,6 +343,20 @@ instance
       . hcmap proxySingle (K . getPoolDistr . getFlipTickedLedgerState)
       . State.tip
       . tickedHardForkLedgerStatePerEra
+
+-- TODO: this instance will have a full implementation as soon as we remove the
+-- degenerate 'BlockSupportsPeras' instance.
+instance
+  CanHardFork xs =>
+  StateSupportsPerasEpochContext (HardForkBlock xs)
+  where
+  type
+    MaybeEraIndexedEpochToPerasRoundInfo (HardForkBlock xs) =
+      EraIndexed xs EpochToPerasRoundInfo
+
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: HardForkBlock does not support Peras (yet)"
 
 {-------------------------------------------------------------------------------
   HeaderValidation
