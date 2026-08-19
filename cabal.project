@@ -26,6 +26,16 @@ benchmarks: true
 
 multi-repl: True
 
+-- cardano-config on branch js/keys: db-synthesizer reads its forging
+-- credentials with cardano-config:keys and Cardano.Configuration.Credentials,
+-- neither of which is in a released cardano-config yet. Replace this with the
+-- released package from CHaP once it is.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-config.git
+  tag: 41839fb75c4234ded81dd46c74408b525975401c
+  --sha256: sha256-ul1N/V62YcTxbj//B+qJEepsuIndsYOwTiVT2WgbeYQ=
+
 import: cabal/asserts.cabal
 import: cabal/newer-ghcs.cabal
 
