@@ -9,18 +9,20 @@ module Cardano.Tools.DBSynthesizer.TxGen
   ( mkRespendTxGen
   ) where
 
-import Cardano.Api.Key (Key (SigningKey))
-import Cardano.Api.KeysShelley (PaymentKey)
+import Cardano.Api.Any (displayError)
+import Cardano.Api.Key (AsType (AsSigningKey), Key (SigningKey))
+import Cardano.Api.KeysShelley (AsType (AsPaymentKey), PaymentKey)
+import Cardano.Api.SerialiseTextEnvelope (readFileTextEnvelope)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Tools.DBSynthesizer.Forging (GenTxs)
+import Data.Bifunctor (first)
 import Ouroboros.Consensus.Cardano.Block (CardanoBlock)
 import Ouroboros.Consensus.Config (TopLevelConfig)
 
 -- | Build the generator that the forge loop runs on each slot that the tool
 -- leads.
 --
--- If the path is 'Nothing', the generator returns no transactions. This is the
--- behaviour of 'synthesize' before this module existed.
+-- If the path is 'Nothing', the generator returns no transactions.
 mkRespendTxGen ::
   Maybe FilePath ->
   IO
@@ -34,7 +36,8 @@ mkRespendTxGen (Just keyFile) = fmap respendTxGen <$> readPaymentSigningKey keyF
 -- | Read a payment signing key from the JSON key file that
 -- @cardano-cli address key-gen@ writes.
 readPaymentSigningKey :: FilePath -> IO (Either String (SigningKey PaymentKey))
-readPaymentSigningKey = undefined
+readPaymentSigningKey path =
+  first displayError <$> readFileTextEnvelope (AsSigningKey AsPaymentKey) path
 
 -- | Spend the first output that this key owns, and pay it back to the same
 -- address. The generator makes one transaction for each block.
