@@ -134,8 +134,8 @@ it (see
     benchmarking.
 
 When neither flag is given, the backend is the one the node configuration file
-selects with `LedgerDB.Backend`, using its `LedgerDB.LSMDatabasePath` and
-`LedgerDB.LSMExportPath`. Both of those paths are interpreted relative to the
+selects with `LedgerDB.Backend`, using the `DatabasePath` and `ExportPath` of its
+`LedgerDB.Backend.LSM` object. Both of those paths are interpreted relative to the
 ChainDB directory — unlike the genesis paths, which are relative to the
 configuration file — so an absolute path is rejected rather than silently
 mounted somewhere else. The OS page cache is used in this case, as it is not
@@ -359,6 +359,17 @@ using the same code path that a real block producer uses. The forged blocks
 contain no transactions. Its primary use is creating chains of arbitrary
 length cheaply, e.g. as input for benchmarks.
 
+:::warning
+
+db-synthesizer cannot forge at the moment. It reads its credentials through
+`cardano-keys`, which is still a package skeleton, so the decoders
+`Cardano.Tools.Credentials` needs from it are `undefined` stubs and pointing the
+tool at any credential file fails. Everything the rest of this section describes
+is otherwise in place; what is missing is only the decoding of the files
+themselves.
+
+:::
+
 ### When to use it
 
 - You need a syntactically and cryptographically valid chain of a given length
@@ -379,9 +390,10 @@ length cheaply, e.g. as input for benchmarks.
   triples). Byron-era credentials (`--byron-delegation-certificate` with
   `--byron-signing-key`) and a KES agent (`--shelley-kes-agent-socket` instead
   of `--shelley-kes-key`) work too. These are `cardano-node`'s own flags —
-  db-synthesizer takes them from `cardano-config`, and they are read and
-  cross-checked there the same way the node reads them. The genesis must give
-  the corresponding pools enough stake to be elected.
+  db-synthesizer takes them from `cardano-config`, so they are spelled and
+  documented exactly as the node spells them, and the files they name are
+  decoded by `cardano-keys`. The genesis must give the corresponding pools
+  enough stake to be elected.
 
 A minimal working setup — a staked genesis with bulk credentials for two
 forgers — is provided in
@@ -543,7 +555,7 @@ with the `state`/`meta` files, plus a directory with the exported tables.
 
 Exported snapshots are produced either by `snapshot-converter lsm export`
 (from an offline database), by the node itself as it takes snapshots (when
-`LedgerDB.LSMExportPath` is set in its configuration), or by a `convert` run
+`LedgerDB.Backend.LSM.ExportPath` is set in its configuration), or by a `convert` run
 with `--lsm-export-to`.
 
 No bloom-filter salt ever needs to be provided: `lsm export` salts the
@@ -603,8 +615,8 @@ and a checksum mismatch (corrupted input).
 In daemon mode, the tool watches the ledger snapshots directory of a running
 node and converts every exported **LSM** snapshot the node completes into a
 **Mem** snapshot, as it is written. It is only meaningful for a node that
-produces LSM snapshots *and* exports them (i.e. with `LedgerDB.LSMExportPath`
-set in the node configuration).
+produces LSM snapshots *and* exports them (i.e. with
+`LedgerDB.Backend.LSM.ExportPath` set in the node configuration).
 
 ```sh
 snapshot-converter daemon \
