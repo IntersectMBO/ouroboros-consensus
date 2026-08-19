@@ -1841,6 +1841,7 @@ library unstable-cardano-tools
     Cardano.Tools.DBSynthesizer.Forging
     Cardano.Tools.DBSynthesizer.Orphans
     Cardano.Tools.DBSynthesizer.Run
+    Cardano.Tools.DBSynthesizer.TxGen
     Cardano.Tools.DBSynthesizer.Types
     Cardano.Tools.DBTruncater.Run
     Cardano.Tools.DBTruncater.Types
@@ -1899,6 +1900,7 @@ library unstable-cardano-tools
     compact,
     containers,
     contra-tracer,
+    deepseq,
     directory,
     dot,
     filepath,
@@ -1907,6 +1909,7 @@ library unstable-cardano-tools
     githash,
     io-classes,
     io-classes:si-timers,
+    measures,
     microlens,
     mtl,
     network,
