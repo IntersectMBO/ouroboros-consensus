@@ -509,7 +509,18 @@ instance
       QueryStakePoolDefaultVote stakePool ->
         SL.queryStakePoolDefaultVote st stakePool
       GetPoolDistr2 mPoolIds ->
-        SL.querySetSnapshotStakePoolDistr st (maybe Set.empty id mPoolIds)
+        let result = SL.querySetSnapshotStakePoolDistr st (maybe Set.empty id mPoolIds)
+            toIndividualPoolStake qrips =
+              SL.IndividualPoolStake
+                { SL.individualPoolStake = SL.qripsStake qrips
+                , SL.individualTotalPoolStake = SL.qripsTotalStake qrips
+                , SL.individualPoolStakeVrf = SL.qripsVrf qrips
+                , SL.individualPoolStakeBls = SL.qripsBls qrips
+                }
+         in SL.PoolDistr
+              { SL.unPoolDistr = fmap toIndividualPoolStake (SL.qrpdDistr result)
+              , SL.pdTotalActiveStake = SL.qrpdTotalActiveStake result
+              }
       GetStakeDistribution2 ->
         SL.poolsByTotalStakeFraction globals st
       GetMaxMajorProtocolVersion ->

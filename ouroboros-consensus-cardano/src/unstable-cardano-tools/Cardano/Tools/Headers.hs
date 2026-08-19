@@ -31,6 +31,7 @@ import qualified Data.Aeson as Json
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block (validateView)
 import Ouroboros.Consensus.Protocol.Praos
   ( Praos
@@ -95,7 +96,13 @@ validate context MutatedHeader{header, mutation} =
     } = context
   -- TODO: get these from the context
   coin = fromJust . toCompact . Coin
-  ownsAllStake vrfKey = IndividualPoolStake 1 (coin 1) vrfKey
+  ownsAllStake vrfKey =
+    IndividualPoolStake
+      { individualPoolStake = 1
+      , individualTotalPoolStake = coin 1
+      , individualPoolStakeVrf = vrfKey
+      , individualPoolStakeBls = SNothing
+      }
   poolDistr = Map.fromList [(poolId, ownsAllStake hashVRFKey)]
   poolId = hashKey $ VKey $ deriveVerKeyDSIGN coldSignKey
   hashVRFKey = hashVerKeyVRF @StandardCrypto $ deriveVerKeyVRF vrfSignKey

@@ -20,6 +20,31 @@ index-state:
 
 packages: .
 
+-- Temp: pin cardano-ledger to PR #5992
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger.git
+  tag: c99f7c8addf270a09d852880bfa0a27340f8e7c3
+  --sha256: sha256-RKXVMS5glorTkL59J4rfyytyPflDWNB0GyLMrwfWZc4=
+  subdir:
+    libs/cardano-ledger-core
+    libs/cardano-ledger-api
+    libs/cardano-ledger-binary
+    libs/cardano-protocol
+    libs/cardano-protocol-tpraos
+    libs/cardano-data
+    libs/small-steps
+    libs/vector-map
+    libs/non-integral
+    eras/shelley/impl
+    eras/shelley/test-suite
+    eras/mary/impl
+    eras/allegra/impl
+    eras/alonzo/impl
+    eras/babbage/impl
+    eras/conway/impl
+    eras/dijkstra/impl
+
 -- We want to always build the test-suites and benchmarks
 tests: true
 benchmarks: true
