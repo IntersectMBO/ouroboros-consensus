@@ -24,6 +24,7 @@ parseNodeFilePaths =
   NodeFilePaths
     <$> parseNodeConfigFilePath
     <*> parseChainDBFilePath
+    <*> optional parsePaymentKeyFilePath
 
 parseNodeCredentials :: Parser NodeCredentials
 parseNodeCredentials =
@@ -63,6 +64,16 @@ parseNodeConfigFilePath =
     ( long "config"
         <> metavar "FILE"
         <> help "Path to the node's config.json"
+        <> completer (bashCompleter "file")
+    )
+
+parsePaymentKeyFilePath :: Parser FilePath
+parsePaymentKeyFilePath =
+  strOption
+    ( long "payment-signing-key"
+        <> metavar "FILE"
+        <> help
+          "Path to a payment signing key, as cardano-cli writes it. Each forged block spends the output of this key and makes a new one. If you do not give this option, the tool forges empty blocks."
         <> completer (bashCompleter "file")
     )
 
