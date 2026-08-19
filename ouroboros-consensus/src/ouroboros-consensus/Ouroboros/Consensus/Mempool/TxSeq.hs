@@ -26,7 +26,6 @@ module Ouroboros.Consensus.Mempool.TxSeq
   , toTuples
   , zeroTicketNo
   , take
-  , append
 
     -- * Reference implementations for testing
   , splitAfterTxSizeSpec
@@ -276,18 +275,14 @@ toSize (TxSeq ftree) = mSize
  where
   TxSeqMeasure{mSize} = FingerTree.measure ftree
 
--- | @txSeqTake n txsT@ takes up to @n@ tickets from the front of @txs@, returning them as a
--- list in original order alongside the remainder.
+-- | @txSeqTake n txsT@ takes up to @n@ tickets from the front of @txs@.
 take ::
   Measure sz =>
   Int ->
   TxSeq sz tx ->
-  ([TxTicket sz tx], TxSeq sz tx)
-take = go []
+  (TxSeq sz tx, TxSeq sz tx)
+take = go Empty
  where
-  go acc 0 rest = (reverse acc, rest)
-  go acc _ Empty = (reverse acc, Empty)
-  go acc n (t :< rest) = go (t : acc) (n - 1) rest
-
-append :: Measure sz => TxSeq sz tx -> TxSeq sz tx -> TxSeq sz tx
-append (TxSeq l) (TxSeq r) = TxSeq (l FingerTree.>< r)
+  go acc 0 rest = (acc, rest)
+  go acc _ Empty = (acc, Empty)
+  go acc n (t :< rest) = go (acc :> t) (n - 1) rest
