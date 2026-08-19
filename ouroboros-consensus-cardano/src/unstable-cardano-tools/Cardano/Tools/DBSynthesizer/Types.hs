@@ -19,6 +19,7 @@ data NodeConfigStub = NodeConfigStub
 data NodeFilePaths = NodeFilePaths
   { nfpConfig :: !FilePath
   , nfpChainDB :: !FilePath
+  , nfpPaymentKey :: !(Maybe FilePath)
   }
   deriving Show
 

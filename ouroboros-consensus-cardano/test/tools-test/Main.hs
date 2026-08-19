@@ -47,6 +47,7 @@ testNodeFilePaths =
   NodeFilePaths
     { nfpConfig = nodeConfig
     , nfpChainDB = chainDB
+    , nfpPaymentKey = Nothing
     }
 
 testNodeCredentials :: NodeCredentials
