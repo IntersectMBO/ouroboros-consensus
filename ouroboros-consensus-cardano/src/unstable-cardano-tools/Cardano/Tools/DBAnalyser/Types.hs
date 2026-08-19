@@ -2,43 +2,8 @@
 
 module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) where
 
-import Control.Exception (Exception (..), handle, throwIO)
 import Data.Word
 import Ouroboros.Consensus.Block
-import System.Environment (getProgName)
-import System.Exit (exitFailure)
-import System.IO (hPutStrLn, stderr)
-
--- | A tool was invoked with a configuration it cannot work with, be it in the
--- node configuration file or on the command line.
-newtype ConfigError = ConfigError String
-  deriving Show
-
-instance Exception ConfigError where
-  -- Deliberately just the message: these are user errors, so neither a call
-  -- stack nor a @user error (..)@ wrapper would tell the user anything useful.
-  displayException (ConfigError msg) = msg
-
--- | Abort because of a 'ConfigError'.
---
--- Every configuration problem these tools detect is reported this way, so that
--- they all reach the user in the same shape.
-throwConfigError :: String -> IO a
-throwConfigError = throwIO . ConfigError
-
--- | Report an escaping 'ConfigError' as a plain @\<prog\>: \<message\>@ on
--- stderr and exit with a failure.
---
--- Wrap a tool's @main@ in this. Without it, GHC's default handler would bury the
--- message under the exception's fully qualified type name and a call-stack
--- backtrace, neither of which helps someone who simply mistyped a configuration
--- key.
-withConfigErrorHandling :: IO a -> IO a
-withConfigErrorHandling =
-  handle $ \(ConfigError msg) -> do
-    prog <- getProgName
-    hPutStrLn stderr $ prog <> ": " <> msg
-    exitFailure
 
 data SelectDB
   = SelectImmutableDB (WithOrigin SlotNo)

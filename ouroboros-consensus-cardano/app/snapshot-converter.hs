@@ -6,8 +6,8 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.Config (withConfigErrorHandling)
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
-import Cardano.Tools.DBAnalyser.Types (withConfigErrorHandling)
 import Cardano.Tools.GitRev (gitRev)
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)

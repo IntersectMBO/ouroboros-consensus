@@ -1763,6 +1763,7 @@ library unstable-cardano-tools
   exposed-modules:
     Cardano.Api.Any
     Cardano.Node.Types
+    Cardano.Tools.Config
     Cardano.Tools.DBAnalyser.Analysis
     Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting
     Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
