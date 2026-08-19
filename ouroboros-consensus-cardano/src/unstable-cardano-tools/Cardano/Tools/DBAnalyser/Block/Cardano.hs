@@ -15,13 +15,11 @@ module Cardano.Tools.DBAnalyser.Block.Cardano
 
     -- * Interpreting the node configuration
 
-    -- | The pieces of the node configuration that db-analyser derives itself,
-    -- rather than getting them ready-made from @cardano-config@. Exposed so
-    -- that they can be tested against a configuration file directly.
-  , mkHardForkTriggers
-  , mkInitialNonce
+    -- | The piece of the node configuration that db-analyser derives itself,
+    -- rather than getting it ready-made from @cardano-config@ or from
+    -- "Cardano.Tools.Config". Exposed so that it can be tested against a
+    -- configuration file directly.
   , mkLedgerDBBackend
-  , resolveNodeConfiguration
   ) where
 
 import qualified Cardano.Chain.Block as Byron.Block
@@ -29,16 +27,21 @@ import qualified Cardano.Chain.Genesis as Byron.Genesis
 import qualified Cardano.Chain.UTxO as Byron.UTxO
 import qualified Cardano.Chain.Update as Byron.Update
 import qualified Cardano.Configuration as Cfg
-import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
-import Cardano.Ledger.BaseTypes (boundRational, unsafeNonZero)
 import Cardano.Ledger.Core (TxOut)
-import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
 import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
 import Cardano.Ledger.TxIn (TxIn)
 import Cardano.Protocol.Crypto
+import Cardano.Tools.Config
+  ( mkHardForkTriggers
+  , mkInitialNonce
+  , mkTransitionConfig
+  , reportConfigWarnings
+  , resolveNodeConfiguration
+  , throwConfigError
+  )
 import Cardano.Tools.DBAnalyser.Block.Byron ()
 import Cardano.Tools.DBAnalyser.Block.Shelley ()
 import Cardano.Tools.DBAnalyser.HasAnalysis
@@ -46,25 +49,21 @@ import Cardano.Tools.DBAnalyser.Types
   ( LSMOptions (..)
   , LedgerDBBackend (..)
   , defaultLSMDatabasePath
-  , throwConfigError
   )
-import Control.Exception (displayException, try)
 import qualified Data.Compact as Compact
 import Data.Functor.Identity (Identity, runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, fromMaybe, isJust, isNothing)
+import Data.Maybe (fromJust)
 import Data.Maybe.Strict
   ( StrictMaybe (..)
   , fromSMaybe
-  , strictMaybe
   , strictMaybeToMaybe
   )
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
-import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron.Ledger
@@ -164,55 +163,17 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     triggers <- either throwConfigError pure $ mkHardForkTriggers (Cfg.testingConfiguration nc)
     backend <- either throwConfigError pure $ mkLedgerDBBackend (Cfg.storageConfiguration nc)
 
-    let genesisByron = Cfg.byronGenesisConfig nc
-        genesisShelley = Cfg.shelleyGenesisConfig nc
-        genesisAlonzo = Cfg.alonzoGenesisConfig nc
-        genesisConway = Cfg.conwayGenesisConfig nc
-        genesisDijkstra =
-          strictMaybe emptyDijkstraGenesis id (Cfg.experimentalGenesisConfig nc)
-
-        transCfg =
-          SL.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway genesisDijkstra
-
-        fs = SomeHasFS (ioHasFS (MountPoint configDir))
+    let fs = SomeHasFS (ioHasFS (MountPoint configDir))
 
     pInfo <-
       mkCardanoProtocolInfo
         fs
-        genesisByron
+        (Cfg.byronGenesisConfig nc)
         threshold
-        transCfg
+        (mkTransitionConfig nc)
         (mkInitialNonce nc)
         triggers
     pure (pInfo, backend)
-
--- | Parse and resolve the node configuration with the shared 'cardano-config'
--- package. db-analyser drives the configuration from the config file alone, with
--- no command-line overrides, so 'Cfg.resolveConfigurationFromFile' resolves it
--- against cardano-config's all-defaults CLI arguments and the file layer wins.
---
--- The warnings emitted while resolving are returned rather than reported here,
--- so that the caller decides where they are printed.
-resolveNodeConfiguration :: FilePath -> IO (Cfg.NodeConfiguration, [Cfg.ConfigWarning])
-resolveNodeConfiguration configFile =
-  -- cardano-config reports some problems -- a missing mandatory key, notably --
-  -- by throwing rather than in its result, so catch those too; letting them
-  -- escape would present the user with a call-stack backtrace for what is just a
-  -- mistake in their configuration file.
-  try (Cfg.resolveConfigurationFromFile configFile) >>= \case
-    Left (err :: Cfg.ConfigurationParsingError) -> invalid (displayException err)
-    Right (Left err) -> invalid (show err)
-    Right (Right res) -> pure res
- where
-  invalid msg = throwConfigError ("invalid node configuration: " <> msg)
-
--- | The initial nonce, ie the Blake2b-256 hash of the Shelley genesis file,
--- which 'cardano-config' records alongside the file path.
-mkInitialNonce :: Cfg.NodeConfiguration -> Nonce
-mkInitialNonce nc =
-  Nonce $
-    CryptoClass.castHash $
-      Cfg.hash (Cfg.shelleyGenesis (Cfg.protocolConfiguration nc))
 
 -- | The LedgerDB backend the node configuration selects, if it selects one.
 mkLedgerDBBackend ::
@@ -253,65 +214,6 @@ mkLedgerDBBackend storeCfg =
             <> show path
             <> ", but it must be relative to the ChainDB directory."
     | otherwise = Right path
-
--- | An empty Dijkstra genesis to be provided when none is specified in the config.
-emptyDijkstraGenesis :: SL.DijkstraGenesis
-emptyDijkstraGenesis =
-  let upgradePParamsDef =
-        UpgradeDijkstraPParams
-          { udppMaxRefScriptSizePerBlock = 1048576
-          , udppMaxRefScriptSizePerTx = 204800
-          , udppRefScriptCostStride = unsafeNonZero 25600
-          , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
-          }
-   in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
-
--- | Build the 'CardanoHardForkTriggers' from the @Testing@ section of the
--- configuration: each era hard-forks at its configured epoch, or at the
--- default protocol version when no epoch is given.
---
--- If an era is configured to hard-fork at a specific epoch, then so must all
--- earlier eras; otherwise the configuration is rejected.
-mkHardForkTriggers ::
-  Cfg.TestingConfiguration Identity -> Either String CardanoHardForkTriggers
-mkHardForkTriggers testCfg
-  | any (\(earlier, later) -> isNothing earlier && isJust later) (zip epochs (drop 1 epochs)) =
-      Left
-        "if the Cardano config file sets a Test*HardForkAtEpoch, it must also set it for all previous eras."
-  | otherwise =
-      Right
-        CardanoHardForkTriggers'
-          { triggerHardForkShelley = toTrigger (epochOf Cfg.testShelleyHardForkAtEpoch)
-          , triggerHardForkAllegra = toTrigger (epochOf Cfg.testAllegraHardForkAtEpoch)
-          , triggerHardForkMary = toTrigger (epochOf Cfg.testMaryHardForkAtEpoch)
-          , triggerHardForkAlonzo = toTrigger (epochOf Cfg.testAlonzoHardForkAtEpoch)
-          , triggerHardForkBabbage = toTrigger (epochOf Cfg.testBabbageHardForkAtEpoch)
-          , triggerHardForkConway = toTrigger (epochOf Cfg.testConwayHardForkAtEpoch)
-          , triggerHardForkDijkstra = toTrigger (epochOf Cfg.testDijkstraHardForkAtEpoch)
-          }
- where
-  -- cardano-config records the configured epochs as 'StrictMaybe'; db-analyser
-  -- works with plain 'Maybe' here.
-  epochOf ::
-    (Cfg.TestingConfiguration Identity -> StrictMaybe Word64) -> Maybe Word64
-  epochOf f = strictMaybeToMaybe (f testCfg)
-
-  -- In Shelley-era order; mirrors the field order of 'CardanoHardForkTriggers''.
-  epochs =
-    [ epochOf Cfg.testShelleyHardForkAtEpoch
-    , epochOf Cfg.testAllegraHardForkAtEpoch
-    , epochOf Cfg.testMaryHardForkAtEpoch
-    , epochOf Cfg.testAlonzoHardForkAtEpoch
-    , epochOf Cfg.testBabbageHardForkAtEpoch
-    , epochOf Cfg.testConwayHardForkAtEpoch
-    , epochOf Cfg.testDijkstraHardForkAtEpoch
-    ]
-
-  toTrigger :: Maybe Word64 -> CardanoHardForkTrigger blk
-  toTrigger =
-    maybe
-      CardanoTriggerHardForkAtDefaultVersion
-      (CardanoTriggerHardForkAtEpoch . EpochNo)
 
 instance HasAnalysis (CardanoBlock StandardCrypto) where
   countTxOutputs = analyseBlock countTxOutputs

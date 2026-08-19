@@ -14,17 +14,19 @@ module Test.Cardano.Tools.DBAnalyser.NodeConfig (tests) where
 import qualified Cardano.Configuration as Cfg
 import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import Cardano.Ledger.BaseTypes (Nonce (..))
-import Cardano.Tools.DBAnalyser.Block.Cardano
-  ( Args (CardanoBlockArgs)
+import Cardano.Tools.Config
+  ( ConfigError (..)
   , mkHardForkTriggers
   , mkInitialNonce
-  , mkLedgerDBBackend
   , resolveNodeConfiguration
+  )
+import Cardano.Tools.DBAnalyser.Block.Cardano
+  ( Args (CardanoBlockArgs)
+  , mkLedgerDBBackend
   )
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfoAndBackend)
 import Cardano.Tools.DBAnalyser.Types
-  ( ConfigError (..)
-  , LSMOptions (..)
+  ( LSMOptions (..)
   , LedgerDBBackend (..)
   )
 import Control.Exception (try)
