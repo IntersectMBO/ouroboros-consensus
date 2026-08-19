@@ -1,48 +1,58 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Cardano.Tools.DBSynthesizer.Run
-  ( initialize
+  ( CardanoProtocol
+  , initialize
   , synthesize
   ) where
 
-import Cardano.Api.Any (displayError)
-import Cardano.Node.Protocol.Cardano (mkConsensusProtocolCardano)
-import Cardano.Node.Types
+import qualified Cardano.Chain.Update as Byron.Update
+import qualified Cardano.Configuration as Cfg
+import qualified Cardano.Configuration.CliArgs as CLI
+import qualified Cardano.Ledger.Api.Era as L
+import Cardano.Ledger.BaseTypes (ProtVer (..))
+import Cardano.Tools.Config
+  ( mkHardForkTriggers
+  , mkInitialNonce
+  , mkTransitionConfig
+  , resolveNodeConfigurationWith
+  , throwConfigError
+  )
+import Cardano.Tools.Credentials (LeaderCredentials)
+import qualified Cardano.Tools.Credentials as Creds
 import Cardano.Tools.DBSynthesizer.Forging
-import Cardano.Tools.DBSynthesizer.Orphans ()
 import Cardano.Tools.DBSynthesizer.Types
 import Control.Monad (filterM)
-import Control.Monad.Trans.Except (ExceptT)
-import Control.Monad.Trans.Except.Extra
-  ( firstExceptT
-  , handleIOExceptT
-  , hoistEither
-  , runExceptT
-  )
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Aeson as Aeson
-  ( FromJSON
-  , Result (..)
-  , Value
-  , eitherDecodeFileStrict'
-  , eitherDecodeStrict'
-  , fromJSON
-  )
 import Data.Bool (bool)
-import Data.ByteString as BS (ByteString, readFile)
 import Data.Functor (($>))
 import qualified Data.Set as Set
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
+import Ouroboros.Consensus.Cardano
+  ( ProtocolParamsByron (..)
+  , ProtocolParamsShelleyBased (..)
+  )
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
-import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
+  ( CardanoHardForkTriggers
+  , CardanoProtocolParams (..)
+  , protocolInfoCardano
+  )
+import Ouroboros.Consensus.Config
+  ( TopLevelConfig
+  , configStorage
+  , emptyCheckpointsMap
+  )
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
   )
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
   ( ShelleyGenesis (..)
@@ -55,116 +65,121 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.IOLike (atomically)
-import Ouroboros.Network.Block
+import Ouroboros.Network.Block hiding (GenesisHash)
 import Ouroboros.Network.Point (WithOrigin (..))
 import System.Directory
 import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (MountPoint))
 import System.FS.IO (ioHasFS)
 import System.FilePath (takeDirectory, (</>))
+import System.IO (hPutStrLn, stderr)
 import System.Random (newStdGen)
 
+-- | A Cardano protocol ready to forge with: the 'ProtocolInfo' and the block
+-- forgers that 'protocolInfoCardano' produces alongside it.
+type CardanoProtocol =
+  ( ProtocolInfo (CardanoBlock StandardCrypto)
+  , Tracer IO KESAgentClientTrace ->
+    IO [BlockForging.MkBlockForging IO (CardanoBlock StandardCrypto)]
+  )
+
+-- | Build the protocol to forge with from a node configuration file and the
+-- forging credentials it is given on the command line.
+--
+-- Everything that reads a file is @cardano-config@'s: it parses and resolves
+-- the configuration, loads every era's genesis, and decodes the credentials.
+-- What happens here is the mapping onto the consensus types, which is the part
+-- that cannot live below the consensus layer.
+--
+-- Any problem with the configuration or the credentials is thrown as a
+-- 'Cardano.Tools.Config.ConfigError', like in the other tools, so that the user
+-- gets a plain message rather than a backtrace.
+--
+-- The Shelley genesis is returned alongside the protocol because 'synthesize'
+-- needs its epoch length.
 initialize ::
-  NodeFilePaths ->
-  NodeCredentials ->
-  DBSynthesizerOptions ->
-  IO (Either String (DBSynthesizerConfig, CardanoProtocolParams StandardCrypto))
-initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
-  configDir <- takeDirectory <$> makeAbsolute nfpConfig
-  let relativeToConfig :: FilePath -> FilePath
-      relativeToConfig = (configDir </>)
-  runExceptT $ do
-    conf <- initConf configDir relativeToConfig
-    proto <- initProtocol relativeToConfig conf
-    pure (conf, proto)
+  -- | The node configuration file.
+  FilePath ->
+  -- | The credential files, as named on the command line.
+  Cfg.Credentials ->
+  IO (ShelleyGenesis, CardanoProtocol)
+initialize configFile creds = do
+  (nc, warns) <- resolveNodeConfigurationWith cliArgs
+  mapM_ (hPutStrLn stderr . ("WARNING: " ++) . show) warns
+
+  triggers <- either throwConfigError pure $ mkHardForkTriggers (Cfg.testingConfiguration nc)
+  let shelleyGenesis = Cfg.shelleyGenesisConfig nc
+  either throwConfigError pure $ validateGenesis shelleyGenesis
+  leaderCredentials <-
+    either throwConfigError pure
+      =<< Creds.readLeaderCredentials (Cfg.byronGenesisConfig nc) (Cfg.credentials nc)
+
+  -- The same filesystem db-analyser mounts: rooted at the configuration file's
+  -- directory, which is what the paths in a node configuration are relative to.
+  configDir <- takeDirectory <$> makeAbsolute configFile
+  let fs = SomeHasFS (ioHasFS (MountPoint configDir))
+
+  protocol <- protocolInfoCardano fs (protocolParams nc triggers leaderCredentials)
+  pure (shelleyGenesis, protocol)
  where
-  initConf :: FilePath -> (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
-  initConf configDir relativeToConfig = do
-    inp <- handleIOExceptT show (BS.readFile nfpConfig)
-    configStub <- adjustFilePaths relativeToConfig <$> readJson inp
-    shelleyGenesis <- readFileJson $ ncsShelleyGenesisFile configStub
-    _ <- hoistEither $ validateGenesis shelleyGenesis
-    let
-      protocolCredentials =
-        ProtocolFilepaths
-          { byronCertFile = Nothing
-          , byronKeyFile = Nothing
-          , shelleyKESFile = credKESFile creds
-          , shelleyVRFFile = credVRFFile creds
-          , shelleyCertFile = credCertFile creds
-          , shelleyBulkCredsFile = credBulkFile creds
-          }
-    pure
-      DBSynthesizerConfig
-        { confConfigStub = configStub
-        , confOptions = synthOptions
-        , confProtocolCredentials = protocolCredentials
-        , confShelleyGenesis = shelleyGenesis
-        , confDbDir = nfpChainDB
-        , confNodeConfigDir = configDir
-        }
+  -- db-synthesizer has no node command line of its own beyond the credentials,
+  -- so everything else in the configuration comes from the file.
+  cliArgs = (CLI.defaultCliArgs configFile){CLI.credentials = creds}
 
-  initProtocol ::
-    (FilePath -> FilePath) ->
-    DBSynthesizerConfig ->
-    ExceptT String IO (CardanoProtocolParams StandardCrypto)
-  initProtocol relativeToConfig DBSynthesizerConfig{confConfigStub, confProtocolCredentials} = do
-    hfConfig :: NodeHardForkProtocolConfiguration <-
-      hoistEither hfConfig_
-    byronConfig :: NodeByronProtocolConfiguration <-
-      adjustFilePaths relativeToConfig <$> hoistEither byConfig_
+protocolParams ::
+  Cfg.NodeConfiguration ->
+  CardanoHardForkTriggers ->
+  LeaderCredentials ->
+  CardanoProtocolParams StandardCrypto
+protocolParams nc triggers leaderCredentials =
+  CardanoProtocolParams
+    ProtocolParamsByron
+      { byronGenesis = Cfg.byronGenesisConfig nc
+      , -- Not modelled by cardano-config; the node's own default is to leave the
+        -- genesis-imposed threshold alone.
+        byronPbftSignatureThreshold = Nothing
+      , -- These two are what a forged Byron block announces about the software
+        -- that made it. cardano-config no longer models them either, so we
+        -- announce what a stock cardano-node announces.
+        byronProtocolVersion = Byron.Update.ProtocolVersion 3 0 0
+      , byronSoftwareVersion =
+          Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "cardano-sl") 1
+      , byronLeaderCredentials = Creds.byronLeaderCredentials leaderCredentials
+      }
+    ProtocolParamsShelleyBased
+      { shelleyBasedInitialNonce = mkInitialNonce nc
+      , shelleyBasedLeaderCredentials = Creds.shelleyLeaderCredentials leaderCredentials
+      }
+    triggers
+    (mkTransitionConfig nc)
+    emptyCheckpointsMap
+    -- The greatest protocol version we can forge in, ie the latest era we know
+    -- about. db-analyser uses the same, so that it can validate what we forge.
+    (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
 
-    firstExceptT displayError $
-      mkConsensusProtocolCardano
-        byronConfig
-        shelleyConfig
-        alonzoConfig
-        conwayConfig
-        dijkstraConfig
-        hfConfig
-        (Just confProtocolCredentials)
-   where
-    shelleyConfig = NodeShelleyProtocolConfiguration (GenesisFile $ ncsShelleyGenesisFile confConfigStub) Nothing
-    alonzoConfig = NodeAlonzoProtocolConfiguration (GenesisFile $ ncsAlonzoGenesisFile confConfigStub) Nothing
-    conwayConfig = NodeConwayProtocolConfiguration (GenesisFile $ ncsConwayGenesisFile confConfigStub) Nothing
-    dijkstraConfig =
-      fmap
-        (\x -> NodeDijkstraProtocolConfiguration (GenesisFile x) Nothing)
-        (ncsDijkstraGenesisFile confConfigStub)
-    hfConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
-    byConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
-
-readJson :: (Monad m, FromJSON a) => ByteString -> ExceptT String m a
-readJson = hoistEither . eitherDecodeStrict'
-
-readFileJson :: FromJSON a => FilePath -> ExceptT String IO a
-readFileJson f = handleIOExceptT show (eitherDecodeFileStrict' f) >>= hoistEither
-
-eitherParseJson :: FromJSON a => Aeson.Value -> Either String a
-eitherParseJson v = case fromJSON v of
-  Error err -> Left err
-  Success a -> Right a
-
+-- | Forge a ChainDB from a ready-made Cardano 'ProtocolInfo' and its block
+-- forgers (as produced by 'initialize'). Constructing the protocol from a node
+-- configuration is the caller's responsibility, keeping this function free of
+-- any configuration machinery. In particular, the caller is also responsible
+-- for having validated the genesis (see
+-- 'Ouroboros.Consensus.Shelley.Node.validateGenesis').
 synthesize ::
   ( TopLevelConfig (CardanoBlock StandardCrypto) ->
     GenTxs (CardanoBlock StandardCrypto)
   ) ->
-  DBSynthesizerConfig ->
-  (CardanoProtocolParams StandardCrypto) ->
+  DBSynthesizerOptions ->
+  -- | The same Shelley genesis the 'ProtocolInfo' was built from; only its
+  -- epoch length is used, to interpret a 'ForgeLimitEpoch'.
+  ShelleyGenesis ->
+  -- | The directory of the ChainDB to forge into.
+  FilePath ->
+  CardanoProtocol ->
   IO ForgeResult
-synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confNodeConfigDir} runP =
+synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) =
   withRegistry $ \registry -> do
-    let fs = SomeHasFS (ioHasFS (MountPoint confNodeConfigDir))
-    ( ProtocolInfo
-        { pInfoConfig
-        , pInfoInitLedger
-        }
-      , mkForgers
-      ) <-
-      protocolInfoCardano fs runP
     snapshotDelayRng <- newStdGen
     let
-      epochSize = sgEpochLength confShelleyGenesis
+      epochSize = sgEpochLength shelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
       flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
       dbArgs =
@@ -225,7 +240,7 @@ preOpenChainDB mode db =
     isChainDB <- checkIsDB <$> listSubdirectories db
     case mode of
       OpenCreate ->
-        fail $ loc ++ " already exists. Use -f to overwrite or -a to append."
+        throwConfigError $ loc ++ " already exists. Use -f to overwrite or -a to append."
       OpenAppend
         | isChainDB ->
             pure ()
@@ -233,7 +248,7 @@ preOpenChainDB mode db =
         | isChainDB ->
             removePathForcibly db >> create
       _ ->
-        fail $
+        throwConfigError $
           loc
             ++ " is non-empty and does not look like a ChainDB"
               <> " (i.e. it contains directories other than"
