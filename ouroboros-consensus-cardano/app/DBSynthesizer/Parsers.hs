@@ -98,22 +98,22 @@ parseEpochLimit =
         <> help "Amount of epochs to process"
     )
 
-parseForce :: Parser Bool
-parseForce =
-  switch
+-- | @-f@ and @-a@ pick the open mode; without either of them, the ChainDB
+-- directory is expected not to exist yet.
+--
+-- These have to be 'flag'' rather than 'switch': a 'switch' succeeds whether or
+-- not its flag is present, so the first alternative would always win and every
+-- run would force-overwrite.
+parseOpenMode :: Parser DBSynthesizerOpenMode
+parseOpenMode =
+  flag'
+    OpenCreateForce
     ( short 'f'
         <> help "Force overwrite an existing Chain DB"
     )
-
-parseAppend :: Parser Bool
-parseAppend =
-  switch
-    ( short 'a'
-        <> help "Append to an existing Chain DB"
-    )
-
-parseOpenMode :: Parser DBSynthesizerOpenMode
-parseOpenMode =
-  (parseForce *> pure OpenCreateForce)
-    <|> (parseAppend *> pure OpenAppend)
+    <|> flag'
+      OpenAppend
+      ( short 'a'
+          <> help "Append to an existing Chain DB"
+      )
     <|> pure OpenCreate
