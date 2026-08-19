@@ -10,6 +10,7 @@
 module Cardano.Tools.DBAnalyser.Run (analyse) where
 
 import Cardano.Ledger.BaseTypes
+import Cardano.Tools.Config (throwConfigError)
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
