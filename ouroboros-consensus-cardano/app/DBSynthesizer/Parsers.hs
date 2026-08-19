@@ -1,37 +1,38 @@
-module DBSynthesizer.Parsers (parseCommandLine) where
+module DBSynthesizer.Parsers
+  ( Options (..)
+  , parseCommandLine
+  ) where
 
+import qualified Cardano.Configuration.CliArgs as CLI
 import Cardano.Tools.DBSynthesizer.Types
 import Data.Word (Word64)
 import Options.Applicative as Opt
 import Ouroboros.Consensus.Block.Abstract (SlotNo (..))
 
-parseCommandLine :: IO (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
+-- | What db-synthesizer was asked to do.
+data Options = Options
+  { configFile :: FilePath
+  , chainDBDir :: FilePath
+  , credentials :: CLI.Credentials
+  , synthOptions :: DBSynthesizerOptions
+  }
+
+parseCommandLine :: IO Options
 parseCommandLine =
   Opt.customExecParser p opts
  where
   p = Opt.prefs Opt.showHelpOnEmpty
   opts = Opt.info parserCommandLine mempty
 
-parserCommandLine :: Parser (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
+parserCommandLine :: Parser Options
 parserCommandLine =
-  (,,)
-    <$> parseNodeFilePaths
-    <*> parseNodeCredentials
-    <*> parseDBSynthesizerOptions
-
-parseNodeFilePaths :: Parser NodeFilePaths
-parseNodeFilePaths =
-  NodeFilePaths
+  Options
     <$> parseNodeConfigFilePath
     <*> parseChainDBFilePath
-
-parseNodeCredentials :: Parser NodeCredentials
-parseNodeCredentials =
-  NodeCredentials
-    <$> optional parseOperationalCertFilePath
-    <*> optional parseVrfKeyFilePath
-    <*> optional parseKesKeyFilePath
-    <*> optional parseBulkFilePath
+    -- The credential flags are cardano-config's own, so that they are spelled
+    -- and documented exactly as they are for a node.
+    <*> CLI.parseCredentials
+    <*> parseDBSynthesizerOptions
 
 parseDBSynthesizerOptions :: Parser DBSynthesizerOptions
 parseDBSynthesizerOptions =
@@ -63,43 +64,6 @@ parseNodeConfigFilePath =
     ( long "config"
         <> metavar "FILE"
         <> help "Path to the node's config.json"
-        <> completer (bashCompleter "file")
-    )
-
-parseOperationalCertFilePath :: Parser FilePath
-parseOperationalCertFilePath =
-  strOption
-    ( long "shelley-operational-certificate"
-        <> metavar "FILE"
-        <> help "Path to the delegation certificate (in JSON TextEnvelope format)"
-        <> completer (bashCompleter "file")
-    )
-
-parseKesKeyFilePath :: Parser FilePath
-parseKesKeyFilePath =
-  strOption
-    ( long "shelley-kes-key"
-        <> metavar "FILE"
-        <> help "Path to the KES signing key (in JSON TextEnvelope format)"
-        <> completer (bashCompleter "file")
-    )
-
-parseVrfKeyFilePath :: Parser FilePath
-parseVrfKeyFilePath =
-  strOption
-    ( long "shelley-vrf-key"
-        <> metavar "FILE"
-        <> help "Path to the VRF signing key (in JSON TextEnvelope format)"
-        <> completer (bashCompleter "file")
-    )
-
-parseBulkFilePath :: Parser FilePath
-parseBulkFilePath =
-  strOption
-    ( long "bulk-credentials-file"
-        <> metavar "FILE"
-        <> help
-          "Path to the bulk credentials file (a JSON file containing an array of arrays containing 3 TextEnvelope objects for the opcert, VRF Signing key, KES signing key)"
         <> completer (bashCompleter "file")
     )
 
