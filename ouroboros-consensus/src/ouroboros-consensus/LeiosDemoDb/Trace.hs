@@ -33,6 +33,12 @@ data TraceLeiosDb
       , copiedEbTxs :: !Int
       , copiedTxs :: !Int
       }
+  | -- | Rows evicted by 'LeiosDbHandle.leiosDbGarbageCollect'.
+    TraceLeiosDbEvicted
+      { evictedEbs :: !Int
+      , evictedEbTxs :: !Int
+      , evictedTxs :: !Int
+      }
   | -- | A trace event for LeiosUtils.CallTrace spans
     TraceLeiosDbCall !SomeJsonCallTrace
   deriving Show

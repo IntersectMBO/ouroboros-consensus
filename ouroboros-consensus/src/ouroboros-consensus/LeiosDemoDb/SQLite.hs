@@ -38,6 +38,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
+import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -102,16 +103,14 @@ newLeiosDBSQLite tracer dbPath = do
   notificationChan <- atomically newBroadcastTChan
   -- start a thread to sample the sizes of the volatile LeiosDB partition
   startVolatileStatsSampler tracer dbPath
-  -- One root call context per maintenance operation, held for the handle's
-  -- lifetime, so span ids stay unique across the calls of one node run. The
-  -- names label the ChainDB background threads that drive each operation.
   gcRootCtx <- rootCallCtx "leiosdb-gc"
   copyRootCtx <- rootCallCtx "leiosdb-copy"
+  noGCYetDoneRef <- newIORef True -- True until the first GC of this handle
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
-      , leiosDbGarbageCollect = sqlGarbageCollect tracer gcRootCtx dbPath
+      , leiosDbGarbageCollect = sqlGarbageCollect tracer gcRootCtx dbPath noGCYetDoneRef
       , leiosDbMarkAsImmutable = sqlMarkAsImmutable tracer copyRootCtx dbPath
       , open = openSQLiteConnection tracer dbPath notificationChan
       }
@@ -162,16 +161,76 @@ sqlMarkAsImmutable tracer rootCtx dbPath point = do
       dbBindBlob stmt 1 ebHash
       fromIntegral <$> readSingleInt64 stmt
 
--- | Stub implementation of 'leiosDbGarbageCollect': flush the WAL.
+  execWithBlob :: HasCallStack => DB.Database -> String -> ByteString -> IO ()
+  execWithBlob db sql blob =
+    withStmt db sql $ \stmt -> do
+      dbBindBlob stmt 1 blob
+      dbStep1Safe stmt
+
+-- | Implements 'leiosDbGarbageCollect': evict every volatile EB all of whose
+-- announcements are older than the given slot, then flush the WAL.
 sqlGarbageCollect ::
   HasCallStack =>
-  Tracer IO TraceLeiosDb -> CallCtx IO -> FilePath -> SlotNo -> IO ()
-sqlGarbageCollect tracer rootCtx dbPath gcSlot =
+  Tracer IO TraceLeiosDb -> CallCtx IO -> FilePath -> IORef Bool -> SlotNo -> IO ()
+sqlGarbageCollect tracer rootCtx dbPath noGCYetDoneRef gcSlot =
   gcSpan rootCtx "sqlGarbageCollect" (unSlotNo gcSlot) $ \gcCtx ->
-    withMaintenanceConn dbPath $ \db ->
+    withMaintenanceConn dbPath $ \db -> do
+      -- check if we're doing the first ever GC during this node's run
+      -- and flip the flag if so
+      -- TODO(geo2a): move this configuration out of the IORef.
+      firstGc <- atomicModifyIORef' noGCYetDoneRef (\b -> (False, b))
+      hasWork <- gcSpan gcCtx "noopGuard" () $ \_ ->
+        withStmt db sql_gc_has_work $ \stmt -> do
+          dbBindInt64 stmt 1 slot
+          (/= 0) <$> readSingleInt64 stmt
+      when (hasWork || firstGc) $ do
+        (evictedEbs, evictedEbTxs, evictedTxs) <-
+          gcSpan gcCtx "evictionTransaction" () $ \txnCtx ->
+            dbWithTransaction db $ do
+              nTxsFromFirstGC <-
+                if firstGc
+                  -- if the the first GC (for example, after a node restart),
+                  -- run the expensive traversal
+                  then gcSpan txnCtx "orphanTxsFullScan" () $ \_ ->
+                    withStmt db sql_gc_orphan_txs_full_scan dbStep1Safe >> DB.changes db
+                  else pure 0
+              -- find txHashBytes that are only referenced by volatile EBs that are older
+              -- than the garbage collection slot and stage them for GC
+              gcSpan txnCtx "stageOrphanCandidates" () $ \_ ->
+                withStmt db sql_gc_stage_orphan_candidates $ \stmt -> do
+                  dbBindInt64 stmt 1 slot
+                  dbStep1Safe stmt
+              -- garbage collect rows of EbTxs
+              nEbTxs <- gcSpan txnCtx "evictEbTxs" () $ \_ ->
+                execWithInt64 db sql_gc_ebTxs slot >> DB.changes db
+              -- garbage collect EBs
+              nEbs <- gcSpan txnCtx "evictEbs" () $ \_ ->
+                execWithInt64 db sql_gc_ebs slot >> DB.changes db
+              -- finally, garbage collect txs that were staged before
+              --
+              -- TODO(geo2a): can we GC txs based on the data we get from GCing EBs?
+              -- why is sql_gc_stage_orphan_candidates + sql_gc_orphan_txs is
+              -- faster than sql_gc_orphan_txs_full_scan?
+              nTxs <- gcSpan txnCtx "orphanTxs" () $ \_ ->
+                withStmt db sql_gc_orphan_txs dbStep1Safe >> DB.changes db
+              gcSpan txnCtx "clearCandidates" () $ \_ ->
+                withStmt db sql_gc_clear_candidates dbStep1Safe
+              let nTxsTotal = nTxs + nTxsFromFirstGC
+              when (nEbs > 0 || nEbTxs > 0 || nTxsTotal > 0) $
+                execWithInt64x3
+                  db
+                  sql_update_volatile_stats
+                  ( negate (fromIntegral nEbs)
+                  , negate (fromIntegral nEbTxs)
+                  , negate (fromIntegral nTxsTotal)
+                  )
+              pure (nEbs, nEbTxs, nTxsTotal)
+        traceWith tracer TraceLeiosDbEvicted{evictedEbs, evictedEbTxs, evictedTxs}
       gcSpan gcCtx "walCheckpoint" () $ \_ ->
         dbExec db "PRAGMA wal_checkpoint(TRUNCATE);"
  where
+  slot = fromIntegral (unSlotNo gcSlot)
+
   gcSpan ::
     (Aeson.ToJSON arg, Aeson.ToJSON res) =>
     CallCtx IO -> CallName -> arg -> (CallCtx IO -> IO res) -> IO res
@@ -431,14 +490,6 @@ withMaintenanceConn dbPath =
 withStmt :: HasCallStack => DB.Database -> String -> (DB.Statement -> IO a) -> IO a
 withStmt db sql =
   MonadThrow.bracket (dbPrepare db (fromString sql)) dbFinalize
-
--- | Run a maintenance statement that takes a single BLOB parameter and returns
--- no rows.
-execWithBlob :: HasCallStack => DB.Database -> String -> ByteString -> IO ()
-execWithBlob db sql blob =
-  withStmt db sql $ \stmt -> do
-    dbBindBlob stmt 1 blob
-    dbStep1Safe stmt
 
 -- | Run a maintenance statement that takes three INTEGER parameters and
 -- returns no rows.
@@ -797,10 +848,10 @@ sql_schema =
     , "    (SELECT 1 FROM ebTxs e JOIN ebs b ON b.ebHashBytes = e.ebHashBytes AND b.immutable = 1"
     , "     WHERE e.txHashBytes = t.txHashBytes))"
     , "WHERE NOT EXISTS (SELECT 1 FROM leiosDbStats WHERE id = 0);"
-    -- , -- Migration: the staging table of the removed garbage-collection path.
-    --   -- Idempotent, so existing devnet databases shed it on the next open.
-    --   -- TODO(geo2a): can we remove that?
-    --   "DROP TABLE IF EXISTS gcTxCandidates;"
+    , -- Garbage collection candidates.
+      "CREATE TABLE IF NOT EXISTS gcTxCandidates ("
+    , "  txHashBytes BLOB NOT NULL PRIMARY KEY"
+    , ");"
     ]
 
 -- | The 'ebTxs' rows of one EB hash. @?1@ is the ebHash blob.
@@ -1012,6 +1063,69 @@ sql_read_immutable_stats =
 sql_read_volatile_stats :: String
 sql_read_volatile_stats =
   "SELECT volatileEbs, volatileEbTxs, volatileTxs FROM leiosDbStats WHERE id = 0\n"
+
+-- ** Garbage collection of the volatile partition
+
+-- | Whether a GC at slot @?1@ would evict anything.
+sql_gc_has_work :: String
+sql_gc_has_work =
+  "SELECT EXISTS (SELECT 1 FROM ebs WHERE immutable = 0 AND ebSlot < ?1)\n\
+  \"
+
+-- | The evictable EB hashes: every announcement is volatile and older than
+-- the GC slot @?1@.
+sql_gc_stale_hashes :: String
+sql_gc_stale_hashes =
+  "SELECT DISTINCT cand.ebHashBytes FROM ebs cand\n\
+  \     WHERE cand.immutable = 0 AND cand.ebSlot < ?1\n\
+  \       AND NOT EXISTS\n\
+  \         (SELECT 1 FROM ebs\n\
+  \          WHERE ebs.ebHashBytes = cand.ebHashBytes\n\
+  \            AND (ebs.immutable = 1 OR ebs.ebSlot >= ?1))\n"
+
+-- | Stage the txs of the stale EB hashes as orphan candidates. @?1@ is the GC
+-- slot.
+sql_gc_stage_orphan_candidates :: String
+sql_gc_stage_orphan_candidates =
+  "INSERT OR IGNORE INTO gcTxCandidates (txHashBytes)\n\
+  \  SELECT DISTINCT txHashBytes FROM ebTxs WHERE ebHashBytes IN\n\
+  \    ("
+    <> sql_gc_stale_hashes
+    <> ")\n"
+
+-- | Evict the body rows of the stale EB hashes. @?1@ is the GC slot.
+sql_gc_ebTxs :: String
+sql_gc_ebTxs =
+  "DELETE FROM ebTxs WHERE ebHashBytes IN\n\
+  \  ("
+    <> sql_gc_stale_hashes
+    <> ")\n"
+
+-- | Evict volatile announcements older than the GC slot @?1@.
+sql_gc_ebs :: String
+sql_gc_ebs = "DELETE FROM ebs WHERE immutable = 0 AND ebSlot < ?\n"
+
+-- | Reap staged candidate txs that no EB references any more.
+sql_gc_orphan_txs :: String
+sql_gc_orphan_txs =
+  "DELETE FROM txs WHERE txHashBytes IN\n\
+  \    (SELECT txHashBytes FROM gcTxCandidates)\n\
+  \  AND NOT EXISTS\n\
+  \    (SELECT 1 FROM ebTxs WHERE ebTxs.txHashBytes = txs.txHashBytes)\n\
+  \"
+
+-- | Full-scan variant of 'sql_gc_orphan_txs', run once per handle on the
+-- first GC: reaps orphans the candidate scheme cannot see (e.g. from before
+-- 'gcTxCandidates' existed).
+sql_gc_orphan_txs_full_scan :: String
+sql_gc_orphan_txs_full_scan =
+  "DELETE FROM txs WHERE NOT EXISTS\n\
+  \  (SELECT 1 FROM ebTxs WHERE ebTxs.txHashBytes = txs.txHashBytes)\n\
+  \"
+
+-- | Drop all staged candidates.
+sql_gc_clear_candidates :: String
+sql_gc_clear_candidates = "DELETE FROM gcTxCandidates\n"
 
 -- * Low-level terminating SQLite functions
 

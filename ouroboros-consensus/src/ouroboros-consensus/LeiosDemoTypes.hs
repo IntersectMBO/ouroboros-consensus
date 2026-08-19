@@ -1095,6 +1095,13 @@ traceLeiosKernelToObject = \case
       , "copiedEbTxs" .= copiedEbTxs
       , "copiedTxs" .= copiedTxs
       ]
+  TraceLeiosDb TraceLeiosDbEvicted{evictedEbs, evictedEbTxs, evictedTxs} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbEvicted"
+      , "evictedEbs" .= evictedEbs
+      , "evictedEbTxs" .= evictedEbTxs
+      , "evictedTxs" .= evictedTxs
+      ]
   -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
   -- the forge loop's call traces, so one dashboard query shape covers both.
   TraceLeiosDb (TraceLeiosDbCall (SomeJsonCallTrace ct)) ->
