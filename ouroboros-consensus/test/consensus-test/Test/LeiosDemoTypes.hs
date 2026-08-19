@@ -112,6 +112,13 @@ prop_ebBytesSizeConsistent =
 
 -- | 'selectCommitteeByStake' selects the highest-stake pools truncated at a
 -- cumulative-stake target.
+--
+-- Every property below inspects weights only, so none of them pins which of two
+-- equal-stake pools is seated, or at which index.
+--
+-- TODO: add a tie-break property asserting that equal-stake entries come out in
+-- ascending key order, as CIP-164 requires; seat indices are what @voter_id@ and
+-- the certificate bitfield are positional over, so disagreement is a chain split.
 prop_selectCommitteeByStake :: Property
 prop_selectCommitteeByStake =
   forAllShrink (listOf genWeight) genericShrink $ \rawStakes ->

@@ -677,6 +677,14 @@ decodeLeiosEb = do
 -- | Select the voting committee from a stake (weight) distribution per CIP-164:
 -- order by stake descending and take the shortest prefix whose cumulative stake
 -- reaches @target@ (σ_c).
+--
+-- CIP-164 breaks equal-stake ties by ascending pool id, which we satisfy only
+-- because 'sortOn' is stable and callers pass 'Data.Map.elems' (already in
+-- ascending key order); nothing here enforces it.
+--
+-- TODO: make the tie-break explicit by threading the pool id through and sorting
+-- on @(Down w, k)@ under an @Ord a@ constraint, so an unstable sort or a caller
+-- switching to an unordered container cannot silently renumber seats.
 selectCommitteeByStake ::
   -- | The target coverage of weights / stake.
   Weight ->
