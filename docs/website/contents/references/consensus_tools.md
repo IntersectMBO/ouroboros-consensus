@@ -367,17 +367,21 @@ length cheaply, e.g. as input for benchmarks.
 
 ### Requirements
 
-- `--config FILE` — a node configuration file. Only a few values regarding
-  geneses and protocol are actually required, so a configuration stub is
-  possible; for the expected key-value pairs see the `NodeConfigStub` type and
-  its deserialization in `Cardano.Tools.DBSynthesizer.Orphans`.
+- `--config FILE` — a node configuration file, exactly as `cardano-node` takes
+  it: it is parsed by the shared `cardano-config` package, which also loads the
+  genesis file of every era the configuration names (their paths are relative
+  to the configuration file's directory).
 - `--db PATH` — where to write the ChainDB.
 - Block forging credentials, either as separate files
-  (`--shelley-operational-certificate`, `--shelley-vrf-key`,
+  (`--shelley-operational-certificate`, `--shelley-vrf-key` and
   `--shelley-kes-key`, all in JSON TextEnvelope format) or in bulk
   (`--bulk-credentials-file`, a JSON array of `[opcert, VRF key, KES key]`
-  triples). The genesis must give the corresponding pools enough stake to be
-  elected.
+  triples). Byron-era credentials (`--byron-delegation-certificate` with
+  `--byron-signing-key`) and a KES agent (`--shelley-kes-agent-socket` instead
+  of `--shelley-kes-key`) work too. These are `cardano-node`'s own flags —
+  db-synthesizer takes them from `cardano-config`, and they are read and
+  cross-checked there the same way the node reads them. The genesis must give
+  the corresponding pools enough stake to be elected.
 
 A minimal working setup — a staked genesis with bulk credentials for two
 forgers — is provided in
