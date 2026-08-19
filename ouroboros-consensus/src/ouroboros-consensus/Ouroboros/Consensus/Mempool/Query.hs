@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | Queries to the mempool
 module Ouroboros.Consensus.Mempool.Query
@@ -10,6 +11,7 @@ module Ouroboros.Consensus.Mempool.Query
 
 import Control.Monad.Except (runExcept)
 import qualified Data.Foldable as Foldable
+import Data.Sequence.Strict (StrictSeq, (|>))
 import qualified Data.Set as Set
 import LeiosUtils.TimeBoundedLoop (iterateUntilOrTimeout')
 import Ouroboros.Consensus.Block.Abstract
@@ -141,25 +143,36 @@ computeSnapshot ::
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   m (MempoolSnapshot blk)
 computeSnapshot resolveValues cfg slot tickedStDiff txsToApply = do
-  let !tickedSt = tickedStDiff `withLedgerTables` emptyLedgerTables
+  let tickedSt = tickedStDiff `withLedgerTables` emptyLedgerTables
 
-  (_, _, _, !appliedTxs, !appliedTxIds) <-
+  SnapshotStepState{..} <-
     iterateUntilOrTimeout'
       snapshotStepTimeLimitSeconds
-      (\(_, txsToApply', _, _, _) -> null txsToApply')
+      (null . remainingTxs)
       (snapshotStep resolveValues cfg slot tickedStDiff)
-      (tickedSt, txsToApply, [], TxSeq.Empty, Set.empty)
+      (SnapshotStepState tickedSt txsToApply mempty TxSeq.Empty Set.empty)
 
-  let !tip = castPoint $ getTip tickedStDiff
+  let tip = castPoint $ getTip tickedStDiff
   return $ snapshot slot tip appliedTxIds appliedTxs
 
-type SnapshotStepState blk =
-  ( TickedLedgerState blk ValuesMK -- ledger state to apply on
-  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) -- txs to apply
-  , [Invalidated blk] -- unapplicable txs
-  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) -- applied txs
-  , Set.Set (GenTxId blk) -- applied tx ids
-  )
+-- | Accumulator type threaded through each 'snapshotStep' call by 'computeSnapshot'.
+data SnapshotStepState blk = SnapshotStepState
+  { currentLedgerSt :: !(TickedLedgerState blk ValuesMK)
+  -- ^ Ticked ledger state reflecting the cumulative effect of all applied
+  -- transactions so far ('appliedTxs').
+  , remainingTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
+  -- ^ Remaining transactions to be applied. Starts as the full
+  -- mempool sequence and is consumed 'snapshotStepTxsPerStep' at a time.
+  -- Iteration terminates when this becomes empty.
+  , unapplicableTxs :: !(StrictSeq (Invalidated blk))
+  -- ^ Transactions that failed reapplication, accumulated in original mempool
+  -- order.
+  , appliedTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
+  -- ^ Transactions successfully applied so far to some base Ledger state that results in 'currentLedgerSt', in original mempool order.
+  -- Becomes the transaction sequence of the final 'MempoolSnapshot'.
+  , appliedTxIds :: !(Set.Set (GenTxId blk))
+  -- ^ Set of all accepted transactions (view on 'appliedTxs').
+  }
 
 snapshotStep ::
   forall blk m.
@@ -170,11 +183,11 @@ snapshotStep ::
   TickedLedgerState blk DiffMK ->
   SnapshotStepState blk ->
   m (SnapshotStepState blk)
-snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedStBeforeStep, !txsToApply, !unapplicableTxs, !appliedTxs, !appliedTxIds) = do
-  let (!txsToApplyStep, !txsToApplyRest) = TxSeq.take snapshotStepTxsPerStep txsToApply
+snapshotStep resolveValues cfg slot baseLedgerStDiff st@SnapshotStepState{..} = do
+  let (!txsToApplyStep, !remainingTxsStep) = TxSeq.take snapshotStepTxsPerStep remainingTxs
       !inputKeysStep =
         Foldable.foldMap'
-          (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
+          (getTransactionKeySets . txForgetValidated . validatedTx)
           txsToApplyStep
 
   -- TODO(bladyjoker): We're fetching inputsKeys many times, can we introduce a cache? Additionally, we don't actually need to get values,
@@ -194,50 +207,46 @@ snapshotStep resolveValues cfg slot tickedStDiffBase (!tickedStBeforeStep, !txsT
     -- TODO(bladyjoker): Please review. The idea is to construct the LedgerState with values that are necessary for applying the transactions in this step.
     -- The `applyMempoolDiffs` uses the base LedgerState that contains diffs (I suspect from ticking? What values are affected by ticking?)
     -- and builds up a LedgerState with values for this step only.
-    -- The `tickedStepBeforeStep` starts empty so it begins with only the values in `tickedStAtBase`, after that because of the union the `tickedStepBeforeStep` entries override whatever is conflicting in `tickedStAtBase`.
-    !tickedStAtBase = applyMempoolDiffs inputValuesStepForKeys inputKeysStep tickedStDiffBase
+    -- The `currentLedgerSt` starts empty so it begins with only the values in `baseLedgerSt`, after that because of the union the `currentLedgerSt` entries override whatever is conflicting in `baseLedgerSt`.
+    !baseLedgerSt = applyMempoolDiffs inputValuesStepForKeys inputKeysStep baseLedgerStDiff
     !inputValuesStep =
       ltliftA2
         unionValues
-        (projectLedgerTables tickedStBeforeStep)
-        (projectLedgerTables tickedStAtBase)
-    !tickedStBeforeStepWithValues = tickedStBeforeStep `withLedgerTables` inputValuesStep
+        (projectLedgerTables currentLedgerSt)
+        (projectLedgerTables baseLedgerSt)
+    !stForStep =
+      st
+        { currentLedgerSt = currentLedgerSt `withLedgerTables` inputValuesStep
+        , remainingTxs = remainingTxsStep
+        }
 
-    (!tickedStAfterStep, !unapplicableTxsStep, !appliedTxsStep) = reapplyTxs' cfg slot txsToApplyStep tickedStBeforeStepWithValues
-
-  return
-    ( tickedStAfterStep
-    , txsToApplyRest
-    , unapplicableTxs <> reverse unapplicableTxsStep
-    , appliedTxs `TxSeq.append` appliedTxsStep
-    , appliedTxIds
-        `Set.union` ( Set.fromList $
-                        txId . txForgetValidated . validatedTx . TxSeq.txTicketTx <$> TxSeq.toList appliedTxsStep
-                    )
-    )
+  return $! reapplyTxs' cfg slot txsToApplyStep stForStep
 
 reapplyTxs' ::
-  LedgerSupportsMempool blk =>
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   LedgerConfig blk ->
   SlotNo ->
-  [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
-  TickedLedgerState blk ValuesMK ->
-  ( TickedLedgerState blk ValuesMK
-  , [Invalidated blk]
-  , TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
-  )
-reapplyTxs' cfg slot toApplyTxs tickedSt =
+  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  SnapshotStepState blk ->
+  SnapshotStepState blk
+reapplyTxs' cfg slot toApplyTxs stBefore =
   Foldable.foldl'
-    ( \(!tickedSt', !unapplicableTxs, !appliedTxs) !tkt ->
-        let tx = validatedTx (TxSeq.txTicketTx tkt)
-         in case runExcept (reapplyTx cfg slot tx tickedSt') of
-              Left !err -> (tickedSt', Invalidated tx err : unapplicableTxs, appliedTxs)
-              Right !tickedSt'' ->
-                let !appliedTxs' = appliedTxs TxSeq.:> tkt
-                 in (tickedSt'', unapplicableTxs, appliedTxs')
+    ( \st !tkt ->
+        let tx = validatedTx . TxSeq.txTicketTx $ tkt
+         in case runExcept (reapplyTx cfg slot tx (currentLedgerSt st)) of
+              Left !err ->
+                st
+                  { unapplicableTxs = unapplicableTxs st |> Invalidated tx err
+                  }
+              Right !ledgerStAfterTx ->
+                st
+                  { currentLedgerSt = ledgerStAfterTx
+                  , appliedTxs = appliedTxs st TxSeq.:> tkt
+                  , appliedTxIds = Set.insert (txId (txForgetValidated tx)) (appliedTxIds st)
+                  }
     )
-    (tickedSt, [], TxSeq.Empty)
-    toApplyTxs
+    stBefore
+    (TxSeq.toList toApplyTxs)
 
 mkResolveValues ::
   (Monad m, LedgerSupportsMempool blk) =>
