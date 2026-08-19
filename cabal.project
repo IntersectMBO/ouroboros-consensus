@@ -14,11 +14,32 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2026-07-31T11:39:47Z
+  , hackage.haskell.org 2026-08-18T23:12:55Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-07-30T09:29:13Z
+  , cardano-haskell-packages 2026-08-17T11:39:16Z
+
+active-repositories:
+  , :rest
+  , cardano-haskell-packages:override
 
 packages: .
+
+-- TEMPORARY: none of these packages touch `memory`/`crypton` directly, they
+-- just haven't widened their cardano-crypto-class upper bound past <2.6 yet,
+-- so relaxing the bound against their already-published code is safe (unlike
+-- the cardano-ledger-* packages, which would drag in an unreleased, version-
+-- skewed slice of that monorepo if done via a source-repository-package
+-- instead). Remove alongside the source-repository-package at the bottom
+-- of this file once upstream catches up.
+allow-newer:
+  cardano-ledger-mary:cardano-crypto-class,
+  cardano-ledger-shelley:cardano-crypto-class,
+  cardano-ledger-binary:cardano-crypto-class,
+  cardano-ledger-core:cardano-crypto-class,
+  cardano-protocol:cardano-crypto-class,
+  cardano-protocol-tpraos:cardano-crypto-class,
+  kes-agent:cardano-crypto-class,
+  kes-agent-crypto:cardano-crypto-class,
 
 -- We want to always build the test-suites and benchmarks
 tests: true
@@ -42,3 +63,48 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+-- TEMPORARY: pulls in cardano-base PR #694 (erikd/contra-tracer, not yet
+-- merged) https://github.com/IntersectMBO/cardano-base/pull/694, which
+-- widens cardano-crypto-class:testlib's contra-tracer bound to
+-- >=0.1 && <0.3 (via CPP, using mkTracer instead of the removed Tracer
+-- constructor for 0.2.x), instead of the ^>=0.2.1 that a prior commit
+-- pinned it to. That's what let contra-tracer stay on 0.1.x here, sidestepping
+-- the network-mux/ouroboros-network/TxSubmissionV2 cascade that upgrading
+-- contra-tracer to 0.2 would otherwise drag in. Remove once this PR (or an
+-- equivalent fix) is released.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base
+  tag: ad3afec8113872652ec8edf19ae1280552ce2a20
+  subdir: cardano-crypto-class
+
+-- TEMPORARY: pulls in kes-agent PR #105 (erikd/contra-tracer, not yet merged)
+-- https://github.com/input-output-hk/kes-agent/pull/105, which widens both
+-- kes-agent's and kes-agent-crypto's contra-tracer bound to >=0.1 && <0.3 (via
+-- CPP, same mkTracer shim as cardano-base PR #694), on top of the already-
+-- released 1.3.0.0/1.2.0.0 (which have the FixedSizeCodec migration
+-- cardano-crypto-class-2.6.0.0 needs -- 1.2.0.0/1.1.0.0 lack it and don't
+-- compile against it). Remove once this PR (or an equivalent fix) is
+-- released.
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/kes-agent
+  tag: 0e9a16c61ecc6b5cc747ae0ebdb718a02eae8ddc
+  subdir:
+    kes-agent
+    kes-agent-crypto
+
+-- TEMPORARY: pulls in cardano-ledger PR #5999 (erikd/ram, not yet merged)
+-- https://github.com/IntersectMBO/cardano-ledger/pull/5999
+-- which switches cardano-crypto-wrapper from `memory` to `ram` (crypton
+-- >=1.1's replacement for `memory`), so it builds against crypton >=1.1.
+-- This is the only package in the chain that needs an actual source
+-- change; the allow-newer entries above cover everything else, which just
+-- has an overly conservative cardano-crypto-class upper bound. Remove once
+-- this PR (or an equivalent fix) is released.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  tag: 6def84b5ae0033053feda72f32b1dac41c812e0e
+  subdir: eras/byron/crypto
