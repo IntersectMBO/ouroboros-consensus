@@ -4,9 +4,9 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.Config (withConfigErrorHandling)
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
-import Cardano.Tools.DBAnalyser.Types (withConfigErrorHandling)
 import qualified Cardano.Tools.ImmDBServer.Diffusion as ImmDBServer
 import Data.Void
 import Main.Utf8 (withStdTerminalHandles)

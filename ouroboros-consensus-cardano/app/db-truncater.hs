@@ -1,7 +1,7 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
-import Cardano.Tools.DBAnalyser.Types (withConfigErrorHandling)
+import Cardano.Tools.Config (withConfigErrorHandling)
 import Cardano.Tools.DBTruncater.Run
 import Cardano.Tools.DBTruncater.Types
 import DBAnalyser.Parsers
