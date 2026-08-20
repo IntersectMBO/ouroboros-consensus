@@ -25,6 +25,7 @@ parseNodeFilePaths =
     <$> parseNodeConfigFilePath
     <*> parseChainDBFilePath
     <*> optional parsePaymentKeyFilePath
+    <*> optional parseBlsKeyFilePath
 
 parseNodeCredentials :: Parser NodeCredentials
 parseNodeCredentials =
@@ -74,6 +75,16 @@ parsePaymentKeyFilePath =
         <> metavar "FILE"
         <> help
           "Path to a payment signing key, as cardano-cli writes it. Each forged block spends the output of this key and makes a new one. If you do not give this option, the tool forges empty blocks."
+        <> completer (bashCompleter "file")
+    )
+
+parseBlsKeyFilePath :: Parser FilePath
+parseBlsKeyFilePath =
+  strOption
+    ( long "shelley-bls-key"
+        <> metavar "FILE"
+        <> help
+          "Path to the pool's BLS signing key, as cardano-cli writes it. The tool needs this key to vote for the endorser blocks it announces. Without it the tool casts no vote."
         <> completer (bashCompleter "file")
     )
 

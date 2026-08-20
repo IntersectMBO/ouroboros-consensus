@@ -9,11 +9,12 @@ module Cardano.Tools.DBSynthesizer.Run
 import Cardano.Api.Any (displayError)
 import Cardano.Node.Protocol.Cardano (mkConsensusProtocolCardano)
 import Cardano.Node.Types
+import Cardano.Tools.DBSynthesizer.BlsKey (readBlsSigningKey)
 import Cardano.Tools.DBSynthesizer.Forging
 import Cardano.Tools.DBSynthesizer.Orphans ()
 import Cardano.Tools.DBSynthesizer.Types
 import Control.Monad (filterM)
-import Control.Monad.Trans.Except (ExceptT)
+import Control.Monad.Trans.Except (ExceptT (ExceptT))
 import Control.Monad.Trans.Except.Extra
   ( firstExceptT
   , handleIOExceptT
@@ -38,15 +39,24 @@ import LeiosDemoDb (newLeiosDBSQLite, withLeiosDb)
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
-import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
+import Ouroboros.Consensus.Config
+  ( TopLevelConfig
+  , configStorage
+  , topLevelConfigVotingKey
+  )
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
   )
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( PraosCanBeLeader (praosCanBeLeaderSignKeyBLS)
+  )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
-  ( ShelleyGenesis (..)
+  ( ProtocolParamsShelleyBased (shelleyBasedLeaderCredentials)
+  , ShelleyGenesis (..)
+  , ShelleyLeaderCredentials (shelleyLeaderCredentialsCanBeLeader)
   , validateGenesis
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
@@ -68,14 +78,43 @@ initialize ::
   NodeCredentials ->
   DBSynthesizerOptions ->
   IO (Either String (DBSynthesizerConfig, CardanoProtocolParams StandardCrypto))
-initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
+initialize NodeFilePaths{nfpConfig, nfpChainDB, nfpBlsKey} creds synthOptions = do
   relativeToConfig :: (FilePath -> FilePath) <-
     (</>) . takeDirectory <$> makeAbsolute nfpConfig
   runExceptT $ do
     conf <- initConf relativeToConfig
-    proto <- initProtocol relativeToConfig conf
+    proto <- initProtocol relativeToConfig conf >>= withVotingKey
     pure (conf, proto)
  where
+  -- 'mkPraosLeaderCredentials' builds every credential with
+  -- 'praosCanBeLeaderSignKeyBLS = Nothing', and the files it reads hold no BLS
+  -- key. 'CardanoProtocolParams' is a plain record, so the key goes in here
+  -- instead of in that vendored module. 'protocolInfoCardano' then puts it in
+  -- 'topLevelConfigVotingKey'.
+  withVotingKey ::
+    CardanoProtocolParams StandardCrypto ->
+    ExceptT String IO (CardanoProtocolParams StandardCrypto)
+  withVotingKey proto = case nfpBlsKey of
+    Nothing -> pure proto
+    Just path -> do
+      votingKey <- ExceptT (readBlsSigningKey path)
+      let shelleyBased = shelleyBasedProtocolParams proto
+          setKey credentials =
+            credentials
+              { shelleyLeaderCredentialsCanBeLeader =
+                  (shelleyLeaderCredentialsCanBeLeader credentials)
+                    { praosCanBeLeaderSignKeyBLS = Just votingKey
+                    }
+              }
+      pure
+        proto
+          { shelleyBasedProtocolParams =
+              shelleyBased
+                { shelleyBasedLeaderCredentials =
+                    map setKey (shelleyBasedLeaderCredentials shelleyBased)
+                }
+          }
+
   initConf :: (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
   initConf relativeToConfig = do
     inp <- handleIOExceptT show (BS.readFile nfpConfig)
@@ -173,6 +212,10 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           flavargs
           leiosDbHandle
           $ ChainDB.defaultArgs
+
+    putStrLn $
+      "--> voting key: "
+        ++ maybe "absent" (const "present") (topLevelConfigVotingKey pInfoConfig)
 
     mbfs <- mkForgers nullTracer
     allocatedForgers <-
