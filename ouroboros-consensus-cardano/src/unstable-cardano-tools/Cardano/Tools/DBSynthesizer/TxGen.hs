@@ -45,6 +45,7 @@ import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Tools.DBSynthesizer.Forging (GenTxs)
 import Control.DeepSeq (force)
 import Control.Exception (throwIO)
+import Control.Monad (when)
 import Control.Monad.Except (runExcept)
 import Data.Bifunctor (first)
 import Data.Function ((&))
@@ -78,6 +79,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , WhetherToIntervene (DoNotIntervene)
   , applyTx
   , blockCapacityTxMeasure
+  , ebCapacityTxMeasure
   , txMeasure
   )
 import Ouroboros.Consensus.Ledger.Tables
@@ -134,6 +136,30 @@ mkRespendTxGen (Just keyFile) = do
 readPaymentSigningKey :: FilePath -> IO (Either String (SigningKey PaymentKey))
 readPaymentSigningKey path =
   first displayError <$> readFileTextEnvelope (AsSigningKey AsPaymentKey) path
+
+-- | A position in the sequence of transactions that the generator makes.
+--
+-- Each transaction spends the output that the one before it made. A position is
+-- that output plus the ledger state that holds it, because the next transaction
+-- needs both.
+data Cursor era = Cursor
+  { cursorState :: TickedLedgerState Cardano ValuesMK
+  -- ^ The ledger state after every transaction up to this position applied.
+  , cursorEntry :: (TxIn, TxOut era)
+  -- ^ The output that the next transaction spends.
+  }
+
+-- | The result of 'fillBatch'.
+data Batch era = Batch
+  { batchTxs :: [Validated (GenTx Cardano)]
+  -- ^ The transactions it accepted, in the order the ledger applies them.
+  , batchUsedTotal :: TxMeasure Cardano
+  -- ^ The total measure of the transactions made for this forging opportunity,
+  -- including this batch. It spans the ranking block and the endorser block,
+  -- because 'fillEb' bounds their sum.
+  , batchCursor :: Cursor era
+  -- ^ The position where it stopped. That position's output is unspent.
+  }
 
 -- | Fill the block of this slot with transactions.
 --
@@ -227,48 +253,95 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
     TickedLedgerState Cardano ValuesMK ->
     (TxIn, TxOut era) ->
     IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)])
-  fillBlock wrap stateAtSlot = go [] Measure.zero stateAtSlot
+  fillBlock wrap stateAtSlot start = do
+    rb <- fillRb Cursor{cursorState = stateAtSlot, cursorEntry = start}
+    when (null (batchTxs rb)) $
+      throwIO . userError $
+        "db-synthesizer: not one generated transaction fits in the ranking block at slot "
+          ++ show slot
+          ++ "."
+    -- The endorser block's transactions do not reach the ledger when this block
+    -- applies. They apply when a later block certifies the endorser block. So
+    -- the next slot spends the output that the *ranking* block left.
+    writeIORef lastOutput (Just (fst (cursorEntry (batchCursor rb))))
+    -- The endorser block's own end has no consumer yet. Once the tool forges a
+    -- block that certifies an endorser block, that block advances the ledger to
+    -- this entry, and the generator has to spend it instead of the one above.
+    (ebTxs, _cursorAfterEb) <- fillEb (batchUsedTotal rb) (batchCursor rb)
+    pure (batchTxs rb, ebTxs)
    where
-    capacity :: TxMeasure Cardano
-    capacity = blockCapacityTxMeasure lcfg stateAtSlot
+    rbCapacity :: TxMeasure Cardano
+    rbCapacity = blockCapacityTxMeasure lcfg stateAtSlot
 
-    go accepted used state (txIn, txOut) = do
-      (tx, madeOut) <- respendTx signKey txIn txOut
-      let genTx = wrap (mkShelleyTx tx)
-      measured <- case runExcept (txMeasure lcfg state genTx) of
-        Left err ->
-          throwIO . userError $
-            "db-synthesizer: a generated transaction breaks a per-transaction limit at slot "
-              ++ show slot
-              ++ ": "
-              ++ show err
-        Right measured -> pure measured
-      let used' = used `Measure.plus` measured
-      if not (used' Measure.<= capacity)
-        -- 'txIn' is the input that this block leaves unspent.
-        then stop accepted txIn
-        else case runExcept (applyTx lcfg DoNotIntervene slot genTx state) of
+    -- Fill the ranking block, from the start of the block.
+    fillRb :: Cursor era -> IO (Batch era)
+    fillRb = fillBatch rbCapacity Measure.zero
+
+    -- Resume where the ranking block stopped, and fill the endorser block. The
+    -- endorser block takes what the ranking block could not, up to the two
+    -- capacities added and counted from the start of the block. This is what
+    -- 'partitionMempool' does in the production forge loop.
+    fillEb ::
+      TxMeasure Cardano ->
+      Cursor era ->
+      IO ([Validated (GenTx Cardano)], Cursor era)
+    fillEb usedByRb cursor = case ebCapacityTxMeasure lcfg stateAtSlot of
+      -- The era has no Leios, so this block announces no endorser block.
+      Nothing -> pure ([], cursor)
+      Just ebCap -> do
+        batch <- fillBatch (rbCapacity `Measure.plus` ebCap) usedByRb cursor
+        -- No batch follows the endorser block, so its measure has no consumer.
+        pure (batchTxs batch, batchCursor batch)
+
+    -- Build one transaction at a time, each spending the output that the one
+    -- before it made. Stop at the first transaction that takes the total over
+    -- the bound, and leave that transaction out.
+    fillBatch ::
+      -- The bound on the total measure.
+      TxMeasure Cardano ->
+      -- The total measure of the transactions made for this forging opportunity
+      -- before this batch.
+      TxMeasure Cardano ->
+      Cursor era ->
+      IO (Batch era)
+    fillBatch bound = go []
+     where
+      go accepted used cursor = do
+        let Cursor{cursorState = state, cursorEntry = (txIn, txOut)} = cursor
+        (tx, madeOut) <- respendTx signKey txIn txOut
+        let genTx = wrap (mkShelleyTx tx)
+        measured <- case runExcept (txMeasure lcfg state genTx) of
           Left err ->
             throwIO . userError $
-              "db-synthesizer: the ledger rejected a generated transaction at slot "
+              "db-synthesizer: a generated transaction breaks a per-transaction limit at slot "
                 ++ show slot
                 ++ ": "
                 ++ show err
-          Right (stateAfterTx, validatedTx) ->
-            go
-              (validatedTx : accepted)
-              used'
-              (applyDiffs state stateAfterTx)
-              (TxIn (txIdTx tx) (TxIx 0), madeOut)
-
-    stop [] _ =
-      throwIO . userError $
-        "db-synthesizer: not one generated transaction fits in the block at slot "
-          ++ show slot
-          ++ "."
-    stop accepted unspent = do
-      writeIORef lastOutput (Just unspent)
-      pure (reverse accepted, [])
+          Right measured -> pure measured
+        let used' = used `Measure.plus` measured
+        if not (used' Measure.<= bound)
+          then
+            pure
+              Batch
+                { batchTxs = reverse accepted
+                , batchUsedTotal = used
+                , batchCursor = cursor
+                }
+          else case runExcept (applyTx lcfg DoNotIntervene slot genTx state) of
+            Left err ->
+              throwIO . userError $
+                "db-synthesizer: the ledger rejected a generated transaction at slot "
+                  ++ show slot
+                  ++ ": "
+                  ++ show err
+            Right (stateAfterTx, validatedTx) ->
+              go
+                (validatedTx : accepted)
+                used'
+                Cursor
+                  { cursorState = applyDiffs state stateAfterTx
+                  , cursorEntry = (TxIn (txIdTx tx) (TxIx 0), madeOut)
+                  }
 
   -- If the 'IORef' holds no key, the generator reads the whole table. The
   -- 'IORef' is empty on the first slot of a run.
