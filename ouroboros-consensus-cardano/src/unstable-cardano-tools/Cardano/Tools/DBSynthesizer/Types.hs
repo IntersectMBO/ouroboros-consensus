@@ -20,6 +20,7 @@ data NodeFilePaths = NodeFilePaths
   { nfpConfig :: !FilePath
   , nfpChainDB :: !FilePath
   , nfpPaymentKey :: !(Maybe FilePath)
+  , nfpBlsKey :: !(Maybe FilePath)
   }
   deriving Show
 
