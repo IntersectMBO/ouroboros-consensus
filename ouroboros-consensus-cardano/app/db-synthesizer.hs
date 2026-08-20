@@ -26,10 +26,14 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.DBSynthesizer.BlsKey (readBlsSigningKey)
 import Cardano.Tools.DBSynthesizer.Run
 import Cardano.Tools.DBSynthesizer.TxGen (mkRespendTxGen)
-import Cardano.Tools.DBSynthesizer.Types (NodeFilePaths (nfpPaymentKey))
+import Cardano.Tools.DBSynthesizer.Types
+  ( NodeFilePaths (nfpBlsKey, nfpPaymentKey)
+  )
 import DBSynthesizer.Parsers
+import Data.Traversable (for)
 import Main.Utf8 (withStdTerminalHandles)
 import System.Exit
 
@@ -38,5 +42,9 @@ main = withStdTerminalHandles $ do
   cryptoInit
   (paths, creds, forgeOpts) <- parseCommandLine
   genTxs <- either die pure =<< mkRespendTxGen (nfpPaymentKey paths)
+  votingKey <- for (nfpBlsKey paths) $ \path ->
+    either die pure =<< readBlsSigningKey path
+  putStrLn $
+    "--> voting key: " ++ maybe "absent" (const "present") votingKey
   result <- initialize paths creds forgeOpts >>= either die (uncurry (synthesize genTxs))
   putStrLn $ "--> done; result: " ++ show result
