@@ -71,7 +71,9 @@ import Ouroboros.Consensus.HardFork.Combinator.Condense
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HardFork.History
   ( Bound (..)
+  , EpochToPerasRoundInfo
   , EraParams (..)
+  , forgetEraIndex
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
@@ -320,7 +322,11 @@ instance HasHardForkHistory BlockA where
   type HardForkIndices BlockA = '[BlockA]
   hardForkSummary = error "BlockA being used as a SingleEraBlock"
 
-instance StateSupportsPerasEpochContext BlockA
+instance StateSupportsPerasEpochContext BlockA where
+  type MaybeEraIndexedEpochToPerasRoundInfo BlockA = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: BlockA does not support Peras"
 
 instance HasPartialConsensusConfig ProtocolA
 

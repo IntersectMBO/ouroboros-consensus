@@ -130,6 +130,7 @@ import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
   ( ImmutableEraParams (immutableEraParams)
   )
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -142,7 +143,7 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -751,7 +752,11 @@ instance HasHardForkHistory (TestBlockWith ptype) where
 
 -- TODO: this instance will have a full (mocked) implementation as soon as we
 -- remove the degenerate 'BlockSupportsPeras' instance.
-instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype)
+instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype) where
+  type MaybeEraIndexedEpochToPerasRoundInfo (TestBlockWith ptype) = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: TestBlockWith does not support Peras"
 
 {-------------------------------------------------------------------------------
   Test blocks without payload

@@ -57,6 +57,7 @@ import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Condense
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -72,7 +73,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -276,7 +277,11 @@ instance HasHardForkHistory BlockB where
   type HardForkIndices BlockB = '[BlockB]
   hardForkSummary = error "BlockB being used as a SingleEraBlock"
 
-instance StateSupportsPerasEpochContext BlockB
+instance StateSupportsPerasEpochContext BlockB where
+  type MaybeEraIndexedEpochToPerasRoundInfo BlockB = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: BlockB does not support Peras"
 
 instance HasPartialConsensusConfig ProtocolB
 
