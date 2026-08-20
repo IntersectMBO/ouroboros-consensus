@@ -34,7 +34,7 @@ import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
 import Data.Functor (($>))
 import qualified Data.Set as Set
-import LeiosDemoDb (LeiosDbHandle (open), newLeiosDBInMemory)
+import LeiosDemoDb (newLeiosDBSQLite, withLeiosDb)
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
@@ -151,8 +151,10 @@ synthesize ::
   IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
   withRegistry $ \registry -> do
-    leiosDbHandle <- newLeiosDBInMemory
-    leiosDb <- open leiosDbHandle
+    -- The node writes its LeiosDb next to the other ChainDB files.
+    -- The tool derives that path from --db. That is also where
+    -- db-analyser looks for it.
+    leiosDbHandle <- newLeiosDBSQLite nullTracer (confDbDir </> "leios.db")
     (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) <-
       protocolInfoCardano (SomeHasFS (ioHasFS (MountPoint confDbDir))) runP
     let
@@ -186,15 +188,19 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
           preOpenChainDB synthOpenMode confDbDir
           let dbTracer = nullTracer
-          ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
-            slotNo <- do
-              tip <- atomically (ChainDB.getTipPoint chainDB)
-              pure $ case pointSlot tip of
-                Origin -> 0
-                At s -> succ s
+          -- Open after 'preOpenChainDB'. That call creates the db directory, and
+          -- with -f it deletes and recreates it. An earlier open loses the file
+          -- with no error.
+          withLeiosDb leiosDbHandle $ \leiosDb ->
+            ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
+              slotNo <- do
+                tip <- atomically (ChainDB.getTipPoint chainDB)
+                pure $ case pointSlot tip of
+                  Origin -> 0
+                  At s -> succ s
 
-            putStrLn $ "--> starting at: " ++ show slotNo
-            runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig (genTxs pInfoConfig) leiosDb
+              putStrLn $ "--> starting at: " ++ show slotNo
+              runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig (genTxs pInfoConfig) leiosDb
         else do
           putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
           pure $ ForgeResult 0

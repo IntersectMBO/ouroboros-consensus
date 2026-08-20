@@ -72,9 +72,10 @@ testAnalyserConfig =
     , validation = Just ValidateAllBlocks
     , analysis = CountBlocks
     , confLimit = Unlimited
-    , -- The synthesized chain holds no certifying block, and DBSynthesizer
-      -- writes no leios.db, so the empty in-memory LeiosDb stub is both enough
-      -- and the only option.
+    , -- The stub generator below makes no transactions, so DBSynthesizer
+      -- announces no endorser block and forges no certifying block. The chain
+      -- then needs nothing from the leios.db that DBSynthesizer writes, and the
+      -- empty in-memory LeiosDb stub is enough.
       stubbedLeiosDb = True
     }
 
