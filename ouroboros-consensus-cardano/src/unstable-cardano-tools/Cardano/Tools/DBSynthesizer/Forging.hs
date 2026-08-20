@@ -89,12 +89,16 @@ data ForgeState
 initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
--- | An action to generate transactions for a given block
+-- | An action to generate transactions for a given block.
+--
+-- The first list fills the ranking block. The second fills the endorser block
+-- that the ranking block announces. An empty second list announces no endorser
+-- block, because 'mkAndStoreEb' forges none for an empty list.
 type GenTxs blk =
   SlotNo ->
   ReadOnlyForker IO (ExtLedgerState blk) ->
   TickedLedgerState blk DiffMK ->
-  IO [Validated (GenTx blk)]
+  IO ([Validated (GenTx blk)], [Validated (GenTx blk)])
 
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
@@ -221,7 +225,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
           -- the node's forging loop
           ExceptT . fmap (Right . fromJust) . withEarlyExit $
             withReadOnlyForkerAtPoint cdb tgt (Trans.lift . k)
-    txs <- withReadOnlyForkerAtPoint'
+    (rbTxs, ebTxs) <- withReadOnlyForkerAtPoint'
       chainDB
       (SpecificPoint bcPrevPoint)
       $ \case
@@ -242,8 +246,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             , fbCurrentBlockNo = bcBlockNo
             , fbCurrentSlotNo = currentSlot
             , fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-            , fbRbTxs = txs
-            , fbEbTxs = []
+            , fbRbTxs = rbTxs
+            , fbEbTxs = ebTxs
             , fbIsLeader = proof
             , fbChainDepState = Nothing
             , fbLeiosDb = leiosDb
