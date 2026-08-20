@@ -545,6 +545,7 @@ initNodeKernel
           btime
           leiosDB
           leiosVoteState
+          (readTVar varGsmState)
           (topLevelConfigVotingKey cfg)
 
     void $
