@@ -3,6 +3,9 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+-- GetStakeDistribution is deprecated in ShelleyNodeToClientVersion13 but kept
+-- here as a serialisation example for the still-supported legacy query.
+-- We will remove it once cardano-ledger fully removes it in the next release.
 {-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Test.Consensus.Shelley.Examples

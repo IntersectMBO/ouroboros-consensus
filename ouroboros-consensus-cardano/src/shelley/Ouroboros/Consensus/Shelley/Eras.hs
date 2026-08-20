@@ -5,8 +5,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
--- TODO: Ledger has a few deprecations that we are ignoring for now
-{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Eras
@@ -132,7 +130,7 @@ class
     Except
       (SL.ApplyTxError era)
       ( SL.LedgerState era
-      , SL.Validated (Core.Tx TopTx era)
+      , SL.ValidatedTx era
       )
 
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
@@ -166,11 +164,11 @@ defaultApplyShelleyBasedTx ::
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx TopTx era)
+    , SL.ValidatedTx era
     )
 defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
   liftEither $
-    SL.applyTx
+    SL.applyTxWithFullValidation
       globals
       ledgerEnv
       mempoolState
@@ -248,7 +246,7 @@ applyAlonzoBasedTx ::
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx TopTx era)
+    , SL.ValidatedTx era
     )
 applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   (mempoolState', vtx) <-
