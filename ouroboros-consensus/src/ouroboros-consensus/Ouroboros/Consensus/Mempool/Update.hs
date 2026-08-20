@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
@@ -12,11 +13,10 @@ module Ouroboros.Consensus.Mempool.Update
   , implSyncWithLedger
   ) where
 
-import Cardano.Slotting.Slot
+import Control.Monad (unless)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
 import Control.Tracer
-import qualified Data.Foldable as Foldable
 import Data.Functor.Identity (Identity (Identity))
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE
@@ -34,7 +34,6 @@ import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Storage.LedgerDB.Forker hiding (trace)
-import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
@@ -475,23 +474,25 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
                   . txTicketTx
               )
               (TxSeq.toList $ isTxs is)
-          toKeep' =
-            Foldable.foldMap'
-              (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
-              toKeep
+          -- A tx actually leaves iff we kept fewer than we had; bump the removal
+          -- generation then, so an in-flight sync notices its snapshot is stale
+          -- (see 'isRemovalGen'). Carried on the state itself, under the lock.
+          newGen
+            | length toKeep < length (isTxs is) = isRemovalGen is + 1
+            | otherwise = isRemovalGen is
       frkr <- readMVar forker
-      tbs <- roforkerReadTables frkr toKeep'
-      let (is', t) =
-            pureRemoveTxs
-              capacityOverride
-              cfg
-              (isSlotNo is)
-              (isLedgerState is `withLedgerTables` emptyLedgerTables)
-              tbs
-              (isLastTicketNo is)
-              toKeep
-              toRemove
-      traceWith trcr t
+      RevalidateTxsResult is' removed <-
+        revalidateTxsFor
+          frkr
+          capacityOverride
+          cfg
+          (isSlotNo is)
+          (isLedgerState is `withLedgerTables` emptyLedgerTables)
+          (isLastTicketNo is)
+          newGen
+          toKeep
+      traceWith trcr $
+        TraceMempoolManuallyRemovedTxs toRemove (map getInvalidated removed) (isMempoolSize is')
       pure ((), is')
  where
   MempoolEnv
@@ -502,45 +503,26 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
     , mpEnvCapacityOverride = capacityOverride
     } = mpEnv
 
--- | Craft a 'RemoveTxs' that manually removes the given transactions from the
--- mempool, returning inside it an updated InternalState.
-pureRemoveTxs ::
-  ( LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
-  ) =>
-  MempoolCapacityBytesOverride ->
-  LedgerConfig blk ->
-  SlotNo ->
-  TickedLedgerState blk DiffMK ->
-  LedgerTables blk ValuesMK ->
-  TicketNo ->
-  -- | Txs to keep
-  [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
-  -- | IDs to remove
-  NE.NonEmpty (GenTxId blk) ->
-  (InternalState blk, TraceEventMempool blk)
-pureRemoveTxs capacityOverride lcfg slot lstate values tkt txs txIds =
-  let RevalidateTxsResult is' removed =
-        revalidateTxsFor
-          capacityOverride
-          lcfg
-          slot
-          lstate
-          values
-          tkt
-          txs
-      trace =
-        TraceMempoolManuallyRemovedTxs
-          txIds
-          (map getInvalidated removed)
-          (isMempoolSize is')
-   in (is', trace)
-
 {-------------------------------------------------------------------------------
   Sync with ledger
 -------------------------------------------------------------------------------}
 
--- | See 'Ouroboros.Consensus.Mempool.API.syncWithLedger'.
+-- | Maximum number of delta transactions 'implSyncWithLedger' will reapply
+-- while holding the state lock. It shrinks its outstanding delta off the lock
+-- until at most this many txs remain, so the final under-lock reapply — and
+-- hence the time snapshot readers can be blocked — is bounded independently of
+-- mempool occupancy.
+syncDeltaCap :: Int
+syncDeltaCap = 256
+
+-- | Safety valve on the off-lock shrink loop: if the delta never falls below
+-- 'syncDeltaCap' (e.g. reapplication is not actually cheaper than ingestion),
+-- stop after this many rounds and finish anyway, degrading to a larger
+-- under-lock reapply rather than looping unboundedly.
+syncMaxIters :: Int
+syncMaxIters = 8
+
+-- | See 'Ouroboros.Consensus.Mempool.API.syncWithLedger'
 implSyncWithLedger ::
   ( IOLike m
   , LedgerSupportsMempool blk
@@ -556,74 +538,125 @@ implSyncWithLedger ::
   MempoolEnv m blk ->
   m r
 implSyncWithLedger projectResult mpEnv =
-  encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) $ do
-    res <-
-      -- There could possibly be a race condition if we used there the state
-      -- that triggered the re-syncing in the background watcher, if a different
-      -- action acquired the state before the revalidation started.
-      --
-      -- For that reason, we read the state again here in the same STM
-      -- transaction in which we acquire the internal state of the mempool.
-      --
-      -- The following interleaving could happen:
-      --
-      -- - [ChainSel thread] We adopt a new block B at the tip of our selection.
-      --
-      -- - [Mempool sync thread] The Watcher wakes up, seeing that the tip has
-      --   changed to B, records it as the fingerprint, and invokes
-      --   implSyncWithLedger, but doesn't reach withTMVarAnd here.
-      --
-      -- - [ChainSel thread] Adopt a new block C.
-      --
-      -- - [Mempool thread] Execute withTMVarAnd here, obtaining the ledger
-      --   state for C and syncing the mempool with C.
-      --
-      -- - [Mempool thread] The Watcher wakes up again, seeing that the tip has
-      --   changed from B to C, and invokes implSyncWithLedger. This time,
-      --   nothing needs to be done, resulting in TraceMempoolSyncNotNeeded.
-      --
-      -- Just for performance reasons, we will avoid re-validating the mempool
-      -- if the state didn't change.
-      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
-        \is (MempoolLedgerDBView ls meFrk) -> do
-          let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
-          if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
-            then do
-              -- The tip didn't change, put the same state.
-              traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
-              pure (Just (projectResult is), is)
-            else do
-              -- The tip changed, we have to revalidate
-              eFrk <- meFrk
-              case eFrk of
-                -- This case should happen only if the tip has moved again, this time
-                -- to a separate fork, since the background thread saw a change in the
-                -- tip, which should happen very rarely
-                Left{} -> do
-                  traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
-                  pure (Nothing, is)
-                Right frk -> do
-                  modifyMVar_
-                    forkerMVar
-                    ( \frkOld -> do
-                        roforkerClose frkOld
-                        pure frk
-                    )
-                  tbs <- roforkerReadTables frk (isTxKeys is)
-                  let (is', mTrace) =
-                        pureSyncWithLedger
-                          capacityOverride
-                          cfg
-                          slot
-                          ls'
-                          tbs
-                          is
-                  whenJust mTrace (traceWith trcr)
-                  pure (Just (projectResult is'), is')
-    case res of
-      Nothing -> implSyncWithLedger projectResult mpEnv
-      Just res' -> pure res'
+  encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) goSync
  where
+  -- Sync with a bounded lock hold. Everything expensive is done /off the lock/,
+  -- against a snapshot @is0@ taken with a non-emptying 'readTMVar' while adds
+  -- keep appending: the big LedgerDB read of @is0@'s inputs, the revalidation of
+  -- @is0@'s txs at the new tip (@cand0@), and then a converging loop that reads
+  -- the txs added in the meantime (the "delta", by 'TicketNo') and reapplies
+  -- them /on top/ via 'revalidateTxsFor'' — never reprocessing what is already done.
+  --
+  -- The delta shrinks each iteration: adds are serialised (the fifo 'MVar's) and
+  -- pay full validation, whereas the sync only reapplies, which is cheaper per
+  -- tx, so fewer txs arrive during a round than it processes. Once the delta is
+  -- at most 'syncDeltaCap' (or we hit 'syncMaxIters'), we 'takeTMVar' and
+  -- reapply just that bounded residual before swapping. So the lock is held for
+  -- a near-constant time — O('syncDeltaCap') — independent of mempool occupancy,
+  -- rather than for a full O(n) revalidation. The committed state is byte-
+  -- identical to a single revalidation of all current txs ('revalidateTxsFor'').
+  goSync =
+    checkTodo >>= \case
+      Left is0 -> do
+        -- The tip didn't change, put the same state.
+        traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is0)
+        pure (projectResult is0)
+      Right (getForker, is0, slot, ls, tipHash0) ->
+        -- The tip changed, we have to revalidate.
+        -- TODO: leaking the forker on exceptions?
+        getForker >>= \case
+          -- This case should happen only if the tip has moved again, this time
+          -- to a separate fork, since the background thread saw a change in the
+          -- tip, which should happen very rarely
+          Left{} -> do
+            -- TODO: This is not really two STM blocks?
+            traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
+            goSync
+          Right frk -> do
+            -- OFF-LOCK, and the tall tent pole of the whole sync: read the
+            -- snapshot's inputs and revalidate the entire mempool against the new
+            -- tip. Everything after this ('shrinkThenCommit') is just a bounded
+            -- catch-up loop reapplying whatever was added or removed while this
+            -- ran, so the state lock is held only briefly at the very end.
+            --
+            -- TODO: this re-reads the entire working set from the LedgerDB on
+            -- every sync. The mempool already caches these values ('isTxValues')
+            -- at its last-synced tip; if the forker exposed the changelog diff
+            -- since that tip, we could forward the cache through it ('applyDiffs')
+            -- instead of re-reading — an O(occupancy) read becomes O(tip-diff).
+            -- Needs a LedgerDB/forker API change (discuss with UTxO-HD).
+            seed <-
+              revalidateTxsFor
+                frk
+                capacityOverride
+                cfg
+                slot
+                ls
+                (isLastTicketNo is0)
+                (isRemovalGen is0)
+                (TxSeq.toList (isTxs is0))
+            shrinkThenCommit frk tipHash0 slot seed (0 :: Int) >>= \case
+              Nothing -> goSync -- Retry if the commit found the state stale.
+              Just r -> pure r
+
+  checkTodo = atomically $ do
+    view <- getCurrentLedgerState ldgrInterface
+    is0 <- readTMVar istate
+    let ls0 = mldViewState view
+        tipHash0 = getTipHash ls0
+        (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls0
+    pure $
+      if pointHash (isTip is0) == castHash tipHash0 && isSlotNo is0 == slot
+        then Left is0
+        else Right (mldViewGetForker view, is0, slot, ls', tipHash0)
+
+  deltaAfter cand is =
+    TxSeq.toList . snd $ TxSeq.splitAfterTicketNo (isTxs is) (isLastTicketNo cand)
+
+  -- Shrink the outstanding delta off the lock, then finish under it with a
+  -- bounded residual reapply. Returns Nothing (retry the whole sync) if the tip
+  -- moved or a tx was removed while we worked.
+  -- NOTE: Either closes the forker or updates it in the InternalState
+  shrinkThenCommit frk tipHash0 slot = goShrink
+   where
+    goShrink acc@(RevalidateTxsResult cand _) iterN = do
+      isNow <- atomically $ readTMVar istate
+      let deltaTickets = deltaAfter cand isNow
+      if length deltaTickets > syncDeltaCap && iterN < syncMaxIters
+        then do
+          next <- revalidateTxsFor' frk capacityOverride cfg slot acc (isLastTicketNo isNow) deltaTickets
+          goShrink next (iterN + 1)
+        else
+          -- Done with the shrink loop
+          withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
+            \isLocked (MempoolLedgerDBView ls _getForker) -> do
+              -- ON-LOCK: Retry the whole sync if the tip moved or a tx was
+              -- removed while we worked off the lock. Committing anyway would
+              -- resurrect a dropped tx, or publish a snapshot for a tip that is
+              -- no longer current — which makes the sync non-linearizable (its
+              -- read and commit would straddle a concurrent tip change). The
+              -- removal generation rides along on the candidate ('isRemovalGen').
+              if getTipHash ls /= tipHash0 || isRemovalGen isLocked /= isRemovalGen cand
+                then do
+                  -- As we won't be keeping the forker in the internal state, we
+                  -- can close it.
+                  roforkerClose frk
+                  pure (Nothing, isLocked)
+                else do
+                  -- Lock held, so no add can intervene: reapply just the residual
+                  -- delta (the cap plus stragglers that landed while acquiring it).
+                  let resTickets = deltaAfter cand isLocked
+                  RevalidateTxsResult isFinal removed <-
+                    revalidateTxsFor' frk capacityOverride cfg slot acc (isLastTicketNo isLocked) resTickets
+                  unless (null removed) $
+                    traceWith trcr $
+                      TraceMempoolRemoveTxs
+                        (map (\x -> (getInvalidated x, getReason x)) removed)
+                        (isMempoolSize isFinal)
+                  -- Store the forker to be used with the new state
+                  modifyMVar_ forkerMVar (\frkOld -> roforkerClose frkOld >> pure frk)
+                  pure (Just (projectResult isFinal), isFinal)
+
   MempoolEnv
     { mpEnvStateVar = istate
     , mpEnvForker = forkerMVar
@@ -632,37 +665,3 @@ implSyncWithLedger projectResult mpEnv =
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride
     } = mpEnv
-
--- | Create a 'SyncWithLedger' value representing the values that will need to
--- be stored for committing this synchronization with the Ledger.
---
--- See the documentation of 'runSyncWithLedger' for more context.
-pureSyncWithLedger ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  MempoolCapacityBytesOverride ->
-  LedgerConfig blk ->
-  SlotNo ->
-  TickedLedgerState blk DiffMK ->
-  LedgerTables blk ValuesMK ->
-  InternalState blk ->
-  ( InternalState blk
-  , Maybe (TraceEventMempool blk)
-  )
-pureSyncWithLedger capacityOverride lcfg slot lstate values istate =
-  let RevalidateTxsResult is' removed =
-        revalidateTxsFor
-          capacityOverride
-          lcfg
-          slot
-          lstate
-          values
-          (isLastTicketNo istate)
-          (TxSeq.toList $ isTxs istate)
-      mTrace =
-        if null removed
-          then
-            Nothing
-          else
-            Just $
-              TraceMempoolRemoveTxs (map (\x -> (getInvalidated x, getReason x)) removed) (isMempoolSize is')
-   in (is', mTrace)
