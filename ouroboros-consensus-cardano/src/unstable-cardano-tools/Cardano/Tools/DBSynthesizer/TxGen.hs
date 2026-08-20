@@ -124,7 +124,7 @@ txFee = Coin 1_000_000
 mkRespendTxGen ::
   Maybe FilePath ->
   IO (Either String (TopLevelConfig Cardano -> GenTxs Cardano))
-mkRespendTxGen Nothing = pure $ Right $ \_cfg _slot _forker _ticked -> pure []
+mkRespendTxGen Nothing = pure $ Right $ \_cfg _slot _forker _ticked -> pure ([], [])
 mkRespendTxGen (Just keyFile) = do
   lastOutput <- newIORef Nothing
   fmap (respendTxGen lastOutput) <$> readPaymentSigningKey keyFile
@@ -164,7 +164,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
   -- the same index on, so no pairing here can go wrong.
   genForEra ::
     Index (CardanoEras StandardCrypto) x ->
-    IO [Validated (GenTx Cardano)]
+    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)])
   genForEra = \case
     IZ ->
       throwIO . userError $
@@ -176,7 +176,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
     forall proto era.
     ShelleyBasedEra era =>
     Index (CardanoEras StandardCrypto) (ShelleyBlock proto era) ->
-    IO [Validated (GenTx Cardano)]
+    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)])
   genFor idx = do
     (keys, valuesAtParent) <- readCandidates idx
     -- The forker is at the point of the parent block, so its values are those
@@ -226,7 +226,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
     (GenTx (ShelleyBlock proto era) -> GenTx Cardano) ->
     TickedLedgerState Cardano ValuesMK ->
     (TxIn, TxOut era) ->
-    IO [Validated (GenTx Cardano)]
+    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)])
   fillBlock wrap stateAtSlot = go [] Measure.zero stateAtSlot
    where
     capacity :: TxMeasure Cardano
@@ -268,7 +268,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
           ++ "."
     stop accepted unspent = do
       writeIORef lastOutput (Just unspent)
-      pure (reverse accepted)
+      pure (reverse accepted, [])
 
   -- If the 'IORef' holds no key, the generator reads the whole table. The
   -- 'IORef' is empty on the first slot of a run.

@@ -123,7 +123,7 @@ blockCountTest logStep = do
       ++ show blockCount
       ++ ")"
  where
-  genTxs _ _ _ _ = pure []
+  genTxs _ _ _ _ = pure ([], [])
 
 tests :: TestTree
 tests =
