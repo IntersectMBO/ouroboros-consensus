@@ -1003,6 +1003,28 @@ benchmark leios-db-bench
     time,
     vector,
 
+benchmark leios-gc-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus/bench/leios-gc-bench
+  main-is: Main.hs
+  ghc-options: -with-rtsopts=-N4
+  build-depends:
+    async,
+    base,
+    bytestring,
+    cardano-slotting,
+    contra-tracer,
+    direct-sqlite,
+    directory,
+    io-classes:si-timers,
+    optparse-applicative,
+    ouroboros-consensus,
+    temporary,
+    text,
+    time,
+    vector,
+
 test-suite doctest
   import: common-test
   main-is: doctest.hs

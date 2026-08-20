@@ -106,8 +106,8 @@ newLeiosDBInMemoryWith stateVar = do
           atomically (dupTChan notificationChan)
       , -- No-op for now; see 'leiosDbGarbageCollect'.
         leiosDbGarbageCollect = \_slotNo -> pure ()
-      , -- No-op for now; see 'leiosDbPromoteToImmutable'.
-        leiosDbPromoteToImmutable = \_point -> pure ()
+      , -- No-op for now; see 'leiosDbMarkAsImmutable'.
+        leiosDbMarkAsImmutable = \_point -> pure ()
       , open =
           pure $
             LeiosDbConnection

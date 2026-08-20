@@ -61,7 +61,7 @@ import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Common
   ( LeiosEbNotification (..)
   , leiosDbGarbageCollect
-  , leiosDbPromoteToImmutable
+  , leiosDbMarkAsImmutable
   , subscribeEbNotifications
   )
 import LeiosDemoTypes (LeiosPoint, pointEbHash)
@@ -240,9 +240,9 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- slot-scheduled VolatileDB-side GC can evict its body and closure. By the
       -- parking invariant a cert-RB is only selected once its certified EB's
       -- closure is acquired, so an immutalised cert-RB's closure is necessarily
-      -- present (and complete) now. See 'leiosDbPromoteToImmutable'.
+      -- present (and complete) now. See 'leiosDbMarkAsImmutable'.
       getBI <- atomically $ VolatileDB.getBlockInfo cdbVolatileDB
-      forM_ (certifiedEb getBI hash) $ leiosDbPromoteToImmutable cdbLeiosDb
+      forM_ (certifiedEb getBI hash) $ leiosDbMarkAsImmutable cdbLeiosDb
       -- TODO the invariant of 'cdbChain' is shortly violated between
       -- these two lines: the tip was updated on the line above, but the
       -- anchor point is only updated on the line below.
@@ -482,9 +482,6 @@ garbageCollectBlocks CDB{..} slotNo = do
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   PerasCertDB.garbageCollect cdbPerasCertDB slotNo
-  -- Evict LeiosDb EB bodies and closures no longer needed now that everything
-  -- up to 'slotNo' is immutable. Driven by the same scheduled slot as the other
-  -- stores; currently a no-op (see 'leiosDbGarbageCollect').
   leiosDbGarbageCollect cdbLeiosDb slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 

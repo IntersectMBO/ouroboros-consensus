@@ -16,6 +16,7 @@ module LeiosDemoDb
     -- * SQLite implementation
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
+  , sqlSampleLeiosDBStats
 
     -- * SQL (re-exported for leiosdemo app)
   , sql_schema
@@ -40,6 +41,7 @@ import LeiosDemoDb.InMemory
 import LeiosDemoDb.SQLite
   ( newLeiosDBSQLite
   , newLeiosDBSQLiteFromEnv
+  , sqlSampleLeiosDBStats
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx
