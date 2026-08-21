@@ -761,6 +761,10 @@ instance BlockSupportsPeras TestBlock where
   type PerasVote TestBlock = MockPerasVote TestBlock
   type PerasCert TestBlock = MockPerasCert TestBlock
   type PerasError TestBlock = MockPerasError TestBlock
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock = Right . tbPerasCert . testBody
 
 instance InspectLedger TestBlock

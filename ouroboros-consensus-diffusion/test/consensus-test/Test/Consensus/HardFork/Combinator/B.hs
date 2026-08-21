@@ -301,6 +301,11 @@ instance BlockSupportsPeras BlockB where
   type PerasVote BlockB = MockPerasVote BlockB
   type PerasCert BlockB = MockPerasCert BlockB
   type PerasError BlockB = MockPerasError BlockB
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing
 
 instance HasPartialConsensusConfig ProtocolB
 

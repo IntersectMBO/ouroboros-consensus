@@ -1237,3 +1237,14 @@ instance
   , Typeable a
   ) =>
   BlockSupportsPeras (DualBlock m a)
+  where
+  type PerasVote (DualBlock m a) = VoidPerasVote (DualBlock m a)
+  type PerasCert (DualBlock m a) = VoidPerasCert (DualBlock m a)
+  type PerasError (DualBlock m a) = VoidPerasError (DualBlock m a)
+  type PerasCrypto (DualBlock m a) = VoidPerasCrypto (DualBlock m a)
+  type PerasVotingCommitteeScheme (DualBlock m a) = VoidPerasVotingCommitteeScheme
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing

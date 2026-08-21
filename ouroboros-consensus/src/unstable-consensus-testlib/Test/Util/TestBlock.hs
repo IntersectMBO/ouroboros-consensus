@@ -729,6 +729,11 @@ instance
   type PerasVote (TestBlockWith ptype) = MockPerasVote (TestBlockWith ptype)
   type PerasCert (TestBlockWith ptype) = MockPerasCert (TestBlockWith ptype)
   type PerasError (TestBlockWith ptype) = MockPerasError (TestBlockWith ptype)
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing
 
 {-------------------------------------------------------------------------------
   Test infrastructure: config

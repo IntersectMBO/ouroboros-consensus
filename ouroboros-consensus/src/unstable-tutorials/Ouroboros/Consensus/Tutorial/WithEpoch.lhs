@@ -71,7 +71,18 @@ And imports, of course:
 >   BlockProtocol, castHeaderFields, BlockConfig, CodecConfig,
 >   StorageConfig, Point, castPoint, WithOrigin (..), EpochNo (EpochNo),
 >   pointSlot, blockPoint, BlockNo (..))
-> import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras)
+> import Ouroboros.Consensus.Block.SupportsPeras
+>   ( BlockSupportsPeras (..)
+>   , VoidPerasCert
+>   , VoidPerasCrypto
+>   , VoidPerasError
+>   , VoidPerasVote
+>   , VoidPerasVotingCommitteeScheme
+>   , defaultForgePerasCert
+>   , defaultForgePerasVoteIfEligible
+>   , defaultVerifyPerasCert
+>   , defaultVerifyPerasVote
+>   )
 > import Ouroboros.Consensus.Block.SupportsProtocol
 >   (BlockSupportsProtocol (..))
 > import Ouroboros.Consensus.Protocol.Abstract
@@ -209,10 +220,20 @@ defined earlier:
 
 > instance StandardHash BlockD
 
-We also need to instantiate `BlockSupportsPeras` for `BlockC`. For this, we can
-use the default emtpy implementation.
+We also need to instantiate `BlockSupportsPeras` for `BlockD`. Since `BlockD`
+does not support Peras, we use the void Peras types and default implementations.
 
-> instance BlockSupportsPeras BlockD
+> instance BlockSupportsPeras BlockD where
+>   type PerasVote BlockD = VoidPerasVote BlockD
+>   type PerasCert BlockD = VoidPerasCert BlockD
+>   type PerasError BlockD = VoidPerasError BlockD
+>   type PerasCrypto BlockD = VoidPerasCrypto BlockD
+>   type PerasVotingCommitteeScheme BlockD = VoidPerasVotingCommitteeScheme
+>   forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+>   verifyPerasVote = defaultVerifyPerasVote
+>   forgePerasCert = defaultForgePerasCert
+>   verifyPerasCert = defaultVerifyPerasCert
+>   getPerasCertInBlock _ = Right Nothing
 
 Then we define a function `computeBlockHash` which computes a `Hash` for a
 `BlockD` - basically aggregating all the data in the block besides the hash
