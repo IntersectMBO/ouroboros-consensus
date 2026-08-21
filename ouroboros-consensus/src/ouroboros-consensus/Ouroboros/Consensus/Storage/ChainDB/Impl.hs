@@ -191,6 +191,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       )
       (Query.getAnyKnownBlock immutableDB volatileDB)
       ledgerDbGetVolatileSuffix
+      (Args.cdbsRegistry cdbSpecificArgs)
 
   lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
