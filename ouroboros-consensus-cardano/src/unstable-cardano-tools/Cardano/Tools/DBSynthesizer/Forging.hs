@@ -10,6 +10,7 @@ module Cardano.Tools.DBSynthesizer.Forging
   , runForge
   ) where
 
+import Cardano.Crypto.DSIGN.Class (deriveVerKeyDSIGN)
 import Cardano.Tools.DBSynthesizer.Types
   ( ForgeLimit (..)
   , ForgeResult (..)
@@ -25,7 +26,9 @@ import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes (getLeiosSeatId, leiosCommitteeSize)
 import LeiosVoteState (LeiosVoteState, newLeiosVoteState)
+import LeiosVoting (HasLeiosVoting (getLeiosCommittee))
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
@@ -37,6 +40,7 @@ import Ouroboros.Consensus.Config
   ( TopLevelConfig
   , configConsensus
   , configLedger
+  , topLevelConfigVotingKey
   )
 import Ouroboros.Consensus.Forecast (forecastFor)
 import Ouroboros.Consensus.HeaderValidation
@@ -59,6 +63,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   , addBlockAsync
   , blockProcessed
   , getCurrentChain
+  , getCurrentLedger
   , getPastLedger
   , withReadOnlyForkerAtPoint
   )
@@ -105,7 +110,9 @@ type GenTxs blk =
 
 runForge ::
   forall blk.
-  LedgerSupportsProtocol blk =>
+  ( LedgerSupportsProtocol blk
+  , HasLeiosVoting blk
+  ) =>
   EpochSize ->
   SlotNo ->
   ForgeLimit ->
@@ -118,9 +125,8 @@ runForge ::
 runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
-  -- Synthetic forging doesn't gather votes; supply a vote state with
-  -- no committee so 'queryCert' always returns 'Nothing'.
-  leiosVoteState <- newLeiosVoteState (pure Nothing)
+  leiosVoteState <- newLeiosVoteState committee
+  reportCommittee
   endState <- go leiosVoteState initialForgeState{currentSlot = nextSlot}
   putStrLn $
     "--> forged and adopted "
@@ -130,6 +136,31 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
   pure $ ForgeResult $ fromIntegral $ forged endState
  where
   epochSize = unEpochSize epochSize_
+
+  -- The committee is rebuilt from the ledger state on every read,
+  -- because it changes with the stake distribution snapshot at each
+  -- epoch boundary.
+  committee = getLeiosCommittee . ledgerState <$> getCurrentLedger chainDB
+
+  -- A seat can exist without a key. If the pool registers no
+  -- 'leiosKey', its seat is keyless. If its proof of possession does
+  -- not verify, 'mkLeiosCommittee' also makes the seat keyless. If our
+  -- key differs from the registered one, no seat matches ours. Each
+  -- case ends with no vote counted.
+  reportCommittee = do
+    mCommittee <- atomically committee
+    -- TODO: shouldn't we be using other mechanism to report other than putStrLn?
+    putStrLn $ case mCommittee of
+      Nothing -> "--> committee: none; the era does not vote"
+      Just c ->
+        "--> committee: "
+          ++ show (leiosCommitteeSize c)
+          ++ " seats; our seat: "
+          ++ case topLevelConfigVotingKey cfg of
+            Nothing -> "none, no voting key"
+            Just sk -> case getLeiosSeatId (deriveVerKeyDSIGN sk) c of
+              Nothing -> "none, our key holds no seat"
+              Just seat -> show seat
 
   forgingDone :: ForgeState -> Bool
   forgingDone = case opts of
