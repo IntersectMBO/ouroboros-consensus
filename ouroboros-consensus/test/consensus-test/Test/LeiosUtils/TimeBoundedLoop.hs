@@ -3,6 +3,7 @@
 
 module Test.LeiosUtils.TimeBoundedLoop (tests) where
 
+import Control.Monad.Class.MonadTimer.SI (DiffTime)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.IOSim (runSimOrThrow)
 import LeiosUtils.TimeBoundedLoop
@@ -15,7 +16,6 @@ import LeiosUtils.TimeBoundedLoop
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertEqual)
 import Test.Tasty.QuickCheck
   ( Arbitrary
   , NonNegative (NonNegative)
@@ -26,6 +26,7 @@ import Test.Tasty.QuickCheck
   , ioProperty
   , label
   , testProperty
+  , (.&&.)
   )
 import Test.Util.Orphans.IOLike ()
 
@@ -38,13 +39,13 @@ tests =
         [ testPropertyIOLike
             "(val, remaining, steps, done) <- propFoldEmptyListTerminates ttl sumAction initSt"
             (\(ttl, _initSt) ret -> labelTtl ttl <> ", " <> labelFoldRet ret)
-            $ \(NonNegative (Small (ttl :: Int)), Small initSt) -> propFoldEmptyListTerminates (fromIntegral ttl) sumAction (getSmall initSt)
+            $ \(NonNegative (Small (ttl :: Int)), Small initSt) -> propFoldEmptyListTerminates (ms ttl) sumAction (getSmall initSt)
         , testPropertyIOLike
             "(val, remaining, steps, done) <- propFoldStepsMatchConsumed ttl sumAction initSt xs"
             labelFoldProp
             $ \(NonNegative (Small (ttl :: Int)), xs :: [Small Int], Small initSt) ->
               propFoldStepsMatchConsumed
-                (fromIntegral ttl)
+                (ms ttl)
                 sumAction
                 (getSmall initSt)
                 (getSmall <$> xs)
@@ -53,7 +54,7 @@ tests =
             labelFoldProp
             $ \(NonNegative (Small (ttl :: Int)), xs :: [Small Int], Small initSt) ->
               propFoldEndReachedIffConsumedAll
-                (fromIntegral ttl)
+                (ms ttl)
                 sumAction
                 (getSmall initSt)
                 (getSmall <$> xs)
@@ -62,7 +63,7 @@ tests =
             labelFoldProp
             $ \(NonNegative (Small (ttl :: Int)), xs :: [Small Int], Small initSt) ->
               propFoldJustFoldl
-                (fromIntegral ttl)
+                (ms ttl)
                 (+)
                 (getSmall initSt)
                 (getSmall <$> xs)
@@ -73,7 +74,7 @@ tests =
             "(val, steps, done) <- propIterImmediateEndOnInit ttl countAction initSt"
             (\(ttl, _initSt) ret -> labelTtl ttl <> ", " <> labelIterRet ret)
             $ \(NonNegative (Small (ttl :: Int)), Small initSt) ->
-              propIterImmediateEndOnInit (fromIntegral ttl) countAction initSt
+              propIterImmediateEndOnInit (ms ttl) countAction initSt
         , testPropertyIOSim
             "(val, steps, done) <- propIterTimeoutOverrunBoundedByOneStep ttl delay"
             ( \(ttl, stepDelay) ret -> labelTtl ttl <> ", " <> labelDelayWithTtl stepDelay ttl <> ", " <> labelIterRet2 ret
@@ -86,11 +87,14 @@ tests =
                 -- ghci> runSimOrThrow $ do { start <- getMonotonicTimeNSec; !x <- pure $ sum [1..100000000]; end <- getMonotonicTimeNSec; return (x, end - start) }
                 -- (5000000050000000,0)
                 -- (1.31 secs, 8,800,104,744 bytes)
-                propIterTimeoutOverrunBoundedByOneStep (fromIntegral ttl) (fromIntegral stepDelay)
+                propIterTimeoutOverrunBoundedByOneStep (ms ttl) (ms stepDelay)
             )
         ]
     ]
  where
+  ms :: Int -> DiffTime
+  ms n = fromIntegral n / 1000
+
   sumAction :: Monad m => Int -> Int -> m Int
   sumAction total x = return (total + x)
 
@@ -132,7 +136,7 @@ tests =
   labelFoldRet (Right res) = labelFoldRes res
 
 testPropertyIOLike ::
-  (Arbitrary a, Show a, Show e, Eq e, Eq b, Show b) =>
+  (Arbitrary a, Show a, Show e, Show b) =>
   String ->
   (a -> (Either e b) -> String) ->
   (forall m. IOLike m => a -> ExceptT e m b) ->
@@ -143,11 +147,13 @@ testPropertyIOLike lbl lblInAndOut prop =
     [ testProperty "IOSim + IO" $ \x -> ioProperty $ do
         let succOrFailSim = runSimOrThrow $ runExceptT (prop x)
         succOrFailIO <- runExceptT (prop x)
-        assertEqual "IO and IOSim results must be the same" succOrFailSim succOrFailIO
         pure $
           counterexample
-            (show succOrFailSim)
-            (label (lblInAndOut x succOrFailSim) $ property $ either (const False) (const True) succOrFailSim)
+            ("IO: " <> show succOrFailIO)
+            (label (lblInAndOut x succOrFailIO) $ property $ either (const False) (const True) succOrFailIO)
+            .&&. counterexample
+              ("IOSIM: " <> show succOrFailSim)
+              (label (lblInAndOut x succOrFailSim) $ property $ either (const False) (const True) succOrFailSim)
     ]
 
 testPropertyIOSim ::
