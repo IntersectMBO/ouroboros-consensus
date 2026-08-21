@@ -1,6 +1,0 @@
-name: formal-consensus
-depend:
-  standard-library
-  standard-library-classes
-  standard-library-meta
-include: .
