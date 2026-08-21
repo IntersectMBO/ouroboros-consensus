@@ -108,13 +108,10 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
           if canUseCache
             -- We are looking for a snapshot at the same state ticked
             -- to a different slot, so we can reuse the cached values
-            then mkResolveValues $ Left (isTxValues is)
+            then pure . restrictValues' (isTxValues is)
             -- We are looking for a snapshot at a different state, so we
             -- need to read the values from the ledgerdb.
-            else
-              mkResolveValues $
-                Right
-                  readUntickedTables
+            else readUntickedTables
       computeSnapshot
         resolveValues
         cfg
@@ -247,13 +244,3 @@ reapplyTxs' cfg slot toApplyTxs stBefore =
     )
     stBefore
     (TxSeq.toList toApplyTxs)
-
-mkResolveValues ::
-  (Monad m, LedgerSupportsMempool blk) =>
-  Either
-    (LedgerTables (LedgerState blk) ValuesMK)
-    (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
-  LedgerTables (LedgerState blk) KeysMK ->
-  m (LedgerTables (LedgerState blk) ValuesMK)
-mkResolveValues (Left cachedValues) keys = return $ restrictValues' cachedValues keys
-mkResolveValues (Right readTables) keys = readTables keys
