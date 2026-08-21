@@ -247,11 +247,13 @@ txSize (TestBlockGenTx tx) =
       1 + length (consumed tx) + length (produced tx)
 
 -- | Simulated CPU cost, in microseconds, of /fully/ validating a transaction
--- (the script and signature checks a real ledger performs in 'applyTx').
--- Overridable via @MEMPOOL_APPLY_CPU_US@; defaults to @128@, the measured median
--- applyBlock cost (~128us/tx) on an nvme SSD (see
--- input-output-hk/ouroboros-leios#553). Set it to @0@ to remove the injected
--- cost (e.g. for the criterion @mempool-bench@).
+-- (the script and signature checks a real ledger performs in 'applyTx'). Set via
+-- @MEMPOOL_APPLY_CPU_US@; defaults to @0@ (no injected cost) so this shared
+-- 'TestBlock' does not slow down the criterion @mempool-bench@ that CI
+-- regression-gates. The @mempool-state-bench@ opts in — it sets the env var from
+-- its @--apply-us@ flag (default 128us, the measured median applyBlock cost on
+-- an nvme SSD, see input-output-hk/ouroboros-leios#553) before this CAF is
+-- forced.
 --
 -- Together with 'reapplyCpuMicros' this lets a benchmark reproduce the
 -- real-node relationship @reapply ≪ apply@: reapplication skips the expensive
@@ -260,16 +262,16 @@ txSize (TestBlockGenTx tx) =
 -- this for its sync-vs-ingest convergence to be faithful.
 {-# NOINLINE applyCpuMicros #-}
 applyCpuMicros :: Int
-applyCpuMicros = envInt "MEMPOOL_APPLY_CPU_US" 128
+applyCpuMicros = envInt "MEMPOOL_APPLY_CPU_US" 0
 
 -- | Simulated CPU cost, in microseconds, of /reapplying/ an already-validated
--- transaction. Overridable via @MEMPOOL_REAPPLY_CPU_US@; defaults to @20@. This
--- is an estimate — reapplyBlock was not measured in #553 — kept well below
--- 'applyCpuMicros' to model @reapply ≪ apply@ (reapply skips the expensive
--- script/signature checks).
+-- transaction. Set via @MEMPOOL_REAPPLY_CPU_US@; defaults to @0@ (see
+-- 'applyCpuMicros'). The @mempool-state-bench@ sets it from its @--reapply-us@
+-- flag (default 20us, an estimate kept well below @--apply-us@ to model
+-- @reapply ≪ apply@, as reapply skips the expensive script/signature checks).
 {-# NOINLINE reapplyCpuMicros #-}
 reapplyCpuMicros :: Int
-reapplyCpuMicros = envInt "MEMPOOL_REAPPLY_CPU_US" 20
+reapplyCpuMicros = envInt "MEMPOOL_REAPPLY_CPU_US" 0
 
 {-# NOINLINE envInt #-}
 envInt :: String -> Int -> Int
