@@ -12,6 +12,8 @@
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+-- Disabled until we get rid of the degenerate 'BlockSupportsPeras' instance.
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( -- * Voting committee types for Peras
@@ -24,6 +26,10 @@ module Ouroboros.Consensus.Block.SupportsPeras
 
     -- * BlockSupportsPeras class
   , BlockSupportsPeras (..)
+  , defaultForgePerasVoteIfEligible
+  , defaultVerifyPerasVote
+  , defaultForgePerasCert
+  , defaultVerifyPerasCert
 
     -- * To be removed in favor of using per-blk definitions
   , PerasCert' (..)
@@ -71,12 +77,15 @@ import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
 import Control.Exception (assert)
+import Control.Monad.Error.Class (MonadError (..))
+import Data.Bifunctor (Bifunctor (..))
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import Data.Proxy (Proxy (..))
+import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -88,16 +97,15 @@ import Ouroboros.Consensus.Committee.Class
   , VotingCommittee
   , unsafeUniqueVotesWithSameTarget
   )
-import Ouroboros.Consensus.Committee.Crypto (VoteCandidate)
+import qualified Ouroboros.Consensus.Committee.Class as Committee
+import Ouroboros.Consensus.Committee.Crypto (PrivateKey, VoteCandidate)
+import Ouroboros.Consensus.Committee.Types (PoolId)
 import Ouroboros.Consensus.Peras.Cert.Class
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Peras.Void
 import Ouroboros.Consensus.Peras.Vote.Class
 import Ouroboros.Consensus.Peras.Voting.Adapter
-  ( PerasConversionError
-  , PerasVoteCompatibleWithVotingCommittee (..)
-  )
 import Ouroboros.Consensus.Util
 
 -- * Voting committee types for Peras
@@ -184,7 +192,8 @@ newtype PerasVoteStakeDistr = PerasVoteStakeDistr
 -- * BlockSupportsPeras class
 
 class
-  ( Show (PerasParams blk)
+  ( StandardHash blk
+  , Show (PerasParams blk)
   , NoThunks (PerasCert blk)
   ) =>
   BlockSupportsPeras blk
@@ -241,6 +250,141 @@ class
   getPerasCertInBlock ::
     blk ->
     Maybe (PerasCert blk)
+
+-- | Forge a Peras vote if the given pool is eligible to vote in the given round.
+defaultForgePerasVoteIfEligible ::
+  forall blk.
+  ( BlockSupportsPeras blk
+  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+  , PerasVoteCompatibleWithVotingCommittee
+      (PerasVote blk)
+      (PerasCrypto blk)
+      (PerasVotingCommitteeScheme blk)
+  ) =>
+  PerasEpochContext blk ->
+  PoolId ->
+  PrivateKey (PerasCrypto blk) ->
+  PerasRoundNo ->
+  Point blk ->
+  Either (PerasError blk) (Maybe (ValidatedPerasVote blk))
+defaultForgePerasVoteIfEligible context ourId ourPrivateKey roundNo point = do
+  let committee = pecCommittee context
+  mbWitness <-
+    bimap injectVotingCommitteeError id $
+      Committee.checkShouldVote committee ourId ourPrivateKey roundNo
+  for mbWitness $ \witness -> do
+    let voteWeight = eligiblePartyVoteWeight committee witness
+    let boostedBlock = pointToBoostedBlock point
+    let abstractVote = Committee.forgeVote witness ourPrivateKey roundNo boostedBlock
+    concreteVote <-
+      bimap injectConversionError id $
+        toPerasVote @(PerasVote blk) abstractVote
+    pure $
+      ValidatedPerasVote
+        { vpvVote = concreteVote
+        , vpvVoteWeight = voteWeight
+        }
+
+-- | Verify a Peras vote and return its weight if valid.
+defaultVerifyPerasVote ::
+  forall blk.
+  ( BlockSupportsPeras blk
+  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+  , PerasVoteCompatibleWithVotingCommittee
+      (PerasVote blk)
+      (PerasCrypto blk)
+      (PerasVotingCommitteeScheme blk)
+  ) =>
+  PerasEpochContext blk ->
+  PerasVote blk ->
+  Either (PerasError blk) (ValidatedPerasVote blk)
+defaultVerifyPerasVote context vote = do
+  let committee = pecCommittee context
+  -- NOTE: checking that the voted point is not from the future w.r.t. the
+  -- starting slot of the 'PerasRoundNo' will have to be done at the HFC level
+  -- since here we don't have 'PerasRoundNo' -> 'SlotNo' resolution device.
+  abstractVote <-
+    bimap injectConversionError id $
+      fromPerasVote @(PerasVote blk) vote
+  witness <-
+    bimap injectVotingCommitteeError id $
+      Committee.verifyVote committee abstractVote
+  let voteWeight = eligiblePartyVoteWeight committee witness
+  pure
+    ValidatedPerasVote
+      { vpvVote = vote
+      , vpvVoteWeight = voteWeight
+      }
+
+-- | Forge a Peras certificate from a collection of votes reaching quorum.
+defaultForgePerasCert ::
+  forall blk.
+  ( BlockSupportsPeras blk
+  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+  , PerasVoteCompatibleWithVotingCommittee
+      (PerasVote blk)
+      (PerasCrypto blk)
+      (PerasVotingCommitteeScheme blk)
+  , PerasCertCompatibleWithVotingCommittee
+      (PerasCert blk)
+      (PerasCrypto blk)
+      (PerasVotingCommitteeScheme blk)
+  ) =>
+  PerasEpochContext blk ->
+  PerasVoteCollectionWithQuorum blk ->
+  Either (PerasError blk) (ValidatedPerasCert blk)
+defaultForgePerasCert context voteCollection = do
+  let params = pecParams context
+  abstractVoteCollection <-
+    bimap injectConversionError id $
+      toUniqueVotesWithSameTarget voteCollection
+  abstractCert <-
+    bimap injectVotingCommitteeError id $
+      Committee.forgeCert abstractVoteCollection
+  concreteCert <-
+    bimap injectConversionError id $
+      toPerasCert abstractCert
+  pure
+    ValidatedPerasCert
+      { vpcCert = concreteCert
+      , vpcCertBoost = perasWeight params
+      }
+
+-- | Verify a Peras certificate and return its boost if valid.
+defaultVerifyPerasCert ::
+  forall blk.
+  ( BlockSupportsPeras blk
+  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+  , PerasCertCompatibleWithVotingCommittee
+      (PerasCert blk)
+      (PerasCrypto blk)
+      (PerasVotingCommitteeScheme blk)
+  ) =>
+  PerasEpochContext blk ->
+  PerasCert blk ->
+  Either (PerasError blk) (ValidatedPerasCert blk)
+defaultVerifyPerasCert context cert = do
+  let committee = pecCommittee context
+  let params = pecParams context
+  -- NOTE: checking that the voted point is not from the future w.r.t. the
+  -- starting slot of the 'PerasRoundNo' will have to be done at the HFC level
+  -- since here we don't have 'PerasRoundNo' -> 'SlotNo' resolution device.
+  abstractCert <-
+    bimap injectConversionError id $
+      fromPerasCert @(PerasCert blk) cert
+  witnesses <-
+    bimap injectVotingCommitteeError id $
+      Committee.verifyCert committee abstractCert
+  let totalVoteWeight = sum (eligiblePartyVoteWeight committee <$> witnesses)
+  if weightAboveThreshold params totalVoteWeight
+    then
+      pure
+        ValidatedPerasCert
+          { vpcCert = cert
+          , vpcCertBoost = perasWeight params
+          }
+    else
+      throwError (injectQuorumNotReachedError totalVoteWeight)
 
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
