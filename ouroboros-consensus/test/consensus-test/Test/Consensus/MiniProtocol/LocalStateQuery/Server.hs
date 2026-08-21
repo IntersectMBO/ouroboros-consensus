@@ -250,19 +250,21 @@ initLedgerDB s c = do
           , lgrQueryBatchSize = DefaultQueryBatchSize
           }
   ldb <-
-    runWithTempRegistry
-      ( do
-          db <-
-            LedgerDB.openDB
-              args
-              streamAPI
-              (Chain.headPoint c)
-              -- These tests do not use EBBs.
-              IsNotEBB
-              (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
-              (LedgerDB.praosGetVolatileSuffix s)
-          pure (db, ())
-      )
+    withRegistry $ \reg ->
+      runWithTempRegistry
+        ( do
+            db <-
+              LedgerDB.openDB
+                args
+                streamAPI
+                (Chain.headPoint c)
+                -- These tests do not use EBBs.
+                IsNotEBB
+                (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+                (LedgerDB.praosGetVolatileSuffix s)
+                reg
+            pure (db, ())
+        )
 
   case NE.nonEmpty $ Chain.toOldestFirst c of
     Nothing -> pure ()

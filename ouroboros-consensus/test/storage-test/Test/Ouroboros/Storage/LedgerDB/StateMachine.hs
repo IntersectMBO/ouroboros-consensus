@@ -536,6 +536,9 @@ openLedgerDB flavArgs env cfg fs = do
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
   (tracer, getNumOpenHandles) <- mkTrackOpenHandles
+  -- These tests drive snapshotting through 'TestInternals' rather than
+  -- 'tryTakeSnapshot', so nothing is ever forked into this registry.
+  reg <- unsafeNewRegistry
   let args =
         LedgerDbArgs
           defaultSnapshotPolicyArgs
@@ -562,7 +565,7 @@ openLedgerDB flavArgs env cfg fs = do
                   (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                   (LedgerDBSnapshotEvent >$< lgrTracer args)
                   (lgrHasFS args)
-          let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
+          let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res reg
           -- These tests do not use EBBs.
           lift $ openDBInternal args initDb snapManager stream replayGoal IsNotEBB
   case NE.nonEmpty volBlocks of
