@@ -10,9 +10,11 @@
 module Cardano.Tools.DBAnalyser.Run (analyse) where
 
 import Cardano.Ledger.BaseTypes
+import Cardano.Tools.Config (throwConfigError)
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
+import Control.Applicative ((<|>))
 import Control.Monad (unless)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
@@ -160,23 +162,29 @@ analyse dbaConfig args =
     lock <- newMVar ()
     chainDBTracer <- mkVerboseTracer lock verbose
     analysisTracer <- mkVerboseTracer lock True
-    LSMConfig{lsmConfigExportPath} <- mkLSMConfig args
     lsmSalt <- fst . genWord64 <$> newStdGen
-    ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
-      mkProtocolInfo args
+    (ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg}, configBackend) <-
+      mkProtocolInfoAndBackend args
+    -- The command line takes precedence over the configuration file.
+    backend <- case ldbBackend <|> configBackend of
+      Just backend -> pure backend
+      Nothing ->
+        throwConfigError $
+          "no LedgerDB backend was selected on the command line and none could"
+            <> " be determined from the configuration; pass --in-mem or --lsm."
     snapshotDelayRng <- newStdGen
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
-        flavargs = case ldbBackend of
+        flavargs = case backend of
           V2InMem ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs
-          V2LSM lsmNoDiskCache ->
+          V2LSM LSMOptions{lsmDatabasePath, lsmExportPath, lsmNoDiskCache} ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs $
                 LSM.LSMArgs
-                  (mkFsPath ["lsm"])
-                  (mkFsPath . splitDirectories <$> lsmConfigExportPath)
+                  (mkFsPath (splitDirectories lsmDatabasePath))
+                  (mkFsPath . splitDirectories <$> lsmExportPath)
                   lsmSalt
                   (if lsmNoDiskCache then LSM.DiskCacheNone else LSM.DiskCacheAll)
                   (LSM.stdMkBlockIOFS dbDir)

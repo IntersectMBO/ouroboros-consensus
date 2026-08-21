@@ -2,6 +2,7 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.Config (withConfigErrorHandling)
 import Cardano.Tools.DBAnalyser.Block.Cardano
 import Cardano.Tools.DBAnalyser.Run
 import Cardano.Tools.DBAnalyser.Types
@@ -21,7 +22,7 @@ import Options.Applicative
   )
 
 main :: IO ()
-main = withStdTerminalHandles $ do
+main = withStdTerminalHandles $ withConfigErrorHandling $ do
   cryptoInit
   void $ uncurry analyse =<< getCmdLine
 
