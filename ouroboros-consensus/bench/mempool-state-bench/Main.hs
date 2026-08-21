@@ -99,6 +99,7 @@ import Ouroboros.Consensus.Util.IOLike
   , readTVar
   , writeTVar
   )
+import System.Environment (setEnv)
 import Test.Util.Orphans.IOLike ()
 
 -- * Configuration (command-line options, each with a default)
@@ -138,6 +139,13 @@ data Config = Config
   -- default models ~7 reads/s/peer; set @0@ for a tight loop (only sensible for a
   -- handful of readers, else hundreds of spinning O(occupancy) readers just
   -- measure CPU saturation).
+  , cfgApplyCpuMicros :: !Int
+  -- ^ Simulated CPU cost of fully validating a tx (@applyTx@), microseconds.
+  -- Exported to the shared 'TestBlock' via @MEMPOOL_APPLY_CPU_US@ (see
+  -- 'Bench.Consensus.Mempool.TestBlock.applyCpuMicros').
+  , cfgReapplyCpuMicros :: !Int
+  -- ^ Simulated CPU cost of reapplying an already-validated tx (@reapplyTx@),
+  -- microseconds. Kept well below 'cfgApplyCpuMicros' to model @reapply ≪ apply@.
   }
 
 configParser :: Parser Config
@@ -214,6 +222,27 @@ configParser =
           <> showDefault
           <> help "Pause between successive getSnapshots per reader; 0 = tight loop"
       )
+    <*> option
+      auto
+      ( long "apply-us"
+          <> metavar "US"
+          <> value 128
+          <> showDefault
+          <> help
+            "Simulated CPU cost of fully validating a tx (applyTx). Default 128us, \
+            \the measured median applyBlock cost (see \
+            \input-output-hk/ouroboros-leios#553). Exported via MEMPOOL_APPLY_CPU_US."
+      )
+    <*> option
+      auto
+      ( long "reapply-us"
+          <> metavar "US"
+          <> value 20
+          <> showDefault
+          <> help
+            "Simulated CPU cost of reapplying an already-validated tx (reapplyTx). \
+            \Default 20us, kept well below --apply-us. Exported via MEMPOOL_REAPPLY_CPU_US."
+      )
 
 -- | tx-submission servers = one per peer.
 numReaders :: Config -> Int
@@ -242,6 +271,12 @@ main = do
             <> progDesc
               "Concurrent benchmark of the real mempool's shared-state access under Leios-scale load"
         )
+  -- Export the apply/reapply CPU costs to the shared 'TestBlock' before anything
+  -- forces its 'NOINLINE' CAFs (they read these env vars once via
+  -- 'unsafePerformIO'). The 'TestBlock' defaults to 0 so the criterion
+  -- 'mempool-bench' is unaffected; only this bench opts in.
+  setEnv "MEMPOOL_APPLY_CPU_US" (show (cfgApplyCpuMicros cfg))
+  setEnv "MEMPOOL_REAPPLY_CPU_US" (show (cfgReapplyCpuMicros cfg))
   putStr $
     unlines
       [ "Mempool shared-state concurrent benchmark (real mempool)"
@@ -266,6 +301,11 @@ main = do
           <> " us + "
           <> show (cfgReadPerKeyMicros cfg)
           <> " us/key"
+      , "  tx cpu cost   : "
+          <> show (cfgApplyCpuMicros cfg)
+          <> " us apply / "
+          <> show (cfgReapplyCpuMicros cfg)
+          <> " us reapply"
       , ""
       ]
   let seeds = [Token (j * chainStride) | j <- [0 .. numAdders cfg - 1]]
