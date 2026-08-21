@@ -64,6 +64,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.NodeKernel.Forge (decideLeiosCertify)
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepState
   , tickChainDepState
@@ -119,8 +120,13 @@ data VoteTally = VoteTally
 -- The first list fills the ranking block. The second fills the endorser block
 -- that the ranking block announces. An empty second list announces no endorser
 -- block, because 'mkAndStoreEb' forges none for an empty list.
+--
+-- The 'Bool' says whether this block certifies the endorser block that its
+-- parent announced. Such a block must get no transactions, because 'mkBody'
+-- drops them and applies the certified endorser block's instead.
 type GenTxs blk =
   SlotNo ->
+  Bool ->
   ReadOnlyForker IO (ExtLedgerState blk) ->
   TickedLedgerState blk DiffMK ->
   IO ([Validated (GenTx blk)], [Validated (GenTx blk)])
@@ -133,6 +139,7 @@ runForge ::
   ( LedgerSupportsProtocol blk
   , HasLeiosVoting blk
   , ConvertRawHash blk
+  , ResolveLeiosBlock blk
   ) =>
   EpochSize ->
   SlotNo ->
@@ -330,6 +337,17 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
           -- the node's forging loop
           ExceptT . fmap (Right . fromJust) . withEarlyExit $
             withReadOnlyForkerAtPoint cdb tgt (Trans.lift . k)
+    -- Decide before generating. A certifying block carries no transactions of
+    -- its own, so the generator has to know.
+    mCert <-
+      lift $
+        decideLeiosCertify
+          leiosDb
+          leiosVoteState
+          Trace.nullTracer
+          currentSlot
+          (headerState unticked)
+
     (rbTxs, ebTxs) <- withReadOnlyForkerAtPoint'
       chainDB
       (SpecificPoint bcPrevPoint)
@@ -338,6 +356,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
         Right frk ->
           genTxs
             currentSlot
+            (isJust mCert)
             frk
             tickedLedgerState
 
@@ -358,7 +377,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             , fbLeiosDb = leiosDb
             , fbLeiosTracer = Trace.nullTracer
             , fbLeiosVoteState = leiosVoteState
-            , fbMayLeiosCert = Nothing
+            , fbMayLeiosCert = fst <$> mCert
             }
 
     -- Add the block to the chain DB (synchronously) and verify adoption
