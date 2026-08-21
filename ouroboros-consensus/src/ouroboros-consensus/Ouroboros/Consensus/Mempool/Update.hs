@@ -575,7 +575,7 @@ implSyncWithLedger projectResult mpEnv =
           Right frk -> do
             -- OFF-LOCK, and the tall tent pole of the whole sync: read the
             -- snapshot's inputs and revalidate the entire mempool against the new
-            -- tip. Everything after this ('shrinkThenCommit') is just a bounded
+            -- tip. Everything after this ('revalidateDeltas') is just a bounded
             -- catch-up loop reapplying whatever was added or removed while this
             -- ran, so the state lock is held only briefly at the very end.
             --
@@ -595,7 +595,7 @@ implSyncWithLedger projectResult mpEnv =
                 (isLastTicketNo is0)
                 (isRemovalGen is0)
                 (TxSeq.toList (isTxs is0))
-            shrinkThenCommit frk tipHash0 slot seed (0 :: Int) >>= \case
+            revalidateDeltas frk tipHash0 slot seed (0 :: Int) >>= \case
               Nothing -> goSync -- Retry if the commit found the state stale.
               Just r -> pure r
 
@@ -613,49 +613,66 @@ implSyncWithLedger projectResult mpEnv =
   deltaAfter cand is =
     TxSeq.toList . snd $ TxSeq.splitAfterTicketNo (isTxs is) (isLastTicketNo cand)
 
-  -- Shrink the outstanding delta off the lock, then finish under it with a
-  -- bounded residual reapply. Returns Nothing (retry the whole sync) if the tip
-  -- moved or a tx was removed while we worked.
+  -- Revalidate the outstanding deltas off the lock until small enough, then
+  -- finish under it with a bounded residual reapply. Returns Nothing (retry the
+  -- whole sync) if the tip moved or a tx was removed while we worked.
   -- NOTE: Either closes the forker or updates it in the InternalState
-  shrinkThenCommit frk tipHash0 slot = goShrink
+  revalidateDeltas frk tipHash0 slot = go
    where
-    goShrink acc@(RevalidateTxsResult cand _) iterN = do
-      isNow <- atomically $ readTMVar istate
-      let deltaTickets = deltaAfter cand isNow
-      if length deltaTickets > syncDeltaCap && iterN < syncMaxIters
+    -- The candidate is doomed the moment the tip moves or a tx is force-removed
+    -- (the commit below would reject it, retrying the whole sync). This helper
+    -- checks that condition, run on each iteration.
+    stale cand isNow curTipHash =
+      curTipHash /= tipHash0 || isRemovalGen isNow /= isRemovalGen cand
+
+    go acc@(RevalidateTxsResult cand _) iterN = do
+      (isNow, curTipHash) <- atomically $ do
+        isNow <- readTMVar istate
+        view <- getCurrentLedgerState ldgrInterface
+        pure (isNow, getTipHash (mldViewState view))
+      if stale cand isNow curTipHash
         then do
-          next <- revalidateTxsFor' frk capacityOverride cfg slot acc (isLastTicketNo isNow) deltaTickets
-          goShrink next (iterN + 1)
-        else
-          -- Done with the shrink loop
-          withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
-            \isLocked (MempoolLedgerDBView ls _getForker) -> do
-              -- ON-LOCK: Retry the whole sync if the tip moved or a tx was
-              -- removed while we worked off the lock. Committing anyway would
-              -- resurrect a dropped tx, or publish a snapshot for a tip that is
-              -- no longer current — which makes the sync non-linearizable (its
-              -- read and commit would straddle a concurrent tip change). The
-              -- removal generation rides along on the candidate ('isRemovalGen').
-              if getTipHash ls /= tipHash0 || isRemovalGen isLocked /= isRemovalGen cand
-                then do
-                  -- As we won't be keeping the forker in the internal state, we
-                  -- can close it.
-                  roforkerClose frk
-                  pure (Nothing, isLocked)
-                else do
-                  -- Lock held, so no add can intervene: reapply just the residual
-                  -- delta (the cap plus stragglers that landed while acquiring it).
-                  let resTickets = deltaAfter cand isLocked
-                  RevalidateTxsResult isFinal removed <-
-                    revalidateTxsFor' frk capacityOverride cfg slot acc (isLastTicketNo isLocked) resTickets
-                  unless (null removed) $
-                    traceWith trcr $
-                      TraceMempoolRemoveTxs
-                        (map (\x -> (getInvalidated x, getReason x)) removed)
-                        (isMempoolSize isFinal)
-                  -- Store the forker to be used with the new state
-                  modifyMVar_ forkerMVar (\frkOld -> roforkerClose frkOld >> pure frk)
-                  pure (Just (projectResult isFinal), isFinal)
+          -- Off-lock early abort: 'goSync' will retry from a fresh snapshot.
+          roforkerClose frk
+          pure Nothing
+        else do
+          let deltaTickets = deltaAfter cand isNow
+          if length deltaTickets > syncDeltaCap && iterN < syncMaxIters
+            then do
+              next <- revalidateTxsFor' frk capacityOverride cfg slot acc (isLastTicketNo isNow) deltaTickets
+              go next (iterN + 1)
+            else
+              -- Delta is small enough (or out of iterations); commit under the lock.
+              withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
+                \isLocked (MempoolLedgerDBView ls _getForker) -> do
+                  -- ON-LOCK: the same staleness check, now atomic with the commit.
+                  -- The off-lock checks above cannot be final: the tip can still
+                  -- move between the last one and acquiring the lock. Re-reading
+                  -- the ledger state here (in the STM transaction that takes the
+                  -- lock) is what makes the tip-moved check atomic with the swap;
+                  -- committing a stale candidate would resurrect a dropped tx or
+                  -- publish a snapshot for a tip that is no longer current, i.e. be
+                  -- non-linearizable.
+                  if stale cand isLocked (getTipHash ls)
+                    then do
+                      -- As we won't be keeping the forker in the internal state, we
+                      -- can close it.
+                      roforkerClose frk
+                      pure (Nothing, isLocked)
+                    else do
+                      -- Lock held, so no add can intervene: reapply just the residual
+                      -- delta (the cap plus stragglers that landed while acquiring it).
+                      let resTickets = deltaAfter cand isLocked
+                      RevalidateTxsResult isFinal removed <-
+                        revalidateTxsFor' frk capacityOverride cfg slot acc (isLastTicketNo isLocked) resTickets
+                      unless (null removed) $
+                        traceWith trcr $
+                          TraceMempoolRemoveTxs
+                            (map (\x -> (getInvalidated x, getReason x)) removed)
+                            (isMempoolSize isFinal)
+                      -- Store the forker to be used with the new state
+                      modifyMVar_ forkerMVar (\frkOld -> roforkerClose frkOld >> pure frk)
+                      pure (Just (projectResult isFinal), isFinal)
 
   MempoolEnv
     { mpEnvStateVar = istate
