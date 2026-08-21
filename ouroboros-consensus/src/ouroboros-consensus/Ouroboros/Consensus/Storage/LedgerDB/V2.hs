@@ -14,10 +14,11 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
-import qualified Control.Monad as Monad (forM, join, void)
+import qualified Control.Monad as Monad (forM, join, void, when)
 import Control.Monad.Except
 import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
+import Control.ResourceRegistry (ResourceRegistry, forkLinkedThread)
 import Control.Tracer
 import Data.Bifunctor (first)
 import Data.Containers.ListUtils (nubOrd)
@@ -80,8 +81,10 @@ mkInitDb ::
   SnapshotManagerV2 m blk ->
   GetVolatileSuffix m blk ->
   Resources m backend ->
+  -- | The 'cdbsRegistry'.
+  ResourceRegistry m ->
   InitDB (LedgerSeq' m blk) m blk
-mkInitDb args getBlock snapManager getVolatileSuffix res = do
+mkInitDb args getBlock snapManager getVolatileSuffix res reg = do
   InitDB
     { initFromGenesis = do
         genesis <- lgrGenesis
@@ -105,6 +108,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
         lock <- RAWLock.new ()
         nextForkerKey <- newTVarIO (ForkerKey 0)
         ldbLastSuccessfulSnapshotRequestedAt <- newTVarIO Nothing
+        snapshotInFlight <- newTVarIO False
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -123,6 +127,8 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbGetVolatileSuffix = getVolatileSuffix
                 , ldbBackendResources = SomeResources res
                 , ldbLastSuccessfulSnapshotRequestedAt = ldbLastSuccessfulSnapshotRequestedAt
+                , ldbRegistry = reg
+                , ldbSnapshotInFlight = snapshotInFlight
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -339,56 +345,90 @@ implTryTakeSnapshot ::
   (SnapshotDelayRange -> m DiffTime) ->
   m ()
 implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
-  now <- getMonotonicTime
-  timeSinceLastSnapshot <- do
-    mLastSnapshotRequested <- readTVarIO $ ldbLastSuccessfulSnapshotRequestedAt env
-    for mLastSnapshotRequested $ \lastSnapshotRequested -> do
-      pure $ now `diffTime` lastSnapshotRequested
-  -- calculate and duplicate the ledger tables handles that we will be taking snapshots of
-  handles <- RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
-    lseq@(LedgerSeq immutableStates) <- atomically $ do
-      LedgerSeq states <- readTVar $ ldbSeq env
-      volSuffix <- getVolatileSuffix (ldbGetVolatileSuffix env)
-      pure $ LedgerSeq $ AS.dropNewest (AS.length (volSuffix states)) states
-    let immutableSlots :: [SlotNo] =
-          -- Remove duplicates due to EBBs.
-          nubOrd . mapMaybe (withOriginToMaybe . getTipSlot . state) $
-            AS.anchor immutableStates : AS.toOldestFirst immutableStates
-        snapshotSlots =
-          onDiskSnapshotSelector
-            (ldbSnapshotPolicy env)
-            SnapshotSelectorContext
-              { sscTimeSinceLast = timeSinceLastSnapshot
-              , sscSnapshotSlots = immutableSlots
-              }
-    Monad.forM snapshotSlots $ \slot -> do
-      -- Prune the 'LedgerSeq' such that the resulting anchor state has slot
-      -- number @slot@.
-      let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
-      (slot,) <$> (duplicateStateRef $ anchorHandle $ snd $ prune pruneStrat lseq)
-
-  -- look at the list of the ledger tables handles from the previous step and take the snapshots
-  case NonEmpty.nonEmpty handles of
-    Nothing -> pure ()
-    Just nonEmptyHandles -> Monad.void $ forkIO $ do
-      copyBlocks
-
-      delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
-      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
-        SnapshotRequestDelayed now delayBeforeSnapshotting (NonEmpty.map fst nonEmptyHandles)
-      threadDelay delayBeforeSnapshotting
-
-      for_ nonEmptyHandles $ \(_, h) -> do
-        Monad.void $ takeSnapshot snapManager Nothing h
-        Monad.void $ close . tables $ h
-      -- we don't bracket around the handles because it is tedious. An exception that may occur
-      -- before we close them would bring the whole cardano-node down anyway.
-
-      atomically $ writeTVar (ldbLastSuccessfulSnapshotRequestedAt env) (Just $! now)
-      Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
-      traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
-        SnapshotRequestCompleted
+  -- Only one snapshot request at a time, counting one that is still sleeping
+  -- out its randomised delay below.
+  --
+  -- The policy's rate limit cannot enforce this on its own: 'sscTimeSinceLast'
+  -- is derived from the last /completed/ request, so it stays satisfied for the
+  -- whole delay, and it can be disabled altogether
+  -- ('SnapshotRateLimitDisabled'). Without this guard every immutable-tip
+  -- advance during one delay starts another request, each duplicating handles
+  -- that pin a ledger state and each writing a snapshot that 'trimSnapshots'
+  -- then discards.
+  mayStart <- atomically $ do
+    inFlight <- readTVar (ldbSnapshotInFlight env)
+    if inFlight
+      then pure False
+      else do
+        -- Claim the slot; released by 'releaseInFlight'.
+        writeTVar (ldbSnapshotInFlight env) True
+        pure True
+  Monad.when mayStart $ flip onException releaseInFlight go
  where
+  releaseInFlight :: m ()
+  releaseInFlight = atomically $ writeTVar (ldbSnapshotInFlight env) False
+
+  go :: m ()
+  go = do
+    now <- getMonotonicTime
+    timeSinceLastSnapshot <- do
+      mLastSnapshotRequested <- readTVarIO $ ldbLastSuccessfulSnapshotRequestedAt env
+      for mLastSnapshotRequested $ \lastSnapshotRequested -> do
+        pure $ now `diffTime` lastSnapshotRequested
+    -- Calculate and duplicate the ledger tables handles that we will be taking snapshots of
+    --
+    -- This stays on the calling thread on purpose: it has to see the
+    -- 'LedgerSeq' before the caller goes on to garbage-collect it. Only the
+    -- delay and the writing are deferred, below.
+    handles <- RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
+      lseq@(LedgerSeq immutableStates) <- atomically $ do
+        LedgerSeq states <- readTVar $ ldbSeq env
+        volSuffix <- getVolatileSuffix (ldbGetVolatileSuffix env)
+        pure $ LedgerSeq $ AS.dropNewest (AS.length (volSuffix states)) states
+      let immutableSlots :: [SlotNo] =
+            -- Remove duplicates due to EBBs.
+            nubOrd . mapMaybe (withOriginToMaybe . getTipSlot . state) $
+              AS.anchor immutableStates : AS.toOldestFirst immutableStates
+          snapshotSlots =
+            onDiskSnapshotSelector
+              (ldbSnapshotPolicy env)
+              SnapshotSelectorContext
+                { sscTimeSinceLast = timeSinceLastSnapshot
+                , sscSnapshotSlots = immutableSlots
+                }
+      Monad.forM snapshotSlots $ \slot -> do
+        -- Prune the 'LedgerSeq' such that the resulting anchor state has slot
+        -- number @slot@.
+        let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
+        (slot,) <$> (duplicateStateRef $ anchorHandle $ snd $ prune pruneStrat lseq)
+
+    -- look at the list of the ledger tables handles from the previous step and take the snapshots
+    case NonEmpty.nonEmpty handles of
+      -- Nothing was selected, so no request is in flight after all.
+      Nothing -> releaseInFlight
+      -- Deferred so that the delay does not block the caller.
+      Just nonEmptyHandles ->
+        Monad.void $
+          forkLinkedThread (ldbRegistry env) "LedgerDB.takeSnapshot" $
+            flip finally releaseInFlight $ do
+              copyBlocks
+
+              delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
+              traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+                SnapshotRequestDelayed now delayBeforeSnapshotting (NonEmpty.map fst nonEmptyHandles)
+              threadDelay delayBeforeSnapshotting
+
+              for_ nonEmptyHandles $ \(_, h) -> do
+                Monad.void $ takeSnapshot snapManager Nothing h
+                Monad.void $ close . tables $ h
+              -- we don't bracket around the handles because it is tedious. An exception that may occur
+              -- before we close them would bring the whole cardano-node down anyway.
+
+              atomically $ writeTVar (ldbLastSuccessfulSnapshotRequestedAt env) (Just $! now)
+              Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
+              traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+                SnapshotRequestCompleted
+
   duplicateStateRef :: StateRef m l blk -> m (StateRef m l blk)
   duplicateStateRef StateRef{state, tables} = do
     h <- duplicate tables
@@ -462,6 +502,15 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- requested -- there may be later snapshot requests that have failed, or that
   -- are currently in progress (but may be blocked by a snapshot delay or
   -- working).
+  , ldbRegistry :: !(ResourceRegistry m)
+  -- ^ Registry owning the threads the LedgerDB forks, passed down from the
+  -- ChainDB. Used for the deferred part of 'implTryTakeSnapshot', so that the
+  -- thread is killed when the ChainDB shuts down and an exception in it is
+  -- linked to the ChainDB rather than silently discarded.
+  , ldbSnapshotInFlight :: !(StrictTVar m Bool)
+  -- ^ Whether a snapshot request is in flight, including one still sleeping
+  -- out its randomised delay. Only one is allowed at a time; see
+  -- 'implTryTakeSnapshot'.
   }
   deriving Generic
 
