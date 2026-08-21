@@ -13,7 +13,7 @@ import Control.Monad.Except (runExcept)
 import qualified Data.Foldable as Foldable
 import Data.Sequence.Strict (StrictSeq, (|>))
 import qualified Data.Set as Set
-import LeiosUtils.TimeBoundedLoop (iterateUntilOrTimeout')
+import LeiosUtils.TimeBoundedLoop (iterateUntilOrTimeout_)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -146,7 +146,7 @@ computeSnapshot resolveValues cfg slot tickedStDiff txsToApply = do
   let tickedSt = tickedStDiff `withLedgerTables` emptyLedgerTables
 
   SnapshotStepState{..} <-
-    iterateUntilOrTimeout'
+    iterateUntilOrTimeout_
       snapshotStepTimeLimitSeconds
       (null . remainingTxs)
       (snapshotStep resolveValues cfg slot tickedStDiff)
