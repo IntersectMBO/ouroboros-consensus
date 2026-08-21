@@ -49,7 +49,7 @@ import Control.Monad (when)
 import Control.Monad.Except (runExcept)
 import Data.Bifunctor (first)
 import Data.Function ((&))
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
 import Data.Proxy (Proxy (Proxy))
@@ -126,7 +126,8 @@ txFee = Coin 1_000_000
 mkRespendTxGen ::
   Maybe FilePath ->
   IO (Either String (TopLevelConfig Cardano -> GenTxs Cardano))
-mkRespendTxGen Nothing = pure $ Right $ \_cfg _slot _forker _ticked -> pure ([], [])
+mkRespendTxGen Nothing =
+  pure $ Right $ \_cfg _slot _certifies _forker _ticked -> pure ([], [])
 mkRespendTxGen (Just keyFile) = do
   lastOutput <- newIORef Nothing
   fmap (respendTxGen lastOutput) <$> readPaymentSigningKey keyFile
@@ -136,6 +137,19 @@ mkRespendTxGen (Just keyFile) = do
 readPaymentSigningKey :: FilePath -> IO (Either String (SigningKey PaymentKey))
 readPaymentSigningKey path =
   first displayError <$> readFileTextEnvelope (AsSigningKey AsPaymentKey) path
+
+-- | The two inputs that a forged block leaves unspent.
+data Leftovers = Leftovers
+  { unspentNow :: TxIn
+  -- ^ The last transaction of the ranking block made this output. The next
+  -- block spends it. The transactions of the endorser block did not apply. So
+  -- the ledger holds none of their outputs.
+  , unspentIfCertified :: TxIn
+  -- ^ The last transaction of the endorser block made this output. If a later
+  -- block certifies the endorser block, its transactions apply. The next block
+  -- then spends this output instead. If the block announced no endorser block,
+  -- this equals 'unspentNow'.
+  }
 
 -- | A position in the sequence of transactions that the generator makes.
 --
@@ -166,17 +180,31 @@ data Batch era = Batch
 -- The genesis must hold an initialFunds entry for the address of the key. If
 -- the entry is absent, the generator stops the run. No later slot adds it.
 --
--- The 'IORef' holds the input that the last transaction of the block before
--- this one made.
+-- The 'IORef' holds what the block before this one left unspent. It is empty on
+-- the first slot of a run.
 respendTxGen ::
-  IORef (Maybe TxIn) ->
+  IORef (Maybe Leftovers) ->
   SigningKey PaymentKey ->
   TopLevelConfig Cardano ->
   GenTxs Cardano
-respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
-  case ticked of
-    TickedHardForkLedgerState _transition perEra ->
-      hcollapse $ hcimap proxySingle (\idx _state -> K (genForEra idx)) perEra
+respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ticked
+  -- The certified endorser block's transactions apply with this block. This
+  -- block drops its own. So the ledger state holds the output that the last
+  -- transaction of that endorser block made.
+  --
+  -- It announces no endorser block of its own. Such a block would spend outputs
+  -- that the certified endorser block makes. Those outputs are absent from the
+  -- ledger state that this generator reads.
+  | certifies = do
+      modifyIORef' lastOutput . fmap $ \previous ->
+        Leftovers
+          { unspentNow = unspentIfCertified previous
+          , unspentIfCertified = unspentIfCertified previous
+          }
+      pure ([], [])
+  | otherwise = case ticked of
+      TickedHardForkLedgerState _transition perEra ->
+        hcollapse $ hcimap proxySingle (\idx _state -> K (genForEra idx)) perEra
  where
   lcfg = configLedger cfg
 
@@ -260,14 +288,15 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
         "db-synthesizer: not one generated transaction fits in the ranking block at slot "
           ++ show slot
           ++ "."
-    -- The endorser block's transactions do not reach the ledger when this block
-    -- applies. They apply when a later block certifies the endorser block. So
-    -- the next slot spends the output that the *ranking* block left.
-    writeIORef lastOutput (Just (fst (cursorEntry (batchCursor rb))))
-    -- The endorser block's own end has no consumer yet. Once the tool forges a
-    -- block that certifies an endorser block, that block advances the ledger to
-    -- this entry, and the generator has to spend it instead of the one above.
-    (ebTxs, _cursorAfterEb) <- fillEb (batchUsedTotal rb) (batchCursor rb)
+    (ebTxs, cursorAfterEb) <- fillEb (batchUsedTotal rb) (batchCursor rb)
+    writeIORef
+      lastOutput
+      ( Just
+          Leftovers
+            { unspentNow = fst (cursorEntry (batchCursor rb))
+            , unspentIfCertified = fst (cursorEntry cursorAfterEb)
+            }
+      )
     pure (batchTxs rb, ebTxs)
    where
     rbCapacity :: TxMeasure Cardano
@@ -343,12 +372,12 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
                   , cursorEntry = (TxIn (txIdTx tx) (TxIx 0), madeOut)
                   }
 
-  -- If the 'IORef' holds no key, the generator reads the whole table. The
+  -- If the 'IORef' holds nothing, the generator reads the whole table. The
   -- 'IORef' is empty on the first slot of a run.
   --
-  -- If the 'IORef' holds a key, the ledger must hold that key. This tool forges
-  -- one chain and has no competitor, so the ChainDB adopts every block that the
-  -- tool makes. A key that is absent means that the ChainDB rejected a block.
+  -- The ledger must hold 'unspentNow'. This tool forges one chain and has no
+  -- competitor. So the ChainDB adopts every block that the tool makes. If the
+  -- input is absent, the ChainDB rejected a block.
   readCandidates ::
     forall proto era.
     Index (CardanoEras StandardCrypto) (ShelleyBlock proto era) ->
@@ -361,8 +390,8 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot forker ticked =
       Nothing -> do
         values <- readWholeUtxo forker
         pure (keysOf values, values)
-      Just txIn -> do
-        let keys = oneKey idx txIn
+      Just leftovers -> do
+        let keys = oneKey idx (unspentNow leftovers)
         values <- roforkerReadTables forker keys
         if Map.null (getValuesMK (getLedgerTables values))
           then

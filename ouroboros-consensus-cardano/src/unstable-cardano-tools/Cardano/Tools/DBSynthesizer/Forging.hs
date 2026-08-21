@@ -119,8 +119,15 @@ data VoteTally = VoteTally
 -- The first list fills the ranking block. The second fills the endorser block
 -- that the ranking block announces. An empty second list announces no endorser
 -- block, because 'mkAndStoreEb' forges none for an empty list.
+--
+-- The 'Bool' says whether this block certifies the endorser block that its
+-- parent announced. A certifying block carries no transactions of its own.
+-- 'mkBody' drops them, and the certified endorser block's transactions apply
+-- instead. So the generator has to know what the block before this one put on
+-- the chain.
 type GenTxs blk =
   SlotNo ->
+  Bool ->
   ReadOnlyForker IO (ExtLedgerState blk) ->
   TickedLedgerState blk DiffMK ->
   IO ([Validated (GenTx blk)], [Validated (GenTx blk)])
@@ -327,6 +334,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
         Right frk ->
           genTxs
             currentSlot
+            -- Nothing certifies yet.
+            False
             frk
             tickedLedgerState
 
