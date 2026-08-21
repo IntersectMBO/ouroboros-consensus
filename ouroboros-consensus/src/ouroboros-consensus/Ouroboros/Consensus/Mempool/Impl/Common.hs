@@ -440,9 +440,13 @@ revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTick
   -- keeps the two byte-identical by construction.
   revalidateTxsFor' frk capacityOverride cfg slot emptyResult lastTicketNo txTickets
  where
+  -- Seed the empty candidate with the real 'lastTicketNo' (not zero): each
+  -- reapplied tx keeps its own 'TicketNo' (carried in its 'TxTicket'), and
+  -- 'revalidateTxsFor'' sets 'isLastTicketNo' to 'lastTicketNo' on the result, so
+  -- the mempool's ticket counter is preserved and the next add continues from it.
   emptyResult =
     RevalidateTxsResult
-      (initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st){isRemovalGen = removalGen}
+      (initInternalState capacityOverride lastTicketNo cfg slot st){isRemovalGen = removalGen}
       []
 
 -- | The general revalidation step: reapply a /delta/ of already-validated txs on
