@@ -64,6 +64,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.NodeKernel.Forge (decideLeiosCertify)
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepState
   , tickChainDepState
@@ -140,6 +141,7 @@ runForge ::
   ( LedgerSupportsProtocol blk
   , HasLeiosVoting blk
   , ConvertRawHash blk
+  , ResolveLeiosBlock blk
   ) =>
   EpochSize ->
   SlotNo ->
@@ -326,6 +328,17 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
           -- the node's forging loop
           ExceptT . fmap (Right . fromJust) . withEarlyExit $
             withReadOnlyForkerAtPoint cdb tgt (Trans.lift . k)
+    -- Decide before generating. A certifying block carries no transactions of
+    -- its own, so the generator has to know.
+    mCert <-
+      lift $
+        decideLeiosCertify
+          leiosDb
+          leiosVoteState
+          Trace.nullTracer
+          currentSlot
+          (headerState unticked)
+
     (rbTxs, ebTxs) <- withReadOnlyForkerAtPoint'
       chainDB
       (SpecificPoint bcPrevPoint)
@@ -334,8 +347,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
         Right frk ->
           genTxs
             currentSlot
-            -- Nothing certifies yet.
-            False
+            (isJust mCert)
             frk
             tickedLedgerState
 
@@ -356,7 +368,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             , fbLeiosDb = leiosDb
             , fbLeiosTracer = Trace.nullTracer
             , fbLeiosVoteState = leiosVoteState
-            , fbMayLeiosCert = Nothing
+            , fbMayLeiosCert = fst <$> mCert
             }
 
     -- Add the block to the chain DB (synchronously) and verify adoption
