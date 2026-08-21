@@ -183,6 +183,8 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , ShelleyCompatible proto2 era2
   , LedgerSupportsProtocol (ShelleyBlock proto1 era1)
   , LedgerSupportsProtocol (ShelleyBlock proto2 era2)
+  , SerialiseConstraintsHFC (ShelleyBlock proto1 era1)
+  , SerialiseConstraintsHFC (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
   , TranslateTxMeasure

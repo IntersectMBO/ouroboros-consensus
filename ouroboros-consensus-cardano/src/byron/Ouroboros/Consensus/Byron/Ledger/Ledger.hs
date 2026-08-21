@@ -81,6 +81,7 @@ import Ouroboros.Consensus.Byron.Ledger.Serialisation
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -91,6 +92,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -582,3 +584,9 @@ instance CanUpgradeLedgerTables LedgerState ByronBlock where
 instance LedgerStateSupportsPeras (LedgerState ByronBlock)
 
 instance LedgerStateSupportsPeras (Ticked LedgerState ByronBlock)
+
+instance StateSupportsPerasEpochContext ByronBlock where
+  type MaybeEraIndexedEpochToPerasRoundInfo ByronBlock = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: ByronBlock does not support Peras"

@@ -82,6 +82,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
@@ -93,6 +94,8 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepStateSupportsPeras, ConsensusProtocol (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -1206,3 +1209,17 @@ instance
 instance LedgerStateSupportsPeras (LedgerState (DualBlock m a))
 
 instance LedgerStateSupportsPeras (Ticked LedgerState (DualBlock m a))
+
+instance
+  ( Bridge m a
+  , Typeable m
+  , Typeable a
+  , ChainDepStateSupportsPeras (ChainDepState (BlockProtocol m))
+  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol m)))
+  ) =>
+  StateSupportsPerasEpochContext (DualBlock m a)
+  where
+  type MaybeEraIndexedEpochToPerasRoundInfo (DualBlock m a) = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: DualBlock does not support Peras"

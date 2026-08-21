@@ -45,7 +45,6 @@ import Data.Word
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -268,10 +267,6 @@ instance ToExpr (ExtLedgerState TestBlock ValuesMK) where
 
 instance ToExpr (LedgerState (TestBlockWith Tx) ValuesMK) where
   toExpr = genericToExpr
-
-instance HasHardForkHistory TestBlock where
-  type HardForkIndices TestBlock = '[TestBlock]
-  hardForkSummary = neverForksHardForkSummary tblcHardForkParams
 
 {-------------------------------------------------------------------------------
   TestBlock generation

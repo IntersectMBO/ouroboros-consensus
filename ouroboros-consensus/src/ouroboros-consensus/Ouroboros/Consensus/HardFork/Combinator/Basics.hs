@@ -5,10 +5,12 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Basics
@@ -31,6 +33,10 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , completeLedgerConfig''
   , distribLedgerConfig
   , distribTopLevelConfig
+
+    -- * HFC injection/projection helpers for Peras
+  , distribHardForkPoint
+  , injectHardForkPoint
 
     -- ** Convenience re-exports
   , EpochInfo
@@ -60,6 +66,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
+import Ouroboros.Consensus.Util.RedundantConstraints (keepRedundantConstraint)
 
 {-------------------------------------------------------------------------------
   Hard fork protocol, block, and ledger state
@@ -247,6 +254,44 @@ distribTopLevelConfig ei tlc =
     `hap` ( getPerEraStorageConfig $
               hardForkStorageConfigPerEra (configStorage tlc)
           )
+
+{-------------------------------------------------------------------------------
+  HFC injection/projection helpers for Peras
+-------------------------------------------------------------------------------}
+
+-- | Extract a 'Point' of the hard fork block to a 'Point' of a single era by
+-- decoding the raw hash via 'fromShortRawHash'. Used when delegating operations
+-- that take a 'Point' argument to a single-era implementation.
+distribHardForkPoint ::
+  forall blk xs.
+  ( ConvertRawHash blk
+  , HashSize (HardForkBlock xs) ~ HashSize blk
+  ) =>
+  Point (HardForkBlock xs) ->
+  Point blk
+distribHardForkPoint = \case
+  GenesisPoint ->
+    GenesisPoint
+  BlockPoint s (OneEraHash h) ->
+    -- The constraints ensure that the hash sizes match, so we can safely use
+    -- the unsafe variant of 'fromShortRawHash' here.
+    BlockPoint s (unsafeFromShortRawHash (Proxy @blk) h)
+ where
+  _ = keepRedundantConstraint (Proxy @(HashSize (HardForkBlock xs) ~ HashSize blk))
+
+-- | Inject a 'Point' from a single era into a 'Point' of the hard fork block by
+-- encoding the raw hash via 'toShortRawHash'. Used by accessor instances to
+-- return 'Point (HardForkBlock xs)' from single-era point values.
+injectHardForkPoint ::
+  forall blk xs.
+  ConvertRawHash blk =>
+  Point blk ->
+  Point (HardForkBlock xs)
+injectHardForkPoint = \case
+  GenesisPoint ->
+    GenesisPoint
+  BlockPoint s h ->
+    BlockPoint s (OneEraHash (toShortRawHash (Proxy @blk) h))
 
 {-------------------------------------------------------------------------------
   LedgerSupportsPeras

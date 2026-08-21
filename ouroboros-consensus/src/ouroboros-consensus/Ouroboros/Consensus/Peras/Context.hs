@@ -1,4 +1,3 @@
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
@@ -98,7 +97,6 @@ import Ouroboros.Consensus.HardFork.History.Qry
   , PastHorizonException
   , Qry
   , epochToPerasRoundInfo
-  , forgetEraIndex
   , runQuery
   , runQueryEraIndexed
   , slotToEpoch'
@@ -493,10 +491,6 @@ withResolvedRoundNo handle roundNo k = do
 
 -- | Type-class for blocks that support constructing a Peras epoch contexts from
 -- their corresponding ledger and chain-dep states.
---
--- NOTE: the default implementation of this class is enough for block that do
--- not support Peras and never try to resolve a 'PerasRoundNo' into a
--- 'PerasEpochContext'.
 class
   ( HasHardForkHistory blk
   , LedgerStateSupportsPeras (LedgerState blk)
@@ -530,21 +524,12 @@ class
   -- implementation.
   type MaybeEraIndexedEpochToPerasRoundInfo blk :: Type
 
-  type MaybeEraIndexedEpochToPerasRoundInfo blk = EpochToPerasRoundInfo
-
   -- | Extract a 'EpochToPerasRoundInfo' the opaque
   -- 'MaybeEraIndexedEpochToPerasRoundInfo' of this block.
   fromMaybeEraIndexedEpochToPerasRoundInfo ::
     proxy blk ->
     MaybeEraIndexedEpochToPerasRoundInfo blk ->
     EpochToPerasRoundInfo
-  default fromMaybeEraIndexedEpochToPerasRoundInfo ::
-    MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo =>
-    proxy blk ->
-    MaybeEraIndexedEpochToPerasRoundInfo blk ->
-    EpochToPerasRoundInfo
-  fromMaybeEraIndexedEpochToPerasRoundInfo _ =
-    id
 
   -- | Inject an era-indexed 'EpochToPerasRoundInfo' into an opaque
   -- 'MaybeEraIndexedEpochToPerasRoundInfo' of this block.
@@ -553,13 +538,6 @@ class
     proxy blk ->
     EraIndexed (HardForkIndices blk) EpochToPerasRoundInfo ->
     MaybeEraIndexedEpochToPerasRoundInfo blk
-  default toMaybeEraIndexedEpochToPerasRoundInfo ::
-    MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo =>
-    proxy blk ->
-    EraIndexed (HardForkIndices blk) EpochToPerasRoundInfo ->
-    MaybeEraIndexedEpochToPerasRoundInfo blk
-  toMaybeEraIndexedEpochToPerasRoundInfo _ =
-    forgetEraIndex
 
   -- | Create a bounded epoch context from a given epoch-to-round info.
   mkBoundedPerasEpochContext ::
@@ -572,16 +550,6 @@ class
     Either
       (PerasError blk)
       (BoundedPerasEpochContext blk)
-  default mkBoundedPerasEpochContext ::
-    MaybeEraIndexedEpochToPerasRoundInfo blk ->
-    ledgerState EmptyMK ->
-    chainDepState ->
-    Either
-      (PerasError blk)
-      (BoundedPerasEpochContext blk)
-  mkBoundedPerasEpochContext _ _ _ =
-    error
-      "mkBoundedPerasEpochContext: should never be called for this block type since it does not support Peras"
 
 -- | Helper to build a 'BoundedPerasEpochContext' using a function that produces
 -- a 'PerasVotingCommitteeInput' from a ledger and chain-dep state.
