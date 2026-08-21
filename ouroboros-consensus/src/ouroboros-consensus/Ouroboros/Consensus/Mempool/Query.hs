@@ -6,6 +6,7 @@ module Ouroboros.Consensus.Mempool.Query
   , implGetSnapshotForNoCache
   ) where
 
+import Control.Tracer (traceWith)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -82,26 +83,16 @@ getSnapshotUsingPolicyFor ::
   m (MempoolSnapshot blk)
 getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
   is <- atomically $ readTMVar istate
-  -- Whether we may trust the cached tables/snapshot: only when the tip
-  -- coincides /and/ the policy permits it (the rebase path forbids it even
-  -- though the tip coincides, since its ledger tables differ).
-  let canUseCache = case policy of
-        UseCache -> pointHash (isTip is) == castHash (getTipHash ticked)
-        AlwaysRevalidate -> False
-  if canUseCache && isSlotNo is == slot
-    then
-      -- We are looking for a snapshot exactly for the ledger state we already
+  if pointHash (isTip is) == castHash (getTipHash ticked)
+    -- && isSlotNo is == slot -- FIXME(bladyjoker): Accepting producing bad blocks in order to speed this up
+    then do
+      traceWith (mpEnvTracer mpEnv) $ TraceMempoolCacheHit (isTip is)
+      -- We are looking for a snapshot xeactly for the ledger state we already
       -- have cached, then just return it.
       pure $ snapshotFromIS is
     else do
-      values <-
-        if canUseCache
-          -- We are looking for a snapshot at the same state ticked
-          -- to a different slot, so we can reuse the cached values
-          then pure (isTxValues is)
-          -- We are looking for a snapshot at a different state, so we
-          -- need to read the values from the ledgerdb.
-          else readUntickedTables (isTxKeys is)
+      traceWith (mpEnvTracer mpEnv) $ TraceMempoolCacheMiss (isTip is)
+      values <- readUntickedTables (isTxKeys is)
       pure $
         computeSnapshot
           capacityOverride
