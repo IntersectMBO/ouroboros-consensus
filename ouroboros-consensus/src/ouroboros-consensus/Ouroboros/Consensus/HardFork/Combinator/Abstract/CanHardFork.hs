@@ -10,6 +10,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
   ( CanHardFork (..)
   , HashSizeOfHead
+  , EqualHashSizeOfHead
   , rawHashNS
   ) where
 
@@ -56,7 +57,8 @@ class HashSize blk ~ HashSizeOfHead xs => EqualHashSizeOfHead xs blk
 instance HashSize blk ~ HashSizeOfHead xs => EqualHashSizeOfHead xs blk
 
 class
-  ( All SingleEraBlock xs
+  ( All Top xs
+  , All SingleEraBlock xs
   , All (EqualHashSizeOfHead xs) xs
   , KnownNat (HashSizeOfHead xs)
   , Typeable xs

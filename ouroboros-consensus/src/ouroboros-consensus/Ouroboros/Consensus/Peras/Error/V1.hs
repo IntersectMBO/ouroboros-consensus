@@ -35,6 +35,8 @@ data PerasError blk
       PerasConversionError
   | PerasQuorumNotReachedError
       VoteWeight
+  | PerasTemporaryCertInBlockError
+      String
   | PerasTemporaryPublicKeyHackError
       String
 

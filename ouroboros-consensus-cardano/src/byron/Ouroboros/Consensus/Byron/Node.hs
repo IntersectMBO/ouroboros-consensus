@@ -42,6 +42,7 @@ import Ouroboros.Consensus.Byron.Crypto.DSIGN
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Ledger.Inspect ()
+import Ouroboros.Consensus.Byron.Node.Peras ()
 import Ouroboros.Consensus.Byron.Node.Serialisation ()
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.Config
@@ -49,6 +50,7 @@ import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -58,7 +60,6 @@ import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
-import Ouroboros.Consensus.Util ((....:))
 import Ouroboros.Network.Magic (NetworkMagic (..))
 
 {-------------------------------------------------------------------------------
@@ -141,7 +142,8 @@ byronBlockForging creds =
           canBeLeader
           slot
           tickedPBftState
-    , forgeBlock = \cfg -> return ....: forgeByronBlock cfg
+    , forgeBlock = \cfg bno slot _mbPerasCert st txs proof ->
+        return $ forgeByronBlock cfg bno slot st txs proof
     , finalize = pure ()
     }
  where
@@ -208,13 +210,19 @@ protocolInfoByron
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
       , pInfoInitLedger =
-          ExtLedgerState
-            { -- Important: don't pass the compacted genesis config to
-              -- 'initByronLedgerState', it needs the full one, including the AVVM
-              -- balances.
-              ledgerState = initByronLedgerState genesisConfig Nothing
-            , headerState = genesisHeaderState S.empty
-            }
+          let
+            -- Important: don't pass the compacted genesis config to
+            -- 'initByronLedgerState', it needs the full one, including the AVVM
+            -- balances.
+            ledgerState = initByronLedgerState genesisConfig Nothing
+            headerState = genesisHeaderState S.empty
+            perasState = initPerasState compactedGenesisConfig ledgerState headerState
+           in
+            ExtLedgerState
+              { ledgerState
+              , headerState
+              , perasState
+              }
       }
    where
     compactedGenesisConfig = compactGenesisConfig genesisConfig
