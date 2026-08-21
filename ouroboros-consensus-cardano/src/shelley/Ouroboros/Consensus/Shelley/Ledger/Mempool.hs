@@ -63,7 +63,6 @@ import Cardano.Ledger.Alonzo.Scripts
   , pointWiseExUnits
   , unWrapExUnits
   )
-import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import Cardano.Ledger.Alonzo.Tx (totExUnits)
 import qualified Cardano.Ledger.Api as L
 import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError))
@@ -85,6 +84,7 @@ import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
+import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)

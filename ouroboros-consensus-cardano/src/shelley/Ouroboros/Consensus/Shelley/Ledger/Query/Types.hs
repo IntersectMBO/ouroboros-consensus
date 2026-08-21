@@ -79,9 +79,9 @@ fromQueryResultPoolDistr qr =
   PoolDistr
     { unPoolDistr = Map.map fromQrips (SL.qrpdDistr qr)
     }
-  where
-    fromQrips qrips =
-      IndividualPoolStake
-        { individualPoolStake = SL.qripsStake qrips
-        , individualPoolStakeVrf = SL.fromVRFVerKeyHash $ SL.qripsVrf qrips
-        }
+ where
+  fromQrips qrips =
+    IndividualPoolStake
+      { individualPoolStake = SL.qripsStake qrips
+      , individualPoolStakeVrf = SL.fromVRFVerKeyHash $ SL.qripsVrf qrips
+      }

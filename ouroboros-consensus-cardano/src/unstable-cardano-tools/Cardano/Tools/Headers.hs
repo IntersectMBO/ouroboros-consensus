@@ -18,7 +18,6 @@ import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Compactible (toCompact)
 import Cardano.Ledger.Keys (VKey (..), hashKey)
 import Cardano.Ledger.State (IndividualPoolStake (..))
-import Data.Maybe.Strict (StrictMaybe (..))
 import Cardano.Prelude
   ( ExitCode (..)
   , exitWith
@@ -32,6 +31,7 @@ import qualified Data.Aeson as Json
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block (validateView)
 import Ouroboros.Consensus.Protocol.Praos
   ( Praos

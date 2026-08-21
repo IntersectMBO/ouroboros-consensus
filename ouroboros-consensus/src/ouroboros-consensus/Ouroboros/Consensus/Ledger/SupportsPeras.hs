@@ -12,8 +12,8 @@ import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Coin (Coin (..), compactCoinOrError, knownNonZeroCoin)
 import Cardano.Ledger.Keys (KeyHash (..), toVRFVerKeyHash)
 import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (..))
-import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Map as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block.SupportsPeras (PerasParams, defaultPerasParams)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 
