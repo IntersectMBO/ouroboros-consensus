@@ -1,9 +1,10 @@
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.LeiosUtils.TimeBoundedLoop (tests) where
 
-import Control.Monad.Class.MonadTimer.SI (DiffTime)
+import Control.Monad.Class.MonadTimer.SI (DiffTime, MonadDelay (threadDelay))
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.IOSim (runSimOrThrow)
 import LeiosUtils.TimeBoundedLoop
@@ -17,11 +18,11 @@ import LeiosUtils.TimeBoundedLoop
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
-  ( Arbitrary
+  ( Arbitrary (..)
   , NonNegative (NonNegative)
-  , Positive (..)
   , Small (..)
   , Testable (property)
+  , chooseInt
   , counterexample
   , ioProperty
   , label
@@ -38,29 +39,31 @@ tests =
         "foldOrTimeout"
         [ testPropertyIOLike
             "(val, remaining, steps, done) <- propFoldEmptyListTerminates ttl sumAction initSt"
-            (\(ttl, _initSt) ret -> labelTtl ttl <> ", " <> labelFoldRet ret)
-            $ \(NonNegative (Small (ttl :: Int)), Small initSt) -> propFoldEmptyListTerminates (ms ttl) sumAction (getSmall initSt)
+            ( \(ttl, delay, _initSt) ret -> labelTtl ttl <> ", " <> labelDelayWithTtl delay ttl <> ", " <> labelFoldRet ret
+            )
+            $ \(NonNegative (Small (ttl :: Int)), delay :: DelayUs, Small initSt) ->
+              propFoldEmptyListTerminates (ms ttl) (sumAction delay) (getSmall initSt)
         , testPropertyIOLike
-            "(val, remaining, steps, done) <- propFoldStepsMatchConsumed ttl sumAction initSt xs"
+            "(val, remaining, steps, done) <- propFoldStepsMatchConsumed ttl (sumAction delay) initSt xs"
             labelFoldProp
-            $ \(NonNegative (Small (ttl :: Int)), xs :: [Small Int], Small initSt) ->
+            $ \(NonNegative (Small (ttl :: Int)), delay :: DelayUs, xs :: [Small Int], Small initSt) ->
               propFoldStepsMatchConsumed
                 (ms ttl)
-                sumAction
+                (sumAction delay)
                 (getSmall initSt)
                 (getSmall <$> xs)
         , testPropertyIOLike
-            "(val, remaining, steps, done) <- propFoldEndReachedIffConsumedAll ttl sumAction initSt xs"
+            "(val, remaining, steps, done) <- propFoldEndReachedIffConsumedAll ttl (sumAction delay) initSt xs"
             labelFoldProp
-            $ \(NonNegative (Small (ttl :: Int)), xs :: [Small Int], Small initSt) ->
+            $ \(NonNegative (Small (ttl :: Int)), delay :: DelayUs, xs :: [Small Int], Small initSt) ->
               propFoldEndReachedIffConsumedAll
                 (ms ttl)
-                sumAction
+                (sumAction delay)
                 (getSmall initSt)
                 (getSmall <$> xs)
         , testPropertyIOLike
             "(val, remaining, steps, done) <- propFoldJustFoldl ttl (+) initSt xs"
-            labelFoldProp
+            (\(ttl, xs, _initSt) ret -> labelTtl ttl <> ", " <> labelXs xs <> ", " <> labelFoldRet ret)
             $ \(NonNegative (Small (ttl :: Int)), xs :: [Small Int], Small initSt) ->
               propFoldJustFoldl
                 (ms ttl)
@@ -71,15 +74,16 @@ tests =
     , testGroup
         "iterateUntilOrTimeout"
         [ testPropertyIOLike
-            "(val, steps, done) <- propIterImmediateEndOnInit ttl countAction initSt"
-            (\(ttl, _initSt) ret -> labelTtl ttl <> ", " <> labelIterRet ret)
-            $ \(NonNegative (Small (ttl :: Int)), Small initSt) ->
-              propIterImmediateEndOnInit (ms ttl) countAction initSt
+            "(val, steps, done) <- propIterImmediateEndOnInit ttl (countAction delay) initSt"
+            ( \(ttl, delay, _initSt) ret -> labelTtl ttl <> ", " <> labelDelayWithTtl delay ttl <> ", " <> labelIterRet ret
+            )
+            $ \(NonNegative (Small (ttl :: Int)), delay :: DelayUs, Small initSt) ->
+              propIterImmediateEndOnInit (ms ttl) (countAction delay) initSt
         , testPropertyIOSim
             "(val, steps, done) <- propIterTimeoutOverrunBoundedByOneStep ttl delay"
             ( \(ttl, stepDelay) ret -> labelTtl ttl <> ", " <> labelDelayWithTtl stepDelay ttl <> ", " <> labelIterRet2 ret
             )
-            ( \(NonNegative (Small (ttl :: Int)), Positive (Small (stepDelay :: Int))) ->
+            ( \(NonNegative (Small (ttl :: Int)), stepDelay :: DelayUs) ->
                 -- NOTE(bladyjoker): stepDelay must be bigger then zero because IOSim doesn't advance the clock in pure computations and then this hangs.
                 -- ghci> import Control.Monad.Class.MonadTime
                 -- ghci> import Control.Monad.IOSim (runSimOrThrow)
@@ -87,7 +91,7 @@ tests =
                 -- ghci> runSimOrThrow $ do { start <- getMonotonicTimeNSec; !x <- pure $ sum [1..100000000]; end <- getMonotonicTimeNSec; return (x, end - start) }
                 -- (5000000050000000,0)
                 -- (1.31 secs, 8,800,104,744 bytes)
-                propIterTimeoutOverrunBoundedByOneStep (ms ttl) (ms stepDelay)
+                propIterTimeoutOverrunBoundedByOneStep (ms ttl) (us . unDelayUs $ stepDelay)
             )
         ]
     ]
@@ -95,18 +99,25 @@ tests =
   ms :: Int -> DiffTime
   ms n = fromIntegral n / 1000
 
-  sumAction :: Monad m => Int -> Int -> m Int
-  sumAction total x = return (total + x)
+  us :: Int -> DiffTime
+  us n = fromIntegral n / 1_000_000
 
-  countAction :: Monad m => Int -> m Int
-  countAction total = return (total + 1)
+  sumAction :: MonadDelay m => DelayUs -> Int -> Int -> m Int
+  sumAction (DelayUs delay) total x = do
+    threadDelay (us delay)
+    return (total + x)
+
+  countAction :: MonadDelay m => DelayUs -> Int -> m Int
+  countAction (DelayUs delay) total = do
+    threadDelay (us delay)
+    return (total + 1)
 
   labelTtl (NonNegative (Small ttl)) | ttl == 0 = "ttl = 0"
   labelTtl _ = "ttl > 0"
 
-  labelDelayWithTtl (Positive (Small delay)) (NonNegative (Small ttl)) | delay > ttl = "delay > ttl"
-  labelDelayWithTtl (Positive (Small delay)) (NonNegative (Small ttl)) | delay < ttl = "delay < ttl"
-  labelDelayWithTtl (Positive (Small delay)) (NonNegative (Small ttl)) | delay == ttl = "delay = ttl"
+  labelDelayWithTtl (DelayUs delay) (NonNegative (Small ttl)) | delay > ttl = "delay > ttl"
+  labelDelayWithTtl (DelayUs delay) (NonNegative (Small ttl)) | delay < ttl = "delay < ttl"
+  labelDelayWithTtl (DelayUs delay) (NonNegative (Small ttl)) | delay == ttl = "delay = ttl"
   labelDelayWithTtl _ _ = "label = impossible"
 
   labelDone done = "done = " <> show done
@@ -122,7 +133,14 @@ tests =
   labelIterRet2 (Left (failReason, (_, res))) = failReason <> ", " <> labelIterRes res
   labelIterRet2 (Right res) = labelIterRes res
 
-  labelFoldProp (ttl, xs, _initSt) ret = labelTtl ttl <> ", " <> labelXs xs <> ", " <> labelFoldRet ret
+  labelFoldProp (ttl, delay, xs, _initSt) ret =
+    labelTtl ttl
+      <> ", "
+      <> labelDelayWithTtl delay ttl
+      <> ", "
+      <> labelXs xs
+      <> ", "
+      <> labelFoldRet ret
 
   labelXs [] = "xs = empty"
   labelXs _ = "xs = non-empty"
@@ -171,3 +189,9 @@ testPropertyIOSim lbl lblInAndOut prop =
               (show succOrFail)
               (label (lblInAndOut x succOrFail) $ property $ either (const False) (const True) succOrFail)
     ]
+
+newtype DelayUs = DelayUs {unDelayUs :: Int} deriving Show
+
+instance Arbitrary DelayUs where
+  arbitrary = DelayUs <$> chooseInt (1, 50)
+  shrink (DelayUs n) = DelayUs <$> filter (>= 1) (shrink n)
