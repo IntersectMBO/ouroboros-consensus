@@ -370,9 +370,7 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
   -- look at the list of the ledger tables handles from the previous step and take the snapshots
   case NonEmpty.nonEmpty handles of
     Nothing -> pure ()
-    -- TODO: this logic could be forked on a separate thread now that we only
-    -- have V2.
-    Just nonEmptyHandles -> do
+    Just nonEmptyHandles -> Monad.void $ forkIO $ do
       copyBlocks
 
       delayBeforeSnapshotting <- getRandomDelay (onDiskSnapshotDelayRange (ldbSnapshotPolicy env))
