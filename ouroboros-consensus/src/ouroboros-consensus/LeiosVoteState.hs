@@ -93,8 +93,7 @@ newLeiosVoteState getCommittee = do
             else do
               -- TODO: disallow votes from different epoch (than the committee is).
               -- Could use slot numbers or put epoch into votes to distinguish?
-              mCommittee <- atomically getCommittee
-              case mCommittee of
+              atomically getCommittee >>= \case
                 Nothing -> pure NoCommittee
                 Just committee ->
                   case validateLeiosVote committee vote of
