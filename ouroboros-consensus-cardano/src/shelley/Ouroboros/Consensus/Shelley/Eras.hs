@@ -5,8 +5,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
--- TODO: Ledger has a few deprecations that we are ignoring for now
-{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Eras
@@ -37,7 +35,7 @@ import Cardano.Ledger.Alonzo (AlonzoEra, ApplyTxError (AlonzoApplyTxError))
 import Cardano.Ledger.Alonzo.Core as Core
 import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
-import qualified Cardano.Ledger.Api.Era as L
+import qualified Cardano.Ledger.Api as L
 import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError), BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes
@@ -132,7 +130,7 @@ class
     Except
       (SL.ApplyTxError era)
       ( SL.LedgerState era
-      , SL.Validated (Core.Tx TopTx era)
+      , SL.ValidatedTx era
       )
 
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
@@ -166,11 +164,11 @@ defaultApplyShelleyBasedTx ::
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx TopTx era)
+    , SL.ValidatedTx era
     )
 defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
   liftEither $
-    SL.applyTx
+    SL.applyTxWithFullValidation
       globals
       ledgerEnv
       mempoolState
@@ -248,7 +246,7 @@ applyAlonzoBasedTx ::
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx TopTx era)
+    , SL.ValidatedTx era
     )
 applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   (mempoolState', vtx) <-
@@ -262,7 +260,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   pure (mempoolState', vtx)
  where
   intervenedTx = case wti of
-    DoNotIntervene -> tx & Core.isValidTxL .~ Alonzo.IsValid True
+    DoNotIntervene -> tx & Core.isPhase2ValidTxL .~ L.Phase2Valid
     Intervene -> tx
 
   handler e = case (wti, e) of
@@ -282,7 +280,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
             ledgerEnv
             mempoolState
             wti
-            (tx & Core.isValidTxL .~ Alonzo.IsValid False)
+            (tx & Core.isPhase2ValidTxL .~ L.Phase2Invalid)
     _ -> throwError e
 
 -- reject the transaction, protecting the local wallet
@@ -298,7 +296,7 @@ instance SupportsTwoPhaseValidation AlonzoEra where
           ( SL.UtxoFailure
               ( Alonzo.UtxosFailure
                   ( Alonzo.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
+                      (L.IsValid _claimedFlag)
                       _validationErrs
                     )
                 )
@@ -316,7 +314,7 @@ instance SupportsTwoPhaseValidation BabbageEra where
                   ( Babbage.AlonzoInBabbageUtxoPredFailure
                       ( Alonzo.UtxosFailure
                           ( Alonzo.ValidationTagMismatch
-                              (Alonzo.IsValid _claimedFlag)
+                              (L.IsValid _claimedFlag)
                               _validationErrs
                             )
                         )
@@ -329,7 +327,7 @@ instance SupportsTwoPhaseValidation BabbageEra where
           ( Babbage.AlonzoInBabbageUtxoPredFailure
               ( Alonzo.UtxosFailure
                   ( Alonzo.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
+                      (L.IsValid _claimedFlag)
                       _validationErrs
                     )
                 )
@@ -344,7 +342,7 @@ instance SupportsTwoPhaseValidation ConwayEra where
       ( Conway.UtxoFailure
           ( Conway.UtxosFailure
               ( Conway.ValidationTagMismatch
-                  (Alonzo.IsValid _claimedFlag)
+                  (L.IsValid _claimedFlag)
                   _validationErrs
                 )
             )
@@ -359,7 +357,7 @@ instance SupportsTwoPhaseValidation DijkstraEra where
           ( Dijkstra.UtxoFailure
               ( Dijkstra.UtxosFailure
                   ( Conway.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
+                      (L.IsValid _claimedFlag)
                       _validationErrs
                     )
                 )

@@ -16,6 +16,7 @@ import Cardano.Api.Any (Error (..))
 import qualified Cardano.Chain.Update as Byron
 import qualified Cardano.Ledger.Api.Transition as SL
 import Cardano.Ledger.BaseTypes
+import Cardano.Ledger.Core (MaxPledgeLeverage (..))
 import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
@@ -266,6 +267,8 @@ emptyDijkstraGenesis =
           , udppMaxRefScriptSizePerTx = 204800
           , udppRefScriptCostStride = unsafeNonZero 25600
           , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
+          , udppMaxPledgeLeverage = MaxPledgeLeverage SNothing
+          , udppMinPoolMargin = minBound
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 
