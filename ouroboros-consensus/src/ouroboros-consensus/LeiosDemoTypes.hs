@@ -1159,6 +1159,8 @@ maxTxsPerEb =
 maxEBClosureSize :: ByteSize32
 maxEBClosureSize = ByteSize32 12_000_000
 
+-- FIXME: This should actually be 14 if we follow the CIP-164 recommended
+-- values.
 minCertificationGap :: Word64
 minCertificationGap = 10
 
@@ -1167,6 +1169,7 @@ minCertificationThreshold :: Rational
 minCertificationThreshold = 3 % 4
 
 -- | Stake to be covered when selecting the committee.
+-- TODO: Switch to a committee size parameter followin the CIP-164 discussions.
 committeeStakeCoverage :: Weight
 committeeStakeCoverage = 99 % 100
 
