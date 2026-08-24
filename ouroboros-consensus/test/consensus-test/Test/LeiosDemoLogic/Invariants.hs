@@ -42,6 +42,7 @@ import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import Data.Foldable (toList)
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -83,6 +84,9 @@ import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, newPureLeiosTxCache, nullLeiosTxCache)
 import Ouroboros.Consensus.Util.IOLike (IOLike, evaluate)
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type
+  ( IsBigLedgerPeer (..)
+  )
 import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
@@ -133,6 +137,39 @@ tests =
         -- so it survives pruning up to slot 9, and is dropped only past slot 10
         Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 9) o))) @?= True
         Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 11) o))) @?= False
+    , testCase "a big-ledger peer has a larger, but still finite, closure budget" $ do
+        let ids = [0, 1, 2, 3, 4] :: TestEb
+            h = hashLeiosEb (ebOf ids)
+            point = pointOf ids 10
+            misses = IntMap.fromList [(off, (txHashOf i, txSizeOf i)) | (off, i) <- zip [0 ..] ids]
+            jobPool =
+              Jobs.mkLeiosJobPool
+                (Leios.maxJobBytesSize demoLeiosFetchStaticEnv)
+                (Leios.maxJobTxCount demoLeiosFetchStaticEnv)
+                misses
+            peerId = MkPeerId (0 :: Int)
+            offers = Map.singleton peerId (Map.singleton point TxsClosureAlsoOffered)
+            ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
+            bigLedgerCap = Leios.maxRequestedBytesSizePerBigLedgerPeer demoLeiosFetchStaticEnv
+            -- hold the body (so the pool is live), with the peer's in-flight bytes
+            -- preloaded to 'used'
+            run bigLedgerPeers used =
+              let outstanding =
+                    (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
+                      Leios.insertAcquiredEbBody h jobPool $
+                        Leios.recordMaxAnnouncementSlot h (SlotNo 10) $
+                          (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
+                  (_o, reqs, _d) =
+                    leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (SlotNo 11)) offers bigLedgerPeers outstanding
+               in requestedOffsets reqs
+            ordinary = Map.empty
+            bigLedger = Map.singleton peerId IsBigLedgerPeer
+        -- past the ordinary cap, an ordinary peer is asked for nothing ...
+        run ordinary (ordinaryCap + 1) @?= IntSet.empty
+        -- ... but a big-ledger peer still has budget for the whole pool at once
+        run bigLedger (ordinaryCap + 1) @?= IntSet.fromList ids
+        -- past even the big-ledger cap, though, a big-ledger peer is bounded too
+        run bigLedger (bigLedgerCap + 1) @?= IntSet.empty
     , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
         let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
             hB = hashLeiosEb (ebOf [2, 3]) -- to be listed at slot 3 only
@@ -244,7 +281,7 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
     withLeiosDb dbHandle $ \conn -> do
       outstandingVar <- newMVar (emptyLeiosOutstanding (SlotNo 0))
       readyVar <- newEmptyMVar
-      peerVars <- newLeiosPeerVars
+      peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
       let kv = (outstandingVar, readyVar)
           txCache = nullLeiosTxCache
           peerId = MkPeerId (0 :: Int)
@@ -310,8 +347,10 @@ applyCmd conn txCache kv peerVars peerId = \case
   Decide slot -> do
     outstanding <- readMVar (fst kv)
     let offerings = Map.singleton peerId (referencedOffers outstanding)
+        -- The generated peer is not a big-ledger peer; the aggressive-fetch path
+        -- has its own dedicated test below.
         (out', decs, _drops) =
-          leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (fromIntegral slot)) offerings outstanding
+          leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (fromIntegral slot)) offerings Map.empty outstanding
     -- Force the fetch logic so any 'impossible!' surfaces (caught by 'go').
     -- Forcing @out'@ to WHNF drives 'go1' to completion (its reverse lookups);
     -- 'forceDecisions' additionally forces the per-request offset lookups.
@@ -357,6 +396,16 @@ ebBodyRequestHashes m =
   | reqs <- Map.elems m
   , Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest p _sz) <- toList reqs
   ]
+
+-- | The union of every tx offset the requests fetch, across all peers.
+requestedOffsets :: Map.Map peer (NESeq Leios.LeiosFetchRequest) -> IntSet.IntSet
+requestedOffsets m =
+  IntSet.unions
+    [ offs
+    | reqs <- Map.elems m
+    , Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p jobs) <- toList reqs
+    , Jobs.MkLeiosJob offs _bytes _root <- toList jobs
+    ]
 
 ------------------------------------------------------------
 -- The invariant
@@ -555,7 +604,7 @@ raceSameHashMultiSlot = do
   withLeiosDb dbHandle $ \conn -> do
     outstandingVar <- newMVar (emptyLeiosOutstanding (SlotNo 0))
     readyVar <- newEmptyMVar
-    peerVars <- newLeiosPeerVars
+    peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
     txCache <- newPureLeiosTxCache
     let kv = (outstandingVar, readyVar)
         peerId = MkPeerId (0 :: Int)

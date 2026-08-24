@@ -1104,7 +1104,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
           csjConfig
           getDiffusionPipeliningSupport
         $ \csState ->
-          bracketLeiosPeer them $ \peerVars -> do
+          bracketLeiosPeer them isBigLedgerPeer $ \peerVars -> do
             (r, trailing) <-
               runPipelinedPeerWithLimitsRnd
                 (contramap (TraceLabelPeer them) tChainSyncTracer)
@@ -1373,9 +1373,10 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
   -- teardown has refunded it.
   bracketLeiosPeer ::
     ConnectionId addrNTN ->
+    IsBigLedgerPeer ->
     (Leios.LeiosPeerVars m -> m a) ->
     m a
-  bracketLeiosPeer them =
+  bracketLeiosPeer them isBigLedgerPeer =
     bracket
       -- Get-or-create: any peer-vars mini-protocol can be the first to run and
       -- allocate; the others share the existing vars. No ref count: a hot peer's
@@ -1383,7 +1384,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
       -- cleanup below, and the rest find it already gone (idempotent). A straggler
       -- that allocated its own entry cleans that up on its own exit.
       ( do
-          fresh <- Leios.newLeiosPeerVars
+          fresh <- Leios.newLeiosPeerVars isBigLedgerPeer
           atomically $ do
             peersVars <- LazySTM.readTVar (getLeiosPeersVars kernel)
             case Map.lookup pid peersVars of
@@ -1410,10 +1411,11 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     ExpandedInitiatorContext
       { eicConnectionId = them
       , eicControlMessage = controlMessageSTM
+      , eicIsBigLedgerPeer = isBigLedgerPeer
       }
     channel = do
       labelThisThread "LeiosNotifyClient"
-      bracketLeiosPeer them $ \peerVars -> do
+      bracketLeiosPeer them isBigLedgerPeer $ \peerVars -> do
         ((), trailing) <-
           runPipelinedPeerWithLimits
             (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
@@ -1454,10 +1456,11 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     ExpandedInitiatorContext
       { eicConnectionId = them
       , eicControlMessage = controlMessageSTM
+      , eicIsBigLedgerPeer = isBigLedgerPeer
       }
     channel = do
       labelThisThread "LeiosFetchClient"
-      bracketLeiosPeer them $ \peerVars ->
+      bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
         withLeiosDb leiosDB $ \leiosConn -> do
           ((), trailing) <-
             runPipelinedPeerWithLimits

@@ -248,7 +248,9 @@ runIteration sc =
   -- A known current slot selects freshest-first (i.e. youngest-first), which is
   -- the ordering these scenarios were written against.
   let (_out, reqs, _drops) =
-        leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
+        -- No big-ledger peers in these scenarios (the aggressive-fetch path is
+        -- exercised in "Test.LeiosDemoLogic.Invariants").
+        leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings Map.empty sc.scOutstanding
    in reqs
 
 ------------------------------------------------------------

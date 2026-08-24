@@ -506,11 +506,13 @@ initNodeKernel
             let mbCurrentSlot = case currentSlot of
                   CurrentSlot s -> Just s
                   CurrentSlotUnknown -> Nothing
+            let bigLedgerPeers = Map.map Leios.whetherBigLedgerPeer stillLivePeers
             let (!outstanding', requests, offerDrops) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
                     mbCurrentSlot
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
+                    bigLedgerPeers
                     outstanding
             pure (outstanding', (requests, offerDrops))
           -- Drop dead offers: exactly the EBs the decision pass found we already

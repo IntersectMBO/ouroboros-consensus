@@ -119,6 +119,9 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type
+  ( IsBigLedgerPeer (..)
+  )
 import Text.Pretty.Simple (pShow)
 
 -- * Hashes and identities
@@ -369,7 +372,10 @@ mergeOffer _ TxsClosureAlsoOffered = TxsClosureAlsoOffered
 mergeOffer _ _ = TxsClosureNotAlsoOffered
 
 data LeiosPeerVars m = MkLeiosPeerVars
-  { offerings :: !(MVar m (Map LeiosPoint AlsoOfferedTxsClosure))
+  { whetherBigLedgerPeer :: !IsBigLedgerPeer
+  -- ^ fixed for the connection's lifetime; the fetch logic fetches more
+  -- aggressively from a big-ledger peer (see 'leiosFetchLogicIteration')
+  , offerings :: !(MVar m (Map LeiosPoint AlsoOfferedTxsClosure))
   -- ^ the peer's current offers, keyed by point -- so the map is already in slot
   -- order (freshest-first via 'Map.toDescList'), no dedup by EB hash needed
   -- (honest announcements don't reuse a hash, and an adversary defeats such
@@ -391,11 +397,11 @@ data LeiosPeerVars m = MkLeiosPeerVars
   -- the Diffusion Layer's control message to be actionable.
   }
 
-newLeiosPeerVars :: IOLike m => m (LeiosPeerVars m)
-newLeiosPeerVars = do
+newLeiosPeerVars :: IOLike m => IsBigLedgerPeer -> m (LeiosPeerVars m)
+newLeiosPeerVars whetherBigLedgerPeer = do
   offerings <- MVar.newMVar Map.empty
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
-  pure MkLeiosPeerVars{offerings, requestsToSend}
+  pure MkLeiosPeerVars{whetherBigLedgerPeer, offerings, requestsToSend}
 
 -- | Main data structure used in the Leios fetching logic.
 --
@@ -681,7 +687,13 @@ prettyLeiosOutstanding x =
 -- request?
 data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   { maxRequestedBytesSizePerPeer :: BytesSize
-  -- ^ At most this many outstanding bytes requested from each peer
+  -- ^ At most this many outstanding bytes requested from each non-big-ledger
+  -- peer
+  , maxRequestedBytesSizePerBigLedgerPeer :: BytesSize
+  -- ^ At most this many outstanding bytes requested from each big-ledger peer.
+  -- Larger than and overrides 'maxRequestedBytesSizePerPeer' so a high-stake
+  -- peer can be asked for multiple whole EB closures at once, but still bounded
+  -- so an adversarial peer can't drown us.
   , maxRequestBytesSize :: BytesSize
   -- ^ At most this many outstanding bytes per request
   , maxRequestsPerEb :: Int
@@ -702,6 +714,7 @@ demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
 demoLeiosFetchStaticEnv =
   MkLeiosFetchStaticEnv
     { maxRequestedBytesSizePerPeer = 5 * million
+    , maxRequestedBytesSizePerBigLedgerPeer = 5 * 12 * million
     , maxRequestBytesSize = 500 * thousand
     , maxRequestsPerEb = 1
     , maxRequestsPerTx = 1

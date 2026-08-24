@@ -136,6 +136,9 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   , ResolveLeiosBlock (..)
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type
+  ( IsBigLedgerPeer (..)
+  )
 
 -- | Wrap an action with exception tracing. Catches the exception,
 -- traces it using the provided handler, and re-throws.
@@ -319,8 +322,9 @@ popLeftmostOffset = \case
 
 -- | Decide what to request from each peer right now
 --
--- TODO even more aggressive requests for BigLedgerPeers (cf
--- @eicIsBigLedgerPeer@)
+-- A big-ledger peer (per 'bigLedgerPeers') is fetched from aggressively: it has a
+-- larger per-peer byte budget, enough that a closure it offers is requested in
+-- full (the whole remaining job pool) at once.
 --
 -- TODO also pull txs from the Mempool
 leiosFetchLogicIteration ::
@@ -331,13 +335,16 @@ leiosFetchLogicIteration ::
   -- syncing), in which case we fetch freshest-last instead of freshest-first.
   Maybe SlotNo ->
   Map (PeerId pid) (Map LeiosPoint AlsoOfferedTxsClosure) ->
+  -- | Which peers are big-ledger peers (a peer absent from this map is treated as
+  -- 'IsNotBigLedgerPeer').
+  Map (PeerId pid) IsBigLedgerPeer ->
   LeiosOutstanding pid ->
   -- | The new outstanding state, the requests to send, and the offers to prune
   ( LeiosOutstanding pid
   , Map (PeerId pid) (NESeq LeiosFetchRequest)
   , Map (PeerId pid) (NESet.NESet LeiosPoint)
   )
-leiosFetchLogicIteration env mbCurrentSlot offerings = \acc0 ->
+leiosFetchLogicIteration env mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
   -- One pass per peer. Bodies and tx-closure jobs compete on equal footing,
   -- ranked by each EB's slot in 'ebState' (its greatest announcement slot), so
   -- the freshest EBs are fetched first regardless of which half they still need.
@@ -345,7 +352,8 @@ leiosFetchLogicIteration env mbCurrentSlot offerings = \acc0 ->
   -- those into the per-peer maps here.
   Map.foldlWithKey'
     ( \(acc, reqs, drops) peerId offers ->
-        let (acc', peerReqs, peerDrops) = assignPeer env mbCurrentSlot peerId offers acc
+        let isBig = Map.findWithDefault IsNotBigLedgerPeer peerId bigLedgerPeers
+            (acc', peerReqs, peerDrops) = assignPeer env mbCurrentSlot isBig peerId offers acc
          in ( acc'
             , case NESeq.nonEmptySeq peerReqs of
                 Nothing -> reqs
@@ -362,14 +370,23 @@ leiosFetchLogicIteration env mbCurrentSlot offerings = \acc0 ->
 -- out as this per-peer cap multiplied by the peer count. That's good so that
 -- an adversarial peer can't occupy "too much" of some fixed global budget,
 -- thereby starving honest peers.
-peerBudget :: Ord pid => LeiosFetchStaticEnv -> LeiosOutstanding pid -> PeerId pid -> Int
-peerBudget env acc peerId =
-  fromIntegral (Leios.maxRequestedBytesSizePerPeer env)
+--
+-- Big-ledger peers get a larger cap (so they can be asked for a whole EB closure
+-- at once), but still a bounded one -- even a stake-based peer might be adversarial.
+peerBudget :: Ord pid => LeiosFetchStaticEnv -> IsBigLedgerPeer -> LeiosOutstanding pid -> PeerId pid -> Int
+peerBudget env isBig acc peerId =
+  fromIntegral cap
     - fromIntegral (Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc))
+ where
+  cap = case isBig of
+    IsBigLedgerPeer -> Leios.maxRequestedBytesSizePerBigLedgerPeer env
+    IsNotBigLedgerPeer -> Leios.maxRequestedBytesSizePerPeer env
 
 -- | Walk this peer's offered points freshest-first (freshest-last while
 -- syncing), assigning requests to the peer until it's saturated at
--- 'Leios.maxRequestedBytesSizePerPeer'.
+-- 'Leios.maxRequestedBytesSizePerPeer'. A big-ledger peer saturates at the larger
+-- 'Leios.maxRequestedBytesSizePerBigLedgerPeer', enough that a closure it offers
+-- is requested in full (see 'assignClosure').
 --
 -- Offered points below the saturation point are never visited, so aren't
 -- pruned this pass; that's fine because it's ephemeral and/or the other prune
@@ -378,11 +395,12 @@ assignPeer ::
   Ord pid =>
   LeiosFetchStaticEnv ->
   Maybe SlotNo ->
+  IsBigLedgerPeer ->
   PeerId pid ->
   Map LeiosPoint AlsoOfferedTxsClosure ->
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest, Set LeiosPoint)
-assignPeer env mbCurrentSlot peerId offers acc =
+assignPeer env mbCurrentSlot isBig peerId offers acc =
   go (acc, Seq.empty, Set.empty) prioritized
  where
   prioritized = case mbCurrentSlot of
@@ -392,7 +410,7 @@ assignPeer env mbCurrentSlot peerId offers acc =
   go st@(acc', _dec, _drops) = \case
     [] -> st
     (point, offerKind) : rest
-      | peerBudget env acc' peerId <= 0 -> st
+      | peerBudget env isBig acc' peerId <= 0 -> st
       | otherwise -> go (classify point offerKind st) rest
 
   classify point offerKind (acc1, dec1, drops) =
@@ -431,7 +449,7 @@ assignPeer env mbCurrentSlot peerId offers acc =
               -- just now assign all remaining jobs to the peer, prune its
               -- offer.
               let ((acc2, dec2), MkWhetherPeerEbExhausted exhausted) =
-                    assignClosure env peerId ebHash (acc1, dec1)
+                    assignClosure env isBig peerId ebHash (acc1, dec1)
                in (acc2, dec2, if not exhausted then drops else Set.insert point drops)
    where
     ebHash = point.pointEbHash
@@ -473,11 +491,12 @@ newtype WhetherPeerEbExhausted = MkWhetherPeerEbExhausted Bool
 assignClosure ::
   Ord pid =>
   LeiosFetchStaticEnv ->
+  IsBigLedgerPeer ->
   PeerId pid ->
   EbHash ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest) ->
   ((LeiosOutstanding pid, Seq LeiosFetchRequest), WhetherPeerEbExhausted)
-assignClosure env peerId ebHash st@(acc, dec) =
+assignClosure env isBig peerId ebHash st@(acc, dec) =
   case Map.lookup ebHash (Leios.ebState acc) of
     Nothing -> (st, MkWhetherPeerEbExhausted False)
     Just (Leios.MkEbState _slot Leios.NoBody) -> (st, MkWhetherPeerEbExhausted False)
@@ -486,8 +505,11 @@ assignClosure env peerId ebHash st@(acc, dec) =
       let inflightJobs =
             maybe IntSet.empty NEIntSet.toSet $
               Map.lookup ebHash =<< Map.lookup peerId (Leios.requestedJobsPerPeer acc)
-          -- there are no more than 184 jobs per EB, so picked can't be a /long/ list
-          (picked, jobPool', exhausted) = pickJobs inflightJobs jobPool (peerBudget env acc peerId)
+          -- A big-ledger peer gets a larger budget ('peerBudget'), enough for multiple
+          -- full EB closures at once, but still bounded.
+          --
+          -- There are no more than 184 jobs per EB, so picked can't be a /long/ list.
+          (picked, jobPool', exhausted) = pickJobs inflightJobs jobPool (peerBudget env isBig acc peerId)
        in flip (,) exhausted $ case nonEmpty picked of
             Nothing -> st
             Just nePicked ->
