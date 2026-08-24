@@ -99,6 +99,8 @@ tests =
         "curated sequences"
         [ testCase "forge purges a body it already holds (offered first)" $
             runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
+        , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
+            runCmdsReFetchViolations reproForgeThenOffer @?= Right []
         ]
     , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
         let eb = ebOf [0, 1]
@@ -119,6 +121,18 @@ tests =
         -- dropped once the greatest slot (5) is below the immutable tip (6)
         Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 6) o)))
           @?= Nothing
+    , testCase "an announcement raises a forged EB's max slot (so it isn't pruned early)" $ do
+        let h = hashLeiosEb (ebOf [0, 1])
+            -- forge at slot 5, then a peer announces the same EB at the later slot 10
+            o =
+              Leios.recordMaxAnnouncementSlot h (SlotNo 10) $
+                Leios.markBodyImminent h (SlotNo 5) $
+                  (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
+        -- the announcement raised the slot to 10, keeping the forged state
+        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 10) Leios.BodyImminent)
+        -- so it survives pruning up to slot 9, and is dropped only past slot 10
+        Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 9) o))) @?= True
+        Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 11) o))) @?= False
     , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
         let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
             hB = hashLeiosEb (ebOf [2, 3]) -- to be listed at slot 3 only
@@ -276,8 +290,20 @@ applyCmd conn txCache kv peerVars peerId = \case
   Forge ids slot -> do
     let eb = ebOf ids
         point = pointOf ids slot
-    -- The outstanding-state half of 'onForgedLeiosEb'; the announcement it also
-    -- makes doesn't touch 'outstanding' for a 'ForgedLocally' source.
+    -- Replicate 'onForgedLeiosEb''s effect on 'outstanding': its 'ForgedLocally'
+    -- announcement marks the EB 'BodyImminent' (via 'markBodyImminent'), then the
+    -- body and closure arrive. That mark is what stops a later peer offer of our
+    -- own EB from being re-fetched -- without it a forge-first sequence would leave
+    -- 'ebState' untouched (as it did pre-fix, causing the crash).
+    --
+    -- We can't just call 'onForgedLeiosEb' because it needs a concrete @blk@ with a
+    -- real 'AnnouncingHeader' and a 'CentralState' -- the whole announcement stack
+    -- this suite deliberately avoids.
+    --
+    -- WARNING: this hand-replicates 'onForgedLeiosEb'; if that function's effect on
+    -- 'outstanding' changes, mirror it here or this regression coverage goes stale
+    -- silently.
+    modifyMVar_ (fst kv) (pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo)
     processLeiosBlock nullTracer nullTracer kv txCache conn (ForgedBlock point) eb
     processLeiosBlockTxs nullTracer nullTracer kv txCache conn (ForgedTxs point eb) (V.fromList (map leiosTxOf ids))
     pure []
@@ -370,6 +396,18 @@ reproForgeAfterOffer :: [Cmd]
 reproForgeAfterOffer =
   [ Offer [0, 1] 10
   , Forge [0, 1] 12
+  , Decide 13
+  ]
+
+-- | The devnet crash order: we forge an EB, then a peer offers that same EB back
+-- (e.g. relaying our own announcement). The forge marked it 'BodyImminent' (the
+-- body arrival then makes it 'BodyAcquired'), so the offer must be dropped, never
+-- re-fetched. Pre-fix the re-fetch re-acquired the closure, emitting a duplicate
+-- 'AcquiredEbTxs' that killed 'runLeiosVoting' with 'AlreadyKnown'.
+reproForgeThenOffer :: [Cmd]
+reproForgeThenOffer =
+  [ Forge [0, 1] 12
+  , Offer [0, 1] 12
   , Decide 13
   ]
 

@@ -403,6 +403,11 @@ assignPeer env mbCurrentSlot peerId offers acc =
         -- prune it now.
         pruneThisOffer
       Just (Leios.MkEbState slot fetchState) -> case (fetchState, offerKind) of
+        (Leios.BodyImminent, _) ->
+          -- Our forge is producing this EB, so we hold the whole datum (even
+          -- though it might not be inserted yet): never request it, and the
+          -- peer's offer is dead.
+          pruneThisOffer
         (Leios.NoBody, TxsClosureNotAlsoOffered) ->
           -- Body-only offer: request the body. If that's all that was
           -- offered, prune it.
@@ -475,7 +480,8 @@ assignClosure ::
 assignClosure env peerId ebHash st@(acc, dec) =
   case Map.lookup ebHash (Leios.ebState acc) of
     Nothing -> (st, MkWhetherPeerEbExhausted False)
-    Just (Leios.MkEbState _slot Leios.NoBody{}) -> (st, MkWhetherPeerEbExhausted False)
+    Just (Leios.MkEbState _slot Leios.NoBody) -> (st, MkWhetherPeerEbExhausted False)
+    Just (Leios.MkEbState _slot Leios.BodyImminent) -> (st, MkWhetherPeerEbExhausted False)
     Just (Leios.MkEbState slot (Leios.BodyAcquired jobPool)) ->
       let inflightJobs =
             maybe IntSet.empty NEIntSet.toSet $
@@ -899,6 +905,7 @@ removePeerFromOutstanding peerId o =
   releaseJobs jobIds (Leios.MkEbState slot fetchState) =
     Leios.MkEbState slot $ case fetchState of
       Leios.NoBody -> Leios.NoBody
+      Leios.BodyImminent -> Leios.BodyImminent
       Leios.BodyAcquired jobPool ->
         Leios.BodyAcquired $!
           NEIntSet.foldl'
@@ -977,6 +984,7 @@ completeTxRequest peerId ebHash jobIds o =
   completeInJobPool (Leios.MkEbState slot fetchState) =
     Leios.MkEbState slot $ case fetchState of
       Leios.NoBody -> Leios.NoBody
+      Leios.BodyImminent -> Leios.BodyImminent
       Leios.BodyAcquired jobPool ->
         Leios.BodyAcquired $!
           NEIntSet.foldl' (flip $ Jobs.completeJob . Jobs.MkLeiosJobId) jobPool jobIds
@@ -1057,15 +1065,14 @@ processLeiosBlockTxs ::
   m ()
 processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source txs = case source of
   ForgedTxs _point eb -> do
-    -- Self-produced: no validation, no fetch bookkeeping, no arrival telemetry.
-    -- The body is at hand, so the tx hashes come straight from it (position-aligned
-    -- with 'txs'), and the txs are tagged applied (drawn from a validated mempool).
-    let toIngest = zip (V.toList (V.map fst (leiosEbTxs eb))) (V.toList (V.map cbor txs))
-    traceException tracer TraceLeiosPeerDbException $ do
-      completed <- leiosDbInsertTxs db toIngest
-      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-      withLockedInsertAppliedTx txCache $ \w0 step ->
-        foldM (\w (txh, _bs) -> step w txh ()) w0 toIngest
+    -- Ingest the whole closure (TODO even though we might already have some of
+    -- it).
+    --
+    -- No peer accounting, no arrival telemetry.
+    _ <- id $
+        ingestAcquiredTxs
+          Applied
+      $ V.toList (V.map fst (leiosEbTxs eb)) `zip` V.toList (V.map cbor txs)
     void $ MVar.tryPutMVar readyVar ()
   ReceivedTxsFrom peerId req@(MkLeiosBlockTxsRequest point jobs) -> do
     traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
@@ -1102,6 +1109,8 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
             IntMap.empty
           Just (Leios.MkEbState _slot Leios.NoBody) ->
             IntMap.empty
+          Just (Leios.MkEbState _slot Leios.BodyImminent) ->
+            IntMap.empty
           Just (Leios.MkEbState _slot (Leios.BodyAcquired jobPool)) ->
             Jobs.restrictToPending (NEIntMap.toMap jobs) jobPool
         -- The covered jobs we won't ingest -- an earlier delivery already
@@ -1118,22 +1127,11 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
     toIngest <-
       either invalidReply (pure . fold) $
         IntMap.traverseWithKey (\i job -> ingestJob aligned (Jobs.MkLeiosJobId i) job) pendingJobs
-    -- ingest the validated txs (unapplied); the DB write precedes the cache
-    -- insert. The cache handle buckets each tx by its prior state in one locked
-    -- pass --- coherent under concurrent duplicate deliveries.
-    --
-    -- NB two peers delivering the same (redundantly-requested) job at once can
-    -- both ingest it: the jobPool read and 'completeTxRequest' aren't atomic
-    -- across threads. That's harmless --- the DB insert is idempotent and the
-    -- cache tolerates duplicates --- so we accept it rather than add a
-    -- claim-under-lock step; only arrival telemetry double-counts.
-    traceException tracer TraceLeiosPeerDbException $ do
-      completed <- leiosDbInsertTxs db toIngest
-      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-      txArrival <-
-        withLockedInsertUnappliedTx txCache $ \w0 step ->
-          foldM (\w (txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
-      traceWith ktracer $ TraceLeiosFetchTxsArrival (txArrival <> redundantExtra)
+    -- ingest the validated txs (unapplied). 'txArrival' covers those; add the
+    -- redundant arrivals the cache never saw, so the trace reflects everything
+    -- that came off the wire.
+    txArrival <- ingestAcquiredTxs Unapplied toIngest
+    traceWith ktracer $ TraceLeiosFetchTxsArrival (txArrival <> redundantExtra)
     -- 'refundTxRequest' reverses this peer's per-request byte accounting (but skips
     -- it if the peer was already cancelled in bulk by a disconnect);
     -- 'completeTxRequest' removes the now-fetched jobs from the EB's job pool and
@@ -1144,6 +1142,35 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
         . refundTxRequest peerId (fromIntegral batchBytes)
     void $ MVar.tryPutMVar readyVar ()
     traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
+ where
+  -- Shared ingest for both sources: write the txs to the LeiosDb (which owns the
+  -- closure-acquired notification side-effect, and reports for the trace the EBs it
+  -- newly completed), then to the tx-cache. A forge's txs are 'Applied'
+  -- (known-valid, from a validated mempool); a peer's are 'Unapplied'. Returns the
+  -- arrival-bytes tally -- 'mempty' on the applied path, which emits no
+  -- fetch-arrival telemetry.
+  --
+  -- NB two peers delivering the same (redundantly-requested) job at once can both
+  -- ingest it: the jobPool read and 'completeTxRequest' aren't atomic across
+  -- threads. Harmless --- the DB insert is idempotent and the cache buckets each
+  -- tx by its prior state in one locked pass, tolerating duplicates.
+  ingestAcquiredTxs :: WhetherApplied -> [(TxHash, BS.ByteString)] -> m Leios.FetchArrivalBytes
+  ingestAcquiredTxs applied toIngest =
+    traceException tracer TraceLeiosPeerDbException $ do
+      completed <- leiosDbInsertTxs db toIngest
+      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+      case applied of
+        Applied -> do
+          withLockedInsertAppliedTx txCache $ \w0 step ->
+            foldM (\w (txh, _bs) -> step w txh ()) w0 toIngest
+          pure mempty
+        Unapplied ->
+          withLockedInsertUnappliedTx txCache $ \w0 step ->
+            foldM (\w (txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
+
+-- | Whether ingested txs are tagged applied (from our forge's validated mempool)
+-- or unapplied (fetched from a peer).
+data WhetherApplied = Applied | Unapplied
 
 -----
 
@@ -1309,12 +1336,13 @@ processAnnouncementCentrally
         (contramap (traceNewAnnouncement provenance) kernelTracer)
         ancElId
         ( \_elSt -> do
-            -- Only a received announcement lists the EB for fetching; one we
-            -- forged is already held (the forge stores it via 'processLeiosBlock').
-            -- (A peer echoing our announcement back never re-enters this
-            -- first-sight callback -- our ForgedLocally sight already claimed it.)
+            -- A received announcement lists the EB for fetching; one we forged is
+            -- instead marked 'BodyImminent' in 'ebState' so the fetch logic never
+            -- requests it -- even after a peer relays our own announcement back to
+            -- us. Marking it here, at announcement time, closes the window before
+            -- the body is persisted and before any such relay can arrive.
             case provenance of
-              ForgedLocally -> pure ()
+              ForgedLocally -> markForged
               ReceivedViaChainSync -> recordAnnounced
               ReceivedViaLeiosNotify -> recordAnnounced
             recordAnnouncementInTxCache txCache ancHdr point
@@ -1330,6 +1358,9 @@ processAnnouncementCentrally
   -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
   point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
   recordAnnounced = recordAnnouncedEb kernelVars (point, Leios.announcementEbBodySize fields)
+  markForged =
+    MVar.modifyMVar_ (fst kernelVars) $
+      pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
@@ -1529,6 +1560,10 @@ maxAnnouncementAgeRecv = 600 -- 10 minutes
 -- ('processLeiosBlock'), then closure ('processLeiosBlockTxs')---with no peer.
 -- Keeping this similarity explicit is what makes forging an EB reconcile the
 -- outstanding fetch state exactly as receiving one does.
+--
+-- WARNING: the @Forge@ command interpreter in "Test.LeiosDemoLogic.Invariants"
+-- hand-replicates only this function's side-effects that alter the
+-- 'LeiosOutstanding' state. If you change here, keep it in sync there.
 onForgedLeiosEb ::
   ( IOLike m
   , ConvertRawHash blk

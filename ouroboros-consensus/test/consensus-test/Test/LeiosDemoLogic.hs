@@ -40,6 +40,7 @@ import LeiosDemoTypes
   , PeerId (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
+  , markBodyImminent
   , mergeOffer
   , recordMaxAnnouncementSlot
   )
@@ -62,6 +63,11 @@ tests =
             test_bodyTwoPeersOffer
         , testCase "per-peer byte budget exhausted skips that peer" $
             test_perPeerByteBudget
+        ]
+    , testGroup
+        "self-forged EB"
+        [ testCase "an offer of a self-forged EB is never re-fetched" $
+            test_forgedEbOfferIgnored
         ]
     ]
 
@@ -127,6 +133,19 @@ test_perPeerByteBudget =
     & runIteration
     & assertRequestPeers [peerB]
 
+-- | Regression for the devnet crash where a node re-fetched an EB it had just
+-- forged: the redundant closure acquisition emitted a second 'AcquiredEbTxs',
+-- which 'runLeiosVoting' rejected ('AlreadyKnown') and died on. The forge marks
+-- the EB in 'ebState' (as 'BodyImminent'), so the fetch logic must drop any peer
+-- offer of it -- even a full body+closure offer -- rather than request it.
+test_forgedEbOfferIgnored :: IO ()
+test_forgedEbOfferIgnored =
+  empty
+    & withForgedEb (point 1 'a')
+    & offersBodyAndClosure peerA [point 1 'a']
+    & runIteration
+    & assertNoRequests
+
 ------------------------------------------------------------
 -- Scenario DSL
 ------------------------------------------------------------
@@ -160,6 +179,12 @@ withMissingBody p@(MkLeiosPoint slot ebHash) size =
             Map.insertWith NESet.union ebHash (NESet.singleton slot) (reverseSlotIndexByEbHash o)
         }
 
+-- | Mark an EB as one our own forge produced -- the 'BodyImminent' 'ebState'
+-- entry that 'onForgedLeiosEb' installs at announcement time.
+withForgedEb :: LeiosPoint -> Scenario pid -> Scenario pid
+withForgedEb (MkLeiosPoint slot ebHash) =
+  onOutstanding $ markBodyImminent ebHash slot
+
 alreadyRequestedEbFrom :: Ord pid => EbHash -> [pid] -> Scenario pid -> Scenario pid
 alreadyRequestedEbFrom ebHash pids =
   onOutstanding $ \o ->
@@ -189,6 +214,11 @@ withRequestedBytesPerPeer pid n =
 offersBody :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBody pid points =
   insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotAlsoOffered) | p <- points])
+
+-- | Peer @p@ offers both the body and the tx-closure of these points.
+offersBodyAndClosure :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
+offersBodyAndClosure pid points =
+  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureAlsoOffered) | p <- points])
 
 insertOffering ::
   Ord pid =>

@@ -477,9 +477,22 @@ data EbState =
   MkEbState !SlotNo !EbFetchState
   deriving (Eq, Show)
 
--- | Whether we hold an EB's body.
+-- | Whether we hold an EB's body, plus the forge's imminent case.
 data EbFetchState
-  = NoBody
+  = -- | Our own forge is producing this EB
+    --
+    -- Its body and closure are in our store already or will be imminently. The
+    -- fetch logic issues no requests for it and treats any peer offer as dead.
+    --
+    -- Distinct from 'NoBody' so we never fetch it, yet (like 'NoBody') reports
+    -- no body held, so the forged body is still recognised as novel and
+    -- persisted when it arrives; it becomes an ordinary 'BodyAcquired' at that
+    -- point. This lets "EB arriving from forge" and "EB arriving from peer" be
+    -- treated mostly the same way.
+    BodyImminent
+  | -- | We've only ever received an announcement, and our forge hasn't issued
+    -- this EB (though it potentially could in the future!)
+    NoBody
   | -- | The job pool: the jobs not yet /requested/ (NB this can be empty even
     -- before jobs have /arrived/).
     --
@@ -490,7 +503,8 @@ data EbFetchState
     --
     -- TODO the 'Jobs.LeiosJobPool' could be an 'MVar m LeiosJobPool' for per-EB
     -- locking, at the cost of an 'm' parameter on
-    -- EbFetchState/EbState/LeiosOutstanding and a monadic body-acquire; deferred.
+    -- EbFetchState\/EbState\/LeiosOutstanding and a monadic body-acquire;
+    -- deferred.
     BodyAcquired !Jobs.LeiosJobPool
   deriving (Eq, Show)
 
@@ -502,6 +516,7 @@ ebStateMaxSlot (MkEbState slot _fetchState) = slot
 ebStateHasBody :: EbState -> Bool
 ebStateHasBody (MkEbState _slot fetchState) = case fetchState of
   NoBody -> False
+  BodyImminent -> False
   BodyAcquired{} -> True
 
 insertAcquiredEbBody ::
@@ -518,6 +533,20 @@ insertAcquiredEbBody ebHash jobPool =
     Just (MkEbState slot fetchState) -> case fetchState of
       BodyAcquired{} -> Nothing
       NoBody -> Just $ MkEbState slot (BodyAcquired jobPool)
+      BodyImminent ->
+        -- note that we ignore the given jobPool here
+        Just $ MkEbState slot (BodyAcquired Jobs.emptyLeiosJobPool)
+
+-- | Record that our own forge is producing this EB
+markBodyImminent ::
+  EbHash -> SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
+markBodyImminent ebHash slot =
+  alterEbState ebHash $ \case
+    Nothing -> Just $ MkEbState slot BodyImminent
+    Just (MkEbState oldSlot fetchState) -> case fetchState of
+      NoBody -> Just $ MkEbState oldSlot BodyImminent
+      BodyImminent -> Nothing
+      BodyAcquired{} -> Just $ MkEbState oldSlot (BodyAcquired Jobs.emptyLeiosJobPool)
 
 -- | Record that the EB with this hash is referenced (announced or offered) at this
 -- slot

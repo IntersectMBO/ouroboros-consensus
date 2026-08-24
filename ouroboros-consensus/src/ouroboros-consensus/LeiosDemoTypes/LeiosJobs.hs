@@ -148,6 +148,10 @@ lookupJob (MkLeiosJobId jid) pool =
 restrictToPending :: IntMap a -> LeiosJobPool -> IntMap a
 restrictToPending m pool = m `IntMap.intersection` jobs pool
 
+-- | The pool with no jobs -- nothing left to fetch.
+emptyLeiosJobPool :: LeiosJobPool
+emptyLeiosJobPool = MkLeiosJobPool IntMap.empty IntMap.empty
+
 -- | 'pickLeastRequestedJobExcept' with no exclusions.
 pickLeastRequestedJob :: LeiosJobPool -> Maybe (LeiosJobId, LeiosJob, LeiosJobPool)
 pickLeastRequestedJob = pickLeastRequestedJobExcept IntSet.empty
