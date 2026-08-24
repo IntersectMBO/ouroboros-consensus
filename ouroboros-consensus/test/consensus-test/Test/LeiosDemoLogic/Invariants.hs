@@ -41,19 +41,18 @@ import Control.Monad.Class.MonadThrow (SomeException, try)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
-import qualified Data.DList as DList
+import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
+import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
 import LeiosDemoDb (withLeiosDb)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
-  ( AlsoOfferedTxsClosure (..)
-  , LeiosBlockSource (..)
+  ( LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
-  , LeiosFetchDecisions (..)
   , leiosFetchLogicIteration
   , processLeiosBlock
   , processLeiosBlockTxs
@@ -61,7 +60,8 @@ import LeiosDemoLogic
   , recordEbBodyOffer
   )
 import LeiosDemoTypes
-  ( BytesSize
+  ( AlsoOfferedTxsClosure (..)
+  , BytesSize
   , EbHash
   , LeiosBlockRequest (..)
   , LeiosEb (..)
@@ -102,20 +102,20 @@ tests =
     , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
         let eb = ebOf [0, 1]
             h = hashLeiosEb eb
-            pool = Jobs.mkLeiosJobPool 1000 10 mempty -- an empty pool suffices here
+            jobPool = Jobs.mkLeiosJobPool 1000 10 mempty -- an empty job pool suffices here
             -- announce at slot 5, then again at the smaller slot 3, and acquire
             o =
-              Leios.insertAcquiredEbBody h eb pool $
+              Leios.insertAcquiredEbBody h eb jobPool $
                 Leios.recordMaxAnnouncementSlot h (SlotNo 3) $
                   Leios.recordMaxAnnouncementSlot h (SlotNo 5) $
                     (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
         -- the greater slot is retained, not the last-recorded one
-        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired eb pool))
+        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired eb jobPool))
         -- kept while the greatest slot (5) is at/above the immutable tip (4)
-        Map.lookup h (Leios.ebState (Leios.pruneOutstandingToImmTip (SlotNo 4) o))
-          @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired eb pool))
+        Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 4) o)))
+          @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired eb jobPool))
         -- dropped once the greatest slot (5) is below the immutable tip (6)
-        Map.lookup h (Leios.ebState (Leios.pruneOutstandingToImmTip (SlotNo 6) o))
+        Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 6) o)))
           @?= Nothing
     , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
         let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
@@ -132,7 +132,7 @@ tests =
                       , (hB, NESet.singleton (SlotNo 3))
                       ]
                 }
-            o = Leios.pruneOutstandingToImmTip (SlotNo 5) o0
+            o = snd (Leios.pruneOutstandingToImmTip (SlotNo 5) o0)
         -- hA's slot-3 point is dropped, its slot-10 point kept
         Map.lookup (pointAt 3 hA) (Leios.missingEbBodies o) @?= Nothing
         Map.lookup (pointAt 10 hA) (Leios.missingEbBodies o) @?= Just 10
@@ -281,9 +281,8 @@ applyCmd conn txCache kv peerVars peerId = \case
     pure []
   Decide slot -> do
     outstanding <- readMVar (fst kv)
-    let ebs = referencedEbs outstanding
-        offerings = Map.singleton peerId (ebs, ebs)
-        (out', decs) =
+    let offerings = Map.singleton peerId (referencedOffers outstanding)
+        (out', decs, _drops) =
           leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (fromIntegral slot)) offerings outstanding
     -- Force the fetch logic so any 'impossible!' surfaces (caught by 'go').
     -- Forcing @out'@ to WHNF drives 'go1' to completion (its reverse lookups);
@@ -296,32 +295,35 @@ applyCmd conn txCache kv peerVars peerId = \case
     let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
     pure (filter (\h -> Set.member h held) (ebBodyRequestHashes decs))
 
--- | Every EbHash currently referenced by the outstanding state (bodies only, now
--- that the EbTxs side is disarmed), as an all-offering peer's body\/closure sets.
-referencedEbs :: LeiosOutstanding Int -> Set.Set EbHash
-referencedEbs o =
-  Set.fromList $
-    map (.pointEbHash) (Map.keys (Leios.missingEbBodies o))
-
--- | Force the decision structure, including each tx request's resolved offset
--- (the @goTx2@ lookup), to a scalar.
-forceDecisions :: LeiosFetchDecisions pid -> Int
-forceDecisions (MkLeiosFetchDecisions m) =
-  sum
-    [ offset + fromIntegral sz
-    | slotMap <- Map.elems m
-    , (txs, _ebs) <- Map.elems slotMap
-    , (_txHash, sz, _ebHash, offset) <- DList.toList txs
+-- | Offer every EB the outstanding state tracks, at its 'ebStateMaxSlot' and as
+-- 'TxsClosureAlsoOffered' (which implies the body too) -- an all-offering peer, so
+-- the fetch logic can act on whichever half each EB still needs.
+referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.AlsoOfferedTxsClosure
+referencedOffers o =
+  Map.fromList
+    [ (Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h, Leios.TxsClosureAlsoOffered)
+    | (h, s) <- Map.toList (Leios.ebState o)
     ]
 
--- | The 'EbHash'es a decision set issues an EB-body fetch request for (one entry
--- per request; the fetch logic caps this at 'maxRequestsPerEb' per EB).
-ebBodyRequestHashes :: LeiosFetchDecisions pid -> [EbHash]
-ebBodyRequestHashes (MkLeiosFetchDecisions m) =
-  [ ebHash
-  | slotMap <- Map.elems m
-  , (_txs, ebReqs) <- Map.elems slotMap
-  , (ebHash, _sz) <- DList.toList ebReqs
+-- | Force the requests to a scalar, so any @impossible!@ hidden in a thunk
+-- surfaces when the caller 'evaluate's it. Touches each tx request's offset
+-- bitmap and each EB request's size.
+forceDecisions :: Map.Map peer (NESeq Leios.LeiosFetchRequest) -> Int
+forceDecisions m =
+  sum [reqScore req | reqs <- Map.elems m, req <- toList reqs]
+ where
+  reqScore = \case
+    Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest _p sz) -> fromIntegral sz
+    Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p bitmaps _jobIds) ->
+      sum [fromIntegral idx + fromIntegral mask | (idx, mask) <- bitmaps]
+
+-- | The 'EbHash'es the requests fetch an EB body for (one entry per request; with
+-- no per-EB cap, an EB may appear once per offering peer).
+ebBodyRequestHashes :: Map.Map peer (NESeq Leios.LeiosFetchRequest) -> [EbHash]
+ebBodyRequestHashes m =
+  [ p.pointEbHash
+  | reqs <- Map.elems m
+  , Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest p _sz) <- toList reqs
   ]
 
 ------------------------------------------------------------

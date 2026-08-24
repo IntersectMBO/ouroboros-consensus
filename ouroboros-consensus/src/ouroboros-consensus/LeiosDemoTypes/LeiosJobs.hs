@@ -23,12 +23,13 @@ import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.Word (Word32)
 
 -- | A unit of tx-fetch work: the EB-body offsets fetched by one
--- @MsgLeiosBlockTxsRequest@ -- a bitfield over the body's tx vector.
-newtype LeiosJob =
-    -- TODO 'LeiosJob' is immutable and only ever fully traversed, so a packed
+-- @MsgLeiosBlockTxsRequest@ (a bitfield over the body's tx vector), plus the
+-- total on-the-wire byte size of those txs (for the fetch byte budget).
+data LeiosJob =
+    -- TODO the offset set is immutable and only ever fully traversed, so a packed
     -- bitfield (a strict ByteString or unboxed Word64 vector) would be more
     -- compact than the 'IntSet' Patricia tree.
-    MkLeiosJob IntSet
+    MkLeiosJob !IntSet !Word32
   deriving (Eq, Show)
 
 -- | Identifies a 'LeiosJob' within its 'LeiosJobPool' (0-based, stable for the
@@ -45,7 +46,7 @@ data LeiosJobState = MkLeiosJobState !LeiosJob !LeiosJobMultiplicity
   deriving (Eq, Show)
 
 -- | The not-yet-requested jobs for one acquired EB, plus a reverse index by
--- multiplicity so a least-requested job is one 'IntMap.lookupMin' away.
+-- multiplicity so a least-requested job is one 'IntMap.minView' away.
 --
 -- INVARIANT: 'jobsByMultiplicity' is the exact inverse of the multiplicities in
 -- 'jobs' -- every job id in 'jobs' sits in exactly the bucket named by its
@@ -68,8 +69,8 @@ mkLeiosJobPool maxJobBytes maxJobTxCount misses =
   MkLeiosJobPool
     { jobs =
         IntMap.fromList
-          [ (jid, MkLeiosJobState (MkLeiosJob offs) (MkLeiosJobMultiplicity 0))
-          | (jid, offs) <- ijbs
+          [ (jid, MkLeiosJobState (MkLeiosJob offs bytes) (MkLeiosJobMultiplicity 0))
+          | (jid, (offs, bytes)) <- ijbs
           ]
     , jobsByMultiplicity =
         maybe IntMap.empty (IntMap.singleton 0) $
@@ -80,11 +81,11 @@ mkLeiosJobPool maxJobBytes maxJobTxCount misses =
     [] -> []
     ((off0, sz0) : rest) -> grow (IntSet.singleton off0) sz0 1 rest
 
-  grow !cur !_bytes !_count [] = [cur]
+  grow !cur !bytes !_count [] = [(cur, bytes)]
   grow !cur !bytes !count ((off, sz) : rest)
     | count < maxJobTxCount && bytes + sz <= maxJobBytes =
         grow (IntSet.insert off cur) (bytes + sz) (count + 1) rest
-    | otherwise = cur : grow (IntSet.singleton off) sz 1 rest
+    | otherwise = (cur, bytes) : grow (IntSet.singleton off) sz 1 rest
 
 -- | No unfinished jobs remain -- the EB's whole tx-closure has been fetched.
 nullLeiosJobPool :: LeiosJobPool -> Bool
@@ -95,33 +96,54 @@ lookupJob :: LeiosJobId -> LeiosJobPool -> Maybe LeiosJob
 lookupJob (MkLeiosJobId jid) pool =
   (\(MkLeiosJobState job _multiplicity) -> job) <$> IntMap.lookup jid (jobs pool)
 
--- | Select a least-requested unfinished job (fewest in-flight requests; ties by
--- lowest job id), record one more in-flight request for it, and return its id,
--- its bitfield, and the updated pool. 'Nothing' if the pool is empty.
+-- | 'pickLeastRequestedJobExcept' with no exclusions.
 pickLeastRequestedJob :: LeiosJobPool -> Maybe (LeiosJobId, LeiosJob, LeiosJobPool)
-pickLeastRequestedJob pool =
-  case IntMap.lookupMin (jobsByMultiplicity pool) of
+pickLeastRequestedJob = pickLeastRequestedJobExcept IntSet.empty
+
+-- | Select a least-requested unfinished job (fewest in-flight requests; ties by
+-- lowest job id) whose id is /not/ in @excluded@, record one more in-flight
+-- request for it, and return its id, its bitfield, and the updated pool.
+-- 'Nothing' if every unfinished job is excluded (or the pool is empty).
+--
+-- The caller passes the job ids this peer already has in flight for the EB, so a
+-- peer is never asked for the same job twice.
+pickLeastRequestedJobExcept ::
+  IntSet -> LeiosJobPool -> Maybe (LeiosJobId, LeiosJob, LeiosJobPool)
+pickLeastRequestedJobExcept excluded pool =
+  case eligible of
     Nothing -> Nothing
-    Just (m, bucket) ->
-      let jid = NEIntSet.findMin bucket
-          -- Bump jid from bucket m to m+1, carrying its bitfield out in the same
-          -- traversal.
-          bump1 mbState = case mbState of
-            Nothing -> (Nothing, Nothing)
-            Just (MkLeiosJobState job _oldMultiplicity) ->
-              (Just job, Just (MkLeiosJobState job (MkLeiosJobMultiplicity (m + 1))))
-       in case IntMap.alterF bump1 jid (jobs pool) of
-            (Nothing, _) -> Nothing
-            (Just job, jobs') ->
-              Just
-                ( MkLeiosJobId jid
-                , job
-                , MkLeiosJobPool
-                    { jobs = jobs'
-                    , jobsByMultiplicity =
-                        bucketInsert (m + 1) jid (bucketDelete m jid (jobsByMultiplicity pool))
-                    }
-                )
+    Just (m, jid) ->
+      case IntMap.alterF (bump1 m) jid (jobs pool) of
+        (Nothing, _) -> Nothing
+        (Just job, jobs') ->
+          Just
+            ( MkLeiosJobId jid
+            , job
+            , MkLeiosJobPool
+                { jobs = jobs'
+                , jobsByMultiplicity =
+                    bucketInsert (m + 1) jid (bucketDelete m jid (jobsByMultiplicity pool))
+                }
+            )
+ where
+  -- Walk multiplicity buckets low-to-high; within a bucket take the lowest
+  -- non-excluded job id. Returns (bucket multiplicity, job id). 'foldrWithKey'
+  -- visits ascending keys and is lazy in the accumulator, so this stops at the
+  -- first eligible bucket without materialising the bucket list.
+  eligible =
+    IntMap.foldrWithKey
+      ( \m bucket rest ->
+          case fst <$> IntSet.minView (IntSet.difference (NEIntSet.toSet bucket) excluded) of
+            Just jid -> Just (m, jid)
+            Nothing -> rest
+      )
+      Nothing
+      (jobsByMultiplicity pool)
+
+  -- Bump jid from bucket m to m+1, carrying its bitfield out in the same traversal.
+  bump1 _m Nothing = (Nothing, Nothing)
+  bump1 m (Just (MkLeiosJobState job _oldMultiplicity)) =
+    (Just job, Just (MkLeiosJobState job (MkLeiosJobMultiplicity (m + 1))))
 
 -- | Record one fewer in-flight request for a job (on disconnect). A no-op if the
 -- job is no longer in the pool.

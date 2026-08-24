@@ -552,10 +552,9 @@ mkHandlers
                       (point, ebBytesSize)
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
-                    let MkLeiosPoint{pointEbHash = ebHash} = p
-                    MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                      let !offers2' = Set.insert ebHash offers2
-                      pure (offers1, offers2')
+                    -- A closure offer implies the body too.
+                    MVar.modifyMVar_ (Leios.offerings peerVars) $
+                      pure . Map.insertWith Leios.mergeOffer p Leios.TxsClosureAlsoOffered
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs

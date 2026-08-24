@@ -26,26 +26,26 @@ import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
-import Data.DList (DList)
-import qualified Data.DList as DList
 import Data.Functor (void, (<&>))
-import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import qualified Data.IntSet as IntSet
+import Data.IntSet.NonEmpty (NEIntSet)
 import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.List (unfoldr)
+import Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
+import Data.Sequence.NonEmpty (NESeq)
+import qualified Data.Sequence.NonEmpty as NESeq
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
-import Data.Void (absurd, Void)
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbConnection
@@ -76,6 +76,7 @@ import LeiosDemoTypes
   ( AnnouncementEquivocation (..)
   , AnnouncementFields (..)
   , AnnouncementSource (..)
+  , AlsoOfferedTxsClosure (..)
   , BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
@@ -275,13 +276,7 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
       error $ "An offset exceeds the theoretical limit " <> show idxLimit
     when (not $ and $ zipWith (<) idxs (drop 1 idxs)) $ do
       error "Offsets not strictly ascending"
-  let nextOffset = \case
-        [] -> Nothing
-        (idx, bitmap) : k -> case popLeftmostOffset bitmap of
-          Nothing -> nextOffset k
-          Just (i, bitmap') ->
-            Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
-      txOffsets = unfoldr nextOffset bitmaps
+  let txOffsets = bitmapOffsets bitmaps
   n <- do
     -- Use new db to batch retrieve transactions
     results <- leiosDbBatchRetrieveTxs leiosDbConn point.pointEbHash txOffsets
@@ -320,13 +315,12 @@ popLeftmostOffset = \case
 
 -----
 
-newtype LeiosFetchDecisions pid
-  = MkLeiosFetchDecisions
-      (Map (PeerId pid) (Map SlotNo (DList (TxHash, BytesSize, EbHash, Int), DList (EbHash, BytesSize))))
-
-emptyLeiosFetchDecisions :: LeiosFetchDecisions pid
-emptyLeiosFetchDecisions = MkLeiosFetchDecisions Map.empty
-
+-- | Decide what to request from each peer right now
+--
+-- TODO even more aggressive requests for BigLedgerPeers (cf
+-- @eicIsBigLedgerPeer@)
+--
+-- TODO also pull txs from the Mempool
 leiosFetchLogicIteration ::
   forall pid.
   Ord pid =>
@@ -334,222 +328,252 @@ leiosFetchLogicIteration ::
   -- | The current slot, or 'Nothing' when it is not yet known (i.e. we are
   -- syncing), in which case we fetch freshest-last instead of freshest-first.
   Maybe SlotNo ->
-  Map (PeerId pid) (Set EbHash, Set EbHash) ->
+  Map (PeerId pid) (Map LeiosPoint AlsoOfferedTxsClosure) ->
   LeiosOutstanding pid ->
-  (LeiosOutstanding pid, LeiosFetchDecisions pid)
-leiosFetchLogicIteration env mbCurrentSlot offerings =
-  \acc ->
-    go1 acc emptyLeiosFetchDecisions $
-      expand $
-        prioritize $
-          Map.map Left (Leios.missingEbBodies acc) `Map.union` Map.map Right mempty
- where
-  -- Once we know the current slot we fetch freshest-first; until then we are
-  -- syncing, so we fetch freshest-last (i.e. oldest-first) to make progress
-  -- from the tip of our chain forward.
-  prioritize m = case mbCurrentSlot of
-    Nothing -> Map.toAscList m
-    Just _currentSlot -> Map.toDescList m
+  -- | The new outstanding state, the requests to send, and the offers to prune
+  ( LeiosOutstanding pid
+  , Map (PeerId pid) (NESeq LeiosFetchRequest)
+  , Map (PeerId pid) (NESet.NESet LeiosPoint)
+  )
+leiosFetchLogicIteration env mbCurrentSlot offerings = \acc0 ->
+  -- One pass per peer. Bodies and tx-closure jobs compete on equal footing,
+  -- ranked by each EB's slot in 'ebState' (its greatest announcement slot), so
+  -- the freshest EBs are fetched first regardless of which half they still need.
+  -- Each peer's 'assignPeer' yields only its own requests and dead offers; fold
+  -- those into the per-peer maps here.
+  Map.foldlWithKey'
+    ( \(acc, reqs, drops) peerId offers ->
+        let (acc', peerReqs, peerDrops) = assignPeer env mbCurrentSlot peerId offers acc
+         in ( acc'
+            , case NESeq.nonEmptySeq peerReqs of
+                Nothing -> reqs
+                Just neReqs -> Map.insert peerId neReqs reqs
+            , case NESet.nonEmptySet peerDrops of
+                Nothing -> drops
+                Just nes -> Map.insert peerId nes drops
+            )
+    )
+    (acc0, Map.empty, Map.empty)
+    offerings
 
-  expand = \case
-    [] -> []
-    (point, Left ebBytesSize) : vs -> Left (point, ebBytesSize) : expand vs
-    (_point, Right x) : _vs -> absurd x
+-- | A peer's remaining outstanding-byte budget. The only "global limit" falls
+-- out as this per-peer cap multiplied by the peer count. That's good so that
+-- an adversarial peer can't occupy "too much" of some fixed global budget,
+-- thereby starving honest peers.
+peerBudget :: Ord pid => LeiosFetchStaticEnv -> LeiosOutstanding pid -> PeerId pid -> Int
+peerBudget env acc peerId =
+  fromIntegral (Leios.maxRequestedBytesSizePerPeer env)
+    - fromIntegral (Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc))
 
-  go1 ::
-    LeiosOutstanding pid ->
-    LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) Void] ->
-    (LeiosOutstanding pid, LeiosFetchDecisions pid)
-  go1 !acc !accNew = \case
-    [] ->
-      (acc, accNew)
-    Left (point, ebBytesSize) : targets
-      | let peerIds :: Set (PeerId pid)
-            peerIds = Map.findWithDefault Set.empty point.pointEbHash (Leios.requestedEbPeers acc) ->
-          goEb2 acc accNew targets point ebBytesSize peerIds
-    Right x : _targets -> absurd x
-
-  goEb2 !acc !accNew targets point ebBytesSize peerIds
-    | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
-      =
-        (acc, accNew)
-    | Set.size peerIds < Leios.maxRequestsPerEb env -- we would like to request it from an additional peer
-    , Just peerId <- choosePeerEb peerIds acc point.pointEbHash =
-        -- there's a peer who offered it and we haven't already requested it from them
-        let accNew' =
-              MkLeiosFetchDecisions $
-                Map.insertWith
-                  (Map.unionWith (<>))
-                  peerId
-                  ( Map.singleton
-                      point.pointSlotNo
-                      (DList.empty, DList.singleton (point.pointEbHash, ebBytesSize))
-                  )
-                  (let MkLeiosFetchDecisions x = accNew in x)
-            acc' =
-              acc
-                { Leios.requestedEbPeers =
-                    Map.insertWith Set.union point.pointEbHash (Set.singleton peerId) (Leios.requestedEbPeers acc)
-                , Leios.requestedBytesSizePerPeer =
-                    Map.insertWith (+) peerId ebBytesSize (Leios.requestedBytesSizePerPeer acc)
-                , Leios.requestedBytesSize = ebBytesSize + Leios.requestedBytesSize acc
-                }
-            peerIds' = Set.insert peerId peerIds
-         in goEb2 acc' accNew' targets point ebBytesSize peerIds'
-    | otherwise =
-        go1 acc accNew targets
-
-  choosePeerEb :: Set (PeerId pid) -> LeiosOutstanding pid -> EbHash -> Maybe (PeerId pid)
-  choosePeerEb peerIds acc ebHash =
-    foldr (\a _ -> Just a) Nothing $
-      [ peerId
-      | (peerId, (ebHashes, _ebHashes)) <-
-          Map.toList $ -- TODO prioritize/shuffle?
-            (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
-              offerings
-      , Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc)
-          <= Leios.maxRequestedBytesSizePerPeer env
-      , -- peer can be sent more requests
-      ebHash `Set.member` ebHashes -- peer has offered this EB body
-      ]
-
-  _goTx2 ::
-    LeiosOutstanding pid ->
-    LeiosFetchDecisions pid ->
-    [Either (LeiosPoint, BytesSize) Void] ->
-    LeiosPoint ->
-    BytesSize ->
-    TxHash ->
-    Map EbHash (NESet SlotNo, Int, BytesSize) ->
-    Set (PeerId pid) ->
-    (LeiosOutstanding pid, LeiosFetchDecisions pid)
-  _goTx2 !acc !accNew targets point txBytesSize txHash txOffsets peerIds
-    | Leios.requestedBytesSize acc >= Leios.maxRequestedBytesSize env -- we can't request anything
-      =
-        (acc, accNew)
-    | Set.size peerIds < Leios.maxRequestsPerTx env -- we would like to request it from an additional peer
-    -- TODO if requests list priority, does this limit apply even if the
-    -- tx has only been requested at lower priorities?
-    , Just peerId <- _choosePeerTx peerIds acc point.pointEbHash =
-        -- there's a peer offering this EB's tx closure and we haven't already
-        -- requested it from them
-        let txOffset = case Map.lookup point.pointEbHash txOffsets of
-              Just (_slots, o, _) -> o
-              Nothing -> error "impossible! goTx2: target EB absent from its own reverse entry"
-            accNew' =
-              MkLeiosFetchDecisions $
-                Map.insertWith
-                  (Map.unionWith (<>))
-                  peerId
-                  (Map.singleton point.pointSlotNo (DList.singleton (txHash, txBytesSize, point.pointEbHash, txOffset), DList.empty))
-                  (let MkLeiosFetchDecisions x = accNew in x)
-            acc' =
-              acc
-                { Leios.requestedBytesSizePerPeer =
-                    Map.insertWith (+) peerId txBytesSize (Leios.requestedBytesSizePerPeer acc)
-                , Leios.requestedBytesSize = txBytesSize + Leios.requestedBytesSize acc
-                }
-            peerIds' = Set.insert peerId peerIds
-         in _goTx2 acc' accNew' targets point txBytesSize txHash txOffsets peerIds'
-    | otherwise =
-        go1 acc accNew targets
-
-  _choosePeerTx ::
-    Set (PeerId pid) ->
-    LeiosOutstanding pid ->
-    EbHash ->
-    Maybe (PeerId pid)
-  _choosePeerTx peerIds acc ebHash =
-    foldr (\a _ -> Just a) Nothing $
-      [ peerId
-      | (peerId, (_bodies, closures)) <-
-          Map.toList $ -- TODO prioritize/shuffle?
-            (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
-              offerings
-      , Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc)
-          <= Leios.maxRequestedBytesSizePerPeer env
-      , -- peer can be sent more requests
-      ebHash `Set.member` closures -- peer has offered this EB's tx closure
-      ]
-
-packRequests ::
+-- | Walk this peer's offered points freshest-first (freshest-last while
+-- syncing), assigning requests to the peer until it's saturated at
+-- 'Leios.maxRequestedBytesSizePerPeer'.
+--
+-- Offered points below the saturation point are never visited, so aren't
+-- pruned this pass; that's fine because it's ephemeral and/or the other prune
+-- based on the imm-tip advancing is a backstop.
+assignPeer ::
+  Ord pid =>
   LeiosFetchStaticEnv ->
-  LeiosFetchDecisions pid ->
-  Map (PeerId pid) (Seq LeiosFetchRequest)
-packRequests env =
-  \(MkLeiosFetchDecisions x) -> Map.map goPeer x
+  Maybe SlotNo ->
+  PeerId pid ->
+  Map LeiosPoint AlsoOfferedTxsClosure ->
+  LeiosOutstanding pid ->
+  (LeiosOutstanding pid, Seq LeiosFetchRequest, Set LeiosPoint)
+assignPeer env mbCurrentSlot peerId offers acc =
+  go (acc, Seq.empty, Set.empty) prioritized
  where
-  goPeer =
-    Map.foldlWithKey
-      (\acc prio (txs, ebs) -> goPrioTx prio txs <> goPrioEb prio ebs <> acc)
-      -- TODO priority within same slot?
-      Seq.empty
+  prioritized = case mbCurrentSlot of
+    Nothing -> Map.toAscList offers -- syncing: freshest-last
+    Just _currentSlot -> Map.toDescList offers -- freshest-first
 
-  goPrioEb prio ebs =
-    DList.foldr (Seq.:<|) Seq.empty $
-      DList.map
-        ( \(ebHash, ebBytesSize) ->
-            LeiosBlockRequest $ MkLeiosBlockRequest (MkLeiosPoint prio ebHash) ebBytesSize
-        )
-        ebs
+  go st@(acc', _dec, _drops) = \case
+    [] -> st
+    (point, offerKind) : rest
+      | peerBudget env acc' peerId <= 0 -> st
+      | otherwise -> go (classify point offerKind st) rest
 
-  goPrioTx prio txs =
-    Map.foldlWithKey
-      ( \acc ebHash txs' ->
-          goEb {- prio -}
-            (MkLeiosPoint prio ebHash)
-            0
-            IntMap.empty
-            0
-            DList.empty
-            (IntMap.toAscList txs')
-            <> acc
-      )
-      Seq.empty
-      -- group by EbHash, sort by offset ascending. 'prio' is the target point's
-      -- own slot and 'ebHash' its own EbHash (both filed by '_goTx2' from the same
-      -- point), so 'MkLeiosPoint prio ebHash' is a real point -- slot and hash
-      -- from the same EB.
-      $ Map.fromListWith IntMap.union
-      $ [ (ebHash, IntMap.singleton txOffset (txHash, txBytesSize))
-        | (txHash, txBytesSize, ebHash, txOffset) <- DList.toList txs
-        ]
-
-  goEb ::
-    LeiosPoint ->
-    BytesSize ->
-    IntMap Word64 ->
-    Int ->
-    DList TxHash ->
-    [(Int, (TxHash, BytesSize))] ->
-    Seq LeiosFetchRequest
-  -- TODO the incoming indexes are ascending, so the IntMap accumulator could
-  -- be simplified away
-  goEb p !accTxBytesSize !accBitmaps !accN !accHashes = \case
-    [] -> if 0 < accN then Seq.singleton flush else Seq.empty
-    txsAgain@((txOffset, (txHash, txBytesSize)) : txs)
-      | Leios.maxRequestBytesSize env < accTxBytesSize' ->
-          flush Seq.:<| goEb p 0 IntMap.empty 0 DList.empty txsAgain
-      | otherwise
-      , let (q, r) = txOffset `divMod` 64 ->
-          goEb
-            p
-            accTxBytesSize'
-            (IntMap.insertWith (Bits..|.) q (Bits.bit (63 - r)) accBitmaps)
-            (accN + 1)
-            (accHashes `DList.snoc` txHash)
-            txs
-     where
-      accTxBytesSize' = accTxBytesSize + txBytesSize
+  classify point offerKind (acc1, dec1, drops) =
+    case Map.lookup ebHash (Leios.ebState acc1) of
+      Nothing ->
+        -- We are no longer tracking this EB (pruned off below the
+        -- imm-tip). This is an ephemeral state, mid prune, but go ahead and
+        -- prune it now.
+        pruneThisOffer
+      Just (Leios.MkEbState slot fetchState) -> case (fetchState, offerKind) of
+        (Leios.NoBody, TxsClosureNotAlsoOffered) ->
+          -- Body-only offer: request the body. If that's all that was
+          -- offered, prune it.
+          let (acc2, dec2) = assignBody peerId ebHash slot (acc1, dec1)
+           in (acc2, dec2, Set.insert point drops)
+        (Leios.NoBody, TxsClosureAlsoOffered) ->
+          -- Request the body now, but keep the offer: we will request the
+          -- closure from this peer once we hold the body.
+          let (acc2, dec2) = assignBody peerId ebHash slot (acc1, dec1)
+           in (acc2, dec2, drops)
+        (Leios.BodyAcquired _body _jobPool, TxsClosureNotAlsoOffered) ->
+          -- We hold the body and the peer never offered the closure, so it
+          -- can no longer help.
+          pruneThisOffer
+        (Leios.BodyAcquired _body jobPool, TxsClosureAlsoOffered)
+          | Jobs.nullLeiosJobPool jobPool ->
+             -- whole datum in hand: the closure offer is useless now too
+             pruneThisOffer
+          | otherwise ->
+              -- Still need the txs, and the peer offered the closure. If we
+              -- just now assign all remaining jobs to the peer, prune its
+              -- offer.
+              let ((acc2, dec2), MkWhetherPeerEbExhausted exhausted) =
+                    assignClosure env peerId ebHash (acc1, dec1)
+               in (acc2, dec2, if not exhausted then drops else Set.insert point drops)
    where
-    flush =
-      LeiosBlockTxsRequest $
-        MkLeiosBlockTxsRequest
-          {- prio -}
-          p
-          [(fromIntegral idx, bitmap) | (idx, bitmap) <- IntMap.toAscList accBitmaps]
-          (V.fromListN accN $ DList.toList accHashes)
+    ebHash = point.pointEbHash
+
+    pruneThisOffer = (acc1, dec1, Set.insert point drops)
+
+-- | Request the EB body from this peer
+assignBody ::
+  Ord pid =>
+  PeerId pid -> EbHash ->
+  SlotNo ->
+  (LeiosOutstanding pid, Seq LeiosFetchRequest) ->
+  (LeiosOutstanding pid, Seq LeiosFetchRequest)
+assignBody peerId ebHash slot st@(acc, dec)
+  | peerId `Set.member` Map.findWithDefault Set.empty ebHash (Leios.requestedEbPeers acc) =
+      -- unless we've already requested it from them
+      st
+  | otherwise =
+      case bodySize acc ebHash of
+        Nothing ->
+          -- another ephemeral case where 'ebState' has been pruned before the
+          -- offers have
+          st
+        Just size ->
+          let acc' =
+                acc
+                  { Leios.requestedEbPeers =
+                      Map.insertWith Set.union ebHash (Set.singleton peerId) (Leios.requestedEbPeers acc)
+                  , Leios.requestedBytesSizePerPeer =
+                      Map.insertWith (+) peerId size (Leios.requestedBytesSizePerPeer acc)
+                  }
+           in (acc', dec Seq.|> LeiosBlockRequest (MkLeiosBlockRequest (MkLeiosPoint slot ebHash) size))
+
+newtype WhetherPeerEbExhausted = MkWhetherPeerEbExhausted Bool
+
+-- | Request tx-closure jobs from this peer, the least-requested ones we haven't
+-- already requested from it. Keep adding jobs until the peer is saturated or
+-- there are no jobs left. Also returns whether there are no jobs left.
+assignClosure ::
+  Ord pid =>
+  LeiosFetchStaticEnv ->
+  PeerId pid ->
+  EbHash ->
+  (LeiosOutstanding pid, Seq LeiosFetchRequest) ->
+  ((LeiosOutstanding pid, Seq LeiosFetchRequest), WhetherPeerEbExhausted)
+assignClosure env peerId ebHash st@(acc, dec) =
+  case Map.lookup ebHash (Leios.ebState acc) of
+    Nothing -> (st, MkWhetherPeerEbExhausted False)
+    Just (Leios.MkEbState _slot Leios.NoBody{}) -> (st, MkWhetherPeerEbExhausted False)
+    Just (Leios.MkEbState slot (Leios.BodyAcquired body jobPool)) ->
+      let inflightJobs =
+            maybe IntSet.empty NEIntSet.toSet $
+              Map.lookup ebHash =<< Map.lookup peerId (Leios.requestedJobsPerPeer acc)
+          -- there are no more than 184 jobs per EB, so picked can't be a /long/ list
+          (picked, jobPool', exhausted) = pickJobs inflightJobs jobPool (peerBudget env acc peerId)
+       in flip (,) exhausted $ case nonEmpty picked of
+            Nothing -> st
+            Just nePicked ->
+              let acc' =
+                    acc
+                      { Leios.ebState =
+                          Map.insert
+                            ebHash
+                            (Leios.MkEbState slot (Leios.BodyAcquired body jobPool'))
+                            (Leios.ebState acc)
+                      , Leios.requestedJobsPerPeer =
+                          Map.insertWith
+                            (Map.unionWith NEIntSet.union)
+                            peerId
+                            (Map.singleton ebHash $ neIntSetFromNonEmpty $ fmap (\(jid, _, _) -> jid) nePicked)
+                            (Leios.requestedJobsPerPeer acc)
+                      , Leios.requestedBytesSizePerPeer =
+                          Map.insertWith
+                            (+)
+                            peerId
+                            (sum $ fmap (\(_, _, bytes) -> bytes) nePicked)
+                            (Leios.requestedBytesSizePerPeer acc)
+                      }
+                  reqs = batchTxsRequests env (MkLeiosPoint slot ebHash) nePicked
+               in (acc', dec <> Seq.fromList reqs)
+  where
+    neIntSetFromNonEmpty :: NonEmpty Int -> NEIntSet
+    neIntSetFromNonEmpty (x :| xs) = NEIntSet.insertSet x $ IntSet.fromList xs
+
+-- | The announced body size of an EB we are still missing. All points of a hash
+-- share the size, so any one still listed in 'missingEbBodies' serves.
+bodySize :: LeiosOutstanding pid -> EbHash -> Maybe BytesSize
+bodySize acc ebHash = do
+  slots <- Map.lookup ebHash (Leios.reverseSlotIndexByEbHash acc)
+  Map.lookup (MkLeiosPoint (NESet.findMin slots) ebHash) (Leios.missingEbBodies acc)
+
+-- | Take least-requested-available jobs until the budget is spent or
+-- there are no more jobs that aren't already assigned to this peer. Also
+-- returns true, in the latter case.
+pickJobs ::
+  IntSet.IntSet ->
+  Jobs.LeiosJobPool ->
+  Int ->
+  ([(Int, IntSet.IntSet, BytesSize)], Jobs.LeiosJobPool, WhetherPeerEbExhausted)
+pickJobs inflightJobs0 jobPool0 budget0 =
+  go inflightJobs0 jobPool0 budget0 []
+ where
+  go inflightJobs jobPool budget acc
+    | budget <= 0 = (reverse acc, jobPool, MkWhetherPeerEbExhausted False)
+    | otherwise = case Jobs.pickLeastRequestedJobExcept inflightJobs jobPool of
+        Nothing -> (reverse acc, jobPool, MkWhetherPeerEbExhausted True)
+        Just (Jobs.MkLeiosJobId jid, Jobs.MkLeiosJob offsets bytes, jobPool') ->
+          go
+            (IntSet.insert jid inflightJobs)
+            jobPool'
+            (budget - fromIntegral bytes)
+            ((jid, offsets, bytes) : acc)
+
+-- | Partition the N picked jobs (pick order) into M <= N requests, each within
+-- 'maxRequestBytesSize'. Seeding each batch from its first job keeps the
+-- accumulating job-id set non-empty, so no empty-batch handling is needed (a
+-- lone job above the cap simply forms its own request).
+batchTxsRequests :: LeiosFetchStaticEnv -> LeiosPoint -> NonEmpty (Int, IntSet.IntSet, BytesSize) -> [LeiosFetchRequest]
+batchTxsRequests env point ((jid0, offsets0, bytes0) :| rest0) =
+  go offsets0 (NEIntSet.singleton jid0) (fromIntegral bytes0) rest0
+ where
+  cap = fromIntegral (Leios.maxRequestBytesSize env) :: Int
+  go curOffsets curJids curBytes = \case
+    [] -> [flush curOffsets curJids]
+    (jid, offsets, bytes) : rest
+      | curBytes + fromIntegral bytes > cap ->
+          flush curOffsets curJids
+            : go offsets (NEIntSet.singleton jid) (fromIntegral bytes) rest
+      | otherwise ->
+          go
+            (IntSet.union offsets curOffsets)
+            (NEIntSet.insert jid curJids)
+            (curBytes + fromIntegral bytes)
+            rest
+  flush curOffsets curJids =
+    LeiosBlockTxsRequest (MkLeiosBlockTxsRequest point (offsetsToBitmap curOffsets) curJids)
+
+-- | The offset set as the wire bitmap (chunk index, 64-bit mask).
+offsetsToBitmap :: IntSet.IntSet -> [(Word16, Word64)]
+offsetsToBitmap offsets =
+  [ (fromIntegral q, bm)
+  | (q, bm) <- IntMap.toAscList chunks
+  ]
+ where
+  chunks =
+    IntSet.foldr
+      (\off -> let (q, r) = off `divMod` 64 in IntMap.insertWith (Bits..|.) q (Bits.bit (63 - r)))
+      IntMap.empty
+      offsets
 
 -----
 
@@ -648,7 +672,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db peerId 
             StrictSTM.atomically $
               LazySTM.writeTQueue responseQ (PendingBlockResponse req eb)
         )
-    LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p bitmaps _txHashes) ->
+    LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p bitmaps _jobIds) ->
       LF.MkSomeLeiosFetchJob
         (LF.MsgLeiosBlockTxsRequest p bitmaps)
         ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) ->
@@ -722,8 +746,8 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
       let ebHash' = hashLeiosEb eb
       when (ebHash' /= ebHash) $ do
         invalidReply $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
-      -- Every referenced tx must be unique: 'reverseEbIndexByTx' records one
-      -- offset per (tx, EB), so a duplicate desyncs it from 'missingEbTxs'.
+      -- Reject an EB that lists the same tx hash at two offsets: malformed, and
+      -- it would otherwise have the tx fetched (and cache-counted) once per offset.
       let MkLeiosEb v = eb
           duplicateTxHashes =
             Map.keys $
@@ -815,7 +839,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
                   IntMap.empty
                   v
               pure (fetchArrivalEvicted ebBytesSize', ms)
-        let !pool =
+        let !jobPool =
               -- TODO should this calculation be deferred until the first offer
               -- arrives?
               Jobs.mkLeiosJobPool
@@ -823,7 +847,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
                 (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
                 (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
                 (IntMap.map snd misses)
-            !outstanding' = Leios.insertAcquiredEbBody ebHash eb pool outstandingCleaned
+            !outstanding' = Leios.insertAcquiredEbBody ebHash eb jobPool outstandingCleaned
         pure (outstanding', bodyClass)
   void $ MVar.tryPutMVar readyVar ()
   case source of
@@ -853,9 +877,7 @@ removePeerFromOutstanding ::
   LeiosOutstanding pid
 removePeerFromOutstanding peerId o =
   o
-    { Leios.requestedBytesSize =
-        Leios.requestedBytesSize o - Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer o)
-    , Leios.requestedBytesSizePerPeer = Map.delete peerId (Leios.requestedBytesSizePerPeer o)
+    { Leios.requestedBytesSizePerPeer = Map.delete peerId (Leios.requestedBytesSizePerPeer o)
     , Leios.requestedEbPeers =
         Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedEbPeers o)
     , Leios.requestedJobsPerPeer = Map.delete peerId (Leios.requestedJobsPerPeer o)
@@ -866,15 +888,15 @@ removePeerFromOutstanding peerId o =
           (Map.findWithDefault Map.empty peerId (Leios.requestedJobsPerPeer o))
     }
  where
-  -- Decrement, in that EB's pool, the multiplicity of each job this peer held.
+  -- Decrement, in that EB's jobPool, the multiplicity of each job this peer held.
   releaseJobs jobIds (Leios.MkEbState slot fetchState) =
     Leios.MkEbState slot $ case fetchState of
       Leios.NoBody -> Leios.NoBody
-      Leios.BodyAcquired body pool ->
+      Leios.BodyAcquired body jobPool ->
         Leios.BodyAcquired body $!
           NEIntSet.foldl'
             (flip $ Jobs.unpickJob . Jobs.MkLeiosJobId)
-            pool
+            jobPool
             jobIds
 
 -----
@@ -885,7 +907,7 @@ removePeerFromOutstanding peerId o =
 -- If the peer has already been cancelled in bulk (e.g. it disconnected and its
 -- requests were refunded en masse via its 'requestedBytesSizePerPeer' total),
 -- that entry is gone; re-applying the per-request refund here would
--- double-subtract 'requestedBytesSize' and underflow. So we gate on the peer
+-- double-subtract 'requestedBytesSizePerPeer' and underflow. So we gate on the peer
 -- still being present. The membership check, the refund, and the bulk
 -- cancellation all run within the same 'outstandingVar' critical section, so
 -- whichever happens first claims the refund and the other no-ops.
@@ -899,8 +921,7 @@ refundEbRequest ::
 refundEbRequest peerId ebHash ebBytesSize o
   | Map.member peerId (Leios.requestedBytesSizePerPeer o) =
       o
-        { Leios.requestedBytesSize = Leios.requestedBytesSize o - ebBytesSize
-        , Leios.requestedBytesSizePerPeer =
+        { Leios.requestedBytesSizePerPeer =
             Map.update (\x -> delIf (== 0) (x - ebBytesSize)) peerId (Leios.requestedBytesSizePerPeer o)
         , Leios.requestedEbPeers =
             Map.update (delIf Set.null . Set.delete peerId) ebHash (Leios.requestedEbPeers o)
@@ -909,10 +930,9 @@ refundEbRequest peerId ebHash ebBytesSize o
 
 -----
 
--- | Like 'refundEbRequest', but for a received batch of EB txs: installs the
--- already-computed 'requestedTxPeers'' (this peer removed from each requested
--- tx) and refunds the bytes, gated on the peer still being tracked (see
--- 'refundEbRequest').
+-- | Like 'refundEbRequest', but for a received batch of EB txs: refunds the
+-- bytes, gated on the peer still being tracked (see 'refundEbRequest'). The job
+-- bookkeeping (jobPool + this peer's in-flight set) is handled by 'completeTxRequest'.
 refundTxRequest ::
   Ord pid =>
   PeerId pid ->
@@ -922,11 +942,53 @@ refundTxRequest ::
 refundTxRequest peerId txsBytesSize o
   | Map.member peerId (Leios.requestedBytesSizePerPeer o) =
       o
-        { Leios.requestedBytesSize = Leios.requestedBytesSize o - txsBytesSize
-        , Leios.requestedBytesSizePerPeer =
+        { Leios.requestedBytesSizePerPeer =
             Map.update (\x -> delIf (== 0) (x - txsBytesSize)) peerId (Leios.requestedBytesSizePerPeer o)
         }
   | otherwise = o
+
+-----
+
+-- | On a received tx batch, remove its now-fetched jobs: delete them from the
+-- EB's jobPool (they are done for /every/ peer) and from this peer's in-flight set,
+-- so neither this peer nor any other is asked for them again. Complements
+-- 'refundTxRequest', which handles only the per-peer byte accounting.
+completeTxRequest ::
+  Ord pid =>
+  PeerId pid ->
+  EbHash ->
+  NEIntSet ->
+  LeiosOutstanding pid ->
+  LeiosOutstanding pid
+completeTxRequest peerId ebHash jobIds o =
+  o
+    { Leios.ebState = Map.adjust completeInJobPool ebHash (Leios.ebState o)
+    , Leios.requestedJobsPerPeer =
+        Map.update (nonEmptyMap . Map.update dropJobs ebHash) peerId (Leios.requestedJobsPerPeer o)
+    }
+ where
+  completeInJobPool (Leios.MkEbState slot fetchState) =
+    Leios.MkEbState slot $ case fetchState of
+      Leios.NoBody -> Leios.NoBody
+      Leios.BodyAcquired body jobPool ->
+        Leios.BodyAcquired body $!
+          NEIntSet.foldl' (flip $ Jobs.completeJob . Jobs.MkLeiosJobId) jobPool jobIds
+  dropJobs held =
+    NEIntSet.nonEmptySet (IntSet.difference (NEIntSet.toSet held) (NEIntSet.toSet jobIds))
+  nonEmptyMap m = if Map.null m then Nothing else Just m
+
+-- | Decode a tx-offset bitmap (@[(chunk index, 64-bit mask)]@) to ascending body
+-- offsets: the inverse of the fetch logic's 'offsetsToBitmap', and the exact
+-- decode the fetch server uses to pick which txs to send -- so the arrival
+-- handler derives its validation hashes in the peer's send order.
+bitmapOffsets :: [(Word16, Word64)] -> [Int]
+bitmapOffsets = unfoldr nextOffset
+ where
+  nextOffset = \case
+    [] -> Nothing
+    (idx, bitmap) : k -> case popLeftmostOffset bitmap of
+      Nothing -> nextOffset k
+      Just (i, bitmap') -> Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
 
 -----
 
@@ -947,13 +1009,21 @@ processLeiosBlockTxs ::
 processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source txs = do
   let txBytess = V.map cbor txs
       batchBytes = V.sum (V.map BS.length txBytess)
-      -- The tx hashes: taken from the request for an arrival (and validated
-      -- below), derived from the txs themselves for a forge.
-      txHashes = case source of
-        ReceivedTxsFrom _ (MkLeiosBlockTxsRequest _ _ txHs) -> txHs
-        -- The body's tx list is position-aligned with the 'txs' vector, so use
-        -- its hashes rather than re-hashing the bytes we already hashed to forge.
-        ForgedTxs _ eb -> V.map fst (leiosEbTxs eb)
+  -- The tx hashes: for a forge, from the body directly (position-aligned with the
+  -- 'txs' vector); for an arrival, by expanding the request's offset bitmap
+  -- against the EB body we hold (the request no longer carries the hashes).
+  -- Validated against the arrived txs below.
+  txHashes <- case source of
+    ForgedTxs _ eb -> pure $ V.map fst (leiosEbTxs eb)
+    ReceivedTxsFrom _ (MkLeiosBlockTxsRequest point bitmaps _jobIds) -> do
+      outstanding <- MVar.readMVar outstandingVar
+      case Map.lookup point.pointEbHash (Leios.ebState outstanding) of
+        Just (Leios.MkEbState _slot (Leios.BodyAcquired eb _jobPool)) ->
+          pure $ V.fromList [fst (leiosEbTxs eb V.! off) | off <- bitmapOffsets bitmaps]
+        _ ->
+          -- We only request txs for an EB whose body we hold; a body-prune race
+          -- could in principle reach here. TODO disconnecting is harsh.
+          error "MsgLeiosBlockTxs arrived but its EB body is no longer held"
   -- validate it (an arrival only; a forge's data is self-produced)
   -- TODO: could validate the returned point + bitmaps too
   case source of
@@ -998,13 +1068,15 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
       ForgedTxs{} ->
         pure $
           outstanding
-      ReceivedTxsFrom peerId _req -> do
-        -- 'refundTxRequest' reverses this peer's per-request accounting (but skips
-        -- it if the peer was already cancelled in bulk by a disconnect); the global
-        -- state below is updated unconditionally, since we did receive the txs.
+      ReceivedTxsFrom peerId (MkLeiosBlockTxsRequest point _bitmaps jobIds) -> do
+        -- 'refundTxRequest' reverses this peer's per-request byte accounting (but
+        -- skips it if the peer was already cancelled in bulk by a disconnect);
+        -- 'completeTxRequest' removes the now-fetched jobs from the EB's jobPool and
+        -- from this peer's in-flight set, so they are never re-requested.
         pure $
-          refundTxRequest peerId (fromIntegral batchBytes) $
-            outstanding
+          completeTxRequest peerId point.pointEbHash jobIds $
+            refundTxRequest peerId (fromIntegral batchBytes) $
+              outstanding
   void $ MVar.tryPutMVar readyVar ()
   case source of
     ForgedTxs{} -> pure ()
@@ -1013,10 +1085,6 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
 
 -----
 
--- | Whether an EB offer also implies its tx-closure is on offer. A CertRB does
--- (it certifies the whole EB); a bare 'MsgLeiosBlockOffer' does not — the closure
--- is offered separately, as a 'MsgLeiosBlockTxsOffer'.
-data AlsoOfferedTxsClosure = TxsClosureAlsoOffered | TxsClosureNotAlsoOffered
 
 -- | Record an offered EB body: mark it as something to fetch and mark the peer
 -- as a serving candidate, then wake the fetch logic. Shared by the explicit
@@ -1072,12 +1140,9 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
                   (NESet.singleton ebSlot)
                   (Leios.reverseSlotIndexByEbHash outstanding')
             }
-  MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-    let !offers1' = Set.insert ebHash offers1
-        !offers2' = case offeredClosure of
-          TxsClosureAlsoOffered -> Set.insert ebHash offers2
-          TxsClosureNotAlsoOffered -> offers2
-    pure (offers1', offers2')
+  MVar.modifyMVar_ (Leios.offerings peerVars) $ \offers ->
+    -- store the offer as-is; 'mergeOffer' keeps the closure if either offer had it
+    pure $! Map.insertWith Leios.mergeOffer point offeredClosure offers
   void $ MVar.tryPutMVar readyVar ()
 
 -----

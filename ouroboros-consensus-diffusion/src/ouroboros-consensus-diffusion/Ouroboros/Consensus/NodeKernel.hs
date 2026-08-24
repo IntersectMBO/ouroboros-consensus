@@ -54,8 +54,10 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.Strict as Map
+import qualified Data.Sequence.NonEmpty as NESeq
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Text as Text
 import Data.Void (Void)
 import LeiosDemoDb
@@ -482,7 +484,7 @@ initNodeKernel
           leiosPeersVars <- LazySTM.readTVarIO getLeiosPeersVars
           offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
           let livePeers = Map.keysSet leiosPeersVars
-          newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+          (newRequests, offerDrops) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
             -- Re-read the live peers while holding the -- 'getLeiosOutstanding'
             -- lock. This is used to avoid losing an update to
             -- 'getLeiosOutstanding' that 'removePeerFromOutstanding' may have
@@ -504,17 +506,28 @@ initNodeKernel
             let mbCurrentSlot = case currentSlot of
                   CurrentSlot s -> Just s
                   CurrentSlotUnknown -> Nothing
-            let (!outstanding', decisions) =
+            let (!outstanding', requests, offerDrops) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
                     mbCurrentSlot
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
                     outstanding
-            pure (outstanding', decisions)
+            pure (outstanding', (requests, offerDrops))
+          -- Drop dead offers: exactly the EBs the decision pass found we already
+          -- fully hold (computed while it walked those offers -- no extra scan).
+          -- This is the timely offer-pruning; the imm-tip Watcher prune is a
+          -- backstop for when this loop is idle.
+          -- TODO this loop is rate-limited, so although a completing acquisition
+          -- wakes it via 'getLeiosReady', this can still lag until the next allowed
+          -- iteration; someday drop the offer at the acquiring moment itself.
+          forM_ (Map.toList offerDrops) $ \(dropPeer, dropped) ->
+            case Map.lookup dropPeer leiosPeersVars of
+              Nothing -> pure ()
+              Just vars ->
+                MVar.modifyMVar_ (Leios.offerings vars) $
+                  pure . (`Map.withoutKeys` NESet.toSet dropped)
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"
-          let newRequests =
-                Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
-              decisionsTargetedKeys = Map.keysSet newRequests
+          let decisionsTargetedKeys = Map.keysSet newRequests
               droppableKeys =
                 decisionsTargetedKeys `Set.difference` livePeers
           traceWith leiosTr $
@@ -530,7 +543,7 @@ initNodeKernel
                   ++ " peer-targeted decisions because target not in leiosPeersVars"
           (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
             atomically $
-              StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
+              StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> NESeq.toSeq reqs)
           iterationEnd <- getMonotonicTime
           let loopInterval = 0.5 :: SI.DiffTime
               duration = iterationEnd `diffTime` iterationStart
@@ -565,7 +578,14 @@ initNodeKernel
                 MVar.modifyMVar_ getLeiosCentralState $
                   pure . Announcements.pruneCentralState immTipSlot
                 MVar.modifyMVar_ getLeiosOutstanding $
-                  pure . Leios.pruneOutstandingToImmTip immTipSlot
+                  pure . snd . Leios.pruneOutstandingToImmTip immTipSlot
+                -- Backstop offer-prune: offers are keyed by point (slot-ordered),
+                -- so drop the below-tip prefix directly. The fetch loop prunes
+                -- completed offers promptly; this catches offers it never reaches.
+                peersVars <- LazySTM.readTVarIO getLeiosPeersVars
+                forM_ peersVars $ \vars ->
+                  MVar.modifyMVar_ (Leios.offerings vars) $
+                    pure . Map.dropWhileAntitone ((< immTipSlot) . Leios.pointSlotNo)
           }
 
     return

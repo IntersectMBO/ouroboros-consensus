@@ -21,23 +21,27 @@ module Test.LeiosDemoLogic (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString as BS
-import qualified Data.DList as DList
+import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
+import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
-import LeiosDemoLogic
-  ( LeiosFetchDecisions (..)
-  , leiosFetchLogicIteration
-  )
+import qualified Data.Set.NonEmpty as NESet
+import LeiosDemoLogic (leiosFetchLogicIteration)
 import LeiosDemoTypes
-  ( BytesSize
+  ( AlsoOfferedTxsClosure (..)
+  , BytesSize
   , EbHash (..)
+  , LeiosBlockRequest (..)
+  , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
   , LeiosPoint (..)
   , PeerId (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
+  , mergeOffer
+  , recordMaxAnnouncementSlot
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -52,12 +56,10 @@ tests =
             test_singleMissingBody
         , testCase "no request when no peer offers the body" $
             test_bodyNoOffer
-        , testCase "per-EB request cap blocks further selection" $
-            test_bodyPerEbCap
-        , testCase "offering peers selected up to the per-EB cap" $
+        , testCase "a peer already asked for a body is not asked again" $
+            test_bodyAlreadyRequestedPeerSkipped
+        , testCase "both offering peers are selected (no per-EB cap)" $
             test_bodyTwoPeersOffer
-        , testCase "global byte budget exhausted blocks further selection" $
-            test_globalByteBudget
         , testCase "per-peer byte budget exhausted skips that peer" $
             test_perPeerByteBudget
         ]
@@ -81,7 +83,7 @@ test_singleMissingBody :: IO ()
 test_singleMissingBody =
   empty
     & withMissingBody (point 1 'a') 1024
-    & offersBody peerA [eb 'a']
+    & offersBody peerA [point 1 'a']
     & runIteration
     & assertBodyRequest peerA (point 1 'a') 1024
 
@@ -89,39 +91,29 @@ test_bodyNoOffer :: IO ()
 test_bodyNoOffer =
   empty
     & withMissingBody (point 1 'a') 1024
-    & offersBody peerA [eb 'b'] -- peer offers a different EB, not the one we need
+    & offersBody peerA [point 1 'b'] -- peer offers a different EB, not the one we need
     & runIteration
     & assertNoRequests
 
-test_bodyPerEbCap :: IO ()
-test_bodyPerEbCap =
+test_bodyAlreadyRequestedPeerSkipped :: IO ()
+test_bodyAlreadyRequestedPeerSkipped =
   empty
     & withMissingBody (point 1 'a') 1024
-    & alreadyRequestedEbFrom (eb 'a') [0 .. ebCap - 1] -- the per-EB cap is used up
-    & offersBody ebCap [eb 'a'] -- so this additional peer is not selected
+    & alreadyRequestedEbFrom (eb 'a') [peerA] -- already in flight from peerA
+    & offersBody peerA [point 1 'a'] -- so peerA is not asked again
+    & offersBody peerB [point 1 'a'] -- but a fresh offering peer is
     & runIteration
-    & assertNoRequests
- where
-  ebCap = maxRequestsPerEb demoLeiosFetchStaticEnv
+    & assertRequestPeers [peerB]
 
 test_bodyTwoPeersOffer :: IO ()
 test_bodyTwoPeersOffer =
   empty
     & withMissingBody (point 1 'a') 1024
-    & offersBody peerA [eb 'a']
-    & offersBody peerB [eb 'a']
+    & offersBody peerA [point 1 'a']
+    & offersBody peerB [point 1 'a']
     & runIteration
-    -- two peers offer; the fetch logic selects up to the per-EB cap of them
-    & assertRequestPeerCount (min 2 (maxRequestsPerEb demoLeiosFetchStaticEnv))
-
-test_globalByteBudget :: IO ()
-test_globalByteBudget =
-  empty
-    & withMissingBody (point 1 'a') 1024
-    & withTotalRequestedBytes (maxRequestedBytesSize demoLeiosFetchStaticEnv)
-    & offersBody peerA [eb 'a']
-    & runIteration
-    & assertNoRequests
+    -- both peers offer; with no per-EB cap the body is requested from both
+    & assertRequestPeerCount 2
 
 test_perPeerByteBudget :: IO ()
 test_perPeerByteBudget =
@@ -130,8 +122,8 @@ test_perPeerByteBudget =
     & withRequestedBytesPerPeer
       peerA
       (maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv + 1)
-    & offersBody peerA [eb 'a']
-    & offersBody peerB [eb 'a']
+    & offersBody peerA [point 1 'a']
+    & offersBody peerB [point 1 'a']
     & runIteration
     & assertRequestPeers [peerB]
 
@@ -142,7 +134,7 @@ test_perPeerByteBudget =
 -- | A test fixture: static env, peer offerings, outstanding work.
 data Scenario pid = Scenario
   { scEnv :: !LeiosFetchStaticEnv
-  , scOfferings :: !(Map.Map (PeerId pid) (Set.Set EbHash, Set.Set EbHash))
+  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint AlsoOfferedTxsClosure))
   , scOutstanding :: !(LeiosOutstanding pid)
   }
 
@@ -156,9 +148,17 @@ empty =
 
 -- | Outstanding-work combinators -----------------------------------------
 withMissingBody :: LeiosPoint -> BytesSize -> Scenario pid -> Scenario pid
-withMissingBody p size =
+withMissingBody p@(MkLeiosPoint slot ebHash) size =
   onOutstanding $ \o ->
-    o{missingEbBodies = Map.insert p size (missingEbBodies o)}
+    -- Seed everything the announce path would: the missing-body point and its
+    -- reverse index, plus (via 'recordMaxAnnouncementSlot') the 'ebState' NoBody
+    -- entry that the fetch loop now drives bodies off of.
+    recordMaxAnnouncementSlot ebHash slot $
+      o
+        { missingEbBodies = Map.insert p size (missingEbBodies o)
+        , reverseSlotIndexByEbHash =
+            Map.insertWith NESet.union ebHash (NESet.singleton slot) (reverseSlotIndexByEbHash o)
+        }
 
 alreadyRequestedEbFrom :: Ord pid => EbHash -> [pid] -> Scenario pid -> Scenario pid
 alreadyRequestedEbFrom ebHash pids =
@@ -171,12 +171,6 @@ alreadyRequestedEbFrom ebHash pids =
             (Set.fromList (map MkPeerId pids))
             (requestedEbPeers o)
       }
-
--- | Set the global in-flight byte total. Use with the env's cap to
--- test the global byte budget.
-withTotalRequestedBytes :: BytesSize -> Scenario pid -> Scenario pid
-withTotalRequestedBytes n =
-  onOutstanding $ \o -> o{requestedBytesSize = n}
 
 -- | Set a per-peer in-flight byte total. Use with the env's per-peer
 -- cap to test the per-peer byte budget.
@@ -191,26 +185,21 @@ withRequestedBytesPerPeer pid n =
 
 -- | Per-peer offer combinators -------------------------------------------
 
--- | Peer @p@ offers the body of these EBs.
-offersBody :: Ord pid => pid -> [EbHash] -> Scenario pid -> Scenario pid
-offersBody pid ebs =
-  insertOffering (MkPeerId pid) (Set.fromList ebs) Set.empty
+-- | Peer @p@ offers the body (only) of these points.
+offersBody :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
+offersBody pid points =
+  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotAlsoOffered) | p <- points])
 
 insertOffering ::
   Ord pid =>
   PeerId pid ->
-  Set.Set EbHash ->
-  Set.Set EbHash ->
+  Map.Map LeiosPoint AlsoOfferedTxsClosure ->
   Scenario pid ->
   Scenario pid
-insertOffering pid bodies txs sc =
+insertOffering pid offers sc =
   sc
     { scOfferings =
-        Map.insertWith
-          (\(a, b) (c, d) -> (a <> c, b <> d))
-          pid
-          (bodies, txs)
-          (scOfferings sc)
+        Map.insertWith (Map.unionWith mergeOffer) pid offers (scOfferings sc)
     }
 
 -- | Internal: lift a function on 'LeiosOutstanding' to one on 'Scenario'.
@@ -224,11 +213,13 @@ onOutstanding f sc = sc{scOutstanding = f (scOutstanding sc)}
 --
 -- (The tx side of the fetch logic is disarmed, so only EB-body requests are
 -- emitted; the old tx-soundness check is gone with it.)
-runIteration :: Ord pid => Scenario pid -> LeiosFetchDecisions pid
+runIteration :: Ord pid => Scenario pid -> Map.Map (PeerId pid) (NESeq LeiosFetchRequest)
 runIteration sc =
   -- A known current slot selects freshest-first (i.e. youngest-first), which is
   -- the ordering these scenarios were written against.
-  snd $ leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
+  let (_out, reqs, _drops) =
+        leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
+   in reqs
 
 ------------------------------------------------------------
 -- Assertions
@@ -239,33 +230,31 @@ assertBodyRequest ::
   pid ->
   LeiosPoint ->
   BytesSize ->
-  LeiosFetchDecisions pid ->
+  Map.Map (PeerId pid) (NESeq LeiosFetchRequest) ->
   IO ()
-assertBodyRequest pid p size (MkLeiosFetchDecisions m) =
+assertBodyRequest pid p size m =
   case Map.lookup (MkPeerId pid) m of
     Nothing -> assertFailure $ "no request for peer " <> show pid
-    Just slotMap -> case Map.lookup p.pointSlotNo slotMap of
-      Nothing -> assertFailure "no request at expected slot"
-      Just (_txs, bodies) ->
-        DList.toList bodies @?= [(p.pointEbHash, size)]
+    Just reqs ->
+      [ (pt.pointEbHash, sz)
+      | LeiosBlockRequest (MkLeiosBlockRequest pt sz) <- toList reqs
+      ]
+        @?= [(p.pointEbHash, size)]
 
-assertNoRequests :: (Ord pid, Show pid) => LeiosFetchDecisions pid -> IO ()
-assertNoRequests (MkLeiosFetchDecisions m) = Map.keys m @?= []
+assertNoRequests :: (Ord pid, Show pid) => Map.Map (PeerId pid) (NESeq LeiosFetchRequest) -> IO ()
+assertNoRequests m = Map.keys m @?= []
 
--- | Assert that the decision set has requests targeting exactly the
--- given set of peers (regardless of what each request is).
+-- | Assert that requests target exactly the given set of peers (regardless of
+-- what each request is).
 assertRequestPeers ::
   (Ord pid, Show pid) =>
-  [pid] -> LeiosFetchDecisions pid -> IO ()
-assertRequestPeers expected (MkLeiosFetchDecisions m) =
+  [pid] -> Map.Map (PeerId pid) (NESeq LeiosFetchRequest) -> IO ()
+assertRequestPeers expected m =
   Set.fromList (Map.keys m) @?= Set.fromList (map MkPeerId expected)
 
--- | Assert how many distinct peers received a request. Order-independent, so it
--- holds for any 'maxRequestsPerEb' \/ 'maxRequestsPerTx': at a cap below the
--- number of offering peers, /which/ peers win is a selection-order detail, but
--- the count is not.
-assertRequestPeerCount :: Int -> LeiosFetchDecisions pid -> IO ()
-assertRequestPeerCount n (MkLeiosFetchDecisions m) = Map.size m @?= n
+-- | Assert how many distinct peers received a request.
+assertRequestPeerCount :: Int -> Map.Map (PeerId pid) (NESeq LeiosFetchRequest) -> IO ()
+assertRequestPeerCount n m = Map.size m @?= n
 
 ------------------------------------------------------------
 -- Fixture helpers

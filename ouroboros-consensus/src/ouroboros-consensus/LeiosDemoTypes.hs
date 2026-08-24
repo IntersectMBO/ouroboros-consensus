@@ -73,6 +73,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
 import Data.IntSet.NonEmpty (NEIntSet)
+import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -319,19 +320,23 @@ data LeiosBlockRequest
       !BytesSize
 
 data LeiosBlockTxsRequest
-  = -- |
-    --
-    -- The hashes aren't sent to the peer, but they are used to validate the
-    -- response when it arrives.
+  = -- | A request for some of an EB's txs: its point, the offset bitmap (the only
+    -- part sent to the peer), and the ids of the 'Jobs.LeiosJob's it covers. The
+    -- job ids are kept locally to 'Jobs.completeJob' on the response; the
+    -- validation hashes are re-derived from the body at arrival, so they are not
+    -- carried here.
     MkLeiosBlockTxsRequest
       !LeiosPoint
       [(Word16, Word64)]
-      !(Vector TxHash)
+      !NEIntSet
 
 prettyLeiosBlockTxsRequest :: LeiosBlockTxsRequest -> String
-prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps _txHashes) =
+prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps jobIds) =
   unwords $
-    "MsgLeiosBlockTxs" : prettyLeiosPoint p : map prettyBitmap bitmaps
+    "MsgLeiosBlockTxs"
+      : prettyLeiosPoint p
+      : ("jobs=" <> show (toList (NEIntSet.toList jobIds)))
+      : map prettyBitmap bitmaps
 
 prettyBitmap :: (Word16, Word64) -> String
 prettyBitmap (idx, bitmap) =
@@ -349,9 +354,27 @@ prettyBitmap (idx, bitmap) =
 -- patterns of access to the "Ouroboros.Consensus.NodeKernel"'s shared state.
 --
 
+-- | Whether an EB offer also implies its tx-closure is on offer. A CertRB does
+-- (it certifies the whole EB); a bare 'MsgLeiosBlockOffer' does not -- the closure
+-- is offered separately, as a 'MsgLeiosBlockTxsOffer'. This is also the value we
+-- store per offered point: 'TxsClosureAlsoOffered' means the peer can serve the
+-- body /and/ the closure (a closure offer implies the body), while
+-- 'TxsClosureNotAlsoOffered' is body-only.
+data AlsoOfferedTxsClosure = TxsClosureAlsoOffered | TxsClosureNotAlsoOffered
+  deriving (Eq, Show)
+
+-- | Merge two offers for one point: the closure is on offer if either says so.
+mergeOffer :: AlsoOfferedTxsClosure -> AlsoOfferedTxsClosure -> AlsoOfferedTxsClosure
+mergeOffer TxsClosureAlsoOffered _ = TxsClosureAlsoOffered
+mergeOffer _ TxsClosureAlsoOffered = TxsClosureAlsoOffered
+mergeOffer _ _ = TxsClosureNotAlsoOffered
+
 data LeiosPeerVars m = MkLeiosPeerVars
-  { -- written to only by the LeiosNotify client (TODO and eviction)
-    offerings :: !(MVar m (Set EbHash, Set EbHash))
+  { offerings :: !(MVar m (Map LeiosPoint AlsoOfferedTxsClosure))
+  -- ^ the peer's current offers, keyed by point -- so the map is already in slot
+  -- order (freshest-first via 'Map.toDescList'), no dedup by EB hash needed
+  -- (honest announcements don't reuse a hash, and an adversary defeats such
+  -- dedup anyway). Written to only by the LeiosNotify client and eviction.
   , requestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
   -- ^ written to by the fetch logic and the LeiosFetch client
   --
@@ -371,7 +394,7 @@ data LeiosPeerVars m = MkLeiosPeerVars
 
 newLeiosPeerVars :: IOLike m => m (LeiosPeerVars m)
 newLeiosPeerVars = do
-  offerings <- MVar.newMVar (Set.empty, Set.empty)
+  offerings <- MVar.newMVar Map.empty
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
   pure MkLeiosPeerVars{offerings, requestsToSend}
 
@@ -423,9 +446,9 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- TODO add requestedEbsPerPeer :: !(Map (PeerId pid) (NESet EbHash)) to avoid
   -- linear scan
   , requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
-  -- ^ Running total of bytes requested from each peer
-  , requestedBytesSize :: !BytesSize
-  -- ^ Total bytes requested across all peers
+  -- ^ Running total of bytes requested from each peer. This is the only
+  -- outstanding-byte limit: there is no global cap (the global bound falls out
+  -- as this per-peer cap times the peer count).
   , requestedJobsPerPeer :: !(Map (PeerId pid) (Map EbHash NEIntSet))
   -- ^ Per peer, per EB, the job ids it currently has in flight -- for
   -- decrementing those multiplicities on disconnect
@@ -445,7 +468,6 @@ emptyLeiosOutstanding prunedSlot =
     , reverseSlotIndexByEbHash = Map.empty
     , requestedEbPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
-    , requestedBytesSize = 0
     , requestedJobsPerPeer = Map.empty
     }
 
@@ -459,8 +481,8 @@ data EbState =
 -- | Whether we hold an EB's body.
 data EbFetchState
   = NoBody
-  | -- | The pool of jobs that have not been /requested/ yet (NB this can be
-    -- empty even before jobs have /arrived/)
+  | -- | The job pool: the jobs not yet /requested/ (NB this can be empty even
+    -- before jobs have /arrived/)
     --
     -- TODO the 'Jobs.LeiosJobPool' could be an 'MVar m LeiosJobPool' for per-EB
     -- locking, at the cost of an 'm' parameter on
@@ -480,7 +502,7 @@ ebStateHasBody (MkEbState _slot fetchState) = case fetchState of
 
 insertAcquiredEbBody ::
   EbHash -> LeiosEb -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
-insertAcquiredEbBody ebHash body pool =
+insertAcquiredEbBody ebHash body jobPool =
   alterEbState ebHash $ \case
     Nothing ->
       -- The state must have been pruned before the MsgLeiosBlock
@@ -491,7 +513,7 @@ insertAcquiredEbBody ebHash body pool =
       Nothing
     Just (MkEbState slot fetchState) -> case fetchState of
       BodyAcquired{} -> Nothing
-      NoBody -> Just $ MkEbState slot (BodyAcquired body pool)
+      NoBody -> Just $ MkEbState slot (BodyAcquired body jobPool)
 
 -- | Record that the EB with this hash is referenced (announced or offered) at this
 -- slot
@@ -543,21 +565,24 @@ alterEbState ebHash f outstanding =
      Nothing -> (Nothing, mbOld)
      Just new -> (Just (ebStateMaxSlot <$> mbOld, ebStateMaxSlot new), Just new)
 
--- | Prune 'Outstanding' to the immutable tip
+-- | Prune 'Outstanding' to the immutable tip, returning the EB hashes it dropped
+-- (so the caller can drop those same hashes from the peers' offers).
 --
 -- Uses the 'ebsPerMaxAnnouncementSlot' reverse index to drop the below-tip prefix
 -- directly (@spanAntitone@), rather than scanning the whole map.
 --
 -- TODO still more it could prune (e.g. abandoned in-flight EB requests).
-pruneOutstandingToImmTip :: SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
+pruneOutstandingToImmTip :: SlotNo -> LeiosOutstanding pid -> (Set EbHash, LeiosOutstanding pid)
 pruneOutstandingToImmTip immTipSlot outstanding =
-  outstanding
-    { ebState = ebState outstanding `Map.withoutKeys` prunedHashes
-    , ebsPerMaxAnnouncementSlot = atOrAbove
-    , acquiredEbBodiesPrunedSlot = max (acquiredEbBodiesPrunedSlot outstanding) immTipSlot
-    , missingEbBodies = missingEbBodiesAtOrAbove
-    , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
-    }
+  ( prunedHashes
+  , outstanding
+      { ebState = ebState outstanding `Map.withoutKeys` prunedHashes
+      , ebsPerMaxAnnouncementSlot = atOrAbove
+      , acquiredEbBodiesPrunedSlot = max (acquiredEbBodiesPrunedSlot outstanding) immTipSlot
+      , missingEbBodies = missingEbBodiesAtOrAbove
+      , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
+      }
+  )
  where
   (below, atOrAbove) =
     Map.spanAntitone (< immTipSlot) (ebsPerMaxAnnouncementSlot outstanding)
@@ -576,27 +601,28 @@ pruneOutstandingToImmTip immTipSlot outstanding =
       (reverseSlotIndexByEbHash outstanding)
       (Map.keys belowBodies)
 
--- | Pretty-print the per-peer 'offerings' map (one tuple per peer: the EB-body
--- offers and the EB-tx-closure offers it has sent). Each offered EB hash is
--- shown truncated.
-prettyOfferings :: Show pid => Map (PeerId pid) (Set EbHash, Set EbHash) -> String
+-- | Pretty-print the per-peer 'offerings' map: for each peer, its offered points
+-- freshest-first, each tagged with the strongest kind offered. Hashes truncated.
+prettyOfferings :: Show pid => Map (PeerId pid) (Map LeiosPoint AlsoOfferedTxsClosure) -> String
 prettyOfferings m =
   unlines $
     map ("    [leios] " ++) $
-      [ show peer
-          ++ " bodies="
-          ++ shortSet bodies
-          ++ " closures="
-          ++ shortSet closures
-      | (peer, (bodies, closures)) <- Map.toList m
+      [ show peer ++ " " ++ shortOffers offers
+      | (peer, offers) <- Map.toList m
       ]
  where
-  shortSet s = case Set.toList s of
+  shortOffers offers = case Map.toDescList offers of
     [] -> "{}"
-    xs ->
+    points ->
       "{"
-        ++ unwords (map (take 8 . prettyEbHash) xs)
+        ++ unwords
+          [ show slot ++ ":" ++ take 8 (prettyEbHash h) ++ kindTag k
+          | (MkLeiosPoint slot h, k) <- points
+          ]
         ++ "}"
+  kindTag = \case
+    TxsClosureNotAlsoOffered -> "b"
+    TxsClosureAlsoOffered -> "c"
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
@@ -607,7 +633,6 @@ prettyLeiosOutstanding x =
       , "reverseSlotIndexByEbHash = " ++ show (Map.size reverseSlotIndexByEbHash)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
-      , "requestedBytesSize = " ++ show requestedBytesSize
       , ""
       ]
  where
@@ -617,15 +642,12 @@ prettyLeiosOutstanding x =
     , reverseSlotIndexByEbHash
     , requestedEbPeers
     , requestedBytesSizePerPeer
-    , requestedBytesSize
     } = x
 
 -- TODO which of these limits are allowed to be exceeded by at most one
 -- request?
 data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
-  { maxRequestedBytesSize :: BytesSize
-  -- ^ At most this many outstanding bytes requested from all peers together
-  , maxRequestedBytesSizePerPeer :: BytesSize
+  { maxRequestedBytesSizePerPeer :: BytesSize
   -- ^ At most this many outstanding bytes requested from each peer
   , maxRequestBytesSize :: BytesSize
   -- ^ At most this many outstanding bytes per request
@@ -646,8 +668,7 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
 demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
 demoLeiosFetchStaticEnv =
   MkLeiosFetchStaticEnv
-    { maxRequestedBytesSize = 50 * million
-    , maxRequestedBytesSizePerPeer = 5 * million
+    { maxRequestedBytesSizePerPeer = 5 * million
     , maxRequestBytesSize = 500 * thousand
     , maxRequestsPerEb = 1
     , maxRequestsPerTx = 1
