@@ -95,6 +95,7 @@ import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import Data.String (fromString)
+import Data.Text (Text)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
@@ -1375,6 +1376,9 @@ data TraceLeiosKernel
   | -- | An 'AcquiredEbTxs' notification arrived but 'runLeiosVoting' chose
     -- not to cast a vote; the reason identifies which precondition failed.
     TraceLeiosNotVoted {ebPoint :: LeiosPoint, reason :: LeiosNotVotedReason}
+  | -- | An EB's endorsed transactions all applied, so we are about to vote for
+    -- it. The split says how many txs the LeiosTxCache spared full validation.
+    TraceLeiosEbValidated {ebPoint :: LeiosPoint, reapplied :: Int, applied :: Int}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
   | -- | A forged RB both certifies an EB and announce a new one
@@ -1474,6 +1478,10 @@ data LeiosNotVotedReason
     TooLate
   | -- | We are not part of the current voting committee.
     NotOnCommittee
+  | -- | The endorsed transactions do not apply to the announcing RB's ledger
+    -- state, so this EB must not be certified. Carries the ledger's rendered
+    -- rejection.
+    EbTxsInvalid !Text
   deriving Show
 
 deriving instance Show TraceLeiosKernel
@@ -1619,6 +1627,14 @@ traceLeiosKernelToObject = \case
       , "ebSlot" .= ebSlot
       , "reason" .= notVotedReasonText reason
       ]
+  TraceLeiosEbValidated{ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash, reapplied, applied} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosEbValidated"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "reapplied" .= reapplied
+      , "applied" .= applied
+      ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
   TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->
@@ -1676,6 +1692,7 @@ notVotedReasonText = \case
   ChainTipDoesNotAnnounce -> Aeson.String "chainTipDoesNotAnnounce"
   TooLate -> Aeson.String "tooLate"
   NotOnCommittee -> Aeson.String "notOnCommittee"
+  EbTxsInvalid err -> Aeson.String $ "ebTxsInvalid: " <> err
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

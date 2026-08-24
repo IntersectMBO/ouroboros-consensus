@@ -71,7 +71,8 @@ import LeiosDemoDb
   , withLeiosDb
   )
 import LeiosDemoTypes
-  ( LeiosPoint (..)
+  ( LeiosNotVotedReason (..)
+  , LeiosPoint (..)
   , LeiosVote (..)
   , TraceLeiosKernel (..)
   , hashLeiosEb
@@ -79,8 +80,13 @@ import LeiosDemoTypes
   , prettyEbHash
   , prettyLeiosPoint
   )
-import Lens.Micro ((%~), (^.))
+import Lens.Micro ((%~), (.~), (^.))
 import Ouroboros.Consensus.Block (SlotNo (..), blockSlot, getHeader)
+import Ouroboros.Consensus.Block.Forging
+  ( BlockForging (..)
+  , ForgeBlockArgs (..)
+  , MkBlockForging (..)
+  )
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -88,7 +94,11 @@ import Ouroboros.Consensus.Cardano
   , ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
   )
-import Ouroboros.Consensus.Cardano.Block (pattern BlockDijkstra, pattern LedgerStateDijkstra)
+import Ouroboros.Consensus.Cardano.Block
+  ( pattern BlockDijkstra
+  , pattern GenTxDijkstra
+  , pattern LedgerStateDijkstra
+  )
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig, configLedger)
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -103,7 +113,7 @@ import Ouroboros.Consensus.Ledger.Extended
   , ExtLedgerState (..)
   , ledgerState
   )
-import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
+import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx, extractTxs)
 import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK)
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
@@ -115,6 +125,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   , shelleyLedgerState
   , shelleyLedgerTip
   )
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -133,6 +144,7 @@ import Test.QuickCheck
   , choose
   , conjoin
   , counterexample
+  , discard
   , forAll
   , ioProperty
   , property
@@ -188,6 +200,8 @@ tests =
         testProperty "basic functionality" prop_leios
     , adjustQuickCheckTests (`div` 10) $
         testProperty "late join" prop_leios_late_join
+    , adjustQuickCheckTests (`div` 10) $
+        testProperty "invalid endorsed tx is not certified" prop_leios_invalid_eb
     ]
 
 -- | Verify a suite of basic Leios ThreadNet invariants in a single run:
@@ -310,6 +324,9 @@ prop_leios seed =
   castVotes = Set.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosVoted{vote} -> Just vote
     _ -> Nothing
+
+  -- Which EB slot each announcing RB hash announced, so that a vote can be
+  -- dated: 'LeiosVote' carries only the hash it signed.
 
   -- Distinct (node, vote) pairs from 'TraceLeiosVoteAcquired'. A vote
   -- received multiple times by the same node (e.g. relayed back via a
@@ -573,6 +590,214 @@ prop_leios_late_join seed =
  where
   numSlots = 200 :: Word64
 
+-- | An EB whose closure cannot apply must never be certified: the committee is
+-- supposed to validate the endorsed transactions before signing a vote.
+--
+-- 4 nodes, 200 slots, node 1 adversarial. Only the EBs it announces carry the
+-- bogus tx — its RBs stay honest — so the chain keeps growing and the honest
+-- nodes' own EBs still certify, which is what makes 'poisonedNeverCertified'
+-- more than a statement about a stalled network.
+prop_leios_invalid_eb :: Seed -> Property
+prop_leios_invalid_eb seed
+  -- An unlucky seed where the adversary never led early enough to announce an
+  -- EB with time to diffuse. There is nothing to conclude either way, so don't
+  -- count the run rather than passing it vacuously.
+  | Set.null poisonedPointsToDiffuse = discard
+  -- Whether any honest EB reaches quorum is seed-dependent: votes scatter
+  -- across forks, so a 4-node run can finish with nothing certified at all.
+  -- Such a run cannot tell "the poisoned EB was rejected" apart from "nothing
+  -- was certified", so it is no evidence either -- discard rather than fail.
+  | Set.null honestCertifiedPoints = discard
+  | otherwise =
+      conjoin
+        [ adversaryWasEffective
+            & counterexample "[failed] adversaryWasEffective"
+        , poisonedNeverCertified
+            & counterexample "[failed] poisonedNeverCertified"
+        , poisonedNeverValidated
+            & counterexample "[failed] poisonedNeverValidated"
+        , validationDidRun
+            & counterexample "[failed] validationDidRun"
+        , isNothing testOutput.exceptionThrown
+            & counterexample "[failed] test threw an exception"
+            & prettyCounterexampleList "all traces" 120 (show <$> traces)
+        ]
+        & tabulate "poisoned EB turned down on" poisonedNotVotedReasons
+ where
+  adversary = CoreNodeId 1
+
+  numCoreNodes = NumCoreNodes 4
+
+  numSlots = 200 :: Word64
+
+  (testOutput, _) =
+    runThreadNet'
+      seed
+      (NumSlots numSlots)
+      numCoreNodes
+      (trivialNodeJoinPlan numCoreNodes)
+      (endorseInvalidTx adversary)
+
+  traces = testOutput.allTraces
+
+  -- 'TraceLeiosBlockForged' is emitted by the forger only, so the emitting
+  -- node id attributes each EB to whoever made it.
+  forgedBy nid = Set.fromList $ flip mapMaybe traces $ \case
+    FromNode nid' (FromLeios TraceLeiosBlockForged{slot, eb})
+      | nid' == nid ->
+          Just (MkLeiosPoint slot (hashLeiosEb eb))
+    _ -> Nothing
+
+  poisonedPoints = forgedBy adversary
+
+  -- Only EBs forged early enough to have 'minCertificationGap' slots left can
+  -- be expected to reach an honest node at all — the same bound 'prop_leios'
+  -- uses for diffusion.
+  poisonedPointsToDiffuse =
+    Set.filter
+      (\p -> unSlotNo p.pointSlotNo + minCertificationGap <= numSlots)
+      poisonedPoints
+
+  acquiredByHonest = Set.fromList $ flip mapMaybe traces $ \case
+    FromNode nid (FromLeios (TraceLeiosBlockTxsAcquired point _age))
+      | nid /= adversary -> Just point
+    _ -> Nothing
+
+  -- Ground truth from the adopted chains rather than from vote traces: a
+  -- CertRB certifies the EB that its parent's header announced.
+  certifiedPoints = foldMap certifiedEbPoints nodeChains
+
+  nodeChains = Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
+
+  -- Guard against a vacuous pass: a poisoned EB must actually have reached an
+  -- honest node's closure, or nobody was ever in a position to vote on one.
+  adversaryWasEffective =
+    not (Set.null (Set.intersection poisonedPointsToDiffuse acquiredByHonest))
+      & counterexample "no honest node acquired a poisoned EB's closure"
+      & prettyCounterexampleList "poisoned EBs (diffusion required)" 120 poisonedPointsToDiffuse
+      & prettyCounterexampleList "acquired by honest nodes" 120 acquiredByHonest
+
+  poisonedNeverCertified =
+    Set.intersection poisonedPoints certifiedPoints === Set.empty
+      & counterexample "a poisoned EB was certified"
+      & prettyCounterexampleList "poisoned EBs" 120 poisonedPoints
+      & prettyCounterexampleList "certified EBs" 120 certifiedPoints
+
+  -- The EBs certified in this run that were not the adversary's. Empty means
+  -- the run proves nothing, which is a discard above rather than a failure.
+  honestCertifiedPoints = Set.difference certifiedPoints poisonedPoints
+
+  -- A poisoned closure cannot apply, so no node may ever report it validated.
+  -- Unlike 'poisonedNeverCertified' this holds even when the vote never got
+  -- close — it is the invariant, not the outcome.
+  poisonedNeverValidated =
+    Set.null (Set.intersection poisonedPoints validatedPoints)
+      & counterexample "an EB carrying the bogus tx was reported as validated"
+      & prettyCounterexampleList "validated EBs" 120 validatedPoints
+
+  -- Non-vacuity for the validation path itself: some honest EB must have gone
+  -- through it. Without this the property would also pass on a build where
+  -- voting never validates anything.
+  validationDidRun =
+    not (Set.null (Set.difference validatedPoints poisonedPoints))
+      & counterexample "no EB's transactions were ever validated"
+      & prettyCounterexampleList "validated EBs" 120 validatedPoints
+
+  validatedPoints = Set.fromList $ flip mapMaybe leiosTraces $ \case
+    TraceLeiosEbValidated{ebPoint} -> Just ebPoint
+    _ -> Nothing
+
+  leiosTraces = [ev | FromNode _ (FromLeios ev) <- traces]
+
+  -- How the poisoned EBs were actually turned down: on their transactions, or
+  -- earlier on one of the cheap gates. Only the former exercises validation,
+  -- and which one happens depends on chain-tip timing, so report it rather
+  -- than requiring it.
+  poisonedNotVotedReasons =
+    [ reasonLabel reason
+    | FromNode _ (FromLeios TraceLeiosNotVoted{ebPoint, reason}) <- traces
+    , Set.member ebPoint poisonedPoints
+    ]
+
+  reasonLabel = \case
+    EbTxsInvalid{} -> "EbTxsInvalid"
+    ChainTipDoesNotAnnounce -> "ChainTipDoesNotAnnounce"
+    TooLate -> "TooLate"
+    NotOnCommittee -> "NotOnCommittee"
+
+-- | The EB points certified by a chain's CertRBs. A CertRB carries no
+-- announcement of its own for the EB it certifies; the announcement lives on
+-- its parent's header, so walk the chain carrying the previous announcement —
+-- the same traversal 'sumChainTxBytes' uses to resolve closures.
+certifiedEbPoints :: [CardanoBlock StandardCrypto] -> Set.Set LeiosPoint
+certifiedEbPoints = go Nothing
+ where
+  go _ [] = Set.empty
+  go prevAnn (blk : rest) =
+    here <> go (fst <$> headerLeiosAnnouncement (getHeader blk)) rest
+   where
+    here = case (blockLeiosCert blk, prevAnn) of
+      (Just _, Just point) -> Set.singleton point
+      _ -> Set.empty
+
+-- * Misbehaving nodes
+
+-- | Make one node endorse a transaction that can never apply, by appending
+-- 'invalidEbTx' to the txs it draws for the EB it is about to announce.
+-- 'fbRbTxs' is untouched, so the announcing RB itself stays valid.
+endorseInvalidTx ::
+  Functor m =>
+  -- | Which node misbehaves; every other node is left alone.
+  CoreNodeId ->
+  CoreNodeId ->
+  TestNodeInitialization m (CardanoBlock StandardCrypto) ->
+  TestNodeInitialization m (CardanoBlock StandardCrypto)
+endorseInvalidTx adversary nid tni
+  | nid /= adversary = tni
+  | otherwise =
+      tni{tniBlockForging = map (mapMkBlockForging poison) <$> tniBlockForging tni}
+ where
+  poison bf =
+    bf
+      { forgeBlock = \args ->
+          forgeBlock bf args{fbEbTxs = fbEbTxs args <> [invalidEbTx]}
+      }
+
+-- | A Dijkstra transaction that spends an output which does not exist: its
+-- input names the id of a transaction that is never applied anywhere, so the
+-- UTxO rule must reject it with 'BadInputsUTxO'.
+--
+-- Deliberately a /state-dependent/ failure rather than a missing-witness one:
+-- a missing witness is a static check, which is exactly what the reapply path
+-- is allowed to skip, so a witness-only failure would not pin down the
+-- behaviour we care about. This tx is unsigned for the same reason — the
+-- signature is irrelevant to the check that has to catch it.
+--
+-- Forced, because 'ForgedLeiosEb' and the forge path run 'NoThunks'
+-- invariants over what they are handed.
+-- 'assumeValidatedClosureTx' is how the adversary lies: it stamps the tx as
+-- mempool-validated so the forge will endorse it, which is exactly the claim a
+-- voter is now supposed to disbelieve.
+invalidEbTx :: Validated (GenTx (CardanoBlock StandardCrypto))
+invalidEbTx = assumeValidatedClosureTx (GenTxDijkstra (mkShelleyTx (force tx)))
+ where
+  tx :: Tx TopTx DijkstraEra
+  tx = mkBasicTx (mkBasicTxBody & inputsTxBodyL .~ Set.singleton phantomInput)
+
+  phantomInput = TxIn (txIdTx phantomTx) (TxIx 0)
+
+  -- Never submitted, never forged: its id therefore never appears in any UTxO.
+  phantomTx :: Tx TopTx DijkstraEra
+  phantomTx = mkBasicTx mkBasicTxBody
+
+-- | Rewrap the 'BlockForging' a 'MkBlockForging' allocates.
+mapMkBlockForging ::
+  Functor m =>
+  (BlockForging m blk -> BlockForging m blk) ->
+  MkBlockForging m blk ->
+  MkBlockForging m blk
+mapMkBlockForging f (MkBlockForging alloc) = MkBlockForging (f <$> alloc)
+
 -- | Independently compute cumulative tx bytes by resolving each block in the
 -- chain (filling in EB closures from the LeiosDB via 'inlineLeiosClosure')
 -- and summing individual 'sizeTxF' values per transaction.
@@ -684,19 +909,39 @@ runThreadNet ::
   NodeJoinPlan ->
   (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
 runThreadNet initSeed numSlots numCoreNodes joinPlan =
+  runThreadNet' initSeed numSlots numCoreNodes joinPlan (\_nid -> id)
+
+-- | 'runThreadNet' with a per-node tweak of the node's initialization, for
+-- tests that need one node to misbehave. Tweaking the whole
+-- 'TestNodeInitialization' rather than just its 'BlockForging' means a test can
+-- reach the protocol info and the crucial txs too; see 'endorseInvalidTx'.
+runThreadNet' ::
+  Seed ->
+  NumSlots ->
+  NumCoreNodes ->
+  NodeJoinPlan ->
+  ( forall m.
+    Functor m =>
+    CoreNodeId ->
+    TestNodeInitialization m (CardanoBlock StandardCrypto) ->
+    TestNodeInitialization m (CardanoBlock StandardCrypto)
+  ) ->
+  (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
+runThreadNet' initSeed numSlots numCoreNodes joinPlan tweakNodeInit =
   ( runTestNetwork
       testConfig
       testConfigB
       TestConfigMB
-        { nodeInfo = \(CoreNodeId nid) -> do
+        { nodeInfo = \coreNodeId@(CoreNodeId nid) -> do
             fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
             (protocolInfo, blockForging) <- protocolInfoCardano fs (cardanoProtocolParams nid)
-            pure
-              TestNodeInitialization
-                { tniProtocolInfo = protocolInfo
-                , tniCrucialTxs = []
-                , tniBlockForging = blockForging Tracer.nullTracer
-                }
+            pure $
+              tweakNodeInit coreNodeId $
+                TestNodeInitialization
+                  { tniProtocolInfo = protocolInfo
+                  , tniCrucialTxs = []
+                  , tniBlockForging = blockForging Tracer.nullTracer
+                  }
         , mkRekeyM = Nothing
         }
   , protocolInfo0
