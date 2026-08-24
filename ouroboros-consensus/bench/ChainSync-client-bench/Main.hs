@@ -28,6 +28,7 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import qualified Ouroboros.Consensus.HeaderValidation as HV
 import qualified Ouroboros.Consensus.Ledger.Extended as Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
@@ -201,8 +202,7 @@ inTheYearOneBillion =
 
 oracularLedgerDB :: Point B -> Extended.ExtLedgerState B mk
 oracularLedgerDB p =
-  Extended.ExtLedgerState
-    { Extended.headerState =
+  let headerState =
         HV.HeaderState
           { HV.headerStateTip = case pointToWithOriginRealPoint p of
               Origin -> Origin
@@ -216,12 +216,22 @@ oracularLedgerDB p =
                     }
           , HV.headerStateChainDep = ()
           }
-    , Extended.ledgerState =
+      ledgerState =
         TB.TestLedger
           { TB.lastAppliedPoint = p
           , TB.payloadDependentState = TB.EmptyPLDS
           }
-    }
+   in Extended.ExtLedgerState
+        { Extended.headerState =
+            headerState
+        , Extended.ledgerState =
+            ledgerState
+        , Extended.perasState =
+            initPerasState
+              (topLevelConfigLedger topConfig)
+              ledgerState
+              headerState
+        }
 
 -- | A convenient fact about 'TB.TestBlock'
 testBlockHashBlockNo :: TB.TestHash -> BlockNo

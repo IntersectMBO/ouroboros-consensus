@@ -56,7 +56,7 @@ import qualified Cardano.Chain.Update.Validation.Endorsement as UPE
 import qualified Cardano.Chain.Update.Validation.Interface as UPI
 import qualified Cardano.Chain.ValidationMode as CC
 import Cardano.Ledger.BaseTypes (unNonZero)
-import Cardano.Ledger.Binary (fromByronCBOR, toByronCBOR)
+import Cardano.Ledger.Binary (ToCBOR (..), fromByronCBOR, toByronCBOR)
 import Cardano.Ledger.Binary.Plain (encodeListLen, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -474,6 +474,7 @@ encodeByronExtLedgerState =
     encodeByronLedgerState
     encodeByronChainDepState
     encodeByronAnnTip
+    toCBOR
 
 encodeByronHeaderState :: HeaderState ByronBlock -> Encoding
 encodeByronHeaderState =

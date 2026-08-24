@@ -45,6 +45,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract
@@ -203,11 +204,14 @@ protocolInfoTPraosShelleyBased
   transitionCfg
   protVer =
     assertWithMsg (validateGenesis genesis) $ do
-      initLedgerState <- mkInitLedgerState
+      ledgerState <- mkInitLedgerState
+      let headerState = genesisHeaderState initChainDepState
+      let perasState = initPerasState ledgerConfig ledgerState headerState
       let initExtLedgerState =
             ExtLedgerState
-              { ledgerState = initLedgerState
-              , headerState = genesisHeaderState initChainDepState
+              { ledgerState
+              , headerState
+              , perasState
               }
       pure
         ( ProtocolInfo

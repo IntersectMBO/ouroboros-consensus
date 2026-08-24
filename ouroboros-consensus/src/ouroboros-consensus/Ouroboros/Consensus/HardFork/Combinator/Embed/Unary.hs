@@ -65,9 +65,11 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
@@ -355,12 +357,44 @@ instance Isomorphic (FlipTickedLedgerState mk) where
       . Telescope.TZ
       . State.Current History.initBound
 
+instance Isomorphic PerasState where
+  project PerasState{..} =
+    PerasState
+      { perasEpochContextResolver =
+          case perasEpochContextResolver of
+            PerasEpochContextResolverError err ->
+              PerasEpochContextResolverError err
+            PerasEpochContextResolver _hfcCurrBoundedContext _hfcPrevBoundedContext ->
+              -- NOTE: we initially used:
+              -- @
+              --   PerasEpochContextResolverError "Not yet implemented for the HFC"
+              -- @
+              -- But the default below save us from having to update golden files twice.
+              PerasEpochContextResolver NoPerasEnabled NoPerasEnabled
+      , latestPerasCertOnChainRound =
+          latestPerasCertOnChainRound
+      }
+
+  inject PerasState{..} =
+    PerasState
+      { perasEpochContextResolver =
+          -- NOTE: we initially used:
+          -- @
+          --   PerasEpochContextResolverError "Not yet implemented for the HFC"
+          -- @
+          -- But the default below save us from having to update golden files twice.
+          PerasEpochContextResolver NoPerasEnabled NoPerasEnabled
+      , latestPerasCertOnChainRound =
+          latestPerasCertOnChainRound
+      }
+
 instance Isomorphic (Flip ExtLedgerState mk) where
   project (Flip ExtLedgerState{..}) =
     Flip $
       ExtLedgerState
         { ledgerState = unFlip $ project $ Flip ledgerState
         , headerState = project headerState
+        , perasState = project perasState
         }
 
   inject (Flip ExtLedgerState{..}) =
@@ -368,6 +402,7 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ inject $ Flip ledgerState
         , headerState = inject headerState
+        , perasState = inject perasState
         }
 
 instance Isomorphic AnnTip where

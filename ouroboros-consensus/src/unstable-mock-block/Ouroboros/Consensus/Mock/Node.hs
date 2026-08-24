@@ -74,6 +74,10 @@ instance
   , Show (ForgeStateUpdateError (SimpleBlock SimpleMockCrypto ext))
   , Serialise ext
   , RunMockBlock SimpleMockCrypto ext
+  , ChainDepStateSupportsPeras
+      (ChainDepState (BlockProtocol (SimpleBlock SimpleMockCrypto ext)))
+  , ChainDepStateSupportsPeras
+      (Ticked (ChainDepState (BlockProtocol (SimpleBlock SimpleMockCrypto ext))))
   ) =>
   RunNode (SimpleBlock SimpleMockCrypto ext)
 
