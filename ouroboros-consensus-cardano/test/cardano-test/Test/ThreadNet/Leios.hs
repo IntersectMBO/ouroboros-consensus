@@ -238,6 +238,8 @@ prop_leios seed =
         & counterexample "[failed] propCertifying"
     , propCertifyAndAnnounce
         & counterexample "[failed] propCertifyAndAnnounce"
+    , propClosuresValidate
+        & counterexample "[failed] propClosuresValidate"
     ]
  where
   numNodes = 3 :: Int
@@ -347,6 +349,29 @@ prop_leios seed =
       & counterexample "no block both certified and announced"
       & counterexample ("certifying block slots: " <> show certificateBlocks)
       & counterexample ("announced-and-certified slots: " <> show announcedAndCertifiedSlots)
+
+  -- In an honest net every acquired closure must apply against the announcing
+  -- RB's ledger state. A rejection here means the voting thread validates
+  -- against the wrong state or the wrong slot, not that anything was invalid.
+  propClosuresValidate =
+    null closureRejections
+      & counterexample "a voter rejected an honestly-produced EB's transactions"
+      & prettyCounterexampleList "rejections" 240 closureRejections
+      -- The reapply-vs-apply split: how much full validation the LeiosTxCache
+      -- spared us. A forger's own EB should be entirely reapplied.
+      & tabulate
+        "EB closure validation (reapplied/total)"
+        [show reapplied <> "/" <> show (reapplied + applied) | (reapplied, applied) <- validatedSplits]
+
+  closureRejections =
+    [ (nid, ebPoint, err)
+    | FromNode nid (FromLeios TraceLeiosNotVoted{ebPoint, reason = EbTxsInvalid err}) <- traces
+    ]
+
+  validatedSplits =
+    flip mapMaybe leiosTraces $ \case
+      TraceLeiosEbValidated{reapplied, applied} -> Just (reapplied, applied)
+      _ -> Nothing
 
   propCertifying =
     conjoin
