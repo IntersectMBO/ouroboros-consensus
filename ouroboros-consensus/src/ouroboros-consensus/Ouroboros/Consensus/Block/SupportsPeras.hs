@@ -31,10 +31,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , defaultForgePerasCert
   , defaultVerifyPerasCert
 
-    -- * To be removed in favor of using per-blk definitions
-  , PerasCert' (..)
-  , PerasVote' (..)
-
     -- * To be removed in favor of using a 'PerasEpochContext' directly
   , PerasVoteStakeDistr (..)
 
@@ -73,7 +69,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
 import Control.Exception (assert)
@@ -84,7 +79,7 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
-import Data.Proxy (Proxy (..))
+import qualified Data.Set.NonEmpty as NESet
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -101,12 +96,15 @@ import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (PrivateKey, VoteCandidate)
 import Ouroboros.Consensus.Committee.Types (PoolId)
 import Ouroboros.Consensus.Peras.Cert.Class
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError (..))
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Peras.Void
 import Ouroboros.Consensus.Peras.Vote.Class
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Peras.Voting.Adapter
-import Ouroboros.Consensus.Util
 
 -- * Voting committee types for Peras
 
@@ -389,12 +387,11 @@ defaultVerifyPerasCert context cert = do
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
 instance StandardHash blk => BlockSupportsPeras blk where
-  type PerasCrypto blk = VoidPerasCrypto blk
-  type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
-  type PerasError blk = VoidPerasError blk
-
-  type PerasCert blk = PerasCert' blk
-  type PerasVote blk = PerasVote' blk
+  type PerasCrypto blk = MockPerasCrypto blk
+  type PerasVotingCommitteeScheme blk = MockPerasVotingCommitteeScheme blk
+  type PerasError blk = MockPerasError blk
+  type PerasCert blk = MockPerasCert blk
+  type PerasVote blk = MockPerasVote blk
 
   validatePerasCert params cert =
     Right
@@ -414,75 +411,15 @@ instance StandardHash blk => BlockSupportsPeras blk where
     Right $
       ValidatedPerasCert
         { vpcCert =
-            PerasCert
-              { pcCertRound = pvtRoundNo (pvcTarget (forgetQuorum votes))
-              , pcCertBoostedBlock = pvtBlock (pvcTarget (forgetQuorum votes))
+            MockPerasCert
+              { mockCertRound = pvtRoundNo (pvcTarget (forgetQuorum votes))
+              , mockCertBlock = pvtBlock (pvcTarget (forgetQuorum votes))
+              , mockCertVoters = NESet.fromList (pviSeatIndex <$> NEMap.keys (pvcVotes (forgetQuorum votes)))
               }
         , vpcCertBoost = perasWeight params
         }
 
   getPerasCertInBlock _ = Nothing
-
--- | NOTE: to be removed in favor of using per-blk definitions.
-data PerasCert' blk
-  = PerasCert
-  { pcCertRound :: PerasRoundNo
-  , pcCertBoostedBlock :: Point blk
-  }
-  deriving stock (Generic, Eq, Ord, Show)
-  deriving anyclass NoThunks
-
--- | NOTE: to be removed in favor of using per-blk definitions.
-data PerasVote' blk
-  = PerasVote
-  { pvVoteRound :: PerasRoundNo
-  , pvVoteBlock :: Point blk
-  , pvVoteVoterId :: PerasSeatIndex
-  }
-  deriving stock (Generic, Eq, Ord, Show)
-  deriving anyclass NoThunks
-
-instance ShowProxy blk => ShowProxy (PerasCert' blk) where
-  showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
-
-instance ShowProxy blk => ShowProxy (PerasVote' blk) where
-  showProxy _ = "PerasVote " <> showProxy (Proxy @blk)
-
-instance Serialise (HeaderHash blk) => Serialise (PerasCert' blk) where
-  encode PerasCert{pcCertRound, pcCertBoostedBlock} =
-    encodeListLen 2
-      <> encode pcCertRound
-      <> encode pcCertBoostedBlock
-  decode = do
-    decodeListLenOf 2
-    pcCertRound <- decode
-    pcCertBoostedBlock <- decode
-    pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
-
-instance Serialise (HeaderHash blk) => Serialise (PerasVote' blk) where
-  encode PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId} =
-    encodeListLen 3
-      <> encode pvVoteRound
-      <> encode pvVoteBlock
-      <> toCBOR pvVoteVoterId
-  decode = do
-    decodeListLenOf 3
-    pvVoteRound <- decode
-    pvVoteBlock <- decode
-    pvVoteVoterId <- fromCBOR
-    pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
-
-type instance BoostedBlock (PerasCert' blk) = Point blk
-type instance BoostedBlock (PerasVote' blk) = Point blk
-
-instance IsPerasCert (PerasCert' blk) blk where
-  getPerasCertRound = pcCertRound
-  getPerasCertBlock = pcCertBoostedBlock
-
-instance IsPerasVote (PerasVote' blk) blk where
-  getPerasVoteRound = pvVoteRound
-  getPerasVoteBlock = pvVoteBlock
-  getPerasVoteSeatIndex = pvVoteVoterId
 
 -- * Validated types
 
@@ -548,6 +485,11 @@ instance IsPerasError (VoidPerasError blk) blk where
     error "injectConversionError: VoidPerasError cannot be inhabited"
   injectQuorumNotReachedError _ =
     error "injectQuorumNotReachedError: VoidPerasError cannot be inhabited"
+
+instance IsPerasError (MockPerasError blk) blk where
+  injectVotingCommitteeError = PerasVotingCommitteeError
+  injectConversionError = PerasVotingConversionError
+  injectQuorumNotReachedError = PerasQuorumNotReachedError
 
 -- * Types and functions related to Peras vote collection and quorum checking
 

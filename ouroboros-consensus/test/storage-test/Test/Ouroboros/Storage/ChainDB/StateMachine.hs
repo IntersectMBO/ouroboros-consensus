@@ -125,6 +125,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
@@ -179,6 +181,7 @@ import Test.Util.ChunkInfo
 import Test.Util.Header (attachSlotTimeToFragment)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras.Mock
 import Test.Util.QuickCheck
 import Test.Util.RefEnv (RefEnv)
 import qualified Test.Util.RefEnv as RE
@@ -1275,15 +1278,18 @@ generator loe genBlock genPerasBlock m@Model{..} =
           ]
     -- Include the boosted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
+    -- Generate some voters to populate the certificate
+    voters <- genMockPerasVoterIndices
     -- Build the certificate
     now <- genRelativeTime
     let certWithTime =
           WithArrivalTime now $
             ValidatedPerasCert
               { vpcCert =
-                  PerasCert
-                    { pcCertRound = roundNo
-                    , pcCertBoostedBlock = blockPoint blk
+                  MockPerasCert
+                    { mockCertRound = roundNo
+                    , mockCertBlock = blockPoint blk
+                    , mockCertVoters = voters
                     }
               , vpcCertBoost = boost
               }
@@ -1368,10 +1374,10 @@ generator loe genBlock genPerasBlock m@Model{..} =
           WithArrivalTime now $
             ValidatedPerasVote
               { vpvVote =
-                  PerasVote
-                    { pvVoteRound = roundNo
-                    , pvVoteBlock = blockPoint blk
-                    , pvVoteVoterId = seatIndex
+                  MockPerasVote
+                    { mockVoteRound = roundNo
+                    , mockVoteBlock = blockPoint blk
+                    , mockVoteSeatIndex = seatIndex
                     }
               , vpvVoteWeight = weight
               }
