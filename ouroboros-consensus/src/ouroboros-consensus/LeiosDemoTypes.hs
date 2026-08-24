@@ -696,10 +696,6 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   -- so an adversarial peer can't drown us.
   , maxRequestBytesSize :: BytesSize
   -- ^ At most this many outstanding bytes per request
-  , maxRequestsPerEb :: Int
-  -- ^ At most this many outstanding requests for each EB body
-  , maxRequestsPerTx :: Int
-  -- ^ At most this many outstanding requests for each individual tx
   , maxJobBytesSize :: BytesSize
   -- ^ At most this many bytes of txs per job
   , maxJobTxCount :: Int
@@ -716,8 +712,6 @@ demoLeiosFetchStaticEnv =
     { maxRequestedBytesSizePerPeer = 5 * million
     , maxRequestedBytesSizePerBigLedgerPeer = 5 * 12 * million
     , maxRequestBytesSize = 500 * thousand
-    , maxRequestsPerEb = 1
-    , maxRequestsPerTx = 1
     , maxJobBytesSize = 64 * thousandBase2
     , maxJobTxCount = 20000   -- TODO do we want this to be low enough to matter?
     , maxLeiosNotifyIngressQueue = 1 * millionBase2

@@ -22,9 +22,9 @@
 -- an EB body it already holds. That storm — a held body being re-listed and
 -- re-requested — is what 'prop_neverRefetchesHeldBody' guards against; after each
 -- 'Decide' it checks that no body just requested is one we already hold.
--- Phrasing it as "already held" rather than a request count keeps it correct if
--- 'maxRequestsPerEb' rises above 1: requesting a not-yet-held body from several
--- peers is fine; re-requesting a held one is not.
+-- Phrasing it as "already held" rather than a request count is what makes it
+-- correct given there is no per-EB request cap: requesting a not-yet-held body
+-- from several peers is fine; re-requesting a held one is not.
 module Test.LeiosDemoLogic.Invariants (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
@@ -534,9 +534,9 @@ prop_invariants =
 -- EB body it already holds (one whose 'ebState' reads 'BodyAcquired'). The storm was precisely
 -- this — a held body re-listed and re-requested indefinitely.
 --
--- Stated as "already held" rather than a request count, so it stays correct if
--- 'maxRequestsPerEb' rises above 1: requesting a not-yet-held body from several
--- peers is fine; re-requesting a held one is not. (With 'nullLeiosTxCache', the
+-- Stated as "already held" rather than a request count, since there is no per-EB
+-- request cap: requesting a not-yet-held body from several peers is fine;
+-- re-requesting a held one is not. (With 'nullLeiosTxCache', the
 -- old LeiosTxCache-based "do we have it?" check would see nothing held and
 -- re-list/re-request endlessly; the 'ebStateHasBody' check is cache-independent.)
 prop_neverRefetchesHeldBody :: Property
