@@ -217,7 +217,7 @@ readEbClosure leiosConn ebHash = do
   -- EB closure". Report the absence here.
   ebBody <- leiosDbLookupEbBody leiosConn ebHash
   when (null ebBody) $ error (missingEbBodyError ebHash)
-  txs <- resolveLeiosClosure leiosConn ebHash
+  txs <- map snd <$> resolveLeiosClosure leiosConn ebHash
   pure (txs, sum (snd <$> ebBody))
 
 missingEbBodyError :: EbHash -> String

@@ -1550,7 +1550,7 @@ instance
   ResolveLeiosBlock (HardForkBlock (CardanoEras c))
   where
   resolveLeiosClosure db ebHash =
-    fmap GenTxDijkstra
+    fmap (fmap GenTxDijkstra)
       <$> resolveLeiosClosure db ebHash
 
   inlineLeiosClosure blk txs = case blk of

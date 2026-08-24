@@ -143,7 +143,7 @@ instance
             <> "; chain-sel selected a cert-RB without its EB closure. "
             <> "Refusing to apply as empty (would diverge UTxO)."
       Just closureEntries ->
-        pure $ mkShelleyTx . deserialiseLeiosTx . snd <$> closureEntries
+        pure $ fmap (mkShelleyTx . deserialiseLeiosTx) <$> closureEntries
 
   leiosClosureTxKeySets = getTransactionKeySets
 

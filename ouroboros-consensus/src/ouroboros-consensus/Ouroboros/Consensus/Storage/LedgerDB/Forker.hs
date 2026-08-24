@@ -800,8 +800,9 @@ data OCINStaleness = FreshOCIN | StaleOCIN
 -- blk' is correct.
 class ResolveLeiosBlock blk where
   -- | For a CertRB, look up the EB closure that the cert in this block's
-  -- body attests to and return it as a list of transactions (in the order
-  -- they appear in the EB). 'Nothing' for non-CertRB blocks.
+  -- body attests to and return its transactions, each paired with the
+  -- 'TxHash' it is stored under, in the order they appear in the EB. Empty
+  -- for non-CertRB blocks.
   --
   -- This is the apply-path variant: the caller applies the closure txs
   -- onto the parent ledger state via 'applyLeiosClosure', then applies
@@ -810,11 +811,15 @@ class ResolveLeiosBlock blk where
   -- folded into the unticked ledger state, mirroring how a non-CertRB
   -- Praos block's body txs would be applied — but sourced from the
   -- LeiosDB rather than the block body.
+  --
+  -- The 'TxHash' comes free with the read and is what keys the
+  -- 'LeiosTxCache', which the voting thread consults to decide whether a
+  -- closure tx still needs full validation.
   resolveLeiosClosure ::
     Monad m =>
     LeiosDbConnection m ->
     EbHash ->
-    m [GenTx blk]
+    m [(TxHash, GenTx blk)]
   resolveLeiosClosure _ _ = pure []
 
   -- | The ledger keys read by a closure tx — what 'forkerReadTables' needs
@@ -943,7 +948,7 @@ resolveLeiosBlock leiosDb cds b =
     Just (announcedPoint, _) ->
       -- NOTE: This produces a block that would fail full validation.
       resolveLeiosClosure leiosDb (pointEbHash announcedPoint)
-        <&> inlineLeiosClosure b
+        <&> inlineLeiosClosure b . map snd
 
 -- | The result of resolving an announced EB's closure and applying it a ledger state.
 data LeiosClosureApplied blk = LeiosClosureApplied
@@ -975,7 +980,7 @@ resolveAndApplyLeiosClosure ::
   m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
 resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
-  closureTxs <- resolveLeiosClosure leiosDb ebHash
+  closureTxs <- map snd <$> resolveLeiosClosure leiosDb ebHash
   -- UTXO-HD of the whole closure
   let closureKeys = foldMap leiosClosureTxKeySets closureTxs <> extraKeys
   closureVals <- readValues closureKeys
