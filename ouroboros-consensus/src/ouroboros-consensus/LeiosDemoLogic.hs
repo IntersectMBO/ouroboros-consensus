@@ -26,9 +26,11 @@ import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
+import Data.Foldable (fold)
 import Data.Functor (void, (<&>))
 import qualified Data.IntMap as IntMap
 import qualified Data.IntSet as IntSet
+import qualified Data.IntMap.NonEmpty as NEIntMap
 import Data.IntSet.NonEmpty (NEIntSet)
 import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.List (unfoldr)
@@ -411,11 +413,11 @@ assignPeer env mbCurrentSlot peerId offers acc =
           -- closure from this peer once we hold the body.
           let (acc2, dec2) = assignBody peerId ebHash slot (acc1, dec1)
            in (acc2, dec2, drops)
-        (Leios.BodyAcquired _body _jobPool, TxsClosureNotAlsoOffered) ->
+        (Leios.BodyAcquired _jobPool, TxsClosureNotAlsoOffered) ->
           -- We hold the body and the peer never offered the closure, so it
           -- can no longer help.
           pruneThisOffer
-        (Leios.BodyAcquired _body jobPool, TxsClosureAlsoOffered)
+        (Leios.BodyAcquired jobPool, TxsClosureAlsoOffered)
           | Jobs.nullLeiosJobPool jobPool ->
              -- whole datum in hand: the closure offer is useless now too
              pruneThisOffer
@@ -474,7 +476,7 @@ assignClosure env peerId ebHash st@(acc, dec) =
   case Map.lookup ebHash (Leios.ebState acc) of
     Nothing -> (st, MkWhetherPeerEbExhausted False)
     Just (Leios.MkEbState _slot Leios.NoBody{}) -> (st, MkWhetherPeerEbExhausted False)
-    Just (Leios.MkEbState slot (Leios.BodyAcquired body jobPool)) ->
+    Just (Leios.MkEbState slot (Leios.BodyAcquired jobPool)) ->
       let inflightJobs =
             maybe IntSet.empty NEIntSet.toSet $
               Map.lookup ebHash =<< Map.lookup peerId (Leios.requestedJobsPerPeer acc)
@@ -488,26 +490,23 @@ assignClosure env peerId ebHash st@(acc, dec) =
                       { Leios.ebState =
                           Map.insert
                             ebHash
-                            (Leios.MkEbState slot (Leios.BodyAcquired body jobPool'))
+                            (Leios.MkEbState slot (Leios.BodyAcquired jobPool'))
                             (Leios.ebState acc)
                       , Leios.requestedJobsPerPeer =
                           Map.insertWith
                             (Map.unionWith NEIntSet.union)
                             peerId
-                            (Map.singleton ebHash $ neIntSetFromNonEmpty $ fmap (\(jid, _, _) -> jid) nePicked)
+                            (Map.singleton ebHash $ NEIntSet.fromList $ fmap (\(Jobs.MkLeiosJobId i, _) -> i) nePicked)
                             (Leios.requestedJobsPerPeer acc)
                       , Leios.requestedBytesSizePerPeer =
                           Map.insertWith
                             (+)
                             peerId
-                            (sum $ fmap (\(_, _, bytes) -> bytes) nePicked)
+                            (sum $ fmap (\(_, Jobs.MkLeiosJob _ bytes _) -> bytes) nePicked)
                             (Leios.requestedBytesSizePerPeer acc)
                       }
                   reqs = batchTxsRequests env (MkLeiosPoint slot ebHash) nePicked
                in (acc', dec <> Seq.fromList reqs)
-  where
-    neIntSetFromNonEmpty :: NonEmpty Int -> NEIntSet
-    neIntSetFromNonEmpty (x :| xs) = NEIntSet.insertSet x $ IntSet.fromList xs
 
 -- | The announced body size of an EB we are still missing. All points of a hash
 -- share the size, so any one still listed in 'missingEbBodies' serves.
@@ -518,12 +517,13 @@ bodySize acc ebHash = do
 
 -- | Take least-requested-available jobs until the budget is spent or
 -- there are no more jobs that aren't already assigned to this peer. Also
--- returns true, in the latter case.
+-- returns true, in the latter case. Each pick carries the whole 'Jobs.LeiosJob'
+-- (id + commitment) so the request can validate its own response.
 pickJobs ::
   IntSet.IntSet ->
   Jobs.LeiosJobPool ->
   Int ->
-  ([(Int, IntSet.IntSet, BytesSize)], Jobs.LeiosJobPool, WhetherPeerEbExhausted)
+  ([(Jobs.LeiosJobId, Jobs.LeiosJob)], Jobs.LeiosJobPool, WhetherPeerEbExhausted)
 pickJobs inflightJobs0 jobPool0 budget0 =
   go inflightJobs0 jobPool0 budget0 []
  where
@@ -531,36 +531,37 @@ pickJobs inflightJobs0 jobPool0 budget0 =
     | budget <= 0 = (reverse acc, jobPool, MkWhetherPeerEbExhausted False)
     | otherwise = case Jobs.pickLeastRequestedJobExcept inflightJobs jobPool of
         Nothing -> (reverse acc, jobPool, MkWhetherPeerEbExhausted True)
-        Just (Jobs.MkLeiosJobId jid, Jobs.MkLeiosJob offsets bytes, jobPool') ->
+        Just (jid@(Jobs.MkLeiosJobId i), job@(Jobs.MkLeiosJob _offsets bytes _root), jobPool') ->
           go
-            (IntSet.insert jid inflightJobs)
+            (IntSet.insert i inflightJobs)
             jobPool'
             (budget - fromIntegral bytes)
-            ((jid, offsets, bytes) : acc)
+            ((jid, job) : acc)
 
--- | Partition the N picked jobs (pick order) into M <= N requests, each within
--- 'maxRequestBytesSize'. Seeding each batch from its first job keeps the
--- accumulating job-id set non-empty, so no empty-batch handling is needed (a
--- lone job above the cap simply forms its own request).
-batchTxsRequests :: LeiosFetchStaticEnv -> LeiosPoint -> NonEmpty (Int, IntSet.IntSet, BytesSize) -> [LeiosFetchRequest]
-batchTxsRequests env point ((jid0, offsets0, bytes0) :| rest0) =
-  go offsets0 (NEIntSet.singleton jid0) (fromIntegral bytes0) rest0
+-- | Partition the picked jobs into requests, each within 'maxRequestBytesSize'
+-- (a lone job above the cap simply forms its own request). Each request carries
+-- the jobs it covers with their commitments; the wire bitmap is derived from the
+-- union of their offsets at send time. Order within a request is irrelevant
+-- (union offsets, set of ids, independent per-job validation).
+batchTxsRequests ::
+  LeiosFetchStaticEnv -> LeiosPoint -> NonEmpty (Jobs.LeiosJobId, Jobs.LeiosJob) -> [LeiosFetchRequest]
+batchTxsRequests env point (j0 :| rest0) =
+  go j0 [] (jobBytes j0) rest0
  where
   cap = fromIntegral (Leios.maxRequestBytesSize env) :: Int
-  go curOffsets curJids curBytes = \case
-    [] -> [flush curOffsets curJids]
-    (jid, offsets, bytes) : rest
-      | curBytes + fromIntegral bytes > cap ->
-          flush curOffsets curJids
-            : go offsets (NEIntSet.singleton jid) (fromIntegral bytes) rest
-      | otherwise ->
-          go
-            (IntSet.union offsets curOffsets)
-            (NEIntSet.insert jid curJids)
-            (curBytes + fromIntegral bytes)
-            rest
-  flush curOffsets curJids =
-    LeiosBlockTxsRequest (MkLeiosBlockTxsRequest point (offsetsToBitmap curOffsets) curJids)
+  jobBytes (_jid, Jobs.MkLeiosJob _offs bytes _root) = fromIntegral bytes :: Int
+  -- 'accRev' are the batch's jobs after its seed; a batch is always non-empty.
+  -- 'NEIntMap.fromList' keys by the raw job id; the picks are distinct ids, so no
+  -- merge.
+  flush seed accRev =
+    LeiosBlockTxsRequest $
+      MkLeiosBlockTxsRequest
+        point
+        (NEIntMap.fromList (fmap (\(Jobs.MkLeiosJobId i, job) -> (i, job)) (seed :| reverse accRev)))
+  go seed accRev _curBytes [] = [flush seed accRev]
+  go seed accRev curBytes (j : rest)
+    | curBytes + jobBytes j > cap = flush seed accRev : go j [] (jobBytes j) rest
+    | otherwise = go seed (j : accRev) (curBytes + jobBytes j) rest
 
 -- | The offset set as the wire bitmap (chunk index, 64-bit mask).
 offsetsToBitmap :: IntSet.IntSet -> [(Word16, Word64)]
@@ -672,13 +673,16 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db peerId 
             StrictSTM.atomically $
               LazySTM.writeTQueue responseQ (PendingBlockResponse req eb)
         )
-    LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p bitmaps _jobIds) ->
-      LF.MkSomeLeiosFetchJob
-        (LF.MsgLeiosBlockTxsRequest p bitmaps)
-        ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) ->
-            StrictSTM.atomically $
-              LazySTM.writeTQueue responseQ (PendingBlockTxsResponse req txs)
-        )
+    LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p jobs) ->
+      -- The wire request is just the point + bitmap; the bitmap is the union of
+      -- the covered jobs' offsets (the jobs and their commitments stay local).
+      let bitmaps = offsetsToBitmap (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
+       in LF.MkSomeLeiosFetchJob
+            (LF.MsgLeiosBlockTxsRequest p bitmaps)
+            ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) ->
+                StrictSTM.atomically $
+                  LazySTM.writeTQueue responseQ (PendingBlockTxsResponse req txs)
+            )
 
 -----
 
@@ -842,12 +846,15 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
         let !jobPool =
               -- TODO should this calculation be deferred until the first offer
               -- arrives?
+              -- each job commits to its covered tx hashes (so its response can be
+              -- validated without the body); 'misses' is offset -> (tx hash,
+              -- on-wire size).
               Jobs.mkLeiosJobPool
                 -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
                 (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
                 (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
-                (IntMap.map snd misses)
-            !outstanding' = Leios.insertAcquiredEbBody ebHash eb jobPool outstandingCleaned
+                misses
+            !outstanding' = Leios.insertAcquiredEbBody ebHash jobPool outstandingCleaned
         pure (outstanding', bodyClass)
   void $ MVar.tryPutMVar readyVar ()
   case source of
@@ -892,8 +899,8 @@ removePeerFromOutstanding peerId o =
   releaseJobs jobIds (Leios.MkEbState slot fetchState) =
     Leios.MkEbState slot $ case fetchState of
       Leios.NoBody -> Leios.NoBody
-      Leios.BodyAcquired body jobPool ->
-        Leios.BodyAcquired body $!
+      Leios.BodyAcquired jobPool ->
+        Leios.BodyAcquired $!
           NEIntSet.foldl'
             (flip $ Jobs.unpickJob . Jobs.MkLeiosJobId)
             jobPool
@@ -970,8 +977,8 @@ completeTxRequest peerId ebHash jobIds o =
   completeInJobPool (Leios.MkEbState slot fetchState) =
     Leios.MkEbState slot $ case fetchState of
       Leios.NoBody -> Leios.NoBody
-      Leios.BodyAcquired body jobPool ->
-        Leios.BodyAcquired body $!
+      Leios.BodyAcquired jobPool ->
+        Leios.BodyAcquired $!
           NEIntSet.foldl' (flip $ Jobs.completeJob . Jobs.MkLeiosJobId) jobPool jobIds
   dropJobs held =
     NEIntSet.nonEmptySet (IntSet.difference (NEIntSet.toSet held) (NEIntSet.toSet jobIds))
@@ -990,9 +997,51 @@ bitmapOffsets = unfoldr nextOffset
       Nothing -> nextOffset k
       Just (i, bitmap') -> Just (64 * fromIntegral idx + i, (idx, bitmap') : k)
 
+-- | Cheap validation of one covered job against the commitment the request
+-- carries for it: its arriving txs match its offset count (popcount) and its
+-- total byte size.
+--
+-- Does /no/ hashing so that redundant\/"hedge" requests doesn't contend for
+-- CPU. A peer that over-sends to create extra work is punished even if we
+-- already did the (right amount of) CPU work for a peer that replied earlier,
+-- without pointlessly repeating that CPU work.
+checkJobSize ::
+  IntMap.IntMap (LeiosTx, BS.ByteString) ->
+  Jobs.LeiosJobId ->
+  Jobs.LeiosJob ->
+  Either String ()
+checkJobSize aligned (Jobs.MkLeiosJobId jid) (Jobs.MkLeiosJob offs expectedBytes _root)
+  | IntMap.size sub /= IntSet.size offs =
+      Left $ "MsgLeiosBlockTxs job " ++ show jid ++ " count mismatch"
+  | fromIntegral (sum [BS.length bs | (_tx, bs) <- IntMap.elems sub]) /= expectedBytes =
+      Left $ "MsgLeiosBlockTxs job " ++ show jid ++ " byte-size mismatch"
+  | otherwise = Right ()
+ where
+  -- just the txs from /this/ job
+  sub = IntMap.restrictKeys aligned offs
+
+-- | Content validation of one /pending/ job we intend to ingest: hash its
+-- arriving txs and check their root hash against the request's commitment,
+--
+-- Only runs for the first reply for a job. Runs /in addition to/
+-- 'checkJobSize'.
+ingestJob ::
+  IntMap.IntMap (LeiosTx, BS.ByteString) ->
+  Jobs.LeiosJobId ->
+  Jobs.LeiosJob ->
+  Either String [(TxHash, BS.ByteString)]
+ingestJob aligned (Jobs.MkLeiosJobId jid) (Jobs.MkLeiosJob offs _expectedBytes expectedRoot)
+  | Jobs.jobRootHashOfTxHashes (map fst hashed) /= expectedRoot =
+      Left $ "MsgLeiosBlockTxs job " ++ show jid ++ " root-hash mismatch"
+  | otherwise = Right hashed
+ where
+  -- 'IntMap.elems' is ascending by offset -- the order the root hash commits to.
+  hashed = [(hashLeiosTx tx, bs) | (tx, bs) <- IntMap.elems (IntMap.restrictKeys aligned offs)]
+
 -----
 
 processLeiosBlockTxs ::
+  forall pid m.
   ( Ord pid
   , IOLike m
   ) =>
@@ -1006,85 +1055,97 @@ processLeiosBlockTxs ::
   LeiosBlockTxsSource pid ->
   V.Vector LeiosTx ->
   m ()
-processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source txs = do
-  let txBytess = V.map cbor txs
-      batchBytes = V.sum (V.map BS.length txBytess)
-  -- The tx hashes: for a forge, from the body directly (position-aligned with the
-  -- 'txs' vector); for an arrival, by expanding the request's offset bitmap
-  -- against the EB body we hold (the request no longer carries the hashes).
-  -- Validated against the arrived txs below.
-  txHashes <- case source of
-    ForgedTxs _ eb -> pure $ V.map fst (leiosEbTxs eb)
-    ReceivedTxsFrom _ (MkLeiosBlockTxsRequest point bitmaps _jobIds) -> do
-      outstanding <- MVar.readMVar outstandingVar
-      case Map.lookup point.pointEbHash (Leios.ebState outstanding) of
-        Just (Leios.MkEbState _slot (Leios.BodyAcquired eb _jobPool)) ->
-          pure $ V.fromList [fst (leiosEbTxs eb V.! off) | off <- bitmapOffsets bitmaps]
-        _ ->
-          -- We only request txs for an EB whose body we hold; a body-prune race
-          -- could in principle reach here. TODO disconnecting is harsh.
-          error "MsgLeiosBlockTxs arrived but its EB body is no longer held"
-  -- validate it (an arrival only; a forge's data is self-produced)
-  -- TODO: could validate the returned point + bitmaps too
-  case source of
-    ForgedTxs{} -> pure ()
-    ReceivedTxsFrom _ req -> do
-      traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
-      let invalidReply reason =
-            traceWith ktracer (TraceLeiosFetchTxsArrival (fetchArrivalInvalid (fromIntegral batchBytes)))
-              >> error reason
-      when (V.length txs /= V.length txHashes) $
-        invalidReply $ "MsgLeiosBlockTxs length mismatch: " ++ show (V.length txs, V.length txHashes)
-      let txHashes' = V.map hashLeiosTx txs
-      when (txHashes' /= txHashes) $ do
-        let mismatches = V.toList $ V.findIndices id $ V.zipWith (/=) txHashes txHashes'
-        invalidReply $ "MsgLeiosBlockTxs hash mismatches: " ++ show mismatches
-  -- ingest: write to the LeiosDb, then the tx-cache. A forge tags its txs applied
-  -- (drawn from its validated mempool, so known-valid) and emits no fetch-arrival
-  -- telemetry; a peer's delivery tags them unapplied and is attributed to the
-  -- arrival panels. The cache insert follows the LeiosDb write, which is what the
-  -- index currently reflects.
-  traceException tracer TraceLeiosPeerDbException $ do
-    completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
-    forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-    case source of
-      ForgedTxs{} ->
-        withLockedInsertAppliedTx txCache $ \w0 step ->
-          V.foldM' (\w txh -> step w txh ()) w0 txHashes
-      ReceivedTxsFrom{} -> do
-        -- The handle buckets each tx's bytes by its prior state in the same
-        -- locked pass -- coherent under concurrent duplicate deliveries; the
-        -- returned partition sums to the batch size.
-        txArrival <-
-          withLockedInsertUnappliedTx txCache $ \w0 step ->
-            V.foldM'
-              (\w (txh, sz) -> step w txh sz ())
-              w0
-              (V.zip txHashes (V.map (fromIntegral . BS.length) txBytess))
-        traceWith ktracer $ TraceLeiosFetchTxsArrival txArrival
-  -- update NodeKernel state
-  MVar.modifyMVar_ outstandingVar $ \outstanding -> do
-    case source of
-      ForgedTxs{} ->
-        pure $
-          outstanding
-      ReceivedTxsFrom peerId (MkLeiosBlockTxsRequest point _bitmaps jobIds) -> do
-        -- 'refundTxRequest' reverses this peer's per-request byte accounting (but
-        -- skips it if the peer was already cancelled in bulk by a disconnect);
-        -- 'completeTxRequest' removes the now-fetched jobs from the EB's jobPool and
-        -- from this peer's in-flight set, so they are never re-requested.
-        pure $
-          completeTxRequest peerId point.pointEbHash jobIds $
-            refundTxRequest peerId (fromIntegral batchBytes) $
-              outstanding
-  void $ MVar.tryPutMVar readyVar ()
-  case source of
-    ForgedTxs{} -> pure ()
-    ReceivedTxsFrom _ req ->
-      traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
+processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source txs = case source of
+  ForgedTxs _point eb -> do
+    -- Self-produced: no validation, no fetch bookkeeping, no arrival telemetry.
+    -- The body is at hand, so the tx hashes come straight from it (position-aligned
+    -- with 'txs'), and the txs are tagged applied (drawn from a validated mempool).
+    let toIngest = zip (V.toList (V.map fst (leiosEbTxs eb))) (V.toList (V.map cbor txs))
+    traceException tracer TraceLeiosPeerDbException $ do
+      completed <- leiosDbInsertTxs db toIngest
+      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+      withLockedInsertAppliedTx txCache $ \w0 step ->
+        foldM (\w (txh, _bs) -> step w txh ()) w0 toIngest
+    void $ MVar.tryPutMVar readyVar ()
+  ReceivedTxsFrom peerId req@(MkLeiosBlockTxsRequest point jobs) -> do
+    traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
+    let txBytess = V.map cbor txs
+        batchBytes = V.sum (V.map BS.length txBytess)
+        invalidReply :: String -> m a
+        invalidReply reason =
+          traceWith ktracer (TraceLeiosFetchTxsArrival (fetchArrivalInvalid (fromIntegral batchBytes)))
+            >> error reason
+        -- The union of the covered jobs' offsets, ascending -- the order the peer
+        -- decoded our bitmap into, so it aligns position-wise with the arriving
+        -- txs. No hashing here: 'aligned' is just @offset -> (tx, tx bytes)@.
+        offsetsSet = foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs
+    when (V.length txs /= IntSet.size offsetsSet) $
+      invalidReply $ "MsgLeiosBlockTxs count mismatch: " ++ show (V.length txs, IntSet.size offsetsSet)
+    let aligned :: IntMap.IntMap (LeiosTx, BS.ByteString)
+        aligned = IntMap.fromList $ zip (IntSet.toAscList offsetsSet) (zip (V.toList txs) (V.toList txBytess))
+    -- Cheap checks (count + total bytes, no hashing) for every covered job, so an
+    -- over-send is caught and punished even for a job we have since completed.
+    -- 'foldrWithKey' short-circuits on the first rejection.
+    either invalidReply pure $
+      NEIntMap.foldrWithKey
+        (\i job acc -> checkJobSize aligned (Jobs.MkLeiosJobId i) job >> acc)
+        (Right ())
+        jobs
+    -- Only jobs still pending in the jobPool are content-validated (root hash) and
+    -- ingested; a redundant delivery of a completed job -- or a response for an EB
+    -- pruned mid-flight -- is discarded without hashing. Read the jobPool once; the
+    -- read-then-complete race is benign (completion is monotonic, and re-ingest is
+    -- idempotent).
+    outstanding0 <- MVar.readMVar outstandingVar
+    let pendingJobs = case Map.lookup point.pointEbHash (Leios.ebState outstanding0) of
+          Nothing ->
+            IntMap.empty
+          Just (Leios.MkEbState _slot Leios.NoBody) ->
+            IntMap.empty
+          Just (Leios.MkEbState _slot (Leios.BodyAcquired jobPool)) ->
+            Jobs.restrictToPending (NEIntMap.toMap jobs) jobPool
+        -- The covered jobs we won't ingest -- an earlier delivery already
+        -- completed them (or the EB was pruned). Their txs did arrive, and being
+        -- from a completed job they are already held, so account their (committed,
+        -- 'checkJobSize'-verified) bytes as 'fetchArrivalExtra'. This mirrors how a
+        -- concurrent duplicate delivery already lands in that bucket via the cache.
+        redundantExtra =
+          fetchArrivalExtra $
+            IntMap.foldr
+              (\(Jobs.MkLeiosJob _ bytes _) acc -> bytes + acc)
+              0
+              (IntMap.difference (NEIntMap.toMap jobs) pendingJobs)
+    toIngest <-
+      either invalidReply (pure . fold) $
+        IntMap.traverseWithKey (\i job -> ingestJob aligned (Jobs.MkLeiosJobId i) job) pendingJobs
+    -- ingest the validated txs (unapplied); the DB write precedes the cache
+    -- insert. The cache handle buckets each tx by its prior state in one locked
+    -- pass --- coherent under concurrent duplicate deliveries.
+    --
+    -- NB two peers delivering the same (redundantly-requested) job at once can
+    -- both ingest it: the jobPool read and 'completeTxRequest' aren't atomic
+    -- across threads. That's harmless --- the DB insert is idempotent and the
+    -- cache tolerates duplicates --- so we accept it rather than add a
+    -- claim-under-lock step; only arrival telemetry double-counts.
+    traceException tracer TraceLeiosPeerDbException $ do
+      completed <- leiosDbInsertTxs db toIngest
+      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+      txArrival <-
+        withLockedInsertUnappliedTx txCache $ \w0 step ->
+          foldM (\w (txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
+      traceWith ktracer $ TraceLeiosFetchTxsArrival (txArrival <> redundantExtra)
+    -- 'refundTxRequest' reverses this peer's per-request byte accounting (but skips
+    -- it if the peer was already cancelled in bulk by a disconnect);
+    -- 'completeTxRequest' removes the now-fetched jobs from the EB's job pool and
+    -- from this peer's in-flight set, so they are never re-requested.
+    MVar.modifyMVar_ outstandingVar $
+      pure
+        . completeTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs)
+        . refundTxRequest peerId (fromIntegral batchBytes)
+    void $ MVar.tryPutMVar readyVar ()
+    traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
 
 -----
-
 
 -- | Record an offered EB body: mark it as something to fetch and mark the peer
 -- as a serving candidate, then wake the fetch logic. Shared by the explicit

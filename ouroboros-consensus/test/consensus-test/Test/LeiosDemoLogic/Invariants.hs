@@ -42,6 +42,7 @@ import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import Data.Foldable (toList)
+import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
@@ -102,18 +103,19 @@ tests =
     , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
         let eb = ebOf [0, 1]
             h = hashLeiosEb eb
-            jobPool = Jobs.mkLeiosJobPool 1000 10 mempty -- an empty job pool suffices here
+            -- an empty job pool suffices here
+            jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
             -- announce at slot 5, then again at the smaller slot 3, and acquire
             o =
-              Leios.insertAcquiredEbBody h eb jobPool $
+              Leios.insertAcquiredEbBody h jobPool $
                 Leios.recordMaxAnnouncementSlot h (SlotNo 3) $
                   Leios.recordMaxAnnouncementSlot h (SlotNo 5) $
                     (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
         -- the greater slot is retained, not the last-recorded one
-        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired eb jobPool))
+        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired jobPool))
         -- kept while the greatest slot (5) is at/above the immutable tip (4)
         Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 4) o)))
-          @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired eb jobPool))
+          @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired jobPool))
         -- dropped once the greatest slot (5) is below the immutable tip (6)
         Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 6) o)))
           @?= Nothing
@@ -306,16 +308,20 @@ referencedOffers o =
     ]
 
 -- | Force the requests to a scalar, so any @impossible!@ hidden in a thunk
--- surfaces when the caller 'evaluate's it. Touches each tx request's offset
--- bitmap and each EB request's size.
+-- surfaces when the caller 'evaluate's it. Touches each tx request's covered
+-- job offsets and each EB request's size.
 forceDecisions :: Map.Map peer (NESeq Leios.LeiosFetchRequest) -> Int
 forceDecisions m =
   sum [reqScore req | reqs <- Map.elems m, req <- toList reqs]
  where
   reqScore = \case
     Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest _p sz) -> fromIntegral sz
-    Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p bitmaps _jobIds) ->
-      sum [fromIntegral idx + fromIntegral mask | (idx, mask) <- bitmaps]
+    Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p jobs) ->
+      sum
+        [ off
+        | Jobs.MkLeiosJob offs _bytes _root <- toList jobs
+        , off <- IntSet.toList offs
+        ]
 
 -- | The 'EbHash'es the requests fetch an EB body for (one entry per request; with
 -- no per-EB cap, an EB may appear once per offering peer).

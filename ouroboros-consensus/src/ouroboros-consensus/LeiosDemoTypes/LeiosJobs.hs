@@ -1,4 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | The unit of Leios tx-fetch work: 'LeiosJob's and the per-EB 'LeiosJobPool'
 -- that schedules them.
@@ -7,13 +11,21 @@
 --
 -- A leaf module (imported by "LeiosDemoTypes") so the pool's structural
 -- operations -- greedy partition, least-requested selection, multiplicity
--- bookkeeping -- stay together and depend only on 'IntMap'/'IntSet'.
+-- bookkeeping -- stay together, along with the 'TxHash' carrier and the
+-- 'JobRootHash' commitment it computes (so the fetch machinery can name tx hashes
+-- and their commitment without a cycle through "LeiosDemoTypes").
 --
 -- The key benefit of jobs is to minimize the bookkeeping footprint and churn.
 --
 -- TO BE IMPORTED QUALIFIED
 module LeiosDemoTypes.LeiosJobs (module LeiosDemoTypes.LeiosJobs) where
 
+import qualified Cardano.Crypto.Hash as Hash
+import Control.DeepSeq (NFData)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as BS16
+import qualified Data.ByteString.Char8 as BS8
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.IntSet (IntSet)
@@ -21,15 +33,42 @@ import qualified Data.IntSet as IntSet
 import Data.IntSet.NonEmpty (NEIntSet)
 import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.Word (Word32)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+
+-- | Hash of a Leios transaction (the 'Cardano.Crypto.Leios.HASH' of its bytes).
+newtype TxHash = MkTxHash ByteString
+  deriving stock (Eq, Ord, Generic)
+  deriving anyclass (NFData, NoThunks)
+
+instance Show TxHash where
+  show = prettyTxHash
+
+prettyTxHash :: TxHash -> String
+prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
+
+-- | A job's commitment to which txs it covers: the Blake2b-256 hash of the
+-- concatenated tx hashes (in ascending offset order), via
+-- 'jobRootHashOfTxHashes'. It lets an arriving @MsgLeiosBlockTxs@ be validated
+-- against the job /without/ retaining the EB body -- crucial, since up to ~10k
+-- EBs (each up to ~512 kB) could have txs in flight at once, far too much to
+-- hold in memory.
+newtype JobRootHash = MkJobRootHash ByteString
+  deriving (Eq, Show)
+
+jobRootHashOfTxHashes :: [TxHash] -> JobRootHash
+jobRootHashOfTxHashes =
+  MkJobRootHash . Hash.hashToBytes . Hash.hashWith @Hash.Blake2b_256 id . BS.concat . map (\(MkTxHash bs) -> bs)
 
 -- | A unit of tx-fetch work: the EB-body offsets fetched by one
--- @MsgLeiosBlockTxsRequest@ (a bitfield over the body's tx vector), plus the
--- total on-the-wire byte size of those txs (for the fetch byte budget).
+-- @MsgLeiosBlockTxsRequest@ (a bitfield over the body's tx vector), the total
+-- on-the-wire byte size of those txs (for the fetch byte budget), and the
+-- 'JobRootHash' commitment used to validate the response.
 data LeiosJob =
     -- TODO the offset set is immutable and only ever fully traversed, so a packed
     -- bitfield (a strict ByteString or unboxed Word64 vector) would be more
     -- compact than the 'IntSet' Patricia tree.
-    MkLeiosJob !IntSet !Word32
+    MkLeiosJob !IntSet !Word32 !JobRootHash
   deriving (Eq, Show)
 
 -- | Identifies a 'LeiosJob' within its 'LeiosJobPool' (0-based, stable for the
@@ -59,18 +98,22 @@ data LeiosJobPool = MkLeiosJobPool
   }
   deriving (Eq, Show)
 
--- | Partition the missing txs (each given by its offset within the EB body and
--- its on-the-wire byte size) into jobs, greedily in offset order: a job grows
+-- | Partition the missing txs into jobs, greedily in offset order: a job grows
 -- until adding the next tx would exceed @maxJobBytes@ or @maxJobTxCount@, but
 -- always holds at least one tx (so an oversized tx would form a solo job, in
 -- the unintended case of max tx size exceeding max job size).
-mkLeiosJobPool :: Word32 -> Int -> IntMap Word32 -> LeiosJobPool
+--
+-- Each miss is its offset within the EB body mapped to its tx hash and its
+-- on-the-wire byte size. Each job's 'JobRootHash' commitment is computed here via
+-- 'jobRootHashOfTxHashes' over its covered tx hashes.
+mkLeiosJobPool ::
+  Word32 -> Int -> IntMap (TxHash, Word32) -> LeiosJobPool
 mkLeiosJobPool maxJobBytes maxJobTxCount misses =
   MkLeiosJobPool
     { jobs =
         IntMap.fromList
-          [ (jid, MkLeiosJobState (MkLeiosJob offs bytes) (MkLeiosJobMultiplicity 0))
-          | (jid, (offs, bytes)) <- ijbs
+          [ (jid, MkLeiosJobState job (MkLeiosJobMultiplicity 0))
+          | (jid, job) <- ijbs
           ]
     , jobsByMultiplicity =
         maybe IntMap.empty (IntMap.singleton 0) $
@@ -79,13 +122,15 @@ mkLeiosJobPool maxJobBytes maxJobTxCount misses =
  where
   ijbs = zip [0 ..] $ case IntMap.toAscList misses of
     [] -> []
-    ((off0, sz0) : rest) -> grow (IntSet.singleton off0) sz0 1 rest
+    ((off0, (h0, sz0)) : rest) -> grow (IntSet.singleton off0) sz0 1 [h0] rest
 
-  grow !cur !bytes !_count [] = [(cur, bytes)]
-  grow !cur !bytes !count ((off, sz) : rest)
+  flush !cur !bytes hashesRev = MkLeiosJob cur bytes (jobRootHashOfTxHashes (reverse hashesRev))
+
+  grow !cur !bytes !_count hashesRev [] = [flush cur bytes hashesRev]
+  grow !cur !bytes !count hashesRev ((off, (h, sz)) : rest)
     | count < maxJobTxCount && bytes + sz <= maxJobBytes =
-        grow (IntSet.insert off cur) (bytes + sz) (count + 1) rest
-    | otherwise = (cur, bytes) : grow (IntSet.singleton off) sz 1 rest
+        grow (IntSet.insert off cur) (bytes + sz) (count + 1) (h : hashesRev) rest
+    | otherwise = flush cur bytes hashesRev : grow (IntSet.singleton off) sz 1 [h] rest
 
 -- | No unfinished jobs remain -- the EB's whole tx-closure has been fetched.
 nullLeiosJobPool :: LeiosJobPool -> Bool
@@ -95,6 +140,13 @@ nullLeiosJobPool = IntMap.null . jobs
 lookupJob :: LeiosJobId -> LeiosJobPool -> Maybe LeiosJob
 lookupJob (MkLeiosJobId jid) pool =
   (\(MkLeiosJobState job _multiplicity) -> job) <$> IntMap.lookup jid (jobs pool)
+
+-- | Restrict a map keyed by 'LeiosJobId' to the jobs still unfinished in the
+-- pool, dropping entries for jobs already 'completeJob'd. Lets the tx-arrival
+-- handler pick out, from a request's covered jobs, the ones we still need to
+-- ingest (a redundant delivery of a completed job is dropped).
+restrictToPending :: IntMap a -> LeiosJobPool -> IntMap a
+restrictToPending m pool = m `IntMap.intersection` jobs pool
 
 -- | 'pickLeastRequestedJobExcept' with no exclusions.
 pickLeastRequestedJob :: LeiosJobPool -> Maybe (LeiosJobId, LeiosJob, LeiosJobPool)

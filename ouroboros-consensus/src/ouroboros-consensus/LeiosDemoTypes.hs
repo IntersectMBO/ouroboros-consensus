@@ -17,7 +17,13 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 
-module LeiosDemoTypes (module LeiosDemoTypes, module Cardano.Crypto.Leios) where
+module LeiosDemoTypes (
+  module LeiosDemoTypes,
+
+  -- * Re-exports
+  module Cardano.Crypto.Leios,
+  module TxHashReexports,
+  ) where
 
 import Cardano.Binary
   ( Decoder
@@ -55,7 +61,7 @@ import Cardano.Crypto.Leios
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
-import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
+import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
 import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
@@ -72,8 +78,9 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
+import Data.IntMap.NonEmpty (NEIntMap)
+import qualified Data.IntMap.NonEmpty as NEIntMap
 import Data.IntSet.NonEmpty (NEIntSet)
-import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -86,6 +93,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
+import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import Data.String (fromString)
 import Data.Time.Clock (NominalDiffTime)
@@ -164,16 +172,6 @@ instance SignableRepresentation RbHash where
   getSignableRepresentation point =
     toStrictByteString $
       encodeRbHash point
-
-newtype TxHash = MkTxHash ByteString
-  deriving stock (Eq, Ord, Generic)
-  deriving anyclass (NFData, NoThunks)
-
-instance Show TxHash where
-  show = prettyTxHash
-
-prettyTxHash :: TxHash -> String
-prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
 
 -- | Uniquely identifies an endorser block in Leios. Could use 'Block SlotNo
 -- EbHash' eventually, but a dedicated type is better to explore.
@@ -320,23 +318,24 @@ data LeiosBlockRequest
       !BytesSize
 
 data LeiosBlockTxsRequest
-  = -- | A request for some of an EB's txs: its point, the offset bitmap (the only
-    -- part sent to the peer), and the ids of the 'Jobs.LeiosJob's it covers. The
-    -- job ids are kept locally to 'Jobs.completeJob' on the response; the
-    -- validation hashes are re-derived from the body at arrival, so they are not
-    -- carried here.
+  = -- | A request for some of an EB's txs: its point and the 'Jobs.LeiosJob's it
+    -- covers, keyed by job id (so a request can't list a job twice), each with its
+    -- full commitment. Everything needed to validate the response is carried here,
+    -- so the reply handler needs no lookup into the (body-less) job pool -- and a
+    -- redundant response for a job that has since completed still validates. On
+    -- the wire only the offset bitmap goes to the peer; it is derived from the
+    -- union of the jobs' offsets (see the LeiosFetch client), not stored.
     MkLeiosBlockTxsRequest
       !LeiosPoint
-      [(Word16, Word64)]
-      !NEIntSet
+      !(NEIntMap Jobs.LeiosJob)
 
 prettyLeiosBlockTxsRequest :: LeiosBlockTxsRequest -> String
-prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps jobIds) =
-  unwords $
-    "MsgLeiosBlockTxs"
-      : prettyLeiosPoint p
-      : ("jobs=" <> show (toList (NEIntSet.toList jobIds)))
-      : map prettyBitmap bitmaps
+prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p jobs) =
+  unwords
+    [ "MsgLeiosBlockTxs"
+    , prettyLeiosPoint p
+    , "jobs=" <> show (toList (NEIntMap.keys jobs))
+    ]
 
 prettyBitmap :: (Word16, Word64) -> String
 prettyBitmap (idx, bitmap) =
@@ -482,12 +481,17 @@ data EbState =
 data EbFetchState
   = NoBody
   | -- | The job pool: the jobs not yet /requested/ (NB this can be empty even
-    -- before jobs have /arrived/)
+    -- before jobs have /arrived/).
+    --
+    -- The body itself is /not/ retained -- it lives in the LeiosDb, and each job
+    -- carries a 'Jobs.JobRootHash' commitment sufficient to validate its
+    -- response. Retaining up to ~10k bodies (each up to ~512 kB) would cost
+    -- gigabytes.
     --
     -- TODO the 'Jobs.LeiosJobPool' could be an 'MVar m LeiosJobPool' for per-EB
     -- locking, at the cost of an 'm' parameter on
     -- EbFetchState/EbState/LeiosOutstanding and a monadic body-acquire; deferred.
-    BodyAcquired !LeiosEb !Jobs.LeiosJobPool
+    BodyAcquired !Jobs.LeiosJobPool
   deriving (Eq, Show)
 
 ebStateMaxSlot :: EbState -> SlotNo
@@ -501,8 +505,8 @@ ebStateHasBody (MkEbState _slot fetchState) = case fetchState of
   BodyAcquired{} -> True
 
 insertAcquiredEbBody ::
-  EbHash -> LeiosEb -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
-insertAcquiredEbBody ebHash body jobPool =
+  EbHash -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
+insertAcquiredEbBody ebHash jobPool =
   alterEbState ebHash $ \case
     Nothing ->
       -- The state must have been pruned before the MsgLeiosBlock
@@ -513,7 +517,7 @@ insertAcquiredEbBody ebHash body jobPool =
       Nothing
     Just (MkEbState slot fetchState) -> case fetchState of
       BodyAcquired{} -> Nothing
-      NoBody -> Just $ MkEbState slot (BodyAcquired body jobPool)
+      NoBody -> Just $ MkEbState slot (BodyAcquired jobPool)
 
 -- | Record that the EB with this hash is referenced (announced or offered) at this
 -- slot
