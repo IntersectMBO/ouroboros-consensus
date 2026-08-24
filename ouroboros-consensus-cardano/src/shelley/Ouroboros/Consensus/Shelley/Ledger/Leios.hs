@@ -7,6 +7,11 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+-- 'SL.unsafeMakeValidated' is deprecated in favour of the ledger's newer
+-- 'ValidatedTx', which consensus has not moved to yet (see the same FIXME in
+-- "Ouroboros.Consensus.Shelley.Ledger.Mempool"). Suppressed here the way the
+-- sibling Shelley modules do.
+{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Leios () where
@@ -85,7 +90,11 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   , ShelleyBasedEra
   , shelleyLedgerGlobals
   )
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (GenTx (ShelleyTx), mkShelleyTx)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool
+  ( GenTx (ShelleyTx)
+  , mkShelleyTx
+  , mkShelleyValidatedTx
+  )
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
@@ -144,6 +153,12 @@ instance
             <> "Refusing to apply as empty (would diverge UTxO)."
       Just closureEntries ->
         pure $ fmap (mkShelleyTx . deserialiseLeiosTx) <$> closureEntries
+
+  -- The ledger's 'Validated' is a bare newtype over the tx, so rebuilding the
+  -- token costs only the tx-id hash; 'SL.reapplyTx' derives the state-dependent
+  -- annotation itself, so nothing stale rides along.
+  assumeValidatedClosureTx (ShelleyTx _ tx) =
+    mkShelleyValidatedTx (SL.unsafeMakeValidated tx)
 
   leiosClosureTxKeySets = getTransactionKeySets
 

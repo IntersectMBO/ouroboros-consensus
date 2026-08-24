@@ -1621,6 +1621,18 @@ instance
       protocolStateLeiosAnnouncement @(ShelleyBlock (Praos c) DijkstraEra) praosSt
     _ -> Nothing
 
+  assumeValidatedClosureTx tx = case tx of
+    GenTxDijkstra inner ->
+      HardForkValidatedGenTx
+        . OneEraValidatedGenTx
+        . TagDijkstra
+        . WrapValidatedGenTx
+        $ assumeValidatedClosureTx inner
+    _ ->
+      -- Only Dijkstra has a Leios closure to validate, so only Dijkstra txs
+      -- ever reach here (see 'resolveLeiosClosure' above).
+      error "assumeValidatedClosureTx: closure tx from a non-Dijkstra era"
+
   leiosClosureTxKeySets tx = case tx of
     GenTxDijkstra inner ->
       injectLedgerTables

@@ -822,6 +822,27 @@ class ResolveLeiosBlock blk where
     m [(TxHash, GenTx blk)]
   resolveLeiosClosure _ _ = pure []
 
+  -- | Rebuild the 'Validated' token for a closure tx that the LeiosTxCache
+  -- reports as already validated, so the voting thread can pick
+  -- 'LedgerSupportsMempool.reapplyTx' — which skips only the static checks
+  -- (witnesses, scripts) — over a full 'LedgerSupportsMempool.applyTx'.
+  --
+  -- The token carries no evidence of its own; the cache's tag is the evidence,
+  -- and the ledger recomputes every state-dependent check from the state at
+  -- hand. Calling this on a tx the cache has /not/ tagged validated would skip
+  -- checks that were never run.
+  --
+  -- NOTE: the cache's tag does not record which protocol version the tx was
+  -- validated under, so an EB straddling a protocol-version change could skip
+  -- a static check whose rules changed. The mempool has the same exposure, and
+  -- the cache only retains a short window of EBs.
+  --
+  -- The default panics, like 'leiosClosureTxKeySets': a non-Leios block never
+  -- reaches the voting path.
+  assumeValidatedClosureTx :: GenTx blk -> Validated (GenTx blk)
+  assumeValidatedClosureTx _ =
+    error "assumeValidatedClosureTx: not Leios-enabled for this block type"
+
   -- | The ledger keys read by a closure tx — what 'forkerReadTables' needs
   -- to load before 'applyLeiosClosure' can run. Leios-enabled instances
   -- should override with their 'LedgerSupportsMempool.getTransactionKeySets'.
