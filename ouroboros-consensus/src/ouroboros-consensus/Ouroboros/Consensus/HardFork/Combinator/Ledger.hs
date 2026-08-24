@@ -91,7 +91,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.HardFork.History
   ( Bound (..)
   , EpochToPerasRoundInfo
-  , EraIndexed
   , EraParams
   , SafeZone (..)
   , forgetEraIndex
@@ -103,7 +102,11 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
@@ -350,13 +353,10 @@ instance
   CanHardFork xs =>
   StateSupportsPerasEpochContext (HardForkBlock xs)
   where
-  type
-    MaybeEraIndexedEpochToPerasRoundInfo (HardForkBlock xs) =
-      EraIndexed xs EpochToPerasRoundInfo
-
-  fromMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
-  toMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: HardForkBlock does not support Peras (yet)"
+  type MaybeEraIndexedEpochToPerasRoundInfo (HardForkBlock xs) = EpochToPerasRoundInfo
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
 
 {-------------------------------------------------------------------------------
   HeaderValidation
