@@ -33,6 +33,7 @@ import qualified Test.LeiosTxCache.Optimized.MutableHashTable (tests)
 import qualified Test.LeiosTxCache.Reference (tests)
 import qualified Test.LeiosUtils.CallTrace (tests)
 import qualified Test.LeiosVoteState (tests)
+import qualified Test.LeiosVoting (tests)
 import Test.Tasty
 import Test.Util.TestEnv
   ( defaultMainWithTestEnv
@@ -93,6 +94,7 @@ tests =
         , Test.LeiosTxCache.Optimized.MutableHashTable.tests
         , Test.LeiosTxCache.Reference.tests
         , Test.LeiosVoteState.tests
+        , Test.LeiosVoting.tests
         , Test.LeiosUtils.CallTrace.tests
         ]
     ]

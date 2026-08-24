@@ -15,6 +15,7 @@ module LeiosVoting
 
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN))
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Applicative ((<|>))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( modifyTVar
   , newTVar
@@ -52,7 +53,6 @@ import LeiosTxCache (LeiosTxCache (..))
 import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..))
 import Ouroboros.Consensus.Block
   ( ConvertRawHash (..)
-  , Point
   , WithOrigin (..)
   )
 import Ouroboros.Consensus.BlockchainTime
@@ -69,7 +69,12 @@ import Ouroboros.Consensus.HeaderValidation
   )
 import Ouroboros.Consensus.Ledger.Abstract
   ( ComputeLedgerEvents (OmitLedgerEvents)
+  , EmptyMK
+  , KeysMK
   , LedgerConfig
+  , LedgerState
+  , LedgerTables
+  , ValuesMK
   , applyChainTick
   , ledgerTipPoint
   )
@@ -93,7 +98,6 @@ import Ouroboros.Consensus.Util.IOLike
   , STM
   , atomically
   , bracket
-  , orElse
   )
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (SpecificPoint))
 
@@ -193,9 +197,7 @@ runLeiosVoting tracer cfg chainDB btime leiosDB txCache voteState = \case
     -- acquisition. 'orElse' gives priority to voting over ingesting,
     -- so we can't stall a due vote behind a chan drain.
     forever $ do
-      mWork <-
-        atomically $
-          (Just <$> takeReady) `orElse` (Nothing <$ takeAcquisition)
+      mWork <- atomically $ (Just <$> takeReady) <|> (Nothing <$ takeAcquisition)
       case mWork of
         Nothing -> pure ()
         Just (point, currentSlot, extLedger) -> do
@@ -204,6 +206,9 @@ runLeiosVoting tracer cfg chainDB btime leiosDB txCache voteState = \case
               notVoted r = traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason = r}
               mVoterId = getLeiosCommittee (ledgerState extLedger) >>= getLeiosSeatId vk
               mAnnouncer = tipAnnouncerFor @blk (headerState extLedger) point
+          -- FIXME: Check the deadline against wall clock not the ledger
+          -- state. The latter is only advancing whenever a block is
+          -- adopted.
           case (currentSlot > deadlineSlot, mAnnouncer, mVoterId) of
             (True, _, _) -> notVoted TooLate
             (_, Nothing, _) -> notVoted ChainTipDoesNotAnnounce
@@ -212,32 +217,45 @@ runLeiosVoting tracer cfg chainDB btime leiosDB txCache voteState = \case
             -- ledger work: we never validate an EB we would not vote for.
             (_, Just rbHash, Just voterId) -> do
               let announcerPoint = ledgerTipPoint (ledgerState extLedger)
-              validateEbClosure
-                (configLedger cfg)
-                chainDB
-                leiosConn
-                txCache
-                point
-                announcerPoint
-                >>= \case
-                  EbClosureNoLedger -> notVoted ChainTipDoesNotAnnounce
-                  EbClosureInvalid err -> notVoted $ EbTxsInvalid (Text.pack (show err))
-                  EbClosureValid reapplied applied -> do
-                    traceWith tracer TraceLeiosEbValidated{ebPoint = point, reapplied, applied}
-                    let vote = signVote voterId rbHash
-                    addVote vote >>= \case
-                      Added weight mCert -> do
-                        traceWith tracer TraceLeiosVoted{vote, weight}
-                        traceWith tracer TraceLeiosVoteAcquired{vote}
-                        -- Trace certification whenever the tally crosses
-                        -- 'minCertificationThreshold'. May fire more than once
-                        -- per point if subsequent votes also come in; consumers
-                        -- (e.g. ThreadNet's 'propCertifying') dedupe.
-                        case mCert of
-                          Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
-                          Nothing -> pure ()
-                      err ->
-                        error $ "runLeiosVoting: unexpected error on addVote: " <> show err
+              -- REVIEW: How expensive is it to open a forker - should we re-use
+              -- one for the whole vote logic?
+              -- TODO: refactor: withForker announcerPoint $ \(ls, forker) ->
+              bracket
+                (ChainDB.openReadOnlyForkerAtPoint chainDB (SpecificPoint announcerPoint))
+                (either (\_ -> pure ()) roforkerClose)
+                $ \case
+                  -- Chain-sel moved off the announcer before we could read
+                  -- its ledger state. No vote, but nothing is wrong with the EB.
+                  Left _ -> notVoted ChainTipDoesNotAnnounce
+                  Right extForker -> do
+                    let forker = ledgerStateReadOnlyForker extForker
+                    lsBase <- atomically $ roforkerGetLedgerState forker
+                    validateEbClosure
+                      (configLedger cfg)
+                      leiosConn
+                      txCache
+                      (roforkerReadTables forker)
+                      point
+                      lsBase
+                      >>= \case
+                        -- XXX: Text in error
+                        EbClosureInvalid err -> notVoted $ EbTxsInvalid (Text.pack $ show err)
+                        EbClosureValid reapplied applied -> do
+                          traceWith tracer TraceLeiosEbValidated{ebPoint = point, reapplied, applied}
+                          let vote = signVote voterId rbHash
+                          addVote vote >>= \case
+                            Added weight mCert -> do
+                              traceWith tracer TraceLeiosVoted{vote, weight}
+                              traceWith tracer TraceLeiosVoteAcquired{vote}
+                              -- Trace certification whenever the tally crosses
+                              -- 'minCertificationThreshold'. May fire more than once
+                              -- per point if subsequent votes also come in; consumers
+                              -- (e.g. ThreadNet's 'propCertifying') dedupe.
+                              case mCert of
+                                Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
+                                Nothing -> pure ()
+                            err ->
+                              error $ "runLeiosVoting: unexpected error on addVote: " <> show err
 
 -- * Validating the endorsed transactions
 
@@ -249,9 +267,6 @@ data EbClosureVerdict blk
     EbClosureValid !Int !Int
   | -- | A tx did not apply, so this EB must not be certified.
     EbClosureInvalid !(ApplyTxErr blk)
-  | -- | The announcing RB's ledger state was gone before we could read it:
-    -- chain-sel moved on. No vote, but nothing is wrong with the EB.
-    EbClosureNoLedger
 
 -- | Apply an EB's endorsed transactions to the announcing RB's ledger state,
 -- which is the state they will meet if the EB is ever certified.
@@ -268,33 +283,25 @@ validateEbClosure ::
   , LedgerSupportsMempool blk
   ) =>
   LedgerConfig blk ->
-  ChainDB m blk ->
   LeiosDbConnection m ->
   LeiosTxCache m () () SerializedEbBody ->
+  -- | Read the ledger tables the closure's txs need, as
+  -- 'resolveAndApplyLeiosClosure' does on the apply path.
+  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
   LeiosPoint ->
-  -- | The announcing RB, whose unticked ledger state the closure applies to.
-  Point blk ->
+  -- | The announcing RB's unticked ledger state, which the closure applies to.
+  LedgerState blk EmptyMK ->
   m (EbClosureVerdict blk)
-validateEbClosure lcfg chainDB leiosConn txCache point announcerPoint =
-  -- REVIEW: How expensive is it to open a forker - should we re-use one for the
-  -- whole vote logic?
-  bracket
-    (ChainDB.openReadOnlyForkerAtPoint chainDB (SpecificPoint announcerPoint))
-    (either (\_ -> pure ()) roforkerClose)
-    $ \case
-      Left _ -> pure EbClosureNoLedger
-      Right extForker -> do
-        let forker = ledgerStateReadOnlyForker extForker
-        lsBase <- atomically $ roforkerGetLedgerState forker
-        -- Load txs from disk
-        closure <- resolveLeiosClosure leiosConn (pointEbHash point)
-        -- Resolve their input UTxOs
-        let keys = foldMap (getTransactionKeySets . snd) closure
-        values <- roforkerReadTables forker keys
-        -- Determine which txs we can just reapply (the cache hits)
-        decided <- withLookupTx txCache $ \look -> mapM (decide look) closure
-        let st0 = applyMempoolDiffs values keys (applyChainTick OmitLedgerEvents lcfg slot lsBase)
-        goValidate st0 decided 0 0
+validateEbClosure lcfg leiosConn txCache resolveValues point lsBase = do
+  -- Load txs from disk
+  closure <- resolveLeiosClosure leiosConn (pointEbHash point)
+  -- Resolve their input UTxOs
+  let keys = foldMap (getTransactionKeySets . snd) closure
+  values <- resolveValues keys
+  -- Determine which txs we can just reapply (the cache hits)
+  decided <- withLookupTx txCache $ \look -> mapM (decide look) closure
+  let st0 = applyMempoolDiffs values keys (applyChainTick OmitLedgerEvents lcfg slot lsBase)
+  goValidate st0 decided 0 0
  where
   -- The EB's slot is also its announcer's, so ticking to it mirrors what the
   -- apply path does when a later RB certifies this EB.
