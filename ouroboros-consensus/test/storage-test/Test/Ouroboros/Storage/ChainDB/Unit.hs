@@ -33,9 +33,7 @@ import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint (..)
   , blockRealPoint
   )
-import Ouroboros.Consensus.Config
-  ( TopLevelConfig
-  )
+import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
@@ -381,7 +379,7 @@ runModelIO loe expr = toAssertion (runModel newModel topLevelConfig expr)
  where
   chunkInfo = ImmutableDB.simpleChunkInfo 100
   k = SecurityParam (knownNonZeroBounded @2)
-  newModel = Model.empty loe testInitExtLedger
+  newModel = Model.empty loe (testInitExtLedger (topLevelConfigLedger topLevelConfig))
   topLevelConfig = mkTestCfg k chunkInfo
 
 -- | Helper function to run the test against the actual chain database and
@@ -392,7 +390,9 @@ runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
   chunkInfo = ImmutableDB.simpleChunkInfo 100
   k = SecurityParam (knownNonZeroBounded @2)
   topLevelConfig = mkTestCfg k chunkInfo
-  withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
+  withChainDbEnv =
+    withTestChainDbEnv topLevelConfig chunkInfo $
+      convertMapKind (testInitExtLedger (topLevelConfigLedger topLevelConfig))
 
 newtype TestFailure = TestFailure String deriving Show
 

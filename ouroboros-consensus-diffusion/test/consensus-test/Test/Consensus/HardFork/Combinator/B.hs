@@ -73,7 +73,11 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -281,7 +285,7 @@ instance StateSupportsPerasEpochContext BlockB where
   type MaybeEraIndexedEpochToPerasRoundInfo BlockB = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: BlockB does not support Peras"
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
 
 instance HasPartialConsensusConfig ProtocolB
 

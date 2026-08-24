@@ -50,6 +50,7 @@ import Control.Tracer
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.SOP (All, Top)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -59,6 +60,7 @@ import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
@@ -98,10 +100,11 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
 withDB ::
   forall m blk a.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   ) =>
@@ -113,10 +116,11 @@ withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
 openDB ::
   forall m blk.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   ) =>
@@ -127,10 +131,11 @@ openDB args = fst <$> openDBInternal args True
 openDBInternal ::
   forall m blk.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack

@@ -63,7 +63,7 @@ module Test.Ouroboros.Storage.TestBlock
   , shrinkCorruptions
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -86,6 +86,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
+import Data.Set.NonEmpty.Internal (NESet (..))
 import Data.TreeDiff
 import Data.Void (Void)
 import Data.Word
@@ -94,6 +95,7 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Abstract
@@ -109,13 +111,20 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.ModChainSel
@@ -128,6 +137,7 @@ import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import Ouroboros.Network.Point (Block)
 import System.FS.API.Lazy
 import Test.Cardano.Slotting.Numeric ()
 import Test.Cardano.Slotting.TreeDiff ()
@@ -736,7 +746,7 @@ instance StateSupportsPerasEpochContext TestBlock where
   type MaybeEraIndexedEpochToPerasRoundInfo TestBlock = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: TestBlock does not support Peras"
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
 
 instance InspectLedger TestBlock
 
@@ -745,12 +755,16 @@ instance InspectLedger TestBlock
 testInitLedger :: LedgerState TestBlock EmptyMK
 testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
-testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
-testInitExtLedger =
-  ExtLedgerState
-    { ledgerState = testInitLedger
-    , headerState = genesisHeaderState ()
-    }
+testInitExtLedger :: LedgerConfig TestBlock -> ExtLedgerState TestBlock EmptyMK
+testInitExtLedger ledgerConfig =
+  let ledgerState = testInitLedger
+      headerState = genesisHeaderState ()
+      perasState = initPerasState ledgerConfig ledgerState headerState
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasState
+        }
 
 -- Only for a single node
 mkTestConfig :: SecurityParam -> ChunkSize -> TopLevelConfig TestBlock
@@ -942,16 +956,24 @@ corruptionFiles = map snd . NE.toList
   Orphans
 -------------------------------------------------------------------------------}
 
+-- ** Hashable
+
 deriving newtype instance Hashable SlotNo
 deriving newtype instance Hashable BlockNo
 deriving newtype instance Hashable PerasRoundNo
+
 instance Hashable IsEBB
-
--- use generic instance
-
+instance Hashable TestHeader
+instance Hashable TestBlock
+instance Hashable (Block SlotNo TestHeaderHash)
+instance Hashable (Point TestBlock)
+instance Hashable PerasSeatIndex
+instance Hashable (NESet PerasSeatIndex)
+instance Hashable (MockPerasCert TestBlock)
+instance (Hashable a, Hashable (WithOrigin a)) => Hashable (WithOrigin a)
 instance (StandardHash b, Hashable (HeaderHash b)) => Hashable (ChainHash b)
 
--- use generic instance
+-- ** ToExpr
 
 instance ToExpr EBB
 instance ToExpr IsEBB
@@ -973,6 +995,15 @@ deriving instance ToExpr (HeaderEnvelopeError TestBlock)
 deriving instance ToExpr BftValidationErr
 deriving instance ToExpr (ExtValidationError TestBlock)
 
+deriving anyclass instance
+  ToExpr (VotingCommitteeError (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock))
+
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile
 deriving instance ToExpr BinaryBlockInfo
+
+-- ** FromCBOR/ToCBOR for Point TestBlock via Serialise
+instance FromCBOR (Point TestBlock) where
+  fromCBOR = decode
+instance ToCBOR (Point TestBlock) where
+  toCBOR = encode

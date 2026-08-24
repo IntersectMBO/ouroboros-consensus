@@ -87,7 +87,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , wipeVolatileDB
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (strictMaybeToMaybe, unNonZero)
 import Codec.Serialise (Serialise, serialise)
 import Control.Monad (unless)
 import Control.Monad.Except (runExcept)
@@ -106,13 +106,20 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff
 import GHC.Generics (Generic)
+import Generics.SOP (All, Top)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolver
+  , StateSupportsPerasEpochContext
+  )
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -184,12 +191,20 @@ deriving instance
   , ToExpr (Chain blk)
   , ToExpr (ChainProducerState blk)
   , ToExpr (ExtLedgerState blk EmptyMK)
+  , Show (PerasCert blk)
+  , Show (PerasVote blk)
   , StandardHash blk
   , Show blk
   ) =>
   ToExpr (Model blk)
 
-deriving instance (LedgerSupportsProtocol blk, Show blk) => Show (Model blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , Show (PerasEpochContextResolver blk)
+  , Show blk
+  ) =>
+  Show (Model blk)
 
 {-------------------------------------------------------------------------------
   Queries
@@ -234,9 +249,12 @@ getBlockComponentByPoint blockComponent pt m =
 getLatestPerasCertOnChainRound ::
   Model blk ->
   Maybe PerasRoundNo
-getLatestPerasCertOnChainRound _ = do
-  -- Placeholder until we finish rewiring this into the extended ledger state
-  Nothing
+getLatestPerasCertOnChainRound m = do
+  strictMaybeToMaybe
+    . latestPerasCertOnChainRound
+    . perasState
+    . currentLedger
+    $ m
 
 hasBlockByPoint ::
   HasHeader blk =>
@@ -397,10 +415,15 @@ isValid = flip getIsValid
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
 
-perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
-perasWeights = PerasCertDBModel.getWeightSnapshot . perasCertModel
+perasWeights ::
+  StandardHash blk =>
+  Model blk -> PerasWeightSnapshot blk
+perasWeights =
+  PerasCertDBModel.getWeightSnapshot . perasCertModel
 
-roundNoOfLatestCertSeen :: Model blk -> Maybe PerasRoundNo
+roundNoOfLatestCertSeen ::
+  IsPerasCert (PerasCert blk) blk =>
+  Model blk -> Maybe PerasRoundNo
 roundNoOfLatestCertSeen m =
   getPerasCertRound . forgetBoostedBlockStatus
     <$> PerasCertDBModel.getLatestCertSeen (perasCertModel m)
@@ -432,7 +455,12 @@ empty loe initLedger =
 
 addBlock ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , StateSupportsPerasEpochContext blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  ) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -461,7 +489,12 @@ addBlock cfg blk m
 
 addPerasCert ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Model blk ->
@@ -477,7 +510,12 @@ addPerasCert cfg cert m
 
 addPerasVote ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   Model blk ->
@@ -494,8 +532,11 @@ addPerasVote cfg vote m =
 
 chainSelection ::
   forall blk.
-  ( LedgerTablesAreTrivial ExtLedgerState blk
+  ( All Top (HardForkIndices blk)
+  , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -623,7 +664,12 @@ chainSelection cfg m =
         consideredCandidates
 
 addBlocks ::
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   [blk] ->
   Model blk ->
@@ -633,7 +679,13 @@ addBlocks cfg = repeatedly (addBlock cfg)
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
 addBlockPromise ::
   forall m blk.
-  (LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , MonadSTM m
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -654,8 +706,11 @@ addBlockPromise cfg blk m = (result, m')
 -- point.
 updateLoE ::
   forall blk.
-  ( LedgerTablesAreTrivial ExtLedgerState blk
+  ( All Top (HardForkIndices blk)
+  , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   AnchoredFragment blk ->
@@ -855,7 +910,12 @@ data ValidatedChain blk
 -- 'invalid' of the given 'Model'.
 validate ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   Chain blk ->
@@ -916,7 +976,12 @@ chains bs = go Chain.Genesis
 
 validChains ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   Map (HeaderHash blk) blk ->
@@ -1177,7 +1242,12 @@ reopen m = m{isOpen = True}
 -- see https://github.com/tweag/cardano-peras/issues/122
 wipeVolatileDB ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   (Point blk, Model blk)
