@@ -40,7 +40,6 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasParams
   , PerasRoundNo (..)
   , PerasSeatIndex (..)
-  , PerasVote' (..)
   , PerasVoteId
   , PerasVoteTarget (..)
   , ValidatedPerasCert
@@ -52,6 +51,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
@@ -179,10 +179,10 @@ instance StateModel Model where
             WithArrivalTime now $
               ValidatedPerasVote
                 { vpvVote =
-                    PerasVote
-                      { pvVoteRound = roundNo
-                      , pvVoteBlock = point
-                      , pvVoteVoterId = seatIndex
+                    MockPerasVote
+                      { mockVoteRound = roundNo
+                      , mockVoteBlock = point
+                      , mockVoteSeatIndex = seatIndex
                       }
                 , vpvVoteWeight = weight
                 }

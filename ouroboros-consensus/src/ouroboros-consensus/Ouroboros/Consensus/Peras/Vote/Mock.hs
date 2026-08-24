@@ -23,11 +23,9 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
-  ( ConvertRawHash
-  , Point
+  ( Point
   , StandardHash
   )
-import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Types
   ( BoostedBlock
   , PerasRoundNo
@@ -98,31 +96,3 @@ instance
         <> toCBOR mockVoteRound
         <> toCBOR mockVoteBlock
         <> toCBOR mockVoteSeatIndex
-
-instance
-  ConvertRawHash blk =>
-  SerialiseNodeToNode blk (MockPerasVote blk)
-  where
-  encodeNodeToNode
-    ccfg
-    version
-    MockPerasVote
-      { mockVoteRound
-      , mockVoteBlock
-      , mockVoteSeatIndex
-      } =
-      encodeListLen 3
-        <> encodeNodeToNode ccfg version mockVoteRound
-        <> encodeNodeToNode ccfg version mockVoteBlock
-        <> encodeNodeToNode ccfg version mockVoteSeatIndex
-  decodeNodeToNode ccfg version = do
-    decodeListLenOf 3
-    mockVoteRound <- decodeNodeToNode ccfg version
-    mockVoteBlock <- decodeNodeToNode ccfg version
-    mockVoteSeatIndex <- decodeNodeToNode ccfg version
-    pure
-      MockPerasVote
-        { mockVoteRound
-        , mockVoteBlock
-        , mockVoteSeatIndex
-        }

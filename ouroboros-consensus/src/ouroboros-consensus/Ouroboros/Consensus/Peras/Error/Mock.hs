@@ -17,41 +17,26 @@ import Control.Exception (Exception)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( IsPerasError (..)
-  , PerasVotingCommitteeError
-  , VoteWeight
+import Ouroboros.Consensus.Committee.Types (VoteWeight)
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  , VotingCommitteeError
   )
 import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
 
 -- | Collection of voting-related errors for Peras
 data MockPerasError blk
   = PerasVotingCommitteeError
-      (PerasVotingCommitteeError blk)
+      (VotingCommitteeError (MockPerasCrypto blk) (MockPerasVotingCommitteeScheme blk))
   | PerasVotingConversionError
       PerasConversionError
   | PerasQuorumNotReachedError
       VoteWeight
   | InputStakeDistrIsEmpty
 
-deriving instance
-  Show (PerasVotingCommitteeError blk) =>
-  Show (MockPerasError blk)
-deriving instance
-  Eq (PerasVotingCommitteeError blk) =>
-  Eq (MockPerasError blk)
-deriving instance
-  NoThunks (PerasVotingCommitteeError blk) =>
-  NoThunks (MockPerasError blk)
-deriving instance
-  Generic (MockPerasError blk)
-deriving instance
-  ( Typeable blk
-  , Show (PerasVotingCommitteeError blk)
-  ) =>
-  Exception (MockPerasError blk)
-
-instance IsPerasError (MockPerasError blk) blk where
-  injectVotingCommitteeError = PerasVotingCommitteeError
-  injectConversionError = PerasVotingConversionError
-  injectQuorumNotReachedError = PerasQuorumNotReachedError
+deriving instance Show (MockPerasError blk)
+deriving instance Eq (MockPerasError blk)
+deriving instance NoThunks (MockPerasError blk)
+deriving instance Generic (MockPerasError blk)
+deriving instance Typeable blk => Exception (MockPerasError blk)
