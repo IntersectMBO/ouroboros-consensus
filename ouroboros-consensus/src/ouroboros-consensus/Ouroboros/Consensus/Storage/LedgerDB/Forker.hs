@@ -857,11 +857,15 @@ class ResolveLeiosBlock blk where
     error "leiosClosureTxKeySets: not Leios-enabled for this block type"
 
   -- | Apply an EB closure's transactions onto an /unticked/ ledger state,
-  -- without validation. The closure has already been individually
-  -- validated when each tx was inserted into the LeiosDb, so we trust it
-  -- here (era-level @ApplyTxValidation ValidateNone@). Returns the
-  -- unticked post-closure ledger state, ready to feed into
+  -- without validation (era-level @ApplyTxValidation ValidateNone@). Returns
+  -- the unticked post-closure ledger state, ready to feed into
   -- 'tickThenApply' for the CertRB itself.
+  --
+  -- What licenses the trust is the /certificate/: a quorum of the voting
+  -- committee applied this closure before signing (see
+  -- 'LeiosVoting.validateEbClosure'), and only a certified EB reaches this
+  -- path. Insertion into the LeiosDb validates nothing, so a node that never
+  -- voted is trusting the committee, not its own check.
   --
   -- The slot is obtained from the provided ledger state.
   --

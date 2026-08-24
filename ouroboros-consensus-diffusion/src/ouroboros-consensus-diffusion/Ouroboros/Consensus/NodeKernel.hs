@@ -580,9 +580,11 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosVoting" $
         runLeiosVoting
           (leiosKernelTracer tracers)
+          cfg
           chainDB
           btime
           leiosDB
+          getLeiosTxCache
           leiosVoteState
           (topLevelConfigVotingKey cfg)
 

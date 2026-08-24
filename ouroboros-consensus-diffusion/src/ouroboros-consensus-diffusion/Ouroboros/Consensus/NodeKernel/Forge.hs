@@ -753,8 +753,8 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
               (ledgerState unticked)
         case res of
           Left err ->
-            -- Should not happen: each closure tx was validated
-            -- when inserted into the LeiosDb. Fail loudly.
+            -- Should not happen: we are certifying this EB, so a quorum of
+            -- the committee applied its closure before signing. Fail loudly.
             error $ "forkBlockForging: applyLeiosClosure failed, announcing no EB. " <> show err
           Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} -> do
             -- Compose the EB closure diff (relative to the unticked

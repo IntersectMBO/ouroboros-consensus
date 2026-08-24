@@ -32,6 +32,7 @@ import LeiosDemoTypes
   , validateLeiosVote
   )
 
+-- FIXME: Garbage collection of vote state
 data LeiosVoteState m = LeiosVoteState
   { addVote :: LeiosVote -> m AddVoteResult
   -- ^ Add a new vote to the LeiosVoteState. Adding the same vote multiple

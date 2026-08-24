@@ -565,6 +565,7 @@ mkHandlers
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
                     forM_ vs $ \vote -> do
                       result <- addVote vote
+                      -- TODO: Keep track of the running tally (even after certification)
                       traceWith kernelTracer TraceLeiosVoteAcquired{vote}
                       -- A remote vote can be the one that tips this
                       -- node's tally past 'minCertificationThreshold';
