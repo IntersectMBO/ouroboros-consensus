@@ -107,6 +107,7 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
+import Generics.SOP (All, Top)
 import qualified Generics.SOP as SOP
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
@@ -125,6 +126,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
@@ -354,7 +356,8 @@ type AllComponents blk =
   )
 
 type TestConstraints blk =
-  ( ConsensusProtocol (BlockProtocol blk)
+  ( All Top (HardForkIndices blk)
+  , ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
@@ -375,6 +378,7 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial LedgerState blk
   , CanUpgradeLedgerTables LedgerState blk
   , ImmutableEraParams blk
+  , StateSupportsPerasEpochContext blk
   )
 
 deriving instance
@@ -2249,8 +2253,10 @@ smUnused loe k chunkInfo =
     envUnused
     (genBlk chunkInfo loe)
     (genPerasBoostedBlk chunkInfo loe)
-    (mkTestCfg k chunkInfo)
-    testInitExtLedger
+    cfg
+    (testInitExtLedger (configLedger cfg))
+ where
+  cfg = mkTestCfg k chunkInfo
 
 prop_sequential :: LoE () -> SmallChunkInfo -> Property
 prop_sequential loe smallChunkInfo@(SmallChunkInfo chunkInfo) =
@@ -2302,7 +2308,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
           mkArgs
             testCfg
             chunkInfo
-            (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+            (testInitExtLedger (configLedger testCfg) `withLedgerTables` emptyLedgerTables)
             threadRegistry
             nodeDBs
             tracer
@@ -2324,7 +2330,14 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                 , varLoEFragment
                 , args
                 }
-            sm' = sm loe env (genBlk chunkInfo loe) (genPerasBoostedBlk chunkInfo loe) testCfg testInitExtLedger
+            sm' =
+              sm
+                loe
+                env
+                (genBlk chunkInfo loe)
+                (genPerasBoostedBlk chunkInfo loe)
+                testCfg
+                (testInitExtLedger (configLedger testCfg))
         (hist, model, res) <- QSM.runCommands' sm' cmds'
         trace <- getTrace
         return (hist, model, res, trace)

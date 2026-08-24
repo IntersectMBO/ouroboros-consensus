@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -41,6 +42,7 @@ import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
@@ -194,9 +196,13 @@ fromShelleyLedgerExamples
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
-      ExtLedgerState
-        ledgerState
-        (genesisHeaderState chainDepState)
+      let headerState = genesisHeaderState chainDepState
+          perasState = initPerasState ledgerConfig ledgerState headerState
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasState
+            }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
@@ -332,9 +338,13 @@ fromShelleyLedgerExamplesPraos
       translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $
         TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
-      ExtLedgerState
-        ledgerState
-        (genesisHeaderState chainDepState)
+      let headerState = genesisHeaderState chainDepState
+          perasState = initPerasState ledgerConfig ledgerState headerState
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasState
+            }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 

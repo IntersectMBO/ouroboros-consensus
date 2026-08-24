@@ -50,9 +50,14 @@ import Ouroboros.Consensus.HeaderValidation
   , genesisHeaderState
   )
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Ledger.Extended
+  ( ExtLedgerState (..)
+  , initPerasEpochContextResolver
+  )
+import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -234,6 +239,17 @@ instance Inject (Flip LedgerState mk) where
 instance Inject WrapChainDepState where
   inject = coerce .: injectHardForkState
 
+instance Inject PerasEpochContextResolver where
+  inject _iidx _ =
+    PerasEpochContextResolverError "Not yet implemented for the HFC"
+
+instance Inject PerasState where
+  inject iidx PerasState{..} =
+    PerasState
+      { perasEpochContextResolver = inject iidx perasEpochContextResolver
+      , latestPerasCertOnChainRound = latestPerasCertOnChainRound
+      }
+
 instance Inject HeaderState where
   inject iidx HeaderState{..} =
     HeaderState
@@ -250,6 +266,7 @@ instance Inject (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ inject iidx (Flip ledgerState)
         , headerState = inject iidx headerState
+        , perasState = inject iidx perasState
         }
 
 {-------------------------------------------------------------------------------
@@ -279,6 +296,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   ExtLedgerState
     { ledgerState = targetEraLedgerState
     , headerState = targetEraHeaderState
+    , perasState = targetEraPerasState
     }
  where
   cfgs :: NP TopLevelConfig (x ': xs)
@@ -326,3 +344,16 @@ injectInitialExtLedgerState cfg extLedgerState0 =
 
   targetEraHeaderState :: HeaderState (HardForkBlock (x ': xs))
   targetEraHeaderState = genesisHeaderState targetEraChainDepState
+
+  targetEraPerasState :: PerasState (HardForkBlock (x ': xs))
+  targetEraPerasState =
+    PerasState
+      { perasEpochContextResolver =
+          initPerasEpochContextResolver
+            (configLedger cfg)
+            (forgetLedgerTables targetEraLedgerState)
+            targetEraHeaderState
+      , latestPerasCertOnChainRound =
+          latestPerasCertOnChainRound
+            (perasState extLedgerState0)
+      }

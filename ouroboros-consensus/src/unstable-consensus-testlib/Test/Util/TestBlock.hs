@@ -90,7 +90,7 @@ module Test.Util.TestBlock
   , updateToNextNumeral
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -136,6 +136,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -143,7 +144,10 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Peras.Context
+  ( BoundedPerasEpochContext (..)
+  , StateSupportsPerasEpochContext (..)
+  )
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -634,12 +638,19 @@ deriving anyclass instance
   NoThunks (Ticked LedgerState (TestBlockWith ptype) mk)
 
 testInitExtLedgerWithState ::
+  ( Typeable ptype
+  , HasLedgerTables LedgerState (TestBlockWith ptype)
+  ) =>
   PayloadDependentState ptype mk -> ExtLedgerState (TestBlockWith ptype) mk
 testInitExtLedgerWithState st =
-  ExtLedgerState
-    { ledgerState = testInitLedgerWithState st
-    , headerState = genesisHeaderState ()
-    }
+  let ledgerState = testInitLedgerWithState st
+      headerState = genesisHeaderState ()
+      perasState = initPerasState (configLedger singleNodeTestConfig) ledgerState headerState
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasState
+        }
 
 data TestBlockLedgerConfig = TestBlockLedgerConfig
   { tblcHardForkParams :: !HardFork.EraParams
@@ -756,7 +767,10 @@ instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype) 
   type MaybeEraIndexedEpochToPerasRoundInfo (TestBlockWith ptype) = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: TestBlockWith does not support Peras"
+  mkBoundedPerasEpochContext _ _ _ =
+    Right $
+      BoundedPerasEpochContext minBound maxBound $
+        error "mkBoundedPerasEpochContext: not yet implemented for TestBlockWith"
 
 {-------------------------------------------------------------------------------
   Test blocks without payload
@@ -987,8 +1001,8 @@ instance Serialise (AnnTip (TestBlockWith ptype)) where
   decode = defaultDecodeAnnTip decode
 
 instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptype) EmptyMK) where
-  encode = encodeExtLedgerState encode encode encode
-  decode = decodeExtLedgerState decode decode decode
+  encode = encodeExtLedgerState encode encode encode toCBOR
+  decode = decodeExtLedgerState decode decode decode fromCBOR
 
 instance Serialise (RealPoint (TestBlockWith ptype)) where
   encode = encodeRealPoint encode

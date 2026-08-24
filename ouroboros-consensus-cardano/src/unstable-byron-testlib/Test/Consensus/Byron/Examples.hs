@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
@@ -41,6 +42,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.NodeId
@@ -219,10 +221,14 @@ exampleHeaderState = HeaderState (NotOrigin exampleAnnTip) exampleChainDepState
 
 exampleExtLedgerState :: ExtLedgerState ByronBlock ValuesMK
 exampleExtLedgerState =
-  ExtLedgerState
-    { ledgerState = exampleLedgerState
-    , headerState = exampleHeaderState
-    }
+  let ledgerState = exampleLedgerState
+      headerState = exampleHeaderState
+      perasState = initPerasState ledgerConfig ledgerState headerState
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasState
+        }
 
 exampleHeaderHash :: ByronHash
 exampleHeaderHash = blockHash exampleBlock

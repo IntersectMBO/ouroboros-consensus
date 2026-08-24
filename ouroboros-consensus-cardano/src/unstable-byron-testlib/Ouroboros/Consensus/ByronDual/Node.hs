@@ -35,6 +35,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -87,48 +88,54 @@ protocolInfoDualByron ::
   , m [BlockForging m DualByronBlock]
   )
 protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
-  ( ProtocolInfo
-      { pInfoConfig =
-          TopLevelConfig
-            { topLevelConfigProtocol =
-                PBftConfig
-                  { pbftParams = params
-                  }
-            , topLevelConfigLedger =
-                DualLedgerConfig
-                  { dualLedgerConfigMain = concreteGenesis
-                  , dualLedgerConfigAux = abstractConfig
-                  }
-            , topLevelConfigBlock =
-                DualBlockConfig
-                  { dualBlockConfigMain = concreteConfig
-                  , dualBlockConfigAux = ByronSpecBlockConfig
-                  }
-            , topLevelConfigCodec =
-                DualCodecConfig
-                  { dualCodecConfigMain = mkByronCodecConfig concreteGenesis
-                  , dualCodecConfigAux = ByronSpecCodecConfig
-                  }
-            , topLevelConfigStorage =
-                DualStorageConfig
-                  { dualStorageConfigMain = ByronStorageConfig concreteConfig
-                  , dualStorageConfigAux = ByronSpecStorageConfig
-                  }
-            , topLevelConfigCheckpoints = emptyCheckpointsMap
-            }
-      , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState =
-                DualLedgerState
-                  { dualLedgerStateMain = initConcreteState
-                  , dualLedgerStateAux = initAbstractState
-                  , dualLedgerStateBridge = initBridge
-                  }
-            , headerState = genesisHeaderState S.empty
-            }
-      }
-  , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
-  )
+  let ledgerConfig =
+        DualLedgerConfig
+          { dualLedgerConfigMain = concreteGenesis
+          , dualLedgerConfigAux = abstractConfig
+          }
+   in ( ProtocolInfo
+          { pInfoConfig =
+              TopLevelConfig
+                { topLevelConfigProtocol =
+                    PBftConfig
+                      { pbftParams = params
+                      }
+                , topLevelConfigLedger =
+                    ledgerConfig
+                , topLevelConfigBlock =
+                    DualBlockConfig
+                      { dualBlockConfigMain = concreteConfig
+                      , dualBlockConfigAux = ByronSpecBlockConfig
+                      }
+                , topLevelConfigCodec =
+                    DualCodecConfig
+                      { dualCodecConfigMain = mkByronCodecConfig concreteGenesis
+                      , dualCodecConfigAux = ByronSpecCodecConfig
+                      }
+                , topLevelConfigStorage =
+                    DualStorageConfig
+                      { dualStorageConfigMain = ByronStorageConfig concreteConfig
+                      , dualStorageConfigAux = ByronSpecStorageConfig
+                      }
+                , topLevelConfigCheckpoints = emptyCheckpointsMap
+                }
+          , pInfoInitLedger =
+              let ledgerState =
+                    DualLedgerState
+                      { dualLedgerStateMain = initConcreteState
+                      , dualLedgerStateAux = initAbstractState
+                      , dualLedgerStateBridge = initBridge
+                      }
+                  headerState = genesisHeaderState S.empty
+                  perasState = initPerasState ledgerConfig ledgerState headerState
+               in ExtLedgerState
+                    { ledgerState
+                    , headerState
+                    , perasState
+                    }
+          }
+      , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
+      )
  where
   initUtxo :: Impl.UTxO
   txIdMap :: Map Spec.TxId Impl.TxId

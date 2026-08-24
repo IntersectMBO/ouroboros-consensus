@@ -7,6 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
@@ -45,6 +46,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -242,21 +244,31 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 
   protocolInfo :: CoreNodeId -> ProtocolInfo TestBlock
   protocolInfo nid =
-    ProtocolInfo
-      { pInfoConfig =
-          topLevelConfig nid
-      , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState =
-                HardForkLedgerState $
-                  initHardForkState
-                    (Flip initLedgerState)
-            , headerState =
-                genesisHeaderState $
-                  initHardForkState
-                    (WrapChainDepState initChainDepState)
-            }
-      }
+    let topConfig = topLevelConfig nid
+        ledgerConfig = topLevelConfigLedger topConfig
+     in ProtocolInfo
+          { pInfoConfig =
+              topConfig
+          , pInfoInitLedger =
+              let ledgerState =
+                    HardForkLedgerState $
+                      initHardForkState
+                        (Flip initLedgerState)
+                  headerState =
+                    genesisHeaderState $
+                      initHardForkState
+                        (WrapChainDepState initChainDepState)
+                  perasState =
+                    initPerasState
+                      ledgerConfig
+                      ledgerState
+                      headerState
+               in ExtLedgerState
+                    { ledgerState
+                    , headerState
+                    , perasState
+                    }
+          }
 
   blockForging :: Monad m => [MkBlockForging m TestBlock]
   blockForging =
