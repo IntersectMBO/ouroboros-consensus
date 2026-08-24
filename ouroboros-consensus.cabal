@@ -239,15 +239,19 @@ library
     Ouroboros.Consensus.Peras.Cert.Class
     Ouroboros.Consensus.Peras.Cert.Inclusion
     Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
+    Ouroboros.Consensus.Peras.Cert.Mock
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Context
     Ouroboros.Consensus.Peras.Crypto.BLS
+    Ouroboros.Consensus.Peras.Crypto.Mock
+    Ouroboros.Consensus.Peras.Error.Mock
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Void
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Class
+    Ouroboros.Consensus.Peras.Vote.Mock
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Adapter
     Ouroboros.Consensus.Peras.Voting.Rules
@@ -375,6 +379,7 @@ library
     containers >=0.5 && <0.9,
     contra-tracer ^>=0.2.1,
     deepseq,
+    extra,
     FailT ^>=0.1.2,
     filelock,
     fs-api ^>=0.4,
@@ -450,10 +455,6 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: ouroboros-consensus/src/unstable-consensus-testlib
   exposed-modules:
-    Ouroboros.Consensus.Peras.Cert.Mock
-    Ouroboros.Consensus.Peras.Crypto.Mock
-    Ouroboros.Consensus.Peras.Error.Mock
-    Ouroboros.Consensus.Peras.Vote.Mock
     Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
@@ -536,7 +537,6 @@ library unstable-consensus-testlib
     contra-tracer,
     deepseq,
     directory,
-    extra,
     file-embed,
     filepath,
     fs-api,
