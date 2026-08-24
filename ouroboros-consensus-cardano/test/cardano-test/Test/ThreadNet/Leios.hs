@@ -74,6 +74,7 @@ import LeiosDemoTypes
   ( LeiosNotVotedReason (..)
   , LeiosPoint (..)
   , LeiosVote (..)
+  , RbHash (..)
   , TraceLeiosKernel (..)
   , hashLeiosEb
   , minCertificationGap
@@ -304,9 +305,10 @@ prop_leios seed =
         -- counts shrugs off the spurious 'TraceLeiosVoteAcquired's emitted
         -- by 'NodeToNode' for relay-redelivered votes that 'addVote'
         -- already classified 'AlreadyKnown'.
-        Set.size acquiredVotePairs === numNodes * Set.size castVotes
+        Set.size votePairsToDiffuse === numNodes * Set.size votesToDiffuse
           & counterexample "created votes not diffused"
           & counterexample ("cast votes: " <> show (Set.size castVotes))
+          & counterexample ("votes required to diffuse: " <> show (Set.size votesToDiffuse))
           & counterexample
             ( "acquired (node, vote) pairs: "
                 <> show (Set.size acquiredVotePairs)
@@ -329,6 +331,23 @@ prop_leios seed =
 
   -- Which EB slot each announcing RB hash announced, so that a vote can be
   -- dated: 'LeiosVote' carries only the hash it signed.
+  -- Which EB each announcing RB hash announced, so that a vote can be dated:
+  -- 'LeiosVote' carries only the hash it signed.
+  announcedPoints :: Map RbHash LeiosPoint
+  announcedPoints = Map.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosBlockAnnounced{announcingRbHashBytes, announcedEbPoint} ->
+      Just (MkRbHash announcingRbHashBytes, announcedEbPoint)
+    _ -> Nothing
+
+  -- Same requirement the EB diffusion properties make, one step further along:
+  -- a vote is required to have diffused iff its EB had 'minCertificationGap'
+  -- slots left to propagate. A vote cast near the end of the sim can still be
+  -- in flight when it stops, which says nothing about diffusion.
+  votesToDiffuse =
+    flip Set.filter castVotes $ \vote ->
+      maybe False diffusionRequired (Map.lookup vote.announcingRbHash announcedPoints)
+
+  votePairsToDiffuse = Set.filter ((`Set.member` votesToDiffuse) . snd) acquiredVotePairs
 
   -- Distinct (node, vote) pairs from 'TraceLeiosVoteAcquired'. A vote
   -- received multiple times by the same node (e.g. relayed back via a

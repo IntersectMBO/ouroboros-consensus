@@ -322,6 +322,7 @@ initNodeKernel
     , initChainDB
     , blockFetchConfiguration
     , btime
+    , systemTime
     , gsmArgs
     , peerSharingRng
     , publicPeerSelectionStateVar
@@ -582,7 +583,7 @@ initNodeKernel
           (leiosKernelTracer tracers)
           cfg
           chainDB
-          btime
+          systemTime
           leiosDB
           getLeiosTxCache
           leiosVoteState
