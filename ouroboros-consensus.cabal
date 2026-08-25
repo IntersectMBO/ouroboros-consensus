@@ -414,6 +414,37 @@ library
     directory
     latex-svg-image
 
+library tracing
+  import: common-lib
+  visibility: public
+  hs-source-dirs: tracing
+  -- Orphan tracing instances (LogFormatting/MetaTrace) for Consensus types,
+  -- moved here from cardano-node so that the definitions live next to the
+  -- types they describe. Depends on trace-dispatcher (Cardano.Logging), the
+  -- same way ouroboros-network:tracing does.
+  exposed-modules:
+    Ouroboros.Consensus.Tracing.BlockReplayProgress
+    Ouroboros.Consensus.Tracing.ConsensusStartupException
+    Ouroboros.Consensus.Tracing.Era.HardFork
+    Ouroboros.Consensus.Tracing.Formatting
+    Ouroboros.Consensus.Tracing.Queries
+    Ouroboros.Consensus.Tracing.Render
+
+  build-depends:
+    aeson,
+    base,
+    bytestring,
+    cardano-crypto-class,
+    cardano-crypto-wrapper,
+    cardano-ledger-core,
+    cardano-protocol-tpraos,
+    cardano-slotting,
+    ouroboros-consensus:{ouroboros-consensus, cardano},
+    ouroboros-network:api,
+    sop-core,
+    text,
+    trace-dispatcher ^>=2.13.0,
+
 library lsm
   import: common-lib
   visibility: public
