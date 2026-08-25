@@ -689,11 +689,6 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   { maxRequestedBytesSizePerPeer :: BytesSize
   -- ^ At most this many outstanding bytes requested from each non-big-ledger
   -- peer
-  , maxRequestedBytesSizePerBigLedgerPeer :: BytesSize
-  -- ^ At most this many outstanding bytes requested from each big-ledger peer.
-  -- Larger than and overrides 'maxRequestedBytesSizePerPeer' so a high-stake
-  -- peer can be asked for multiple whole EB closures at once, but still bounded
-  -- so an adversarial peer can't drown us.
   , maxRequestBytesSize :: BytesSize
   -- ^ At most this many outstanding bytes per request
   , maxJobBytesSize :: BytesSize
@@ -712,20 +707,23 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   , maxLeiosNotifyIngressQueue :: BytesSize
   -- ^ @maximumIngressQueue@ for LeiosNotify
   , maxLeiosFetchIngressQueue :: BytesSize
-  -- ^ @maximumIngressQueue@ for LeiosFetch
+  -- ^ @maximumIngressQueue@ for LeiosFetch. This is the concrete bound from
+  -- which 'maxRequestedBytesSizePerBigLedgerPeer' is derived: the scheduler
+  -- must never leave more requested-but-unconsumed response bytes outstanding
+  -- than this queue can hold, else the mux tears the connection down (see
+  -- @Network.Mux.Ingress@'s @IngressQueueOverRun@).
   }
 
 demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
 demoLeiosFetchStaticEnv =
   MkLeiosFetchStaticEnv
     { maxRequestedBytesSizePerPeer = 5 * million
-    , maxRequestedBytesSizePerBigLedgerPeer = 5 * 12 * million
     , maxRequestBytesSize = 500 * thousand
     , maxJobBytesSize = 64 * thousandBase2
     , maxJobTxCount = 20000   -- TODO do we want this to be low enough to matter?
     , fetchPriorityWindowSlots = 10   -- TODO read dynamically from ledger state
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
-    , maxLeiosFetchIngressQueue = 50 * millionBase2
+    , maxLeiosFetchIngressQueue = 5 * 12 * millionBase2
     }
  where
   million :: Num a => a
@@ -736,6 +734,21 @@ demoLeiosFetchStaticEnv =
   thousand = 10 ^ (3 :: Int)
   thousandBase2 :: Num a => a
   thousandBase2 = 2 ^ (10 :: Int)
+
+-- | At most this many outstanding bytes requested from each big-ledger peer.
+--
+-- Derived from the concrete lower-level bound 'maxLeiosFetchIngressQueue': the
+-- scheduler may leave outstanding as many requested tx bytes as the LeiosFetch
+-- ingress queue can hold. The on-the-wire message framing that sits atop those
+-- tx bytes is covered by the +10% @addSafetyMargin@ the mux wiring applies to
+-- 'maxLeiosFetchIngressQueue' when it sets the actual @maximumIngressQueue@, so
+-- a full budget's worth of tx bytes plus framing still fits.
+--
+-- Larger than 'maxRequestedBytesSizePerPeer' so a high-stake peer can be asked
+-- for multiple whole EB closures at once, but still bounded (by the ingress
+-- queue) so an adversarial peer can't drown us.
+maxRequestedBytesSizePerBigLedgerPeer :: LeiosFetchStaticEnv -> BytesSize
+maxRequestedBytesSizePerBigLedgerPeer = maxLeiosFetchIngressQueue
 
 -- * LeiosTx newtype
 
