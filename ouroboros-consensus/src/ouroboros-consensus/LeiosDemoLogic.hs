@@ -191,7 +191,13 @@ recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
   mbSummary <-
       fmap (fmap @Maybe (\(x, ()) -> x))
     $ insertBody txCache point.pointEbHash (Leios.serializeEbBody eb) () (\() _ _ _ -> ())
-  forM_ mbSummary $ traceWith tracer . TraceLeiosTxCacheEbBody point
+  -- A forged body holds its whole closure locally: every tx not already in the
+  -- cache came from our own mempool (that is where the forge selected them). There
+  -- is no actual mempool-pull stage, so attribute those txs -- @txsInEb - acquired@
+  -- -- to mempool hits directly, making the combined cache+mempool hit rate 100%.
+  forM_ mbSummary $ \summary ->
+    traceWith tracer $
+      TraceLeiosBodyHits point summary (Leios.ibsTxsInEb summary - Leios.ibsAcquired summary)
   withLockedInsertAppliedTx txCache $ \w0 step ->
     foldM (\w (txh, _sz) -> step w txh ()) w0 (leiosEbTxs eb)
  where
@@ -901,22 +907,24 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db pullFromM
               (Leios.serializeEbBody eb)
               IntMap.empty
               (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
-          forM_ mbSummaryMisses $ traceWith ktracer . TraceLeiosTxCacheEbBody point . fst
           traceWith ktracer $ TraceLeiosBlockAcquired point
           forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
-          pure $ fmap snd mbSummaryMisses
-        (bodyClass, misses) <- case source of
+          -- The 'TraceLeiosBodyHits' trace is deferred to after the mempool pull
+          -- below, so it can report the mempool-hit count alongside this cache
+          -- summary.
+          pure mbSummaryMisses
+        (bodyClass, misses, mbBodySummary) <- case source of
           -- A forge holds its whole closure, so nothing is missing. Its txs are
           -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
           -- 'insertBody' above only served to register the cache entries.
-          ForgedBlock{} -> pure (fetchArrivalGood ebBytesSize', IntMap.empty)
+          ForgedBlock{} -> pure (fetchArrivalGood ebBytesSize', IntMap.empty, Nothing)
           ReceivedBlockFrom{} -> case mbMissesFromBody of
             -- 'BodyNotYetInserted': the announcement was present and we filled it.
-            Just ms -> pure (fetchArrivalGood ebBytesSize', ms)
+            Just (summary, ms) -> pure (fetchArrivalGood ebBytesSize', ms, Just summary)
             Nothing -> do
               -- Announcement absent (assumed present once, since evicted): the
               -- cache insert was a no-op. Backstop: classify the txs directly to
-              -- build the misses.
+              -- build the misses. No cache summary, so no 'TraceLeiosBodyHits'.
               let MkLeiosEb v = eb
               ms <- withLookupTx txCache $ \look ->
                 V.ifoldM
@@ -928,11 +936,16 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db pullFromM
                   )
                   IntMap.empty
                   v
-              pure (fetchArrivalEvicted ebBytesSize', ms)
+              pure (fetchArrivalEvicted ebBytesSize', ms, Nothing)
         -- Before allocating jobs, pull out the misses we already hold in our local
         -- mempool: they never become fetch jobs; instead we ingest them ourselves
         -- below (the last thing this function does).
         (stillMissing, mempoolHits) <- pullFromMempool misses
+        -- Now that the mempool pull is done, report the body's combined
+        -- cache+mempool hit picture: the cache summary plus how many of the
+        -- cache-miss txs we found in our own mempool.
+        forM_ mbBodySummary $ \summary ->
+          traceWith ktracer $ TraceLeiosBodyHits point summary (Map.size mempoolHits)
         let !jobPool =
               -- TODO should this calculation be deferred until the first offer
               -- arrives?

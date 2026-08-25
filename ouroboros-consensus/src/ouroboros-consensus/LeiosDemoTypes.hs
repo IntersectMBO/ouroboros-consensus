@@ -1280,7 +1280,7 @@ messageLeiosFetchToObject = \case
     "kind" .= Aeson.String "MsgDone"
 
 -- | Summary of an EB body inserted into the LeiosTxCache, for observability (see
--- 'TraceLeiosTxCacheEbBody'). The counts nest:
+-- 'TraceLeiosBodyHits'). The counts nest:
 -- @ibsTxsInEb >= ibsTracked >= ibsAcquired >= ibsValidated@.
 data InsertBodySummary = InsertBodySummary
   { ibsTxsInEb :: !Int
@@ -1305,8 +1305,12 @@ data TraceLeiosKernel
     -- unexpected as the point should have been inserted during announcement handling.
     TraceLeiosBlockPointMissing LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
-  | -- | An EB body was inserted into the LeiosTxCache; carries the insertion summary.
-    TraceLeiosTxCacheEbBody LeiosPoint InsertBodySummary
+  | -- | An EB body was inserted into the LeiosTxCache
+    --
+    -- Carries the LeiosTxCache summary (cache hits) and how many of the
+    -- /remaining/ txs we then found in our local mempool. Together these give
+    -- the combined cache+mempool hit rate on the body's arrival.
+    TraceLeiosBodyHits LeiosPoint InsertBodySummary Int
   | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
       , eb :: LeiosEb
@@ -1501,15 +1505,16 @@ traceLeiosKernelToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
-  TraceLeiosTxCacheEbBody (MkLeiosPoint (SlotNo ebSlot) ebHash) ibs ->
+  TraceLeiosBodyHits (MkLeiosPoint (SlotNo ebSlot) ebHash) ibs mempoolHits ->
     mconcat
-      [ "kind" .= Aeson.String "LeiosTxCacheEbBody"
+      [ "kind" .= Aeson.String "LeiosBodyHits"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       , "txsInEb" .= ibsTxsInEb ibs
       , "tracked" .= ibsTracked ibs
       , "acquired" .= ibsAcquired ibs
       , "validated" .= ibsValidated ibs
+      , "mempoolHits" .= mempoolHits
       , "cacheTxCount" .= ibsCacheTxCount ibs
       , "cacheLoad" .= ibsCacheLoad ibs
       ]
