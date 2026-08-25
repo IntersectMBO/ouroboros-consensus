@@ -525,6 +525,131 @@ ebStateHasBody (MkEbState _slot fetchState) = case fetchState of
   BodyImminent -> False
   BodyAcquired{} -> True
 
+-- | A size summary of the LeiosFetch decision loop's working set
+--
+-- The stats are rather coarse because we forbid their calculation work to scale
+-- with EBs; it's either O(1) or scales based on the number of peers.
+data LeiosOutstandingStats = MkLeiosOutstandingStats
+  { losTracked :: !Int
+  -- ^ Total EBs in 'ebState' (should stay bounded by the pruning window; a
+  -- persistent climb signals a pruning leak).
+  , losMissingBodies :: !Int
+  -- ^ Size of 'missingEbBodies' (EB body points still to fetch) -- the body-fetch
+  -- backlog.
+  , losPeersInflight :: !Int
+  -- ^ Peers tracked in the outstanding-request byte map.
+  , losInflightBytesDesc :: !(Vector Int)
+  -- ^ Per-peer outstanding requested bytes, sorted descending -- the whole
+  -- distribution, so budget concentration across peers is visible. The peer
+  -- count is low, so materializing and sorting this is cheap.
+  , losOffersDesc :: !(Vector Int)
+  -- ^ Per-peer offer-set sizes, sorted descending -- the whole distribution.
+  -- Offers are not byte-budgeted, so a peer can pile them up between prunes; a
+  -- lone climbing head is the per-peer flood signal.
+  }
+  deriving (Eq, Show, Generic)
+
+-- | @offerSizes@ is each peer's current offer-set size (e.g.
+-- @map Map.size (Map.elems offerings)@ in the decision loop) and @numOfferingPeers@
+-- its length, passed separately as an O(1) 'Map.size' hint so the sorted vector
+-- is allocated exactly.
+leiosOutstandingStats :: Int -> [Int] -> LeiosOutstanding pid -> LeiosOutstandingStats
+leiosOutstandingStats numOfferingPeers offerSizes o =
+  MkLeiosOutstandingStats
+    { losTracked = Map.size (ebState o)
+    , losMissingBodies = Map.size (missingEbBodies o)
+    , losPeersInflight = Map.size inflightMap
+    , losInflightBytesDesc = inflightDesc
+    , losOffersDesc = offersDesc
+    }
+ where
+  inflightMap = requestedBytesSizePerPeer o
+  inflightDesc =
+    V.fromListN
+      (Map.size inflightMap)
+      (sortOn Down (map fromIntegral (Map.elems inflightMap)))
+  offersDesc = V.fromListN numOfferingPeers (sortOn Down offerSizes)
+
+-- | Summary order-statistics of a distribution across peers, given as a
+-- /descending-sorted, non-negative/ 'Vector' (as 'losInflightBytesDesc' /
+-- 'losOffersDesc' are). All are cheap to derive, so the vector stays the source
+-- of truth and these are computed only when emitting telemetry.
+--
+-- The median is taken over the /non-zero/ values only, so peers currently
+-- holding nothing don't drag it toward zero.
+data PeerDistSummary = MkPeerDistSummary
+  { pdsNonzeroCount :: !Int
+  , pdsTotal :: !Int
+  , pdsTop1 :: !Int
+  , pdsTop2 :: !Int
+  , pdsTop3 :: !Int
+  , pdsTop4 :: !Int
+  , pdsTop5 :: !Int
+  , pdsNonzeroMedian :: !Int
+  }
+
+summarizePeerDist :: Vector Int -> PeerDistSummary
+summarizePeerDist desc =
+  MkPeerDistSummary
+    { pdsNonzeroCount = nz
+    , pdsTotal = V.sum desc
+    , pdsTop1 = nth 0
+    , pdsTop2 = nth 1
+    , pdsTop3 = nth 2
+    , pdsTop4 = nth 3
+    , pdsTop5 = nth 4
+    , pdsNonzeroMedian = median
+    }
+ where
+  n = V.length desc
+  nth i = if i < n then desc V.! i else 0
+  -- Descending-sorted and non-negative, so the non-zero values are the leading
+  -- prefix and the median index lands inside it.
+  nz = V.length (V.takeWhile (> 0) desc)
+  median
+    | nz == 0 = 0
+    | odd nz = desc V.! (nz `div` 2)
+    | otherwise = (desc V.! (nz `div` 2 - 1) + desc V.! (nz `div` 2)) `div` 2
+
+-- | Simple counts describing what one decision iteration issued -- bounded by the
+-- number of requests issued that iteration, never by the outstanding state. See
+-- 'TraceLeiosFetchDecision'.
+data LeiosDecisionStats = MkLeiosDecisionStats
+  { ldsPeers :: !Int
+  -- ^ Peers issued at least one request this iteration.
+  , ldsRequests :: !Int
+  -- ^ Total fetch requests issued.
+  , ldsBodyRequests :: !Int
+  -- ^ Of those, EB-body ('MsgLeiosBlock') requests; the rest are tx-batch
+  -- ('MsgLeiosBlockTxs') requests.
+  , ldsJobs :: !Int
+  -- ^ Total jobs across the tx-batch requests.
+  , ldsBodyBytes :: !Int
+  -- ^ Requested EB-body bytes (sum of the body requests' sizes).
+  , ldsTxBytes :: !Int
+  -- ^ Requested tx bytes (sum of the covered jobs' on-the-wire sizes).
+  }
+  deriving (Eq, Show, Generic)
+
+summarizeDecisions ::
+  Foldable t => Map k (t LeiosFetchRequest) -> LeiosDecisionStats
+summarizeDecisions decs =
+  MkLeiosDecisionStats
+    { ldsPeers = Map.size decs
+    , ldsRequests = length reqs
+    , ldsBodyRequests = length [() | LeiosBlockRequest{} <- reqs]
+    , ldsJobs = sum [NEIntMap.size jobs | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) <- reqs]
+    , ldsBodyBytes = sum [fromIntegral sz | LeiosBlockRequest (MkLeiosBlockRequest _ sz) <- reqs]
+    , ldsTxBytes =
+        sum
+          [ fromIntegral b
+          | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) <- reqs
+          , Jobs.MkLeiosJob _ b _ <- F.toList jobs
+          ]
+    }
+ where
+  reqs = concatMap toList (Map.elems decs)
+
 insertAcquiredEbBody ::
   EbHash -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
 insertAcquiredEbBody ebHash jobPool =
@@ -1224,6 +1349,9 @@ data TraceLeiosKernel
     TraceLeiosFetchBodyArrival !FetchArrivalBytes
   | -- | An arriving 'MsgLeiosBlockTxs' (tx batch) from an upstream peer
     TraceLeiosFetchTxsArrival !FetchArrivalBytes
+  | -- | One completed iteration of the LeiosFetch decision logic: its wall-clock
+    -- duration and a size sample of the resulting 'LeiosOutstanding' state.
+    TraceLeiosFetchDecision !NominalDiffTime !LeiosOutstandingStats !LeiosDecisionStats
 
 -- | The data of a relayed EB announcement, shared by 'TraceLeiosPeerAnnouncement'
 -- and 'TraceLeiosAnnouncementAccepted'. A separate record so its selectors are
@@ -1315,6 +1443,41 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosFetchTxsArrival"
       , fabObject fab
       ]
+  TraceLeiosFetchDecision d stats dec ->
+    let inflight = summarizePeerDist (losInflightBytesDesc stats)
+        offers = summarizePeerDist (losOffersDesc stats)
+     in mconcat
+          [ "kind" .= Aeson.String "LeiosFetchDecision"
+          , "durationSeconds" .= (realToFrac d :: Double)
+          , "durationMillis" .= (realToFrac d * 1000 :: Double)
+          , "decisionPeers" .= ldsPeers dec
+          , "decisionRequests" .= ldsRequests dec
+          , "decisionBodyRequests" .= ldsBodyRequests dec
+          , "decisionJobs" .= ldsJobs dec
+          , "decisionBodyBytes" .= ldsBodyBytes dec
+          , "decisionTxBytes" .= ldsTxBytes dec
+          , "tracked" .= losTracked stats
+          , "missingBodies" .= losMissingBodies stats
+          , "peersInflight" .= losPeersInflight stats
+          , "inflightNonzeroCount" .= pdsNonzeroCount inflight
+          , "inflightTotal" .= pdsTotal inflight
+          , "inflightTop1" .= pdsTop1 inflight
+          , "inflightTop2" .= pdsTop2 inflight
+          , "inflightTop3" .= pdsTop3 inflight
+          , "inflightTop4" .= pdsTop4 inflight
+          , "inflightTop5" .= pdsTop5 inflight
+          , "inflightNonzeroMedian" .= pdsNonzeroMedian inflight
+          , "inflightDesc" .= V.toList (losInflightBytesDesc stats)
+          , "offersNonzeroCount" .= pdsNonzeroCount offers
+          , "offersTotal" .= pdsTotal offers
+          , "offersTop1" .= pdsTop1 offers
+          , "offersTop2" .= pdsTop2 offers
+          , "offersTop3" .= pdsTop3 offers
+          , "offersTop4" .= pdsTop4 offers
+          , "offersTop5" .= pdsTop5 offers
+          , "offersNonzeroMedian" .= pdsNonzeroMedian offers
+          , "offersDesc" .= V.toList (losOffersDesc stats)
+          ]
   MkTraceLeiosKernel s ->
     mconcat
       [ "kind" .= Aeson.String "LeiosKernelMsg"

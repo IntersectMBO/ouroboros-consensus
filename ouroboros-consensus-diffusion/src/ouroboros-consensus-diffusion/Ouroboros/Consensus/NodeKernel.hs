@@ -484,7 +484,7 @@ initNodeKernel
           leiosPeersVars <- LazySTM.readTVarIO getLeiosPeersVars
           offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
           let livePeers = Map.keysSet leiosPeersVars
-          (newRequests, offerDrops) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+          (newRequests, offerDrops, outstandingStats) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
             -- Re-read the live peers while holding the -- 'getLeiosOutstanding'
             -- lock. This is used to avoid losing an update to
             -- 'getLeiosOutstanding' that 'removePeerFromOutstanding' may have
@@ -514,7 +514,7 @@ initNodeKernel
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
                     bigLedgerPeers
                     outstanding
-            pure (outstanding', (requests, offerDrops))
+            pure (outstanding', (requests, offerDrops, Leios.leiosOutstandingStats (Map.size offerings) (map Map.size (Map.elems offerings)) outstanding'))
           -- Drop dead offers: exactly the EBs the decision pass found we already
           -- fully hold (computed while it walked those offers -- no extra scan).
           -- This is the timely offer-pruning; the imm-tip Watcher prune is a
@@ -549,7 +549,10 @@ initNodeKernel
           iterationEnd <- getMonotonicTime
           let loopInterval = 0.5 :: SI.DiffTime
               duration = iterationEnd `diffTime` iterationStart
-          traceWith leiosTr $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
+          -- Structured, Loki-queryable telemetry for the decision loop: the
+          -- iteration's duration (the worst-case-latency signal the LeiosTxCache
+          -- bounds) and a size sample of the (now well-pruned) outstanding state.
+          traceWith leiosTr $ TraceLeiosFetchDecision (realToFrac duration) outstandingStats (Leios.summarizeDecisions newRequests)
           threadDelay $ loopInterval - duration
 
     -- The Leios voting thread: when this node has a voting key, subscribe
