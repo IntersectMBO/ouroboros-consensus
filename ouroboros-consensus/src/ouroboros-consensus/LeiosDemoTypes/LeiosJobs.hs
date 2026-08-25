@@ -186,6 +186,9 @@ pickLeastRequestedJobExcept excluded pool =
   -- non-excluded job id. Returns (bucket multiplicity, job id). 'foldrWithKey'
   -- visits ascending keys and is lazy in the accumulator, so this stops at the
   -- first eligible bucket without materialising the bucket list.
+  --
+  -- TODO if we wanted to enforce a limit on the multiplicity of /each job/,
+  -- it'd be easy to do so here: only visit the lower-multiplicity buckets
   eligible =
     IntMap.foldrWithKey
       ( \m bucket rest ->

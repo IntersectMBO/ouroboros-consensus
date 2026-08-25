@@ -326,7 +326,14 @@ popLeftmostOffset = \case
 -- larger per-peer byte budget, enough that a closure it offers is requested in
 -- full (the whole remaining job pool) at once.
 --
--- TODO also pull txs from the Mempool
+-- NOTE that this does not read txs from the LeiosTxCache nor from the Mempool;
+-- that happened when the EB body arrived, in 'processLeiosBlock'. (TODO the
+-- LeiosFetch client could also check the LeiosTxCache and the Mempool just
+-- before it sends the request? The major cost is that doing so requires
+-- retaining the individual txs' hashes in memory and/or fetching them from
+-- disk, which adds complexity and\/or latency. At least with the /current/
+-- SQLite-based LeiosDb backend, that complexity and\/or latency is not the
+-- responsibility of the LeiosFetch logic.)
 leiosFetchLogicIteration ::
   forall pid.
   Ord pid =>
@@ -414,13 +421,14 @@ fetchPriorityTiers mbCurrentSlot l offers =
 
 -- | Walk this peer's offered points in priority order (see
 -- 'fetchPriorityTiers'), assigning requests to the peer until it's saturated at
--- 'Leios.maxRequestedBytesSizePerPeer'. A big-ledger peer saturates at the
--- larger 'Leios.maxRequestedBytesSizePerBigLedgerPeer', enough that a closure
--- it offers is requested in full (see 'assignClosure').
+-- 'Leios.maxRequestedBytesSizePerPeer'. A big-ledger peer saturates instead at
+-- the larger 'Leios.maxRequestedBytesSizePerBigLedgerPeer', enough that a
+-- couple closures it offers can be entirely inflight at the same time (see
+-- 'assignClosure').
 --
--- Offered points below the saturation point are never visited, so aren't
--- pruned this pass; that's fine because it's ephemeral and/or the other prune
--- based on the imm-tip advancing is a backstop.
+-- Offers beyond the saturation point are never visited, so aren't pruned this
+-- pass; that's fine because it's ephemeral and/or the other prune based on the
+-- imm-tip advancing is a backstop.
 assignPeer ::
   Ord pid =>
   LeiosFetchStaticEnv ->
@@ -431,8 +439,9 @@ assignPeer ::
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest, Set LeiosPoint)
 assignPeer env mbCurrentSlot isBig peerId offers acc =
-  -- Walk the high-priority tier, then the low, threading the accumulator; a
-  -- second walk short-circuits at once if the first exhausted the byte budget.
+  -- Walk the high-priority tier, then the low, threading the accumulator; the
+  -- second walk immediately short-circuits if the first already saturated the
+  -- peer.
   go (go (acc, Seq.empty, Set.empty) highTier) lowTier
  where
   (highTier, lowTier) = fetchPriorityTiers mbCurrentSlot (Leios.fetchPriorityWindowSlots env) offers
@@ -513,6 +522,8 @@ assignBody peerId ebHash slot st@(acc, dec)
                   }
            in (acc', dec Seq.|> LeiosBlockRequest (MkLeiosBlockRequest (MkLeiosPoint slot ebHash) size))
 
+-- | Flag indicating whether all jobs matching a peer's offers are already
+-- inflight
 newtype WhetherPeerEbExhausted = MkWhetherPeerEbExhausted Bool
 
 -- | Request tx-closure jobs from this peer, the least-requested ones we haven't
