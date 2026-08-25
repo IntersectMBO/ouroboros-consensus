@@ -37,6 +37,7 @@ import Data.List (unfoldr)
 import Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -120,7 +121,8 @@ import Ouroboros.Consensus.Block
   , toRawHash
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( SystemTime
+  ( RelativeTime
+  , SystemTime
   , diffRelTime
   , systemTimeCurrent
   )
@@ -465,7 +467,7 @@ assignPeer env mbCurrentSlot isBig peerId offers acc =
         -- imm-tip). This is an ephemeral state, mid prune, but go ahead and
         -- prune it now.
         pruneThisOffer
-      Just (Leios.MkEbState slot fetchState) -> case (fetchState, offerKind) of
+      Just (Leios.MkEbState slot _onset fetchState) -> case (fetchState, offerKind) of
         (Leios.BodyImminent, _) ->
           -- Our forge is producing this EB, so we hold the whole datum (even
           -- though it might not be inserted yet): never request it, and the
@@ -546,9 +548,9 @@ assignClosure ::
 assignClosure env isBig peerId ebHash st@(acc, dec) =
   case Map.lookup ebHash (Leios.ebState acc) of
     Nothing -> (st, MkWhetherPeerEbExhausted False)
-    Just (Leios.MkEbState _slot Leios.NoBody) -> (st, MkWhetherPeerEbExhausted False)
-    Just (Leios.MkEbState _slot Leios.BodyImminent) -> (st, MkWhetherPeerEbExhausted False)
-    Just (Leios.MkEbState slot (Leios.BodyAcquired jobPool)) ->
+    Just (Leios.MkEbState _slot _onset Leios.NoBody) -> (st, MkWhetherPeerEbExhausted False)
+    Just (Leios.MkEbState _slot _onset Leios.BodyImminent) -> (st, MkWhetherPeerEbExhausted False)
+    Just (Leios.MkEbState slot onset (Leios.BodyAcquired jobPool)) ->
       let inflightJobs =
             maybe IntSet.empty NEIntSet.toSet $
               Map.lookup ebHash =<< Map.lookup peerId (Leios.requestedJobsPerPeer acc)
@@ -565,7 +567,7 @@ assignClosure env isBig peerId ebHash st@(acc, dec) =
                       { Leios.ebState =
                           Map.insert
                             ebHash
-                            (Leios.MkEbState slot (Leios.BodyAcquired jobPool'))
+                            (Leios.MkEbState slot onset (Leios.BodyAcquired jobPool'))
                             (Leios.ebState acc)
                       , Leios.requestedJobsPerPeer =
                           Map.insertWith
@@ -673,6 +675,8 @@ nextLeiosFetchClientCommand ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
+  -- | For reporting each arriving EB's age (see 'processLeiosBlock').
+  SystemTime m ->
   -- | Pull EB-body misses out of the local mempool; see 'processLeiosBlock'.
   ( IntMap.IntMap (TxHash, BytesSize) ->
     m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
@@ -689,7 +693,7 @@ nextLeiosFetchClientCommand ::
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db pullFromMempool peerId reqsVar responseQ = do
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemTime pullFromMempool peerId reqsVar responseQ = do
   drainResponses
   StrictSTM.atomically checkOrPeek >>= \case
     Right result -> pure $ Right result
@@ -701,9 +705,9 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db pullFro
     pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
     forM_ pending $ \case
       PendingBlockResponse req eb ->
-        processLeiosBlock ktracer tracer kernelVars txCache db pullFromMempool (ReceivedBlockFrom peerId req) eb
+        processLeiosBlock ktracer tracer kernelVars txCache db systemTime pullFromMempool (ReceivedBlockFrom peerId req) eb
       PendingBlockTxsResponse req txs ->
-        processLeiosBlockTxs ktracer tracer kernelVars txCache db (ReceivedTxsFrom peerId req txs)
+        processLeiosBlockTxs ktracer tracer kernelVars txCache db systemTime (ReceivedTxsFrom peerId req txs)
 
   -- Non-blocking: return 'Right result' if stop or a request is available,
   -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
@@ -770,8 +774,8 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db pullFro
 -- request we are fulfilling) and our own forge; the arrival-specific behaviour a
 -- local forge skips is: refunding the peer's request budget, classifying/listing
 -- the missing txs (a forge holds its whole closure, so nothing is missing), and
--- emitting fetch-arrival telemetry (which would otherwise pollute the arrival
--- panels with self-produced data).
+-- emitting fetch-arrival telemetry (which would otherwise pollute the metrics
+-- with self-produced data).
 data LeiosBlockSource pid
   = ReceivedBlockFrom (PeerId pid) LeiosBlockRequest
   | -- | A locally-forged EB, carrying the point the forge assigned it.
@@ -790,6 +794,16 @@ data LeiosBlockTxsSource pid
     -- (known) tx hashes, to be ingested applied.
     MempoolTxs !LeiosPoint !(Map TxHash BS.ByteString)
 
+-- | The age of an EB on arrival: the wall-clock elapsed from its recorded oldest
+-- announcement-slot onset (see 'Leios.ebStateOnset') to @now@, or 'Nothing' if
+-- the EB was never heralded by an announcement (an offer-only or self-forged
+-- body).
+ebPointAge :: RelativeTime -> Map EbHash Leios.EbState -> LeiosPoint -> Maybe NominalDiffTime
+ebPointAge now ebStates p = do
+  st <- Map.lookup p.pointEbHash ebStates
+  onset <- strictMaybeToMaybe (Leios.ebStateOnset st)
+  Just (diffRelTime now onset)
+
 processLeiosBlock ::
   ( Ord pid
   , IOLike m
@@ -801,6 +815,8 @@ processLeiosBlock ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
+  -- | For reporting the EB's age on arrival (now minus its recorded onset).
+  SystemTime m ->
   -- | Pull the txs we already hold in our local mempool out of the given misses
   -- (offset -> (tx hash, size)): returns the misses still to fetch from peers,
   -- plus the mempool-found txs' bytes (which 'processLeiosBlock' ingests itself,
@@ -811,7 +827,8 @@ processLeiosBlock ::
   LeiosBlockSource pid ->
   LeiosEb ->
   m ()
-processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db pullFromMempool source eb = do
+processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTime pullFromMempool source eb = do
+  now <- systemTimeCurrent systemTime
   -- validate it
   let (mbPeer, point, ebBytesSize) = case source of
         ReceivedBlockFrom peerId (MkLeiosBlockRequest p sz) -> (Just peerId, p, sz)
@@ -908,8 +925,11 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db pullFromM
               (Leios.serializeEbBody eb)
               IntMap.empty
               (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
-          traceWith ktracer $ TraceLeiosBlockAcquired point
-          forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+          traceWith ktracer $
+            TraceLeiosBlockAcquired point (ebPointAge now (Leios.ebState outstanding) point)
+          forM_ completedByBody $ \p ->
+            traceWith ktracer $
+              TraceLeiosBlockTxsAcquired p (ebPointAge now (Leios.ebState outstanding) p)
           -- The 'TraceLeiosBodyHits' trace is deferred to after the mempool pull
           -- below, so it can report the mempool-hit count alongside this cache
           -- summary.
@@ -993,6 +1013,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db pullFromM
       (outstandingVar, readyVar)
       txCache
       db
+      systemTime
       (MempoolTxs point mempoolNotCache)
 
 -- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
@@ -1060,8 +1081,8 @@ removePeerFromOutstanding peerId o =
     }
  where
   -- Decrement, in that EB's jobPool, the multiplicity of each job this peer held.
-  releaseJobs jobIds (Leios.MkEbState slot fetchState) =
-    Leios.MkEbState slot $ case fetchState of
+  releaseJobs jobIds (Leios.MkEbState slot onset fetchState) =
+    Leios.MkEbState slot onset $ case fetchState of
       Leios.NoBody -> Leios.NoBody
       Leios.BodyImminent -> Leios.BodyImminent
       Leios.BodyAcquired jobPool ->
@@ -1139,8 +1160,8 @@ completeTxRequest peerId ebHash jobIds o =
         Map.update (nonEmptyMap . Map.update dropJobs ebHash) peerId (Leios.requestedJobsPerPeer o)
     }
  where
-  completeInJobPool (Leios.MkEbState slot fetchState) =
-    Leios.MkEbState slot $ case fetchState of
+  completeInJobPool (Leios.MkEbState slot onset fetchState) =
+    Leios.MkEbState slot onset $ case fetchState of
       Leios.NoBody -> Leios.NoBody
       Leios.BodyImminent -> Leios.BodyImminent
       Leios.BodyAcquired jobPool ->
@@ -1218,25 +1239,31 @@ processLeiosBlockTxs ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
+  -- | For reporting each completed closure's age on arrival.
+  SystemTime m ->
   LeiosBlockTxsSource pid ->
   m ()
-processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source = case source of
+processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db systemTime source = case source of
   ForgedTxs _point eb txs -> do
+    now <- systemTimeCurrent systemTime
     -- Ingest the whole closure (TODO even though we might already have some of
     -- it).
     --
     -- No peer accounting, no arrival telemetry.
     _ <- id $
         ingestAcquiredTxs
+          now
           Applied
       $ V.toList (V.map fst (leiosEbTxs eb)) `zip` V.toList (V.map cbor txs)
     void $ MVar.tryPutMVar readyVar ()
   MempoolTxs _point hits -> do
+    now <- systemTimeCurrent systemTime
     -- Txs found in our local mempool (so already-known-valid): ingest applied,
     -- using the hashes we already have. No peer accounting, no arrival telemetry.
-    _ <- ingestAcquiredTxs Applied (Map.toList hits)
+    _ <- ingestAcquiredTxs now Applied (Map.toList hits)
     void $ MVar.tryPutMVar readyVar ()
   ReceivedTxsFrom peerId req@(MkLeiosBlockTxsRequest point jobs) txs -> do
+    now <- systemTimeCurrent systemTime
     traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
     let txBytess = V.map cbor txs
         batchBytes = V.sum (V.map BS.length txBytess)
@@ -1269,11 +1296,11 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
     let pendingJobs = case Map.lookup point.pointEbHash (Leios.ebState outstanding0) of
           Nothing ->
             IntMap.empty
-          Just (Leios.MkEbState _slot Leios.NoBody) ->
+          Just (Leios.MkEbState _slot _onset Leios.NoBody) ->
             IntMap.empty
-          Just (Leios.MkEbState _slot Leios.BodyImminent) ->
+          Just (Leios.MkEbState _slot _onset Leios.BodyImminent) ->
             IntMap.empty
-          Just (Leios.MkEbState _slot (Leios.BodyAcquired jobPool)) ->
+          Just (Leios.MkEbState _slot _onset (Leios.BodyAcquired jobPool)) ->
             Jobs.restrictToPending (NEIntMap.toMap jobs) jobPool
         -- The covered jobs we won't ingest -- an earlier delivery already
         -- completed them (or the EB was pruned). Their txs did arrive, and being
@@ -1292,7 +1319,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
     -- ingest the validated txs (unapplied). 'txArrival' covers those; add the
     -- redundant arrivals the cache never saw, so the trace reflects everything
     -- that came off the wire.
-    txArrival <- ingestAcquiredTxs Unapplied toIngest
+    txArrival <- ingestAcquiredTxs now Unapplied toIngest
     traceWith ktracer $ TraceLeiosFetchTxsArrival (txArrival <> redundantExtra)
     -- 'refundTxRequest' reverses this peer's per-request byte accounting (but skips
     -- it if the peer was already cancelled in bulk by a disconnect);
@@ -1316,11 +1343,13 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
   -- ingest it: the jobPool read and 'completeTxRequest' aren't atomic across
   -- threads. Harmless --- the DB insert is idempotent and the cache buckets each
   -- tx by its prior state in one locked pass, tolerating duplicates.
-  ingestAcquiredTxs :: WhetherApplied -> [(TxHash, BS.ByteString)] -> m Leios.FetchArrivalBytes
-  ingestAcquiredTxs applied toIngest =
+  ingestAcquiredTxs :: RelativeTime -> WhetherApplied -> [(TxHash, BS.ByteString)] -> m Leios.FetchArrivalBytes
+  ingestAcquiredTxs now applied toIngest =
     traceException tracer TraceLeiosPeerDbException $ do
       completed <- leiosDbInsertTxs db toIngest
-      forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+      ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
+      forM_ completed $ \p ->
+        traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
       case applied of
         Applied -> do
           withLockedInsertAppliedTx txCache $ \w0 step ->
@@ -1373,7 +1402,7 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
           -- TODO stop that, once offers are no longer trusted
           outstanding'
             | tooOld || malformed = outstanding
-            | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot outstanding
+            | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
           skip =
             tooOld
             || malformed
@@ -1480,6 +1509,12 @@ processAnnouncementCentrally ::
   Maybe peer ->
   AnnouncementSource ->
   ShouldRelay ->
+  -- | This announcement slot's wall-clock onset, if known
+  --
+  -- Recorded so the body\/closure arrival handlers can report the EB's
+  -- age. It's intentionally 'SNothing' for a self-forged EB, since these ages
+  -- are relevant to /diffusion/.
+  StrictMaybe RelativeTime ->
   Maybe NominalDiffTime ->
   AnnouncingHeader blk ->
   m ()
@@ -1491,6 +1526,7 @@ processAnnouncementCentrally
   source
   provenance
   shouldRelay
+  onset
   age
   ancHdr =
     MVar.modifyMVar_ centralVar $ \cst ->
@@ -1519,7 +1555,7 @@ processAnnouncementCentrally
   -- The announced EB's slot is the announcing header's own slot (see
   -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
   point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
-  recordAnnounced = recordAnnouncedEb kernelVars (point, Leios.announcementEbBodySize fields)
+  recordAnnounced = recordAnnouncedEb kernelVars onset (point, Leios.announcementEbBodySize fields)
   markForged =
     MVar.modifyMVar_ (fst kernelVars) $
       pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
@@ -1572,7 +1608,7 @@ announcementValidity ::
   m
     ( AnnouncementVerdict
         (AnnouncementInvalidity blk)
-        (ShouldRelay, NominalDiffTime, (LeiosPoint, BytesSize))
+        (ShouldRelay, RelativeTime, NominalDiffTime, (LeiosPoint, BytesSize))
     )
 announcementValidity systemTime futureCheck cfg immLedger hdr = do
   onset <- case futureCheck of
@@ -1605,7 +1641,7 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
          in case validateAnnouncementHeader cfg immLedger hdr of
               Left inv -> VerdictInvalid inv
               Right (StaleOCIN, _v) -> VerdictIgnore
-              Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, age, v)
+              Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, onset, age, v)
 
 -- | Record a validated, newly-announced EB body as missing, unless its already
 -- pruned\/tracked\/acquired
@@ -1614,9 +1650,11 @@ recordAnnouncedEb ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
+  -- | This announcement slot's wall-clock onset, if known.
+  StrictMaybe RelativeTime ->
   (LeiosPoint, BytesSize) ->
   m ()
-recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
+recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
   changed <- MVar.modifyMVar outstandingVar (pure . upd)
   when changed $ void $ MVar.tryPutMVar readyVar ()
  where
@@ -1628,7 +1666,7 @@ recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
     let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
         !outstanding'
           | tooOld = outstanding
-          | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot outstanding
+          | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot onset outstanding
         skip =
           tooOld
           || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
@@ -1739,12 +1777,14 @@ onForgedLeiosEb ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
+  -- | Threaded through to the body/closure handlers for age reporting
+  SystemTime m ->
   -- | Built by the caller (see 'mkForgedAnnouncingHeader'), at the call site
   -- nearest the forge where its correspondence to the closure is evident.
   AnnouncingHeader blk ->
   Leios.ForgedLeiosEb ->
   m ()
-onForgedLeiosEb kernelTracer centralVar kv txCache db anc forgedEb = do
+onForgedLeiosEb kernelTracer centralVar kv txCache db systemTime anc forgedEb = do
   processAnnouncementCentrally
     kernelTracer
     centralVar
@@ -1753,6 +1793,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache db anc forgedEb = do
     Nothing
     ForgedLocally
     Announcements.DoRelay
+    SNothing -- a self-forged EB records no onset (kept out of the /diffusion/ events)
     Nothing
     anc
   processLeiosBlock
@@ -1761,6 +1802,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache db anc forgedEb = do
     kv
     txCache
     db
+    systemTime
     noMempoolPull -- the forge holds the whole closure
     (ForgedBlock forgedEb.point)
     forgedEb.body
@@ -1770,6 +1812,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache db anc forgedEb = do
     kv
     txCache
     db
+    systemTime
     (ForgedTxs forgedEb.point forgedEb.body $ V.fromList $ map (MkLeiosTx . snd) $ forgedEb.txClosure)
   traceWith kernelTracer $
     TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}

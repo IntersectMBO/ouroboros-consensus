@@ -96,6 +96,7 @@ import qualified Data.Set.NonEmpty as NESet
 import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import Data.String (fromString)
+import Cardano.Slotting.Time (RelativeTime)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
@@ -478,9 +479,12 @@ emptyLeiosOutstanding prunedSlot =
 
 -- | Per-EB state tracked in 'ebState'
 data EbState =
-  -- | the greatest slot at which the EB has been announced (TODO or, for now,
-  -- offered), together with the current progress of fetching it
-  MkEbState !SlotNo !EbFetchState
+  -- | The greatest slot at which the EB has been announced (TODO or, for now,
+  -- offered); the wall-clock onset of its /oldest/ announcement slot (kept as the
+  -- minimum, so the body\/closure arrival handlers can report how old the EB was
+  -- when we first held it; 'SNothing' for an unheralded offer-only or self-forged
+  -- EB); and the current progress of fetching it.
+  MkEbState !SlotNo !(StrictMaybe RelativeTime) !EbFetchState
   deriving (Eq, Show)
 
 -- | Whether we hold an EB's body, plus the forge's imminent case.
@@ -515,12 +519,17 @@ data EbFetchState
   deriving (Eq, Show)
 
 ebStateMaxSlot :: EbState -> SlotNo
-ebStateMaxSlot (MkEbState slot _fetchState) = slot
+ebStateMaxSlot (MkEbState slot _onset _fetchState) = slot
+
+-- | The recorded onset of the EB's oldest announcement slot, if any (see
+-- 'MkEbState'); the arrival handlers use it to report the EB's age on arrival.
+ebStateOnset :: EbState -> StrictMaybe RelativeTime
+ebStateOnset (MkEbState _slot onset _fetchState) = onset
 
 -- | Whether we already hold the EB's body (the "do we have it?" test that the
 -- offer/announcement/arrival paths consult before fetching).
 ebStateHasBody :: EbState -> Bool
-ebStateHasBody (MkEbState _slot fetchState) = case fetchState of
+ebStateHasBody (MkEbState _slot _onset fetchState) = case fetchState of
   NoBody -> False
   BodyImminent -> False
   BodyAcquired{} -> True
@@ -661,36 +670,52 @@ insertAcquiredEbBody ebHash jobPool =
       --
       -- Because it was previously pruned, it should simply be ignored now.
       Nothing
-    Just (MkEbState slot fetchState) -> case fetchState of
+    Just (MkEbState slot onset fetchState) -> case fetchState of
       BodyAcquired{} -> Nothing
-      NoBody -> Just $ MkEbState slot (BodyAcquired jobPool)
+      NoBody -> Just $ MkEbState slot onset (BodyAcquired jobPool)
       BodyImminent ->
         -- note that we ignore the given jobPool here
-        Just $ MkEbState slot (BodyAcquired Jobs.emptyLeiosJobPool)
+        Just $ MkEbState slot onset (BodyAcquired Jobs.emptyLeiosJobPool)
 
 -- | Record that our own forge is producing this EB
 markBodyImminent ::
   EbHash -> SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
 markBodyImminent ebHash slot =
   alterEbState ebHash $ \case
-    Nothing -> Just $ MkEbState slot BodyImminent
-    Just (MkEbState oldSlot fetchState) -> case fetchState of
-      NoBody -> Just $ MkEbState oldSlot BodyImminent
+    -- A self-forged EB records no onset: we produced it, so its arrival age is a
+    -- trivial ~0, not a diffusion-latency data point.
+    Nothing -> Just $ MkEbState slot SNothing BodyImminent
+    Just (MkEbState oldSlot onset fetchState) -> case fetchState of
+      NoBody -> Just $ MkEbState oldSlot onset BodyImminent
       BodyImminent -> Nothing
-      BodyAcquired{} -> Just $ MkEbState oldSlot (BodyAcquired Jobs.emptyLeiosJobPool)
+      BodyAcquired{} -> Just $ MkEbState oldSlot onset (BodyAcquired Jobs.emptyLeiosJobPool)
 
 -- | Record that the EB with this hash is referenced (announced or offered) at this
--- slot
+-- slot, along with that slot's wall-clock onset if known.
 --
 -- The same EB (hash) can be referenced by several points; we keep the
--- /greatest/ such slot, so the EB's state isn't pruned prematurely.
+-- /greatest/ such slot, so the EB's state isn't pruned prematurely. The onset,
+-- in contrast, is kept as the /minimum/ (oldest announcement), so the arrival
+-- handlers report the age since the EB was first heralded. An offer carries no
+-- onset ('SNothing') and so never overrides one already recorded by an
+-- announcement.
 recordMaxAnnouncementSlot ::
-  EbHash -> SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
-recordMaxAnnouncementSlot ebHash slot =
+  EbHash -> SlotNo -> StrictMaybe RelativeTime -> LeiosOutstanding pid -> LeiosOutstanding pid
+recordMaxAnnouncementSlot ebHash slot onset =
   alterEbState ebHash $ \mbOld -> case mbOld of
-    Nothing -> Just $ MkEbState slot NoBody
-    Just (MkEbState oldSlot fetchState) ->
-      if slot <= oldSlot then Nothing else Just $ MkEbState slot fetchState
+    Nothing -> Just $ MkEbState slot onset NoBody
+    Just (MkEbState oldSlot oldOnset fetchState) ->
+      let newSlot = max slot oldSlot
+          newOnset = minOnset onset oldOnset
+       in if newSlot == oldSlot && newOnset == oldOnset
+            then Nothing
+            else Just $ MkEbState newSlot newOnset fetchState
+
+-- | Combine two onsets, keeping the earlier and treating 'SNothing' as absent.
+minOnset :: StrictMaybe RelativeTime -> StrictMaybe RelativeTime -> StrictMaybe RelativeTime
+minOnset SNothing y = y
+minOnset x SNothing = x
+minOnset (SJust a) (SJust b) = SJust (min a b)
 
 -- | Initialize the outstanding state
 --
@@ -737,7 +762,7 @@ initializeLeiosOutstanding points immTipSlot =
  where
   seed1 (MkLeiosPoint slot ebHash) =
     insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool
-      . recordMaxAnnouncementSlot ebHash slot
+      . recordMaxAnnouncementSlot ebHash slot SNothing
 
 -- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
 -- whenever the entry's max slot moves. The supplied function must be
@@ -1300,11 +1325,17 @@ data LeiosTxCacheInsertBodySummary = MkLeiosTxCacheInsertBodySummary
 
 data TraceLeiosKernel
   = MkTraceLeiosKernel String
-  | TraceLeiosBlockAcquired LeiosPoint
+  | -- | An EB body was first acquired
+    --
+    -- Carries how old the EB was on arrival, if it was preceded by an
+    -- announcement and not forged locally.
+    TraceLeiosBlockAcquired LeiosPoint (Maybe NominalDiffTime)
   | -- | The EB body was received but the point was not in the database. This is
     -- unexpected as the point should have been inserted during announcement handling.
     TraceLeiosBlockPointMissing LeiosPoint
-  | TraceLeiosBlockTxsAcquired LeiosPoint
+  | -- | An EB's tx closure was first completed. Carries the EB's age on arrival,
+    -- as for 'TraceLeiosBlockAcquired'.
+    TraceLeiosBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
   | -- | An EB body was inserted into the LeiosTxCache
     --
     -- Carries the LeiosTxCache summary (cache hits), how many of its txs we found
@@ -1490,24 +1521,26 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosKernelMsg"
       , "msg" .= s
       ]
-  TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
-    mconcat
+  TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) mbAge ->
+    mconcat $
       [ "kind" .= Aeson.String "LeiosBlockAcquired"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
+        ++ foldMap (\age -> ["bodyAgeSeconds" .= (realToFrac age :: Double)]) mbAge
   TraceLeiosBlockPointMissing (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockPointMissing"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
-  TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
-    mconcat
+  TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) mbAge ->
+    mconcat $
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
+        ++ foldMap (\age -> ["closureAgeSeconds" .= (realToFrac age :: Double)]) mbAge
   TraceLeiosBodyHits (MkLeiosPoint (SlotNo ebSlot) ebHash) ibs mempoolHits missedBoth ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBodyHits"

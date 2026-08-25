@@ -71,6 +71,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SJust))
 import qualified Data.Primitive.MutVar as Prim
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
@@ -425,6 +426,7 @@ mkHandlers
                       (Just peer)
                       Leios.ReceivedViaChainSync
                       Announcements.DoRelay
+                      (SJust hdrSlotTime)
                       (Just (diffRelTime now hdrSlotTime))
                       ancHdr
               }
@@ -521,7 +523,7 @@ mkHandlers
                                 (Leios.ancHeader ancH)
                           )
                           -- central part of the processing
-                          ( \ancHdr (shouldRelay, age, (p, _sz)) -> do
+                          ( \ancHdr (shouldRelay, onset, age, (p, _sz)) -> do
                               traceWith tracer $
                                 MkTraceLeiosPeer $
                                   "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
@@ -533,6 +535,7 @@ mkHandlers
                                 (Just peer)
                                 Leios.ReceivedViaLeiosNotify
                                 shouldRelay
+                                (SJust onset)
                                 (Just age)
                                 ancHdr
                           )
@@ -667,6 +670,7 @@ mkHandlers
                   (getLeiosOutstanding, getLeiosReady)
                   getLeiosTxCache
                   leiosConn
+                  systemTime
                   ( Leios.mkMempoolPull
                       (atomically (getLeiosTxIndex getMempool))
                       (leiosTxBytesOfGenTx . txForgetValidated)

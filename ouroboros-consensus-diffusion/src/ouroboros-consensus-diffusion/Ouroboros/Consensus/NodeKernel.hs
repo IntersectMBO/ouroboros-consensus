@@ -660,6 +660,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , cfg :: TopLevelConfig blk
   , registry :: ResourceRegistry m
   , btime :: BlockchainTime m
+  , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
   , blockFetchInterface ::
       BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
@@ -702,6 +703,7 @@ initInternalState
     , cfg
     , blockFetchSize
     , btime
+    , systemTime
     , mempoolCapacityOverride
     , mempoolTimeoutConfig
     , gsmArgs
@@ -827,6 +829,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                           (leiosOutstanding, leiosReady)
                           leiosTxCache
                           leiosConn
+                          systemTime
                           -- Safe here: the forge hands us a corresponding header
                           -- and closure.
                           (Leios.mkForgedAnnouncingHeader forgedHeader forgedEb)

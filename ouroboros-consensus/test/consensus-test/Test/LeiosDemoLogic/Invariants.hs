@@ -45,6 +45,7 @@ import Data.Foldable (toList)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import Data.Sequence.NonEmpty (NESeq)
@@ -84,6 +85,10 @@ import LeiosDemoTypes
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, newPureLeiosTxCache, nullLeiosTxCache)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , SystemTime (..)
+  )
 import Ouroboros.Consensus.Util.IOLike (IOLike, evaluate)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
@@ -115,14 +120,14 @@ tests =
             -- announce at slot 5, then again at the smaller slot 3, and acquire
             o =
               Leios.insertAcquiredEbBody h jobPool $
-                Leios.recordMaxAnnouncementSlot h (SlotNo 3) $
-                  Leios.recordMaxAnnouncementSlot h (SlotNo 5) $
+                Leios.recordMaxAnnouncementSlot h (SlotNo 3) SNothing $
+                  Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
                     (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
         -- the greater slot is retained, not the last-recorded one
-        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired jobPool))
+        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
         -- kept while the greatest slot (5) is at/above the immutable tip (4)
         Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 4) o)))
-          @?= Just (Leios.MkEbState (SlotNo 5) (Leios.BodyAcquired jobPool))
+          @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
         -- dropped once the greatest slot (5) is below the immutable tip (6)
         Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 6) o)))
           @?= Nothing
@@ -130,14 +135,38 @@ tests =
         let h = hashLeiosEb (ebOf [0, 1])
             -- forge at slot 5, then a peer announces the same EB at the later slot 10
             o =
-              Leios.recordMaxAnnouncementSlot h (SlotNo 10) $
+              Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
                 Leios.markBodyImminent h (SlotNo 5) $
                   (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
         -- the announcement raised the slot to 10, keeping the forged state
-        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 10) Leios.BodyImminent)
+        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 10) SNothing Leios.BodyImminent)
         -- so it survives pruning up to slot 9, and is dropped only past slot 10
         Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 9) o))) @?= True
         Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 11) o))) @?= False
+    , testCase "an announcement's onset is recorded (earliest kept); an offer never clobbers it" $ do
+        let h = hashLeiosEb (ebOf [0, 1])
+            t3 = RelativeTime 3
+            t5 = RelativeTime 5
+            base = emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int
+            onsetOf o = Leios.ebStateOnset <$> Map.lookup h (Leios.ebState o)
+        -- an announcement records its slot's onset
+        onsetOf (Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base)
+          @?= Just (SJust t5)
+        -- a later announcement (greater slot, earlier onset) keeps the earlier onset
+        onsetOf
+          ( Leios.recordMaxAnnouncementSlot h (SlotNo 8) (SJust t3) $
+              Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base
+          )
+          @?= Just (SJust t3)
+        -- an offer (no onset) bumps the slot but never clobbers a recorded onset
+        onsetOf
+          ( Leios.recordMaxAnnouncementSlot h (SlotNo 9) SNothing $
+              Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base
+          )
+          @?= Just (SJust t5)
+        -- a self-forged EB records no onset (kept out of the age panels)
+        onsetOf (Leios.markBodyImminent h (SlotNo 5) base)
+          @?= Just SNothing
     , testCase "start-up seeding marks each completed EB held, with an empty pool" $ do
         let ebA = [0, 1] :: TestEb
             ebB = [2, 3] :: TestEb
@@ -150,10 +179,10 @@ tests =
             o = Leios.initializeLeiosOutstanding points immTipSlot :: LeiosOutstanding Int
         -- each completed EB is held with an empty job pool: nothing left to fetch
         Map.lookup hB (Leios.ebState o)
-          @?= Just (Leios.MkEbState (SlotNo 6) (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
+          @?= Just (Leios.MkEbState (SlotNo 6) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
         -- and when one EB is listed at several points, its greatest slot wins (8, not 5)
         Map.lookup hA (Leios.ebState o)
-          @?= Just (Leios.MkEbState (SlotNo 8) (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
+          @?= Just (Leios.MkEbState (SlotNo 8) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
         -- so every seeded EB reports as held ...
         all Leios.ebStateHasBody (Map.elems (Leios.ebState o)) @?= True
         -- ... nothing is listed for fetch (empty pools, no missing bodies) ...
@@ -199,7 +228,7 @@ tests =
               let outstanding =
                     (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
                       Leios.insertAcquiredEbBody h jobPool $
-                        Leios.recordMaxAnnouncementSlot h (SlotNo 10) $
+                        Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
                           (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
                   (_o, reqs, _d) =
                     leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (SlotNo 11)) offers bigLedgerPeers outstanding
@@ -294,6 +323,15 @@ txHashOf = hashLeiosTx . leiosTxOf
 txSizeOf :: Int -> BytesSize
 txSizeOf = fromIntegral . BS.length . txBytesOf
 
+-- | A stub clock for the handlers: the suite never asserts on EB age, and these
+-- EBs are never heralded, so the age always comes out 'Nothing' regardless.
+dummySystemTime :: Applicative m => SystemTime m
+dummySystemTime =
+  SystemTime
+    { systemTimeCurrent = pure (RelativeTime 0)
+    , systemTimeWait = pure ()
+    }
+
 ebOf :: TestEb -> LeiosEb
 ebOf ids = MkLeiosEb (V.fromList [(txHashOf i, txSizeOf i) | i <- ids])
 
@@ -363,7 +401,7 @@ applyCmd conn txCache kv peerVars peerId = \case
   ArriveBody ids slot -> do
     let eb = ebOf ids
         req = MkLeiosBlockRequest (pointOf ids slot) (leiosEbBytesSize eb)
-    processLeiosBlock nullTracer nullTracer kv txCache conn noMempoolPull (ReceivedBlockFrom peerId req) eb
+    processLeiosBlock nullTracer nullTracer kv txCache conn dummySystemTime noMempoolPull (ReceivedBlockFrom peerId req) eb
     pure []
   ArriveTx v -> absurd v
   Forge ids slot -> do
@@ -383,8 +421,8 @@ applyCmd conn txCache kv peerVars peerId = \case
     -- 'outstanding' changes, mirror it here or this regression coverage goes stale
     -- silently.
     modifyMVar_ (fst kv) (pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo)
-    processLeiosBlock nullTracer nullTracer kv txCache conn noMempoolPull (ForgedBlock point) eb
-    processLeiosBlockTxs nullTracer nullTracer kv txCache conn (ForgedTxs point eb $ V.fromList $ map leiosTxOf ids)
+    processLeiosBlock nullTracer nullTracer kv txCache conn dummySystemTime noMempoolPull (ForgedBlock point) eb
+    processLeiosBlockTxs nullTracer nullTracer kv txCache conn dummySystemTime (ForgedTxs point eb $ V.fromList $ map leiosTxOf ids)
     pure []
   Decide slot -> do
     outstanding <- readMVar (fst kv)
@@ -667,6 +705,7 @@ raceSameHashMultiSlot = do
               kv
               txCache
               conn
+              dummySystemTime
               noMempoolPull
               (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize))
               eb

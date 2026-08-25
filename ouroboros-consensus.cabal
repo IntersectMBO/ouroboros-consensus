@@ -1231,6 +1231,7 @@ library diffusion
     cardano-binary,
     cardano-diffusion:{api, cardano-diffusion, protocols},
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,

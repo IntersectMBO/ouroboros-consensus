@@ -24,6 +24,7 @@ import qualified Data.ByteString as BS
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
@@ -189,7 +190,7 @@ withMissingBody p@(MkLeiosPoint slot ebHash) size =
     -- Seed everything the announce path would: the missing-body point and its
     -- reverse index, plus (via 'recordMaxAnnouncementSlot') the 'ebState' NoBody
     -- entry that the fetch loop now drives bodies off of.
-    recordMaxAnnouncementSlot ebHash slot $
+    recordMaxAnnouncementSlot ebHash slot SNothing $
       o
         { missingEbBodies = Map.insert p size (missingEbBodies o)
         , reverseSlotIndexByEbHash =
