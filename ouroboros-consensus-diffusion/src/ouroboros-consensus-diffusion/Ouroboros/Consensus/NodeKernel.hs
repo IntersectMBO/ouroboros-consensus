@@ -581,7 +581,7 @@ initNodeKernel
       forkLinkedThread registry "NodeKernel.leiosVoting" $
         runLeiosVoting
           (leiosKernelTracer tracers)
-          cfg
+          (configLedger cfg)
           chainDB
           systemTime
           leiosDB

@@ -17,7 +17,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Function ((&))
-import Data.IORef (modifyIORef', newIORef, readIORef)
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbConnection (..)
@@ -28,9 +27,7 @@ import LeiosDemoDb
 import LeiosDemoTypes
   ( BytesSize
   , LeiosEb (..)
-  , LeiosNotVotedReason (..)
   , LeiosPoint (..)
-  , LeiosSeatId (..)
   , LeiosTx (..)
   , RbHash (..)
   , SerializedEbBody
@@ -44,9 +41,8 @@ import LeiosTxCache
   ( LeiosTxCache (..)
   , newPureLeiosTxCache
   )
-import LeiosVoting (EbClosureVerdict (..), decideVote, validateEbClosure)
+import LeiosVoting (EbClosureVerdict (..), validateEbClosure)
 import Ouroboros.Consensus.Block (SlotNo (..))
-import Ouroboros.Consensus.BlockchainTime (RelativeTime (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Tables (projectLedgerTables)
 import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK)
@@ -69,15 +65,6 @@ tests =
   testGroup
     "LeiosVoting"
     [ testGroup
-        "decideVote"
-        [ testProperty "abstains when the tip does not announce" prop_abstainsWhenTipDoesNotAnnounce
-        , testProperty "abstains when off the committee" prop_abstainsWhenOffCommittee
-        , testProperty "does not validate what it would not vote for" prop_noValidationWhenAbstaining
-        , testProperty "abstains when the closure is rejected" prop_abstainsOnInvalidClosure
-        , testProperty "reads the clock after validating" prop_deadlineJudgedAfterValidation
-        , testProperty "votes when everything passes" prop_votesWhenEverythingPasses
-        ]
-    , testGroup
         "validateEbClosure"
         [ testProperty "a fresh closure is validated in full" prop_freshClosureFullyApplied
         , testProperty "a second look reapplies instead" prop_secondLookReapplies
@@ -85,99 +72,6 @@ tests =
         , testProperty "a tx after the failure is not recorded" prop_stopsAtFirstFailure
         ]
     ]
-
-{-------------------------------------------------------------------------------
-  decideVote
--------------------------------------------------------------------------------}
-
--- | A 'decideVote' run that records whether validation happened and lets the
--- clock be read as late as the decision wants it.
-runDecide ::
-  Maybe LeiosSeatId ->
-  Maybe RbHash ->
-  Either LeiosNotVotedReason () ->
-  -- | What the clock reads, versus a deadline of 100.
-  RelativeTime ->
-  IO (Either LeiosNotVotedReason (RbHash, LeiosSeatId, ()), Bool)
-runDecide mSeat mAnnouncer closure now = do
-  validatedRef <- newIORef False
-  outcome <-
-    decideVote
-      mSeat
-      mAnnouncer
-      (modifyIORef' validatedRef (const True) >> pure closure)
-      (pure now)
-      deadlineAt
-  (,) outcome <$> readIORef validatedRef
-
-deadlineAt :: RelativeTime
-deadlineAt = RelativeTime 100
-
-inTime, tooLate :: RelativeTime
-inTime = RelativeTime 50
-tooLate = RelativeTime 150
-
-someSeat :: LeiosSeatId
-someSeat = LeiosSeatId 0
-
-someRb :: RbHash
-someRb = MkRbHash (BS.replicate 32 7)
-
-prop_abstainsWhenTipDoesNotAnnounce :: Property
-prop_abstainsWhenTipDoesNotAnnounce = ioProperty $ do
-  (outcome, _) <- runDecide (Just someSeat) Nothing (Right ()) inTime
-  pure $ abstainedBecause outcome === Just "ChainTipDoesNotAnnounce"
-
-prop_abstainsWhenOffCommittee :: Property
-prop_abstainsWhenOffCommittee = ioProperty $ do
-  (outcome, _) <- runDecide Nothing (Just someRb) (Right ()) inTime
-  pure $ abstainedBecause outcome === Just "NotOnCommittee"
-
--- | The cheap checks gate the expensive one: an EB we would not vote for must
--- never be validated.
-prop_noValidationWhenAbstaining :: Property
-prop_noValidationWhenAbstaining = ioProperty $ do
-  (_, v1) <- runDecide (Just someSeat) Nothing (Right ()) inTime
-  (_, v2) <- runDecide Nothing (Just someRb) (Right ()) inTime
-  pure $
-    (v1, v2) === (False, False)
-      & counterexample "validated an EB that failed a cheap check"
-
-prop_abstainsOnInvalidClosure :: Property
-prop_abstainsOnInvalidClosure = ioProperty $ do
-  (outcome, validated) <- runDecide (Just someSeat) (Just someRb) (Left TooLate) inTime
-  pure $
-    conjoin
-      [ abstainedBecause outcome === Just "TooLate"
-      , validated === True & counterexample "should have validated"
-      ]
-
--- | The deadline is judged by the clock as it reads /after/ validation, not
--- before: validating a closure takes real time, and a vote signed past the
--- window is no use.
-prop_deadlineJudgedAfterValidation :: Property
-prop_deadlineJudgedAfterValidation = ioProperty $ do
-  (outcome, validated) <- runDecide (Just someSeat) (Just someRb) (Right ()) tooLate
-  pure $
-    conjoin
-      [ abstainedBecause outcome === Just "TooLate"
-          & counterexample "a clock past the deadline should abstain"
-      , validated === True
-          & counterexample "validation must run before the deadline is judged"
-      ]
-
-prop_votesWhenEverythingPasses :: Property
-prop_votesWhenEverythingPasses = ioProperty $ do
-  (outcome, _) <- runDecide (Just someSeat) (Just someRb) (Right ()) inTime
-  pure $ case outcome of
-    Right (rb, seat, ()) -> (rb, seat) === (someRb, someSeat)
-    Left r -> counterexample ("expected a vote, abstained: " <> show r) False
-
--- | 'LeiosNotVotedReason' has no 'Eq', so compare its constructor by name.
-abstainedBecause :: Either LeiosNotVotedReason a -> Maybe String
-abstainedBecause = \case
-  Right _ -> Nothing
-  Left r -> Just (takeWhile (/= ' ') (show r))
 
 {-------------------------------------------------------------------------------
   validateEbClosure

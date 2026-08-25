@@ -15,22 +15,23 @@ module LeiosVoting
 
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN))
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Applicative ((<|>))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( modifyTVar
   , newTVar
   , readTChan
   , readTVar
-  , tryReadTChan
   )
-import Control.Monad (forM_, forever)
+import Control.Monad (filterM, forever, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as TVar
 import Control.Monad.Class.MonadTimer (MonadTimer, registerDelay)
 import Control.Monad.Class.MonadTimer.SI (diffTimeToMicrosecondsAsInt)
 import Control.Monad.Except (runExcept)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Tracer (Tracer, traceWith)
+import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
-import Data.Set (Set)
-import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
 import LeiosDemoDb
@@ -43,7 +44,6 @@ import LeiosDemoTypes
   ( HasLeiosVoting (..)
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
-  , LeiosSeatId
   , LeiosSigningKey
   , RbHash (..)
   , SerializedEbBody
@@ -56,6 +56,7 @@ import LeiosTxCache (LeiosTxCache (..))
 import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..))
 import Ouroboros.Consensus.Block
   ( ConvertRawHash (..)
+  , Point
   , WithOrigin (..)
   )
 import Ouroboros.Consensus.BlockchainTime
@@ -64,7 +65,6 @@ import Ouroboros.Consensus.BlockchainTime
   , addRelTime
   , diffRelTime
   )
-import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
 import Ouroboros.Consensus.HeaderValidation
@@ -83,7 +83,6 @@ import Ouroboros.Consensus.Ledger.Abstract
   , LedgerTables
   , ValuesMK
   , applyChainTick
-  , ledgerTipPoint
   )
 import Ouroboros.Consensus.Ledger.Extended (headerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -96,6 +95,7 @@ import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ReadOnlyForker (..)
+  , ReadOnlyForker'
   , ResolveLeiosBlock (..)
   , ledgerStateReadOnlyForker
   , protocolStateLeiosAnnouncement
@@ -107,7 +107,7 @@ import Ouroboros.Consensus.Util.IOLike
   , bracket
   )
 import Ouroboros.Consensus.Util.Time (nominalDelay)
-import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (SpecificPoint))
+import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
 
 -- * Voting timing constants
 
@@ -126,6 +126,74 @@ lHdrWait = 3
 -- | How long after 'lHdrWait' votes are still accepted. Stub for 'L_vote'.
 lVoteWindow :: NominalDiffTime
 lVoteWindow = 4
+
+-- * Vote timers
+
+-- | A vote timer per acquired EB, armed at the wall-clock moment that EB's
+-- voting window opens.
+--
+-- There is no priority queue: the wall clock does the prioritising, since
+-- whichever timer fires first is by construction the EB whose window opens
+-- first.
+data VoteTimers m = VoteTimers
+  { scheduleVoteTime :: LeiosPoint -> m ()
+  -- ^ Arm a timer for a newly acquired EB. One whose window is already open
+  -- clamps to a near-zero delay and fires immediately, so "already open" is not
+  -- a separate case for the caller.
+  , waitNextVoteTime :: STM m (LeiosPoint, RelativeTime)
+  -- ^ Block until an armed EB's window opens, yielding it and the moment after
+  -- which a vote for it would be too late. It is disarmed in the same
+  -- transaction, so each EB's window opens exactly once.
+  }
+
+newVoteTimers ::
+  forall m blk.
+  ( IOLike m
+  , MonadTimer m
+  , HasHardForkHistory blk
+  ) =>
+  Tracer m TraceLeiosKernel ->
+  LedgerConfig blk ->
+  ChainDB m blk ->
+  SystemTime m ->
+  m (VoteTimers m)
+newVoteTimers tracer lcfg chainDB systemTime = do
+  -- An armed timer, and the deadline it was armed against, per acquired EB.
+  pendingVotes <- atomically $ newTVar Map.empty
+  pure
+    VoteTimers
+      { scheduleVoteTime = \point -> do
+          extLedger <- atomically $ ChainDB.getCurrentLedger chainDB
+          case slotOnset lcfg (ledgerState extLedger) (pointSlotNo point) of
+            -- Cannot happen for an EB announced on our own chain: its slot is
+            -- at or behind the tip whose summary we just read. Drop it rather
+            -- than arm a timer we cannot place, and say so.
+            Left horizon ->
+              traceWith tracer . MkTraceLeiosKernel $
+                "newVoteTimers: no wall-clock onset for "
+                  <> prettyLeiosPoint point
+                  <> ": "
+                  <> show horizon
+            Right onset -> do
+              now <- systemTimeCurrent systemTime
+              timer <-
+                registerDelay . max 1 . diffTimeToMicrosecondsAsInt . nominalDelay $
+                  diffRelTime (votableAt onset) now
+              atomically . modifyTVar pendingVotes . Map.insert point $
+                (timer, addRelTime lVoteWindow (votableAt onset))
+      , -- Reading every armed timer puts them all in this transaction's read
+        -- set, so it wakes on any of them, and 'Map.toList' is in point order,
+        -- so simultaneous firings break towards the earlier slot.
+        waitNextVoteTime = do
+          armed <- readTVar pendingVotes
+          filterM (\(_, (timer, _)) -> TVar.readTVar timer) (Map.toList armed) >>= \case
+            [] -> TVar.retry
+            (point, (_, deadline)) : _ -> do
+              modifyTVar pendingVotes (Map.delete point)
+              pure (point, deadline)
+      }
+ where
+  votableAt = addRelTime lHdrWait
 
 -- | When a slot begins, in wall-clock terms.
 --
@@ -158,7 +226,7 @@ runLeiosVoting ::
   , MonadTimer m
   ) =>
   Tracer m TraceLeiosKernel ->
-  TopLevelConfig blk ->
+  LedgerConfig blk ->
   ChainDB m blk ->
   SystemTime m ->
   LeiosDbHandle m ->
@@ -166,182 +234,106 @@ runLeiosVoting ::
   LeiosVoteState m ->
   Maybe LeiosSigningKey ->
   m ()
-runLeiosVoting tracer cfg chainDB systemTime leiosDB txCache voteState = \case
+runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
   Nothing ->
     traceWith tracer $
       MkTraceLeiosKernel
         "runLeiosVoting: disabled because no topLevelConfigVotingKey"
-  -- A 'LeiosDbConnection' is not thread-safe, so this thread owns one for its
-  -- lifetime, the way each forge-credentials thread does.
-  Just sk -> withLeiosDb leiosDB $ \leiosConn -> do
-    let vk = deriveVerKeyDSIGN sk
-        signVote = signLeiosVote sk
-        LeiosVoteState{addVote} = voteState
-    chan <- subscribeEbNotifications leiosDB
+  Just sk ->
+    -- A 'LeiosDbConnection' is not thread-safe, so this thread owns one for its
+    -- lifetime, the way each forge-credentials thread does.
+    withLeiosDb leiosDB $ \leiosConn -> do
+      chan <- subscribeEbNotifications leiosDB
+      let waitAcquiredEbTxs =
+            readTChan chan >>= \case
+              AcquiredEb{} -> waitAcquiredEbTxs
+              AcquiredEbTxs point -> pure point
 
-    -- 'pendingVar' holds EB closures whose voting windows we still owe
-    -- a decision on. The 'Ord LeiosPoint' instance orders by slot then
-    -- hash, so 'Set.minView' yields the earliest upcoming deadline.
-    -- A burst of closures arriving in the same slot no longer
-    -- serialises voting through the L_hdr wait for the first one:
-    -- each is enqueued as it arrives and drained the moment its
-    -- window opens.
-    pendingVar <- atomically $ newTVar (Set.empty :: Set LeiosPoint)
+      VoteTimers{scheduleVoteTime, waitNextVoteTime} <- newVoteTimers tracer lcfg chainDB systemTime
 
-    let
-      -- Enqueue a fresh acquisition. Retries until the channel has
-      -- one available; ignores 'AcquiredEb' (no txs closure yet).
-      takeAcquisition :: STM m ()
-      takeAcquisition =
-        readTChan chan >>= \case
-          AcquiredEb{} -> pure ()
-          AcquiredEbTxs point -> modifyTVar pendingVar (Set.insert point)
-
-      -- Move whatever has already arrived into the pending set, blocking only
-      -- when there is nothing pending to act on at all.
-      ingest :: STM m ()
-      ingest = do
-        pending <- readTVar pendingVar
-        if Set.null pending then takeAcquisition else drain
-       where
-        drain =
-          tryReadTChan chan >>= \case
-            Nothing -> pure ()
-            Just AcquiredEb{} -> drain
-            Just (AcquiredEbTxs point) -> do
-              modifyTVar pendingVar (Set.insert point)
-              drain
-
-      -- Everything the node has to be asked about before we can decide, read
-      -- as one consistent view of the selected chain.
-      readTip = atomically $ ChainDB.getCurrentLedger chainDB
-
-      -- Validate an EB's closure against the announcing RB's ledger state.
-      -- Losing that state to chain-sel is not the EB's fault, so it reads as
-      -- 'ChainTipDoesNotAnnounce' rather than a rejection.
-      validateClosure extLedger point =
-        -- REVIEW: How expensive is it to open a forker - should we re-use
-        -- one for the whole vote logic?
-        -- TODO: refactor: withForker announcerPoint $ \(ls, forker) ->
-        bracket
-          (ChainDB.openReadOnlyForkerAtPoint chainDB (SpecificPoint (ledgerTipPoint (ledgerState extLedger))))
-          (either (\_ -> pure ()) roforkerClose)
-          $ \case
-            Left _ -> pure $ Left ChainTipDoesNotAnnounce
-            Right extForker -> do
-              let forker = ledgerStateReadOnlyForker extForker
-              lsBase <- atomically $ roforkerGetLedgerState forker
-              validateEbClosure
-                (configLedger cfg)
-                leiosConn
-                txCache
-                (roforkerReadTables forker)
-                point
-                lsBase
-                >>= \case
-                  -- XXX: Text in error
-                  EbClosureInvalid err -> pure $ Left $ EbTxsInvalid $ Text.pack $ show err
-                  EbClosureValid reapplied applied -> pure $ Right (reapplied, applied)
-
-      -- Decide and, if we may, cast the vote.
-      voteOn point extLedger deadline = do
-        let notVoted r = traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason = r}
-        decideVote
-          (getLeiosCommittee (ledgerState extLedger) >>= getLeiosSeatId vk)
-          (tipAnnouncerFor @blk (headerState extLedger) point)
-          (validateClosure extLedger point)
-          (systemTimeCurrent systemTime)
-          deadline
+      forever $
+        atomically ((Left <$> waitAcquiredEbTxs) <|> (Right <$> waitNextVoteTime))
           >>= \case
-            Left reason -> notVoted reason
-            Right (rbHash, voterId, (reapplied, applied)) -> do
-              traceWith tracer TraceLeiosEbValidated{ebPoint = point, reapplied, applied}
-              let vote = signVote voterId rbHash
-              addVote vote >>= \case
-                Added weight mCert -> do
-                  traceWith tracer TraceLeiosVoted{vote, weight}
-                  traceWith tracer TraceLeiosVoteAcquired{vote}
-                  -- Trace certification whenever the tally crosses
-                  -- 'minCertificationThreshold'. May fire more than once
-                  -- per point if subsequent votes also come in; consumers
-                  -- (e.g. ThreadNet's 'propCertifying') dedupe.
-                  case mCert of
-                    Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
-                    Nothing -> pure ()
-                err ->
-                  error $ "runLeiosVoting: unexpected error on addVote: " <> show err
+            Left point -> scheduleVoteTime point
+            Right (point, deadline) ->
+              goVote leiosConn sk point deadline >>= \case
+                Left reason -> traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason}
+                Right () -> pure ()
+ where
+  -- Decide whether to vote for an acquired EB and, if we may, cast the
+  -- vote. Every way of not voting leaves via 'throwE', and the reason is
+  -- traced once, here.
+  --
+  -- Validation runs /before/ the deadline is checked, deliberately: applying
+  -- a closure takes real time, so whether we are still inside the vote
+  -- window has to be judged by the clock as it reads when we are ready to
+  -- sign, not by a reading taken before the work. The cheap checks come
+  -- first, so an EB we would not vote for is never validated.
+  goVote ::
+    LeiosDbConnection m ->
+    -- \| Our voting key, to find our committee seat and sign votes.
+    LeiosSigningKey ->
+    -- \| The leios point of the EB to vote on.
+    LeiosPoint ->
+    -- \| The moment after which a vote is too late.
+    RelativeTime ->
+    m (Either LeiosNotVotedReason ())
+  goVote leiosConn sk point deadline = do
+    let vk = deriveVerKeyDSIGN sk
+    withForkerAt VolatileTip $ \case
+      Nothing -> pure $ Left ChainTipDoesNotAnnounce
+      Just forker -> runExceptT $ do
+        -- One consistent view of the selection: the header state that has
+        -- to announce this EB and the ledger state its closure has to apply
+        -- to come from the same forker.
+        extLs <- lift $ atomically $ roforkerGetLedgerState forker
+        let ls = ledgerState extLs
+            hs = headerState extLs
+            readTables = roforkerReadTables (ledgerStateReadOnlyForker forker)
+        rbHash <-
+          tipAnnouncerFor @blk hs point ?>= ChainTipDoesNotAnnounce
+        seatId <-
+          (getLeiosCommittee ls >>= getLeiosSeatId vk) ?>= NotOnCommittee
 
-    forever $ do
-      atomically ingest
-      mNext <- atomically $ fmap fst . Set.minView <$> readTVar pendingVar
-      forM_ mNext $ \point -> do
-        extLedger <- readTip
-        now <- systemTimeCurrent systemTime
-        case slotOnset (configLedger cfg) (ledgerState extLedger) (pointSlotNo point) of
-          Left horizon -> do
-            -- Cannot happen for an EB announced on our own chain: its slot is
-            -- at or behind the tip whose summary we just read. Drop it rather
-            -- than spin on it, and say so.
-            atomically $ modifyTVar pendingVar (Set.delete point)
-            traceWith tracer . MkTraceLeiosKernel $
-              "runLeiosVoting: no wall-clock onset for "
-                <> prettyLeiosPoint point
-                <> ": "
-                <> show horizon
-          Right onset -> do
-            let votableAt = addRelTime lHdrWait onset
-            if now < votableAt
-              then do
-                -- Wait until it is votable, but wake early if something
-                -- arrives: an EB turning up late with an older slot must not
-                -- have to sit out this one's wait. Never register a zero
-                -- delay.
-                varTimeout <-
-                  registerDelay . max 1 . diffTimeToMicrosecondsAsInt . nominalDelay $
-                    diffRelTime votableAt now
-                atomically $
-                  (TVar.check =<< TVar.readTVar varTimeout) `TVar.orElse` takeAcquisition
-              else do
-                atomically $ modifyTVar pendingVar (Set.delete point)
-                voteOn point extLedger (addRelTime lVoteWindow votableAt)
+        lift (validateEbClosure lcfg leiosConn txCache readTables point ls) >>= \case
+          EbClosureInvalid err ->
+            -- XXX: Text in error
+            throwE . EbTxsInvalid . Text.pack $ show err
+          EbClosureValid reapplied applied ->
+            lift $ traceWith tracer TraceLeiosEbValidated{ebPoint = point, reapplied, applied}
 
--- * The vote decision
+        now <- lift $ systemTimeCurrent systemTime
+        when (now > deadline) $
+          throwE TooLate
 
--- | Whether to vote for an acquired EB, and why not when we don't.
---
--- Validation runs /before/ the deadline is checked, deliberately: applying a
--- closure takes real time, so whether we are still inside the vote window has
--- to be judged by the clock as it reads when we are ready to sign, not by a
--- reading taken before the work. The cheap checks still come first, so an EB we
--- would not vote for is never validated.
-decideVote ::
-  Monad m =>
-  -- | Our seat on the voting committee, if we hold one.
-  Maybe LeiosSeatId ->
-  -- | The announcing RB's hash, if our tip announces this EB.
-  Maybe RbHash ->
-  -- | Validate the EB's closure.
-  m (Either LeiosNotVotedReason a) ->
-  -- | Read the wall clock. Called after validation.
-  m RelativeTime ->
-  -- | The moment after which a vote is too late.
-  RelativeTime ->
-  m (Either LeiosNotVotedReason (RbHash, LeiosSeatId, a))
-decideVote mSeat mAnnouncer validate readNow deadline =
-  case (mAnnouncer, mSeat) of
-    (Nothing, _) -> pure $ Left ChainTipDoesNotAnnounce
-    (_, Nothing) -> pure $ Left NotOnCommittee
-    (Just rbHash, Just seatId) ->
-      validate >>= \case
-        Left reason -> pure $ Left reason
-        Right a -> do
-          now <- readNow
-          pure $
-            if now > deadline
-              then Left TooLate
-              else Right (rbHash, seatId, a)
+        let vote = signLeiosVote sk seatId rbHash
+        lift $
+          addVote vote
+            >>= \case
+              Added weight mCert -> do
+                traceWith tracer TraceLeiosVoted{vote, weight}
+                traceWith tracer TraceLeiosVoteAcquired{vote}
+                -- Trace certification whenever the tally crosses
+                -- 'minCertificationThreshold'. May fire more than once per
+                -- point if subsequent votes also come in; consumers (e.g.
+                -- ThreadNet's 'propCertifying') dedupe.
+                case mCert of
+                  Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
+                  Nothing -> pure ()
+              err ->
+                -- XXX: Make this a NotVoted error / trace
+                error $ "runLeiosVoting: unexpected error on addVote: " <> show err
 
--- * Validating the endorsed transactions
+  LeiosVoteState{addVote} = voteState
+
+  -- The forker at a target, for as long as the continuation needs it, or
+  -- 'Nothing' when chain-sel has already moved off it.
+  withForkerAt :: Target (Point blk) -> (Maybe (ReadOnlyForker' m blk) -> m a) -> m a
+  withForkerAt tgt k =
+    bracket
+      (ChainDB.openReadOnlyForkerAtPoint chainDB tgt)
+      (either (\_ -> pure ()) roforkerClose)
+      (either (\_ -> k Nothing) (k . Just))
 
 -- | The outcome of checking an EB's endorsed transactions.
 data EbClosureVerdict blk
@@ -444,3 +436,7 @@ tipAnnouncerFor hs point = do
   if announcedPoint == point
     then Just (MkRbHash (toRawHash (Proxy @blk) (annTipHash tip)))
     else Nothing
+
+(?>=) :: Monad m => Maybe a -> e -> ExceptT e m a
+(?>=) Nothing e = throwE e
+(?>=) (Just x) _ = pure x
