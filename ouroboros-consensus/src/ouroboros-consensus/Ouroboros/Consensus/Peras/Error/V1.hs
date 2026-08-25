@@ -37,8 +37,6 @@ data PerasError blk
       VoteWeight
   | PerasTemporaryCertInBlockError
       String
-  | PerasTemporaryPublicKeyHackError
-      String
 
 deriving instance
   Show (PerasVotingCommitteeError blk) =>
