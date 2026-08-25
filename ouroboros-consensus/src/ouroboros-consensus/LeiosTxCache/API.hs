@@ -97,7 +97,7 @@ data LeiosTxCache m a v b = LeiosTxCache
   , withLockedInsertAppliedTx :: (forall w. w -> (w -> TxHash -> v -> m w) -> m w) -> m ()
   -- ^ Has exclusive write-access
   , withLookupTx :: forall r. ((TxHash -> m (Maybe (Either a v))) -> m r) -> m r
-  -- ^ Does not not hold the lock
+  -- ^ Also holds the lock
   }
 
 -- | A body @b@ from which the referenced txs can be enumerated, each paired with
