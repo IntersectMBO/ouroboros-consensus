@@ -139,17 +139,17 @@ computeSnapshot ::
   TickedLedgerState blk DiffMK ->
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   m (MempoolSnapshot blk)
-computeSnapshot resolveValues cfg slot tickedStDiff txsToApply = do
-  let tickedSt = tickedStDiff `withLedgerTables` emptyLedgerTables
+computeSnapshot resolveValues cfg slot baseLedgerStDiff txsToApply = do
+  let startingLedgerSt = baseLedgerStDiff `withLedgerTables` emptyLedgerTables
 
   SnapshotStepState{..} <-
     iterateUntilOrTimeout_
       snapshotStepTimeLimitSeconds
       (null . remainingTxs)
-      (snapshotStep resolveValues cfg slot tickedStDiff)
-      (SnapshotStepState tickedSt txsToApply mempty TxSeq.Empty Set.empty)
+      (snapshotStep resolveValues cfg slot baseLedgerStDiff)
+      (SnapshotStepState startingLedgerSt txsToApply mempty TxSeq.Empty Set.empty)
 
-  let tip = castPoint $ getTip tickedStDiff
+  let tip = castPoint $ getTip baseLedgerStDiff
   return $ snapshot slot tip appliedTxIds appliedTxs
 
 -- | Accumulator type threaded through each 'snapshotStep' call by 'computeSnapshot'.
