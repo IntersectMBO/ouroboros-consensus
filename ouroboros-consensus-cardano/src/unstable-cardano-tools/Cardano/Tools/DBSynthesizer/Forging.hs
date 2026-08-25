@@ -20,17 +20,16 @@ import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Class (liftIO)
 import qualified Control.Monad.Trans.Class as Trans
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
-import Control.Tracer (Tracer, nullTracer)
+import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.ByteString.Short (fromShort)
 import Data.Either (isRight)
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes
   ( RbHash (MkRbHash)
-  , TraceLeiosKernel
+  , TraceLeiosKernel (..)
   , getLeiosSeatId
   , leiosCommitteeSize
   , signLeiosVote
@@ -107,15 +106,6 @@ data ForgeState
 initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
--- | What the forger's own votes achieved over a run.
-data VoteTally = VoteTally
-  { cast :: !Word64
-  -- ^ Votes the forger cast, one for every endorser block it announced.
-  , certified :: !Word64
-  -- ^ Votes that took the tally for their announcing block to the
-  -- certification threshold. A certificate exists for each one.
-  }
-
 -- | An action to generate transactions for a given block.
 --
 -- The first list fills the ranking block. The second fills the endorser block
@@ -157,18 +147,12 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosT
   putStrLn $ "--> will process until: " ++ show opts
   leiosVoteState <- newLeiosVoteState committee
   reportCommittee
-  -- 'goSlot' reports only success or failure to 'go', so the tally lives beside
-  -- 'ForgeState' rather than in it.
-  tally <- newIORef VoteTally{cast = 0, certified = 0}
-  endState <- go leiosVoteState tally initialForgeState{currentSlot = nextSlot}
+  endState <- go leiosVoteState initialForgeState{currentSlot = nextSlot}
   putStrLn $
     "--> forged and adopted "
       ++ show (forged endState)
       ++ " blocks; reached "
       ++ show (currentSlot endState)
-  VoteTally{cast, certified} <- readIORef tally
-  putStrLn $
-    "--> votes: " ++ show cast ++ " cast, " ++ show certified ++ " certified"
   pure $ ForgeResult $ fromIntegral $ forged endState
  where
   epochSize = unEpochSize epochSize_
@@ -212,11 +196,10 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosT
   -- against a node log sees the vote that many slots early.
   voteFor ::
     LeiosVoteState IO ->
-    IORef VoteTally ->
     blk ->
     [Validated (GenTx blk)] ->
     IO ()
-  voteFor leiosVoteState tally newBlock ebTxs
+  voteFor leiosVoteState newBlock ebTxs
     -- 'mkAndStoreEb' announces an endorser block exactly when it is given
     -- transactions. So an empty list means this block announced none, and there
     -- is nothing to vote for.
@@ -229,19 +212,21 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosT
                 let rbHash =
                       MkRbHash . fromShort . toShortRawHash (Proxy @blk) $
                         blockHash newBlock
-                addVote leiosVoteState (signLeiosVote sk seat rbHash) >>= \case
-                  Added _weight mCert ->
-                    modifyIORef' tally $ \t ->
-                      VoteTally
-                        { cast = cast t + 1
-                        , certified = certified t + if isJust mCert then 1 else 0
-                        }
+                    vote = signLeiosVote sk seat rbHash
+                addVote leiosVoteState vote >>= \case
+                  Added weight mCert -> do
+                    -- The same events 'runLeiosVoting' emits.
+                    traceWith leiosTracer TraceLeiosVoted{vote, weight}
+                    traceWith leiosTracer TraceLeiosVoteAcquired{vote}
+                    case mCert of
+                      Just _ -> traceWith leiosTracer TraceLeiosCertified{rbHash}
+                      Nothing -> pure ()
                   -- 'reportCommittee' already showed the committee and the seat,
                   -- so any other result means the state changed under us. Stop,
                   -- rather than forge blocks that nobody certifies.
                   other -> fail $ "db-synthesizer: addVote returned " ++ show other
           -- No key or no seat. 'reportCommittee' said so at start-up, and the
-          -- run ends with "0 cast".
+          -- run emits no 'TraceLeiosVoted'.
           _ -> pure ()
 
   forgingDone :: ForgeState -> Bool
@@ -250,12 +235,12 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosT
     ForgeLimitBlock b -> (b ==) . forged
     ForgeLimitEpoch e -> (e ==) . currentEpoch
 
-  go :: LeiosVoteState IO -> IORef VoteTally -> ForgeState -> IO ForgeState
-  go leiosVoteState tally forgeState
+  go :: LeiosVoteState IO -> ForgeState -> IO ForgeState
+  go leiosVoteState forgeState
     | forgingDone forgeState = pure forgeState
     | otherwise =
-        go leiosVoteState tally . nextForgeState forgeState . isRight
-          =<< runExceptT (goSlot leiosVoteState tally $ currentSlot forgeState)
+        go leiosVoteState . nextForgeState forgeState . isRight
+          =<< runExceptT (goSlot leiosVoteState $ currentSlot forgeState)
 
   nextForgeState :: ForgeState -> Bool -> ForgeState
   nextForgeState ForgeState{currentSlot, forged, currentEpoch, processed} didForge =
@@ -273,8 +258,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosT
   exitEarly' = throwE
   lift = liftIO
 
-  goSlot :: LeiosVoteState IO -> IORef VoteTally -> SlotNo -> ExceptT String IO ()
-  goSlot leiosVoteState tally currentSlot = do
+  goSlot :: LeiosVoteState IO -> SlotNo -> ExceptT String IO ()
+  goSlot leiosVoteState currentSlot = do
     -- Figure out which block to connect to
     BlockContext{bcBlockNo, bcPrevPoint} <- do
       eBlkCtx <-
@@ -389,7 +374,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosT
     when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $
       exitEarly' "block not adopted"
 
-    lift $ voteFor leiosVoteState tally newBlock ebTxs
+    lift $ voteFor leiosVoteState newBlock ebTxs
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
