@@ -425,6 +425,7 @@ library tracing
   exposed-modules:
     Ouroboros.Consensus.Tracing.BlockReplayProgress
     Ouroboros.Consensus.Tracing.ChainDB
+    Ouroboros.Consensus.Tracing.Consensus
     Ouroboros.Consensus.Tracing.ConsensusStartupException
     Ouroboros.Consensus.Tracing.Era.HardFork
     Ouroboros.Consensus.Tracing.Formatting
@@ -444,12 +445,16 @@ library tracing
     cardano-prelude,
     cardano-protocol-tpraos,
     cardano-slotting,
-    ouroboros-consensus:{ouroboros-consensus, cardano, protocol, lsm},
-    ouroboros-network:api,
+    kes-agent,
+    ouroboros-consensus:{ouroboros-consensus, cardano, protocol, lsm, diffusion},
+    ouroboros-network:{api, orphan-instances, ouroboros-network},
+    psqueues,
     sop-core,
     strict-sop-core,
     text,
+    time,
     trace-dispatcher ^>=2.13.0,
+    typed-protocols,
 
 library lsm
   import: common-lib
