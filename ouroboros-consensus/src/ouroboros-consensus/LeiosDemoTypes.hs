@@ -1373,6 +1373,9 @@ data TraceLeiosKernel
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosCertified {rbHash :: RbHash}
+  | -- \| A vote is scheduled to happen.
+    TraceLeiosVoteScheduled
+      {ebPoint :: LeiosPoint, voteIn :: NominalDiffTime, deadlineIn :: NominalDiffTime}
   | -- | An 'AcquiredEbTxs' notification arrived but 'runLeiosVoting' chose
     -- not to cast a vote; the reason identifies which precondition failed.
     TraceLeiosNotVoted {ebPoint :: LeiosPoint, reason :: LeiosNotVotedReason}
@@ -1626,6 +1629,15 @@ traceLeiosKernelToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       , "reason" .= notVotedReasonText reason
+      ]
+  TraceLeiosVoteScheduled{ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash, voteIn, deadlineIn} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosVoteScheduled"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , -- Aeson renders 'NominalDiffTime' as a number of seconds, exactly.
+        "voteIn" .= voteIn
+      , "deadlineIn" .= deadlineIn
       ]
   TraceLeiosEbValidated{ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash, reapplied, applied} ->
     mconcat

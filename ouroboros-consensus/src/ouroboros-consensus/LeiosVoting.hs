@@ -116,6 +116,14 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
 -- described in the Leios protocol specification. Real values should come
 -- from the protocol parameters once wired in.
 
+-- TODO: Fetching and validating an EB's closure should start when the closure
+-- arrives, streamed, rather than after this wait. Validation is linear in the
+-- closure -- a full ~13.5k-tx closure takes ~1.5s even when every tx is a
+-- tx-cache hit -- so doing it inside the vote window spends the window on work
+-- that could have been done while waiting for it to open. A devnet run showed
+-- exactly that: as closures filled up, the time from votable to validated grew
+-- past the window and voting stopped entirely.
+
 -- | How long after its announcing slot /begins/ before an EB's voters may cast
 -- a vote. Serves as the equivocation-detection window: if a peer equivocates by
 -- announcing two different EBs on the same slot, we want to observe the second
@@ -174,13 +182,24 @@ newVoteTimers tracer lcfg chainDB systemTime = do
                   <> prettyLeiosPoint point
                   <> ": "
                   <> show horizon
-            Right onset -> do
+            Right announced -> do
               now <- systemTimeCurrent systemTime
+              let voteAt = addRelTime lHdrWait announced
+                  voteDeadline = addRelTime lVoteWindow voteAt
+                  voteIn = voteAt `diffRelTime` now
+              traceWith tracer $
+                TraceLeiosVoteScheduled
+                  { ebPoint = point
+                  , voteIn
+                  , deadlineIn = voteDeadline `diffRelTime` now
+                  }
               timer <-
-                registerDelay . max 1 . diffTimeToMicrosecondsAsInt . nominalDelay $
-                  diffRelTime (votableAt onset) now
+                registerDelay
+                  . max 1
+                  . diffTimeToMicrosecondsAsInt
+                  $ nominalDelay voteIn
               atomically . modifyTVar pendingVotes . Map.insert point $
-                (timer, addRelTime lVoteWindow (votableAt onset))
+                (timer, voteDeadline)
       , -- Reading every armed timer puts them all in this transaction's read
         -- set, so it wakes on any of them, and 'Map.toList' is in point order,
         -- so simultaneous firings break towards the earlier slot.
@@ -192,8 +211,6 @@ newVoteTimers tracer lcfg chainDB systemTime = do
               modifyTVar pendingVotes (Map.delete point)
               pure (point, deadline)
       }
- where
-  votableAt = addRelTime lHdrWait
 
 -- | When a slot begins, in wall-clock terms.
 --
@@ -249,7 +266,8 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
               AcquiredEb{} -> waitAcquiredEbTxs
               AcquiredEbTxs point -> pure point
 
-      VoteTimers{scheduleVoteTime, waitNextVoteTime} <- newVoteTimers tracer lcfg chainDB systemTime
+      VoteTimers{scheduleVoteTime, waitNextVoteTime} <-
+        newVoteTimers tracer lcfg chainDB systemTime
 
       forever $
         atomically ((Left <$> waitAcquiredEbTxs) <|> (Right <$> waitNextVoteTime))
