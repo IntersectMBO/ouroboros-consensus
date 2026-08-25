@@ -424,6 +424,7 @@ library tracing
   -- same way ouroboros-network:tracing does.
   exposed-modules:
     Ouroboros.Consensus.Tracing.BlockReplayProgress
+    Ouroboros.Consensus.Tracing.ChainDB
     Ouroboros.Consensus.Tracing.ConsensusStartupException
     Ouroboros.Consensus.Tracing.Era.HardFork
     Ouroboros.Consensus.Tracing.Formatting
@@ -440,9 +441,10 @@ library tracing
     cardano-crypto-wrapper,
     cardano-ledger-byron,
     cardano-ledger-core,
+    cardano-prelude,
     cardano-protocol-tpraos,
     cardano-slotting,
-    ouroboros-consensus:{ouroboros-consensus, cardano, protocol},
+    ouroboros-consensus:{ouroboros-consensus, cardano, protocol, lsm},
     ouroboros-network:api,
     sop-core,
     strict-sop-core,
