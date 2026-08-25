@@ -50,6 +50,7 @@ module Ouroboros.Consensus.Mempool.API
 
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
 import Data.Measure (Measure)
 import qualified Data.Measure
 import GHC.Generics (Generic)
@@ -60,6 +61,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike
+import LeiosDemoTypes.LeiosJobs (TxHash)
 import Ouroboros.Network.Protocol.TxSubmission2.Type (SizeInBytes)
 
 {-------------------------------------------------------------------------------
@@ -231,6 +233,10 @@ data Mempool m blk = Mempool
   -- removed because they have become invalid.
   --
   -- This capacity excludes the `mempoolTimeoutCapacity`.
+  , getLeiosTxIndex :: STM m (Map TxHash (Validated (GenTx blk)))
+  -- ^ The current mempool contents indexed by Leios EB-tx hash: lets the Leios
+  -- fetch logic find an EB's referenced txs in our mempool by hash. Empty in a
+  -- non-Leios setup (see 'ResolveLeiosBlock'\''s @leiosTxHashOfGenTx@).
   , testTryAddTx ::
       DiffTime ->
       AddTxOnBehalfOf ->

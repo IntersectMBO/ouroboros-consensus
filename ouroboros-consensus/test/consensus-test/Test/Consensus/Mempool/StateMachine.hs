@@ -613,6 +613,7 @@ mkSUT ::
   , MonadTimer m
   , LedgerSupportsProtocol blk
   , LedgerSupportsMempool blk
+  , ResolveLeiosBlock blk
   , HasTxId (GenTx blk)
   ) =>
   LedgerConfig blk ->

@@ -81,6 +81,7 @@ import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
+import qualified Data.ByteString as Strict
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -89,6 +90,7 @@ import LeiosDemoTypes
   , LeiosExtValidationError (..)
   , LeiosPoint (..)
   , RbHash
+  , TxHash
   , minCertificationThreshold
   , verifyLeiosCert
   )
@@ -911,6 +913,19 @@ class ResolveLeiosBlock blk where
   -- certifies. 'Nothing' for non-Leios eras.
   announcingRbHash :: blk -> Maybe RbHash
   announcingRbHash _ = Nothing
+
+  -- | The Leios EB-tx hash of a mempool tx, if this block's txs are Leios txs.
+  -- Lets the mempool index its contents by the hash an EB references (see
+  -- 'Ouroboros.Consensus.Mempool.API.getLeiosTxIndex'). 'Nothing' (the default)
+  -- for non-Leios eras.
+  leiosTxHashOfGenTx :: GenTx blk -> Maybe TxHash
+  leiosTxHashOfGenTx _ = Nothing
+
+  -- | The 'LeiosTx' wire bytes of a mempool tx (the preimage of
+  -- 'leiosTxHashOfGenTx'), if any -- what the Leios fetch logic ingests when it
+  -- finds an EB's tx in our mempool. 'Nothing' (the default) for non-Leios eras.
+  leiosTxBytesOfGenTx :: GenTx blk -> Maybe Strict.ByteString
+  leiosTxBytesOfGenTx _ = Nothing
 
 -- | Resolve and inline EB closure transactions as announced on the previous
 -- header. NOTE: This produces a block that would fail full validation.

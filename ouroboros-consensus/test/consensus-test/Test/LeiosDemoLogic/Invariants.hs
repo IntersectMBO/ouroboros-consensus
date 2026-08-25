@@ -56,6 +56,7 @@ import LeiosDemoLogic
   ( LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
   , leiosFetchLogicIteration
+  , noMempoolPull
   , processLeiosBlock
   , processLeiosBlockTxs
   , recordAnnouncedEb
@@ -321,7 +322,7 @@ applyCmd conn txCache kv peerVars peerId = \case
   ArriveBody ids slot -> do
     let eb = ebOf ids
         req = MkLeiosBlockRequest (pointOf ids slot) (leiosEbBytesSize eb)
-    processLeiosBlock nullTracer nullTracer kv txCache conn (ReceivedBlockFrom peerId req) eb
+    processLeiosBlock nullTracer nullTracer kv txCache conn noMempoolPull (ReceivedBlockFrom peerId req) eb
     pure []
   ArriveTx v -> absurd v
   Forge ids slot -> do
@@ -341,8 +342,8 @@ applyCmd conn txCache kv peerVars peerId = \case
     -- 'outstanding' changes, mirror it here or this regression coverage goes stale
     -- silently.
     modifyMVar_ (fst kv) (pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo)
-    processLeiosBlock nullTracer nullTracer kv txCache conn (ForgedBlock point) eb
-    processLeiosBlockTxs nullTracer nullTracer kv txCache conn (ForgedTxs point eb) (V.fromList (map leiosTxOf ids))
+    processLeiosBlock nullTracer nullTracer kv txCache conn noMempoolPull (ForgedBlock point) eb
+    processLeiosBlockTxs nullTracer nullTracer kv txCache conn (ForgedTxs point eb $ V.fromList $ map leiosTxOf ids)
     pure []
   Decide slot -> do
     outstanding <- readMVar (fst kv)
@@ -625,6 +626,7 @@ raceSameHashMultiSlot = do
               kv
               txCache
               conn
+              noMempoolPull
               (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize))
               eb
           )

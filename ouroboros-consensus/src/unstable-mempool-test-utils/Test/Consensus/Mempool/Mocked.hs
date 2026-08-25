@@ -29,6 +29,7 @@ import Control.Tracer (Tracer)
 import qualified Data.List.NonEmpty as NE
 import Ouroboros.Consensus.HeaderValidation as Header
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -73,6 +74,7 @@ openMockedMempool ::
   ( Ledger.LedgerSupportsMempool blk
   , Ledger.HasTxId (Ledger.GenTx blk)
   , Header.ValidateEnvelope blk
+  , ResolveLeiosBlock blk
   ) =>
   Mempool.MempoolCapacityBytesOverride ->
   Tracer IO (Mempool.TraceEventMempool blk) ->

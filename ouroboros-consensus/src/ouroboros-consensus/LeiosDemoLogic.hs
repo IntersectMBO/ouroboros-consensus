@@ -19,7 +19,7 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Monad (foldM, forM_, when)
+import Control.Monad (foldM, forM_, unless, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
@@ -626,6 +626,10 @@ nextLeiosFetchClientCommand ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
+  -- | Pull EB-body misses out of the local mempool; see 'processLeiosBlock'.
+  ( IntMap.IntMap (TxHash, BytesSize) ->
+    m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
+  ) ->
   PeerId pid ->
   StrictTVar m (Seq LeiosFetchRequest) ->
   -- | Queue of responses received by the pipelined collector thread.
@@ -638,7 +642,7 @@ nextLeiosFetchClientCommand ::
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db peerId reqsVar responseQ = do
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db pullFromMempool peerId reqsVar responseQ = do
   drainResponses
   StrictSTM.atomically checkOrPeek >>= \case
     Right result -> pure $ Right result
@@ -650,9 +654,9 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db peerId 
     pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
     forM_ pending $ \case
       PendingBlockResponse req eb ->
-        processLeiosBlock ktracer tracer kernelVars txCache db (ReceivedBlockFrom peerId req) eb
+        processLeiosBlock ktracer tracer kernelVars txCache db pullFromMempool (ReceivedBlockFrom peerId req) eb
       PendingBlockTxsResponse req txs ->
-        processLeiosBlockTxs ktracer tracer kernelVars txCache db (ReceivedTxsFrom peerId req) txs
+        processLeiosBlockTxs ktracer tracer kernelVars txCache db (ReceivedTxsFrom peerId req txs)
 
   -- Non-blocking: return 'Right result' if stop or a request is available,
   -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
@@ -726,14 +730,18 @@ data LeiosBlockSource pid
   | -- | A locally-forged EB, carrying the point the forge assigned it.
     ForgedBlock !LeiosPoint
 
--- | Like 'LeiosBlockSource', for a batch of EB txs. The tx bytes are the
--- 'V.Vector LeiosTx' argument; 'ForgedTxs' additionally carries the forged EB's
--- point and body so the tx hashes come from the body's 'leiosEbTxs' (aligned by
--- position with the 'V.Vector LeiosTx') rather than being re-derived. Some of the
--- carried fields are currently unused.
+-- | Like 'LeiosBlockSource', for a batch of EB txs. Each constructor carries its
+-- own tx bytes.
 data LeiosBlockTxsSource pid
-  = ReceivedTxsFrom (PeerId pid) LeiosBlockTxsRequest
-  | ForgedTxs !LeiosPoint !LeiosEb
+  = ReceivedTxsFrom (PeerId pid) LeiosBlockTxsRequest !(V.Vector LeiosTx)
+  | -- | Carries the forged EB's point and body (so the tx hashes come from the
+    -- body's 'leiosEbTxs', aligned by position with the closure bytes, rather
+    -- than being re-derived) and the closure bytes.
+    ForgedTxs !LeiosPoint !LeiosEb !(V.Vector LeiosTx)
+  | -- | Carries an EB's txs that 'processLeiosBlock' found in our local mempool
+    -- (so it removed them from the fetch job set), already paired with their
+    -- (known) tx hashes, to be ingested applied.
+    MempoolTxs !LeiosPoint !(Map TxHash BS.ByteString)
 
 processLeiosBlock ::
   ( Ord pid
@@ -746,10 +754,17 @@ processLeiosBlock ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
+  -- | Pull the txs we already hold in our local mempool out of the given misses
+  -- (offset -> (tx hash, size)): returns the misses still to fetch from peers,
+  -- plus the mempool-found txs' bytes (which 'processLeiosBlock' ingests itself,
+  -- as its last step). See 'noMempoolPull' for the forge/test no-op.
+  ( IntMap.IntMap (TxHash, BytesSize) ->
+    m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
+  ) ->
   LeiosBlockSource pid ->
   LeiosEb ->
   m ()
-processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb = do
+processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db pullFromMempool source eb = do
   -- validate it
   let (mbPeer, point, ebBytesSize) = case source of
         ReceivedBlockFrom peerId (MkLeiosBlockRequest p sz) -> (Just peerId, p, sz)
@@ -788,7 +803,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
       when (not (null duplicateTxHashes)) $ do
         invalidReply $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
   -- ingest it
-  bodyClass <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+  (bodyClass, mempoolHits) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
         novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
@@ -823,7 +838,9 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
       then
         pure
           ( outstandingCleaned
-          , (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
+          , ( (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
+            , Map.empty
+            )
           )
       else do
         -- TODO don't hold the outstanding mvar during this IO
@@ -871,24 +888,70 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db source eb
                   IntMap.empty
                   v
               pure (fetchArrivalEvicted ebBytesSize', ms)
+        -- Before allocating jobs, pull out the misses we already hold in our local
+        -- mempool: they never become fetch jobs; instead we ingest them ourselves
+        -- below (the last thing this function does).
+        (stillMissing, mempoolHits) <- pullFromMempool misses
         let !jobPool =
               -- TODO should this calculation be deferred until the first offer
               -- arrives?
               -- each job commits to its covered tx hashes (so its response can be
-              -- validated without the body); 'misses' is offset -> (tx hash,
+              -- validated without the body); 'stillMissing' is offset -> (tx hash,
               -- on-wire size).
               Jobs.mkLeiosJobPool
                 -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
                 (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
                 (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
-                misses
+                stillMissing
             !outstanding' = Leios.insertAcquiredEbBody ebHash jobPool outstandingCleaned
-        pure (outstanding', bodyClass)
+        pure (outstanding', (bodyClass, mempoolHits))
   void $ MVar.tryPutMVar readyVar ()
   case source of
     ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
     ReceivedBlockFrom{} -> traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
+  -- Last: ingest the txs we found in our own mempool into the DB and cache (they
+  -- were removed from the fetch job set above). This function already pays disk
+  -- latency, so doing it synchronously here is fine.
+  unless (Map.null mempoolHits) $
+    processLeiosBlockTxs
+      ktracer
+      tracer
+      (outstandingVar, readyVar)
+      txCache
+      db
+      (MempoolTxs point mempoolHits)
+
+-- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
+-- mempool (the forge, which already holds the whole closure, and tests): keep
+-- every miss and find nothing locally.
+noMempoolPull ::
+  Applicative m =>
+  IntMap.IntMap (TxHash, BytesSize) ->
+  m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
+noMempoolPull misses = pure (misses, Map.empty)
+
+-- | Build a 'processLeiosBlock' mempool-pull from a read of the mempool's Leios
+-- tx index (keyed by 'TxHash') and an era-specific conversion of a found tx to
+-- its 'LeiosTx' bytes. A miss is removed from the still-to-fetch set only if it
+-- is present in the index /and/ converts (so a tx we can't turn into bytes is
+-- still fetched from peers, never lost). Polymorphic in the index's value type so
+-- this stays blk-agnostic.
+mkMempoolPull ::
+  Monad m =>
+  -- | Read the mempool's current Leios tx index.
+  m (Map TxHash vtx) ->
+  -- | The 'LeiosTx' bytes of a found tx, if it has them.
+  (vtx -> Maybe BS.ByteString) ->
+  IntMap.IntMap (TxHash, BytesSize) ->
+  m (IntMap.IntMap (TxHash, BytesSize), Map TxHash BS.ByteString)
+mkMempoolPull readIndex toBytes misses = do
+  idx <- readIndex
+  let missHashes = Set.fromList (map fst (IntMap.elems misses))
+      hits = Map.mapMaybe toBytes (Map.restrictKeys idx missHashes)
+      hitHashes = Map.keysSet hits
+      stillMissing = IntMap.filter (\(h, _sz) -> not (Set.member h hitHashes)) misses
+  pure (stillMissing, hits)
 
 -----
 
@@ -1083,10 +1146,9 @@ processLeiosBlockTxs ::
   LeiosTxCache m () () SerializedEbBody ->
   LeiosDbConnection m ->
   LeiosBlockTxsSource pid ->
-  V.Vector LeiosTx ->
   m ()
-processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source txs = case source of
-  ForgedTxs _point eb -> do
+processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source = case source of
+  ForgedTxs _point eb txs -> do
     -- Ingest the whole closure (TODO even though we might already have some of
     -- it).
     --
@@ -1096,7 +1158,12 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db source
           Applied
       $ V.toList (V.map fst (leiosEbTxs eb)) `zip` V.toList (V.map cbor txs)
     void $ MVar.tryPutMVar readyVar ()
-  ReceivedTxsFrom peerId req@(MkLeiosBlockTxsRequest point jobs) -> do
+  MempoolTxs _point hits -> do
+    -- Txs found in our local mempool (so already-known-valid): ingest applied,
+    -- using the hashes we already have. No peer accounting, no arrival telemetry.
+    _ <- ingestAcquiredTxs Applied (Map.toList hits)
+    void $ MVar.tryPutMVar readyVar ()
+  ReceivedTxsFrom peerId req@(MkLeiosBlockTxsRequest point jobs) txs -> do
     traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
     let txBytess = V.map cbor txs
         batchBytes = V.sum (V.map BS.length txBytess)
@@ -1621,6 +1688,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache db anc forgedEb = do
     kv
     txCache
     db
+    noMempoolPull -- the forge holds the whole closure
     (ForgedBlock forgedEb.point)
     forgedEb.body
   processLeiosBlockTxs
@@ -1629,7 +1697,6 @@ onForgedLeiosEb kernelTracer centralVar kv txCache db anc forgedEb = do
     kv
     txCache
     db
-    (ForgedTxs forgedEb.point forgedEb.body)
-    (V.fromList (map (MkLeiosTx . snd) forgedEb.txClosure))
+    (ForgedTxs forgedEb.point forgedEb.body $ V.fromList $ map (MkLeiosTx . snd) $ forgedEb.txClosure)
   traceWith kernelTracer $
     TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}

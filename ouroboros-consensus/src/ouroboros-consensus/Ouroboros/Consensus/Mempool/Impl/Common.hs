@@ -54,12 +54,15 @@ import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Typeable
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes.LeiosJobs (TxHash)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -121,6 +124,13 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
+  , isLeiosTxIndex :: !(Map TxHash (Validated (GenTx blk)))
+  -- ^ The mempool's transactions indexed by their Leios EB-tx hash (a hash of a
+  -- /different/ preimage than 'GenTxId', so 'isTxIds' can't answer it). Lets the
+  -- Leios fetch logic find an EB's referenced txs in our mempool by hash without
+  -- rescanning. Maintained in lockstep with 'isTxs' via the block's
+  -- 'ResolveLeiosBlock' @leiosTxHashOfGenTx@; empty when that returns 'Nothing'
+  -- for every tx (i.e. a non-Leios setup).
   , isTxKeys :: !(LedgerTables (LedgerState blk) KeysMK)
   -- ^ The cached set of keys needed for the transactions
   -- currently in the mempool.
@@ -213,6 +223,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
   IS
     { isTxs = TxSeq.Empty
     , isTxIds = Set.empty
+    , isLeiosTxIndex = Map.empty
     , isTxKeys = emptyLedgerTables
     , isTxValues = emptyLedgerTables
     , isLedgerState = st
@@ -362,7 +373,7 @@ tickLedgerState cfg (ForgeInUnknownSlot st) =
 -- | Extend 'InternalState' with a new transaction (one which we have not
 -- previously validated) that may or may not be valid in this ledger state.
 validateNewTransaction ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk), ResolveLeiosBlock blk) =>
   LedgerConfig blk ->
   WhetherToIntervene ->
   GenTx blk ->
@@ -394,6 +405,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
+            , isLeiosTxIndex = maybe id (\h -> Map.insert h vtx) (leiosTxHashOfGenTx tx) isLeiosTxIndex
             , isLedgerState = prependMempoolDiffs isLedgerState st'
             , isLastTicketNo = nextTicketNo
             }
@@ -402,6 +414,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
   IS
     { isTxs
     , isTxIds
+    , isLeiosTxIndex
     , isTxKeys
     , isTxValues
     , isLedgerState
@@ -420,7 +433,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 -- some transactions and revalidate the remaining ones.
 revalidateTxsFor ::
   forall m blk.
-  (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk), ResolveLeiosBlock blk) =>
   -- | The forker to read the transactions' inputs from.
   ReadOnlyForker m (LedgerState blk) ->
   MempoolCapacityBytesOverride ->
@@ -463,7 +476,7 @@ revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTick
 -- ('implSyncWithLedger').
 revalidateTxsFor' ::
   forall m blk.
-  (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk), ResolveLeiosBlock blk) =>
   -- | The forker to read the delta txs' inputs from.
   ReadOnlyForker m (LedgerState blk) ->
   MempoolCapacityBytesOverride ->
@@ -501,6 +514,13 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
       cand
         { isTxs = Foldable.foldl' (:>) (isTxs cand) (map unwrap validDelta)
         , isTxIds = isTxIds cand <> Set.fromList (map (txId . txForgetValidated . fst3) validDelta)
+        , isLeiosTxIndex =
+            isLeiosTxIndex cand
+              <> Map.fromList
+                [ (h, vtx)
+                | vtx <- map fst3 validDelta
+                , Just h <- [leiosTxHashOfGenTx (txForgetValidated vtx)]
+                ]
         , isTxKeys = isTxKeys cand <> survivorKeys
         , -- REVIEW(utxo-hd): incremental value cache. Equal to the from-scratch
           -- @restrictValuesMK (isTxValues cand `union` deltaValues) (allKeys)@:
@@ -561,6 +581,9 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
         IS
           { isTxs = TxSeq.fromList $ map unwrap validatedTxs
           , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validatedTxs
+          , -- The Leios index is read from the committed state, never from a
+            -- 'getSnapshotFor' snapshot, so leave it empty here.
+            isLeiosTxIndex = Map.empty
           , -- These two can be empty since we don't need the resulting
             -- values at all when making a snapshot, as we won't update
             -- the internal state.

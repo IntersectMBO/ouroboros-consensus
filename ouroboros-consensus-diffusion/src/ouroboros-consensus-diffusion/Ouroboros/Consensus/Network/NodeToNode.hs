@@ -152,6 +152,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Mempool.API (getLeiosTxIndex)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
@@ -159,6 +160,7 @@ import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
+  , leiosTxBytesOfGenTx
   )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy, whenJust)
@@ -665,6 +667,10 @@ mkHandlers
                   (getLeiosOutstanding, getLeiosReady)
                   getLeiosTxCache
                   leiosConn
+                  ( Leios.mkMempoolPull
+                      (atomically (getLeiosTxIndex getMempool))
+                      (leiosTxBytesOfGenTx . txForgetValidated)
+                  )
                   (Leios.MkPeerId peer)
                   reqVar
                   responseQ

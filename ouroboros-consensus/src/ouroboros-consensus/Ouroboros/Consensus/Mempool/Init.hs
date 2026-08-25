@@ -20,6 +20,7 @@ import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Query
 import Ouroboros.Consensus.Mempool.Update
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
 import Ouroboros.Network.Block (Point)
@@ -36,6 +37,7 @@ openMempool ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
+  , ResolveLeiosBlock blk
   ) =>
   ResourceRegistry m ->
   LedgerInterface m blk ->
@@ -57,6 +59,7 @@ forkSyncStateOnTipPointChange ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
+  , ResolveLeiosBlock blk
   ) =>
   MempoolEnv m blk ->
   ResourceRegistry m ->
@@ -91,6 +94,7 @@ openMempoolWithoutSyncThread ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
+  , ResolveLeiosBlock blk
   ) =>
   LedgerInterface m blk ->
   LedgerConfig blk ->
@@ -107,6 +111,7 @@ mkMempool ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
+  , ResolveLeiosBlock blk
   ) =>
   MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv =
@@ -117,6 +122,7 @@ mkMempool mpEnv =
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getSnapshotForNoCache = implGetSnapshotForNoCache mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
+    , getLeiosTxIndex = isLeiosTxIndex <$> readTMVar istate
     , testSyncWithLedger = implSyncWithLedger snapshotFromIS mpEnv
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }
