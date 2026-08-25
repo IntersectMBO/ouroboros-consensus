@@ -20,7 +20,7 @@ import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Class (liftIO)
 import qualified Control.Monad.Trans.Class as Trans
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
-import Control.Tracer as Trace (nullTracer)
+import Control.Tracer (Tracer, nullTracer)
 import Data.ByteString.Short (fromShort)
 import Data.Either (isRight)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
@@ -30,6 +30,7 @@ import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes
   ( RbHash (MkRbHash)
+  , TraceLeiosKernel
   , getLeiosSeatId
   , leiosCommitteeSize
   , signLeiosVote
@@ -149,8 +150,9 @@ runForge ::
   TopLevelConfig blk ->
   GenTxs blk ->
   LeiosDbConnection IO ->
+  Tracer IO TraceLeiosKernel ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosTracer = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   leiosVoteState <- newLeiosVoteState committee
@@ -183,11 +185,10 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
   -- case ends with no vote counted.
   reportCommittee = do
     mCommittee <- atomically committee
-    -- TODO: shouldn't we be using other mechanism to report other than putStrLn?
-    putStrLn $ case mCommittee of
-      Nothing -> "--> committee: none; the era does not vote"
+    traceWith leiosTracer . MkTraceLeiosKernel $ case mCommittee of
+      Nothing -> "committee: none; the era does not vote"
       Just c ->
-        "--> committee: "
+        "committee: "
           ++ show (leiosCommitteeSize c)
           ++ " seats; our seat: "
           ++ case topLevelConfigVotingKey cfg of
@@ -344,7 +345,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
         decideLeiosCertify
           leiosDb
           leiosVoteState
-          Trace.nullTracer
+          leiosTracer
           currentSlot
           (headerState unticked)
 
@@ -375,7 +376,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             , fbIsLeader = proof
             , fbChainDepState = Nothing
             , fbLeiosDb = leiosDb
-            , fbLeiosTracer = Trace.nullTracer
+            , fbLeiosTracer = leiosTracer
             , fbLeiosVoteState = leiosVoteState
             , fbMayLeiosCert = fst <$> mCert
             }
