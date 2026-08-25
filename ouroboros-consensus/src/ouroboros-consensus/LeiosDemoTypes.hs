@@ -567,6 +567,53 @@ recordMaxAnnouncementSlot ebHash slot =
     Just (MkEbState oldSlot fetchState) ->
       if slot <= oldSlot then Nothing else Just $ MkEbState slot fetchState
 
+-- | Initialize the outstanding state
+--
+-- Its contents are only @'BodyAcquired' 'emptyLeiosJobPool'@ for the EBs the
+-- LeiosDb already holds /in full/: a complete tx closure whose announcer is no
+-- older than the immutable tip. Each is marked 'BodyAcquired' with an empty job
+-- pool so we neither re-fetch nor re-process (eg emit 'AcquiredEb') an EB whose
+-- closure we already have at start-up time.
+--
+-- Everything else in the LeiosDb is deliberately ignored here, and it's
+-- safe to do so:
+--
+--   * A merely body-held EB with a /partial/ closure is not seeded: an
+--     empty pool would strand its missing txs. Left absent, it is
+--     re-derived from a fresh announcement/offer, and the redundant body
+--     re-fetch + re-insert is idempotent (INSERT-OR-IGNORE / no-op on
+--     duplicate).
+--
+--   * Complete closures at or below the immutable tip are already final;
+--     they would read as @tooOld@ anyway, so there is nothing to track.
+--
+--   * For the "points" and "txs" SQL tables, the control paths that
+--     actually depend on them read the LeiosDb directly, never via this
+--     outstanding state.
+--
+-- The per-peer request-tracking fields must start empty regardless: there are
+-- no connections yet and nothing is in flight.
+--
+-- The 'cdbAcquiredLeiosEbs' field of the ChainDB (which gates ChainSel for
+-- CertRBs) is initialized in the exact same way: from
+-- 'LeiosDemoDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot', already
+-- restricted to announcers no older than the immutable tip. And, it's
+-- necessarily initialized earlier, as part of the ChainDB. But for the sake of
+-- modularity/independence (see the TODO below), we're not reusing it to
+-- initialize 'LeiosOutstanding'.
+--
+-- TODO At the cost of more complexity here, we could initialize 'ebState'
+-- /and/ the LeiosTxCache to perfectly reflect the state of the LeiosDb on
+-- start-up. It's not clear that that's worthwhile for the MVP; /healthy/
+-- nodes shouldn't be frequently restarting.
+initializeLeiosOutstanding :: [LeiosPoint] -> SlotNo -> LeiosOutstanding pid
+initializeLeiosOutstanding points immTipSlot =
+  F.foldl' (flip seed1) (emptyLeiosOutstanding immTipSlot) points
+ where
+  seed1 (MkLeiosPoint slot ebHash) =
+    insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool
+      . recordMaxAnnouncementSlot ebHash slot
+
 -- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
 -- whenever the entry's max slot moves. The supplied function must be
 -- slot-monotonic (never lower the greatest slot), which both callers are.

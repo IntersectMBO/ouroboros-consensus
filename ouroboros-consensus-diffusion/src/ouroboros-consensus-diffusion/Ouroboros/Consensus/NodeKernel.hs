@@ -737,7 +737,12 @@ initInternalState
     let !immTipSlot = case immTip of
           Origin -> SlotNo 0
           NotOrigin s -> s
-    leiosOutstanding <- MVar.newMVar (Leios.emptyLeiosOutstanding immTipSlot)
+    leiosOutstanding <- do
+      acquiredClosures <-
+        LeiosDb.withLeiosDb leiosDB $ \leiosConn ->
+          LeiosDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot leiosConn immTipSlot
+      MVar.newMVar $
+        Leios.initializeLeiosOutstanding acquiredClosures immTipSlot
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
 

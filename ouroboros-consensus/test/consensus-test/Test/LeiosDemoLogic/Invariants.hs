@@ -138,6 +138,47 @@ tests =
         -- so it survives pruning up to slot 9, and is dropped only past slot 10
         Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 9) o))) @?= True
         Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 11) o))) @?= False
+    , testCase "start-up seeding marks each completed EB held, with an empty pool" $ do
+        let ebA = [0, 1] :: TestEb
+            ebB = [2, 3] :: TestEb
+            hA = hashLeiosEb (ebOf ebA)
+            hB = hashLeiosEb (ebOf ebB)
+            -- The complete-closure scan yields points: ebA listed at two slots (5
+            -- and 8), ebB at slot 6.
+            points = [pointOf ebA 5, pointOf ebA 8, pointOf ebB 6]
+            immTipSlot = SlotNo 4
+            o = Leios.initializeLeiosOutstanding points immTipSlot :: LeiosOutstanding Int
+        -- each completed EB is held with an empty job pool: nothing left to fetch
+        Map.lookup hB (Leios.ebState o)
+          @?= Just (Leios.MkEbState (SlotNo 6) (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
+        -- and when one EB is listed at several points, its greatest slot wins (8, not 5)
+        Map.lookup hA (Leios.ebState o)
+          @?= Just (Leios.MkEbState (SlotNo 8) (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
+        -- so every seeded EB reports as held ...
+        all Leios.ebStateHasBody (Map.elems (Leios.ebState o)) @?= True
+        -- ... nothing is listed for fetch (empty pools, no missing bodies) ...
+        Leios.missingEbBodies o @?= Map.empty
+        Leios.reverseSlotIndexByEbHash o @?= Map.empty
+        -- ... no requests are outstanding (there are no connections at start-up) ...
+        Leios.requestedBytesSizePerPeer o @?= Map.empty
+        Leios.requestedEbPeers o @?= Map.empty
+        Leios.requestedJobsPerPeer o @?= Map.empty
+        -- ... and the pruning watermark is seeded from the immutable tip
+        Leios.acquiredEbBodiesPrunedSlot o @?= immTipSlot
+    , testCase "start-up seeding: a peer's offer of a seeded EB is not re-fetched" $ do
+        let ebA = [0, 1] :: TestEb
+            ebB = [2, 3] :: TestEb
+            points = [pointOf ebA 8, pointOf ebB 6]
+            o = Leios.initializeLeiosOutstanding points (SlotNo 4) :: LeiosOutstanding Int
+            peerId = MkPeerId (0 :: Int)
+            -- a peer offers every seeded EB, body and closure
+            offerings = Map.singleton peerId (referencedOffers o)
+            (_out', decs, _drops) =
+              leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (SlotNo 10)) offerings Map.empty o
+        -- no body is re-requested (the whole point of the seed) ...
+        ebBodyRequestHashes decs @?= []
+        -- ... and with empty pools there is nothing at all to request
+        Map.null decs @?= True
     , testCase "a big-ledger peer has a larger, but still finite, closure budget" $ do
         let ids = [0, 1, 2, 3, 4] :: TestEb
             h = hashLeiosEb (ebOf ids)
