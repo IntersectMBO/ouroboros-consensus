@@ -382,11 +382,41 @@ peerBudget env isBig acc peerId =
     IsBigLedgerPeer -> Leios.maxRequestedBytesSizePerBigLedgerPeer env
     IsNotBigLedgerPeer -> Leios.maxRequestedBytesSizePerPeer env
 
--- | Walk this peer's offered points freshest-first (freshest-last while
--- syncing), assigning requests to the peer until it's saturated at
--- 'Leios.maxRequestedBytesSizePerPeer'. A big-ledger peer saturates at the larger
--- 'Leios.maxRequestedBytesSizePerBigLedgerPeer', enough that a closure it offers
--- is requested in full (see 'assignClosure').
+-- | Prioritize a peer's Leios offers
+--
+-- The offers are categorized into two tiers. The high-priority tier prioritizes
+-- /staler/ EBs (those with lesser slot numbers). The low-priority tier
+-- prioritizes /fresher/ EBs (those with greater slot numbers).
+--
+-- 'assignPeer' processes the high-priority tier first and then it carries over
+-- the resulting accumulator in order to process the low-priority tier.
+--
+-- When the node's ledger state is too old to know what the current slot is, all
+-- EBs are categorized as the high-priority tier, and the low-priority tier is
+-- empty.
+--
+-- When the current slot is known, the high-priority tier is only the freshest
+-- EBs, those no older than L = 3*L_hdr + L_vote + L_diff (ie whose slot is @>=
+-- currentSlot - L@). All EBs older than that are categorized as the
+-- low-priority tier.
+fetchPriorityTiers ::
+  Maybe SlotNo -> Word64 -> Map LeiosPoint v -> ([(LeiosPoint, v)], [(LeiosPoint, v)])
+fetchPriorityTiers mbCurrentSlot l offers =
+  (Map.toAscList highTier, Map.toDescList lowTier)
+ where
+  (highTier, lowTier) = case mbCurrentSlot of
+    Nothing -> (offers, Map.empty)
+    Just (SlotNo s) ->
+      -- @a + l < s@ (i.e. @a < S - L@) is the low tier, guarding underflow when
+      -- @S < L@; 'spanAntitone' relies on it being false-suffixed in slot order.
+      let (stale, fresh) = Map.spanAntitone (\p -> case p.pointSlotNo of SlotNo a -> a + l < s) offers
+       in (fresh, stale)
+
+-- | Walk this peer's offered points in priority order (see
+-- 'fetchPriorityTiers'), assigning requests to the peer until it's saturated at
+-- 'Leios.maxRequestedBytesSizePerPeer'. A big-ledger peer saturates at the
+-- larger 'Leios.maxRequestedBytesSizePerBigLedgerPeer', enough that a closure
+-- it offers is requested in full (see 'assignClosure').
 --
 -- Offered points below the saturation point are never visited, so aren't
 -- pruned this pass; that's fine because it's ephemeral and/or the other prune
@@ -401,11 +431,11 @@ assignPeer ::
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest, Set LeiosPoint)
 assignPeer env mbCurrentSlot isBig peerId offers acc =
-  go (acc, Seq.empty, Set.empty) prioritized
+  -- Walk the high-priority tier, then the low, threading the accumulator; a
+  -- second walk short-circuits at once if the first exhausted the byte budget.
+  go (go (acc, Seq.empty, Set.empty) highTier) lowTier
  where
-  prioritized = case mbCurrentSlot of
-    Nothing -> Map.toAscList offers -- syncing: freshest-last
-    Just _currentSlot -> Map.toDescList offers -- freshest-first
+  (highTier, lowTier) = fetchPriorityTiers mbCurrentSlot (Leios.fetchPriorityWindowSlots env) offers
 
   go st@(acc', _dec, _drops) = \case
     [] -> st

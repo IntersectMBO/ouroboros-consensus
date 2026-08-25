@@ -700,6 +700,15 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   -- ^ At most this many bytes of txs per job
   , maxJobTxCount :: Int
   -- ^ At most this many txs per job
+  , fetchPriorityWindowSlots :: Word64
+  -- ^ @L = 3*L_hdr + L_vote + L_diff@ (in slots): the window, ending at the
+  -- current slot, of EBs still worth voting on. Fetch prioritisation inverts to
+  -- oldest-first within it (see @fetchPriorityTiers@). ~14s on mainnet, ~10 on
+  -- the testnet.
+  --
+  -- TODO these are Leios protocol parameters (@L_hdr@/@L_vote@/@L_diff@) that
+  -- should be read from the ledger state and can change via on-chain governance;
+  -- static stub for now.
   , maxLeiosNotifyIngressQueue :: BytesSize
   -- ^ @maximumIngressQueue@ for LeiosNotify
   , maxLeiosFetchIngressQueue :: BytesSize
@@ -714,6 +723,7 @@ demoLeiosFetchStaticEnv =
     , maxRequestBytesSize = 500 * thousand
     , maxJobBytesSize = 64 * thousandBase2
     , maxJobTxCount = 20000   -- TODO do we want this to be low enough to matter?
+    , fetchPriorityWindowSlots = 10   -- TODO read dynamically from ledger state
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
     , maxLeiosFetchIngressQueue = 50 * millionBase2
     }

@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as Map
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
-import LeiosDemoLogic (leiosFetchLogicIteration)
+import LeiosDemoLogic (fetchPriorityTiers, leiosFetchLogicIteration)
 import LeiosDemoTypes
   ( AlsoOfferedTxsClosure (..)
   , BytesSize
@@ -69,7 +69,24 @@ tests =
         [ testCase "an offer of a self-forged EB is never re-fetched" $
             test_forgedEbOfferIgnored
         ]
+    , testGroup
+        "fetch priority"
+        [ testCase "freshest window oldest-first, then rest freshest-first" $
+            test_fetchPriorityOrder
+        ]
     ]
+
+-- | With current slot S=100 and window L=10, EBs at slot >= 90 (the voting
+-- window) are prioritised oldest-first, EBs beyond S trail that first tier, and
+-- everything older is freshest-first.
+test_fetchPriorityOrder :: IO ()
+test_fetchPriorityOrder =
+  map (unSlot . (.pointSlotNo) . fst) (hi ++ lo)
+    @?= [90, 95, 100, 101, 105, 89, 50, 0]
+ where
+  (hi, lo) = fetchPriorityTiers (Just (SlotNo 100)) 10 offers
+  offers = Map.fromList [(point a 'x', ()) | a <- [0, 105, 90, 50, 100, 89, 101, 95]]
+  unSlot (SlotNo n) = n
 
 ------------------------------------------------------------
 -- Scenarios
@@ -245,8 +262,8 @@ onOutstanding f sc = sc{scOutstanding = f (scOutstanding sc)}
 -- emitted; the old tx-soundness check is gone with it.)
 runIteration :: Ord pid => Scenario pid -> Map.Map (PeerId pid) (NESeq LeiosFetchRequest)
 runIteration sc =
-  -- A known current slot selects freshest-first (i.e. youngest-first), which is
-  -- the ordering these scenarios were written against.
+  -- Any known current slot suffices here: these scenarios don't depend on the
+  -- offer-visit order (the priority order is tested by 'test_fetchPriorityOrder').
   let (_out, reqs, _drops) =
         -- No big-ledger peers in these scenarios (the aggressive-fetch path is
         -- exercised in "Test.LeiosDemoLogic.Invariants").
