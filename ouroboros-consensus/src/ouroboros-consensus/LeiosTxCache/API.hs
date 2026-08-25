@@ -17,8 +17,8 @@ module LeiosTxCache.API
   , maxAnnouncementCount
 
     -- * Insert-body observability summary
-  , InsertBodySummary (..)
-  , mkInsertBodySummary
+  , LeiosTxCacheInsertBodySummary (..)
+  , mkLeiosTxCacheInsertBodySummary
   , worstCaseCacheTxCount
 
     -- * Arrival classification
@@ -37,7 +37,7 @@ import LeiosDemoTypes
   ( BytesSize
   , EbHash
   , FetchArrivalBytes
-  , InsertBodySummary (..)
+  , LeiosTxCacheInsertBodySummary (..)
   , RbHash
   , SerializedEbBody (..)
   , TxHash
@@ -75,7 +75,7 @@ data LeiosTxCache m a v b = LeiosTxCache
       b ->
       w ->
       (w -> Int -> TxHash -> BytesSize -> w) ->
-      m (Maybe (InsertBodySummary, w))
+      m (Maybe (LeiosTxCacheInsertBodySummary, w))
   -- ^ Record that we hold this EB's body, bumping the refcount of each tx it
   -- references. In the same pass, fold a caller-supplied accumulator over the
   -- referenced txs that are /not yet acquired/ (the "misses"): starting from the
@@ -161,11 +161,11 @@ bucketTxArrival = \case
 worstCaseCacheTxCount :: Int
 worstCaseCacheTxCount = maxAnnouncementCount * maxTxsPerEb
 
--- | Build an 'InsertBodySummary' from the raw counts, computing the load factor
--- ('ibsCacheLoad') against 'worstCaseCacheTxCount'.
-mkInsertBodySummary :: Int -> Int -> Int -> Int -> Int -> InsertBodySummary
-mkInsertBodySummary txsInEb tracked acquired validated cacheTxCount =
-  InsertBodySummary
+-- | Build an 'LeiosTxCacheInsertBodySummary' from the raw counts, computing the
+-- load factor ('ibsCacheLoad') against 'worstCaseCacheTxCount'.
+mkLeiosTxCacheInsertBodySummary :: Int -> Int -> Int -> Int -> Int -> LeiosTxCacheInsertBodySummary
+mkLeiosTxCacheInsertBodySummary txsInEb tracked acquired validated cacheTxCount =
+  MkLeiosTxCacheInsertBodySummary
     { ibsTxsInEb = txsInEb
     , ibsTracked = tracked
     , ibsAcquired = acquired

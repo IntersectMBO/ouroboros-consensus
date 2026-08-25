@@ -38,7 +38,7 @@ import LeiosTxCache.API
   , TxArrivalPrior (..)
   , bucketTxArrival
   , maxAnnouncementCount
-  , mkInsertBodySummary
+  , mkLeiosTxCacheInsertBodySummary
   )
 import qualified LeiosTxCache.Optimized.MutableHashTable as HT
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -109,7 +109,7 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                     b
                 cacheTxCount <- HT.size ht
                 let st' = st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)}
-                pure (st', Just (mkInsertBodySummary n tracked acquired validated cacheTxCount, w))
+                pure (st', Just (mkLeiosTxCacheInsertBodySummary n tracked acquired validated cacheTxCount, w))
       , lookupBody = \ebh ->
           MVar.withMVar stateVar $ \st ->
             pure $ case Map.lookup ebh (hsBodies st) of

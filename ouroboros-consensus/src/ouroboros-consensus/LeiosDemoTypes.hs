@@ -1282,7 +1282,7 @@ messageLeiosFetchToObject = \case
 -- | Summary of an EB body inserted into the LeiosTxCache, for observability (see
 -- 'TraceLeiosBodyHits'). The counts nest:
 -- @ibsTxsInEb >= ibsTracked >= ibsAcquired >= ibsValidated@.
-data InsertBodySummary = InsertBodySummary
+data LeiosTxCacheInsertBodySummary = MkLeiosTxCacheInsertBodySummary
   { ibsTxsInEb :: !Int
   -- ^ txs the EB body references
   , ibsTracked :: !Int
@@ -1307,10 +1307,13 @@ data TraceLeiosKernel
   | TraceLeiosBlockTxsAcquired LeiosPoint
   | -- | An EB body was inserted into the LeiosTxCache
     --
-    -- Carries the LeiosTxCache summary (cache hits) and how many of the
-    -- /remaining/ txs we then found in our local mempool. Together these give
-    -- the combined cache+mempool hit rate on the body's arrival.
-    TraceLeiosBodyHits LeiosPoint InsertBodySummary Int
+    -- Carries the LeiosTxCache summary (cache hits), how many of its txs we found
+    -- in our local mempool (the /full/ mempool-resident count, which may overlap
+    -- the cache hits), and how many were in /neither/ and so must be fetched. The
+    -- combined cache+mempool hit rate is thus @(txsInEb - missedBoth) \/ txsInEb@;
+    -- using @missedBoth@ avoids double-counting the mempool\/cache overlap. The two
+    -- 'Int's are the mempool count then @missedBoth@.
+    TraceLeiosBodyHits LeiosPoint LeiosTxCacheInsertBodySummary Int Int
   | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
       , eb :: LeiosEb
@@ -1505,7 +1508,7 @@ traceLeiosKernelToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
-  TraceLeiosBodyHits (MkLeiosPoint (SlotNo ebSlot) ebHash) ibs mempoolHits ->
+  TraceLeiosBodyHits (MkLeiosPoint (SlotNo ebSlot) ebHash) ibs mempoolHits missedBoth ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBodyHits"
       , "ebHash" .= prettyEbHash ebHash
@@ -1515,6 +1518,7 @@ traceLeiosKernelToObject = \case
       , "acquired" .= ibsAcquired ibs
       , "validated" .= ibsValidated ibs
       , "mempoolHits" .= mempoolHits
+      , "missedBoth" .= missedBoth
       , "cacheTxCount" .= ibsCacheTxCount ibs
       , "cacheLoad" .= ibsCacheLoad ibs
       ]

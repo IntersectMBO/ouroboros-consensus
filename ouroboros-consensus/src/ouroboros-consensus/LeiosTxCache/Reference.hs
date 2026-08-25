@@ -67,12 +67,12 @@ import qualified Data.Set as Set
 import LeiosDemoTypes (BytesSize, EbHash, RbHash, TxHash)
 import LeiosTxCache.API
   ( BodyState (..)
-  , InsertBodySummary
+  , LeiosTxCacheInsertBodySummary
   , RefCount (..)
   , ReferencesTxsByHash (..)
   , TxArrivalPrior (..)
   , maxAnnouncementCount
-  , mkInsertBodySummary
+  , mkLeiosTxCacheInsertBodySummary
   )
 import qualified Lens.Micro as L
 import qualified Lens.Micro.Extras as L
@@ -318,7 +318,7 @@ insertBody ::
   w ->
   (w -> Int -> TxHash -> BytesSize -> w) ->
   LeiosTxCacheIndex a v b ->
-  (LeiosTxCacheIndex a v b, Maybe (InsertBodySummary, w))
+  (LeiosTxCacheIndex a v b, Maybe (LeiosTxCacheInsertBodySummary, w))
 insertBody ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
   Nothing -> (idx, Nothing)
   Just BodyAlreadyInserted{} -> (idx, Nothing)
@@ -333,7 +333,7 @@ insertBody ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
             , txState = txState'
             , prunedSlot = prunedSlot idx
             }
-     in (idx', Just (mkInsertBodySummary n tracked acquired validated (Map.size txState'), w))
+     in (idx', Just (mkLeiosTxCacheInsertBodySummary n tracked acquired validated (Map.size txState'), w))
  where
   -- Bump each tx's refcount and, in the same pass, classify its /prior/ state:
   -- the counts feed the summary, and every not-yet-acquired tx (a "miss") is
