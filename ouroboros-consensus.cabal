@@ -433,15 +433,16 @@ library tracing
   build-depends:
     aeson,
     base,
+    base16-bytestring,
     bytestring,
     cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-ledger-core,
-    cardano-protocol-tpraos,
     cardano-slotting,
-    ouroboros-consensus:{ouroboros-consensus, cardano},
+    ouroboros-consensus:{ouroboros-consensus, cardano, protocol},
     ouroboros-network:api,
     sop-core,
+    strict-sop-core,
     text,
     trace-dispatcher ^>=2.13.0,
 
