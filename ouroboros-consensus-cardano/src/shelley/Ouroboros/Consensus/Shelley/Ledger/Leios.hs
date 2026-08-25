@@ -11,6 +11,7 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Leios () where
 
+import Cardano.Binary (serialize')
 import qualified Cardano.Crypto.Hash as Crypto (hashToBytesShort)
 import Cardano.Ledger.Api (Tx)
 import Cardano.Ledger.Binary (decCBOR, decodeFullAnnotator)
@@ -38,7 +39,9 @@ import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , LeiosPoint (..)
+  , LeiosTx (..)
   , RbHash (..)
+  , hashLeiosTx
   )
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
@@ -107,6 +110,13 @@ instance
   (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
   ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
   where
+  -- The on-wire bytes and 'TxHash' a forged EB records for each tx (see
+  -- 'forgeLeiosEb'): 'serialize'' the tx, and hash exactly those bytes. Matching
+  -- this encoding is what lets the mempool key its txs by the same 'TxHash' an EB
+  -- lists, so the body-arrival mempool pull can find them.
+  leiosTxBytesOfGenTx (ShelleyTx _ tx) = Just (serialize' tx)
+  leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serialize' tx)))
+
   resolveLeiosClosure leiosDb ebHash = do
     mAnnouncedEb <-
       leiosDbLookupEbClosure

@@ -1628,6 +1628,14 @@ instance
         (leiosClosureTxKeySets inner)
     _ -> emptyLedgerTables
 
+  leiosTxHashOfGenTx tx = case tx of
+    GenTxDijkstra inner -> leiosTxHashOfGenTx inner
+    _ -> Nothing
+
+  leiosTxBytesOfGenTx tx = case tx of
+    GenTxDijkstra inner -> leiosTxBytesOfGenTx inner
+    _ -> Nothing
+
 -----
 
 -- | We don't want to add the ResolveLeiosBlock sin-bin to SingleEraBlock, so we
