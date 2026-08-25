@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Consensus startup exception
 module Ouroboros.Consensus.Tracing.ConsensusStartupException
   ( ConsensusStartupException (..)
