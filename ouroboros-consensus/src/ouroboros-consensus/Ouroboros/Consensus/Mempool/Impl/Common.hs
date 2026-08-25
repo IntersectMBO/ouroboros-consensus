@@ -56,6 +56,7 @@ import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -95,6 +96,11 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
   { validatedTx :: !(Validated (GenTx blk))
   , validatedTxDiffs :: !(LedgerTables (TickedLedgerState blk) DiffMK)
+  , validatedTxLeiosHash :: !(StrictMaybe TxHash)
+  -- ^ Cached here so it isn't computed on every resync.
+  --
+  -- 'SNothing' for txs that can't be in a Leios block (eg when the Mempool is
+  -- in a Cardano era in which Leios is not enabled).
   }
   deriving Generic
 
@@ -399,13 +405,13 @@ validateNewTransaction cfg wti tx txsz origValues st is =
             { isTxs =
                 isTxs
                   :> TxTicket
-                    (ValidatedTxWithDiffs vtx (projectLedgerTables st'))
+                    (ValidatedTxWithDiffs vtx (projectLedgerTables st') leiosHash)
                     nextTicketNo
                     (MkTxMeasureWithDiffTime txsz dur)
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
-            , isLeiosTxIndex = maybe id (\h -> Map.insert h vtx) (leiosTxHashOfGenTx tx) isLeiosTxIndex
+            , isLeiosTxIndex = strictMaybe id (\h -> Map.insert h vtx) leiosHash isLeiosTxIndex
             , isLedgerState = prependMempoolDiffs isLedgerState st'
             , isLastTicketNo = nextTicketNo
             }
@@ -424,6 +430,8 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 
   nextTicketNo = succ isLastTicketNo
 
+  leiosHash = maybeToStrictMaybe (leiosTxHashOfGenTx tx)
+
 -- | Revalidate the given transactions against the given ticked ledger state,
 -- producing a new 'InternalState'.
 --
@@ -433,7 +441,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 -- some transactions and revalidate the remaining ones.
 revalidateTxsFor ::
   forall m blk.
-  (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk), ResolveLeiosBlock blk) =>
+  (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   -- | The forker to read the transactions' inputs from.
   ReadOnlyForker m (LedgerState blk) ->
   MempoolCapacityBytesOverride ->
@@ -476,7 +484,7 @@ revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTick
 -- ('implSyncWithLedger').
 revalidateTxsFor' ::
   forall m blk.
-  (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk), ResolveLeiosBlock blk) =>
+  (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   -- | The forker to read the delta txs' inputs from.
   ReadOnlyForker m (LedgerState blk) ->
   MempoolCapacityBytesOverride ->
@@ -515,11 +523,12 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
         { isTxs = Foldable.foldl' (:>) (isTxs cand) (map unwrap validDelta)
         , isTxIds = isTxIds cand <> Set.fromList (map (txId . txForgetValidated . fst3) validDelta)
         , isLeiosTxIndex =
+            -- Reuse each survivor's memoized hash (carried through 'reapplyTxs'' in
+            -- the per-tx payload) -- never recompute it on a resync.
             isLeiosTxIndex cand
               <> Map.fromList
                 [ (h, vtx)
-                | vtx <- map fst3 validDelta
-                , Just h <- [leiosTxHashOfGenTx (txForgetValidated vtx)]
+                | (vtx, _df, (_tk, _tz, SJust h)) <- validDelta
                 ]
         , isTxKeys = isTxKeys cand <> survivorKeys
         , -- REVIEW(utxo-hd): incremental value cache. Equal to the from-scratch
@@ -542,8 +551,8 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
         }
   pure $ RevalidateTxsResult newIS (removedSoFar ++ errDelta)
  where
-  wrap (TxTicket (ValidatedTxWithDiffs tx df) tk tz) = (tx, df, (tk, tz))
-  unwrap (tx, df, (tk, tz)) = TxTicket (ValidatedTxWithDiffs tx df) tk tz
+  wrap (TxTicket (ValidatedTxWithDiffs tx df mh) tk tz) = (tx, df, (tk, tz, mh))
+  unwrap (tx, df, (tk, tz, mh)) = TxTicket (ValidatedTxWithDiffs tx df mh) tk tz
   fst3 (x, _, _) = x
   snd3 (_, x, _) = x
 
@@ -601,8 +610,8 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
           }
  where
   fst3 (x, _, _) = x
-  wrap = (\(TxTicket (ValidatedTxWithDiffs tx df) tk tz) -> (tx, (), (df, tk, tz)))
-  unwrap = (\(tx, (), (df, tk, tz)) -> (TxTicket (ValidatedTxWithDiffs tx df) tk tz))
+  wrap = (\(TxTicket (ValidatedTxWithDiffs tx df mh) tk tz) -> (tx, (), (df, tk, tz, mh)))
+  unwrap = (\(tx, (), (df, tk, tz, mh)) -> (TxTicket (ValidatedTxWithDiffs tx df mh) tk tz))
 
 {-------------------------------------------------------------------------------
   Conversions

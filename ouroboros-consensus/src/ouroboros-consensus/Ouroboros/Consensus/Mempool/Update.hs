@@ -440,7 +440,6 @@ implRemoveTxsEvenIfValid ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , ResolveLeiosBlock blk
   ) =>
   MempoolEnv m blk ->
   NE.NonEmpty (GenTxId blk) ->
@@ -512,7 +511,6 @@ implSyncWithLedger ::
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , HasTxId (GenTx blk)
-  , ResolveLeiosBlock blk
   ) =>
   -- | This argument is only to be able to acquire a snapshot in the same
   -- atomically block as the re-sync when testing the mempool in the QSM

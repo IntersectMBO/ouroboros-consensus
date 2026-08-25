@@ -59,7 +59,6 @@ forkSyncStateOnTipPointChange ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
-  , ResolveLeiosBlock blk
   ) =>
   MempoolEnv m blk ->
   ResourceRegistry m ->
