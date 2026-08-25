@@ -427,6 +427,7 @@ library tracing
     Ouroboros.Consensus.Tracing.ConsensusStartupException
     Ouroboros.Consensus.Tracing.Era.HardFork
     Ouroboros.Consensus.Tracing.Formatting
+    Ouroboros.Consensus.Tracing.HasIssuer
     Ouroboros.Consensus.Tracing.Queries
     Ouroboros.Consensus.Tracing.Render
 
@@ -437,7 +438,9 @@ library tracing
     bytestring,
     cardano-crypto-class,
     cardano-crypto-wrapper,
+    cardano-ledger-byron,
     cardano-ledger-core,
+    cardano-protocol-tpraos,
     cardano-slotting,
     ouroboros-consensus:{ouroboros-consensus, cardano, protocol},
     ouroboros-network:api,
