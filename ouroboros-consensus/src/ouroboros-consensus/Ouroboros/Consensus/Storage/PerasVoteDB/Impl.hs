@@ -4,9 +4,13 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
   ( -- * Opening
@@ -21,7 +25,6 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
 import Control.Monad (when)
 import Control.Monad.Except (throwError)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Data (Typeable)
 import Data.Foldable (for_)
 import Data.Foldable qualified as Foldable
 import Data.Kind (Type)
@@ -29,10 +32,12 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))
+import Ouroboros.Consensus.Peras.Context
 import Ouroboros.Consensus.Peras.Vote.Aggregation
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
 import Ouroboros.Consensus.Util.Args
@@ -61,8 +66,30 @@ data PerasVoteDbState blk = PerasVoteDbState
   , pvdsLastTicketNo :: !PerasVoteTicketNo
   -- ^ The most recent 'PerasVoteTicketNo' (or 'zeroPerasVoteTicketNo' otherwise).
   }
-  deriving stock (Show, Generic)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  , Show (PerasVotingCommittee blk)
+  ) =>
+  Show (PerasVoteDbState blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  , Eq (PerasVotingCommittee blk)
+  ) =>
+  Eq (PerasVoteDbState blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  , NoThunks (PerasVotingCommittee blk)
+  ) =>
+  NoThunks (PerasVoteDbState blk)
+deriving instance
+  Generic (PerasVoteDbState blk)
 
 initialPerasVoteDbState :: WithFingerprint (PerasVoteDbState blk)
 initialPerasVoteDbState =
@@ -77,6 +104,7 @@ initialPerasVoteDbState =
 
 -- | Check that the fields of 'PerasVoteState' are in sync.
 invariantForPerasVoteDbState ::
+  IsPerasVote (PerasVote blk) blk =>
   WithFingerprint (PerasVoteDbState blk) -> Either String ()
 invariantForPerasVoteDbState pvs = do
   for_ (Map.toList pvdsRoundVoteStates) $ \(roundNo, prvs) ->
@@ -118,7 +146,24 @@ data TraceEvent blk
       (AddPerasVoteResult blk)
   | GarbageCollected
       SlotNo
-  deriving stock (Show, Eq, Generic)
+
+deriving instance
+  ( Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (TraceEvent blk)
+deriving instance
+  ( Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (TraceEvent blk)
+deriving instance
+  ( NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (TraceEvent blk)
+deriving instance
+  Generic (TraceEvent blk)
 
 {------------------------------------------------------------------------------
   Creating the database
@@ -127,14 +172,14 @@ data TraceEvent blk
 type PerasVoteDbArgs :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data PerasVoteDbArgs f m blk = PerasVoteDbArgs
   { pvdbaTracer :: Tracer m (TraceEvent blk)
-  , pvdbaPerasParams :: HKD f (PerasParams blk)
+  , pvdbaPerasEpochContextResolverHandle :: HKD f (PerasEpochContextResolverHandle m blk)
   }
 
 defaultArgs :: Monad m => Incomplete PerasVoteDbArgs m blk
 defaultArgs =
   PerasVoteDbArgs
     { pvdbaTracer = nullTracer
-    , pvdbaPerasParams = noDefault
+    , pvdbaPerasEpochContextResolverHandle = noDefault
     }
 
 createDB ::
@@ -145,7 +190,7 @@ createDB ::
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
-createDB args@PerasVoteDbArgs{pvdbaPerasParams} = do
+createDB args@PerasVoteDbArgs{pvdbaPerasEpochContextResolverHandle} = do
   pvdeState <-
     newTVarWithInvariantIO
       (either Just (const Nothing) . invariantForPerasVoteDbState)
@@ -157,7 +202,7 @@ createDB args@PerasVoteDbArgs{pvdbaPerasParams} = do
           }
   pure
     PerasVoteDB
-      { addVote = implAddVote pvdbaPerasParams env
+      { addVote = implAddVote pvdbaPerasEpochContextResolverHandle env
       , getVoteIds = implGetVoteIds env
       , getVotesAfter = implGetVotesAfter env
       , getForgedCertForRound = implGetForgedCertForRound env
@@ -175,15 +220,16 @@ createDB args@PerasVoteDbArgs{pvdbaPerasParams} = do
 -- TODO: we will need to update this method with non-trivial validation logic
 -- see https://github.com/tweag/cardano-peras/issues/120
 implAddVote ::
+  forall m blk.
   ( IOLike m
   , StandardHash blk
   , Typeable blk
   ) =>
-  PerasParams blk ->
+  PerasEpochContextResolverHandle m blk ->
   PerasVoteDbEnv m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   STM m (m (AddPerasVoteResult blk))
-implAddVote perasParams PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
+implAddVote resolverHandle PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
   let voteId = getPerasVoteId vote
   addPerasVoteRes <- do
     WithFingerprint pvds fp <- readTVar pvdeState
@@ -208,7 +254,7 @@ implAddVote perasParams PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
         pvsVotesByTicket' = Map.insert pvsLastTicketNo' vote (pvdsVotesByTicket pvds)
 
     (addPerasVoteRes, pvsRoundVoteStates') <-
-      case updatePerasRoundVoteStates vote perasParams (pvdsRoundVoteStates pvds) of
+      updatePerasRoundVoteStates vote resolverHandle (pvdsRoundVoteStates pvds) >>= \case
         -- Added vote and reached a quorum, forging a new certificate
         Right (VoteGeneratedNewCert cert, pvsRoundVoteStates') ->
           pure (AddedPerasVoteAndGeneratedNewCert cert, pvsRoundVoteStates')
@@ -237,6 +283,9 @@ implAddVote perasParams PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
         Left (RoundVoteStateForgingCertError forgeErr) ->
           throwSTM $
             ForgingCertError forgeErr
+        Left (RoundVoteStateEpochContextNotFound resolverErr) ->
+          throwSTM $
+            EpochContextNotFoundForRound @blk resolverErr
 
     pure
       ( addPerasVoteRes

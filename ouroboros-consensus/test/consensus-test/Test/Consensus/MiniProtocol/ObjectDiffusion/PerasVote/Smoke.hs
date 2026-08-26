@@ -1,15 +1,11 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
   ( tests
   ) where
 
 import Control.Monad (join)
 import Control.Tracer (contramap, nullTracer)
-import Data.Data (Typeable)
 import qualified Data.Map as Map
+import Data.Typeable (Typeable)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -18,7 +14,10 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
-import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolverHandle
+  , mockPerasEpochContextResolverHandle
+  )
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
@@ -51,10 +50,15 @@ tests =
     ]
 
 newVoteDB ::
-  (IOLike m, StandardHash blk, Typeable blk) =>
-  [WithArrivalTime (ValidatedPerasVote blk)] -> m (PerasVoteDB m blk)
-newVoteDB votes = do
-  db <- PerasVoteDB.createDB (PerasVoteDB.PerasVoteDbArgs nullTracer defaultPerasParams)
+  ( IOLike m
+  , Typeable blk
+  , StandardHash blk
+  ) =>
+  PerasEpochContextResolverHandle m blk ->
+  [WithArrivalTime (ValidatedPerasVote blk)] ->
+  m (PerasVoteDB m blk)
+newVoteDB resolverHandle votes = do
+  db <- PerasVoteDB.createDB (PerasVoteDB.PerasVoteDbArgs nullTracer resolverHandle)
   mapM_
     ( \vote -> do
         result <- join $ atomically $ PerasVoteDB.addVote db vote
@@ -82,21 +86,13 @@ prop_smoke =
                 , m [PerasVote TestBlock]
                 )
             mkPoolInterfaces = do
-              outboundPool <- newVoteDB watValidatedVotes
-              inboundPool <- newVoteDB []
+              epochContextResolverHandle <- mockPerasEpochContextResolverHandle epochContext
+
+              outboundPool <- newVoteDB epochContextResolverHandle watValidatedVotes
+              inboundPool <- newVoteDB epochContextResolverHandle []
 
               let outboundPoolReader = makePerasVotePoolReaderFromVoteDB outboundPool
-                  stakeDistr =
-                    PerasVoteStakeDistr $
-                      Map.fromList
-                        [ (mockVoteSeatIndex (vpvVote v), vpvVoteWeight v)
-                        | WithArrivalTime _ v <- watValidatedVotes
-                        ]
-                  inboundPoolWriter =
-                    makePerasVotePoolWriterFromVoteDB
-                      mockSystemTime
-                      (pure stakeDistr)
-                      inboundPool
+                  inboundPoolWriter = makePerasVotePoolWriterFromVoteDB mockSystemTime inboundPool epochContextResolverHandle
                   getAllInboundPoolContent = do
                     votesMap <-
                       atomically $
