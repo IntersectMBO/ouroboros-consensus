@@ -68,8 +68,6 @@ openDB ::
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
   GetVolatileSuffix m blk ->
-  -- | The 'cdbsRegistry'
-  ResourceRegistry m ->
   WithTempRegistry st m (LedgerDB' m blk)
 openDB
   args
@@ -77,8 +75,7 @@ openDB
   replayGoal
   replayGoalIsEBB
   getBlock
-  getVolatileSuffix
-  reg =
+  getVolatileSuffix =
     case lgrBackendArgs args of
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         -- Note this is the only step that cares about the temporary
@@ -98,7 +95,7 @@ openDB
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                 snapTracer
                 (lgrHasFS args)
-        let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res reg
+        let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
         lift $ doOpenDB args initDb snapManager stream replayGoal replayGoalIsEBB
        where
         !tr = lgrTracer args
