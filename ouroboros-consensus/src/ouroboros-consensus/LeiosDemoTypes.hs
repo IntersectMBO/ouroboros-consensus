@@ -1492,6 +1492,16 @@ data LeiosNotVotedReason
 
 deriving instance Show TraceLeiosKernel
 
+-- | Render a 'TraceLeiosDb'.
+jsonLeiosDb :: TraceLeiosDb -> Aeson.Object
+jsonLeiosDb = \case
+  TraceLeiosDbInsertCollision table key ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbInsertCollision"
+      , "table" .= table
+      , "key" .= key
+      ]
+
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
   TraceLeiosFetchBodyArrival fab ->
@@ -1652,12 +1662,7 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
-  TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbInsertCollision"
-      , "table" .= table
-      , "key" .= key
-      ]
+  TraceLeiosDb ev -> jsonLeiosDb ev
   TraceLeiosCertifiedAndAnnounced slotNo rbHash ->
     mconcat
       [ "kind" .= Aeson.String "LeiosCertifiedAndAnnounced"

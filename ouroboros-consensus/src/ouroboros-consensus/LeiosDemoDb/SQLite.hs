@@ -193,10 +193,24 @@ openSQLiteConnection tracer dbPath notificationChan = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
   traverse_ (dbExec db) $
-    [ "pragma journal_mode = WAL;"
-    , "pragma synchronous = normal;"
-    , "pragma page_size = 32768;"
+    [ "pragma synchronous = normal;"
+    , -- Must precede 'journal_mode': SQLite cannot change the page size of a
+      -- database already in WAL mode, so the order this list used to have left
+      -- the setting a silent no-op and every run so far on the 4096 default.
+      -- Which is where it belongs anyway. Measured: a devnet run with 32768
+      -- actually in effect reached 35x WAL amplification (34 GiB of log for 0.97
+      -- GiB of data) against ~18x for the same workload at 4096. The WAL is a
+      -- page-level redo log, so a commit rewrites each dirtied page whole, and
+      -- both hot indexes are keyed by hash, so writes scatter -- the page count
+      -- barely falls as the page grows, the bytes just multiply.
+      "pragma page_size = 4096;"
     , "pragma mmap_size = 268435500;"
+    , "pragma journal_mode = WAL;"
+    , -- SQLite's own default, spelled out because it is what keeps the log
+      -- bounded: passive checkpoints reset the WAL every 1000 frames, provided
+      -- no connection is sitting on a stale read snapshot. One that is will
+      -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
+      "pragma wal_autocheckpoint = 1000;"
     ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
