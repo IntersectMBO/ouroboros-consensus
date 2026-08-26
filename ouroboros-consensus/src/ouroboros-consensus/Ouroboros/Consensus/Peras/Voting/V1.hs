@@ -11,7 +11,6 @@ module Ouroboros.Consensus.Peras.Voting.V1
 
     -- * For testing purposes
   , extractPerasStakeDistrAndPublicKeys
-  , ledgerKeyScope
   ) where
 
 import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (..))

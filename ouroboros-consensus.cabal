@@ -702,6 +702,7 @@ test-suite consensus-test
     Test.Consensus.Peras.Serialisation
     Test.Consensus.Peras.Voting.Adapter
     Test.Consensus.Peras.Voting.Rules
+    Test.Consensus.Peras.Voting.V1
     Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.Bitmap
     Test.Consensus.Util.MonadSTM.NormalForm
@@ -721,6 +722,7 @@ test-suite consensus-test
     cardano-ledger-binary,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-slotting:{cardano-slotting, testlib},
+    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
