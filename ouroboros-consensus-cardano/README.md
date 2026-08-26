@@ -380,8 +380,9 @@ Additional flags:
 ## db-synthesizer
 
 ### About
-This tool synthesizes a valid ChainDB, replicating cardano-node's UX. The blocks
-forged to synthesize the ChainDB won't contain any transactions.
+This tool synthesizes a valid ChainDB, replicating cardano-node's UX.
+By default the blocks it forges hold no transactions.
+Give `--payment-signing-key` to fill them, and `--shelley-bls-key` to certify the endorser blocks they announce.
 
 A minimal test case is provided which incorporates a staked genesis and credentials for 2 forgers (cf. `test/config`).
 
@@ -403,6 +404,14 @@ The tool expects the given ChainDB path (`--db` option) to *not* be present. Sho
 #### limiting synthesis
 
 A limit must be specified up to which the tool synthesizes a ChainDB. Possible limits are either the number of slots processed (`-s`), the number of epochs processed (`-e`) or the absolute number of blocks in the resulting ChainDB (`-b`).
+
+#### transactions and Leios data
+
+Two options control what the forged blocks hold. Each one is optional, and each one changes the chain the tool writes.
+
+`--payment-signing-key` names a payment signing key that the Shelley genesis funds. The tool then fills each block with a chain of transactions, and it announces an endorser block that holds the transactions the block itself could not take. Without the option the tool forges empty blocks, announces no endorser block, and writes an empty `leios.db`.
+
+`--shelley-bls-key` names the BLS signing key that the pool registered as its `leiosKey`. The tool votes with it for each endorser block it announces, and a later block carries the resulting certificate. Without the option the tool casts no vote. It still announces endorser blocks, but no block certifies one, so the transactions of those blocks never reach the ledger.
 
 ## ImmDB Server
 
