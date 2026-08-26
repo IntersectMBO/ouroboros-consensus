@@ -55,12 +55,15 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolverHandle (..)
+  , StateSupportsPerasEpochContext
+  )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
@@ -196,8 +199,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
+    let resolverHandle = mkPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
     perasCertDB <- PerasCertDB.createDB argsPerasCertDB
-    perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB
+    perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB resolverHandle
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
@@ -312,6 +316,10 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , addPerasVoteWithAsyncCertHandling = getEnv1 h ChainSel.addPerasVoteWithAsyncCertHandling
             , getPerasVotesAfter = getEnvSTM1 h Query.getPerasVotesAfter
             , getPerasVoteIds = getEnvSTM h Query.getPerasVoteIds
+            , getPerasEpochContextResolverHandle =
+                PerasEpochContextResolverHandle $
+                  getEnvSTM h $
+                    Query.getPerasEpochContextResolver
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }

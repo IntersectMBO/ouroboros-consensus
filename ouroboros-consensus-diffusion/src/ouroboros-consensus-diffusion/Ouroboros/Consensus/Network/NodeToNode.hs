@@ -396,17 +396,7 @@ mkHandlers
             , 50 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             , 50 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             )
-            ( makePerasVotePoolWriterFromChainDB
-                systemTime
-                -- TODO: when actual plumbing for Peras is ready, we will have to
-                -- extract the committee selection data from the chainDB to pass
-                -- it here, instead of relying on an empty the stake distribution.
-                --
-                -- Note that the empty stake distribution will cause all votes to
-                -- be considered invalid.
-                (pure (PerasVoteStakeDistr mempty))
-                getChainDB
-            )
+            (makePerasVotePoolWriterFromChainDB systemTime getChainDB)
             version
             controlMessageSTM
       , hPerasVoteDiffusionServer = \version peer ->

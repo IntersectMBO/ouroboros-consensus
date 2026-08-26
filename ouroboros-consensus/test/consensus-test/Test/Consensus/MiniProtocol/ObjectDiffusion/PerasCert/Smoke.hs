@@ -1,8 +1,5 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
   ( tests
@@ -20,6 +17,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
+import Ouroboros.Consensus.Peras.Context (mockPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertDB
@@ -52,7 +50,11 @@ tests =
     ]
 
 newCertDB ::
-  (IOLike m, StandardHash blk) => [WithArrivalTime (ValidatedPerasCert blk)] -> m (PerasCertDB m blk)
+  ( IOLike m
+  , StandardHash blk
+  ) =>
+  [WithArrivalTime (ValidatedPerasCert blk)] ->
+  m (PerasCertDB m blk)
 newCertDB certs = do
   db <- PerasCertDB.createDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
@@ -82,11 +84,13 @@ prop_smoke =
                 , m [PerasCert TestBlock]
                 )
             mkPoolInterfaces = do
+              epochContextResolverHandle <- mockPerasEpochContextResolverHandle epochContext
+
               outboundPool <- newCertDB watValidatedCerts
               inboundPool <- newCertDB []
 
               let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
-                  inboundPoolWriter = makePerasCertPoolWriterFromCertDB mockSystemTime inboundPool
+                  inboundPoolWriter = makePerasCertPoolWriterFromCertDB mockSystemTime inboundPool epochContextResolverHandle
                   getAllInboundPoolContent = do
                     certsMap <-
                       atomically $
