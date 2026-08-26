@@ -126,7 +126,7 @@ mkRespendTxGen ::
   Maybe FilePath ->
   IO (Either String (TopLevelConfig Cardano -> GenTxs Cardano))
 mkRespendTxGen Nothing =
-  pure $ Right $ \_cfg _slot _certifies _forker _ticked -> pure ([], [])
+  pure $ Right $ \_cfg _slot _certifies _forker _ticked -> pure ([], [], pure ())
 mkRespendTxGen (Just keyFile) = do
   lastOutput <- newIORef Nothing
   fmap (respendTxGen lastOutput) <$> readPaymentSigningKey keyFile
@@ -180,7 +180,9 @@ data Batch era = Batch
 -- the entry is absent, the generator stops the run. No later slot adds it.
 --
 -- The 'IORef' holds what the block before this one left unspent. It is empty on
--- the first slot of a run.
+-- the first slot of a run. The generator does not write it. It returns an
+-- action that writes it, and the forge loop runs that action once the ChainDB
+-- adopts the block.
 respendTxGen ::
   IORef (Maybe Leftovers) ->
   SigningKey PaymentKey ->
@@ -194,10 +196,13 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
   -- It announces no endorser block of its own. Such a block would spend outputs
   -- that the certified endorser block makes. Those outputs are absent from the
   -- ledger state that this generator reads.
-  | certifies = do
-      modifyIORef' lastOutput . fmap $ \previous ->
-        previous{unspentNow = unspentIfCertified previous}
-      pure ([], [])
+  | certifies =
+      pure
+        ( []
+        , []
+        , modifyIORef' lastOutput . fmap $ \previous ->
+            previous{unspentNow = unspentIfCertified previous}
+        )
   | otherwise = case ticked of
       TickedHardForkLedgerState _transition perEra ->
         hcollapse $ hcimap proxySingle (\idx _state -> K (genForEra idx)) perEra
@@ -214,7 +219,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
   -- the same index on, so no pairing here can go wrong.
   genForEra ::
     Index (CardanoEras StandardCrypto) x ->
-    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)])
+    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)], IO ())
   genForEra = \case
     IZ ->
       throwIO . userError $
@@ -226,7 +231,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
     forall proto era.
     ShelleyBasedEra era =>
     Index (CardanoEras StandardCrypto) (ShelleyBlock proto era) ->
-    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)])
+    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)], IO ())
   genFor idx = do
     (keys, valuesAtParent) <- readCandidates idx
     -- The forker is at the point of the parent block, so its values are those
@@ -276,7 +281,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
     (GenTx (ShelleyBlock proto era) -> GenTx Cardano) ->
     TickedLedgerState Cardano ValuesMK ->
     (TxIn, TxOut era) ->
-    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)])
+    IO ([Validated (GenTx Cardano)], [Validated (GenTx Cardano)], IO ())
   fillBlock wrap stateAtSlot start = do
     rb <- fillRb Cursor{cursorState = stateAtSlot, cursorEntry = start}
     when (null (batchTxs rb)) $
@@ -285,15 +290,18 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
           ++ show slot
           ++ "."
     (ebTxs, cursorAfterEb) <- fillEb (batchUsedTotal rb) (batchCursor rb)
-    writeIORef
-      lastOutput
-      ( Just
-          Leftovers
-            { unspentNow = fst (cursorEntry (batchCursor rb))
-            , unspentIfCertified = fst (cursorEntry cursorAfterEb)
-            }
+    pure
+      ( batchTxs rb
+      , ebTxs
+      , writeIORef
+          lastOutput
+          ( Just
+              Leftovers
+                { unspentNow = fst (cursorEntry (batchCursor rb))
+                , unspentIfCertified = fst (cursorEntry cursorAfterEb)
+                }
+          )
       )
-    pure (batchTxs rb, ebTxs)
    where
     rbCapacity :: TxMeasure Cardano
     rbCapacity = blockCapacityTxMeasure lcfg stateAtSlot
@@ -371,9 +379,9 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
   -- If the 'IORef' holds nothing, the generator reads the whole table. The
   -- 'IORef' is empty on the first slot of a run.
   --
-  -- The ledger must hold 'unspentNow'. This tool forges one chain and has no
-  -- competitor. So the ChainDB adopts every block that the tool makes. If the
-  -- input is absent, the ChainDB rejected a block.
+  -- The ledger must hold 'unspentNow', because the forge loop records a block's
+  -- outputs only after the ChainDB adopts that block. If the input is absent,
+  -- the ledger rolled back under the tool.
   readCandidates ::
     forall proto era.
     Index (CardanoEras StandardCrypto) (ShelleyBlock proto era) ->

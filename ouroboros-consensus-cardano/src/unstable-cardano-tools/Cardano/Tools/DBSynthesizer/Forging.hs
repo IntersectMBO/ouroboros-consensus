@@ -115,12 +115,17 @@ initialForgeState = ForgeState 0 0 0 0
 -- The 'Bool' says whether this block certifies the endorser block that its
 -- parent announced. Such a block must get no transactions, because 'mkBody'
 -- drops them and applies the certified endorser block's instead.
+--
+-- The 'IO' action records what this block leaves unspent. The caller runs it
+-- once the ChainDB adopts the block, and skips it otherwise. A generator that
+-- recorded the outputs as it built them would carry the outputs of a block
+-- that no chain holds.
 type GenTxs blk =
   SlotNo ->
   Bool ->
   ReadOnlyForker IO (ExtLedgerState blk) ->
   TickedLedgerState blk DiffMK ->
-  IO ([Validated (GenTx blk)], [Validated (GenTx blk)])
+  IO ([Validated (GenTx blk)], [Validated (GenTx blk)], IO ())
 
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
@@ -336,7 +341,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
           currentSlot
           (headerState unticked)
 
-    (rbTxs, ebTxs) <- withReadOnlyForkerAtPoint'
+    (rbTxs, ebTxs, commitLeftovers) <- withReadOnlyForkerAtPoint'
       chainDB
       (SpecificPoint bcPrevPoint)
       $ \case
@@ -375,6 +380,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
 
     when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $
       exitEarly' "block not adopted"
+
+    lift commitLeftovers
 
     lift $ voteFor leiosVoteState newBlock ebTxs
 
