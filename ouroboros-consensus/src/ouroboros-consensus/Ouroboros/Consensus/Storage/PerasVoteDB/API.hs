@@ -3,8 +3,11 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteDB (..)
@@ -32,11 +35,13 @@ import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextNotFoundForRound)
 import Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM (..))
 
 data PerasVoteDB m blk = PerasVoteDB
@@ -83,8 +88,21 @@ data AddPerasVoteResult blk
   = PerasVoteAlreadyInDB
   | AddedPerasVoteButDidntGenerateNewCert
   | AddedPerasVoteAndGeneratedNewCert (ValidatedPerasCert blk)
-  deriving stock (Generic, Eq, Ord, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  Show (PerasCert blk) =>
+  Show (AddPerasVoteResult blk)
+deriving instance
+  Eq (PerasCert blk) =>
+  Eq (AddPerasVoteResult blk)
+deriving instance
+  Ord (PerasCert blk) =>
+  Ord (AddPerasVoteResult blk)
+deriving instance
+  NoThunks (PerasCert blk) =>
+  NoThunks (AddPerasVoteResult blk)
+deriving instance
+  Generic (AddPerasVoteResult blk)
 
 {-------------------------------------------------------------------------------
   Exceptions
@@ -98,17 +116,31 @@ newtype BlockedPerasRoundWinner blk
   = BlockedPerasRoundWinner (Point blk, VoteWeight)
   deriving stock (Show, Eq)
 
-data PerasVoteDbError blk
-  = -- | Attempted to add a vote that would lead to multiple winners for the
-    -- same round
-    MultipleWinnersInRound
-      PerasRoundNo
-      (ExistingPerasRoundWinner blk)
-      (BlockedPerasRoundWinner blk)
-  | -- | An error occurred while forging a certificate
-    ForgingCertError (PerasError blk)
-  deriving stock Show
-  deriving anyclass Exception
+data PerasVoteDbError blk where
+  -- | Attempted to add a vote that would lead to multiple winners for the same round
+  MultipleWinnersInRound ::
+    PerasRoundNo ->
+    (ExistingPerasRoundWinner blk) ->
+    (BlockedPerasRoundWinner blk) ->
+    PerasVoteDbError blk
+  -- | An error occurred while forging a certificate
+  ForgingCertError ::
+    Show (PerasError blk) =>
+    PerasError blk ->
+    PerasVoteDbError blk
+  -- | The epoch context for the round of the vote could not be found
+  EpochContextNotFoundForRound ::
+    PerasEpochContextNotFoundForRound ->
+    PerasVoteDbError blk
+
+deriving instance
+  StandardHash blk =>
+  Show (PerasVoteDbError blk)
+deriving instance
+  ( StandardHash blk
+  , Typeable blk
+  ) =>
+  Exception (PerasVoteDbError blk)
 
 -- * Invariants
 
@@ -116,7 +148,9 @@ data PerasVoteDbError blk
 
 -- | After adding a vote, its ID should be present in 'getVoteIds'.
 prop_addVoteThenGetVoteIds ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDB m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   m Bool
@@ -130,7 +164,9 @@ prop_addVoteThenGetVoteIds db vote =
 
 -- | 'getVotesAfter' with ticket 0 should return all votes in the database.
 prop_getVotesAfterZero ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDB m blk ->
   m Bool
 prop_getVotesAfterZero db =
@@ -161,7 +197,9 @@ prop_getVotesAfterMonotonic db ticketNo =
 
 -- | After garbage collection for slot S, no votes with target slot < S should remain.
 prop_garbageCollectRemovesOldVotes ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDB m blk ->
   SlotNo ->
   m Bool
@@ -180,7 +218,10 @@ prop_garbageCollectRemovesOldVotes db slotNo =
 -- | When adding a vote results in a certificate just being forged for a round,
 -- this certificate should also be retrievable via 'getForgedCertForRound'.
 prop_addVoteThenGetForgedCertForRound ::
-  (MonadSTM m, StandardHash blk) =>
+  ( MonadSTM m
+  , Eq (PerasCert blk)
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDB m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   m Bool
