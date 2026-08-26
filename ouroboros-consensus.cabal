@@ -429,6 +429,7 @@ library tracing
     Ouroboros.Consensus.Tracing.ConsensusStartupException
     Ouroboros.Consensus.Tracing.Era.Byron
     Ouroboros.Consensus.Tracing.Era.HardFork
+    Ouroboros.Consensus.Tracing.Era.Shelley
     Ouroboros.Consensus.Tracing.Era.Shelley.Render
     Ouroboros.Consensus.Tracing.Formatting
     Ouroboros.Consensus.Tracing.HasIssuer
@@ -444,15 +445,21 @@ library tracing
     cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-data,
+    cardano-ledger-allegra,
     cardano-ledger-alonzo,
     cardano-ledger-api,
+    cardano-ledger-babbage,
     cardano-ledger-byron,
     cardano-ledger-conway,
     cardano-ledger-core,
+    cardano-ledger-dijkstra,
+    cardano-ledger-shelley,
     cardano-prelude,
+    cardano-protocol,
     cardano-protocol-tpraos,
     cardano-slotting,
     containers,
+    deepseq,
     kes-agent,
     ouroboros-consensus:{ouroboros-consensus, cardano, protocol, lsm, diffusion},
     ouroboros-network:{api, orphan-instances, ouroboros-network},
