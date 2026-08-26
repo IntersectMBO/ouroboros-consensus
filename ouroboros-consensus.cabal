@@ -428,6 +428,7 @@ library tracing
     Ouroboros.Consensus.Tracing.Consensus
     Ouroboros.Consensus.Tracing.ConsensusStartupException
     Ouroboros.Consensus.Tracing.Era.HardFork
+    Ouroboros.Consensus.Tracing.Era.Shelley.Render
     Ouroboros.Consensus.Tracing.Formatting
     Ouroboros.Consensus.Tracing.HasIssuer
     Ouroboros.Consensus.Tracing.Queries
@@ -437,10 +438,15 @@ library tracing
     aeson,
     base,
     base16-bytestring,
+    bech32,
     bytestring,
     cardano-crypto-class,
     cardano-crypto-wrapper,
+    cardano-data,
+    cardano-ledger-alonzo,
+    cardano-ledger-api,
     cardano-ledger-byron,
+    cardano-ledger-conway,
     cardano-ledger-core,
     cardano-prelude,
     cardano-protocol-tpraos,
