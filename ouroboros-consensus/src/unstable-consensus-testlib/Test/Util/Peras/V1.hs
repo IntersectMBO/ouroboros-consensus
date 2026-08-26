@@ -12,6 +12,7 @@ module Test.Util.Peras.V1
   , perasCertContainsOnlyPersistentVotes
   , genPerasVote
   , genPerasCert
+  , genPrivateKey
   , tabulatePerasCert
   , tabulatePerasVote
   ) where
