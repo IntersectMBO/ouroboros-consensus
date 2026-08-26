@@ -537,6 +537,13 @@ dualExtValidationErrorMain = \case
   ExtValidationErrorLedger e -> ExtValidationErrorLedger (dualLedgerErrorMain e)
   ExtValidationErrorHeader e -> ExtValidationErrorHeader (castHeaderError e)
   ExtValidationErrorPerasEpochContextResolver e -> ExtValidationErrorPerasEpochContextResolver e
+  -- NOTE: this will become an impossible case for the dual block after removing
+  -- the degenerate 'BlockSupportsPeras' instance, since:
+  -- @
+  --   PerasError (DualBlock m a) ~ VoidPerasError (DualBlock m a) ~ Void
+  -- @
+  ExtValidationErrorPerasCertInBlock _ ->
+    error "dualExtValidationErrorMain: impossible error for dual block"
 
 {-------------------------------------------------------------------------------
   LedgerSupportsProtocol

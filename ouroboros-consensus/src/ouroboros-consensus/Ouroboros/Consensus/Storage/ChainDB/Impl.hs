@@ -55,12 +55,15 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolverHandle (..)
+  , StateSupportsPerasEpochContext
+  )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
@@ -197,7 +200,14 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     perasCertDB <- PerasCertDB.createDB argsPerasCertDB
-    perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB
+    perasVoteDB <-
+      PerasVoteDB.createDB
+        PerasVoteDB.PerasVoteDbArgs
+          { PerasVoteDB.pvdbaTracer =
+              PerasVoteDB.pvdbaTracer incompleteArgsPerasVoteDB
+          , PerasVoteDB.pvdbaPerasEpochContextResolverHandle =
+              mkPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
+          }
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
@@ -312,6 +322,10 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , addPerasVoteWithAsyncCertHandling = getEnv1 h ChainSel.addPerasVoteWithAsyncCertHandling
             , getPerasVotesAfter = getEnvSTM1 h Query.getPerasVotesAfter
             , getPerasVoteIds = getEnvSTM h Query.getPerasVoteIds
+            , getPerasEpochContextResolverHandle =
+                PerasEpochContextResolverHandle $
+                  getEnvSTM h $
+                    Query.getPerasEpochContextResolver
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }
@@ -353,7 +367,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     argsVolatileDb
     argsLgrDb
     argsPerasCertDB
-    argsPerasVoteDB
+    incompleteArgsPerasVoteDB
     cdbSpecificArgs = args
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')
