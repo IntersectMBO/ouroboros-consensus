@@ -182,7 +182,7 @@ blockCountTest logStep = do
           ++ " blocks"
     _ -> assertFailure $ "analysis after truncation returned " ++ show resultTruncated
  where
-  genTxs _ _ _ _ _ = pure ([], [])
+  genTxs _ _ _ _ _ = pure ([], [], pure ())
 
   mkEbHash c = MkEbHash (fromString (replicate 32 c))
 
