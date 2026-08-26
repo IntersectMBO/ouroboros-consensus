@@ -145,6 +145,7 @@ import Test.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.SignableRepresentation ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras (divisorClosestToQuotient)
 
 {-------------------------------------------------------------------------------
   TestBlock
@@ -210,13 +211,13 @@ data TestBody = TestBody
   -- Note that this is a /local/ number, it is specific to this block,
   -- other blocks need not be aware of it.
   , tbIsValid :: !Bool
-  , tbPerasCertRound :: !(Maybe PerasRoundNo)
+  , tbPerasCert :: !(Maybe (PerasCert TestBlock))
   -- ^ Some real blocks will ocasionally carry a Peras certificate inside their
-  -- body to coordinate the end of a cooldown period. For the purposes of the
-  -- ChainDB, we don't really care about the details of the certificate other
-  -- than its round number, which needs to be stored (and carefully updated
-  -- whenever a newer one pops up) so it can be used to evaluate the Peras
-  -- voting rules and decide if a node should resume voting.
+  -- body to coordinate the end of a cooldown period.
+  -- NOTE: for the purposes of the ChainDB, we don't care about the details of
+  -- the certificate other than its round number, which needs to be stored (and
+  -- carefully updated whenever a newer one pops up) so it can be used to
+  -- evaluate the Peras voting rules and decide if a node should resume voting.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData, NoThunks, Serialise, Hashable)
@@ -641,7 +642,7 @@ instance ApplyBlock LedgerState TestBlock where
                   --
                   -- TODO: refactor this to use 'getPerasCertInBlock' after the
                   -- HFC plumbing for 'BlockSupportsPeras' is in place.
-                  certRoundInBlock = tbPerasCertRound testBody
+                  certRoundInBlock = getPerasCertRound <$> tbPerasCert testBody
                  in
                   -- the highest Peras certificate round number  we've seen so far
                   case (certRoundInBlock, latestPerasCertRound) of
@@ -805,7 +806,19 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
       , eraSlotLength = slotLength
       , eraSafeZone = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
       , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
-      , eraPerasRoundLength = dijkstraPerasRoundLength
+      , -- Epoch size is 'numRegularBlocks' (between 5 and 15), and
+        -- perasRoundLength should divive it.
+        -- picking the closest divisor to get us about 3 Peras rounds per epoch
+        -- gives us a suitable distribution of perasRoundLengths:
+        -- >>> flip divisorClosestToQuotient 3 <$> [5..15]
+        -- [1,2,1,2,3,2,1,4,1,7,5]
+        -- TODO: it would be better to generate PerasRoundLength randomly in
+        -- accordance with the 'ChunkInfo' directly, but that would require an
+        -- overhaul of how test config is propagated all over this file.
+        -- See https://github.com/tweag/cardano-peras/issues/257
+        eraPerasRoundLength =
+          PerasEnabled . PerasRoundLength $
+            divisorClosestToQuotient numRegularBlocks 3
       }
 
 instance ImmutableEraParams TestBlock where
@@ -999,6 +1012,11 @@ deriving anyclass instance
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile
 deriving instance ToExpr BinaryBlockInfo
+
+-- ** Serialise for MockPerasCert via FromCBOR/ToCBOR
+instance Serialise (MockPerasCert TestBlock) where
+  encode = toCBOR
+  decode = fromCBOR
 
 -- ** FromCBOR/ToCBOR for Point TestBlock via Serialise
 instance FromCBOR (Point TestBlock) where
