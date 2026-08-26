@@ -4,6 +4,7 @@
 --                       [--shelley-operational-certificate FILE]
 --                       [--shelley-vrf-key FILE] [--shelley-kes-key FILE]
 --                       [--bulk-credentials-file FILE]
+--                       [--shelley-bls-key FILE]
 --                       ((-s|--slots NUMBER) | (-b|--blocks NUMBER) |
 --                         (-e|--epochs NUMBER)) [-f | -a]
 --
@@ -18,6 +19,7 @@
 --   --shelley-kes-key FILE   Path to the KES signing key
 --   --bulk-credentials-file FILE
 --                            Path to the bulk credentials file
+--   --shelley-bls-key FILE   Path to the pool's BLS signing key
 --   -s,--slots NUMBER        Amount of slots to process
 --   -b,--blocks NUMBER       Amount of blocks to forge
 --   -e,--epochs NUMBER       Amount of epochs to process

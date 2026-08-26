@@ -48,7 +48,6 @@ testNodeFilePaths =
     { nfpConfig = nodeConfig
     , nfpChainDB = chainDB
     , nfpPaymentKey = Nothing
-    , nfpBlsKey = Nothing
     }
 
 testNodeCredentials :: NodeCredentials
@@ -58,6 +57,7 @@ testNodeCredentials =
     , credVRFFile = Nothing
     , credKESFile = Nothing
     , credBulkFile = Just "ouroboros-consensus-cardano/test/tools-test/disk/config/bulk-creds-k2.json"
+    , credBlsFile = Nothing
     }
 
 testImmutaliserConfig :: DBImmutaliser.Opts

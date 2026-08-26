@@ -25,7 +25,6 @@ parseNodeFilePaths =
     <$> parseNodeConfigFilePath
     <*> parseChainDBFilePath
     <*> optional parsePaymentKeyFilePath
-    <*> optional parseBlsKeyFilePath
 
 parseNodeCredentials :: Parser NodeCredentials
 parseNodeCredentials =
@@ -34,6 +33,7 @@ parseNodeCredentials =
     <*> optional parseVrfKeyFilePath
     <*> optional parseKesKeyFilePath
     <*> optional parseBulkFilePath
+    <*> optional parseBlsKeyFilePath
 
 parseDBSynthesizerOptions :: Parser DBSynthesizerOptions
 parseDBSynthesizerOptions =
