@@ -47,24 +47,15 @@ import LeiosDemoTypes
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
-import Ouroboros.Consensus.Config
-  ( TopLevelConfig
-  , configStorage
-  , topLevelConfigVotingKey
-  )
+import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
   )
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
-import Ouroboros.Consensus.Protocol.Praos.Common
-  ( PraosCanBeLeader (praosCanBeLeaderSignKeyBLS)
-  )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
-  ( ProtocolParamsShelleyBased (shelleyBasedLeaderCredentials)
-  , ShelleyGenesis (..)
-  , ShelleyLeaderCredentials (shelleyLeaderCredentialsCanBeLeader)
+  ( ShelleyGenesis (..)
   , validateGenesis
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
@@ -96,49 +87,21 @@ initialize ::
   NodeCredentials ->
   DBSynthesizerOptions ->
   IO (Either String (DBSynthesizerConfig, CardanoProtocolParams StandardCrypto))
-initialize NodeFilePaths{nfpConfig, nfpChainDB, nfpBlsKey} creds synthOptions = do
+initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
   relativeToConfig :: (FilePath -> FilePath) <-
     (</>) . takeDirectory <$> makeAbsolute nfpConfig
   runExceptT $ do
     conf <- initConf relativeToConfig
-    proto <- initProtocol relativeToConfig conf >>= withVotingKey
+    proto <- initProtocol relativeToConfig conf
     pure (conf, proto)
  where
-  -- 'mkPraosLeaderCredentials' builds every credential with
-  -- 'praosCanBeLeaderSignKeyBLS = Nothing', and the files it reads hold no BLS
-  -- key. 'CardanoProtocolParams' is a plain record, so the key goes in here
-  -- instead of in that vendored module. 'protocolInfoCardano' then puts it in
-  -- 'topLevelConfigVotingKey'.
-  withVotingKey ::
-    CardanoProtocolParams StandardCrypto ->
-    ExceptT String IO (CardanoProtocolParams StandardCrypto)
-  withVotingKey proto = case nfpBlsKey of
-    Nothing -> pure proto
-    Just path -> do
-      votingKey <- ExceptT (readBlsSigningKey path)
-      let shelleyBased = shelleyBasedProtocolParams proto
-          setKey credentials =
-            credentials
-              { shelleyLeaderCredentialsCanBeLeader =
-                  (shelleyLeaderCredentialsCanBeLeader credentials)
-                    { praosCanBeLeaderSignKeyBLS = Just votingKey
-                    }
-              }
-      pure
-        proto
-          { shelleyBasedProtocolParams =
-              shelleyBased
-                { shelleyBasedLeaderCredentials =
-                    map setKey (shelleyBasedLeaderCredentials shelleyBased)
-                }
-          }
-
   initConf :: (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
   initConf relativeToConfig = do
     inp <- handleIOExceptT show (BS.readFile nfpConfig)
     configStub <- adjustFilePaths relativeToConfig <$> readJson inp
     shelleyGenesis <- readFileJson $ ncsShelleyGenesisFile configStub
     _ <- hoistEither $ validateGenesis shelleyGenesis
+    votingKey <- traverse (ExceptT . readBlsSigningKey) (credBlsFile creds)
     let
       protocolCredentials =
         ProtocolFilepaths
@@ -156,6 +119,7 @@ initialize NodeFilePaths{nfpConfig, nfpChainDB, nfpBlsKey} creds synthOptions = 
         , confProtocolCredentials = protocolCredentials
         , confShelleyGenesis = shelleyGenesis
         , confDbDir = nfpChainDB
+        , confVotingKey = votingKey
         }
 
   initProtocol ::
@@ -230,7 +194,7 @@ synthesize ::
   DBSynthesizerConfig ->
   (CardanoProtocolParams StandardCrypto) ->
   IO ForgeResult
-synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
+synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confVotingKey} runP =
   withRegistry $ \registry -> do
     -- The node writes its LeiosDb next to the other ChainDB files.
     -- The tool derives that path from --db. That is also where
@@ -256,10 +220,6 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           flavargs
           leiosDbHandle
           $ ChainDB.defaultArgs
-
-    putStrLn $
-      "--> voting key: "
-        ++ maybe "absent" (const "present") (topLevelConfigVotingKey pInfoConfig)
 
     mbfs <- mkForgers nullTracer
     allocatedForgers <-
@@ -294,6 +254,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
                 chainDB
                 forgers
                 pInfoConfig
+                confVotingKey
                 (genTxs pInfoConfig)
                 leiosDb
                 leiosTracer

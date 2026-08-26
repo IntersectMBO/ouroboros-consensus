@@ -28,7 +28,8 @@ import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes
-  ( RbHash (MkRbHash)
+  ( LeiosSigningKey
+  , RbHash (MkRbHash)
   , TraceLeiosKernel (..)
   , getLeiosSeatId
   , leiosCommitteeSize
@@ -51,7 +52,6 @@ import Ouroboros.Consensus.Config
   ( TopLevelConfig
   , configConsensus
   , configLedger
-  , topLevelConfigVotingKey
   )
 import Ouroboros.Consensus.Forecast (forecastFor)
 import Ouroboros.Consensus.HeaderValidation
@@ -138,11 +138,13 @@ runForge ::
   ChainDB IO blk ->
   [BlockForging IO blk] ->
   TopLevelConfig blk ->
+  -- | The BLS key that this forger votes with, if it has one.
+  Maybe LeiosSigningKey ->
   GenTxs blk ->
   LeiosDbConnection IO ->
   Tracer IO TraceLeiosKernel ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosTracer = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDb leiosTracer = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   leiosVoteState <- newLeiosVoteState committee
@@ -175,7 +177,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosT
         "committee: "
           ++ show (leiosCommitteeSize c)
           ++ " seats; our seat: "
-          ++ case topLevelConfigVotingKey cfg of
+          ++ case votingKey of
             Nothing -> "none, no voting key"
             Just sk -> case getLeiosSeatId (deriveVerKeyDSIGN sk) c of
               Nothing -> "none, our key holds no seat"
@@ -206,7 +208,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb leiosT
     | null ebTxs = pure ()
     | otherwise = do
         mCommittee <- atomically committee
-        case (mCommittee, topLevelConfigVotingKey cfg) of
+        case (mCommittee, votingKey) of
           (Just c, Just sk)
             | Just seat <- getLeiosSeatId (deriveVerKeyDSIGN sk) c -> do
                 let rbHash =
