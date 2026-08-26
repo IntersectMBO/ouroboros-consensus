@@ -49,8 +49,10 @@ import Control.Monad.Except (runExcept)
 import Data.Bifunctor (first)
 import Data.Function ((&))
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.List (maximumBy)
 import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
+import Data.Ord (comparing)
 import Data.Proxy (Proxy (Proxy))
 import Data.SOP.BasicFunctors (K (K))
 import Data.SOP.Dict (Dict (Dict))
@@ -115,8 +117,9 @@ type Cardano = CardanoBlock StandardCrypto
 -- | The fee that each generated transaction pays.
 --
 -- The tool pays a fixed fee and does not compute the minimum. If the fee is
--- too low, 'applyTx' rejects the transaction. The ledger error names the fee
--- that it needs.
+-- too low, 'applyTx' rejects the first transaction and the ledger error names
+-- the fee that it needs. If the run instead spends the output down, the ledger
+-- stops it once the change no longer covers the minimum a UTxO entry holds.
 txFee :: Coin
 txFee = Coin 1_000_000
 
@@ -265,7 +268,11 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
           "db-synthesizer: the payment signing key owns no output at slot "
             ++ show slot
             ++ ". Add an initialFunds entry for its address to the Shelley genesis."
-      entry : _ -> fillBlock (wrapGenTx idx) stateAtSlot entry
+      -- The key can own more than one output, and each transaction pays a fee
+      -- out of the one the generator picks. The largest output runs longest.
+      entries -> fillBlock (wrapGenTx idx) stateAtSlot (richest entries)
+   where
+    richest = maximumBy (comparing (\(_, txOut) -> txOut ^. coinTxOutL))
 
   wrapGenTx ::
     Index (CardanoEras StandardCrypto) x ->
