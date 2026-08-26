@@ -123,6 +123,7 @@ import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
+import System.Random (StdGen)
 import Text.Pretty.Simple (pShow)
 
 -- * Hashes and identities
@@ -457,14 +458,20 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   , requestedJobsPerPeer :: !(Map (PeerId pid) (Map EbHash NEIntSet))
   -- ^ Per peer, per EB, the job ids it currently has in flight -- for
   -- decrementing those multiplicities on disconnect
+  , leiosFetchPrng :: !StdGen
+  -- ^ The LeiosFetch decision loop's own PRNG, threaded through each iteration.
+  -- Used to shuffle which job is drawn when assigning tx-closure work to a peer
+  -- (a uniform pick within the least-requested multiplicity bucket), so job ids
+  -- aren't consumed in a fixed order. Seeded once at start-up.
   }
 
 -- | The empty outstanding state, given the slot it has already been pruned up
 -- to. The caller supplies the immutable-tip slot at startup so that a body at
 -- or below it reads as too old from the outset (see
--- 'acquiredEbBodiesPrunedSlot' / 'pruneOutstandingToImmTip').
-emptyLeiosOutstanding :: SlotNo -> LeiosOutstanding pid
-emptyLeiosOutstanding prunedSlot =
+-- 'acquiredEbBodiesPrunedSlot' / 'pruneOutstandingToImmTip'), and the seed for
+-- the decision loop's PRNG (see 'leiosFetchPrng').
+emptyLeiosOutstanding :: StdGen -> SlotNo -> LeiosOutstanding pid
+emptyLeiosOutstanding prng prunedSlot =
   MkLeiosOutstanding
     { ebState = Map.empty
     , ebsPerMaxAnnouncementSlot = Map.empty
@@ -474,6 +481,7 @@ emptyLeiosOutstanding prunedSlot =
     , requestedEbPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
     , requestedJobsPerPeer = Map.empty
+    , leiosFetchPrng = prng
     }
 
 -- | Per-EB state tracked in 'ebState'
@@ -755,9 +763,9 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 -- /and/ the LeiosTxCache to perfectly reflect the state of the LeiosDb on
 -- start-up. It's not clear that that's worthwhile for the MVP; /healthy/
 -- nodes shouldn't be frequently restarting.
-initializeLeiosOutstanding :: [LeiosPoint] -> SlotNo -> LeiosOutstanding pid
-initializeLeiosOutstanding points immTipSlot =
-  F.foldl' (flip seed1) (emptyLeiosOutstanding immTipSlot) points
+initializeLeiosOutstanding :: StdGen -> [LeiosPoint] -> SlotNo -> LeiosOutstanding pid
+initializeLeiosOutstanding prng points immTipSlot =
+  F.foldl' (flip seed1) (emptyLeiosOutstanding prng immTipSlot) points
  where
   seed1 (MkLeiosPoint slot ebHash) =
     insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool

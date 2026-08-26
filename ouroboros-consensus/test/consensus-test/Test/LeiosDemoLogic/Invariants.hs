@@ -93,9 +93,10 @@ import Ouroboros.Consensus.Util.IOLike (IOLike, evaluate)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
+import System.Random (mkStdGen)
 import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestEnv (adjustQuickCheckTests)
@@ -123,7 +124,7 @@ tests =
                 Leios.insertAcquiredEbBody h jobPool $
                   Leios.recordMaxAnnouncementSlot h (SlotNo 3) SNothing $
                     Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
-                      (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
+                      (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
           -- the greater slot is retained, not the last-recorded one
           Map.lookup h (Leios.ebState o)
             @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
@@ -139,7 +140,7 @@ tests =
               o =
                 Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
                   Leios.markBodyImminent h (SlotNo 5) $
-                    (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
+                    (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
           -- the announcement raised the slot to 10, keeping the forged state
           Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 10) SNothing Leios.BodyImminent)
           -- so it survives pruning up to slot 9, and is dropped only past slot 10
@@ -149,7 +150,7 @@ tests =
           let h = hashLeiosEb (ebOf [0, 1])
               t3 = RelativeTime 3
               t5 = RelativeTime 5
-              base = emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int
+              base = emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int
               onsetOf o = Leios.ebStateOnset <$> Map.lookup h (Leios.ebState o)
           -- an announcement records its slot's onset
           onsetOf (Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base)
@@ -178,7 +179,7 @@ tests =
               -- and 8), ebB at slot 6.
               points = [pointOf ebA 5, pointOf ebA 8, pointOf ebB 6]
               immTipSlot = SlotNo 4
-              o = Leios.initializeLeiosOutstanding points immTipSlot :: LeiosOutstanding Int
+              o = Leios.initializeLeiosOutstanding (mkStdGen 0) points immTipSlot :: LeiosOutstanding Int
           -- each completed EB is held with an empty job pool: nothing left to fetch
           Map.lookup hB (Leios.ebState o)
             @?= Just (Leios.MkEbState (SlotNo 6) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
@@ -200,7 +201,7 @@ tests =
           let ebA = [0, 1] :: TestEb
               ebB = [2, 3] :: TestEb
               points = [pointOf ebA 8, pointOf ebB 6]
-              o = Leios.initializeLeiosOutstanding points (SlotNo 4) :: LeiosOutstanding Int
+              o = Leios.initializeLeiosOutstanding (mkStdGen 0) points (SlotNo 4) :: LeiosOutstanding Int
               peerId = MkPeerId (0 :: Int)
               -- a peer offers every seeded EB, body and closure
               offerings = Map.singleton peerId (referencedOffers o)
@@ -231,7 +232,7 @@ tests =
                       (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
                         Leios.insertAcquiredEbBody h jobPool $
                           Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
-                            (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
+                            (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                     (_o, reqs, _d) =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
@@ -248,13 +249,42 @@ tests =
           run bigLedger (ordinaryCap + 1) @?= IntSet.fromList ids
           -- past even the big-ledger cap, though, a big-ledger peer is bounded too
           run bigLedger (bigLedgerCap + 1) @?= IntSet.empty
+      , testCase "job assignment draws within the least-requested bucket, at random, respecting exclusions" $ do
+          let misses = IntMap.fromList [(off, (txHashOf off, txSizeOf off)) | off <- [0 .. 5]]
+              -- 'maxJobTxCount' 1 makes each tx its own job, so job ids 0..5 all
+              -- start at multiplicity 0 (one bucket).
+              pool0 = Jobs.mkLeiosJobPool 1000000 1 misses
+              pickId pool excluded s =
+                case Jobs.pickLeastRequestedJobExcept (mkStdGen s) excluded pool of
+                  Just (Jobs.MkLeiosJobId i, _job, _pool', _prng') -> Just i
+                  Nothing -> Nothing
+          -- across seeds the draw isn't pinned to the lowest id, and every draw is
+          -- a real job id.
+          let drawn = Set.fromList [i | s <- [0 .. 99 :: Int], Just i <- [pickId pool0 IntSet.empty s]]
+          assertBool "shuffles: more than one distinct job is drawn" (Set.size drawn > 1)
+          assertBool "only ever draws real job ids" (drawn `Set.isSubsetOf` Set.fromList [0 .. 5])
+          -- an excluded job is never drawn: exclude all but job 5.
+          Set.fromList
+            [i | s <- [0 .. 50 :: Int], Just i <- [pickId pool0 (IntSet.fromList [0, 1, 2, 3, 4]) s]]
+            @?= Set.singleton 5
+          -- the least-requested bucket wins regardless of the draw: force job 0 to
+          -- multiplicity 1 (by excluding the rest), then an unrestricted draw comes
+          -- only from the still-least-requested jobs 1..5, never job 0.
+          let pool1 = case Jobs.pickLeastRequestedJobExcept (mkStdGen 0) (IntSet.fromList [1, 2, 3, 4, 5]) pool0 of
+                Just (_jid, _job, p, _prng') -> p
+                Nothing -> error "forced pick of the sole non-excluded job failed"
+              drawnFromPool1 = Set.fromList [i | s <- [0 .. 50 :: Int], Just i <- [pickId pool1 IntSet.empty s]]
+          assertBool
+            "least-requested bucket wins: job 0 (multiplicity 1) is not drawn"
+            (not (0 `Set.member` drawnFromPool1))
+          assertBool "still shuffles among the least-requested jobs" (Set.size drawnFromPool1 > 1)
       , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
           let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
               hB = hashLeiosEb (ebOf [2, 3]) -- to be listed at slot 3 only
               pointAt slot h = MkLeiosPoint (SlotNo slot) h
               o0 :: LeiosOutstanding Int
               o0 =
-                (emptyLeiosOutstanding (SlotNo 0))
+                (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
                   { Leios.missingEbBodies =
                       Map.fromList [(pointAt 3 hA, 10), (pointAt 10 hA, 10), (pointAt 3 hB, 20)]
                   , Leios.reverseSlotIndexByEbHash =
@@ -366,7 +396,7 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
   go cs0 = do
     dbHandle <- LeiosDb.newLeiosDBInMemory
     withLeiosDb dbHandle $ \conn -> do
-      outstandingVar <- newMVar (emptyLeiosOutstanding (SlotNo 0))
+      outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
       readyVar <- newEmptyMVar
       peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
       let kv = (outstandingVar, readyVar)
@@ -725,7 +755,7 @@ raceSameHashMultiSlot :: forall m. IOLike m => m Property
 raceSameHashMultiSlot = do
   dbHandle <- LeiosDb.newLeiosDBInMemory
   withLeiosDb dbHandle $ \conn -> do
-    outstandingVar <- newMVar (emptyLeiosOutstanding (SlotNo 0))
+    outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
     readyVar <- newEmptyMVar
     peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
     txCache <- newPureLeiosTxCache

@@ -295,6 +295,10 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ The in-memory tx-presence index. Created in "Ouroboros.Consensus.Node"
   -- (before the ChainDB, so the ChainDB GC can prune it just before the LeiosDb)
   -- and threaded through here.
+  , leiosFetchRng :: StdGen
+  -- ^ Seeds the LeiosFetch decision loop's PRNG (see 'Leios.leiosFetchPrng'),
+  -- which shuffles job assignment to peers. An independent split of the node
+  -- generator, like 'keepAliveRng' / 'peerSharingRng'.
   }
 
 initNodeKernel ::
@@ -723,6 +727,7 @@ initInternalState
     , genesisArgs
     , leiosDB
     , leiosTxCache
+    , leiosFetchRng
     } = do
     varGsmState <- do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -758,7 +763,7 @@ initInternalState
         LeiosDb.withLeiosDb leiosDB $ \leiosConn ->
           LeiosDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot leiosConn immTipSlot
       MVar.newMVar $
-        Leios.initializeLeiosOutstanding acquiredClosures immTipSlot
+        Leios.initializeLeiosOutstanding leiosFetchRng acquiredClosures immTipSlot
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
 

@@ -35,6 +35,7 @@ import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
+import System.Random (StdGen, uniformR)
 
 -- | Hash of a Leios transaction (the 'Cardano.Crypto.Leios.HASH' of its bytes).
 newtype TxHash = MkTxHash ByteString
@@ -156,49 +157,53 @@ restrictToPending m pool = m `IntMap.intersection` jobs pool
 emptyLeiosJobPool :: LeiosJobPool
 emptyLeiosJobPool = MkLeiosJobPool IntMap.empty IntMap.empty
 
--- | 'pickLeastRequestedJobExcept' with no exclusions.
-pickLeastRequestedJob :: LeiosJobPool -> Maybe (LeiosJobId, LeiosJob, LeiosJobPool)
-pickLeastRequestedJob = pickLeastRequestedJobExcept IntSet.empty
-
--- | Select a least-requested unfinished job (fewest in-flight requests; ties by
--- lowest job id) whose id is /not/ in @excluded@, record one more in-flight
--- request for it, and return its id, its bitfield, and the updated pool.
--- 'Nothing' if every unfinished job is excluded (or the pool is empty).
+-- | Select a least-requested unfinished job (fewest in-flight requests; ties
+-- broken uniformly at random via the supplied PRNG) whose id is /not/ in
+-- @excluded@, record one more in-flight request for it, and return its id, its
+-- bitfield, the updated pool, and the advanced PRNG. 'Nothing' if every
+-- unfinished job is excluded (or the pool is empty), in which case the caller
+-- keeps its own PRNG (nothing was drawn).
 --
 -- The caller passes the job ids this peer already has in flight for the EB, so a
 -- peer is never asked for the same job twice.
 pickLeastRequestedJobExcept ::
-  IntSet -> LeiosJobPool -> Maybe (LeiosJobId, LeiosJob, LeiosJobPool)
-pickLeastRequestedJobExcept excluded pool =
-  case eligible of
+  StdGen -> IntSet -> LeiosJobPool -> Maybe (LeiosJobId, LeiosJob, LeiosJobPool, StdGen)
+pickLeastRequestedJobExcept prng excluded pool =
+  case eligibleBucket of
     Nothing -> Nothing
-    Just (m, jid) ->
-      case IntMap.alterF (bump1 m) jid (jobs pool) of
-        (Nothing, _) -> Nothing
-        (Just job, jobs') ->
-          Just
-            ( MkLeiosJobId jid
-            , job
-            , MkLeiosJobPool
-                { jobs = jobs'
-                , jobsByMultiplicity =
-                    bucketInsert (m + 1) jid (bucketDelete m jid (jobsByMultiplicity pool))
-                }
-            )
+    Just (m, diff) ->
+      -- Draw a uniform index into the eligible bucket's non-excluded jobs.
+      -- 'Data.IntSet' has no indexed access, but a bucket holds at most the ~184
+      -- jobs of one EB, so indexing the ascending list is cheap.
+      let (i, prng') = uniformR (0, IntSet.size diff - 1) prng
+          jid = IntSet.toAscList diff !! i
+       in case IntMap.alterF (bump1 m) jid (jobs pool) of
+            (Nothing, _) -> Nothing
+            (Just job, jobs') ->
+              Just
+                ( MkLeiosJobId jid
+                , job
+                , MkLeiosJobPool
+                    { jobs = jobs'
+                    , jobsByMultiplicity =
+                        bucketInsert (m + 1) jid (bucketDelete m jid (jobsByMultiplicity pool))
+                    }
+                , prng'
+                )
  where
-  -- Walk multiplicity buckets low-to-high; within a bucket take the lowest
-  -- non-excluded job id. Returns (bucket multiplicity, job id). 'foldrWithKey'
-  -- visits ascending keys and is lazy in the accumulator, so this stops at the
-  -- first eligible bucket without materialising the bucket list.
+  -- Walk multiplicity buckets low-to-high, stopping at the first whose
+  -- non-excluded jobs are non-empty; the caller draws a random one from that
+  -- 'IntSet' difference. 'foldrWithKey' visits ascending keys and is lazy in the
+  -- accumulator, so this stops at the first eligible bucket without materialising
+  -- the bucket list.
   --
   -- TODO if we wanted to enforce a limit on the multiplicity of /each job/,
   -- it'd be easy to do so here: only visit the lower-multiplicity buckets
-  eligible =
+  eligibleBucket =
     IntMap.foldrWithKey
       ( \m bucket rest ->
-          case fst <$> IntSet.minView (IntSet.difference (NEIntSet.toSet bucket) excluded) of
-            Just jid -> Just (m, jid)
-            Nothing -> rest
+          let diff = IntSet.difference (NEIntSet.toSet bucket) excluded
+           in if IntSet.null diff then rest else Just (m, diff)
       )
       Nothing
       (jobsByMultiplicity pool)

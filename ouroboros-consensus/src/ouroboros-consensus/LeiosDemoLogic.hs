@@ -141,6 +141,7 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
+import System.Random (StdGen)
 
 -- | Wrap an action with exception tracing. Catches the exception,
 -- traces it using the provided handler, and re-throws.
@@ -560,7 +561,12 @@ assignClosure env isBig peerId ebHash st@(acc, dec) =
           -- full EB closures at once, but still bounded.
           --
           -- There are no more than 184 jobs per EB, so picked can't be a /long/ list.
-          (picked, jobPool', exhausted) = pickJobs inflightJobs jobPool (peerBudget env isBig acc peerId)
+          --
+          -- 'pickJobs' draws from the decision loop's own PRNG ('leiosFetchPrng');
+          -- its advanced state is written back below (unchanged when nothing is
+          -- picked, so the 'Nothing' branch's 'st' is correct as-is).
+          (picked, jobPool', prng', exhausted) =
+            pickJobs (Leios.leiosFetchPrng acc) inflightJobs jobPool (peerBudget env isBig acc peerId)
        in flip (,) exhausted $ case nonEmpty picked of
             Nothing -> st
             Just nePicked ->
@@ -583,6 +589,7 @@ assignClosure env isBig peerId ebHash st@(acc, dec) =
                             peerId
                             (sum $ fmap (\(_, Jobs.MkLeiosJob _ bytes _) -> bytes) nePicked)
                             (Leios.requestedBytesSizePerPeer acc)
+                      , Leios.leiosFetchPrng = prng'
                       }
                   reqs = batchTxsRequests env (MkLeiosPoint slot ebHash) nePicked
                in (acc', dec <> Seq.fromList reqs)
@@ -597,21 +604,25 @@ bodySize acc ebHash = do
 -- | Take least-requested-available jobs until the budget is spent or
 -- there are no more jobs that aren't already assigned to this peer. Also
 -- returns true, in the latter case. Each pick carries the whole 'Jobs.LeiosJob'
--- (id + commitment) so the request can validate its own response.
+-- (id + commitment) so the request can validate its own response. The supplied
+-- PRNG shuffles which job is drawn within the least-requested bucket; its
+-- advanced state is returned so the caller can persist it.
 pickJobs ::
+  StdGen ->
   IntSet.IntSet ->
   Jobs.LeiosJobPool ->
   Int ->
-  ([(Jobs.LeiosJobId, Jobs.LeiosJob)], Jobs.LeiosJobPool, WhetherPeerEbExhausted)
-pickJobs inflightJobs0 jobPool0 budget0 =
-  go inflightJobs0 jobPool0 budget0 []
+  ([(Jobs.LeiosJobId, Jobs.LeiosJob)], Jobs.LeiosJobPool, StdGen, WhetherPeerEbExhausted)
+pickJobs prng0 inflightJobs0 jobPool0 budget0 =
+  go prng0 inflightJobs0 jobPool0 budget0 []
  where
-  go inflightJobs jobPool budget acc
-    | budget <= 0 = (reverse acc, jobPool, MkWhetherPeerEbExhausted False)
-    | otherwise = case Jobs.pickLeastRequestedJobExcept inflightJobs jobPool of
-        Nothing -> (reverse acc, jobPool, MkWhetherPeerEbExhausted True)
-        Just (jid@(Jobs.MkLeiosJobId i), job@(Jobs.MkLeiosJob _offsets bytes _root), jobPool') ->
+  go prng inflightJobs jobPool budget acc
+    | budget <= 0 = (reverse acc, jobPool, prng, MkWhetherPeerEbExhausted False)
+    | otherwise = case Jobs.pickLeastRequestedJobExcept prng inflightJobs jobPool of
+        Nothing -> (reverse acc, jobPool, prng, MkWhetherPeerEbExhausted True)
+        Just (jid@(Jobs.MkLeiosJobId i), job@(Jobs.MkLeiosJob _offsets bytes _root), jobPool', prng') ->
           go
+            prng'
             (IntSet.insert i inflightJobs)
             jobPool'
             (budget - fromIntegral bytes)

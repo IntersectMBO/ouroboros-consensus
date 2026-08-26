@@ -45,6 +45,7 @@ import LeiosDemoTypes
   , mergeOffer
   , recordMaxAnnouncementSlot
   )
+import System.Random (mkStdGen)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
@@ -180,7 +181,7 @@ empty =
   Scenario
     { scEnv = demoLeiosFetchStaticEnv
     , scOfferings = Map.empty
-    , scOutstanding = emptyLeiosOutstanding (SlotNo 0)
+    , scOutstanding = emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
     }
 
 -- | Outstanding-work combinators -----------------------------------------

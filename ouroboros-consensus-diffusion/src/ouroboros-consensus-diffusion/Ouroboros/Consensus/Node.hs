@@ -963,7 +963,8 @@ mkNodeKernelArgs
   leiosTxCache =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, _) = splitGen rng'
+          (psRng, rng'') = splitGen rng'
+          (lfRng, _) = splitGen rng''
       return
         NodeKernelArgs
           { tracers
@@ -997,6 +998,7 @@ mkNodeKernelArgs
           , txSubmissionInitDelay
           , leiosDB
           , leiosTxCache
+          , leiosFetchRng = lfRng
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'

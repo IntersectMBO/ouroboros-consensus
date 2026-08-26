@@ -1089,7 +1089,8 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
-          (psRng, chainSyncRng) = splitGen rng''
+          (psRng, rng''') = splitGen rng''
+          (lfRng, chainSyncRng) = splitGen rng'''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
 
       let nodeKernelArgs =
@@ -1153,6 +1154,7 @@ runThreadNetwork
               , txSubmissionInitDelay = NoTxSubmissionInitDelay
               , leiosDB = leiosDbHandle
               , leiosTxCache
+              , leiosFetchRng = lfRng
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs
