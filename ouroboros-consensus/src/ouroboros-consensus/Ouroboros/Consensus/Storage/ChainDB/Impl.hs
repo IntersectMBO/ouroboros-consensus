@@ -187,7 +187,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       )
       (Query.getAnyKnownBlock immutableDB volatileDB)
       ledgerDbGetVolatileSuffix
-      (Args.cdbsRegistry cdbSpecificArgs)
 
   lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
@@ -319,7 +318,12 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                 Background.garbageCollectBlocks e slot
                 Background.garbageCollectPeras e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
-            , intTryTakeSnapshot = getEnv2 h $ LedgerDB.tryTakeSnapshot . cdbLedgerDB
+            , intTryTakeSnapshot = getEnv h $ \e -> do
+                -- 'tryTakeSnapshot' only enqueues a request for the snapshots;
+                -- as the background thread that would serve it is usually not
+                -- running in the tests using this, serve it ourselves.
+                LedgerDB.tryTakeSnapshot (cdbLedgerDB e)
+                Background.tryServeSnapshotRequestNow e
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }

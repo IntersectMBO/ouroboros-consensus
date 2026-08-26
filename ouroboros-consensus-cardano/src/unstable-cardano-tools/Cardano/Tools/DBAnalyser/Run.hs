@@ -78,13 +78,11 @@ openLedgerDB ::
   -- starting from a ledger state begins exactly there, regardless of which
   -- snapshots happen to exist on disk.
   Point blk ->
-  -- | Registry owning the threads the LedgerDB forks.
-  ResourceRegistry IO ->
   IO
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args immutableDB replayGoal reg =
+openLedgerDB args immutableDB replayGoal =
   runWithTempRegistry $
     (,()) <$> do
       (ldb, od) <- case LedgerDB.lgrBackendArgs args of
@@ -109,7 +107,6 @@ openLedgerDB args immutableDB replayGoal reg =
                   snapManager
                   (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
                   res
-                  reg
           lift $ do
             warnUnlessSnapshotAtGoal snapManager
             -- The replay goal is the @--analyse-from@ point, which is not
@@ -232,7 +229,7 @@ analyse dbaConfig args =
             NotOrigin slot -> getPointForSlot slot
         SStartFromLedgerState -> do
           (ledgerDB, intLedgerDB) <-
-            (\pt -> openLedgerDB ldbArgs immutableDB pt registry) =<< case startSlot of
+            openLedgerDB ldbArgs immutableDB =<< case startSlot of
               Origin -> pure genesisPoint
               NotOrigin slot -> getPointForSlot slot
           -- This marker divides the "loading" phase of the program, where the

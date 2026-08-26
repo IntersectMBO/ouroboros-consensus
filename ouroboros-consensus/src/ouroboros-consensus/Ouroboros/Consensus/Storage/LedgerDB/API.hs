@@ -323,18 +323,19 @@ data LedgerDB m l blk = LedgerDB
   --  * Ledger states (and potentially underlying handles for on-disk storage).
   --
   --  * The set of previously applied points.
-  , tryTakeSnapshot ::
-      m () ->
-      (SnapshotDelayRange -> m DiffTime) ->
-      m ()
-  -- ^ If the provided arguments indicate so (based on the SnapshotPolicy with
-  -- which this LedgerDB was opened), take a snapshot and delete stale ones.
+  , tryTakeSnapshot :: m ()
+  -- ^ If the 'SnapshotPolicy' with which this LedgerDB was opened indicates
+  -- so, select the ledger states to snapshot and enqueue a 'SnapshotRequest'
+  -- for them on 'snapshotRequestQueue'.
   --
-  -- The arguments are:
-  -- - a callback to run before taking a snapshot. Usually it will
-  --   flush the immutable blocks from the VolatileDB into the
-  --   ImmutableDB.
-  -- - a function that calculates the delay before the snapshot
+  -- This neither blocks nor writes anything to disk itself: the writing (and
+  -- the randomised delay preceding it) is the job of whoever serves
+  -- 'snapshotRequestQueue'. The request is dropped when the queue is already
+  -- occupied.
+  , snapshotRequestQueue :: SnapshotRequestQueue m
+  -- ^ The queue on which 'tryTakeSnapshot' puts its requests. In a running
+  -- node, it is served by a background thread of the ChainDB; see
+  -- 'withSnapshotRequest'.
   , closeDB :: m ()
   -- ^ Close the LedgerDB
   --
