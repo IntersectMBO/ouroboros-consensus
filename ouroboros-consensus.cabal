@@ -427,6 +427,7 @@ library tracing
     Ouroboros.Consensus.Tracing.ChainDB
     Ouroboros.Consensus.Tracing.Consensus
     Ouroboros.Consensus.Tracing.ConsensusStartupException
+    Ouroboros.Consensus.Tracing.Era.Byron
     Ouroboros.Consensus.Tracing.Era.HardFork
     Ouroboros.Consensus.Tracing.Era.Shelley.Render
     Ouroboros.Consensus.Tracing.Formatting
@@ -451,6 +452,7 @@ library tracing
     cardano-prelude,
     cardano-protocol-tpraos,
     cardano-slotting,
+    containers,
     kes-agent,
     ouroboros-consensus:{ouroboros-consensus, cardano, protocol, lsm, diffusion},
     ouroboros-network:{api, orphan-instances, ouroboros-network},
