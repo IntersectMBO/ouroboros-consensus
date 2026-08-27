@@ -561,7 +561,11 @@ instance LogFormatting ClientMetrics where
 instance MetaTrace ClientMetrics where
   namespaceFor _ = Namespace [] ["ClientMetrics"]
   severityFor _ _ = Just Debug
-  documentFor _ = Just ""
+  documentFor (Namespace _ ["ClientMetrics"]) = Just
+    "Block fetch client metrics, recomputed on every completed block fetch: the\
+    \ size and delay of the last block, how many fetches ran late, and the\
+    \ distribution of fetch delays."
+  documentFor _ = Nothing
 
   metricsDocFor (Namespace _ ["ClientMetrics"]) =
       [ ("blockfetchclient.blockdelay", "delay (s) of the latest block fetch")
@@ -2438,6 +2442,24 @@ namespaceForObjectDiffusionInbound = \case
   TraceObjectDiffusionInboundCannotRequestMoreObjects _ ->
     Namespace [] ["TraceObjectDiffusionInboundCannotRequestMoreObjects"]
 
+documentForObjectDiffusionInbound :: Namespace a -> Maybe Text.Text
+documentForObjectDiffusionInbound = \case
+  Namespace _ ["TraceObjectDiffusionInboundCollectedObjects"] -> Just
+    "The number of objects received from the peer that are about to be inserted\
+    \ into the object pool."
+  Namespace _ ["TraceObjectDiffusionInboundAddedObjects"] -> Just
+    "The pass/fail breakdown of the objects just handed to the object pool."
+  Namespace _ ["TraceObjectDiffusionInboundRecvControlMessage"] -> Just
+    "A control message was received from the outbound peer governor, and is\
+    \ about to be acted on."
+  Namespace _ ["TraceObjectDiffusionInboundCanRequestMoreObjects"] -> Just
+    "There is room to request more objects from the peer; the payload is how\
+    \ many."
+  Namespace _ ["TraceObjectDiffusionInboundCannotRequestMoreObjects"] -> Just
+    "No more objects can be requested from the peer for now; the payload is how\
+    \ many are already in flight."
+  _ -> Nothing
+
 severityForObjectDiffusionInbound :: Namespace a -> Maybe SeverityS
 severityForObjectDiffusionInbound = \case
   Namespace _ ["TraceObjectDiffusionInboundCollectedObjects"] -> Just Info
@@ -2464,7 +2486,7 @@ instance LogFormatting (TraceObjectDiffusionInbound PerasRoundNo object) where
 instance MetaTrace (TraceObjectDiffusionInbound PerasRoundNo object) where
   namespaceFor = namespaceForObjectDiffusionInbound
   severityFor ns _ = severityForObjectDiffusionInbound ns
-  documentFor _ = Nothing
+  documentFor = documentForObjectDiffusionInbound
   metricsDocFor = metricsDocForObjectDiffusionInbound perasCertMetricsPrefix
   allNamespaces = allNamespacesObjectDiffusionInbound
 
@@ -2476,7 +2498,7 @@ instance LogFormatting (TraceObjectDiffusionInbound PerasVoteId object) where
 instance MetaTrace (TraceObjectDiffusionInbound PerasVoteId object) where
   namespaceFor = namespaceForObjectDiffusionInbound
   severityFor ns _ = severityForObjectDiffusionInbound ns
-  documentFor _ = Nothing
+  documentFor = documentForObjectDiffusionInbound
   metricsDocFor = metricsDocForObjectDiffusionInbound perasVoteMetricsPrefix
   allNamespaces = allNamespacesObjectDiffusionInbound
 
@@ -2546,6 +2568,20 @@ namespaceForObjectDiffusionOutbound = \case
   TraceObjectDiffusionOutboundTerminated ->
     Namespace [] ["TraceObjectDiffusionOutboundTerminated"]
 
+documentForObjectDiffusionOutbound :: Namespace a -> Maybe Text.Text
+documentForObjectDiffusionOutbound = \case
+  Namespace _ ["TraceObjectDiffusionOutboundRecvMsgRequestObjectIds"] -> Just
+    "The peer asked for object ids; the payload is how many it asked for."
+  Namespace _ ["TraceObjectDiffusionOutboundSendMsgReplyObjectIds"] -> Just
+    "The object ids about to be sent to the peer in reply."
+  Namespace _ ["TraceObjectDiffusionOutboundRecvMsgRequestObjects"] -> Just
+    "The peer asked for the objects with these ids."
+  Namespace _ ["TraceObjectDiffusionOutboundSendMsgReplyObjects"] -> Just
+    "The objects about to be sent to the peer in reply."
+  Namespace _ ["TraceObjectDiffusionOutboundTerminated"] -> Just
+    "The peer sent MsgDone, ending the object diffusion session."
+  _ -> Nothing
+
 severityForObjectDiffusionOutbound :: Namespace a -> Maybe SeverityS
 severityForObjectDiffusionOutbound = \case
   Namespace _ ["TraceObjectDiffusionOutboundRecvMsgRequestObjectIds"] -> Just Info
@@ -2573,7 +2609,7 @@ instance Show object
 instance MetaTrace (TraceObjectDiffusionOutbound PerasRoundNo object) where
   namespaceFor = namespaceForObjectDiffusionOutbound
   severityFor ns _ = severityForObjectDiffusionOutbound ns
-  documentFor _ = Nothing
+  documentFor = documentForObjectDiffusionOutbound
   metricsDocFor = metricsDocForObjectDiffusionOutbound perasCertMetricsPrefix
   allNamespaces = allNamespacesObjectDiffusionOutbound
 
@@ -2586,7 +2622,7 @@ instance Show object
 instance MetaTrace (TraceObjectDiffusionOutbound PerasVoteId object) where
   namespaceFor = namespaceForObjectDiffusionOutbound
   severityFor ns _ = severityForObjectDiffusionOutbound ns
-  documentFor _ = Nothing
+  documentFor = documentForObjectDiffusionOutbound
   metricsDocFor = metricsDocForObjectDiffusionOutbound perasVoteMetricsPrefix
   allNamespaces = allNamespacesObjectDiffusionOutbound
 

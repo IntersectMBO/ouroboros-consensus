@@ -479,6 +479,26 @@ library tracing
     trace-dispatcher ^>=2.13.0,
     typed-protocols,
 
+test-suite tracing-test
+  import: common-test
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tracing/test
+  main-is: Main.hs
+  other-modules:
+    Test.Consensus.Tracing.MetaTrace
+
+  build-depends:
+    base,
+    cardano-protocol-tpraos,
+    containers,
+    ouroboros-consensus:{ouroboros-consensus, cardano, diffusion, protocol, tracing},
+    ouroboros-network:api,
+    tasty,
+    tasty-hunit,
+    text,
+    time,
+    trace-dispatcher,
+
 library lsm
   import: common-lib
   visibility: public

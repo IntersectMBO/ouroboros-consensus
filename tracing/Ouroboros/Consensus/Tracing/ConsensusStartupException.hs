@@ -29,7 +29,8 @@ instance MetaTrace ConsensusStartupException where
   severityFor _ _ = Nothing
 
   documentFor (Namespace _ ["ConsensusStartupException"]) = Just
-    ""
-  documentFor _ = Just ""
+    "An exception was thrown while the Consensus layer was starting up. The node\
+    \ does not come up when this is traced."
+  documentFor _ = Nothing
 
   allNamespaces = [Namespace [] ["ConsensusStartupException"]]
