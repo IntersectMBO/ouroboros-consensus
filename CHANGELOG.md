@@ -6,6 +6,24 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-4.2.0.0'></a>
+## 4.2.0.0 -- 2026-08-27
+
+### Breaking
+
+- `LedgerDB.tryTakeSnapshot` no longer writes any snapshot itself: it only
+  enqueues a `SnapshotRequest` on the new `LedgerDB.snapshotRequestQueue`, which
+  the ChainDB serves in a dedicated background thread. Accordingly, it lost its
+  "copy blocks" and "random delay" arguments, which are now supplied by that
+  thread.
+- `ChainDB.Internal.intTryTakeSnapshot` lost its arguments for the same reason;
+  it now enqueues a request and serves it synchronously, without copying blocks
+  to the ImmutableDB or delaying.
+
+### Patch
+
+- Decouple LedgerDB garbage collection from (randomly delayed) snapshotting.
+
 <a id='changelog-4.1.0.0'></a>
 ## 4.1.0.0 -- 2026-08-11
 
