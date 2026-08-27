@@ -1,0 +1,17 @@
+renderScriptHash                   = 4d50a11e297e7783383bf06dd6e4e481230323bd96cd8b8d9ee3888d
+renderScriptIntegrityHash Nothing  = null
+renderScriptIntegrityHash (Just _) = "31237cdb79ae1dfa7ffb87cde7ea8a80352d300ee5ac758a6cddd19d671925ec"
+renderRewardAccount mainnet/key    = stake1u9r87kyn9d2fzpvy5r5w5fdzyhsx59znpvhfd6fcc5ar7gs7uwm3p
+renderRewardAccount testnet/key    = stake_test1upr87kyn9d2fzpvy5r5w5fdzyhsx59znpvhfd6fcc5ar7gsekye4u
+renderRewardAccount mainnet/script = stake17x85vx25lch33lhpmj3r8u6cjplxg0lc88k3lx27f0ejtcc83spxq
+renderScriptIndex spending         = {"kind":"ScriptWitnessIndexTxIn","value":0}
+renderScriptIndex minting          = {"kind":"ScriptWitnessIndexMint","value":1}
+renderScriptIndex certifying       = {"kind":"ScriptWitnessIndexCertificate","value":2}
+renderScriptIndex withdrawing      = {"kind":"ScriptWitnessIndexWithdrawal","value":3}
+renderScriptIndex voting           = {"kind":"ScriptWitnessIndexVoting","value":4}
+renderScriptIndex proposing        = {"kind":"ScriptWitnessIndexProposing","value":5}
+renderScriptPurpose spending       = {"spending":"8928aae63c84d87ea098564d1e03ad813f107add474e56aedd286349c0c03ea4#0"}
+renderScriptPurpose minting        = {"minting":{"item":"2db8410d969b6ad6b6969703c77ebf6c44061aa51c5d6ceba46557e2"}}
+renderScriptPurpose withdrawing    = {"rewarding":"stake1uyg94rcmk4jyfjkvscmce92zrt8wkvntp7mhg0jf86uzl4gynahcu"}
+renderMissingRedeemers             = {"245d5a7a06fe18358242e81281cd5ba9e6abe4efc54e7b659f25abae":{"spending":"8928aae63c84d87ea098564d1e03ad813f107add474e56aedd286349c0c03ea4#0"},"b0c53e2bf180858da4b64eb5598c5615bba7d723d2b604a83b7f9165":{"minting":{"item":"4a1c412d8e2b3015a7fb7d382808fb7cb721bf93a56e8bb6661cdebe"}}}
+renderIncompleteWithdrawals        = {"stake1uykhy5fggpkusvhtwnz8pxk2q5fynxeu0vt7qrtuktndrvgxnyhra":"Mismatch (RelEQ) {supplied: 1, expected: 2}"}

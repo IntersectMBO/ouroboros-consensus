@@ -485,15 +485,26 @@ test-suite tracing-test
   hs-source-dirs: tracing/test
   main-is: Main.hs
   other-modules:
+    Test.Consensus.Tracing.Golden
     Test.Consensus.Tracing.MetaTrace
 
   build-depends:
+    aeson,
     base,
+    bytestring,
+    cardano-crypto-class,
+    cardano-data,
+    cardano-ledger-alonzo,
+    cardano-ledger-conway,
+    cardano-ledger-core,
+    cardano-ledger-mary,
     cardano-protocol-tpraos,
     containers,
-    ouroboros-consensus:{ouroboros-consensus, cardano, diffusion, protocol, tracing},
+    filepath,
+    ouroboros-consensus:{ouroboros-consensus, cardano, diffusion, protocol, tracing, unstable-consensus-testlib},
     ouroboros-network:api,
     tasty,
+    tasty-golden,
     tasty-hunit,
     text,
     time,

@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Tracing.Era.Shelley.Render
   , renderMissingRedeemers
   , renderIncompleteWithdrawals
   , renderRewardAccount
+  , renderTxIn
   ) where
 
 import qualified Cardano.Crypto.Hash.Class as Crypto
@@ -31,9 +32,11 @@ import           Cardano.Ledger.Api.Scripts (AnyEraScript, PlutusPurpose,
                    pattern AnyEraCertifyingPurpose, pattern AnyEraMintingPurpose,
                    pattern AnyEraProposingPurpose, pattern AnyEraWithdrawingPurpose,
                    pattern AnyEraSpendingPurpose, pattern AnyEraVotingPurpose)
-import           Cardano.Ledger.BaseTypes (Mismatch (..), Network (..), Relation (..))
+import           Cardano.Ledger.BaseTypes (Mismatch (..), Network (..), Relation (..),
+                   TxIx (..))
 import           Cardano.Ledger.Conway.Governance (ProposalProcedure)
 import qualified Cardano.Ledger.Core as Ledger
+import           Cardano.Ledger.TxIn (TxId (..), TxIn (..))
 import qualified Cardano.Ledger.Hashes as Hashes
 import           Cardano.Ledger.Hashes (ScriptHash (..))
 import qualified Codec.Binary.Bech32 as Bech32
@@ -46,7 +49,8 @@ import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.NonEmpty (NonEmptyMap)
 import qualified Data.Map.NonEmpty as NonEmptyMap
 import           Data.Text (Text)
-import qualified Data.Text.Encoding as Text
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text.Encoding
 import           Data.Word (Word32)
 
 -- | Hex-encode a script hash, matching @cardano-api@'s
@@ -68,7 +72,7 @@ renderRewardAccount acct =
       Right t  -> t
       -- 'encode' only fails if the payload exceeds bech32 length limits, which
       -- a 29-byte stake address never does; fall back to hex just in case.
-      Left _   -> Text.decodeLatin1 (B16.encode bytes)
+      Left _   -> Text.Encoding.decodeLatin1 (B16.encode bytes)
   where
     bytes = serialiseAccountAddress acct
     hrp = case aaNetworkId acct of
@@ -97,6 +101,15 @@ unsafeHrp t = case Bech32.humanReadablePartFromText t of
 unknownPurpose :: Value
 unknownPurpose = Aeson.object ["kind" .= Aeson.String "UnknownPlutusPurpose"]
 
+-- | Render a transaction input as @\<txid hex\>#\<index\>@.
+--
+-- Deliberately not @cardano-ledger@'s @ToJSON TxIn@: that one shows the index
+-- newtype, giving @...#TxIx {unTxIx = 0}@. @cardano-api@ rendered the bare
+-- number, and that is what the log has always carried.
+renderTxIn :: TxIn -> Text
+renderTxIn (TxIn (TxId h) (TxIx ix)) =
+  Crypto.hashToTextAsHex (Hashes.extractHash h) <> "#" <> Text.pack (show ix)
+
 -- | Render a plutus script purpose (as an item), era-generically via
 -- @cardano-ledger-api@'s @AnyEraScript@ projections. Replaces @cardano-api@'s
 -- per-era @renderAlonzoPlutusPurpose@/@renderConwayPlutusPurpose@.
@@ -114,7 +127,7 @@ renderScriptPurpose ::
 -- changing it is a deliberate format change, not a cleanup to make here.
 renderScriptPurpose = \case
   AnyEraSpendingPurpose (AsItem txin) ->
-    Aeson.object ["spending" .= toJSON txin]
+    Aeson.object ["spending" .= Aeson.String (renderTxIn txin)]
   AnyEraMintingPurpose pid ->
     Aeson.object ["minting" .= toJSON pid]
   AnyEraWithdrawingPurpose (AsItem rwdAcct) ->
