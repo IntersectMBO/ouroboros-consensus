@@ -5,7 +5,6 @@ module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
 import Control.Monad (join)
 import Control.Tracer (contramap, nullTracer)
 import qualified Data.Map as Map
-import Data.Typeable (Typeable)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -26,7 +25,6 @@ import Ouroboros.Consensus.Storage.PerasVoteDB
   )
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Network.Block (StandardHash)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( objectDiffusionInboundPeerPipelined
@@ -51,8 +49,7 @@ tests =
 
 newVoteDB ::
   ( IOLike m
-  , Typeable blk
-  , StandardHash blk
+  , BlockSupportsPeras blk
   ) =>
   PerasEpochContextResolverHandle m blk ->
   [WithArrivalTime (ValidatedPerasVote blk)] ->

@@ -398,6 +398,9 @@ type TestConstraints blk =
   , CanUpgradeLedgerTables LedgerState blk
   , ImmutableEraParams blk
   , StateSupportsPerasEpochContext blk
+  , BlockSupportsPeras blk
+  , PerasVote blk ~ MockPerasVote blk
+  , PerasCert blk ~ MockPerasCert blk
   )
 
 deriving instance

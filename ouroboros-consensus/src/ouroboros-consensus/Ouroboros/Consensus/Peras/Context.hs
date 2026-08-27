@@ -16,9 +16,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
--- TODO: remove this after getting rid of the degenerate 'BlockSupportsPeras'
--- instance that renders some of the constraints here redundant.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Peras.Context
   ( -- * Bounded Peras epoch context
@@ -89,8 +86,10 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , IsPerasCert (..)
   , IsPerasError (..)
   , IsPerasVote (..)
+  , PerasCert
   , PerasEpochContext (..)
   , PerasRoundNo
+  , PerasVote
   , PerasVotingCommittee
   , PerasVotingCommitteeInput
   , ValidatedPerasCert
