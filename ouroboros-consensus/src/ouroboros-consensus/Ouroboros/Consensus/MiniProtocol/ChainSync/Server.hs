@@ -27,7 +27,7 @@ import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor ((<&>))
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbConnection (..))
 import LeiosDemoTypes (LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -157,20 +157,24 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDb flr = ChainSyncServer $ do
       mPrevAnn <- readTVarIO prevAnnVar
       atomically $ writeTVar prevAnnVar (fst <$> headerLeiosAnnouncement hdr)
       sblk' <- case mPrevAnn of
-        -- Only a CertRB — a block whose header records that it carries a Leios
-        -- certificate ('headerContainsLeiosCert') — splices in an EB closure,
-        -- and it splices the EB announced by its predecessor (the one the cert
-        -- attests to). A block that merely follows an announcement but carries
-        -- no certificate of its own — e.g. one whose predecessor announced an
-        -- EB that was never certified — is served unchanged. Splicing there
-        -- would inline an EB that is not chain content, and whose closure may
-        -- be absent from the LeiosDb (throwing in 'resolveLeiosClosure').
-        Just prevAnn | headerContainsLeiosCert hdr -> case decodeRaw sblk of
-          Left _ -> pure sblk
-          Right blk -> do
-            resolveLeiosClosure leiosDb (pointEbHash prevAnn)
-              <&> inlineLeiosClosure blk
-              <&> encode
+        -- Splice only into a block whose own body carries a cert
+        -- ('blockLeiosCert', not the header flag), and only when 'prevAnn'
+        -- names a completed EB at its full point (slot AND hash). This keeps
+        -- a stale prevAnn after a reorg from splicing the wrong/incomplete
+        -- closure.
+        Just prevAnn -> case decodeRaw sblk of
+          Right blk | Just{} <- blockLeiosCert blk -> do
+            completed <-
+              leiosDbScanCompleteEbClosuresNotOlderThanSlot
+                leiosDb
+                (pointSlotNo prevAnn)
+            if prevAnn `elem` completed
+              then
+                resolveLeiosClosure leiosDb (pointEbHash prevAnn)
+                  <&> inlineLeiosClosure blk
+                  <&> encode
+              else pure sblk
+          _ -> pure sblk
         _ -> pure sblk
       pure (WithPoint sblk' pt)
 
