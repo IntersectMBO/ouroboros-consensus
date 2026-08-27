@@ -422,7 +422,16 @@ library tracing
   -- moved here from cardano-node so that the definitions live next to the
   -- types they describe. Depends on trace-dispatcher (Cardano.Logging), the
   -- same way ouroboros-network:tracing does.
+  -- Everything that carries an instance is private, and reachable only through
+  -- the Ouroboros.Consensus.Tracing umbrella, so that importing a subset cannot
+  -- silently lose an orphan. The two Render modules define no instances -- they
+  -- are plain rendering functions -- so exposing them costs nothing.
   exposed-modules:
+    Ouroboros.Consensus.Tracing
+    Ouroboros.Consensus.Tracing.Era.Shelley.Render
+    Ouroboros.Consensus.Tracing.Render
+
+  other-modules:
     Ouroboros.Consensus.Tracing.BlockReplayProgress
     Ouroboros.Consensus.Tracing.ChainDB
     Ouroboros.Consensus.Tracing.Consensus
@@ -431,11 +440,9 @@ library tracing
     Ouroboros.Consensus.Tracing.Era.Byron
     Ouroboros.Consensus.Tracing.Era.HardFork
     Ouroboros.Consensus.Tracing.Era.Shelley
-    Ouroboros.Consensus.Tracing.Era.Shelley.Render
     Ouroboros.Consensus.Tracing.Formatting
     Ouroboros.Consensus.Tracing.HasIssuer
     Ouroboros.Consensus.Tracing.KESInfo
-    Ouroboros.Consensus.Tracing.Render
 
   build-depends:
     aeson,
