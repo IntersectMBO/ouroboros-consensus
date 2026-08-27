@@ -87,6 +87,16 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
 
+    -- * Requesting snapshots
+  , SnapshotRequest (..)
+  , SnapshotRequestQueue
+  , newSnapshotRequestQueue
+  , snapshotQueueDelayRange
+  , snapshotRequestInFlight
+  , tryEnqueueSnapshotRequest
+  , tryWithSnapshotRequest
+  , withSnapshotRequest
+
     -- * Tracing
   , TraceSnapshotEvent (..)
 
@@ -792,6 +802,107 @@ sanityCheckSnapshotPolicyArgs k SnapshotPolicyArgs{spaFrequency, spaNum} =
     | otherwise = Nothing
    where
     interval = unNonZero $ resolveSnapshotInterval k sfaInterval
+
+{-------------------------------------------------------------------------------
+  Requesting snapshots
+-------------------------------------------------------------------------------}
+
+-- | A pending request to write ledger snapshots to disk.
+--
+-- The ledger states to snapshot have already been selected and pinned down
+-- (the request holds on to duplicated ledger tables handles), but nothing has
+-- been written yet. Serving the request via 'writeSnapshots' is what writes
+-- the snapshots and releases those handles again.
+data SnapshotRequest m = SnapshotRequest
+  { snapshotRequestedAt :: !Time
+  -- ^ The time at which the ledger states to snapshot were selected.
+  , snapshotRequestSlots :: !(NonEmpty SlotNo)
+  -- ^ The slots of the ledger states that will be snapshotted, for tracing.
+  , writeSnapshots :: !(m ())
+  -- ^ Write the snapshots and release the ledger tables handles this request
+  -- holds on to.
+  --
+  -- This is a closure rather than data that whoever serves the request could
+  -- act on, because writing a snapshot needs the ledger tables handles and the
+  -- backend-specific machinery of the LedgerDB implementation, neither of
+  -- which is nameable outside of it. All that is left to the server is /when/
+  -- to run this.
+  }
+
+-- | A queue holding at most one 'SnapshotRequest'.
+--
+-- It is shared between the thread deciding that a snapshot must be taken and
+-- the background thread taking it. The former never blocks
+-- ('tryEnqueueSnapshotRequest' drops the request when the queue is occupied),
+-- the latter is parked on the queue until there is work to do
+-- ('withSnapshotRequest').
+--
+-- The queue stays occupied for as long as a request is being /served/, not
+-- merely while it is waiting to be picked up. Hence at most one snapshot
+-- request is alive at any point in time.
+--
+-- Bounding it this way is not something the 'SnapshotPolicy' rate limit can do
+-- on its own: 'sscTimeSinceLast' is derived from the last /completed/ request,
+-- so it stays satisfied for the whole of a request's delay, and it can be
+-- disabled altogether ('SnapshotRateLimitDisabled'). Without this bound, every
+-- advance of the immutable tip
+-- during one delay would start another request, each pinning a ledger state
+-- and each writing a snapshot that 'trimSnapshots' then discards.
+data SnapshotRequestQueue m
+  = SnapshotRequestQueue !SnapshotDelayRange !(StrictMVar m (SnapshotRequest m))
+  deriving NoThunks via OnlyCheckWhnfNamed "SnapshotRequestQueue" (SnapshotRequestQueue m)
+
+newSnapshotRequestQueue :: MonadMVar m => SnapshotDelayRange -> m (SnapshotRequestQueue m)
+newSnapshotRequestQueue delayRange =
+  SnapshotRequestQueue delayRange <$> uncheckedNewEmptyMVar
+
+-- | The range to draw the randomised delay before writing the snapshots from,
+-- see 'onDiskSnapshotDelayRange'.
+--
+-- It lives on the queue, and not in every 'SnapshotRequest', because it is a
+-- property of the 'SnapshotPolicy' the LedgerDB was opened with, hence the same
+-- for every request.
+snapshotQueueDelayRange :: SnapshotRequestQueue m -> SnapshotDelayRange
+snapshotQueueDelayRange (SnapshotRequestQueue delayRange _) = delayRange
+
+-- | Whether a request is currently queued or being served.
+--
+-- Merely a hint: by the time the caller acts on it, the answer might have
+-- changed. It is meant to let a would-be producer skip the (not entirely
+-- cheap) work of assembling a request that 'tryEnqueueSnapshotRequest' would
+-- then drop anyway.
+snapshotRequestInFlight :: MonadMVar m => SnapshotRequestQueue m -> m Bool
+snapshotRequestInFlight (SnapshotRequestQueue _ var) = not <$> isEmptyMVar var
+
+-- | Enqueue a request, unless one is already queued or being served.
+--
+-- Never blocks. Returns 'False' when the request was dropped, in which case
+-- the caller is responsible for releasing the resources it holds on to.
+tryEnqueueSnapshotRequest ::
+  MonadMVar m => SnapshotRequestQueue m -> SnapshotRequest m -> m Bool
+tryEnqueueSnapshotRequest (SnapshotRequestQueue _ var) = tryPutMVar var
+
+-- | Block until a request is enqueued, then serve it.
+--
+-- The queue is only freed once the given action has returned or thrown, so
+-- that no further request is accepted while this one is being served.
+withSnapshotRequest ::
+  (MonadMVar m, MonadThrow m) =>
+  SnapshotRequestQueue m ->
+  (SnapshotRequest m -> m a) ->
+  m a
+withSnapshotRequest (SnapshotRequestQueue _ var) =
+  bracket (readMVar var) (\_ -> takeMVar var)
+
+-- | Like 'withSnapshotRequest', but do nothing when no request is queued
+-- instead of waiting for one.
+tryWithSnapshotRequest ::
+  (MonadMVar m, MonadThrow m) =>
+  SnapshotRequestQueue m ->
+  (SnapshotRequest m -> m ()) ->
+  m ()
+tryWithSnapshotRequest (SnapshotRequestQueue _ var) f =
+  bracket (tryReadMVar var) (mapM_ (\_ -> takeMVar var)) (mapM_ f)
 
 {-------------------------------------------------------------------------------
   Tracing snapshot events

@@ -21,6 +21,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
     -- * Copying blocks from the VolatileDB to the ImmutableDB
   , copyToImmutableDB
 
+    -- * Writing LedgerDB snapshots
+  , snapshotRunner
+  , tryServeSnapshotRequestNow
+
     -- * Executing garbage collection
   , garbageCollectBlocks
   , garbageCollectPeras
@@ -120,6 +124,10 @@ launchBgTasks cdb@CDB{..} = do
     launch "ChainDB.copyToImmutableDBRunner" $
       copyToImmutableDBRunner cdb ledgerDbTasksTrigger gcSchedule
 
+  !snapshotThread <-
+    launch "ChainDB.snapshotRunner" $
+      snapshotRunner cdb
+
   atomically $
     writeTVar cdbKillBgThreads $
       sequence_
@@ -127,6 +135,7 @@ launchBgTasks cdb@CDB{..} = do
         , cancelThread ledgerDbMaintenanceThread
         , gcThread
         , copyToImmutableDBThread
+        , snapshotThread
         ]
  where
   launch :: String -> m Void -> m (m ())
@@ -314,26 +323,104 @@ triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) =
 --  * Garbage collection.
 ledgerDbTaskWatcher ::
   forall m blk.
-  (IOLike m, ConsensusProtocol (BlockProtocol blk), GetHeader blk, HasHeader blk) =>
+  IOLike m =>
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
   Watcher m SlotNo SlotNo
-ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
+ledgerDbTaskWatcher CDB{cdbLedgerDB} (LedgerDbTasksTrigger varSt) =
   Watcher
     { wFingerprint = id
     , wInitial = Nothing
     , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
     , wNotify = \slotNo -> do
-        LedgerDB.tryTakeSnapshot cdbLedgerDB (void $ copyToImmutableDB cdb) mkRandomDelay
+        -- Both of these are non-blocking: 'tryTakeSnapshot' only hands a
+        -- request over to 'snapshotRunner'.
+        LedgerDB.tryTakeSnapshot cdbLedgerDB
         LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
- where
-  mkRandomDelay :: LedgerDB.SnapshotDelayRange -> m DiffTime
-  mkRandomDelay sdr = atomically $ do
-    stateTVar cdbSnapshotDelayRNG (randomSnapshotDelay sdr)
 
-  randomSnapshotDelay :: LedgerDB.SnapshotDelayRange -> StdGen -> (DiffTime, StdGen)
-  randomSnapshotDelay sdr rng =
+{-------------------------------------------------------------------------------
+  Writing LedgerDB snapshots
+-------------------------------------------------------------------------------}
+
+-- | Serve the snapshot requests made by 'LedgerDB.tryTakeSnapshot', one at a
+-- time.
+--
+-- This thread is parked on the LedgerDB's snapshot request queue until there is
+-- work to do, and it keeps the queue occupied until it is done with a request,
+-- so no two snapshot requests are ever served concurrently.
+--
+-- Serving a request means copying the immutable blocks to the ImmutableDB and
+-- sleeping out a randomised delay (so that not all nodes snapshot at the same
+-- time) before writing the snapshots to disk. Doing that here rather than in
+-- the thread that decided the snapshot must be taken is what allows that
+-- thread to carry on in the meantime, in particular to garbage-collect the
+-- LedgerDB states the snapshots no longer need.
+snapshotRunner ::
+  forall m blk.
+  ( IOLike m
+  , ConsensusProtocol (BlockProtocol blk)
+  , HasHeader blk
+  , GetHeader blk
+  , HasCallStack
+  ) =>
+  ChainDbEnv m blk ->
+  m Void
+snapshotRunner cdb@CDB{cdbTracer, cdbLedgerDB} =
+  forever $ LedgerDB.withSnapshotRequest queue $ \req -> do
+    -- The LedgerDB assumes that all snapshots correspond to immutable blocks,
+    -- so copy the immutable blocks from the VolatileDB to the ImmutableDB
+    -- first.
+    void $ copyToImmutableDB cdb
+
+    delayBeforeSnapshotting <- mkRandomSnapshotDelay cdb delayRange
+    traceWith (TraceLedgerDBEvent . LedgerDB.LedgerDBSnapshotEvent >$< cdbTracer) $
+      LedgerDB.SnapshotRequestDelayed
+        (LedgerDB.snapshotRequestedAt req)
+        delayBeforeSnapshotting
+        (LedgerDB.snapshotRequestSlots req)
+    threadDelay delayBeforeSnapshotting
+
+    LedgerDB.writeSnapshots req
+ where
+  queue = LedgerDB.snapshotRequestQueue cdbLedgerDB
+
+  -- Fixed by the 'SnapshotPolicy' the LedgerDB was opened with, so read it
+  -- once rather than for every request.
+  delayRange = LedgerDB.snapshotQueueDelayRange queue
+
+-- | Serve the snapshot request that is currently queued, if any, right away,
+-- and return immediately when there is none.
+--
+-- Unlike 'snapshotRunner', this neither copies any blocks to the ImmutableDB
+-- nor waits out the randomised delay first.
+--
+-- For testing purposes: it lets 'Internal' drive snapshotting without a
+-- 'snapshotRunner' thread, which would otherwise leave the requests unserved
+-- and the ledger tables handles they hold on to unreleased. The model of the
+-- ChainDB state machine tests cannot faithfully implement the conditional
+-- copying that 'snapshotRunner' does, and it has no notion of time either.
+tryServeSnapshotRequestNow ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  m ()
+tryServeSnapshotRequestNow CDB{cdbLedgerDB} =
+  LedgerDB.tryWithSnapshotRequest (LedgerDB.snapshotRequestQueue cdbLedgerDB) $
+    LedgerDB.writeSnapshots
+
+-- | Draw the delay to wait before actually writing a requested snapshot.
+mkRandomSnapshotDelay ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  LedgerDB.SnapshotDelayRange ->
+  m DiffTime
+mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
+  atomically $ stateTVar cdbSnapshotDelayRNG randomSnapshotDelay
+ where
+  randomSnapshotDelay :: StdGen -> (DiffTime, StdGen)
+  randomSnapshotDelay rng =
     first fromInteger $
       uniformR (floor (LedgerDB.minimumDelay sdr), floor (LedgerDB.maximumDelay sdr)) rng
 
