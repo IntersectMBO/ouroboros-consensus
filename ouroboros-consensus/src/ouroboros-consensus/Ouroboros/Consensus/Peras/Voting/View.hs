@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -6,6 +7,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Pure Peras voting rules
 --
@@ -35,6 +37,8 @@ import Cardano.Slotting.Slot (WithOrigin)
 import Control.Exception (Exception)
 import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
 import Control.Monad.Reader (MonadReader (..), Reader, runReader)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
   ( GetHeader (..)
   , Header
@@ -75,10 +79,15 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 -- | Exceptions thrown when querying Peras-related historical information
 data PerasQryException
   = -- | The hard fork summary does not cover the needed point in time.
-    PerasQryExceptionPastHorizon HF.PastHorizonException
+    --
+    -- NOTE: this contains a serialized 'PastHorizonException' to be able to
+    -- provide some of the instances needed for tracing (notably 'Eq').
+    PerasQryExceptionPastHorizon
+      -- | The 'EraSummary's that we tried to evaluate the 'Expr' against
+      String
   | -- | Peras is not enabled at the needed point in time.
     PerasQryExceptionPerasDisabled
-  deriving (Show, Exception)
+  deriving (Show, Eq, Generic, NoThunks, Exception)
 
 -- | Monad for querying Peras-related information from a hard fork summary.
 --
@@ -105,7 +114,7 @@ perasCertArrivalSlot cert = PerasQry $ do
   summary <- ask
   case HF.runQuery (HF.wallclockToSlot (getArrivalTime cert)) summary of
     Left pastHorizon ->
-      throwError (PerasQryExceptionPastHorizon pastHorizon)
+      throwError (PerasQryExceptionPastHorizon (show pastHorizon))
     Right (slotNo, _, _) ->
       return slotNo
 
@@ -117,7 +126,7 @@ perasRoundStart roundNo = PerasQry $ do
   summary <- ask
   case HF.runQuery (HF.perasRoundNoToSlot roundNo) summary of
     Left pastHorizon ->
-      throwError (PerasQryExceptionPastHorizon pastHorizon)
+      throwError (PerasQryExceptionPastHorizon (show pastHorizon))
     Right NoPerasEnabled ->
       throwError PerasQryExceptionPerasDisabled
     Right (PerasEnabled (slotNo, _)) ->
