@@ -43,7 +43,6 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
-import Ouroboros.Consensus.Util ((.....:))
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Delegation as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -65,7 +64,8 @@ dualByronBlockForging creds =
     , updateForgeState = \cfg ->
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
-    , forgeBlock = return .....: forgeDualByronBlock
+    , forgeBlock = \cfg slot bno _mbPerasCert lst txs proof ->
+        return $ forgeDualByronBlock cfg slot bno lst txs proof
     , finalize = return ()
     }
  where

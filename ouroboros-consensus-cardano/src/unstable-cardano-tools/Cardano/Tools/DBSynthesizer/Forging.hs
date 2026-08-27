@@ -231,6 +231,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
           cfg
           bcBlockNo
           currentSlot
+          Nothing -- DBSynthesizer does not include Peras certs in blocks for now
           (forgetLedgerTables tickedLedgerState)
           txs
           proof

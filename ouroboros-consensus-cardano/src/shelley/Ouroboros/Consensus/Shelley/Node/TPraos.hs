@@ -120,11 +120,10 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           (configConsensus cfg)
           forgingVRFHash
           curSlot
-    , forgeBlock = \cfg ->
+    , forgeBlock =
         forgeShelleyBlock
           hotKey
           canBeLeader
-          cfg
     , finalize = HotKey.finalize hotKey
     }
  where
@@ -282,7 +281,6 @@ protocolInfoTPraosShelleyBased
         protVer
         genesis
         (shelleyBlockIssuerVKey <$> credentialss)
-
     storageConfig :: StorageConfig (ShelleyBlock (TPraos c) era)
     storageConfig =
       ShelleyStorageConfig
