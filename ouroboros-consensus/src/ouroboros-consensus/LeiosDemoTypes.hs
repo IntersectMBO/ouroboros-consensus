@@ -1501,6 +1501,18 @@ jsonLeiosDb = \case
       , "table" .= table
       , "key" .= key
       ]
+  TraceLeiosDbBusyRetry attempt waitedMs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbBusyRetry"
+      , "attempt" .= attempt
+      , "waitedMs" .= waitedMs
+      ]
+  TraceLeiosDbBusyStuck attempt waitedMs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbBusyStuck"
+      , "attempt" .= attempt
+      , "waitedMs" .= waitedMs
+      ]
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
