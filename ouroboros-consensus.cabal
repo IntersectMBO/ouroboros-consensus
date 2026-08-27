@@ -427,13 +427,14 @@ library tracing
     Ouroboros.Consensus.Tracing.ChainDB
     Ouroboros.Consensus.Tracing.Consensus
     Ouroboros.Consensus.Tracing.ConsensusStartupException
+    Ouroboros.Consensus.Tracing.ConvertTxId
     Ouroboros.Consensus.Tracing.Era.Byron
     Ouroboros.Consensus.Tracing.Era.HardFork
     Ouroboros.Consensus.Tracing.Era.Shelley
     Ouroboros.Consensus.Tracing.Era.Shelley.Render
     Ouroboros.Consensus.Tracing.Formatting
     Ouroboros.Consensus.Tracing.HasIssuer
-    Ouroboros.Consensus.Tracing.Queries
+    Ouroboros.Consensus.Tracing.KESInfo
     Ouroboros.Consensus.Tracing.Render
 
   build-depends:
@@ -461,7 +462,7 @@ library tracing
     containers,
     deepseq,
     kes-agent,
-    ouroboros-consensus:{ouroboros-consensus, cardano, protocol, lsm, diffusion},
+    ouroboros-consensus:{cardano, diffusion, lsm, ouroboros-consensus, protocol},
     ouroboros-network:{api, orphan-instances, ouroboros-network},
     psqueues,
     sop-core,

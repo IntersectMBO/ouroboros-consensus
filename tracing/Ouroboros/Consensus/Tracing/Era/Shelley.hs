@@ -38,7 +38,7 @@ import qualified Cardano.Ledger.Hashes as Hashes
 import           Cardano.Ledger.Shelley.API
 import           Cardano.Ledger.Shelley.Rules
 import           Cardano.Logging
-import           Ouroboros.Consensus.Tracing.Queries (ConvertTxId)
+import           Ouroboros.Consensus.Tracing.ConvertTxId (ConvertTxId)
 import           Ouroboros.Consensus.Tracing.Era.Shelley.Render (renderIncompleteWithdrawals, renderMissingRedeemers,
                    renderRewardAccount, renderScriptHash, renderScriptIndex,
                    renderScriptIntegrityHash)

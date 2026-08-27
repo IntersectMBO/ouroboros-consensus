@@ -28,7 +28,8 @@ module Ouroboros.Consensus.Tracing.Consensus
 
 import qualified Cardano.KESAgent.Processes.ServiceClient as Agent
 import           Cardano.Logging
-import           Ouroboros.Consensus.Tracing.Queries (ConvertTxId (..), HasKESInfo (..))
+import           Ouroboros.Consensus.Tracing.ConvertTxId (ConvertTxId (..))
+import           Ouroboros.Consensus.Tracing.KESInfo (HasKESInfo (..))
 import           Ouroboros.Consensus.Tracing.Formatting ()
 import           Ouroboros.Consensus.Tracing.Render
 import           Ouroboros.Consensus.Tracing.ConsensusStartupException ()
