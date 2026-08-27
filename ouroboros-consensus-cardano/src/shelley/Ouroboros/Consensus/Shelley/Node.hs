@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -42,6 +43,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , pHeaderIssuer
   )
+import Ouroboros.Consensus.Util (ShowProxy)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -113,5 +115,8 @@ instance
   , TxLimits (ShelleyBlock proto era)
   , NoHardForks (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , SerialiseNodeToNodeConstraints (ShelleyBlock proto era)
+  , ShowProxy (PerasCert (ShelleyBlock proto era))
+  , ShowProxy (PerasVote (ShelleyBlock proto era))
   ) =>
   RunNode (ShelleyBlock proto era)

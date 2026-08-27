@@ -173,6 +173,7 @@ startChainSyncConnectionThread ::
   ( IOLike m
   , MonadTimer m
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , ShowProxy blk
   , ShowProxy (Header blk)
   ) =>
