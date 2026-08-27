@@ -2360,16 +2360,14 @@ instance MetaTrace KESAgentClientTrace where
 -- cert and vote metrics overwrite each other.
 --
 -- The two kinds share the same 'TraceObjectDiffusionInbound' \/
--- 'TraceObjectDiffusionOutbound' type, distinguished only by the (concrete)
--- object-id type, so the prefix is keyed on that.
-class ObjectDiffusionMetricsPrefix objectId where
-  objectDiffusionMetricsPrefix :: proxy objectId -> Text.Text
-
-instance ObjectDiffusionMetricsPrefix PerasRoundNo where
-  objectDiffusionMetricsPrefix _ = "perasCert"
-
-instance ObjectDiffusionMetricsPrefix PerasVoteId where
-  objectDiffusionMetricsPrefix _ = "perasVote"
+-- 'TraceObjectDiffusionOutbound' type and are told apart by their object-id
+-- type, which is what the instances below match on. The object type itself is
+-- a type family ('PerasCert' \/ 'PerasVote') and so cannot appear in an
+-- instance head; it is left free. A further diffusion kind adds its own pair
+-- of instances for its own object-id type.
+perasCertMetricsPrefix, perasVoteMetricsPrefix :: Text.Text
+perasCertMetricsPrefix = "perasCert"
+perasVoteMetricsPrefix = "perasVote"
 
 forMachineObjectDiffusionInbound ::
      TraceObjectDiffusionInbound objectId object
@@ -2458,17 +2456,28 @@ allNamespacesObjectDiffusionInbound =
   , Namespace [] ["TraceObjectDiffusionInboundCannotRequestMoreObjects"]
   ]
 
-instance forall objectId object. ObjectDiffusionMetricsPrefix objectId
-      => LogFormatting (TraceObjectDiffusionInbound objectId object) where
+-- | Peras certificate diffusion, inbound side.
+instance LogFormatting (TraceObjectDiffusionInbound PerasRoundNo object) where
   forMachine _ = forMachineObjectDiffusionInbound
-  asMetrics = asMetricsObjectDiffusionInbound (objectDiffusionMetricsPrefix (Proxy @objectId))
+  asMetrics = asMetricsObjectDiffusionInbound perasCertMetricsPrefix
 
-instance forall objectId object. ObjectDiffusionMetricsPrefix objectId
-      => MetaTrace (TraceObjectDiffusionInbound objectId object) where
+instance MetaTrace (TraceObjectDiffusionInbound PerasRoundNo object) where
   namespaceFor = namespaceForObjectDiffusionInbound
   severityFor ns _ = severityForObjectDiffusionInbound ns
   documentFor _ = Nothing
-  metricsDocFor = metricsDocForObjectDiffusionInbound (objectDiffusionMetricsPrefix (Proxy @objectId))
+  metricsDocFor = metricsDocForObjectDiffusionInbound perasCertMetricsPrefix
+  allNamespaces = allNamespacesObjectDiffusionInbound
+
+-- | Peras vote diffusion, inbound side.
+instance LogFormatting (TraceObjectDiffusionInbound PerasVoteId object) where
+  forMachine _ = forMachineObjectDiffusionInbound
+  asMetrics = asMetricsObjectDiffusionInbound perasVoteMetricsPrefix
+
+instance MetaTrace (TraceObjectDiffusionInbound PerasVoteId object) where
+  namespaceFor = namespaceForObjectDiffusionInbound
+  severityFor ns _ = severityForObjectDiffusionInbound ns
+  documentFor _ = Nothing
+  metricsDocFor = metricsDocForObjectDiffusionInbound perasVoteMetricsPrefix
   allNamespaces = allNamespacesObjectDiffusionInbound
 
 forMachineObjectDiffusionOutbound ::
@@ -2555,16 +2564,28 @@ allNamespacesObjectDiffusionOutbound =
   , Namespace [] ["TraceObjectDiffusionOutboundTerminated"]
   ]
 
-instance forall objectId object.
-         (Show objectId, Show object, ObjectDiffusionMetricsPrefix objectId)
-      => LogFormatting (TraceObjectDiffusionOutbound objectId object) where
+-- | Peras certificate diffusion, outbound side.
+instance Show object
+      => LogFormatting (TraceObjectDiffusionOutbound PerasRoundNo object) where
   forMachine _ = forMachineObjectDiffusionOutbound
-  asMetrics = asMetricsObjectDiffusionOutbound (objectDiffusionMetricsPrefix (Proxy @objectId))
+  asMetrics = asMetricsObjectDiffusionOutbound perasCertMetricsPrefix
 
-instance forall objectId object. ObjectDiffusionMetricsPrefix objectId
-      => MetaTrace (TraceObjectDiffusionOutbound objectId object) where
+instance MetaTrace (TraceObjectDiffusionOutbound PerasRoundNo object) where
   namespaceFor = namespaceForObjectDiffusionOutbound
   severityFor ns _ = severityForObjectDiffusionOutbound ns
   documentFor _ = Nothing
-  metricsDocFor = metricsDocForObjectDiffusionOutbound (objectDiffusionMetricsPrefix (Proxy @objectId))
+  metricsDocFor = metricsDocForObjectDiffusionOutbound perasCertMetricsPrefix
+  allNamespaces = allNamespacesObjectDiffusionOutbound
+
+-- | Peras vote diffusion, outbound side.
+instance Show object
+      => LogFormatting (TraceObjectDiffusionOutbound PerasVoteId object) where
+  forMachine _ = forMachineObjectDiffusionOutbound
+  asMetrics = asMetricsObjectDiffusionOutbound perasVoteMetricsPrefix
+
+instance MetaTrace (TraceObjectDiffusionOutbound PerasVoteId object) where
+  namespaceFor = namespaceForObjectDiffusionOutbound
+  severityFor ns _ = severityForObjectDiffusionOutbound ns
+  documentFor _ = Nothing
+  metricsDocFor = metricsDocForObjectDiffusionOutbound perasVoteMetricsPrefix
   allNamespaces = allNamespacesObjectDiffusionOutbound
