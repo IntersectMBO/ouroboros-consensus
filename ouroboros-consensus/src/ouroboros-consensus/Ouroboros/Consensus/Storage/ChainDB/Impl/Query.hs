@@ -28,7 +28,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPerasVotesAfter
   , getPerasVoteIds
   , getLatestPerasCertOnChainRound
+  , getPerasVotingView
+  , getPerasCertInclusionView
   , getPerasEpochContextResolver
+  , getTimeResolutionContext
   , getStatistics
   , getTipBlock
   , getTipHeader
@@ -57,14 +60,32 @@ import Data.Typeable
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
+import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver)
+import Ouroboros.Consensus.Peras.Cert.Inclusion
+  ( PerasCertInclusionView
+  , mkPerasCertInclusionView
+  )
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolver
+  , StateSupportsPerasEpochContext
+  , TimeResolutionContext (..)
+  , resolveRoundNo
+  )
+import Ouroboros.Consensus.Peras.Voting.View
+  ( PerasVotingView
+  , WithBoostedBlockStatus
+  , mkPerasVotingView
+  , perasChainAtCandidateBlock
+  , runPerasQry
+  )
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , takeVolatileSuffix
@@ -81,7 +102,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertTicketNo
-  , WithBoostedBlockStatus
+  , forgetBoostedBlockStatus
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
@@ -390,6 +411,74 @@ getPerasEpochContextResolver ::
   STM m (PerasEpochContextResolver blk)
 getPerasEpochContextResolver =
   fmap (perasEpochContextResolver . perasState) . getCurrentLedger
+
+getPerasVotingView ::
+  ( StateSupportsPerasEpochContext blk
+  , IOLike m
+  , ConsensusProtocol (BlockProtocol blk)
+  , GetHeader blk
+  , BlockSupportsPeras blk
+  ) =>
+  LedgerConfig blk ->
+  PerasRoundNo ->
+  ChainDbEnv m blk ->
+  STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+getPerasVotingView ledgerConfig roundNo env = do
+  resolver <-
+    getPerasEpochContextResolver env
+  perasParams <-
+    either throwSTM (pure . pecParams) $
+      resolveRoundNo resolver roundNo
+  latestCertSeen <-
+    withOriginFromMaybe <$> getLatestPerasCertSeen env
+  latestCertOnChainRoundNo <-
+    withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
+  currentChain <-
+    getCurrentChain env
+  summary <-
+    hardForkSummary ledgerConfig . ledgerState <$> getCurrentLedger env
+  either throwSTM pure $
+    runPerasQry summary $
+      perasChainAtCandidateBlock (perasBlockMinSlots perasParams) roundNo currentChain
+        >>= mkPerasVotingView perasParams roundNo latestCertSeen latestCertOnChainRoundNo
+
+getPerasCertInclusionView ::
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
+  PerasRoundNo ->
+  ChainDbEnv m blk ->
+  STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+getPerasCertInclusionView roundNo env = do
+  getLatestPerasCertSeen env >>= \case
+    Nothing ->
+      pure Nothing
+    Just latestCertSeen -> do
+      resolver <-
+        getPerasEpochContextResolver env
+      perasParams <-
+        either throwSTM (pure . pecParams) $
+          resolveRoundNo resolver roundNo
+      latestCertOnChainRoundNo <-
+        withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
+      certsInChainDB <-
+        getPerasCertIds env
+      pure $
+        Just $
+          mkPerasCertInclusionView
+            perasParams
+            roundNo
+            (forgetBoostedBlockStatus latestCertSeen)
+            latestCertOnChainRoundNo
+            certsInChainDB
+
+getTimeResolutionContext ::
+  MonadSTM m =>
+  LedgerConfig blk ->
+  ChainDbEnv m blk ->
+  STM m (TimeResolutionContext blk)
+getTimeResolutionContext ledgerConfig =
+  fmap (TimeResolutionContext ledgerConfig . ledgerState) . getCurrentLedger
 
 -- | Wait until the slot of the given point is smaller or equal than the immutable tip slot,
 --   and then return:
