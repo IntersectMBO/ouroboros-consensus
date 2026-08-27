@@ -87,10 +87,13 @@ import qualified Data.Text.Encoding as Text.Encoding
 textShow :: Show a => a -> Text
 textShow = Text.pack . show
 
--- | Render a non-empty set/map as a plain JSON array/object. Done explicitly
--- (rather than via a @ToJSON (NonEmptySet _)@ instance) because whether
--- @cardano-data@ provides such instances varies across versions; going through
--- the underlying 'Set'/'Map' is stable and matches the previous output.
+-- | Render a non-empty set\/map as a plain JSON array\/object.
+--
+-- @cardano-data@ only gained @ToJSON@ instances for @NonEmptySet@ and
+-- @NonEmptyMap@ in 1.3.1.0, and we build against 1.3.0.0, so going through the
+-- underlying 'Set' \/ 'Map' is what works either way. It is also what those
+-- instances do -- they are derived from the container being wrapped -- so the
+-- rendering does not depend on which version ends up in the build plan.
 jsonNonEmptySet :: ToJSON a => NonEmptySet.NonEmptySet a -> Value
 jsonNonEmptySet = toJSON . NonEmptySet.toSet
 
