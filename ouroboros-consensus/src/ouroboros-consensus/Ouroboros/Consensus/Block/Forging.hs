@@ -28,6 +28,7 @@ import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.SupportsPeras (PerasCert)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -122,6 +123,7 @@ data BlockForging m blk = BlockForging
       TopLevelConfig blk ->
       BlockNo -> -- Current block number
       SlotNo -> -- Current slot number
+      Maybe (PerasCert blk) -> -- Optional Peras certificate to include
       TickedLedgerState blk EmptyMK -> -- Current ledger state
       [Validated (GenTx blk)] -> -- Transactions to include
       IsLeader (BlockProtocol blk) -> -- Proof we are leader
