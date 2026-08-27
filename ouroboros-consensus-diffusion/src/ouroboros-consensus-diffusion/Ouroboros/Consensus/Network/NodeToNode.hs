@@ -137,6 +137,7 @@ import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -354,6 +355,7 @@ mkHandlers ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , LedgerSupportsProtocol blk
+  , HasHardForkHistory blk
   , ResolveLeiosBlock blk
   , Ord addrNTN
   , Hashable addrNTN
@@ -664,6 +666,7 @@ mkHandlers
                 Leios.nextLeiosFetchClientCommand
                   (Node.leiosKernelTracer tracers)
                   (leiosPeerTracer peer)
+                  (Leios.slotAge systemTime getTopLevelConfig (atomically $ ChainDB.getImmutableLedger getChainDB))
                   ((== Terminate) <$> controlMessageSTM)
                   (getLeiosOutstanding, getLeiosReady)
                   leiosConn

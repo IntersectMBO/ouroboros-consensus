@@ -107,6 +107,8 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , systemTimeCurrent
   )
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (hardForkSummary))
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
@@ -561,6 +563,23 @@ data PendingResponse
   = PendingBlockResponse !LeiosBlockRequest !LeiosEb
   | PendingBlockTxsResponse !LeiosBlockTxsRequest !(V.Vector LeiosTx)
 
+-- | Elapsed wall-clock time since the onset of the given slot, per the
+-- current ledger's era history. Used to populate 'Leios.leiosEbAge'.
+slotAge ::
+  (IOLike m, HasHardForkHistory blk) =>
+  SystemTime m ->
+  TopLevelConfig blk ->
+  -- | Action to obtain a recent ledger state, e.g. the immutable tip's.
+  m (ExtLedgerState blk EmptyMK) ->
+  SlotNo ->
+  m NominalDiffTime
+slotAge systemTime cfg getLedger slot = do
+  now <- systemTimeCurrent systemTime
+  ledger <- getLedger
+  let summary = hardForkSummary (configLedger cfg) (ledgerState ledger)
+      onset = fst $ HardFork.runQueryPure (HardFork.slotToWallclock slot) summary
+  pure $ diffRelTime now onset
+
 nextLeiosFetchClientCommand ::
   forall pid m.
   ( Ord pid
@@ -568,6 +587,9 @@ nextLeiosFetchClientCommand ::
   ) =>
   Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
+  -- | Elapsed wall-clock time since a slot's onset, for 'Leios.leiosEbAge'.
+  -- See 'slotAge'.
+  (SlotNo -> m NominalDiffTime) ->
   StrictSTM.STM m Bool ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
@@ -585,7 +607,7 @@ nextLeiosFetchClientCommand ::
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar responseQ = do
+nextLeiosFetchClientCommand ktracer tracer ebAge stopSTM kernelVars db peerId reqsVar responseQ = do
   drainResponses
   StrictSTM.atomically checkOrPeek >>= \case
     Right result -> pure $ Right result
@@ -597,9 +619,9 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar 
     pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
     forM_ pending $ \case
       PendingBlockResponse req eb ->
-        msgLeiosBlock ktracer tracer kernelVars db peerId req eb
+        msgLeiosBlock ktracer tracer ebAge kernelVars db peerId req eb
       PendingBlockTxsResponse req txs ->
-        msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
+        msgLeiosBlockTxs ktracer tracer ebAge kernelVars db peerId req txs
 
   -- Non-blocking: return 'Right result' if stop or a request is available,
   -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
@@ -664,6 +686,8 @@ msgLeiosBlock ::
   ) =>
   Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
+  -- | Elapsed wall-clock time since a slot's onset, for 'Leios.leiosEbAge'.
+  (SlotNo -> m NominalDiffTime) ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -672,7 +696,7 @@ msgLeiosBlock ::
   LeiosBlockRequest ->
   LeiosEb ->
   m ()
-msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
+msgLeiosBlock ktracer tracer ebAge (outstandingVar, readyVar) db peerId req eb = do
   -- validate it
   let MkLeiosBlockRequest point ebBytesSize = req
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
@@ -706,7 +730,9 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         leiosDbInsertEbPoint db point ebBytesSize
         completedByBody <- leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
-        forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+        forM_ completedByBody $ \completedPoint -> do
+          age <- ebAge completedPoint.pointSlotNo
+          traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint age
     -- update NodeKernel state
     --
     -- 'refundEbRequest' reverses this peer's per-request accounting (but skips
@@ -840,6 +866,8 @@ msgLeiosBlockTxs ::
   ) =>
   Tracer m TraceLeiosKernel ->
   Tracer m TraceLeiosPeer ->
+  -- | Elapsed wall-clock time since a slot's onset, for 'Leios.leiosEbAge'.
+  (SlotNo -> m NominalDiffTime) ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -848,7 +876,7 @@ msgLeiosBlockTxs ::
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->
   m ()
-msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = do
+msgLeiosBlockTxs ktracer tracer ebAge (outstandingVar, readyVar) db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
   -- TODO: could validate the returned point + bitmaps too (added to response recently)
@@ -875,7 +903,9 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
   -- ingest
   traceException tracer TraceLeiosPeerDbException $ do
     completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
-    forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+    forM_ completed $ \completedPoint -> do
+      age <- ebAge completedPoint.pointSlotNo
+      traceWith ktracer $ TraceLeiosBlockTxsAcquired completedPoint age
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let (requestedTxPeers', reverseEbIndexByTx', txsBytesSize) =
