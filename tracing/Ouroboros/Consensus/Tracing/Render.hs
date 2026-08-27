@@ -44,7 +44,7 @@ import           Ouroboros.Consensus.Block.Abstract (Point (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTx, TxId)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal (ChunkNo (..))
-import           Ouroboros.Consensus.Tracing.Queries (ConvertTxId (..))
+import           Ouroboros.Consensus.Tracing.ConvertTxId (ConvertTxId (..))
 import           Ouroboros.Consensus.Util.Condense (Condense, condense)
 import           Ouroboros.Network.Block (ChainHash (..), HeaderHash, StandardHash, Tip,
                    getTipPoint)
