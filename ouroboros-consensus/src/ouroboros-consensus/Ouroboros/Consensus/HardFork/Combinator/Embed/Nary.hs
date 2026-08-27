@@ -240,13 +240,9 @@ instance Inject WrapChainDepState where
   inject = coerce .: injectHardForkState
 
 instance Inject PerasEpochContextResolver where
-  inject _iidx _ =
-    -- NOTE: we initially used:
-    -- @
-    --   PerasEpochContextResolverError "Not yet implemented for the HFC"
-    -- @
-    -- But the default below save us from having to update golden files twice.
-    PerasEpochContextResolver NoPerasEnabled NoPerasEnabled
+  inject iidx =
+    injectHFCPerasEpochContextResolver
+      . injectNS (forgetInjectionIndex iidx)
 
 instance Inject PerasState where
   inject iidx PerasState{..} =

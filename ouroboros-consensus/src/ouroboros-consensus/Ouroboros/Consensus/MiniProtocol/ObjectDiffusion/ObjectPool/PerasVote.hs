@@ -14,8 +14,13 @@ import Data.Foldable (traverse_)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Data.Typeable (Typeable)
-import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  , IsPerasVote
+  , PerasVoteId
+  , ValidatedPerasVote (..)
+  , getPerasVoteId
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( SystemTime (..)
   , WithArrivalTime (..)
@@ -47,7 +52,9 @@ takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 -- | Internal helper: create a pool reader from a @getVotesAfter@ function.
 makePerasVotePoolReader ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   ( PerasVoteTicketNo ->
     STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   ) ->
@@ -66,7 +73,9 @@ makePerasVotePoolReader getVotesAfterSTM =
     }
 
 makePerasVotePoolReaderFromVoteDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDB m blk ->
   ObjectPoolReader PerasVoteId (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromVoteDB perasVoteDB =
@@ -74,7 +83,9 @@ makePerasVotePoolReaderFromVoteDB perasVoteDB =
     (PerasVoteDB.getVotesAfter perasVoteDB)
 
 makePerasVotePoolReaderFromChainDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   ChainDB m blk ->
   ObjectPoolReader PerasVoteId (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromChainDB chainDB =
@@ -92,7 +103,9 @@ makePerasVotePoolReaderFromChainDB chainDB =
 -- see 'makePerasVotePoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' and thus properly handles the produced certs.
 makePerasVotePoolWriterFromVoteDB ::
-  (StandardHash blk, Typeable blk, IOLike m) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   PerasVoteDB m blk ->
   PerasEpochContextResolverHandle m blk ->
@@ -120,7 +133,9 @@ makePerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
 -- This properly handles the produced certs by letting the ChainDB take care
 -- of them (see 'ChainDB.addPerasVoteWithAsyncCertHandling').
 makePerasVotePoolWriterFromChainDB ::
-  (StandardHash blk, Typeable blk, IOLike m) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   ChainDB m blk ->
   ObjectPoolWriter PerasVoteId (PerasVote blk) m
