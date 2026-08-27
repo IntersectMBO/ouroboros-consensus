@@ -731,6 +731,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           cfg
           bcBlockNo
           currentSlot
+          Nothing -- No PerasCert for now
           tickedLedgerState
           txs
           proof

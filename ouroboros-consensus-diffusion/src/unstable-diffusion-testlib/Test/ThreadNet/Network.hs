@@ -883,11 +883,12 @@ runThreadNetwork
             TopLevelConfig blk ->
             BlockNo ->
             SlotNo ->
+            Maybe (PerasCert blk) ->
             TickedLedgerState blk mk ->
             [Validated (GenTx blk)] ->
             IsLeader (BlockProtocol blk) ->
             m blk
-          customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs prf = do
+          customForgeBlock origBlockForging cfg' currentBno currentSlot mbPerasCert tickedLdgSt txs prf = do
             let currentEpoch = HFF.futureSlotToEpoch future currentSlot
 
             -- EBBs are only ever possible in the first era
@@ -911,6 +912,7 @@ runThreadNetwork
                   cfg'
                   currentBno
                   currentSlot
+                  mbPerasCert
                   (forgetLedgerTables tickedLdgSt)
                   txs
                   prf
@@ -957,6 +959,7 @@ runThreadNetwork
                     cfg'
                     currentBno
                     currentSlot
+                    mbPerasCert
                     (forgetLedgerTables tickedLdgSt')
                     txs
                     prf
