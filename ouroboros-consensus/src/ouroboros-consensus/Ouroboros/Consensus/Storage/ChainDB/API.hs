@@ -29,10 +29,14 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , AddPerasVoteResult (..)
   , addPerasCertSync
   , addPerasVoteSync
+  , WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
 
     -- * Peras stateful handles
+  , PerasVotingViewError (..)
   , PerasVotingViewHandle (..)
   , isPerasVotingAllowedWithHandle
+  , PerasCertInclusionViewError (..)
   , PerasCertInclusionViewHandle (..)
   , needCertWithHandle
 
@@ -105,12 +109,13 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
   , PerasCertInclusionView
   , needCert
   )
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle)
-import Ouroboros.Consensus.Peras.Voting.Rules
-  ( PerasVotingRulesDecision
-  , isPerasVotingAllowed
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextNotFoundForRound
+  , PerasEpochContextResolverHandle
+  , TimeResolutionContextHandle
   )
-import Ouroboros.Consensus.Peras.Voting.View (PerasVotingView)
+import Ouroboros.Consensus.Peras.Voting.Rules (PerasVotingRulesDecision, isPerasVotingAllowed)
+import Ouroboros.Consensus.Peras.Voting.View (PerasQryException, PerasVotingView)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
@@ -123,7 +128,8 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertTicketNo
-  , WithBoostedBlockStatus
+  , WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)
@@ -485,6 +491,15 @@ data ChainDB m blk = ChainDB
   -- ^ Get the set of all Peras vote IDs currently in the database.
   , getPerasEpochContextResolverHandle :: PerasEpochContextResolverHandle m blk
   -- ^ Returns a handle to obtain the 'PerasEpochContext' for a given 'PerasRoundNo'
+  , getPerasVotingViewHandle :: PerasVotingViewHandle m blk
+  -- ^ Returns a handle to obtain a 'PerasVotingView' that is used to decide
+  -- when to vote with respect to the Peras voting rules.
+  , getPerasCertInclusionViewHandle :: PerasCertInclusionViewHandle m blk
+  -- ^ Returns a handle to obtain a 'PerasCertInclusionView' that is used to
+  -- decide when a Persa certificate must be included in the next forged block.
+  , getTimeResolutionContextHandle :: TimeResolutionContextHandle m blk
+  -- ^ Returns a handle to obtain a 'TimeResolutionContext' used to run
+  -- time-sensitive queries.
   , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
   -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
   --   - returns the block when it becomes the immutable tip,
@@ -665,26 +680,55 @@ addPerasVoteSync chainDB vote = do
   Peras stateful handles
 -------------------------------------------------------------------------------}
 
+-- | Errors that can occur when constructing a Peras voting view.
+data PerasVotingViewError
+  = PerasVotingViewEpochContextNotFoundForRound
+      PerasEpochContextNotFoundForRound
+  | PerasVotingViewQryException
+      PerasQryException
+  deriving (Show, Eq, Generic, NoThunks)
+
 -- | Handle for querying the Peras voting view via STM.
 newtype PerasVotingViewHandle m blk
   = PerasVotingViewHandle
       ( PerasRoundNo ->
-        STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+        STM
+          m
+          ( Either
+              PerasVotingViewError
+              (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+          )
       )
 
 isPerasVotingAllowedWithHandle ::
   (IsPerasCert (WithArrivalTime (ValidatedPerasCert blk)) blk, MonadSTM m) =>
   PerasVotingViewHandle m blk ->
   PerasRoundNo ->
-  STM m (PerasVotingRulesDecision blk)
+  STM
+    m
+    ( Either
+        PerasVotingViewError
+        (PerasVotingRulesDecision blk)
+    )
 isPerasVotingAllowedWithHandle (PerasVotingViewHandle getPerasVotingView) =
-  fmap isPerasVotingAllowed . getPerasVotingView
+  fmap (fmap isPerasVotingAllowed) . getPerasVotingView
+
+-- | Errors that can occur when constructing a Peras certificate inclusion view.
+data PerasCertInclusionViewError
+  = PerasCertInclusionEpochContextNotFoundForRound
+      PerasEpochContextNotFoundForRound
+  deriving (Show, Eq, Generic, NoThunks)
 
 -- | Handle for querying the Peras certificate inclusion rules via STM.
 newtype PerasCertInclusionViewHandle m blk
   = PerasCertInclusionViewHandle
       ( PerasRoundNo ->
-        STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+        STM
+          m
+          ( Either
+              PerasCertInclusionViewError
+              (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+          )
       )
 
 -- | Query the Peras certificate inclusion rules via STM.
@@ -692,9 +736,14 @@ needCertWithHandle ::
   MonadSTM m =>
   PerasCertInclusionViewHandle m blk ->
   PerasRoundNo ->
-  STM m (Maybe (PerasCertInclusionRulesDecision (WithArrivalTime (ValidatedPerasCert blk))))
+  STM
+    m
+    ( Either
+        PerasCertInclusionViewError
+        (Maybe (PerasCertInclusionRulesDecision (WithArrivalTime (ValidatedPerasCert blk))))
+    )
 needCertWithHandle (PerasCertInclusionViewHandle getPerasCertInclusionView) =
-  fmap (fmap needCert) . getPerasCertInclusionView
+  fmap (fmap (fmap needCert)) . getPerasCertInclusionView
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point
