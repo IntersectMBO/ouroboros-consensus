@@ -364,37 +364,27 @@ instance Isomorphic PerasState where
           case perasEpochContextResolver of
             PerasEpochContextResolverError err ->
               PerasEpochContextResolverError err
-            PerasEpochContextResolver _hfcCurrBoundedContext _hfcPrevBoundedContext ->
-              -- NOTE: we initially used:
-              -- @
-              --   PerasEpochContextResolverError "Not yet implemented for the HFC"
-              -- @
-              -- But the default below save us from having to update golden files twice.
-              --
-              -- This will be fixed after getting rid of the degenerate
-              -- 'BlockSupportsPeras' instance in Peras 65:
-              -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2240
-              PerasEpochContextResolver NoPerasEnabled NoPerasEnabled
+            PerasEpochContextResolver hfcCurrBoundedContext hfcPrevBoundedContext ->
+              PerasEpochContextResolver
+                (fromZ . projectHFCBoundedPerasEpochContext <$> hfcCurrBoundedContext)
+                (fromZ . projectHFCBoundedPerasEpochContext <$> hfcPrevBoundedContext)
       , latestPerasCertOnChainRound =
           latestPerasCertOnChainRound
       }
+   where
+    fromZ :: NS f '[a] -> f a
+    fromZ (Z x) = x
 
   inject PerasState{..} =
     PerasState
       { perasEpochContextResolver =
-          -- NOTE: we initially used:
-          -- @
-          --   PerasEpochContextResolverError "Not yet implemented for the HFC"
-          -- @
-          -- But the default below save us from having to update golden files twice.
-          --
-          -- This will be fixed after getting rid of the degenerate
-          -- 'BlockSupportsPeras' instance in Peras 65:
-          -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2240
-          PerasEpochContextResolver NoPerasEnabled NoPerasEnabled
+          injectHFCPerasEpochContextResolver (toZ perasEpochContextResolver)
       , latestPerasCertOnChainRound =
           latestPerasCertOnChainRound
       }
+   where
+    toZ :: f a -> NS f '[a]
+    toZ x = Z x
 
 instance Isomorphic (Flip ExtLedgerState mk) where
   project (Flip ExtLedgerState{..}) =

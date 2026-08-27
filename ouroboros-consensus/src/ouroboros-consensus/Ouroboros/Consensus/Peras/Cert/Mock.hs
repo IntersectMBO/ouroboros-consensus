@@ -34,9 +34,11 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
-  ( Point
+  ( ConvertRawHash
+  , Point
   , StandardHash
   )
+import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Cert.Class (IsPerasCert (..))
 import Ouroboros.Consensus.Peras.Types
   ( BoostedBlock
@@ -112,6 +114,40 @@ instance
         <> toCBOR mockCertRound
         <> toCBOR mockCertBlock
         <> toCBOR (NonEmpty.toList (NESet.toList mockCertVoters))
+
+instance
+  ConvertRawHash blk =>
+  SerialiseNodeToNode blk (MockPerasCert blk)
+  where
+  encodeNodeToNode
+    ccfg
+    version
+    MockPerasCert
+      { mockCertRound
+      , mockCertBlock
+      , mockCertVoters
+      } =
+      encodeListLen 3
+        <> encodeNodeToNode ccfg version mockCertRound
+        <> encodeNodeToNode ccfg version mockCertBlock
+        <> toCBOR (NonEmpty.toList (NESet.toList mockCertVoters))
+  decodeNodeToNode ccfg version = do
+    decodeListLenOf 3
+    mockCertRound <- decodeNodeToNode ccfg version
+    mockCertBlock <- decodeNodeToNode ccfg version
+    mockCertVoters <- decodeNodeToNodeNonEmptySet ccfg version
+    pure
+      MockPerasCert
+        { mockCertRound
+        , mockCertBlock
+        , mockCertVoters
+        }
+   where
+    decodeNodeToNodeNonEmptySet _ccfg _version = do
+      xs <- fromCBOR
+      case NonEmpty.nonEmpty xs of
+        Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
+        Just neSet -> pure (NESet.fromList neSet)
 
 -- * Orphan instances
 

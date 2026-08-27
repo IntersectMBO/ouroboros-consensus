@@ -245,6 +245,7 @@ library
     Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Crypto.Mock
     Ouroboros.Consensus.Peras.Error.Mock
+    Ouroboros.Consensus.Peras.Error.V1
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
@@ -404,7 +405,7 @@ library
     singletons ^>=3,
     small-steps ^>=1.1,
     sop-core ^>=0.5,
-    sop-extras ^>=0.4.1,
+    sop-extras ^>=0.4.2,
     streaming,
     strict >=0.1 && <0.6,
     strict-checked-vars ^>=0.2,
@@ -1386,6 +1387,7 @@ library cardano
     Ouroboros.Consensus.Byron.Ledger.PBFT
     Ouroboros.Consensus.Byron.Ledger.Serialisation
     Ouroboros.Consensus.Byron.Node
+    Ouroboros.Consensus.Byron.Node.Peras
     Ouroboros.Consensus.Byron.Node.Serialisation
     Ouroboros.Consensus.Byron.Protocol
     Ouroboros.Consensus.Cardano

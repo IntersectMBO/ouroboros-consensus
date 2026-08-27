@@ -12,8 +12,6 @@
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
--- Disabled until we get rid of the degenerate 'BlockSupportsPeras' instance.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( -- * Voting committee types for Peras
@@ -91,14 +89,10 @@ import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (ElectionId, PrivateKey, VoteCandidate)
 import Ouroboros.Consensus.Committee.Types (PoolId (..))
 import Ouroboros.Consensus.Peras.Cert.Class
-import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
-import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError (..))
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Peras.Void
 import Ouroboros.Consensus.Peras.Vote.Class
-import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Peras.Voting.Adapter
 
 -- * Voting committee types for Peras
@@ -420,20 +414,6 @@ defaultVerifyPerasCert context cert = do
     else
       throwError (injectQuorumNotReachedError totalVoteWeight)
 
--- TODO: degenerate instance for all blks to get things to compile
--- see https://github.com/tweag/cardano-peras/issues/73
-instance (StandardHash blk, Typeable blk) => BlockSupportsPeras blk where
-  type PerasCrypto blk = MockPerasCrypto blk
-  type PerasVotingCommitteeScheme blk = MockPerasVotingCommitteeScheme blk
-  type PerasError blk = MockPerasError blk
-  type PerasCert blk = MockPerasCert blk
-  type PerasVote blk = MockPerasVote blk
-  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
-  verifyPerasVote = defaultVerifyPerasVote
-  forgePerasCert = defaultForgePerasCert
-  verifyPerasCert = defaultVerifyPerasCert
-  getPerasCertInBlock _ = Right Nothing
-
 -- * Validated types
 
 data ValidatedPerasVote blk
@@ -498,11 +478,6 @@ instance IsPerasError (VoidPerasError blk) blk where
     error "injectConversionError: VoidPerasError cannot be inhabited"
   injectQuorumNotReachedError _ =
     error "injectQuorumNotReachedError: VoidPerasError cannot be inhabited"
-
-instance IsPerasError (MockPerasError blk) blk where
-  injectVotingCommitteeError = PerasVotingCommitteeError
-  injectConversionError = PerasVotingConversionError
-  injectQuorumNotReachedError = PerasQuorumNotReachedError
 
 -- * Types and functions related to Peras vote collection and quorum checking
 
@@ -681,6 +656,8 @@ toUniqueVotesWithSameTarget ::
   ( vote ~ PerasVote blk
   , crypto ~ PerasCrypto blk
   , committee ~ PerasVotingCommitteeScheme blk
+  , ElectionId crypto ~ PerasRoundNo
+  , CryptoSupportsVotingCommittee crypto committee
   , PerasVoteCompatibleWithVotingCommittee vote crypto committee
   , Eq (VoteCandidate crypto)
   ) =>

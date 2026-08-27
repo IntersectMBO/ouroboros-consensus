@@ -42,6 +42,7 @@ import Codec.CBOR.Decoding (Decoder, decodeListLen)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
+import Control.Monad.Trans.Except (except)
 import Data.Functor ((<&>))
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
@@ -64,7 +65,6 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , IsPerasCert (..)
-  , PerasWeight (..)
   , ValidatedPerasCert (..)
   , pattern NoPerasEnabled
   )
@@ -81,6 +81,7 @@ import Ouroboros.Consensus.Peras.Context
   , PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext (..)
   , initPerasEpochContextResolver
+  , resolveRoundNo
   , tickPerasEpochContextResolver
   )
 import Ouroboros.Consensus.Protocol.Abstract
@@ -333,27 +334,39 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
 
 -- | Extract and validate a Peras certificate from a block, if it exists.
 --
--- NOTE: this is a placeholder until we get rid of the degenerate
--- 'BlockSupportsPeras' instance.
+-- This can fail in several ways:
+-- 1. The block contains a Peras certificate that cannot be deserialized (temporary).
+-- 2. The certificate claims to be from a round we cannot resolve.
+-- 3. The certificate is invalid in the epoch resolved for its round.
 extractAndValidatePerasCertFromBlock ::
   forall blk.
   BlockSupportsPeras blk =>
   PerasEpochContextResolver blk ->
   blk ->
   Except (LedgerErr ExtLedgerState blk) (Maybe (ValidatedPerasCert blk))
-extractAndValidatePerasCertFromBlock _ blk = do
-  case getPerasCertInBlock blk of
-    Left err ->
-      throwError (ExtValidationErrorPerasCertInBlock err)
-    Right Nothing ->
+extractAndValidatePerasCertFromBlock perasResolver blk = do
+  getPerasCertInBlockOrFail blk >>= \case
+    Nothing ->
       pure Nothing
-    Right (Just cert) -> do
-      pure $
-        Just
-          ValidatedPerasCert
-            { vpcCert = cert
-            , vpcCertBoost = PerasWeight 0
-            }
+    Just cert -> do
+      let roundNo = getPerasCertRound cert
+      context <- resolveRoundNoOrFail roundNo
+      Just <$> verifyPerasCertOrFail context cert
+ where
+  getPerasCertInBlockOrFail =
+    withExcept ExtValidationErrorPerasCertInBlock
+      . except
+      . getPerasCertInBlock
+
+  resolveRoundNoOrFail =
+    withExcept ExtValidationErrorPerasEpochContextResolver
+      . except
+      . resolveRoundNo perasResolver
+
+  verifyPerasCertOrFail context =
+    withExcept ExtValidationErrorPerasCertInBlock
+      . except
+      . verifyPerasCert context
 
 instance
   ( GetBlockKeySets blk

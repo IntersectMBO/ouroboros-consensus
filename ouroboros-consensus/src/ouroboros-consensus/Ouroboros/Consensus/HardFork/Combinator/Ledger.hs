@@ -50,6 +50,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Control.Monad (guard)
 import Control.Monad.Except (throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
+import Data.Bifunctor (bimap)
 import Data.Functor ((<&>))
 import Data.Functor.Product
 import Data.Kind (Type)
@@ -60,6 +61,7 @@ import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (getExactly)
+import Data.SOP.Either (hdistribute, mkEitherF)
 import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -91,8 +93,10 @@ import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.HardFork.History
   ( Bound (..)
   , EpochToPerasRoundInfo
+  , EraIndexed
   , EraParams
   , SafeZone (..)
+  , eraIndexedToNS
   , forgetEraIndex
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
@@ -102,11 +106,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Context
-  ( StateSupportsPerasEpochContext (..)
-  , mkBoundedPerasEpochContextWith
-  )
-import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
@@ -347,16 +347,36 @@ instance
       . State.tip
       . tickedHardForkLedgerStatePerEra
 
--- TODO: this instance will have a full implementation as soon as we remove the
--- degenerate 'BlockSupportsPeras' instance.
 instance
   CanHardFork xs =>
   StateSupportsPerasEpochContext (HardForkBlock xs)
   where
-  type MaybeEraIndexedEpochToPerasRoundInfo (HardForkBlock xs) = EpochToPerasRoundInfo
-  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
-  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+  type
+    MaybeEraIndexedEpochToPerasRoundInfo (HardForkBlock xs) =
+      EraIndexed xs EpochToPerasRoundInfo
+
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = id
+
+  mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState =
+    bimap
+      (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+      injectHFCBoundedPerasEpochContext
+      ( hdistribute
+          . hcmap
+            proxySingle
+            ( \_ ->
+                mkEitherF WrapPerasError id $
+                  mkBoundedPerasEpochContext
+                    ( fromMaybeEraIndexedEpochToPerasRoundInfo
+                        (Proxy @(HardForkBlock xs))
+                        epochToPerasRoundInfo
+                    )
+                    ledgerState
+                    headerState
+            )
+          $ eraIndexedToNS epochToPerasRoundInfo
+      )
 
 {-------------------------------------------------------------------------------
   HeaderValidation

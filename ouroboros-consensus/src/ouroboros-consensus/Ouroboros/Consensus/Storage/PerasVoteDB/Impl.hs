@@ -32,7 +32,6 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -183,8 +182,7 @@ defaultArgs =
 createDB ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
-  , Typeable blk
+  , BlockSupportsPeras blk
   ) =>
   Complete PerasVoteDbArgs m blk ->
   PerasEpochContextResolverHandle m blk ->
@@ -221,8 +219,7 @@ createDB args perasEpochContextResolverHandle = do
 implAddVote ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
-  , Typeable blk
+  , BlockSupportsPeras blk
   ) =>
   PerasEpochContextResolverHandle m blk ->
   PerasVoteDbEnv m blk ->
@@ -329,7 +326,9 @@ implGetForgedCertForRound PerasVoteDbEnv{pvdeState} roundNo = do
 
 implGarbageCollect ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDbEnv m blk ->
   SlotNo ->
   STM m (m ())

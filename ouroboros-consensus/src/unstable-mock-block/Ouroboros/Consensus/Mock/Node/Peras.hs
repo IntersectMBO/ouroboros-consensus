@@ -13,6 +13,18 @@ module Ouroboros.Consensus.Mock.Node.Peras () where
 
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block (BlockProtocol)
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  , VoidPerasCert
+  , VoidPerasCrypto
+  , VoidPerasError
+  , VoidPerasVote
+  , VoidPerasVotingCommitteeScheme
+  , defaultForgePerasCert
+  , defaultForgePerasVoteIfEligible
+  , defaultVerifyPerasCert
+  , defaultVerifyPerasVote
+  )
 import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import Ouroboros.Consensus.Mock.Ledger.Block (SimpleBlock, SimpleCrypto)
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
@@ -34,3 +46,20 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: SimpleBlock does not support Peras"
+
+instance
+  ( SimpleCrypto c
+  , Typeable ext
+  ) =>
+  BlockSupportsPeras (SimpleBlock c ext)
+  where
+  type PerasVote (SimpleBlock c ext) = VoidPerasVote (SimpleBlock c ext)
+  type PerasCert (SimpleBlock c ext) = VoidPerasCert (SimpleBlock c ext)
+  type PerasError (SimpleBlock c ext) = VoidPerasError (SimpleBlock c ext)
+  type PerasCrypto (SimpleBlock c ext) = VoidPerasCrypto (SimpleBlock c ext)
+  type PerasVotingCommitteeScheme (SimpleBlock c ext) = VoidPerasVotingCommitteeScheme
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing

@@ -1746,6 +1746,7 @@ nullDebugTracers ::
   ( Monad m
   , Show peer
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , TracingConstraints blk
   ) =>
   Tracers m peer Void blk
@@ -1777,6 +1778,8 @@ type TracingConstraints blk =
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   , HasNestedContent Header blk
   , HasRawTxId (GenTxId blk)
   )

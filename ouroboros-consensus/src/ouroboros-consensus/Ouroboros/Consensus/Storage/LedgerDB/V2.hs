@@ -74,6 +74,7 @@ mkInitDb ::
   forall m blk backend.
   ( All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , Backend m backend blk
   , IOLike m

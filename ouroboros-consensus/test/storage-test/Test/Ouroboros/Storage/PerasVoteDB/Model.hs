@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Test.Ouroboros.Storage.PerasVoteDB.Model
@@ -157,6 +158,8 @@ closeDB model =
 
 addVote ::
   ( StandardHash blk
+  , Ord (PerasVote blk)
+  , PerasCert blk ~ MockPerasCert blk
   , IsPerasVote (PerasVote blk) blk
   , IsPerasCert (PerasCert blk) blk
   ) =>

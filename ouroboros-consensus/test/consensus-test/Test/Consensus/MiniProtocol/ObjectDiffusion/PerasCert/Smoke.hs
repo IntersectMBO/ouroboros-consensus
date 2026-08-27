@@ -26,7 +26,6 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.Impl as PerasCertDB
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Network.Block (StandardHash)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( objectDiffusionInboundPeerPipelined
@@ -51,7 +50,7 @@ tests =
 
 newCertDB ::
   ( IOLike m
-  , StandardHash blk
+  , BlockSupportsPeras blk
   ) =>
   [WithArrivalTime (ValidatedPerasCert blk)] ->
   m (PerasCertDB m blk)

@@ -90,10 +90,17 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
   , mkBoundedPerasEpochContextWith
   )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
@@ -319,9 +326,9 @@ instance LedgerStateSupportsPeras (LedgerState BlockA)
 
 instance LedgerStateSupportsPeras (Ticked LedgerState BlockA)
 
--- NOTE: BlockA is only ever used wrapped in the
--- hard fork combinator (which implements 'hardForkSummary' directly and never
--- delegates to the underlying era), so this method is never actually called.
+-- NOTE: BlockA is only ever used wrapped in the hard fork combinator (which
+-- implements 'hardForkSummary' directly and never delegates to the underlying
+-- era), so this method is never actually called.
 instance HasHardForkHistory BlockA where
   type HardForkIndices BlockA = '[BlockA]
   hardForkSummary = error "BlockA being used as a SingleEraBlock"
@@ -331,6 +338,18 @@ instance StateSupportsPerasEpochContext BlockA where
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+
+instance BlockSupportsPeras BlockA where
+  type PerasCrypto BlockA = MockPerasCrypto BlockA
+  type PerasVotingCommitteeScheme BlockA = MockPerasVotingCommitteeScheme BlockA
+  type PerasVote BlockA = MockPerasVote BlockA
+  type PerasCert BlockA = MockPerasCert BlockA
+  type PerasError BlockA = MockPerasError BlockA
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing
 
 instance HasPartialConsensusConfig ProtocolA
 

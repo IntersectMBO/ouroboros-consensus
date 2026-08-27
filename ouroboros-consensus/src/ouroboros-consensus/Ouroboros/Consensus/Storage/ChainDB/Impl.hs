@@ -107,6 +107,7 @@ withDB ::
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
@@ -123,6 +124,7 @@ openDB ::
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
@@ -138,6 +140,7 @@ openDBInternal ::
   , LedgerSupportsProtocol blk
   , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk

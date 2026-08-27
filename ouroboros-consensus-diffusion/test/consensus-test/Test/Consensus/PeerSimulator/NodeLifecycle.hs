@@ -139,6 +139,7 @@ mkChainDb ::
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
@@ -192,6 +193,7 @@ restoreNode ::
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
@@ -222,6 +224,7 @@ lifecycleStart ::
   , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk

@@ -123,7 +123,14 @@ import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
   , mkBoundedPerasEpochContextWith
   )
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock
+  ( MockPerasVote (..)
+  )
 import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
@@ -635,22 +642,18 @@ instance ApplyBlock LedgerState TestBlock where
             TestLedger
               (Chain.blockPoint tb)
               (BlockHash (blockHash tb))
-              ( let
-                  -- NOTE: this bypasses the degenerate global implementation of
-                  -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
-                  -- which currently always returns 'Nothing'.
-                  --
-                  -- TODO: refactor this to use 'getPerasCertInBlock' after the
-                  -- HFC plumbing for 'BlockSupportsPeras' is in place.
-                  certRoundInBlock = getPerasCertRound <$> tbPerasCert testBody
-                 in
-                  -- the highest Peras certificate round number  we've seen so far
-                  case (certRoundInBlock, latestPerasCertRound) of
-                    (Nothing, Nothing) -> Nothing
-                    (Just rb, Nothing) -> Just rb
-                    (Nothing, Just rl) -> Just rl
-                    (Just rb, Just rl) -> Just (rb `max` rl)
-              )
+              latestPerasCertRound'
+   where
+    -- The round number of the Peras certificate stored in this block, if any
+    perasCertRoundInBlock =
+      either (const Nothing) (fmap getPerasCertRound) (getPerasCertInBlock tb)
+    -- The highest Peras certificate round number we've seen so far
+    latestPerasCertRound' =
+      case (perasCertRoundInBlock, latestPerasCertRound) of
+        (Nothing, Nothing) -> Nothing
+        (Just rb, Nothing) -> Just rb
+        (Nothing, Just rl) -> Just rl
+        (Just rb, Just rl) -> Just (rb `max` rl)
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
@@ -748,6 +751,19 @@ instance StateSupportsPerasEpochContext TestBlock where
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+
+-- NOTE: this is a mocked up implementation without crypto!
+instance BlockSupportsPeras TestBlock where
+  type PerasCrypto TestBlock = MockPerasCrypto TestBlock
+  type PerasVotingCommitteeScheme TestBlock = MockPerasVotingCommitteeScheme TestBlock
+  type PerasVote TestBlock = MockPerasVote TestBlock
+  type PerasCert TestBlock = MockPerasCert TestBlock
+  type PerasError TestBlock = MockPerasError TestBlock
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock = Right . tbPerasCert . testBody
 
 instance InspectLedger TestBlock
 

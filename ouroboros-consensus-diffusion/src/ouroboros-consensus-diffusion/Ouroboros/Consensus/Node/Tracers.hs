@@ -208,6 +208,7 @@ showTracers ::
   , Show (TxMeasurePhase2 blk)
   , Show (PerasVote blk)
   , Show (PerasCert blk)
+  , Show (PerasError blk)
   , Show remotePeer
   , HasRawTxId (GenTxId blk)
   , LedgerSupportsProtocol blk
@@ -427,6 +428,7 @@ deriving instance
   , Eq (CannotForge blk)
   , Eq (TxMeasurePhase1 blk)
   , Eq (TxMeasurePhase2 blk)
+  , Eq (PerasError blk)
   ) =>
   Eq (TraceForgeEvent blk)
 deriving instance
@@ -437,6 +439,7 @@ deriving instance
   , Show (CannotForge blk)
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
+  , Show (PerasError blk)
   ) =>
   Show (TraceForgeEvent blk)
 

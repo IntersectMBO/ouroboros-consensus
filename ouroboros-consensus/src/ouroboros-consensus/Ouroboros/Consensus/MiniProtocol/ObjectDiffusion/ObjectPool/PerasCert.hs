@@ -16,8 +16,12 @@ import Data.Foldable (traverse_)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Data.Typeable (Typeable)
-import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  , IsPerasCert (..)
+  , PerasRoundNo
+  , ValidatedPerasCert (..)
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( SystemTime (..)
   , WithArrivalTime (..)
@@ -49,7 +53,9 @@ takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 -- | Internal helper: create a pool reader from a @getCertsAfter@ function.
 makePerasCertPoolReader ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ( PerasCertTicketNo ->
     STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
   ) ->
@@ -70,7 +76,9 @@ makePerasCertPoolReader getCertsAfterSTM =
     }
 
 makeTestPerasCertPoolReaderFromCertDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDB m blk ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makeTestPerasCertPoolReaderFromCertDB perasCertDB =
@@ -78,7 +86,9 @@ makeTestPerasCertPoolReaderFromCertDB perasCertDB =
     (PerasCertDB.getCertsAfter perasCertDB)
 
 makePerasCertPoolReaderFromChainDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ChainDB m blk ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromChainDB chainDB =
@@ -94,7 +104,9 @@ makePerasCertPoolReaderFromChainDB chainDB =
 -- see 'makePerasCertPoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' with proper handling of chain selection side-effects.
 makeTestPerasCertPoolWriterFromCertDB ::
-  (StandardHash blk, Typeable blk, IOLike m) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   PerasCertDB m blk ->
   PerasEpochContextResolverHandle m blk ->
@@ -122,7 +134,9 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
 -- | Create a pool writer from the 'ChainDB'. This properly handles any needed
 -- chain selection side-effects.
 makePerasCertPoolWriterFromChainDB ::
-  (StandardHash blk, Typeable blk, IOLike m) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   ChainDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m

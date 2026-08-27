@@ -4,7 +4,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -42,9 +41,9 @@ import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (Serialise (decode, encode))
 import Data.Kind
-import qualified Data.List.NonEmpty as NonEmpty
 import Data.SOP.BasicFunctors
-import qualified Data.Set.NonEmpty as NESet
+import Data.Typeable (Typeable)
+import Data.Void (absurd)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -52,8 +51,8 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , GenTxId
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
-import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
-import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (Some (..))
 import Ouroboros.Network.Block
@@ -190,6 +189,14 @@ deriving newtype instance
   SerialiseNodeToNode blk (GenTxId blk) =>
   SerialiseNodeToNode blk (WrapGenTxId blk)
 
+deriving newtype instance
+  SerialiseNodeToNode blk (PerasVote blk) =>
+  SerialiseNodeToNode blk (WrapPerasVote blk)
+
+deriving newtype instance
+  SerialiseNodeToNode blk (PerasCert blk) =>
+  SerialiseNodeToNode blk (WrapPerasCert blk)
+
 instance ConvertRawHash blk => SerialiseNodeToNode blk (Point blk) where
   encodeNodeToNode _ccfg _version = encodePoint $ encodeRawHash (Proxy @blk)
   decodeNodeToNode _ccfg _version = decodePoint $ decodeRawHash (Proxy @blk)
@@ -206,72 +213,6 @@ instance SerialiseNodeToNode blk PerasSeatIndex where
   encodeNodeToNode _ccfg _version = toCBOR . unPerasSeatIndex
   decodeNodeToNode _ccfg _version = PerasSeatIndex <$> fromCBOR
 
--- NOTE: currently defined here to avoid a cyclic module dependency.
--- To be moved next to its corresponding type definition.
-instance
-  ConvertRawHash blk =>
-  SerialiseNodeToNode blk (MockPerasVote blk)
-  where
-  encodeNodeToNode
-    ccfg
-    version
-    MockPerasVote
-      { mockVoteRound
-      , mockVoteBlock
-      , mockVoteSeatIndex
-      } =
-      encodeListLen 3
-        <> encodeNodeToNode ccfg version mockVoteRound
-        <> encodeNodeToNode ccfg version mockVoteBlock
-        <> encodeNodeToNode ccfg version mockVoteSeatIndex
-  decodeNodeToNode ccfg version = do
-    decodeListLenOf 3
-    mockVoteRound <- decodeNodeToNode ccfg version
-    mockVoteBlock <- decodeNodeToNode ccfg version
-    mockVoteSeatIndex <- decodeNodeToNode ccfg version
-    pure
-      MockPerasVote
-        { mockVoteRound
-        , mockVoteBlock
-        , mockVoteSeatIndex
-        }
-
--- NOTE: currently defined here to avoid a cyclic module dependency.
--- To be moved next to its corresponding type definition.
-instance
-  ConvertRawHash blk =>
-  SerialiseNodeToNode blk (MockPerasCert blk)
-  where
-  encodeNodeToNode
-    ccfg
-    version
-    MockPerasCert
-      { mockCertRound
-      , mockCertBlock
-      , mockCertVoters
-      } =
-      encodeListLen 3
-        <> encodeNodeToNode ccfg version mockCertRound
-        <> encodeNodeToNode ccfg version mockCertBlock
-        <> toCBOR (NonEmpty.toList (NESet.toList mockCertVoters))
-  decodeNodeToNode ccfg version = do
-    decodeListLenOf 3
-    mockCertRound <- decodeNodeToNode ccfg version
-    mockCertBlock <- decodeNodeToNode ccfg version
-    mockCertVoters <- decodeNodeToNodeNonEmptySet ccfg version
-    pure
-      MockPerasCert
-        { mockCertRound
-        , mockCertBlock
-        , mockCertVoters
-        }
-   where
-    decodeNodeToNodeNonEmptySet _ccfg _version = do
-      xs <- fromCBOR
-      case NonEmpty.nonEmpty xs of
-        Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
-        Just neSet -> pure (NESet.fromList neSet)
-
 instance SerialiseNodeToNode blk PerasVoteId where
   -- Consistent with the 'Serialise' instance for 'PerasVoteId' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasVoteId{..} =
@@ -283,6 +224,22 @@ instance SerialiseNodeToNode blk PerasVoteId where
     pviRoundNo <- decodeNodeToNode ccfg version
     pviSeatIndex <- decodeNodeToNode ccfg version
     pure $ PerasVoteId pviRoundNo pviSeatIndex
+
+instance SerialiseNodeToNode blk (VoidPerasVote blk) where
+  encodeNodeToNode _ _ = absurd . unVoidPerasVote
+  decodeNodeToNode _ _ = fail "VoidPerasVote cannot be decoded"
+
+instance SerialiseNodeToNode blk (VoidPerasCert blk) where
+  encodeNodeToNode _ _ = absurd . unVoidPerasCert
+  decodeNodeToNode _ _ = fail "VoidPerasCert cannot be decoded"
+
+instance Typeable tag => SerialiseNodeToNode blk (V1.PerasVote tag) where
+  encodeNodeToNode _ccfg _version = toCBOR
+  decodeNodeToNode _ccfg _version = fromCBOR
+
+instance Typeable tag => SerialiseNodeToNode blk (V1.PerasCert tag) where
+  encodeNodeToNode _ccfg _version = toCBOR
+  decodeNodeToNode _ccfg _version = fromCBOR
 
 deriving newtype instance
   SerialiseNodeToClient blk (GenTxId blk) =>

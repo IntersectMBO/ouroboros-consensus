@@ -36,6 +36,7 @@ import Data.SOP (All, Top)
 import GHC.Generics (Generic, Generically (..))
 import Ouroboros.Consensus.Block
   ( BlockSupportsDiffusionPipelining
+  , BlockSupportsPeras
   , ConvertRawHash
   , Header
   )
@@ -188,6 +189,7 @@ toTestTree ::
   , StateSupportsPerasEpochContext blk
   , SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
