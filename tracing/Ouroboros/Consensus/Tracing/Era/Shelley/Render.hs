@@ -85,6 +85,18 @@ unsafeHrp t = case Bech32.humanReadablePartFromText t of
   Right hrp -> hrp
   Left err  -> error ("renderRewardAccount: invalid HRP " <> show t <> ": " <> show err)
 
+-- | Rendered in place of a plutus purpose that none of the @AnyEraScript@
+-- projections below matched.
+--
+-- Those projections cover every purpose the ledger currently defines, but they
+-- are pattern synonyms without a @COMPLETE@ pragma, so GHC cannot check that
+-- for us and a purpose added by a future ledger era would fall through here.
+-- Render a marker rather than @null@: a @null@ is indistinguishable from a
+-- purpose that legitimately rendered as one, whereas this is greppable in the
+-- logs and shows up as a distinct shape in the trace schemas.
+unknownPurpose :: Value
+unknownPurpose = Aeson.object ["kind" .= Aeson.String "UnknownPlutusPurpose"]
+
 -- | Render a plutus script purpose (as an item), era-generically via
 -- @cardano-ledger-api@'s @AnyEraScript@ projections. Replaces @cardano-api@'s
 -- per-era @renderAlonzoPlutusPurpose@/@renderConwayPlutusPurpose@.
@@ -95,35 +107,46 @@ renderScriptPurpose ::
      )
   => PlutusPurpose AsItem era
   -> Value
+-- Note the asymmetry in whether the 'AsItem' wrapper is unwrapped: spending and
+-- rewarding render their item directly, the other four go through
+-- @ToJSON (AsItem ix it)@ and so come out wrapped in an @{"item": ...}@ object.
+-- That is what @cardano-api@'s renderer did, so it is what consumers parse;
+-- changing it is a deliberate format change, not a cleanup to make here.
 renderScriptPurpose = \case
   AnyEraSpendingPurpose (AsItem txin) ->
     Aeson.object ["spending" .= toJSON txin]
-  AnyEraMintingPurpose (AsItem pid) ->
+  AnyEraMintingPurpose pid ->
     Aeson.object ["minting" .= toJSON pid]
   AnyEraWithdrawingPurpose (AsItem rwdAcct) ->
     Aeson.object ["rewarding" .= Aeson.String (renderRewardAccount rwdAcct)]
-  AnyEraCertifyingPurpose (AsItem cert) ->
+  AnyEraCertifyingPurpose cert ->
     Aeson.object ["certifying" .= toJSON cert]
-  AnyEraVotingPurpose (AsItem voter) ->
+  AnyEraVotingPurpose voter ->
     Aeson.object ["voting" .= toJSON voter]
-  AnyEraProposingPurpose (AsItem proposal) ->
+  AnyEraProposingPurpose proposal ->
     Aeson.object ["proposing" .= toJSON proposal]
-  _ -> Aeson.Null
+  _ -> unknownPurpose
 
 -- | Render a plutus script purpose given by its index (redeemer pointer),
 -- era-generically.
+--
+-- Reproduces what @cardano-api@'s @toScriptIndex@ followed by
+-- @ToJSON ScriptWitnessIndex@ emitted: a @kind@ naming the witness index
+-- constructor and the index itself under @value@. The constructor names are
+-- @cardano-api@'s and do not all match the purpose names used by
+-- 'renderScriptPurpose' above.
 renderScriptIndex :: AnyEraScript era => PlutusPurpose AsIx era -> Value
 renderScriptIndex = \case
-  AnyEraSpendingPurpose (AsIx ix)   -> ixObject "spending" ix
-  AnyEraMintingPurpose (AsIx ix)    -> ixObject "minting" ix
-  AnyEraWithdrawingPurpose (AsIx ix)  -> ixObject "rewarding" ix
-  AnyEraCertifyingPurpose (AsIx ix) -> ixObject "certifying" ix
-  AnyEraVotingPurpose (AsIx ix)     -> ixObject "voting" ix
-  AnyEraProposingPurpose (AsIx ix)  -> ixObject "proposing" ix
-  _ -> Aeson.Null
+  AnyEraSpendingPurpose (AsIx ix)    -> witnessIndex "ScriptWitnessIndexTxIn" ix
+  AnyEraMintingPurpose (AsIx ix)     -> witnessIndex "ScriptWitnessIndexMint" ix
+  AnyEraWithdrawingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexWithdrawal" ix
+  AnyEraCertifyingPurpose (AsIx ix)  -> witnessIndex "ScriptWitnessIndexCertificate" ix
+  AnyEraVotingPurpose (AsIx ix)      -> witnessIndex "ScriptWitnessIndexVoting" ix
+  AnyEraProposingPurpose (AsIx ix)   -> witnessIndex "ScriptWitnessIndexProposing" ix
+  _ -> unknownPurpose
   where
-    ixObject :: Text -> Word32 -> Value
-    ixObject purpose ix = Aeson.object ["purpose" .= purpose, "index" .= ix]
+    witnessIndex :: Text -> Word32 -> Value
+    witnessIndex kind ix = Aeson.object ["kind" .= kind, "value" .= ix]
 
 renderMissingRedeemers ::
      ( AnyEraScript era
