@@ -231,6 +231,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
           cfg
           bcBlockNo
           currentSlot
+          Nothing
           (forgetLedgerTables tickedLedgerState)
           txs
           proof
