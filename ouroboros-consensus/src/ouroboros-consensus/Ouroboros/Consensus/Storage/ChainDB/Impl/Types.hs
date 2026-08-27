@@ -128,7 +128,6 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.Snapshots (SnapshotDelayRange (..))
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
@@ -412,8 +411,12 @@ data Internal m blk = Internal
   -- returned. This can be used for a garbage collection on the VolatileDB.
   , intGarbageCollect :: SlotNo -> m ()
   -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
-  , intTryTakeSnapshot :: m () -> (SnapshotDelayRange -> m DiffTime) -> m ()
-  -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s).
+  , intTryTakeSnapshot :: m ()
+  -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s), if
+  -- the 'SnapshotPolicy' indicates so.
+  --
+  -- Unlike in a running node, the snapshots are written synchronously and
+  -- right away; see 'Background.tryServeSnapshotRequestNow'.
   , intAddBlockRunner :: m Void
   -- ^ Start the loop that adds blocks to the ChainDB retrieved from the
   -- queue populated by 'ChainDB.addBlock'. Execute this loop in a separate
