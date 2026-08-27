@@ -60,10 +60,13 @@ import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionViewHandle (..))
 import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext
+  , TimeResolutionContextHandle (..)
   )
+import Ouroboros.Consensus.Peras.Voting.View (PerasVotingViewHandle (..))
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
@@ -329,6 +332,21 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                 PerasEpochContextResolverHandle $
                   getEnvSTM h $
                     Query.getPerasEpochContextResolver
+            , getPerasVotingViewHandle =
+                PerasVotingViewHandle $ \roundNo ->
+                  getEnvSTM h $
+                    Query.getPerasVotingView
+                      (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
+                      roundNo
+            , getPerasCertInclusionViewHandle =
+                PerasCertInclusionViewHandle $ \roundNo ->
+                  getEnvSTM h $
+                    Query.getPerasCertInclusionView roundNo
+            , getTimeResolutionContextHandle =
+                TimeResolutionContextHandle $
+                  getEnvSTM h $
+                    Query.getTimeResolutionContext
+                      (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }
