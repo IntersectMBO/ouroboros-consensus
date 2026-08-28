@@ -42,11 +42,6 @@ import           Ouroboros.Consensus.Node.Tracers (TraceForgeEvent,
 import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
-import qualified Ouroboros.Consensus.Storage.VolatileDB as VolDB
 import           Ouroboros.Consensus.Tracing (ClientMetrics, ConsensusStartupException,
                    ReplayBlockStats)
 import           Ouroboros.Network.Block (Tip)
@@ -89,13 +84,14 @@ tests = testGroup "MetaTrace"
       , metaTrace @(TraceDecisionEvent Peer (Header Blk)) "TraceDecisionEvent"
       , metaTrace @KESAgentClientTrace "KESAgentClientTrace"
       ]
+    -- Only ChainDB. The LedgerDB, ImmutableDB, VolatileDB, PerasCertDB and
+    -- PerasVoteDB tracers are not separate: ChainDbArgs derives each of them
+    -- from the ChainDB tracer, and ChainDB.TraceEvent's allNamespaces maps all
+    -- of their namespaces in under LedgerEvent, ImmDbEvent and so on. Listing
+    -- them here as well checked every one of those namespaces twice, under two
+    -- different names.
   , testGroup "storage"
       [ metaTrace @(ChainDB.TraceEvent Blk) "ChainDB.TraceEvent"
-      , metaTrace @(LedgerDB.TraceEvent Blk) "LedgerDB.TraceEvent"
-      , metaTrace @(ImmDB.TraceEvent Blk) "ImmutableDB.TraceEvent"
-      , metaTrace @(VolDB.TraceEvent Blk) "VolatileDB.TraceEvent"
-      , metaTrace @(PerasCertDB.TraceEvent Blk) "PerasCertDB.TraceEvent"
-      , metaTrace @(PerasVoteDB.TraceEvent Blk) "PerasVoteDB.TraceEvent"
       ]
   , testGroup "peras"
       [ metaTrace @(TracePerasCertInclusionEvent Blk) "TracePerasCertInclusionEvent"
@@ -210,18 +206,6 @@ knownUndocumented = Set.fromList
   , ("ChainDB.TraceEvent", "LedgerEvent.Flavor.V2.BackendTrace.LSM.LSMSnap")
   , ("ChainDB.TraceEvent", "LedgerEvent.Flavor.V2.BackendTrace.LSM.LSMTrace")
   , ("ChainDB.TraceEvent", "LedgerEvent.Flavor.V2.BackendTrace.LSM.LSMUpdate")
-  , ("ImmutableDB.TraceEvent", "CacheEvent.PastChunkExpired")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.InvalidChunkFile")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.InvalidPrimaryIndex")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.InvalidSecondaryIndex")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.MissingChunkFile")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.MissingPrimaryIndex")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.MissingSecondaryIndex")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.RewritePrimaryIndex")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.RewriteSecondaryIndex")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.StartedValidatingChunk")
-  , ("ImmutableDB.TraceEvent", "ChunkValidation.ValidatedChunk")
-  , ("ImmutableDB.TraceEvent", "DBAlreadyClosed")
   , ("KESAgentClientTrace", "KESAgentClientException")
   , ("KESAgentClientTrace", "ServiceClientAbnormalTermination")
   , ("KESAgentClientTrace", "ServiceClientAttemptReconnect")
@@ -235,11 +219,6 @@ knownUndocumented = Set.fromList
   , ("KESAgentClientTrace", "ServiceClientStopped")
   , ("KESAgentClientTrace", "ServiceClientVersionHandshakeFailed")
   , ("KESAgentClientTrace", "ServiceClientVersionHandshakeTrace")
-  , ("LedgerDB.TraceEvent", "Flavor.V2.BackendTrace.LSM.LSMLookup")
-  , ("LedgerDB.TraceEvent", "Flavor.V2.BackendTrace.LSM.LSMOpenSession")
-  , ("LedgerDB.TraceEvent", "Flavor.V2.BackendTrace.LSM.LSMSnap")
-  , ("LedgerDB.TraceEvent", "Flavor.V2.BackendTrace.LSM.LSMTrace")
-  , ("LedgerDB.TraceEvent", "Flavor.V2.BackendTrace.LSM.LSMUpdate")
   , ("TraceForgeEvent", "ForgeTickedLedgerState")
   , ("TraceForgeEvent", "ForgingMempoolSnapshot")
   ]
