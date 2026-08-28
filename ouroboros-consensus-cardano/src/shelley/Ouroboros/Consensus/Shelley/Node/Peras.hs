@@ -79,6 +79,9 @@ import Ouroboros.Consensus.Peras.Context
   , mkBoundedPerasEpochContextWith
   )
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
+  ( unsafePerasBLSPrivateKeyFromEnv
+  )
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import Ouroboros.Consensus.Peras.Params
   ( PerasParams
@@ -426,6 +429,8 @@ instance
       . SL.blockBody
       . shelleyBlockRaw
       $ blk
+  readPerasPrivateKeyFromEnv _ =
+    unsafePerasBLSPrivateKeyFromEnv
 
 {-------------------------------------------------------------------------------
   ShelleyPerasCertCompatibleWithLedger
