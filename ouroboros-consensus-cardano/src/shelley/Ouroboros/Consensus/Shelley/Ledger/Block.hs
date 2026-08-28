@@ -16,6 +16,8 @@ module Ouroboros.Consensus.Shelley.Ledger.Block
   ( GetHeader (..)
   , Header (..)
   , IsShelleyBlock
+  , ShelleyPerasCertCompatibleWithLedger (..)
+  , LedgerPerasCertError
   , NestedCtxt_ (..)
   , ShelleyBasedEra
   , ShelleyBlock (..)
@@ -50,11 +52,12 @@ import Cardano.Ledger.Binary
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Cardano.Ledger.Block as SL (EraBlockHeader)
 import Cardano.Ledger.Core as SL
-  ( eraDecoder
+  ( EraBlockBody (..)
+  , eraDecoder
   , eraProtVerLow
   , toEraCBOR
   )
-import qualified Cardano.Ledger.Core as SL (TranslationContext, hashBlockBody)
+import qualified Cardano.Ledger.Core as SL (TranslationContext)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
@@ -139,6 +142,7 @@ class
     StateSupportsPerasEpochContext (ShelleyBlock proto era)
   , BlockSupportsPeras (ShelleyBlock proto era)
   , MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock proto era) ~ EpochToPerasRoundInfo
+  , ShelleyPerasCertCompatibleWithLedger proto era
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
@@ -263,6 +267,32 @@ instance ShelleyCompatible proto era => HasAnnTip (ShelleyBlock proto era)
 -- The 'ValidateEnvelope' instance lives in the
 -- "Ouroboros.Consensus.Shelley.Ledger.Ledger" module because of the
 -- dependency on the 'LedgerConfig'.
+
+{-------------------------------------------------------------------------------
+  Conversion between Peras certificates type between Ledger and Consensus
+-------------------------------------------------------------------------------}
+
+-- | Error type for Ledger <=> Consensus Peras certificate conversions.
+--
+-- NOTE: this will disappear once we have a proper type for Peras certificates
+-- in the Ledger.
+type LedgerPerasCertError = String
+
+-- | Bridge between the Peras certificates types between Consensus and Ledger
+--
+-- NOTE: this will disappear once we have a proper type for Peras certificates
+-- in the Ledger.
+class ShelleyPerasCertCompatibleWithLedger proto era where
+  -- | Extract a Peras certificate from a Shelley block body, if present
+  extractPerasCertFromShelleyBlockBody ::
+    BlockBody era ->
+    Either LedgerPerasCertError (Maybe (PerasCert (ShelleyBlock proto era)))
+
+  -- | Inject a Peras certificate into a Shelley block body
+  injectPerasCertIntoShelleyBlockBody ::
+    PerasCert (ShelleyBlock proto era) ->
+    BlockBody era ->
+    BlockBody era
 
 {-------------------------------------------------------------------------------
   Conversions
