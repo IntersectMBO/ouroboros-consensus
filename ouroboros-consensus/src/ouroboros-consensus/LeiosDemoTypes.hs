@@ -908,7 +908,10 @@ data TraceLeiosKernel
   | -- | The EB body was received but the point was not in the database. This is
     -- unexpected as the point should have been inserted during announcement handling.
     TraceLeiosBlockPointMissing LeiosPoint
-  | TraceLeiosBlockTxsAcquired LeiosPoint
+  | TraceLeiosBlockTxsAcquired 
+      { ebPoint :: LeiosPoint
+      , ebAge :: NominalDiffTime
+      }
   | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
       , eb :: LeiosEb
@@ -1008,11 +1011,12 @@ traceLeiosKernelToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
-  TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+  TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) age ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
+      , "ageSeconds" .= (realToFrac age :: Double)
       ]
   TraceLeiosBlockForged{slot, eb, ebMeasure, mempoolRestMeasure} ->
     mconcat
