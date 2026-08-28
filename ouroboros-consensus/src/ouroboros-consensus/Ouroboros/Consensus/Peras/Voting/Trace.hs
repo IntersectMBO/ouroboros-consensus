@@ -23,6 +23,7 @@ import Ouroboros.Consensus.Peras.Voting.Rules (PerasVotingRulesDecision)
 import Ouroboros.Consensus.Storage.ChainDB
   ( AddPerasCertChainSelOutcome
   , AddPerasVoteResult
+  , PerasVotingViewError
   )
 
 -- | Peras vote forging events.
@@ -61,6 +62,12 @@ data TracePerasVoteForgingEvent blk
       PerasRoundNo
       -- | The result of adding the certificate to the chain
       AddPerasCertChainSelOutcome
+  | -- | An error occurred while trying to evaluate the voting rules
+    TracePerasVotingViewError
+      -- | The current round number
+      PerasRoundNo
+      -- | The error that occurred while trying to evaluate the voting rules
+      PerasVotingViewError
   | -- | TODO: get rid of this when we no longer read stuff from env variables
     TracePerasVotingCantReadEnv String
 
