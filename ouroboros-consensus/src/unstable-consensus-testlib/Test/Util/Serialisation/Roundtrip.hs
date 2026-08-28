@@ -661,9 +661,10 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
   , -- Note: Ideally we'd just use 'rt' to test Ledger config, but that would
     -- require an 'Eq' and 'Show' instance for all ledger config types which
     -- we'd like to avoid (as the EpochInfo is a record of functions).
-    testProperty "roundtrip (comparing encoding) LedgerConfig" $
-      withMaxSuccess 20 $ \(Blind (WithVersion version a)) ->
-        roundtripComparingEncoding @(LedgerConfig blk) (enc version) (dec version) a
+    adjustQuickCheckTests (const 20) $
+      testProperty "roundtrip (comparing encoding) LedgerConfig" $
+        \(Blind (WithVersion version a)) ->
+          roundtripComparingEncoding @(LedgerConfig blk) (enc version) (dec version) a
   , rtWith
       @(SomeSecond Query blk)
       @(QueryVersion, BlockNodeToClientVersion blk)
