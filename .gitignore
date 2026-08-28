@@ -76,6 +76,13 @@ cabal.project.consensus
 */.tasty-rerun-log
 ouroboros-consensus-cardano/test/tools-test/disk/chaindb/
 
+# artefacts written by the CDDL tests
+/failing_cddl_tests/
+/ntnblock.cddl
+/ntnheader.cddl
+/ntntx.cddl
+/ntntxid.cddl
+
 # https://github.com/github/gitignore/blob/main/Haskell.gitignore
 dist
 dist-*
