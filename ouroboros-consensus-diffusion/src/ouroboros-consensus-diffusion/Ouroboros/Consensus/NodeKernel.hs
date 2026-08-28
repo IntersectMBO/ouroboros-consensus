@@ -514,7 +514,14 @@ initNodeKernel
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
                     bigLedgerPeers
                     outstanding
-            pure (outstanding', (requests, offerDrops, Leios.leiosOutstandingStats (Map.size offerings) (map Map.size (Map.elems offerings)) outstanding'))
+            pure
+              ( outstanding'
+              ,
+                ( requests
+                , offerDrops
+                , Leios.leiosOutstandingStats (Map.size offerings) (map Map.size (Map.elems offerings)) outstanding'
+                )
+              )
           -- Drop dead offers: exactly the EBs the decision pass found we already
           -- fully hold (computed while it walked those offers -- no extra scan).
           -- This is the timely offer-pruning; the imm-tip Watcher prune is a
@@ -552,7 +559,11 @@ initNodeKernel
           -- Structured, Loki-queryable telemetry for the decision loop: the
           -- iteration's duration (the worst-case-latency signal the LeiosTxCache
           -- bounds) and a size sample of the (now well-pruned) outstanding state.
-          traceWith leiosTr $ TraceLeiosFetchDecision (realToFrac duration) outstandingStats (Leios.summarizeDecisions newRequests)
+          traceWith leiosTr $
+            TraceLeiosFetchDecision
+              (realToFrac duration)
+              outstandingStats
+              (Leios.summarizeDecisions newRequests)
           threadDelay $ loopInterval - duration
 
     -- The Leios voting thread: when this node has a voting key, subscribe

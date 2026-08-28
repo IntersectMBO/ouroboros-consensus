@@ -318,4 +318,3 @@ point slot c = MkLeiosPoint (SlotNo (fromIntegral slot)) (eb c)
 -- | Distinct EB hash from a Char.
 eb :: Char -> EbHash
 eb c = MkEbHash $ BS.pack $ replicate 32 (fromIntegral (fromEnum c))
-

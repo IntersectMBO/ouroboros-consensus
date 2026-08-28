@@ -88,9 +88,9 @@ instance ReferencesTxsByHash BenchBody where
     go !acc i
       | i >= n = acc
       | otherwise =
-        go
-          (f acc (MkTxHash (BS.copy (BS.take 32 (BS.drop (i * 32) bs)))) dummySize)
-          (i + 1)
+          go
+            (f acc (MkTxHash (BS.copy (BS.take 32 (BS.drop (i * 32) bs)))) dummySize)
+            (i + 1)
     dummySize = 0
 
 type BenchCache = LeiosTxCache IO () () BenchBody

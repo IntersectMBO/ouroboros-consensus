@@ -145,6 +145,7 @@ import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Mempool.API (getLeiosTxIndex)
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncStateView (..)
@@ -153,7 +154,6 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
-import Ouroboros.Consensus.Mempool.API (getLeiosTxIndex)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node

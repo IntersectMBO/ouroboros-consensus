@@ -333,7 +333,7 @@ decTx ht txh = do
 
 -- | Set a present tx's state tag, preserving its refcount; no-op if absent.
 setTag_ :: PrimMonad m => HT.MutableHashTable (PrimState m) -> Word64 -> TxHash -> m ()
-{-# SPECIALISE setTag_ :: HT.MutableHashTable (PrimState IO) -> Word64 -> TxHash -> IO () #-}
+{-# SPECIALIZE setTag_ :: HT.MutableHashTable (PrimState IO) -> Word64 -> TxHash -> IO () #-}
 setTag_ ht tag txh = do
   let key = toKey txh
   mv <- HT.lookup ht key
@@ -342,8 +342,22 @@ setTag_ ht tag txh = do
     Just w -> HT.insert ht key (mkVal (valRefcount w) tag)
 
 -- | Like 'setTag', but also maintains a 'FetchArrivalBytes'
-setTag :: PrimMonad m => HT.MutableHashTable (PrimState m) -> Word64 -> FetchArrivalBytes -> TxHash -> BytesSize -> m FetchArrivalBytes
-{-# SPECIALISE setTag :: HT.MutableHashTable (PrimState IO) -> Word64 -> FetchArrivalBytes -> TxHash -> BytesSize -> IO FetchArrivalBytes #-}
+setTag ::
+  PrimMonad m =>
+  HT.MutableHashTable (PrimState m) ->
+  Word64 ->
+  FetchArrivalBytes ->
+  TxHash ->
+  BytesSize ->
+  m FetchArrivalBytes
+{-# SPECIALIZE setTag ::
+  HT.MutableHashTable (PrimState IO) ->
+  Word64 ->
+  FetchArrivalBytes ->
+  TxHash ->
+  BytesSize ->
+  IO FetchArrivalBytes
+  #-}
 setTag ht tag fab txh sz = do
   let key = toKey txh
   mv <- HT.lookup ht key

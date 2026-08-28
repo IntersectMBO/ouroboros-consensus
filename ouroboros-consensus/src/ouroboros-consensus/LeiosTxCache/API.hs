@@ -89,7 +89,8 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- pins itself: a hit means it is in the LeiosDb and stays there until the EB is
   -- pruned, so no cross-object reasoning is needed.
   , withLockedInsertUnappliedTx ::
-      (forall w. w -> (w -> TxHash -> BytesSize -> a -> m w) -> m w) -> m FetchArrivalBytes
+      (forall w. w -> (w -> TxHash -> BytesSize -> a -> m w) -> m w) ->
+      m FetchArrivalBytes
   -- ^ Has exclusive write-access
   --
   -- The 'BytesSize' argument is only used to accumulate the

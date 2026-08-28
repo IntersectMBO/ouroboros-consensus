@@ -100,10 +100,13 @@ newPureLeiosTxCache = do
           pure $! Pure.lookupBody ebh idx
       , withLockedInsertUnappliedTx = \k ->
           MVar.modifyMVar var $ \idx ->
-            k (idx, mempty) (\(!idx', !fab) txh sz a ->
-              let (idx'', prior) = Pure.insertUnappliedTx txh a idx'
-                  fab' = fab <> bucketTxArrival prior sz
-               in idx'' `seq` fab' `seq` pure (idx'', fab'))
+            k
+              (idx, mempty)
+              ( \(!idx', !fab) txh sz a ->
+                  let (idx'', prior) = Pure.insertUnappliedTx txh a idx'
+                      fab' = fab <> bucketTxArrival prior sz
+                   in idx'' `seq` fab' `seq` pure (idx'', fab')
+              )
       , withLockedInsertAppliedTx = \k ->
           MVar.modifyMVar_ var $ \idx ->
             k idx (\idx' txh v -> pure $! Pure.insertAppliedTx txh v idx')

@@ -58,14 +58,18 @@ newtype JobRootHash = MkJobRootHash ByteString
 
 jobRootHashOfTxHashes :: [TxHash] -> JobRootHash
 jobRootHashOfTxHashes =
-  MkJobRootHash . Hash.hashToBytes . Hash.hashWith @Hash.Blake2b_256 id . BS.concat . map (\(MkTxHash bs) -> bs)
+  MkJobRootHash
+    . Hash.hashToBytes
+    . Hash.hashWith @Hash.Blake2b_256 id
+    . BS.concat
+    . map (\(MkTxHash bs) -> bs)
 
 -- | A unit of tx-fetch work: the EB-body offsets fetched by one
 -- @MsgLeiosBlockTxsRequest@ (a bitfield over the body's tx vector), the total
 -- on-the-wire byte size of those txs (for the fetch byte budget), and the
 -- 'JobRootHash' commitment used to validate the response.
-data LeiosJob =
-    -- TODO the offset set is immutable and only ever fully traversed, so a packed
+data LeiosJob
+  = -- TODO the offset set is immutable and only ever fully traversed, so a packed
     -- bitfield (a strict ByteString or unboxed Word64 vector) would be more
     -- compact than the 'IntSet' Patricia tree.
     MkLeiosJob !IntSet !Word32 !JobRootHash

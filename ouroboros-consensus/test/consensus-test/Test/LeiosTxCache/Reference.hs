@@ -97,9 +97,9 @@ newtype TestBody = TestBody [TxHash]
 
 instance ReferencesTxsByHash TestBody where
   foldTxReferences f z (TestBody hs) =
-      List.foldl' (\acc txh -> f acc txh dummySize) z hs
-    where
-      dummySize = 0
+    List.foldl' (\acc txh -> f acc txh dummySize) z hs
+   where
+    dummySize = 0
 
 empty :: Idx
 empty = emptyLeiosTxCacheIndex

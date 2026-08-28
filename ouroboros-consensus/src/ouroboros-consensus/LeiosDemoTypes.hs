@@ -17,12 +17,12 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 
-module LeiosDemoTypes (
-  module LeiosDemoTypes,
+module LeiosDemoTypes
+  ( module LeiosDemoTypes
 
-  -- * Re-exports
-  module Cardano.Crypto.Leios,
-  module TxHashReexports,
+    -- * Re-exports
+  , module Cardano.Crypto.Leios
+  , module TxHashReexports
   ) where
 
 import Cardano.Binary
@@ -63,6 +63,7 @@ import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
+import Cardano.Slotting.Time (RelativeTime)
 import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -93,10 +94,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
-import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
-import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import Data.String (fromString)
-import Cardano.Slotting.Time (RelativeTime)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
@@ -110,6 +108,8 @@ import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
+import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
+import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
@@ -444,9 +444,8 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- this index makes that a direct lookup rather than a scan of 'missingEbBodies'
   -- (it likewise backs the "already listed?" check on the offer/announcement
   -- paths). Kept in step with 'missingEbBodies' at every insert and delete.
-
-  -- Request tracking
-  , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
+  , -- Request tracking
+    requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   -- ^ Which peers we've requested each EB from
   --
   -- TODO add requestedEbsPerPeer :: !(Map (PeerId pid) (NESet EbHash)) to avoid
@@ -478,13 +477,13 @@ emptyLeiosOutstanding prunedSlot =
     }
 
 -- | Per-EB state tracked in 'ebState'
-data EbState =
-  -- | The greatest slot at which the EB has been announced (TODO or, for now,
-  -- offered); the wall-clock onset of its /oldest/ announcement slot (kept as the
-  -- minimum, so the body\/closure arrival handlers can report how old the EB was
-  -- when we first held it; 'SNothing' for an unheralded offer-only or self-forged
-  -- EB); and the current progress of fetching it.
-  MkEbState !SlotNo !(StrictMaybe RelativeTime) !EbFetchState
+data EbState
+  = -- | The greatest slot at which the EB has been announced (TODO or, for now,
+    -- offered); the wall-clock onset of its /oldest/ announcement slot (kept as the
+    -- minimum, so the body\/closure arrival handlers can report how old the EB was
+    -- when we first held it; 'SNothing' for an unheralded offer-only or self-forged
+    -- EB); and the current progress of fetching it.
+    MkEbState !SlotNo !(StrictMaybe RelativeTime) !EbFetchState
   deriving (Eq, Show)
 
 -- | Whether we hold an EB's body, plus the forge's imminent case.
@@ -769,8 +768,8 @@ initializeLeiosOutstanding points immTipSlot =
 -- slot-monotonic (never lower the greatest slot), which both callers are.
 alterEbState ::
   EbHash ->
+  -- | REQUIREMENT: must not reduce 'ebStateMaxSlot'
   (Maybe EbState -> Maybe EbState) ->
-  -- ^ REQUIREMENT: must not reduce 'ebStateMaxSlot'
   LeiosOutstanding pid ->
   LeiosOutstanding pid
 alterEbState ebHash f outstanding =
@@ -782,24 +781,23 @@ alterEbState ebHash f outstanding =
         , ebsPerMaxAnnouncementSlot =
             if mbOldSlot == Just newSlot
               then ebsPerMaxAnnouncementSlot outstanding -- max slot unchanged
-              else
-                Map.insertWith NESet.union newSlot (NESet.singleton ebHash) $
-                  case mbOldSlot of
-                    Nothing ->
-                      ebsPerMaxAnnouncementSlot outstanding
-                    Just oldSlot ->
-                      Map.update
-                        (NESet.nonEmptySet . NESet.delete ebHash)
-                        oldSlot
-                        (ebsPerMaxAnnouncementSlot outstanding)
+              else Map.insertWith NESet.union newSlot (NESet.singleton ebHash) $
+                case mbOldSlot of
+                  Nothing ->
+                    ebsPerMaxAnnouncementSlot outstanding
+                  Just oldSlot ->
+                    Map.update
+                      (NESet.nonEmptySet . NESet.delete ebHash)
+                      oldSlot
+                      (ebsPerMaxAnnouncementSlot outstanding)
         }
  where
   -- One traversal of 'ebState': the pair functor carries whether the entry
   -- changed at all and, if so, the prior and new greatest slots for the
   -- reverse-index update.
   upsert1 mbOld = case f mbOld of
-     Nothing -> (Nothing, mbOld)
-     Just new -> (Just (ebStateMaxSlot <$> mbOld, ebStateMaxSlot new), Just new)
+    Nothing -> (Nothing, mbOld)
+    Just new -> (Just (ebStateMaxSlot <$> mbOld, ebStateMaxSlot new), Just new)
 
 -- | Prune 'Outstanding' to the immutable tip, returning the EB hashes it dropped
 -- (so the caller can drop those same hashes from the peers' offers).
@@ -917,8 +915,8 @@ demoLeiosFetchStaticEnv =
     { maxRequestedBytesSizePerPeer = 5 * million
     , maxRequestBytesSize = 500 * thousand
     , maxJobBytesSize = 64 * thousandBase2
-    , maxJobTxCount = 20000   -- TODO do we want this to be low enough to matter?
-    , fetchPriorityWindowSlots = 10   -- TODO read dynamically from ledger state
+    , maxJobTxCount = 20000 -- TODO do we want this to be low enough to matter?
+    , fetchPriorityWindowSlots = 10 -- TODO read dynamically from ledger state
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
     , maxLeiosFetchIngressQueue = 5 * 12 * millionBase2
     }
@@ -1426,8 +1424,11 @@ instance Monoid FetchArrivalBytes where
   mempty = MkFetchArrivalBytes 0 0 0 0
 
 -- | The message's whole size attributed to a single bucket, the rest zero.
-fetchArrivalInvalid, fetchArrivalEvicted, fetchArrivalGood, fetchArrivalExtra ::
-  BytesSize -> FetchArrivalBytes
+fetchArrivalInvalid
+  , fetchArrivalEvicted
+  , fetchArrivalGood
+  , fetchArrivalExtra ::
+    BytesSize -> FetchArrivalBytes
 fetchArrivalInvalid n = mempty{fabInvalid = n}
 fetchArrivalEvicted n = mempty{fabEvicted = n}
 fetchArrivalGood n = mempty{fabGood = n}
@@ -1632,14 +1633,14 @@ traceLeiosKernelToObject = \case
       , announcementEquivocationToObject equivocation
       ]
         ++ foldMap (\age -> ["announcementAgeSeconds" .= (realToFrac age :: Double)]) mbAge
-  where
-    fabObject fab =
-      mconcat
-        [ "invalidBytes" .= fabInvalid fab
-        , "evictedBytes" .= fabEvicted fab
-        , "goodBytes" .= fabGood fab
-        , "extraBytes" .= fabExtra fab
-        ]
+ where
+  fabObject fab =
+    mconcat
+      [ "invalidBytes" .= fabInvalid fab
+      , "evictedBytes" .= fabEvicted fab
+      , "goodBytes" .= fabGood fab
+      , "extraBytes" .= fabExtra fab
+      ]
 
 announcementFieldsToObject :: AnnouncementFields -> Aeson.Object
 announcementFieldsToObject

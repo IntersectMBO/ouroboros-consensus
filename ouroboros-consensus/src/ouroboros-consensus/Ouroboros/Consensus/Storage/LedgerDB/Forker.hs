@@ -71,6 +71,7 @@ import Control.Monad.Except
   , runExcept
   )
 import Data.Bifunctor (first)
+import qualified Data.ByteString as Strict
 import Data.Functor ((<&>))
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
@@ -81,7 +82,6 @@ import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
-import qualified Data.ByteString as Strict
 import LeiosDemoTypes
   ( BytesSize
   , EbHash

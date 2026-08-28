@@ -29,8 +29,8 @@ import qualified Data.ByteString as BS
 import Data.Foldable (fold)
 import Data.Functor (void, (<&>))
 import qualified Data.IntMap as IntMap
-import qualified Data.IntSet as IntSet
 import qualified Data.IntMap.NonEmpty as NEIntMap
+import qualified Data.IntSet as IntSet
 import Data.IntSet.NonEmpty (NEIntSet)
 import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.List (unfoldr)
@@ -76,10 +76,10 @@ import LeiosDemoLogic.Announcements.Validate
   )
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
-  ( AnnouncementEquivocation (..)
+  ( AlsoOfferedTxsClosure (..)
+  , AnnouncementEquivocation (..)
   , AnnouncementFields (..)
   , AnnouncementSource (..)
-  , AlsoOfferedTxsClosure (..)
   , BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
@@ -97,12 +97,12 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   , TxHash (..)
-  , hashLeiosEb
-  , hashLeiosTx
   , fetchArrivalEvicted
   , fetchArrivalExtra
   , fetchArrivalGood
   , fetchArrivalInvalid
+  , hashLeiosEb
+  , hashLeiosTx
   , leiosEbBytesSize
   , leiosEbTxs
   , maxTxsPerEb
@@ -191,8 +191,8 @@ recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
   -- The forge path does not fetch, so it discards the miss set: a unit
   -- accumulator and a no-op snoc.
   mbSummary <-
-      fmap (fmap @Maybe (\(x, ()) -> x))
-    $ insertBody txCache point.pointEbHash (Leios.serializeEbBody eb) () (\() _ _ _ -> ())
+    fmap (fmap @Maybe (\(x, ()) -> x)) $
+      insertBody txCache point.pointEbHash (Leios.serializeEbBody eb) () (\() _ _ _ -> ())
   -- A forged body holds its whole closure locally: every tx not already in the
   -- cache came from our own mempool (that is where the forge selected them). There
   -- is no actual mempool-pull stage, so attribute those txs -- @txsInEb - acquired@
@@ -388,7 +388,8 @@ leiosFetchLogicIteration env mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
 --
 -- Big-ledger peers get a larger cap (so they can be asked for a whole EB closure
 -- at once), but still a bounded one -- even a stake-based peer might be adversarial.
-peerBudget :: Ord pid => LeiosFetchStaticEnv -> IsBigLedgerPeer -> LeiosOutstanding pid -> PeerId pid -> Int
+peerBudget ::
+  Ord pid => LeiosFetchStaticEnv -> IsBigLedgerPeer -> LeiosOutstanding pid -> PeerId pid -> Int
 peerBudget env isBig acc peerId =
   fromIntegral cap
     - fromIntegral (Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc))
@@ -489,8 +490,8 @@ assignPeer env mbCurrentSlot isBig peerId offers acc =
           pruneThisOffer
         (Leios.BodyAcquired jobPool, TxsClosureAlsoOffered)
           | Jobs.nullLeiosJobPool jobPool ->
-             -- whole datum in hand: the closure offer is useless now too
-             pruneThisOffer
+              -- whole datum in hand: the closure offer is useless now too
+              pruneThisOffer
           | otherwise ->
               -- Still need the txs, and the peer offered the closure. If we
               -- just now assign all remaining jobs to the peer, prune its
@@ -506,7 +507,8 @@ assignPeer env mbCurrentSlot isBig peerId offers acc =
 -- | Request the EB body from this peer
 assignBody ::
   Ord pid =>
-  PeerId pid -> EbHash ->
+  PeerId pid ->
+  EbHash ->
   SlotNo ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest) ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest)
@@ -621,7 +623,10 @@ pickJobs inflightJobs0 jobPool0 budget0 =
 -- union of their offsets at send time. Order within a request is irrelevant
 -- (union offsets, set of ids, independent per-job validation).
 batchTxsRequests ::
-  LeiosFetchStaticEnv -> LeiosPoint -> NonEmpty (Jobs.LeiosJobId, Jobs.LeiosJob) -> [LeiosFetchRequest]
+  LeiosFetchStaticEnv ->
+  LeiosPoint ->
+  NonEmpty (Jobs.LeiosJobId, Jobs.LeiosJob) ->
+  [LeiosFetchRequest]
 batchTxsRequests env point (j0 :| rest0) =
   go j0 [] (jobBytes j0) rest0
  where
@@ -705,9 +710,25 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemT
     pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
     forM_ pending $ \case
       PendingBlockResponse req eb ->
-        processLeiosBlock ktracer tracer kernelVars txCache db systemTime pullFromMempool (ReceivedBlockFrom peerId req) eb
+        processLeiosBlock
+          ktracer
+          tracer
+          kernelVars
+          txCache
+          db
+          systemTime
+          pullFromMempool
+          (ReceivedBlockFrom peerId req)
+          eb
       PendingBlockTxsResponse req txs ->
-        processLeiosBlockTxs ktracer tracer kernelVars txCache db systemTime (ReceivedTxsFrom peerId req txs)
+        processLeiosBlockTxs
+          ktracer
+          tracer
+          kernelVars
+          txCache
+          db
+          systemTime
+          (ReceivedTxsFrom peerId req txs)
 
   -- Non-blocking: return 'Right result' if stop or a request is available,
   -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
@@ -884,12 +905,12 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
             $ outstanding
               { Leios.missingEbBodies =
                   case Map.lookup ebHash (Leios.reverseSlotIndexByEbHash outstanding) of
-                        Nothing -> Leios.missingEbBodies outstanding
-                        Just slots ->
-                          foldr
-                            (\slot -> Map.delete (MkLeiosPoint slot ebHash))
-                            (Leios.missingEbBodies outstanding)
-                            slots
+                    Nothing -> Leios.missingEbBodies outstanding
+                    Just slots ->
+                      foldr
+                        (\slot -> Map.delete (MkLeiosPoint slot ebHash))
+                        (Leios.missingEbBodies outstanding)
+                        slots
               , Leios.reverseSlotIndexByEbHash =
                   Map.delete ebHash (Leios.reverseSlotIndexByEbHash outstanding)
               }
@@ -902,7 +923,8 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
       then
         pure
           ( outstandingCleaned
-          , ( (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
+          ,
+            ( (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
             , Map.empty
             , Map.empty
             )
@@ -1250,11 +1272,12 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db system
     -- it).
     --
     -- No peer accounting, no arrival telemetry.
-    _ <- id $
-        ingestAcquiredTxs
+    _ <-
+      id
+        $ ingestAcquiredTxs
           now
           Applied
-      $ V.toList (V.map fst (leiosEbTxs eb)) `zip` V.toList (V.map cbor txs)
+        $ V.toList (V.map fst (leiosEbTxs eb)) `zip` V.toList (V.map cbor txs)
     void $ MVar.tryPutMVar readyVar ()
   MempoolTxs _point hits -> do
     now <- systemTimeCurrent systemTime
@@ -1276,7 +1299,8 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db system
         -- txs. No hashing here: 'aligned' is just @offset -> (tx, tx bytes)@.
         offsetsSet = foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs
     when (V.length txs /= IntSet.size offsetsSet) $
-      invalidReply $ "MsgLeiosBlockTxs count mismatch: " ++ show (V.length txs, IntSet.size offsetsSet)
+      invalidReply $
+        "MsgLeiosBlockTxs count mismatch: " ++ show (V.length txs, IntSet.size offsetsSet)
     let aligned :: IntMap.IntMap (LeiosTx, BS.ByteString)
         aligned = IntMap.fromList $ zip (IntSet.toAscList offsetsSet) (zip (V.toList txs) (V.toList txBytess))
     -- Cheap checks (count + total bytes, no hashing) for every covered job, so an
@@ -1343,7 +1367,8 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db system
   -- ingest it: the jobPool read and 'completeTxRequest' aren't atomic across
   -- threads. Harmless --- the DB insert is idempotent and the cache buckets each
   -- tx by its prior state in one locked pass, tolerating duplicates.
-  ingestAcquiredTxs :: RelativeTime -> WhetherApplied -> [(TxHash, BS.ByteString)] -> m Leios.FetchArrivalBytes
+  ingestAcquiredTxs ::
+    RelativeTime -> WhetherApplied -> [(TxHash, BS.ByteString)] -> m Leios.FetchArrivalBytes
   ingestAcquiredTxs now applied toIngest =
     traceException tracer TraceLeiosPeerDbException $ do
       completed <- leiosDbInsertTxs db toIngest
@@ -1405,20 +1430,22 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
             | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
           skip =
             tooOld
-            || malformed
-            || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
-            || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
-       in if skip then outstanding' else
-          outstanding'
-            { Leios.missingEbBodies =
-                Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
-            , Leios.reverseSlotIndexByEbHash =
-                Map.insertWith
-                  NESet.union
-                  ebHash
-                  (NESet.singleton ebSlot)
-                  (Leios.reverseSlotIndexByEbHash outstanding')
-            }
+              || malformed
+              || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
+              || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
+       in if skip
+            then outstanding'
+            else
+              outstanding'
+                { Leios.missingEbBodies =
+                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
+                , Leios.reverseSlotIndexByEbHash =
+                    Map.insertWith
+                      NESet.union
+                      ebHash
+                      (NESet.singleton ebSlot)
+                      (Leios.reverseSlotIndexByEbHash outstanding')
+                }
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \offers ->
     -- store the offer as-is; 'mergeOffer' keeps the closure if either offer had it
     pure $! Map.insertWith Leios.mergeOffer point offeredClosure offers
@@ -1550,15 +1577,15 @@ processAnnouncementCentrally
         shouldRelay
         age
         ancHdr
- where
-  fields = ancAnnouncementFields ancHdr
-  -- The announced EB's slot is the announcing header's own slot (see
-  -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
-  point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
-  recordAnnounced = recordAnnouncedEb kernelVars onset (point, Leios.announcementEbBodySize fields)
-  markForged =
-    MVar.modifyMVar_ (fst kernelVars) $
-      pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
+   where
+    fields = ancAnnouncementFields ancHdr
+    -- The announced EB's slot is the announcing header's own slot (see
+    -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
+    point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
+    recordAnnounced = recordAnnouncedEb kernelVars onset (point, Leios.announcementEbBodySize fields)
+    markForged =
+      MVar.modifyMVar_ (fst kernelVars) $
+        pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
@@ -1669,20 +1696,21 @@ recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
           | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot onset outstanding
         skip =
           tooOld
-          || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
-          || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
+            || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
+            || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
         !outstanding''
           | skip = outstanding'
-          | otherwise = outstanding'
-              { Leios.missingEbBodies =
-                  Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
-              , Leios.reverseSlotIndexByEbHash =
-                  Map.insertWith
-                    NESet.union
-                    ebHash
-                    (NESet.singleton ebSlot)
-                    (Leios.reverseSlotIndexByEbHash outstanding')
-              }
+          | otherwise =
+              outstanding'
+                { Leios.missingEbBodies =
+                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
+                , Leios.reverseSlotIndexByEbHash =
+                    Map.insertWith
+                      NESet.union
+                      ebHash
+                      (NESet.singleton ebSlot)
+                      (Leios.reverseSlotIndexByEbHash outstanding')
+                }
      in (outstanding'', not skip)
 
 prunePeerStateToImmTip ::

@@ -61,9 +61,9 @@ newtype TestBody = TestBody [TxHash]
 
 instance ReferencesTxsByHash TestBody where
   foldTxReferences f z (TestBody hs) =
-      List.foldl' (\acc txh -> f acc txh dummySize) z hs
-    where
-      dummySize = 0
+    List.foldl' (\acc txh -> f acc txh dummySize) z hs
+   where
+    dummySize = 0
 
 -- A 32-byte tx hash (the mutable table reads exactly 32 bytes).
 txhOf :: Word8 -> TxHash
