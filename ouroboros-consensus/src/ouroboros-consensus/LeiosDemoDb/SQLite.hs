@@ -269,7 +269,7 @@ sqlLookupEbBody conn ebHash =
 
 sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint conn point ebBytesSize =
-  dbWithTransaction db $ useStmt stmt $ do
+  dbWithWriteTransaction db $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
     dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
@@ -289,7 +289,7 @@ sqlInsertEbBody ::
 sqlInsertEbBody tracer conn notify point eb = do
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
-  completedNow <- dbWithTransaction db $ do
+  completedNow <- dbWithWriteTransaction db $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
@@ -355,7 +355,7 @@ sqlInsertTxs _tracer conn notify txs = do
   -- hashes; attempting the INSERT and catching a constraint violation
   -- still pays the bind + PK-lookup + reset cost per row.
   missing <- Set.fromList <$> sqlFilterMissingTxs conn (map fst txs)
-  completed <- dbWithTransaction db $ do
+  completed <- dbWithWriteTransaction db $ do
     -- 'dbStepInsert' still handles the rare race where a concurrent
     -- writer inserted the same hash between the filter above and the
     -- INSERT below.
@@ -687,12 +687,30 @@ dbPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> IO DB.Statement
 dbPrepare db q = withDieJust db $ DB.prepare db q
 
 -- TODO: alternative: bind and use https://www.sqlite.org/c3ref/busy_handler.html
+
+-- | A read-only transaction: @BEGIN DEFERRED@, so readers do not exclude each
+-- other. Any transaction that writes must use 'dbWithWriteTransaction'.
 dbWithTransaction :: HasCallStack => DB.Database -> IO a -> IO a
-dbWithTransaction db k =
+dbWithTransaction = dbWithTransactionAs "BEGIN"
+
+-- | A writing transaction: @BEGIN IMMEDIATE@, taking the write lock up front.
+--
+-- A deferred transaction that reads before it writes has to upgrade its lock,
+-- and in WAL mode that upgrade fails with @SQLITE_BUSY_SNAPSHOT@ whenever
+-- another connection committed in between. That status is not serviced by the
+-- busy handler and cannot be retried at the statement level, because the
+-- transaction's snapshot is stale for good: the only remedy is to roll back and
+-- start over. Taking the lock at BEGIN removes the upgrade, so contention
+-- surfaces here instead, where waiting actually resolves it.
+dbWithWriteTransaction :: HasCallStack => DB.Database -> IO a -> IO a
+dbWithWriteTransaction = dbWithTransactionAs "BEGIN IMMEDIATE"
+
+dbWithTransactionAs :: HasCallStack => String -> DB.Database -> IO a -> IO a
+dbWithTransactionAs begin db k =
   do
     fmap fst
     $ generalBracket
-      (dbExec db (fromString "BEGIN"))
+      (dbExec db (fromString begin))
       ( \() -> \case
           MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
           MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
@@ -753,8 +771,15 @@ dbStepInsertOrTrace tracer table key stmt = do
 
 -- ** Error "handling"
 
+-- | How many times a busy operation is re-attempted before it throws.
+--
+-- The backoff below grows linearly, so the total wait grows with the square of
+-- this: at 10000 it was about 83 minutes, which is indistinguishable from
+-- hanging. 1000 gives roughly 50 s in total with a longest single sleep near
+-- 100 ms, which outlasts any transient contention while still surfacing a real
+-- deadlock inside a minute.
 maxBusyRetries :: Int
-maxBusyRetries = 10000
+maxBusyRetries = 1000
 
 -- | Execute a database action that may return an error. If the error is
 -- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with linear backoff and
