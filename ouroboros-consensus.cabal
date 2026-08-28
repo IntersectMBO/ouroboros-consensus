@@ -502,7 +502,7 @@ test-suite tracing-test
     containers,
     filepath,
     ouroboros-consensus:{ouroboros-consensus, cardano, diffusion, protocol, tracing, unstable-consensus-testlib},
-    ouroboros-network:api,
+    ouroboros-network:{api, ouroboros-network},
     tasty,
     tasty-golden,
     tasty-hunit,
