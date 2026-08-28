@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Shelley.Node.Peras () where
 
 import Cardano.Ledger.Api
 import Data.Typeable (Typeable)
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , VoidPerasCert
@@ -28,7 +29,15 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , defaultVerifyPerasVote
   )
 import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepStateSupportsPeras
   , ConsensusProtocol (..)
@@ -137,7 +146,7 @@ instance
       EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: DijkstraEra does not support Peras (yet)"
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith V1.mkPerasVotingCommitteeInput
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
@@ -215,15 +224,17 @@ instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto ConwayEra) whe
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock _ = Right Nothing
 
--- NOTE: temporarily wired to the void implementation until we land some of the
--- machinery needed to use production types (and which conflicted with the
--- degenerate 'BlockSupportsPeras' instance).
-instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto DijkstraEra) where
-  type PerasVote (ShelleyBlock proto DijkstraEra) = VoidPerasVote (ShelleyBlock proto DijkstraEra)
-  type PerasCert (ShelleyBlock proto DijkstraEra) = VoidPerasCert (ShelleyBlock proto DijkstraEra)
-  type PerasError (ShelleyBlock proto DijkstraEra) = VoidPerasError (ShelleyBlock proto DijkstraEra)
-  type PerasCrypto (ShelleyBlock proto DijkstraEra) = VoidPerasCrypto (ShelleyBlock proto DijkstraEra)
-  type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = VoidPerasVotingCommitteeScheme
+instance
+  ( Typeable proto
+  , ConvertRawHash (ShelleyBlock proto DijkstraEra)
+  ) =>
+  BlockSupportsPeras (ShelleyBlock proto DijkstraEra)
+  where
+  type PerasVote (ShelleyBlock proto DijkstraEra) = V1.PerasVote (ShelleyBlock proto DijkstraEra)
+  type PerasCert (ShelleyBlock proto DijkstraEra) = V1.PerasCert (ShelleyBlock proto DijkstraEra)
+  type PerasError (ShelleyBlock proto DijkstraEra) = V1.PerasError (ShelleyBlock proto DijkstraEra)
+  type PerasCrypto (ShelleyBlock proto DijkstraEra) = BLS.PerasBLSCrypto
+  type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = V1.PerasVotingCommitteeScheme
   forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
   verifyPerasVote = defaultVerifyPerasVote
   forgePerasCert = defaultForgePerasCert
