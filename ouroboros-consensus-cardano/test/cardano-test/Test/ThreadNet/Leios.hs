@@ -370,14 +370,21 @@ prop_leios seed =
       & counterexample ("announced-and-certified slots: " <> show announcedAndCertifiedSlots)
 
   -- In an honest net every acquired closure must apply against the announcing
-  -- RB's ledger state. A rejection here means the voting thread validates
-  -- against the wrong state or the wrong slot, not that anything was invalid.
+  -- RB's ledger state, because 'partitionMempool' cuts both the RB's and the
+  -- EB's transactions out of a single mempool snapshot: the snapshot is
+  -- internally consistent, so its transactions apply in sequence against the
+  -- state it was taken for, and the announcing RB /is/ that state plus its own
+  -- share of the split. The EB's share therefore applies against the RB's
+  -- post-state by construction. So a rejection here cannot mean a transaction
+  -- was bad; it means the voting thread validated against the wrong state or
+  -- the wrong slot.
   propClosuresValidate =
     null closureRejections
       & counterexample "a voter rejected an honestly-produced EB's transactions"
       & prettyCounterexampleList "rejections" 240 closureRejections
       -- The reapply-vs-apply split: how much full validation the LeiosTxCache
-      -- spared us. A forger's own EB should be entirely reapplied.
+      -- spared us. Tabulated only for visibility -- nothing here requires any
+      -- particular ratio.
       & tabulate
         "EB closure validation (reapplied/total)"
         [show reapplied <> "/" <> show (reapplied + applied) | (reapplied, applied) <- validatedSplits]
@@ -817,13 +824,14 @@ endorseInvalidTx adversary nid tni
 -- behaviour we care about. This tx is unsigned for the same reason — the
 -- signature is irrelevant to the check that has to catch it.
 --
--- Forced, because 'ForgedLeiosEb' and the forge path run 'NoThunks'
--- invariants over what they are handed.
 -- 'assumeValidatedClosureTx' is how the adversary lies: it stamps the tx as
 -- mempool-validated so the forge will endorse it, which is exactly the claim a
 -- voter is now supposed to disbelieve.
 invalidEbTx :: Validated (GenTx (CardanoBlock StandardCrypto))
-invalidEbTx = assumeValidatedClosureTx (GenTxDijkstra (mkShelleyTx (force tx)))
+invalidEbTx =
+  -- 'force'd because 'ForgedLeiosEb' and the forge path run 'NoThunks'
+  -- invariants over what they are handed, as the mempool does in 'respendTx'.
+  assumeValidatedClosureTx (GenTxDijkstra (mkShelleyTx (force tx)))
  where
   tx :: Tx TopTx DijkstraEra
   tx = mkBasicTx (mkBasicTxBody & inputsTxBodyL .~ Set.singleton phantomInput)

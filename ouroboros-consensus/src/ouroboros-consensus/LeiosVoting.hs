@@ -127,11 +127,17 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
 -- | How long after its announcing slot /begins/ before an EB's voters may cast
 -- a vote. Serves as the equivocation-detection window: if a peer equivocates by
 -- announcing two different EBs on the same slot, we want to observe the second
--- announcement (and drop the vote) before committing. Stub for '3 * L_hdr'.
+-- announcement (and drop the vote) before issuing our vote. Stub for
+-- '3 * L_hdr'.
+--
+-- TODO: read from the ledger state, once the Leios protocol parameters are
+-- there; a constant cannot follow an on-chain change.
 lHdrWait :: NominalDiffTime
 lHdrWait = 3
 
 -- | How long after 'lHdrWait' votes are still accepted. Stub for 'L_vote'.
+--
+-- TODO: read from the ledger state, as for 'lHdrWait'.
 lVoteWindow :: NominalDiffTime
 lVoteWindow = 4
 
@@ -195,6 +201,9 @@ newVoteTimers tracer lcfg chainDB systemTime = do
                   }
               timer <-
                 registerDelay
+                  -- An EB whose window is already open gives a non-positive
+                  -- delay; 1us keeps 'registerDelay' in its intended range and
+                  -- fires on the next tick, which is the behaviour wanted here.
                   . max 1
                   . diffTimeToMicrosecondsAsInt
                   $ nominalDelay voteIn
@@ -214,10 +223,9 @@ newVoteTimers tracer lcfg chainDB systemTime = do
 
 -- | When a slot begins, in wall-clock terms.
 --
--- Both gates are measured from here rather than counted in slots: the node's
--- notion of the current slot only advances as blocks are adopted, so slot
--- arithmetic would judge the deadline against a clock that stops whenever the
--- chain does.
+-- Both gates are durations -- the protocol parameters they stub for are diff
+-- times, not slot counts -- so they are measured from the announcing slot's
+-- onset rather than counted against the current slot.
 slotOnset ::
   HasHardForkHistory blk =>
   LedgerConfig blk ->

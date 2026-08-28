@@ -213,7 +213,9 @@ withHarness txs k = do
     -- The fold over the not-yet-acquired txs is what a fetch would use to build
     -- its request; here only the refcount bump matters, so it folds into ().
     void $ insertBody cache (pointEbHash point) (serializeEbBody eb) () (\() _ _ _ -> ())
-    -- Mark them acquired, as a fetch would: only then can they be upgraded.
+    -- Mark them acquired, as a fetch would. Not the only way an entry appears --
+    -- a tx taken straight from the mempool goes to Applied without passing
+    -- through here -- but it is the path this harness exercises.
     void $ withLockedInsertUnappliedTx cache $ \w0 step ->
       foldM (\w tx -> step w (txHashOf tx) (txBytesSize tx) ()) w0 txs
 
