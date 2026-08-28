@@ -42,6 +42,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   , ConwayMeasure (..)
   , DijkstraMeasure (..)
   , fromExUnits
+  , leiosEbExUnitsFactor
   , leiosEndorserBlockMeasure
   ) where
 
@@ -736,6 +737,20 @@ txMeasureDijkstra ::
 txMeasureDijkstra st tx =
   (\c -> DijkstraMeasure c oneTxCount) <$> txMeasureConway st tx
 
+#ifndef LEIOS_EB_EXUNITS_FACTOR
+#define LEIOS_EB_EXUNITS_FACTOR 1
+#endif
+
+-- | Multiplier applied to the RB Plutus budget ('SL.ppMaxBlockExUnitsL') to
+-- obtain the EB Plutus budget in 'leiosEndorserBlockMeasure'.
+--
+-- Set at build time via @-DLEIOS_EB_EXUNITS_FACTOR=\<n\>@; defaults to 1,
+-- i.e. EBs get the same Plutus budget as RBs. This only scales the per-EB
+-- capacity used when forging an EB; per-tx limits are unaffected, so every
+-- tx remains individually valid in an RB.
+leiosEbExUnitsFactor :: Natural
+leiosEbExUnitsFactor = LEIOS_EB_EXUNITS_FACTOR
+
 -- | The capacity for the txs in a Leios Endorser Block (Dijkstra era).
 leiosEndorserBlockMeasure ::
   forall proto era mk.
@@ -753,7 +768,11 @@ leiosEndorserBlockMeasure st =
     DijkstraMeasure
       { conwayMeasure =
           conway
-            { alonzoMeasure = alonzo{byteSize = IgnoringOverflow Leios.maxEBClosureSize}
+            { alonzoMeasure =
+                alonzo
+                  { byteSize = IgnoringOverflow Leios.maxEBClosureSize
+                  , exUnits = (* leiosEbExUnitsFactor) <$> exUnits alonzo
+                  }
             , refScriptsSize =
                 IgnoringOverflow $
                   ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
