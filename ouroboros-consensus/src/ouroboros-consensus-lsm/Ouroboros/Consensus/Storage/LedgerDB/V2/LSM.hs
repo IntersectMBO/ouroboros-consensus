@@ -615,7 +615,7 @@ stdMkBlockIOFS ::
 stdMkBlockIOFS fastStoragePath = do
   uncurry SomeHasFSAndBlockIO
     <$> allocateTemp
-      (ioHasBlockIO (MountPoint fastStoragePath) defaultIOCtxParams)
+      (ioHasBlockIO (MountPoint fastStoragePath) defaultIOCtxParams{ioctxIOWaitMetrics = False})
       (\(_, bio) -> BIO.close bio >> pure True)
       impossibleToNotTransfer
 
