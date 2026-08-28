@@ -35,8 +35,6 @@ data PerasError blk
       PerasConversionError
   | PerasQuorumNotReachedError
       VoteWeight
-  | PerasTemporaryPublicKeyHackError
-      String
 
 deriving instance
   Show (PerasVotingCommitteeError blk) =>
