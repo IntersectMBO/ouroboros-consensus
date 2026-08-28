@@ -6,6 +6,13 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-4.2.0.1'></a>
+## 4.2.0.1 -- 2026-08-28
+
+### Patch
+
+- Disable IOWait time accounting, see [well-typed/blockio-uring#55](github.com/well-typed/blockio-uring/issues/55).
+
 <a id='changelog-4.2.0.0'></a>
 ## 4.2.0.0 -- 2026-08-27
 
