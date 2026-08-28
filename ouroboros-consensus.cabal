@@ -1072,6 +1072,7 @@ benchmark leios-db-bench
     bytestring,
     cardano-slotting,
     contra-tracer,
+    directory,
     io-classes:si-timers,
     ouroboros-consensus,
     temporary,

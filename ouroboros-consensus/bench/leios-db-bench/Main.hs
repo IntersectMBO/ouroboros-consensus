@@ -1,6 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Concurrent benchmark for 'LeiosDemoDb' mirroring production access patterns.
 --
@@ -33,12 +35,13 @@ module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (debugTracer, (>$<))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.List (sort)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
@@ -51,6 +54,7 @@ import LeiosDemoDb
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
   , leiosDbLookupEbClosure
+  , leiosDbScanEbPoints
   , newLeiosDBSQLite
   , withLeiosDb
   )
@@ -62,8 +66,11 @@ import LeiosDemoTypes
   , TxHash (..)
   , leiosEbBytesSize
   )
+import System.Directory (doesFileExist)
+import System.Environment (lookupEnv)
 import System.IO (hFlush, stdout)
 import System.IO.Temp (withSystemTempDirectory)
+import System.IO.Unsafe (unsafePerformIO)
 
 main :: IO ()
 main = do
@@ -74,6 +81,8 @@ main = do
       , "Database setup:"
       , "  EBs pre-populated : " <> show numPrePopulatedEbs
       , "  TXs per EB        : " <> show txsPerEb
+      , "  TX hash pool      : "
+          <> (if txHashPool <= 0 then "disjoint per EB" else show txHashPool <> " shared")
       , "  Total TXs         : " <> show (numPrePopulatedEbs * txsPerEb)
       , ""
       , "Concurrent workload per iteration:"
@@ -85,35 +94,79 @@ main = do
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
       , ""
       ]
-  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
-    env <- setupBenchEnv tmpDir
-    runBench (benchConcurrentAll env)
+  -- The default temp directory is often tmpfs, i.e. RAM: measurements taken
+  -- there miss everything the storage layer does. Point this at the same
+  -- filesystem the node uses.
+  lookupEnv "LEIOS_DB_BENCH_DIR" >>= \case
+    Just dir -> do
+      putStrLn $ "  Database directory: " <> dir <> " (from LEIOS_DB_BENCH_DIR)"
+      env <- setupBenchEnv dir
+      runBench (beInsertTimes env) (benchConcurrentAll env)
+    Nothing ->
+      withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
+        putStrLn $ "  Database directory: " <> tmpDir <> " (system temp -- may be tmpfs)"
+        env <- setupBenchEnv tmpDir
+        runBench (beInsertTimes env) (benchConcurrentAll env)
 
 -- * Configuration
 
+-- | Read an @Int@ knob from the environment, defaulting if unset.
+--
+-- The shape of the database dominates every measurement here, and the
+-- production shape is nothing like the defaults: a devnet reached 13.5k txs per
+-- EB with closures overlapping almost completely, against 200 unique ones here.
+-- Rather than bake one shape in, the three that matter are knobs.
+envInt :: String -> Int -> Int
+envInt name def = unsafePerformIO $ maybe def read <$> lookupEnv name
+{-# NOINLINE envInt #-}
+
 -- | Number of EBs pre-inserted into the DB during setup (not timed).
 numPrePopulatedEbs :: Int
-numPrePopulatedEbs = 500
+numPrePopulatedEbs = envInt "LEIOS_DB_BENCH_EBS" 500
+{-# NOINLINE numPrePopulatedEbs #-}
 
--- | TXs per EB (mid-range; Leios spec allows up to 2000).
+-- | TXs per EB. Production reached 13568, the cap set by 'maxEBClosureSize'.
 txsPerEb :: Int
-txsPerEb = 200
+txsPerEb = envInt "LEIOS_DB_BENCH_TXS_PER_EB" 200
+{-# NOINLINE txsPerEb #-}
+
+-- | Size of the shared pool tx hashes are drawn from, or 0 for a fresh hash per
+-- (EB, offset).
+--
+-- Zero -- the historical behaviour -- means no two EBs ever share a
+-- transaction, so 'txs' grows as fast as 'ebTxs'. In production the mempool
+-- does not drain between EBs, so successive closures repeat almost the same
+-- transactions: 'ebTxs' grew to 4.7x the distinct hashes it referenced. A pool
+-- smaller than @numPrePopulatedEbs * txsPerEb@ reproduces that.
+txHashPool :: Int
+txHashPool = envInt "LEIOS_DB_BENCH_TX_POOL" 0
+{-# NOINLINE txHashPool #-}
+
+-- | Skip 'leiosDbInsertTxs', leaving only what the node traces as its EB body
+-- ingest.
+skipInsertTxs :: Bool
+skipInsertTxs = envInt "LEIOS_DB_BENCH_SKIP_INSERTTXS" 0 /= 0
+{-# NOINLINE skipInsertTxs #-}
 
 -- | Number of fetch client threads (writers that insert fresh EBs).
 numFetchClients :: Int
-numFetchClients = 3
+numFetchClients = envInt "LEIOS_DB_BENCH_CLIENTS" 3
+{-# NOINLINE numFetchClients #-}
 
 -- | Number of fetch server threads (readers serving downstream peers).
 numFetchServers :: Int
-numFetchServers = 3
+numFetchServers = envInt "LEIOS_DB_BENCH_SERVERS" 3
+{-# NOINLINE numFetchServers #-}
 
 -- | Number of chain-sel-shaped reader calls per iteration.
 numChainSelReads :: Int
-numChainSelReads = 50
+numChainSelReads = envInt "LEIOS_DB_BENCH_CHAINSEL" 50
+{-# NOINLINE numChainSelReads #-}
 
 -- | Number of GC ticks per iteration.
 numGcTicks :: Int
-numGcTicks = 3
+numGcTicks = envInt "LEIOS_DB_BENCH_GC" 3
+{-# NOINLINE numGcTicks #-}
 
 -- | Timed repetitions (plus one warmup).
 numRuns :: Int
@@ -123,15 +176,21 @@ numRuns = 5
 
 -- | All production roles running concurrently against one DB handle.
 benchConcurrentAll :: BenchEnv -> IO ()
-benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerIdxRef} = do
+benchConcurrentAll BenchEnv
+                     { beDb = db
+                     , bePoints = points
+                     , bePool = pool
+                     , beInsertTimes = times
+                     , beWriterIdx = writerIdxRef
+                     } = do
   startIdx <-
     atomicModifyIORef'
       writerIdxRef
       (\n -> (n + numFetchClients * ebsPerClient, n))
   cs <- async (chainSelReader db points)
   gc <- async (gcTicker db)
-  clients <- forM (clientRanges startIdx) $ \range -> async (fetchClient db range)
-  mapConcurrently_ (fetchServer db points) [0 .. numFetchServers - 1]
+  clients <- forM (clientRanges startIdx) $ \range -> async (fetchClient db pool times range)
+  mapConcurrently_ (fetchServer db points) [0 .. numFetchServers - 1 :: Int]
   wait cs >> wait gc
   forM_ clients wait
  where
@@ -142,10 +201,12 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
     ]
 
 -- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
-fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
-fetchClient db range =
+fetchClient :: LeiosDbHandle IO -> V.Vector TxHash -> IORef [Split] -> [Int] -> IO ()
+fetchClient db pool times range =
   withLeiosDb db $ \c ->
-    forM_ range (insertOneEb c)
+    forM_ range $ \i -> do
+      sp <- insertOneEbTimed c pool i
+      atomicModifyIORef' times (\ts -> (sp : ts, ()))
 
 -- | Mirrors chain-selection's block-apply path: repeated
 -- 'leiosDbLookupEbClosure' for the tx closure of each certified EB.
@@ -176,36 +237,82 @@ fetchServer db points i =
 
 -- * Benchmark environment
 
+-- | Per-insert durations of 'insertEbPoint', 'insertEbBody' and 'insertTxs'.
+type Split = (DiffTime, DiffTime, DiffTime)
+
 data BenchEnv = BenchEnv
   { beDb :: !(LeiosDbHandle IO)
   , bePoints :: ![LeiosPoint]
   -- ^ Pre-computed list of all 'numPrePopulatedEbs' points.
+  , bePool :: !(V.Vector TxHash)
+  -- ^ Tx hashes the writers draw from; empty means synthesise fresh ones.
+  , beInsertTimes :: !(IORef [Split])
+  -- ^ Per-'insertOneEb' durations, so the writer path can be read separately
+  -- from an iteration total that is a max over concurrent roles, not a sum.
   , beWriterIdx :: !(IORef Int)
   -- ^ Monotonically increasing counter so each benchmark iteration allocates
   -- a fresh range of EB indices for writers (avoids duplicate-key errors).
   }
 
--- | Create a fresh SQLite DB and insert 'numPrePopulatedEbs' complete EBs.
--- This setup cost is not included in the timed measurements.
+-- | Open the benchmark database, adopting one that is already there.
+--
+-- Copy a node's @leios.db@ into the directory as @bench.db@ and the benchmark
+-- runs against production data at production scale, with no setup: the readers
+-- cycle real EBs and the writers draw their closures from real transaction
+-- hashes, so the anti-join finds them present, as it does on a node whose
+-- mempool is not draining. Building an equivalent database here would take
+-- hours and still not have the same shape.
 setupBenchEnv :: FilePath -> IO BenchEnv
 setupBenchEnv tmpDir = do
-  db <- newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.db")
-  putStr "Inserting EBs: " >> hFlush stdout
-  forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
-    withLeiosDb db (`insertOneEb` i)
-    when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
-      putStr (show (i + 1) <> " ") >> hFlush stdout
-  putStrLn "done"
-  let points = [genPoint i | i <- [0 .. numPrePopulatedEbs - 1]]
+  let path = tmpDir <> "/bench.db"
+  adopted <- doesFileExist path
+  db <- newLeiosDBSQLite (show >$< debugTracer) path
+  points <-
+    if adopted
+      then do
+        ps <- withLeiosDb db leiosDbScanEbPoints
+        putStrLn $ "Adopted existing database: " <> show (length ps) <> " EBs"
+        pure [MkLeiosPoint slot h | (slot, h) <- ps]
+      else do
+        putStr "Inserting EBs: " >> hFlush stdout
+        forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
+          withLeiosDb db (\c -> insertOneEb c V.empty i)
+          when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
+            putStr (show (i + 1) <> " ") >> hFlush stdout
+        putStrLn "done"
+        pure [genPoint i | i <- [0 .. numPrePopulatedEbs - 1]]
+  when (null points) $ error "leios-db-bench: no EBs in the database"
+  -- Writers reuse hashes the database already holds, so their closures overlap
+  -- with stored transactions the way production closures do.
+  pool <-
+    if adopted
+      then do
+        -- Walk stored EBs until there are enough hashes to fill a closure. The
+        -- first EBs a scan returns can be nearly empty, and a pool smaller than
+        -- the closure would make the anti-join probe a handful of rows over and
+        -- over instead of the ~13.5k distinct ones a real body probes.
+        hs <- withLeiosDb db $ \c ->
+          let go :: [TxHash] -> [LeiosPoint] -> IO [TxHash]
+              go acc [] = pure acc
+              go acc (pt : rest)
+                | length acc >= txsPerEb = pure acc
+                | otherwise = do
+                    body <- leiosDbLookupEbBody c pt.pointEbHash
+                    go (acc <> map fst body) rest
+           in go [] (reverse points)
+        putStrLn $ "Writer tx pool: " <> show (length hs) <> " hashes sampled from stored EBs"
+        pure $ V.fromList hs
+      else pure V.empty
   writerIdx <- newIORef numPrePopulatedEbs
-  pure $ BenchEnv db points writerIdx
+  insertTimes <- newIORef []
+  pure $ BenchEnv db points pool insertTimes writerIdx
 
 -- * Timing
 
 -- | Warm up once, then time 'numRuns' repetitions, printing each result and a
 -- final min\/avg\/max summary.
-runBench :: IO () -> IO ()
-runBench action = do
+runBench :: IORef [Split] -> IO () -> IO ()
+runBench insertTimes action = do
   action -- warmup (not printed)
   times <- forM [1 .. numRuns] $ \i -> do
     t <- snd <$> timed action
@@ -216,6 +323,24 @@ runBench action = do
       maxT = maximum times
   putStrLn $
     "  => min=" <> showTime minT <> "  avg=" <> showTime avg <> "  max=" <> showTime maxT
+  splits <- readIORef insertTimes
+  let stat name sel =
+        let xs = sort (map sel splits)
+            pick q = xs !! min (length xs - 1) (floor (q * fromIntegral (length xs) :: Double))
+         in putStrLn $
+              "    "
+                <> name
+                <> ": median="
+                <> showTime (pick 0.5)
+                <> "  p90="
+                <> showTime (pick 0.9)
+                <> "  max="
+                <> showTime (last xs)
+  putStrLn $ "  insertOneEb (n=" <> show (length splits) <> "), by call:"
+  stat "insertEbPoint" (\(a, _, _) -> a)
+  stat "insertEbBody " (\(_, b, _) -> b)
+  stat "insertTxs    " (\(_, _, c) -> c)
+  stat "total        " (\(a, b, c) -> a + b + c)
 
 timed :: IO a -> IO (a, DiffTime)
 timed action = do
@@ -236,21 +361,55 @@ showTime t
 -- * DB helpers
 
 -- | Insert one complete EB (point + body + all TXs) by index.
-insertOneEb :: Monad m => LeiosDbConnection m -> Int -> m ()
-insertOneEb conn ebIdx = do
-  let point = genPoint ebIdx
-      eb = genEb ebIdx
-      txs =
-        [ (h, genTx h)
-        | txIdx <- [0 .. txsPerEb - 1]
-        , let h = genTxHash ebIdx txIdx
-        ]
+insertOneEb :: Monad m => LeiosDbConnection m -> V.Vector TxHash -> Int -> m ()
+insertOneEb conn pool ebIdx = do
+  let hashAt = ebTxHash pool ebIdx
+      point = genPoint ebIdx
+      eb = MkLeiosEb $ V.fromList [(hashAt i, 200 :: BytesSize) | i <- [0 .. txsPerEb - 1]]
+      txs = [(h, genTx h) | txIdx <- [0 .. txsPerEb - 1], let h = hashAt txIdx]
   leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
   _ <- leiosDbInsertEbBody conn point eb
   _ <- leiosDbInsertTxs conn txs
   pure ()
 
+-- | As 'insertOneEb', but reporting how long each of the three calls took.
+--
+-- Poor-man's profiling: a profiled build needs a profiling variant of every
+-- linked library, which the nix shell does not ship, so the writer path is
+-- bisected by hand instead.
+insertOneEbTimed ::
+  LeiosDbConnection IO -> V.Vector TxHash -> Int -> IO (DiffTime, DiffTime, DiffTime)
+insertOneEbTimed conn pool ebIdx = do
+  let hashAt = ebTxHash pool ebIdx
+      point = genPoint ebIdx
+      eb = MkLeiosEb $ V.fromList [(hashAt i, 200 :: BytesSize) | i <- [0 .. txsPerEb - 1]]
+      txs = [(h, genTx h) | txIdx <- [0 .. txsPerEb - 1], let h = hashAt txIdx]
+  (_, tPoint) <- timed $ leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
+  (_, tBody) <- timed $ leiosDbInsertEbBody conn point eb
+  -- The node's 'dbInsertMs' spans only the two calls above; 'insertTxs' happens
+  -- later, outside that trace. Skipping it isolates the stage production
+  -- actually measures.
+  (_, tTxs) <-
+    if skipInsertTxs
+      then pure ((), 0)
+      else timed $ void (leiosDbInsertTxs conn txs)
+  pure (tPoint, tBody, tTxs)
+
 -- * Deterministic data generation
+
+-- | Which hash a given (EB, offset) slot uses: its own, or one from the shared
+-- pool when 'txHashPool' is set.
+hashIndex :: Int -> Int -> (Int, Int)
+hashIndex ebIdx txIdx
+  | txHashPool <= 0 = (ebIdx, txIdx)
+  | otherwise = (0, (ebIdx * txsPerEb + txIdx) `mod` txHashPool)
+
+-- | The hash a writer puts at a given offset: one the database already holds
+-- when a pool was sampled, otherwise a synthetic one.
+ebTxHash :: V.Vector TxHash -> Int -> Int -> TxHash
+ebTxHash pool ebIdx txIdx
+  | V.null pool = genTxHash ebIdx txIdx
+  | otherwise = pool V.! ((ebIdx * txsPerEb + txIdx) `mod` V.length pool)
 
 -- | 'LeiosPoint' from an index (SlotNo = index).
 genPoint :: Int -> LeiosPoint
@@ -272,11 +431,14 @@ genEb ebIdx =
 -- | 'TxHash' from an EB index + TX offset: \"txHash:<ebIdx>:<txIdx>\" padded
 -- to 32 bytes with zeros.
 --
--- NOTE: This is taking an EB index as it always generates the worst case of
--- fully disjunct transaction closures between EBs.
+-- NOTE: Takes an EB index because with 'txHashPool' unset it generates the worst
+-- case of fully disjunct closures between EBs. With a pool set, the index pair
+-- collapses onto the pool and successive closures overlap, as they do under a
+-- mempool that is not draining.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx0 txIdx0 = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
  where
+  (ebIdx, txIdx) = hashIndex ebIdx0 txIdx0
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
 -- | Generate a TX payload: the TX hash bytes padded with zeros to 16 KiB.
