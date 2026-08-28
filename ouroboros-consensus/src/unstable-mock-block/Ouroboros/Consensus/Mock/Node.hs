@@ -104,14 +104,14 @@ simpleBlockForging aCanBeLeader aForgeExt =
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
           flip (,) Nothing $
-          forgeSimple
-            aForgeExt
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            (map txForgetValidated fbRbTxs)
-            fbIsLeader
+            forgeSimple
+              aForgeExt
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              (map txForgetValidated fbRbTxs)
+              fbIsLeader
     , finalize = pure ()
     }
  where

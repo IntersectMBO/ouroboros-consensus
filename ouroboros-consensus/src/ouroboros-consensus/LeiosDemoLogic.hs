@@ -87,6 +87,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , LeiosTx (..)
   , PeerId (..)
+  , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
@@ -94,9 +95,8 @@ import LeiosDemoTypes
   , hashLeiosEb
   , hashLeiosTx
   , leiosEbBytesSize
-  , maxTxsPerEb
   , leiosEbTxs
-  , RbHash (..)
+  , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
 import LeiosTxCache (LeiosTxCache (..))
@@ -1135,11 +1135,11 @@ processAnnouncementCentrally
         shouldRelay
         age
         ancHdr
- where
-  fields = ancAnnouncementFields ancHdr
-  -- The announced EB's slot is the announcing header's own slot (see
-  -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
-  point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
+   where
+    fields = ancAnnouncementFields ancHdr
+    -- The announced EB's slot is the announcing header's own slot (see
+    -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
+    point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the

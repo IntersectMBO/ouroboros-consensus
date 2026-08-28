@@ -68,7 +68,7 @@ data MutableHashTable s = MutableHashTable
 -- | Allocate a table of @2 ^ nshift@ slots (@nshift >= 6@) with the given 128-bit
 -- salt. Feed a securely-random salt: keys are adversarial.
 new :: PrimMonad m => Int -> Word64 -> Word64 -> m (MutableHashTable (PrimState m))
-{-# SPECIALISE new :: Int -> Word64 -> Word64 -> IO (MutableHashTable (PrimState IO)) #-}
+{-# SPECIALIZE new :: Int -> Word64 -> Word64 -> IO (MutableHashTable (PrimState IO)) #-}
 new nshift k0 k1
   | nshift < 6 = error "MutableHashTable.new: nshift must be >= 6"
   | otherwise = do
@@ -93,7 +93,7 @@ capacity :: MutableHashTable s -> Int
 capacity = mhtCap
 
 size :: PrimMonad m => MutableHashTable (PrimState m) -> m Int
-{-# SPECIALISE size :: MutableHashTable (PrimState IO) -> IO Int #-}
+{-# SPECIALIZE size :: MutableHashTable (PrimState IO) -> IO Int #-}
 size = readMutVar . mhtSize
 
 {-------------------------------------------------------------------------------
@@ -101,20 +101,20 @@ size = readMutVar . mhtSize
 -------------------------------------------------------------------------------}
 
 isOccupied :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m Bool
-{-# SPECIALISE isOccupied :: MutableHashTable (PrimState IO) -> Int -> IO Bool #-}
+{-# SPECIALIZE isOccupied :: MutableHashTable (PrimState IO) -> Int -> IO Bool #-}
 isOccupied ht i = do
   w <- readByteArray (mhtOccupied ht) (i `unsafeShiftR` 6)
   pure $ testBit (w :: Word64) (i .&. 63)
 
 setOccupied :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m ()
-{-# SPECIALISE setOccupied :: MutableHashTable (PrimState IO) -> Int -> IO () #-}
+{-# SPECIALIZE setOccupied :: MutableHashTable (PrimState IO) -> Int -> IO () #-}
 setOccupied ht i = do
   let j = i `unsafeShiftR` 6
   w <- readByteArray (mhtOccupied ht) j
   writeByteArray (mhtOccupied ht) j (setBit (w :: Word64) (i .&. 63))
 
 clearOccupied :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m ()
-{-# SPECIALISE clearOccupied :: MutableHashTable (PrimState IO) -> Int -> IO () #-}
+{-# SPECIALIZE clearOccupied :: MutableHashTable (PrimState IO) -> Int -> IO () #-}
 clearOccupied ht i = do
   let j = i `unsafeShiftR` 6
   w <- readByteArray (mhtOccupied ht) j
@@ -125,7 +125,7 @@ clearOccupied ht i = do
 -------------------------------------------------------------------------------}
 
 readKey :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m Key
-{-# SPECIALISE readKey :: MutableHashTable (PrimState IO) -> Int -> IO Key #-}
+{-# SPECIALIZE readKey :: MutableHashTable (PrimState IO) -> Int -> IO Key #-}
 readKey ht i = do
   let b = i * 5
   Key
@@ -135,7 +135,7 @@ readKey ht i = do
     <*> readByteArray (mhtEntries ht) (b + 3)
 
 writeKey :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> Key -> m ()
-{-# SPECIALISE writeKey :: MutableHashTable (PrimState IO) -> Int -> Key -> IO () #-}
+{-# SPECIALIZE writeKey :: MutableHashTable (PrimState IO) -> Int -> Key -> IO () #-}
 writeKey ht i (Key a b c d) = do
   let o = i * 5
   writeByteArray (mhtEntries ht) o a
@@ -144,11 +144,11 @@ writeKey ht i (Key a b c d) = do
   writeByteArray (mhtEntries ht) (o + 3) d
 
 readVal :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m Word64
-{-# SPECIALISE readVal :: MutableHashTable (PrimState IO) -> Int -> IO Word64 #-}
+{-# SPECIALIZE readVal :: MutableHashTable (PrimState IO) -> Int -> IO Word64 #-}
 readVal ht i = readByteArray (mhtEntries ht) (i * 5 + 4)
 
 writeVal :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> Word64 -> m ()
-{-# SPECIALISE writeVal :: MutableHashTable (PrimState IO) -> Int -> Word64 -> IO () #-}
+{-# SPECIALIZE writeVal :: MutableHashTable (PrimState IO) -> Int -> Word64 -> IO () #-}
 writeVal ht i = writeByteArray (mhtEntries ht) (i * 5 + 4)
 
 {-------------------------------------------------------------------------------
@@ -226,7 +226,7 @@ hashKey ht = homeSlot (mhtMask ht) (mhtK0 ht) (mhtK1 ht)
 
 -- | Insert or overwrite. Guarded against the full-table infinite loop: raises.
 insert :: PrimMonad m => MutableHashTable (PrimState m) -> Key -> Word64 -> m ()
-{-# SPECIALISE insert :: MutableHashTable (PrimState IO) -> Key -> Word64 -> IO () #-}
+{-# SPECIALIZE insert :: MutableHashTable (PrimState IO) -> Key -> Word64 -> IO () #-}
 insert ht key val = go 0 (hashKey ht key)
  where
   cap = mhtCap ht
@@ -248,7 +248,7 @@ insert ht key val = go 0 (hashKey ht key)
             modifyMutVar' (mhtSize ht) (+ 1)
 
 lookup :: PrimMonad m => MutableHashTable (PrimState m) -> Key -> m (Maybe Word64)
-{-# SPECIALISE lookup :: MutableHashTable (PrimState IO) -> Key -> IO (Maybe Word64) #-}
+{-# SPECIALIZE lookup :: MutableHashTable (PrimState IO) -> Key -> IO (Maybe Word64) #-}
 lookup ht key = go 0 (hashKey ht key)
  where
   cap = mhtCap ht
@@ -269,7 +269,7 @@ lookup ht key = go 0 (hashKey ht key)
 -- back toward their ideal index so no tombstone is left behind. Returns whether
 -- the key was present.
 delete :: PrimMonad m => MutableHashTable (PrimState m) -> Key -> m Bool
-{-# SPECIALISE delete :: MutableHashTable (PrimState IO) -> Key -> IO Bool #-}
+{-# SPECIALIZE delete :: MutableHashTable (PrimState IO) -> Key -> IO Bool #-}
 delete ht key = do
   mIdx <- findSlot 0 (hashKey ht key)
   case mIdx of

@@ -68,13 +68,13 @@ dualByronBlockForging creds =
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
           flip (,) Nothing $
-          forgeDualByronBlock
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            fbRbTxs
-            fbIsLeader
+            forgeDualByronBlock
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              fbRbTxs
+              fbIsLeader
     , finalize = return ()
     }
  where

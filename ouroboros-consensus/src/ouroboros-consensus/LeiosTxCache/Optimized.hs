@@ -63,9 +63,8 @@ newHashTableLeiosTxCache ::
   Word64 ->
   Word64 ->
   m (LeiosTxCache m () () b)
-{-# SPECIALISE
-  newHashTableLeiosTxCache ::
-    ReferencesTxsByHash b => Int -> Word64 -> Word64 -> IO (LeiosTxCache IO () () b)
+{-# SPECIALIZE newHashTableLeiosTxCache ::
+  ReferencesTxsByHash b => Int -> Word64 -> Word64 -> IO (LeiosTxCache IO () () b)
   #-}
 newHashTableLeiosTxCache nshift k0 k1 = do
   ht <- HT.new nshift k0 k1
@@ -159,15 +158,14 @@ evictWhile ::
   Set EbHash ->
   Set TxHash ->
   m (HtState b, (Set EbHash, Set TxHash))
-{-# SPECIALISE
-  evictWhile ::
-    ReferencesTxsByHash b =>
-    HT.MutableHashTable (PrimState IO) ->
-    (HtState b -> Bool) ->
-    HtState b ->
-    Set EbHash ->
-    Set TxHash ->
-    IO (HtState b, (Set EbHash, Set TxHash))
+{-# SPECIALIZE evictWhile ::
+  ReferencesTxsByHash b =>
+  HT.MutableHashTable (PrimState IO) ->
+  (HtState b -> Bool) ->
+  HtState b ->
+  Set EbHash ->
+  Set TxHash ->
+  IO (HtState b, (Set EbHash, Set TxHash))
   #-}
 evictWhile ht shouldEvict = go
  where
@@ -189,12 +187,11 @@ evictOldest ::
   HT.MutableHashTable (PrimState m) ->
   HtState b ->
   m (HtState b, Set EbHash, Set TxHash)
-{-# SPECIALISE
-  evictOldest ::
-    ReferencesTxsByHash b =>
-    HT.MutableHashTable (PrimState IO) ->
-    HtState b ->
-    IO (HtState b, Set EbHash, Set TxHash)
+{-# SPECIALIZE evictOldest ::
+  ReferencesTxsByHash b =>
+  HT.MutableHashTable (PrimState IO) ->
+  HtState b ->
+  IO (HtState b, Set EbHash, Set TxHash)
   #-}
 evictOldest ht st = do
   let (slotMin, nem) = Map.findMin (hsAnnouncements st)
@@ -220,13 +217,12 @@ decBody ::
   EbHash ->
   Map EbHash (BodyState b) ->
   m (Map EbHash (BodyState b), Set EbHash, Set TxHash)
-{-# SPECIALISE
-  decBody ::
-    ReferencesTxsByHash b =>
-    HT.MutableHashTable (PrimState IO) ->
-    EbHash ->
-    Map EbHash (BodyState b) ->
-    IO (Map EbHash (BodyState b), Set EbHash, Set TxHash)
+{-# SPECIALIZE decBody ::
+  ReferencesTxsByHash b =>
+  HT.MutableHashTable (PrimState IO) ->
+  EbHash ->
+  Map EbHash (BodyState b) ->
+  IO (Map EbHash (BodyState b), Set EbHash, Set TxHash)
   #-}
 decBody ht ebh bodies = case Map.lookup ebh bodies of
   Nothing -> pure (bodies, Set.empty, Set.empty)
@@ -243,9 +239,8 @@ decBodyTxs ::
   HT.MutableHashTable (PrimState m) ->
   b ->
   m (Set TxHash)
-{-# SPECIALISE
-  decBodyTxs ::
-    ReferencesTxsByHash b => HT.MutableHashTable (PrimState IO) -> b -> IO (Set TxHash)
+{-# SPECIALIZE decBodyTxs ::
+  ReferencesTxsByHash b => HT.MutableHashTable (PrimState IO) -> b -> IO (Set TxHash)
   #-}
 decBodyTxs ht =
   foldTxReferences
@@ -300,7 +295,7 @@ valTag w = w .&. 3
 -- Returns the tx's /prior/ packed value ('Nothing' if it was untracked), so the
 -- caller can classify it without a second lookup.
 bumpTx :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m (Maybe Word64)
-{-# SPECIALISE bumpTx :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe Word64) #-}
+{-# SPECIALIZE bumpTx :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe Word64) #-}
 bumpTx ht txh = do
   let key = toKey txh
   mv <- HT.lookup ht key
@@ -321,7 +316,7 @@ priorClass (Just w)
 -- | An evicted body no longer refers to this tx: decrement, deleting (and
 -- reporting) it at zero.
 decTx :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m Bool
-{-# SPECIALISE decTx :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO Bool #-}
+{-# SPECIALIZE decTx :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO Bool #-}
 decTx ht txh = do
   let key = toKey txh
   mv <- HT.lookup ht key
@@ -333,7 +328,7 @@ decTx ht txh = do
 
 -- | Set a present tx's state tag, preserving its refcount; no-op if absent.
 setTag :: PrimMonad m => HT.MutableHashTable (PrimState m) -> Word64 -> TxHash -> m ()
-{-# SPECIALISE setTag :: HT.MutableHashTable (PrimState IO) -> Word64 -> TxHash -> IO () #-}
+{-# SPECIALIZE setTag :: HT.MutableHashTable (PrimState IO) -> Word64 -> TxHash -> IO () #-}
 setTag ht tag txh = do
   let key = toKey txh
   mv <- HT.lookup ht key
@@ -342,7 +337,9 @@ setTag ht tag txh = do
     Just w -> HT.insert ht key (mkVal (valRefcount w) tag)
 
 lookupOne :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m (Maybe (Either () ()))
-{-# SPECIALISE lookupOne :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe (Either () ())) #-}
+{-# SPECIALIZE lookupOne ::
+  HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe (Either () ()))
+  #-}
 lookupOne ht txh = do
   mv <- HT.lookup ht (toKey txh)
   pure $ case mv of

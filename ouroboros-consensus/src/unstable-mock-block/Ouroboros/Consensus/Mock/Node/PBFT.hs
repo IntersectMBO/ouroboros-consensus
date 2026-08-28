@@ -113,13 +113,13 @@ pbftBlockForging canBeLeader =
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
           flip (,) Nothing $
-          forgeSimple
-            forgePBftExt
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            (map txForgetValidated fbRbTxs)
-            fbIsLeader
+            forgeSimple
+              forgePBftExt
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              (map txForgetValidated fbRbTxs)
+              fbIsLeader
     , finalize = pure ()
     }

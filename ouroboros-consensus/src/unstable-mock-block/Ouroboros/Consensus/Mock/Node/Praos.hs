@@ -140,13 +140,13 @@ praosBlockForging cid initHotKey = do
           hotKey <- readMVar varHotKey
           return $
             flip (,) Nothing $
-            forgeSimple
-              (forgePraosExt hotKey)
-              fbConfig
-              fbCurrentBlockNo
-              fbCurrentSlotNo
-              fbCurrentTickedLedgerState
-              (map txForgetValidated fbRbTxs)
-              fbIsLeader
+              forgeSimple
+                (forgePraosExt hotKey)
+                fbConfig
+                fbCurrentBlockNo
+                fbCurrentSlotNo
+                fbCurrentTickedLedgerState
+                (map txForgetValidated fbRbTxs)
+                fbIsLeader
       , finalize = pure ()
       }

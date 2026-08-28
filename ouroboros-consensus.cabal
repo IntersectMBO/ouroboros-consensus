@@ -712,10 +712,12 @@ test-suite leios-txcache-bounds-checked
     ouroboros-consensus/test/leios-txcache-bounds-checked
     ouroboros-consensus/test/consensus-test
     ouroboros-consensus/src/ouroboros-consensus
+
   main-is: Main.hs
   other-modules:
     LeiosTxCache.Optimized.MutableHashTable
     Test.LeiosTxCache.Optimized.MutableHashTable
+
   ghc-options: -fcheck-prim-bounds
   build-depends:
     base,

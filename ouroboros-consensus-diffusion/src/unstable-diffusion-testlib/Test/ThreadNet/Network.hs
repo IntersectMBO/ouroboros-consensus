@@ -769,7 +769,11 @@ runThreadNetwork
       NodeDBs (StrictTMVar m MockFS) ->
       LeiosState (MonadSTMStrict.StrictTVar m) ->
       CoreNodeId ->
-      m (LeiosDemoDb.LeiosDbHandle m, LeiosTxCache m () () LeiosDemoTypes.SerializedEbBody, ChainDbArgs Identity m blk)
+      m
+        ( LeiosDemoDb.LeiosDbHandle m
+        , LeiosTxCache m () () LeiosDemoTypes.SerializedEbBody
+        , ChainDbArgs Identity m blk
+        )
     mkArgs
       registry
       cfg
