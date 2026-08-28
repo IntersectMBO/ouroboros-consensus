@@ -811,8 +811,13 @@ endorseInvalidTx adversary nid tni
   poison bf =
     bf
       { forgeBlock = \args ->
-          forgeBlock bf args{fbEbTxs = fbEbTxs args <> [invalidEbTx]}
+          forgeBlock bf args{fbEbTxs = fbEbTxs args <> [lie invalidEbTx]}
       }
+  -- The lie is told here and only here: 'assumeValidatedClosureTx' stamps the tx
+  -- as mempool-validated so the forge will endorse it, which is exactly the
+  -- claim a voter is now supposed to disbelieve. Applying it at the use site
+  -- keeps 'invalidEbTx' an ordinary, plainly invalid transaction.
+  lie = assumeValidatedClosureTx
 
 -- | A Dijkstra transaction that spends an output which does not exist: its
 -- input names the id of a transaction that is never applied anywhere, so the
@@ -823,15 +828,11 @@ endorseInvalidTx adversary nid tni
 -- is allowed to skip, so a witness-only failure would not pin down the
 -- behaviour we care about. This tx is unsigned for the same reason — the
 -- signature is irrelevant to the check that has to catch it.
---
--- 'assumeValidatedClosureTx' is how the adversary lies: it stamps the tx as
--- mempool-validated so the forge will endorse it, which is exactly the claim a
--- voter is now supposed to disbelieve.
-invalidEbTx :: Validated (GenTx (CardanoBlock StandardCrypto))
+invalidEbTx :: GenTx (CardanoBlock StandardCrypto)
 invalidEbTx =
   -- 'force'd because 'ForgedLeiosEb' and the forge path run 'NoThunks'
   -- invariants over what they are handed, as the mempool does in 'respendTx'.
-  assumeValidatedClosureTx (GenTxDijkstra (mkShelleyTx (force tx)))
+  GenTxDijkstra (mkShelleyTx (force tx))
  where
   tx :: Tx TopTx DijkstraEra
   tx = mkBasicTx (mkBasicTxBody & inputsTxBodyL .~ Set.singleton phantomInput)

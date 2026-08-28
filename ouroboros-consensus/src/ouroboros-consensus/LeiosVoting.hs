@@ -116,13 +116,18 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
 -- described in the Leios protocol specification. Real values should come
 -- from the protocol parameters once wired in.
 
--- TODO: Fetching and validating an EB's closure should start when the closure
--- arrives, streamed, rather than after this wait. Validation is linear in the
--- closure -- a full ~13.5k-tx closure takes ~1.5s even when every tx is a
--- tx-cache hit -- so doing it inside the vote window spends the window on work
--- that could have been done while waiting for it to open. A devnet run showed
--- exactly that: as closures filled up, the time from votable to validated grew
--- past the window and voting stopped entirely.
+-- Validation is linear in the closure -- a full ~13.5k-tx closure takes ~1.5s
+-- even when every tx is a tx-cache hit -- so doing it inside the vote window
+-- spends the window on work that could have been done before it opened. A devnet
+-- run showed exactly that: as closures filled up, the time from votable to
+-- validated grew past the window and voting stopped entirely. Two independent
+-- ways to stop paying for it here:
+--
+-- TODO: validate as soon as the whole closure has arrived, rather than waiting
+-- for the vote window to open.
+--
+-- TODO: validate the closure as it streams in, rather than waiting for all of
+-- it. Subsumes the above, and is considerably more involved.
 
 -- | How long after its announcing slot /begins/ before an EB's voters may cast
 -- a vote. Serves as the equivocation-detection window: if a peer equivocates by

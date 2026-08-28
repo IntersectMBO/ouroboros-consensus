@@ -80,21 +80,26 @@ tests =
 -- | Nothing in the cache yet, so every tx goes through the full 'applyTx'.
 prop_freshClosureFullyApplied :: Property
 prop_freshClosureFullyApplied =
-  forAllValidClosure 4 $ \txs -> ioProperty $ do
-    (verdict, tagged) <- runValidate txs
+  forAllValidClosure 4 $ \acquired txs -> ioProperty $ do
+    (verdict, tagged) <- runValidate acquired txs
     pure $
       conjoin
         [ verdict === Valid 0 (length txs)
         , tagged === map (const True) txs
             & counterexample "every validated tx should be tagged"
         ]
+        -- A tx the cache never saw acquired must behave exactly like one it
+        -- holds unapplied, so the verdict above is asserted across the mix.
+        & tabulate
+          "txs the cache had seen acquired"
+          [show (length (filter id acquired)) <> "/" <> show (length acquired)]
 
 -- | The tags the first pass left behind send the second pass down 'reapplyTx',
 -- which is the whole point of consulting the cache.
 prop_secondLookReapplies :: Property
 prop_secondLookReapplies =
-  forAllValidClosure 4 $ \txs -> ioProperty $ do
-    (_, _, second) <- runValidateTwice txs
+  forAllValidClosure 4 $ \acquired txs -> ioProperty $ do
+    (_, _, second) <- runValidateTwice acquired txs
     pure $ second === Valid (length txs) 0
 
 -- | A closure that fails part-way must still leave everything it validated
@@ -102,8 +107,8 @@ prop_secondLookReapplies =
 -- and holds regardless of the tx that sank the EB.
 prop_recordsValidatedBeforeFailure :: Property
 prop_recordsValidatedBeforeFailure =
-  forAllValidThenInvalid 3 $ \good bad -> ioProperty $ do
-    (verdict, tagged) <- runValidate (good <> [bad])
+  forAllValidThenInvalid 3 $ \acquired good bad -> ioProperty $ do
+    (verdict, tagged) <- runValidate acquired (good <> [bad])
     pure $
       conjoin
         [ isInvalid verdict
@@ -115,8 +120,8 @@ prop_recordsValidatedBeforeFailure =
 -- | The failing tx itself is not recorded -- it never validated.
 prop_stopsAtFirstFailure :: Property
 prop_stopsAtFirstFailure =
-  forAllValidThenInvalid 2 $ \good bad -> ioProperty $ do
-    (_, tagged) <- runValidate (good <> [bad])
+  forAllValidThenInvalid 2 $ \acquired good bad -> ioProperty $ do
+    (_, tagged) <- runValidate acquired (good <> [bad])
     pure $
       last tagged === False
         & counterexample "the failing tx must not be tagged validated"
@@ -125,17 +130,19 @@ prop_stopsAtFirstFailure =
   Generators
 -------------------------------------------------------------------------------}
 
-forAllValidClosure :: Int -> ([TestTx] -> Property) -> Property
+forAllValidClosure :: Int -> ([Bool] -> [TestTx] -> Property) -> Property
 forAllValidClosure n k =
   forAll (fst <$> genValidTxs n testInitLedger) $ \txs ->
-    length txs === n .&&. k txs
+    forAll (vectorOf n arbitrary) $ \acquired ->
+      length txs === n .&&. k acquired txs
 
 -- | @n@ txs that apply, then one that does not.
-forAllValidThenInvalid :: Int -> ([TestTx] -> TestTx -> Property) -> Property
+forAllValidThenInvalid :: Int -> ([Bool] -> [TestTx] -> TestTx -> Property) -> Property
 forAllValidThenInvalid n k =
   forAll (genValidTxs n testInitLedger) $ \(good, ledger') ->
     forAll (genInvalidTx ledger') $ \bad ->
-      length good === n .&&. k good bad
+      forAll (vectorOf (n + 1) arbitrary) $ \acquired ->
+        length good === n .&&. k acquired good bad
 
 {-------------------------------------------------------------------------------
   Harness
@@ -161,14 +168,14 @@ isInvalid = \case
 
 -- | Run 'validateEbClosure' over a closure, returning its verdict and, per tx
 -- in closure order, whether the cache now reports it validated.
-runValidate :: [TestTx] -> IO (Verdict, [Bool])
-runValidate txs = do
-  withHarness txs $ \h -> validateOnce h txs
+runValidate :: [Bool] -> [TestTx] -> IO (Verdict, [Bool])
+runValidate acquired txs = do
+  withHarness acquired txs $ \h -> validateOnce h txs
 
 -- | As 'runValidate', but validates the same closure twice against the same
 -- cache, so the second pass sees the first pass's tags.
-runValidateTwice :: [TestTx] -> IO (Verdict, [Bool], Verdict)
-runValidateTwice txs = withHarness txs $ \h -> do
+runValidateTwice :: [Bool] -> [TestTx] -> IO (Verdict, [Bool], Verdict)
+runValidateTwice acquired txs = withHarness acquired txs $ \h -> do
   (first', tagged) <- validateOnce h txs
   (second', _) <- validateOnce h txs
   pure (first', tagged, second')
@@ -200,8 +207,11 @@ validateOnce Harness{hConn, hCache, hPoint} txs = do
 -- | An in-memory LeiosDb holding the closure, and a cache that has seen the
 -- announcement and body -- the state LeiosFetch would have left behind, since
 -- 'withLockedInsertAppliedTx' only upgrades entries a body already created.
-withHarness :: [TestTx] -> (Harness -> IO a) -> IO a
-withHarness txs k = do
+--
+-- @acquired@ says, per tx, whether the cache has seen it acquired; 'False'
+-- leaves the voting logic to find nothing for it.
+withHarness :: [Bool] -> [TestTx] -> (Harness -> IO a) -> IO a
+withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
   withLeiosDb db $ \conn -> do
     leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
@@ -213,11 +223,16 @@ withHarness txs k = do
     -- The fold over the not-yet-acquired txs is what a fetch would use to build
     -- its request; here only the refcount bump matters, so it folds into ().
     void $ insertBody cache (pointEbHash point) (serializeEbBody eb) () (\() _ _ _ -> ())
-    -- Mark them acquired, as a fetch would. Not the only way an entry appears --
-    -- a tx taken straight from the mempool goes to Applied without passing
-    -- through here -- but it is the path this harness exercises.
+    -- Mark them acquired, as a fetch would -- but only the ones the caller asked
+    -- for. A lookup that finds nothing must be tolerated exactly like one that
+    -- finds an unapplied entry: a tx can reach the cache straight from the
+    -- mempool without passing through here, and a just-restarted node may hold
+    -- neither.
     void $ withLockedInsertUnappliedTx cache $ \w0 step ->
-      foldM (\w tx -> step w (txHashOf tx) (txBytesSize tx) ()) w0 txs
+      foldM
+        (\w (tx, seen) -> if seen then step w (txHashOf tx) (txBytesSize tx) () else pure w)
+        w0
+        (zip txs acquired)
 
     k Harness{hConn = conn, hCache = cache, hPoint = point}
  where
