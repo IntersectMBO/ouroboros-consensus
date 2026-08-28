@@ -1116,7 +1116,9 @@ genesisConfigEnDecoding ::
   (CompactGenesis -> Encoding, Decoder s CompactGenesis)
 genesisConfigEnDecoding v
   | v >= ShelleyNodeToClientVersion13 =
-      (toCBOR, fromCBOR)
+      ( encodeShelleyGenesisNoExtraConfig . getCompactGenesis
+      , compactGenesis <$> decodeShelleyGenesisWithOptionalExtraConfig
+      )
   | otherwise =
       (encodeLegacyShelleyGenesis . getCompactGenesis, compactGenesis <$> decodeLegacyShelleyGenesis)
 
