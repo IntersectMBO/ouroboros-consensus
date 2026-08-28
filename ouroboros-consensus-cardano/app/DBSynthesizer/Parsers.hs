@@ -24,6 +24,7 @@ parseNodeFilePaths =
   NodeFilePaths
     <$> parseNodeConfigFilePath
     <*> parseChainDBFilePath
+    <*> optional parsePaymentKeyFilePath
 
 parseNodeCredentials :: Parser NodeCredentials
 parseNodeCredentials =
@@ -32,6 +33,7 @@ parseNodeCredentials =
     <*> optional parseVrfKeyFilePath
     <*> optional parseKesKeyFilePath
     <*> optional parseBulkFilePath
+    <*> optional parseBlsKeyFilePath
 
 parseDBSynthesizerOptions :: Parser DBSynthesizerOptions
 parseDBSynthesizerOptions =
@@ -63,6 +65,26 @@ parseNodeConfigFilePath =
     ( long "config"
         <> metavar "FILE"
         <> help "Path to the node's config.json"
+        <> completer (bashCompleter "file")
+    )
+
+parsePaymentKeyFilePath :: Parser FilePath
+parsePaymentKeyFilePath =
+  strOption
+    ( long "payment-signing-key"
+        <> metavar "FILE"
+        <> help
+          "Path to a payment signing key, as cardano-cli writes it. Each forged block spends the output of this key and makes a new one. If you do not give this option, the tool forges empty blocks and announces no endorser block."
+        <> completer (bashCompleter "file")
+    )
+
+parseBlsKeyFilePath :: Parser FilePath
+parseBlsKeyFilePath =
+  strOption
+    ( long "shelley-bls-key"
+        <> metavar "FILE"
+        <> help
+          "Path to the pool's BLS signing key, as cardano-cli writes it. The tool needs this key to vote for the endorser blocks it announces. Without it the tool casts no vote, so no block certifies an endorser block and the transactions of those blocks never reach the ledger."
         <> completer (bashCompleter "file")
     )
 

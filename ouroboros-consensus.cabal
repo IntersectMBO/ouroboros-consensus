@@ -1873,9 +1873,11 @@ library unstable-cardano-tools
     Cardano.Tools.DBAnalyser.Run
     Cardano.Tools.DBAnalyser.Types
     Cardano.Tools.DBImmutaliser.Run
+    Cardano.Tools.DBSynthesizer.BlsKey
     Cardano.Tools.DBSynthesizer.Forging
     Cardano.Tools.DBSynthesizer.Orphans
     Cardano.Tools.DBSynthesizer.Run
+    Cardano.Tools.DBSynthesizer.TxGen
     Cardano.Tools.DBSynthesizer.Types
     Cardano.Tools.DBTruncater.Run
     Cardano.Tools.DBTruncater.Types
@@ -1910,6 +1912,7 @@ library unstable-cardano-tools
     bytestring,
     cardano-crypto,
     cardano-crypto-class,
+    cardano-crypto-leios,
     cardano-crypto-wrapper,
     cardano-diffusion:cardano-diffusion,
     cardano-git-rev ^>=0.2.1,
@@ -1934,6 +1937,7 @@ library unstable-cardano-tools
     compact,
     containers,
     contra-tracer,
+    deepseq,
     directory,
     dot,
     filepath,
@@ -1942,6 +1946,7 @@ library unstable-cardano-tools
     githash,
     io-classes,
     io-classes:si-timers,
+    measures,
     microlens,
     mtl,
     network,

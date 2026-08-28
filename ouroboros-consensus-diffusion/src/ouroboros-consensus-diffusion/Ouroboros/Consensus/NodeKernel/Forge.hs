@@ -12,7 +12,8 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.NodeKernel.Forge
-  ( forge
+  ( decideLeiosCertify
+  , forge
   ) where
 
 import Control.Monad

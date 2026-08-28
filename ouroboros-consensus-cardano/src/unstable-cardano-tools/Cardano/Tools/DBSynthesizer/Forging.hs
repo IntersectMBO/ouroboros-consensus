@@ -10,6 +10,7 @@ module Cardano.Tools.DBSynthesizer.Forging
   , runForge
   ) where
 
+import Cardano.Crypto.DSIGN.Class (deriveVerKeyDSIGN)
 import Cardano.Tools.DBSynthesizer.Types
   ( ForgeLimit (..)
   , ForgeResult (..)
@@ -19,13 +20,27 @@ import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Class (liftIO)
 import qualified Control.Monad.Trans.Class as Trans
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
-import Control.Tracer as Trace (nullTracer)
+import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.ByteString.Short (fromShort)
 import Data.Either (isRight)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosVoteState (LeiosVoteState, newLeiosVoteState)
+import LeiosDemoTypes
+  ( LeiosSigningKey
+  , RbHash (MkRbHash)
+  , TraceLeiosKernel (..)
+  , getLeiosSeatId
+  , leiosCommitteeSize
+  , signLeiosVote
+  )
+import LeiosVoteState
+  ( AddVoteResult (Added)
+  , LeiosVoteState (addVote)
+  , newLeiosVoteState
+  )
+import LeiosVoting (HasLeiosVoting (getLeiosCommittee))
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
@@ -49,6 +64,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.NodeKernel.Forge (decideLeiosCertify)
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepState
   , tickChainDepState
@@ -59,6 +75,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   , addBlockAsync
   , blockProcessed
   , getCurrentChain
+  , getCurrentLedger
   , getPastLedger
   , withReadOnlyForkerAtPoint
   )
@@ -89,34 +106,54 @@ data ForgeState
 initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
--- | An action to generate transactions for a given block
+-- | An action to generate transactions for a given block.
+--
+-- The first list fills the ranking block. The second fills the endorser block
+-- that the ranking block announces. An empty second list announces no endorser
+-- block, because 'mkAndStoreEb' forges none for an empty list.
+--
+-- The 'Bool' says whether this block certifies the endorser block that its
+-- parent announced. Such a block must get no transactions, because 'mkBody'
+-- drops them and applies the certified endorser block's instead.
+--
+-- The 'IO' action records what this block leaves unspent. The caller runs it
+-- once the ChainDB adopts the block, and skips it otherwise. A generator that
+-- recorded the outputs as it built them would carry the outputs of a block
+-- that no chain holds.
 type GenTxs blk =
   SlotNo ->
+  Bool ->
   ReadOnlyForker IO (ExtLedgerState blk) ->
   TickedLedgerState blk DiffMK ->
-  IO [Validated (GenTx blk)]
+  IO ([Validated (GenTx blk)], [Validated (GenTx blk)], IO ())
 
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
 
 runForge ::
   forall blk.
-  LedgerSupportsProtocol blk =>
+  ( LedgerSupportsProtocol blk
+  , HasLeiosVoting blk
+  , ConvertRawHash blk
+  , ResolveLeiosBlock blk
+  ) =>
   EpochSize ->
   SlotNo ->
   ForgeLimit ->
   ChainDB IO blk ->
   [BlockForging IO blk] ->
   TopLevelConfig blk ->
+  -- | The BLS key that this forger votes with, if it has one.
+  Maybe LeiosSigningKey ->
   GenTxs blk ->
   LeiosDbConnection IO ->
+  Tracer IO TraceLeiosKernel ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDb leiosTracer = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
-  -- Synthetic forging doesn't gather votes; supply a vote state with
-  -- no committee so 'queryCert' always returns 'Nothing'.
-  leiosVoteState <- newLeiosVoteState (pure Nothing)
+  leiosVoteState <- newLeiosVoteState committee
+  reportCommittee
   endState <- go leiosVoteState initialForgeState{currentSlot = nextSlot}
   putStrLn $
     "--> forged and adopted "
@@ -126,6 +163,78 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
   pure $ ForgeResult $ fromIntegral $ forged endState
  where
   epochSize = unEpochSize epochSize_
+
+  -- The committee is rebuilt from the ledger state on every read,
+  -- because it changes with the stake distribution snapshot at each
+  -- epoch boundary.
+  committee = getLeiosCommittee . ledgerState <$> getCurrentLedger chainDB
+
+  -- A seat can exist without a key. If the pool registers no
+  -- 'leiosKey', its seat is keyless. If its proof of possession does
+  -- not verify, 'mkLeiosCommittee' also makes the seat keyless. If our
+  -- key differs from the registered one, no seat matches ours. Each
+  -- case ends with no vote counted.
+  reportCommittee = do
+    mCommittee <- atomically committee
+    traceWith leiosTracer . MkTraceLeiosKernel $ case mCommittee of
+      Nothing -> "committee: none; the era does not vote"
+      Just c ->
+        "committee: "
+          ++ show (leiosCommitteeSize c)
+          ++ " seats; our seat: "
+          ++ case votingKey of
+            Nothing -> "none, no voting key"
+            Just sk -> case getLeiosSeatId (deriveVerKeyDSIGN sk) c of
+              Nothing -> "none, our key holds no seat"
+              Just seat -> show seat
+
+  -- Vote for the endorser block that this block announces. The vote signs the
+  -- announcing block's hash, not the endorser block's.
+  --
+  -- 'runLeiosVoting' applies four checks that this function does not. Three of
+  -- them hold here already. 'forgeBlock' stores the closure before it returns,
+  -- so the closure is on disk. The caller votes only after the ChainDB adopts
+  -- the block, so the announcing block is the tip. The vote goes out in the
+  -- announcing slot, so it is inside the vote window.
+  --
+  -- The fourth is the wait of 'lHdrWaitSlots' after the announcing slot, which
+  -- gives an equivocating announcement time to arrive. One forger makes this
+  -- chain, so no second announcement exists. A reader that compares this trace
+  -- against a node log sees the vote that many slots early.
+  voteFor ::
+    LeiosVoteState IO ->
+    blk ->
+    [Validated (GenTx blk)] ->
+    IO ()
+  voteFor leiosVoteState newBlock ebTxs
+    -- 'mkAndStoreEb' announces an endorser block exactly when it is given
+    -- transactions. So an empty list means this block announced none, and there
+    -- is nothing to vote for.
+    | null ebTxs = pure ()
+    | otherwise = do
+        mCommittee <- atomically committee
+        case (mCommittee, votingKey) of
+          (Just c, Just sk)
+            | Just seat <- getLeiosSeatId (deriveVerKeyDSIGN sk) c -> do
+                let rbHash =
+                      MkRbHash . fromShort . toShortRawHash (Proxy @blk) $
+                        blockHash newBlock
+                    vote = signLeiosVote sk seat rbHash
+                addVote leiosVoteState vote >>= \case
+                  Added weight mCert -> do
+                    -- The same events 'runLeiosVoting' emits.
+                    traceWith leiosTracer TraceLeiosVoted{vote, weight}
+                    traceWith leiosTracer TraceLeiosVoteAcquired{vote}
+                    case mCert of
+                      Just _ -> traceWith leiosTracer TraceLeiosCertified{rbHash}
+                      Nothing -> pure ()
+                  -- 'reportCommittee' already showed the committee and the seat,
+                  -- so any other result means the state changed under us. Stop,
+                  -- rather than forge blocks that nobody certifies.
+                  other -> fail $ "db-synthesizer: addVote returned " ++ show other
+          -- No key or no seat. 'reportCommittee' said so at start-up, and the
+          -- run emits no 'TraceLeiosVoted'.
+          _ -> pure ()
 
   forgingDone :: ForgeState -> Bool
   forgingDone = case opts of
@@ -221,7 +330,18 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
           -- the node's forging loop
           ExceptT . fmap (Right . fromJust) . withEarlyExit $
             withReadOnlyForkerAtPoint cdb tgt (Trans.lift . k)
-    txs <- withReadOnlyForkerAtPoint'
+    -- Decide before generating. A certifying block carries no transactions of
+    -- its own, so the generator has to know.
+    mCert <-
+      lift $
+        decideLeiosCertify
+          leiosDb
+          leiosVoteState
+          leiosTracer
+          currentSlot
+          (headerState unticked)
+
+    (rbTxs, ebTxs, commitLeftovers) <- withReadOnlyForkerAtPoint'
       chainDB
       (SpecificPoint bcPrevPoint)
       $ \case
@@ -229,6 +349,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
         Right frk ->
           genTxs
             currentSlot
+            (isJust mCert)
             frk
             tickedLedgerState
 
@@ -242,14 +363,14 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             , fbCurrentBlockNo = bcBlockNo
             , fbCurrentSlotNo = currentSlot
             , fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-            , fbRbTxs = txs
-            , fbEbTxs = []
+            , fbRbTxs = rbTxs
+            , fbEbTxs = ebTxs
             , fbIsLeader = proof
             , fbChainDepState = Nothing
             , fbLeiosDb = leiosDb
-            , fbLeiosTracer = Trace.nullTracer
+            , fbLeiosTracer = leiosTracer
             , fbLeiosVoteState = leiosVoteState
-            , fbMayLeiosCert = Nothing
+            , fbMayLeiosCert = fst <$> mCert
             }
 
     -- Add the block to the chain DB (synchronously) and verify adoption
@@ -259,6 +380,10 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
 
     when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $
       exitEarly' "block not adopted"
+
+    lift commitLeftovers
+
+    lift $ voteFor leiosVoteState newBlock ebTxs
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
