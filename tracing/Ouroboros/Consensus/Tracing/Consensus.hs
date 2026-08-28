@@ -3004,6 +3004,12 @@ instance
         [ "kind" .= String "TracePerasVotingCantReadEnv"
         , "error" .= String (Text.pack err)
         ]
+    TracePerasVotingViewError roundNo err ->
+      mconcat
+        [ "kind" .= String "TracePerasVotingViewError"
+        , "round" .= unPerasRoundNo roundNo
+        , "error" .= String (showT err)
+        ]
 
   forHuman = \case
     TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound ->
@@ -3036,6 +3042,11 @@ instance
         <> showT outcome
     TracePerasVotingCantReadEnv err ->
       "Could not read the Peras voting environment: " <> Text.pack err
+    TracePerasVotingViewError roundNo err ->
+      "Could not obtain the Peras voting view for round "
+        <> showT (unPerasRoundNo roundNo)
+        <> ": "
+        <> showT err
 
 instance MetaTrace (TracePerasVoteForgingEvent blk) where
   namespaceFor TracePerasVotingNoVoteAfterFirstSlotInRound{} =
@@ -3052,6 +3063,8 @@ instance MetaTrace (TracePerasVoteForgingEvent blk) where
     Namespace [] ["AddCertChainSelOutcome"]
   namespaceFor TracePerasVotingCantReadEnv{} =
     Namespace [] ["CantReadEnv"]
+  namespaceFor TracePerasVotingViewError{} =
+    Namespace [] ["ViewError"]
 
   severityFor (Namespace _ ["NoVoteAfterFirstSlotInRound"]) _ = Just Debug
   severityFor (Namespace _ ["NotAVoterInRound"]) _ = Just Debug
@@ -3060,6 +3073,7 @@ instance MetaTrace (TracePerasVoteForgingEvent blk) where
   severityFor (Namespace _ ["AddVoteResult"]) _ = Just Info
   severityFor (Namespace _ ["AddCertChainSelOutcome"]) _ = Just Info
   severityFor (Namespace _ ["CantReadEnv"]) _ = Just Error
+  severityFor (Namespace _ ["ViewError"]) _ = Just Error
   severityFor _ _ = Nothing
 
   documentFor (Namespace _ ["NoVoteAfterFirstSlotInRound"]) =
@@ -3086,6 +3100,8 @@ instance MetaTrace (TracePerasVoteForgingEvent blk) where
   documentFor (Namespace _ ["CantReadEnv"]) =
     Just
       "The Peras voting environment could not be read."
+  documentFor (Namespace _ ["ViewError"]) =
+    Just "The Peras voting view could not be obtained for the current round."
   documentFor _ = Nothing
 
   allNamespaces =
@@ -3096,4 +3112,5 @@ instance MetaTrace (TracePerasVoteForgingEvent blk) where
     , Namespace [] ["AddVoteResult"]
     , Namespace [] ["AddCertChainSelOutcome"]
     , Namespace [] ["CantReadEnv"]
+    , Namespace [] ["ViewError"]
     ]
