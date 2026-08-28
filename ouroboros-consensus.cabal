@@ -1871,6 +1871,7 @@ test-suite shelley-test
     Test.Consensus.Shelley.Golden
     Test.Consensus.Shelley.Integrity
     Test.Consensus.Shelley.LedgerTables
+    Test.Consensus.Shelley.Peras
     Test.Consensus.Shelley.Serialisation
     Test.Consensus.Shelley.SupportedNetworkProtocolVersion
     Test.ThreadNet.Shelley
@@ -1878,6 +1879,7 @@ test-suite shelley-test
   build-depends:
     base,
     bytestring,
+    cardano-binary,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
     cardano-ledger-babbage:testlib,
