@@ -63,7 +63,7 @@ forgeShelleyBlock
   cfg
   curNo
   curSlot
-  _mbPerasCert -- Ignored for now
+  mbPerasCert
   tickedLedger
   txs
   isLeader = do
@@ -88,6 +88,7 @@ forgeShelleyBlock
     body =
       SL.mkBasicBlockBody
         & (SL.txSeqBlockBodyL .~ Seq.fromList (fmap extractTx txs))
+        & (maybe id injectPerasCertIntoShelleyBlockBody mbPerasCert)
 
     actualBodySize = SL.blockBodySize protocolVersion body
 
