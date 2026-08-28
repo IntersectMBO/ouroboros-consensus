@@ -206,14 +206,12 @@ newVoteTimers tracer lcfg chainDB systemTime = do
                   }
               timer <-
                 registerDelay
-                  -- An EB whose window is already open gives a non-positive
-                  -- delay; 1us keeps 'registerDelay' in its intended range and
-                  -- fires on the next tick, which is the behaviour wanted here.
-                  . max 1
                   . diffTimeToMicrosecondsAsInt
                   $ nominalDelay voteIn
-              atomically . modifyTVar pendingVotes . Map.insert point $
-                (timer, voteDeadline)
+              atomically
+                . modifyTVar pendingVotes
+                . Map.insert point
+                $ (timer, voteDeadline)
       , -- Reading every armed timer puts them all in this transaction's read
         -- set, so it wakes on any of them, and 'Map.toList' is in point order,
         -- so simultaneous firings break towards the earlier slot.
@@ -312,7 +310,11 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
   goVote leiosConn sk point deadline = do
     let vk = deriveVerKeyDSIGN sk
     withForkerAt VolatileTip $ \case
-      Nothing -> pure $ Left ChainTipDoesNotAnnounce
+      Nothing ->
+        -- Should not happen: VolatileTip target never fails to open. It's safe
+        -- to interpret this non-typed corner case the same way as if we were
+        -- not on the announcing chain.
+        pure $ Left ChainTipDoesNotAnnounce
       Just forker -> runExceptT $ do
         -- One consistent view of the selection: the header state that has
         -- to announce this EB and the ledger state its closure has to apply
@@ -328,7 +330,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
 
         lift (validateEbClosure lcfg leiosConn txCache readTables point ls) >>= \case
           EbClosureInvalid err ->
-            -- XXX: Text in error
+            -- TODO: Text in error
             throwE . EbTxsInvalid . Text.pack $ show err
           EbClosureValid reapplied applied ->
             lift $ traceWith tracer TraceLeiosEbValidated{ebPoint = point, reapplied, applied}
@@ -352,7 +354,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
                   Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
                   Nothing -> pure ()
               err ->
-                -- XXX: Make this a NotVoted error / trace
+                -- TODO: Make this a NotVoted error / trace
                 error $ "runLeiosVoting: unexpected error on addVote: " <> show err
 
   LeiosVoteState{addVote} = voteState
@@ -372,7 +374,8 @@ data EbClosureVerdict blk
     -- tx-cache. Carries how many were reapplied versus validated in full — the
     -- cache's hit rate.
     EbClosureValid !Int !Int
-  | -- | A tx did not apply, so this EB must not be certified.
+  | -- | A tx did not apply, so this EB must not be certified. Any valid prefix
+    -- of txs is recorded as valid in the tx-cache.
     EbClosureInvalid !(ApplyTxErr blk)
 
 -- | Apply an EB's endorsed transactions to the announcing RB's ledger state,
@@ -380,9 +383,7 @@ data EbClosureVerdict blk
 --
 -- Each tx is validated in full, except where the LeiosTxCache reports it
 -- already validated: then only the state-dependent checks re-run
--- ('LedgerSupportsMempool.reapplyTx' rather than 'applyTx'). That is where the
--- cache earns its keep — consecutive EBs overlap heavily, and a forger's own EB
--- is entirely pre-validated by its mempool.
+-- ('LedgerSupportsMempool.reapplyTx' rather than 'applyTx').
 validateEbClosure ::
   forall m blk.
   ( IOLike m
@@ -403,10 +404,14 @@ validateEbClosure lcfg leiosConn txCache resolveValues point lsBase = do
   -- Load txs from disk
   closure <- resolveLeiosClosure leiosConn (pointEbHash point)
   -- Resolve their input UTxOs
+  -- TODO: This collects ALL inputs, but we would just need the inputs of the
+  -- transitive closure. That is, any chained txs would only require inputs not
+  -- internal to the chain.
   let keys = foldMap (getTransactionKeySets . snd) closure
   values <- resolveValues keys
   -- Determine which txs we can just reapply (the cache hits)
   decided <- withLookupTx txCache $ \look -> mapM (decide look) closure
+  -- TODO: Temporarily use the Mempool API until we have a dedicated one
   let st0 = applyMempoolDiffs values keys (applyChainTick OmitLedgerEvents lcfg slot lsBase)
   goValidate st0 decided 0 0 []
  where

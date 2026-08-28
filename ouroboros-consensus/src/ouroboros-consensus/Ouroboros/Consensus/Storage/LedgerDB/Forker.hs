@@ -827,15 +827,10 @@ class ResolveLeiosBlock blk where
   -- 'LedgerSupportsMempool.reapplyTx' — which skips only the static checks
   -- (witnesses, scripts) — over a full 'LedgerSupportsMempool.applyTx'.
   --
-  -- The token carries no evidence of its own; the cache's tag is the evidence,
-  -- and the ledger recomputes every state-dependent check from the state at
-  -- hand. Calling this on a tx the cache has /not/ tagged validated would skip
-  -- checks that were never run.
-  --
-  -- NOTE: the cache's tag does not record which protocol version the tx was
-  -- validated under, so an EB straddling a protocol-version change could skip
-  -- a static check whose rules changed. The mempool has the same exposure, and
-  -- the cache only retains a short window of EBs.
+  -- NOTE: The token carries no evidence of its own; the cache's tag is the
+  -- evidence, and the ledger recomputes every state-dependent check from the
+  -- state at hand. Calling this on a tx the cache has /not/ tagged validated
+  -- would skip checks that were never run!
   --
   -- The default panics, like 'leiosClosureTxKeySets': a non-Leios block never
   -- reaches the voting path.
