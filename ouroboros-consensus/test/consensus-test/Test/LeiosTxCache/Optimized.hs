@@ -1,5 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
-
 -- | Observational-equivalence test for the mutable 'LeiosTxCache' handle: run
 -- the same random op sequence (announcements, bodies, tx inserts) through both
 -- 'newPureLeiosTxCache' and 'newHashTableLeiosTxCache' and require that they

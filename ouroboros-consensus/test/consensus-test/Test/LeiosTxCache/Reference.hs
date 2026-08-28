@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
-
 -- | Tests for the pure 'LeiosTxCacheIndex': announcement/body/tx reference
 -- counting and the 'maxAnnouncementCount' eviction cascade.
 --
