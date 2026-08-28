@@ -46,9 +46,9 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
+import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
-import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
 import LeiosDemoDb (withLeiosDb)
@@ -103,179 +103,186 @@ import Test.Util.TestEnv (adjustQuickCheckTests)
 tests :: TestTree
 tests =
   -- 10x whatever '--quickcheck-tests' supplies, for every property below.
-  adjustQuickCheckTests (* 10) $ testGroup
-    "LeiosDemoLogic.Invariants"
-    [ testGroup
-        "curated sequences"
-        [ testCase "forge purges a body it already holds (offered first)" $
-            runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
-        , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
-            runCmdsReFetchViolations reproForgeThenOffer @?= Right []
-        ]
-    , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
-        let eb = ebOf [0, 1]
-            h = hashLeiosEb eb
-            -- an empty job pool suffices here
-            jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
-            -- announce at slot 5, then again at the smaller slot 3, and acquire
-            o =
-              Leios.insertAcquiredEbBody h jobPool $
-                Leios.recordMaxAnnouncementSlot h (SlotNo 3) SNothing $
-                  Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
+  adjustQuickCheckTests (* 10) $
+    testGroup
+      "LeiosDemoLogic.Invariants"
+      [ testGroup
+          "curated sequences"
+          [ testCase "forge purges a body it already holds (offered first)" $
+              runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
+          , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
+              runCmdsReFetchViolations reproForgeThenOffer @?= Right []
+          ]
+      , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
+          let eb = ebOf [0, 1]
+              h = hashLeiosEb eb
+              -- an empty job pool suffices here
+              jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
+              -- announce at slot 5, then again at the smaller slot 3, and acquire
+              o =
+                Leios.insertAcquiredEbBody h jobPool $
+                  Leios.recordMaxAnnouncementSlot h (SlotNo 3) SNothing $
+                    Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
+                      (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
+          -- the greater slot is retained, not the last-recorded one
+          Map.lookup h (Leios.ebState o)
+            @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
+          -- kept while the greatest slot (5) is at/above the immutable tip (4)
+          Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 4) o)))
+            @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
+          -- dropped once the greatest slot (5) is below the immutable tip (6)
+          Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 6) o)))
+            @?= Nothing
+      , testCase "an announcement raises a forged EB's max slot (so it isn't pruned early)" $ do
+          let h = hashLeiosEb (ebOf [0, 1])
+              -- forge at slot 5, then a peer announces the same EB at the later slot 10
+              o =
+                Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
+                  Leios.markBodyImminent h (SlotNo 5) $
                     (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
-        -- the greater slot is retained, not the last-recorded one
-        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
-        -- kept while the greatest slot (5) is at/above the immutable tip (4)
-        Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 4) o)))
-          @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
-        -- dropped once the greatest slot (5) is below the immutable tip (6)
-        Map.lookup h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 6) o)))
-          @?= Nothing
-    , testCase "an announcement raises a forged EB's max slot (so it isn't pruned early)" $ do
-        let h = hashLeiosEb (ebOf [0, 1])
-            -- forge at slot 5, then a peer announces the same EB at the later slot 10
-            o =
-              Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
-                Leios.markBodyImminent h (SlotNo 5) $
-                  (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
-        -- the announcement raised the slot to 10, keeping the forged state
-        Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 10) SNothing Leios.BodyImminent)
-        -- so it survives pruning up to slot 9, and is dropped only past slot 10
-        Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 9) o))) @?= True
-        Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 11) o))) @?= False
-    , testCase "an announcement's onset is recorded (earliest kept); an offer never clobbers it" $ do
-        let h = hashLeiosEb (ebOf [0, 1])
-            t3 = RelativeTime 3
-            t5 = RelativeTime 5
-            base = emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int
-            onsetOf o = Leios.ebStateOnset <$> Map.lookup h (Leios.ebState o)
-        -- an announcement records its slot's onset
-        onsetOf (Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base)
-          @?= Just (SJust t5)
-        -- a later announcement (greater slot, earlier onset) keeps the earlier onset
-        onsetOf
-          ( Leios.recordMaxAnnouncementSlot h (SlotNo 8) (SJust t3) $
-              Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base
-          )
-          @?= Just (SJust t3)
-        -- an offer (no onset) bumps the slot but never clobbers a recorded onset
-        onsetOf
-          ( Leios.recordMaxAnnouncementSlot h (SlotNo 9) SNothing $
-              Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base
-          )
-          @?= Just (SJust t5)
-        -- a self-forged EB records no onset (kept out of the age panels)
-        onsetOf (Leios.markBodyImminent h (SlotNo 5) base)
-          @?= Just SNothing
-    , testCase "start-up seeding marks each completed EB held, with an empty pool" $ do
-        let ebA = [0, 1] :: TestEb
-            ebB = [2, 3] :: TestEb
-            hA = hashLeiosEb (ebOf ebA)
-            hB = hashLeiosEb (ebOf ebB)
-            -- The complete-closure scan yields points: ebA listed at two slots (5
-            -- and 8), ebB at slot 6.
-            points = [pointOf ebA 5, pointOf ebA 8, pointOf ebB 6]
-            immTipSlot = SlotNo 4
-            o = Leios.initializeLeiosOutstanding points immTipSlot :: LeiosOutstanding Int
-        -- each completed EB is held with an empty job pool: nothing left to fetch
-        Map.lookup hB (Leios.ebState o)
-          @?= Just (Leios.MkEbState (SlotNo 6) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
-        -- and when one EB is listed at several points, its greatest slot wins (8, not 5)
-        Map.lookup hA (Leios.ebState o)
-          @?= Just (Leios.MkEbState (SlotNo 8) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
-        -- so every seeded EB reports as held ...
-        all Leios.ebStateHasBody (Map.elems (Leios.ebState o)) @?= True
-        -- ... nothing is listed for fetch (empty pools, no missing bodies) ...
-        Leios.missingEbBodies o @?= Map.empty
-        Leios.reverseSlotIndexByEbHash o @?= Map.empty
-        -- ... no requests are outstanding (there are no connections at start-up) ...
-        Leios.requestedBytesSizePerPeer o @?= Map.empty
-        Leios.requestedEbPeers o @?= Map.empty
-        Leios.requestedJobsPerPeer o @?= Map.empty
-        -- ... and the pruning watermark is seeded from the immutable tip
-        Leios.acquiredEbBodiesPrunedSlot o @?= immTipSlot
-    , testCase "start-up seeding: a peer's offer of a seeded EB is not re-fetched" $ do
-        let ebA = [0, 1] :: TestEb
-            ebB = [2, 3] :: TestEb
-            points = [pointOf ebA 8, pointOf ebB 6]
-            o = Leios.initializeLeiosOutstanding points (SlotNo 4) :: LeiosOutstanding Int
-            peerId = MkPeerId (0 :: Int)
-            -- a peer offers every seeded EB, body and closure
-            offerings = Map.singleton peerId (referencedOffers o)
-            (_out', decs, _drops) =
-              leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (SlotNo 10)) offerings Map.empty o
-        -- no body is re-requested (the whole point of the seed) ...
-        ebBodyRequestHashes decs @?= []
-        -- ... and with empty pools there is nothing at all to request
-        Map.null decs @?= True
-    , testCase "a big-ledger peer has a larger, but still finite, closure budget" $ do
-        let ids = [0, 1, 2, 3, 4] :: TestEb
-            h = hashLeiosEb (ebOf ids)
-            point = pointOf ids 10
-            misses = IntMap.fromList [(off, (txHashOf i, txSizeOf i)) | (off, i) <- zip [0 ..] ids]
-            jobPool =
-              Jobs.mkLeiosJobPool
-                (Leios.maxJobBytesSize demoLeiosFetchStaticEnv)
-                (Leios.maxJobTxCount demoLeiosFetchStaticEnv)
-                misses
-            peerId = MkPeerId (0 :: Int)
-            offers = Map.singleton peerId (Map.singleton point TxsClosureAlsoOffered)
-            ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
-            bigLedgerCap = Leios.maxRequestedBytesSizePerBigLedgerPeer demoLeiosFetchStaticEnv
-            -- hold the body (so the pool is live), with the peer's in-flight bytes
-            -- preloaded to 'used'
-            run bigLedgerPeers used =
-              let outstanding =
-                    (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
-                      Leios.insertAcquiredEbBody h jobPool $
-                        Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
-                          (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
-                  (_o, reqs, _d) =
-                    leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (SlotNo 11)) offers bigLedgerPeers outstanding
-               in requestedOffsets reqs
-            ordinary = Map.empty
-            bigLedger = Map.singleton peerId IsBigLedgerPeer
-        -- past the ordinary cap, an ordinary peer is asked for nothing ...
-        run ordinary (ordinaryCap + 1) @?= IntSet.empty
-        -- ... but a big-ledger peer still has budget for the whole pool at once
-        run bigLedger (ordinaryCap + 1) @?= IntSet.fromList ids
-        -- past even the big-ledger cap, though, a big-ledger peer is bounded too
-        run bigLedger (bigLedgerCap + 1) @?= IntSet.empty
-    , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
-        let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
-            hB = hashLeiosEb (ebOf [2, 3]) -- to be listed at slot 3 only
-            pointAt slot h = MkLeiosPoint (SlotNo slot) h
-            o0 :: LeiosOutstanding Int
-            o0 =
-              (emptyLeiosOutstanding (SlotNo 0))
-                { Leios.missingEbBodies =
-                    Map.fromList [(pointAt 3 hA, 10), (pointAt 10 hA, 10), (pointAt 3 hB, 20)]
-                , Leios.reverseSlotIndexByEbHash =
-                    Map.fromList
-                      [ (hA, NESet.insert (SlotNo 3) (NESet.singleton (SlotNo 10)))
-                      , (hB, NESet.singleton (SlotNo 3))
-                      ]
-                }
-            o = snd (Leios.pruneOutstandingToImmTip (SlotNo 5) o0)
-        -- hA's slot-3 point is dropped, its slot-10 point kept
-        Map.lookup (pointAt 3 hA) (Leios.missingEbBodies o) @?= Nothing
-        Map.lookup (pointAt 10 hA) (Leios.missingEbBodies o) @?= Just 10
-        -- hB was listed only at slot 3, so it drops out entirely
-        Map.lookup (pointAt 3 hB) (Leios.missingEbBodies o) @?= Nothing
-        Map.size (Leios.missingEbBodies o) @?= 1
-        -- the reverse index stays the exact inverse: hA at slot 10 only, hB gone
-        Map.lookup hA (Leios.reverseSlotIndexByEbHash o) @?= Just (NESet.singleton (SlotNo 10))
-        Map.lookup hB (Leios.reverseSlotIndexByEbHash o) @?= Nothing
-    , testProperty
-        "ebState stays in sync with ebsPerMaxAnnouncementSlot across arbitrary sequences"
-        prop_invariants
-    , testProperty
-        "the fetch logic never requests an already-held EB body"
-        prop_neverRefetchesHeldBody
-    , testProperty
-        "a concurrent offer and body arrival never leave a held EB body listed (IOSimPOR)"
-        prop_neverRefetchesHeldBodyConcurrent
-    ]
+          -- the announcement raised the slot to 10, keeping the forged state
+          Map.lookup h (Leios.ebState o) @?= Just (Leios.MkEbState (SlotNo 10) SNothing Leios.BodyImminent)
+          -- so it survives pruning up to slot 9, and is dropped only past slot 10
+          Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 9) o))) @?= True
+          Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 11) o))) @?= False
+      , testCase "an announcement's onset is recorded (earliest kept); an offer never clobbers it" $ do
+          let h = hashLeiosEb (ebOf [0, 1])
+              t3 = RelativeTime 3
+              t5 = RelativeTime 5
+              base = emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int
+              onsetOf o = Leios.ebStateOnset <$> Map.lookup h (Leios.ebState o)
+          -- an announcement records its slot's onset
+          onsetOf (Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base)
+            @?= Just (SJust t5)
+          -- a later announcement (greater slot, earlier onset) keeps the earlier onset
+          onsetOf
+            ( Leios.recordMaxAnnouncementSlot h (SlotNo 8) (SJust t3) $
+                Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base
+            )
+            @?= Just (SJust t3)
+          -- an offer (no onset) bumps the slot but never clobbers a recorded onset
+          onsetOf
+            ( Leios.recordMaxAnnouncementSlot h (SlotNo 9) SNothing $
+                Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base
+            )
+            @?= Just (SJust t5)
+          -- a self-forged EB records no onset (kept out of the age panels)
+          onsetOf (Leios.markBodyImminent h (SlotNo 5) base)
+            @?= Just SNothing
+      , testCase "start-up seeding marks each completed EB held, with an empty pool" $ do
+          let ebA = [0, 1] :: TestEb
+              ebB = [2, 3] :: TestEb
+              hA = hashLeiosEb (ebOf ebA)
+              hB = hashLeiosEb (ebOf ebB)
+              -- The complete-closure scan yields points: ebA listed at two slots (5
+              -- and 8), ebB at slot 6.
+              points = [pointOf ebA 5, pointOf ebA 8, pointOf ebB 6]
+              immTipSlot = SlotNo 4
+              o = Leios.initializeLeiosOutstanding points immTipSlot :: LeiosOutstanding Int
+          -- each completed EB is held with an empty job pool: nothing left to fetch
+          Map.lookup hB (Leios.ebState o)
+            @?= Just (Leios.MkEbState (SlotNo 6) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
+          -- and when one EB is listed at several points, its greatest slot wins (8, not 5)
+          Map.lookup hA (Leios.ebState o)
+            @?= Just (Leios.MkEbState (SlotNo 8) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
+          -- so every seeded EB reports as held ...
+          all Leios.ebStateHasBody (Map.elems (Leios.ebState o)) @?= True
+          -- ... nothing is listed for fetch (empty pools, no missing bodies) ...
+          Leios.missingEbBodies o @?= Map.empty
+          Leios.reverseSlotIndexByEbHash o @?= Map.empty
+          -- ... no requests are outstanding (there are no connections at start-up) ...
+          Leios.requestedBytesSizePerPeer o @?= Map.empty
+          Leios.requestedEbPeers o @?= Map.empty
+          Leios.requestedJobsPerPeer o @?= Map.empty
+          -- ... and the pruning watermark is seeded from the immutable tip
+          Leios.acquiredEbBodiesPrunedSlot o @?= immTipSlot
+      , testCase "start-up seeding: a peer's offer of a seeded EB is not re-fetched" $ do
+          let ebA = [0, 1] :: TestEb
+              ebB = [2, 3] :: TestEb
+              points = [pointOf ebA 8, pointOf ebB 6]
+              o = Leios.initializeLeiosOutstanding points (SlotNo 4) :: LeiosOutstanding Int
+              peerId = MkPeerId (0 :: Int)
+              -- a peer offers every seeded EB, body and closure
+              offerings = Map.singleton peerId (referencedOffers o)
+              (_out', decs, _drops) =
+                leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (SlotNo 10)) offerings Map.empty o
+          -- no body is re-requested (the whole point of the seed) ...
+          ebBodyRequestHashes decs @?= []
+          -- ... and with empty pools there is nothing at all to request
+          Map.null decs @?= True
+      , testCase "a big-ledger peer has a larger, but still finite, closure budget" $ do
+          let ids = [0, 1, 2, 3, 4] :: TestEb
+              h = hashLeiosEb (ebOf ids)
+              point = pointOf ids 10
+              misses = IntMap.fromList [(off, (txHashOf i, txSizeOf i)) | (off, i) <- zip [0 ..] ids]
+              jobPool =
+                Jobs.mkLeiosJobPool
+                  (Leios.maxJobBytesSize demoLeiosFetchStaticEnv)
+                  (Leios.maxJobTxCount demoLeiosFetchStaticEnv)
+                  misses
+              peerId = MkPeerId (0 :: Int)
+              offers = Map.singleton peerId (Map.singleton point TxsClosureAlsoOffered)
+              ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
+              bigLedgerCap = Leios.maxRequestedBytesSizePerBigLedgerPeer demoLeiosFetchStaticEnv
+              -- hold the body (so the pool is live), with the peer's in-flight bytes
+              -- preloaded to 'used'
+              run bigLedgerPeers used =
+                let outstanding =
+                      (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
+                        Leios.insertAcquiredEbBody h jobPool $
+                          Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
+                            (emptyLeiosOutstanding (SlotNo 0) :: LeiosOutstanding Int)
+                    (_o, reqs, _d) =
+                      leiosFetchLogicIteration
+                        demoLeiosFetchStaticEnv
+                        (Just (SlotNo 11))
+                        offers
+                        bigLedgerPeers
+                        outstanding
+                 in requestedOffsets reqs
+              ordinary = Map.empty
+              bigLedger = Map.singleton peerId IsBigLedgerPeer
+          -- past the ordinary cap, an ordinary peer is asked for nothing ...
+          run ordinary (ordinaryCap + 1) @?= IntSet.empty
+          -- ... but a big-ledger peer still has budget for the whole pool at once
+          run bigLedger (ordinaryCap + 1) @?= IntSet.fromList ids
+          -- past even the big-ledger cap, though, a big-ledger peer is bounded too
+          run bigLedger (bigLedgerCap + 1) @?= IntSet.empty
+      , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
+          let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
+              hB = hashLeiosEb (ebOf [2, 3]) -- to be listed at slot 3 only
+              pointAt slot h = MkLeiosPoint (SlotNo slot) h
+              o0 :: LeiosOutstanding Int
+              o0 =
+                (emptyLeiosOutstanding (SlotNo 0))
+                  { Leios.missingEbBodies =
+                      Map.fromList [(pointAt 3 hA, 10), (pointAt 10 hA, 10), (pointAt 3 hB, 20)]
+                  , Leios.reverseSlotIndexByEbHash =
+                      Map.fromList
+                        [ (hA, NESet.insert (SlotNo 3) (NESet.singleton (SlotNo 10)))
+                        , (hB, NESet.singleton (SlotNo 3))
+                        ]
+                  }
+              o = snd (Leios.pruneOutstandingToImmTip (SlotNo 5) o0)
+          -- hA's slot-3 point is dropped, its slot-10 point kept
+          Map.lookup (pointAt 3 hA) (Leios.missingEbBodies o) @?= Nothing
+          Map.lookup (pointAt 10 hA) (Leios.missingEbBodies o) @?= Just 10
+          -- hB was listed only at slot 3, so it drops out entirely
+          Map.lookup (pointAt 3 hB) (Leios.missingEbBodies o) @?= Nothing
+          Map.size (Leios.missingEbBodies o) @?= 1
+          -- the reverse index stays the exact inverse: hA at slot 10 only, hB gone
+          Map.lookup hA (Leios.reverseSlotIndexByEbHash o) @?= Just (NESet.singleton (SlotNo 10))
+          Map.lookup hB (Leios.reverseSlotIndexByEbHash o) @?= Nothing
+      , testProperty
+          "ebState stays in sync with ebsPerMaxAnnouncementSlot across arbitrary sequences"
+          prop_invariants
+      , testProperty
+          "the fetch logic never requests an already-held EB body"
+          prop_neverRefetchesHeldBody
+      , testProperty
+          "a concurrent offer and body arrival never leave a held EB body listed (IOSimPOR)"
+          prop_neverRefetchesHeldBodyConcurrent
+      ]
 
 ------------------------------------------------------------
 -- Commands
@@ -368,8 +375,8 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
           loop acc [] = pure (Right acc)
           loop acc (c : cs) = do
             r <-
-              try (applyCmd conn txCache kv peerVars peerId c)
-                :: IOSim s (Either SomeException [EbHash])
+              try (applyCmd conn txCache kv peerVars peerId c) ::
+                IOSim s (Either SomeException [EbHash])
             case r of
               Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
               Right violations -> do
@@ -393,15 +400,30 @@ applyCmd ::
   IOSim s [EbHash]
 applyCmd conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
-    recordAnnouncedEb kv (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+    -- These invariants are about the fetch bookkeeping, which never reads the
+    -- onset; only the voting path needs it.
+    recordAnnouncedEb kv SNothing (pointOf ids slot, leiosEbBytesSize (ebOf ids))
     pure []
   Offer ids slot -> do
-    recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+    recordEbBodyOffer
+      kv
+      peerVars
+      TxsClosureNotAlsoOffered
+      (pointOf ids slot, leiosEbBytesSize (ebOf ids))
     pure []
   ArriveBody ids slot -> do
     let eb = ebOf ids
         req = MkLeiosBlockRequest (pointOf ids slot) (leiosEbBytesSize eb)
-    processLeiosBlock nullTracer nullTracer kv txCache conn dummySystemTime noMempoolPull (ReceivedBlockFrom peerId req) eb
+    processLeiosBlock
+      nullTracer
+      nullTracer
+      kv
+      txCache
+      conn
+      dummySystemTime
+      noMempoolPull
+      (ReceivedBlockFrom peerId req)
+      eb
     pure []
   ArriveTx v -> absurd v
   Forge ids slot -> do
@@ -421,8 +443,24 @@ applyCmd conn txCache kv peerVars peerId = \case
     -- 'outstanding' changes, mirror it here or this regression coverage goes stale
     -- silently.
     modifyMVar_ (fst kv) (pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo)
-    processLeiosBlock nullTracer nullTracer kv txCache conn dummySystemTime noMempoolPull (ForgedBlock point) eb
-    processLeiosBlockTxs nullTracer nullTracer kv txCache conn dummySystemTime (ForgedTxs point eb $ V.fromList $ map leiosTxOf ids)
+    processLeiosBlock
+      nullTracer
+      nullTracer
+      kv
+      txCache
+      conn
+      dummySystemTime
+      noMempoolPull
+      (ForgedBlock point)
+      eb
+    processLeiosBlockTxs
+      nullTracer
+      nullTracer
+      kv
+      txCache
+      conn
+      dummySystemTime
+      (ForgedTxs point eb $ V.fromList $ map leiosTxOf ids)
     pure []
   Decide slot -> do
     outstanding <- readMVar (fst kv)
@@ -430,7 +468,12 @@ applyCmd conn txCache kv peerVars peerId = \case
         -- The generated peer is not a big-ledger peer; the aggressive-fetch path
         -- has its own dedicated test below.
         (out', decs, _drops) =
-          leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (fromIntegral slot)) offerings Map.empty outstanding
+          leiosFetchLogicIteration
+            demoLeiosFetchStaticEnv
+            (Just (fromIntegral slot))
+            offerings
+            Map.empty
+            outstanding
     -- Force the fetch logic so any 'impossible!' surfaces (caught by 'go').
     -- Forcing @out'@ to WHNF drives 'go1' to completion (its reverse lookups);
     -- 'forceDecisions' additionally forces the per-request offset lookups.
@@ -698,7 +741,7 @@ raceSameHashMultiSlot = do
     concurrently_
       (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
       ( concurrently_
-          (recordAnnouncedEb kv (announcePoint, ebBytesSize))
+          (recordAnnouncedEb kv SNothing (announcePoint, ebBytesSize))
           ( processLeiosBlock
               nullTracer
               nullTracer

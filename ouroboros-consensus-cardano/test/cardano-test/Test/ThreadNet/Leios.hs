@@ -250,7 +250,7 @@ prop_leios seed =
     _ -> Nothing
 
   acquiredPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
-    TraceLeiosBlockTxsAcquired point -> Just point
+    TraceLeiosBlockTxsAcquired point _age -> Just point
     _ -> Nothing
 
   -- An EB forged at slot @s@ is required to diffuse iff it has at least
