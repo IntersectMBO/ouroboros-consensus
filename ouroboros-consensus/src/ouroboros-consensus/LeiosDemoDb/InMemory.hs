@@ -159,8 +159,11 @@ imInsertEbBody ::
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   LeiosEb ->
+  -- | Candidate txs; the in-memory backend holds everything in one map, so it
+  -- can answer exactly and has no use for the caller's narrowing.
+  [TxHash] ->
   m CompletedEbs
-imInsertEbBody stateVar notificationChan point eb = do
+imInsertEbBody stateVar notificationChan point eb _candidates = do
   let items = leiosEbBodyItems eb
       ebBytesSize = leiosEbBytesSize eb
   when (null items) $

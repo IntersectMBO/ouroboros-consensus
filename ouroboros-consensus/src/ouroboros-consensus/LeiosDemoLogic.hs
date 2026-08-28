@@ -952,8 +952,22 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
           -- receiving an EB body without a prior announcement, so we insert
           -- the point idempotently as a stop-gap and trace a warning.
           traceWith ktracer $ TraceLeiosBlockPointMissing point
+          -- Ask the cache which of the body's txs it cannot vouch for. A hit
+          -- means the tx is in the LeiosDb, so only the misses are worth a
+          -- lookup; a miss is not evidence of absence -- an evicted tx misses
+          -- too -- so they are candidates the DB still checks.
+          let MkLeiosEb bodyTxs = eb
+          candidates <- withLookupTx txCache $ \look ->
+            V.foldM
+              ( \acc (txh, _sz) ->
+                  look txh >>= \case
+                    Just{} -> pure acc
+                    Nothing -> pure (txh : acc)
+              )
+              []
+              bodyTxs
           leiosDbInsertEbPoint db point ebBytesSize
-          completedByBody <- leiosDbInsertEbBody db point eb
+          completedByBody <- leiosDbInsertEbBody db point eb candidates
           mbSummaryTxCacheMisses <-
             insertBody
               txCache

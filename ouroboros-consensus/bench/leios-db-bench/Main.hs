@@ -368,7 +368,7 @@ insertOneEb conn pool ebIdx = do
       eb = MkLeiosEb $ V.fromList [(hashAt i, 200 :: BytesSize) | i <- [0 .. txsPerEb - 1]]
       txs = [(h, genTx h) | txIdx <- [0 .. txsPerEb - 1], let h = hashAt txIdx]
   leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
-  _ <- leiosDbInsertEbBody conn point eb
+  _ <- leiosDbInsertEbBody conn point eb (candidatesOf eb)
   _ <- leiosDbInsertTxs conn txs
   pure ()
 
@@ -385,7 +385,7 @@ insertOneEbTimed conn pool ebIdx = do
       eb = MkLeiosEb $ V.fromList [(hashAt i, 200 :: BytesSize) | i <- [0 .. txsPerEb - 1]]
       txs = [(h, genTx h) | txIdx <- [0 .. txsPerEb - 1], let h = hashAt txIdx]
   (_, tPoint) <- timed $ leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
-  (_, tBody) <- timed $ leiosDbInsertEbBody conn point eb
+  (_, tBody) <- timed $ leiosDbInsertEbBody conn point eb (candidatesOf eb)
   -- The node's 'dbInsertMs' spans only the two calls above; 'insertTxs' happens
   -- later, outside that trace. Skipping it isolates the stage production
   -- actually measures.
@@ -403,6 +403,21 @@ hashIndex :: Int -> Int -> (Int, Int)
 hashIndex ebIdx txIdx
   | txHashPool <= 0 = (ebIdx, txIdx)
   | otherwise = (0, (ebIdx * txsPerEb + txIdx) `mod` txHashPool)
+
+-- | What the writer claims the cache could not vouch for.
+--
+-- 'LEIOS_DB_BENCH_CANDIDATES' as a percentage: 100 is the pre-change behaviour
+-- of checking every tx in the body, 0 is a cache that vouches for the whole
+-- closure, which is the steady state on a devnet.
+candidatesOf :: LeiosEb -> [TxHash]
+candidatesOf (MkLeiosEb v) =
+  map fst . take n $ V.toList v
+ where
+  n = (V.length v * candidatePercent) `div` 100
+
+candidatePercent :: Int
+candidatePercent = envInt "LEIOS_DB_BENCH_CANDIDATES" 100
+{-# NOINLINE candidatePercent #-}
 
 -- | The hash a writer puts at a given offset: one the database already holds
 -- when a pool was sampled, otherwise a synthetic one.

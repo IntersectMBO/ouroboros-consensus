@@ -313,8 +313,10 @@ sqlInsertEbBody ::
   (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
   LeiosEb ->
+  -- | Txs of the body that might not be stored yet; the rest are asserted present.
+  [TxHash] ->
   IO CompletedEbs
-sqlInsertEbBody tracer conn notify point eb = do
+sqlInsertEbBody tracer conn notify point eb candidates = do
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
   completedNow <- dbWithWriteTransaction conn $ do
@@ -333,6 +335,7 @@ sqlInsertEbBody tracer conn notify point eb = do
     -- or the other way round.
     useStmt stInsertMissingTxs $ do
       dbBindBlob stInsertMissingTxs 1 point.pointEbHash.ebHashBytes
+      dbBindUtf8 stInsertMissingTxs 2 (jsonHexArray [b | MkTxHash b <- candidates])
       dbStep1 stInsertMissingTxs
     -- Initialize missingTxCount and read the resulting value via
     -- @RETURNING missingTxCount@. Only /this/ point's row can have
@@ -653,19 +656,20 @@ sql_delete_missing_txs =
 
 -- | Record which of a freshly-inserted body's txs we do not yet hold.
 --
--- One anti-join over the EB's own 'ebTxs' range -- the same work
--- 'sql_init_missing_tx_count' used to do to produce a count, now materialised so
--- that the arrival side reads the rows instead of recomputing them. Paying it
--- here rather than on every tx arrival is what earns the index removal: this
--- runs once per body, against ~4.7 times per tx for the old reverse lookup.
+-- Only the candidates the caller could not vouch for are looked up, passed as a
+-- JSON array of hex hashes. Everything else in the body is taken to be stored
+-- already; see 'leiosDbInsertEbBody' for why that is the caller's to assert.
 --
--- Parameter 1: ebHashBytes
+-- The join it replaced ran over the EB's whole 'ebTxs' range, so it probed the
+-- txs index once per tx in the body -- ~13.5k random probes for ~140 ms -- to
+-- discover, in the steady state, that nothing was missing at all.
+--
+-- Parameters: 1 = ebHashBytes, 2 = JSON array of candidate tx hashes
 sql_insert_missing_txs :: String
 sql_insert_missing_txs =
   "INSERT OR IGNORE INTO ebsMissingTxs (txHashBytes, ebHashBytes)\n\
-  \SELECT e.txHashBytes, e.ebHashBytes FROM ebTxs e\n\
-  \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
-  \WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
+  \SELECT unhex(je.value), ? FROM json_each(?) je\n\
+  \WHERE NOT EXISTS (SELECT 1 FROM txs t WHERE t.txHashBytes = unhex(je.value))\n\
   \"
 
 -- | Initialize missingTxCount after EB body is inserted, returning the

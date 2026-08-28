@@ -225,7 +225,7 @@ withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
   withLeiosDb db $ \conn -> do
     leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
-    void $ leiosDbInsertEbBody conn point eb
+    void $ leiosDbInsertEbBody conn point eb (allTxHashes eb)
     void $ leiosDbInsertTxs conn [(txHashOf tx, txBytes tx) | tx <- txs]
 
     cache <- newPureLeiosTxCache
@@ -268,3 +268,8 @@ ebOf :: [TestTx] -> LeiosEb
 ebOf txs =
   MkLeiosEb $
     V.fromList [(txHashOf tx, txBytesSize tx) | tx <- txs]
+
+-- | Every tx of a body, i.e. check them all -- what 'leiosDbInsertEbBody' did
+-- before it took a candidate list, and what keeps the lookup path under test.
+allTxHashes :: LeiosEb -> [TxHash]
+allTxHashes (MkLeiosEb v) = map fst (V.toList v)

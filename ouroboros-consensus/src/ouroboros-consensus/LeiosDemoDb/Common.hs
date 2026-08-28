@@ -102,14 +102,26 @@ data LeiosDbConnection m = LeiosDbConnection
   -- ^ Read the EB "body": the ordered list of tx-hash + tx-byte-size
   -- pairs that constitute this EB. No tx bytes are fetched; contrast
   -- with 'leiosDbLookupEbClosure' which joins with the 'txs' table.
-  , leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m CompletedEbs
+  , leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> [TxHash] -> m CompletedEbs
   -- ^ Persist an EB body. The point MUST already have been inserted via
   -- 'leiosDbInsertEbPoint' (announcement path). Yields an 'AcquiredEb'
   -- notification.
   --
   -- Returns any EBs whose closure just became complete because their body
-  -- landed after all their txs were already present in the DB. Those EBs also
-  -- get an 'AcquiredEbTxs' notification.
+  -- landed after all their txs were already present in the DB. Structurally that
+  -- is at most this EB: only its own 'missingTxCount' can change here.
+  --
+  -- The third argument is the subset of the body's txs that might not be stored
+  -- yet -- every other tx is asserted to be present, and is not looked up. The
+  -- caller is expected to derive it from the LeiosTxCache, whose hits mean
+  -- exactly "this tx is in the LeiosDb" (see the eviction ordering contract on
+  -- 'LeiosTxCache.insertBody'); a cache miss is not evidence of absence, so
+  -- misses are candidates rather than conclusions and are checked here.
+  --
+  -- Passing every tx of the body is always correct and is what this did before
+  -- the argument existed. It is also what it costs: each candidate is a random
+  -- probe into the txs index, and on a devnet database a full body cost ~140 ms
+  -- against ~0 ms when the cache vouched for all of them.
   --
   -- XXX: return type only used for tracing
   , leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
