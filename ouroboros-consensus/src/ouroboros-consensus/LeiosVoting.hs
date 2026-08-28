@@ -22,7 +22,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTChan
   , readTVar
   )
-import Control.Monad (filterM, forever, when)
+import Control.Monad (filterM, foldM, forever, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as TVar
 import Control.Monad.Class.MonadTimer (MonadTimer, registerDelay)
 import Control.Monad.Class.MonadTimer.SI (diffTimeToMicrosecondsAsInt)
@@ -408,7 +408,7 @@ validateEbClosure lcfg leiosConn txCache resolveValues point lsBase = do
   -- Determine which txs we can just reapply (the cache hits)
   decided <- withLookupTx txCache $ \look -> mapM (decide look) closure
   let st0 = applyMempoolDiffs values keys (applyChainTick OmitLedgerEvents lcfg slot lsBase)
-  goValidate st0 decided 0 0
+  goValidate st0 decided 0 0 []
  where
   -- The EB's slot is also its announcer's, so ticking to it mirrors what the
   -- apply path does when a later RB certifies this EB.
@@ -422,27 +422,40 @@ validateEbClosure lcfg leiosConn txCache resolveValues point lsBase = do
       Just Right{} -> pure (txh, Right (assumeValidatedClosureTx tx))
       _ -> pure (txh, Left tx)
 
-  -- Apply or reapply txs and tag the former as validated in the cache
-  goValidate _ [] !reapplied !applied =
+  -- Apply or reapply txs, accumulating the ones we newly validated so the cache
+  -- is written once for the whole closure rather than once per tx.
+  goValidate _ [] !reapplied !applied newly = do
+    recordValidated newly
     pure $ EbClosureValid reapplied applied
-  goValidate !st ((txh, decision) : rest) !reapplied !applied =
+  goValidate !st ((txh, decision) : rest) !reapplied !applied newly =
     case decision of
       Right vtx ->
         -- Already validated once, so only the state-dependent checks re-run. A
         -- failure here is state-dependent (a spent input, say) and says nothing
         -- about the static checks, so the tx keeps the tag it already has.
         case runExcept $ reapplyTx lcfg slot vtx st of
-          Left err -> pure $ EbClosureInvalid err
-          Right st' -> goValidate st' rest (reapplied + 1) applied
+          Left err -> abandon newly err
+          Right st' -> goValidate st' rest (reapplied + 1) applied newly
       Left tx ->
         case runExcept $ applyTx lcfg DoNotIntervene slot tx st of
-          Left err -> pure $ EbClosureInvalid err
-          Right (st', _vtx) -> do
-            recordValidated txh
-            goValidate (applyDiffs st st') rest reapplied (applied + 1)
+          Left err -> abandon newly err
+          Right (st', _vtx) ->
+            goValidate (applyDiffs st st') rest reapplied (applied + 1) (txh : newly)
 
-  recordValidated txh =
-    withLockedInsertAppliedTx txCache $ \w0 step -> step w0 txh ()
+  -- A closure that fails part-way still validated everything before the failure,
+  -- against a real ledger state, so those tags are kept: the work holds
+  -- regardless of the tx that sank the EB.
+  abandon newly err = do
+    recordValidated newly
+    pure $ EbClosureInvalid err
+
+  -- One lock acquisition per closure. Order is irrelevant -- each entry is an
+  -- independent tag -- so the accumulator is not reversed.
+  recordValidated newly
+    | null newly = pure ()
+    | otherwise =
+        withLockedInsertAppliedTx txCache $ \w0 step ->
+          foldM (\w txh -> step w txh ()) w0 newly
 
 -- | The 'RbHash' of the currently-selected chain's tip iff its most
 -- recently applied announcing header announces the given EB and is
