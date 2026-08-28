@@ -22,11 +22,14 @@ import qualified Data.Text as Text
 import           Data.Time.Clock (UTCTime)
 import           Ouroboros.Consensus.Block.SupportsSanityCheck (SanityCheckIssue)
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Util (TraceBlockchainTimeEvent)
+import           Ouroboros.Consensus.Block (Header)
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
+import           Ouroboros.Consensus.Genesis.Governor (TraceGDDEvent)
 import           Ouroboros.Consensus.Mempool (TraceEventMempool)
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server (TraceBlockFetchServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (TraceChainSyncClientEvent)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server (TraceChainSyncServerEvent)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                    (TraceLocalTxSubmissionServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
@@ -36,6 +39,7 @@ import           Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
 import           Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import           Ouroboros.Consensus.Node.Tracers (TraceForgeEvent,
                    TracePerasCertInclusionEvent, TracePerasVoteForgingEvent)
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmDB
@@ -46,10 +50,19 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolDB
 import           Ouroboros.Consensus.Tracing (ClientMetrics, ConsensusStartupException,
                    ReplayBlockStats)
 import           Ouroboros.Network.Block (Tip)
+import qualified Ouroboros.Network.BlockFetch.ClientState as BlockFetch
+import           Ouroboros.Network.BlockFetch.Decision.Trace (TraceDecisionEvent)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
 type Blk = CardanoBlock StandardCrypto
+
+-- | Stand-in for the peer type of the per-peer tracers.
+--
+-- No 'MetaTrace' method looks at it -- namespaces, severities and documentation
+-- are the same whatever a peer is -- so this picks the simplest inhabitant
+-- rather than dragging in the node's address types.
+type Peer = ()
 
 tests :: TestTree
 tests = testGroup "MetaTrace"
@@ -68,6 +81,13 @@ tests = testGroup "MetaTrace"
       , metaTrace @ConsensusStartupException "ConsensusStartupException"
       , metaTrace @ReplayBlockStats "ReplayBlockStats"
       , metaTrace @ClientMetrics "ClientMetrics"
+      , metaTrace @(TraceGDDEvent Peer Blk) "TraceGDDEvent"
+      , metaTrace @(Jumping.TraceEventCsj Peer Blk) "Jumping.TraceEventCsj"
+      , metaTrace @(Jumping.TraceEventDbf Peer) "Jumping.TraceEventDbf"
+      , metaTrace @(BlockFetch.TraceFetchClientState (Header Blk))
+          "BlockFetch.TraceFetchClientState"
+      , metaTrace @(TraceDecisionEvent Peer (Header Blk)) "TraceDecisionEvent"
+      , metaTrace @KESAgentClientTrace "KESAgentClientTrace"
       ]
   , testGroup "storage"
       [ metaTrace @(ChainDB.TraceEvent Blk) "ChainDB.TraceEvent"
@@ -163,7 +183,8 @@ metaTrace name = testGroup name
 -- documentation. Shrink this list, never grow it.
 knownUndocumented :: Set.Set (String, Text.Text)
 knownUndocumented = Set.fromList
-  [ ("ChainDB.TraceEvent", "AddBlockEvent.AddBlockValidation.UpdateLedgerDb")
+  [ ("BlockFetch.TraceFetchClientState", "CompletedBlockFetch")
+  , ("ChainDB.TraceEvent", "AddBlockEvent.AddBlockValidation.UpdateLedgerDb")
   , ("ChainDB.TraceEvent", "AddBlockEvent.AddedReprocessLoEBlocksToQueue")
   , ("ChainDB.TraceEvent", "AddBlockEvent.ChainSelectionLoEDebug")
   , ("ChainDB.TraceEvent", "AddBlockEvent.PoppedBlockFromQueue")
@@ -201,6 +222,19 @@ knownUndocumented = Set.fromList
   , ("ImmutableDB.TraceEvent", "ChunkValidation.StartedValidatingChunk")
   , ("ImmutableDB.TraceEvent", "ChunkValidation.ValidatedChunk")
   , ("ImmutableDB.TraceEvent", "DBAlreadyClosed")
+  , ("KESAgentClientTrace", "KESAgentClientException")
+  , ("KESAgentClientTrace", "ServiceClientAbnormalTermination")
+  , ("KESAgentClientTrace", "ServiceClientAttemptReconnect")
+  , ("KESAgentClientTrace", "ServiceClientConnected")
+  , ("KESAgentClientTrace", "ServiceClientDeclinedKey")
+  , ("KESAgentClientTrace", "ServiceClientDriverTrace")
+  , ("KESAgentClientTrace", "ServiceClientDroppedKey")
+  , ("KESAgentClientTrace", "ServiceClientOpCertNumberCheck")
+  , ("KESAgentClientTrace", "ServiceClientReceivedKey")
+  , ("KESAgentClientTrace", "ServiceClientSocketClosed")
+  , ("KESAgentClientTrace", "ServiceClientStopped")
+  , ("KESAgentClientTrace", "ServiceClientVersionHandshakeFailed")
+  , ("KESAgentClientTrace", "ServiceClientVersionHandshakeTrace")
   , ("LedgerDB.TraceEvent", "Flavor.V2.BackendTrace.LSM.LSMLookup")
   , ("LedgerDB.TraceEvent", "Flavor.V2.BackendTrace.LSM.LSMOpenSession")
   , ("LedgerDB.TraceEvent", "Flavor.V2.BackendTrace.LSM.LSMSnap")
