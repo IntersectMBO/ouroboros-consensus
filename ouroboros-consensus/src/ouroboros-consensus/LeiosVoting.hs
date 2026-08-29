@@ -88,7 +88,7 @@ import Ouroboros.Consensus.Ledger.Extended (headerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , LedgerSupportsMempool (..)
-  , WhetherToIntervene (DoNotIntervene)
+  , WhetherToIntervene (Intervene)
   )
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
@@ -442,7 +442,19 @@ validateEbClosure lcfg leiosConn txCache resolveValues point lsBase = do
           Left err -> abandon newly err
           Right st' -> goValidate st' rest (reapplied + 1) applied newly
       Left tx ->
-        case runExcept $ applyTx lcfg DoNotIntervene slot tx st of
+        -- 'Intervene', despite the mempool's framing of it as a courtesy to
+        -- local clients. What it actually selects is whether the era's applyTx
+        -- may rewrite the tx's 'isValid' flag: 'DoNotIntervene' forces the flag
+        -- true and, on a tag mismatch, retries with it false, so a Plutus tx
+        -- whose scripts fail would be validated here as a collateral-only tx
+        -- and voted for. The apply path does not do that -- it runs with
+        -- 'ValidateNone' and branches on the /declared/ flag -- so it would
+        -- consume the tx's whole input set instead. Rewriting the flag here
+        -- would mean voting for a closure the chain never applies, which is
+        -- exactly the trust 'applyLeiosClosure' cites the certificate for.
+        -- 'Intervene' leaves the flag alone and lets the mismatch escape as an
+        -- error, so we fail closed on precisely those txs.
+        case runExcept $ applyTx lcfg Intervene slot tx st of
           Left err -> abandon newly err
           Right (st', _vtx) ->
             goValidate (applyDiffs st st') rest reapplied (applied + 1) (txh : newly)
