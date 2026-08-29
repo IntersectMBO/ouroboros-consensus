@@ -1373,7 +1373,7 @@ data TraceLeiosKernel
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosCertified {rbHash :: RbHash}
-  | -- \| A vote is scheduled to happen.
+  | -- | A vote is scheduled to happen.
     TraceLeiosVoteScheduled
       {ebPoint :: LeiosPoint, voteIn :: NominalDiffTime, deadlineIn :: NominalDiffTime}
   | -- | An 'AcquiredEbTxs' notification arrived but 'runLeiosVoting' chose
@@ -1485,6 +1485,9 @@ data LeiosNotVotedReason
     -- state, so this EB must not be certified. Carries the ledger's rendered
     -- rejection.
     EbTxsInvalid !Text
+  | -- | The vote we signed was not accepted into the tally. Carries the
+    -- rendered 'AddVoteResult'.
+    VoteRejected !Text
   deriving Show
 
 deriving instance Show TraceLeiosKernel
@@ -1705,6 +1708,7 @@ notVotedReasonText = \case
   TooLate -> Aeson.String "tooLate"
   NotOnCommittee -> Aeson.String "notOnCommittee"
   EbTxsInvalid err -> Aeson.String $ "ebTxsInvalid: " <> err
+  VoteRejected err -> Aeson.String $ "voteRejected: " <> err
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

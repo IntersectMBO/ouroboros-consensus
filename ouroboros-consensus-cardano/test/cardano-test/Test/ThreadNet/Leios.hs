@@ -329,8 +329,6 @@ prop_leios seed =
     TraceLeiosVoted{vote} -> Just vote
     _ -> Nothing
 
-  -- Which EB slot each announcing RB hash announced, so that a vote can be
-  -- dated: 'LeiosVote' carries only the hash it signed.
   -- Which EB each announcing RB hash announced, so that a vote can be dated:
   -- 'LeiosVote' carries only the hash it signed.
   announcedPoints :: Map RbHash LeiosPoint
@@ -775,6 +773,7 @@ prop_leios_invalid_eb seed
     ChainTipDoesNotAnnounce -> "ChainTipDoesNotAnnounce"
     TooLate -> "TooLate"
     NotOnCommittee -> "NotOnCommittee"
+    VoteRejected{} -> "VoteRejected"
 
 -- | The EB points certified by a chain's CertRBs. A CertRB carries no
 -- announcement of its own for the EB it certifies; the announcement lives on
