@@ -17,7 +17,13 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 
-module LeiosDemoTypes (module LeiosDemoTypes, module Cardano.Crypto.Leios) where
+module LeiosDemoTypes
+  ( module LeiosDemoTypes
+
+    -- * Re-exports
+  , module Cardano.Crypto.Leios
+  , module TxHashReexports
+  ) where
 
 import Cardano.Binary
   ( Decoder
@@ -55,8 +61,9 @@ import Cardano.Crypto.Leios
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
-import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
+import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
+import Cardano.Slotting.Time (RelativeTime)
 import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -72,8 +79,9 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
-import Data.IntMap (IntMap)
-import qualified Data.IntMap as IntMap
+import Data.IntMap.NonEmpty (NEIntMap)
+import qualified Data.IntMap.NonEmpty as NEIntMap
+import Data.IntSet.NonEmpty (NEIntSet)
 import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -87,6 +95,7 @@ import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import Data.String (fromString)
+import Data.Text (Text)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
@@ -100,6 +109,8 @@ import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
+import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
+import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
@@ -110,6 +121,10 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type
+  ( IsBigLedgerPeer (..)
+  )
+import System.Random (StdGen)
 import Text.Pretty.Simple (pShow)
 
 -- * Hashes and identities
@@ -163,16 +178,6 @@ instance SignableRepresentation RbHash where
   getSignableRepresentation point =
     toStrictByteString $
       encodeRbHash point
-
-newtype TxHash = MkTxHash ByteString
-  deriving stock (Eq, Ord, Generic)
-  deriving anyclass (NFData, NoThunks)
-
-instance Show TxHash where
-  show = prettyTxHash
-
-prettyTxHash :: TxHash -> String
-prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
 
 -- | Uniquely identifies an endorser block in Leios. Could use 'Block SlotNo
 -- EbHash' eventually, but a dedicated type is better to explore.
@@ -319,19 +324,24 @@ data LeiosBlockRequest
       !BytesSize
 
 data LeiosBlockTxsRequest
-  = -- |
-    --
-    -- The hashes aren't sent to the peer, but they are used to validate the
-    -- response when it arrives.
+  = -- | A request for some of an EB's txs: its point and the 'Jobs.LeiosJob's it
+    -- covers, keyed by job id (so a request can't list a job twice), each with its
+    -- full commitment. Everything needed to validate the response is carried here,
+    -- so the reply handler needs no lookup into the (body-less) job pool -- and a
+    -- redundant response for a job that has since completed still validates. On
+    -- the wire only the offset bitmap goes to the peer; it is derived from the
+    -- union of the jobs' offsets (see the LeiosFetch client), not stored.
     MkLeiosBlockTxsRequest
       !LeiosPoint
-      [(Word16, Word64)]
-      !(Vector TxHash)
+      !(NEIntMap Jobs.LeiosJob)
 
 prettyLeiosBlockTxsRequest :: LeiosBlockTxsRequest -> String
-prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps _txHashes) =
-  unwords $
-    "MsgLeiosBlockTxs" : prettyLeiosPoint p : map prettyBitmap bitmaps
+prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p jobs) =
+  unwords
+    [ "MsgLeiosBlockTxs"
+    , prettyLeiosPoint p
+    , "jobs=" <> show (toList (NEIntMap.keys jobs))
+    ]
 
 prettyBitmap :: (Word16, Word64) -> String
 prettyBitmap (idx, bitmap) =
@@ -349,9 +359,30 @@ prettyBitmap (idx, bitmap) =
 -- patterns of access to the "Ouroboros.Consensus.NodeKernel"'s shared state.
 --
 
+-- | Whether an EB offer also implies its tx-closure is on offer. A CertRB does
+-- (it certifies the whole EB); a bare 'MsgLeiosBlockOffer' does not -- the closure
+-- is offered separately, as a 'MsgLeiosBlockTxsOffer'. This is also the value we
+-- store per offered point: 'TxsClosureAlsoOffered' means the peer can serve the
+-- body /and/ the closure (a closure offer implies the body), while
+-- 'TxsClosureNotAlsoOffered' is body-only.
+data AlsoOfferedTxsClosure = TxsClosureAlsoOffered | TxsClosureNotAlsoOffered
+  deriving (Eq, Show)
+
+-- | Merge two offers for one point: the closure is on offer if either says so.
+mergeOffer :: AlsoOfferedTxsClosure -> AlsoOfferedTxsClosure -> AlsoOfferedTxsClosure
+mergeOffer TxsClosureAlsoOffered _ = TxsClosureAlsoOffered
+mergeOffer _ TxsClosureAlsoOffered = TxsClosureAlsoOffered
+mergeOffer _ _ = TxsClosureNotAlsoOffered
+
 data LeiosPeerVars m = MkLeiosPeerVars
-  { -- written to only by the LeiosNotify client (TODO and eviction)
-    offerings :: !(MVar m (Set EbHash, Set EbHash))
+  { whetherBigLedgerPeer :: !IsBigLedgerPeer
+  -- ^ fixed for the connection's lifetime; the fetch logic fetches more
+  -- aggressively from a big-ledger peer (see 'leiosFetchLogicIteration')
+  , offerings :: !(MVar m (Map LeiosPoint AlsoOfferedTxsClosure))
+  -- ^ the peer's current offers, keyed by point -- so the map is already in slot
+  -- order (freshest-first via 'Map.toDescList'), no dedup by EB hash needed
+  -- (honest announcements don't reuse a hash, and an adversary defeats such
+  -- dedup anyway). Written to only by the LeiosNotify client and eviction.
   , requestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
   -- ^ written to by the fetch logic and the LeiosFetch client
   --
@@ -369,11 +400,11 @@ data LeiosPeerVars m = MkLeiosPeerVars
   -- the Diffusion Layer's control message to be actionable.
   }
 
-newLeiosPeerVars :: IOLike m => m (LeiosPeerVars m)
-newLeiosPeerVars = do
-  offerings <- MVar.newMVar (Set.empty, Set.empty)
+newLeiosPeerVars :: IOLike m => IsBigLedgerPeer -> m (LeiosPeerVars m)
+newLeiosPeerVars whetherBigLedgerPeer = do
+  offerings <- MVar.newMVar Map.empty
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
-  pure MkLeiosPeerVars{offerings, requestsToSend}
+  pure MkLeiosPeerVars{whetherBigLedgerPeer, offerings, requestsToSend}
 
 -- | Main data structure used in the Leios fetching logic.
 --
@@ -383,168 +414,520 @@ newLeiosPeerVars = do
 --
 -- TODO: Potential simplifications once we have better test coverage:
 --
--- 1. With filterMissingWork now querying the DB before each fetch iteration,
---    we could simplify this structure to only track "offers" from peers rather
---    than "missing" items. The DB would be the source of truth for what we have,
---    and we'd filter offers against DB to find what to fetch.
---
--- 2. The acquiredEbBodies set is now redundant with DB - we update it in
---    filterMissingWork but could remove it entirely once we trust DB filtering.
---
--- 3. The reverseEbIndexByTx inverse index could be computed on-demand from missingEbTxs
---    rather than maintained incrementally, simplifying state updates.
---
--- 4. Consider separating "offer tracking" from "request tracking" into distinct
+-- 1. Consider separating "offer tracking" from "request tracking" into distinct
 --    data structures for clarity.
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
-    acquiredEbBodies :: !(Set EbHash)
-  -- ^ EB bodies we've successfully received/stored
+    ebState :: !(Map EbHash EbState)
+  -- ^ Per-EB state for every EB we have seen announced (or offered)
+  --
+  -- TODO once offers are only valid if preceded by an announcement, then
+  -- 'ebState' and the @selfPeer@ field of
+  -- 'LeiosDemoLogic.Announcements.CentralState' are partially redundant
+  , ebsPerMaxAnnouncementSlot :: !(Map SlotNo (NESet EbHash))
+  -- ^ Slot-keyed reverse index of 'ebStateMaxSlot' on 'ebState'
+  --
+  -- Used to accelerate pruning.
+  --
+  -- TODO will also be redundant with by 'CentralState.selfPeer.live' once
+  -- offers are no longer trusted.
+  , acquiredEbBodiesPrunedSlot :: !SlotNo
+  -- ^ The slot 'ebState' has most recently been pruned up to (see
+  -- 'pruneOutstandingToImmTip').
+  --
+  -- Used to robustly prevent re-inserting what has already been pruned out.
   , missingEbBodies :: !(Map LeiosPoint BytesSize)
   -- ^ EB bodies still needed to be fetched (indexed by point and size)
-  -- Request tracking
-  , requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
+  , reverseSlotIndexByEbHash :: !(Map EbHash (NESet SlotNo))
+  -- ^ Inverse of 'missingEbBodies' grouped by content hash: for each EbHash
+  -- listed there, the slots of the 'LeiosPoint's listing it. An EbHash is not
+  -- 1-to-1 with slots, so one body can be listed at several points; on acquiring
+  -- the body (keyed by hash) 'processLeiosBlock' must clear every such point, and
+  -- this index makes that a direct lookup rather than a scan of 'missingEbBodies'
+  -- (it likewise backs the "already listed?" check on the offer/announcement
+  -- paths). Kept in step with 'missingEbBodies' at every insert and delete.
+  , -- Request tracking
+    requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   -- ^ Which peers we've requested each EB from
-  , requestedTxPeers :: !(Map TxHash (Set (PeerId pid)))
-  -- ^ Which peers we've requested each TX from
+  --
+  -- TODO add requestedEbsPerPeer :: !(Map (PeerId pid) (NESet EbHash)) to avoid
+  -- linear scan
   , requestedBytesSizePerPeer :: !(Map (PeerId pid) BytesSize)
-  -- ^ Running total of bytes requested from each peer
-  , requestedBytesSize :: !BytesSize
-  -- ^ Total bytes requested across all peers
-  -- TX-level tracking
-  , missingEbTxs :: !(Map LeiosPoint (IntMap (TxHash, BytesSize)))
-  -- ^ The txs that still need to be sourced
-  --
-  -- * A @MsgLeiosBlock@ inserts into 'missingEbTxs' if that EB has never
-  --   been received before.
-  --
-  -- * Every @MsgLeiosBlockTxs@ deletes from 'missingEbTxs', but that delete
-  --   will be a no-op for all except the first to arrive carrying this EbTx.
-  --
-  -- TODO this is far too big for the heap
-  , reverseEbIndexByTx :: !(Map TxHash (Map EbHash (Int, BytesSize)))
-  -- ^ Inverse of missingEbTxs - for each TX, which EBs (and offsets) need it
-  --
-  -- TODO this is far too big for the heap
-  , blockingPerEb :: !(Map LeiosPoint Int)
-  -- ^ How many txs of each EB are not yet in the @txs@ table
-  --
-  -- These missing txs are blocking the node from sending @MsgLeiosBlockTxsOffer@
-  -- to its downstream peers.
-  --
-  -- It's different from 'missingEbTxs' in two ways.
-  --
-  -- * The heap footprint of 'blockingPerEb' doesn't scale with the number of
-  --   EbTxs.
-  --
-  -- * 'blockingPerEb' is only decremented when txs are actually inserted
-  --   into the DB (via @MsgLeiosBlockTxs@ handling).
-  --
-  -- TODO: 'blockingPerEb' can go permanently stale for txs shared across EBs.
-  -- 'msgLeiosBlockTxs' only decrements the entry for the EB it was requesting;
-  -- a tx that also belongs to another EB B is then in the DB, so 'filterMissingWork'
-  -- drops it from B's missing set and B never fetches it itself -- so B's
-  -- 'blockingPerEb' is never decremented for that tx and stays > 0. This is
-  -- currently harmless only because nothing reads 'blockingPerEb' as a gate: the
-  -- downstream @MsgLeiosBlockTxsOffer@ is actually driven by the DB emitting
-  -- 'AcquiredEbTxs' for every EB its @completed@ computation finds finished
-  -- (cross-EB aware), not by this field. Before using 'blockingPerEb' to gate
-  -- anything, reconcile it against shared-tx arrivals (or derive it from the DB).
+  -- ^ Running total of bytes requested from each peer. This is the only
+  -- outstanding-byte limit: there is no global cap (the global bound falls out
+  -- as this per-peer cap times the peer count).
+  , requestedJobsPerPeer :: !(Map (PeerId pid) (Map EbHash NEIntSet))
+  -- ^ Per peer, per EB, the job ids it currently has in flight -- for
+  -- decrementing those multiplicities on disconnect
+  , leiosFetchPrng :: !StdGen
+  -- ^ The LeiosFetch decision loop's own PRNG, threaded through each iteration.
+  -- Used to shuffle which job is drawn when assigning tx-closure work to a peer
+  -- (a uniform pick within the least-requested multiplicity bucket), so job ids
+  -- aren't consumed in a fixed order. Seeded once at start-up.
   }
 
-emptyLeiosOutstanding :: LeiosOutstanding pid
-emptyLeiosOutstanding =
+-- | The empty outstanding state, given the slot it has already been pruned up
+-- to. The caller supplies the immutable-tip slot at startup so that a body at
+-- or below it reads as too old from the outset (see
+-- 'acquiredEbBodiesPrunedSlot' / 'pruneOutstandingToImmTip'), and the seed for
+-- the decision loop's PRNG (see 'leiosFetchPrng').
+emptyLeiosOutstanding :: StdGen -> SlotNo -> LeiosOutstanding pid
+emptyLeiosOutstanding prng prunedSlot =
   MkLeiosOutstanding
-    { acquiredEbBodies = Set.empty
+    { ebState = Map.empty
+    , ebsPerMaxAnnouncementSlot = Map.empty
+    , acquiredEbBodiesPrunedSlot = prunedSlot
     , missingEbBodies = Map.empty
+    , reverseSlotIndexByEbHash = Map.empty
     , requestedEbPeers = Map.empty
-    , requestedTxPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
-    , requestedBytesSize = 0
-    , missingEbTxs = Map.empty
-    , reverseEbIndexByTx = Map.empty
-    , blockingPerEb = Map.empty
+    , requestedJobsPerPeer = Map.empty
+    , leiosFetchPrng = prng
     }
 
--- | Pretty-print the per-peer 'offerings' map (one tuple per peer: the EB-body
--- offers and the EB-tx-closure offers it has sent). Each offered EB hash is
--- shown truncated.
-prettyOfferings :: Show pid => Map (PeerId pid) (Set EbHash, Set EbHash) -> String
+-- | Per-EB state tracked in 'ebState'
+data EbState
+  = -- | The greatest slot at which the EB has been announced (TODO or, for now,
+    -- offered); the wall-clock onset of its /oldest/ announcement slot (kept as the
+    -- minimum, so the body\/closure arrival handlers can report how old the EB was
+    -- when we first held it; 'SNothing' for an unheralded offer-only or self-forged
+    -- EB); and the current progress of fetching it.
+    MkEbState !SlotNo !(StrictMaybe RelativeTime) !EbFetchState
+  deriving (Eq, Show)
+
+-- | Whether we hold an EB's body, plus the forge's imminent case.
+data EbFetchState
+  = -- | Our own forge is producing this EB
+    --
+    -- Its body and closure are in our store already or will be imminently. The
+    -- fetch logic issues no requests for it and treats any peer offer as dead.
+    --
+    -- Distinct from 'NoBody' so we never fetch it, yet (like 'NoBody') reports
+    -- no body held, so the forged body is still recognised as novel and
+    -- persisted when it arrives; it becomes an ordinary 'BodyAcquired' at that
+    -- point. This lets "EB arriving from forge" and "EB arriving from peer" be
+    -- treated mostly the same way.
+    BodyImminent
+  | -- | We've only ever received an announcement, and our forge hasn't issued
+    -- this EB (though it potentially could in the future!)
+    NoBody
+  | -- | The job pool: the jobs not yet /requested/ (NB this can be empty even
+    -- before jobs have /arrived/).
+    --
+    -- The body itself is /not/ retained -- it lives in the LeiosDb, and each job
+    -- carries a 'Jobs.JobRootHash' commitment sufficient to validate its
+    -- response. Retaining up to ~10k bodies (each up to ~512 kB) would cost
+    -- gigabytes.
+    --
+    -- TODO the 'Jobs.LeiosJobPool' could be an 'MVar m LeiosJobPool' for per-EB
+    -- locking, at the cost of an 'm' parameter on
+    -- EbFetchState\/EbState\/LeiosOutstanding and a monadic body-acquire;
+    -- deferred.
+    BodyAcquired !Jobs.LeiosJobPool
+  deriving (Eq, Show)
+
+ebStateMaxSlot :: EbState -> SlotNo
+ebStateMaxSlot (MkEbState slot _onset _fetchState) = slot
+
+-- | The recorded onset of the EB's oldest announcement slot, if any (see
+-- 'MkEbState'); the arrival handlers use it to report the EB's age on arrival.
+ebStateOnset :: EbState -> StrictMaybe RelativeTime
+ebStateOnset (MkEbState _slot onset _fetchState) = onset
+
+-- | Whether we already hold the EB's body (the "do we have it?" test that the
+-- offer/announcement/arrival paths consult before fetching).
+ebStateHasBody :: EbState -> Bool
+ebStateHasBody (MkEbState _slot _onset fetchState) = case fetchState of
+  NoBody -> False
+  BodyImminent -> False
+  BodyAcquired{} -> True
+
+-- | A size summary of the LeiosFetch decision loop's working set
+--
+-- The stats are rather coarse because we forbid their calculation work to scale
+-- with EBs; it's either O(1) or scales based on the number of peers.
+data LeiosOutstandingStats = MkLeiosOutstandingStats
+  { losTracked :: !Int
+  -- ^ Total EBs in 'ebState' (should stay bounded by the pruning window; a
+  -- persistent climb signals a pruning leak).
+  , losMissingBodies :: !Int
+  -- ^ Size of 'missingEbBodies' (EB body points still to fetch) -- the body-fetch
+  -- backlog.
+  , losPeersInflight :: !Int
+  -- ^ Peers tracked in the outstanding-request byte map.
+  , losInflightBytesDesc :: !(Vector Int)
+  -- ^ Per-peer outstanding requested bytes, sorted descending -- the whole
+  -- distribution, so budget concentration across peers is visible. The peer
+  -- count is low, so materializing and sorting this is cheap.
+  , losOffersDesc :: !(Vector Int)
+  -- ^ Per-peer offer-set sizes, sorted descending -- the whole distribution.
+  -- Offers are not byte-budgeted, so a peer can pile them up between prunes; a
+  -- lone climbing head is the per-peer flood signal.
+  }
+  deriving (Eq, Show, Generic)
+
+-- | @offerSizes@ is each peer's current offer-set size (e.g.
+-- @map Map.size (Map.elems offerings)@ in the decision loop) and @numOfferingPeers@
+-- its length, passed separately as an O(1) 'Map.size' hint so the sorted vector
+-- is allocated exactly.
+leiosOutstandingStats :: Int -> [Int] -> LeiosOutstanding pid -> LeiosOutstandingStats
+leiosOutstandingStats numOfferingPeers offerSizes o =
+  MkLeiosOutstandingStats
+    { losTracked = Map.size (ebState o)
+    , losMissingBodies = Map.size (missingEbBodies o)
+    , losPeersInflight = Map.size inflightMap
+    , losInflightBytesDesc = inflightDesc
+    , losOffersDesc = offersDesc
+    }
+ where
+  inflightMap = requestedBytesSizePerPeer o
+  inflightDesc =
+    V.fromListN
+      (Map.size inflightMap)
+      (sortOn Down (map fromIntegral (Map.elems inflightMap)))
+  offersDesc = V.fromListN numOfferingPeers (sortOn Down offerSizes)
+
+-- | Summary order-statistics of a distribution across peers, given as a
+-- /descending-sorted, non-negative/ 'Vector' (as 'losInflightBytesDesc' /
+-- 'losOffersDesc' are). All are cheap to derive, so the vector stays the source
+-- of truth and these are computed only when emitting telemetry.
+--
+-- The median is taken over the /non-zero/ values only, so peers currently
+-- holding nothing don't drag it toward zero.
+data PeerDistSummary = MkPeerDistSummary
+  { pdsNonzeroCount :: !Int
+  , pdsTotal :: !Int
+  , pdsTop1 :: !Int
+  , pdsTop2 :: !Int
+  , pdsTop3 :: !Int
+  , pdsTop4 :: !Int
+  , pdsTop5 :: !Int
+  , pdsNonzeroMedian :: !Int
+  }
+
+summarizePeerDist :: Vector Int -> PeerDistSummary
+summarizePeerDist desc =
+  MkPeerDistSummary
+    { pdsNonzeroCount = nz
+    , pdsTotal = V.sum desc
+    , pdsTop1 = nth 0
+    , pdsTop2 = nth 1
+    , pdsTop3 = nth 2
+    , pdsTop4 = nth 3
+    , pdsTop5 = nth 4
+    , pdsNonzeroMedian = median
+    }
+ where
+  n = V.length desc
+  nth i = if i < n then desc V.! i else 0
+  -- Descending-sorted and non-negative, so the non-zero values are the leading
+  -- prefix and the median index lands inside it.
+  nz = V.length (V.takeWhile (> 0) desc)
+  median
+    | nz == 0 = 0
+    | odd nz = desc V.! (nz `div` 2)
+    | otherwise = (desc V.! (nz `div` 2 - 1) + desc V.! (nz `div` 2)) `div` 2
+
+-- | Simple counts describing what one decision iteration issued -- bounded by the
+-- number of requests issued that iteration, never by the outstanding state. See
+-- 'TraceLeiosFetchDecision'.
+data LeiosDecisionStats = MkLeiosDecisionStats
+  { ldsPeers :: !Int
+  -- ^ Peers issued at least one request this iteration.
+  , ldsRequests :: !Int
+  -- ^ Total fetch requests issued.
+  , ldsBodyRequests :: !Int
+  -- ^ Of those, EB-body ('MsgLeiosBlock') requests; the rest are tx-batch
+  -- ('MsgLeiosBlockTxs') requests.
+  , ldsJobs :: !Int
+  -- ^ Total jobs across the tx-batch requests.
+  , ldsBodyBytes :: !Int
+  -- ^ Requested EB-body bytes (sum of the body requests' sizes).
+  , ldsTxBytes :: !Int
+  -- ^ Requested tx bytes (sum of the covered jobs' on-the-wire sizes).
+  }
+  deriving (Eq, Show, Generic)
+
+summarizeDecisions ::
+  Foldable t => Map k (t LeiosFetchRequest) -> LeiosDecisionStats
+summarizeDecisions decs =
+  MkLeiosDecisionStats
+    { ldsPeers = Map.size decs
+    , ldsRequests = length reqs
+    , ldsBodyRequests = length [() | LeiosBlockRequest{} <- reqs]
+    , ldsJobs = sum [NEIntMap.size jobs | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) <- reqs]
+    , ldsBodyBytes = sum [fromIntegral sz | LeiosBlockRequest (MkLeiosBlockRequest _ sz) <- reqs]
+    , ldsTxBytes =
+        sum
+          [ fromIntegral b
+          | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) <- reqs
+          , Jobs.MkLeiosJob _ b _ <- F.toList jobs
+          ]
+    }
+ where
+  reqs = concatMap toList (Map.elems decs)
+
+insertAcquiredEbBody ::
+  EbHash -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
+insertAcquiredEbBody ebHash jobPool =
+  alterEbState ebHash $ \case
+    Nothing ->
+      -- The state must have been pruned before the MsgLeiosBlock
+      -- arrived. (Because we couldn't have sent a MsgLeiosBlockRequest if no
+      -- announcement had arrived.)
+      --
+      -- Because it was previously pruned, it should simply be ignored now.
+      Nothing
+    Just (MkEbState slot onset fetchState) -> case fetchState of
+      BodyAcquired{} -> Nothing
+      NoBody -> Just $ MkEbState slot onset (BodyAcquired jobPool)
+      BodyImminent ->
+        -- note that we ignore the given jobPool here
+        Just $ MkEbState slot onset (BodyAcquired Jobs.emptyLeiosJobPool)
+
+-- | Record that our own forge is producing this EB
+markBodyImminent ::
+  EbHash -> SlotNo -> LeiosOutstanding pid -> LeiosOutstanding pid
+markBodyImminent ebHash slot =
+  alterEbState ebHash $ \case
+    -- A self-forged EB records no onset: we produced it, so its arrival age is a
+    -- trivial ~0, not a diffusion-latency data point.
+    Nothing -> Just $ MkEbState slot SNothing BodyImminent
+    Just (MkEbState oldSlot onset fetchState) -> case fetchState of
+      NoBody -> Just $ MkEbState oldSlot onset BodyImminent
+      BodyImminent -> Nothing
+      BodyAcquired{} -> Just $ MkEbState oldSlot onset (BodyAcquired Jobs.emptyLeiosJobPool)
+
+-- | Record that the EB with this hash is referenced (announced or offered) at this
+-- slot, along with that slot's wall-clock onset if known.
+--
+-- The same EB (hash) can be referenced by several points; we keep the
+-- /greatest/ such slot, so the EB's state isn't pruned prematurely. The onset,
+-- in contrast, is kept as the /minimum/ (oldest announcement), so the arrival
+-- handlers report the age since the EB was first heralded. An offer carries no
+-- onset ('SNothing') and so never overrides one already recorded by an
+-- announcement.
+recordMaxAnnouncementSlot ::
+  EbHash -> SlotNo -> StrictMaybe RelativeTime -> LeiosOutstanding pid -> LeiosOutstanding pid
+recordMaxAnnouncementSlot ebHash slot onset =
+  alterEbState ebHash $ \mbOld -> case mbOld of
+    Nothing -> Just $ MkEbState slot onset NoBody
+    Just (MkEbState oldSlot oldOnset fetchState) ->
+      let newSlot = max slot oldSlot
+          newOnset = minOnset onset oldOnset
+       in if newSlot == oldSlot && newOnset == oldOnset
+            then Nothing
+            else Just $ MkEbState newSlot newOnset fetchState
+
+-- | Combine two onsets, keeping the earlier and treating 'SNothing' as absent.
+minOnset :: StrictMaybe RelativeTime -> StrictMaybe RelativeTime -> StrictMaybe RelativeTime
+minOnset SNothing y = y
+minOnset x SNothing = x
+minOnset (SJust a) (SJust b) = SJust (min a b)
+
+-- | Initialize the outstanding state
+--
+-- Its contents are only @'BodyAcquired' 'emptyLeiosJobPool'@ for the EBs the
+-- LeiosDb already holds /in full/: a complete tx closure whose announcer is no
+-- older than the immutable tip. Each is marked 'BodyAcquired' with an empty job
+-- pool so we neither re-fetch nor re-process (eg emit 'AcquiredEb') an EB whose
+-- closure we already have at start-up time.
+--
+-- Everything else in the LeiosDb is deliberately ignored here, and it's
+-- safe to do so:
+--
+--   * A merely body-held EB with a /partial/ closure is not seeded: an
+--     empty pool would strand its missing txs. Left absent, it is
+--     re-derived from a fresh announcement/offer, and the redundant body
+--     re-fetch + re-insert is idempotent (INSERT-OR-IGNORE / no-op on
+--     duplicate).
+--
+--   * Complete closures at or below the immutable tip are already final;
+--     they would read as @tooOld@ anyway, so there is nothing to track.
+--
+--   * For the "points" and "txs" SQL tables, the control paths that
+--     actually depend on them read the LeiosDb directly, never via this
+--     outstanding state.
+--
+-- The per-peer request-tracking fields must start empty regardless: there are
+-- no connections yet and nothing is in flight.
+--
+-- The 'cdbAcquiredLeiosEbs' field of the ChainDB (which gates ChainSel for
+-- CertRBs) is initialized in the exact same way: from
+-- 'LeiosDemoDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot', already
+-- restricted to announcers no older than the immutable tip. And, it's
+-- necessarily initialized earlier, as part of the ChainDB. But for the sake of
+-- modularity/independence (see the TODO below), we're not reusing it to
+-- initialize 'LeiosOutstanding'.
+--
+-- TODO At the cost of more complexity here, we could initialize 'ebState'
+-- /and/ the LeiosTxCache to perfectly reflect the state of the LeiosDb on
+-- start-up. It's not clear that that's worthwhile for the MVP; /healthy/
+-- nodes shouldn't be frequently restarting.
+initializeLeiosOutstanding :: StdGen -> [LeiosPoint] -> SlotNo -> LeiosOutstanding pid
+initializeLeiosOutstanding prng points immTipSlot =
+  F.foldl' (flip seed1) (emptyLeiosOutstanding prng immTipSlot) points
+ where
+  seed1 (MkLeiosPoint slot ebHash) =
+    insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool
+      . recordMaxAnnouncementSlot ebHash slot SNothing
+
+-- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
+-- whenever the entry's max slot moves. The supplied function must be
+-- slot-monotonic (never lower the greatest slot), which both callers are.
+alterEbState ::
+  EbHash ->
+  -- | REQUIREMENT: must not reduce 'ebStateMaxSlot'
+  (Maybe EbState -> Maybe EbState) ->
+  LeiosOutstanding pid ->
+  LeiosOutstanding pid
+alterEbState ebHash f outstanding =
+  case Map.alterF upsert1 ebHash (ebState outstanding) of
+    (Nothing, _) -> outstanding
+    (Just (mbOldSlot, newSlot), ebState') ->
+      outstanding
+        { ebState = ebState'
+        , ebsPerMaxAnnouncementSlot =
+            if mbOldSlot == Just newSlot
+              then ebsPerMaxAnnouncementSlot outstanding -- max slot unchanged
+              else Map.insertWith NESet.union newSlot (NESet.singleton ebHash) $
+                case mbOldSlot of
+                  Nothing ->
+                    ebsPerMaxAnnouncementSlot outstanding
+                  Just oldSlot ->
+                    Map.update
+                      (NESet.nonEmptySet . NESet.delete ebHash)
+                      oldSlot
+                      (ebsPerMaxAnnouncementSlot outstanding)
+        }
+ where
+  -- One traversal of 'ebState': the pair functor carries whether the entry
+  -- changed at all and, if so, the prior and new greatest slots for the
+  -- reverse-index update.
+  upsert1 mbOld = case f mbOld of
+    Nothing -> (Nothing, mbOld)
+    Just new -> (Just (ebStateMaxSlot <$> mbOld, ebStateMaxSlot new), Just new)
+
+-- | Prune 'Outstanding' to the immutable tip, returning the EB hashes it dropped
+-- (so the caller can drop those same hashes from the peers' offers).
+--
+-- Uses the 'ebsPerMaxAnnouncementSlot' reverse index to drop the below-tip prefix
+-- directly (@spanAntitone@), rather than scanning the whole map.
+--
+-- TODO still more it could prune (e.g. abandoned in-flight EB requests).
+pruneOutstandingToImmTip :: SlotNo -> LeiosOutstanding pid -> (Set EbHash, LeiosOutstanding pid)
+pruneOutstandingToImmTip immTipSlot outstanding =
+  ( prunedHashes
+  , outstanding
+      { ebState = ebState outstanding `Map.withoutKeys` prunedHashes
+      , ebsPerMaxAnnouncementSlot = atOrAbove
+      , acquiredEbBodiesPrunedSlot = max (acquiredEbBodiesPrunedSlot outstanding) immTipSlot
+      , missingEbBodies = missingEbBodiesAtOrAbove
+      , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
+      }
+  )
+ where
+  (below, atOrAbove) =
+    Map.spanAntitone (< immTipSlot) (ebsPerMaxAnnouncementSlot outstanding)
+  prunedHashes = Set.unions (map NESet.toSet (Map.elems below))
+
+  -- 'LeiosPoint' orders slot-first, so the below-tip points are a prefix.
+  (belowBodies, missingEbBodiesAtOrAbove) =
+    Map.spanAntitone
+      (\(MkLeiosPoint slot _ebHash) -> slot < immTipSlot)
+      (missingEbBodies outstanding)
+  -- Remove each dropped point's slot from its hash's reverse-index entry (which
+  -- exists, since the index is the exact inverse of 'missingEbBodies').
+  reverseSlotIndexByEbHash' =
+    foldr
+      (\(MkLeiosPoint slot ebHash) -> Map.update (NESet.nonEmptySet . NESet.delete slot) ebHash)
+      (reverseSlotIndexByEbHash outstanding)
+      (Map.keys belowBodies)
+
+-- | Pretty-print the per-peer 'offerings' map: for each peer, its offered points
+-- freshest-first, each tagged with the strongest kind offered. Hashes truncated.
+prettyOfferings :: Show pid => Map (PeerId pid) (Map LeiosPoint AlsoOfferedTxsClosure) -> String
 prettyOfferings m =
   unlines $
     map ("    [leios] " ++) $
-      [ show peer
-          ++ " bodies="
-          ++ shortSet bodies
-          ++ " closures="
-          ++ shortSet closures
-      | (peer, (bodies, closures)) <- Map.toList m
+      [ show peer ++ " " ++ shortOffers offers
+      | (peer, offers) <- Map.toList m
       ]
  where
-  shortSet s = case Set.toList s of
+  shortOffers offers = case Map.toDescList offers of
     [] -> "{}"
-    xs ->
+    points ->
       "{"
-        ++ unwords (map (take 8 . prettyEbHash) xs)
+        ++ unwords
+          [ show slot ++ ":" ++ take 8 (prettyEbHash h) ++ kindTag k
+          | (MkLeiosPoint slot h, k) <- points
+          ]
         ++ "}"
+  kindTag = \case
+    TxsClosureNotAlsoOffered -> "b"
+    TxsClosureAlsoOffered -> "c"
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
   unlines $
     map ("    [leios] " ++) $
-      [ "acquiredEbBodies = " ++ show (Set.size acquiredEbBodies)
+      [ "ebState = " ++ show (Map.size ebState)
       , "missingEbBodies = " ++ show (Map.size missingEbBodies)
+      , "reverseSlotIndexByEbHash = " ++ show (Map.size reverseSlotIndexByEbHash)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
-      , "requestedTxPeers = " ++ unwords (map prettyTxHash (Map.keys requestedTxPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
-      , "requestedBytesSize = " ++ show requestedBytesSize
-      , "missingEbTxs = "
-          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show (IntMap.size v)) | (k, v) <- Map.toList missingEbTxs]
-      , "blockingPerEb = "
-          ++ unwords [(prettyLeiosPoint k ++ "__" ++ show c) | (k, c) <- Map.toList blockingPerEb]
       , ""
       ]
  where
   MkLeiosOutstanding
-    { acquiredEbBodies
+    { ebState
     , missingEbBodies
+    , reverseSlotIndexByEbHash
     , requestedEbPeers
-    , requestedTxPeers
     , requestedBytesSizePerPeer
-    , requestedBytesSize
-    , missingEbTxs
-    , blockingPerEb
     } = x
 
 -- TODO which of these limits are allowed to be exceeded by at most one
 -- request?
 data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
-  { maxRequestedBytesSize :: BytesSize
-  -- ^ At most this many outstanding bytes requested from all peers together
-  , maxRequestedBytesSizePerPeer :: BytesSize
-  -- ^ At most this many outstanding bytes requested from each peer
+  { maxRequestedBytesSizePerPeer :: BytesSize
+  -- ^ At most this many outstanding bytes requested from each non-big-ledger
+  -- peer
   , maxRequestBytesSize :: BytesSize
   -- ^ At most this many outstanding bytes per request
-  , maxRequestsPerEb :: Int
-  -- ^ At most this many outstanding requests for each EB body
-  , maxRequestsPerTx :: Int
-  -- ^ At most this many outstanding requests for each individual tx
+  , maxJobBytesSize :: BytesSize
+  -- ^ At most this many bytes of txs per job
+  , maxJobTxCount :: Int
+  -- ^ At most this many txs per job
+  , fetchPriorityWindowSlots :: Word64
+  -- ^ @L = 3*L_hdr + L_vote + L_diff@ (in slots): the window, ending at the
+  -- current slot, of EBs still worth voting on. Fetch prioritisation inverts to
+  -- oldest-first within it (see @fetchPriorityTiers@). ~14s on mainnet, ~10 on
+  -- the testnet.
+  --
+  -- TODO these are Leios protocol parameters (@L_hdr@/@L_vote@/@L_diff@) that
+  -- should be read from the ledger state and can change via on-chain governance;
+  -- static stub for now.
   , maxLeiosNotifyIngressQueue :: BytesSize
   -- ^ @maximumIngressQueue@ for LeiosNotify
   , maxLeiosFetchIngressQueue :: BytesSize
-  -- ^ @maximumIngressQueue@ for LeiosFetch
+  -- ^ @maximumIngressQueue@ for LeiosFetch. This is the concrete bound from
+  -- which 'maxRequestedBytesSizePerBigLedgerPeer' is derived: the scheduler
+  -- must never leave more requested-but-unconsumed response bytes outstanding
+  -- than this queue can hold, else the mux tears the connection down (see
+  -- @Network.Mux.Ingress@'s @IngressQueueOverRun@).
   }
 
 demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
 demoLeiosFetchStaticEnv =
   MkLeiosFetchStaticEnv
-    { maxRequestedBytesSize = 50 * million
-    , maxRequestedBytesSizePerPeer = 5 * million
+    { maxRequestedBytesSizePerPeer = 5 * million
     , maxRequestBytesSize = 500 * thousand
-    , maxRequestsPerEb = 2
-    , maxRequestsPerTx = 2
+    , maxJobBytesSize = 64 * thousandBase2
+    , maxJobTxCount = 20000 -- TODO do we want this to be low enough to matter?
+    , fetchPriorityWindowSlots = 10 -- TODO read dynamically from ledger state
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
-    , maxLeiosFetchIngressQueue = 50 * millionBase2
+    , maxLeiosFetchIngressQueue = 5 * 12 * millionBase2
     }
  where
   million :: Num a => a
@@ -553,6 +936,23 @@ demoLeiosFetchStaticEnv =
   millionBase2 = 2 ^ (20 :: Int)
   thousand :: Num a => a
   thousand = 10 ^ (3 :: Int)
+  thousandBase2 :: Num a => a
+  thousandBase2 = 2 ^ (10 :: Int)
+
+-- | At most this many outstanding bytes requested from each big-ledger peer.
+--
+-- Derived from the concrete lower-level bound 'maxLeiosFetchIngressQueue': the
+-- scheduler may leave outstanding as many requested tx bytes as the LeiosFetch
+-- ingress queue can hold. The on-the-wire message framing that sits atop those
+-- tx bytes is covered by the +10% @addSafetyMargin@ the mux wiring applies to
+-- 'maxLeiosFetchIngressQueue' when it sets the actual @maximumIngressQueue@, so
+-- a full budget's worth of tx bytes plus framing still fits.
+--
+-- Larger than 'maxRequestedBytesSizePerPeer' so a high-stake peer can be asked
+-- for multiple whole EB closures at once, but still bounded (by the ingress
+-- queue) so an adversarial peer can't drown us.
+maxRequestedBytesSizePerBigLedgerPeer :: LeiosFetchStaticEnv -> BytesSize
+maxRequestedBytesSizePerBigLedgerPeer = maxLeiosFetchIngressQueue
 
 -- * LeiosTx newtype
 
@@ -671,6 +1071,15 @@ decodeLeiosEb = do
   -- ultimate in ST.
   fmap MkLeiosEb $ V.generateM n $ \_i -> do
     (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
+
+-- | An EB body as its canonical CBOR bytes: the @b@ stored in the
+-- 'LeiosTxCache' index. Its 'LeiosTxCache.API.ReferencesTxsByHash' instance
+-- (defined alongside the class in "LeiosTxCache.API") decodes it to enumerate the
+-- referenced txs.
+newtype SerializedEbBody = MkSerializedEbBody SBS.ShortByteString
+
+serializeEbBody :: LeiosEb -> SerializedEbBody
+serializeEbBody = MkSerializedEbBody . SBS.toShort . toStrictByteString . encodeLeiosEb
 
 -- * Voting
 
@@ -902,13 +1311,47 @@ messageLeiosFetchToObject = \case
   LeiosFetch.MsgDone ->
     "kind" .= Aeson.String "MsgDone"
 
+-- | Summary of an EB body inserted into the LeiosTxCache, for observability (see
+-- 'TraceLeiosBodyHits'). The counts nest:
+-- @ibsTxsInEb >= ibsTracked >= ibsAcquired >= ibsValidated@.
+data LeiosTxCacheInsertBodySummary = MkLeiosTxCacheInsertBodySummary
+  { ibsTxsInEb :: !Int
+  -- ^ txs the EB body references
+  , ibsTracked :: !Int
+  -- ^ of those, how many the cache already tracked
+  , ibsAcquired :: !Int
+  -- ^ of those tracked, how many were already acquired (inserted or validated)
+  , ibsValidated :: !Int
+  -- ^ of those acquired, how many were already validated
+  , ibsCacheTxCount :: !Int
+  -- ^ total txs the cache tracks after this insert
+  , ibsCacheLoad :: !Double
+  -- ^ 'ibsCacheTxCount' as a fraction of the worst-case cache capacity
+  }
+  deriving (Eq, Show)
+
 data TraceLeiosKernel
   = MkTraceLeiosKernel String
-  | TraceLeiosBlockAcquired LeiosPoint
+  | -- | An EB body was first acquired
+    --
+    -- Carries how old the EB was on arrival, if it was preceded by an
+    -- announcement and not forged locally.
+    TraceLeiosBlockAcquired LeiosPoint (Maybe NominalDiffTime)
   | -- | The EB body was received but the point was not in the database. This is
     -- unexpected as the point should have been inserted during announcement handling.
     TraceLeiosBlockPointMissing LeiosPoint
-  | TraceLeiosBlockTxsAcquired LeiosPoint
+  | -- | An EB's tx closure was first completed. Carries the EB's age on arrival,
+    -- as for 'TraceLeiosBlockAcquired'.
+    TraceLeiosBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
+  | -- | An EB body was inserted into the LeiosTxCache
+    --
+    -- Carries the LeiosTxCache summary (cache hits), how many of its txs we found
+    -- in our local mempool (the /full/ mempool-resident count, which may overlap
+    -- the cache hits), and how many were in /neither/ and so must be fetched. The
+    -- combined cache+mempool hit rate is thus @(txsInEb - missedBoth) \/ txsInEb@;
+    -- using @missedBoth@ avoids double-counting the mempool\/cache overlap. The two
+    -- 'Int's are the mempool count then @missedBoth@.
+    TraceLeiosBodyHits LeiosPoint LeiosTxCacheInsertBodySummary Int Int
   | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
       , eb :: LeiosEb
@@ -930,9 +1373,15 @@ data TraceLeiosKernel
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosCertified {rbHash :: RbHash}
+  | -- | A vote is scheduled to happen.
+    TraceLeiosVoteScheduled
+      {ebPoint :: LeiosPoint, voteIn :: NominalDiffTime, deadlineIn :: NominalDiffTime}
   | -- | An 'AcquiredEbTxs' notification arrived but 'runLeiosVoting' chose
     -- not to cast a vote; the reason identifies which precondition failed.
     TraceLeiosNotVoted {ebPoint :: LeiosPoint, reason :: LeiosNotVotedReason}
+  | -- | An EB's endorsed transactions all applied, so we are about to vote for
+    -- it. The split says how many txs the LeiosTxCache spared full validation.
+    TraceLeiosEbValidated {ebPoint :: LeiosPoint, reapplied :: Int, applied :: Int}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
   | -- | A forged RB both certifies an EB and announce a new one
@@ -947,6 +1396,13 @@ data TraceLeiosKernel
       -- wall-clock onset to when this node counted it — when known (relayed
       -- announcements carry it; a locally-forged one does not).
       !(Maybe NominalDiffTime)
+  | -- | An arriving 'MsgLeiosBlock' (EB body) from an upstream peer
+    TraceLeiosFetchBodyArrival !FetchArrivalBytes
+  | -- | An arriving 'MsgLeiosBlockTxs' (tx batch) from an upstream peer
+    TraceLeiosFetchTxsArrival !FetchArrivalBytes
+  | -- | One completed iteration of the LeiosFetch decision logic: its wall-clock
+    -- duration and a size sample of the resulting 'LeiosOutstanding' state.
+    TraceLeiosFetchDecision !NominalDiffTime !LeiosOutstandingStats !LeiosDecisionStats
 
 -- | The data of a relayed EB announcement, shared by 'TraceLeiosPeerAnnouncement'
 -- and 'TraceLeiosAnnouncementAccepted'. A separate record so its selectors are
@@ -958,6 +1414,41 @@ data AnnouncementFields = MkAnnouncementFields
   }
   deriving (Eq, Show)
 
+-- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
+-- partitioned by the arriving item's /prior/ state in the LeiosTxCache. The four
+-- fields sum to the message's total size.
+--
+-- See 'TraceLeiosFetchBodyArrival' and 'TraceLeiosFetchTxsArrival'.
+data FetchArrivalBytes = MkFetchArrivalBytes
+  { fabInvalid :: !BytesSize
+  -- ^ Bytes of an invalid message (the whole message).
+  , fabEvicted :: !BytesSize
+  -- ^ Bytes whose prior cache state was absent (assumed present once, since evicted).
+  , fabGood :: !BytesSize
+  -- ^ Bytes in the expected not-yet-inserted state.
+  , fabExtra :: !BytesSize
+  -- ^ Bytes already inserted (redundant).
+  }
+  deriving (Eq, Show)
+
+instance Semigroup FetchArrivalBytes where
+  MkFetchArrivalBytes a1 b1 c1 d1 <> MkFetchArrivalBytes a2 b2 c2 d2 =
+    MkFetchArrivalBytes (a1 + a2) (b1 + b2) (c1 + c2) (d1 + d2)
+
+instance Monoid FetchArrivalBytes where
+  mempty = MkFetchArrivalBytes 0 0 0 0
+
+-- | The message's whole size attributed to a single bucket, the rest zero.
+fetchArrivalInvalid
+  , fetchArrivalEvicted
+  , fetchArrivalGood
+  , fetchArrivalExtra ::
+    BytesSize -> FetchArrivalBytes
+fetchArrivalInvalid n = mempty{fabInvalid = n}
+fetchArrivalEvicted n = mempty{fabEvicted = n}
+fetchArrivalGood n = mempty{fabGood = n}
+fetchArrivalExtra n = mempty{fabExtra = n}
+
 -- | Whether the accepted announcement equivocates: a second, distinct header
 -- announcing an election that a prior header already announced. (The two
 -- headers can even announce the same EB hash and size and still equivocate,
@@ -968,9 +1459,14 @@ data AnnouncementEquivocation
   | Equivocation
   deriving (Eq, Show)
 
--- | Whether the node accepted an EB announcement it forged itself or one
--- relayed by an upstream peer.
-data AnnouncementSource = ForgedLocally | ReceivedFromPeer
+-- | How the node came to accept an EB announcement.
+data AnnouncementSource
+  = -- | The node forged the EB itself.
+    ForgedLocally
+  | -- | An upstream peer relayed it over the LeiosNotify mini-protocol.
+    ReceivedViaLeiosNotify
+  | -- | It rode in on a ChainSync 'MsgRollForward' header (the announcing RB).
+    ReceivedViaChainSync
   deriving (Eq, Show)
 
 -- | Reasons 'runLeiosVoting' may decline to cast a vote after acquiring an
@@ -985,34 +1481,124 @@ data LeiosNotVotedReason
     TooLate
   | -- | We are not part of the current voting committee.
     NotOnCommittee
+  | -- | The endorsed transactions do not apply to the announcing RB's ledger
+    -- state, so this EB must not be certified. Carries the ledger's rendered
+    -- rejection.
+    EbTxsInvalid !Text
+  | -- | The vote we signed was not accepted into the tally. Carries the
+    -- rendered 'AddVoteResult'.
+    VoteRejected !Text
   deriving Show
 
 deriving instance Show TraceLeiosKernel
 
+-- | Render a 'TraceLeiosDb'.
+jsonLeiosDb :: TraceLeiosDb -> Aeson.Object
+jsonLeiosDb = \case
+  TraceLeiosDbInsertCollision table key ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbInsertCollision"
+      , "table" .= table
+      , "key" .= key
+      ]
+  TraceLeiosDbBusyRetry attempt waitedMs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbBusyRetry"
+      , "attempt" .= attempt
+      , "waitedMs" .= waitedMs
+      ]
+  TraceLeiosDbBusyStuck attempt waitedMs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbBusyStuck"
+      , "attempt" .= attempt
+      , "waitedMs" .= waitedMs
+      ]
+
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
+  TraceLeiosFetchBodyArrival fab ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosFetchBodyArrival"
+      , fabObject fab
+      ]
+  TraceLeiosFetchTxsArrival fab ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosFetchTxsArrival"
+      , fabObject fab
+      ]
+  TraceLeiosFetchDecision d stats dec ->
+    let inflight = summarizePeerDist (losInflightBytesDesc stats)
+        offers = summarizePeerDist (losOffersDesc stats)
+     in mconcat
+          [ "kind" .= Aeson.String "LeiosFetchDecision"
+          , "durationSeconds" .= (realToFrac d :: Double)
+          , "durationMillis" .= (realToFrac d * 1000 :: Double)
+          , "decisionPeers" .= ldsPeers dec
+          , "decisionRequests" .= ldsRequests dec
+          , "decisionBodyRequests" .= ldsBodyRequests dec
+          , "decisionJobs" .= ldsJobs dec
+          , "decisionBodyBytes" .= ldsBodyBytes dec
+          , "decisionTxBytes" .= ldsTxBytes dec
+          , "tracked" .= losTracked stats
+          , "missingBodies" .= losMissingBodies stats
+          , "peersInflight" .= losPeersInflight stats
+          , "inflightNonzeroCount" .= pdsNonzeroCount inflight
+          , "inflightTotal" .= pdsTotal inflight
+          , "inflightTop1" .= pdsTop1 inflight
+          , "inflightTop2" .= pdsTop2 inflight
+          , "inflightTop3" .= pdsTop3 inflight
+          , "inflightTop4" .= pdsTop4 inflight
+          , "inflightTop5" .= pdsTop5 inflight
+          , "inflightNonzeroMedian" .= pdsNonzeroMedian inflight
+          , "inflightDesc" .= V.toList (losInflightBytesDesc stats)
+          , "offersNonzeroCount" .= pdsNonzeroCount offers
+          , "offersTotal" .= pdsTotal offers
+          , "offersTop1" .= pdsTop1 offers
+          , "offersTop2" .= pdsTop2 offers
+          , "offersTop3" .= pdsTop3 offers
+          , "offersTop4" .= pdsTop4 offers
+          , "offersTop5" .= pdsTop5 offers
+          , "offersNonzeroMedian" .= pdsNonzeroMedian offers
+          , "offersDesc" .= V.toList (losOffersDesc stats)
+          ]
   MkTraceLeiosKernel s ->
     mconcat
       [ "kind" .= Aeson.String "LeiosKernelMsg"
       , "msg" .= s
       ]
-  TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
-    mconcat
+  TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) mbAge ->
+    mconcat $
       [ "kind" .= Aeson.String "LeiosBlockAcquired"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
+        ++ foldMap (\age -> ["bodyAgeSeconds" .= (realToFrac age :: Double)]) mbAge
   TraceLeiosBlockPointMissing (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockPointMissing"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
-  TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
-    mconcat
+  TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) mbAge ->
+    mconcat $
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
+      ]
+        ++ foldMap (\age -> ["closureAgeSeconds" .= (realToFrac age :: Double)]) mbAge
+  TraceLeiosBodyHits (MkLeiosPoint (SlotNo ebSlot) ebHash) ibs mempoolHits missedBoth ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBodyHits"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "txsInEb" .= ibsTxsInEb ibs
+      , "tracked" .= ibsTracked ibs
+      , "acquired" .= ibsAcquired ibs
+      , "validated" .= ibsValidated ibs
+      , "mempoolHits" .= mempoolHits
+      , "missedBoth" .= missedBoth
+      , "cacheTxCount" .= ibsCacheTxCount ibs
+      , "cacheLoad" .= ibsCacheLoad ibs
       ]
   TraceLeiosBlockForged{slot, eb, ebMeasure, mempoolRestMeasure} ->
     mconcat
@@ -1069,14 +1655,26 @@ traceLeiosKernelToObject = \case
       , "ebSlot" .= ebSlot
       , "reason" .= notVotedReasonText reason
       ]
+  TraceLeiosVoteScheduled{ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash, voteIn, deadlineIn} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosVoteScheduled"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , -- Aeson renders 'NominalDiffTime' as a number of seconds, exactly.
+        "voteIn" .= voteIn
+      , "deadlineIn" .= deadlineIn
+      ]
+  TraceLeiosEbValidated{ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash, reapplied, applied} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosEbValidated"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "reapplied" .= reapplied
+      , "applied" .= applied
+      ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
-  TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbInsertCollision"
-      , "table" .= table
-      , "key" .= key
-      ]
+  TraceLeiosDb ev -> jsonLeiosDb ev
   TraceLeiosCertifiedAndAnnounced slotNo rbHash ->
     mconcat
       [ "kind" .= Aeson.String "LeiosCertifiedAndAnnounced"
@@ -1091,6 +1689,14 @@ traceLeiosKernelToObject = \case
       , announcementEquivocationToObject equivocation
       ]
         ++ foldMap (\age -> ["announcementAgeSeconds" .= (realToFrac age :: Double)]) mbAge
+ where
+  fabObject fab =
+    mconcat
+      [ "invalidBytes" .= fabInvalid fab
+      , "evictedBytes" .= fabEvicted fab
+      , "goodBytes" .= fabGood fab
+      , "extraBytes" .= fabExtra fab
+      ]
 
 announcementFieldsToObject :: AnnouncementFields -> Aeson.Object
 announcementFieldsToObject
@@ -1110,13 +1716,16 @@ announcementEquivocationToObject = \case
 announcementSourceText :: AnnouncementSource -> Aeson.Value
 announcementSourceText = \case
   ForgedLocally -> Aeson.String "forgedLocally"
-  ReceivedFromPeer -> Aeson.String "receivedFromPeer"
+  ReceivedViaLeiosNotify -> Aeson.String "receivedViaLeiosNotify"
+  ReceivedViaChainSync -> Aeson.String "receivedViaChainSync"
 
 notVotedReasonText :: LeiosNotVotedReason -> Aeson.Value
 notVotedReasonText = \case
   ChainTipDoesNotAnnounce -> Aeson.String "chainTipDoesNotAnnounce"
   TooLate -> Aeson.String "tooLate"
   NotOnCommittee -> Aeson.String "notOnCommittee"
+  EbTxsInvalid err -> Aeson.String $ "ebTxsInvalid: " <> err
+  VoteRejected err -> Aeson.String $ "voteRejected: " <> err
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

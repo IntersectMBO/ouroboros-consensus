@@ -71,6 +71,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SJust))
 import qualified Data.Primitive.MutVar as Prim
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
@@ -136,10 +137,15 @@ import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( diffRelTime
+  , systemTimeCurrent
+  )
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Mempool.API (getLeiosTxIndex)
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncStateView (..)
@@ -155,9 +161,10 @@ import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
+  , leiosTxBytesOfGenTx
   )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
-import Ouroboros.Consensus.Util (ShowProxy)
+import Ouroboros.Consensus.Util (ShowProxy, whenJust)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block
@@ -351,6 +358,7 @@ mkHandlers ::
   ( IOLike m
   , MonadTime m
   , MonadTimer m
+  , ConvertRawHash blk
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , LedgerSupportsProtocol blk
@@ -397,8 +405,30 @@ mkHandlers
               , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
-              , CsClient.leiosCertRbCallback =
-                  Leios.leiosCertRbCallback (getLeiosOutstanding, getLeiosReady) peerVars
+              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime cds -> do
+                  Leios.checkMsgRollForwardForLeiosOffers
+                    (getLeiosOutstanding, getLeiosReady)
+                    peerVars
+                    hdr
+                    cds
+                  -- Feed any EB this header announces into the central
+                  -- announcement state (relay + dedup + txCache), central-only:
+                  -- a roll-forward is not this peer announcing over LeiosNotify,
+                  -- so no PeerState is touched. Date it from the header slot's
+                  -- onset (its ChainSync arrival latency).
+                  whenJust (Leios.mkAnnouncingHeader hdr) $ \ancHdr -> do
+                    now <- systemTimeCurrent systemTime
+                    Leios.processAnnouncementCentrally
+                      (Node.leiosKernelTracer tracers)
+                      getLeiosCentralState
+                      (getLeiosOutstanding, getLeiosReady)
+                      getLeiosTxCache
+                      (Just peer)
+                      Leios.ReceivedViaChainSync
+                      Announcements.DoRelay
+                      (SJust hdrSlotTime)
+                      (Just (diffRelTime now hdrSlotTime))
+                      ancHdr
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -493,23 +523,21 @@ mkHandlers
                                 (Leios.ancHeader ancH)
                           )
                           -- central part of the processing
-                          ( \ancHdr (shouldRelay, age, anc'@(p, _sz)) -> do
+                          ( \ancHdr (shouldRelay, onset, age, (p, _sz)) -> do
                               traceWith tracer $
                                 MkTraceLeiosPeer $
                                   "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
-                              MVar.modifyMVar_ getLeiosCentralState $ \cst ->
-                                -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
-                                Announcements.onAnnouncementCentral
-                                  (contramap Leios.traceNewAnnouncement kernelTracer)
-                                  Leios.ancElId
-                                  ( \_elSt ->
-                                      Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
-                                  )
-                                  cst
-                                  (Just peer)
-                                  shouldRelay
-                                  (Just age)
-                                  ancHdr
+                              Leios.processAnnouncementCentrally
+                                kernelTracer
+                                getLeiosCentralState
+                                (getLeiosOutstanding, getLeiosReady)
+                                getLeiosTxCache
+                                (Just peer)
+                                Leios.ReceivedViaLeiosNotify
+                                shouldRelay
+                                (SJust onset)
+                                (Just age)
+                                ancHdr
                           )
                           peerSt0
                           anc
@@ -521,48 +549,23 @@ mkHandlers
                     Prim.writeMutVar peerStateVar (latestPruneSlot', peerSt2)
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
-                    let MkLeiosPoint{pointEbHash = ebHash} = point
-                    -- TODO: EB announcements now record the authoritative
-                    -- (forger-signed) size via 'recordAnnouncedEb', but this
-                    -- offer handler is not integrated with them yet: it still
-                    -- builds fetch state directly from peer offers, whose sizes
-                    -- are not authoritative (the authoritative one lives in
-                    -- 'headerLeiosAnnouncement' on the parent RB header). Until
-                    -- the two are reconciled, the sanitisation below is the best
-                    -- we can do against malformed offers: drop a zero-sized
-                    -- offer outright (no honest forger ever announces a 0-byte
-                    -- EB) and refuse to overwrite an existing entry that shares
-                    -- the same content hash, so the first-seen (slot, size)
-                    -- wins. The per-peer 'offerings' below is still updated so
-                    -- the peer remains a valid serving candidate.
-                    MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
-                      pure $
-                        if ebBytesSize == 0
-                          || Set.member ebHash (Leios.acquiredEbBodies outstanding)
-                          || any
-                            ((== ebHash) . pointEbHash)
-                            (Map.keys (Leios.missingEbBodies outstanding))
-                          then outstanding
-                          else
-                            outstanding
-                              { Leios.missingEbBodies =
-                                  Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-                              }
-                    MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                      let !offers1' = Set.insert ebHash offers1
-                      pure (offers1', offers2)
-                    void $ MVar.tryPutMVar getLeiosReady ()
+                    -- TODO punish peer for a too-old offer, modulo clock/immtip skew.
+                    Leios.recordEbBodyOffer
+                      (getLeiosOutstanding, getLeiosReady)
+                      peerVars
+                      Leios.TxsClosureNotAlsoOffered
+                      (point, ebBytesSize)
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
-                    let MkLeiosPoint{pointEbHash = ebHash} = p
-                    MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                      let !offers2' = Set.insert ebHash offers2
-                      pure (offers1, offers2')
+                    -- A closure offer implies the body too.
+                    MVar.modifyMVar_ (Leios.offerings peerVars) $
+                      pure . Map.insertWith Leios.mergeOffer p Leios.TxsClosureAlsoOffered
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
                     forM_ vs $ \vote -> do
                       result <- addVote vote
+                      -- TODO: Keep track of the running tally (even after certification)
                       traceWith kernelTracer TraceLeiosVoteAcquired{vote}
                       -- A remote vote can be the one that tips this
                       -- node's tally past 'minCertificationThreshold';
@@ -666,7 +669,13 @@ mkHandlers
                   (leiosPeerTracer peer)
                   ((== Terminate) <$> controlMessageSTM)
                   (getLeiosOutstanding, getLeiosReady)
+                  getLeiosTxCache
                   leiosConn
+                  systemTime
+                  ( Leios.mkMempoolPull
+                      (atomically (getLeiosTxIndex getMempool))
+                      (leiosTxBytesOfGenTx . txForgetValidated)
+                  )
                   (Leios.MkPeerId peer)
                   reqVar
                   responseQ
@@ -684,6 +693,7 @@ mkHandlers
       , getLeiosOutstanding
       , getLeiosReady
       , getLeiosCentralState
+      , getLeiosTxCache
       } = nodeKernel
 
     leiosPeerTracer peer = TraceLabelPeer peer `contramap` Node.leiosPeerTracer tracers
@@ -1105,7 +1115,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
           csjConfig
           getDiffusionPipeliningSupport
         $ \csState ->
-          bracketLeiosPeer them $ \peerVars -> do
+          bracketLeiosPeer them isBigLedgerPeer $ \peerVars -> do
             (r, trailing) <-
               runPipelinedPeerWithLimitsRnd
                 (contramap (TraceLabelPeer them) tChainSyncTracer)
@@ -1374,9 +1384,10 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
   -- teardown has refunded it.
   bracketLeiosPeer ::
     ConnectionId addrNTN ->
+    IsBigLedgerPeer ->
     (Leios.LeiosPeerVars m -> m a) ->
     m a
-  bracketLeiosPeer them =
+  bracketLeiosPeer them isBigLedgerPeer =
     bracket
       -- Get-or-create: any peer-vars mini-protocol can be the first to run and
       -- allocate; the others share the existing vars. No ref count: a hot peer's
@@ -1384,7 +1395,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
       -- cleanup below, and the rest find it already gone (idempotent). A straggler
       -- that allocated its own entry cleans that up on its own exit.
       ( do
-          fresh <- Leios.newLeiosPeerVars
+          fresh <- Leios.newLeiosPeerVars isBigLedgerPeer
           atomically $ do
             peersVars <- LazySTM.readTVar (getLeiosPeersVars kernel)
             case Map.lookup pid peersVars of
@@ -1411,10 +1422,11 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     ExpandedInitiatorContext
       { eicConnectionId = them
       , eicControlMessage = controlMessageSTM
+      , eicIsBigLedgerPeer = isBigLedgerPeer
       }
     channel = do
       labelThisThread "LeiosNotifyClient"
-      bracketLeiosPeer them $ \peerVars -> do
+      bracketLeiosPeer them isBigLedgerPeer $ \peerVars -> do
         ((), trailing) <-
           runPipelinedPeerWithLimits
             (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
@@ -1455,10 +1467,11 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     ExpandedInitiatorContext
       { eicConnectionId = them
       , eicControlMessage = controlMessageSTM
+      , eicIsBigLedgerPeer = isBigLedgerPeer
       }
     channel = do
       labelThisThread "LeiosFetchClient"
-      bracketLeiosPeer them $ \peerVars ->
+      bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
         withLeiosDb leiosDB $ \leiosConn -> do
           ((), trailing) <-
             runPipelinedPeerWithLimits

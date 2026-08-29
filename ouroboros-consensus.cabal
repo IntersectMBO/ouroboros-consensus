@@ -112,6 +112,12 @@ library
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
+    LeiosDemoTypes.LeiosJobs
+    LeiosTxCache
+    LeiosTxCache.API
+    LeiosTxCache.Optimized
+    LeiosTxCache.Optimized.MutableHashTable
+    LeiosTxCache.Reference
     LeiosUtils.CallTrace
     LeiosVoteState
     LeiosVoting
@@ -384,7 +390,6 @@ library
     diff-containers >=1.2,
     direct-sqlite,
     directory,
-    dlist,
     filelock,
     fingertree-rm >=1.0,
     fs-api ^>=0.4,
@@ -392,6 +397,7 @@ library
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1 || ^>=1.9,
     measures,
     mempack,
+    microlens,
     monoid-subclasses,
     mtl,
     multiset ^>=0.3,
@@ -691,6 +697,36 @@ library unstable-tutorials
     ouroboros-network:api,
     serialise,
 
+-- A dedicated suite that recompiles the hash-table source (and its test) with
+-- GHC's array-primop bounds checking, so an out-of-bounds MutableByteArray access
+-- in the probing / backward-shift / bitset arithmetic fails loudly instead of
+-- silently corrupting memory. It deliberately does NOT depend on
+-- 'ouroboros-consensus': the module and its test are self-contained on
+-- base/containers/primitive/tasty, so recompiling them here (rather than linking
+-- the library's unchecked copy) both applies the flag and avoids a
+-- duplicate-module clash.
+test-suite leios-txcache-bounds-checked
+  import: common-test
+  type: exitcode-stdio-1.0
+  hs-source-dirs:
+    ouroboros-consensus/test/leios-txcache-bounds-checked
+    ouroboros-consensus/test/consensus-test
+    ouroboros-consensus/src/ouroboros-consensus
+
+  main-is: Main.hs
+  other-modules:
+    LeiosTxCache.Optimized.MutableHashTable
+    Test.LeiosTxCache.Optimized.MutableHashTable
+
+  ghc-options: -fcheck-prim-bounds
+  build-depends:
+    base,
+    containers,
+    primitive,
+    tasty,
+    tasty-hunit,
+    tasty-quickcheck,
+
 test-suite consensus-test
   import: common-test
   type: exitcode-stdio-1.0
@@ -727,9 +763,14 @@ test-suite consensus-test
     Test.LeiosDemoDb
     Test.LeiosDemoLogic
     Test.LeiosDemoLogic.Announcements
+    Test.LeiosDemoLogic.Invariants
     Test.LeiosDemoTypes
+    Test.LeiosTxCache.Optimized
+    Test.LeiosTxCache.Optimized.MutableHashTable
+    Test.LeiosTxCache.Reference
     Test.LeiosUtils.CallTrace
     Test.LeiosVoteState
+    Test.LeiosVoting
 
   build-depends:
     QuickCheck,
@@ -752,7 +793,6 @@ test-suite consensus-test
     deepseq,
     diff-containers,
     directory,
-    dlist,
     file-embed,
     filepath,
     fingertree-rm,
@@ -1038,6 +1078,26 @@ benchmark leios-db-bench
     time,
     vector,
 
+benchmark leios-txcache-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus/bench/leios-txcache-bench
+  main-is: Main.hs
+  other-modules: LeiosTxCache.Bench.SQLite
+  ghc-options: -with-rtsopts=-T
+  build-depends:
+    base,
+    bytestring,
+    cardano-slotting,
+    containers,
+    deepseq,
+    direct-sqlite,
+    directory,
+    ouroboros-consensus,
+    text,
+    unix,
+    vector,
+
 test-suite doctest
   import: common-test
   main-is: doctest.hs
@@ -1172,6 +1232,7 @@ library diffusion
     cardano-binary,
     cardano-diffusion:{api, cardano-diffusion, protocols},
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -1183,6 +1244,7 @@ library diffusion
     measures,
     mtl,
     network-mux ^>=0.10,
+    nonempty-containers,
     ouroboros-consensus:{ouroboros-consensus, protocol},
     ouroboros-network:{api, framework, ouroboros-network, protocols},
     primitive,

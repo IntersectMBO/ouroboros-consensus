@@ -67,13 +67,14 @@ dualByronBlockForging creds =
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
-          forgeDualByronBlock
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            fbRbTxs
-            fbIsLeader
+          flip (,) Nothing $
+            forgeDualByronBlock
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              fbRbTxs
+              fbIsLeader
     , finalize = return ()
     }
  where

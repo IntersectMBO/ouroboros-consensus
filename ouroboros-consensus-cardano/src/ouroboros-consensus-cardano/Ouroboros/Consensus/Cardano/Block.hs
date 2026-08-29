@@ -1550,7 +1550,7 @@ instance
   ResolveLeiosBlock (HardForkBlock (CardanoEras c))
   where
   resolveLeiosClosure db ebHash =
-    fmap GenTxDijkstra
+    fmap (fmap GenTxDijkstra)
       <$> resolveLeiosClosure db ebHash
 
   inlineLeiosClosure blk txs = case blk of
@@ -1621,12 +1621,32 @@ instance
       protocolStateLeiosAnnouncement @(ShelleyBlock (Praos c) DijkstraEra) praosSt
     _ -> Nothing
 
+  assumeValidatedClosureTx tx = case tx of
+    GenTxDijkstra inner ->
+      HardForkValidatedGenTx
+        . OneEraValidatedGenTx
+        . TagDijkstra
+        . WrapValidatedGenTx
+        $ assumeValidatedClosureTx inner
+    _ ->
+      -- Only Dijkstra has a Leios closure to validate, so only Dijkstra txs
+      -- ever reach here (see 'resolveLeiosClosure' above).
+      error "assumeValidatedClosureTx: closure tx from a non-Dijkstra era"
+
   leiosClosureTxKeySets tx = case tx of
     GenTxDijkstra inner ->
       injectLedgerTables
         (IS (IS (IS (IS (IS (IS (IS IZ)))))))
         (leiosClosureTxKeySets inner)
     _ -> emptyLedgerTables
+
+  leiosTxHashOfGenTx tx = case tx of
+    GenTxDijkstra inner -> leiosTxHashOfGenTx inner
+    _ -> Nothing
+
+  leiosTxBytesOfGenTx tx = case tx of
+    GenTxDijkstra inner -> leiosTxBytesOfGenTx inner
+    _ -> Nothing
 
 -----
 

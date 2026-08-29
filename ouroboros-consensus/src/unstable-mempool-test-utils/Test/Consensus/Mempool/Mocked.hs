@@ -73,6 +73,7 @@ openMockedMempool ::
   ( Ledger.LedgerSupportsMempool blk
   , Ledger.HasTxId (Ledger.GenTx blk)
   , Header.ValidateEnvelope blk
+  , ResolveLeiosBlock blk
   ) =>
   Mempool.MempoolCapacityBytesOverride ->
   Tracer IO (Mempool.TraceEventMempool blk) ->

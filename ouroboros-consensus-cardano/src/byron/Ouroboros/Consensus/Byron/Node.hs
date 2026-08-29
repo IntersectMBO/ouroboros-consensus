@@ -145,13 +145,14 @@ byronBlockForging creds =
           tickedPBftState
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
-          forgeByronBlock
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            fbRbTxs
-            fbIsLeader
+          flip (,) Nothing $
+            forgeByronBlock
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              fbRbTxs
+              fbIsLeader
     , finalize = pure ()
     }
  where

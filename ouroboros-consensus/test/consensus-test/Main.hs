@@ -26,9 +26,14 @@ import qualified Test.Consensus.Util.Versioned (tests)
 import qualified Test.LeiosDemoDb (tests)
 import qualified Test.LeiosDemoLogic (tests)
 import qualified Test.LeiosDemoLogic.Announcements (tests)
+import qualified Test.LeiosDemoLogic.Invariants (tests)
 import qualified Test.LeiosDemoTypes (tests)
+import qualified Test.LeiosTxCache.Optimized (tests)
+import qualified Test.LeiosTxCache.Optimized.MutableHashTable (tests)
+import qualified Test.LeiosTxCache.Reference (tests)
 import qualified Test.LeiosUtils.CallTrace (tests)
 import qualified Test.LeiosVoteState (tests)
+import qualified Test.LeiosVoting (tests)
 import Test.Tasty
 import Test.Util.TestEnv
   ( defaultMainWithTestEnv
@@ -84,7 +89,12 @@ tests =
         , Test.LeiosDemoDb.tests
         , Test.LeiosDemoLogic.tests
         , Test.LeiosDemoLogic.Announcements.tests
+        , Test.LeiosDemoLogic.Invariants.tests
+        , Test.LeiosTxCache.Optimized.tests
+        , Test.LeiosTxCache.Optimized.MutableHashTable.tests
+        , Test.LeiosTxCache.Reference.tests
         , Test.LeiosVoteState.tests
+        , Test.LeiosVoting.tests
         , Test.LeiosUtils.CallTrace.tests
         ]
     ]

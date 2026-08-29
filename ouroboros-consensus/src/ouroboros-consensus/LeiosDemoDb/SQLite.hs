@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -36,7 +37,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
-import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.String (fromString)
 import Database.SQLite3
@@ -45,6 +45,7 @@ import Database.SQLite3
   , open2
   )
 import qualified Database.SQLite3.Direct as DB
+import GHC.Clock (getMonotonicTime)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoDb.Common
@@ -125,11 +126,12 @@ data Stmts = Stmts
   , stInitMissingCount :: !DB.Statement
   , stInsertTx :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
+  , stInsertMissingTxs :: !DB.Statement
+  , stDeleteMissingTxs :: !DB.Statement
   , stFindCompleteEbs :: !DB.Statement
   , stMarkNotifiedEbs :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
-  , stFilterMissingEbBodies :: !DB.Statement
   , stFilterMissingTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
@@ -138,6 +140,8 @@ data Stmts = Stmts
 data Conn = Conn
   { connDb :: !DB.Database
   , connStmts :: !Stmts
+  , connTracer :: !(Tracer IO TraceLeiosDb)
+  -- ^ So the write path can report exhausting SQLite's own busy timeout.
   }
 
 -- | Prepare every statement 'Stmts' names. Order is not observable.
@@ -150,11 +154,12 @@ prepareStmts db = do
   stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
   stInsertTx <- dbPrepare db (fromString sql_insert_tx)
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
+  stInsertMissingTxs <- dbPrepare db (fromString sql_insert_missing_txs)
+  stDeleteMissingTxs <- dbPrepare db (fromString sql_delete_missing_txs)
   stFindCompleteEbs <- dbPrepare db (fromString sql_find_complete_ebs)
   stMarkNotifiedEbs <- dbPrepare db (fromString sql_mark_notified_ebs)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
-  stFilterMissingEbBodies <- dbPrepare db (fromString sql_filter_missing_eb_bodies_json)
   stFilterMissingTxs <- dbPrepare db (fromString sql_filter_missing_txs_json)
   stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
@@ -171,11 +176,12 @@ finalizeStmts Stmts{..} = do
   dbFinalize stInitMissingCount
   dbFinalize stInsertTx
   dbFinalize stDecrMissingCount
+  dbFinalize stInsertMissingTxs
+  dbFinalize stDeleteMissingTxs
   dbFinalize stFindCompleteEbs
   dbFinalize stMarkNotifiedEbs
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
-  dbFinalize stFilterMissingEbBodies
   dbFinalize stFilterMissingTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince
@@ -197,15 +203,39 @@ openSQLiteConnection tracer dbPath notificationChan = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
   traverse_ (dbExec db) $
-    [ "pragma journal_mode = WAL;"
+    [ -- First, before any pragma that takes a lock -- 'journal_mode' does. Until
+      -- this runs the timeout is zero, so a contended lock is refused outright
+      -- rather than waited for, and opening a second connection to a busy
+      -- database fails where it should merely be slow.
+      --
+      -- Let SQLite do that waiting in C, retrying tightly rather than sleeping
+      -- through the window it is waiting for. Safe because writers take the lock
+      -- at BEGIN, so nothing waits here holding a snapshot; see
+      -- 'dbWithWriteTransaction'.
+      "pragma busy_timeout = 1000;"
     , "pragma synchronous = normal;"
-    , "pragma page_size = 32768;"
+    , -- Must precede 'journal_mode': SQLite cannot change the page size of a
+      -- database already in WAL mode, so the order this list used to have left
+      -- the setting a silent no-op and every run so far on the 4096 default.
+      -- Which is where it belongs anyway. Measured: a devnet run with 32768
+      -- actually in effect reached 35x WAL amplification (34 GiB of log for 0.97
+      -- GiB of data) against ~18x for the same workload at 4096. The WAL is a
+      -- page-level redo log, so a commit rewrites each dirtied page whole, and
+      -- both hot indexes are keyed by hash, so writes scatter -- the page count
+      -- barely falls as the page grows, the bytes just multiply.
+      "pragma page_size = 4096;"
     , "pragma mmap_size = 268435500;"
+    , "pragma journal_mode = WAL;"
+    , -- SQLite's own default, spelled out because it is what keeps the log
+      -- bounded: passive checkpoints reset the WAL every 1000 frames, provided
+      -- no connection is sitting on a stale read snapshot. One that is will
+      -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
+      "pragma wal_autocheckpoint = 1000;"
     ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   stmts <- prepareStmts db
-  let conn = Conn{connDb = db, connStmts = stmts}
+  let conn = Conn{connDb = db, connStmts = stmts, connTracer = tracer}
       notify = atomically . writeTChan notificationChan
   pure $
     LeiosDbConnection
@@ -217,8 +247,6 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
       , leiosDbInsertTxs = sqlInsertTxs tracer conn notify
       , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs conn
-      , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies conn
-      , leiosDbFilterMissingTxs = sqlFilterMissingTxs conn
       , leiosDbLookupEbClosure = sqlLookupEbClosure conn
       }
 
@@ -269,13 +297,13 @@ sqlLookupEbBody conn ebHash =
 
 sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint conn point ebBytesSize =
-  dbWithWriteTransaction db $ useStmt stmt $ do
+  dbWithWriteTransaction conn $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
     dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
     dbStep1 stmt
  where
-  Conn{connDb = db, connStmts = Stmts{stInsertEbPoint = stmt}} = conn
+  Conn{connStmts = Stmts{stInsertEbPoint = stmt}} = conn
 
 -- | Persist an EB body. The point MUST already be present (inserted
 -- via 'sqlInsertEbPoint' on the announcement path).
@@ -289,7 +317,7 @@ sqlInsertEbBody ::
 sqlInsertEbBody tracer conn notify point eb = do
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
-  completedNow <- dbWithWriteTransaction db $ do
+  completedNow <- dbWithWriteTransaction conn $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
@@ -300,6 +328,12 @@ sqlInsertEbBody tracer conn notify point eb = do
         "ebTxs"
         (show point.pointEbHash <> "@" <> show txOffset)
         stInsertEbTxsRow
+    -- Record which of this body's txs we still lack, then count them. Both in
+    -- this transaction, so an arrival can never see the rows without the count
+    -- or the other way round.
+    useStmt stInsertMissingTxs $ do
+      dbBindBlob stInsertMissingTxs 1 point.pointEbHash.ebHashBytes
+      dbStep1 stInsertMissingTxs
     -- Initialize missingTxCount and read the resulting value via
     -- @RETURNING missingTxCount@. Only /this/ point's row can have
     -- transitioned to 0 as a consequence of the insert above.
@@ -322,9 +356,10 @@ sqlInsertEbBody tracer conn notify point eb = do
  where
   items = leiosEbBodyItems eb
   ebBytesSize = leiosEbBytesSize eb
-  Conn{connDb = db, connStmts} = conn
+  Conn{connStmts} = conn
   Stmts
     { stInsertEbTxsRow
+    , stInsertMissingTxs
     , stInitMissingCount
     , stMarkPointNotified
     } = connStmts
@@ -355,7 +390,7 @@ sqlInsertTxs _tracer conn notify txs = do
   -- hashes; attempting the INSERT and catching a constraint violation
   -- still pays the bind + PK-lookup + reset cost per row.
   missing <- Set.fromList <$> sqlFilterMissingTxs conn (map fst txs)
-  completed <- dbWithWriteTransaction db $ do
+  completed <- dbWithWriteTransaction conn $ do
     -- 'dbStepInsert' still handles the rare race where a concurrent
     -- writer inserted the same hash between the filter above and the
     -- INSERT below.
@@ -367,9 +402,14 @@ sqlInsertTxs _tracer conn notify txs = do
         dbBindBlob stInsertTx 2 txBytes
         dbBindInt64 stInsertTx 3 txBytesSize
         dbStepInsert stInsertTx
-      when inserted $ useStmt stDecrMissingCount $ do
-        dbBindBlob stDecrMissingCount 1 txHashBytes
-        dbStep1 stDecrMissingCount
+      when inserted $ do
+        useStmt stDecrMissingCount $ do
+          dbBindBlob stDecrMissingCount 1 txHashBytes
+          dbStep1 stDecrMissingCount
+        -- Strictly after the decrement, which reads these rows.
+        useStmt stDeleteMissingTxs $ do
+          dbBindBlob stDeleteMissingTxs 1 txHashBytes
+          dbStep1 stDeleteMissingTxs
     -- Find newly-complete EBs (missingTxCount reached 0)
     completed <- useStmt stFindCompleteEbs $ do
       let loop acc =
@@ -387,8 +427,14 @@ sqlInsertTxs _tracer conn notify txs = do
   forM_ completed $ \point -> notify (AcquiredEbTxs point)
   pure completed
  where
-  Conn{connDb = db, connStmts} = conn
-  Stmts{stInsertTx, stDecrMissingCount, stFindCompleteEbs, stMarkNotifiedEbs} = connStmts
+  Conn{connStmts} = conn
+  Stmts
+    { stInsertTx
+    , stDecrMissingCount
+    , stDeleteMissingTxs
+    , stFindCompleteEbs
+    , stMarkNotifiedEbs
+    } = connStmts
   novel missing = filter (\(h, _) -> h `Set.member` missing) txs
 
 -- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
@@ -420,28 +466,10 @@ sqlBatchRetrieveTxs conn ebHash offsets =
         let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
         loop ((offset, txHash, mbTxBytes) : acc)
 
--- | Batch-filter EB points against @ebTxs@. Passes ebHashes as a JSON
--- array of hex strings; SQL decodes with @unhex()@ so index lookups on
--- @ebTxs.ebHashBytes@ still fire.
-sqlFilterMissingEbBodies :: Conn -> [LeiosPoint] -> IO [LeiosPoint]
-sqlFilterMissingEbBodies conn points =
-  dbWithTransaction db $ useStmt stmt $ do
-    dbBindUtf8 stmt 1 (jsonHexArray (map ebHashBytes (Map.keys pointsByHash)))
-    loop []
- where
-  Conn{connDb = db, connStmts = Stmts{stFilterMissingEbBodies = stmt}} = conn
-  pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
-  loop acc =
-    dbStep stmt >>= \case
-      DB.Done -> pure (reverse acc)
-      DB.Row -> do
-        ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-        case Map.lookup ebHash pointsByHash of
-          Just p -> loop (p : acc)
-          Nothing -> loop acc
-
--- | Batch-filter tx hashes against @txs@. Same idiom as
--- 'sqlFilterMissingEbBodies'.
+-- | Batch-filter tx hashes against @txs@: passes txHashes as a JSON array
+-- of hex strings; SQL decodes with @unhex()@ so index lookups on
+-- @txs.txHashBytes@ still fire. Used internally by 'sqlInsertTxs' to skip
+-- already-persisted txs.
 sqlFilterMissingTxs :: Conn -> [TxHash] -> IO [TxHash]
 sqlFilterMissingTxs conn txHashes =
   dbWithTransaction db $ useStmt stmt $ do
@@ -523,7 +551,12 @@ sql_schema =
     , "  txBytesSize INTEGER NOT NULL,"
     , "  PRIMARY KEY (ebHashBytes, txOffset)"
     , ");"
-    , "CREATE INDEX idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);"
+    , "CREATE TABLE ebsMissingTxs ("
+    , "  txHashBytes BLOB NOT NULL,"
+    , "  ebHashBytes BLOB NOT NULL,"
+    , "  PRIMARY KEY (txHashBytes, ebHashBytes)"
+    , ");"
+    , "CREATE INDEX idx_ebsMissingTxs_ebHashBytes ON ebsMissingTxs(ebHashBytes);"
     , "CREATE TABLE txs ("
     , "  txHashBytes BLOB NOT NULL PRIMARY KEY,"
     , "  txBytes BLOB NOT NULL,"
@@ -578,17 +611,9 @@ sql_insert_tx =
   "INSERT INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
   \"
 
--- | Batch-filter ebHashes via JSON1. Parameter is a JSON array of hex
+-- | Batch-filter txHashes via JSON1. Parameter is a JSON array of hex
 -- strings; 'unhex(je.value)' decodes back into a BLOB comparable against
--- the indexed @ebTxs.ebHashBytes@ column.
-sql_filter_missing_eb_bodies_json :: String
-sql_filter_missing_eb_bodies_json =
-  "SELECT unhex(je.value) FROM json_each(?) je\n\
-  \WHERE NOT EXISTS (SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = unhex(je.value))\n\
-  \"
-
--- | Batch-filter txHashes via JSON1. Same shape as
--- 'sql_filter_missing_eb_bodies_json'.
+-- the indexed @txs.txHashBytes@ column.
 sql_filter_missing_txs_json :: String
 sql_filter_missing_txs_json =
   "SELECT unhex(je.value) FROM json_each(?) je\n\
@@ -606,12 +631,41 @@ sql_mark_notified_ebs :: String
 sql_mark_notified_ebs =
   "UPDATE ebs SET missingTxCount = -1 WHERE missingTxCount = 0"
 
--- | Decrement missingTxCount for all EBs referencing the given txHash.
+-- | Decrement missingTxCount for every EB still /waiting/ on the given txHash.
+--
+-- Uses 'ebsMissingTxs' rather than 'ebTxs', which makes this more efficient
+-- than a full scan of 'ebTxs' in the average case.
+--
+-- Must be paired with 'sql_delete_missing_txs' in the same transaction.
+--
 -- Parameter 1: txHashBytes
 sql_decrement_missing_tx_count :: String
 sql_decrement_missing_tx_count =
   "UPDATE ebs SET missingTxCount = missingTxCount - 1\n\
-  \WHERE ebHashBytes IN (SELECT ebHashBytes FROM ebTxs WHERE txHashBytes = ?)\n\
+  \WHERE ebHashBytes IN (SELECT ebHashBytes FROM ebsMissingTxs WHERE txHashBytes = ?)\n\
+  \"
+
+-- | Retire the waiting rows for a tx that has just landed.
+-- Parameter 1: txHashBytes
+sql_delete_missing_txs :: String
+sql_delete_missing_txs =
+  "DELETE FROM ebsMissingTxs WHERE txHashBytes = ?"
+
+-- | Record which of a freshly-inserted body's txs we do not yet hold.
+--
+-- One anti-join over the EB's own 'ebTxs' range -- the same work
+-- 'sql_init_missing_tx_count' used to do to produce a count, now materialised so
+-- that the arrival side reads the rows instead of recomputing them. Paying it
+-- here rather than on every tx arrival is what earns the index removal: this
+-- runs once per body, against ~4.7 times per tx for the old reverse lookup.
+--
+-- Parameter 1: ebHashBytes
+sql_insert_missing_txs :: String
+sql_insert_missing_txs =
+  "INSERT OR IGNORE INTO ebsMissingTxs (txHashBytes, ebHashBytes)\n\
+  \SELECT e.txHashBytes, e.ebHashBytes FROM ebTxs e\n\
+  \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
+  \WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
   \"
 
 -- | Initialize missingTxCount after EB body is inserted, returning the
@@ -625,9 +679,7 @@ sql_decrement_missing_tx_count =
 sql_init_missing_tx_count :: String
 sql_init_missing_tx_count =
   "UPDATE ebs SET missingTxCount = (\n\
-  \    SELECT COUNT(*) FROM ebTxs e\n\
-  \    LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
-  \    WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
+  \    SELECT COUNT(*) FROM ebsMissingTxs WHERE ebHashBytes = ?\n\
   \) WHERE ebHashBytes = ? AND ebSlot = ?\n\
   \RETURNING missingTxCount\n\
   \"
@@ -702,8 +754,56 @@ dbWithTransaction = dbWithTransactionAs "BEGIN"
 -- transaction's snapshot is stale for good: the only remedy is to roll back and
 -- start over. Taking the lock at BEGIN removes the upgrade, so contention
 -- surfaces here instead, where waiting actually resolves it.
-dbWithWriteTransaction :: HasCallStack => DB.Database -> IO a -> IO a
-dbWithWriteTransaction = dbWithTransactionAs "BEGIN IMMEDIATE"
+dbWithWriteTransaction :: HasCallStack => Conn -> IO a -> IO a
+dbWithWriteTransaction conn k = getMonotonicTime >>= go 0
+ where
+  Conn{connDb = db, connTracer = tracer} = conn
+
+  -- After this many refusals, a write transaction is no longer merely
+  -- contended.
+  --
+  -- This picks which constructor gets traced and nothing else. Crossing it does
+  -- not change how long we wait, does not throw, and does not abandon anything
+  -- -- 'dbWithWriteTransaction' retries forever either way. It exists only so
+  -- that the severity in the log matches the severity of the situation.
+  --
+  -- Each attempt is a full 'busy_timeout', so this is about half a minute of one
+  -- writer making no progress, re-traced every half minute it stays that way.
+  busyStuckAfter = 30
+
+  go !attempt t0 =
+    fmap (first fst) (DB.exec db (fromString "BEGIN IMMEDIATE")) >>= \case
+      Left DB.ErrorBusy -> do
+        -- Unbounded, deliberately. Nothing is held while waiting here -- that is
+        -- the whole point of taking the lock at BEGIN -- so waiting costs
+        -- latency and nothing else, whereas giving up throws, and a throw on
+        -- this path kills the Leios threads outright. Past
+        -- 'busyStuckAfter' attempts that is no longer ordinary contention, so
+        -- say so at a severity someone will notice, and keep waiting.
+        --
+        -- The wait is measured, not accumulated: most of it happens inside
+        -- SQLite's own busy handler, so summing the sleeps below would report a
+        -- fraction of the truth and disagree with the log timestamps.
+        now <- getMonotonicTime
+        let n = attempt + 1
+            waitedMs = 1000 * (now - t0)
+        traceWith tracer $
+          if n >= busyStuckAfter && n `mod` busyStuckAfter == 0
+            then TraceLeiosDbBusyStuck n waitedMs
+            else TraceLeiosDbBusyRetry n waitedMs
+        busyBackoff
+        go n t0
+      Left e -> throwDbException db e
+      Right () ->
+        fmap fst $
+          generalBracket
+            (pure ())
+            ( \() -> \case
+                MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
+                MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
+                MonadThrow.ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
+            )
+            (\() -> k)
 
 dbWithTransactionAs :: HasCallStack => String -> DB.Database -> IO a -> IO a
 dbWithTransactionAs begin db k =
@@ -738,10 +838,7 @@ dbStepInsert stmt =
   go n io =
     io >>= \case
       Left DB.ErrorBusy -> do
-        let retryNum = maxBusyRetries - n
-            baseDelay = 100
-        jitter <- (`mod` baseDelay) <$> randomIO
-        threadDelay (baseDelay * retryNum + jitter)
+        busyBackoff
         go (n - 1) io
       Left DB.ErrorConstraint -> pure False
       Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
@@ -771,15 +868,31 @@ dbStepInsertOrTrace tracer table key stmt = do
 
 -- ** Error "handling"
 
--- | How many times a busy operation is re-attempted before it throws.
+-- | How many times a busy statement is re-attempted /after/ SQLite's own
+-- 'busy_timeout' has already expired on that attempt, before it throws.
 --
--- The backoff below grows linearly, so the total wait grows with the square of
--- this: at 10000 it was about 83 minutes, which is indistinguishable from
--- hanging. 1000 gives roughly 50 s in total with a longest single sleep near
--- 100 ms, which outlasts any transient contention while still surfacing a real
--- deadlock inside a minute.
+-- Exhausting these throws 'LeiosDbException', which no caller catches: it leaves
+-- the Leios thread it was raised in, and the node dies. That is the intent.
+-- Unlike 'dbWithWriteTransaction', these retries happen /inside/ an open
+-- transaction, so waiting is not free -- the transaction holds its snapshot
+-- throughout, and a connection that sits on a stale snapshot indefinitely is
+-- exactly what pins the WAL and stops back-fill. Half a minute of a statement
+-- refusing inside a transaction is not contention, it is a deadlock, and dying
+-- is better than silently wedging the log.
+--
+-- With 'busy_timeout' doing the real waiting, each attempt costs about a
+-- timeout, so the ceiling is linear -- roughly 30 s -- rather than the quadratic
+-- 83 minutes the escalating sleep used to reach at the old value of 10000.
 maxBusyRetries :: Int
-maxBusyRetries = 1000
+maxBusyRetries = 30
+
+-- | A short fixed pause between attempts.
+--
+-- Deliberately not escalating.
+busyBackoff :: IO ()
+busyBackoff = do
+  jitter <- (`mod` 5000) <$> randomIO
+  threadDelay (20000 + jitter)
 
 -- | Execute a database action that may return an error. If the error is
 -- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with linear backoff and
@@ -794,14 +907,8 @@ withDie db = go maxBusyRetries
       Right x -> pure x
   go n io =
     io >>= \case
-      -- TODO: Expose and use sqlite3_busy_timeout instead
       Left DB.ErrorBusy -> do
-        -- Linear backoff with jitter: base delay increases each retry, plus
-        -- random jitter up to the base delay, with a 0.1ms floor.
-        let retryNum = maxBusyRetries - n
-            baseDelay = 100
-        jitter <- (`mod` baseDelay) <$> randomIO
-        threadDelay (baseDelay * retryNum + jitter)
+        busyBackoff
         go (n - 1) io
       Left e -> throwDbException db e
       Right x -> pure x

@@ -71,6 +71,7 @@ import Control.Monad.Except
   , runExcept
   )
 import Data.Bifunctor (first)
+import qualified Data.ByteString as Strict
 import Data.Functor ((<&>))
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
@@ -89,6 +90,7 @@ import LeiosDemoTypes
   , LeiosExtValidationError (..)
   , LeiosPoint (..)
   , RbHash
+  , TxHash
   , minCertificationThreshold
   , verifyLeiosCert
   )
@@ -798,8 +800,9 @@ data OCINStaleness = FreshOCIN | StaleOCIN
 -- blk' is correct.
 class ResolveLeiosBlock blk where
   -- | For a CertRB, look up the EB closure that the cert in this block's
-  -- body attests to and return it as a list of transactions (in the order
-  -- they appear in the EB). 'Nothing' for non-CertRB blocks.
+  -- body attests to and return its transactions, each paired with the
+  -- 'TxHash' it is stored under, in the order they appear in the EB. Empty
+  -- for non-CertRB blocks.
   --
   -- This is the apply-path variant: the caller applies the closure txs
   -- onto the parent ledger state via 'applyLeiosClosure', then applies
@@ -808,12 +811,32 @@ class ResolveLeiosBlock blk where
   -- folded into the unticked ledger state, mirroring how a non-CertRB
   -- Praos block's body txs would be applied — but sourced from the
   -- LeiosDB rather than the block body.
+  --
+  -- The 'TxHash' comes free with the read and is what keys the
+  -- 'LeiosTxCache', which the voting thread consults to decide whether a
+  -- closure tx still needs full validation.
   resolveLeiosClosure ::
     Monad m =>
     LeiosDbConnection m ->
     EbHash ->
-    m [GenTx blk]
+    m [(TxHash, GenTx blk)]
   resolveLeiosClosure _ _ = pure []
+
+  -- | Rebuild the 'Validated' token for a closure tx that the LeiosTxCache
+  -- reports as already validated, so the voting thread can pick
+  -- 'LedgerSupportsMempool.reapplyTx' — which skips only the static checks
+  -- (witnesses, scripts) — over a full 'LedgerSupportsMempool.applyTx'.
+  --
+  -- NOTE: The token carries no evidence of its own; the cache's tag is the
+  -- evidence, and the ledger recomputes every state-dependent check from the
+  -- state at hand. Calling this on a tx the cache has /not/ tagged validated
+  -- would skip checks that were never run!
+  --
+  -- The default panics, like 'leiosClosureTxKeySets': a non-Leios block never
+  -- reaches the voting path.
+  assumeValidatedClosureTx :: GenTx blk -> Validated (GenTx blk)
+  assumeValidatedClosureTx _ =
+    error "assumeValidatedClosureTx: not Leios-enabled for this block type"
 
   -- | The ledger keys read by a closure tx — what 'forkerReadTables' needs
   -- to load before 'applyLeiosClosure' can run. Leios-enabled instances
@@ -829,11 +852,15 @@ class ResolveLeiosBlock blk where
     error "leiosClosureTxKeySets: not Leios-enabled for this block type"
 
   -- | Apply an EB closure's transactions onto an /unticked/ ledger state,
-  -- without validation. The closure has already been individually
-  -- validated when each tx was inserted into the LeiosDb, so we trust it
-  -- here (era-level @ApplyTxValidation ValidateNone@). Returns the
-  -- unticked post-closure ledger state, ready to feed into
+  -- without validation (era-level @ApplyTxValidation ValidateNone@). Returns
+  -- the unticked post-closure ledger state, ready to feed into
   -- 'tickThenApply' for the CertRB itself.
+  --
+  -- What licenses the trust is the /certificate/: a quorum of the voting
+  -- committee applied this closure before signing (see
+  -- 'LeiosVoting.validateEbClosure'), and only a certified EB reaches this
+  -- path. Insertion into the LeiosDb validates nothing, so a node that never
+  -- voted is trusting the committee, not its own check.
   --
   -- The slot is obtained from the provided ledger state.
   --
@@ -912,6 +939,19 @@ class ResolveLeiosBlock blk where
   announcingRbHash :: blk -> Maybe RbHash
   announcingRbHash _ = Nothing
 
+  -- | The Leios EB-tx hash of a mempool tx, if this block's txs are Leios txs.
+  -- Lets the mempool index its contents by the hash an EB references (see
+  -- 'Ouroboros.Consensus.Mempool.API.getLeiosTxIndex'). 'Nothing' (the default)
+  -- for non-Leios eras.
+  leiosTxHashOfGenTx :: GenTx blk -> Maybe TxHash
+  leiosTxHashOfGenTx _ = Nothing
+
+  -- | The 'LeiosTx' wire bytes of a mempool tx (the preimage of
+  -- 'leiosTxHashOfGenTx'), if any -- what the Leios fetch logic ingests when it
+  -- finds an EB's tx in our mempool. 'Nothing' (the default) for non-Leios eras.
+  leiosTxBytesOfGenTx :: GenTx blk -> Maybe Strict.ByteString
+  leiosTxBytesOfGenTx _ = Nothing
+
 -- | Resolve and inline EB closure transactions as announced on the previous
 -- header. NOTE: This produces a block that would fail full validation.
 resolveLeiosBlock ::
@@ -928,7 +968,7 @@ resolveLeiosBlock leiosDb cds b =
     Just (announcedPoint, _) ->
       -- NOTE: This produces a block that would fail full validation.
       resolveLeiosClosure leiosDb (pointEbHash announcedPoint)
-        <&> inlineLeiosClosure b
+        <&> inlineLeiosClosure b . map snd
 
 -- | The result of resolving an announced EB's closure and applying it a ledger state.
 data LeiosClosureApplied blk = LeiosClosureApplied
@@ -960,7 +1000,7 @@ resolveAndApplyLeiosClosure ::
   m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
 resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
-  closureTxs <- resolveLeiosClosure leiosDb ebHash
+  closureTxs <- map snd <$> resolveLeiosClosure leiosDb ebHash
   -- UTXO-HD of the whole closure
   let closureKeys = foldMap leiosClosureTxKeySets closureTxs <> extraKeys
   closureVals <- readValues closureKeys

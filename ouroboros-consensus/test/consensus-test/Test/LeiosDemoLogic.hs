@@ -6,8 +6,8 @@
 --
 -- Each test is a small data fixture built via the 'Scenario' DSL
 -- below: start from an 'empty' scenario, layer in missing work
--- ('withMissingBody', 'withMissingTx') and peer offers
--- ('offersBody', 'offersTxs'), then run and assert on the resulting
+-- ('withMissingBody') and peer offers
+-- ('offersBody'), then run and assert on the resulting
 -- decisions. The DSL chains via '&' (`x & f = f x`), keeping each
 -- test ~5 lines so the scenario reads top-to-bottom.
 --
@@ -21,26 +21,31 @@ module Test.LeiosDemoLogic (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString as BS
-import qualified Data.DList as DList
+import Data.Foldable (toList)
 import Data.Function ((&))
-import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SNothing))
+import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
-import LeiosDemoLogic
-  ( LeiosFetchDecisions (..)
-  , leiosFetchLogicIteration
-  )
+import qualified Data.Set.NonEmpty as NESet
+import LeiosDemoLogic (fetchPriorityTiers, leiosFetchLogicIteration)
 import LeiosDemoTypes
-  ( BytesSize
+  ( AlsoOfferedTxsClosure (..)
+  , BytesSize
   , EbHash (..)
+  , LeiosBlockRequest (..)
+  , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
   , LeiosPoint (..)
   , PeerId (..)
-  , TxHash (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
+  , markBodyImminent
+  , mergeOffer
+  , recordMaxAnnouncementSlot
   )
+import System.Random (mkStdGen)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
@@ -54,27 +59,36 @@ tests =
             test_singleMissingBody
         , testCase "no request when no peer offers the body" $
             test_bodyNoOffer
-        , testCase "per-EB request cap blocks further selection" $
-            test_bodyPerEbCap
-        , testCase "two offering peers both selected (up to cap)" $
+        , testCase "a peer already asked for a body is not asked again" $
+            test_bodyAlreadyRequestedPeerSkipped
+        , testCase "both offering peers are selected (no per-EB cap)" $
             test_bodyTwoPeersOffer
-        , testCase "global byte budget exhausted blocks further selection" $
-            test_globalByteBudget
         , testCase "per-peer byte budget exhausted skips that peer" $
             test_perPeerByteBudget
         ]
     , testGroup
-        "EB tx fetch"
-        [ testCase "single missing tx with one offering peer issues one request" $
-            test_singleMissingTx
-        , testCase "per-tx request cap blocks further selection" $
-            test_txPerTxCap
-        , testCase "tx referenced in multiple EBs, peer offering only target is selected" $
-            test_txTwoEbsSinglePeerOffer
-        , testCase "tx referenced in two EBs of different recorded size, peer offering both is selected" $
-            test_txTwoEbsDifferentSize
+        "self-forged EB"
+        [ testCase "an offer of a self-forged EB is never re-fetched" $
+            test_forgedEbOfferIgnored
+        ]
+    , testGroup
+        "fetch priority"
+        [ testCase "freshest window oldest-first, then rest freshest-first" $
+            test_fetchPriorityOrder
         ]
     ]
+
+-- | With current slot S=100 and window L=10, EBs at slot >= 90 (the voting
+-- window) are prioritised oldest-first, EBs beyond S trail that first tier, and
+-- everything older is freshest-first.
+test_fetchPriorityOrder :: IO ()
+test_fetchPriorityOrder =
+  map (unSlot . (.pointSlotNo) . fst) (hi ++ lo)
+    @?= [90, 95, 100, 101, 105, 89, 50, 0]
+ where
+  (hi, lo) = fetchPriorityTiers (Just (SlotNo 100)) 10 offers
+  offers = Map.fromList [(point a 'x', ()) | a <- [0, 105, 90, 50, 100, 89, 101, 95]]
+  unSlot (SlotNo n) = n
 
 ------------------------------------------------------------
 -- Scenarios
@@ -85,16 +99,16 @@ tests =
 -- meaning beyond identity.
 type Pid = Int
 
-peerA, peerB, peerC :: Pid
+peerA, peerB, _peerC :: Pid
 peerA = 0
 peerB = 1
-peerC = 2
+_peerC = 2
 
 test_singleMissingBody :: IO ()
 test_singleMissingBody =
   empty
     & withMissingBody (point 1 'a') 1024
-    & offersBody peerA [eb 'a']
+    & offersBody peerA [point 1 'a']
     & runIteration
     & assertBodyRequest peerA (point 1 'a') 1024
 
@@ -102,53 +116,29 @@ test_bodyNoOffer :: IO ()
 test_bodyNoOffer =
   empty
     & withMissingBody (point 1 'a') 1024
-    & offersTxs peerA [eb 'a'] -- offers tx-closure, not the body
+    & offersBody peerA [point 1 'b'] -- peer offers a different EB, not the one we need
     & runIteration
     & assertNoRequests
 
-test_bodyPerEbCap :: IO ()
-test_bodyPerEbCap =
+test_bodyAlreadyRequestedPeerSkipped :: IO ()
+test_bodyAlreadyRequestedPeerSkipped =
   empty
     & withMissingBody (point 1 'a') 1024
-    & alreadyRequestedEbFrom (eb 'a') [peerA, peerB] -- default cap = 2
-    & offersBody peerC [eb 'a']
+    & alreadyRequestedEbFrom (eb 'a') [peerA] -- already in flight from peerA
+    & offersBody peerA [point 1 'a'] -- so peerA is not asked again
+    & offersBody peerB [point 1 'a'] -- but a fresh offering peer is
     & runIteration
-    & assertNoRequests
-
-test_singleMissingTx :: IO ()
-test_singleMissingTx =
-  empty
-    & withMissingTx (point 1 'a') 0 (tx 'x') 500
-    & offersTxs peerA [eb 'a']
-    & runIteration
-    & assertTxRequest peerA (point 1 'a') (tx 'x')
-
-test_txPerTxCap :: IO ()
-test_txPerTxCap =
-  empty
-    & withMissingTx (point 1 'a') 0 (tx 'x') 500
-    & alreadyRequestedTxFrom (tx 'x') [peerA, peerB] -- default cap = 2
-    & offersTxs peerC [eb 'a']
-    & runIteration
-    & assertNoRequests
+    & assertRequestPeers [peerB]
 
 test_bodyTwoPeersOffer :: IO ()
 test_bodyTwoPeersOffer =
   empty
     & withMissingBody (point 1 'a') 1024
-    & offersBody peerA [eb 'a']
-    & offersBody peerB [eb 'a']
+    & offersBody peerA [point 1 'a']
+    & offersBody peerB [point 1 'a']
     & runIteration
-    & assertRequestPeers [peerA, peerB]
-
-test_globalByteBudget :: IO ()
-test_globalByteBudget =
-  empty
-    & withMissingBody (point 1 'a') 1024
-    & withTotalRequestedBytes (maxRequestedBytesSize demoLeiosFetchStaticEnv)
-    & offersBody peerA [eb 'a']
-    & runIteration
-    & assertNoRequests
+    -- both peers offer; with no per-EB cap the body is requested from both
+    & assertRequestPeerCount 2
 
 test_perPeerByteBudget :: IO ()
 test_perPeerByteBudget =
@@ -157,42 +147,23 @@ test_perPeerByteBudget =
     & withRequestedBytesPerPeer
       peerA
       (maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv + 1)
-    & offersBody peerA [eb 'a']
-    & offersBody peerB [eb 'a']
+    & offersBody peerA [point 1 'a']
+    & offersBody peerB [point 1 'a']
     & runIteration
     & assertRequestPeers [peerB]
 
--- | Tx X is referenced in two EBs (A and B), but the peer only
--- offers the tx-closure of EB A (the target). Expected: request
--- targets the peer with offset taken from A's entry.
-test_txTwoEbsSinglePeerOffer :: IO ()
-test_txTwoEbsSinglePeerOffer =
+-- | Regression for the devnet crash where a node re-fetched an EB it had just
+-- forged: the redundant closure acquisition emitted a second 'AcquiredEbTxs',
+-- which 'runLeiosVoting' rejected ('AlreadyKnown') and died on. The forge marks
+-- the EB in 'ebState' (as 'BodyImminent'), so the fetch logic must drop any peer
+-- offer of it -- even a full body+closure offer -- rather than request it.
+test_forgedEbOfferIgnored :: IO ()
+test_forgedEbOfferIgnored =
   empty
-    & withMissingTx (point 1 'a') 0 (tx 'x') 100
-    & alsoReferencedInEb (tx 'x') (eb 'b') 7 100 -- same recorded size in B
-    & offersTxs peerA [eb 'a']
+    & withForgedEb (point 1 'a')
+    & offersBodyAndClosure peerA [point 1 'a']
     & runIteration
-    & assertTxRequest peerA (point 1 'a') (tx 'x')
-
--- | Tx X is referenced in EB A (size 100) and EB B (size 200) —
--- inconsistent sizes for the same content hash, e.g. one peer
--- delivered a malformed body for the other EB before the cap on
--- size-validation was tightened. Peer P offers the tx-closure of
--- BOTH. The gate must still issue the request: the target EB is A,
--- the recorded size on A is the authority, and B's stale/wrong
--- entry must not veto the selection.
---
--- Today the size predicate at 'choosePeerTx' (LeiosDemoLogic.hs:403)
--- uses @Map.lookupMax txOffsets'@, which picks whichever EB hash is
--- bytewise-larger; on disagreement the request is silently dropped.
-test_txTwoEbsDifferentSize :: IO ()
-test_txTwoEbsDifferentSize =
-  empty
-    & withMissingTx (point 1 'a') 0 (tx 'x') 100
-    & alsoReferencedInEb (tx 'x') (eb 'b') 7 200 -- different recorded size
-    & offersTxs peerA [eb 'a', eb 'b']
-    & runIteration
-    & assertTxRequest peerA (point 1 'a') (tx 'x')
+    & assertNoRequests
 
 ------------------------------------------------------------
 -- Scenario DSL
@@ -201,7 +172,7 @@ test_txTwoEbsDifferentSize =
 -- | A test fixture: static env, peer offerings, outstanding work.
 data Scenario pid = Scenario
   { scEnv :: !LeiosFetchStaticEnv
-  , scOfferings :: !(Map.Map (PeerId pid) (Set.Set EbHash, Set.Set EbHash))
+  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint AlsoOfferedTxsClosure))
   , scOutstanding :: !(LeiosOutstanding pid)
   }
 
@@ -210,38 +181,28 @@ empty =
   Scenario
     { scEnv = demoLeiosFetchStaticEnv
     , scOfferings = Map.empty
-    , scOutstanding = emptyLeiosOutstanding
+    , scOutstanding = emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
     }
 
 -- | Outstanding-work combinators -----------------------------------------
 withMissingBody :: LeiosPoint -> BytesSize -> Scenario pid -> Scenario pid
-withMissingBody p size =
+withMissingBody p@(MkLeiosPoint slot ebHash) size =
   onOutstanding $ \o ->
-    o{missingEbBodies = Map.insert p size (missingEbBodies o)}
+    -- Seed everything the announce path would: the missing-body point and its
+    -- reverse index, plus (via 'recordMaxAnnouncementSlot') the 'ebState' NoBody
+    -- entry that the fetch loop now drives bodies off of.
+    recordMaxAnnouncementSlot ebHash slot SNothing $
+      o
+        { missingEbBodies = Map.insert p size (missingEbBodies o)
+        , reverseSlotIndexByEbHash =
+            Map.insertWith NESet.union ebHash (NESet.singleton slot) (reverseSlotIndexByEbHash o)
+        }
 
-withMissingTx ::
-  LeiosPoint ->
-  Int -> -- offset within the EB
-  TxHash ->
-  BytesSize ->
-  Scenario pid ->
-  Scenario pid
-withMissingTx p offset h size =
-  onOutstanding $ \o ->
-    o
-      { missingEbTxs =
-          Map.insertWith
-            IntMap.union
-            p
-            (IntMap.singleton offset (h, size))
-            (missingEbTxs o)
-      , reverseEbIndexByTx =
-          Map.insertWith
-            Map.union
-            h
-            (Map.singleton p.pointEbHash (offset, size))
-            (reverseEbIndexByTx o)
-      }
+-- | Mark an EB as one our own forge produced -- the 'BodyImminent' 'ebState'
+-- entry that 'onForgedLeiosEb' installs at announcement time.
+withForgedEb :: LeiosPoint -> Scenario pid -> Scenario pid
+withForgedEb (MkLeiosPoint slot ebHash) =
+  onOutstanding $ markBodyImminent ebHash slot
 
 alreadyRequestedEbFrom :: Ord pid => EbHash -> [pid] -> Scenario pid -> Scenario pid
 alreadyRequestedEbFrom ebHash pids =
@@ -254,42 +215,6 @@ alreadyRequestedEbFrom ebHash pids =
             (Set.fromList (map MkPeerId pids))
             (requestedEbPeers o)
       }
-
-alreadyRequestedTxFrom :: Ord pid => TxHash -> [pid] -> Scenario pid -> Scenario pid
-alreadyRequestedTxFrom txHash pids =
-  onOutstanding $ \o ->
-    o
-      { requestedTxPeers =
-          Map.insertWith
-            Set.union
-            txHash
-            (Set.fromList (map MkPeerId pids))
-            (requestedTxPeers o)
-      }
-
--- | Tag a tx as also referenced by another EB at the given offset
--- and recorded size, without adding the EB to 'missingEbTxs'.
--- 'choosePeerTx' consults 'reverseEbIndexByTx' for "which EBs does
--- this tx appear in?" when evaluating peer offerings; this helper
--- lets us seed that cross-reference.
-alsoReferencedInEb ::
-  TxHash -> EbHash -> Int -> BytesSize -> Scenario pid -> Scenario pid
-alsoReferencedInEb txHash ebHash offset size =
-  onOutstanding $ \o ->
-    o
-      { reverseEbIndexByTx =
-          Map.insertWith
-            Map.union
-            txHash
-            (Map.singleton ebHash (offset, size))
-            (reverseEbIndexByTx o)
-      }
-
--- | Set the global in-flight byte total. Use with the env's cap to
--- test the global byte budget.
-withTotalRequestedBytes :: BytesSize -> Scenario pid -> Scenario pid
-withTotalRequestedBytes n =
-  onOutstanding $ \o -> o{requestedBytesSize = n}
 
 -- | Set a per-peer in-flight byte total. Use with the env's per-peer
 -- cap to test the per-peer byte budget.
@@ -304,31 +229,26 @@ withRequestedBytesPerPeer pid n =
 
 -- | Per-peer offer combinators -------------------------------------------
 
--- | Peer @p@ offers the body of these EBs.
-offersBody :: Ord pid => pid -> [EbHash] -> Scenario pid -> Scenario pid
-offersBody pid ebs =
-  insertOffering (MkPeerId pid) (Set.fromList ebs) Set.empty
+-- | Peer @p@ offers the body (only) of these points.
+offersBody :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
+offersBody pid points =
+  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotAlsoOffered) | p <- points])
 
--- | Peer @p@ offers the tx-closure of these EBs.
-offersTxs :: Ord pid => pid -> [EbHash] -> Scenario pid -> Scenario pid
-offersTxs pid ebs =
-  insertOffering (MkPeerId pid) Set.empty (Set.fromList ebs)
+-- | Peer @p@ offers both the body and the tx-closure of these points.
+offersBodyAndClosure :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
+offersBodyAndClosure pid points =
+  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureAlsoOffered) | p <- points])
 
 insertOffering ::
   Ord pid =>
   PeerId pid ->
-  Set.Set EbHash ->
-  Set.Set EbHash ->
+  Map.Map LeiosPoint AlsoOfferedTxsClosure ->
   Scenario pid ->
   Scenario pid
-insertOffering pid bodies txs sc =
+insertOffering pid offers sc =
   sc
     { scOfferings =
-        Map.insertWith
-          (\(a, b) (c, d) -> (a <> c, b <> d))
-          pid
-          (bodies, txs)
-          (scOfferings sc)
+        Map.insertWith (Map.unionWith mergeOffer) pid offers (scOfferings sc)
     }
 
 -- | Internal: lift a function on 'LeiosOutstanding' to one on 'Scenario'.
@@ -339,11 +259,18 @@ onOutstanding ::
 onOutstanding f sc = sc{scOutstanding = f (scOutstanding sc)}
 
 -- | Run the iteration and project the decisions.
-runIteration :: Ord pid => Scenario pid -> LeiosFetchDecisions pid
+--
+-- (The tx side of the fetch logic is disarmed, so only EB-body requests are
+-- emitted; the old tx-soundness check is gone with it.)
+runIteration :: Ord pid => Scenario pid -> Map.Map (PeerId pid) (NESeq LeiosFetchRequest)
 runIteration sc =
-  -- A known current slot selects freshest-first (i.e. youngest-first), which is
-  -- the ordering these scenarios were written against.
-  snd $ leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
+  -- Any known current slot suffices here: these scenarios don't depend on the
+  -- offer-visit order (the priority order is tested by 'test_fetchPriorityOrder').
+  let (_out, reqs, _drops) =
+        -- No big-ledger peers in these scenarios (the aggressive-fetch path is
+        -- exercised in "Test.LeiosDemoLogic.Invariants").
+        leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings Map.empty sc.scOutstanding
+   in reqs
 
 ------------------------------------------------------------
 -- Assertions
@@ -354,42 +281,31 @@ assertBodyRequest ::
   pid ->
   LeiosPoint ->
   BytesSize ->
-  LeiosFetchDecisions pid ->
+  Map.Map (PeerId pid) (NESeq LeiosFetchRequest) ->
   IO ()
-assertBodyRequest pid p size (MkLeiosFetchDecisions m) =
+assertBodyRequest pid p size m =
   case Map.lookup (MkPeerId pid) m of
     Nothing -> assertFailure $ "no request for peer " <> show pid
-    Just slotMap -> case Map.lookup p.pointSlotNo slotMap of
-      Nothing -> assertFailure "no request at expected slot"
-      Just (_txs, bodies) ->
-        DList.toList bodies @?= [(p.pointEbHash, size)]
+    Just reqs ->
+      [ (pt.pointEbHash, sz)
+      | LeiosBlockRequest (MkLeiosBlockRequest pt sz) <- toList reqs
+      ]
+        @?= [(p.pointEbHash, size)]
 
-assertTxRequest ::
-  (Ord pid, Show pid) =>
-  pid ->
-  LeiosPoint ->
-  TxHash ->
-  LeiosFetchDecisions pid ->
-  IO ()
-assertTxRequest pid p txHash (MkLeiosFetchDecisions m) =
-  case Map.lookup (MkPeerId pid) m of
-    Nothing -> assertFailure $ "no request for peer " <> show pid
-    Just slotMap -> case Map.lookup p.pointSlotNo slotMap of
-      Nothing -> assertFailure "no request at expected slot"
-      Just (txs, _bodies) -> case DList.toList txs of
-        [(h, _size, _offsets)] -> h @?= txHash
-        xs -> assertFailure $ "expected one tx request, got " <> show (length xs)
+assertNoRequests :: (Ord pid, Show pid) => Map.Map (PeerId pid) (NESeq LeiosFetchRequest) -> IO ()
+assertNoRequests m = Map.keys m @?= []
 
-assertNoRequests :: (Ord pid, Show pid) => LeiosFetchDecisions pid -> IO ()
-assertNoRequests (MkLeiosFetchDecisions m) = Map.keys m @?= []
-
--- | Assert that the decision set has requests targeting exactly the
--- given set of peers (regardless of what each request is).
+-- | Assert that requests target exactly the given set of peers (regardless of
+-- what each request is).
 assertRequestPeers ::
   (Ord pid, Show pid) =>
-  [pid] -> LeiosFetchDecisions pid -> IO ()
-assertRequestPeers expected (MkLeiosFetchDecisions m) =
+  [pid] -> Map.Map (PeerId pid) (NESeq LeiosFetchRequest) -> IO ()
+assertRequestPeers expected m =
   Set.fromList (Map.keys m) @?= Set.fromList (map MkPeerId expected)
+
+-- | Assert how many distinct peers received a request.
+assertRequestPeerCount :: Int -> Map.Map (PeerId pid) (NESeq LeiosFetchRequest) -> IO ()
+assertRequestPeerCount n m = Map.size m @?= n
 
 ------------------------------------------------------------
 -- Fixture helpers
@@ -403,7 +319,3 @@ point slot c = MkLeiosPoint (SlotNo (fromIntegral slot)) (eb c)
 -- | Distinct EB hash from a Char.
 eb :: Char -> EbHash
 eb c = MkEbHash $ BS.pack $ replicate 32 (fromIntegral (fromEnum c))
-
--- | Distinct tx hash from a Char.
-tx :: Char -> TxHash
-tx c = MkTxHash $ BS.pack $ replicate 32 (fromIntegral (fromEnum c))

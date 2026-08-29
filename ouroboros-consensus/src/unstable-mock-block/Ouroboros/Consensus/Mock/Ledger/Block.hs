@@ -80,7 +80,7 @@ import Cardano.Crypto.Hash (Hash, HashAlgorithm, SHA256, ShortHash)
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import Codec.Serialise (Serialise (..), serialise)
+import Codec.Serialise (Serialise (..), deserialise, serialise)
 import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Kind (Type)
@@ -88,6 +88,7 @@ import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoDb (leiosDbLookupEbClosure)
 import LeiosVoting (HasLeiosVoting)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -136,10 +137,21 @@ data SimpleBlock' c ext ext' = SimpleBlock
   }
   deriving (Generic, Show, Eq)
 
--- | Default 'ResolveLeiosBlock' — mock blocks never carry Leios certs.
+-- | Mock blocks never carry Leios certs, so the certificate-shaped methods keep
+-- their defaults. The two the Leios voting thread needs are real, though, so
+-- that 'LeiosVoting.validateEbClosure' can be tested against mock blocks --
+-- 'assumeValidatedClosureTx' in particular defaults to a panic.
+--
+-- Narrowed to @ext' ~ ext@ because that is where 'GenTx' is defined.
 instance
-  (Typeable c, Typeable ext, Typeable ext') =>
-  ResolveLeiosBlock (SimpleBlock' c ext ext')
+  (Typeable c, Typeable ext, Serialise (GenTx (SimpleBlock' c ext ext))) =>
+  ResolveLeiosBlock (SimpleBlock' c ext ext)
+  where
+  resolveLeiosClosure leiosDb ebHash =
+    maybe [] (fmap (fmap (deserialise . Lazy.fromStrict)))
+      <$> leiosDbLookupEbClosure leiosDb ebHash
+
+  assumeValidatedClosureTx = ValidatedSimpleGenTx
 
 instance HasLeiosVoting (SimpleBlock' c ext ext')
 

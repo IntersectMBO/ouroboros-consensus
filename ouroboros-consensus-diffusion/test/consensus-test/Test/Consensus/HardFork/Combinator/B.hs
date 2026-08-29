@@ -304,13 +304,14 @@ blockForgingB =
     , checkCanForge = \_ _ _ _ _ -> return ()
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
-          forgeBlockB
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            (fmap txForgetValidated fbRbTxs)
-            fbIsLeader
+          flip (,) Nothing $
+            forgeBlockB
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              (fmap txForgetValidated fbRbTxs)
+              fbIsLeader
     , finalize = return ()
     }
 

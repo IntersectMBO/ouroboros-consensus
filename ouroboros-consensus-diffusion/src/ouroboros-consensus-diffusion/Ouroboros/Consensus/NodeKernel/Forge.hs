@@ -97,13 +97,13 @@ forge ::
   LeiosVoteState m ->
   BlockForging m blk ->
   LeiosDbConnection m ->
-  -- | Invoked with the freshly-forged block's header, after forging and
-  -- /before/ adoption, so the caller can act on the new block (e.g. concurrently
-  -- announce its EB) without adoption gating it.
-  (Header blk -> m ()) ->
+  -- | Invoked with the header and closure of each EB we forge, to ingest it
+  -- through the same handlers an upstream peer's messages (see
+  -- 'Leios.onForgedLeiosEb').
+  (Header blk -> Leios.ForgedLeiosEb -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn afterForge currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn onForgedLeiosEb currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -235,7 +235,6 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
               , Block.fbIsLeader = proof
               , Block.fbChainDepState = Just (headerStateChainDep (headerState unticked))
               , Block.fbMayLeiosCert = fst <$> mayLeiosCertAndAnnouncement
-              , Block.fbLeiosDb = leiosConn
               , Block.fbLeiosTracer = leiosTracer
               , Block.fbLeiosVoteState = leiosVoteState
               }
@@ -244,8 +243,8 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
           , rbTxsSize
           )
 
-  -- Actually produce the block
-  newBlock <-
+  -- Actually produce the block (and the EB it announces, if any)
+  (newBlock, mForgedEb) <-
     forgeTrace'Via
       (const ())
       "forge-block"
@@ -261,9 +260,12 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       snapSize
       rbTxsSize
 
-  -- Hand the freshly-forged block's header to the caller before adoption, so it
-  -- can act on it (e.g. concurrently announce its EB) without adoption gating it.
-  lift $ afterForge (getHeader newBlock)
+  -- On a fundamental level, issuing a block is only slightly different than
+  -- receiving it from an upstream peer; we keep that explicit to limit the risk
+  -- of accidental discrepancies. 'onForgedLeiosEb' hands our freshly-forged EB's
+  -- announcement, body, and closure to the very handlers those mini-protocol
+  -- messages use.
+  lift $ forM_ mForgedEb $ onForgedLeiosEb (getHeader newBlock)
 
   forgeTrace'Via
     (const ())
@@ -751,8 +753,8 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
               (ledgerState unticked)
         case res of
           Left err ->
-            -- Should not happen: each closure tx was validated
-            -- when inserted into the LeiosDb. Fail loudly.
+            -- Should not happen: we are certifying this EB, so a quorum of
+            -- the committee applied its closure before signing. Fail loudly.
             error $ "forkBlockForging: applyLeiosClosure failed, announcing no EB. " <> show err
           Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} -> do
             -- Compose the EB closure diff (relative to the unticked

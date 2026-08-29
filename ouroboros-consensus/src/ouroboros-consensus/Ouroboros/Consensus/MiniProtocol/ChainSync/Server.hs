@@ -169,7 +169,7 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDb flr = ChainSyncServer $ do
           Left _ -> pure sblk
           Right blk -> do
             resolveLeiosClosure leiosDb (pointEbHash prevAnn)
-              <&> inlineLeiosClosure blk
+              <&> inlineLeiosClosure blk . map snd
               <&> encode
         _ -> pure sblk
       pure (WithPoint sblk' pt)

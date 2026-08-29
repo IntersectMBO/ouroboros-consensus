@@ -7,10 +7,16 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+-- 'SL.unsafeMakeValidated' is deprecated in favour of the ledger's newer
+-- 'ValidatedTx', which consensus has not moved to yet (see the same FIXME in
+-- "Ouroboros.Consensus.Shelley.Ledger.Mempool"). Suppressed here the way the
+-- sibling Shelley modules do.
+{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Leios () where
 
+import Cardano.Binary (serialize')
 import qualified Cardano.Crypto.Hash as Crypto (hashToBytesShort)
 import Cardano.Ledger.Api (Tx)
 import Cardano.Ledger.Binary (decCBOR, decodeFullAnnotator)
@@ -38,7 +44,9 @@ import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , LeiosPoint (..)
+  , LeiosTx (..)
   , RbHash (..)
+  , hashLeiosTx
   )
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
@@ -82,7 +90,11 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   , ShelleyBasedEra
   , shelleyLedgerGlobals
   )
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (GenTx (ShelleyTx), mkShelleyTx)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool
+  ( GenTx (ShelleyTx)
+  , mkShelleyTx
+  , mkShelleyValidatedTx
+  )
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
@@ -107,6 +119,13 @@ instance
   (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
   ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
   where
+  -- The on-wire bytes and 'TxHash' a forged EB records for each tx (see
+  -- 'forgeLeiosEb'): 'serialize'' the tx, and hash exactly those bytes. Matching
+  -- this encoding is what lets the mempool key its txs by the same 'TxHash' an EB
+  -- lists, so the body-arrival mempool pull can find them.
+  leiosTxBytesOfGenTx (ShelleyTx _ tx) = Just (serialize' tx)
+  leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serialize' tx)))
+
   resolveLeiosClosure leiosDb ebHash = do
     mAnnouncedEb <-
       leiosDbLookupEbClosure
@@ -133,7 +152,13 @@ instance
             <> "; chain-sel selected a cert-RB without its EB closure. "
             <> "Refusing to apply as empty (would diverge UTxO)."
       Just closureEntries ->
-        pure $ mkShelleyTx . deserialiseLeiosTx . snd <$> closureEntries
+        pure $ fmap (mkShelleyTx . deserialiseLeiosTx) <$> closureEntries
+
+  -- The ledger's 'Validated' is a bare newtype over the tx, so rebuilding the
+  -- token costs only the tx-id hash; 'SL.reapplyTx' derives the state-dependent
+  -- annotation itself, so nothing stale rides along.
+  assumeValidatedClosureTx (ShelleyTx _ tx) =
+    mkShelleyValidatedTx (SL.unsafeMakeValidated tx)
 
   leiosClosureTxKeySets = getTransactionKeySets
 
