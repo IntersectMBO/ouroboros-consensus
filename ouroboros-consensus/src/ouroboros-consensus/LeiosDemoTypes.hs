@@ -1386,6 +1386,10 @@ data TraceLeiosKernel
   | TraceLeiosDb TraceLeiosDb
   | -- | A forged RB both certifies an EB and announce a new one
     TraceLeiosCertifiedAndAnnounced {atSlot :: SlotNo, rbHash :: RbHash}
+  | -- | An EB announcement whose slot our ledger cannot place on the wall clock,
+    -- because it is beyond the forecast horizon. Ordinary while syncing: the
+    -- announcement describes the network's tip and we are far behind it.
+    TraceLeiosAnnouncementPastHorizon {atSlot :: SlotNo}
   | -- | The node accepted a new EB announcement, deduplicated across all peers
     -- and its own block forging (see 'AnnouncementSource').
     TraceLeiosAnnouncementAccepted
@@ -1680,6 +1684,11 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosCertifiedAndAnnounced"
       , "slotNo" .= slotNo
       , "rbHash" .= prettyRbHash rbHash
+      ]
+  TraceLeiosAnnouncementPastHorizon{atSlot} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosAnnouncementPastHorizon"
+      , "slotNo" .= atSlot
       ]
   TraceLeiosAnnouncementAccepted announcementSource equivocation acc mbAge ->
     mconcat $

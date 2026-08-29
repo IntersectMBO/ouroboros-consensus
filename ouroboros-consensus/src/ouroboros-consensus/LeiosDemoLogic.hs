@@ -127,6 +127,9 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , systemTimeCurrent
   )
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
+import Ouroboros.Consensus.HardFork.History
+  ( PastHorizonException (PastHorizon)
+  )
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
@@ -1629,6 +1632,11 @@ instance Exception ExnLeiosBlockAnnouncementMissing
 -- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
 -- announcement is the peer's fault.
 --
+-- A slot past the forecast horizon is /not/ the peer's fault, so it must not
+-- disconnect them: it means our own ledger is too far behind to date the
+-- announcement, which is the ordinary state of affairs while syncing. The
+-- verdict is 'VerdictIgnore' and 'TraceLeiosAnnouncementPastHorizon' records it.
+--
 -- If the announcement is valid and 'FreshOCIN', the verdict carries its data and
 -- whether to relay it downstream (see 'ShouldRelay' and
 -- 'maxAnnouncementAgeSend'). If it is valid but 'StaleOCIN' (its opcert counter
@@ -1638,6 +1646,7 @@ instance Exception ExnLeiosBlockAnnouncementMissing
 -- relaying it.
 announcementValidity ::
   (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
+  Tracer m TraceLeiosKernel ->
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
@@ -1648,38 +1657,43 @@ announcementValidity ::
         (AnnouncementInvalidity blk)
         (ShouldRelay, RelativeTime, NominalDiffTime, (LeiosPoint, BytesSize))
     )
-announcementValidity systemTime futureCheck cfg immLedger hdr = do
-  onset <- case futureCheck of
+announcementValidity tracer systemTime futureCheck cfg immLedger hdr = do
+  mbOnset <- case futureCheck of
     InFutureCheck.SomeHeaderInFutureCheck hifc -> do
       arrival <- InFutureCheck.recordHeaderArrival hifc hdr
-      judgment <-
-        either throwIO pure $
-          runExcept $
-            InFutureCheck.judgeHeaderArrival
-              hifc
-              (configLedger cfg)
-              (ledgerState immLedger)
-              arrival
-      arrivalResult <- InFutureCheck.handleHeaderArrival hifc judgment
-      either throwIO pure (runExcept arrivalResult)
-  -- The in-future check has delayed this thread until 'onset' if the
-  -- slot was near-future, so 'now' is at or after 'onset' and the age
-  -- is non-negative.
-  now <- systemTimeCurrent systemTime
-  let age = diffRelTime now onset
-  pure $
-    -- Only this function holds the wall clock, so it owns the too-old check.
-    if age > maxAnnouncementAgeRecv
-      then VerdictTooOld
-      else
-        let shouldRelay =
-              if age <= maxAnnouncementAgeSend
-                then DoRelay
-                else DoNotRelay
-         in case validateAnnouncementHeader cfg immLedger hdr of
-              Left inv -> VerdictInvalid inv
-              Right (StaleOCIN, _v) -> VerdictIgnore
-              Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, onset, age, v)
+      case runExcept $
+        InFutureCheck.judgeHeaderArrival
+          hifc
+          (configLedger cfg)
+          (ledgerState immLedger)
+          arrival of
+        Left PastHorizon{} -> do
+          traceWith tracer $ TraceLeiosAnnouncementPastHorizon (blockSlot hdr)
+          pure Nothing
+        Right judgment -> do
+          arrivalResult <- InFutureCheck.handleHeaderArrival hifc judgment
+          Just <$> either throwIO pure (runExcept arrivalResult)
+  case mbOnset of
+    Nothing -> pure VerdictIgnore
+    Just onset -> do
+      -- The in-future check has delayed this thread until 'onset' if the
+      -- slot was near-future, so 'now' is at or after 'onset' and the age
+      -- is non-negative.
+      now <- systemTimeCurrent systemTime
+      let age = diffRelTime now onset
+      pure $
+        -- Only this function holds the wall clock, so it owns the too-old check.
+        if age > maxAnnouncementAgeRecv
+          then VerdictTooOld
+          else
+            let shouldRelay =
+                  if age <= maxAnnouncementAgeSend
+                    then DoRelay
+                    else DoNotRelay
+             in case validateAnnouncementHeader cfg immLedger hdr of
+                  Left inv -> VerdictInvalid inv
+                  Right (StaleOCIN, _v) -> VerdictIgnore
+                  Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, onset, age, v)
 
 -- | Record a validated, newly-announced EB body as missing, unless its already
 -- pruned\/tracked\/acquired

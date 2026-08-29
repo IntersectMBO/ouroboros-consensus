@@ -516,6 +516,7 @@ mkHandlers
                           Leios.ancElId
                           ( \ancH ->
                               Leios.announcementValidity
+                                kernelTracer
                                 systemTime
                                 chainSyncFutureCheck
                                 getTopLevelConfig
