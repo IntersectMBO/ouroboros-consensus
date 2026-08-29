@@ -1504,7 +1504,6 @@ library cardano
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Ledger
-    Ouroboros.Consensus.Cardano.LeiosWibble
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Cardano.QueryHF
     Ouroboros.Consensus.Shelley.Crypto
