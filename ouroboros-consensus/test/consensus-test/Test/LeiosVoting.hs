@@ -44,9 +44,8 @@ import LeiosTxCache
 import LeiosVoting (EbClosureVerdict (..), validateEbClosure)
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
-import Ouroboros.Consensus.Ledger.Tables (projectLedgerTables)
 import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK)
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables, restrictValues')
 import Test.Consensus.Mempool.Util
   ( TestBlock
   , TestTx
@@ -107,8 +106,8 @@ prop_secondLookReapplies =
 -- and holds regardless of the tx that sank the EB.
 prop_recordsValidatedBeforeFailure :: Property
 prop_recordsValidatedBeforeFailure =
-  forAllValidThenInvalid 3 $ \acquired good bad -> ioProperty $ do
-    (verdict, tagged) <- runValidate acquired (good <> [bad])
+  forAllValidThenInvalid 3 2 $ \acquired good bad after -> ioProperty $ do
+    (verdict, tagged) <- runValidate acquired (good <> [bad] <> after)
     pure $
       conjoin
         [ isInvalid verdict
@@ -117,14 +116,16 @@ prop_recordsValidatedBeforeFailure =
             & counterexample "txs validated before the failure should be tagged"
         ]
 
--- | The failing tx itself is not recorded -- it never validated.
+-- | Validation abandons the closure at the first failure: neither the failing
+-- tx nor anything behind it is recorded, even though the tail would have
+-- applied.
 prop_stopsAtFirstFailure :: Property
 prop_stopsAtFirstFailure =
-  forAllValidThenInvalid 2 $ \acquired good bad -> ioProperty $ do
-    (_, tagged) <- runValidate acquired (good <> [bad])
+  forAllValidThenInvalid 2 2 $ \acquired good bad after -> ioProperty $ do
+    (_, tagged) <- runValidate acquired (good <> [bad] <> after)
     pure $
-      last tagged === False
-        & counterexample "the failing tx must not be tagged validated"
+      drop (length good) tagged === map (const False) (bad : after)
+        & counterexample "the failing tx and everything after it must be untagged"
 
 {-------------------------------------------------------------------------------
   Generators
@@ -136,13 +137,18 @@ forAllValidClosure n k =
     forAll (vectorOf n arbitrary) $ \acquired ->
       length txs === n .&&. k acquired txs
 
--- | @n@ txs that apply, then one that does not.
-forAllValidThenInvalid :: Int -> ([Bool] -> [TestTx] -> TestTx -> Property) -> Property
-forAllValidThenInvalid n k =
+-- | @n@ txs that apply, then one that does not, then @m@ that /would/ apply if
+-- they were reached. The tail is generated against the same ledger state as the
+-- failing tx, which never commits, so reaching it is the only reason it could
+-- fail to be tagged.
+forAllValidThenInvalid ::
+  Int -> Int -> ([Bool] -> [TestTx] -> TestTx -> [TestTx] -> Property) -> Property
+forAllValidThenInvalid n m k =
   forAll (genValidTxs n testInitLedger) $ \(good, ledger') ->
     forAll (genInvalidTx ledger') $ \bad ->
-      forAll (vectorOf (n + 1) arbitrary) $ \acquired ->
-        length good === n .&&. k acquired good bad
+      forAll (fst <$> genValidTxs m ledger') $ \after ->
+        forAll (vectorOf (n + 1 + m) arbitrary) $ \acquired ->
+          length good === n .&&. length after === m .&&. k acquired good bad after
 
 {-------------------------------------------------------------------------------
   Harness
@@ -193,7 +199,11 @@ validateOnce Harness{hConn, hCache, hPoint} txs = do
       testLedgerConfigNoSizeLimits
       hConn
       hCache
-      (\_keys -> pure (projectLedgerTables testInitLedger))
+      -- Restricted to what was asked for, not the whole UTxO: a closure whose
+      -- key sets came back empty would otherwise still validate, and the
+      -- transitive-closure TODO in 'validateEbClosure' has nothing to fail
+      -- against.
+      (\keys -> pure (restrictValues' testInitLedger keys))
       hPoint
       baseLedger
   tagged <- withLookupTx hCache $ \look ->
