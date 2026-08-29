@@ -507,7 +507,15 @@ mkHandlers
                     anc <- case Leios.mkAnnouncingHeader hdr of
                       Nothing -> throwIO Leios.ExnLeiosBlockAnnouncementMissing
                       Just x -> pure x
-                    immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                    -- The volatile tip dates the announcement (longest forecast
+                    -- horizon), the immutable tip judges OCIN revocation (only
+                    -- a state that cannot roll back may revoke). Read together
+                    -- so the two cannot disagree about the same chain.
+                    (volLedger, immLedger) <-
+                      atomically $
+                        (,)
+                          <$> ChainDB.getCurrentLedger getChainDB
+                          <*> ChainDB.getImmutableLedger getChainDB
                     (latestPruneSlot, peerSt0) <- Prim.readMutVar peerStateVar
                     res <-
                       runExceptT $
@@ -520,6 +528,7 @@ mkHandlers
                                 systemTime
                                 chainSyncFutureCheck
                                 getTopLevelConfig
+                                volLedger
                                 immLedger
                                 (Leios.ancHeader ancH)
                           )

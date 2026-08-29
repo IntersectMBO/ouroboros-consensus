@@ -1636,6 +1636,9 @@ instance Exception ExnLeiosBlockAnnouncementMissing
 -- disconnect them: it means our own ledger is too far behind to date the
 -- announcement, which is the ordinary state of affairs while syncing. The
 -- verdict is 'VerdictIgnore' and 'TraceLeiosAnnouncementPastHorizon' records it.
+-- The horizon comes from the volatile tip rather than the immutable one for the
+-- same reason — it is the longest forecast we have, and every slot it buys is a
+-- peer we do not drop.
 --
 -- If the announcement is valid and 'FreshOCIN', the verdict carries its data and
 -- whether to relay it downstream (see 'ShouldRelay' and
@@ -1650,6 +1653,11 @@ announcementValidity ::
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
+  -- | The volatile tip's ledger state, for the in-future check: it forecasts
+  -- furthest, and a shorter horizon costs us peers.
+  ExtLedgerState blk EmptyMK ->
+  -- | The immutable tip's ledger state, for the OCIN revocation check: a
+  -- revocation only counts once it cannot be rolled back.
   ExtLedgerState blk EmptyMK ->
   Header blk ->
   m
@@ -1657,7 +1665,7 @@ announcementValidity ::
         (AnnouncementInvalidity blk)
         (ShouldRelay, RelativeTime, NominalDiffTime, (LeiosPoint, BytesSize))
     )
-announcementValidity tracer systemTime futureCheck cfg immLedger hdr = do
+announcementValidity tracer systemTime futureCheck cfg volLedger immLedger hdr = do
   mbOnset <- case futureCheck of
     InFutureCheck.SomeHeaderInFutureCheck hifc -> do
       arrival <- InFutureCheck.recordHeaderArrival hifc hdr
@@ -1665,7 +1673,7 @@ announcementValidity tracer systemTime futureCheck cfg immLedger hdr = do
         InFutureCheck.judgeHeaderArrival
           hifc
           (configLedger cfg)
-          (ledgerState immLedger)
+          (ledgerState volLedger)
           arrival of
         Left PastHorizon{} -> do
           traceWith tracer $ TraceLeiosAnnouncementPastHorizon (blockSlot hdr)
