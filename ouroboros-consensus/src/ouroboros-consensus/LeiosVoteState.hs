@@ -50,10 +50,15 @@ data AddVoteResult
   = NoCommittee
   | VoteInvalid VoteInvalid
   | AlreadyKnown
-  | -- | The vote was added to the state, with the running per-point weight
-    -- after this addition. The LeiosCert is 'Just' whenever the tally for the
-    -- vote's point is at or above 'minCertificationThreshold'.
-    Added Weight (Maybe LeiosCert)
+  | -- | The vote was added to the state. The first 'Weight' is this voter's own
+    -- weight; the second is the running per-point tally after this addition.
+    -- The LeiosCert is 'Just' whenever that tally is at or above
+    -- 'minCertificationThreshold'.
+    --
+    -- The tally is surfaced rather than traced where it is computed because
+    -- 'addVote' runs inside 'atomically' and STM cannot trace. Callers emit it,
+    -- as they already do for certification.
+    Added Weight Weight (Maybe LeiosCert)
   deriving (Eq, Show)
 
 data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m LeiosVote}
@@ -141,7 +146,7 @@ newLeiosVoteState getCommittee = do
                                         Right cert -> pst'{psCert = Just cert}
                                   | otherwise -> pst'
                           writeTVar pointStates $! Map.insert vote.announcingRbHash pst'' states
-                          pure $ Added weight pst''.psCert
+                          pure $ Added weight totalW pst''.psCert
       , subscribeVotes = do
           chan <- atomically $ dupTChan votesChan
           pure $
