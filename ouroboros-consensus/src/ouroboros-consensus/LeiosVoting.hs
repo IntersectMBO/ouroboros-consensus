@@ -49,6 +49,7 @@ import LeiosDemoTypes
   , SerializedEbBody
   , TraceLeiosKernel (..)
   , getLeiosSeatId
+  , minCertificationThreshold
   , prettyLeiosPoint
   , signLeiosVote
   )
@@ -355,9 +356,17 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           ExceptT $
             addVote vote
               >>= \case
-                Added weight mCert -> fmap Right $ do
+                Added weight tally mCert -> fmap Right $ do
                   traceWith tracer TraceLeiosVoted{vote, weight}
                   traceWith tracer TraceLeiosVoteAcquired{vote}
+                  traceWith tracer $
+                    TraceLeiosTally
+                      { rbHash
+                      , seatId
+                      , weight
+                      , tally
+                      , threshold = minCertificationThreshold
+                      }
                   -- Trace certification whenever the tally crosses
                   -- 'minCertificationThreshold'. May fire more than once per
                   -- point if subsequent votes also come in; consumers (e.g.
