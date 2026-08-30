@@ -575,15 +575,31 @@ mkHandlers
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
                     forM_ vs $ \vote -> do
                       result <- addVote vote
-                      -- TODO: Keep track of the running tally (even after certification)
                       traceWith kernelTracer TraceLeiosVoteAcquired{vote}
                       -- A remote vote can be the one that tips this
                       -- node's tally past 'minCertificationThreshold';
                       -- trace certification whenever 'addVote' surfaces
                       -- a cert for the point.
+                      --
+                      -- The tally is traced only on 'Added', so one line per
+                      -- distinct vote rather than per arrival: the same vote
+                      -- reaches us from every peer that has it, and those
+                      -- duplicates return 'AlreadyKnown' with no tally to
+                      -- report.
                       case result of
-                        Added _ (Just _) ->
-                          traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
+                        Added weight tally mCert -> do
+                          traceWith kernelTracer $
+                            TraceLeiosTally
+                              { rbHash = Leios.announcingRbHash vote
+                              , seatId = Leios.voterId vote
+                              , weight
+                              , tally
+                              , threshold = Leios.minCertificationThreshold
+                              }
+                          case mCert of
+                            Just _ ->
+                              traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
+                            Nothing -> pure ()
                         _ -> pure ()
               )
       , hLeiosNotifyServer = \_version peer -> do

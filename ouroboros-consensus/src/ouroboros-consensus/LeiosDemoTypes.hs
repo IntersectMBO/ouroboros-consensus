@@ -1372,6 +1372,25 @@ data TraceLeiosKernel
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
+  | -- | The running per-point tally moved, i.e. a vote was newly added rather
+    -- than being a duplicate arrival. Emitted once per distinct vote, so the
+    -- max per 'RbHash' is that point's final accumulated weight, whether or not
+    -- it ever reached 'minCertificationThreshold'. That margin is otherwise
+    -- unobservable: only certified points reach the chain, so a point that
+    -- stalls below the threshold leaves no other trace of how close it came.
+    -- The adding voter and its own weight ride along so the line stands alone.
+    -- A consumer can then attribute the tally, and say what a seat that never
+    -- voted would have been worth, without a second source for seat weights.
+    -- 'seatId' rather than 'voterId': 'LeiosVote' already has a 'voterId'
+    -- field, and a second one in this module makes the qualified selector
+    -- ambiguous for importers.
+    TraceLeiosTally
+      { rbHash :: RbHash
+      , seatId :: LeiosSeatId
+      , weight :: Weight
+      , tally :: Weight
+      , threshold :: Weight
+      }
   | TraceLeiosCertified {rbHash :: RbHash}
   | -- | A vote is scheduled to happen.
     TraceLeiosVoteScheduled
@@ -1646,6 +1665,19 @@ traceLeiosKernelToObject = \case
     mconcat
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
       , "vote" .= voteToObject vote
+      ]
+  TraceLeiosTally{rbHash = announcingRbHash, seatId, weight, tally, threshold} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosTally"
+      , "rbHash" .= prettyRbHash announcingRbHash
+      , -- Rendered as voterId to match 'voteToObject', so consumers index one
+        -- name across the vote traces.
+        "voterId" .= seatId.leiosSeatIndex
+      , -- Same precision rationale as 'LeiosVoted' above.
+        "weight" .= fromRational @Pico weight
+      , "tally" .= fromRational @Pico tally
+      , -- Carried so the ratio is self-contained and survives a threshold change.
+        "threshold" .= fromRational @Pico threshold
       ]
   TraceLeiosCertified{rbHash = announcingRbHash} ->
     mconcat
