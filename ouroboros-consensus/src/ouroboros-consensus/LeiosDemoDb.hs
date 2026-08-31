@@ -2,6 +2,7 @@ module LeiosDemoDb
   ( -- * API
     withLeiosDb
   , LeiosDbHandle (..)
+  , LeiosDbStats (..)
   , LeiosEbNotification (..)
   , LeiosDbConnection (..)
   , CompletedEbs
@@ -33,6 +34,7 @@ import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbStats (..)
   , LeiosEbNotification (..)
   , withLeiosDb
   )
