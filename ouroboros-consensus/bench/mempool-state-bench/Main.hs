@@ -372,12 +372,13 @@ runAdder ::
 runAdder cfg expired mempool onBehalf j addedRef = go 0
  where
   base = j * chainStride
+
   intervalMicros =
     if cfgTargetTpsTotal cfg <= 0
       then 0
       else round (1_000_000 * fromIntegral (numAdders cfg) / cfgTargetTpsTotal cfg)
-  go :: Int -> IO ()
-  go i = do
+       
+  go !i = do
     done <- expired
     if done
       then pure ()
@@ -419,8 +420,7 @@ runSyncer ::
   IO ()
 runSyncer cfg expired mempool ledgerVar baseLedger syncDursRef = go 1
  where
-  go :: Int -> IO ()
-  go n = do
+  go !n = do
     Conc.threadDelay (round (1_000_000 * cfgSyncPeriodSec cfg))
     done <- expired
     if done
