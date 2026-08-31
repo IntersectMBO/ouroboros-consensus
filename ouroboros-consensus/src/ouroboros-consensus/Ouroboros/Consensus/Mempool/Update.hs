@@ -570,7 +570,6 @@ implSyncWithLedger projectResult mpEnv =
           -- to a separate fork, since the background thread saw a change in the
           -- tip, which should happen very rarely
           Left{} -> do
-            -- TODO: This is not really two STM blocks?
             traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
             goSync
           Right frk -> do
