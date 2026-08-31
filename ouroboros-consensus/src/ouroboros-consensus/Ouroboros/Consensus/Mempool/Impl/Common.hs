@@ -502,19 +502,9 @@ revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand remove
         { isTxs = Foldable.foldl' (:>) (isTxs cand) (map unwrap validDelta)
         , isTxIds = isTxIds cand <> Set.fromList (map (txId . txForgetValidated . fst3) validDelta)
         , isTxKeys = isTxKeys cand <> survivorKeys
-        , -- REVIEW(utxo-hd): incremental value cache. Equal to the from-scratch
-          -- @restrictValuesMK (isTxValues cand `union` deltaValues) (allKeys)@:
-          -- 'isTxValues cand' is already restricted to the candidate's keys and
-          -- 'deltaValues' covers the delta's keys, so the outer restrict is a
-          -- no-op; any key shared with the candidate (a reference input) carries
-          -- the same base value, so the union is unambiguous.
-          isTxValues =
+        , isTxValues =
             ltliftA2 unionValues (isTxValues cand) (ltliftA2 restrictValuesMK deltaValues survivorKeys)
-        , -- REVIEW(utxo-hd): incremental ledger tables. Prepends only the delta's
-          -- diffs onto the candidate's tables (base ⊕ cand-diffs). Equal to the
-          -- from-scratch @rawPrependDiffs base (candDiffs ⊕ deltaDiffs)@ iff
-          -- 'rawPrependDiffs' is associative over the (disjoint) per-tx diffs.
-          isLedgerState =
+        , isLedgerState =
             st'
               `withLedgerTables` ltliftA2 rawPrependDiffs (projectLedgerTables (isLedgerState cand)) (LedgerTables survivorDiffs)
         , isCapacity = computeMempoolCapacity cfg st' capacityOverride
