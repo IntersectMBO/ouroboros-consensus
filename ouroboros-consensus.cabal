@@ -224,6 +224,7 @@ library
     Ouroboros.Consensus.Mempool.Capacity
     Ouroboros.Consensus.Mempool.Impl.Common
     Ouroboros.Consensus.Mempool.Init
+    Ouroboros.Consensus.Mempool.Ledger
     Ouroboros.Consensus.Mempool.Query
     Ouroboros.Consensus.Mempool.TxSeq
     Ouroboros.Consensus.Mempool.Update

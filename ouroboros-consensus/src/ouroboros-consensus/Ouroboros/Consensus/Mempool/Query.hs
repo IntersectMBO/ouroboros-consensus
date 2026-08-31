@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -9,17 +8,16 @@ module Ouroboros.Consensus.Mempool.Query
   , implGetSnapshotForNoCache
   ) where
 
-import Control.Monad.Except (runExcept)
-import qualified Data.Foldable as Foldable
-import Data.Sequence.Strict (StrictSeq, (|>))
-import qualified Data.Set as Set
-import LeiosUtils.TimeBoundedLoop (iterateUntilOrTimeout_)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables, restrictValues', unionValues)
+import Ouroboros.Consensus.Ledger.Tables.Utils (restrictValues')
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Impl.Common
+import Ouroboros.Consensus.Mempool.Ledger
+  ( ReapplyStepState (ReapplyStepState, appliedTxIds, appliedTxs)
+  , reapplyUntilTimeout
+  )
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Util.IOLike
 
@@ -140,107 +138,15 @@ computeSnapshot ::
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   m (MempoolSnapshot blk)
 computeSnapshot resolveValues cfg slot baseLedgerStDiff txsToApply = do
-  let startingLedgerSt = baseLedgerStDiff `withLedgerTables` emptyLedgerTables
-
-  SnapshotStepState{..} <-
-    iterateUntilOrTimeout_
+  ReapplyStepState{..} <-
+    reapplyUntilTimeout
       snapshotStepTimeLimitSeconds
-      (null . remainingTxs)
-      (snapshotStep resolveValues cfg slot baseLedgerStDiff)
-      (SnapshotStepState startingLedgerSt txsToApply mempty TxSeq.Empty Set.empty)
+      snapshotStepTxsPerStep
+      resolveValues
+      cfg
+      slot
+      baseLedgerStDiff
+      txsToApply
 
   let tip = castPoint $ getTip baseLedgerStDiff
   return $ snapshot slot tip appliedTxIds appliedTxs
-
--- | Accumulator type threaded through each 'snapshotStep' call by 'computeSnapshot'.
-data SnapshotStepState blk = SnapshotStepState
-  { currentLedgerSt :: !(TickedLedgerState blk ValuesMK)
-  -- ^ Ticked ledger state reflecting the cumulative effect of all applied
-  -- transactions so far ('appliedTxs').
-  , remainingTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
-  -- ^ Remaining transactions to be applied. Starts as the full
-  -- mempool sequence and is consumed 'snapshotStepTxsPerStep' at a time.
-  -- Iteration terminates when this becomes empty.
-  , unapplicableTxs :: !(StrictSeq (Invalidated blk))
-  -- ^ Transactions that failed reapplication, accumulated in original mempool
-  -- order.
-  , appliedTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
-  -- ^ Transactions successfully applied so far to some base Ledger state that results in 'currentLedgerSt', in original mempool order.
-  -- Becomes the transaction sequence of the final 'MempoolSnapshot'.
-  , appliedTxIds :: !(Set.Set (GenTxId blk))
-  -- ^ Set of all accepted transactions (view on 'appliedTxs').
-  }
-
-snapshotStep ::
-  forall blk m.
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk), IOLike m) =>
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
-  LedgerConfig blk ->
-  SlotNo ->
-  TickedLedgerState blk DiffMK ->
-  SnapshotStepState blk ->
-  m (SnapshotStepState blk)
-snapshotStep resolveValues cfg slot baseLedgerStDiff st@SnapshotStepState{..} = do
-  let (!txsToApplyStep, !remainingTxsStep) = TxSeq.take snapshotStepTxsPerStep remainingTxs
-      !inputKeysStep =
-        Foldable.foldMap'
-          (getTransactionKeySets . txForgetValidated . validatedTx)
-          txsToApplyStep
-
-  -- TODO(bladyjoker): We're fetching inputsKeys many times, can we introduce a cache? Additionally, we don't actually need to get values,
-  -- we just need to check whether the keys are still there? Should be much cheaper.
-  -- Javier made an important point, we can for UTxOs but not for "updateable state variables" like Accounts and such. So doing this here is
-  -- not future proof as it assumes UTxO like state variables.
-  -- So there's opportunities here to minimize disk access significanly, but to do it in a future proof manner we need to introduce and manage
-  -- distinction between updateable and non-updateable state variables.
-  -- In other words, state variables can be: created, read, updated, deleted...CRUD
-  -- However, some variables like UTxOs can only be: created, read and deleted...CRD
-  -- Whereas, others like Accounts can be: created, read, updated and deleted...CRUD
-  -- Perhaps, there're other types in Cardano?
-  -- Sounds like working with this distinction could be an optimization point!
-  !inputValuesStepForKeys <- resolveValues inputKeysStep
-
-  let
-    -- TODO(bladyjoker): Please review. The idea is to construct the LedgerState with values that are necessary for applying the transactions in this step.
-    -- The `applyMempoolDiffs` uses the base LedgerState that contains diffs (I suspect from ticking? What values are affected by ticking?)
-    -- and builds up a LedgerState with values for this step only.
-    -- The `currentLedgerSt` starts empty so it begins with only the values in `baseLedgerSt`, after that because of the union the `currentLedgerSt` entries override whatever is conflicting in `baseLedgerSt`.
-    !baseLedgerSt = applyMempoolDiffs inputValuesStepForKeys inputKeysStep baseLedgerStDiff
-    !inputValuesStep =
-      ltliftA2
-        unionValues
-        (projectLedgerTables currentLedgerSt)
-        (projectLedgerTables baseLedgerSt)
-    !stForStep =
-      st
-        { currentLedgerSt = currentLedgerSt `withLedgerTables` inputValuesStep
-        , remainingTxs = remainingTxsStep
-        }
-
-  return $! reapplyTxs' cfg slot txsToApplyStep stForStep
-
-reapplyTxs' ::
-  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  LedgerConfig blk ->
-  SlotNo ->
-  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
-  SnapshotStepState blk ->
-  SnapshotStepState blk
-reapplyTxs' cfg slot toApplyTxs stBefore =
-  Foldable.foldl'
-    ( \st !tkt ->
-        let tx = validatedTx . TxSeq.txTicketTx $ tkt
-         in case runExcept (reapplyTx cfg slot tx (currentLedgerSt st)) of
-              Left !err ->
-                st
-                  { unapplicableTxs = unapplicableTxs st |> Invalidated tx err
-                  }
-              Right !ledgerStAfterTx ->
-                st
-                  { currentLedgerSt = ledgerStAfterTx
-                  , appliedTxs = appliedTxs st TxSeq.:> tkt
-                  , appliedTxIds = Set.insert (txId (txForgetValidated tx)) (appliedTxIds st)
-                  }
-    )
-    stBefore
-    (TxSeq.toList toApplyTxs)
