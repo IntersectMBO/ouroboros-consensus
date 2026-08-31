@@ -476,10 +476,10 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               (TxSeq.toList $ isTxs is)
           -- A tx actually leaves iff we kept fewer than we had; bump the removal
           -- generation then, so an in-flight sync notices its snapshot is stale
-          -- (see 'isRemovalGen'). Carried on the state itself, under the lock.
+          -- (see 'isRemovalCounter'). Carried on the state itself, under the lock.
           newGen
-            | length toKeep < length (isTxs is) = isRemovalGen is + 1
-            | otherwise = isRemovalGen is
+            | length toKeep < length (isTxs is) = isRemovalCounter is + 1
+            | otherwise = isRemovalCounter is
       frkr <- readMVar forker
       RevalidateTxsResult is' removed <-
         revalidateTxsFor
@@ -593,7 +593,7 @@ implSyncWithLedger projectResult mpEnv =
                 slot
                 ls
                 (isLastTicketNo is0)
-                (isRemovalGen is0)
+                (isRemovalCounter is0)
                 (TxSeq.toList (isTxs is0))
             revalidateDeltas frk tipHash0 slot seed (0 :: Int) >>= \case
               Nothing -> goSync -- Retry if the commit found the state stale.
@@ -623,7 +623,7 @@ implSyncWithLedger projectResult mpEnv =
     -- (the commit below would reject it, retrying the whole sync). This helper
     -- checks that condition, run on each iteration.
     stale cand isNow curTipHash =
-      curTipHash /= tipHash0 || isRemovalGen isNow /= isRemovalGen cand
+      curTipHash /= tipHash0 || isRemovalCounter isNow /= isRemovalCounter cand
 
     go acc@(RevalidateTxsResult cand _) iterN = do
       (isNow, curTipHash) <- atomically $ do

@@ -169,7 +169,7 @@ data InternalState blk = IS
   -- transactions will be in the next block. So any changes caused by that
   -- block will take effect after applying it and will only affect the
   -- next block.
-  , isRemovalGen :: !Word64
+  , isRemovalCounter :: !Word64
   -- ^ A monotonic counter bumped each time 'implRemoveTxsEvenIfValid' drops a
   -- transaction. A sync carries it along its (off-lock) candidate and re-checks
   -- it against the committed state under the lock: a mismatch means a removal
@@ -219,7 +219,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
     , isTip = castPoint $ getTip st
     , isSlotNo = slot
     , isLastTicketNo = lastTicketNo
-    , isRemovalGen = 0
+    , isRemovalCounter = 0
     , isCapacity = computeMempoolCapacity cfg st capacityOverride
     }
 
@@ -430,7 +430,7 @@ revalidateTxsFor ::
   TickedLedgerState blk DiffMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
-  -- | The removal generation to stamp on the result (see 'isRemovalGen').
+  -- | The removal generation to stamp on the result (see 'isRemovalCounter').
   Word64 ->
   [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
   m (RevalidateTxsResult blk)
@@ -446,7 +446,7 @@ revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTick
   -- the mempool's ticket counter is preserved and the next add continues from it.
   emptyResult =
     RevalidateTxsResult
-      (initInternalState capacityOverride lastTicketNo cfg slot st){isRemovalGen = removalGen}
+      (initInternalState capacityOverride lastTicketNo cfg slot st){isRemovalCounter = removalGen}
       []
 
 -- | The general revalidation step: reapply a /delta/ of already-validated txs on
