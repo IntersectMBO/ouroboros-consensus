@@ -553,8 +553,7 @@ implSyncWithLedger projectResult mpEnv =
   -- at most 'syncDeltaCap' (or we hit 'syncMaxIters'), we 'takeTMVar' and
   -- reapply just that bounded residual before swapping. So the lock is held for
   -- a near-constant time — O('syncDeltaCap') — independent of mempool occupancy,
-  -- rather than for a full O(n) revalidation. The committed state is byte-
-  -- identical to a single revalidation of all current txs ('revalidateTxsFor'').
+  -- rather than for a full O(n) revalidation.
   goSync =
     checkTodo >>= \case
       Left is0 -> do
@@ -563,7 +562,9 @@ implSyncWithLedger projectResult mpEnv =
         pure (projectResult is0)
       Right (getForker, is0, slot, ls, tipHash0) ->
         -- The tip changed, we have to revalidate.
-        -- TODO: leaking the forker on exceptions?
+        -- NOTE: The forker is closed in a bracket here because exceptions here
+        -- are fatal anyways. See also 'mldViewGetForker' (the function we call
+        -- here).
         getForker >>= \case
           -- This case should happen only if the tip has moved again, this time
           -- to a separate fork, since the background thread saw a change in the
@@ -578,13 +579,6 @@ implSyncWithLedger projectResult mpEnv =
             -- tip. Everything after this ('revalidateDeltas') is just a bounded
             -- catch-up loop reapplying whatever was added or removed while this
             -- ran, so the state lock is held only briefly at the very end.
-            --
-            -- TODO: this re-reads the entire working set from the LedgerDB on
-            -- every sync. The mempool already caches these values ('isTxValues')
-            -- at its last-synced tip; if the forker exposed the changelog diff
-            -- since that tip, we could forward the cache through it ('applyDiffs')
-            -- instead of re-reading — an O(occupancy) read becomes O(tip-diff).
-            -- Needs a LedgerDB/forker API change (discuss with UTxO-HD).
             seed <-
               revalidateTxsFor
                 frk
