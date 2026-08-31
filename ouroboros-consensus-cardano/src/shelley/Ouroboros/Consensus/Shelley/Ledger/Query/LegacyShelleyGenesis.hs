@@ -6,7 +6,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
   , encodeLegacyShelleyGenesis
   , decodeLegacyShelleyGenesis
   , encodeShelleyGenesisNoExtraConfig
-  , decodeShelleyGenesisWithOptionalExtraConfig
+  , decodeShelleyGenesisNoExtraConfig
   ) where
 
 import Cardano.Ledger.BaseTypes
@@ -126,54 +126,45 @@ encodeShelleyGenesisNoExtraConfig
         <> encCBOR sgInitialFunds
         <> encCBOR sgStaking
 
--- | Decode 'ShelleyGenesis' from 15 or 16 fields.
---
--- cardano-ledger-shelley 1.19.0.0 and later encode 16 fields.
--- cardano-ledger-shelley 1.18 encodes 15.
--- We accept both.
-decodeShelleyGenesisWithOptionalExtraConfig :: Plain.Decoder s ShelleyGenesis
-decodeShelleyGenesisWithOptionalExtraConfig = toPlainDecoder Nothing shelleyProtVer $ do
-  len <- decodeListLen
-  case len of
-    15 -> pure ()
-    16 -> pure ()
-    _ ->
-      cborError $
-        DecoderErrorCustom "ShelleyGenesis" (Text.pack $ "unexpected record length " <> show len)
-  sgSystemStart <- decCBOR
-  sgNetworkMagic <- decCBOR
-  sgNetworkId <- decCBOR
-  sgActiveSlotsCoeff <- activeSlotsCoeffDecCBOR
-  sgSecurityParam <- decCBOR
-  sgEpochLength <- decCBOR
-  sgSlotsPerKESPeriod <- decCBOR
-  sgMaxKESEvolutions <- decCBOR
-  sgSlotLength <- decCBOR
-  sgUpdateQuorum <- decCBOR
-  sgMaxLovelaceSupply <- decCBOR
-  sgProtocolParams <- decCBOR
-  sgGenDelegs <- decCBOR
-  sgInitialFunds <- decCBOR
-  sgStaking <- decCBOR
-  sgExtraConfig <- if len == 16 then decCBOR else pure SNothing
-  pure $
-    ShelleyGenesis
-      sgSystemStart
-      sgNetworkMagic
-      sgNetworkId
-      sgActiveSlotsCoeff
-      sgSecurityParam
-      (EpochSize sgEpochLength)
-      sgSlotsPerKESPeriod
-      sgMaxKESEvolutions
-      sgSlotLength
-      sgUpdateQuorum
-      sgMaxLovelaceSupply
-      sgProtocolParams
-      sgGenDelegs
-      sgInitialFunds
-      sgStaking
-      sgExtraConfig
+-- | Decode 'ShelleyGenesis' from the 15 fields written by
+-- 'encodeShelleyGenesisNoExtraConfig'.
+decodeShelleyGenesisNoExtraConfig :: Plain.Decoder s ShelleyGenesis
+decodeShelleyGenesisNoExtraConfig = toPlainDecoder Nothing shelleyProtVer $
+  decodeRecordNamed "ShelleyGenesis" (const 15) $ do
+    sgSystemStart <- decCBOR
+    sgNetworkMagic <- decCBOR
+    sgNetworkId <- decCBOR
+    sgActiveSlotsCoeff <- activeSlotsCoeffDecCBOR
+    sgSecurityParam <- decCBOR
+    sgEpochLength <- decCBOR
+    sgSlotsPerKESPeriod <- decCBOR
+    sgMaxKESEvolutions <- decCBOR
+    sgSlotLength <- decCBOR
+    sgUpdateQuorum <- decCBOR
+    sgMaxLovelaceSupply <- decCBOR
+    sgProtocolParams <- decCBOR
+    sgGenDelegs <- decCBOR
+    sgInitialFunds <- decCBOR
+    sgStaking <- decCBOR
+    let sgExtraConfig = SNothing
+    pure $
+      ShelleyGenesis
+        sgSystemStart
+        sgNetworkMagic
+        sgNetworkId
+        sgActiveSlotsCoeff
+        sgSecurityParam
+        (EpochSize sgEpochLength)
+        sgSlotsPerKESPeriod
+        sgMaxKESEvolutions
+        sgSlotLength
+        sgUpdateQuorum
+        sgMaxLovelaceSupply
+        sgProtocolParams
+        sgGenDelegs
+        sgInitialFunds
+        sgStaking
+        sgExtraConfig
 
 activeSlotsCoeffEncCBOR :: PositiveUnitInterval -> Encoding
 activeSlotsCoeffEncCBOR = enforceEncodingVersion shelleyProtVer . encCBOR . unboundRational
