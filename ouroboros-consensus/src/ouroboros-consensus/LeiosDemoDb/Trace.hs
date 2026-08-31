@@ -1,4 +1,14 @@
-module LeiosDemoDb.Trace (TraceLeiosDb (..)) where
+module LeiosDemoDb.Trace (TraceLeiosDb (..), LeiosDbStats (..)) where
+
+import LeiosUtils.CallTrace (SomeJsonCallTrace)
+
+data LeiosDbStats = LeiosDbStats
+  { volatileEbs :: !Int
+  , immutableEbs :: !Int
+  , dbFileBytes :: !Integer
+  , walBytes :: !Integer
+  }
+  deriving Show
 
 data TraceLeiosDb
   = -- | A UNIQUE/PRIMARY KEY constraint was violated by an INSERT, the
@@ -20,4 +30,8 @@ data TraceLeiosDb
     -- means throwing, and throwing here kills the Leios threads. A node that is
     -- merely slow should stay a node that is merely slow.
     TraceLeiosDbBusyStuck Int Double
+  | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
+    TraceLeiosDbStats LeiosDbStats
+  | -- | A trace event for LeiosUtils.CallTrace spans
+    TraceLeiosDbCall !SomeJsonCallTrace
   deriving Show

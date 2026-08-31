@@ -4,6 +4,7 @@
 module LeiosDemoDb.Common
   ( withLeiosDb
   , LeiosDbHandle (..)
+  , LeiosDbStats (..)
   , LeiosEbNotification (..)
   , LeiosDbConnection (..)
   , CompletedEbs
@@ -13,6 +14,7 @@ import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Data.ByteString (ByteString)
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb.Trace (LeiosDbStats (..))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -73,6 +75,8 @@ data LeiosDbHandle m = LeiosDbHandle
   --
   -- Currently a no-op -- the companion of 'leiosDbGarbageCollect': the immutable
   -- storage it would promote into is not yet implemented.
+  , leiosDbSampleStats :: HasCallStack => m LeiosDbStats
+  -- ^ Sample 'LeiosDbStats' counters.
   }
 
 data LeiosEbNotification

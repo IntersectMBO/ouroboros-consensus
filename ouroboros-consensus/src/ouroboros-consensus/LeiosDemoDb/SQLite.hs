@@ -19,15 +19,15 @@ module LeiosDemoDb.SQLite
 
 import Cardano.Prelude (forM_, traverse_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , dupTChan
   , newBroadcastTChan
   , writeTChan
   )
-import Control.Exception (throwIO)
-import Control.Monad (unless, void)
+import Control.Exception (SomeException, throwIO)
+import Control.Monad (forever, unless, void)
 import Control.Monad.Class.MonadThrow (generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import Control.Tracer (Tracer, traceWith)
@@ -36,6 +36,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import qualified Data.Set as Set
 import Data.String (fromString)
@@ -54,7 +55,7 @@ import LeiosDemoDb.Common
   , LeiosDbHandle (..)
   , LeiosEbNotification (..)
   )
-import LeiosDemoDb.Trace (TraceLeiosDb (..))
+import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..))
 import LeiosDemoTypes
   ( BytesSize
@@ -66,7 +67,7 @@ import LeiosDemoTypes
   , leiosEbBytesSize
   )
 import Ouroboros.Consensus.Util.IOLike (atomically)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, getFileSize)
 import System.Environment (lookupEnv)
 import System.Exit (die)
 import System.Random (randomIO)
@@ -91,6 +92,10 @@ newLeiosDBSQLiteFromEnv tracer = do
 newLeiosDBSQLite :: Tracer IO TraceLeiosDb -> FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite tracer dbPath = do
   notificationChan <- atomically newBroadcastTChan
+  -- seed the in-memory stats by counting the EB rows once per handle
+  statsVar <- newIORef =<< initialStats
+  -- start a thread to sample the sizes of the LeiosDB
+  startVolatileStatsSampler tracer statsVar dbPath
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =
@@ -101,8 +106,82 @@ newLeiosDBSQLite tracer dbPath = do
       , -- No-op for now; see 'leiosDbPromoteToImmutable'. A real implementation
         -- would copy the EB's body and closure rows into immutable storage.
         leiosDbPromoteToImmutable = \_point -> pure ()
-      , open = openSQLiteConnection tracer dbPath notificationChan
+      , leiosDbSampleStats = readIORef statsVar
+      , open = openSQLiteConnection tracer dbPath notificationChan statsVar
       }
+  where
+    -- | Initialise 'LeiosDbStats' by counting the EB rows.
+    initialStats :: HasCallStack => IO LeiosDbStats
+    initialStats  = do
+      exists <- doesFileExist dbPath
+      if exists
+        then do
+          n <- withReadOnlyConn dbPath $ \db -> queryInt64 db "SELECT COUNT(*) FROM ebs"
+          pure emptyStats{volatileEbs = fromIntegral n}
+        else pure emptyStats
+
+    emptyStats =
+      LeiosDbStats
+        { volatileEbs = 0
+        , immutableEbs = 0
+        , dbFileBytes = 0
+        , walBytes = 0
+        }
+
+
+-- * Stats sampling
+
+-- | Fork a thread that traces 'TraceLeiosDbStats' every 10 seconds.
+startVolatileStatsSampler ::
+  HasCallStack => Tracer IO TraceLeiosDb -> IORef LeiosDbStats -> FilePath -> IO ()
+startVolatileStatsSampler tracer statsVar dbPath =
+  void $ forkIO $ forever $ do
+    -- wait one sample window to side-step contention with starting the LeiosDB
+    threadDelay tenSeconds
+    stats <- readIORef statsVar
+    -- read the WAL size
+    walBytes <- fileSizeOr0 (dbPath <> "-wal")
+    traceWith tracer $
+      TraceLeiosDbStats
+        stats
+          { walBytes
+          }
+ where
+  tenSeconds = 10000000
+
+  fileSizeOr0 :: FilePath -> IO Integer
+  fileSizeOr0 path = do
+    exists <- doesFileExist path
+    if exists then getFileSize path else pure 0
+
+-- | Fold a delta into the volatile EB count of the in-memory 'LeiosDbStats'.
+bumpVolatileStats :: Conn -> Int -> IO ()
+bumpVolatileStats Conn{connStats} dEbs =
+  unless (dEbs == 0) $
+    atomicModifyIORef' connStats $ \s ->
+      (s{volatileEbs = s.volatileEbs + dEbs}, ())
+
+-- | Open a strictly read-only connection, for sampling DB statistics.
+--
+-- Opening fails harmlessly if the database does not exist yet; the caller
+-- swallows it and tries again on the next tick.
+withReadOnlyConn :: HasCallStack => FilePath -> (DB.Database -> IO a) -> IO a
+withReadOnlyConn dbPath =
+  MonadThrow.bracket open (void . DB.close)
+ where
+  open = do
+    db <- open2 (fromString dbPath) [SQLOpenReadOnly] SQLVFSDefault
+    -- Only mmap_size: journal_mode and page_size need write access.
+    dbExec db "pragma mmap_size = 268435500;"
+    pure db
+
+-- | Run a query that yields exactly one integer column.
+queryInt64 :: HasCallStack => DB.Database -> String -> IO Int64
+queryInt64 db sql =
+  MonadThrow.bracket (dbPrepare db (fromString sql)) dbFinalize $ \stmt ->
+    dbStep stmt >>= \case
+      DB.Row -> DB.columnInt64 stmt 0
+      DB.Done -> error ("queryInt64: expected a row: " <> sql)
 
 -- * Connection management
 
@@ -142,6 +221,8 @@ data Conn = Conn
   , connStmts :: !Stmts
   , connTracer :: !(Tracer IO TraceLeiosDb)
   -- ^ So the write path can report exhausting SQLite's own busy timeout.
+  , connStats :: !(IORef LeiosDbStats)
+  -- ^ The handle-wide in-memory stats, bumped by the write path.
   }
 
 -- | Prepare every statement 'Stmts' names. Order is not observable.
@@ -198,8 +279,9 @@ openSQLiteConnection ::
   Tracer IO TraceLeiosDb ->
   FilePath ->
   StrictTChan IO LeiosEbNotification ->
+  IORef LeiosDbStats ->
   IO (LeiosDbConnection IO)
-openSQLiteConnection tracer dbPath notificationChan = do
+openSQLiteConnection tracer dbPath notificationChan statsVar = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
   traverse_ (dbExec db) $
@@ -235,7 +317,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   stmts <- prepareStmts db
-  let conn = Conn{connDb = db, connStmts = stmts, connTracer = tracer}
+  let conn = Conn{connDb = db, connStmts = stmts, connTracer = tracer, connStats = statsVar}
       notify = atomically . writeTChan notificationChan
   pure $
     LeiosDbConnection
@@ -296,14 +378,16 @@ sqlLookupEbBody conn ebHash =
         loop ((txHash, size) : acc)
 
 sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint conn point ebBytesSize =
-  dbWithWriteTransaction conn $ useStmt stmt $ do
+sqlInsertEbPoint conn point ebBytesSize = do
+  inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
     dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
     dbStep1 stmt
+    DB.changes db
+  bumpVolatileStats conn inserted
  where
-  Conn{connStmts = Stmts{stInsertEbPoint = stmt}} = conn
+  Conn{connDb = db, connStmts = Stmts{stInsertEbPoint = stmt}} = conn
 
 -- | Persist an EB body. The point MUST already be present (inserted
 -- via 'sqlInsertEbPoint' on the announcement path).

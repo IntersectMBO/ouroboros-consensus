@@ -102,7 +102,7 @@ import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
-import LeiosDemoDb.Trace (TraceLeiosDb (..))
+import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
@@ -111,6 +111,7 @@ import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
+import LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
@@ -1517,6 +1518,18 @@ jsonLeiosDb = \case
       , "attempt" .= attempt
       , "waitedMs" .= waitedMs
       ]
+  TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, dbFileBytes, walBytes} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbStats"
+      , "volatileEbs" .= volatileEbs
+      , "immutableEbs" .= immutableEbs
+      , "dbFileBytes" .= dbFileBytes
+      , "walBytes" .= walBytes
+      ]
+  -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
+  -- the forge loop's call traces, so one dashboard query shape covers both.
+  TraceLeiosDbCall (SomeJsonCallTrace ct) ->
+    callTraceToObject ct
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
