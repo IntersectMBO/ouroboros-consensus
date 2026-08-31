@@ -649,7 +649,7 @@ implSyncWithLedger projectResult mpEnv =
                   if stale cand isLocked (getTipHash ls)
                     then do
                       -- As we won't be keeping the forker in the internal state, we
-                      -- can close it.
+                      -- must close it.
                       roforkerClose frk
                       pure (Nothing, isLocked)
                     else do
