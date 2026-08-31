@@ -120,6 +120,9 @@ import Ouroboros.Consensus.Block
   , headerHash
   , toRawHash
   )
+import Ouroboros.Consensus.BlockchainTime
+  ( CurrentSlot (CurrentSlot, CurrentSlotUnknown)
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime
   , SystemTime
@@ -127,10 +130,14 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , systemTimeCurrent
   )
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
+import Ouroboros.Consensus.Forecast (forecastFor)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
-import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  , ledgerViewForecastAt
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
@@ -1620,6 +1627,38 @@ data ExnLeiosBlockAnnouncementMissing = ExnLeiosBlockAnnouncementMissing
 
 instance Exception ExnLeiosBlockAnnouncementMissing
 
+-- | Block until the immutable tip can forecast the ledger view to the current
+-- slot
+--
+-- LeiosNotify replies are fresh, ie in slots near the wall clock, and
+-- 'announcementValidity' judges them by forecasting from the immutable tip.
+-- Until that tip reaches approximately /now/, a fresh reply would be
+-- @PastHorizon@, and a reply we cannot judge is no grounds to punish the
+-- peer. So we don't even send a request.
+--
+-- The current slot is read via the caller's 'CurrentSlot' action, which uses
+-- the volatile tip; its horizon reaches further, so gating on it alone would
+-- send requests too soon.
+awaitImmTipCanForecastNow ::
+  (IOLike m, LedgerSupportsProtocol blk) =>
+  TopLevelConfig blk ->
+  -- | the /immutable/ tip's ledger state
+  StrictSTM.STM m (ExtLedgerState blk mk) ->
+  StrictSTM.STM m CurrentSlot ->
+  StrictSTM.STM m ()
+awaitImmTipCanForecastNow cfg readImmutableLedger readCurrentSlot =
+  readCurrentSlot >>= \case
+    CurrentSlotUnknown -> StrictSTM.retry
+    CurrentSlot slot -> do
+      immLedger <- readImmutableLedger
+      case runExcept
+        ( forecastFor
+            (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger))
+            slot
+        ) of
+        Left _ -> StrictSTM.retry
+        Right _ -> pure ()
+
 -- | The @validate@ callback for 'onAnnouncement'.
 --
 -- First apply ChainSync's in-future check to the announced slot's wall-clock
@@ -1641,6 +1680,8 @@ announcementValidity ::
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
+  -- | The immutable tip's ledger state, for the OCIN revocation check: a
+  -- revocation only counts once it cannot be rolled back.
   ExtLedgerState blk EmptyMK ->
   Header blk ->
   m

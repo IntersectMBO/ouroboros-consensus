@@ -137,6 +137,7 @@ import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (getCurrentSlot)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( diffRelTime
   , systemTimeCurrent
@@ -387,6 +388,7 @@ mkHandlers
     , getTracers = tracers
     , getPeerSharingAPI
     , getGsmState
+    , getBlockchainTime
     }
   txSubmissionLogicVersion =
     Handlers
@@ -496,9 +498,17 @@ mkHandlers
           peerStateVar <- Prim.newMutVar (SlotNo 0, Announcements.emptyPeerState)
           pure $
             leiosNotifyClientPeerPipelined
-              ( atomically controlMessageSTM <&> \case
-                  Terminate -> Left ()
-                  _ -> Right leiosNotifyPipelineDepth
+              ( atomically $
+                  controlMessageSTM >>= \case
+                    Terminate -> pure (Left ())
+                    _ -> do
+                      -- Gate on the immutable tip being able to forecast to the
+                      -- current wall clock.
+                      Leios.awaitImmTipCanForecastNow
+                        getTopLevelConfig
+                        (ChainDB.getImmutableLedger getChainDB)
+                        (getCurrentSlot getBlockchainTime)
+                      pure $ Right leiosNotifyPipelineDepth
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
