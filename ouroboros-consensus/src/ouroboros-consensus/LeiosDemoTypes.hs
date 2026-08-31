@@ -1372,15 +1372,16 @@ data TraceLeiosKernel
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
-  | -- | The running per-point tally moved, i.e. a vote was newly added rather
-    -- than being a duplicate arrival. Emitted once per distinct vote, so the
-    -- max per 'RbHash' is that point's final accumulated weight, whether or not
-    -- it ever reached 'minCertificationThreshold'. That margin is otherwise
-    -- unobservable: only certified points reach the chain, so a point that
-    -- stalls below the threshold leaves no other trace of how close it came.
-    -- The adding voter and its own weight ride along so the line stands alone.
-    -- A consumer can then attribute the tally, and say what a seat that never
-    -- voted would have been worth, without a second source for seat weights.
+  | -- | A vote was accepted for this point rather than rejected as a duplicate
+    -- arrival, carrying the running tally after the update. Emitted once per
+    -- accepted vote, so the max per 'RbHash' is that point's final accumulated
+    -- weight, whether or not it ever reached 'minCertificationThreshold'. That
+    -- margin is otherwise unobservable: only certified points reach the chain,
+    -- so a point that stalls below the threshold leaves no other trace of how
+    -- close it came. Note the tally does not necessarily move: a seat that
+    -- votes twice with distinct signatures replaces its own entry at the same
+    -- weight, so 'weight' identifies the accepted vote and is not summable
+    -- across lines. Read 'tally' for the total.
     -- 'seatId' rather than 'voterId': 'LeiosVote' already has a 'voterId'
     -- field, and a second one in this module makes the qualified selector
     -- ambiguous for importers.
