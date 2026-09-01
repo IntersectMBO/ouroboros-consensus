@@ -10,6 +10,7 @@ module Cardano.Tools.DBTruncater.Run (truncate) where
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBTruncater.Types
+import Cardano.Tools.LeiosDb (openLeiosDb)
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
@@ -18,6 +19,7 @@ import Control.Tracer (Tracer (..), emit)
 import Data.Foldable (asum)
 import Data.Functor ((<&>))
 import Data.Functor.Identity
+import LeiosDemoDb (withLeiosDb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Node as Node
@@ -42,8 +44,9 @@ truncate ::
   DBTruncaterConfig ->
   Args block ->
   IO ()
-truncate DBTruncaterConfig{dbDir, truncateAfter, verbose} args = do
-  withRegistry $ \registry -> do
+truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, stubbedLeiosDb} args = do
+  leiosDbHandle <- openLeiosDb stubbedLeiosDb dbDir
+  withRegistry $ \registry -> withLeiosDb leiosDbHandle $ \_leiosDb -> do
     lock <- mkLock
     immutableDBTracer <- mkTracer lock verbose
     ProtocolInfo

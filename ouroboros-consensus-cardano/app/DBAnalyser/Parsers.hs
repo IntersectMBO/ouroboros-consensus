@@ -4,6 +4,7 @@
 module DBAnalyser.Parsers
   ( parseCmdLine
   , parseCardanoArgs
+  , parseStubbedLeiosDb
   , CardanoBlockArgs
   ) where
 
@@ -70,9 +71,8 @@ parseStubbedLeiosDb =
       , help $
           "Use an empty in-memory LeiosDb, rather than the leios.db file under "
             <> "the --db path. Pass this for a chain that holds no block with a "
-            <> "Leios certificate, and hence no endorser block to resolve. "
-            <> "Without this flag, the tool refuses to start when it finds no "
-            <> "such file."
+            <> "Leios certificate. Without this flag, the tool refuses to start "
+            <> "when it finds no such file."
       ]
 
 parseSelectDB :: Parser SelectDB
