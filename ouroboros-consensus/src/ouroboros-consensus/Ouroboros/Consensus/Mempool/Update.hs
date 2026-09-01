@@ -524,6 +524,7 @@ syncMaxIters = 8
 
 -- | See 'Ouroboros.Consensus.Mempool.API.syncWithLedger'
 implSyncWithLedger ::
+  forall m blk r.
   ( IOLike m
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
@@ -610,6 +611,13 @@ implSyncWithLedger projectResult mpEnv =
   -- finish under it with a bounded residual reapply. Returns Nothing (retry the
   -- whole sync) if the tip moved or a tx was removed while we worked.
   -- NOTE: Either closes the forker or updates it in the InternalState
+  revalidateDeltas ::
+    ReadOnlyForker m LedgerState blk ->
+    ChainHash (LedgerState blk) ->
+    SlotNo ->
+    RevalidateTxsResult blk ->
+    Int ->
+    m (Maybe r)
   revalidateDeltas frk tipHash0 slot = go
    where
     -- The candidate is doomed the moment the tip moves or a tx is force-removed
