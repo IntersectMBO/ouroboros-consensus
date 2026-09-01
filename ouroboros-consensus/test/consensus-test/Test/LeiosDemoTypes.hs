@@ -2,10 +2,6 @@ module Test.LeiosDemoTypes (tests) where
 
 import Cardano.Binary (serialize')
 import qualified Data.ByteString as BS
-import Data.Function ((&))
-import Data.Functor ((<&>))
-import Data.List ((\\))
-import Data.Ratio ((%))
 import qualified Data.Vector.Strict as V
 import LeiosDemoTypes
   ( BytesSize
@@ -14,27 +10,15 @@ import LeiosDemoTypes
   , encodeLeiosEb
   , leiosEbBytesSize
   , maxTxsPerEb
-  , selectCommitteeByStake
   )
 import Test.QuickCheck
   ( Gen
   , Property
-  , checkCoverage
   , chooseInt
-  , chooseInteger
-  , conjoin
   , counterexample
-  , cover
   , forAll
-  , forAllShrink
   , frequency
-  , genericShrink
-  , listOf
-  , property
-  , shrinkIntegral
-  , shrinkRealFrac
   , vectorOf
-  , (.||.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
@@ -45,9 +29,6 @@ tests =
   testGroup
     "LeiosDemoTypes"
     [ testProperty "leiosEbBytesSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
-    , testProperty
-        "selectCommitteeByStake orders by stake and applies the cutoff"
-        prop_selectCommitteeByStake
     ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'leiosEbBytesSize'.
@@ -109,65 +90,3 @@ prop_ebBytesSizeConsistent =
      in counterexample
           ("items: " <> show (V.length (leiosEbTxs eb)))
           (estimatedSize === actualSize)
-
--- | 'selectCommitteeByStake' selects the highest-stake pools truncated at a
--- cumulative-stake target.
---
--- Every property below inspects weights only, so none of them pins which of two
--- equal-stake pools is seated, or at which index.
---
--- TODO: add a tie-break property asserting that equal-stake entries come out in
--- ascending key order, as CIP-164 requires; seat indices are what @voter_id@ and
--- the certificate bitfield are positional over, so disagreement is a chain split.
-prop_selectCommitteeByStake :: Property
-prop_selectCommitteeByStake =
-  forAllShrink (listOf genWeight) genericShrink $ \rawStakes ->
-    forAllShrink genWeight (filter (> 0) . shrinkRealFrac) $ \target ->
-      let weights = snd <$> selectCommitteeByStake target (zip [0 :: Int ..] rawStakes)
-          allSelected = length weights == length rawStakes
-       in conjoin
-            [ cutoffReached target weights .||. allSelected
-            , committeeNonEmpty rawStakes weights
-            , isDescending weights
-            , isMinimal target weights
-            , selectsTopStake rawStakes weights
-            ]
-            & counterexample ("target: " <> show target <> ", weights: " <> show weights)
-            & cover 0.1 (not allSelected) "not all selected"
-            & checkCoverage
- where
-  genWeight = chooseInteger (1, 100) <&> (% 100)
-
-  forAllIndices xs f
-    | null xs = property True
-    | otherwise = forAllShrink (chooseInt (0, length xs - 1)) shrinkIntegral f
-
-  -- The selected stake reaches the target.
-  cutoffReached target weights =
-    sum weights >= target
-      & counterexample "cutoff not reached"
-
-  -- A non-empty pool set yields a non-empty committee (target > 0).
-  committeeNonEmpty rawStakes weights =
-    null rawStakes || not (null weights)
-      & counterexample "empty committee for a non-empty pool set"
-
-  -- Descending order: any prefix outweighs the rest.
-  isDescending weights =
-    forAllIndices weights $ \i ->
-      let (prefix, rest) = splitAt i weights
-       in null prefix || null rest || minimum prefix >= maximum rest
-            & counterexample ("weights not monotonically decreasing at " <> show i)
-
-  -- Minimal: dropping any single member falls below the target.
-  isMinimal target weights =
-    forAllIndices weights $ \i ->
-      sum weights - (weights !! i) < target
-        & counterexample
-          "committee not minimal: dropping an entry still reaches the target"
-
-  -- Top-stake: no excluded pool outweighs a selected one.
-  selectsTopStake rawStakes weights =
-    let excluded = rawStakes \\ weights
-     in null weights || null excluded || minimum weights >= maximum excluded
-          & counterexample ("an excluded pool outweighs a selected one: " <> show excluded)

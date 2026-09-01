@@ -1084,33 +1084,6 @@ serializeEbBody = MkSerializedEbBody . SBS.toShort . toStrictByteString . encode
 
 -- * Voting
 
--- | Select the voting committee from a stake (weight) distribution per CIP-164:
--- order by stake descending and take the shortest prefix whose cumulative stake
--- reaches @target@ (σ_c).
---
--- CIP-164 breaks equal-stake ties by ascending pool id, which we satisfy only
--- because 'sortOn' is stable and callers pass 'Data.Map.elems' (already in
--- ascending key order); nothing here enforces it.
---
--- TODO: make the tie-break explicit by threading the pool id through and sorting
--- on @(Down w, k)@ under an @Ord a@ constraint, so an unstable sort or a caller
--- switching to an unordered container cannot silently renumber seats.
-selectCommitteeByStake ::
-  -- | The target coverage of weights / stake.
-  Weight ->
-  -- | All available voters weights.
-  [(a, Weight)] ->
-  -- | The selected committee weights.
-  [(a, Weight)]
-selectCommitteeByStake target = go 0 . sortOn (Down . snd)
- where
-  go _ [] = []
-  go acc (p : ps)
-    | acc >= target = []
-    | otherwise = p : go (acc + snd p) ps
-
--- ** Vote
-
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
   { announcingRbHash :: RbHash
@@ -1216,8 +1189,6 @@ deriving via
   instance
     NoThunks LeiosExtValidationError
 
--- * Era-level Leios dispatch
-
 -- | Per-era hooks for Leios voting and CertRB admission. Default
 -- methods make this a no-op for non-Leios eras.
 --
@@ -1225,8 +1196,8 @@ deriving via
 -- the LedgerDB layer ('applyBlock') without pulling 'ChainDB' (which
 -- 'runLeiosVoting' depends on) into scope.
 class HasLeiosVoting blk where
-  -- | The voting committee for the given (pre-tick) ledger state, or
-  -- 'Nothing' if the era does not participate in Leios voting.
+  -- | The voting committee for the given ledger state, or 'Nothing' if the era
+  -- does not participate in Leios voting.
   getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe LeiosCommittee
   getLeiosCommittee _ = Nothing
 
@@ -2058,11 +2029,6 @@ minCertificationGap = 10
 -- | Minimum fraction of stake to create a valid 'LeiosCertificate'.
 minCertificationThreshold :: Rational
 minCertificationThreshold = 3 % 4
-
--- | Stake to be covered when selecting the committee.
--- TODO: Switch to a committee size parameter followin the CIP-164 discussions.
-committeeStakeCoverage :: Weight
-committeeStakeCoverage = 99 % 100
 
 -- * Utilities for prototyping
 

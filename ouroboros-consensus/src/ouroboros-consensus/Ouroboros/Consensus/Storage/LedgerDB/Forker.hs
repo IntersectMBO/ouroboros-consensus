@@ -645,6 +645,11 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             -- certify, so the block is invalid.
             rejectLeios (LeiosCertificateWithoutAnnouncement cert)
           Just (announcedPoint, _) ->
+            -- FIXME: This uses the leios committee of the tip's epoch (before
+            -- ticking) and allows certification across epoch boundaries. We
+            -- want to avoid that, because otherwise we would need to track
+            -- whether protocol parameters changed between validating EBs
+            -- (voting) and including the txs certified here.
             case getLeiosCommittee (ledgerState extSt) of
               Nothing ->
                 -- CertRB on an era without a Leios committee is itself a protocol

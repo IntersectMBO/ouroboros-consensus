@@ -61,7 +61,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
-import Cardano.Crypto.Leios (mkLeiosCommittee)
 import Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
@@ -93,15 +92,12 @@ import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import Cardano.Ledger.State
-  ( LeiosKey (..)
-  , LeiosPossessionProof (..)
-  , LeiosPubKey (..)
-  , individualPoolStake
-  , individualPoolStakeBls
-  , poolDistrDistrL
-  )
 import qualified Cardano.Ledger.State as SL
+import qualified Cardano.Ledger.State as SL
+  ( emptyLeiosCommittee
+  , ssLeiosCommittee
+  , ssStakeSet
+  )
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -115,15 +111,12 @@ import qualified Control.State.Transition.Extended as STS
 import Data.Coerce
 import Data.Foldable (toList)
 import Data.Functor.Identity
-import qualified Data.Map as Map
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.MemPack
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import qualified Data.Vector.Strict as V
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (committeeStakeCoverage, selectCommitteeByStake)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -1004,35 +997,15 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra)
 instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
-  -- REVIEW: Should we use the LedgerView (Praos c) instead?
-  getLeiosCommittee ls =
-    Just everyoneVotes
-   where
-    -- Every pool in the (snapshotted) stake distribution gets a committee seat
-    -- weighted by its stake fraction; a pool that has not registered a Leios
-    -- key gets a keyless seat (an invalid proof of possession is dropped to
-    -- keyless by 'mkLeiosCommittee').
-    --
-    -- Weights are the raw stake fractions and are deliberately NOT normalised
-    -- as we have fractions of active stake already in the
-    -- 'individualPoolStake'.
-    --
-    -- 'Map.elems' is what gives us CIP-164's ascending-pool-id tie-break for
-    -- equal stakes, since 'selectCommitteeByStake' sorts stably and never sees
-    -- the pool id; do not replace it with an unordered traversal.
-    --
-    -- TODO: Move this to the era boundary (to cache the computation).
-    everyoneVotes =
-      mkLeiosCommittee . V.fromList $
-        selectCommitteeByStake
-          committeeStakeCoverage -- TODO: take from pparams
-          [ (seatKey ips, ips.individualPoolStake)
-          | ips <- Map.elems stakeDistribution
-          ]
-
-    seatKey ips = case ips.individualPoolStakeBls of
-      SJust lk -> SJust (unLeiosPubKey lk.leiosPubKey, unLeiosPossessionProof lk.leiosPossessionProof)
-      SNothing -> SNothing
-
-    stakeDistribution =
-      ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
+  -- The ledger seats the committee on the mark snapshot at the epoch boundary;
+  -- one boundary later that snapshot is 'ssStakeSet', the same stake
+  -- distribution leader election uses ('nesPd'), so every node votes and
+  -- validates certificates against the same seats for the whole epoch.
+  -- 'Nothing' while the committee has no seats.
+  getLeiosCommittee =
+    Just
+      . SL.ssLeiosCommittee
+      . SL.ssStakeSet
+      . SL.esSnapshots
+      . SL.nesEs
+      . shelleyLedgerState

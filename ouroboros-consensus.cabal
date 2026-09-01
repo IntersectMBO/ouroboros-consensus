@@ -1587,7 +1587,6 @@ library cardano
     text,
     these,
     validation ^>=1.2,
-    vector,
 
 library unstable-byronspec
   import: common-lib
