@@ -102,7 +102,8 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
   , needCertWithHandle
   )
 import Ouroboros.Consensus.Peras.Context
-  ( forgePerasVoteIfEligibleWithHandle
+  ( PerasEpochContextNotFoundForRound
+  , forgePerasVoteIfEligibleWithHandle
   , runQueryWithContextHandle
   )
 import Ouroboros.Consensus.Peras.Voting.Rules
@@ -516,33 +517,34 @@ perasVoteForgingController
     -- while keeping everything in the same transaction. We also use MaybeT because there is
     -- a natural abort/continue logic within the transaction. Unfortunately, we can't leverage
     -- the outer WithEarlyExit monad, because we _always_ want to get the trace.
-    (mVote, traceEvents :: [TracePerasVoteForgingEvent blk]) <- lift $ atomically $ runWriterT $ runMaybeT $ do
-      when (slotInRound /= 0) $ do
-        tell [TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound]
-        hoistMaybe Nothing
+    (mVote, traceEvents :: [TracePerasVoteForgingEvent blk]) <-
+      handle catchNoContextErr $ lift $ atomically $ runWriterT $ runMaybeT $ do
+        when (slotInRound /= 0) $ do
+          tell [TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound]
+          hoistMaybe Nothing
 
-      -- Do the voting rules state that we should vote?
-      votingDecision <-
-        dyel $
-          isPerasVotingAllowedWithHandle
-            (ChainDB.getPerasVotingViewHandle chainDB)
-            roundNo
-      tell [TracePerasVotingRulesDecision roundNo votingDecision]
-      candidateBlock <- case votingDecision of
-        NoVote _ -> hoistMaybe Nothing
-        Vote _ block -> pure block
+        -- Do the voting rules state that we should vote?
+        votingDecision <-
+          dyel $
+            isPerasVotingAllowedWithHandle
+              (ChainDB.getPerasVotingViewHandle chainDB)
+              roundNo
+        tell [TracePerasVotingRulesDecision roundNo votingDecision]
+        candidateBlock <- case votingDecision of
+          NoVote _ -> hoistMaybe Nothing
+          Vote _ block -> pure block
 
-      -- Forge the vote, if allowed
-      mVote <-
-        dyel $
-          forgePerasVoteIfEligibleWithHandle
-            (ChainDB.getPerasEpochContextResolverHandle chainDB)
-            poolId
-            privateKey
-            roundNo
-            candidateBlock
-      when (isNothing mVote) $ tell $ [TracePerasVotingNotAVoterInRound roundNo]
-      hoistMaybe mVote
+        -- Forge the vote, if allowed
+        mVote <-
+          dyel $
+            forgePerasVoteIfEligibleWithHandle
+              (ChainDB.getPerasEpochContextResolverHandle chainDB)
+              poolId
+              privateKey
+              roundNo
+              candidateBlock
+        when (isNothing mVote) $ tell $ [TracePerasVotingNotAVoterInRound roundNo]
+        hoistMaybe mVote
 
     traverse_ trace traceEvents
     vote <- maybe exitEarly pure mVote
@@ -555,6 +557,11 @@ perasVoteForgingController
    where
     trace :: TracePerasVoteForgingEvent blk -> WithEarlyExit m ()
     trace = lift . traceWith (perasVoteForgingTracer tracers)
+
+    catchNoContextErr :: forall a. PerasEpochContextNotFoundForRound -> WithEarlyExit m a
+    catchNoContextErr e = do
+      lift $ traceWith (consensusErrorTracer tracers) $ toException e
+      exitEarly
 
     -- Do you even lift, bro?
     dyel = lift . lift
