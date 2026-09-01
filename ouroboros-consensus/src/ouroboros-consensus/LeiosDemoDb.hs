@@ -20,6 +20,7 @@ module LeiosDemoDb
     -- * Re-exported for internal tooling
   , truncateLeiosDbAfterSlot
   , deleteDanglingTxs
+  , vacuumLeiosDb
 
     -- * SQL (re-exported for leiosdemo app)
   , sql_schema
@@ -50,5 +51,6 @@ import LeiosDemoDb.SQLite
   , sql_insert_tx
   , sql_schema
   , truncateLeiosDbAfterSlot
+  , vacuumLeiosDb
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
