@@ -126,6 +126,10 @@ data instance StorageConfig (ShelleyBlock proto era) = ShelleyStorageConfig
 --
 -- * The 'sgStaking' field is erased. It is only used to register initial stake
 --   pools in tests and benchmarks.
+--
+-- * The 'sgExtraConfig' field is erased. It only gives the source of the initial
+--   funds, the stake pools and the stake delegations, which ledger reads at an
+--   era transition.
 newtype CompactGenesis = CompactGenesis {getCompactGenesis :: SL.ShelleyGenesis}
   deriving stock (Eq, Show, Generic)
   deriving newtype (ToCBOR, FromCBOR)
