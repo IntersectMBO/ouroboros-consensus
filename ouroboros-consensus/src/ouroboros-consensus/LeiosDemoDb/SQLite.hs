@@ -10,6 +10,9 @@ module LeiosDemoDb.SQLite
   ( newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
 
+    -- * Re-exported for internal tooling
+  , truncateLeiosDbAfterSlot
+
     -- * SQL strings (re-exported for leiosdemo app)
   , sql_schema
   , sql_insert_eb
@@ -483,6 +486,34 @@ sqlFilterMissingTxs conn txHashes =
       DB.Row -> do
         txHash <- MkTxHash <$> DB.columnBlob stmt 0
         loop (txHash : acc)
+
+-- | Delete the EBs announced after the given slot.
+--
+-- For internal tooling.
+truncateLeiosDbAfterSlot :: HasCallStack => FilePath -> SlotNo -> IO ()
+truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
+  MonadThrow.bracket openReadWrite (void . DB.close) $ \db ->
+    -- One transaction, so a crash cannot leave an EB that is still announced
+    -- but has no body.
+    dbWithTransactionAs "BEGIN IMMEDIATE" db $
+      dbExec db (fromString deletes)
+ where
+  -- No 'SQLOpenCreate', unlike 'openSQLiteConnection': a path with no database
+  -- must fail here rather than gain an empty one. No 'busy_timeout' either, so
+  -- a database another process holds open refuses the write at once.
+  openReadWrite = open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault
+
+  -- 'ebTxs' and 'ebsMissingTxs' are keyed by EB hash and carry no slot, and the
+  -- same EB can be announced in several slots. So a body is deleted only when
+  -- the truncation drops every announcement of that EB.
+  deletes =
+    unlines
+      [ "DELETE FROM ebTxs WHERE ebHashBytes NOT IN (" <> remainingHashes <> ");"
+      , "DELETE FROM ebsMissingTxs WHERE ebHashBytes NOT IN (" <> remainingHashes <> ");"
+      , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
+      ]
+
+  remainingHashes = "SELECT ebHashBytes FROM ebs WHERE ebSlot <= " <> show slot
 
 -- | Build a JSON array of hex-encoded blobs: @["aabb...","1234...",...]@.
 -- Consumed on the SQL side via @json_each(?)@ + @unhex(je.value)@.

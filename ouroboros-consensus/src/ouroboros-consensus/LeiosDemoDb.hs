@@ -17,6 +17,9 @@ module LeiosDemoDb
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
 
+    -- * Re-exported for internal tooling
+  , truncateLeiosDbAfterSlot
+
     -- * SQL (re-exported for leiosdemo app)
   , sql_schema
   , sql_insert_eb
@@ -44,5 +47,6 @@ import LeiosDemoDb.SQLite
   , sql_insert_ebBody
   , sql_insert_tx
   , sql_schema
+  , truncateLeiosDbAfterSlot
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
