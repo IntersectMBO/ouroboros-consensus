@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -377,7 +378,7 @@ runAdder cfg expired mempool onBehalf j addedRef = go 0
     if cfgTargetTpsTotal cfg <= 0
       then 0
       else round (1_000_000 * fromIntegral (numAdders cfg) / cfgTargetTpsTotal cfg)
-       
+
   go !i = do
     done <- expired
     if done
@@ -426,7 +427,7 @@ runSyncer cfg expired mempool ledgerVar baseLedger syncDursRef = go 1
     if done
       then pure ()
       else do
-        atomically $ writeTVar ledgerVar (advanceTip (fromIntegral n) baseLedger)
+        atomically $ writeTVar ledgerVar (advanceTip n baseLedger)
         t0 <- getMonotonicTime
         _ <- testSyncWithLedger mempool
         t1 <- getMonotonicTime
