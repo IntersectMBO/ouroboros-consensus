@@ -573,11 +573,8 @@ implSyncWithLedger projectResult mpEnv =
             traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
             goSync
           Right frk -> do
-            -- OFF-LOCK, and the tall tent pole of the whole sync: read the
-            -- snapshot's inputs and revalidate the entire mempool against the new
-            -- tip. Everything after this ('revalidateDeltas') is just a bounded
-            -- catch-up loop reapplying whatever was added or removed while this
-            -- ran, so the state lock is held only briefly at the very end.
+            -- OFF-LOCK: read the snapshot's inputs and revalidate the entire
+            -- mempool against the new tip.
             seed <-
               revalidateTxsFor
                 frk
@@ -588,6 +585,9 @@ implSyncWithLedger projectResult mpEnv =
                 (isLastTicketNo is0)
                 (isRemovalCounter is0)
                 (TxSeq.toList (isTxs is0))
+            -- A bounded catch-up loop reapplying whatever was added or
+            -- removed while this ran, so the state lock is held only briefly at
+            -- the very end.
             revalidateDeltas frk tipHash0 slot seed (0 :: Int) >>= \case
               Nothing -> goSync -- Retry if the commit found the state stale.
               Just r -> pure r
