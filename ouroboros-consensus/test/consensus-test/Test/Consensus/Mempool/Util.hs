@@ -9,6 +9,7 @@ module Test.Consensus.Mempool.Util
   , TestTxId
   , TheMeasure
   , applyTxToLedger
+  , bumpTip
   , genInvalidTx
   , genLargeInvalidTx
   , genTxs
@@ -210,6 +211,29 @@ genLargeInvalidTx (IgnoringOverflow sz) = go Set.empty
         tx = mkSimpleGenTx $ Tx DoNotExpire ins outs
     guard $ genTxSize tx > sz
     pure tx
+
+-- | Advance the ledger tip by one slot while keeping the UTxO unchanged.
+--
+-- Unlike 'applyTxToLedger', this consumes no inputs, so any transaction that was
+-- valid against the input state is still valid against the result. This is
+-- exactly the base change needed to make a mempool sync do real work without
+-- invalidating any of the transactions it already holds.
+bumpTip ::
+  LedgerState TestBlock ValuesMK ->
+  LedgerState TestBlock ValuesMK
+bumpTip (SimpleLedgerState mockState tbls) =
+  SimpleLedgerState mockState{mockTip = BlockPoint slot' hash'} tbls
+ where
+  slot' = case pointSlot $ mockTip mockState of
+    Origin -> 0
+    NotOrigin s -> succ s
+
+  -- See 'applyTxToLedger' for the phantom-parameter trick behind this hash.
+  hash' :: HeaderHash TestBlock
+  hash' = hashWithSerialiser fakeEncodeHeader (error "fake header")
+
+  fakeEncodeHeader :: Header TestBlock -> Encoding
+  fakeEncodeHeader _ = toCBOR slot'
 
 -- | Apply a transaction to the ledger
 --
