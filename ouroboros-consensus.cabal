@@ -1947,6 +1947,7 @@ library unstable-cardano-tools
     Cardano.Tools.ImmDBServer.Json.Say
     Cardano.Tools.ImmDBServer.Json.SendRecv
     Cardano.Tools.ImmDBServer.MiniProtocols
+    Cardano.Tools.LeiosDb
     Cardano.Tools.ThreadNet.Run
 
   other-modules:

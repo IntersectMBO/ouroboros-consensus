@@ -9,6 +9,11 @@ data DBTruncaterConfig = DBTruncaterConfig
   { dbDir :: FilePath
   , truncateAfter :: TruncateAfter
   , verbose :: Bool
+  , stubbedLeiosDb :: Bool
+  -- ^ Use an empty in-memory LeiosDb instead of @leios.db@ under 'dbDir'.
+  --
+  -- The tool cannot tell a pre-Leios chain from a Leios one, so it needs the
+  -- file. This flag is how the caller says that the chain has none.
   }
 
 -- | Where to truncate the ImmutableDB.
