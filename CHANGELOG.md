@@ -6,6 +6,23 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-4.2.1.0'></a>
+## 4.2.1.0 -- 2026-09-01
+
+### Non-Breaking
+
+- Added `encodeShelleyGenesisNoExtraConfig` and `decodeShelleyGenesisNoExtraConfig`
+  to `Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis`. They encode
+  and decode `ShelleyGenesis` with 15 fields.
+
+### Patch
+
+- Fixed the `GetGenesisConfig` node-to-client query. `cardano-ledger-shelley`
+  1.19.0.0 added the `sgExtraConfig` field to `ShelleyGenesis` and grew the CBOR
+  record from 15 fields to 16, under a fixed node-to-client version. The node now
+  encodes and decodes 15 fields again. `compactGenesis`
+  erases `sgExtraConfig`, so the reply carries no less data than before.
+
 <a id='changelog-4.2.0.1'></a>
 ## 4.2.0.1 -- 2026-08-28
 
