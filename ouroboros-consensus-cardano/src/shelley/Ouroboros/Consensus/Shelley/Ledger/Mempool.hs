@@ -13,8 +13,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
--- TODO: Ledger has a few deprecations that we are ignoring for now
-{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -86,6 +84,7 @@ import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
+import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)
@@ -104,7 +103,7 @@ import GHC.Generics (Generic)
 import GHC.Natural (Natural)
 import Lens.Micro ((^.))
 import Lens.Micro.Extras (view)
-import NoThunks.Class (NoThunks (..))
+import NoThunks.Class (NoThunks (..), allNoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -138,14 +137,26 @@ instance
 data instance Validated (GenTx (ShelleyBlock proto era))
   = ShelleyValidatedTx
       !SL.TxId
-      !(SL.Validated (Tx TopTx era))
-  deriving stock Generic
+      !(SL.ValidatedTx era)
 
-deriving instance ShelleyBasedEra era => NoThunks (Validated (GenTx (ShelleyBlock proto era)))
+-- ValidatedTx era does not have Eq/Show/NoThunks instances for all eras (the
+-- instances for Alonzo+ eras are missing from the ledger), so we write manual
+-- instances using the extracted inner Tx.
 
-deriving instance ShelleyBasedEra era => Eq (Validated (GenTx (ShelleyBlock proto era)))
+instance ShelleyBasedEra era => NoThunks (Validated (GenTx (ShelleyBlock proto era))) where
+  showTypeOf _ = "Validated (GenTx (ShelleyBlock proto era))"
+  wNoThunks ctxt (ShelleyValidatedTx txid vtx) =
+    allNoThunks
+      [ wNoThunks ctxt txid
+      , wNoThunks ctxt (SL.extractValidatedTx vtx)
+      ]
 
-deriving instance ShelleyBasedEra era => Show (Validated (GenTx (ShelleyBlock proto era)))
+instance ShelleyBasedEra era => Eq (Validated (GenTx (ShelleyBlock proto era))) where
+  ShelleyValidatedTx txid1 _ == ShelleyValidatedTx txid2 _ = txid1 == txid2
+
+instance ShelleyBasedEra era => Show (Validated (GenTx (ShelleyBlock proto era))) where
+  show (ShelleyValidatedTx txid vtx) =
+    "(ShelleyValidatedTx " ++ show txid ++ " " ++ show (SL.extractValidatedTx vtx) ++ ")"
 
 instance
   (Typeable era, Typeable proto) =>
@@ -190,7 +201,7 @@ instance
 
   reapplyTx = reapplyShelleyTx
 
-  txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
+  txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractValidatedTx vtx)
 
   getTransactionKeySets (ShelleyTx _ tx) =
     LedgerTables $
@@ -208,11 +219,11 @@ mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
 mkShelleyValidatedTx ::
   forall era proto.
   ShelleyBasedEra era =>
-  SL.Validated (Tx TopTx era) ->
+  SL.ValidatedTx era ->
   Validated (GenTx (ShelleyBlock proto era))
 mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
  where
-  txid = txIdTx (SL.extractTx vtx)
+  txid = txIdTx (SL.extractValidatedTx vtx)
 
 newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
@@ -335,7 +346,7 @@ reapplyShelleyTx cfg slot vgtx st0 = do
 
   mempoolState' <-
     liftEither $
-      SL.reapplyTx
+      SL.reapplyValidatedTx
         (shelleyLedgerGlobals cfg)
         (SL.mkMempoolEnv innerSt slot)
         (SL.mkMempoolState innerSt)
@@ -622,8 +633,8 @@ instance ExUnitsTooBigUTxO AlonzoEra where
           ShelleyEra.UtxoFailure $
             AlonzoEra.ExUnitsTooBigUTxO $
               L.Mismatch
-                { mismatchSupplied = txsz
-                , mismatchExpected = limit
+                { mismatchSupplied = OrdExUnits txsz
+                , mismatchExpected = OrdExUnits limit
                 }
 
 instance ExUnitsTooBigUTxO BabbageEra where
@@ -636,8 +647,8 @@ instance ExUnitsTooBigUTxO BabbageEra where
               BabbageEra.AlonzoInBabbageUtxoPredFailure $
                 AlonzoEra.ExUnitsTooBigUTxO $
                   L.Mismatch
-                    { mismatchSupplied = txsz
-                    , mismatchExpected = limit
+                    { mismatchSupplied = OrdExUnits txsz
+                    , mismatchExpected = OrdExUnits limit
                     }
 
 instance ExUnitsTooBigUTxO ConwayEra where
@@ -647,8 +658,8 @@ instance ExUnitsTooBigUTxO ConwayEra where
         ConwayEra.UtxoFailure $
           ConwayEra.ExUnitsTooBigUTxO $
             L.Mismatch
-              { mismatchSupplied = txsz
-              , mismatchExpected = limit
+              { mismatchSupplied = OrdExUnits txsz
+              , mismatchExpected = OrdExUnits limit
               }
 
 instance ExUnitsTooBigUTxO DijkstraEra where
@@ -659,8 +670,8 @@ instance ExUnitsTooBigUTxO DijkstraEra where
           DijkstraEra.UtxoFailure $
             DijkstraEra.ExUnitsTooBigUTxO $
               L.Mismatch
-                { mismatchSupplied = txsz
-                , mismatchExpected = limit
+                { mismatchSupplied = OrdExUnits txsz
+                , mismatchExpected = OrdExUnits limit
                 }
 
 -----

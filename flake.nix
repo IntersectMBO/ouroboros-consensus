@@ -45,6 +45,14 @@
       url = "github:phadej/gentle-introduction";
       flake = false;
     };
+    cardano-ledger-src = {
+      url = "github:IntersectMBO/cardano-ledger/fcc6f4fdaa28f18f7a2a4ac3e9100e7f8238ec31";
+      flake = false;
+    };
+    kes-agent-src = {
+      url = "github:koslambrou/kes-agent/4625f3cf543566517d08882e659c97932d106d86";
+      flake = false;
+    };
   };
   outputs = inputs:
     let
