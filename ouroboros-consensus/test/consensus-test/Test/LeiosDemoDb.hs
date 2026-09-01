@@ -30,6 +30,7 @@ import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosEbNotification (..)
+  , deleteDanglingTxs
   , leiosDbBatchRetrieveTxs
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
@@ -82,6 +83,11 @@ tests =
              "truncateLeiosDbAfterSlot"
              [ testCase "drops the EBs announced after the slot, with their bodies" $
                  withFreshSQLiteFile test_truncateDropsEbsAfterSlot
+             ]
+         , testGroup
+             "deleteDanglingTxs"
+             [ testCase "keeps the txs an EB references" $
+                 withFreshSQLiteFile test_deleteDanglingTxs
              ]
          ]
 
@@ -859,3 +865,32 @@ test_truncateDropsEbsAfterSlot dbPath db = do
     keptBody @?= V.toList (leiosEbTxs eb)
     droppedBody <- leiosDbLookupEbBody con droppedHash
     droppedBody @?= []
+
+-- * deleteDanglingTxs
+
+test_deleteDanglingTxs :: FilePath -> LeiosDbHandle IO -> IO ()
+test_deleteDanglingTxs dbPath db = do
+  let eb = mkTestEb 2
+      ebHash = mkTestEbHash 1
+      danglingTx = mkTestTxHash 9
+      txBytes = BS.replicate 10 0
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con (MkLeiosPoint 5 ebHash) (leiosEbBytesSize eb)
+    void $ leiosDbInsertEbBody con (MkLeiosPoint 5 ebHash) eb
+    void $
+      leiosDbInsertTxs con $
+        (danglingTx, txBytes) : [(txHash, txBytes) | (txHash, _) <- V.toList (leiosEbTxs eb)]
+
+  deleteDanglingTxs dbPath
+
+  withLeiosDb db $ \con -> do
+    closure <- leiosDbLookupEbClosure con ebHash
+    fmap (map fst) closure @?= Just (map fst (V.toList (leiosEbTxs eb)))
+    -- A closure resolves only when the db holds every tx the body names. So
+    -- this probe resolves only if the delete missed the dangling tx.
+    let probeEb = MkLeiosEb (V.fromList [(danglingTx, 10)])
+        probePoint = MkLeiosPoint 6 (mkTestEbHash 2)
+    leiosDbInsertEbPoint con probePoint (leiosEbBytesSize probeEb)
+    void $ leiosDbInsertEbBody con probePoint probeEb
+    probeClosure <- leiosDbLookupEbClosure con probePoint.pointEbHash
+    probeClosure @?= Nothing

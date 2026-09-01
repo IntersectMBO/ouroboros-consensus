@@ -12,6 +12,7 @@ module LeiosDemoDb.SQLite
 
     -- * Re-exported for internal tooling
   , truncateLeiosDbAfterSlot
+  , deleteDanglingTxs
 
     -- * SQL strings (re-exported for leiosdemo app)
   , sql_schema
@@ -492,17 +493,12 @@ sqlFilterMissingTxs conn txHashes =
 -- For internal tooling.
 truncateLeiosDbAfterSlot :: HasCallStack => FilePath -> SlotNo -> IO ()
 truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
-  MonadThrow.bracket openReadWrite (void . DB.close) $ \db ->
+  withExistingDb dbPath $ \db ->
     -- One transaction, so a crash cannot leave an EB that is still announced
     -- but has no body.
     dbWithTransactionAs "BEGIN IMMEDIATE" db $
       dbExec db (fromString deletes)
  where
-  -- No 'SQLOpenCreate', unlike 'openSQLiteConnection': a path with no database
-  -- must fail here rather than gain an empty one. No 'busy_timeout' either, so
-  -- a database another process holds open refuses the write at once.
-  openReadWrite = open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault
-
   -- 'ebTxs' and 'ebsMissingTxs' are keyed by EB hash and carry no slot, and the
   -- same EB can be announced in several slots. So a body is deleted only when
   -- the truncation drops every announcement of that EB.
@@ -514,6 +510,26 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
       ]
 
   remainingHashes = "SELECT ebHashBytes FROM ebs WHERE ebSlot <= " <> show slot
+
+-- | Delete the transactions that no EB references.
+--
+-- For internal tooling.
+deleteDanglingTxs :: HasCallStack => FilePath -> IO ()
+deleteDanglingTxs dbPath =
+  withExistingDb dbPath $ \db ->
+    dbExec db . fromString $
+      "DELETE FROM txs WHERE txHashBytes NOT IN (SELECT txHashBytes FROM ebTxs)"
+
+-- | Open a LeiosDb that must already exist.
+--
+-- No 'SQLOpenCreate', unlike 'openSQLiteConnection': a wrong path must fail
+-- rather than gain an empty database. No 'busy_timeout' either, so a database
+-- another process holds open refuses a write at once.
+withExistingDb :: HasCallStack => FilePath -> (DB.Database -> IO a) -> IO a
+withExistingDb dbPath =
+  MonadThrow.bracket
+    (open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault)
+    (void . DB.close)
 
 -- | Build a JSON array of hex-encoded blobs: @["aabb...","1234...",...]@.
 -- Consumed on the SQL side via @json_each(?)@ + @unhex(je.value)@.
