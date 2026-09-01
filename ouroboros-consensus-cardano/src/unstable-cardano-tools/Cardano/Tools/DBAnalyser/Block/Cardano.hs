@@ -24,8 +24,8 @@ import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
-import Cardano.Ledger.BaseTypes (boundRational, unsafeNonZero)
-import Cardano.Ledger.Core (TxOut)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), boundRational, unsafeNonZero)
+import Cardano.Ledger.Core (MaxPledgeLeverage (..), TxOut)
 import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
 import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
@@ -206,6 +206,8 @@ emptyDijkstraGenesis =
           , udppMaxRefScriptSizePerTx = 204800
           , udppRefScriptCostStride = unsafeNonZero 25600
           , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
+          , udppMaxPledgeLeverage = MaxPledgeLeverage SNothing
+          , udppMinPoolMargin = minBound
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 

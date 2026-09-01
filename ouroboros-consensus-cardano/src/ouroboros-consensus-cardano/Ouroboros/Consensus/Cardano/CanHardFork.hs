@@ -7,12 +7,11 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
--- TODO: Ledger has a few deprecations that we are ignoring for now
-{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -90,6 +89,8 @@ import Ouroboros.Consensus.Protocol.Abstract hiding
   )
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
+import Ouroboros.Consensus.Protocol.Leios (Leios)
+import qualified Ouroboros.Consensus.Protocol.Leios as Leios
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
@@ -98,6 +99,7 @@ import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node ()
+import Ouroboros.Consensus.Shelley.Protocol.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -110,13 +112,14 @@ import Ouroboros.Consensus.Util (coerceMapKeys)
 type CardanoHardForkConstraints c =
   ( TPraos.PraosCrypto c
   , Praos.PraosCrypto c
+  , Leios.LeiosCrypto c
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) ShelleyEra)
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AllegraEra)
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) MaryEra)
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AlonzoEra)
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) BabbageEra)
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
-  , LedgerSupportsProtocol (ShelleyBlock (Praos c) DijkstraEra)
+  , LedgerSupportsProtocol (ShelleyBlock (Leios c) DijkstraEra)
   )
 
 -- | When performing era translations, two eras have special behaviours on the
@@ -661,12 +664,26 @@ getConwayTranslationContext =
   Translation from Conway to Dijkstra
 -------------------------------------------------------------------------------}
 
+-- | Cast the @proto@ phantom type of a 'ShelleyLedgerState', which is safe
+-- as long as both protocols use the same @ShelleyHash@ and @TxIn@/@TxOut@
+-- for the same ledger era.
+castShelleyLedgerStateProto ::
+  LedgerState (ShelleyBlock protoFrom era) mk ->
+  LedgerState (ShelleyBlock protoTo era) mk
+castShelleyLedgerStateProto ShelleyLedgerState{..} =
+  ShelleyLedgerState
+    { shelleyLedgerTip = fmap castShelleyTip shelleyLedgerTip
+    , shelleyLedgerState = shelleyLedgerState
+    , shelleyLedgerTransition = shelleyLedgerTransition
+    , shelleyLedgerTables = coerce shelleyLedgerTables
+    }
+
 translateLedgerStateConwayToDijkstraWrapper ::
   RequiringBoth
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (Leios c) DijkstraEra)
 translateLedgerStateConwayToDijkstraWrapper =
   RequireBoth $ \_cfgConway cfgDijkstra ->
     TranslateLedgerState
@@ -677,12 +694,13 @@ translateLedgerStateConwayToDijkstraWrapper =
             . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra)
             . Comp
             . Flip
+            . castShelleyLedgerStateProto
       }
 
 translateLedgerTablesConwayToDijkstraWrapper ::
   TranslateLedgerTables
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (Leios c) DijkstraEra)
 translateLedgerTablesConwayToDijkstraWrapper =
   TranslateLedgerTables
     { translateTxInWith = coerce
@@ -690,7 +708,7 @@ translateLedgerTablesConwayToDijkstraWrapper =
     }
 
 getDijkstraTranslationContext ::
-  WrapLedgerConfig (ShelleyBlock (Praos c) DijkstraEra) ->
+  WrapLedgerConfig (ShelleyBlock (Leios c) DijkstraEra) ->
   SL.TranslationContext DijkstraEra
 getDijkstraTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
