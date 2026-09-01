@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.Config (withConfigErrorHandling)
 import Cardano.Tools.DBTruncater.Run
 import Cardano.Tools.DBTruncater.Types
 import DBAnalyser.Parsers
@@ -18,7 +19,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Impl ()
 import Prelude hiding (truncate)
 
 main :: IO ()
-main = withStdTerminalHandles $ do
+main = withStdTerminalHandles $ withConfigErrorHandling $ do
   cryptoInit
   uncurry truncate =<< getCommandLineConfig
 
