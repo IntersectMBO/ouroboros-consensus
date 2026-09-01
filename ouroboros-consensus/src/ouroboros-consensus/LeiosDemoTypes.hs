@@ -1526,6 +1526,31 @@ jsonLeiosDb = \case
       , "dbFileBytes" .= dbFileBytes
       , "walBytes" .= walBytes
       ]
+  TraceLeiosDbCopiedToImmutable{copiedEbs, copiedEbTxs, copiedTxs} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopiedToImmutable"
+      , "copiedEbs" .= copiedEbs
+      , "copiedEbTxs" .= copiedEbTxs
+      , "copiedTxs" .= copiedTxs
+      ]
+  TraceLeiosDbEvicted{evictedEbs, evictedEbTxs, evictedTxs} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbEvicted"
+      , "evictedEbs" .= evictedEbs
+      , "evictedEbTxs" .= evictedEbTxs
+      , "evictedTxs" .= evictedTxs
+      ]
+  TraceLeiosDbCopyQueueFull ebHash ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopyQueueFull"
+      , "ebHash" .= ebHash
+      ]
+  TraceLeiosDbCopyError ebHash reason ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopyError"
+      , "ebHash" .= ebHash
+      , "reason" .= reason
+      ]
   -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
   -- the forge loop's call traces, so one dashboard query shape covers both.
   TraceLeiosDbCall (SomeJsonCallTrace ct) ->

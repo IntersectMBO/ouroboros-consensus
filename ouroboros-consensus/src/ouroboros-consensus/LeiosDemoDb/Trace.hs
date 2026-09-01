@@ -2,6 +2,12 @@ module LeiosDemoDb.Trace (TraceLeiosDb (..), LeiosDbStats (..)) where
 
 import LeiosUtils.CallTrace (SomeJsonCallTrace)
 
+-- | In-memory LeiosDb counters: seeded from the database files once per
+-- handle, bumped by the write, copy and GC paths, never written back.
+--
+-- An EB that has been copied to the immutable partition but not yet evicted
+-- from the volatile one counts in both partitions -- that is the truth on
+-- disk during the window between copy and GC.
 data LeiosDbStats = LeiosDbStats
   { volatileEbs :: !Int
   , immutableEbs :: !Int
@@ -32,6 +38,27 @@ data TraceLeiosDb
     TraceLeiosDbBusyStuck Int Double
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
+  | -- | The background copier committed an EB's closure to the immutable
+    -- partition. Row counts of that copy (txs are stored inline there, so
+    -- 'copiedTxs' == 'copiedEbTxs').
+    TraceLeiosDbCopiedToImmutable
+      { copiedEbs :: !Int
+      , copiedEbTxs :: !Int
+      , copiedTxs :: !Int
+      }
+  | -- | A garbage collection pass evicted rows from the volatile partition.
+    TraceLeiosDbEvicted
+      { evictedEbs :: !Int
+      , evictedEbTxs :: !Int
+      , evictedTxs :: !Int
+      }
+  | -- | The copy queue was full and the hash was dropped. Not a data-loss
+    -- signal (GC self-heal re-delivers), but a steady stream of these means
+    -- the copier cannot keep up with certification.
+    TraceLeiosDbCopyQueueFull String
+  | -- | The background copier failed on an EB (which stays pinned and will be
+    -- retried). Fields: the EB hash, then the reason.
+    TraceLeiosDbCopyError String String
   | -- | A trace event for LeiosUtils.CallTrace spans
     TraceLeiosDbCall !SomeJsonCallTrace
   deriving Show
