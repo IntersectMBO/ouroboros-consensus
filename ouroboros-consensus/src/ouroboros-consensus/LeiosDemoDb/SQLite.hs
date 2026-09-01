@@ -13,6 +13,7 @@ module LeiosDemoDb.SQLite
     -- * Re-exported for internal tooling
   , truncateLeiosDbAfterSlot
   , deleteDanglingTxs
+  , vacuumLeiosDb
 
     -- * SQL strings (re-exported for leiosdemo app)
   , sql_schema
@@ -519,6 +520,16 @@ deleteDanglingTxs dbPath =
   withExistingDb dbPath $ \db ->
     dbExec db . fromString $
       "DELETE FROM txs WHERE txHashBytes NOT IN (SELECT txHashBytes FROM ebTxs)"
+
+-- | Shrink a LeiosDb file to the space its rows need.
+--
+-- A delete frees pages inside the file without returning them to the
+-- filesystem. This rewrites the file, so it needs free space of about the size
+-- of the file. For internal tooling.
+vacuumLeiosDb :: HasCallStack => FilePath -> IO ()
+vacuumLeiosDb dbPath =
+  withExistingDb dbPath $ \db ->
+    dbExec db (fromString "VACUUM")
 
 -- | Open a LeiosDb that must already exist.
 --
