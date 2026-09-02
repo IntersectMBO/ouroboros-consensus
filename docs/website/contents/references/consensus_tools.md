@@ -103,7 +103,7 @@ cabal run db-analyser -- \
 |---|---|
 | `--db PATH` | Path to the ChainDB (required). |
 | `--config PATH` | Node configuration file (required). |
-| `--in-mem` / `--lsm` | LedgerDB backend to use for analyses that maintain a ledger state (one of the two is required; there is no default). See below. |
+| `--in-mem` / `--lsm` | LedgerDB backend to use for analyses that maintain a ledger state. Optional: when neither is given, the backend and its settings are taken from the node configuration file. See below. |
 | `--analyse-from SLOT_NUMBER` | Start the analysis at the block in slot `SLOT_NUMBER` (a block must exist exactly at that slot). See below. |
 | `--num-blocks-to-process INT` | Cap on the number of blocks to process. |
 | `--db-validation POLICY` | Extent of the on-disk file validation when opening the database: `validate-all-blocks` or `minimum-block-validation` (only the most recent chunk). This is unrelated to validation of the ledger rules. |
@@ -115,20 +115,36 @@ chunks of the ImmutableDB, and exits — useful as a standalone integrity check.
 
 #### Choosing a ledger backend: `--in-mem` vs `--lsm`
 
-Analyses that maintain a ledger state need a LedgerDB, and you must pick its
-backend (see
+Analyses that maintain a ledger state need a LedgerDB, and hence a backend for
+it (see
 [Consensus configuration values §1](./consensus_configuration#1-ledgerdb-and-storage-backends)):
 
 - `--in-mem`: the whole UTxO set lives in memory. Fastest, but needs as much
   RAM as a pre-UTxO-HD node.
 - `--lsm`: the UTxO set lives in an LSM tree on disk. The tool creates its
   working LSM database under `<db>/lsm`, with a fresh random bloom-filter salt
-  on every run. If the node configuration sets `LedgerDB.LSMExportPath`,
-  snapshots taken with `--store-ledger` are additionally *exported* into that
-  directory as standalone LSM snapshots, which
-  [`snapshot-converter`](#snapshot-converter) can then convert or import (the
-  random salt is irrelevant here, as exported snapshots record their own
-  salt).
+  on every run.
+  - `--lsm-export`: additionally *export* every snapshot taken with
+    `--store-ledger` into `<db>/lsm-exported`, as a standalone LSM snapshot
+    that [`snapshot-converter`](#snapshot-converter) can convert or import (the
+    random salt is irrelevant here, as exported snapshots record their own
+    salt).
+  - `--lsm-no-cache`: bypass the OS page cache for UTxO table reads and writes
+    (`O_DIRECT`) instead of caching everything; primarily useful for
+    benchmarking.
+
+When neither flag is given, the backend is the one the node configuration file
+selects with `LedgerDB.Backend`, using its `LedgerDB.LSMDatabasePath` and
+`LedgerDB.LSMExportPath`. Both of those paths are interpreted relative to the
+ChainDB directory — unlike the genesis paths, which are relative to the
+configuration file — so an absolute path is rejected rather than silently
+mounted somewhere else. The OS page cache is used in this case, as it is not
+configurable in the configuration file.
+
+Note that a configuration file that does not set `LedgerDB.Backend` at all still
+selects a backend: it defaults to the in-memory one. So omitting `--in-mem` and
+`--lsm` on an unconfigured file gives you `--in-mem`, with its RAM requirements,
+rather than an error.
 
 #### Starting from a slot: `--analyse-from`
 
@@ -351,17 +367,21 @@ length cheaply, e.g. as input for benchmarks.
 
 ### Requirements
 
-- `--config FILE` — a node configuration file. Only a few values regarding
-  geneses and protocol are actually required, so a configuration stub is
-  possible; for the expected key-value pairs see the `NodeConfigStub` type and
-  its deserialization in `Cardano.Tools.DBSynthesizer.Orphans`.
+- `--config FILE` — a node configuration file, exactly as `cardano-node` takes
+  it: it is parsed by the shared `cardano-config` package, which also loads the
+  genesis file of every era the configuration names (their paths are relative
+  to the configuration file's directory).
 - `--db PATH` — where to write the ChainDB.
 - Block forging credentials, either as separate files
-  (`--shelley-operational-certificate`, `--shelley-vrf-key`,
+  (`--shelley-operational-certificate`, `--shelley-vrf-key` and
   `--shelley-kes-key`, all in JSON TextEnvelope format) or in bulk
   (`--bulk-credentials-file`, a JSON array of `[opcert, VRF key, KES key]`
-  triples). The genesis must give the corresponding pools enough stake to be
-  elected.
+  triples). Byron-era credentials (`--byron-delegation-certificate` with
+  `--byron-signing-key`) and a KES agent (`--shelley-kes-agent-socket` instead
+  of `--shelley-kes-key`) work too. These are `cardano-node`'s own flags —
+  db-synthesizer takes them from `cardano-config`, and they are read and
+  cross-checked there the same way the node reads them. The genesis must give
+  the corresponding pools enough stake to be elected.
 
 A minimal working setup — a staked genesis with bulk credentials for two
 forgers — is provided in
