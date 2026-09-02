@@ -96,6 +96,7 @@ import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import Data.String (fromString)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
@@ -1734,6 +1735,16 @@ data TraceLeiosPeer
     TraceLeiosPeerAnnouncement !AnnouncementEquivocation !AnnouncementFields
   deriving Show
 
+-----
+-- Leios tracer rendering, delegated to by cardano-node's tracer instances
+--
+-- Defined here so that we can alter these tracer data types without having to
+-- change the cardano-node code.
+--
+-- TODO some of these functions were already defined here and cardano-node
+-- delegated to them; they should be consolidated into this "section" as well
+-----
+
 traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
 traceLeiosPeerToObject = \case
   MkTraceLeiosPeer s -> fromString "msg" .= Aeson.String (fromString s)
@@ -1744,6 +1755,277 @@ traceLeiosPeerToObject = \case
       , announcementFieldsToObject acc
       , announcementEquivocationToObject equivocation
       ]
+
+-- | Consensus-side severity; cardano-node maps it to its @SeverityS@.
+--
+-- TODO once we update the dependencies/merge this code into
+-- ouroboros-consensus's main branch (which has newer deps), we should be able
+-- to import something from the relatively-new tracer library instead of
+-- defining our own here
+data LeiosSeverity = LSDebug | LSInfo | LSNotice | LSWarning | LSError
+  deriving (Eq, Show)
+
+-- | A trace namespace's suffix, severity, and metric docs.
+data LeiosNSInfo = LeiosNSInfo
+  { nsiPath :: ![Text]
+  , nsiSeverity :: !LeiosSeverity
+  , nsiMetricsDoc :: ![(Text, Text)]
+  }
+
+-- | This data type is only used for internal consistency of these functions
+-- that categorize tracer events.
+--
+-- TODO don't export them from this module
+data LeiosKernelNS
+  = LKNSMsg
+  | LKNSBlockAcquired
+  | LKNSBlockPointMissing
+  | LKNSBlockTxsAcquired
+  | LKNSFetchBodyArrival
+  | LKNSFetchTxsArrival
+  | LKNSBodyHits
+  | LKNSBlockForged
+  | LKNSBlockStored
+  | LKNSBlockAnnounced
+  | LKNSBlockCertified
+  | LKNSVoted
+  | LKNSVoteAcquired
+  | LKNSCertified
+  | LKNSNotVoted
+  | LKNSVoteScheduled
+  | LKNSEbValidated
+  | LKNSDbException
+  | LKNSDb
+  | LKNSCertifiedAndAnnounced
+  | LKNSAnnouncementAccepted
+  | LKNSFetchDecision
+  deriving (Eq, Show, Enum, Bounded)
+
+leiosKernelNSOf :: TraceLeiosKernel -> LeiosKernelNS
+leiosKernelNSOf = \case
+  MkTraceLeiosKernel{} -> LKNSMsg
+  TraceLeiosBlockAcquired{} -> LKNSBlockAcquired
+  TraceLeiosBlockPointMissing{} -> LKNSBlockPointMissing
+  TraceLeiosBlockTxsAcquired{} -> LKNSBlockTxsAcquired
+  TraceLeiosFetchBodyArrival{} -> LKNSFetchBodyArrival
+  TraceLeiosFetchTxsArrival{} -> LKNSFetchTxsArrival
+  TraceLeiosBodyHits{} -> LKNSBodyHits
+  TraceLeiosBlockForged{} -> LKNSBlockForged
+  TraceLeiosBlockStored{} -> LKNSBlockStored
+  TraceLeiosBlockAnnounced{} -> LKNSBlockAnnounced
+  TraceLeiosBlockCertified{} -> LKNSBlockCertified
+  TraceLeiosVoted{} -> LKNSVoted
+  TraceLeiosVoteAcquired{} -> LKNSVoteAcquired
+  TraceLeiosCertified{} -> LKNSCertified
+  TraceLeiosNotVoted{} -> LKNSNotVoted
+  TraceLeiosVoteScheduled{} -> LKNSVoteScheduled
+  TraceLeiosEbValidated{} -> LKNSEbValidated
+  TraceLeiosDbException{} -> LKNSDbException
+  TraceLeiosDb{} -> LKNSDb
+  TraceLeiosCertifiedAndAnnounced{} -> LKNSCertifiedAndAnnounced
+  TraceLeiosAnnouncementAccepted{} -> LKNSAnnouncementAccepted
+  TraceLeiosFetchDecision{} -> LKNSFetchDecision
+
+leiosKernelNSInfo :: LeiosKernelNS -> LeiosNSInfo
+leiosKernelNSInfo = \case
+  LKNSMsg -> LeiosNSInfo ["Msg"] LSInfo []
+  LKNSBlockAcquired -> LeiosNSInfo ["BlockAcquired"] LSInfo []
+  LKNSBlockPointMissing -> LeiosNSInfo ["BlockPointMissing"] LSWarning []
+  LKNSBlockTxsAcquired -> LeiosNSInfo ["BlockTxsAcquired"] LSInfo []
+  LKNSFetchBodyArrival ->
+    LeiosNSInfo
+      ["FetchBodyArrival"]
+      LSDebug
+      [ ("leiosFetchBodyInvalidBytes", "EB-body bytes received in a failed-validation MsgLeiosBlock.")
+      , ("leiosFetchBodyEvictedBytes", "EB-body bytes whose announcement was absent from the LeiosTxCache (assumed since evicted).")
+      , ("leiosFetchBodyGoodBytes", "EB-body bytes filling an announced-but-not-yet-held EB (the expected case).")
+      , ("leiosFetchBodyExtraBytes", "EB-body bytes for an EB already held (redundant).")
+      ]
+  LKNSFetchTxsArrival ->
+    LeiosNSInfo
+      ["FetchTxsArrival"]
+      LSDebug
+      [ ("leiosFetchTxsInvalidBytes", "Tx bytes received in a failed-validation MsgLeiosBlockTxs.")
+      , ("leiosFetchTxsEvictedBytes", "Tx bytes no cached body expected (prior state absent, assumed since evicted).")
+      , ("leiosFetchTxsGoodBytes", "Tx bytes a cached body expected and had not yet held (the expected case).")
+      , ("leiosFetchTxsExtraBytes", "Tx bytes already held (redundant).")
+      ]
+  LKNSBodyHits -> LeiosNSInfo ["BodyHits"] LSInfo []
+  LKNSBlockForged -> LeiosNSInfo ["BlockForged"] LSInfo []
+  LKNSBlockStored -> LeiosNSInfo ["BlockStored"] LSInfo []
+  LKNSBlockAnnounced -> LeiosNSInfo ["BlockAnnounced"] LSInfo []
+  LKNSBlockCertified -> LeiosNSInfo ["BlockCertified"] LSInfo []
+  LKNSVoted -> LeiosNSInfo ["Voted"] LSInfo []
+  LKNSVoteAcquired -> LeiosNSInfo ["VoteAcquired"] LSInfo []
+  LKNSCertified -> LeiosNSInfo ["Certified"] LSInfo []
+  LKNSNotVoted -> LeiosNSInfo ["NotVoted"] LSInfo []
+  LKNSVoteScheduled -> LeiosNSInfo ["VoteScheduled"] LSInfo []
+  LKNSEbValidated -> LeiosNSInfo ["EbValidated"] LSInfo []
+  LKNSDbException -> LeiosNSInfo ["DbException"] LSError []
+  LKNSDb -> LeiosNSInfo ["Db"] LSInfo []
+  LKNSCertifiedAndAnnounced -> LeiosNSInfo ["CertifiedAndAnnounced"] LSInfo []
+  LKNSAnnouncementAccepted -> LeiosNSInfo ["AnnouncementAccepted"] LSInfo []
+  LKNSFetchDecision -> LeiosNSInfo ["FetchDecision"] LSInfo []
+
+-- | Every kernel namespace suffix, for @allNamespaces@.
+leiosKernelNSPaths :: [[Text]]
+leiosKernelNSPaths = [nsiPath (leiosKernelNSInfo ns) | ns <- [minBound .. maxBound]]
+
+-- | Look up namespace metadata by suffix, for @severityFor@\/@metricsDocFor@.
+leiosKernelNSByPath :: [Text] -> Maybe LeiosNSInfo
+leiosKernelNSByPath p =
+  lookup p [(nsiPath i, i) | ns <- [minBound .. maxBound], let i = leiosKernelNSInfo ns]
+
+traceLeiosKernelForHuman :: TraceLeiosKernel -> Text
+traceLeiosKernelForHuman = \case
+  MkTraceLeiosKernel msg -> "LeiosKernel: " <> T.pack msg
+  TraceLeiosBlockAcquired pt age -> "EB body acquired: " <> T.pack (show pt) <> " age=" <> showT age
+  TraceLeiosBlockPointMissing pt -> "EB point missing on body acquisition: " <> T.pack (show pt)
+  TraceLeiosBlockTxsAcquired pt age -> "EB txs acquired: " <> T.pack (show pt) <> " age=" <> showT age
+  TraceLeiosFetchBodyArrival fab ->
+    "LeiosFetch EB body arrival (bytes): invalid="
+      <> showT (fabInvalid fab)
+      <> " evicted="
+      <> showT (fabEvicted fab)
+      <> " good="
+      <> showT (fabGood fab)
+      <> " extra="
+      <> showT (fabExtra fab)
+  TraceLeiosFetchTxsArrival fab ->
+    "LeiosFetch tx batch arrival (bytes): invalid="
+      <> showT (fabInvalid fab)
+      <> " evicted="
+      <> showT (fabEvicted fab)
+      <> " good="
+      <> showT (fabGood fab)
+      <> " extra="
+      <> showT (fabExtra fab)
+  TraceLeiosBodyHits pt ibs mempoolHits missedBoth ->
+    "EB body added to TxCache "
+      <> T.pack (show pt)
+      <> ": "
+      <> showT (ibsTxsInEb ibs)
+      <> " txs"
+      <> ", "
+      <> showT (ibsTracked ibs)
+      <> " already tracked"
+      <> " ("
+      <> showT (ibsAcquired ibs)
+      <> " acquired"
+      <> ", "
+      <> showT (ibsValidated ibs)
+      <> " validated)"
+      <> ", "
+      <> showT mempoolHits
+      <> " mempool hits"
+      <> ", "
+      <> showT missedBoth
+      <> " in neither"
+      <> "; cache now holds "
+      <> showT (ibsCacheTxCount ibs)
+      <> " txs"
+      <> ", load "
+      <> showT (ibsCacheLoad ibs)
+  TraceLeiosBlockForged{slot, eb} ->
+    "EB forged at slot " <> showT slot <> ": " <> T.pack (show eb)
+  TraceLeiosBlockStored{slot, eb} ->
+    "EB stored at slot " <> showT slot <> ": " <> T.pack (show eb)
+  TraceLeiosBlockAnnounced{announcedEbPoint} ->
+    "EB announced: " <> T.pack (show announcedEbPoint)
+  TraceLeiosBlockCertified{atSlot, certifiedPoint} ->
+    "EB certified at slot " <> showT atSlot <> ": " <> T.pack (show certifiedPoint)
+  TraceLeiosVoted{weight} -> "Leios voted, weight=" <> showT (fromRational @Double weight)
+  TraceLeiosVoteAcquired{} -> "Leios vote acquired"
+  TraceLeiosCertified{rbHash} -> "Leios cert assembled for RB " <> T.pack (show rbHash)
+  TraceLeiosVoteScheduled{ebPoint, voteIn, deadlineIn} ->
+    "Leios vote scheduled for "
+      <> T.pack (show ebPoint)
+      <> " in "
+      <> showT voteIn
+      <> ", deadline in "
+      <> showT deadlineIn
+  TraceLeiosEbValidated{ebPoint, reapplied, applied} ->
+    "Leios EB validated "
+      <> T.pack (show ebPoint)
+      <> " (reapplied "
+      <> showT reapplied
+      <> ", applied "
+      <> showT applied
+      <> ")"
+  TraceLeiosNotVoted{ebPoint, reason} ->
+    "Leios not voted for " <> T.pack (show ebPoint) <> ": " <> T.pack (show reason)
+  TraceLeiosDbException e -> "Leios DB exception: " <> T.pack (show e)
+  TraceLeiosDb ev -> "Leios DB event: " <> T.pack (show ev)
+  TraceLeiosCertifiedAndAnnounced{atSlot, rbHash} ->
+    "RB certified an EB and announced a new one at slot "
+      <> showT atSlot
+      <> " (RB "
+      <> T.pack (show rbHash)
+      <> ")"
+  TraceLeiosAnnouncementAccepted src equiv fields mbAge ->
+    "EB announcement accepted from "
+      <> T.pack (show src)
+      <> " ("
+      <> T.pack (show equiv)
+      <> "): "
+      <> T.pack (show fields)
+      <> " age="
+      <> showT mbAge
+  TraceLeiosFetchDecision d stats dec ->
+    "LeiosFetch decision took "
+      <> showT d
+      <> "; issued "
+      <> showT (ldsRequests dec)
+      <> " reqs to "
+      <> showT (ldsPeers dec)
+      <> " peers ("
+      <> showT (ldsBodyRequests dec)
+      <> " bodies, "
+      <> showT (ldsJobs dec)
+      <> " jobs)"
+      <> "; "
+      <> showT (losTracked stats)
+      <> " EBs tracked"
+      <> ", missingBodies="
+      <> showT (losMissingBodies stats)
+      <> ", peersInflight="
+      <> showT (losPeersInflight stats)
+      <> ", inflightBytesDesc="
+      <> showT (losInflightBytesDesc stats)
+      <> ", offersDesc="
+      <> showT (losOffersDesc stats)
+ where
+  showT :: Show a => a -> Text
+  showT = T.pack . show
+
+data LeiosPeerNS = LPNSMsg | LPNSDbException | LPNSAnnouncement
+  deriving (Eq, Show, Enum, Bounded)
+
+leiosPeerNSOf :: TraceLeiosPeer -> LeiosPeerNS
+leiosPeerNSOf = \case
+  MkTraceLeiosPeer{} -> LPNSMsg
+  TraceLeiosPeerDbException{} -> LPNSDbException
+  TraceLeiosPeerAnnouncement{} -> LPNSAnnouncement
+
+leiosPeerNSInfo :: LeiosPeerNS -> LeiosNSInfo
+leiosPeerNSInfo = \case
+  LPNSMsg -> LeiosNSInfo ["Msg"] LSInfo []
+  LPNSDbException -> LeiosNSInfo ["DbException"] LSError []
+  LPNSAnnouncement -> LeiosNSInfo ["Announcement"] LSInfo []
+
+leiosPeerNSPaths :: [[Text]]
+leiosPeerNSPaths = [nsiPath (leiosPeerNSInfo ns) | ns <- [minBound .. maxBound]]
+
+leiosPeerNSByPath :: [Text] -> Maybe LeiosNSInfo
+leiosPeerNSByPath p =
+  lookup p [(nsiPath i, i) | ns <- [minBound .. maxBound], let i = leiosPeerNSInfo ns]
+
+traceLeiosPeerForHuman :: TraceLeiosPeer -> Text
+traceLeiosPeerForHuman = \case
+  MkTraceLeiosPeer msg -> "LeiosPeer: " <> T.pack msg
+  TraceLeiosPeerDbException e -> "Leios peer DB exception: " <> T.pack (show e)
+  TraceLeiosPeerAnnouncement equiv fields ->
+    "EB announcement from peer (" <> T.pack (show equiv) <> "): " <> T.pack (show fields)
 
 -- * Protocol parameters
 
