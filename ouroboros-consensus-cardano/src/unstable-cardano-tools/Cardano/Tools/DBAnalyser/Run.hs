@@ -269,22 +269,28 @@ analyse dbaConfig args =
   --
   -- Hence this check, rather than a check inside the SQLite backend: that
   -- backend opens with 'SQLOpenCreate' and it creates the schema when it finds
-  -- no file. So without this check the tool would write an empty leios.db into
-  -- the node's directory and fail only at the first cert-RB.
+  -- no file. So without this check the tool would write an empty leios.db.vol
+  -- into the node's directory and fail only at the first cert-RB.
   openLeiosDb
     | stubbedLeiosDb = newLeiosDBInMemory
     | otherwise = do
+        -- Same naming convention as the node: the volatile and immutable
+        -- partitions live in "leios.db.vol" and "leios.db.imm". The volatile
+        -- file suffices as the existence witness; connections create a
+        -- missing immutable file, and its fallback reads then simply miss.
         let leiosDbPath = dbDir FilePath.</> "leios.db"
-        exists <- Directory.doesFileExist leiosDbPath
+            volPath = leiosDbPath <> ".vol"
+            immPath = leiosDbPath <> ".imm"
+        exists <- Directory.doesFileExist volPath
         unless exists $
           die $
             "No LeiosDb at "
-              <> leiosDbPath
+              <> volPath
               <> ". A block that carries a Leios certificate has an empty body, "
               <> "and the transactions that it puts on the chain are in the "
               <> "endorser block that it certifies, which the LeiosDb holds. "
               <> "Pass --stubbed-leios-db if this chain holds no such block."
-        newLeiosDBSQLite nullTracer leiosDbPath
+        newLeiosDBSQLite nullTracer volPath immPath
 
   withImmutableDB immutableDbArgs =
     bracket

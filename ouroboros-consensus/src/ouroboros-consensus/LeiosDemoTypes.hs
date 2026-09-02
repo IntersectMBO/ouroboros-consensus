@@ -1518,13 +1518,38 @@ jsonLeiosDb = \case
       , "attempt" .= attempt
       , "waitedMs" .= waitedMs
       ]
-  TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, dbFileBytes, walBytes} ->
+  TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosDbStats"
       , "volatileEbs" .= volatileEbs
       , "immutableEbs" .= immutableEbs
-      , "dbFileBytes" .= dbFileBytes
       , "walBytes" .= walBytes
+      ]
+  TraceLeiosDbCopiedToImmutable copiedEbs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopiedToImmutable"
+      , "copiedEbs" .= copiedEbs
+      ]
+  TraceLeiosDbEvicted evictedEbs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbEvicted"
+      , "evictedEbs" .= evictedEbs
+      ]
+  TraceLeiosDbGCError reason ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbSweepError"
+      , "reason" .= reason
+      ]
+  TraceLeiosDbCopyQueueFull ebHash ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopyQueueFull"
+      , "ebHash" .= ebHash
+      ]
+  TraceLeiosDbCopyError ebHash reason ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopyError"
+      , "ebHash" .= ebHash
+      , "reason" .= reason
       ]
   -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
   -- the forge loop's call traces, so one dashboard query shape covers both.
