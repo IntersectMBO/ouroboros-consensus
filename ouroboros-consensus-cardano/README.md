@@ -439,6 +439,8 @@ It then does three things to the Leios database:
 3. Vacuum the file, which returns the freed pages to the filesystem.
 
 Step 3 rewrites the file, so it needs free space of about the size of the file.
+SQLite puts that copy in the system temp directory, not beside the database.
+Set `SQLITE_TMPDIR` if that filesystem is small.
 
 Pass `--stubbed-leios-db` for a chain that holds no certifying block, such as a chain that predates Leios.
 Without the flag the tool needs `DB_PATH/leios.db` and refuses to start when that file is absent.
