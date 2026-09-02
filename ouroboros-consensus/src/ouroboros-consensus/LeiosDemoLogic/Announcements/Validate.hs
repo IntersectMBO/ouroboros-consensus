@@ -227,6 +227,12 @@ validateAnnouncementHeader cfg extLedger hdr =
     -- that our lagging tip would spuriously trip (see
     -- 'validateAnnouncementChainDepState'). Any error it returns is a genuine
     -- rejection.
+    --
+    -- Ticks the immutable tip's header state to the announcing slot without
+    -- applying the intervening headers: sound within the forecast horizon, since
+    -- the nonce and stake the VRF/KES checks use are already fixed and stale
+    -- opcert counters only yield 'StaleOCIN', never a false rejection. No TICKF
+    -- analog is warranted: unlike the ledger tick, nothing costly is discarded.
     let tickedHeaderState =
           tickHeaderState (configConsensus cfg) ledgerView slot (headerState extLedger)
     staleness <-

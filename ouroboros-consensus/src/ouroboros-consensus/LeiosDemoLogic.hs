@@ -120,6 +120,9 @@ import Ouroboros.Consensus.Block
   , headerHash
   , toRawHash
   )
+import Ouroboros.Consensus.BlockchainTime
+  ( CurrentSlot (CurrentSlot, CurrentSlotUnknown)
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime
   , SystemTime
@@ -127,13 +130,14 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , systemTimeCurrent
   )
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
-import Ouroboros.Consensus.HardFork.History
-  ( PastHorizonException (PastHorizon)
-  )
+import Ouroboros.Consensus.Forecast (forecastFor)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
-import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  , ledgerViewForecastAt
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
@@ -1623,6 +1627,38 @@ data ExnLeiosBlockAnnouncementMissing = ExnLeiosBlockAnnouncementMissing
 
 instance Exception ExnLeiosBlockAnnouncementMissing
 
+-- | Block until the immutable tip can forecast the ledger view to the current
+-- slot
+--
+-- LeiosNotify replies are fresh, ie in slots near the wall clock, and
+-- 'announcementValidity' judges them by forecasting from the immutable tip.
+-- Until that tip reaches approximately /now/, a fresh reply would be
+-- @PastHorizon@, and a reply we cannot judge is no grounds to punish the
+-- peer. So we don't even send a request.
+--
+-- The current slot is read via the caller's 'CurrentSlot' action, which uses
+-- the volatile tip; its horizon reaches further, so gating on it alone would
+-- send requests too soon.
+awaitImmTipCanForecastNow ::
+  (IOLike m, LedgerSupportsProtocol blk) =>
+  TopLevelConfig blk ->
+  -- | the /immutable/ tip's ledger state
+  StrictSTM.STM m (ExtLedgerState blk mk) ->
+  StrictSTM.STM m CurrentSlot ->
+  StrictSTM.STM m ()
+awaitImmTipCanForecastNow cfg readImmutableLedger readCurrentSlot =
+  readCurrentSlot >>= \case
+    CurrentSlotUnknown -> StrictSTM.retry
+    CurrentSlot slot -> do
+      immLedger <- readImmutableLedger
+      case runExcept
+        ( forecastFor
+            (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger))
+            slot
+        ) of
+        Left _ -> StrictSTM.retry
+        Right _ -> pure ()
+
 -- | The @validate@ callback for 'onAnnouncement'.
 --
 -- First apply ChainSync's in-future check to the announced slot's wall-clock
@@ -1631,14 +1667,6 @@ instance Exception ExnLeiosBlockAnnouncementMissing
 -- the peer), a near-future slot blocks until the slot's onset (Ouroboros
 -- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
 -- announcement is the peer's fault.
---
--- A slot past the forecast horizon is /not/ the peer's fault, so it must not
--- disconnect them: it means our own ledger is too far behind to date the
--- announcement, which is the ordinary state of affairs while syncing. The
--- verdict is 'VerdictIgnore' and 'TraceLeiosAnnouncementPastHorizon' records it.
--- The horizon comes from the volatile tip rather than the immutable one for the
--- same reason — it is the longest forecast we have, and every slot it buys is a
--- peer we do not drop.
 --
 -- If the announcement is valid and 'FreshOCIN', the verdict carries its data and
 -- whether to relay it downstream (see 'ShouldRelay' and
@@ -1649,13 +1677,9 @@ instance Exception ExnLeiosBlockAnnouncementMissing
 -- relaying it.
 announcementValidity ::
   (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
-  Tracer m TraceLeiosKernel ->
   SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
-  -- | The volatile tip's ledger state, for the in-future check: it forecasts
-  -- furthest, and a shorter horizon costs us peers.
-  ExtLedgerState blk EmptyMK ->
   -- | The immutable tip's ledger state, for the OCIN revocation check: a
   -- revocation only counts once it cannot be rolled back.
   ExtLedgerState blk EmptyMK ->
@@ -1665,43 +1689,38 @@ announcementValidity ::
         (AnnouncementInvalidity blk)
         (ShouldRelay, RelativeTime, NominalDiffTime, (LeiosPoint, BytesSize))
     )
-announcementValidity tracer systemTime futureCheck cfg volLedger immLedger hdr = do
-  mbOnset <- case futureCheck of
+announcementValidity systemTime futureCheck cfg immLedger hdr = do
+  onset <- case futureCheck of
     InFutureCheck.SomeHeaderInFutureCheck hifc -> do
       arrival <- InFutureCheck.recordHeaderArrival hifc hdr
-      case runExcept $
-        InFutureCheck.judgeHeaderArrival
-          hifc
-          (configLedger cfg)
-          (ledgerState volLedger)
-          arrival of
-        Left PastHorizon{} -> do
-          traceWith tracer $ TraceLeiosAnnouncementPastHorizon (blockSlot hdr)
-          pure Nothing
-        Right judgment -> do
-          arrivalResult <- InFutureCheck.handleHeaderArrival hifc judgment
-          Just <$> either throwIO pure (runExcept arrivalResult)
-  case mbOnset of
-    Nothing -> pure VerdictIgnore
-    Just onset -> do
-      -- The in-future check has delayed this thread until 'onset' if the
-      -- slot was near-future, so 'now' is at or after 'onset' and the age
-      -- is non-negative.
-      now <- systemTimeCurrent systemTime
-      let age = diffRelTime now onset
-      pure $
-        -- Only this function holds the wall clock, so it owns the too-old check.
-        if age > maxAnnouncementAgeRecv
-          then VerdictTooOld
-          else
-            let shouldRelay =
-                  if age <= maxAnnouncementAgeSend
-                    then DoRelay
-                    else DoNotRelay
-             in case validateAnnouncementHeader cfg immLedger hdr of
-                  Left inv -> VerdictInvalid inv
-                  Right (StaleOCIN, _v) -> VerdictIgnore
-                  Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, onset, age, v)
+      judgment <-
+        either throwIO pure $
+          runExcept $
+            InFutureCheck.judgeHeaderArrival
+              hifc
+              (configLedger cfg)
+              (ledgerState immLedger)
+              arrival
+      arrivalResult <- InFutureCheck.handleHeaderArrival hifc judgment
+      either throwIO pure (runExcept arrivalResult)
+  -- The in-future check has delayed this thread until 'onset' if the
+  -- slot was near-future, so 'now' is at or after 'onset' and the age
+  -- is non-negative.
+  now <- systemTimeCurrent systemTime
+  let age = diffRelTime now onset
+  pure $
+    -- Only this function holds the wall clock, so it owns the too-old check.
+    if age > maxAnnouncementAgeRecv
+      then VerdictTooOld
+      else
+        let shouldRelay =
+              if age <= maxAnnouncementAgeSend
+                then DoRelay
+                else DoNotRelay
+         in case validateAnnouncementHeader cfg immLedger hdr of
+              Left inv -> VerdictInvalid inv
+              Right (StaleOCIN, _v) -> VerdictIgnore
+              Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, onset, age, v)
 
 -- | Record a validated, newly-announced EB body as missing, unless its already
 -- pruned\/tracked\/acquired

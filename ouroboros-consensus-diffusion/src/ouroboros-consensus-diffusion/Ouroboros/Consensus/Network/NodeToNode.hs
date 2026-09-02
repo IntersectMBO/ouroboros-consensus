@@ -137,6 +137,7 @@ import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (getCurrentSlot)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( diffRelTime
   , systemTimeCurrent
@@ -387,6 +388,7 @@ mkHandlers
     , getTracers = tracers
     , getPeerSharingAPI
     , getGsmState
+    , getBlockchainTime
     }
   txSubmissionLogicVersion =
     Handlers
@@ -496,9 +498,17 @@ mkHandlers
           peerStateVar <- Prim.newMutVar (SlotNo 0, Announcements.emptyPeerState)
           pure $
             leiosNotifyClientPeerPipelined
-              ( atomically controlMessageSTM <&> \case
-                  Terminate -> Left ()
-                  _ -> Right leiosNotifyPipelineDepth
+              ( atomically $
+                  controlMessageSTM >>= \case
+                    Terminate -> pure (Left ())
+                    _ -> do
+                      -- Gate on the immutable tip being able to forecast to the
+                      -- current wall clock.
+                      Leios.awaitImmTipCanForecastNow
+                        getTopLevelConfig
+                        (ChainDB.getImmutableLedger getChainDB)
+                        (getCurrentSlot getBlockchainTime)
+                      pure $ Right leiosNotifyPipelineDepth
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
@@ -507,15 +517,7 @@ mkHandlers
                     anc <- case Leios.mkAnnouncingHeader hdr of
                       Nothing -> throwIO Leios.ExnLeiosBlockAnnouncementMissing
                       Just x -> pure x
-                    -- The volatile tip dates the announcement (longest forecast
-                    -- horizon), the immutable tip judges OCIN revocation (only
-                    -- a state that cannot roll back may revoke). Read together
-                    -- so the two cannot disagree about the same chain.
-                    (volLedger, immLedger) <-
-                      atomically $
-                        (,)
-                          <$> ChainDB.getCurrentLedger getChainDB
-                          <*> ChainDB.getImmutableLedger getChainDB
+                    immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
                     (latestPruneSlot, peerSt0) <- Prim.readMutVar peerStateVar
                     res <-
                       runExceptT $
@@ -524,11 +526,9 @@ mkHandlers
                           Leios.ancElId
                           ( \ancH ->
                               Leios.announcementValidity
-                                kernelTracer
                                 systemTime
                                 chainSyncFutureCheck
                                 getTopLevelConfig
-                                volLedger
                                 immLedger
                                 (Leios.ancHeader ancH)
                           )
