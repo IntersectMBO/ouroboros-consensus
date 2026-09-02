@@ -534,8 +534,9 @@ vacuumLeiosDb dbPath =
 -- | Open a LeiosDb that must already exist.
 --
 -- No 'SQLOpenCreate', unlike 'openSQLiteConnection': a wrong path must fail
--- rather than gain an empty database. No 'busy_timeout' either, so a database
--- another process holds open refuses a write at once.
+-- rather than gain an empty database. No 'busy_timeout' either, so a write that
+-- meets the node's own write lock gives up after the retries in 'withDie'
+-- rather than block.
 withExistingDb :: HasCallStack => FilePath -> (DB.Database -> IO a) -> IO a
 withExistingDb dbPath =
   MonadThrow.bracket
