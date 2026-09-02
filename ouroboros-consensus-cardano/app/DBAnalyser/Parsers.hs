@@ -69,10 +69,9 @@ parseStubbedLeiosDb =
     mconcat
       [ long "stubbed-leios-db"
       , help $
-          "Use an empty in-memory LeiosDb, rather than the leios.db file under "
-            <> "the --db path. Pass this for a chain that holds no block with a "
-            <> "Leios certificate. Without this flag, the tool refuses to start "
-            <> "when it finds no such file."
+          "Do not use the leios.db file under the --db path. Pass this for a "
+            <> "chain that holds no block with a Leios certificate. Without "
+            <> "this flag, the tool refuses to start when it finds no such file."
       ]
 
 parseSelectDB :: Parser SelectDB
