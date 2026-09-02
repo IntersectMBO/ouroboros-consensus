@@ -106,10 +106,28 @@ truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, stubbedLeiosDb} args =
               deleteAfter internal (At newTip)
               -- Truncate the LeiosDb after the ImmutableDB. The other order
               -- can leave a cert-RB whose EB is gone.
-              forM_ mLeiosDbPath $ \path -> do
-                truncateLeiosDbAfterSlot path (tipSlotNo newTip)
-                deleteDanglingTxs path
-                vacuumLeiosDb path
+              forM_ mLeiosDbPath $ \path ->
+                (`onException` hPutStrLn stderr (leiosDbCutFailed newTip)) $ do
+                  truncateLeiosDbAfterSlot path (tipSlotNo newTip)
+                  deleteDanglingTxs path
+                  vacuumLeiosDb path
+
+leiosDbCutFailed :: Tip blk -> String
+leiosDbCutFailed newTip =
+  mconcat
+    [ "The ImmutableDB is truncated to slot "
+    , slot
+    , ". The LeiosDb cut did not complete, so leios.db still holds the EBs "
+    , "announced after that slot. Nothing on the truncated chain reads them, "
+    , "so you can leave them. To remove them, re-run with a "
+    , "--truncate-after-slot below "
+    , slot
+    , ": a re-run at "
+    , slot
+    , " reports \"Nothing to truncate\" and changes nothing."
+    ]
+ where
+  slot = show (tipSlotNo newTip)
 
 -- | Given a predicate, and an iterator, find the last item for which
 -- the predicate passes.
