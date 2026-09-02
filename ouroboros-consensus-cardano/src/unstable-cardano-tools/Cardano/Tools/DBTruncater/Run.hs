@@ -10,7 +10,7 @@ module Cardano.Tools.DBTruncater.Run (truncate) where
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBTruncater.Types
-import Cardano.Tools.LeiosDb (openLeiosDb)
+import Cardano.Tools.LeiosDb (leiosDbPath)
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
@@ -19,7 +19,11 @@ import Control.Tracer (Tracer (..), emit)
 import Data.Foldable (asum)
 import Data.Functor ((<&>))
 import Data.Functor.Identity
-import LeiosDemoDb (withLeiosDb)
+import LeiosDemoDb
+  ( deleteDanglingTxs
+  , truncateLeiosDbAfterSlot
+  , vacuumLeiosDb
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Node as Node
@@ -45,8 +49,8 @@ truncate ::
   Args block ->
   IO ()
 truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, stubbedLeiosDb} args = do
-  leiosDbHandle <- openLeiosDb stubbedLeiosDb dbDir
-  withRegistry $ \registry -> withLeiosDb leiosDbHandle $ \_leiosDb -> do
+  mLeiosDbPath <- leiosDbPath stubbedLeiosDb dbDir
+  withRegistry $ \registry -> do
     lock <- mkLock
     immutableDBTracer <- mkTracer lock verbose
     ProtocolInfo
@@ -100,6 +104,12 @@ truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, stubbedLeiosDb} args =
                   , show newTip
                   ]
               deleteAfter internal (At newTip)
+              -- Truncate the LeiosDb after the ImmutableDB. The other order
+              -- can leave a cert-RB whose EB is gone.
+              forM_ mLeiosDbPath $ \path -> do
+                truncateLeiosDbAfterSlot path (tipSlotNo newTip)
+                deleteDanglingTxs path
+                vacuumLeiosDb path
 
 -- | Given a predicate, and an iterator, find the last item for which
 -- the predicate passes.
