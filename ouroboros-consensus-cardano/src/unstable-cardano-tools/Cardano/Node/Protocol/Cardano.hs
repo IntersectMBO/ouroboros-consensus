@@ -18,6 +18,7 @@ import qualified Cardano.Ledger.Api.Transition as SL
 import Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Core (MaxPledgeLeverage (..))
 import Cardano.Ledger.Dijkstra.PParams
+import Cardano.Ledger.Plutus (Language (..), costModelInitParamCount, mkCostModel)
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
@@ -26,6 +27,7 @@ import qualified Cardano.Node.Protocol.Shelley as Shelley
 import Cardano.Node.Types
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Monad.Trans.Except.Extra (firstExceptT)
+import Data.Either (fromRight)
 import Data.Maybe (fromMaybe)
 import Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
@@ -269,6 +271,9 @@ emptyDijkstraGenesis =
           , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
           , udppMaxPledgeLeverage = MaxPledgeLeverage SNothing
           , udppMinPoolMargin = minBound
+          , udppPlutusV4CostModel =
+              fromRight (error "impossible") $
+                mkCostModel PlutusV4 (replicate (costModelInitParamCount PlutusV4) 0)
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 

@@ -33,12 +33,12 @@ import Cardano.Protocol.Praos.BlockHeader
   ( HeaderBody (HeaderBody)
   )
 import qualified Cardano.Protocol.Praos.BlockHeader as Praos
-import Data.Maybe.Strict (StrictMaybe (SNothing))
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Time (mkSlotLength)
 import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -57,8 +57,8 @@ import Ouroboros.Consensus.Protocol.TPraos
   )
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
-import Ouroboros.Consensus.Shelley.Protocol.Leios ()
 import Ouroboros.Consensus.Shelley.Ledger.Query.Types
+import Ouroboros.Consensus.Shelley.Protocol.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)

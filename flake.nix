@@ -46,7 +46,7 @@
       flake = false;
     };
     cardano-ledger-src = {
-      url = "github:IntersectMBO/cardano-ledger/fcc6f4fdaa28f18f7a2a4ac3e9100e7f8238ec31";
+      url = "github:IntersectMBO/cardano-ledger/e1fe1dd48d1c0b05bfe459e651a47015fb87a635";
       flake = false;
     };
     kes-agent-src = {

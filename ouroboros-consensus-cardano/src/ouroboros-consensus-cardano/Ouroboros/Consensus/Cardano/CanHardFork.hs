@@ -87,10 +87,10 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract hiding
   ( translateChainDepState
   )
-import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
-import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import Ouroboros.Consensus.Protocol.Leios (Leios)
 import qualified Ouroboros.Consensus.Protocol.Leios as Leios
+import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
+import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)

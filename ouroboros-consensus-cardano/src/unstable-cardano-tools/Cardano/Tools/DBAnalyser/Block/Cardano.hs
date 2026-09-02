@@ -27,6 +27,7 @@ import qualified Cardano.Ledger.Api.Transition as SL
 import Cardano.Ledger.BaseTypes (StrictMaybe (..), boundRational, unsafeNonZero)
 import Cardano.Ledger.Core (MaxPledgeLeverage (..), TxOut)
 import Cardano.Ledger.Dijkstra.PParams
+import Cardano.Ledger.Plutus (Language (..), costModelInitParamCount, mkCostModel)
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
 import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
 import Cardano.Ledger.TxIn (TxIn)
@@ -40,6 +41,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.Compact as Compact
+import Data.Either (fromRight)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe)
@@ -208,6 +210,9 @@ emptyDijkstraGenesis =
           , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
           , udppMaxPledgeLeverage = MaxPledgeLeverage SNothing
           , udppMinPoolMargin = minBound
+          , udppPlutusV4CostModel =
+              fromRight (error "impossible") $
+                mkCostModel PlutusV4 (replicate (costModelInitParamCount PlutusV4) 0)
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 
