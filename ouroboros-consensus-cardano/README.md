@@ -404,6 +404,46 @@ The tool expects the given ChainDB path (`--db` option) to *not* be present. Sho
 
 A limit must be specified up to which the tool synthesizes a ChainDB. Possible limits are either the number of slots processed (`-s`), the number of epochs processed (`-e`) or the absolute number of blocks in the resulting ChainDB (`-b`).
 
+## db-truncater
+
+Cut a chain back to a given slot or block number.
+The tool edits the ImmutableDB in place, so the truncation is destructive and irreversible.
+
+Basic usage:
+```sh
+cabal run db-truncater -- \
+  --db /path/to/chaindb \
+  --truncate-after-slot 42 \
+  --config /path/to/config.json
+```
+
+Pass either `--truncate-after-slot SLOT_NUMBER` or `--truncate-after-block BLOCK_NUMBER`.
+The tool finds the last block at or below that point and makes it the new tip.
+If the ImmutableDB tip already sits at or below that point, the tool changes nothing.
+
+The tool does not touch the VolatileDB or the ledger snapshots.
+Both still describe the longer chain after a truncation.
+
+Additional flags:
+
+ - `--verbose`: Trace the ImmutableDB events to stderr.
+
+### The Leios database
+
+On a Leios chain the tool also cuts `DB_PATH/leios.db` back to the new tip.
+It truncates the ImmutableDB first, because the other order can leave a certifying block whose endorser block (EB) is gone.
+It then does three things to the Leios database:
+
+1. Delete the EBs announced after the new tip slot, with their bodies.
+2. Delete the transactions that no EB references any more.
+3. Vacuum the file, which returns the freed pages to the filesystem.
+
+Step 3 rewrites the file, so it needs free space of about the size of the file.
+
+Pass `--stubbed-leios-db` for a chain that holds no certifying block, such as a chain that predates Leios.
+Without the flag the tool needs `DB_PATH/leios.db` and refuses to start when that file is absent.
+See the db-analyser section on that flag for why the tool cannot make the call itself.
+
 ## ImmDB Server
 
 A standalone tool that serves a Cardano ImmutableDB via ChainSync and BlockFetch.
