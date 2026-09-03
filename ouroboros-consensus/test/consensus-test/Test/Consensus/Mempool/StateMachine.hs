@@ -86,6 +86,7 @@ import Test.Tasty
 import Test.Tasty.HUnit (assertBool, testCase)
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.ToExpr ()
+import qualified Test.Util.QuickCheck as QC'
 import Test.Util.ToExpr ()
 
 {-------------------------------------------------------------------------------
@@ -983,7 +984,7 @@ tests =
     "QSM"
     [ testCase "removal is not undone by a concurrent sync" prop_removeDuringSyncSM
     , testProperty "sequential" $
-        withMaxSuccess 1000 $
+        QC'.withNumTests 1000 $
           prop_mempoolSequential testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger $
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
@@ -995,7 +996,7 @@ tests =
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
         , testProperty "non atomic" $
-            withMaxSuccess 10 $
+            QC'.withNumTests 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
         ]
