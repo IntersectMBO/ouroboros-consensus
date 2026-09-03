@@ -14,12 +14,16 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
+import Data.Function (on)
+import Data.List (nubBy)
 import Data.Maybe (fromJust, isNothing)
 import LeiosDemoTypes
   ( LeiosSeatId (..)
   , LeiosSigningKey
   , LeiosVote (..)
+  , RbHash
   , VoteInvalid (..)
+  , Weight
   , getLeiosSeatId
   , leiosCommitteeSize
   , signLeiosVote
@@ -41,6 +45,7 @@ import Test.QuickCheck
   , forAll
   , listOf1
   , property
+  , sublistOf
   , suchThat
   , (.&&.)
   , (===)
@@ -60,6 +65,7 @@ tests =
     , testProperty "invalid vote is rejected and not published" prop_invalidVoteRejected
     , testProperty "no committee rejects vote" prop_noCommitteeRejected
     , testProperty "vote signed with key not on committee is rejected" prop_signerNotInCommittee
+    , testProperty "reported tally accumulates the reported weights" prop_tallyAccumulates
     ]
 
 -- | A 'VotingKey' that is *not* a member of the given committee.
@@ -198,3 +204,45 @@ prop_signerNotInCommittee =
 isAdded :: AddVoteResult -> Property
 isAdded Added{} = property True
 isAdded r = counterexample ("expected Added, got " ++ show r) False
+
+-- | Votes for one point, one per distinct committee seat.
+--
+-- Deduplicated on seat rather than on key: two keys mapping to the same seat
+-- would have the second replace the first in the tally rather than add to it,
+-- which is a different property from the one below.
+genOneVotePerSeat :: TestCommittee -> RbHash -> Gen [LeiosVote]
+genOneVotePerSeat c rbHash = do
+  keys <- sublistOf c.allKeys `suchThat` (not . null)
+  pure [signLeiosVote key (seatOf key) rbHash | key <- nubBy ((==) `on` seatOf) keys]
+ where
+  seatOf key = fromJust $ getLeiosSeatId (deriveVerKeyDSIGN key) c.committee
+
+-- | The tally reported with each accepted vote must be the running sum of the
+-- individual weights reported so far.
+--
+-- This pins the incrementally maintained 'psTotal' against the sum over the
+-- voter map that it replaced. Nothing else in this suite asserts anything about
+-- the tally value, so without this a wrong total is invisible to the tests and
+-- shows up only as wrong telemetry.
+prop_tallyAccumulates :: Property
+prop_tallyAccumulates =
+  forAll genCommittee $ \testCommittee ->
+    forAll genRbHash $ \rbHash ->
+      forAll (genOneVotePerSeat testCommittee rbHash) $ \votes ->
+        property $ runSimOrThrow $ do
+          st <- newLeiosVoteState (pure (Just testCommittee.committee))
+          results <- mapM (addVote st) votes
+          pure $ case traverse addedWeights results of
+            Nothing ->
+              counterexample ("expected every add to be Added, got " ++ show results) False
+            Just weighted ->
+              let (ownWeights, tallies) = unzip weighted
+               in counterexample
+                    ("own weights " ++ show ownWeights ++ ", tallies " ++ show tallies)
+                    (tallies === scanl1 (+) ownWeights)
+
+-- | The own weight and running tally carried by 'Added', or 'Nothing' for any
+-- other result.
+addedWeights :: AddVoteResult -> Maybe (Weight, Weight)
+addedWeights (Added ownWeight tally _) = Just (ownWeight, tally)
+addedWeights _ = Nothing

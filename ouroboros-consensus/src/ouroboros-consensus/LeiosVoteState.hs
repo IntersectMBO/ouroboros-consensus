@@ -50,10 +50,20 @@ data AddVoteResult
   = NoCommittee
   | VoteInvalid VoteInvalid
   | AlreadyKnown
-  | -- | The vote was added to the state, with the running per-point weight
-    -- after this addition. The LeiosCert is 'Just' whenever the tally for the
-    -- vote's point is at or above 'minCertificationThreshold'.
-    Added Weight (Maybe LeiosCert)
+  | -- | The vote was added to the state. The first 'Weight' is this voter's own
+    -- weight; the second is the running per-point tally after this addition.
+    -- The LeiosCert is 'Just' whenever that tally is at or above
+    -- 'minCertificationThreshold'.
+    --
+    -- Both fields are 'Weight', so transposing them at a construction or
+    -- destructuring site type checks and yields plausible but wrong telemetry.
+    -- Keep the order above when touching either this constructor or its three
+    -- use sites.
+    --
+    -- The tally is surfaced rather than traced where it is computed because
+    -- the update runs in STM, which cannot trace. Callers emit it, as they
+    -- already do for certification.
+    Added !Weight !Weight (Maybe LeiosCert)
   deriving (Eq, Show)
 
 data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m LeiosVote}
@@ -63,6 +73,11 @@ data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m Leios
 -- threshold is crossed.
 data PointState = PointState
   { psVoters :: !(Map LeiosSeatId (Weight, LeiosSignature))
+  , psTotal :: !Weight
+  -- ^ Running sum of 'psVoters' weights, maintained incrementally. Kept in the
+  -- state rather than recomputed per vote: summing the map is linear in the
+  -- committee, so recomputing made the per-point cost quadratic, and every
+  -- post-threshold vote paid it too once the tally started being reported.
   , psCert :: !(Maybe LeiosCert)
   -- ^ Assembled once when this point's total weight first reaches
   -- 'minCertificationThreshold'; reused for subsequent post-threshold
@@ -70,7 +85,7 @@ data PointState = PointState
   }
 
 emptyPointState :: PointState
-emptyPointState = PointState Map.empty Nothing
+emptyPointState = PointState Map.empty 0 Nothing
 
 -- | Create a new empty 'LeiosVoteState'.
 newLeiosVoteState ::
@@ -118,12 +133,17 @@ newLeiosVoteState getCommittee = do
                           -- threshold is crossed.
                           states <- readTVar pointStates
                           let pst = Map.findWithDefault emptyPointState vote.announcingRbHash states
-                              pst' =
-                                pst
-                                  { psVoters =
-                                      Map.insert vote.voterId (weight, vote.voteSignature) pst.psVoters
-                                  }
-                              totalW = sum [w | (w, _) <- Map.elems pst'.psVoters]
+                              -- 'Map.insert' replaces any entry this seat already
+                              -- had, so the running total must drop the old weight
+                              -- rather than simply adding the new one.
+                              (mOld, voters') =
+                                Map.insertLookupWithKey
+                                  (\_ new _old -> new)
+                                  vote.voterId
+                                  (weight, vote.voteSignature)
+                                  pst.psVoters
+                              totalW = pst.psTotal + weight - maybe 0 fst mOld
+                              pst' = pst{psVoters = voters', psTotal = totalW}
                               pst'' = case pst.psCert of
                                 Just _ -> pst'
                                 Nothing
@@ -141,7 +161,7 @@ newLeiosVoteState getCommittee = do
                                         Right cert -> pst'{psCert = Just cert}
                                   | otherwise -> pst'
                           writeTVar pointStates $! Map.insert vote.announcingRbHash pst'' states
-                          pure $ Added weight pst''.psCert
+                          pure $ Added weight totalW pst''.psCert
       , subscribeVotes = do
           chan <- atomically $ dupTChan votesChan
           pure $
