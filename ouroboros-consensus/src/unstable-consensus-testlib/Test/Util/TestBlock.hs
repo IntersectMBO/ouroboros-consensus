@@ -168,6 +168,7 @@ import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Network.Block (decodePoint, encodePoint)
 import Ouroboros.Network.Magic (NetworkMagic (..))
 import Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -1036,6 +1037,12 @@ instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptyp
 instance Serialise (RealPoint (TestBlockWith ptype)) where
   encode = encodeRealPoint encode
   decode = decodeRealPoint decode
+
+instance Typeable ptype => ToCBOR (Point (TestBlockWith ptype)) where
+  toCBOR = encodePoint encode
+
+instance Typeable ptype => FromCBOR (Point (TestBlockWith ptype)) where
+  fromCBOR = decodePoint decode
 
 -- 'ConvertRawHash' expects a constant-size hash. As a compromise, we allow to
 -- encode hashes with a block length of up to 100.

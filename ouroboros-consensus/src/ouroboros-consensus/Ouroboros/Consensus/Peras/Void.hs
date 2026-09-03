@@ -82,6 +82,12 @@ instance IsPerasCert (VoidPerasCert blk) blk where
   getPerasCertRound = absurd . unVoidPerasCert
   getPerasCertBlock = absurd . unVoidPerasCert
 
+instance Typeable blk => ToCBOR (VoidPerasCert blk) where
+  toCBOR = absurd . unVoidPerasCert
+
+instance Typeable blk => FromCBOR (VoidPerasCert blk) where
+  fromCBOR = fail "VoidPerasCert cannot be decoded"
+
 -- | Void Peras error for @blk@.
 --
 -- NOTE: the phantom @blk@ is used to keep the 'PerasError' type family injective.
