@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   , hackage.haskell.org 2026-07-15T21:58:35Z
-  , cardano-haskell-packages 2026-07-27T20:44:57Z
+  , cardano-haskell-packages 2026-08-07T15:03:01Z
 
 -- TODO: needed to drop because newer cuddle on hackage would have not been seen
 -- active-repositories:
@@ -46,6 +46,13 @@ if os (windows)
 -- TODO: bump packages instead of this
 allow-newer:
   , cardano-crypto-class
+-- Hold the crypto closure on the old `memory` line rather than following crypton
+-- onto `ram`, which cascades through cardano-crypto/crypton-x509/tls/grapesy for no
+-- code benefit. The crypton pin only works together with the matching declaration
+-- swap in the sibling cardano-crypto-class (see cabal.project.local): pinning one
+-- without the other puts both ByteArray classes in scope.
+allow-older:
+  , cardano-crypto-class:crypton
 constraints:
   , any.crypton < 1.1
 
@@ -70,28 +77,31 @@ source-repository-package
     typed-protocols
 
 -- Points to ouroboros-ledger/leios-prototype
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/cardano-ledger
-  tag: f3104f00f9819ba94de119c38bc3e0109982821f
-  --sha256: sha256-PESnjqXXQTD5C9tvE6AfADSkymvj+edu3BhX3sQYjRk=
-  subdir:
-    libs/cardano-data
-    libs/cardano-ledger-api
-    libs/small-steps
-    libs/cardano-ledger-binary
-    libs/cardano-ledger-core
-    libs/cardano-protocol-tpraos
-    eras/shelley/impl
-    eras/shelley/test-suite
-    eras/shelley-ma/test-suite
-    eras/mary/impl
-    eras/allegra/impl
-    eras/alonzo/impl
-    eras/alonzo/test-suite
-    eras/babbage/impl
-    eras/conway/impl
-    eras/dijkstra/impl
+-- LOCAL ITERATION, DO NOT COMMIT: integrating ledger master (bc7df95611).
+-- The pin below is the old leios-prototype ledger fork; the sibling worktree
+-- in cabal.project.local is plain master.
+-- source-repository-package
+--   type: git
+--   location: https://github.com/IntersectMBO/cardano-ledger
+--   tag: f3104f00f9819ba94de119c38bc3e0109982821f
+--   --sha256: sha256-PESnjqXXQTD5C9tvE6AfADSkymvj+edu3BhX3sQYjRk=
+--   subdir:
+--     libs/cardano-data
+--     libs/cardano-ledger-api
+--     libs/small-steps
+--     libs/cardano-ledger-binary
+--     libs/cardano-ledger-core
+--     libs/cardano-protocol-tpraos
+--     eras/shelley/impl
+--     eras/shelley/test-suite
+--     eras/shelley-ma/test-suite
+--     eras/mary/impl
+--     eras/allegra/impl
+--     eras/alonzo/impl
+--     eras/alonzo/test-suite
+--     eras/babbage/impl
+--     eras/conway/impl
+--     eras/dijkstra/impl
 
 source-repository-package
   type: git
@@ -102,14 +112,13 @@ source-repository-package
     kes-agent
     kes-agent-crypto
 
--- cardano-base ch1bo/mk-committee (Leios committee/BLS + crypton memory revert).
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/cardano-base
-  tag: 9c6078d9c39c542abcb5912d0d7c222b7ba8a03d
-  --sha256: sha256-FfzoMXitbX/pzEJDQExQikGef6FcantzGWvqu2g19ho=
-  subdir:
-    cardano-binary
-    cardano-crypto-class
-    cardano-crypto-leios
-    cardano-crypto-praos
+-- source-repository-package
+--   type: git
+--   location: https://github.com/IntersectMBO/cardano-base
+--   tag: 9c6078d9c39c542abcb5912d0d7c222b7ba8a03d
+--   --sha256: sha256-FfzoMXitbX/pzEJDQExQikGef6FcantzGWvqu2g19ho=
+--   subdir:
+--     cardano-binary
+--     cardano-crypto-class
+--     cardano-crypto-leios
+--     cardano-crypto-praos

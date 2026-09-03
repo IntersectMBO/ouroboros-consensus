@@ -332,7 +332,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
           SL.AccountAddress Shelley.networkId $ SL.AccountId (Shelley.mkCredential poolSK)
       , SL.sppRelays = StrictSeq.empty
       , SL.sppVrf = Shelley.mkKeyHashVrf @c vrfSK
-      , SL.sppLeiosKey = SL.SNothing
+      , SL.sppBlsKey = SL.SNothing
       }
 
 -----

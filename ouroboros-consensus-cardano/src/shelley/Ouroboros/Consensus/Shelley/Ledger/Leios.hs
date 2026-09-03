@@ -211,6 +211,9 @@ instance
           (SL.systemStart globals)
           (envv ^. ledgerPpL)
           (ms ^. SL.utxoG)
+          -- The script-decoding cache only saves re-decoding work, and with
+          -- ValidateNone no script is evaluated, so start empty.
+          mempty
           tx
 
   inlineLeiosClosure blk txs = do

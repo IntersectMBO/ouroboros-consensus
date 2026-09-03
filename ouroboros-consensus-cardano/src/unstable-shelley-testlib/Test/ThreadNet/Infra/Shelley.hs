@@ -71,7 +71,7 @@ import Cardano.Ledger.Hashes
 import qualified Cardano.Ledger.Keys as LK
 import qualified Cardano.Ledger.Mary.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Ledger.State (LeiosKey (..), LeiosPossessionProof (..), LeiosPubKey (..))
+import Cardano.Ledger.State (BlsKey (..))
 import qualified Cardano.Ledger.Val as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF, hashVerKeyVRF)
 import Cardano.Protocol.TPraos.OCert
@@ -265,7 +265,7 @@ mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert, cnBLS} =
           , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
           , praosCanBeLeaderSignKeyVRF = cnVRF
           , -- Vote with the node's Leios (BLS) key; must be the key whose verification
-            -- key is registered as the pool's 'sppLeiosKey' (see mkGenesisConfig).
+            -- key is registered as the pool's 'sppBlsKey' (see mkGenesisConfig).
             praosCanBeLeaderSignKeyBLS = cnBLS
           }
     , shelleyLeaderCredentialsLabel = "ThreadNet"
@@ -471,7 +471,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
               , SL.sppOwners = Set.singleton poolOwnerHash
               , SL.sppRelays = Seq.empty
               , SL.sppMetadata = SL.SNothing
-              , SL.sppLeiosKey = leiosKey
+              , SL.sppBlsKey = blsKey
               }
           )
         | CoreNode{cnDelegateKey, cnStakingKey, cnVRF, cnBLS} <- coreNodes
@@ -484,13 +484,13 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
         -- so its committee seat is keyed. The vk must equal the voter's
         -- 'deriveVerKeyDSIGN' of its 'praosCanBeLeaderSignKeyBLS' (same 'cnBLS'),
         -- else 'getLeiosSeatId' won't match; an invalid PoP is dropped to keyless.
-        let leiosKey = case cnBLS of
+        let blsKey = case cnBLS of
               Nothing -> SL.SNothing
               Just blsSk ->
                 SL.SJust $
-                  LeiosKey
-                    (LeiosPubKey (deriveVerKeyDSIGN blsSk))
-                    (LeiosPossessionProof (createPossessionProofDSIGN leiosSignContext blsSk))
+                  BlsKey
+                    (deriveVerKeyDSIGN blsSk)
+                    (createPossessionProofDSIGN leiosSignContext blsSk)
         ]
 
 mkProtocolShelley ::

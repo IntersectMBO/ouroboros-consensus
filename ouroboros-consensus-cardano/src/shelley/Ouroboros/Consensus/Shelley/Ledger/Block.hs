@@ -48,7 +48,6 @@ import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (..)
   , EncCBOR (..)
-  , EncCBORGroup
   , Encoding
   , FullByteString (..)
   , encodeListLen
@@ -130,7 +129,10 @@ class
   , NoThunks (ShelleyProtocolHeader proto)
   , EncCBOR (ShelleyProtocolHeader proto)
   , DecCBOR (Annotator (ShelleyProtocolHeader proto))
-  , EncCBORGroup (SL.BlockBody era)
+  , -- The ledger's Block codecs are per-era instances rather than one generic
+    -- instance, so they have to be demanded here.
+    EncCBOR (SL.Block (ShelleyProtocolHeader proto) era)
+  , DecCBOR (Annotator (SL.Block (ShelleyProtocolHeader proto) era))
   , SL.EraBlockHeader (ShelleyProtocolHeader proto) era
   , SL.ApplyBlock (ShelleyProtocolHeader proto) era
   , Show (CannotForgeError proto)

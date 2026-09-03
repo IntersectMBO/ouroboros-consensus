@@ -10,6 +10,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- DUPLICATE -- adapted from: cardano-api/src/Cardano/Api/KeysShelley.hs
 
@@ -44,6 +45,8 @@ import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.Seed as Crypto
 import qualified Cardano.Crypto.Wallet as Crypto.HD
 import Cardano.Ledger.Binary (rawDecodeFixedSized, rawEncodeFixedSized)
+import qualified Cardano.Ledger.Binary.Plain as Plain
+import Data.Typeable (Typeable)
 import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys as Shelley
 import Data.Aeson.Types
@@ -72,6 +75,17 @@ data PaymentKey
 instance HasTypeProxy PaymentKey where
   data AsType PaymentKey = AsPaymentKey
   proxyToAsType _ = AsPaymentKey
+
+-- Ledger master dropped the plain 'ToCBOR'/'FromCBOR' instances for 'VKey' when
+-- cardano-binary went to 1.9.1.0, but the vendored newtypes below still derive
+-- them. Reinstate the encoding those instances had: they were
+-- 'encodeVerKeyDSIGN', itself an alias for 'encodeFixedSized', so the bytes are
+-- unchanged.
+instance Typeable kd => ToCBOR (Shelley.VKey kd) where
+  toCBOR = Plain.encodeBytes . rawEncodeFixedSized . Shelley.unVKey
+
+instance Typeable kd => FromCBOR (Shelley.VKey kd) where
+  fromCBOR = Shelley.VKey <$> (Plain.decodeBytes >>= rawDecodeFixedSized)
 
 instance Key PaymentKey where
   newtype VerificationKey PaymentKey

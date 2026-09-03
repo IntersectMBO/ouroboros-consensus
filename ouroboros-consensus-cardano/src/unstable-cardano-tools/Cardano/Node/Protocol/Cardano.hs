@@ -20,7 +20,6 @@ import Cardano.Api.Any (Error (..))
 import qualified Cardano.Chain.Update as Byron
 import qualified Cardano.Ledger.Api.Transition as SL
 import Cardano.Ledger.BaseTypes
-import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
@@ -29,7 +28,6 @@ import qualified Cardano.Node.Protocol.Shelley as Shelley
 import Cardano.Node.Types
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Monad.Trans.Except.Extra (firstExceptT)
-import Data.Maybe (fromMaybe)
 import Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import Ouroboros.Consensus.Cardano.Condense ()
@@ -37,6 +35,7 @@ import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..))
 import Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import Ouroboros.Consensus.HardFork.Combinator.Condense ()
 import Ouroboros.Consensus.Shelley.Crypto (StandardCrypto)
+import Test.Cardano.Ledger.Dijkstra.Examples (exampleDijkstraGenesis)
 
 ------------------------------------------------------------------------------
 -- Real Cardano protocol
@@ -133,7 +132,7 @@ mkConsensusProtocolCardano
           npcConwayGenesisFileHash
 
     dijkstraGenesis <- case npcDijkstraProtocolConfig of
-      Nothing -> pure emptyDijkstraGenesis
+      Nothing -> pure exampleDijkstraGenesis
       Just
         ( NodeDijkstraProtocolConfiguration
             { npcDijkstraGenesisFile
@@ -260,18 +259,6 @@ mkConsensusProtocolCardano
             then ProtVer (natVersion @12) 0
             else ProtVer (natVersion @11) 0
         )
-
--- | An empty Dijkstra genesis to be provided when none is specified in the config.
-emptyDijkstraGenesis :: SL.DijkstraGenesis
-emptyDijkstraGenesis =
-  let upgradePParamsDef =
-        UpgradeDijkstraPParams
-          { udppMaxRefScriptSizePerBlock = 1048576
-          , udppMaxRefScriptSizePerTx = 204800
-          , udppRefScriptCostStride = unsafeNonZero 25600
-          , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
-          }
-   in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 
 ------------------------------------------------------------------------------
 -- Errors
