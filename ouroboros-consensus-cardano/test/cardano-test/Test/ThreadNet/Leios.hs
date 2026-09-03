@@ -137,7 +137,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
-import qualified Test.Cardano.Ledger.Shelley.Examples as Shelley (leTranslationContext)
+import qualified Test.Cardano.Ledger.Shelley.Examples as Shelley (lePParams, leTranslationContext)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Dijkstra), hardForkInto)
 import Test.QuickCheck
   ( Property
@@ -276,7 +276,7 @@ prop_leios seed =
   -- eventually be a protocol parameter capturing the worst case diffusion
   -- time; the property therefore assumes it is sufficient by definition.
   diffusionRequired point =
-    unSlotNo point.pointSlotNo + minCertificationGap <= numSlots
+    unSlotNo point.pointSlotNo + minCertGap <= numSlots
 
   forgedPointsToDiffuse = Set.filter diffusionRequired forgedPoints
   acquiredPointsToDiffuse = Set.filter diffusionRequired acquiredPoints
@@ -581,7 +581,7 @@ prop_leios seed =
   -- that far apart.
   certificationGapIsCorrect =
     conjoin $
-      [ (unSlotNo s2 - unSlotNo s1 > minCertificationGap)
+      [ (unSlotNo s2 - unSlotNo s1 > minCertGap)
           & counterexample
             ( "Certification blocks too close: slots "
                 <> show (unSlotNo s1)
@@ -590,12 +590,20 @@ prop_leios seed =
                 <> " (gap = "
                 <> show (unSlotNo s2 - unSlotNo s1)
                 <> ", expected > "
-                <> show minCertificationGap
+                <> show minCertGap
                 <> ")"
             )
           & prettyCounterexampleList "certifying block slots" 120 certificateBlocks
       | (s1, s2) <- zip certificateBlocks (drop 1 certificateBlocks)
       ]
+
+-- | The certification gap the simulated nodes run with.
+--
+-- 'minCertificationGap' derives it from the protocol parameters, and
+-- 'runThreadNet'' hard-forks into Dijkstra with the ledger's example parameters,
+-- so reading it from the same examples value keeps the two in step.
+minCertGap :: Word64
+minCertGap = minCertificationGap (Shelley.lePParams Dijkstra.ledgerExamples)
 
 -- | A late-joining node must not crash on a CertRB whose certified EB
 -- closure it never observed live.
@@ -704,7 +712,7 @@ prop_leios_invalid_eb seed
   -- uses for diffusion.
   poisonedPointsToDiffuse =
     Set.filter
-      (\p -> unSlotNo p.pointSlotNo + minCertificationGap <= numSlots)
+      (\p -> unSlotNo p.pointSlotNo + minCertGap <= numSlots)
       poisonedPoints
 
   acquiredByHonest = Set.fromList $ flip mapMaybe traces $ \case

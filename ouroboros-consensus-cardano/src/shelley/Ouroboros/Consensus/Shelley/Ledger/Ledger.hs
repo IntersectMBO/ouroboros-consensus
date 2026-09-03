@@ -122,7 +122,7 @@ import qualified Data.Text as Text
 import qualified Data.Vector.Strict as V
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (selectCommitteeByStake)
+import LeiosDemoTypes (minCertificationGap, selectCommitteeByStake)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -998,26 +998,32 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
+  getMinCertificationGap = const Nothing
 
 instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
+  getMinCertificationGap = const Nothing
 
 instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
+  getMinCertificationGap = const Nothing
 
 instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
+  getMinCertificationGap = const Nothing
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
+  getMinCertificationGap = const Nothing
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
+  getMinCertificationGap = const Nothing
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   -- REVIEW: Should we use the LedgerView (Praos c) instead?
@@ -1054,6 +1060,9 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
 
     stakeDistribution =
       ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
+
+  getMinCertificationGap =
+    Just . minCertificationGap . getPParams . shelleyLedgerState
 
   getCurrentThreshold ls =
     Just $
