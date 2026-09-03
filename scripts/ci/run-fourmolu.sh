@@ -20,12 +20,7 @@ if ! command -v "$fdcmd" &> /dev/null; then
     fi
 fi
 
-case "$(uname -s)" in
-    MINGW*)     path="$(pwd -W | sed 's_/_\\\\_g')\\\\ouroboros-consensus";;
-    *)          path="$(pwd -P)/ouroboros-consensus";;
-esac
-
-$fdcmd --full-path "$path" \
+$fdcmd --exclude docs --exclude scripts \
        --extension hs \
        --exec-batch fourmolu --config fourmolu.yaml -i
 
