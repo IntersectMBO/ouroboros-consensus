@@ -50,7 +50,7 @@ import           Ouroboros.Consensus.Mempool (MempoolRejectionDetails (..), Memp
                    TraceEventMempool (..), jsonMempoolRejectionDetails)
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
                    (TraceBlockFetchServerEvent (..))
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as ChainSync
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
@@ -162,74 +162,74 @@ instance (LogFormatting (LedgerUpdate blk), LogFormatting (LedgerWarning blk))
 --------------------------------------------------------------------------------
 
 instance (ConvertRawHash blk, ConvertRawHash (Header blk), LedgerSupportsProtocol blk)
-      => LogFormatting (TraceChainSyncClientEvent blk) where
+      => LogFormatting (ChainSync.TraceChainSyncClientEvent blk) where
   forHuman = \case
-    TraceDownloadedHeader pt ->
+    ChainSync.TraceDownloadedHeader pt ->
       mconcat
         [ "While following a candidate chain, we rolled forward by downloading a"
         , " header. "
         , showT (headerPoint pt)
         ]
-    TraceRolledBack tip ->
+    ChainSync.TraceRolledBack tip ->
       "While following a candidate chain, we rolled back to the given point: " <> showT tip
-    TraceException exc ->
+    ChainSync.TraceException exc ->
       "An exception was thrown by the Chain Sync Client. " <> showT exc
-    TraceFoundIntersection {} ->
+    ChainSync.TraceFoundIntersection {} ->
       mconcat
         [ "We found an intersection between our chain fragment and the"
         , " candidate's chain."
         ]
-    TraceTermination res ->
+    ChainSync.TraceTermination res ->
       "The client has terminated. " <> showT res
-    TraceValidatedHeader header ->
+    ChainSync.TraceValidatedHeader header ->
       "The header has been validated" <> showT (headerHash header)
-    TraceWaitingBeyondForecastHorizon slotNo ->
+    ChainSync.TraceWaitingBeyondForecastHorizon slotNo ->
       mconcat
         [ "The slot number " <> showT slotNo <> " is beyond the forecast horizon, the ChainSync client"
         , " cannot yet validate a header in this slot and therefore is waiting"
         ]
-    TraceAccessingForecastHorizon slotNo ->
+    ChainSync.TraceAccessingForecastHorizon slotNo ->
       mconcat
         [ "The slot number " <> showT slotNo <> ", which was previously beyond the forecast horizon, has now"
         , " entered it, and we can resume processing."
         ]
-    TraceGaveLoPToken {} ->
+    ChainSync.TraceGaveLoPToken {} ->
       mconcat
         [ "Whether we added a token to the LoP bucket of the peer. Also carries"
         , "the considered header and the best block number known prior to this"
         , "header"
         ]
-    TraceOfferJump point ->
+    ChainSync.TraceOfferJump point ->
       mconcat
         [ "ChainSync Jumping -- we are offering a jump to the server, to point: "
         , showT point
         ]
-    TraceJumpResult (AcceptedJump instruction) ->
+    ChainSync.TraceJumpResult (AcceptedJump instruction) ->
       mconcat
         [ "ChainSync Jumping -- the client accepted the jump to "
         , showT (jumpInstructionToPoint instruction)
         ]
-    TraceJumpResult (RejectedJump instruction) ->
+    ChainSync.TraceJumpResult (RejectedJump instruction) ->
       mconcat
         [ "ChainSync Jumping -- the client rejected the jump to "
         , showT (jumpInstructionToPoint instruction)
         ]
-    TraceJumpingWaitingForNextInstruction ->
+    ChainSync.TraceJumpingWaitingForNextInstruction ->
       "ChainSync Jumping -- the client is blocked, waiting for its next instruction."
-    TraceJumpingInstructionIs RunNormally ->
+    ChainSync.TraceJumpingInstructionIs RunNormally ->
       "ChainSyncJumping -- the client is asked to run normally"
-    TraceJumpingInstructionIs Restart ->
+    ChainSync.TraceJumpingInstructionIs Restart ->
       mconcat
         [ "ChainSyncJumping -- the client is asked to restart. This is necessary"
         , "when disengaging a peer of which we know no point that we could set"
         , "the intersection of the ChainSync server to."
         ]
-    TraceJumpingInstructionIs (JumpInstruction instruction) ->
+    ChainSync.TraceJumpingInstructionIs (JumpInstruction instruction) ->
       mconcat
         [ "ChainSync Jumping -- the client is asked to jump to "
         , showT (jumpInstructionToPoint instruction)
         ]
-    TraceDrainingThePipe n ->
+    ChainSync.TraceDrainingThePipe n ->
       "ChainSync client is draining the pipe. Pipelined messages expected: " <> showT (natToInt n)
     where
       jumpInstructionToPoint = AF.headPoint . jTheirFragment . \case
@@ -237,74 +237,74 @@ instance (ConvertRawHash blk, ConvertRawHash (Header blk), LedgerSupportsProtoco
         JumpToGoodPoint ji -> ji
 
   forMachine dtal = \case
-    TraceDownloadedHeader h ->
+    ChainSync.TraceDownloadedHeader h ->
       mconcat
         [ "kind" .= String "DownloadedHeader"
         , tipToObject (tipFromHeader h)
         ]
-    TraceRolledBack tip ->
+    ChainSync.TraceRolledBack tip ->
       mconcat
         [ "kind" .= String "RolledBack"
         , "tip" .= forMachine dtal tip
         ]
-    TraceException exc ->
+    ChainSync.TraceException exc ->
       mconcat
         [ "kind" .= String "Exception"
         , "exception" .= String (Text.pack $ show exc)
         ]
-    TraceFoundIntersection {} ->
+    ChainSync.TraceFoundIntersection {} ->
       mconcat
         [ "kind" .= String "FoundIntersection"
         ]
-    TraceTermination reason ->
+    ChainSync.TraceTermination reason ->
       mconcat
         [ "kind" .= String "Termination"
         , "reason" .= String (Text.pack $ show reason)
         ]
-    TraceValidatedHeader header ->
+    ChainSync.TraceValidatedHeader header ->
       mconcat
         [ "kind" .= String "ValidatedHeader"
         , "headerHash" .= showT (headerHash header)
         ]
-    TraceWaitingBeyondForecastHorizon slotNo ->
+    ChainSync.TraceWaitingBeyondForecastHorizon slotNo ->
       mconcat
         [ "kind" .= String "WaitingBeyondForecastHorizon"
         , "slotNo" .= slotNo
         ]
-    TraceAccessingForecastHorizon slotNo ->
+    ChainSync.TraceAccessingForecastHorizon slotNo ->
       mconcat
         [ "kind" .= String "AccessingForecastHorizon"
         , "slotNo" .= slotNo
         ]
-    TraceGaveLoPToken tokenAdded header aBlockNo ->
+    ChainSync.TraceGaveLoPToken tokenAdded header aBlockNo ->
       mconcat
         [ "kind" .= String "TraceGaveLoPToken"
         , "tokenAdded" .= tokenAdded
         , "headerHash" .= showT (headerHash header)
         , "blockNo" .= aBlockNo
         ]
-    TraceOfferJump point ->
+    ChainSync.TraceOfferJump point ->
       mconcat
         [ "kind" .= String "TraceOfferJump"
         , "point" .= showT point
         ]
-    TraceJumpResult jumpResult ->
+    ChainSync.TraceJumpResult jumpResult ->
       mconcat
         [ "kind" .= String "TraceJumpResult"
         , "result" .= case jumpResult of
             AcceptedJump _ -> String "AcceptedJump"
             RejectedJump _ -> String "RejectedJump"
         ]
-    TraceJumpingWaitingForNextInstruction ->
+    ChainSync.TraceJumpingWaitingForNextInstruction ->
       mconcat
         [ "kind" .= String "TraceJumpingWaitingForNextInstruction"
         ]
-    TraceJumpingInstructionIs instruction ->
+    ChainSync.TraceJumpingInstructionIs instruction ->
       mconcat
         [ "kind" .= String "TraceJumpingInstructionIs"
         , "instr" .= instructionToObject instruction
         ]
-    TraceDrainingThePipe n ->
+    ChainSync.TraceDrainingThePipe n ->
       mconcat
         [ "kind" .= String "TraceDrainingThePipe"
         , "n" .= natToInt n
@@ -345,35 +345,35 @@ tipToObject = \case
     , "blockNo" .= blockno
     ]
 
-instance MetaTrace (TraceChainSyncClientEvent blk) where
+instance MetaTrace (ChainSync.TraceChainSyncClientEvent blk) where
   namespaceFor = \case
-    TraceDownloadedHeader {} ->
+    ChainSync.TraceDownloadedHeader {} ->
       Namespace [] ["DownloadedHeader"]
-    TraceRolledBack {} ->
+    ChainSync.TraceRolledBack {} ->
       Namespace [] ["RolledBack"]
-    TraceException {} ->
+    ChainSync.TraceException {} ->
       Namespace [] ["Exception"]
-    TraceFoundIntersection {} ->
+    ChainSync.TraceFoundIntersection {} ->
       Namespace [] ["FoundIntersection"]
-    TraceTermination {} ->
+    ChainSync.TraceTermination {} ->
       Namespace [] ["Termination"]
-    TraceValidatedHeader {} ->
+    ChainSync.TraceValidatedHeader {} ->
       Namespace [] ["ValidatedHeader"]
-    TraceWaitingBeyondForecastHorizon {} ->
+    ChainSync.TraceWaitingBeyondForecastHorizon {} ->
       Namespace [] ["WaitingBeyondForecastHorizon"]
-    TraceAccessingForecastHorizon {} ->
+    ChainSync.TraceAccessingForecastHorizon {} ->
       Namespace [] ["AccessingForecastHorizon"]
-    TraceGaveLoPToken {} ->
+    ChainSync.TraceGaveLoPToken {} ->
       Namespace [] ["GaveLoPToken"]
-    TraceOfferJump _ ->
+    ChainSync.TraceOfferJump _ ->
       Namespace [] ["OfferJump"]
-    TraceJumpResult _ ->
+    ChainSync.TraceJumpResult _ ->
       Namespace [] ["JumpResult"]
-    TraceJumpingWaitingForNextInstruction ->
+    ChainSync.TraceJumpingWaitingForNextInstruction ->
       Namespace [] ["JumpingWaitingForNextInstruction"]
-    TraceJumpingInstructionIs _ ->
+    ChainSync.TraceJumpingInstructionIs _ ->
       Namespace [] ["JumpingInstructionIs"]
-    TraceDrainingThePipe _ ->
+    ChainSync.TraceDrainingThePipe _ ->
       Namespace [] ["DrainingThePipe"]
 
   severityFor ns _ =
