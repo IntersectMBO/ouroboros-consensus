@@ -62,7 +62,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   ) where
 
 import Cardano.Crypto.Leios (mkLeiosCommittee)
-import Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
+import Cardano.Ledger.BaseTypes (strictMaybeToMaybe, unboundRational)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
@@ -90,6 +90,7 @@ import Cardano.Ledger.Core
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
+import Cardano.Ledger.Dijkstra.PParams (ppLeiosCommitteeSizeL, ppLeiosQuorumStakeThresholdL)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
@@ -121,7 +122,7 @@ import qualified Data.Text as Text
 import qualified Data.Vector.Strict as V
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (committeeStakeCoverage, selectCommitteeByStake)
+import LeiosDemoTypes (selectCommitteeByStake)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -994,17 +995,34 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 
 -- TODO: Ledger-level type class EraCommittee? LedgerState era -> Committee
 
-instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra)
-instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra)
-instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra)
-instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra)
-instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra)
-instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
+instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+
+instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+
+instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+
+instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   -- REVIEW: Should we use the LedgerView (Praos c) instead?
   getLeiosCommittee ls =
-    Just everyoneVotes
+    Just stakeBasedCommiteeSelection
    where
     -- Every pool in the (snapshotted) stake distribution gets a committee seat
     -- weighted by its stake fraction; a pool that has not registered a Leios
@@ -1020,13 +1038,15 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
     -- the pool id; do not replace it with an unordered traversal.
     --
     -- TODO: Move this to the era boundary (to cache the computation).
-    everyoneVotes =
+    stakeBasedCommiteeSelection =
       mkLeiosCommittee . V.fromList $
         selectCommitteeByStake
-          committeeStakeCoverage -- TODO: take from pparams
+          committeeSize
           [ (seatKey ips, ips.individualPoolStake)
           | ips <- Map.elems stakeDistribution
           ]
+
+    committeeSize = getPParams ls.shelleyLedgerState ^. ppLeiosCommitteeSizeL
 
     seatKey ips = case ips.individualPoolStakeBls of
       SJust lk -> SJust (lk.blsPubKey, lk.blsPossessionProof)
@@ -1034,3 +1054,10 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
 
     stakeDistribution =
       ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
+
+  getCurrentThreshold ls =
+    Just $
+      getPParams ls.shelleyLedgerState
+        ^. ppLeiosQuorumStakeThresholdL
+        -- TODO: Use UnitInterval further upstream
+        & unboundRational

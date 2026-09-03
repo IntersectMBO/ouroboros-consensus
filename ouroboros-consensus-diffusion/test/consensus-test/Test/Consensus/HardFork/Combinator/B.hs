@@ -45,7 +45,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void
 import GHC.Generics (Generic)
-import LeiosVoting (HasLeiosVoting)
+import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -539,4 +539,6 @@ instance SerialiseBlockQueryResult BlockB BlockQuery where
 
 -- * Leios
 
-instance HasLeiosVoting BlockB
+instance HasLeiosVoting BlockB where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing

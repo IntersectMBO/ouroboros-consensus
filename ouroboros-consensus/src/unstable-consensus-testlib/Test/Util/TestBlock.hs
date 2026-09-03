@@ -120,7 +120,7 @@ import Data.Typeable (Typeable)
 import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (HasLeiosVoting)
+import LeiosDemoTypes (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -320,7 +320,9 @@ isStrictDescendentOf b1 b2 = b1 `isDescendentOf` b2 && b1 /= b2
 
 instance ShowProxy TestBlock
 
-instance HasLeiosVoting (TestBlockWith ptype)
+instance HasLeiosVoting (TestBlockWith ptype) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
 
 -- | Default 'ResolveLeiosBlock' — test blocks never carry Leios certificates.
 instance Typeable ptype => ResolveLeiosBlock (TestBlockWith ptype)

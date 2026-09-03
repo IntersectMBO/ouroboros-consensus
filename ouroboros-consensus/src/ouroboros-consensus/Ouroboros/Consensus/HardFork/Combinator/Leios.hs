@@ -43,3 +43,10 @@ instance
         (Proxy @HasLeiosVoting)
         (\(Current _ (Flip ls)) -> K (getLeiosCommittee ls))
         (Telescope.tip tele)
+
+  getCurrentThreshold (HardForkLedgerState (HardForkState tele)) =
+    hcollapse $
+      hcmap
+        (Proxy @HasLeiosVoting)
+        (\(Current _ (Flip ls)) -> K (getCurrentThreshold ls))
+        (Telescope.tip tele)

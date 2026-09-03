@@ -51,7 +51,7 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy
 import Data.Typeable
 import GHC.Generics (Generic)
-import LeiosVoting (HasLeiosVoting)
+import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Byron.EBBs as EBBs
@@ -108,7 +108,9 @@ instance ShowProxy ByronBlock
 -- | Default 'ResolveLeiosBlock' — Byron blocks never carry Leios certs.
 instance ResolveLeiosBlock ByronBlock
 
-instance HasLeiosVoting ByronBlock
+instance HasLeiosVoting ByronBlock where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
 
 instance NFData ByronBlock where
   rnf ByronBlock{byronBlockRaw, byronBlockSlotNo, byronBlockHash} =

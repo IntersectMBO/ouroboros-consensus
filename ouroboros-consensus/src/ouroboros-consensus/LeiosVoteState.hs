@@ -28,7 +28,6 @@ import LeiosDemoTypes
   , VoteInvalid (..)
   , Weight
   , aggregateLeiosCert
-  , minCertificationThreshold
   , validateLeiosVote
   )
 
@@ -41,9 +40,8 @@ data LeiosVoteState m = LeiosVoteState
   -- ^ Subscribe to new votes arriving in the LeiosVoteState. This will only
   -- serve new additions, starting from when this function was called.
   , queryCert :: RbHash -> m (Maybe LeiosCert)
-  -- ^ Look up the assembled certificate for a 'RbHash', or
-  -- 'Nothing' if its collected votes haven't crossed
-  -- 'minCertificationThreshold'.
+  -- ^ Look up the assembled certificate for a 'RbHash', or 'Nothing' if its
+  -- collected votes haven't crossed 'ppLeiosQuorumStakeThresholdL'.
   }
 
 data AddVoteResult
@@ -75,8 +73,8 @@ emptyPointState = PointState Map.empty Nothing
 -- | Create a new empty 'LeiosVoteState'.
 newLeiosVoteState ::
   MonadSTM m =>
-  -- | Get the current 'LeiosCommittee'.
-  STM m (Maybe LeiosCommittee) ->
+  -- | Get the current 'LeiosCommittee' and threshold 'Weight'.
+  STM m (Maybe (LeiosCommittee, Weight)) ->
   m (LeiosVoteState m)
 newLeiosVoteState getCommittee = do
   votesChan <- atomically newBroadcastTChan
@@ -96,7 +94,7 @@ newLeiosVoteState getCommittee = do
               -- Could use slot numbers or put epoch into votes to distinguish?
               atomically getCommittee >>= \case
                 Nothing -> pure NoCommittee
-                Just committee ->
+                Just (committee, threshold) ->
                   case validateLeiosVote committee vote of
                     Left reason -> pure $ VoteInvalid reason
                     Right weight -> atomically $ do
@@ -127,7 +125,7 @@ newLeiosVoteState getCommittee = do
                               pst'' = case pst.psCert of
                                 Just _ -> pst'
                                 Nothing
-                                  | totalW >= minCertificationThreshold ->
+                                  | totalW >= threshold ->
                                       -- Voters were validated against this committee before
                                       -- being added and the per-voter signatures already
                                       -- passed individual verification, so aggregation must
