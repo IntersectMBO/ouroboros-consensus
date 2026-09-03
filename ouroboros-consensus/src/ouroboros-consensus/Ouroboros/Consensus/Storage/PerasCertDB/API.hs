@@ -76,12 +76,12 @@ data PerasCertDB m blk = PerasCertDB
   -- (at origin).
   , garbageCollect ::
       SlotNo ->
-      STM m (m ())
+      STM m (m [ValidatedPerasCert blk])
   -- ^ Garbage-collect certificates whose target slot is strictly smaller
   -- than the given slot number.
   -- The STM transaction clears the relevant state from the in-memory index, and
-  -- the resulting 'm' action performs tracing and might perform side-effects in
-  -- implementations with on-disk storage.
+  -- the resulting 'm' action performs tracing, might perform side-effects in
+  -- implementations with on-disk storage and returns the certificates that were removed.
   --
   -- NOTE: Use the `join . atomically` pattern to consume its output.
   }
