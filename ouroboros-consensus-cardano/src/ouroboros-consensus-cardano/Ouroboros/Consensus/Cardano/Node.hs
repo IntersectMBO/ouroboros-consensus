@@ -34,11 +34,6 @@ module Ouroboros.Consensus.Cardano.Node
   , protocolInfoCardano
 
     -- * SupportedNetworkProtocolVersion
-  , pattern CardanoNodeToClientVersion14
-  , pattern CardanoNodeToClientVersion15
-  , pattern CardanoNodeToClientVersion16
-  , pattern CardanoNodeToClientVersion17
-  , pattern CardanoNodeToClientVersion18
   , pattern CardanoNodeToClientVersion19
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
@@ -294,93 +289,6 @@ pattern CardanoNodeToNodeVersion2 =
         :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion10' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion14 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion14 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion11' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion15 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion15 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion12' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion16 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion16 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion13' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion17 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion17 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* Nil
-      )
-
-pattern CardanoNodeToClientVersion18 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion18 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* Nil
-      )
-
 pattern CardanoNodeToClientVersion19 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion19 =
   HardForkNodeToClientEnabled
@@ -411,8 +319,8 @@ instance
   -- determines when it can be dropped: a client built against an older
   -- @cardano-node@ can offer nothing newer than that release's maximum.
   --
-  -- > NodeToClientV_16   9.0.0    (dropped)
-  -- > NodeToClientV_17   9.2.0    (dropped)
+  -- > NodeToClientV_16   9.0.0
+  -- > NodeToClientV_17   9.2.0
   -- > NodeToClientV_18   10.1.1
   -- > NodeToClientV_19   10.2.1
   -- > NodeToClientV_20   10.3.1
@@ -424,12 +332,7 @@ instance
   -- @ouroboros-consensus-3.0.1.0@ and so offer the very same set.
   supportedNodeToClientVersions _ =
     Map.fromList $
-      [ (NodeToClientV_18, CardanoNodeToClientVersion14)
-      , (NodeToClientV_19, CardanoNodeToClientVersion15)
-      , (NodeToClientV_20, CardanoNodeToClientVersion16)
-      , (NodeToClientV_21, CardanoNodeToClientVersion17)
-      , (NodeToClientV_22, CardanoNodeToClientVersion18)
-      , (NodeToClientV_23, CardanoNodeToClientVersion19)
+      [ (NodeToClientV_23, CardanoNodeToClientVersion19)
       ]
 
   latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_23)
