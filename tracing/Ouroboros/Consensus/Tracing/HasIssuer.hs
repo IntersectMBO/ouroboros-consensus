@@ -16,24 +16,27 @@ import qualified Cardano.Chain.Common as Byron.Common
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.Hashing as Byron.Crypto
 import qualified Cardano.Ledger.Hashes as SL
-import           Cardano.Protocol.Crypto (StandardCrypto)
-import           Data.ByteString (ByteString)
-import           Data.SOP
-import           Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock, Header (..))
-import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock, Header (..),
-                   OneEraHeader (..))
-import           Ouroboros.Consensus.Shelley.Ledger.Block (Header (..), ShelleyBlock)
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract
+import Cardano.Protocol.Crypto (StandardCrypto)
+import Data.ByteString (ByteString)
+import Data.SOP
+import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock, Header (..))
+import Ouroboros.Consensus.HardFork.Combinator
+  ( HardForkBlock
+  , Header (..)
+  , OneEraHeader (..)
+  )
+import Ouroboros.Consensus.Shelley.Ledger.Block (Header (..), ShelleyBlock)
+import Ouroboros.Consensus.Shelley.Protocol.Abstract
 
 -- | Block issuer verification key hash.
 data BlockIssuerVerificationKeyHash
-  = BlockIssuerVerificationKeyHash !ByteString
-  -- ^ Serialized block issuer verification key hash.
-  | NoBlockIssuer
-  -- ^ There is no block issuer.
-  --
-  -- For example, this could be relevant for epoch boundary blocks (EBBs),
-  -- genesis blocks, etc.
+  = -- | Serialized block issuer verification key hash.
+    BlockIssuerVerificationKeyHash !ByteString
+  | -- | There is no block issuer.
+    --
+    -- For example, this could be relevant for epoch boundary blocks (EBBs),
+    -- genesis blocks, etc.
+    NoBlockIssuer
   deriving (Eq, Show)
 
 -- | Get the block issuer verification key hash from a block header.
@@ -59,18 +62,20 @@ instance HasIssuer ByronBlock where
 instance
   ( ProtoCrypto protocol ~ StandardCrypto
   , ProtocolHeaderSupportsProtocol protocol
-  ) => HasIssuer (ShelleyBlock protocol era) where
+  ) =>
+  HasIssuer (ShelleyBlock protocol era)
+  where
   getIssuerVerificationKeyHash shelleyBlkHdr =
-      BlockIssuerVerificationKeyHash
-        -- The raw bytes of the key hash. This matches @cardano-api@'s
-        -- @serialiseToRawBytes . verificationKeyHash . StakePoolVerificationKey@;
-        -- the key role is a phantom type, so hashing the block-issuer key
-        -- directly yields the same bytes as first converting it to a stake
-        -- pool key.
-        . Crypto.hashToBytes
-        . SL.unKeyHash
-        . SL.hashKey
-        $ pHeaderIssuer (shelleyHeaderRaw shelleyBlkHdr)
+    BlockIssuerVerificationKeyHash
+      -- The raw bytes of the key hash. This matches @cardano-api@'s
+      -- @serialiseToRawBytes . verificationKeyHash . StakePoolVerificationKey@;
+      -- the key role is a phantom type, so hashing the block-issuer key
+      -- directly yields the same bytes as first converting it to a stake
+      -- pool key.
+      . Crypto.hashToBytes
+      . SL.unKeyHash
+      . SL.hashKey
+      $ pHeaderIssuer (shelleyHeaderRaw shelleyBlkHdr)
 
 instance All HasIssuer xs => HasIssuer (HardForkBlock xs) where
   getIssuerVerificationKeyHash =

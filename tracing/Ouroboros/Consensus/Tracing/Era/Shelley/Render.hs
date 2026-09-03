@@ -25,33 +25,43 @@ module Ouroboros.Consensus.Tracing.Era.Shelley.Render
   ) where
 
 import qualified Cardano.Crypto.Hash.Class as Crypto
-import           Cardano.Ledger.Address (AccountAddress (..), serialiseAccountAddress)
-import           Cardano.Ledger.Alonzo.Scripts (AsItem (..), AsIx (..))
+import Cardano.Ledger.Address (AccountAddress (..), serialiseAccountAddress)
+import Cardano.Ledger.Alonzo.Scripts (AsItem (..), AsIx (..))
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
-import           Cardano.Ledger.Api.Scripts (AnyEraScript, PlutusPurpose,
-                   pattern AnyEraCertifyingPurpose, pattern AnyEraMintingPurpose,
-                   pattern AnyEraProposingPurpose, pattern AnyEraWithdrawingPurpose,
-                   pattern AnyEraSpendingPurpose, pattern AnyEraVotingPurpose)
-import           Cardano.Ledger.BaseTypes (Mismatch (..), Network (..), Relation (..),
-                   TxIx (..))
-import           Cardano.Ledger.Conway.Governance (ProposalProcedure)
+import Cardano.Ledger.Api.Scripts
+  ( AnyEraScript
+  , PlutusPurpose
+  , pattern AnyEraCertifyingPurpose
+  , pattern AnyEraMintingPurpose
+  , pattern AnyEraProposingPurpose
+  , pattern AnyEraSpendingPurpose
+  , pattern AnyEraVotingPurpose
+  , pattern AnyEraWithdrawingPurpose
+  )
+import Cardano.Ledger.BaseTypes
+  ( Mismatch (..)
+  , Network (..)
+  , Relation (..)
+  , TxIx (..)
+  )
+import Cardano.Ledger.Conway.Governance (ProposalProcedure)
 import qualified Cardano.Ledger.Core as Ledger
-import           Cardano.Ledger.TxIn (TxId (..), TxIn (..))
+import Cardano.Ledger.Hashes (ScriptHash (..))
 import qualified Cardano.Ledger.Hashes as Hashes
-import           Cardano.Ledger.Hashes (ScriptHash (..))
+import Cardano.Ledger.TxIn (TxId (..), TxIn (..))
 import qualified Codec.Binary.Bech32 as Bech32
-import           Data.Aeson (ToJSON, Value, toJSON, (.=))
+import Data.Aeson (ToJSON, Value, toJSON, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Aeson
 import qualified Data.ByteString.Base16 as B16
-import           Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import           Data.Map.NonEmpty (NonEmptyMap)
+import Data.Map.NonEmpty (NonEmptyMap)
 import qualified Data.Map.NonEmpty as NonEmptyMap
-import           Data.Text (Text)
+import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text.Encoding
-import           Data.Word (Word32)
+import Data.Word (Word32)
 
 -- | Hex-encode a script hash, matching @cardano-api@'s
 -- @serialiseToRawBytesHexText . fromShelleyScriptHash@.
@@ -68,26 +78,26 @@ renderScriptIntegrityHash Nothing = Aeson.Null
 -- part @stake@ on mainnet, @stake_test@ on testnets.
 renderRewardAccount :: AccountAddress -> Text
 renderRewardAccount acct =
-    case Bech32.encode hrp (Bech32.dataPartFromBytes bytes) of
-      Right t  -> t
-      -- 'encode' only fails if the payload exceeds bech32 length limits, which
-      -- a 29-byte stake address never does; fall back to hex just in case.
-      Left _   -> Text.Encoding.decodeLatin1 (B16.encode bytes)
-  where
-    bytes = serialiseAccountAddress acct
-    hrp = case aaNetworkId acct of
-      Mainnet -> hrpStake
-      Testnet -> hrpStakeTest
+  case Bech32.encode hrp (Bech32.dataPartFromBytes bytes) of
+    Right t -> t
+    -- 'encode' only fails if the payload exceeds bech32 length limits, which
+    -- a 29-byte stake address never does; fall back to hex just in case.
+    Left _ -> Text.Encoding.decodeLatin1 (B16.encode bytes)
+ where
+  bytes = serialiseAccountAddress acct
+  hrp = case aaNetworkId acct of
+    Mainnet -> hrpStake
+    Testnet -> hrpStakeTest
 
 hrpStake, hrpStakeTest :: Bech32.HumanReadablePart
-hrpStake     = unsafeHrp "stake"
+hrpStake = unsafeHrp "stake"
 hrpStakeTest = unsafeHrp "stake_test"
 
 -- | These literals are valid human-readable parts, so this never fails.
 unsafeHrp :: Text -> Bech32.HumanReadablePart
 unsafeHrp t = case Bech32.humanReadablePartFromText t of
   Right hrp -> hrp
-  Left err  -> error ("renderRewardAccount: invalid HRP " <> show t <> ": " <> show err)
+  Left err -> error ("renderRewardAccount: invalid HRP " <> show t <> ": " <> show err)
 
 -- | Rendered in place of a plutus purpose that none of the @AnyEraScript@
 -- projections below matched.
@@ -114,12 +124,12 @@ renderTxIn (TxIn (TxId h) (TxIx ix)) =
 -- @cardano-ledger-api@'s @AnyEraScript@ projections. Replaces @cardano-api@'s
 -- per-era @renderAlonzoPlutusPurpose@/@renderConwayPlutusPurpose@.
 renderScriptPurpose ::
-     ( AnyEraScript era
-     , ToJSON (Ledger.TxCert era)
-     , ToJSON (ProposalProcedure era)
-     )
-  => PlutusPurpose AsItem era
-  -> Value
+  ( AnyEraScript era
+  , ToJSON (Ledger.TxCert era)
+  , ToJSON (ProposalProcedure era)
+  ) =>
+  PlutusPurpose AsItem era ->
+  Value
 -- Note the asymmetry in whether the 'AsItem' wrapper is unwrapped: spending and
 -- rewarding render their item directly, the other four go through
 -- @ToJSON (AsItem ix it)@ and so come out wrapped in an @{"item": ...}@ object.
@@ -150,36 +160,36 @@ renderScriptPurpose = \case
 -- 'renderScriptPurpose' above.
 renderScriptIndex :: AnyEraScript era => PlutusPurpose AsIx era -> Value
 renderScriptIndex = \case
-  AnyEraSpendingPurpose (AsIx ix)    -> witnessIndex "ScriptWitnessIndexTxIn" ix
-  AnyEraMintingPurpose (AsIx ix)     -> witnessIndex "ScriptWitnessIndexMint" ix
+  AnyEraSpendingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexTxIn" ix
+  AnyEraMintingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexMint" ix
   AnyEraWithdrawingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexWithdrawal" ix
-  AnyEraCertifyingPurpose (AsIx ix)  -> witnessIndex "ScriptWitnessIndexCertificate" ix
-  AnyEraVotingPurpose (AsIx ix)      -> witnessIndex "ScriptWitnessIndexVoting" ix
-  AnyEraProposingPurpose (AsIx ix)   -> witnessIndex "ScriptWitnessIndexProposing" ix
+  AnyEraCertifyingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexCertificate" ix
+  AnyEraVotingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexVoting" ix
+  AnyEraProposingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexProposing" ix
   _ -> unknownPurpose
-  where
-    witnessIndex :: Text -> Word32 -> Value
-    witnessIndex kind ix = Aeson.object ["kind" .= kind, "value" .= ix]
+ where
+  witnessIndex :: Text -> Word32 -> Value
+  witnessIndex kind ix = Aeson.object ["kind" .= kind, "value" .= ix]
 
 renderMissingRedeemers ::
-     ( AnyEraScript era
-     , Ledger.EraPParams era
-     , ToJSON (Ledger.TxCert era)
-     )
-  => NonEmpty (PlutusPurpose AsItem era, ScriptHash)
-  -> Value
+  ( AnyEraScript era
+  , Ledger.EraPParams era
+  , ToJSON (Ledger.TxCert era)
+  ) =>
+  NonEmpty (PlutusPurpose AsItem era, ScriptHash) ->
+  Value
 renderMissingRedeemers scripts =
-    Aeson.object $ NonEmpty.toList $ NonEmpty.map renderTuple scripts
-  where
-    renderTuple (scriptPurpose, sHash) =
-      Aeson.fromText (renderScriptHash sHash) .= renderScriptPurpose scriptPurpose
+  Aeson.object $ NonEmpty.toList $ NonEmpty.map renderTuple scripts
+ where
+  renderTuple (scriptPurpose, sHash) =
+    Aeson.fromText (renderScriptHash sHash) .= renderScriptPurpose scriptPurpose
 
 renderIncompleteWithdrawals ::
-     Show payload
-  => NonEmptyMap AccountAddress (Mismatch RelEQ payload)
-  -> Value
+  Show payload =>
+  NonEmptyMap AccountAddress (Mismatch RelEQ payload) ->
+  Value
 renderIncompleteWithdrawals payload =
-    Aeson.object $ map renderTuple $ NonEmptyMap.toList payload
-  where
-    renderTuple (address, mismatch) =
-      Aeson.fromText (renderRewardAccount address) .= show mismatch
+  Aeson.object $ map renderTuple $ NonEmptyMap.toList payload
+ where
+  renderTuple (address, mismatch) =
+    Aeson.fromText (renderRewardAccount address) .= show mismatch
