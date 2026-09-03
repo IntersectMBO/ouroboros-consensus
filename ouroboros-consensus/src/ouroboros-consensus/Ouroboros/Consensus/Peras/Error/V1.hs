@@ -19,6 +19,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( IsPerasError (..)
+  , PerasCertSize
   , PerasVotingCommitteeError
   , VoteWeight
   )
@@ -39,6 +40,9 @@ data PerasError blk
       String
   | PerasTemporaryPublicKeyHackError
       String
+  | PerasCertTooLargeError
+      PerasCertSize
+      PerasCertSize
 
 deriving instance
   Show (PerasVotingCommitteeError blk) =>

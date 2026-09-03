@@ -24,6 +24,7 @@ import qualified Cardano.Ledger.Binary as CBOR
 import qualified Cardano.Ledger.Dijkstra.BlockBody as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Codec.CBOR.Read as CBOR
+import Control.Monad (when)
 import Data.Array.Byte (ByteArray)
 import Data.Bifunctor (Bifunctor (..))
 import Data.ByteString.Lazy (ByteString)
@@ -39,6 +40,7 @@ import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block.Abstract (ConvertRawHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
+  , ValidatedPerasCert (..)
   , VoidPerasCert
   , VoidPerasCrypto
   , VoidPerasError
@@ -60,6 +62,7 @@ import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
   ( unsafePerasBLSPrivateKeyFromEnv
   )
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import Ouroboros.Consensus.Peras.Params (dijkstraPerasMaxCertSize)
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
@@ -265,7 +268,29 @@ instance
   type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = V1.PerasVotingCommitteeScheme
   forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
   verifyPerasVote = defaultVerifyPerasVote
-  forgePerasCert = defaultForgePerasCert
+  forgePerasCert ctx votes = do
+    cert <- defaultForgePerasCert ctx votes
+    let
+      votersMap = V1.unPerasCertVoters $ V1.pcVoters $ vpcCert cert
+      (numPersistentVoters, numNonPersistentVoters) =
+        foldr
+          ( \case
+              V1.PersistentPerasVoteEligibilityProof -> first (+ 1)
+              V1.NonPersistentPerasVoteEligibilityProof _ -> second (+ 1)
+          )
+          (0, 0)
+          votersMap
+      constSize = undefined
+      sizePerPersistentVoter = undefined
+      sizePerNonPersistentVoter = undefined
+      sizeUpperBound
+        = constSize
+        + numPersistentVoters * sizePerPersistentVoter
+        + numNonPersistentVoters * sizePerNonPersistentVoter
+    when (sizeUpperBound > dijkstraPerasMaxCertSize) $
+      Left $
+        V1.PerasCertTooLargeError sizeUpperBound dijkstraPerasMaxCertSize
+    pure cert
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock blk =
     bimap V1.PerasTemporaryCertInBlockError id

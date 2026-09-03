@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Peras.Types
   , PerasSeatIndex (..)
 
     -- * Peras vote parameters
+  , PerasCertSize (..)
   , PerasVoteTarget (..)
   , PerasVoteId (..)
   , VoteWeight (..) -- Re-exported from Committee.Types for convenience
@@ -42,7 +43,7 @@ import Codec.Serialise.Class (Serialise (..))
 import Control.DeepSeq (NFData)
 import Data.Coerce (coerce)
 import Data.Kind (Type)
-import Data.Word (Word16, Word64)
+import Data.Word (Word16, Word32, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
@@ -201,3 +202,13 @@ instance ToCBOR PerasVoteId where
       encodeListLen 2
         <> toCBOR pviRoundNo
         <> toCBOR pviSeatIndex
+
+-- | Size of a Peras certificates in bytes.
+--
+-- We use this to ensure that the maximum block size is not exceeded
+-- when including a Peras certificate in a block.
+newtype PerasCertSize
+  = PerasCertSize {unPerasCertSize :: Word32}
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving anyclass NoThunks
+  deriving Num via Word32
