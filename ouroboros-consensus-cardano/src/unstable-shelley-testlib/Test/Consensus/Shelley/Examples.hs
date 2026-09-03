@@ -3,6 +3,9 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+-- GetStakeDistribution is deprecated in ShelleyNodeToClientVersion13 but kept
+-- here as a serialisation example for the still-supported legacy query.
+-- We will remove it once cardano-ledger fully removes it in the next release.
 {-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Test.Consensus.Shelley.Examples
@@ -25,6 +28,7 @@ import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
+import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import Cardano.Protocol.Praos.BlockHeader
   ( HeaderBody (HeaderBody)
   )
@@ -34,6 +38,7 @@ import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Time (mkSlotLength)
 import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -43,6 +48,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
+import Ouroboros.Consensus.Protocol.Leios (Leios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.TPraos
@@ -52,6 +58,7 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Query.Types
+import Ouroboros.Consensus.Shelley.Protocol.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
@@ -335,6 +342,147 @@ fromShelleyLedgerExamplesPraos
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
+-- | TODO Factor this out into something nicer.
+fromShelleyLedgerExamplesLeios ::
+  forall era.
+  ShelleyCompatible (Leios StandardCrypto) era =>
+  ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
+  Examples (ShelleyBlock (Leios StandardCrypto) era)
+fromShelleyLedgerExamplesLeios
+  ProtocolLedgerExamples
+    { pleLedgerExamples = Shelley.LedgerExamples{..}
+    , ..
+    } =
+    Examples
+      { exampleBlock = unlabelled blk
+      , exampleSerialisedBlock = unlabelled serialisedBlock
+      , exampleHeader = unlabelled $ getHeader blk
+      , exampleSerialisedHeader = unlabelled serialisedHeader
+      , exampleHeaderHash = unlabelled hash
+      , exampleGenTx = unlabelled tx
+      , exampleGenTxId = unlabelled $ txId tx
+      , exampleApplyTxErr = unlabelled leApplyTxError
+      , exampleQuery = queries
+      , exampleResult = results
+      , exampleAnnTip = unlabelled annTip
+      , exampleLedgerState = unlabelled ledgerState
+      , exampleChainDepState = unlabelled chainDepState
+      , exampleExtLedgerState = unlabelled extLedgerState
+      , exampleSlotNo = unlabelled slotNo
+      , exampleLedgerConfig = unlabelled ledgerConfig
+      }
+   where
+    emptyTx = mkBasicTx mkBasicTxBody
+    blk =
+      mkShelleyBlock $
+        let SL.Block hdr1 bdy = pleBlock
+         in SL.Block (translateHeader hdr1) bdy
+
+    translateHeader :: SL.BHeader StandardCrypto -> Leios.Header StandardCrypto
+    translateHeader (SL.BHeader bhBody bhSig) =
+      Leios.Header hBody hSig
+     where
+      hBody =
+        Leios.HeaderBody
+          { Leios.hbBlockNo = SL.bheaderBlockNo bhBody
+          , Leios.hbSlotNo = SL.bheaderSlotNo bhBody
+          , Leios.hbPrev = SL.bheaderPrev bhBody
+          , Leios.hbVk = SL.bheaderVk bhBody
+          , Leios.hbVrfVk = SL.bheaderVrfVk bhBody
+          , Leios.hbVrfRes = coerce $ SL.bheaderEta bhBody
+          , Leios.hbBodySize = SL.bsize bhBody
+          , Leios.hbBodyHash = SL.bhash bhBody
+          , Leios.hbOCert = SL.bheaderOCert bhBody
+          , Leios.hbProtVer = SL.bprotver bhBody
+          , Leios.hbBlockBodyContainsLeiosCert = False
+          , Leios.hbEbAnnouncement = SNothing
+          }
+      hSig = coerce bhSig
+    hash = ShelleyHash $ SL.unHashHeader pleHashHeader
+    serialisedBlock = Serialised "<BLOCK>"
+    tx = mkShelleyTx emptyTx
+    slotNo = SlotNo 42
+    serialisedHeader =
+      SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
+    queries =
+      labelled
+        [ ("GetLedgerTip", SomeBlockQuery GetLedgerTip)
+        , ("GetEpochNo", SomeBlockQuery GetEpochNo)
+        , ("GetCurrentPParams", SomeBlockQuery GetCurrentPParams)
+        , ("GetStakeDistribution", SomeBlockQuery GetStakeDistribution)
+        , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
+        , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
+        , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
+        , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
+        , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
+        ]
+    results =
+      labelled
+        [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
+        , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
+        , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
+        , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr lePoolDistr)
+        ,
+          ( "NonMyopicMemberRewards"
+          , SomeResult
+              (GetNonMyopicMemberRewards Set.empty)
+              (NonMyopicMemberRewards $ leNonMyopicRewards)
+          )
+        , ("GenesisConfig", SomeResult GetGenesisConfig (compactGenesis leShelleyGenesis))
+        ,
+          ( "GetBigLedgerPeerSnapshot"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingBigLedgerPeers)
+              ( LedgerPeerSnapshotV2
+                  ( NotOrigin slotNo
+                  ,
+                    [
+                      ( AccPoolStake 0.9
+                      ,
+                        ( PoolStake 0.9
+                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
+                        )
+                      )
+                    ]
+                  )
+              )
+          )
+        , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
+        ,
+          ( "MaxMajorProtocolVersion"
+          , SomeResult GetMaxMajorProtocolVersion $ MaxMajorProtVer (maxBound @SL.Version)
+          )
+        ]
+    annTip =
+      AnnTip
+        { annTipSlotNo = SlotNo 14
+        , annTipBlockNo = BlockNo 6
+        , annTipInfo = hash
+        }
+    ledgerState =
+      ShelleyLedgerState
+        { shelleyLedgerTip =
+            NotOrigin
+              ShelleyTip
+                { shelleyTipSlotNo = SlotNo 9
+                , shelleyTipBlockNo = BlockNo 3
+                , shelleyTipHash = hash
+                }
+        , shelleyLedgerState = leNewEpochState
+        , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
+        , shelleyLedgerTables = emptyLedgerTables
+        }
+    chainDepState =
+      translateChainDepState (Proxy @(Praos StandardCrypto, Leios StandardCrypto)) $
+        translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $
+          TPraosState (NotOrigin 1) pleChainDepState
+    extLedgerState =
+      ExtLedgerState
+        ledgerState
+        (genesisHeaderState chainDepState)
+
+    ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
+
 examplesShelley :: Examples StandardShelleyBlock
 examplesShelley = fromShelleyLedgerExamples ledgerExamplesShelley
 
@@ -354,7 +502,7 @@ examplesConway :: Examples StandardConwayBlock
 examplesConway = fromShelleyLedgerExamplesPraos (ledgerExamplesTPraos Conway.ledgerExamples)
 
 examplesDijkstra :: Examples StandardDijkstraBlock
-examplesDijkstra = fromShelleyLedgerExamplesPraos (ledgerExamplesTPraos Dijkstra.ledgerExamples)
+examplesDijkstra = fromShelleyLedgerExamplesLeios (ledgerExamplesTPraos Dijkstra.ledgerExamples)
 
 exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
 exampleShelleyLedgerConfig translationContext =

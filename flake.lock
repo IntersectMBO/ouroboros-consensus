@@ -3,11 +3,11 @@
     "CHaP": {
       "flake": false,
       "locked": {
-        "lastModified": 1785405248,
-        "narHash": "sha256-qMmv6sncwdCXZWOgTY00TjQvTIStNm+xf3d3TyT9m70=",
+        "lastModified": 1788340302,
+        "narHash": "sha256-4xBiG33FSaLyIWGf3uzA1YWPvwBFcJ7zd1QgXxtkDm0=",
         "owner": "intersectmbo",
         "repo": "cardano-haskell-packages",
-        "rev": "2f34a2539b504182c147262d5e2ee454ee76cf44",
+        "rev": "097b28f32f34294b6f01e682683ab375e3ca0e5e",
         "type": "github"
       },
       "original": {
@@ -114,6 +114,23 @@
         "owner": "phadej",
         "ref": "cabal-docspec-0.0.0.20250606",
         "repo": "cabal-extras",
+        "type": "github"
+      }
+    },
+    "cardano-ledger-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788441480,
+        "narHash": "sha256-LI0zqi99UaXksj+op2rLFL0aY+Ayt7EmxvQtUlJvHDg=",
+        "owner": "IntersectMBO",
+        "repo": "cardano-ledger",
+        "rev": "620d2e31ad263bcfab4ad1516a9549c7b53c3ef6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "IntersectMBO",
+        "ref": "koslambrou/prepare-11.2",
+        "repo": "cardano-ledger",
         "type": "github"
       }
     },
@@ -236,11 +253,11 @@
     "hackageNix": {
       "flake": false,
       "locked": {
-        "lastModified": 1785751397,
-        "narHash": "sha256-lZYZq4Js6JRyiYaW/CH/3Lnh3ce0CL5XpyzB1Yz7eho=",
+        "lastModified": 1788358854,
+        "narHash": "sha256-NIF+y/9ctwQILbHsCZCOFN7dxuwWXKnFn5T0+ya49+Y=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "514ee5e56990d36a98c20f3799e74f6e3e1636f9",
+        "rev": "04149d44d879f7115282c442f8904b5eb5a78c4e",
         "type": "github"
       },
       "original": {
@@ -615,6 +632,23 @@
         "type": "github"
       }
     },
+    "kes-agent-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787329268,
+        "narHash": "sha256-CSHWndpeJFqCEFNT6ysfyN6x+O4vZ9TtYOOsZKcLnIA=",
+        "owner": "koslambrou",
+        "repo": "kes-agent",
+        "rev": "4625f3cf543566517d08882e659c97932d106d86",
+        "type": "github"
+      },
+      "original": {
+        "owner": "koslambrou",
+        "repo": "kes-agent",
+        "rev": "4625f3cf543566517d08882e659c97932d106d86",
+        "type": "github"
+      }
+    },
     "nixpkgs-2305": {
       "locked": {
         "lastModified": 1705033721,
@@ -749,6 +783,7 @@
         "CHaP": "CHaP",
         "agda-nixpkgs": "agda-nixpkgs",
         "cabal-extras": "cabal-extras",
+        "cardano-ledger-src": "cardano-ledger-src",
         "flake-compat": "flake-compat",
         "flake-utils": "flake-utils",
         "gentle-introduction": "gentle-introduction",
@@ -756,6 +791,7 @@
         "haskellNix": "haskellNix",
         "hls": "hls_2",
         "iohkNix": "iohkNix",
+        "kes-agent-src": "kes-agent-src",
         "nixpkgs": [
           "haskellNix",
           "nixpkgs-unstable"

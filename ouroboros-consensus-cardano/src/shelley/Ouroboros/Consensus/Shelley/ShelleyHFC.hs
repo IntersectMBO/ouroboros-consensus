@@ -7,14 +7,13 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
--- TODO: Ledger has a few deprecations that we are ignoring for now
-{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module is the Shelley Hard Fork Combinator
@@ -85,6 +84,8 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.Leios (Leios)
+import qualified Ouroboros.Consensus.Protocol.Leios as Leios
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras
@@ -267,6 +268,14 @@ instance SL.PraosCrypto c => HasPartialConsensusConfig (TPraos c) where
   completeConsensusConfig _ tpraosEpochInfo tpraosParams = TPraosConfig{..}
 
   toPartialConsensusConfig _ = tpraosParams
+
+instance Leios.LeiosCrypto c => HasPartialConsensusConfig (Leios c) where
+  type PartialConsensusConfig (Leios c) = PraosParams
+
+  completeConsensusConfig _ leiosEpochInfo leiosPraosParams =
+    Leios.LeiosConfig{leiosPraosParams, leiosEpochInfo}
+
+  toPartialConsensusConfig _ = Leios.leiosPraosParams
 
 translateChainDepStateAcrossShelley ::
   forall eraFrom eraTo protoFrom protoTo.

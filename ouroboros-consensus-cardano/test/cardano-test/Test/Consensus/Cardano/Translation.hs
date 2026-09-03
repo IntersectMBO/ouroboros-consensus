@@ -60,6 +60,7 @@ import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Protocol.Leios (Leios)
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
@@ -191,7 +192,7 @@ conwayToDijkstraLedgerStateTranslation ::
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos Crypto) ConwayEra)
-    (ShelleyBlock (Praos Crypto) DijkstraEra)
+    (ShelleyBlock (Leios Crypto) DijkstraEra)
 PCons
   byronToShelleyLedgerStateTranslation
   ( PCons
@@ -434,7 +435,7 @@ instance
   Arbitrary
     ( TestSetup
         (ShelleyBlock (Praos Crypto) ConwayEra)
-        (ShelleyBlock (Praos Crypto) DijkstraEra)
+        (ShelleyBlock (Leios Crypto) DijkstraEra)
     )
   where
   arbitrary =
