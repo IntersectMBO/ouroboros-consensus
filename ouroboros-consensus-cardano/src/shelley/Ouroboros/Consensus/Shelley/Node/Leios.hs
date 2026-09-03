@@ -21,7 +21,6 @@ import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Leios
   ( ConsensusConfig (LeiosConfig, leiosEpochInfo, leiosPraosParams)
   , Leios
-  , LeiosCrypto
   )
 import Ouroboros.Consensus.Protocol.Praos
   ( ConsensusConfig (PraosConfig)
@@ -48,7 +47,6 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 leiosBlockForging ::
   forall m era c.
   ( ShelleyCompatible (Leios c) era
-  , LeiosCrypto c
   , IOLike m
   ) =>
   ConsensusConfig (Leios c) ->
@@ -71,7 +69,6 @@ leiosBlockForging leiosConfig hotKey credentials =
 leiosSharedBlockForging ::
   forall m c era.
   ( ShelleyCompatible (Leios c) era
-  , LeiosCrypto c
   , IOLike m
   ) =>
   HotKey.HotKey c m ->

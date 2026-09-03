@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -24,10 +25,21 @@ import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
-import Cardano.Ledger.BaseTypes (StrictMaybe (..), boundRational, unsafeNonZero)
+import Cardano.Ledger.BaseTypes
+  ( Milliseconds32 (..)
+  , StrictMaybe (..)
+  , boundRational
+  , unsafeNonZero
+  )
 import Cardano.Ledger.Core (MaxPledgeLeverage (..), TxOut)
 import Cardano.Ledger.Dijkstra.PParams
-import Cardano.Ledger.Plutus (Language (..), costModelInitParamCount, mkCostModel)
+import Cardano.Ledger.Plutus
+  ( ExUnits (..)
+  , Language (..)
+  , OrdExUnits (..)
+  , costModelInitParamCount
+  , mkCostModel
+  )
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
 import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
 import Cardano.Ledger.TxIn (TxIn)
@@ -50,6 +62,7 @@ import Data.SOP.Functors
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import Data.String (IsString (..))
+import Data.Word (Word16)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron.Ledger
@@ -213,6 +226,15 @@ emptyDijkstraGenesis =
           , udppPlutusV4CostModel =
               fromRight (error "impossible") $
                 mkCostModel PlutusV4 (replicate (costModelInitParamCount PlutusV4) 0)
+          , udppLeiosAnnouncementPeriodLength = Milliseconds32 1_000
+          , udppLeiosVotePeriodLength = Milliseconds32 4_000
+          , udppLeiosDiffusionPeriodLength = Milliseconds32 7_000
+          , udppLeiosCommitteeSize = 900 :: Word16
+          , udppLeiosQuorumStakeThreshold = fromMaybe (error "impossible") $ boundRational 0.75
+          , udppMaxEndorserBlockReferencesSize = 512 * 1024
+          , udppMaxEndorserBlockTxsSize = 12 * 1024 * 1024
+          , udppMaxEndorserBlockExUnits = OrdExUnits $ ExUnits 7_000_000_000 2_000_000_000_000
+          , udppMaxRefScriptSizePerEndorserBlock = 12 * 1024 * 1024
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 

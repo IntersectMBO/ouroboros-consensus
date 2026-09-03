@@ -40,7 +40,12 @@ import Cardano.Protocol.Praos.VRF
   , vrfLeaderValue
   , vrfNonceValue
   )
-import Cardano.Protocol.TPraos.BlockHeader (BoundedNatural (bvValue), PrevHash, checkLeaderNatValue, prevHashToNonce)
+import Cardano.Protocol.TPraos.BlockHeader
+  ( BoundedNatural (bvValue)
+  , PrevHash
+  , checkLeaderNatValue
+  , prevHashToNonce
+  )
 import Cardano.Protocol.TPraos.OCert
   ( KESPeriod (KESPeriod)
   , OCert (OCert)

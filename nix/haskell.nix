@@ -42,8 +42,6 @@ let
     };
     inputMap = {
       "https://chap.intersectmbo.org/" = inputs.CHaP;
-      "https://github.com/IntersectMBO/cardano-ledger" = inputs.cardano-ledger-src;
-      "https://github.com/koslambrou/kes-agent" = inputs.kes-agent-src;
     };
     modules = [
       (forAllProjectPackages ({ ... }: {
