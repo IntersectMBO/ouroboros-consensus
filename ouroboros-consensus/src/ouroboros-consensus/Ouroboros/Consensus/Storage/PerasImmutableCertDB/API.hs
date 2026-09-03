@@ -15,6 +15,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime)
 import Ouroboros.Consensus.Util.CallStack (HasCallStack, PrettyCallStack)
 import Ouroboros.Consensus.Util.IOLike (Exception (..), STM)
 
@@ -47,7 +48,7 @@ data PerasImmutableCertDB m blk = PerasImmutableCertDB
   -- waits for an 'addCert' that is already modifying the database to
   -- complete, while a 'getCertsAfter' in progress may still read certificate
   -- files and return them after the database is closed.
-  , addCert :: HasCallStack => ValidatedPerasCert blk -> m AddPerasImmutableCertResult
+  , addCert :: HasCallStack => WithArrivalTime (ValidatedPerasCert blk) -> m AddPerasImmutableCertResult
   -- ^ Add a certificate to the Peras immutable certificate database. If a
   -- certificate for the same round is already stored but its file is
   -- unreadable or corrupt, it is replaced by the given one.
