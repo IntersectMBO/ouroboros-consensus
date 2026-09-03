@@ -67,6 +67,7 @@ import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
 import Cardano.Ledger.Alonzo.Scripts
   ( ExUnits
   , ExUnits' (..)
+  , OrdExUnits (..)
   , pointWiseExUnits
   , unWrapExUnits
   )
@@ -622,8 +623,8 @@ instance ExUnitsTooBigUTxO AlonzoEra where
           ShelleyEra.UtxoFailure $
             AlonzoEra.ExUnitsTooBigUTxO $
               L.Mismatch
-                { mismatchSupplied = txsz
-                , mismatchExpected = limit
+                { mismatchSupplied = OrdExUnits txsz
+                , mismatchExpected = OrdExUnits limit
                 }
 
 instance ExUnitsTooBigUTxO BabbageEra where
@@ -636,8 +637,8 @@ instance ExUnitsTooBigUTxO BabbageEra where
               BabbageEra.AlonzoInBabbageUtxoPredFailure $
                 AlonzoEra.ExUnitsTooBigUTxO $
                   L.Mismatch
-                    { mismatchSupplied = txsz
-                    , mismatchExpected = limit
+                    { mismatchSupplied = OrdExUnits txsz
+                    , mismatchExpected = OrdExUnits limit
                     }
 
 instance ExUnitsTooBigUTxO ConwayEra where
@@ -647,8 +648,8 @@ instance ExUnitsTooBigUTxO ConwayEra where
         ConwayEra.UtxoFailure $
           ConwayEra.ExUnitsTooBigUTxO $
             L.Mismatch
-              { mismatchSupplied = txsz
-              , mismatchExpected = limit
+              { mismatchSupplied = OrdExUnits txsz
+              , mismatchExpected = OrdExUnits limit
               }
 
 instance ExUnitsTooBigUTxO DijkstraEra where
@@ -659,8 +660,8 @@ instance ExUnitsTooBigUTxO DijkstraEra where
           DijkstraEra.UtxoFailure $
             DijkstraEra.ExUnitsTooBigUTxO $
               L.Mismatch
-                { mismatchSupplied = txsz
-                , mismatchExpected = limit
+                { mismatchSupplied = OrdExUnits txsz
+                , mismatchExpected = OrdExUnits limit
                 }
 
 -----

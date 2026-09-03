@@ -94,9 +94,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Cardano.Ledger.State
-  ( LeiosKey (..)
-  , LeiosPossessionProof (..)
-  , LeiosPubKey (..)
+  ( BlsKey (..)
   , individualPoolStake
   , individualPoolStakeBls
   , poolDistrDistrL
@@ -1031,7 +1029,7 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
           ]
 
     seatKey ips = case ips.individualPoolStakeBls of
-      SJust lk -> SJust (unLeiosPubKey lk.leiosPubKey, unLeiosPossessionProof lk.leiosPossessionProof)
+      SJust lk -> SJust (lk.blsPubKey, lk.blsPossessionProof)
       SNothing -> SNothing
 
     stakeDistribution =
