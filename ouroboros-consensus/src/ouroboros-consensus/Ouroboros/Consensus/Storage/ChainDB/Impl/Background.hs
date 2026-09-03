@@ -61,7 +61,7 @@ import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (forgetArrivalTime))
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime)
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -121,7 +121,9 @@ launchBgTasks cdb@CDB{..} = do
     launch "ChainDB.gcBlocksAndPerasScheduleRunner" $
       gcScheduleRunner gcSchedule $ \slot -> do
         garbageCollectBlocks cdb slot
-        garbageCollectPeras cdb slot
+        removedCerts <- garbageCollectPeras cdb slot
+        forM_ removedCerts $ PerasImmutableCertDB.addCert cdbPerasImmutableCertDB
+        pure ()
 
   !copyToImmutableDBThread <-
     launch "ChainDB.copyToImmutableDBRunner" $
@@ -207,13 +209,6 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- these two lines: the tip was updated on the line above, but the
       -- anchor point is only updated on the line below.
       atomically $ removeFromChain pt
-      -- Copy any certificates boosting this now-immutable block from the
-      -- volatile PerasCertDB to the PerasImmutableCertDB, so that they
-      -- remain available for syncing nodes. This is best-effort: a
-      -- certificate arriving after its boosted block has already been
-      -- copied here is not retried.
-      certsBoostingBlk <- atomically $ PerasCertDB.getCertsBoosting cdbPerasCertDB pt
-      forM_ certsBoostingBlk (PerasImmutableCertDB.addCert cdbPerasImmutableCertDB . forgetArrivalTime)
       trace $ CopiedBlockToImmutableDB pt
 
   -- Get the /possibly/ updated tip of the ImmutableDB
@@ -465,10 +460,11 @@ garbageCollectPeras ::
   IOLike m =>
   ChainDbEnv m blk ->
   SlotNo ->
-  m ()
+  m [WithArrivalTime (ValidatedPerasCert blk)]
 garbageCollectPeras CDB{..} slotNo = do
-  join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
+  removedCerts <- join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   join . atomically $ PerasVoteDB.garbageCollect cdbPerasVoteDB slotNo
+  pure removedCerts
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections
