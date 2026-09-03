@@ -16,11 +16,7 @@ data ShelleyNodeToNodeVersion = ShelleyNodeToNodeVersion1
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 data ShelleyNodeToClientVersion
-  = -- | New queries introduced: GetConstitutionHash, GetFilteredVoteDelegatees
-    ShelleyNodeToClientVersion8
-  | -- | New queries introduced: GetProposals, GetRatifyState
-    ShelleyNodeToClientVersion9
-  | -- | New queries introduced: GetFuturePParams
+  = -- | New queries introduced: GetFuturePParams
     ShelleyNodeToClientVersion10
   | -- | New queries introduced: GetBigLedgerPeerSnapshot
     ShelleyNodeToClientVersion11
@@ -57,9 +53,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
       ]
   supportedNodeToClientVersions _ =
     Map.fromList
-      [ (NodeToClientV_16, ShelleyNodeToClientVersion8)
-      , (NodeToClientV_17, ShelleyNodeToClientVersion9)
-      , (NodeToClientV_18, ShelleyNodeToClientVersion10)
+      [ (NodeToClientV_18, ShelleyNodeToClientVersion10)
       , (NodeToClientV_19, ShelleyNodeToClientVersion11)
       , (NodeToClientV_20, ShelleyNodeToClientVersion12)
       , (NodeToClientV_21, ShelleyNodeToClientVersion13)

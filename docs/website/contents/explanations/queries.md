@@ -60,9 +60,7 @@ The top-level available queries depend on the `NodeToClientVersion`.
 
 | `NodeToClientVersion` | `QueryVersion`  | Newly enabled top-level queries                                    |
 |-----------------------|-----------------|--------------------------------------------------------------------|
-| `NodeToClientV_16`    | `QueryVersion2` | `BlockQuery`, `GetSystemStart`, `GetChainBlockNo`, `GetChainPoint` |
-| `NodeToClientV_17`    | `QueryVersion2` |                                                                    |
-| `NodeToClientV_18`    | `QueryVersion2` |                                                                    |
+| `NodeToClientV_18`    | `QueryVersion2` | `BlockQuery`, `GetSystemStart`, `GetChainBlockNo`, `GetChainPoint` |
 | `NodeToClientV_19`    | `QueryVersion2` |                                                                    |
 | `NodeToClientV_20`    | `QueryVersion3` | `DebugLedgerConfig`                                                |
 | `NodeToClientV_21`    | `QueryVersion3` |                                                                    |
@@ -78,8 +76,6 @@ instead we focus on the Cardano version. All the current versions imply also
 
 | `NodeToClientVersion` | `BlockNodeToNodeVersion blk`   | `ShelleyNodeToClientVersion`   |
 |-----------------------|--------------------------------|--------------------------------|
-| `NodeToClientV_16`    | `CardanoNodeToClientVersion12` | `ShelleyNodeToClientVersion8`  |
-| `NodeToClientV_17`    | `CardanoNodeToClientVersion13` | `ShelleyNodeToClientVersion9`  |
 | `NodeToClientV_18`    | `CardanoNodeToClientVersion14` | `ShelleyNodeToClientVersion10` |
 | `NodeToClientV_19`    | `CardanoNodeToClientVersion15` | `ShelleyNodeToClientVersion11` |
 | `NodeToClientV_20`    | `CardanoNodeToClientVersion16` | `ShelleyNodeToClientVersion12` |

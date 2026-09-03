@@ -49,8 +49,6 @@ instance
   where
   toGoldenDirectory (queryVersion, blockVersion) =
     show queryVersion </> case blockVersion of
-      CardanoNodeToClientVersion12 -> "CardanoNodeToClientVersion12"
-      CardanoNodeToClientVersion13 -> "CardanoNodeToClientVersion13"
       CardanoNodeToClientVersion14 -> "CardanoNodeToClientVersion14"
       CardanoNodeToClientVersion15 -> "CardanoNodeToClientVersion15"
       CardanoNodeToClientVersion16 -> "CardanoNodeToClientVersion16"
