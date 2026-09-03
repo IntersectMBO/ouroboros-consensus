@@ -537,7 +537,7 @@ vacuumLeiosDb dbPath =
 -- rather than gain an empty database. No 'busy_timeout' either, so a write that
 -- meets the node's own write lock gives up after the retries in 'withDie'
 -- rather than block.
-withExistingDb :: HasCallStack => FilePath -> (DB.Database -> IO a) -> IO a
+withExistingDb :: FilePath -> (DB.Database -> IO a) -> IO a
 withExistingDb dbPath =
   MonadThrow.bracket
     (open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault)
