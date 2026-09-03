@@ -18,15 +18,15 @@ module Ouroboros.Consensus.Tracing
   , module Ouroboros.Consensus.Tracing.Render
   ) where
 
-import           Ouroboros.Consensus.Tracing.BlockReplayProgress
-import           Ouroboros.Consensus.Tracing.ChainDB
-import           Ouroboros.Consensus.Tracing.Consensus
-import           Ouroboros.Consensus.Tracing.ConsensusStartupException
-import           Ouroboros.Consensus.Tracing.ConvertTxId
-import           Ouroboros.Consensus.Tracing.Era.Byron ()
-import           Ouroboros.Consensus.Tracing.Era.HardFork ()
-import           Ouroboros.Consensus.Tracing.Era.Shelley ()
-import           Ouroboros.Consensus.Tracing.Formatting ()
-import           Ouroboros.Consensus.Tracing.HasIssuer
-import           Ouroboros.Consensus.Tracing.KESInfo
-import           Ouroboros.Consensus.Tracing.Render
+import Ouroboros.Consensus.Tracing.BlockReplayProgress
+import Ouroboros.Consensus.Tracing.ChainDB
+import Ouroboros.Consensus.Tracing.Consensus
+import Ouroboros.Consensus.Tracing.ConsensusStartupException
+import Ouroboros.Consensus.Tracing.ConvertTxId
+import Ouroboros.Consensus.Tracing.Era.Byron ()
+import Ouroboros.Consensus.Tracing.Era.HardFork ()
+import Ouroboros.Consensus.Tracing.Era.Shelley ()
+import Ouroboros.Consensus.Tracing.Formatting ()
+import Ouroboros.Consensus.Tracing.HasIssuer
+import Ouroboros.Consensus.Tracing.KESInfo
+import Ouroboros.Consensus.Tracing.Render
