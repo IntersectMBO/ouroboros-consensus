@@ -18,14 +18,14 @@ import qualified Cardano.Crypto.Hash as Crypto
 import qualified Cardano.Crypto.Hashing as Byron.Crypto
 import qualified Cardano.Ledger.Hashes as Ledger
 import qualified Cardano.Ledger.TxIn as Ledger
-import           Data.ByteString (ByteString)
-import           Data.SOP
-import           Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
-import           Ouroboros.Consensus.Byron.Ledger.Mempool (TxId (..))
-import           Ouroboros.Consensus.HardFork.Combinator
-import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
-import           Ouroboros.Consensus.Shelley.Ledger.Mempool (TxId (..))
-import           Ouroboros.Consensus.TypeFamilyWrappers (unwrapGenTxId)
+import Data.ByteString (ByteString)
+import Data.SOP
+import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
+import Ouroboros.Consensus.Byron.Ledger.Mempool (TxId (..))
+import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (TxId (..))
+import Ouroboros.Consensus.TypeFamilyWrappers (unwrapGenTxId)
 
 -- | Convert a transaction ID to raw bytes.
 class ConvertTxId blk where
@@ -43,8 +43,10 @@ instance ConvertTxId (ShelleyBlock protocol c) where
   txIdToRawBytes (ShelleyTxId txId) =
     Crypto.hashToBytes . Ledger.extractHash . Ledger.unTxId $ txId
 
-instance All ConvertTxId xs
-      => ConvertTxId (HardForkBlock xs) where
+instance
+  All ConvertTxId xs =>
+  ConvertTxId (HardForkBlock xs)
+  where
   txIdToRawBytes =
     hcollapse
       . hcmap (Proxy @ConvertTxId) (K . txIdToRawBytes . unwrapGenTxId)
