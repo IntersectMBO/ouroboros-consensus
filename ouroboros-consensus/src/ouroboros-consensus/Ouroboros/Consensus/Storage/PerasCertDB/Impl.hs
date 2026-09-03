@@ -173,6 +173,7 @@ createDB args = do
       , getWeightSnapshot = implGetWeightSnapshot env
       , getLatestCertSeen = implGetLatestCertSeen env
       , garbageCollect = implGarbageCollect env
+      , filterCertsByTicket = implFilterCertsByTicket env
       }
  where
   PerasCertDbArgs
@@ -315,3 +316,15 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
             , pcdsLastTicketNo = pcdsLastTicketNo
             , pcdsLatestCertSeen = pcdsLatestCertSeen'
             }
+
+implFilterCertsByTicket ::
+  forall m blk.
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDbEnv m blk ->
+  (WithArrivalTime (ValidatedPerasCert blk) -> Bool) ->
+  STM m (m (Map PerasCertTicketNo (WithArrivalTime (ValidatedPerasCert blk))))
+implFilterCertsByTicket PerasCertDbEnv{pcdbState} p = do
+  PerasCertDbState{pcdsCertsByTicket} <- fmap forgetFingerprint $ readTVar pcdbState
+  pure $ pure $ Map.filter p pcdsCertsByTicket

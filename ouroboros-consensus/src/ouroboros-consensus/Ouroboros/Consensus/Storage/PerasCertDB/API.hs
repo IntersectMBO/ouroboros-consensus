@@ -84,6 +84,9 @@ data PerasCertDB m blk = PerasCertDB
   -- implementations with on-disk storage.
   --
   -- NOTE: Use the `join . atomically` pattern to consume its output.
+  , filterCertsByTicket ::
+      (WithArrivalTime (ValidatedPerasCert blk) -> Bool) ->
+      STM m (m (Map PerasCertTicketNo (WithArrivalTime (ValidatedPerasCert blk))))
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasCertDB" (PerasCertDB m blk)
 

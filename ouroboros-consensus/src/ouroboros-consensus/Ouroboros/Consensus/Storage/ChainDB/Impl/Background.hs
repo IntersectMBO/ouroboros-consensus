@@ -155,6 +155,7 @@ copyToImmutableDB ::
   , ConsensusProtocol (BlockProtocol blk)
   , HasHeader blk
   , GetHeader blk
+  , IsPerasCert (PerasCert blk) blk
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
@@ -194,7 +195,11 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- TODO the invariant of 'cdbChain' is shortly violated between
       -- these two lines: the tip was updated on the line above, but the
       -- anchor point is only updated on the line below.
-      atomically $ removeFromChain pt
+      certsForThisPoint <- atomically $ do
+        removeFromChain pt
+        PerasCertDB.filterCertsByTicket cdbPerasCertDB
+          (\cert -> getPerasCertPoint cert == pt)
+      PerasCertImmutableDB.appendCerts cdbPerasImmutableCertDB pt
       trace $ CopiedBlockToImmutableDB pt
 
   -- Get the /possibly/ updated tip of the ImmutableDB
@@ -249,6 +254,7 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
 copyToImmutableDBRunner ::
   forall m blk.
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   ) =>
   ChainDbEnv m blk ->
@@ -315,7 +321,7 @@ triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) =
 --  * Garbage collection.
 ledgerDbTaskWatcher ::
   forall m blk.
-  (IOLike m, ConsensusProtocol (BlockProtocol blk), GetHeader blk, HasHeader blk) =>
+  (IOLike m, ConsensusProtocol (BlockProtocol blk), GetHeader blk, HasHeader blk, IsPerasCert (PerasCert blk) blk) =>
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
   Watcher m SlotNo SlotNo
