@@ -1,0 +1,328 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+
+-- | A simplified variant of the ImmutableDB specialised to storing immutable
+-- Peras certificates.
+--
+-- Unlike the ImmutableDB, this database does not use chunking: each certificate
+-- is stored in its own file, named after the Peras round number of the
+-- certificate (which uniquely identifies it). Certificates themselves are
+-- therefore never cached in memory; only the (much smaller) set of certificate
+-- round numbers known to be on disk is kept in memory, guarded by a
+-- 'StrictSVar', similarly to how the ImmutableDB guards its
+-- 'Ouroboros.Consensus.Storage.ImmutableDB.Impl.State.OpenState'.
+-- Every database operation goes through this guarded set,
+-- which acts as this database's (much simpler, since there is no chunking)
+-- equivalent of the ImmutableDB's on-disk indices.
+module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
+  ( -- * Opening
+    PerasImmutableCertDbArgs (..)
+  , defaultArgs
+  , openDB
+
+    -- * Trace types
+  , TraceEvent (..)
+  ) where
+
+import Cardano.Binary
+  ( FromCBOR
+  , ToCBOR
+  , decodeFull
+  , serialize
+  )
+import Control.Monad (void)
+import Control.Monad.State.Strict (StateT, get, lift, put)
+import Control.ResourceRegistry (WithTempRegistry, allocateTemp, modifyWithTempRegistry)
+import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.List (stripPrefix)
+import Data.Maybe (mapMaybe)
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Data.Typeable (Typeable)
+import Data.Word (Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (OnlyCheckWhnfNamed (..))
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.PerasImmutableCertDB.API
+import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.IOLike
+import System.FS.API.Lazy
+import Text.Read (readMaybe)
+
+{-------------------------------------------------------------------------------
+  Database state
+-------------------------------------------------------------------------------}
+
+data PerasImmutableCertDbEnv m blk = PerasImmutableCertDbEnv
+  { picdbHasFS :: !(SomeHasFS m)
+  , picdbTracer :: !(Tracer m (TraceEvent blk))
+  , picdbKnownRounds :: !(StrictSVar m (Set PerasRoundNo))
+  -- ^ The round numbers of all certificates currently stored on
+  -- disk. This is the only bit of information about the certificates kept
+  -- in memory; the certificates themselves are read back from disk
+  -- on demand.
+  }
+  deriving
+    NoThunks
+    via OnlyCheckWhnfNamed "PerasImmutableCertDbEnv" (PerasImmutableCertDbEnv m blk)
+
+-- | Shorthand for the monad in which 'implAddCert' safely modifies
+-- 'picdbKnownRounds': allocated resources (here, a single certificate file)
+-- are automatically cleaned up if they don't end up part of the on-disk state.
+type ModifyKnownRounds m = StateT (Set PerasRoundNo) (WithTempRegistry (Set PerasRoundNo) m)
+
+{-------------------------------------------------------------------------------
+  Errors
+-------------------------------------------------------------------------------}
+
+-- | A certificate file on disk could not be decoded.
+data PerasImmutableCertDbError
+  = CorruptPerasImmutableCertFile FsPath String
+  deriving stock Show
+  deriving anyclass Exception
+
+{-------------------------------------------------------------------------------
+  Trace types
+-------------------------------------------------------------------------------}
+
+data TraceEvent blk
+  = -- | Number of certificates found on disk when opening.
+    OpenedDB
+      Int
+  | -- | The result of attempting to add a certificate for the given round.
+    AddedCert PerasRoundNo AddPerasImmutableCertResult
+  deriving stock (Eq, Show, Generic)
+
+{-------------------------------------------------------------------------------
+  Creating the database
+-------------------------------------------------------------------------------}
+
+data PerasImmutableCertDbArgs f m blk = PerasImmutableCertDbArgs
+  { picdbaHasFS :: HKD f (SomeHasFS m)
+  , picdbaTracer :: Tracer m (TraceEvent blk)
+  }
+
+defaultArgs :: Monad m => Incomplete PerasImmutableCertDbArgs m blk
+defaultArgs =
+  PerasImmutableCertDbArgs
+    { picdbaHasFS = noDefault
+    , picdbaTracer = nullTracer
+    }
+
+openDB ::
+  forall m blk.
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  , FromCBOR (PerasCert blk)
+  , ToCBOR (PerasCert blk)
+  , Typeable blk
+  ) =>
+  Complete PerasImmutableCertDbArgs m blk ->
+  m (PerasImmutableCertDB m blk)
+openDB
+  PerasImmutableCertDbArgs
+    { picdbaHasFS = someHasFS@(SomeHasFS hasFS)
+    , picdbaTracer
+    } = do
+    createDirectoryIfMissing hasFS True (mkFsPath [])
+    -- Index the certificate files present on disk by recovering their round
+    -- numbers from their file names; the certificates themselves are read back
+    -- from disk on demand, see 'implGetCertsAfter'.
+    rounds <- indexCertRounds hasFS
+    picdbKnownRounds <- newSVar rounds
+    let env =
+          PerasImmutableCertDbEnv
+            { picdbHasFS = someHasFS
+            , picdbTracer = picdbaTracer
+            , picdbKnownRounds
+            }
+    traceWith picdbaTracer (OpenedDB (Set.size rounds))
+    pure
+      PerasImmutableCertDB
+        { addCert = implAddCert env
+        , getCertsAfter = implGetCertsAfter env
+        }
+
+{-------------------------------------------------------------------------------
+  API implementation
+-------------------------------------------------------------------------------}
+
+implAddCert ::
+  forall m blk.
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  , ToCBOR (PerasCert blk)
+  , Typeable blk
+  ) =>
+  PerasImmutableCertDbEnv m blk ->
+  ValidatedPerasCert blk ->
+  m AddPerasImmutableCertResult
+implAddCert env cert = do
+  result <- modifyWithTempRegistry getSt putSt modifyRounds
+  traceWith (picdbTracer env) (AddedCert roundNo result)
+  pure result
+ where
+  roundNo = getPerasCertRound cert
+
+  getSt :: m (Set PerasRoundNo)
+  getSt = takeSVar (picdbKnownRounds env)
+
+  -- Taking and putting back the 'StrictSVar' makes the whole
+  -- check-then-write below atomic wrt concurrent 'addCert' calls, closing
+  -- the race that a plain 'StrictTVar' check-then-update can't avoid. On
+  -- abort or exception, restore the state as it was before this call; any
+  -- certificate file written in the meantime is cleaned up by
+  -- 'allocateTemp' (see 'modifyRounds') since it never becomes part of the
+  -- committed state.
+  putSt :: Set PerasRoundNo -> ExitCase (Set PerasRoundNo) -> m ()
+  putSt before ec =
+    putSVar (picdbKnownRounds env) $ case ec of
+      ExitCaseSuccess after -> after
+      _ -> before
+
+  modifyRounds :: ModifyKnownRounds m AddPerasImmutableCertResult
+  modifyRounds = do
+    rounds <- get
+    if Set.member roundNo rounds
+      then pure CertAlreadyInImmutableDB
+      else do
+        lift $
+          allocateTemp
+            (writeCertFile env roundNo cert)
+            (\() -> removeCertFile env roundNo >> pure True)
+            (\rounds' () -> Set.member roundNo rounds')
+        put (Set.insert roundNo rounds)
+        pure AddedCertToImmutableDB
+
+implGetCertsAfter ::
+  forall m blk.
+  ( IOLike m
+  , FromCBOR (PerasCert blk)
+  , Typeable blk
+  ) =>
+  PerasImmutableCertDbEnv m blk ->
+  PerasRoundNo ->
+  Word64 ->
+  m [ValidatedPerasCert blk]
+implGetCertsAfter env roundNo maxCerts = do
+  -- A possibly slightly stale read is fine: concurrently added certificates
+  -- may or may not show up, just as for the ImmutableDB (see
+  -- 'getOpenState').
+  rounds <- atomically $ readSVarSTM (picdbKnownRounds env)
+  let roundsAfter = snd $ Set.split roundNo rounds
+  mapM (readCertFile env) (take (fromIntegral maxCerts) (Set.toAscList roundsAfter))
+
+{-------------------------------------------------------------------------------
+  On-disk serialisation
+-------------------------------------------------------------------------------}
+
+-- | The extension shared by all certificate files. A directory entry without
+-- this extension is not a certificate file and is ignored when indexing.
+certFileExtension :: String
+certFileExtension = ".cert"
+
+-- | The name of the file storing the certificate of the given round number.
+--
+-- The round number is encoded in the file name (and nowhere else), so that it
+-- can be recovered without reading the file, see 'certRoundFromFileName'.
+certFileName :: PerasRoundNo -> String
+certFileName roundNo = show (unPerasRoundNo roundNo) <> certFileExtension
+
+fsPathCertFile :: PerasRoundNo -> FsPath
+fsPathCertFile roundNo = mkFsPath [certFileName roundNo]
+
+-- | Recover the round number of a certificate from its file name, or 'Nothing'
+-- if the name is not a well-formed certificate file name. Inverse of
+-- 'certFileName'.
+certRoundFromFileName :: String -> Maybe PerasRoundNo
+certRoundFromFileName name = do
+  digits <- stripSuffix certFileExtension name
+  PerasRoundNo <$> readMaybe digits
+ where
+  stripSuffix suffix s = reverse <$> stripPrefix (reverse suffix) (reverse s)
+
+writeCertFile ::
+  ( IOLike m
+  , ToCBOR (PerasCert blk)
+  , Typeable blk
+  ) =>
+  PerasImmutableCertDbEnv m blk ->
+  PerasRoundNo ->
+  ValidatedPerasCert blk ->
+  m ()
+writeCertFile env roundNo cert =
+  case picdbHasFS env of
+    SomeHasFS hasFS ->
+      withFile hasFS path (WriteMode MustBeNew) $ \h ->
+        void $ hPutAll hasFS h bytes
+ where
+  path = fsPathCertFile roundNo
+  bytes = serialize cert
+
+-- | Remove the file of a certificate.
+--
+-- Only used to clean up a certificate file that was written by 'addCert' but
+-- never made it into 'picdbKnownRounds' because of an exception.
+removeCertFile ::
+  PerasImmutableCertDbEnv m blk ->
+  PerasRoundNo ->
+  m ()
+removeCertFile env roundNo =
+  case picdbHasFS env of
+    SomeHasFS hasFS -> removeFile hasFS (fsPathCertFile roundNo)
+
+-- | Read and decode the certificate of the given round number.
+--
+-- PRECONDITION: the round number's certificate file exists.
+readCertFile ::
+  forall m blk.
+  ( IOLike m
+  , FromCBOR (PerasCert blk)
+  , Typeable blk
+  ) =>
+  PerasImmutableCertDbEnv m blk ->
+  PerasRoundNo ->
+  m (ValidatedPerasCert blk)
+readCertFile env roundNo =
+  case picdbHasFS env of
+    SomeHasFS hasFS -> readCertFileAt (Proxy @blk) hasFS (fsPathCertFile roundNo)
+
+readCertFileAt ::
+  ( IOLike m
+  , FromCBOR (PerasCert blk)
+  , Typeable blk
+  ) =>
+  Proxy blk ->
+  HasFS m h ->
+  FsPath ->
+  m (ValidatedPerasCert blk)
+readCertFileAt _ hasFS path = do
+  bytes <- withFile hasFS path ReadMode (hGetAll hasFS)
+  case decodeFull bytes of
+    Right cert -> pure cert
+    -- Corrupt data on disk is treated as unrecoverable,
+    -- so error handling is bubbled up.
+    Left err -> throwIO $ CorruptPerasImmutableCertFile path (show err)
+
+-- | Index the round numbers of all certificate files in the database
+-- directory.
+--
+-- The round number of each certificate is recovered from its file name (see
+-- 'certFileName'), so the certificates themselves are not read or decoded here;
+-- that happens on demand in 'readCertFile'. Directory entries that are not
+-- well-formed certificate file names are ignored.
+indexCertRounds ::
+  IOLike m =>
+  HasFS m h ->
+  m (Set PerasRoundNo)
+indexCertRounds hasFS = do
+  names <- listDirectory hasFS (mkFsPath [])
+  pure $ Set.fromList $ mapMaybe certRoundFromFileName $ Set.toList names

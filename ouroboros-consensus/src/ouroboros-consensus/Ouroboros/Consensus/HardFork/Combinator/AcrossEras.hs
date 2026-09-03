@@ -270,6 +270,15 @@ instance
   Typeable xs =>
   ShowProxy (OneEraPerasCert xs)
 
+instance CanHardFork xs => FromCBOR (OneEraPerasCert xs) where
+  fromCBOR =
+    OneEraPerasCert
+      <$> decodeNS (hcpure proxySingle (Comp (WrapPerasCert <$> fromCBOR)))
+
+instance CanHardFork xs => ToCBOR (OneEraPerasCert xs) where
+  toCBOR (OneEraPerasCert ns) =
+    encodeNS (hcpure proxySingle (fn (K . toCBOR . unwrapPerasCert))) ns
+
 newtype OneEraPerasError xs
   = OneEraPerasError
   { getOneEraPerasError ::
