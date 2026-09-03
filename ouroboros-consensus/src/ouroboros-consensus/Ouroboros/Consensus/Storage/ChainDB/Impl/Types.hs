@@ -130,6 +130,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasHistCertDB (PerasHistCertDB)
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import Ouroboros.Consensus.Storage.Serialisation
@@ -385,6 +386,7 @@ data ChainDbEnv m blk = CDB
   -- ^ PRNG for determining the random delay we'll wait before actually
   -- performing the snapshot when one has been requested.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
+  , cdbPerasHistCertDB :: !(PerasHistCertDB m blk)
   , cdbPerasVoteDB :: !(PerasVoteDB m blk)
   }
   deriving Generic

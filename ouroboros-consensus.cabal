@@ -317,6 +317,9 @@ library
     Ouroboros.Consensus.Storage.PerasCertDB
     Ouroboros.Consensus.Storage.PerasCertDB.API
     Ouroboros.Consensus.Storage.PerasCertDB.Impl
+    Ouroboros.Consensus.Storage.PerasHistCertDB
+    Ouroboros.Consensus.Storage.PerasHistCertDB.API
+    Ouroboros.Consensus.Storage.PerasHistCertDB.Impl
     Ouroboros.Consensus.Storage.PerasVoteDB
     Ouroboros.Consensus.Storage.PerasVoteDB.API
     Ouroboros.Consensus.Storage.PerasVoteDB.Impl
