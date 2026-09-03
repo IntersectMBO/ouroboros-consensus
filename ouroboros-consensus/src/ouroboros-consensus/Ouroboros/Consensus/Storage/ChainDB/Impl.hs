@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
+import Cardano.Binary (FromCBOR, ToCBOR)
 import Control.Monad (void, when)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.RAWLock as RAW
@@ -117,6 +118,8 @@ withDB ::
   , InspectLedger blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , ToCBOR (PerasCert blk)
+  , FromCBOR (PerasCert blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -134,6 +137,8 @@ openDB ::
   , InspectLedger blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , ToCBOR (PerasCert blk)
+  , FromCBOR (PerasCert blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -151,6 +156,8 @@ openDBInternal ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack
+  , ToCBOR (PerasCert blk)
+  , FromCBOR (PerasCert blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks
