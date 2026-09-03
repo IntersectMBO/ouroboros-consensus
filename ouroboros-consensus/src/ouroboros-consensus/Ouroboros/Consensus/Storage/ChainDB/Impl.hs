@@ -359,7 +359,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
-                Background.garbageCollectPeras e slot
+                void $ Background.garbageCollectPeras e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
             , intTryTakeSnapshot = getEnv h $ \e -> do
                 -- 'tryTakeSnapshot' only enqueues a request for the snapshots;

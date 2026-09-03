@@ -79,6 +79,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasHistCertDB.API as PerasHistCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
@@ -88,6 +89,7 @@ import Ouroboros.Consensus.Util.STM (Watcher (..), blockUntilJust, forkLinkedWat
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import System.Random
+import Ouroboros.Consensus.Storage.PerasHistCertDB (PerasHistCertDB(PerasHistCertDB))
 
 {-------------------------------------------------------------------------------
   Launch background tasks
@@ -119,7 +121,9 @@ launchBgTasks cdb@CDB{..} = do
     launch "ChainDB.gcBlocksAndPerasScheduleRunner" $
       gcScheduleRunner gcSchedule $ \slot -> do
         garbageCollectBlocks cdb slot
-        garbageCollectPeras cdb slot
+        removedCerts <- garbageCollectPeras cdb slot
+        forM_ removedCerts $ PerasHistCertDB.appendCert cdbPerasHistCertDB
+        pure ()
 
   !copyToImmutableDBThread <-
     launch "ChainDB.copyToImmutableDBRunner" $
@@ -455,10 +459,11 @@ garbageCollectPeras ::
   IOLike m =>
   ChainDbEnv m blk ->
   SlotNo ->
-  m ()
+  m [ValidatedPerasCert blk]
 garbageCollectPeras CDB{..} slotNo = do
-  join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
+  removedCerts <- join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   join . atomically $ PerasVoteDB.garbageCollect cdbPerasVoteDB slotNo
+  pure removedCerts
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections
