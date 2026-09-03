@@ -1837,8 +1837,14 @@ leiosKernelNSInfo = \case
       ["FetchBodyArrival"]
       LSDebug
       [ ("leiosFetchBodyInvalidBytes", "EB-body bytes received in a failed-validation MsgLeiosBlock.")
-      , ("leiosFetchBodyEvictedBytes", "EB-body bytes whose announcement was absent from the LeiosTxCache (assumed since evicted).")
-      , ("leiosFetchBodyGoodBytes", "EB-body bytes filling an announced-but-not-yet-held EB (the expected case).")
+      ,
+        ( "leiosFetchBodyEvictedBytes"
+        , "EB-body bytes whose announcement was absent from the LeiosTxCache (assumed since evicted)."
+        )
+      ,
+        ( "leiosFetchBodyGoodBytes"
+        , "EB-body bytes filling an announced-but-not-yet-held EB (the expected case)."
+        )
       , ("leiosFetchBodyExtraBytes", "EB-body bytes for an EB already held (redundant).")
       ]
   LKNSFetchTxsArrival ->
@@ -1846,8 +1852,14 @@ leiosKernelNSInfo = \case
       ["FetchTxsArrival"]
       LSDebug
       [ ("leiosFetchTxsInvalidBytes", "Tx bytes received in a failed-validation MsgLeiosBlockTxs.")
-      , ("leiosFetchTxsEvictedBytes", "Tx bytes no cached body expected (prior state absent, assumed since evicted).")
-      , ("leiosFetchTxsGoodBytes", "Tx bytes a cached body expected and had not yet held (the expected case).")
+      ,
+        ( "leiosFetchTxsEvictedBytes"
+        , "Tx bytes no cached body expected (prior state absent, assumed since evicted)."
+        )
+      ,
+        ( "leiosFetchTxsGoodBytes"
+        , "Tx bytes a cached body expected and had not yet held (the expected case)."
+        )
       , ("leiosFetchTxsExtraBytes", "Tx bytes already held (redundant).")
       ]
   LKNSBodyHits -> LeiosNSInfo ["BodyHits"] LSInfo []
