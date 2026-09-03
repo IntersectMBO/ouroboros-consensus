@@ -562,17 +562,17 @@ instance
     GetStakeSnapshots{} -> const True
     GetPoolDistr{} -> (< v13)
     GetStakeDelegDeposits{} -> const True
-    GetConstitution -> (>= v8)
-    GetGovState -> (>= v8)
-    GetDRepState{} -> (>= v8)
-    GetDRepStakeDistr{} -> (>= v8)
-    GetCommitteeMembersState{} -> (>= v8)
-    GetFilteredVoteDelegatees{} -> (>= v8)
-    GetAccountState{} -> (>= v8)
-    GetSPOStakeDistr{} -> (>= v8)
-    GetProposals{} -> (>= v9)
-    GetRatifyState{} -> (>= v9)
-    GetFuturePParams{} -> (>= v10)
+    GetConstitution -> const True
+    GetGovState -> const True
+    GetDRepState{} -> const True
+    GetDRepStakeDistr{} -> const True
+    GetCommitteeMembersState{} -> const True
+    GetFilteredVoteDelegatees{} -> const True
+    GetAccountState{} -> const True
+    GetSPOStakeDistr{} -> const True
+    GetProposals{} -> const True
+    GetRatifyState{} -> const True
+    GetFuturePParams{} -> const True
     GetLedgerPeerSnapshot' False _peerKind -> (>= v11)
     GetLedgerPeerSnapshot' True _peerKind -> (>= v15)
     QueryStakePoolDefaultVote{} -> (>= v12)
@@ -584,9 +584,6 @@ instance
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
 
-    v8 = ShelleyNodeToClientVersion8
-    v9 = ShelleyNodeToClientVersion9
-    v10 = ShelleyNodeToClientVersion10
     v11 = ShelleyNodeToClientVersion11
     v12 = ShelleyNodeToClientVersion12
     v13 = ShelleyNodeToClientVersion13
