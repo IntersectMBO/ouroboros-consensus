@@ -121,7 +121,7 @@ instance CanMapKeysMK EmptyMK where
   KeysMK
 -------------------------------------------------------------------------------}
 
-newtype KeysMK k v = KeysMK (Set k)
+newtype KeysMK k v = KeysMK {getKeysMK :: Set k}
   deriving stock (Generic, Eq, Show)
   deriving newtype (Semigroup, Monoid)
   deriving anyclass NoThunks

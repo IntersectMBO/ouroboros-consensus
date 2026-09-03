@@ -7,12 +7,10 @@
 module Ouroboros.Consensus.Mempool.Ledger
   ( reapplyUntilTimeout
   , ReapplyStepState (..)
-  , propUTxOsIsDisjoint
   , reapply
   ) where
 
-import Control.Monad (unless)
-import Control.Monad.Except (ExceptT, MonadError (throwError), runExcept)
+import Control.Monad.Except (runExcept)
 import qualified Data.Foldable as Foldable
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -24,7 +22,9 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables, unionValues)
+import Ouroboros.Consensus.Ledger.Tables.Utils
+  ( prependDiffs
+  )
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Impl.Common
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
@@ -32,7 +32,7 @@ import Ouroboros.Consensus.Util.IOLike
 
 -- | Accumulator type threaded through each 'reapplyStep' call by top-level 'reapply'.
 data ReapplyStepState blk = ReapplyStepState
-  { currentLedgerSt :: !(TickedLedgerState blk ValuesMK)
+  { currentLedgerStWithDiffs :: !(TickedLedgerState blk DiffMK)
   -- ^ Ticked ledger state reflecting the cumulative effect of all applied
   -- transactions so far ('appliedTxs').
   , remainingTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
@@ -47,13 +47,17 @@ data ReapplyStepState blk = ReapplyStepState
   -- Becomes the transaction sequence of the final 'MempoolSnapshot'.
   , appliedTxIds :: !(Set.Set (GenTxId blk))
   -- ^ Set of all accepted transactions (view on 'appliedTxs').
-  , inUTxOs :: !(Set (TxIn (LedgerState blk)))
-  -- ^ Set of boundary UTxO input keys
-  , outUTxOs :: !(Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk)))
-  -- ^ Map of boundary UTxO output keys
-  , unapplicableTxsUTxOs :: !(Set (TxIn (LedgerState blk)))
-  -- ^ Set of UTxOs created by 'unapplicableTxs'
+  , deadOutputs :: !(Set (TxIn (LedgerState blk)))
+  -- ^ UTxOs created by unapplicable transactions in 'unapplicableTxs'
   }
+
+initReapplyStepState ::
+  LedgerSupportsMempool blk =>
+  TickedLedgerState blk DiffMK ->
+  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  ReapplyStepState blk
+initReapplyStepState startingLedgerStDiff txs =
+  ReapplyStepState startingLedgerStDiff txs mempty TxSeq.Empty Set.empty Set.empty
 
 reapply ::
   forall blk m.
@@ -64,27 +68,11 @@ reapply ::
   TickedLedgerState blk DiffMK ->
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   m (ReapplyStepState blk)
-reapply resolveValues cfg slot baseLedgerStDiff txsToApply = do
-  let startingLedgerSt = baseLedgerStDiff `withLedgerTables` emptyLedgerTables
-
+reapply resolveValues cfg slot baseLedgerStDiff txsToApply =
   iterateUntilM
     (null . remainingTxs)
-    (reapplyStep (length txsToApply) resolveValues cfg slot baseLedgerStDiff)
-    ( ReapplyStepState
-        startingLedgerSt
-        txsToApply
-        mempty
-        TxSeq.Empty
-        Set.empty
-        Set.empty
-        Map.empty
-        Set.empty
-    )
-
-iterateUntilM :: Monad m => (a -> Bool) -> (a -> m a) -> a -> m a
-iterateUntilM p f a
-  | p a = return a
-  | otherwise = f a >>= iterateUntilM p f
+    (reapplyStep (length txsToApply) resolveValues cfg slot)
+    (initReapplyStepState baseLedgerStDiff txsToApply)
 
 reapplyUntilTimeout ::
   forall blk m.
@@ -97,23 +85,12 @@ reapplyUntilTimeout ::
   TickedLedgerState blk DiffMK ->
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   m (ReapplyStepState blk)
-reapplyUntilTimeout reapplyTimeout reapplyPerStep resolveValues cfg slot baseLedgerStDiff txsToApply = do
-  let startingLedgerSt = baseLedgerStDiff `withLedgerTables` emptyLedgerTables
-
+reapplyUntilTimeout reapplyTimeout reapplyPerStep resolveValues cfg slot baseLedgerStDiff txsToApply =
   iterateUntilOrTimeout_
     reapplyTimeout
     (null . remainingTxs)
-    (reapplyStep reapplyPerStep resolveValues cfg slot baseLedgerStDiff)
-    ( ReapplyStepState
-        startingLedgerSt
-        txsToApply
-        mempty
-        TxSeq.Empty
-        Set.empty
-        Set.empty
-        Map.empty
-        Set.empty
-    )
+    (reapplyStep reapplyPerStep resolveValues cfg slot)
+    (initReapplyStepState baseLedgerStDiff txsToApply)
 
 reapplyStep ::
   forall blk m.
@@ -122,132 +99,147 @@ reapplyStep ::
   (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
   LedgerConfig blk ->
   SlotNo ->
-  TickedLedgerState blk DiffMK ->
   ReapplyStepState blk ->
   m (ReapplyStepState blk)
-reapplyStep reapplyPerStep resolveValues cfg slot baseLedgerStDiff st@ReapplyStepState{..} = do
+reapplyStep reapplyPerStep resolveValues cfg slot st@ReapplyStepState{..} = do
   let (!txsToApplyStep, !remainingTxsStep) = TxSeq.take reapplyPerStep remainingTxs
 
-  -- Resolve boundary input keys
-  -- a) UTxOs that haven't been previously resolved
-  -- b) UTxOs that weren't produced by unapplicable transactions
-  --      -- omitted in 'inputValuesStep' so Ledger will report a proper "missing utxo" error
-  let !(ins, _outs) = insAndOutsFromTxs (inUTxOs, outUTxOs) txsToApplyStep
-      !unknownIns = (ins `Set.difference` inUTxOs) `Set.difference` unapplicableTxsUTxOs
-      !inputKeysToResolve = LedgerTables (KeysMK unknownIns)
+  -- Find boundary input keys
+  let !(inputsStep, inputsToResolveStep) = findBoundaryInputs currentLedgerStWithDiffs deadOutputs txsToApplyStep
 
-  !inputValuesResolvedForStep <- resolveValues inputKeysToResolve
+  !inputValuesResolvedStep <- resolveValues inputsToResolveStep
 
   -- Prepare the ledger state with values
-  -- TODO(bladyjoker): We're growing the 'inputValuesStep' and `currentLedgerSt` but that's unnecessary and might impact performance? Should we just provide the necessary UTxO closure?
   let
-    !baseLedgerSt = applyMempoolDiffs inputValuesResolvedForStep inputKeysToResolve baseLedgerStDiff
-    !inputValuesStep =
-      ltliftA2
-        unionValues
-        (projectLedgerTables currentLedgerSt)
-        (projectLedgerTables baseLedgerSt)
+    !currentLedgerSt =
+      applyMempoolDiffs inputValuesResolvedStep inputsStep currentLedgerStWithDiffs
     !stForStep =
       st
-        { currentLedgerSt = currentLedgerSt `withLedgerTables` inputValuesStep
-        , remainingTxs = remainingTxsStep
+        { remainingTxs = remainingTxsStep
         }
 
-  return $! reapplyTxs' cfg slot txsToApplyStep stForStep
+  return $! reapplyTxs' cfg slot txsToApplyStep currentLedgerSt stForStep
 
 reapplyTxs' ::
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   LedgerConfig blk ->
   SlotNo ->
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  TickedLedgerState blk ValuesMK ->
   ReapplyStepState blk ->
   ReapplyStepState blk
-reapplyTxs' cfg slot txs stBefore =
-  Foldable.foldl'
-    ( \st !tkt ->
-        let tx = validatedTx . TxSeq.txTicketTx $ tkt
-            txUTxOs = utxosFromTx $ TxSeq.txTicketTx tkt
-            (inUTxOs', outUTxOs') = insAndOutsFromUTxOsStep (inUTxOs st, outUTxOs st) txUTxOs
-         in case runExcept (reapplyTx cfg slot tx (currentLedgerSt st)) of
-              Left !err ->
-                st
-                  { unapplicableTxs = unapplicableTxs st |> Invalidated tx err
-                  , unapplicableTxsUTxOs =
-                      unapplicableTxsUTxOs st `Set.union` (Map.keysSet . createdUTxOs $ txUTxOs)
-                  }
-              Right !ledgerStAfterTx ->
-                st
-                  { currentLedgerSt = ledgerStAfterTx
-                  , appliedTxs = appliedTxs st TxSeq.:> tkt
-                  , appliedTxIds = Set.insert (txId (txForgetValidated tx)) (appliedTxIds st)
-                  , inUTxOs = inUTxOs'
-                  , outUTxOs = outUTxOs'
-                  }
-    )
-    stBefore
-    (TxSeq.toList txs)
-
-data UTxOs blk = UTxOs
-  { createdUTxOs :: Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
-  , readUTxOs :: Set (TxIn (LedgerState blk))
-  , deletedUTxOs :: Set (TxIn (LedgerState blk))
-  }
-
-propUTxOsIsDisjoint ::
-  (LedgerSupportsMempool blk, Monad m) =>
-  UTxOs blk -> ExceptT String m (UTxOs blk)
-propUTxOsIsDisjoint utxos@(UTxOs cs rs ds) = do
-  unless
-    (rs `Set.disjoint` ds && rs `Set.disjoint` (Map.keysSet cs) && ds `Set.disjoint` (Map.keysSet cs))
-    $ throwError "UTxO create, read and delete sets must be mutually disjoint"
-  return utxos
-
-utxosFromTx ::
-  LedgerSupportsMempool blk =>
-  ValidatedTxWithDiffs blk -> UTxOs blk
-utxosFromTx tx =
-  let
-    LedgerTables (KeysMK allKeys) = getTransactionKeySets . txForgetValidated . validatedTx $ tx
-    (deletedKeys, createdValues) = Diff.deletedAndCreated . getDiffMK . getLedgerTables . validatedTxDiffs $ tx
-   in
-    UTxOs
-      { createdUTxOs = createdValues
-      , readUTxOs = allKeys `Set.difference` deletedKeys
-      , deletedUTxOs = deletedKeys
-      }
-
-insAndOutsFromUTxOss ::
-  (LedgerSupportsMempool blk, Foldable t) =>
-  (Set (TxIn (LedgerState blk)), Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk))) ->
-  t (UTxOs blk) ->
-  (Set (TxIn (LedgerState blk)), Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk)))
-insAndOutsFromUTxOss ios utxos = Foldable.foldl' insAndOutsFromUTxOsStep ios utxos
-
-insAndOutsFromUTxOsStep ::
-  LedgerSupportsMempool blk =>
-  (Set (TxIn (LedgerState blk)), Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk))) ->
-  UTxOs blk ->
-  (Set (TxIn (LedgerState blk)), Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk)))
-insAndOutsFromUTxOsStep (ins, outs) (UTxOs cutxos rutxos dutxos) =
-  let txIns = rutxos `Set.union` dutxos
-      -- 1. Inputs required by this tx that were NOT output boundary keys produced by earlier txs
-      unmatchedIns = txIns `Set.difference` Map.keysSet outs
-      -- 2. Outputs deleted/spent by this tx
-      remainingOuts = outs `Map.withoutKeys` dutxos
-   in ( ins `Set.union` unmatchedIns
-      , cutxos `Map.union` remainingOuts
+reapplyTxs' cfg slot txs startingLedgerSt stBefore =
+  snd $
+    Foldable.foldl'
+      ( \(!curLedger, !st) !tkt ->
+          let tx = TxSeq.txTicketTx tkt
+              vtx = validatedTx tx
+           in case runExcept (reapplyTx cfg slot vtx curLedger) of
+                Left !err ->
+                  ( curLedger
+                  , st
+                      { unapplicableTxs = unapplicableTxs st |> Invalidated vtx err
+                      , deadOutputs = deadOutputs st `Set.union` (Map.keysSet . outputsFromTx $ tx)
+                      }
+                  )
+                Right !ledgerStAfterTx ->
+                  ( ledgerStAfterTx
+                  , st
+                      { appliedTxs = appliedTxs st TxSeq.:> tkt
+                      , appliedTxIds = Set.insert (txId (txForgetValidated vtx)) (appliedTxIds st)
+                      , currentLedgerStWithDiffs =
+                          currentLedgerStWithDiffs st
+                            `withLedgerTables` prependDiffs
+                              (projectLedgerTables (currentLedgerStWithDiffs st))
+                              (validatedTxDiffs tx)
+                      }
+                  )
       )
+      (startingLedgerSt, stBefore)
+      (TxSeq.toList txs)
 
--- | `let insAndOuts' = insAndOutsFromTxs insAndOuts txs` computes the boundary (UTxO) input keys and (UTxO) output values for 'txs'.
--- Input (UTxO) keys are the ones that transactions in 'txs' requires but aren't created by any transactions in 'txs'.
--- Output (UTxO) values are the ones that transactions in 'txs' produces but aren't deleted by any transactions in 'txs'.
--- Examples:
--- `({A}, {C}) = insAndOutsFromTxs (mempty, mempty) [ <tx deletes A creates B>, <tx deletes B creates C>]`
--- `({A, C}, {B, D}) = insAndOutsFromTxs (mempty, mempty) [ <tx deletes A creates B>, <tx deletes C creates D>]`
--- `({A, C, E, G}, {B, F}) = insAndOutsFromTxs (mempty, mempty) [ <tx deletes A creates B reads C>, <tx deletes E creates F reads G>]`
-insAndOutsFromTxs ::
-  (LedgerSupportsMempool blk, Foldable t) =>
-  (Set (TxIn (LedgerState blk)), Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk))) ->
-  t (ValidatedTxWithDiffs blk) ->
-  (Set (TxIn (LedgerState blk)), Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk)))
-insAndOutsFromTxs ios txs = insAndOutsFromUTxOss ios (utxosFromTx <$> Foldable.toList txs)
+-- * Helpers
+
+iterateUntilM :: Monad m => (a -> Bool) -> (a -> m a) -> a -> m a
+iterateUntilM p f a
+  | p a = return a
+  | otherwise = f a >>= iterateUntilM p f
+
+diffFromLedgerState ::
+  forall blk.
+  LedgerSupportsMempool blk =>
+  TickedLedgerState blk DiffMK -> Diff.Diff (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
+diffFromLedgerState = getDiffMK . getLedgerTables . projectLedgerTables
+
+diffFromTx ::
+  forall blk.
+  ValidatedTxWithDiffs blk -> Diff.Diff (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
+diffFromTx = getDiffMK . getLedgerTables . validatedTxDiffs
+
+inputsFromTx ::
+  forall blk. LedgerSupportsMempool blk => ValidatedTxWithDiffs blk -> Set (TxIn (LedgerState blk))
+inputsFromTx = getKeysMK . getLedgerTables . getTransactionKeySets . txForgetValidated . validatedTx
+
+outputsFromTx ::
+  forall blk.
+  LedgerSupportsMempool blk =>
+  ValidatedTxWithDiffs blk -> Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
+outputsFromTx = snd . Diff.deletedAndCreated . getDiffMK . getLedgerTables . validatedTxDiffs
+
+-- | `let (boundaryInputs, boundaryInputsToResolve) = findBoundaryInputs ledgerStWithDiffs deadOutputs txs` finds __boundary inputs__ for a transaction batch 'txs'
+-- and its subset 'boundaryInputsToResolve'.
+-- A __boundary input__ is a tx input that wasn't created by any tx in 'txs'.
+-- That's precisely the __input closure__ 'txs' require in the ledger state table before application.
+-- 'boundaryInputsToResolve' are ommitting:
+-- a) UTxOs that have been deleted or created in batch 'txs'
+-- b) UTxOs that have been created or deleted in 'ledgerStWithDiffs'
+findBoundaryInputs ::
+  forall blk.
+  LedgerSupportsMempool blk =>
+  TickedLedgerState blk DiffMK ->
+  Set (TxIn (LedgerState blk)) ->
+  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  ((LedgerTables (LedgerState blk) KeysMK), LedgerTables (LedgerState blk) KeysMK)
+findBoundaryInputs ledgerStWithDiffs deadOutputs txs =
+  let !(inputsStep, inputsToResolveStep, _, _) =
+        Foldable.foldl'
+          (findBoundaryInputsStep (diffFromLedgerState ledgerStWithDiffs) deadOutputs)
+          (Set.empty, Set.empty, mempty, Set.empty)
+          [(inputsFromTx tx, diffFromTx tx) | tx <- Foldable.toList txs]
+   in (LedgerTables (KeysMK inputsStep), LedgerTables (KeysMK inputsToResolveStep))
+
+-- | Goal: Only resolve what is actually necessary
+-- 1. Chained good txs [ ok "tx deletes A, reads B, creates C", ok "tx deletes C, reads D, creates E"] => resolves {A, B, D}
+-- 2. Independent good txs [ok "tx deletes A, reads B, creates C", ok "tx deletes D, reads E, creates F"] => resolves {A, B, D, E}
+-- 3. Chained bad txs with [bad "tx deletes A, reads B, creates C", bad "tx deletes C, reads D, creates E"] => resolves {A, B}
+-- 4. Independent bad txs [bad "tx deletes A, reads B, creates C", bad "tx deletes D, reads E, creates F"] => resolves {A, B, D, E}
+findBoundaryInputsStep ::
+  Ord k =>
+  Diff.Diff k v ->
+  Set k ->
+  (Set k, Set k, Diff.Diff k v, Set k) ->
+  (Set k, Diff.Diff k v) ->
+  (Set k, Set k, Diff.Diff k v, Set k)
+findBoundaryInputsStep diffs deadKeys =
+  ( \(batchInputs, batchToResolve, batchDiffs, batchDeadKeys) (txIns, txDiff) ->
+      let newBatchInputs = batchInputs `Set.union` (txIns `Set.difference` Diff.keysSet batchDiffs) -- boundary inputs not created/deleted in this batch
+          requiresKnownDeadKeys = not (txIns `Set.disjoint` batchDeadKeys && txIns `Set.disjoint` deadKeys)
+          txOuts = snd . Diff.deletedAndCreated $ txDiff
+       in if requiresKnownDeadKeys -- tx will fail
+            then
+              ( batchInputs `Set.union` newBatchInputs -- still adding
+              , batchToResolve -- fetch nothing for tx that fails
+              , batchDiffs -- unapplicable txs don't contribute their diffs
+              , batchDeadKeys `Set.union` Map.keysSet txOuts -- add created UTxOs into deadKeys
+              )
+            else -- tx might succeeed
+              ( batchInputs `Set.union` newBatchInputs
+              , batchToResolve
+                  `Set.union` ( txIns
+                                  `Set.difference` Diff.keysSet batchDiffs -- created/deleted in this batch
+                                  `Set.difference` Diff.keysSet diffs -- created/deleted in prior batches
+                              )
+              , batchDiffs <> txDiff
+              , batchDeadKeys
+              )
+  )
