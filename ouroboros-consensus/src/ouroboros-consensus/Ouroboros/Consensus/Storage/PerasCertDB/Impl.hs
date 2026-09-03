@@ -297,22 +297,27 @@ implGarbageCollect ::
   ) =>
   PerasCertDbEnv m blk ->
   SlotNo ->
-  STM m (m ())
+  STM m (m [WithArrivalTime (ValidatedPerasCert blk)])
 implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
+  WithFingerprint (pcdbState', removedCertsByTicket) fp <- fmap gc <$> readTVar pcdbState
   -- No need to update the 'Fingerprint' as we only remove certificates that do
   -- not matter for comparing interesting chains.
-  modifyTVar pcdbState (fmap gc)
-  pure $ traceWith pcdbTracer (GarbageCollected slotNo)
+  writeTVar pcdbState (WithFingerprint pcdbState' fp)
+  pure $ do
+    traceWith pcdbTracer (GarbageCollected slotNo)
+    pure (Map.elems removedCertsByTicket)
  where
-  gc :: PerasCertDbState blk -> PerasCertDbState blk
+  gc ::
+    PerasCertDbState blk ->
+    (PerasCertDbState blk, Map PerasCertTicketNo (WithArrivalTime (ValidatedPerasCert blk)))
   gc
     PerasCertDbState
       { pcdsCertsByTicket
       , pcdsLastTicketNo
       , pcdsLatestCertSeen
       } =
-      let pcdsCertsByTicket' =
-            Map.filter
+      let (pcdsCertsByTicket', gcCertsByTicket) =
+            Map.partition
               (\cert -> pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo)
               pcdsCertsByTicket
           pcdsCertIds' =
@@ -328,9 +333,11 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
                 CertBoostingBlockNoLongerInVolatileDB (forgetBoostedBlockStatus cert)
             | otherwise =
                 cert
-       in PerasCertDbState
-            { pcdsCertIds = pcdsCertIds'
-            , pcdsCertsByTicket = pcdsCertsByTicket'
-            , pcdsLastTicketNo = pcdsLastTicketNo
-            , pcdsLatestCertSeen = pcdsLatestCertSeen'
-            }
+       in ( PerasCertDbState
+              { pcdsCertIds = pcdsCertIds'
+              , pcdsCertsByTicket = pcdsCertsByTicket'
+              , pcdsLastTicketNo = pcdsLastTicketNo
+              , pcdsLatestCertSeen = pcdsLatestCertSeen'
+              }
+          , gcCertsByTicket
+          )

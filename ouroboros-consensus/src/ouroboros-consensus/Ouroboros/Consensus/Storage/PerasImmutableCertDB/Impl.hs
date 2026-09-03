@@ -169,6 +169,7 @@ import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (forgetArrivalTime))
 import Ouroboros.Consensus.Storage.PerasImmutableCertDB.API
 import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
 import Ouroboros.Consensus.Util.Args
@@ -489,9 +490,9 @@ implAddCert ::
   , DecodeDisk blk (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
-  ValidatedPerasCert blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
   m AddPerasImmutableCertResult
-implAddCert env cert = do
+implAddCert env certWithArrivalTime = do
   -- Whether 'modifyState' quarantined a broken stored certificate for this
   -- round. Quarantining happens on disk right away, so it must survive the
   -- state rollback that 'putSt' performs on abort or exception; this flag lets
@@ -502,6 +503,7 @@ implAddCert env cert = do
   traceWith (picdbTracer env) (AddedCert roundNo result)
   pure result
  where
+  cert = forgetArrivalTime certWithArrivalTime
   roundNo = getPerasCertRound cert
 
   getSt :: m CertDbState
