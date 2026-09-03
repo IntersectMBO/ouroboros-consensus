@@ -380,6 +380,7 @@ library
     cardano-diffusion:api,
     cardano-ledger-binary ^>=1.10,
     cardano-ledger-core ^>=1.22,
+    cardano-ledger-dijkstra ^>=0.4,
     cardano-prelude,
     cardano-slotting,
     cardano-strict-containers,

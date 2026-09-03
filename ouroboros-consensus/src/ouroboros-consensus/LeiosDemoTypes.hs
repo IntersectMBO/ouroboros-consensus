@@ -60,7 +60,14 @@ import Cardano.Crypto.Leios
   , verifyLeiosCert
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.Core (EraTx, PParams, Tx, TxLevel (TopTx))
+import Cardano.Ledger.Dijkstra.PParams
+  ( DijkstraEraPParams
+  , ppLeiosAnnouncementPeriodLengthL
+  , ppLeiosDiffusionPeriodLengthL
+  , ppLeiosVotePeriodLengthL
+  )
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
 import Cardano.Slotting.Time (RelativeTime)
@@ -111,6 +118,7 @@ import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
+import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
@@ -1234,6 +1242,15 @@ class HasLeiosVoting blk where
   -- 'Nothing' if the protocol parameter does not yet exist on the current era.
   getCurrentThreshold :: LedgerState blk EmptyMK -> Maybe Weight
 
+  -- | Slots that must elapse between an EB's announcement and the block that
+  -- may certify it, per 'minCertificationGap'. Reading it needs the era's
+  -- protocol parameters, which is why the forge loop cannot compute it itself.
+  --
+  -- TODO: this has nothing to do with voting, so this class is the wrong home
+  -- for it. Either split the per-era Leios ledger parameters into their own
+  -- class, or arrange for the forge loop not to need the gap in the first place.
+  getMinCertificationGap :: LedgerState blk EmptyMK -> Maybe Word64
+
 -- * Tracing
 
 messageLeiosNotifyToObject ::
@@ -2066,10 +2083,15 @@ maxTxsPerEb =
 maxEBClosureSize :: ByteSize32
 maxEBClosureSize = ByteSize32 12_000_000
 
--- FIXME: This should actually be 14 if we follow the CIP-164 recommended
--- values.
-minCertificationGap :: Word64
-minCertificationGap = 10
+-- | Total time between announcement slot onset until the certificate may be included.
+-- TODO: make sure that we ceil this value in call sites
+minCertificationGap :: DijkstraEraPParams era => PParams era -> Word64
+minCertificationGap pp =
+  3 * msToW64 (pp ^. ppLeiosAnnouncementPeriodLengthL)
+    + msToW64 (pp ^. ppLeiosVotePeriodLengthL)
+    + msToW64 (pp ^. ppLeiosDiffusionPeriodLengthL)
+ where
+  msToW64 = fromIntegral . unMilliseconds32
 
 -- * Utilities for prototyping
 

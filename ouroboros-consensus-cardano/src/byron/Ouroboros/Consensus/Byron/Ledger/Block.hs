@@ -111,6 +111,7 @@ instance ResolveLeiosBlock ByronBlock
 instance HasLeiosVoting ByronBlock where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
+  getMinCertificationGap = const Nothing
 
 instance NFData ByronBlock where
   rnf ByronBlock{byronBlockRaw, byronBlockSlotNo, byronBlockHash} =

@@ -150,6 +150,7 @@ data TestBlock = TestBlock
 instance HasLeiosVoting TestBlock where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
+  getMinCertificationGap = const Nothing
 
 instance ResolveLeiosBlock TestBlock
 
