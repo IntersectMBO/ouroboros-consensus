@@ -120,17 +120,17 @@
     "cardano-ledger-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1788371970,
-        "narHash": "sha256-J0UQrmQjPhEwhh1NiBylCZQFf4F2hsTVEBIPETxgz5c=",
+        "lastModified": 1788441480,
+        "narHash": "sha256-LI0zqi99UaXksj+op2rLFL0aY+Ayt7EmxvQtUlJvHDg=",
         "owner": "IntersectMBO",
         "repo": "cardano-ledger",
-        "rev": "e1fe1dd48d1c0b05bfe459e651a47015fb87a635",
+        "rev": "620d2e31ad263bcfab4ad1516a9549c7b53c3ef6",
         "type": "github"
       },
       "original": {
         "owner": "IntersectMBO",
+        "ref": "koslambrou/prepare-11.2",
         "repo": "cardano-ledger",
-        "rev": "e1fe1dd48d1c0b05bfe459e651a47015fb87a635",
         "type": "github"
       }
     },
