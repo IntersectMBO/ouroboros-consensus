@@ -58,14 +58,9 @@ and how to interpret the results.
 
 The top-level available queries depend on the `NodeToClientVersion`.
 
-| `NodeToClientVersion` | `QueryVersion`  | Newly enabled top-level queries                                    |
-|-----------------------|-----------------|--------------------------------------------------------------------|
-| `NodeToClientV_18`    | `QueryVersion2` | `BlockQuery`, `GetSystemStart`, `GetChainBlockNo`, `GetChainPoint` |
-| `NodeToClientV_19`    | `QueryVersion2` |                                                                    |
-| `NodeToClientV_20`    | `QueryVersion3` | `DebugLedgerConfig`                                                |
-| `NodeToClientV_21`    | `QueryVersion3` |                                                                    |
-| `NodeToClientV_22`    | `QueryVersion3` |                                                                    |
-| `NodeToClientV_23`    | `QueryVersion3` |                                                                    |
+|`NodeToClientVersion`|`QueryVersion` |Available top-level queries                                                            |
+|---------------------|---------------|---------------------------------------------------------------------------------------|
+|`NodeToClientV_23`   |`QueryVersion3`|`BlockQuery`, `GetSystemStart`, `GetChainBlockNo`, `GetChainPoint`, `DebugLedgerConfig`|
 
 Particular block-query versions are of type `BlockNodeToNodeVersion blk`, which
 is associated with the global `NodeToClientVersion` in
@@ -76,11 +71,6 @@ instead we focus on the Cardano version. All the current versions imply also
 
 | `NodeToClientVersion` | `BlockNodeToNodeVersion blk`   | `ShelleyNodeToClientVersion`   |
 |-----------------------|--------------------------------|--------------------------------|
-| `NodeToClientV_18`    | `CardanoNodeToClientVersion14` | `ShelleyNodeToClientVersion10` |
-| `NodeToClientV_19`    | `CardanoNodeToClientVersion15` | `ShelleyNodeToClientVersion11` |
-| `NodeToClientV_20`    | `CardanoNodeToClientVersion16` | `ShelleyNodeToClientVersion12` |
-| `NodeToClientV_21`    | `CardanoNodeToClientVersion17` | `ShelleyNodeToClientVersion13` |
-| `NodeToClientV_22`    | `CardanoNodeToClientVersion18` | `ShelleyNodeToClientVersion14` |
 | `NodeToClientV_23`    | `CardanoNodeToClientVersion19` | `ShelleyNodeToClientVersion15` |
 
 ## Codecs
@@ -151,8 +141,6 @@ and the serialization of the arguments.
 | 1   | `GetEpochNo`                              |                                     |                                                                                               | `EpochNo`                                                    |
 | 2   | `GetNonMyopicMemberRewards`               |                                     | `Set (Either Coin (Credential Staking))`                                                      | `NonMyopicMemberRewards`                                     |
 | 3   | `GetCurrentPParams`                       |                                     |                                                                                               | `PParams era`                                                |
-| 4   | `GetProposedPParamsUpdates`               | < v12                               |                                                                                               | `ProposedPPUpdates era` ‡                                    |
-| 5   | `GetStakeDistribution`                    | < v13 *                             |                                                                                               | `PoolDistr (ProtoCrypto proto)`                              |
 | 6   | `GetUTxOByAddress`                        |                                     | `Set Addr`                                                                                    | `UTxO era`                                                   |
 | 7   | `GetUTxOWhole`                            |                                     |                                                                                               | `UTxO era`                                                   |
 | 8   | `DebugEpochState`                         |                                     |                                                                                               | `EpochState era`                                             |
@@ -168,7 +156,6 @@ and the serialization of the arguments.
 | 18  | `GetRewardInfoPools`                      |                                     |                                                                                               | `(RewardParams, Map (KeyHash StakePool) RewardInfoPool)`     |
 | 19  | `GetPoolState`                            |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `QueryPoolStateResult`                                       |
 | 20  | `GetStakeSnapshots`                       |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `StakeSnapshots`                                             |
-| 21  | `GetPoolDistr`                            | < v13 *                             | `Maybe (Set (KeyHash StakePool))`                                                             | `PoolDistr (ProtoCrypto proto)`                              |
 | 22  | `GetStakeDelegDeposits`                   |                                     | `Set StakeCredential`                                                                         | `Map StakeCredential Coin`                                   |
 | 23  | `GetConstitution`                         | †                                   |                                                                                               | `Constitution era`                                           |
 | 24  | `GetGovState`                             |                                     |                                                                                               | `GovState era`                                               |
@@ -178,19 +165,15 @@ and the serialization of the arguments.
 | 28  | `GetFilteredVoteDelegatees`               | †                                   | `Set (Credential Staking)`                                                                    | `VoteDelegatees`                                             |
 | 29  | `GetAccountState`                         | †                                   |                                                                                               | `ChainAccountState`                                          |
 | 30  | `GetSPOStakeDistr`                        | †                                   | `Set (KeyHash StakePool)`                                                                     | `Map (KeyHash StakePool) Coin`                               |
-| 31  | `GetProposals`                            | >= v9 †                             | `Set GovActionId`                                                                             | `Seq (GovActionState era)`                                   |
-| 32  | `GetRatifyState`                          | >= v9 †                             |                                                                                               | `RatifyState era`                                            |
-| 33  | `GetFuturePParams`                        | >= v10                              |                                                                                               | `Maybe (PParams era)`                                        |
-| 34  | `GetBigLedgerPeerSnapshot`                | >= v11                              |                                                                                               | `LedgerPeerSnapshot` ‡                                       |
-| 35  | `GetStakePoolDefaultVote`                 | >= v12 †                            | `KeyHash StakePool`                                                                           | `DefaultVote`                                                |
-| 36  | `GetPoolDistr2`                           | >= v13 *                            | `Maybe (Set (KeyHash StakePool))`                                                             | `PoolDistr`                                                  |
-| 37  | `GetStakeDistribution2`                   | >= v13 *                            |                                                                                               | `PoolDistr`                                                  |
-| 38  | `GetMaxMajorProtocolVersion`              | >= v13                              |                                                                                               | `MaxMajorProtVer`                                            |
-| 39  | `GetDRepDelegations`                      | >= v14                              | `Set DRep`                                                                                    | `(Map DRep (Set (Credential Staking)))`                      |
-
-*: The queries enabled only before version 13 used old types from the Ledger
-that were removed in recent versions. The queries enabled at version 13 use the
-new corresponding ledger types.
+| 31  | `GetProposals`                            | †                                   | `Set GovActionId`                                                                             | `Seq (GovActionState era)`                                   |
+| 32  | `GetRatifyState`                          | †                                   |                                                                                               | `RatifyState era`                                            |
+| 33  | `GetFuturePParams`                        |                                     |                                                                                               | `Maybe (PParams era)`                                        |
+| 34  | `GetBigLedgerPeerSnapshot`                |                                     |                                                                                               | `LedgerPeerSnapshot` ‡                                       |
+| 35  | `GetStakePoolDefaultVote`                 | †                                   | `KeyHash StakePool`                                                                           | `DefaultVote`                                                |
+| 36  | `GetPoolDistr2`                           |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `PoolDistr`                                                  |
+| 37  | `GetStakeDistribution2`                   |                                     |                                                                                               | `PoolDistr`                                                  |
+| 38  | `GetMaxMajorProtocolVersion`              |                                     |                                                                                               | `MaxMajorProtVer`                                            |
+| 39  | `GetDRepDelegations`                      |                                     | `Set DRep`                                                                                    | `(Map DRep (Set (Credential Staking)))`                      |
 
 †: Even if an appropriate version is enabled, these queries can only be answered
 when the corresponding era is Conway or later, as they relate to governance

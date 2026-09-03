@@ -16,28 +16,13 @@ data ShelleyNodeToNodeVersion = ShelleyNodeToNodeVersion1
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 data ShelleyNodeToClientVersion
-  = -- | New queries introduced: GetFuturePParams
-    ShelleyNodeToClientVersion10
-  | -- | New queries introduced: GetBigLedgerPeerSnapshot
-    ShelleyNodeToClientVersion11
-  | -- | New queries introduced: QueryStakePoolDefaultVote
-    -- Queries deprecated: GetProposedPParamsUpdates
-    ShelleyNodeToClientVersion12
-  | -- | New encoder for PParams, CompactGenesis
-    ShelleyNodeToClientVersion13
-  | -- | Support SRV in GetBigLedgerPeerSnapshot
-    -- TODO: remove the GetLedgerPeerSnapshot pattern synonym
-    -- when removing support of ShelleyNodeToClientVersion14
-    ShelleyNodeToClientVersion14
-  | -- | Support retrieving all ledger peers by GetLedgerPeerSnapshot
+  = -- | Support retrieving all ledger peers by GetLedgerPeerSnapshot
     -- New queries introduced: QueryDRepDelegations
     ShelleyNodeToClientVersion15
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 ledgerPeerSnapshotSupportsSRV :: ShelleyNodeToClientVersion -> LedgerPeerSnapshotSRVSupport
-ledgerPeerSnapshotSupportsSRV v
-  | v < ShelleyNodeToClientVersion14 = LedgerPeerSnapshotDoesntSupportSRV
-  | otherwise = LedgerPeerSnapshotSupportsSRV
+ledgerPeerSnapshotSupportsSRV ShelleyNodeToClientVersion15 = LedgerPeerSnapshotSupportsSRV
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
   type BlockNodeToNodeVersion (ShelleyBlock proto era) = ShelleyNodeToNodeVersion
@@ -53,12 +38,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
       ]
   supportedNodeToClientVersions _ =
     Map.fromList
-      [ (NodeToClientV_18, ShelleyNodeToClientVersion10)
-      , (NodeToClientV_19, ShelleyNodeToClientVersion11)
-      , (NodeToClientV_20, ShelleyNodeToClientVersion12)
-      , (NodeToClientV_21, ShelleyNodeToClientVersion13)
-      , (NodeToClientV_22, ShelleyNodeToClientVersion14)
-      , (NodeToClientV_23, ShelleyNodeToClientVersion15)
+      [ (NodeToClientV_23, ShelleyNodeToClientVersion15)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
