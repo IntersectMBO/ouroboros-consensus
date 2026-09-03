@@ -87,7 +87,6 @@ import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Ord (Down (..))
-import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -1096,18 +1095,18 @@ serializeEbBody = MkSerializedEbBody . SBS.toShort . toStrictByteString . encode
 -- on @(Down w, k)@ under an @Ord a@ constraint, so an unstable sort or a caller
 -- switching to an unordered container cannot silently renumber seats.
 selectCommitteeByStake ::
-  -- | The target coverage of weights / stake.
-  Weight ->
+  -- | The target committee size / stake.
+  Word16 ->
   -- | All available voters weights.
   [(a, Weight)] ->
   -- | The selected committee weights.
   [(a, Weight)]
-selectCommitteeByStake target = go 0 . sortOn (Down . snd)
+selectCommitteeByStake targetSize = go 0 . sortOn (Down . snd)
  where
   go _ [] = []
   go acc (p : ps)
-    | acc >= target = []
-    | otherwise = p : go (acc + snd p) ps
+    | acc >= targetSize = []
+    | otherwise = p : go (acc + 1) ps
 
 -- ** Vote
 
@@ -1204,6 +1203,8 @@ data LeiosExtValidationError
   | -- | A CertRB reached ledger validation in an era/state with no Leios
     -- committee to verify the cert against.
     LeiosMissingCommittee !LeiosPoint !LeiosCert
+  | -- | No quorum stake threshold parameter available.
+    LeiosMissingThreshold
   | -- | A CertRB whose announcing ranking block could not be determined; it
     -- would be certifying against genesis.
     LeiosCertificateAfterGenesis !LeiosCert !LeiosPoint
@@ -1225,10 +1226,13 @@ deriving via
 -- the LedgerDB layer ('applyBlock') without pulling 'ChainDB' (which
 -- 'runLeiosVoting' depends on) into scope.
 class HasLeiosVoting blk where
-  -- | The voting committee for the given (pre-tick) ledger state, or
-  -- 'Nothing' if the era does not participate in Leios voting.
+  -- | The voting committee for the given (pre-tick) ledger state, or 'Nothing'
+  -- if the era does not participate in Leios voting.
   getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe LeiosCommittee
-  getLeiosCommittee _ = Nothing
+
+  -- | The currently active quorum threshold for the given ledger state, or
+  -- 'Nothing' if the protocol parameter does not yet exist on the current era.
+  getCurrentThreshold :: LedgerState blk EmptyMK -> Maybe Weight
 
 -- * Tracing
 
@@ -1837,8 +1841,14 @@ leiosKernelNSInfo = \case
       ["FetchBodyArrival"]
       LSDebug
       [ ("leiosFetchBodyInvalidBytes", "EB-body bytes received in a failed-validation MsgLeiosBlock.")
-      , ("leiosFetchBodyEvictedBytes", "EB-body bytes whose announcement was absent from the LeiosTxCache (assumed since evicted).")
-      , ("leiosFetchBodyGoodBytes", "EB-body bytes filling an announced-but-not-yet-held EB (the expected case).")
+      ,
+        ( "leiosFetchBodyEvictedBytes"
+        , "EB-body bytes whose announcement was absent from the LeiosTxCache (assumed since evicted)."
+        )
+      ,
+        ( "leiosFetchBodyGoodBytes"
+        , "EB-body bytes filling an announced-but-not-yet-held EB (the expected case)."
+        )
       , ("leiosFetchBodyExtraBytes", "EB-body bytes for an EB already held (redundant).")
       ]
   LKNSFetchTxsArrival ->
@@ -1846,8 +1856,14 @@ leiosKernelNSInfo = \case
       ["FetchTxsArrival"]
       LSDebug
       [ ("leiosFetchTxsInvalidBytes", "Tx bytes received in a failed-validation MsgLeiosBlockTxs.")
-      , ("leiosFetchTxsEvictedBytes", "Tx bytes no cached body expected (prior state absent, assumed since evicted).")
-      , ("leiosFetchTxsGoodBytes", "Tx bytes a cached body expected and had not yet held (the expected case).")
+      ,
+        ( "leiosFetchTxsEvictedBytes"
+        , "Tx bytes no cached body expected (prior state absent, assumed since evicted)."
+        )
+      ,
+        ( "leiosFetchTxsGoodBytes"
+        , "Tx bytes a cached body expected and had not yet held (the expected case)."
+        )
       , ("leiosFetchTxsExtraBytes", "Tx bytes already held (redundant).")
       ]
   LKNSBodyHits -> LeiosNSInfo ["BodyHits"] LSInfo []
@@ -2054,15 +2070,6 @@ maxEBClosureSize = ByteSize32 12_000_000
 -- values.
 minCertificationGap :: Word64
 minCertificationGap = 10
-
--- | Minimum fraction of stake to create a valid 'LeiosCertificate'.
-minCertificationThreshold :: Rational
-minCertificationThreshold = 3 % 4
-
--- | Stake to be covered when selecting the committee.
--- TODO: Switch to a committee size parameter followin the CIP-164 discussions.
-committeeStakeCoverage :: Weight
-committeeStakeCoverage = 99 % 100
 
 -- * Utilities for prototyping
 

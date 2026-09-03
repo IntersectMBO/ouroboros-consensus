@@ -519,6 +519,7 @@ tipAnnouncerFor hs point = do
     then Just (MkRbHash (toRawHash (Proxy @blk) (annTipHash tip)))
     else Nothing
 
+-- TODO: DRY with similar functions
 (?>=) :: Monad m => Maybe a -> e -> ExceptT e m a
 (?>=) Nothing e = throwE e
 (?>=) (Just x) _ = pure x

@@ -66,9 +66,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , TraceValidateEvent (..)
   ) where
 
+import Cardano.Prelude (withExceptT)
+import Control.Monad.Error.Class (MonadError, throwError)
 import Control.Monad.Except
   ( Except
+  , ExceptT (..)
   , runExcept
+  , runExceptT
   )
 import Data.Bifunctor (first)
 import qualified Data.ByteString as Strict
@@ -91,7 +95,6 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , RbHash
   , TxHash
-  , minCertificationThreshold
   , verifyLeiosCert
   )
 import NoThunks.Class
@@ -588,113 +591,70 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                     blockDiff = tickThenReapply evs cfg b lsAfterEB
                  in pure (Right (prependDiffs lcaClosureDiff blockDiff))
   ApplyVal b -> do
-    extSt <- atomically (forkerGetLedgerState fo)
-    let cds = headerStateChainDep (headerState extSt)
     case blockLeiosCert b of
-      Nothing ->
+      Nothing -> do
         -- Not a CertRB: ordinary Praos block
         withValues b $ \v ->
           case runExcept $ tickThenApply evs cfg b v of
             Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
             Right st -> pure (Right st)
       Just cert -> do
-        -- CertRB apply path. The block's body on the wire is empty (it
-        -- carries only the Leios certificate, not the EB's txs). The
-        -- sequence:
-        --
-        -- TODO(geo2a): rewrite this comment to account for using 'reasolveAndApplyLeiosClosure'
-        --   1. 'verifyLeiosCert' against the current committee and the
-        --      announced (expected signed) EB.
-        --   2. 'resolveLeiosClosure' to fetch the EB's txs from the
-        --      LeiosDB.
-        --   3. Load utxos (ledger tables) for the closure txs.
-        --   4. 'reasolveAndApplyLeiosClosure' folds those txs onto the /unticked/
-        --      parent ledger via the per-era ledger 'ApplyTx' class
-        --      with 'ValidateNone' (txs were validated upstream when
-        --      inserted into the LeiosDb).
-        --   5. 'tickThenApply' the CertRB on the post-closure state;
-        --      BBODY's 'hbBodyHash' check matches because the on-wire
-        --      body is genuinely empty.
-        --
-        -- Steps 1 and 2 happen here rather than as Dijkstra ledger
-        -- rules because step 2 involves an IO read of the LeiosDB
-        -- which can't be interleaved with the pure STS evaluation.
-        --
-        -- 'rejectLeios' rejects the CertRB as an InvalidBlock (ChainSel marks it
-        -- InvalidBlock and carries on) rather than crashing the node with a hard
-        -- 'error'. Most of these failures should already have caused our node to
-        -- reject the 'MsgRollForward' header that first informed us of this
-        -- CertRB, so catching them here is belt-and-suspenders — but worthwhile,
-        -- because not all headers arrive via 'MsgRollForward' (e.g. a bug in our
-        -- own forging logic). The invalid-cert case below is the only one that
-        -- header validation could not have caught.
-        let tip = castPoint $ getTip extSt
-            rejectLeios err =
-              pure
-                ( Left
-                    ( AnnLedgerError
-                        tip
-                        (blockRealPoint b)
-                        (ExtValidationErrorLeios err)
-                    )
-                )
-        case protocolStateLeiosAnnouncement @blk cds of
-          Nothing ->
-            -- A CertRB certifies an EB announced by its predecessor; if the
-            -- parent's chain-dep state announced none, there is nothing to
-            -- certify, so the block is invalid.
-            rejectLeios (LeiosCertificateWithoutAnnouncement cert)
-          Just (announcedPoint, _) ->
-            case getLeiosCommittee (ledgerState extSt) of
-              Nothing ->
-                -- CertRB on an era without a Leios committee is itself a protocol
-                -- violation: the era machinery shouldn't have let one through.
-                rejectLeios (LeiosMissingCommittee announcedPoint cert)
-              Just cm ->
-                case announcingRbHash b of
-                  Nothing ->
-                    -- A CertRB always has a (non-genesis) announcing parent; if
-                    -- we cannot determine one, it would be certifying at genesis.
-                    rejectLeios (LeiosCertificateAfterGenesis cert announcedPoint)
-                  Just announcingRbHashValue ->
-                    case verifyLeiosCert cm minCertificationThreshold announcingRbHashValue cert of
-                      Left invalid ->
-                        rejectLeios
-                          (LeiosInvalidCertificate cert announcedPoint announcingRbHashValue invalid)
-                      Right _weight -> do
-                        -- get the UTXO-HD keys of the RB we are applying the cert onto
-                        let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
-                        let readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
-                        -- Resolve the EB closure from disk and apply it onto the ledger state.
-                        res <-
-                          resolveAndApplyLeiosClosure
-                            leiosDb
-                            (configLedger (getExtLedgerCfg cfg))
-                            (pointEbHash announcedPoint)
-                            readTables
-                            bKeys
-                            (ledgerState extSt)
-                        case res of
-                          Left lerr ->
-                            -- REVIEW: Better annotation than CertRB point possible?
-                            --
-                            -- TODO this should be unreachable, at least from
-                            -- ChainSel (maybe LeiosVoting calls it?)
-                            pure
-                              ( Left
-                                  ( AnnLedgerError
-                                      tip
-                                      (blockRealPoint b)
-                                      (ExtValidationErrorLedger lerr)
-                                  )
-                              )
-                          Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} ->
-                            let lsAfterEB = extSt{ledgerState = lcaStateAfterEB}
-                             in case runExcept $ tickThenApply evs cfg b lsAfterEB of
-                                  Left lerr ->
-                                    pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
-                                  Right blockDiff ->
-                                    pure (Right (prependDiffs lcaClosureDiff blockDiff))
+        -- CertRB apply path. The block's body on the wire is empty (it carries
+        -- only the Leios certificate, not the EB's txs)
+        extSt <- atomically (forkerGetLedgerState fo)
+        let cds = headerStateChainDep (headerState extSt)
+            ls = ledgerState extSt
+            tip = castPoint $ getTip extSt
+        runExceptT . withExceptT (\err -> AnnLedgerError tip (blockRealPoint b) err) $ do
+          -- A CertRB certifies an EB announced by its predecessor; if the
+          -- parent's chain-dep state announced none, there is nothing to
+          -- certify, so the block is invalid.
+          (announcedPoint, _) <-
+            protocolStateLeiosAnnouncement @blk cds
+              ?>= ExtValidationErrorLeios (LeiosCertificateWithoutAnnouncement cert)
+
+          -- A CertRB always has a (non-genesis) announcing parent; if
+          -- we cannot determine one, it would be certifying at genesis.
+          announcingRbHashValue <-
+            announcingRbHash b
+              ?>= ExtValidationErrorLeios (LeiosCertificateAfterGenesis cert announcedPoint)
+
+          -- CertRB on an era without a Leios committee is itself a protocol
+          -- violation: the era machinery shouldn't have let one through.
+          cm <-
+            getLeiosCommittee ls
+              ?>= ExtValidationErrorLeios (LeiosMissingCommittee announcedPoint cert)
+
+          -- If we have a committee, we must also have a quorum threshold.
+          threshold <-
+            getCurrentThreshold ls ?>= ExtValidationErrorLeios LeiosMissingThreshold
+
+          -- Check the certificate
+          case verifyLeiosCert cm threshold announcingRbHashValue cert of
+            Left invalid ->
+              throwError $
+                ExtValidationErrorLeios
+                  (LeiosInvalidCertificate cert announcedPoint announcingRbHashValue invalid)
+            Right _weight -> pure ()
+
+          -- get the UTXO-HD keys of the RB we are applying the cert onto
+          let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
+          let readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
+          -- Resolve the EB closure from disk and apply it onto the ledger state.
+          LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} <-
+            withExceptT ExtValidationErrorLedger . ExceptT $
+              resolveAndApplyLeiosClosure
+                leiosDb
+                (configLedger (getExtLedgerCfg cfg))
+                (pointEbHash announcedPoint)
+                readTables
+                bKeys
+                ls
+          -- Finally, validate the block itself
+          -- XXX: Hoist Except to ExceptT m?
+          case runExcept $ tickThenApply evs cfg b extSt{ledgerState = lcaStateAfterEB} of
+            Left lerr -> throwError lerr
+            Right blockDiff -> pure (prependDiffs lcaClosureDiff blockDiff)
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
@@ -1102,3 +1062,8 @@ data ForkerWasCommitted
   = ForkerWasCommitted
   | ForkerWasUncommitted
   deriving (Eq, Show)
+
+-- TODO: DRY with similar functions
+(?>=) :: MonadError e m => Maybe a -> e -> m a
+(?>=) Nothing e = throwError e
+(?>=) (Just x) _ = pure x

@@ -89,7 +89,7 @@ import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import LeiosDemoTypes (HasLeiosVoting)
+import LeiosDemoTypes (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -147,7 +147,9 @@ data TestBlock = TestBlock
 
 -- | Default 'HasLeiosVoting' / 'ResolveLeiosBlock' — storage TestBlock
 -- never carries Leios certs.
-instance HasLeiosVoting TestBlock
+instance HasLeiosVoting TestBlock where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
 
 instance ResolveLeiosBlock TestBlock
 

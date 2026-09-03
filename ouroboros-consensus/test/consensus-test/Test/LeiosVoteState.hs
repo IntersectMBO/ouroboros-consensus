@@ -14,21 +14,26 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
-import Data.Maybe (fromJust, isNothing)
+import Data.Maybe (fromJust, isJust, isNothing)
+import Data.Ratio ((%))
 import LeiosDemoTypes
   ( LeiosSeatId (..)
   , LeiosSigningKey
   , LeiosVote (..)
+  , RbHash
   , VoteInvalid (..)
+  , Weight
   , getLeiosSeatId
   , leiosCommitteeSize
   , signLeiosVote
+  , validateLeiosVote
   )
 import LeiosVoteState
   ( AddVoteResult (..)
   , addVote
   , getNextVote
   , newLeiosVoteState
+  , queryCert
   , subscribeVotes
   )
 import Test.Cardano.Crypto.Leios.Gen (TestCommittee (..), genCommittee, genLeiosSigningKey)
@@ -60,6 +65,7 @@ tests =
     , testProperty "invalid vote is rejected and not published" prop_invalidVoteRejected
     , testProperty "no committee rejects vote" prop_noCommitteeRejected
     , testProperty "vote signed with key not on committee is rejected" prop_signerNotInCommittee
+    , testProperty "certification follows the threshold parameter" prop_certificationFollowsThreshold
     ]
 
 -- | A 'VotingKey' that is *not* a member of the given committee.
@@ -81,7 +87,7 @@ prop_subscriberReceivesVote :: Property
 prop_subscriberReceivesVote =
   forAll genCommittee $ \testCommittee ->
     forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just testCommittee.committee))
+      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
       sub <- subscribeVotes st
       _ <- addVote st vote
       received <- atomically $ getNextVote sub
@@ -92,7 +98,7 @@ prop_subscriberReceivesAll :: Property
 prop_subscriberReceivesAll =
   forAll genCommittee $ \testCommittee ->
     forAll (listOf1 (genVoteFor testCommittee)) $ \votes -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just testCommittee.committee))
+      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
       sub <- subscribeVotes st
       forM_ votes (addVote st)
       received <- mapM (\_ -> atomically $ getNextVote sub) votes
@@ -104,7 +110,7 @@ prop_deduplicateVotes :: Property
 prop_deduplicateVotes =
   forAll genCommittee $ \testCommittee ->
     forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just testCommittee.committee))
+      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
       sub <- subscribeVotes st
       r1 <- addVote st vote
       r2 <- addVote st vote
@@ -125,12 +131,12 @@ prop_deduplicateBeforeValidation =
   forAll genCommittee $ \initialCommittee ->
     forAll (genVoteFor initialCommittee) $ \vote ->
       forAll genCommittee $ \otherCommittee -> property $ runSimOrThrow $ do
-        committeeVar <- atomically $ newTVar (Just initialCommittee.committee)
+        committeeVar <- atomically $ newTVar (Just (initialCommittee.committee, testQuorumThreshold))
         st <- newLeiosVoteState (readTVar committeeVar)
         r1 <- addVote st vote
         -- Swap to a fresh committee for which the vote does not validate
         -- (different voter keys, so the signature check fails).
-        atomically $ writeTVar committeeVar (Just otherCommittee.committee)
+        atomically $ writeTVar committeeVar (Just (otherCommittee.committee, testQuorumThreshold))
         r2 <- addVote st vote
         pure $
           counterexample "first add" (isAdded r1)
@@ -141,7 +147,7 @@ prop_lateSubscriber :: Property
 prop_lateSubscriber =
   forAll genCommittee $ \testCommittee ->
     forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just testCommittee.committee))
+      st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
       _ <- addVote st vote
       sub <- subscribeVotes st
       mVote <- timeout 0.1 $ atomically $ getNextVote sub
@@ -155,7 +161,7 @@ prop_invalidVoteRejected =
       forAll genLeiosSigningKey $ \someKey ->
         property $ runSimOrThrow $ do
           let badVote = signLeiosVote someKey vote.voterId vote.announcingRbHash
-          st <- newLeiosVoteState (pure (Just testCommittee.committee))
+          st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
           sub <- subscribeVotes st
           r <- addVote st badVote
           mVote <- timeout 0.1 $ atomically $ getNextVote sub
@@ -187,7 +193,7 @@ prop_signerNotInCommittee =
         -- VoterId must be outside of committe, otherwise this is just a bad signature
         let n = leiosCommitteeSize testCommittee.committee
         let vote = signLeiosVote key (LeiosSeatId $ fromIntegral n) announcement
-        st <- newLeiosVoteState (pure (Just testCommittee.committee))
+        st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
         sub <- subscribeVotes st
         r <- addVote st vote
         mVote <- timeout 0.1 $ atomically $ getNextVote sub
@@ -198,3 +204,50 @@ prop_signerNotInCommittee =
 isAdded :: AddVoteResult -> Property
 isAdded Added{} = property True
 isAdded r = counterexample ("expected Added, got " ++ show r) False
+
+-- | The quorum threshold these tests run with. Certification used to be pinned
+-- to a hardcoded 3/4, so keeping that value here leaves the plumbing properties
+-- above behaving exactly as they did before the parameter was introduced.
+testQuorumThreshold :: Weight
+testQuorumThreshold = 3 % 4
+
+-- | Certification is driven by the threshold parameter rather than a constant.
+--
+-- Pinned at the two ends, which holds whatever weights the generator picks: at a
+-- zero threshold the first vote already certifies, and at a threshold above the
+-- committee's total weight even a vote from every seat does not.
+prop_certificationFollowsThreshold :: Property
+prop_certificationFollowsThreshold =
+  forAll genCommittee $ \testCommittee ->
+    forAll genRbHash $ \rbHash ->
+      let votes = votesForEverySeat testCommittee rbHash
+          totalWeight = sum (voteWeight testCommittee <$> votes)
+       in property $ runSimOrThrow $ do
+            certAtZero <- certifyWith testCommittee.committee 0 votes rbHash
+            certAboveTotal <- certifyWith testCommittee.committee (totalWeight + 1) votes rbHash
+            pure $
+              counterexample
+                ("total weight: " <> show totalWeight <> ", votes: " <> show (length votes))
+                ( counterexample "a zero threshold should certify on the first vote" (isJust certAtZero)
+                    .&&. counterexample
+                      "a threshold above the committee's total weight must never certify"
+                      (isNothing certAboveTotal)
+                )
+ where
+  certifyWith c threshold votes rbHash = do
+    st <- newLeiosVoteState (pure (Just (c, threshold)))
+    forM_ votes (addVote st)
+    queryCert st rbHash
+
+-- | One vote per seat that has a key, all on the same point so they tally
+-- together.
+votesForEverySeat :: TestCommittee -> RbHash -> [LeiosVote]
+votesForEverySeat c rbHash =
+  [ signLeiosVote key vid rbHash
+  | key <- c.allKeys
+  , Just vid <- [getLeiosSeatId (deriveVerKeyDSIGN key) c.committee]
+  ]
+
+-- | The weight a vote carries, as the committee accounts for it.
+voteWeight :: TestCommittee -> LeiosVote -> Weight
+voteWeight c vote = either (const 0) id $ validateLeiosVote c.committee vote
