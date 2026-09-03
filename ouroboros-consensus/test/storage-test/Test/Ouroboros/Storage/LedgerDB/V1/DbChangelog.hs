@@ -69,6 +69,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck hiding (elements)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.QuickCheck
+import qualified Test.Util.QuickCheck as QC
 import qualified Test.Util.TestBlock as TestBlock
 import Text.Show.Pretty (ppShow)
 
@@ -94,14 +95,14 @@ tests =
         , testProperty "switchExpectedLedger" prop_switchExpectedLedger
         ]
     , testProperty "flushing" $
-        withMaxSuccess samples $
+        QC.withNumTests samples $
           conjoin
             [ counterexample
                 "flushing keeps immutable tip"
                 prop_flushingSplitsTheChangelog
             ]
     , testProperty "rolling back" $
-        withMaxSuccess samples $
+        QC.withNumTests samples $
           conjoin
             [ counterexample
                 "rollback after extension is noop"
@@ -114,9 +115,9 @@ tests =
                 prop_rollBackToVolatileTipIsNoop
             ]
     , testProperty "extending adds head to volatile states" $
-        withMaxSuccess samples prop_extendingAdvancesTipOfVolatileStates
+        QC.withNumTests samples prop_extendingAdvancesTipOfVolatileStates
     , testProperty "pruning before a slot works as expected" $
-        withMaxSuccess samples prop_pruningBeforeSlotCorrectness
+        QC.withNumTests samples prop_pruningBeforeSlotCorrectness
     ]
 
 {-------------------------------------------------------------------------------
