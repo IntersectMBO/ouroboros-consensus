@@ -18,9 +18,26 @@ import Data.Sequence.Strict (StrictSeq, (|>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import LeiosUtils.TimeBoundedLoop (iterateUntilOrTimeout_)
-import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.Abstract (SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
+  ( DiffMK (getDiffMK)
+  , HasLedgerTables (projectLedgerTables, withLedgerTables)
+  , KeysMK (KeysMK, getKeysMK)
+  , LedgerConfig
+  , LedgerState
+  , LedgerTables (LedgerTables, getLedgerTables)
+  , TickedLedgerState
+  , TxIn
+  , TxOut
+  , ValuesMK (ValuesMK)
+  )
 import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( GenTx
+  , GenTxId
+  , HasTxId (txId)
+  , Invalidated (Invalidated)
+  , LedgerSupportsMempool (getTransactionKeySets, reapplyTx, txForgetValidated)
+  )
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( forgetLedgerTables
@@ -29,25 +46,21 @@ import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Impl.Common
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Util.IOLike
-import Prelude hiding (read)
 
 -- | Accumulator type threaded through each 'reapplyStep' call by top-level 'reapply' and 'reapplyUntilTimeout'.
 data ReapplyStepState blk = ReapplyStepState
-  { currentLedgerSt :: !(TickedLedgerState blk EmptyMK)
-  -- ^ Ticked ledger state reflecting the cumulative (internal, no tables) effect of all applied transactions so far ('appliedTxs').
+  { currentLedgerSt :: !(TickedLedgerState blk ValuesMK)
+  -- ^ Ticked ledger state reflecting the cumulative effect of all applied transactions so far ('appliedTxs').
   , remainingTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
-  -- ^ Remaining transactions to be applied.
+  -- ^ Remaining transactions to be applied (__applicability condition holds__)
   , unapplicableTxs :: !(StrictSeq (Invalidated blk))
   -- ^ Transactions that failed reapplication, accumulated in original order of 'remainingTxs'.
   , appliedTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
   -- ^ Transactions successfully applied to produce 'currentLedgerSt'.
   , appliedTxIds :: !(Set.Set (GenTxId blk))
   -- ^ Set of all accepted transactions (view on 'appliedTxs').
-  , deadOutputs :: !(Set (TxIn (LedgerState blk)))
+  , phantomUTxOs :: !(Set (TxIn (LedgerState blk)))
   -- ^ UTxOs created by unapplicable transactions in 'unapplicableTxs'.
-  , values :: Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
-  -- ^ Cache for UTxOs resolved by 'appliedTxs'.
-  , crd :: !(CRD (TxIn (LedgerState blk)) (TxOut (LedgerState blk)))
   }
 
 initReapplyStepState ::
@@ -56,16 +69,15 @@ initReapplyStepState ::
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   ReapplyStepState blk
 initReapplyStepState startingLedgerStDiff txs =
-  let initCRD = crdFromLedgerState startingLedgerStDiff
+  let (tickingCreated, tickingDeleted) = cdFromLedgerState startingLedgerStDiff
    in ReapplyStepState
-        { currentLedgerSt = forgetLedgerTables startingLedgerStDiff
+        { currentLedgerSt =
+            forgetLedgerTables startingLedgerStDiff `withLedgerTables` LedgerTables (ValuesMK tickingCreated)
         , remainingTxs = txs
         , unapplicableTxs = mempty
         , appliedTxs = TxSeq.Empty
         , appliedTxIds = Set.empty
-        , deadOutputs = deleted initCRD -- handling ticking "deleted"
-        , values = mempty
-        , crd = initCRD{deleted = Set.empty} -- handling ticking "created"
+        , phantomUTxOs = tickingDeleted -- REVIEW: handling ticking "deleted"
         }
 
 -- | `let res = reapply resolve cfg slot ls txs` reapplies all 'txs' against 'ls' at 'slot' using 'resolve' to fetch values at 'ls' required by the transactions.
@@ -116,67 +128,60 @@ reapplyStep ::
 reapplyStep reapplyPerStep resolveValues cfg slot st@ReapplyStepState{..} = do
   let (!txsToApplyStep, !remainingTxsStep) = TxSeq.take reapplyPerStep remainingTxs
 
-  -- Find boundary input keys
-  -- Reminder of how this works
-  -- `({A, B, D, F}) = findBoundaryInputs [ "tx deletes A, reads B, creates C", "tx deletes C, reads D, creates E", "tx deletes E, reads F, creates G"]`
-  let !allInputsStep = findBoundaryInputs txsToApplyStep
-      !inputsStep = allInputsStep `Set.difference` deadOutputs -- Due to applicability of txs we don't need to further subtract the `deleted crd`!
-      !inputsInMemoryStep = created crd `Map.restrictKeys` inputsStep
-      !inputsNotInMemoryStep = inputsStep `Set.difference` Map.keysSet inputsInMemoryStep
-      !inputsInCacheStep = values `Map.restrictKeys` inputsNotInMemoryStep
-      !inputsToResolveStep = inputsNotInMemoryStep `Set.difference` Map.keysSet inputsInCacheStep
+  let LedgerTables (ValuesMK currValues) = projectLedgerTables currentLedgerSt
+      -- Find boundary input keys
+      -- Reminder of how this works
+      -- `({A, B, D, F}) = boundaryInputsForTxs [ "tx deletes A, reads B, creates C", "tx deletes C, reads D, creates E", "tx deletes E, reads F, creates G"]`
+      !inputsStep = boundaryInputsForTxs txsToApplyStep
+      -- Never resolves phantom inputs or in memory inputs.
+      -- Note that because of applicability, txIns in 'inputsStep' can only refer to
+      -- a) phantom UTxOs
+      -- b) live UTxOs in current Ledger State (never dead)
+      -- c) dead or live UTxO in 'resolveValues'
+      !inputsToResolveStep = inputsStep `Set.difference` phantomUTxOs `Set.difference` Map.keysSet currValues
 
-  !(LedgerTables (ValuesMK inputsResolvedStep)) <-
+  LedgerTables (ValuesMK inputsResolvedStep) <-
     resolveValues (LedgerTables (KeysMK inputsToResolveStep))
 
   -- Prepare the ledger state with values
-  let
-    -- These inputs are all mutually exclusive
-    !currentValuesStep = LedgerTables (ValuesMK $ Map.unions [inputsResolvedStep, inputsInCacheStep, inputsInMemoryStep])
-    !currentLedgerStWitValues = currentLedgerSt `withLedgerTables` currentValuesStep
-    !stForStep =
-      st
-        { remainingTxs = remainingTxsStep
-        , values = values <> inputsResolvedStep
-        }
+  let allValues = LedgerTables (ValuesMK (currValues `Map.union` inputsResolvedStep))
+      !stForStep =
+        st
+          { remainingTxs = remainingTxsStep
+          , currentLedgerSt = currentLedgerSt `withLedgerTables` allValues
+          }
 
-  return $! reapplyTxs' cfg slot txsToApplyStep currentLedgerStWitValues stForStep
+  return $! reapplyTxs cfg slot txsToApplyStep stForStep
 
-reapplyTxs' ::
+reapplyTxs ::
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   LedgerConfig blk ->
   SlotNo ->
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
-  TickedLedgerState blk ValuesMK ->
   ReapplyStepState blk ->
   ReapplyStepState blk
-reapplyTxs' cfg slot txs startingLedgerSt stBefore =
-  snd $
-    Foldable.foldl'
-      ( \(!curLedger, !st) !tkt ->
-          let tx = TxSeq.txTicketTx tkt
-              vtx = validatedTx tx
-              txCrd = crdFromTx tx
-           in case runExcept (reapplyTx cfg slot vtx curLedger) of
-                Left !err ->
-                  ( curLedger
-                  , st
-                      { unapplicableTxs = unapplicableTxs st |> Invalidated vtx err
-                      , deadOutputs = deadOutputs st `Set.union` (Map.keysSet . created $ txCrd)
-                      }
-                  )
-                Right !ledgerStAfterTx ->
-                  ( ledgerStAfterTx
-                  , st
-                      { appliedTxs = appliedTxs st TxSeq.:> tkt
-                      , appliedTxIds = Set.insert (txId (txForgetValidated vtx)) (appliedTxIds st)
-                      , currentLedgerSt = forgetLedgerTables curLedger
-                      , crd = crd st <> txCrd
-                      }
-                  )
-      )
-      (startingLedgerSt, stBefore)
-      (TxSeq.toList txs)
+reapplyTxs cfg slot txs stBefore =
+  Foldable.foldl'
+    reapplyTxsStep
+    stBefore
+    (TxSeq.toList txs)
+ where
+  reapplyTxsStep !st !tkt =
+    let tx = TxSeq.txTicketTx tkt
+        vtx = validatedTx tx
+        txCreated = createdFromTx tx
+     in case runExcept (reapplyTx cfg slot vtx (currentLedgerSt st)) of
+          Left !err ->
+            st
+              { unapplicableTxs = unapplicableTxs st |> Invalidated vtx err
+              , phantomUTxOs = phantomUTxOs st `Set.union` Map.keysSet txCreated -- propagate phantom outputs
+              }
+          Right !ledgerStAfterTx ->
+            st
+              { appliedTxs = appliedTxs st TxSeq.:> tkt
+              , appliedTxIds = Set.insert (txId (txForgetValidated vtx)) (appliedTxIds st)
+              , currentLedgerSt = ledgerStAfterTx
+              }
 
 -- * Helpers
 
@@ -185,103 +190,74 @@ iterateUntilM p f a
   | p a = return a
   | otherwise = f a >>= iterateUntilM p f
 
--- Prop: keys always exclusive
-data CRD k v = CRD
-  { created :: !(Map k v)
-  , read :: !(Set k)
-  , deleted :: !(Set k)
-  }
-
--- `let (CRD c r d) = CRD cl rl dl <> CRD cr rr dr`
--- Assumptions
--- 1. `crdL` and `crdR` must adhere to CRD props
--- 1. `crdL` and `crdR` must be 'applicable'
---   a) No double creation @Map.keysSet cl `Set.disjoint` Map.keysSet cr@
---   b) No reads of deleted keys @rr `Set.disjoint` dl@
---   c) No double spends @dr `Set.disjoint` dl@
--- Properties
--- 1. CRD prop, all keys exclusive
-instance Ord k => Semigroup (CRD k v) where
-  (CRD c r d) <> (CRD c' r' d') =
-    CRD
-      { created = (c `Map.withoutKeys` d') `Map.union` c'
-      , read = (r `Set.difference` d') `Set.union` (r' `Set.difference` Map.keysSet c)
-      , deleted = d `Set.union` d'
-      }
-
-instance Ord k => Monoid (CRD k v) where
-  mempty = CRD mempty mempty mempty
-
-crdFromTx ::
+createdFromTx ::
   forall blk.
   LedgerSupportsMempool blk =>
-  ValidatedTxWithDiffs blk -> CRD (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
-crdFromTx tx =
-  let (deletedKeys, createdMap) = Diff.deletedAndCreated (diffFromTx tx)
-   in CRD
-        { created = createdMap
-        , read = inputsFromTx tx `Set.difference` deletedKeys
-        , deleted = deletedKeys
-        }
- where
-  diffFromTx ::
-    forall blk.
-    ValidatedTxWithDiffs blk -> Diff.Diff (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
-  diffFromTx = getDiffMK . getLedgerTables . validatedTxDiffs
+  ValidatedTxWithDiffs blk ->
+  Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
+createdFromTx = snd . Diff.deletedAndCreated . diffFromTx
 
-  inputsFromTx ::
-    forall blk. LedgerSupportsMempool blk => ValidatedTxWithDiffs blk -> Set (TxIn (LedgerState blk))
-  inputsFromTx = getKeysMK . getLedgerTables . getTransactionKeySets . txForgetValidated . validatedTx
+diffFromTx ::
+  forall blk.
+  ValidatedTxWithDiffs blk -> Diff.Diff (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
+diffFromTx = getDiffMK . getLedgerTables . validatedTxDiffs
 
-crdFromLedgerState ::
+inputsFromTx ::
+  forall blk. LedgerSupportsMempool blk => ValidatedTxWithDiffs blk -> Set (TxIn (LedgerState blk))
+inputsFromTx = getKeysMK . getLedgerTables . getTransactionKeySets . txForgetValidated . validatedTx
+
+cdFromLedgerState ::
   forall blk.
   LedgerSupportsMempool blk =>
-  TickedLedgerState blk DiffMK -> CRD (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
-crdFromLedgerState st =
+  TickedLedgerState blk DiffMK ->
+  (Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk)), Set (TxIn (LedgerState blk)))
+cdFromLedgerState st =
   let (deleted, created) = Diff.deletedAndCreated . getDiffMK . getLedgerTables . projectLedgerTables $ st
-   in CRD created mempty deleted
+   in (created, deleted)
 
--- | `let (boundaryInputs, boundaryInputsToResolve) = findBoundaryInputs ledgerStWithDiffs deadOutputs txs` finds __boundary inputs__ for a transaction batch 'txs'
--- and its subset 'boundaryInputsToResolve'.
+-- | `let boundaryInputs = boundaryInputsForTxs txs` finds __boundary inputs__ for a transaction batch 'txs'.
 --
 -- A __boundary input__ is a tx input that wasn't created by any tx in 'txs' (not an __intermediary input__).
 -- That's precisely the __input closure__ 'txs' require in the ledger state table before application.
---
--- A __dead transaction__ is the one that requires 'deadOutputs'. __Dead outputs__ are created by transactions that failed reapplication.
--- Its outputs are then also considered 'dead'.
--- Its __boundary inputs__ are added to 'boundaryInputs' but omitted from 'boundaryInputsToResolve'.
---
--- Properties:
--- 1. 'boundaryInputsToResolve' is subset of 'boundaryInputs'
--- 2. `boundaryInputs - boundaryInputsToResolve` is either keys in 'ledgerStWithDiffs' or keys required by dead txs.
-findBoundaryInputs ::
+boundaryInputsForTxs ::
   forall blk.
   LedgerSupportsMempool blk =>
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   Set (TxIn (LedgerState blk))
-findBoundaryInputs txs =
+boundaryInputsForTxs txs =
   let (boundaryInputs, _) =
         Foldable.foldl'
-          findBoundaryInputsStep
+          boundaryInputsForTxsStep
           (Set.empty, mempty)
-          [crdFromTx tx | tx <- Foldable.toList txs]
+          [(inputsFromTx tx, diffFromTx tx) | tx <- Foldable.toList txs]
    in boundaryInputs
 
-findBoundaryInputsStep ::
+-- PRECONDITION: `_prop_applicable (Diff.deletedAndCreated batchDiff) (txIns, txDiff)`
+boundaryInputsForTxsStep ::
   Ord k =>
-  -- acc
-  (Set k, CRD k v) ->
-  -- Tx CRD
-  CRD k v ->
-  (Set k, CRD k v)
-findBoundaryInputsStep =
-  \(!batchInputs, !batchCRD@(CRD batchC _batchR batchD))
-   txCRD@(CRD _txC txR txD) ->
-      let txIns = txR `Set.union` txD
-          -- if created in this batch then it's not a boundary input,
-          -- if deleted then either it was a boundary input (already in batchInputs) or wasn't a boundary input (remove it)
-          -- if read in this batch then it's already in batchInputs
-          !newBatchInputs = txIns `Set.difference` (Map.keysSet batchC `Set.union` batchD)
-       in ( batchInputs `Set.union` newBatchInputs
-          , batchCRD <> txCRD
-          )
+  (Set k, Diff.Diff k v) -> -- (boundaryInputs, batchDiff)
+  (Set k, Diff.Diff k v) -> -- (txIns, txDiff)
+  (Set k, Diff.Diff k v)
+boundaryInputsForTxsStep
+  (!boundaryInputs, !batchDiff)
+  (!txIns, !txDiff) =
+    let
+      -- if created in this batch then it's not a boundary input,
+      -- if deleted in this batch then that means the 'Applicability precondition' was violated
+      -- if read in this batch then it's already in boundaryInputs (re-added but Set.union is idempotent)
+      !newBoundaryInputs = txIns `Set.difference` Diff.keysSet batchDiff
+     in
+      ( boundaryInputs `Set.union` newBoundaryInputs
+      , batchDiff <> txDiff
+      )
+
+-- | Applicability property: `_prop_applicable st tx` holds when a transactions 'tx' can be applied to 'st'.
+_prop_applicable ::
+  Ord k =>
+  (Set k, Map k v) ->
+  (Set k, Diff.Diff k v) ->
+  Bool
+_prop_applicable (deletedL, createdL) (txInsR, txDiffR) =
+  let (_, createdR) = Diff.deletedAndCreated txDiffR
+   in Map.keysSet createdL `Set.disjoint` Map.keysSet createdR -- no double creation
+        && txInsR `Set.disjoint` deletedL -- no reads or deletes of already-deleted keys
