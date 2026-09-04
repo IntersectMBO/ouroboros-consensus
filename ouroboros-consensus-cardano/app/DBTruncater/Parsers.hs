@@ -14,6 +14,7 @@ parseDBTruncaterConfig =
     <$> parseChainDBPath
     <*> parseTruncateAfter
     <*> parseVerbose
+    <*> parseNoLeiosDb
  where
   parseChainDBPath =
     strOption $

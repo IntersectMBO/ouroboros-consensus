@@ -10,6 +10,7 @@ module Cardano.Tools.DBTruncater.Run (truncate) where
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBTruncater.Types
+import Cardano.Tools.LeiosDb (leiosDbPath)
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
@@ -18,6 +19,11 @@ import Control.Tracer (Tracer (..), emit)
 import Data.Foldable (asum)
 import Data.Functor ((<&>))
 import Data.Functor.Identity
+import LeiosDemoDb
+  ( deleteDanglingTxs
+  , truncateLeiosDbAfterSlot
+  , vacuumLeiosDb
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Node as Node
@@ -42,7 +48,8 @@ truncate ::
   DBTruncaterConfig ->
   Args block ->
   IO ()
-truncate DBTruncaterConfig{dbDir, truncateAfter, verbose} args = do
+truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leiosDbSource} args = do
+  mLeiosDbPath <- leiosDbPath leiosDbSource dbDir
   withRegistry $ \registry -> do
     lock <- mkLock
     immutableDBTracer <- mkTracer lock verbose
@@ -97,6 +104,30 @@ truncate DBTruncaterConfig{dbDir, truncateAfter, verbose} args = do
                   , show newTip
                   ]
               deleteAfter internal (At newTip)
+              -- Truncate the LeiosDb after the ImmutableDB. The other order
+              -- can leave a cert-RB whose EB is gone.
+              forM_ mLeiosDbPath $ \path ->
+                (`onException` hPutStrLn stderr (leiosDbCutFailed newTip)) $ do
+                  truncateLeiosDbAfterSlot path (tipSlotNo newTip)
+                  deleteDanglingTxs path
+                  vacuumLeiosDb path
+
+leiosDbCutFailed :: Tip blk -> String
+leiosDbCutFailed newTip =
+  mconcat
+    [ "The ImmutableDB is truncated to slot "
+    , slot
+    , ". The LeiosDb cut did not complete, so leios.db still holds the EBs "
+    , "announced after that slot. Nothing on the truncated chain reads them, "
+    , "so you can leave them. To remove them, re-run with a "
+    , "--truncate-after-slot below "
+    , slot
+    , ": a re-run at "
+    , slot
+    , " reports \"Nothing to truncate\" and changes nothing."
+    ]
+ where
+  slot = show (tipSlotNo newTip)
 
 -- | Given a predicate, and an iterator, find the last item for which
 -- the predicate passes.

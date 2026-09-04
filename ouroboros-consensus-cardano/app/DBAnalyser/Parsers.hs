@@ -4,12 +4,14 @@
 module DBAnalyser.Parsers
   ( parseCmdLine
   , parseCardanoArgs
+  , parseNoLeiosDb
   , CardanoBlockArgs
   ) where
 
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.Block.Cardano
 import Cardano.Tools.DBAnalyser.Types
+import Cardano.Tools.LeiosDb (LeiosDbSource (..))
 import qualified Data.Foldable as Foldable
 import Options.Applicative
 import Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
@@ -59,20 +61,18 @@ parseDBAnalyserConfig =
             , help "use v2 LSM backend"
             ]
       ]
-    <*> parseStubbedLeiosDb
+    <*> parseNoLeiosDb
 
 -- | Run with an empty in-memory LeiosDb, rather than the node's @leios.db@.
-parseStubbedLeiosDb :: Parser Bool
-parseStubbedLeiosDb =
-  switch $
+parseNoLeiosDb :: Parser LeiosDbSource
+parseNoLeiosDb =
+  flag NodeLeiosDb NoLeiosDb $
     mconcat
-      [ long "stubbed-leios-db"
+      [ long "no-leios-db"
       , help $
-          "Use an empty in-memory LeiosDb, rather than the leios.db file under "
-            <> "the --db path. Pass this for a chain that holds no block with a "
-            <> "Leios certificate, and hence no endorser block to resolve. "
-            <> "Without this flag, the tool refuses to start when it finds no "
-            <> "such file."
+          "Do not use the leios.db file under the --db path. Pass this for a "
+            <> "chain that holds no block with a Leios certificate. Without "
+            <> "this flag, the tool refuses to start when it finds no such file."
       ]
 
 parseSelectDB :: Parser SelectDB
