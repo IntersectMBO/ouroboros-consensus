@@ -13,10 +13,13 @@ module Ouroboros.Consensus.Shelley.Ledger.Query.Types
   , PoolDistr (..)
   , fromLedgerIndividualPoolStake
   , fromLedgerPoolDistr
+  , fromQueryResultIndividualPoolStake
+  , fromQueryResultPoolDistr
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.Ledger.Api.State.Query as SL
 import Cardano.Ledger.Binary
 import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Keys as SL
@@ -70,4 +73,17 @@ fromLedgerPoolDistr :: SL.PoolDistr -> PoolDistr c
 fromLedgerPoolDistr pd =
   PoolDistr
     { unPoolDistr = Map.map fromLedgerIndividualPoolStake $ SL.unPoolDistr pd
+    }
+
+fromQueryResultIndividualPoolStake :: SL.QueryResultIndividualPoolStake -> IndividualPoolStake c
+fromQueryResultIndividualPoolStake ips =
+  IndividualPoolStake
+    { individualPoolStake = SL.qripsStake ips
+    , individualPoolStakeVrf = SL.fromVRFVerKeyHash $ SL.qripsVrf ips
+    }
+
+fromQueryResultPoolDistr :: SL.QueryResultPoolDistr -> PoolDistr c
+fromQueryResultPoolDistr pd =
+  PoolDistr
+    { unPoolDistr = Map.map fromQueryResultIndividualPoolStake $ SL.qrpdDistr pd
     }
