@@ -93,7 +93,7 @@ withFreshDb SQLite action = do
   bracket
     ( do
         tmpDir <- createTempDirectory sysTmp "leios-test"
-        db <- newLeiosDBSQLite nullTracer (tmpDir <> "/test.db")
+        db <- newLeiosDBSQLite nullTracer (tmpDir <> "/test.db.vol") (tmpDir <> "/test.db.imm")
         pure (db, removeDirectoryRecursive tmpDir)
     )
     snd

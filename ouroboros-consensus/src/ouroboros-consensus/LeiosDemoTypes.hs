@@ -103,7 +103,7 @@ import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
-import LeiosDemoDb.Trace (TraceLeiosDb (..))
+import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
@@ -112,6 +112,7 @@ import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
+import LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
@@ -1514,6 +1515,43 @@ jsonLeiosDb = \case
       , "attempt" .= attempt
       , "waitedMs" .= waitedMs
       ]
+  TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbStats"
+      , "volatileEbs" .= volatileEbs
+      , "immutableEbs" .= immutableEbs
+      , "walBytes" .= walBytes
+      ]
+  TraceLeiosDbCopiedToImmutable copiedEbs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopiedToImmutable"
+      , "copiedEbs" .= copiedEbs
+      ]
+  TraceLeiosDbEvicted evictedEbs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbEvicted"
+      , "evictedEbs" .= evictedEbs
+      ]
+  TraceLeiosDbGCError reason ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbSweepError"
+      , "reason" .= reason
+      ]
+  TraceLeiosDbCopyQueueFull ebHash ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopyQueueFull"
+      , "ebHash" .= ebHash
+      ]
+  TraceLeiosDbCopyError ebHash reason ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopyError"
+      , "ebHash" .= ebHash
+      , "reason" .= reason
+      ]
+  -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
+  -- the forge loop's call traces, so one dashboard query shape covers both.
+  TraceLeiosDbCall (SomeJsonCallTrace ct) ->
+    callTraceToObject ct
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case

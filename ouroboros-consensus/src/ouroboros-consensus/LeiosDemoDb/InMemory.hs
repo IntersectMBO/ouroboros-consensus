@@ -34,6 +34,7 @@ import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbStats (..)
   , LeiosEbNotification (..)
   )
 import LeiosDemoTypes
@@ -108,6 +109,8 @@ newLeiosDBInMemoryWith stateVar = do
         leiosDbGarbageCollect = \_slotNo -> pure ()
       , -- No-op for now; see 'leiosDbPromoteToImmutable'.
         leiosDbPromoteToImmutable = \_point -> pure ()
+      , -- The in-memory implementation does not track stats.
+        leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , open =
           pure $
             LeiosDbConnection
