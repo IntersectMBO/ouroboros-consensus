@@ -144,7 +144,7 @@ reapplyStep reapplyPerStep resolveValues cfg slot st@ReapplyStepState{..} = do
     resolveValues (LedgerTables (KeysMK inputsToResolveStep))
 
   -- Prepare the ledger state with values
-  let allValues = LedgerTables (ValuesMK (currValues `Map.union` inputsResolvedStep))
+  let !allValues = LedgerTables (ValuesMK (currValues `Map.union` inputsResolvedStep))
       !stForStep =
         st
           { remainingTxs = remainingTxsStep
@@ -225,7 +225,7 @@ boundaryInputsForTxs ::
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   Set (TxIn (LedgerState blk))
 boundaryInputsForTxs txs =
-  let (boundaryInputs, _) =
+  let (!boundaryInputs, _) =
         Foldable.foldl'
           boundaryInputsForTxsStep
           (Set.empty, mempty)

@@ -122,8 +122,9 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
     , mpEnvLedgerCfg = cfg
     } = mpEnv
 
-snapshotStepTimeLimitSeconds :: DiffTime
-snapshotStepTimeLimitSeconds = 0.1
+-- TODO(bladyjoker): Make it configurable?
+snapshotStepTimeLimit :: DiffTime
+snapshotStepTimeLimit = 0.1
 
 snapshotStepTxsPerStep :: Int
 snapshotStepTxsPerStep = 100
@@ -140,7 +141,7 @@ computeSnapshot ::
 computeSnapshot resolveValues cfg slot baseLedgerStDiff txsToApply = do
   ReapplyStepState{..} <-
     reapplyUntilTimeout
-      snapshotStepTimeLimitSeconds
+      snapshotStepTimeLimit
       snapshotStepTxsPerStep
       resolveValues
       cfg
@@ -149,4 +150,4 @@ computeSnapshot resolveValues cfg slot baseLedgerStDiff txsToApply = do
       txsToApply
 
   let tip = castPoint $ getTip baseLedgerStDiff
-  return $ snapshot slot tip appliedTxIds appliedTxs
+  return $! snapshot slot tip appliedTxIds appliedTxs
