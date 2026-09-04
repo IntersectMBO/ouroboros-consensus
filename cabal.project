@@ -20,7 +20,7 @@ index-state:
 
 packages: .
 
--- Temp: pin cardano-ledger to PR #5992
+-- Temp: pin cardano-ledger to PR IntersectMBO/cardano-ledger#5992
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger.git
