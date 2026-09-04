@@ -14,7 +14,7 @@ import Cardano.Ledger.BaseTypes
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
-import Cardano.Tools.LeiosDb (openLeiosDb)
+import Cardano.Tools.LeiosDb (leiosDbPath)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), emit, nullTracer)
@@ -22,7 +22,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
-import LeiosDemoDb (withLeiosDb)
+import LeiosDemoDb (newLeiosDBInMemory, newLeiosDBSQLite, withLeiosDb)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -152,7 +152,10 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
-    leiosDbHandle <- openLeiosDb noLeiosDb dbDir
+    leiosDbHandle <-
+      leiosDbPath leiosDbSource dbDir >>= \case
+        Nothing -> newLeiosDBInMemory
+        Just path -> newLeiosDBSQLite nullTracer path
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -252,7 +255,7 @@ analyse dbaConfig args =
     , validation
     , verbose
     , ldbBackend
-    , noLeiosDb
+    , leiosDbSource
     } = dbaConfig
 
   SelectImmutableDB startSlot = selectDB

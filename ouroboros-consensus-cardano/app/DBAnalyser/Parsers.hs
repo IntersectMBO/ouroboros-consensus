@@ -11,6 +11,7 @@ module DBAnalyser.Parsers
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.Block.Cardano
 import Cardano.Tools.DBAnalyser.Types
+import Cardano.Tools.LeiosDb (LeiosDbSource (..))
 import qualified Data.Foldable as Foldable
 import Options.Applicative
 import Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
@@ -63,9 +64,9 @@ parseDBAnalyserConfig =
     <*> parseNoLeiosDb
 
 -- | Run with an empty in-memory LeiosDb, rather than the node's @leios.db@.
-parseNoLeiosDb :: Parser Bool
+parseNoLeiosDb :: Parser LeiosDbSource
 parseNoLeiosDb =
-  switch $
+  flag NodeLeiosDb NoLeiosDb $
     mconcat
       [ long "no-leios-db"
       , help $

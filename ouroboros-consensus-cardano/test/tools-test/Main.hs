@@ -8,6 +8,7 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
 import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
+import Cardano.Tools.LeiosDb (LeiosDbSource (..))
 import Data.String (fromString)
 import LeiosDemoDb
   ( leiosDbInsertEbPoint
@@ -84,7 +85,7 @@ testAnalyserConfig =
     , -- The synthesized chain holds no certifying block, and DBSynthesizer
       -- writes no leios.db, so the empty in-memory LeiosDb stub is both enough
       -- and the only option.
-      noLeiosDb = True
+      leiosDbSource = NoLeiosDb
     }
 
 -- | The truncater cuts the chain back to this slot. Far enough into the
@@ -99,7 +100,7 @@ testTruncaterConfig =
     { DBTruncater.dbDir = chainDB
     , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
     , DBTruncater.verbose = False
-    , DBTruncater.noLeiosDb = False
+    , DBTruncater.leiosDbSource = NodeLeiosDb
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)

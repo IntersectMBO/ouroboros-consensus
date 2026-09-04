@@ -3,17 +3,19 @@ module Cardano.Tools.DBTruncater.Types
   , TruncateAfter (..)
   ) where
 
+import Cardano.Tools.LeiosDb (LeiosDbSource)
 import Ouroboros.Consensus.Block.Abstract
 
 data DBTruncaterConfig = DBTruncaterConfig
   { dbDir :: FilePath
   , truncateAfter :: TruncateAfter
   , verbose :: Bool
-  , noLeiosDb :: Bool
-  -- ^ Skip every LeiosDb operation. The tool then neither opens nor modifies
-  -- the @leios.db@ under 'dbDir', whether or not that file exists.
+  , leiosDbSource :: LeiosDbSource
+  -- ^ 'NoLeiosDb' skips every LeiosDb operation. The tool then neither opens
+  -- nor modifies the @leios.db@ under 'dbDir', whether or not that file
+  -- exists.
   --
-  -- Without this flag the tool requires that file, because it cannot tell a
+  -- With 'NodeLeiosDb' the tool requires that file, because it cannot tell a
   -- pre-Leios chain from a Leios one before it reads the chain.
   }
 
