@@ -166,17 +166,18 @@ tier it *actually* lands in (standard, for an EB), **not** its claimed
 `feeChangeAddr` it is charged the standard-tier fee and refunded
 `txFee − minfeeAt actualCoeff minfee` to that address; if it named none, the
 excess above `minfee` is donated to the treasury instead (no refund).
-The *admission check*, by contrast, used the tx's **claimed** (urgent)
-tier (`minfeeAt tier.tierCoeff minfee ≤ txFee`). The mempool itself does not
-compute this; it only preserves the tier tag on each emitted tx, and
-the ledger's fee split does the actual-tier charge/refund (see
-`Utxo.lagda.md` / `Tiers.lagda.md` in the Cardano ledger repo).
+A transaction declares no coefficient of its own, so there is only one fee
+constraint and it is on the actual tier: `minfeeAt actualCoeff minfee ≤ txFee`.
+The mempool itself does not compute this; it only preserves the tier tag on
+each emitted tx, and the ledger's fee split does the actual-tier
+charge/refund (see `Utxo.lagda.md` / `Tiers.lagda.md` in the Cardano ledger
+repo).
 
 **Fixed-point coefficients.** Every tier coefficient is a natural scaled by
 `tierScale = 10 ^ tierDec` (`tierDec = 6`), so a stored coefficient `c` denotes
 the real number `c / tierScale`. Coefficients are therefore never multiplied
 directly into a fee: the ledger's single conversion is
-`minfeeAt c base = ⌊ base · c / tierScale ⌋`, and every fee comparison above goes
+`minfeeAt c base = ⌈ base · c / tierScale ⌉`, and every fee comparison above goes
 through it. This matters to the mempool because its admission and selection
 checks must agree with the ledger's *exactly*, not up to rounding: a check
 written in real arithmetic as `quote × (1 + stepBound)` can differ from the
