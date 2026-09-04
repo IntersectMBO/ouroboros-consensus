@@ -1,0 +1,10 @@
+name: formal-consensus
+depend:
+  standard-library
+  standard-library-classes
+  standard-library-meta
+  abstract-set-theory
+  iog-prelude
+include:
+  src
+  src-lib-exts
