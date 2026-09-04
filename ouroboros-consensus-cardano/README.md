@@ -78,10 +78,10 @@ The user can use snapshots created by the node or they can create their own snap
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
-#### --stubbed-leios-db
+#### --no-leios-db
 
 ```
-[--stubbed-leios-db]
+[--no-leios-db]
 ```
 
 Run with an empty in-memory Leios database, rather than the `leios.db` file under the `--db` path.
@@ -206,7 +206,7 @@ Lastly the user can provide the analysis that should be run on the chain:
   Therefore, it is recommended to start with NUM=1, and only use NUM=2 when you
   want to test the performance impact of a more filled mempool.
 
-  On a Leios chain, this pass reads the Leios database, so do not pass `--stubbed-leios-db`.
+  On a Leios chain, this pass reads the Leios database, so do not pass `--no-leios-db`.
   A block that certifies an EB has an empty body.
   The txs that it causes the ledger to apply are in the EB that it certifies, and the Leios database holds them.
   This pass adds them to the mempool, and it reports their count and their total size in the `ebNumTxs` and `ebTxsByteSize` columns.
@@ -442,7 +442,7 @@ Step 3 rewrites the file, so it needs free space of about the size of the file.
 SQLite puts that copy in the system temp directory, not beside the database.
 Set `SQLITE_TMPDIR` if that filesystem is small.
 
-Pass `--stubbed-leios-db` for a chain that holds no certifying block, such as a chain that predates Leios.
+Pass `--no-leios-db` for a chain that holds no certifying block, such as a chain that predates Leios.
 Without the flag the tool needs `DB_PATH/leios.db` and refuses to start when that file is absent.
 See the db-analyser section on that flag for why the tool cannot make the call itself.
 

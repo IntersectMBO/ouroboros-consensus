@@ -8,7 +8,7 @@ import System.Exit (die)
 import qualified System.FilePath as FilePath
 
 -- | The path of the @leios.db@ that the node writes under its ChainDB
--- directory, or 'Nothing' when the caller asks for the stub.
+-- directory, or 'Nothing' when the caller passes --no-leios-db.
 --
 -- The tool derives that path from @--db@ rather than take one of its own. An
 -- operator who puts the file elsewhere can symlink it into place.
@@ -27,8 +27,8 @@ leiosDbPath ::
   -- | The ChainDB directory.
   FilePath ->
   IO (Maybe FilePath)
-leiosDbPath stubbedLeiosDb dbDir
-  | stubbedLeiosDb = pure Nothing
+leiosDbPath noLeiosDb dbDir
+  | noLeiosDb = pure Nothing
   | otherwise = do
       let path = dbDir FilePath.</> "leios.db"
       exists <- Directory.doesFileExist path
@@ -39,13 +39,14 @@ leiosDbPath stubbedLeiosDb dbDir
             <> ". A block that carries a Leios certificate has an empty body, "
             <> "and the transactions that it puts on the chain are in the "
             <> "endorser block that it certifies, which the LeiosDb holds. "
-            <> "Pass --stubbed-leios-db if this chain holds no such block."
+            <> "Pass --no-leios-db if this chain holds no such block."
       pure (Just path)
 
--- | Open the node's LeiosDb, or an empty in-memory one for the stub.
+-- | Open the node's LeiosDb, or an empty in-memory one when the caller passes
+-- --no-leios-db.
 openLeiosDb :: Bool -> FilePath -> IO (LeiosDbHandle IO)
-openLeiosDb stubbedLeiosDb dbDir = do
-  mPath <- leiosDbPath stubbedLeiosDb dbDir
+openLeiosDb noLeiosDb dbDir = do
+  mPath <- leiosDbPath noLeiosDb dbDir
   case mPath of
     Nothing -> newLeiosDBInMemory
     Just path -> newLeiosDBSQLite nullTracer path

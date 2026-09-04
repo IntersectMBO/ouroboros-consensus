@@ -4,7 +4,7 @@
 module DBAnalyser.Parsers
   ( parseCmdLine
   , parseCardanoArgs
-  , parseStubbedLeiosDb
+  , parseNoLeiosDb
   , CardanoBlockArgs
   ) where
 
@@ -60,14 +60,14 @@ parseDBAnalyserConfig =
             , help "use v2 LSM backend"
             ]
       ]
-    <*> parseStubbedLeiosDb
+    <*> parseNoLeiosDb
 
 -- | Run with an empty in-memory LeiosDb, rather than the node's @leios.db@.
-parseStubbedLeiosDb :: Parser Bool
-parseStubbedLeiosDb =
+parseNoLeiosDb :: Parser Bool
+parseNoLeiosDb =
   switch $
     mconcat
-      [ long "stubbed-leios-db"
+      [ long "no-leios-db"
       , help $
           "Do not use the leios.db file under the --db path. Pass this for a "
             <> "chain that holds no block with a Leios certificate. Without "

@@ -84,7 +84,7 @@ testAnalyserConfig =
     , -- The synthesized chain holds no certifying block, and DBSynthesizer
       -- writes no leios.db, so the empty in-memory LeiosDb stub is both enough
       -- and the only option.
-      stubbedLeiosDb = True
+      noLeiosDb = True
     }
 
 -- | The truncater cuts the chain back to this slot. Far enough into the
@@ -99,7 +99,7 @@ testTruncaterConfig =
     { DBTruncater.dbDir = chainDB
     , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
     , DBTruncater.verbose = False
-    , DBTruncater.stubbedLeiosDb = False
+    , DBTruncater.noLeiosDb = False
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)

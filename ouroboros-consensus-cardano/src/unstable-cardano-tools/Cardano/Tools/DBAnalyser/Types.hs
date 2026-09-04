@@ -17,7 +17,7 @@ data DBAnalyserConfig = DBAnalyserConfig
   , analysis :: AnalysisName
   , confLimit :: Limit
   , ldbBackend :: LedgerDBBackend
-  , stubbedLeiosDb :: Bool
+  , noLeiosDb :: Bool
   -- ^ Use an empty in-memory LeiosDb instead of @leios.db@ under 'dbDir'.
   --
   -- The tool cannot tell a pre-Leios chain from a Leios one before it reads

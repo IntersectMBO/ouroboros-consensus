@@ -152,7 +152,7 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
-    leiosDbHandle <- openLeiosDb stubbedLeiosDb dbDir
+    leiosDbHandle <- openLeiosDb noLeiosDb dbDir
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -252,7 +252,7 @@ analyse dbaConfig args =
     , validation
     , verbose
     , ldbBackend
-    , stubbedLeiosDb
+    , noLeiosDb
     } = dbaConfig
 
   SelectImmutableDB startSlot = selectDB
