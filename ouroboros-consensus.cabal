@@ -1085,6 +1085,9 @@ benchmark leios-txcache-bench
   main-is: Main.hs
   other-modules: LeiosTxCache.Bench.SQLite
   ghc-options: -with-rtsopts=-T
+
+  if !os(linux) && !os(osx)
+    buildable: False
   build-depends:
     base,
     bytestring,
