@@ -18,6 +18,7 @@ let
       ../ouroboros-consensus-diffusion
       ../ouroboros-consensus-protocol
       ../ouroboros-consensus.cabal
+      ../tracing
     ];
   };
   forAllProjectPackages = cfg: args@{ config, lib, ... }: {

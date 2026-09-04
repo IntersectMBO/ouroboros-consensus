@@ -414,6 +414,102 @@ library
     directory
     latex-svg-image
 
+library tracing
+  import: common-lib
+  visibility: public
+  hs-source-dirs: tracing
+  -- Orphan tracing instances (LogFormatting/MetaTrace) for Consensus types,
+  -- moved here from cardano-node so that the definitions live next to the
+  -- types they describe. Depends on trace-dispatcher (Cardano.Logging), the
+  -- same way ouroboros-network:tracing does.
+  -- Everything that carries an instance is private, and reachable only through
+  -- the Ouroboros.Consensus.Tracing umbrella, so that importing a subset cannot
+  -- silently lose an orphan. The two Render modules define no instances -- they
+  -- are plain rendering functions -- so exposing them costs nothing.
+  exposed-modules:
+    Ouroboros.Consensus.Tracing
+    Ouroboros.Consensus.Tracing.Era.Shelley.Render
+    Ouroboros.Consensus.Tracing.Render
+
+  other-modules:
+    Ouroboros.Consensus.Tracing.BlockReplayProgress
+    Ouroboros.Consensus.Tracing.ChainDB
+    Ouroboros.Consensus.Tracing.Consensus
+    Ouroboros.Consensus.Tracing.ConsensusStartupException
+    Ouroboros.Consensus.Tracing.ConvertTxId
+    Ouroboros.Consensus.Tracing.Era.Byron
+    Ouroboros.Consensus.Tracing.Era.HardFork
+    Ouroboros.Consensus.Tracing.Era.Shelley
+    Ouroboros.Consensus.Tracing.Formatting
+    Ouroboros.Consensus.Tracing.HasIssuer
+    Ouroboros.Consensus.Tracing.KESInfo
+
+  build-depends:
+    aeson,
+    base,
+    base16-bytestring,
+    bech32,
+    bytestring,
+    cardano-crypto-class,
+    cardano-crypto-wrapper,
+    cardano-data,
+    cardano-ledger-allegra,
+    cardano-ledger-alonzo,
+    cardano-ledger-api,
+    cardano-ledger-babbage,
+    cardano-ledger-byron,
+    cardano-ledger-conway,
+    cardano-ledger-core,
+    cardano-ledger-dijkstra,
+    cardano-ledger-shelley,
+    cardano-prelude,
+    cardano-protocol,
+    cardano-protocol-tpraos,
+    cardano-slotting,
+    containers,
+    deepseq,
+    kes-agent,
+    ouroboros-consensus:{cardano, diffusion, lsm, ouroboros-consensus, protocol},
+    ouroboros-network:{api, orphan-instances, ouroboros-network},
+    psqueues,
+    sop-core,
+    strict-sop-core,
+    text,
+    time,
+    trace-dispatcher ^>=2.13.0,
+    typed-protocols,
+
+test-suite tracing-test
+  import: common-test
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tracing/test
+  main-is: Main.hs
+  other-modules:
+    Test.Consensus.Tracing.Golden
+    Test.Consensus.Tracing.MetaTrace
+
+  build-depends:
+    aeson,
+    base,
+    bytestring,
+    cardano-crypto-class,
+    cardano-data,
+    cardano-ledger-alonzo,
+    cardano-ledger-conway,
+    cardano-ledger-core,
+    cardano-ledger-mary,
+    cardano-protocol-tpraos,
+    containers,
+    filepath,
+    ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, tracing, unstable-consensus-testlib},
+    ouroboros-network:{api, ouroboros-network},
+    tasty,
+    tasty-golden,
+    tasty-hunit,
+    text,
+    time,
+    trace-dispatcher,
+
 library lsm
   import: common-lib
   visibility: public
