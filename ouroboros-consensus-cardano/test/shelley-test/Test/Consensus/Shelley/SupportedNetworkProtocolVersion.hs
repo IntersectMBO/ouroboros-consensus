@@ -18,12 +18,12 @@ import Test.Util.SupportedNetworkProtocolVersion
 
 tests :: TestTree
 tests =
-  testCase "Shelley exhaustive network protocol versions"
+  testCase "Shelley contiguous network protocol versions"
     . sequence_
     . hcollapse
     . hcmap
       (Proxy @(And Typeable SupportedNetworkProtocolVersion))
-      (K . exhaustiveSupportedNetworkProtocolVersions)
+      (K . contiguousSupportedNetworkProtocolVersions)
     $ shelleyBlocks
  where
   shelleyBlocks :: NP Proxy (CardanoShelleyEras StandardCrypto)
