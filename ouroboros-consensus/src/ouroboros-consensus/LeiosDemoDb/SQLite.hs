@@ -500,17 +500,26 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
     dbWithTransactionAs "BEGIN IMMEDIATE" db $
       dbExec db (fromString deletes)
  where
-  -- 'ebTxs' and 'ebsMissingTxs' are keyed by EB hash and carry no slot, and the
-  -- same EB can be announced in several slots. So a body is deleted only when
-  -- the truncation drops every announcement of that EB.
   deletes =
     unlines
-      [ "DELETE FROM ebTxs WHERE ebHashBytes NOT IN (" <> remainingHashes <> ");"
-      , "DELETE FROM ebsMissingTxs WHERE ebHashBytes NOT IN (" <> remainingHashes <> ");"
+      [ "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      , "DELETE FROM ebsMissingTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
       , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
       ]
 
-  remainingHashes = "SELECT ebHashBytes FROM ebs WHERE ebSlot <= " <> show slot
+  -- The EBs whose bodies the truncation drops.
+  --
+  -- 'ebs' holds one row per announcement, so the same EB hash can appear at
+  -- several slots. 'ebTxs' and 'ebsMissingTxs' hold one copy per hash and carry
+  -- no slot. So an EB announced at slot 5 and again at slot 15 keeps its body
+  -- when the cut is at slot 10. That is what the EXCEPT does: take the hashes
+  -- announced after the cut, then remove the ones also announced at or before
+  -- it.
+  droppedHashes =
+    "SELECT ebHashBytes FROM ebs WHERE ebSlot > "
+      <> show slot
+      <> " EXCEPT SELECT ebHashBytes FROM ebs WHERE ebSlot <= "
+      <> show slot
 
 -- | Delete the transactions that no EB references.
 --
