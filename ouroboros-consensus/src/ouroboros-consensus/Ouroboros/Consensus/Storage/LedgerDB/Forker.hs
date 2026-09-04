@@ -1008,7 +1008,7 @@ resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
   closureVals <- readValues closureKeys
   let !lsBeforeEB = lsBase `withLedgerTables` closureVals
   -- apply the closure and return the result in case there was not errors
-  let !ledgerErrOrState = applyLeiosClosure lcfg closureTxs lsBeforeEB
+  let ledgerErrOrState = applyLeiosClosure lcfg closureTxs lsBeforeEB
   case ledgerErrOrState of
     Left !err -> pure $ Left err
     Right !lsAfterEB -> do
