@@ -1,8 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeOperators #-}
--- TODO: remove this once we we get rid of the degenerate 'BlockSupportsPeras'
--- instance making the equality constraint below redundant.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Peras.Voting.Mock
   ( mkMockPerasVotingCommitteeInput
