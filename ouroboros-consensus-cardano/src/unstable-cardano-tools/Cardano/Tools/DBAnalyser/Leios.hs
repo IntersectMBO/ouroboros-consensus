@@ -225,7 +225,7 @@ missingEbBodyError ebHash =
   "Could not resolve the EB "
     <> show ebHash
     <> ", because the LeiosDb holds no body for it. Either the analysis ran "
-    <> "with --stubbed-leios-db, which uses an empty in-memory LeiosDb, or the "
+    <> "with --no-leios-db, which uses an empty in-memory LeiosDb, or the "
     <> "chain and the node's leios.db do not match: the node that applied the "
     <> "certifying block held that EB."
 

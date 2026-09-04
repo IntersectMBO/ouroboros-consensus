@@ -48,8 +48,8 @@ truncate ::
   DBTruncaterConfig ->
   Args block ->
   IO ()
-truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, stubbedLeiosDb} args = do
-  mLeiosDbPath <- leiosDbPath stubbedLeiosDb dbDir
+truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, noLeiosDb} args = do
+  mLeiosDbPath <- leiosDbPath noLeiosDb dbDir
   withRegistry $ \registry -> do
     lock <- mkLock
     immutableDBTracer <- mkTracer lock verbose

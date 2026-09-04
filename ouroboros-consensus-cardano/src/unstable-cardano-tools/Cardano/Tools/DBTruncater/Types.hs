@@ -9,7 +9,7 @@ data DBTruncaterConfig = DBTruncaterConfig
   { dbDir :: FilePath
   , truncateAfter :: TruncateAfter
   , verbose :: Bool
-  , stubbedLeiosDb :: Bool
+  , noLeiosDb :: Bool
   -- ^ Skip every LeiosDb operation. The tool then neither opens nor modifies
   -- the @leios.db@ under 'dbDir', whether or not that file exists.
   --
