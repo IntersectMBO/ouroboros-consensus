@@ -3,6 +3,7 @@
 
 module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) where
 
+import Cardano.Tools.LeiosDb (LeiosDbSource)
 import Data.Word
 import Ouroboros.Consensus.Block
 
@@ -17,8 +18,9 @@ data DBAnalyserConfig = DBAnalyserConfig
   , analysis :: AnalysisName
   , confLimit :: Limit
   , ldbBackend :: LedgerDBBackend
-  , noLeiosDb :: Bool
-  -- ^ Use an empty in-memory LeiosDb instead of @leios.db@ under 'dbDir'.
+  , leiosDbSource :: LeiosDbSource
+  -- ^ 'NoLeiosDb' uses an empty in-memory LeiosDb instead of @leios.db@ under
+  -- 'dbDir'.
   --
   -- The tool cannot tell a pre-Leios chain from a Leios one before it reads
   -- the chain, so it cannot decide on its own whether an absent @leios.db@ is
