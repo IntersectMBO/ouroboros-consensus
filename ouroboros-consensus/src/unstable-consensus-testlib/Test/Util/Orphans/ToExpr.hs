@@ -12,15 +12,18 @@
 module Test.Util.Orphans.ToExpr () where
 
 import qualified Control.Monad.Class.MonadTime.SI as SI
+import Data.Maybe.Strict (StrictMaybe)
 import Data.Set.NonEmpty (NESet)
 import Data.TreeDiff
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime, WithArrivalTime)
+import Ouroboros.Consensus.Committee.Class (VotingCommittee)
 import Ouroboros.Consensus.Committee.WFA (SeatIndex)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (PerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.TxSeq
@@ -29,7 +32,7 @@ import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextNotFoundForRound
   , PerasEpochContextResolver
   )
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasVotingCommitteeScheme, VotingCommittee)
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasVotingCommitteeScheme)
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
@@ -74,8 +77,13 @@ instance
   ( ToExpr (LedgerState blk EmptyMK)
   , ToExpr (ChainDepState (BlockProtocol blk))
   , ToExpr (TipInfo blk)
+  , Show (PerasVotingCommittee blk)
   ) =>
   ToExpr (ExtLedgerState blk EmptyMK)
+
+instance
+  Show (PerasVotingCommittee blk) =>
+  ToExpr (PerasState blk)
 
 instance
   ( ToExpr (ChainDepState (BlockProtocol blk))
@@ -132,6 +140,8 @@ instance ToExpr FsError where
 deriving instance ToExpr a => ToExpr (LoE a)
 
 deriving anyclass instance ToExpr PerasRoundNo
+
+deriving instance ToExpr a => ToExpr (StrictMaybe a)
 
 deriving anyclass instance ToExpr PerasWeight
 

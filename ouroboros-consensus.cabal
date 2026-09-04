@@ -254,6 +254,7 @@ library
     Ouroboros.Consensus.Peras.Vote.Mock
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Adapter
+    Ouroboros.Consensus.Peras.Voting.Mock
     Ouroboros.Consensus.Peras.Voting.Rules
     Ouroboros.Consensus.Peras.Voting.Trace
     Ouroboros.Consensus.Peras.Voting.View
@@ -840,7 +841,6 @@ test-suite storage-test
     cardano-ledger-binary:testlib,
     cardano-ledger-core:cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
-    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
