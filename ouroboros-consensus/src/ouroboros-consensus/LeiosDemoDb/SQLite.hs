@@ -494,7 +494,7 @@ sqlFilterMissingTxs conn txHashes =
 -- For internal tooling.
 truncateLeiosDbAfterSlot :: HasCallStack => FilePath -> SlotNo -> IO ()
 truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
-  withExistingDb dbPath $ \db ->
+  withExistingLeiosDbFile dbPath $ \db ->
     -- One transaction, so a crash cannot leave an EB that is still announced
     -- but has no body.
     dbWithTransactionAs "BEGIN IMMEDIATE" db $
@@ -517,7 +517,7 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
 -- For internal tooling.
 deleteDanglingTxs :: HasCallStack => FilePath -> IO ()
 deleteDanglingTxs dbPath =
-  withExistingDb dbPath $ \db ->
+  withExistingLeiosDbFile dbPath $ \db ->
     dbExec db . fromString $
       "DELETE FROM txs WHERE txHashBytes NOT IN (SELECT txHashBytes FROM ebTxs)"
 
@@ -528,17 +528,20 @@ deleteDanglingTxs dbPath =
 -- of the file. For internal tooling.
 vacuumLeiosDb :: HasCallStack => FilePath -> IO ()
 vacuumLeiosDb dbPath =
-  withExistingDb dbPath $ \db ->
+  withExistingLeiosDbFile dbPath $ \db ->
     dbExec db (fromString "VACUUM")
 
--- | Open a LeiosDb that must already exist.
+-- | Open the LeiosDb file at the given path, which must already exist.
+--
+-- Unrelated to 'withLeiosDb', which brackets a 'LeiosDbConnection' that a
+-- 'LeiosDbHandle' opens.
 --
 -- No 'SQLOpenCreate', unlike 'openSQLiteConnection': a wrong path must fail
 -- rather than gain an empty database. No 'busy_timeout' either, so a write that
 -- meets the node's own write lock gives up after the retries in 'withDie'
 -- rather than block.
-withExistingDb :: FilePath -> (DB.Database -> IO a) -> IO a
-withExistingDb dbPath =
+withExistingLeiosDbFile :: FilePath -> (DB.Database -> IO a) -> IO a
+withExistingLeiosDbFile dbPath =
   MonadThrow.bracket
     (open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault)
     (void . DB.close)
