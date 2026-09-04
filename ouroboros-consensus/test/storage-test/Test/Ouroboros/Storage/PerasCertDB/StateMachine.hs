@@ -19,15 +19,19 @@ module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 import Control.Monad (join)
 import Control.Monad.State
 import Control.Tracer (nullTracer)
+import Data.Containers.NonEmpty (HasNonEmpty (..))
 import Data.Function ((&))
 import qualified Data.List.NonEmpty as NE
+import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
@@ -91,14 +95,16 @@ instance StateModel Model where
     genAddCert = do
       roundNo <- genRoundNo
       boostedBlock <- genPoint
+      voters <- genVoters
       now <- genRelativeTime
       let certWithTime =
             WithArrivalTime now $
               ValidatedPerasCert
                 { vpcCert =
-                    PerasCert
-                      { pcCertRound = roundNo
-                      , pcCertBoostedBlock = boostedBlock
+                    MockPerasCert
+                      { mockCertRound = roundNo
+                      , mockCertBlock = boostedBlock
+                      , mockCertVoters = voters
                       }
                 , vpcCertBoost = perasWeight perasTestParams
                 }
@@ -120,6 +126,12 @@ instance StateModel Model where
         , (8, PerasRoundNo <$> arbitrary)
         ]
     genHash = TestHash . NE.fromList . getNonEmpty <$> arbitrary
+
+    genVoters :: Gen (NE (Set PerasSeatIndex))
+    genVoters =
+      NESet.fromList <$> (liftA2 (NE.:|) genSeatIndex (listOf genSeatIndex))
+
+    genSeatIndex = PerasSeatIndex <$> arbitrary
 
   initialState = Model Model.initModel
 

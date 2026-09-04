@@ -42,13 +42,6 @@ import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Peras
-  ( ListWithUniqueIds (..)
-  , genListWithUniqueIds
-  , genPointTestBlock
-  , genRoundNo
-  , genWithArrivalTime
-  , mockSystemTime
-  )
 import Test.Util.TestBlock
 
 tests :: TestTree
@@ -57,20 +50,6 @@ tests =
     "ObjectDiffusion.PerasCert.Smoke"
     [ testProperty "PerasCertDiffusion smoke test" prop_smoke
     ]
-
-genValidatedPerasCert :: Gen (ValidatedPerasCert TestBlock)
-genValidatedPerasCert =
-  ValidatedPerasCert
-    <$> genPerasCert
-    <*> genPerasWeight
- where
-  genPerasCert =
-    PerasCert
-      <$> genRoundNo
-      <*> genPointTestBlock
-  genPerasWeight =
-    PerasWeight
-      <$> choose (1, 15)
 
 newCertDB ::
   (IOLike m, StandardHash blk) => [WithArrivalTime (ValidatedPerasCert blk)] -> m (PerasCertDB m blk)
@@ -89,38 +68,40 @@ newCertDB certs = do
 prop_smoke :: Property
 prop_smoke =
   forAll genProtocolConstants $ \protocolConstants ->
-    forAll (genListWithUniqueIds getPerasCertRound (genWithArrivalTime genValidatedPerasCert)) $
-      \(ListWithUniqueIds watValidatedCerts) ->
-        let
-          mkPoolInterfaces ::
-            forall m.
-            IOLike m =>
-            m
-              ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo m
-              , ObjectPoolWriter PerasRoundNo (PerasCert TestBlock) m
-              , m [PerasCert TestBlock]
-              )
-          mkPoolInterfaces = do
-            outboundPool <- newCertDB watValidatedCerts
-            inboundPool <- newCertDB []
+    forAll genMockPerasEpochContext $ \epochContext ->
+      forAll
+        (genListWithUniqueIds getPerasCertRound (genWithArrivalTime (genMockValidatedPerasCert epochContext)))
+        $ \(ListWithUniqueIds watValidatedCerts) ->
+          let
+            mkPoolInterfaces ::
+              forall m.
+              IOLike m =>
+              m
+                ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo m
+                , ObjectPoolWriter PerasRoundNo (PerasCert TestBlock) m
+                , m [PerasCert TestBlock]
+                )
+            mkPoolInterfaces = do
+              outboundPool <- newCertDB watValidatedCerts
+              inboundPool <- newCertDB []
 
-            let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
-                inboundPoolWriter = makePerasCertPoolWriterFromCertDB mockSystemTime inboundPool
-                getAllInboundPoolContent = do
-                  certsMap <-
-                    atomically $
-                      PerasCertDB.getCertsAfter inboundPool (PerasCertDB.zeroPerasCertTicketNo)
-                  certs' <- sequence (Map.elems certsMap)
-                  pure $ vpcCert . forgetArrivalTime <$> certs'
+              let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
+                  inboundPoolWriter = makePerasCertPoolWriterFromCertDB mockSystemTime inboundPool
+                  getAllInboundPoolContent = do
+                    certsMap <-
+                      atomically $
+                        PerasCertDB.getCertsAfter inboundPool (PerasCertDB.zeroPerasCertTicketNo)
+                    certs' <- sequence (Map.elems certsMap)
+                    pure $ vpcCert . forgetArrivalTime <$> certs'
 
-            return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
-         in
-          prop_smoke_object_diffusion
-            protocolConstants
-            (map (vpcCert . forgetArrivalTime) watValidatedCerts)
-            runOutboundPeer
-            runInboundPeer
-            mkPoolInterfaces
+              return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
+           in
+            prop_smoke_object_diffusion
+              protocolConstants
+              (map (vpcCert . forgetArrivalTime) watValidatedCerts)
+              runOutboundPeer
+              runInboundPeer
+              mkPoolInterfaces
  where
   runOutboundPeer outbound outboundChannel tracer =
     runPeer
