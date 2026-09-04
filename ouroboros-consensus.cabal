@@ -119,6 +119,7 @@ library
     LeiosTxCache.Optimized.MutableHashTable
     LeiosTxCache.Reference
     LeiosUtils.CallTrace
+    LeiosUtils.TimeBoundedLoop
     LeiosVoteState
     LeiosVoting
     Ouroboros.Consensus.Block
@@ -223,6 +224,7 @@ library
     Ouroboros.Consensus.Mempool.Capacity
     Ouroboros.Consensus.Mempool.Impl.Common
     Ouroboros.Consensus.Mempool.Init
+    Ouroboros.Consensus.Mempool.Ledger
     Ouroboros.Consensus.Mempool.Query
     Ouroboros.Consensus.Mempool.TxSeq
     Ouroboros.Consensus.Mempool.Update
@@ -769,6 +771,7 @@ test-suite consensus-test
     Test.LeiosTxCache.Optimized.MutableHashTable
     Test.LeiosTxCache.Reference
     Test.LeiosUtils.CallTrace
+    Test.LeiosUtils.TimeBoundedLoop
     Test.LeiosVoteState
     Test.LeiosVoting
 

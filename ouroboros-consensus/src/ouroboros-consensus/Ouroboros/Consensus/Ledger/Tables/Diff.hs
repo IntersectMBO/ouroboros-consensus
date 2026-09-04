@@ -44,6 +44,7 @@ module Ouroboros.Consensus.Ledger.Tables.Diff
   , filterWithKeyOnly
   , foldMapDelta
   , traverseDeltaWithKey_
+  , deletedAndCreated
   ) where
 
 import Control.Monad (void)
@@ -135,6 +136,16 @@ fromListInserts = Diff . Map.fromList . fmap (second Insert)
 
 fromListDeletes :: Ord k => [(k, v)] -> Diff k v
 fromListDeletes = Diff . Map.fromList . fmap (second (const Delete))
+
+deletedAndCreated :: Ord k => Diff k v -> (Set k, Map k v)
+deletedAndCreated (Diff d) =
+  Map.foldlWithKey'
+    ( \(deleted, created) k delta -> case delta of
+        Delete -> (Set.insert k deleted, created)
+        Insert v -> (deleted, Map.insert k v created)
+    )
+    (Set.empty, Map.empty)
+    d
 
 {------------------------------------------------------------------------------
   Query

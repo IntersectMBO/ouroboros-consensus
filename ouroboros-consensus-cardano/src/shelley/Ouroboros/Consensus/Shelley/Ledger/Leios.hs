@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -185,9 +186,9 @@ instance
         -- 'applyLeiosClosure' — silently drops them from
         -- 'shelleyCumulativeTxBytes'. The immutable-DB replay path
         -- already sums them via 'inlineLeiosClosure' → block body.
-        closureBytes =
+        !closureBytes =
           sum (fromIntegral . (^. Core.sizeTxF) <$> innerTxs)
-        lst' =
+        !lst' =
           stowed
             { shelleyLedgerState = nes'
             , shelleyCumulativeTxBytes =
@@ -203,7 +204,7 @@ instance
     ms0 = SL.mkMempoolState nes
 
     -- TODO: Ask ledger for an 'applyTxNoValidation' to replace this
-    applyOne envv ms tx =
+    applyOne envv ms !tx =
       fmap fst
         . SL.ruleApplyTxValidation @"LEDGER" STS.ValidateNone globals envv ms
         $ SL.mkStAnnTx
@@ -306,4 +307,4 @@ deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx Top
 deserialiseLeiosTx bs =
   case decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" decCBOR (BL.fromStrict bs) of
     Left err -> error $ "Failed to deserialise Leios tx: " <> show err
-    Right tx -> tx
+    Right !tx -> tx

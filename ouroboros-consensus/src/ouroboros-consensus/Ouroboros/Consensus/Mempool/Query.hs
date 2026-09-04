@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | Queries to the mempool
 module Ouroboros.Consensus.Mempool.Query
@@ -9,8 +11,13 @@ module Ouroboros.Consensus.Mempool.Query
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils (restrictValues')
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Impl.Common
+import Ouroboros.Consensus.Mempool.Ledger
+  ( ReapplyStepState (ReapplyStepState, appliedTxIds, appliedTxs)
+  , reapplyUntilTimeout
+  )
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Util.IOLike
 
@@ -94,26 +101,53 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
       -- have cached, then just return it.
       pure $ snapshotFromIS is
     else do
-      values <-
-        if canUseCache
-          -- We are looking for a snapshot at the same state ticked
-          -- to a different slot, so we can reuse the cached values
-          then pure (isTxValues is)
-          -- We are looking for a snapshot at a different state, so we
-          -- need to read the values from the ledgerdb.
-          else readUntickedTables (isTxKeys is)
-      pure $
-        computeSnapshot
-          capacityOverride
-          cfg
-          slot
-          ticked
-          values
-          (isLastTicketNo is)
-          (TxSeq.toList $ isTxs is)
+      resolveValues <-
+        return $
+          if canUseCache
+            -- We are looking for a snapshot at the same state ticked
+            -- to a different slot, so we can reuse the cached values
+            then pure . restrictValues' (isTxValues is)
+            -- We are looking for a snapshot at a different state, so we
+            -- need to read the values from the ledgerdb.
+            else readUntickedTables
+      computeSnapshot
+        resolveValues
+        cfg
+        slot
+        ticked
+        (isTxs is)
  where
   MempoolEnv
     { mpEnvStateVar = istate
     , mpEnvLedgerCfg = cfg
-    , mpEnvCapacityOverride = capacityOverride
     } = mpEnv
+
+-- TODO(bladyjoker): Make it configurable?
+snapshotStepTimeLimit :: DiffTime
+snapshotStepTimeLimit = 0.1
+
+snapshotStepTxsPerStep :: Int
+snapshotStepTxsPerStep = 100
+
+computeSnapshot ::
+  forall blk m.
+  (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  LedgerConfig blk ->
+  SlotNo ->
+  TickedLedgerState blk DiffMK ->
+  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  m (MempoolSnapshot blk)
+computeSnapshot resolveValues cfg slot baseLedgerStDiff txsToApply = do
+  ReapplyStepState{..} <-
+    reapplyUntilTimeout
+      snapshotStepTimeLimit
+      snapshotStepTxsPerStep
+      resolveValues
+      cfg
+      slot
+      baseLedgerStDiff
+      txsToApply
+
+  let tip = castPoint $ getTip baseLedgerStDiff
+  return $! snapshot slot tip appliedTxIds appliedTxs
