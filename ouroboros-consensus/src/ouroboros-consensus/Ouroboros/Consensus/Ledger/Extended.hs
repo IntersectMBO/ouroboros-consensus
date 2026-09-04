@@ -96,6 +96,7 @@ data ExtValidationError blk
   = ExtValidationErrorLedger !(LedgerErr LedgerState blk)
   | ExtValidationErrorHeader !(HeaderError blk)
   | ExtValidationErrorPerasEpochContextResolver !PerasEpochContextNotFoundForRound
+  | ExtValidationErrorPerasCertInBlock !(PerasError blk)
   deriving Generic
 
 deriving instance
@@ -342,9 +343,11 @@ extractAndValidatePerasCertFromBlock ::
   Except (LedgerErr ExtLedgerState blk) (Maybe (ValidatedPerasCert blk))
 extractAndValidatePerasCertFromBlock _ blk = do
   case getPerasCertInBlock blk of
-    Nothing ->
+    Left err ->
+      throwError (ExtValidationErrorPerasCertInBlock err)
+    Right Nothing ->
       pure Nothing
-    Just cert -> do
+    Right (Just cert) -> do
       pure $
         Just
           ValidatedPerasCert
