@@ -599,11 +599,14 @@ prop_leios seed =
 
 -- | The certification gap the simulated nodes run with.
 --
--- 'minCertificationGap' derives it from the protocol parameters, and
+-- 'minCertificationGap' derives it from the protocol parameters and the slot
+-- length, and
 -- 'runThreadNet'' hard-forks into Dijkstra with the ledger's example parameters,
 -- so reading it from the same examples value keeps the two in step.
 minCertGap :: Word64
-minCertGap = minCertificationGap (Shelley.lePParams Dijkstra.ledgerExamples)
+minCertGap =
+  unSlotNo $
+    minCertificationGap slotLength (Shelley.lePParams Dijkstra.ledgerExamples)
 
 -- | A late-joining node must not crash on a CertRB whose certified EB
 -- closure it never observed live.
