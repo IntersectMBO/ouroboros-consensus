@@ -144,7 +144,7 @@ instance
 instance HasLeiosVoting (DualBlock m a) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance Condense m => Condense (DualBlock m a) where
   condense = condense . dualBlockMain

@@ -196,6 +196,11 @@ deriving instance Show (Core.TranslationContext era) => Show (ShelleyLedgerConfi
 shelleyLedgerGenesis :: ShelleyLedgerConfig era -> SL.ShelleyGenesis
 shelleyLedgerGenesis = getCompactGenesis . shelleyLedgerCompactGenesis
 
+-- | The era's slot length, as genesis fixes it.
+shelleyLedgerSlotLength :: ShelleyLedgerConfig era -> SlotLength
+shelleyLedgerSlotLength =
+  mkSlotLength . SL.fromNominalDiffTimeMicro . SL.sgSlotLength . shelleyLedgerGenesis
+
 shelleyEraParams ::
   SL.ShelleyGenesis ->
   HardFork.EraParams
@@ -998,32 +1003,32 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   -- REVIEW: Should we use the LedgerView (Praos c) instead?
@@ -1061,8 +1066,11 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
     stakeDistribution =
       ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
 
-  getMinCertificationGap =
-    Just . minCertificationGap . getPParams . shelleyLedgerState
+  getMinCertificationGap cfg =
+    Just
+      . minCertificationGap (shelleyLedgerSlotLength cfg)
+      . getPParams
+      . shelleyLedgerState
 
   getCurrentThreshold ls =
     Just $

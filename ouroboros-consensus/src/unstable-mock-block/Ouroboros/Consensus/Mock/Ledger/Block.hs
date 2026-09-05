@@ -156,7 +156,7 @@ instance
 instance HasLeiosVoting (SimpleBlock' c ext ext') where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance
   (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>

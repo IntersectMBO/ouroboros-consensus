@@ -323,7 +323,7 @@ instance ShowProxy TestBlock
 instance HasLeiosVoting (TestBlockWith ptype) where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 -- | Default 'ResolveLeiosBlock' — test blocks never carry Leios certificates.
 instance Typeable ptype => ResolveLeiosBlock (TestBlockWith ptype)
