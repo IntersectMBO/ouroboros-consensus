@@ -89,6 +89,13 @@ import qualified Cardano.Ledger.Conway.PParams as SL
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
+import Cardano.Ledger.Dijkstra.PParams
+  ( DijkstraEraPParams
+  , ppMaxEndorserBlockExUnitsL
+  , ppMaxEndorserBlockReferencesSizeL
+  , ppMaxEndorserBlockTxsSizeL
+  , ppMaxRefScriptSizePerEndorserBlockL
+  )
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
@@ -738,10 +745,15 @@ txMeasureDijkstra st tx =
   (\c -> DijkstraMeasure c oneTxCount) <$> txMeasureConway st tx
 
 -- | The capacity for the txs in a Leios Endorser Block (Dijkstra era).
+--
+-- Every limit is a protocol parameter. 'Leios.maxTxsPerEb' still bounds the
+-- buffers, because that is the wire message limit and has to hold before any
+-- ledger state is in reach; the parameter cannot exceed it.
 leiosEndorserBlockMeasure ::
   forall proto era mk.
   ( ShelleyCompatible proto era
   , SL.ConwayEraPParams era
+  , DijkstraEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   DijkstraMeasure
@@ -754,13 +766,22 @@ leiosEndorserBlockMeasure st =
     DijkstraMeasure
       { conwayMeasure =
           conway
-            { alonzoMeasure = alonzo{byteSize = IgnoringOverflow Leios.maxEBClosureSize}
+            { alonzoMeasure =
+                alonzo
+                  { byteSize =
+                      IgnoringOverflow . ByteSize32 $
+                        pparams ^. ppMaxEndorserBlockTxsSizeL
+                  , exUnits =
+                      fromExUnits . unOrdExUnits $
+                        pparams ^. ppMaxEndorserBlockExUnitsL
+                  }
             , refScriptsSize =
-                IgnoringOverflow $
-                  ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
+                IgnoringOverflow . ByteSize32 $
+                  pparams ^. ppMaxRefScriptSizePerEndorserBlockL
             }
       , leiosMaxTxsPerEb =
-          IgnoringOverflow . TxCount . fromIntegral $ Leios.maxTxsPerEb
+          IgnoringOverflow . TxCount . fromIntegral $
+            Leios.maxEbTxCount (pparams ^. ppMaxEndorserBlockReferencesSizeL)
       }
 
 -----

@@ -2072,14 +2072,26 @@ minEbItemBytesSize = 32 + hashOverhead + minSizeOverhead
   hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
   minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
 
-maxTxsPerEb :: Int
-maxTxsPerEb =
+-- | How many transactions an EB of the given reference-list size can name.
+--
+-- Called with 'maxMsgLeiosBlockBytesSize' this is the wire bound, which sizes
+-- the buffers; called with the @maxEndorserBlockReferencesSize@ protocol
+-- parameter it is the capacity the mempool is allowed to fill.
+maxEbTxCount :: Integral a => a -> Int
+maxEbTxCount referencesSize =
   fromIntegral $
-    (maxMsgLeiosBlockBytesSize - msgOverhead - sequenceOverhead)
+    (fromIntegral referencesSize - msgOverhead - sequenceOverhead)
       `div` minEbItemBytesSize
  where
   msgOverhead = 1 + 1 -- short list len + small word
   sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
+
+-- | The most transactions any EB can name, set by the wire message limit.
+--
+-- Sizes buffers that are allocated before any ledger state is in reach; the
+-- protocol parameter cannot exceed it.
+maxTxsPerEb :: Int
+maxTxsPerEb = maxEbTxCount maxMsgLeiosBlockBytesSize
 
 maxEBClosureSize :: ByteSize32
 maxEBClosureSize = ByteSize32 12_000_000
