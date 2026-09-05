@@ -2063,6 +2063,17 @@ traceLeiosPeerForHuman = \case
 
 -- * Protocol parameters
 
+-- FIXME: the node-to-node limits below are still constants, and it is not clear
+-- that they can stay that way. The ledger now has protocol parameters for the
+-- same quantities (@maxEndorserBlockReferencesSize@, @maxEndorserBlockTxsSize@),
+-- so governance can raise a capacity past what these allow the network layer to
+-- carry, and nothing rejects that today. This is not hypothetical: the ledger's
+-- own example parameters are 512 KiB and 12 MiB against the 500 kB and 12 MB
+-- here, so the capacity is clamped where it is read. Either the ledger has to bound the
+-- parameters by the wire limits, or the node has to refuse such a ledger state
+-- at startup, or these have to become negotiated rather than fixed.
+
+-- | The largest Leios block message we will send or accept.
 maxMsgLeiosBlockBytesSize :: BytesSize
 maxMsgLeiosBlockBytesSize = 500 * 10 ^ (3 :: Int) -- from CIP-0164's recommendations
 
@@ -2093,6 +2104,10 @@ maxEbTxCount referencesSize =
 maxTxsPerEb :: Int
 maxTxsPerEb = maxEbTxCount maxMsgLeiosBlockBytesSize
 
+-- | The largest EB closure we will fetch.
+--
+-- FIXME: see the note above -- @maxEndorserBlockTxsSize@ is the ledger's say on
+-- the same quantity, and the two are unrelated today.
 maxEBClosureSize :: ByteSize32
 maxEBClosureSize = ByteSize32 12_000_000
 
