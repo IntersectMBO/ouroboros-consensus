@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   , hackage.haskell.org 2026-07-15T21:58:35Z
-  , cardano-haskell-packages 2026-08-07T15:03:01Z
+  , cardano-haskell-packages 2026-09-02T08:49:12Z
 
 -- TODO: needed to drop because newer cuddle on hackage would have not been seen
 -- active-repositories:

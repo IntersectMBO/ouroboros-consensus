@@ -39,7 +39,7 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
     poolDistr :: SL.PoolDistr
     poolDistr = SL.nesPd shelleyLedgerState
 
-    futurePoolParams :: Map (SL.KeyHash SL.StakePool) SL.StakePoolParams
+    futurePoolParams :: Map (SL.KeyHash SL.StakePool) (SL.StakePoolParams era)
     futurePoolParams = SL.psFutureStakePoolParams pstate
 
     stakePoolsState :: Map (SL.KeyHash SL.StakePool) SL.StakePoolState
