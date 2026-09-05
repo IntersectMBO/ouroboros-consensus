@@ -781,7 +781,14 @@ leiosEndorserBlockMeasure st =
             }
       , leiosMaxTxsPerEb =
           IgnoringOverflow . TxCount . fromIntegral $
-            Leios.maxEbTxCount (pparams ^. ppMaxEndorserBlockReferencesSizeL)
+            -- FIXME: clamped, because the parameter can exceed the wire limit
+            -- and the fetch buffers are sized by the latter -- the ledger's own
+            -- example parameters already do (512 KiB of references against a
+            -- 500 kB message). Serving such an EB would run off
+            -- 'leiosEbBuffer'. Whoever resolves the FIXME on the limits should
+            -- take this with them.
+            min Leios.maxTxsPerEb $
+              Leios.maxEbTxCount (pparams ^. ppMaxEndorserBlockReferencesSizeL)
       }
 
 -----
