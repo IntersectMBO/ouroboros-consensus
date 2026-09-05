@@ -542,4 +542,4 @@ instance SerialiseBlockQueryResult BlockB BlockQuery where
 instance HasLeiosVoting BlockB where
   getLeiosCommittee = const Nothing
   getCurrentThreshold = const Nothing
-  getMinCertificationGap = const Nothing
+  getMinCertificationGap _ _ = Nothing

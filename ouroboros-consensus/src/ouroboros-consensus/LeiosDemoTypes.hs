@@ -70,7 +70,7 @@ import Cardano.Ledger.Dijkstra.PParams
   )
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
-import Cardano.Slotting.Time (RelativeTime)
+import Cardano.Slotting.Time (RelativeTime, SlotLength, slotLengthToMillisec)
 import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -121,7 +121,7 @@ import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
-import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
@@ -1244,12 +1244,13 @@ class HasLeiosVoting blk where
 
   -- | Slots that must elapse between an EB's announcement and the block that
   -- may certify it, per 'minCertificationGap'. Reading it needs the era's
-  -- protocol parameters, which is why the forge loop cannot compute it itself.
+  -- protocol parameters and its slot length, both of which only the era's
+  -- config has, which is why the forge loop cannot compute it itself.
   --
   -- TODO: this has nothing to do with voting, so this class is the wrong home
   -- for it. Either split the per-era Leios ledger parameters into their own
   -- class, or arrange for the forge loop not to need the gap in the first place.
-  getMinCertificationGap :: LedgerState blk EmptyMK -> Maybe Word64
+  getMinCertificationGap :: LedgerConfig blk -> LedgerState blk EmptyMK -> Maybe SlotNo
 
 -- * Tracing
 
@@ -2083,15 +2084,26 @@ maxTxsPerEb =
 maxEBClosureSize :: ByteSize32
 maxEBClosureSize = ByteSize32 12_000_000
 
--- | Total time between announcement slot onset until the certificate may be included.
--- TODO: make sure that we ceil this value in call sites
-minCertificationGap :: DijkstraEraPParams era => PParams era -> Word64
-minCertificationGap pp =
-  3 * msToW64 (pp ^. ppLeiosAnnouncementPeriodLengthL)
-    + msToW64 (pp ^. ppLeiosVotePeriodLengthL)
-    + msToW64 (pp ^. ppLeiosDiffusionPeriodLengthL)
+-- | Slots between an EB's announcement and the earliest block that may certify
+-- it: the announcement, voting and diffusion periods must all have elapsed.
+--
+-- The periods are wall-clock milliseconds while the answer is a slot count, so
+-- the caller supplies the era's 'SlotLength'. Rounded up: a partially elapsed
+-- slot has not elapsed.
+minCertificationGap :: DijkstraEraPParams era => SlotLength -> PParams era -> SlotNo
+minCertificationGap slotLength pp =
+  SlotNo . fromIntegral $ (totalMs + slotMs - 1) `div` slotMs
  where
-  msToW64 = fromIntegral . unMilliseconds32
+  totalMs =
+    3 * ms (pp ^. ppLeiosAnnouncementPeriodLengthL)
+      + ms (pp ^. ppLeiosVotePeriodLengthL)
+      + ms (pp ^. ppLeiosDiffusionPeriodLengthL)
+  ms = toInteger . unMilliseconds32
+  -- A zero-length slot is not something the ledger can express, but dividing by
+  -- it would be, so refuse rather than invent an answer.
+  slotMs = case slotLengthToMillisec slotLength of
+    0 -> error "minCertificationGap: zero slot length"
+    n -> n
 
 -- * Utilities for prototyping
 

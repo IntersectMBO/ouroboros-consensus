@@ -304,16 +304,18 @@ decideLeiosCertify ::
   LeiosDbConnection m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
+  -- | The era's ledger config, which is where the certification gap comes from.
+  LedgerConfig blk ->
   -- | The slot we are forging for.
   SlotNo ->
   -- | Unticked ledger state that we can extend.
   ExtLedgerState blk EmptyMK ->
   m (Maybe (LeiosCert, Leios.EbHash))
-decideLeiosCertify leiosDb voteState tracer currentSlot extState =
+decideLeiosCertify leiosDb voteState tracer ledgerCfg currentSlot extState =
   case (,) <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs) <*> mMinGap of
     Nothing -> pure Nothing
     Just ((ebPoint, _ebSize), minGap)
-      | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= minGap ->
+      | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= unSlotNo minGap ->
           pure Nothing
       | otherwise -> do
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
@@ -353,7 +355,7 @@ decideLeiosCertify leiosDb voteState tracer currentSlot extState =
  where
   -- The gap comes from the era's protocol parameters, so only the era knows it;
   -- 'Nothing' means this era does not do Leios and nothing is certifiable.
-  mMinGap = Leios.getMinCertificationGap (ledgerState extState)
+  mMinGap = Leios.getMinCertificationGap ledgerCfg (ledgerState extState)
 
   hs = headerState extState
 
@@ -726,6 +728,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
         leiosConn
         leiosVoteState
         leiosTracer
+        (configLedger cfg)
         currentSlot
         unticked
 
