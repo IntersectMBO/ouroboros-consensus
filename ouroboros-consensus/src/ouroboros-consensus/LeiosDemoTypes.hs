@@ -1393,23 +1393,22 @@ data TraceLeiosKernel
     -- forging/announcing anyways.
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
-  | TraceLeiosVoteAcquired {vote :: LeiosVote}
-  | -- | A vote was accepted for this point rather than rejected as a duplicate
+  | -- | A vote was accepted for its point rather than rejected as a duplicate
     -- arrival, carrying the running tally after the update. Emitted once per
-    -- accepted vote, so the max per 'RbHash' is that point's final accumulated
-    -- weight, whether or not it ever reached 'minCertificationThreshold'. That
-    -- margin is otherwise unobservable: only certified points reach the chain,
-    -- so a point that stalls below the threshold leaves no other trace of how
-    -- close it came. Note the tally does not necessarily move: a seat that
-    -- votes twice with distinct signatures replaces its own entry at the same
-    -- weight, so 'weight' identifies the accepted vote and is not summable
-    -- across lines. Read 'tally' for the total.
-    -- 'seatId' rather than 'voterId': 'LeiosVote' already has a 'voterId'
-    -- field, and a second one in this module makes the qualified selector
-    -- ambiguous for importers.
-    TraceLeiosTally
-      { rbHash :: RbHash
-      , seatId :: LeiosSeatId
+    -- accepted vote -- not once per arrival, since the same vote reaches us
+    -- from every peer holding it and those return 'AlreadyKnown'.
+    --
+    -- The max 'tally' per 'RbHash' is that point's final accumulated weight,
+    -- whether or not it ever reached the threshold. That margin is otherwise
+    -- unobservable: only certified points reach the chain, so a point that
+    -- stalls below the threshold leaves no other trace of how close it came.
+    --
+    -- The tally does not necessarily move: a seat that votes twice with
+    -- distinct signatures replaces its own entry at the same weight, so
+    -- 'weight' identifies the accepted vote and is not summable across lines.
+    -- Read 'tally' for the total.
+    TraceLeiosVoteAcquired
+      { vote :: LeiosVote
       , weight :: Weight
       , tally :: Weight
       , threshold :: Weight
@@ -1680,18 +1679,12 @@ traceLeiosKernelToObject = \case
         -- is reasonable precision here.
         "weight" .= fromRational @Pico weight
       ]
-  TraceLeiosVoteAcquired{vote} ->
+  TraceLeiosVoteAcquired{vote, weight, tally, threshold} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
-      , "vote" .= voteToObject vote
-      ]
-  TraceLeiosTally{rbHash = announcingRbHash, seatId, weight, tally, threshold} ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosTally"
-      , "rbHash" .= prettyRbHash announcingRbHash
-      , -- Rendered as voterId to match 'voteToObject', so consumers index one
-        -- name across the vote traces.
-        "voterId" .= seatId.leiosSeatIndex
+      , -- Carries rbHash and voterId, so the tally is indexable by point
+        -- without a second trace to join against.
+        "vote" .= voteToObject vote
       , -- Same precision rationale as 'LeiosVoted' above.
         "weight" .= fromRational @Pico weight
       , "tally" .= fromRational @Pico tally

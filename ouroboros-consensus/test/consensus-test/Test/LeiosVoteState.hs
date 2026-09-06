@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module Test.LeiosVoteState (tests) where
@@ -32,6 +33,7 @@ import LeiosDemoTypes
   )
 import LeiosVoteState
   ( AddVoteResult (..)
+  , VoteTally (..)
   , addVote
   , getNextVote
   , newLeiosVoteState
@@ -295,5 +297,5 @@ prop_tallyAccumulates =
 -- | The own weight and running tally carried by 'Added', or 'Nothing' for any
 -- other result.
 addedWeights :: AddVoteResult -> Maybe (Weight, Weight)
-addedWeights (Added ownWeight tally _) = Just (ownWeight, tally)
+addedWeights (Added VoteTally{vtWeight, vtTally} _) = Just (vtWeight, vtTally)
 addedWeights _ = Nothing

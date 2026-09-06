@@ -49,12 +49,11 @@ import LeiosDemoTypes
   , SerializedEbBody
   , TraceLeiosKernel (..)
   , getLeiosSeatId
-  , minCertificationThreshold
   , prettyLeiosPoint
   , signLeiosVote
   )
 import LeiosTxCache (LeiosTxCache (..))
-import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..))
+import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..), VoteTally (..))
 import Ouroboros.Consensus.Block
   ( ConvertRawHash (..)
   , Point
@@ -356,16 +355,14 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           ExceptT $
             addVote vote
               >>= \case
-                Added weight tally mCert -> fmap Right $ do
-                  traceWith tracer TraceLeiosVoted{vote, weight}
-                  traceWith tracer TraceLeiosVoteAcquired{vote}
+                Added VoteTally{vtWeight, vtTally, vtThreshold} mCert -> fmap Right $ do
+                  traceWith tracer TraceLeiosVoted{vote, weight = vtWeight}
                   traceWith tracer $
-                    TraceLeiosTally
-                      { rbHash
-                      , seatId
-                      , weight
-                      , tally
-                      , threshold = minCertificationThreshold
+                    TraceLeiosVoteAcquired
+                      { vote
+                      , weight = vtWeight
+                      , tally = vtTally
+                      , threshold = vtThreshold
                       }
                   -- Trace certification whenever the tally crosses
                   -- 'minCertificationThreshold'. May fire more than once per

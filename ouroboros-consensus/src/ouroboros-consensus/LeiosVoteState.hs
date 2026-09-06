@@ -48,20 +48,30 @@ data AddVoteResult
   = NoCommittee
   | VoteInvalid VoteInvalid
   | AlreadyKnown
-  | -- | The vote was added to the state. The first 'Weight' is this voter's own
-    -- weight; the second is the running per-point tally after this addition.
-    -- The LeiosCert is 'Just' whenever that tally is at or above
-    -- 'minCertificationThreshold'.
-    --
-    -- Both fields are 'Weight', so transposing them at a construction or
-    -- destructuring site type checks and yields plausible but wrong telemetry.
-    -- Keep the order above when touching either this constructor or its three
-    -- use sites.
+  | -- | The vote was added to the state. The 'LeiosCert' is 'Just' whenever the
+    -- tally is at or above the quorum threshold in force.
     --
     -- The tally is surfaced rather than traced where it is computed because
     -- the update runs in STM, which cannot trace. Callers emit it, as they
     -- already do for certification.
-    Added !Weight !Weight (Maybe LeiosCert)
+    Added !VoteTally (Maybe LeiosCert)
+  deriving (Eq, Show)
+
+-- | What one accepted vote did to its point's tally.
+--
+-- A record rather than three positional 'Weight's: transposing any two of them
+-- at a construction or destructuring site would type check and yield plausible
+-- but wrong telemetry.
+data VoteTally = VoteTally
+  { vtWeight :: !Weight
+  -- ^ The accepted vote's own weight.
+  , vtTally :: !Weight
+  -- ^ Running per-point tally after this vote was counted.
+  , vtThreshold :: !Weight
+  -- ^ The quorum in force when the tally was taken. Carried alongside rather
+  -- than looked up by consumers because it comes from the committee that
+  -- validated this vote, and that committee turns over at epoch boundaries.
+  }
   deriving (Eq, Show)
 
 data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m LeiosVote}
@@ -159,7 +169,14 @@ newLeiosVoteState getCommittee = do
                                         Right cert -> pst'{psCert = Just cert}
                                   | otherwise -> pst'
                           writeTVar pointStates $! Map.insert vote.announcingRbHash pst'' states
-                          pure $ Added weight totalW pst''.psCert
+                          pure $
+                            Added
+                              VoteTally
+                                { vtWeight = weight
+                                , vtTally = totalW
+                                , vtThreshold = threshold
+                                }
+                              pst''.psCert
       , subscribeVotes = do
           chan <- atomically $ dupTChan votesChan
           pure $
