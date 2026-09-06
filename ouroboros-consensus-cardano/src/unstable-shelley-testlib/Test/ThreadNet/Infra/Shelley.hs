@@ -51,7 +51,6 @@ import Cardano.Crypto.KES
   , unsoundPureDeriveVerKeyKES
   , unsoundPureGenKeyKES
   )
-import Cardano.Crypto.Leios (leiosSignContext)
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import Cardano.Crypto.VRF
@@ -490,7 +489,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
                 SL.SJust $
                   BlsKey
                     (deriveVerKeyDSIGN blsSk)
-                    (createPossessionProofDSIGN leiosSignContext blsSk)
+                    (createPossessionProofDSIGN blsSk)
         ]
 
 mkProtocolShelley ::
