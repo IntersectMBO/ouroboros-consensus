@@ -573,7 +573,10 @@ mkHandlers
                       pure . Map.insertWith Leios.mergeOffer p Leios.TxsClosureAlsoOffered
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
-                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
+                    -- No peer-level trace here: 'TraceLeiosVoteAcquired' below
+                    -- reports every vote with structured fields, and votes are
+                    -- the one Leios message whose count scales with committee
+                    -- size, so rendering each one cost more than the vote.
                     forM_ vs $ \vote -> do
                       result <- addVote vote
                       -- Traced on 'Added' only, so one line per distinct vote
