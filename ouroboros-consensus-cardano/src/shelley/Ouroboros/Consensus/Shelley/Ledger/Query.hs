@@ -447,7 +447,7 @@ instance
       GetRewardInfoPools ->
         SL.getRewardInfoPools globals st
       GetPoolState mPoolIds ->
-        SL.queryPoolState st mPoolIds (SL.networkId globals)
+        SL.queryPoolState st mPoolIds
       GetStakeSnapshots mPoolIds ->
         SL.queryStakeSnapshots st mPoolIds
       GetPoolDistr mPoolIds ->
