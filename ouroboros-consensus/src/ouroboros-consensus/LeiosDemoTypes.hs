@@ -1512,6 +1512,19 @@ data AnnouncementSource
 
 -- | Reasons 'runLeiosVoting' may decline to cast a vote after acquiring an
 -- EB closure. See 'TraceLeiosNotVoted'.
+-- | Why an EB's closure could not be produced from the LeiosDb.
+--
+-- Resolution stops at the first failure: a closure is only useful whole, so
+-- there is nothing to be gained by decoding the transactions after a bad one.
+data LeiosClosureError
+  = -- | The LeiosDb holds no closure for this EB.
+    LeiosClosureMissing !EbHash
+  | -- | A stored transaction did not decode, rendering the decoder's complaint.
+    -- The bytes were written by this node, so this means the LeiosDb disagrees
+    -- with the codec that reads it.
+    LeiosClosureTxUndecodable !EbHash !TxHash !Text
+  deriving (Eq, Show)
+
 data LeiosNotVotedReason
   = -- | The tip of the currently selected chain does not announce this EB.
     -- Either our chain hasn't caught up to the announcing RB yet, or the
@@ -1529,6 +1542,10 @@ data LeiosNotVotedReason
   | -- | The vote we signed was not accepted into the tally. Carries the
     -- rendered 'AddVoteResult'.
     VoteRejected !Text
+  | -- | The EB's closure could not be read back from the LeiosDb, so there is
+    -- nothing to validate. Not a verdict on the EB: this node cannot tell
+    -- whether it is votable, so it abstains rather than voting either way.
+    ClosureUnavailable !LeiosClosureError
   deriving Show
 
 deriving instance Show TraceLeiosKernel
@@ -1774,6 +1791,7 @@ notVotedReasonText = \case
   NotOnCommittee -> Aeson.String "notOnCommittee"
   EbTxsInvalid err -> Aeson.String $ "ebTxsInvalid: " <> err
   VoteRejected err -> Aeson.String $ "voteRejected: " <> err
+  ClosureUnavailable err -> Aeson.String $ "closureUnavailable: " <> show err
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

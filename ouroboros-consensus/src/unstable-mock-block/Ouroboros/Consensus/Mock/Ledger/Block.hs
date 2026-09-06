@@ -89,6 +89,7 @@ import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (leiosDbLookupEbClosure)
+import LeiosDemoTypes (LeiosClosureError (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -148,7 +149,7 @@ instance
   ResolveLeiosBlock (SimpleBlock' c ext ext)
   where
   resolveLeiosClosure leiosDb ebHash =
-    maybe [] (fmap (fmap (deserialise . Lazy.fromStrict)))
+    maybe (Left (LeiosClosureMissing ebHash)) (Right . fmap (fmap (deserialise . Lazy.fromStrict)))
       <$> leiosDbLookupEbClosure leiosDb ebHash
 
   assumeValidatedClosureTx = ValidatedSimpleGenTx
