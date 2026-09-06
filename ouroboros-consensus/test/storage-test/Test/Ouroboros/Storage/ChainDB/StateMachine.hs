@@ -1546,10 +1546,6 @@ deriving instance
   Labelling
 -------------------------------------------------------------------------------}
 
-deriving instance SOP.Generic (TraceEvent blk)
-deriving instance SOP.HasDatatypeInfo (TraceEvent blk)
-deriving instance SOP.Generic (TraceAddBlockEvent blk)
-deriving instance SOP.HasDatatypeInfo (TraceAddBlockEvent blk)
 deriving instance SOP.Generic (ChainDB.TraceFollowerEvent blk)
 deriving instance SOP.HasDatatypeInfo (ChainDB.TraceFollowerEvent blk)
 deriving instance SOP.Generic (TraceCopyToImmutableDBEvent blk)
@@ -2111,7 +2107,24 @@ traceEventName = \case
   TraceAddBlockEvent ev ->
     "AddBlock." <> case ev of
       AddBlockValidation ev' -> constrName ev'
-      _ -> constrName ev
+      IgnoreBlockOlderThanImmTip{} -> "IgnoreBlockOlderThanImmTip"
+      IgnoreBlockAlreadyInVolatileDB{} -> "IgnoreBlockAlreadyInVolatileDB"
+      IgnoreInvalidBlock{} -> "IgnoreInvalidBlock"
+      AddedBlockToQueue{} -> "AddedBlockToQueue"
+      PoppingFromQueue{} -> "PoppingFromQueue"
+      PoppedBlockFromQueue{} -> "PoppedBlockFromQueue"
+      AddedReprocessLoEBlocksToQueue{} -> "AddedReprocessLoEBlocksToQueue"
+      PoppedReprocessLoEBlocksFromQueue{} -> "PoppedReprocessLoEBlocksFromQueue"
+      AddedBlockToVolatileDB{} -> "AddedBlockToVolatileDB"
+      TryAddToCurrentChain{} -> "TryAddToCurrentChain"
+      TrySwitchToAFork{} -> "TrySwitchToAFork"
+      StoreButDontChange{} -> "StoreButDontChange"
+      ChainSelectionLoEDebug{} -> "ChainSelectionLoEDebug"
+      AddedToCurrentChain{} -> "AddedToCurrentChain"
+      SwitchedToAFork{} -> "SwitchedToAFork"
+      PipeliningEvent{} -> "PipeliningEvent"
+      ChangingSelection{} -> "ChangingSelection"
+      TraceAddBlockCall{} -> "TraceAddBlockCall"
   TraceFollowerEvent ev -> "Follower." <> constrName ev
   TraceCopyToImmutableDBEvent ev -> "CopyToImmutableDB." <> constrName ev
   TraceInitChainSelEvent ev ->

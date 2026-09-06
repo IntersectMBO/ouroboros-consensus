@@ -1,7 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
 -- | Unit tests for 'validateEbClosure', the part of the Leios voting thread
 -- that decides whether an EB's endorsed transactions actually apply.

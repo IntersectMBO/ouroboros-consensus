@@ -94,6 +94,8 @@ module Ouroboros.Consensus.Util
   , electric
   , newFuse
   , withFuse
+  , callTraceSameThread
+  , callTraceSameThreadVia
 
     -- * Type-safe boolean flags
   , Flag (..)
@@ -134,6 +136,13 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack
 import GHC.TypeLits (Symbol)
+import LeiosUtils.CallTrace
+  ( CallCtx
+  , CallName
+  , CallTrace
+  , MonadAllocationCounter
+  )
+import qualified LeiosUtils.CallTrace as CallTrace
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.RedundantConstraints
 import Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
@@ -508,6 +517,38 @@ withFuse (Fuse name m) (Electric io) = do
 newtype FuseBlownException = FuseBlownException Text
   deriving Show
   deriving anyclass Exception
+
+-- | Unwrap 'Electric'. Only safe when already inside 'withFuse'.
+runElectric :: Electric m a -> m a
+runElectric (Electric io) = io
+
+-- | Like 'CallTrace.callTraceSameThread', but for a traced action that lives
+-- in 'Electric'. See 'EarlyExit.callTraceSameThread' for the analogous
+-- 'WithEarlyExit' variant and the motivation for this wrapper.
+callTraceSameThread ::
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  (CallTrace a r -> m ()) ->
+  CallCtx m ->
+  CallName ->
+  a ->
+  (CallCtx m -> Electric m r) ->
+  Electric m r
+callTraceSameThread = callTraceSameThreadVia id
+
+-- | Like 'callTraceSameThread', but the value recorded in the 'CallEnd' is
+-- @f r@ rather than @r@ itself. See 'CallTrace.callTraceSameThreadVia'.
+callTraceSameThreadVia ::
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  (r -> r') ->
+  (CallTrace a r' -> m ()) ->
+  CallCtx m ->
+  CallName ->
+  a ->
+  (CallCtx m -> Electric m r) ->
+  Electric m r
+callTraceSameThreadVia f trace pctx cn arg action =
+  electric $
+    CallTrace.callTraceSameThreadVia f trace pctx cn arg (runElectric . action)
 
 {-------------------------------------------------------------------------------
   Type-safe boolean flags
