@@ -61,8 +61,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
-import Cardano.Crypto.Leios (mkLeiosCommittee)
-import Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
+import Cardano.Ledger.BaseTypes (strictMaybeToMaybe, unboundRational)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
@@ -90,17 +89,10 @@ import Cardano.Ledger.Core
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
+import Cardano.Ledger.Dijkstra.PParams (ppLeiosQuorumStakeThresholdL)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import Cardano.Ledger.State
-  ( LeiosKey (..)
-  , LeiosPossessionProof (..)
-  , LeiosPubKey (..)
-  , individualPoolStake
-  , individualPoolStakeBls
-  , poolDistrDistrL
-  )
 import qualified Cardano.Ledger.State as SL
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
@@ -120,10 +112,9 @@ import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.MemPack
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import qualified Data.Vector.Strict as V
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (committeeStakeCoverage, selectCommitteeByStake)
+import LeiosDemoTypes (minCertificationGap)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -196,6 +187,11 @@ deriving instance Show (Core.TranslationContext era) => Show (ShelleyLedgerConfi
 
 shelleyLedgerGenesis :: ShelleyLedgerConfig era -> SL.ShelleyGenesis
 shelleyLedgerGenesis = getCompactGenesis . shelleyLedgerCompactGenesis
+
+-- | The era's slot length, as genesis fixes it.
+shelleyLedgerSlotLength :: ShelleyLedgerConfig era -> SlotLength
+shelleyLedgerSlotLength =
+  mkSlotLength . SL.fromNominalDiffTimeMicro . SL.sgSlotLength . shelleyLedgerGenesis
 
 shelleyEraParams ::
   SL.ShelleyGenesis ->
@@ -996,43 +992,67 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 
 -- TODO: Ledger-level type class EraCommittee? LedgerState era -> Committee
 
-instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra)
-instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra)
-instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra)
-instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra)
-instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra)
-instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
+instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+  getMinCertificationGap _ _ = Nothing
+
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+  getMinCertificationGap _ _ = Nothing
+
+instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+  getMinCertificationGap _ _ = Nothing
+
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+  getMinCertificationGap _ _ = Nothing
+
+instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+  getMinCertificationGap _ _ = Nothing
+
+instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra) where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
-  -- REVIEW: Should we use the LedgerView (Praos c) instead?
+  -- The ledger already seats the committee, on the stake snapshot, at the era
+  -- boundary; take it from there rather than selecting a second time here.
+  --
+  -- Re-deriving it in consensus cannot honour voting-key expiry: the pool
+  -- distribution carries a bare 'BlsKey' with no registration epoch, whereas
+  -- the snapshot's seats were filtered by 'selectLeiosCommittee' against
+  -- @bksRegisteredIn + maxKeyAge@ (CIP-0164).
+  --
+  -- 'ssStakeSet' is the snapshot that governs /this/ epoch: NEWEPOCH sets
+  -- @nesPd@ -- the distribution leader election runs on -- from the mark
+  -- snapshot of the previous boundary, which is exactly what 'ssStakeSet'
+  -- holds after the rotation. Taking the committee from the same snapshot
+  -- keeps a pool's voting weight and its block-production weight in step.
   getLeiosCommittee ls =
-    Just everyoneVotes
-   where
-    -- Every pool in the (snapshotted) stake distribution gets a committee seat
-    -- weighted by its stake fraction; a pool that has not registered a Leios
-    -- key gets a keyless seat (an invalid proof of possession is dropped to
-    -- keyless by 'mkLeiosCommittee').
-    --
-    -- Weights are the raw stake fractions and are deliberately NOT normalised
-    -- as we have fractions of active stake already in the
-    -- 'individualPoolStake'.
-    --
-    -- 'Map.elems' is what gives us CIP-164's ascending-pool-id tie-break for
-    -- equal stakes, since 'selectCommitteeByStake' sorts stably and never sees
-    -- the pool id; do not replace it with an unordered traversal.
-    --
-    -- TODO: Move this to the era boundary (to cache the computation).
-    everyoneVotes =
-      mkLeiosCommittee . V.fromList $
-        selectCommitteeByStake
-          committeeStakeCoverage -- TODO: take from pparams
-          [ (seatKey ips, ips.individualPoolStake)
-          | ips <- Map.elems stakeDistribution
-          ]
+    Just $
+      ls.shelleyLedgerState
+        ^. SL.nesEsL
+          . SL.esSnapshotsL
+          . SL.ssStakeSetL
+          . SL.ssLeiosCommitteeL
 
-    seatKey ips = case ips.individualPoolStakeBls of
-      SJust lk -> SJust (unLeiosPubKey lk.leiosPubKey, unLeiosPossessionProof lk.leiosPossessionProof)
-      SNothing -> SNothing
+  getMinCertificationGap cfg =
+    Just
+      . minCertificationGap (shelleyLedgerSlotLength cfg)
+      . getPParams
+      . shelleyLedgerState
 
-    stakeDistribution =
-      ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
+  getCurrentThreshold ls =
+    Just $
+      getPParams ls.shelleyLedgerState
+        ^. ppLeiosQuorumStakeThresholdL
+        -- TODO: Use UnitInterval further upstream
+        & unboundRational

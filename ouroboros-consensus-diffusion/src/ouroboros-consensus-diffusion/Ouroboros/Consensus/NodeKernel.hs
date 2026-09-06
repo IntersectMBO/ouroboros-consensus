@@ -79,7 +79,7 @@ import LeiosUtils.CallTrace
   , rootCallCtx
   )
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
-import LeiosVoting (getLeiosCommittee, runLeiosVoting)
+import LeiosVoting (HasLeiosVoting (..), runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
@@ -794,8 +794,12 @@ initInternalState
     peerSharingRegistry <- newPeerSharingRegistry
 
     leiosVoteState <-
-      newLeiosVoteState
-        (getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB)
+      newLeiosVoteState $ do
+        ls <- ledgerState <$> ChainDB.getCurrentLedger chainDB
+        pure $
+          (,)
+            <$> getLeiosCommittee ls
+            <*> getCurrentThreshold ls
 
     return IS{..}
 

@@ -53,7 +53,7 @@ import LeiosDemoTypes
   , signLeiosVote
   )
 import LeiosTxCache (LeiosTxCache (..))
-import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..))
+import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..), VoteTally (..))
 import Ouroboros.Consensus.Block
   ( ConvertRawHash (..)
   , Point
@@ -355,9 +355,15 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           ExceptT $
             addVote vote
               >>= \case
-                Added weight mCert -> fmap Right $ do
-                  traceWith tracer TraceLeiosVoted{vote, weight}
-                  traceWith tracer TraceLeiosVoteAcquired{vote}
+                Added VoteTally{vtWeight, vtTally, vtThreshold} mCert -> fmap Right $ do
+                  traceWith tracer TraceLeiosVoted{vote, weight = vtWeight}
+                  traceWith tracer $
+                    TraceLeiosVoteAcquired
+                      { vote
+                      , weight = vtWeight
+                      , tally = vtTally
+                      , threshold = vtThreshold
+                      }
                   -- Trace certification whenever the tally crosses
                   -- 'minCertificationThreshold'. May fire more than once per
                   -- point if subsequent votes also come in; consumers (e.g.
@@ -519,6 +525,7 @@ tipAnnouncerFor hs point = do
     then Just (MkRbHash (toRawHash (Proxy @blk) (annTipHash tip)))
     else Nothing
 
+-- TODO: DRY with similar functions
 (?>=) :: Monad m => Maybe a -> e -> ExceptT e m a
 (?>=) Nothing e = throwE e
 (?>=) (Just x) _ = pure x

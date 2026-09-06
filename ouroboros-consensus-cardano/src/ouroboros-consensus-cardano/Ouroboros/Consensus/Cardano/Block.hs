@@ -247,9 +247,6 @@ import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyCompatible)
-import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( ShelleyPartialLedgerConfig (..)
-  )
 import Ouroboros.Consensus.Shelley.Ledger.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
@@ -1562,21 +1559,31 @@ instance
   applyLeiosClosure cfg txs lst =
     case lst of
       HardForkLedgerState
-        ( State.HardForkState
-            ( TeleDijkstra
-                byron
-                shelley
-                allegra
-                mary
-                alonzo
-                babbage
-                conway
-                (State.Current bound (Flip dijkstraLst))
-              )
-          ) ->
+        hfState@( State.HardForkState
+                    ( TeleDijkstra
+                        byron
+                        shelley
+                        allegra
+                        mary
+                        alonzo
+                        babbage
+                        conway
+                        (State.Current bound (Flip dijkstraLst))
+                      )
+                  ) ->
           let dijkstraTxs = [tx | GenTxDijkstra tx <- txs]
               CardanoLedgerConfig _ _ _ _ _ _ _ dijkstraPCfg = cfg
-              dijkstraCfg = shelleyLedgerConfig dijkstraPCfg
+              -- The combinator only stores /partial/ configs, whose 'EpochInfo'
+              -- is 'History.dummyEpochInfo' until 'completeLedgerConfig' swaps
+              -- in the real one. Taking 'shelleyLedgerConfig' straight out of
+              -- the partial config keeps the dummy, and the LEDGER rule needs a
+              -- working 'EpochInfo': it stamps a pool's voting key with the
+              -- epoch it was registered in, and 'mkStAnnTx' reads it too.
+              dijkstraCfg =
+                completeLedgerConfig
+                  (Proxy @(ShelleyBlock (Praos c) DijkstraEra))
+                  (State.epochInfoLedger cfg hfState)
+                  dijkstraPCfg
            in case applyLeiosClosure dijkstraCfg dijkstraTxs dijkstraLst of
                 Left dijkstraErr -> Left (LedgerErrorDijkstra dijkstraErr)
                 Right dijkstraLst' ->

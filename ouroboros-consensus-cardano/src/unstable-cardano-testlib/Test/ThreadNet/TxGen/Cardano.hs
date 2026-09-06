@@ -319,7 +319,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
       (SL.StakeRefBase $ Shelley.mkCredential stakingSK)
 
   -- A simplistic individual pool
-  poolParams :: SL.Coin -> SL.StakePoolParams
+  poolParams :: SL.Coin -> SL.StakePoolParams ShelleyEra
   poolParams pledge =
     SL.StakePoolParams
       { SL.sppCost = SL.Coin 1
@@ -332,7 +332,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
           SL.AccountAddress Shelley.networkId $ SL.AccountId (Shelley.mkCredential poolSK)
       , SL.sppRelays = StrictSeq.empty
       , SL.sppVrf = Shelley.mkKeyHashVrf @c vrfSK
-      , SL.sppLeiosKey = SL.SNothing
+      , SL.sppBlsKey = SL.SNothing
       }
 
 -----

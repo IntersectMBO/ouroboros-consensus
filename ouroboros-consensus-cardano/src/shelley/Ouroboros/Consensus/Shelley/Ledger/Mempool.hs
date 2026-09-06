@@ -67,6 +67,7 @@ import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
 import Cardano.Ledger.Alonzo.Scripts
   ( ExUnits
   , ExUnits' (..)
+  , OrdExUnits (..)
   , pointWiseExUnits
   , unWrapExUnits
   )
@@ -88,6 +89,13 @@ import qualified Cardano.Ledger.Conway.PParams as SL
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
+import Cardano.Ledger.Dijkstra.PParams
+  ( DijkstraEraPParams
+  , ppMaxEndorserBlockExUnitsL
+  , ppMaxEndorserBlockReferencesSizeL
+  , ppMaxEndorserBlockTxsSizeL
+  , ppMaxRefScriptSizePerEndorserBlockL
+  )
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
@@ -622,8 +630,8 @@ instance ExUnitsTooBigUTxO AlonzoEra where
           ShelleyEra.UtxoFailure $
             AlonzoEra.ExUnitsTooBigUTxO $
               L.Mismatch
-                { mismatchSupplied = txsz
-                , mismatchExpected = limit
+                { mismatchSupplied = OrdExUnits txsz
+                , mismatchExpected = OrdExUnits limit
                 }
 
 instance ExUnitsTooBigUTxO BabbageEra where
@@ -636,8 +644,8 @@ instance ExUnitsTooBigUTxO BabbageEra where
               BabbageEra.AlonzoInBabbageUtxoPredFailure $
                 AlonzoEra.ExUnitsTooBigUTxO $
                   L.Mismatch
-                    { mismatchSupplied = txsz
-                    , mismatchExpected = limit
+                    { mismatchSupplied = OrdExUnits txsz
+                    , mismatchExpected = OrdExUnits limit
                     }
 
 instance ExUnitsTooBigUTxO ConwayEra where
@@ -647,8 +655,8 @@ instance ExUnitsTooBigUTxO ConwayEra where
         ConwayEra.UtxoFailure $
           ConwayEra.ExUnitsTooBigUTxO $
             L.Mismatch
-              { mismatchSupplied = txsz
-              , mismatchExpected = limit
+              { mismatchSupplied = OrdExUnits txsz
+              , mismatchExpected = OrdExUnits limit
               }
 
 instance ExUnitsTooBigUTxO DijkstraEra where
@@ -659,8 +667,8 @@ instance ExUnitsTooBigUTxO DijkstraEra where
           DijkstraEra.UtxoFailure $
             DijkstraEra.ExUnitsTooBigUTxO $
               L.Mismatch
-                { mismatchSupplied = txsz
-                , mismatchExpected = limit
+                { mismatchSupplied = OrdExUnits txsz
+                , mismatchExpected = OrdExUnits limit
                 }
 
 -----
@@ -737,10 +745,15 @@ txMeasureDijkstra st tx =
   (\c -> DijkstraMeasure c oneTxCount) <$> txMeasureConway st tx
 
 -- | The capacity for the txs in a Leios Endorser Block (Dijkstra era).
+--
+-- Every limit is a protocol parameter. 'Leios.maxTxsPerEb' still bounds the
+-- buffers, because that is the wire message limit and has to hold before any
+-- ledger state is in reach; the parameter cannot exceed it.
 leiosEndorserBlockMeasure ::
   forall proto era mk.
   ( ShelleyCompatible proto era
   , SL.ConwayEraPParams era
+  , DijkstraEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   DijkstraMeasure
@@ -753,13 +766,29 @@ leiosEndorserBlockMeasure st =
     DijkstraMeasure
       { conwayMeasure =
           conway
-            { alonzoMeasure = alonzo{byteSize = IgnoringOverflow Leios.maxEBClosureSize}
+            { alonzoMeasure =
+                alonzo
+                  { byteSize =
+                      IgnoringOverflow . ByteSize32 $
+                        pparams ^. ppMaxEndorserBlockTxsSizeL
+                  , exUnits =
+                      fromExUnits . unOrdExUnits $
+                        pparams ^. ppMaxEndorserBlockExUnitsL
+                  }
             , refScriptsSize =
-                IgnoringOverflow $
-                  ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
+                IgnoringOverflow . ByteSize32 $
+                  pparams ^. ppMaxRefScriptSizePerEndorserBlockL
             }
       , leiosMaxTxsPerEb =
-          IgnoringOverflow . TxCount . fromIntegral $ Leios.maxTxsPerEb
+          IgnoringOverflow . TxCount . fromIntegral $
+            -- FIXME: clamped, because the parameter can exceed the wire limit
+            -- and the fetch buffers are sized by the latter -- the ledger's own
+            -- example parameters already do (512 KiB of references against a
+            -- 500 kB message). Serving such an EB would run off
+            -- 'leiosEbBuffer'. Whoever resolves the FIXME on the limits should
+            -- take this with them.
+            min Leios.maxTxsPerEb $
+              Leios.maxEbTxCount (pparams ^. ppMaxEndorserBlockReferencesSizeL)
       }
 
 -----

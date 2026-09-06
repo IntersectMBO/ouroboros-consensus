@@ -28,7 +28,6 @@ import LeiosDemoTypes
   , VoteInvalid (..)
   , Weight
   , aggregateLeiosCert
-  , minCertificationThreshold
   , validateLeiosVote
   )
 
@@ -41,19 +40,38 @@ data LeiosVoteState m = LeiosVoteState
   -- ^ Subscribe to new votes arriving in the LeiosVoteState. This will only
   -- serve new additions, starting from when this function was called.
   , queryCert :: RbHash -> m (Maybe LeiosCert)
-  -- ^ Look up the assembled certificate for a 'RbHash', or
-  -- 'Nothing' if its collected votes haven't crossed
-  -- 'minCertificationThreshold'.
+  -- ^ Look up the assembled certificate for a 'RbHash', or 'Nothing' if its
+  -- collected votes haven't crossed 'ppLeiosQuorumStakeThresholdL'.
   }
 
 data AddVoteResult
   = NoCommittee
   | VoteInvalid VoteInvalid
   | AlreadyKnown
-  | -- | The vote was added to the state, with the running per-point weight
-    -- after this addition. The LeiosCert is 'Just' whenever the tally for the
-    -- vote's point is at or above 'minCertificationThreshold'.
-    Added Weight (Maybe LeiosCert)
+  | -- | The vote was added to the state. The 'LeiosCert' is 'Just' whenever the
+    -- tally is at or above the quorum threshold in force.
+    --
+    -- The tally is surfaced rather than traced where it is computed because
+    -- the update runs in STM, which cannot trace. Callers emit it, as they
+    -- already do for certification.
+    Added !VoteTally (Maybe LeiosCert)
+  deriving (Eq, Show)
+
+-- | What one accepted vote did to its point's tally.
+--
+-- A record rather than three positional 'Weight's: transposing any two of them
+-- at a construction or destructuring site would type check and yield plausible
+-- but wrong telemetry.
+data VoteTally = VoteTally
+  { vtWeight :: !Weight
+  -- ^ The accepted vote's own weight.
+  , vtTally :: !Weight
+  -- ^ Running per-point tally after this vote was counted.
+  , vtThreshold :: !Weight
+  -- ^ The quorum in force when the tally was taken. Carried alongside rather
+  -- than looked up by consumers because it comes from the committee that
+  -- validated this vote, and that committee turns over at epoch boundaries.
+  }
   deriving (Eq, Show)
 
 data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m LeiosVote}
@@ -63,6 +81,11 @@ data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m Leios
 -- threshold is crossed.
 data PointState = PointState
   { psVoters :: !(Map LeiosSeatId (Weight, LeiosSignature))
+  , psTotal :: !Weight
+  -- ^ Running sum of 'psVoters' weights, maintained incrementally. Kept in the
+  -- state rather than recomputed per vote: summing the map is linear in the
+  -- committee, so recomputing made the per-point cost quadratic, and every
+  -- post-threshold vote paid it too once the tally started being reported.
   , psCert :: !(Maybe LeiosCert)
   -- ^ Assembled once when this point's total weight first reaches
   -- 'minCertificationThreshold'; reused for subsequent post-threshold
@@ -70,13 +93,13 @@ data PointState = PointState
   }
 
 emptyPointState :: PointState
-emptyPointState = PointState Map.empty Nothing
+emptyPointState = PointState Map.empty 0 Nothing
 
 -- | Create a new empty 'LeiosVoteState'.
 newLeiosVoteState ::
   MonadSTM m =>
-  -- | Get the current 'LeiosCommittee'.
-  STM m (Maybe LeiosCommittee) ->
+  -- | Get the current 'LeiosCommittee' and threshold 'Weight'.
+  STM m (Maybe (LeiosCommittee, Weight)) ->
   m (LeiosVoteState m)
 newLeiosVoteState getCommittee = do
   votesChan <- atomically newBroadcastTChan
@@ -96,7 +119,7 @@ newLeiosVoteState getCommittee = do
               -- Could use slot numbers or put epoch into votes to distinguish?
               atomically getCommittee >>= \case
                 Nothing -> pure NoCommittee
-                Just committee ->
+                Just (committee, threshold) ->
                   case validateLeiosVote committee vote of
                     Left reason -> pure $ VoteInvalid reason
                     Right weight -> atomically $ do
@@ -118,16 +141,21 @@ newLeiosVoteState getCommittee = do
                           -- threshold is crossed.
                           states <- readTVar pointStates
                           let pst = Map.findWithDefault emptyPointState vote.announcingRbHash states
-                              pst' =
-                                pst
-                                  { psVoters =
-                                      Map.insert vote.voterId (weight, vote.voteSignature) pst.psVoters
-                                  }
-                              totalW = sum [w | (w, _) <- Map.elems pst'.psVoters]
+                              -- 'Map.insert' replaces any entry this seat already
+                              -- had, so the running total must drop the old weight
+                              -- rather than simply adding the new one.
+                              (mOld, voters') =
+                                Map.insertLookupWithKey
+                                  (\_ new _old -> new)
+                                  vote.voterId
+                                  (weight, vote.voteSignature)
+                                  pst.psVoters
+                              totalW = pst.psTotal + weight - maybe 0 fst mOld
+                              pst' = pst{psVoters = voters', psTotal = totalW}
                               pst'' = case pst.psCert of
                                 Just _ -> pst'
                                 Nothing
-                                  | totalW >= minCertificationThreshold ->
+                                  | totalW >= threshold ->
                                       -- Voters were validated against this committee before
                                       -- being added and the per-voter signatures already
                                       -- passed individual verification, so aggregation must
@@ -141,7 +169,14 @@ newLeiosVoteState getCommittee = do
                                         Right cert -> pst'{psCert = Just cert}
                                   | otherwise -> pst'
                           writeTVar pointStates $! Map.insert vote.announcingRbHash pst'' states
-                          pure $ Added weight pst''.psCert
+                          pure $
+                            Added
+                              VoteTally
+                                { vtWeight = weight
+                                , vtTally = totalW
+                                , vtThreshold = threshold
+                                }
+                              pst''.psCert
       , subscribeVotes = do
           chan <- atomically $ dupTChan votesChan
           pure $

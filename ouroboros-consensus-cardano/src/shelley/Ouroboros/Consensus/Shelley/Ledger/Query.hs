@@ -231,7 +231,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Map (SL.KeyHash SL.StakePool) SL.StakePoolParams)
+      (Map (SL.KeyHash SL.StakePool) (SL.StakePoolParams era))
   GetRewardInfoPools ::
     BlockQuery
       (ShelleyBlock proto era)
@@ -246,7 +246,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      SL.QueryPoolStateResult
+      (SL.QueryPoolStateResult era)
   GetStakeSnapshots ::
     SL.EraGov era =>
     Maybe (Set (SL.KeyHash SL.StakePool)) ->
@@ -447,7 +447,7 @@ instance
       GetRewardInfoPools ->
         SL.getRewardInfoPools globals st
       GetPoolState mPoolIds ->
-        SL.queryPoolState st mPoolIds (SL.networkId globals)
+        SL.queryPoolState st mPoolIds
       GetStakeSnapshots mPoolIds ->
         SL.queryStakeSnapshots st mPoolIds
       GetPoolDistr mPoolIds ->

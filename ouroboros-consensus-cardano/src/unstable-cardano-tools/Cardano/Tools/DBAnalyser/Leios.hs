@@ -42,7 +42,6 @@ import LeiosDemoTypes
   , HasLeiosVoting (..)
   , LeiosExtValidationError (..)
   , LeiosPoint
-  , minCertificationThreshold
   , pointEbHash
   , verifyLeiosCert
   )
@@ -133,11 +132,14 @@ verifyCertRb parent blk = case blockLeiosCert blk of
       Just committee -> case announcingRbHash blk of
         -- A cert-RB always has a non-genesis announcing parent.
         Nothing -> Left (LeiosCertificateAfterGenesis cert announcedPoint)
-        Just rbHash ->
-          case verifyLeiosCert committee minCertificationThreshold rbHash cert of
-            Left invalid ->
-              Left (LeiosInvalidCertificate cert announcedPoint rbHash invalid)
-            Right _weight -> Right ()
+        Just rbHash -> case getCurrentThreshold (ledgerState parent) of
+          -- The era has a committee, so it must have a quorum threshold too.
+          Nothing -> Left LeiosMissingThreshold
+          Just threshold ->
+            case verifyLeiosCert committee threshold rbHash cert of
+              Left invalid ->
+                Left (LeiosInvalidCertificate cert announcedPoint rbHash invalid)
+              Right _weight -> Right ()
 
 -- | The EB that this block certifies. 'Nothing' for a block that carries no
 -- Leios certificate.

@@ -89,7 +89,7 @@ import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (leiosDbLookupEbClosure)
-import LeiosVoting (HasLeiosVoting)
+import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -153,7 +153,10 @@ instance
 
   assumeValidatedClosureTx = ValidatedSimpleGenTx
 
-instance HasLeiosVoting (SimpleBlock' c ext ext')
+instance HasLeiosVoting (SimpleBlock' c ext ext') where
+  getLeiosCommittee = const Nothing
+  getCurrentThreshold = const Nothing
+  getMinCertificationGap _ _ = Nothing
 
 instance
   (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>

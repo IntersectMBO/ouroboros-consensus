@@ -131,6 +131,7 @@ import LeiosVoteState
   ( AddVoteResult (..)
   , LeiosVoteState (..)
   , LeiosVoteSubscription (..)
+  , VoteTally (..)
   , subscribeVotes
   )
 import qualified Network.Mux as Mux
@@ -572,18 +573,33 @@ mkHandlers
                       pure . Map.insertWith Leios.mergeOffer p Leios.TxsClosureAlsoOffered
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
-                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
+                    -- No peer-level trace here: 'TraceLeiosVoteAcquired' below
+                    -- reports every vote with structured fields, and votes are
+                    -- the one Leios message whose count scales with committee
+                    -- size, so rendering each one cost more than the vote.
                     forM_ vs $ \vote -> do
                       result <- addVote vote
-                      -- TODO: Keep track of the running tally (even after certification)
-                      traceWith kernelTracer TraceLeiosVoteAcquired{vote}
-                      -- A remote vote can be the one that tips this
-                      -- node's tally past 'minCertificationThreshold';
-                      -- trace certification whenever 'addVote' surfaces
-                      -- a cert for the point.
+                      -- Traced on 'Added' only, so one line per distinct vote
+                      -- rather than per arrival: the same vote reaches us from
+                      -- every peer that has it, and those duplicates return
+                      -- 'AlreadyKnown' with no tally to report.
+                      --
+                      -- A remote vote can be the one that tips this node's
+                      -- tally past the threshold, so certification is traced
+                      -- whenever 'addVote' surfaces a cert for the point.
                       case result of
-                        Added _ (Just _) ->
-                          traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
+                        Added VoteTally{vtWeight, vtTally, vtThreshold} mCert -> do
+                          traceWith kernelTracer $
+                            TraceLeiosVoteAcquired
+                              { vote
+                              , weight = vtWeight
+                              , tally = vtTally
+                              , threshold = vtThreshold
+                              }
+                          case mCert of
+                            Just _ ->
+                              traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
+                            Nothing -> pure ()
                         _ -> pure ()
               )
       , hLeiosNotifyServer = \_version peer -> do

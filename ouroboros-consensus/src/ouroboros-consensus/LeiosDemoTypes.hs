@@ -55,15 +55,21 @@ import Cardano.Crypto.Leios
   , aggregateLeiosCert
   , getLeiosSeatId
   , leiosCommitteeSize
-  , leiosSignContext
   , resolveLeiosSeat
   , verifyLeiosCert
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.Core (EraTx, PParams, Tx, TxLevel (TopTx))
+import Cardano.Ledger.Dijkstra.PParams
+  ( DijkstraEraPParams
+  , ppLeiosAnnouncementPeriodLengthL
+  , ppLeiosDiffusionPeriodLengthL
+  , ppLeiosVotePeriodLengthL
+  )
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
-import Cardano.Slotting.Time (RelativeTime)
+import Cardano.Slotting.Time (RelativeTime, SlotLength, slotLengthToMillisec)
 import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -87,7 +93,6 @@ import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Ord (Down (..))
-import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -112,9 +117,10 @@ import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
+import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
-import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
@@ -1096,18 +1102,18 @@ serializeEbBody = MkSerializedEbBody . SBS.toShort . toStrictByteString . encode
 -- on @(Down w, k)@ under an @Ord a@ constraint, so an unstable sort or a caller
 -- switching to an unordered container cannot silently renumber seats.
 selectCommitteeByStake ::
-  -- | The target coverage of weights / stake.
-  Weight ->
+  -- | The target committee size / stake.
+  Word16 ->
   -- | All available voters weights.
   [(a, Weight)] ->
   -- | The selected committee weights.
   [(a, Weight)]
-selectCommitteeByStake target = go 0 . sortOn (Down . snd)
+selectCommitteeByStake targetSize = go 0 . sortOn (Down . snd)
  where
   go _ [] = []
   go acc (p : ps)
-    | acc >= target = []
-    | otherwise = p : go (acc + snd p) ps
+    | acc >= targetSize = []
+    | otherwise = p : go (acc + 1) ps
 
 -- ** Vote
 
@@ -1166,7 +1172,7 @@ signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
     { announcingRbHash
     , voterId
-    , voteSignature = signDSIGN leiosSignContext announcingRbHash sk
+    , voteSignature = signDSIGN () announcingRbHash sk
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
@@ -1178,7 +1184,7 @@ validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature
       case seat.seatVKey of
         SNothing -> Left SignerHasNoKey
         SJust vk ->
-          case verifyDSIGN leiosSignContext vk announcingRbHash voteSignature of
+          case verifyDSIGN () vk announcingRbHash voteSignature of
             Left _ -> Left InvalidSignature
             Right () -> Right seat.seatWeight
 
@@ -1204,6 +1210,8 @@ data LeiosExtValidationError
   | -- | A CertRB reached ledger validation in an era/state with no Leios
     -- committee to verify the cert against.
     LeiosMissingCommittee !LeiosPoint !LeiosCert
+  | -- | No quorum stake threshold parameter available.
+    LeiosMissingThreshold
   | -- | A CertRB whose announcing ranking block could not be determined; it
     -- would be certifying against genesis.
     LeiosCertificateAfterGenesis !LeiosCert !LeiosPoint
@@ -1225,10 +1233,23 @@ deriving via
 -- the LedgerDB layer ('applyBlock') without pulling 'ChainDB' (which
 -- 'runLeiosVoting' depends on) into scope.
 class HasLeiosVoting blk where
-  -- | The voting committee for the given (pre-tick) ledger state, or
-  -- 'Nothing' if the era does not participate in Leios voting.
+  -- | The voting committee for the given (pre-tick) ledger state, or 'Nothing'
+  -- if the era does not participate in Leios voting.
   getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe LeiosCommittee
-  getLeiosCommittee _ = Nothing
+
+  -- | The currently active quorum threshold for the given ledger state, or
+  -- 'Nothing' if the protocol parameter does not yet exist on the current era.
+  getCurrentThreshold :: LedgerState blk EmptyMK -> Maybe Weight
+
+  -- | Slots that must elapse between an EB's announcement and the block that
+  -- may certify it, per 'minCertificationGap'. Reading it needs the era's
+  -- protocol parameters and its slot length, both of which only the era's
+  -- config has, which is why the forge loop cannot compute it itself.
+  --
+  -- TODO: this has nothing to do with voting, so this class is the wrong home
+  -- for it. Either split the per-era Leios ledger parameters into their own
+  -- class, or arrange for the forge loop not to need the gap in the first place.
+  getMinCertificationGap :: LedgerConfig blk -> LedgerState blk EmptyMK -> Maybe SlotNo
 
 -- * Tracing
 
@@ -1372,7 +1393,26 @@ data TraceLeiosKernel
     -- forging/announcing anyways.
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
-  | TraceLeiosVoteAcquired {vote :: LeiosVote}
+  | -- | A vote was accepted for its point rather than rejected as a duplicate
+    -- arrival, carrying the running tally after the update. Emitted once per
+    -- accepted vote -- not once per arrival, since the same vote reaches us
+    -- from every peer holding it and those return 'AlreadyKnown'.
+    --
+    -- The max 'tally' per 'RbHash' is that point's final accumulated weight,
+    -- whether or not it ever reached the threshold. That margin is otherwise
+    -- unobservable: only certified points reach the chain, so a point that
+    -- stalls below the threshold leaves no other trace of how close it came.
+    --
+    -- The tally does not necessarily move: a seat that votes twice with
+    -- distinct signatures replaces its own entry at the same weight, so
+    -- 'weight' identifies the accepted vote and is not summable across lines.
+    -- Read 'tally' for the total.
+    TraceLeiosVoteAcquired
+      { vote :: LeiosVote
+      , weight :: Weight
+      , tally :: Weight
+      , threshold :: Weight
+      }
   | TraceLeiosCertified {rbHash :: RbHash}
   | -- | A vote is scheduled to happen.
     TraceLeiosVoteScheduled
@@ -1639,10 +1679,17 @@ traceLeiosKernelToObject = \case
         -- is reasonable precision here.
         "weight" .= fromRational @Pico weight
       ]
-  TraceLeiosVoteAcquired{vote} ->
+  TraceLeiosVoteAcquired{vote, weight, tally, threshold} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
-      , "vote" .= voteToObject vote
+      , -- Carries rbHash and voterId, so the tally is indexable by point
+        -- without a second trace to join against.
+        "vote" .= voteToObject vote
+      , -- Same precision rationale as 'LeiosVoted' above.
+        "weight" .= fromRational @Pico weight
+      , "tally" .= fromRational @Pico tally
+      , -- Carried so the ratio is self-contained and survives a threshold change.
+        "threshold" .= fromRational @Pico threshold
       ]
   TraceLeiosCertified{rbHash = announcingRbHash} ->
     mconcat
@@ -2041,6 +2088,17 @@ traceLeiosPeerForHuman = \case
 
 -- * Protocol parameters
 
+-- FIXME: the node-to-node limits below are still constants, and it is not clear
+-- that they can stay that way. The ledger now has protocol parameters for the
+-- same quantities (@maxEndorserBlockReferencesSize@, @maxEndorserBlockTxsSize@),
+-- so governance can raise a capacity past what these allow the network layer to
+-- carry, and nothing rejects that today. This is not hypothetical: the ledger's
+-- own example parameters are 512 KiB and 12 MiB against the 500 kB and 12 MB
+-- here, so the capacity is clamped where it is read. Either the ledger has to bound the
+-- parameters by the wire limits, or the node has to refuse such a ledger state
+-- at startup, or these have to become negotiated rather than fixed.
+
+-- | The largest Leios block message we will send or accept.
 maxMsgLeiosBlockBytesSize :: BytesSize
 maxMsgLeiosBlockBytesSize = 500 * 10 ^ (3 :: Int) -- from CIP-0164's recommendations
 
@@ -2050,31 +2108,54 @@ minEbItemBytesSize = 32 + hashOverhead + minSizeOverhead
   hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
   minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
 
-maxTxsPerEb :: Int
-maxTxsPerEb =
+-- | How many transactions an EB of the given reference-list size can name.
+--
+-- Called with 'maxMsgLeiosBlockBytesSize' this is the wire bound, which sizes
+-- the buffers; called with the @maxEndorserBlockReferencesSize@ protocol
+-- parameter it is the capacity the mempool is allowed to fill.
+maxEbTxCount :: Integral a => a -> Int
+maxEbTxCount referencesSize =
   fromIntegral $
-    (maxMsgLeiosBlockBytesSize - msgOverhead - sequenceOverhead)
+    (fromIntegral referencesSize - msgOverhead - sequenceOverhead)
       `div` minEbItemBytesSize
  where
   msgOverhead = 1 + 1 -- short list len + small word
   sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
 
+-- | The most transactions any EB can name, set by the wire message limit.
+--
+-- Sizes buffers that are allocated before any ledger state is in reach; the
+-- protocol parameter cannot exceed it.
+maxTxsPerEb :: Int
+maxTxsPerEb = maxEbTxCount maxMsgLeiosBlockBytesSize
+
+-- | The largest EB closure we will fetch.
+--
+-- FIXME: see the note above -- @maxEndorserBlockTxsSize@ is the ledger's say on
+-- the same quantity, and the two are unrelated today.
 maxEBClosureSize :: ByteSize32
 maxEBClosureSize = ByteSize32 12_000_000
 
--- FIXME: This should actually be 14 if we follow the CIP-164 recommended
--- values.
-minCertificationGap :: Word64
-minCertificationGap = 10
-
--- | Minimum fraction of stake to create a valid 'LeiosCertificate'.
-minCertificationThreshold :: Rational
-minCertificationThreshold = 3 % 4
-
--- | Stake to be covered when selecting the committee.
--- TODO: Switch to a committee size parameter followin the CIP-164 discussions.
-committeeStakeCoverage :: Weight
-committeeStakeCoverage = 99 % 100
+-- | Slots between an EB's announcement and the earliest block that may certify
+-- it: the announcement, voting and diffusion periods must all have elapsed.
+--
+-- The periods are wall-clock milliseconds while the answer is a slot count, so
+-- the caller supplies the era's 'SlotLength'. Rounded up: a partially elapsed
+-- slot has not elapsed.
+minCertificationGap :: DijkstraEraPParams era => SlotLength -> PParams era -> SlotNo
+minCertificationGap slotLength pp =
+  SlotNo . fromIntegral $ (totalMs + slotMs - 1) `div` slotMs
+ where
+  totalMs =
+    3 * ms (pp ^. ppLeiosAnnouncementPeriodLengthL)
+      + ms (pp ^. ppLeiosVotePeriodLengthL)
+      + ms (pp ^. ppLeiosDiffusionPeriodLengthL)
+  ms = toInteger . unMilliseconds32
+  -- A zero-length slot is not something the ledger can express, but dividing by
+  -- it would be, so refuse rather than invent an answer.
+  slotMs = case slotLengthToMillisec slotLength of
+    0 -> error "minCertificationGap: zero slot length"
+    n -> n
 
 -- * Utilities for prototyping
 

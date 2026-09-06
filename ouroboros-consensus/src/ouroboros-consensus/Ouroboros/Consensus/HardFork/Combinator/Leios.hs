@@ -18,23 +18,29 @@ import Data.Proxy (Proxy (..))
 import Data.SOP.BasicFunctors (K (..))
 import Data.SOP.Constraint (All)
 import Data.SOP.Functors (Flip (..))
-import Data.SOP.Strict (hcmap, hcollapse)
+import Data.SOP.Strict (hcmap, hcollapse, hczipWith)
 import qualified Data.SOP.Telescope as Telescope
 import LeiosVoting (HasLeiosVoting (..))
+import Ouroboros.Consensus.HardFork.Combinator.Abstract (CanHardFork)
 import Ouroboros.Consensus.HardFork.Combinator.Basics
   ( HardForkBlock (..)
   , LedgerState (HardForkLedgerState)
+  , distribLedgerConfig
   )
 import Ouroboros.Consensus.HardFork.Combinator.Protocol ()
+import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( Current (..)
   , HardForkState (..)
   )
+import Ouroboros.Consensus.TypeFamilyWrappers (WrapLedgerConfig (..))
 
 -- | Dispatch to the active era of a hard-fork chain. Requires every era in
 -- the @xs@ list to have a 'HasLeiosVoting' instance.
 instance
-  All HasLeiosVoting xs =>
+-- 'CanHardFork' is here only for 'getMinCertificationGap', which has to
+-- complete the combinator's partial per-era configs. See the note there.
+  (All HasLeiosVoting xs, CanHardFork xs) =>
   HasLeiosVoting (HardForkBlock xs)
   where
   getLeiosCommittee (HardForkLedgerState (HardForkState tele)) =
@@ -42,4 +48,23 @@ instance
       hcmap
         (Proxy @HasLeiosVoting)
         (\(Current _ (Flip ls)) -> K (getLeiosCommittee ls))
+        (Telescope.tip tele)
+
+  getCurrentThreshold (HardForkLedgerState (HardForkState tele)) =
+    hcollapse $
+      hcmap
+        (Proxy @HasLeiosVoting)
+        (\(Current _ (Flip ls)) -> K (getCurrentThreshold ls))
+        (Telescope.tip tele)
+
+  -- Unlike the other two, this one needs the era's config as well as its
+  -- state, and the combinator only stores partial configs -- hence completing
+  -- them against an 'EpochInfo' reconstructed from the very state we are
+  -- dispatching on.
+  getMinCertificationGap cfg (HardForkLedgerState hfState@(HardForkState tele)) =
+    hcollapse $
+      hczipWith
+        (Proxy @HasLeiosVoting)
+        (\(WrapLedgerConfig cfg') (Current _ (Flip ls)) -> K (getMinCertificationGap cfg' ls))
+        (distribLedgerConfig (State.epochInfoLedger cfg hfState) cfg)
         (Telescope.tip tele)

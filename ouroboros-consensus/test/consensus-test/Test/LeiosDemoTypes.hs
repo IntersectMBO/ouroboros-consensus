@@ -32,9 +32,7 @@ import Test.QuickCheck
   , listOf
   , property
   , shrinkIntegral
-  , shrinkRealFrac
   , vectorOf
-  , (.||.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
@@ -46,7 +44,7 @@ tests =
     "LeiosDemoTypes"
     [ testProperty "leiosEbBytesSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
     , testProperty
-        "selectCommitteeByStake orders by stake and applies the cutoff"
+        "selectCommitteeByStake orders by stake and bounds by committee size"
         prop_selectCommitteeByStake
     ]
 
@@ -110,8 +108,8 @@ prop_ebBytesSizeConsistent =
           ("items: " <> show (V.length (leiosEbTxs eb)))
           (estimatedSize === actualSize)
 
--- | 'selectCommitteeByStake' selects the highest-stake pools truncated at a
--- cumulative-stake target.
+-- | 'selectCommitteeByStake' seats the highest-stake pools, bounded by the
+-- committee-size parameter rather than by cumulative stake.
 --
 -- Every property below inspects weights only, so none of them pins which of two
 -- equal-stake pools is seated, or at which index.
@@ -122,35 +120,35 @@ prop_ebBytesSizeConsistent =
 prop_selectCommitteeByStake :: Property
 prop_selectCommitteeByStake =
   forAllShrink (listOf genWeight) genericShrink $ \rawStakes ->
-    forAllShrink genWeight (filter (> 0) . shrinkRealFrac) $ \target ->
-      let weights = snd <$> selectCommitteeByStake target (zip [0 :: Int ..] rawStakes)
-          allSelected = length weights == length rawStakes
+    forAllShrink genCommitteeSize shrinkIntegral $ \targetSize ->
+      let weights = snd <$> selectCommitteeByStake targetSize (zip [0 :: Int ..] rawStakes)
+          sizeBinds = length rawStakes > fromIntegral targetSize
        in conjoin
-            [ cutoffReached target weights .||. allSelected
-            , committeeNonEmpty rawStakes weights
+            [ seatsExactlySize targetSize rawStakes weights
             , isDescending weights
-            , isMinimal target weights
             , selectsTopStake rawStakes weights
             ]
-            & counterexample ("target: " <> show target <> ", weights: " <> show weights)
-            & cover 0.1 (not allSelected) "not all selected"
+            & counterexample ("targetSize: " <> show targetSize <> ", weights: " <> show weights)
+            & cover 0.1 sizeBinds "size bound binds"
+            & cover 0.1 (not sizeBinds) "every pool seated"
+            & cover 0.1 (targetSize == 0) "empty committee"
             & checkCoverage
  where
   genWeight = chooseInteger (1, 100) <&> (% 100)
+
+  -- Deliberately overlaps the stake-list length so both regimes are generated:
+  -- the bound biting, and every pool fitting.
+  genCommitteeSize = fromIntegral <$> chooseInt (0, 12)
 
   forAllIndices xs f
     | null xs = property True
     | otherwise = forAllShrink (chooseInt (0, length xs - 1)) shrinkIntegral f
 
-  -- The selected stake reaches the target.
-  cutoffReached target weights =
-    sum weights >= target
-      & counterexample "cutoff not reached"
-
-  -- A non-empty pool set yields a non-empty committee (target > 0).
-  committeeNonEmpty rawStakes weights =
-    null rawStakes || not (null weights)
-      & counterexample "empty committee for a non-empty pool set"
+  -- The committee is exactly as large as the parameter allows: the whole pool
+  -- set when it fits, the parameter when it does not, and empty at zero.
+  seatsExactlySize targetSize rawStakes weights =
+    length weights === min (fromIntegral targetSize) (length rawStakes)
+      & counterexample "committee size does not match the parameter"
 
   -- Descending order: any prefix outweighs the rest.
   isDescending weights =
@@ -158,13 +156,6 @@ prop_selectCommitteeByStake =
       let (prefix, rest) = splitAt i weights
        in null prefix || null rest || minimum prefix >= maximum rest
             & counterexample ("weights not monotonically decreasing at " <> show i)
-
-  -- Minimal: dropping any single member falls below the target.
-  isMinimal target weights =
-    forAllIndices weights $ \i ->
-      sum weights - (weights !! i) < target
-        & counterexample
-          "committee not minimal: dropping an entry still reaches the target"
 
   -- Top-stake: no excluded pool outweighs a selected one.
   selectsTopStake rawStakes weights =

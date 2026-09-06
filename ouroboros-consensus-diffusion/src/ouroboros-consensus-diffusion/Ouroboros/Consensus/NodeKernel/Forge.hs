@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -296,22 +297,25 @@ decideLeiosCertify ::
   forall blk m.
   ( Monad m
   , ResolveLeiosBlock blk
+  , Leios.HasLeiosVoting blk
   , ConvertRawHash blk
   , HasAnnTip blk
   ) =>
   LeiosDbConnection m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
+  -- | The era's ledger config, which is where the certification gap comes from.
+  LedgerConfig blk ->
   -- | The slot we are forging for.
   SlotNo ->
-  -- | The state of the header we are extending.
-  HeaderState blk ->
+  -- | Unticked ledger state that we can extend.
+  ExtLedgerState blk EmptyMK ->
   m (Maybe (LeiosCert, Leios.EbHash))
-decideLeiosCertify leiosDb voteState tracer currentSlot headerState =
-  case protocolStateLeiosAnnouncement @blk (headerStateChainDep headerState) of
+decideLeiosCertify leiosDb voteState tracer ledgerCfg currentSlot extState =
+  case (,) <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs) <*> mMinGap of
     Nothing -> pure Nothing
-    Just (ebPoint, _ebSize)
-      | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= Leios.minCertificationGap ->
+    Just ((ebPoint, _ebSize), minGap)
+      | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= unSlotNo minGap ->
           pure Nothing
       | otherwise -> do
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
@@ -328,7 +332,7 @@ decideLeiosCertify leiosDb voteState tracer currentSlot headerState =
               -- The announcing RB is the block we're forging on top of;
               -- EB certification must happen within one block (this is the
               -- linear aspect of linear Leios).
-              case headerStateTip headerState of
+              case headerStateTip hs of
                 Origin -> error "decideLeiosCertify: cannot certify on top of genesis"
                 At tip -> do
                   -- the hash of the block we will be forging on top of (the announcing RB).
@@ -348,6 +352,12 @@ decideLeiosCertify leiosDb voteState tracer currentSlot headerState =
                           , certifiedPoint = ebPoint
                           }
                       pure (Just (cert, Leios.pointEbHash ebPoint))
+ where
+  -- The gap comes from the era's protocol parameters, so only the era knows it;
+  -- 'Nothing' means this era does not do Leios and nothing is certifiable.
+  mMinGap = Leios.getMinCertificationGap ledgerCfg (ledgerState extState)
+
+  hs = headerState extState
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
@@ -718,8 +728,9 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
         leiosConn
         leiosVoteState
         leiosTracer
+        (configLedger cfg)
         currentSlot
-        (headerState unticked)
+        unticked
 
   let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
       ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
