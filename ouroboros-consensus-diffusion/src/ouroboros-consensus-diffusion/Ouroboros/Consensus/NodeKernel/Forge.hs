@@ -265,7 +265,11 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
   -- of accidental discrepancies. 'onForgedLeiosEb' hands our freshly-forged EB's
   -- announcement, body, and closure to the very handlers those mini-protocol
   -- messages use.
-  lift $ forM_ mForgedEb $ onForgedLeiosEb (getHeader newBlock)
+  forgeTrace'Via
+    (const ())
+    "on-forged-leios-eb"
+    currentSlot
+    (lift $ forM_ mForgedEb $ onForgedLeiosEb (getHeader newBlock))
 
   forgeTrace'Via
     (const ())
