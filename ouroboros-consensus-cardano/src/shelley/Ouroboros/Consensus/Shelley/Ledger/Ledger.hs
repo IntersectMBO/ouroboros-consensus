@@ -107,7 +107,6 @@ import qualified Control.State.Transition.Extended as STS
 import Data.Coerce
 import Data.Foldable (toList)
 import Data.Functor.Identity
-import qualified Data.Map as Map
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.MemPack
 import qualified Data.Text as T
