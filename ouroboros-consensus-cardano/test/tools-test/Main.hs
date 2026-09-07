@@ -100,7 +100,7 @@ testTruncaterConfig =
     { DBTruncater.dbDir = chainDB
     , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
     , DBTruncater.verbose = False
-    , DBTruncater.leiosDbSource = NodeLeiosDb
+    , DBTruncater.leiosDbSource = LeiosDbFile Nothing
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)

@@ -78,20 +78,24 @@ The user can use snapshots created by the node or they can create their own snap
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
-#### --no-leios-db
+#### --leios-db and --no-leios-db
 
 ```
-[--no-leios-db]
+[--leios-db PATH | --no-leios-db]
 ```
-
-Run with an empty in-memory Leios database, rather than the `leios.db` file under the `--db` path.
 
 A Praos block (a Leios ranking block) that carries a certificate has an empty body on the wire.
 Its transactions are in the endorser block (EB) that it certifies, and those live in the Leios database, not in the ImmutableDB.
-So the tool reads `DB_PATH/leios.db`, which is where the node writes that database, and it refuses to start when that file is absent.
-If your node writes the file elsewhere, symlink it into `DB_PATH`.
+So the tool reads that database, and it refuses to start when it finds no such file.
 
-Pass this flag for a chain that holds no certifying block, such as a chain that predates Leios.
+Without `--leios-db` the tool reads `DB_PATH/leios.db`.
+That is where a node with the default `LeiosDbConfig` writes it, as long as the node keeps all its databases under one path.
+A node that splits the immutable path from the volatile one writes the file under the volatile path.
+A node can also name another file in its configuration.
+Pass `--leios-db` in both cases.
+
+`--no-leios-db` runs with an empty in-memory Leios database and reads no file.
+Pass it for a chain that holds no certifying block, such as a chain that predates Leios.
 The tool cannot tell such a chain from a Leios one before it reads the chain, so it cannot make that call itself.
 If you pass the flag on a chain that does hold a certifying block, the analysis stops at that block.
 
@@ -242,6 +246,7 @@ export NODE_DIR="/path/to/cardano-node-data/db-leios"
 That directory holds `config.json`, the genesis files, and `db/`.
 `db/` is the chain database. It holds `immutable/`, `volatile/`, `ledger/`, and,
 on a Leios chain, `leios.db`.
+The node configuration decides the name and the directory of that last file, so pass `--leios-db` when it is not there.
 
 #### Checking the Leios analyses
 
@@ -430,7 +435,7 @@ Additional flags:
 
 ### The Leios database
 
-On a Leios chain the tool also cuts `DB_PATH/leios.db` back to the new tip.
+On a Leios chain the tool also cuts the Leios database back to the new tip.
 It truncates the ImmutableDB first, because the other order can leave a certifying block whose endorser block (EB) is gone.
 It then does three things to the Leios database:
 
@@ -442,9 +447,9 @@ Step 3 rewrites the file, so it needs free space of about the size of the file.
 SQLite puts that copy in the system temp directory, not beside the database.
 Set `SQLITE_TMPDIR` if that filesystem is small.
 
+Without `--leios-db` the tool reads `DB_PATH/leios.db`, and it refuses to start when that file is absent.
 Pass `--no-leios-db` for a chain that holds no certifying block, such as a chain that predates Leios.
-Without the flag the tool needs `DB_PATH/leios.db` and refuses to start when that file is absent.
-See the db-analyser section on that flag for why the tool cannot make the call itself.
+See the db-analyser section on those two flags for the paths a node writes and for why the tool cannot make the call itself.
 
 ## ImmDB Server
 

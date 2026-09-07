@@ -4,7 +4,7 @@
 module DBAnalyser.Parsers
   ( parseCmdLine
   , parseCardanoArgs
-  , parseNoLeiosDb
+  , parseLeiosDbSource
   , CardanoBlockArgs
   ) where
 
@@ -61,19 +61,35 @@ parseDBAnalyserConfig =
             , help "use v2 LSM backend"
             ]
       ]
-    <*> parseNoLeiosDb
+    <*> parseLeiosDbSource
 
--- | Run with an empty in-memory LeiosDb, rather than the node's @leios.db@.
-parseNoLeiosDb :: Parser LeiosDbSource
-parseNoLeiosDb =
-  flag NodeLeiosDb NoLeiosDb $
-    mconcat
-      [ long "no-leios-db"
-      , help $
-          "Do not use the leios.db file under the --db path. Pass this for a "
-            <> "chain that holds no block with a Leios certificate. Without "
-            <> "this flag, the tool refuses to start when it finds no such file."
-      ]
+-- | Where the tool finds the LeiosDb, or that it uses none.
+--
+-- The two flags exclude each other: @--no-leios-db@ leaves no path to read.
+parseLeiosDbSource :: Parser LeiosDbSource
+parseLeiosDbSource =
+  parseNoLeiosDb <|> fmap LeiosDbFile parseLeiosDbPath
+ where
+  parseNoLeiosDb =
+    flag' NoLeiosDb $
+      mconcat
+        [ long "no-leios-db"
+        , help $
+            "Do not use a LeiosDb file. Pass this for a chain that holds no "
+              <> "block with a Leios certificate. Without this flag, the tool "
+              <> "refuses to start when it finds no such file."
+        ]
+  parseLeiosDbPath =
+    optional $
+      strOption $
+        mconcat
+          [ long "leios-db"
+          , metavar "PATH"
+          , help $
+              "Path of the Leios SQLite database. Defaults to leios.db under "
+                <> "the --db path, which is where a node with the default "
+                <> "LeiosDbConfig writes it."
+          ]
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =

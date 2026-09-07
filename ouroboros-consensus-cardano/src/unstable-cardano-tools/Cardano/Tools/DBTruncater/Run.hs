@@ -10,7 +10,7 @@ module Cardano.Tools.DBTruncater.Run (truncate) where
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBTruncater.Types
-import Cardano.Tools.LeiosDb (LeiosDbSource (..), requireNodeLeiosDb)
+import Cardano.Tools.LeiosDb (LeiosDbSource (..), requireLeiosDbFile)
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
@@ -53,7 +53,7 @@ truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leiosDbSource} args = 
   -- fails before the tool deletes any block.
   mLeiosDbPath <- case leiosDbSource of
     NoLeiosDb -> pure Nothing
-    NodeLeiosDb -> Just <$> requireNodeLeiosDb dbDir
+    LeiosDbFile mPath -> Just <$> requireLeiosDbFile dbDir mPath
   withRegistry $ \registry -> do
     lock <- mkLock
     immutableDBTracer <- mkTracer lock verbose
@@ -121,7 +121,7 @@ leiosDbCutFailed newTip =
   mconcat
     [ "The ImmutableDB is truncated to slot "
     , slot
-    , ". The LeiosDb cut did not complete, so leios.db still holds the EBs "
+    , ". The LeiosDb cut did not complete, so the LeiosDb still holds the EBs "
     , "announced after that slot. Nothing on the truncated chain reads them, "
     , "so you can leave them. To remove them, re-run with a "
     , "--truncate-after-slot below "

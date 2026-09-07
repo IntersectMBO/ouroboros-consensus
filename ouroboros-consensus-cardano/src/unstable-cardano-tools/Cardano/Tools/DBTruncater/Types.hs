@@ -12,10 +12,9 @@ data DBTruncaterConfig = DBTruncaterConfig
   , verbose :: Bool
   , leiosDbSource :: LeiosDbSource
   -- ^ 'NoLeiosDb' skips every LeiosDb operation. The tool then neither opens
-  -- nor modifies the @leios.db@ under 'dbDir', whether or not that file
-  -- exists.
+  -- nor modifies any LeiosDb file, whether or not one exists.
   --
-  -- With 'NodeLeiosDb' the tool requires that file, because it cannot tell a
+  -- With 'LeiosDbFile' the tool requires that file, because it cannot tell a
   -- pre-Leios chain from a Leios one before it reads the chain.
   }
 

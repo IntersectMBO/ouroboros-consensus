@@ -19,13 +19,13 @@ data DBAnalyserConfig = DBAnalyserConfig
   , confLimit :: Limit
   , ldbBackend :: LedgerDBBackend
   , leiosDbSource :: LeiosDbSource
-  -- ^ 'NoLeiosDb' uses an empty in-memory LeiosDb instead of @leios.db@ under
-  -- 'dbDir'.
+  -- ^ 'NoLeiosDb' uses an empty in-memory LeiosDb instead of a LeiosDb file.
   --
   -- The tool cannot tell a pre-Leios chain from a Leios one before it reads
-  -- the chain, so it cannot decide on its own whether an absent @leios.db@ is
-  -- a problem. It therefore needs the file, and this flag is how the caller
-  -- says that the chain holds no cert-RB and that the empty stub is enough.
+  -- the chain, so it cannot decide on its own whether an absent LeiosDb file
+  -- is a problem. It therefore needs the file, and 'NoLeiosDb' is how the
+  -- caller says that the chain holds no cert-RB and that the empty stub is
+  -- enough.
   }
 
 data AnalysisName
