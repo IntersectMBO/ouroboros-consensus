@@ -10,7 +10,7 @@ module Cardano.Tools.DBTruncater.Run (truncate) where
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBTruncater.Types
-import Cardano.Tools.LeiosDb (leiosDbPath)
+import Cardano.Tools.LeiosDb (LeiosDbSource (..), requireNodeLeiosDb)
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
@@ -49,7 +49,11 @@ truncate ::
   Args block ->
   IO ()
 truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leiosDbSource} args = do
-  mLeiosDbPath <- leiosDbPath leiosDbSource dbDir
+  -- Check the file before the ImmutableDB truncation, so a missing LeiosDb
+  -- fails before the tool deletes any block.
+  mLeiosDbPath <- case leiosDbSource of
+    NoLeiosDb -> pure Nothing
+    NodeLeiosDb -> Just <$> requireNodeLeiosDb dbDir
   withRegistry $ \registry -> do
     lock <- mkLock
     immutableDBTracer <- mkTracer lock verbose

@@ -14,7 +14,7 @@ import Cardano.Ledger.BaseTypes
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
-import Cardano.Tools.LeiosDb (leiosDbPath)
+import Cardano.Tools.LeiosDb (LeiosDbSource (..), requireNodeLeiosDb)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), emit, nullTracer)
@@ -152,10 +152,9 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
-    leiosDbHandle <-
-      leiosDbPath leiosDbSource dbDir >>= \case
-        Nothing -> newLeiosDBInMemory
-        Just path -> newLeiosDBSQLite nullTracer path
+    leiosDbHandle <- case leiosDbSource of
+      NoLeiosDb -> newLeiosDBInMemory
+      NodeLeiosDb -> newLeiosDBSQLite nullTracer =<< requireNodeLeiosDb dbDir
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of

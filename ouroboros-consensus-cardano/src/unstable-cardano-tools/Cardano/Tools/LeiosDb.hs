@@ -1,4 +1,4 @@
-module Cardano.Tools.LeiosDb (LeiosDbSource (..), leiosDbPath) where
+module Cardano.Tools.LeiosDb (LeiosDbSource (..), requireNodeLeiosDb) where
 
 import Control.Monad (unless)
 import qualified System.Directory as Directory
@@ -14,26 +14,24 @@ data LeiosDbSource
     NoLeiosDb
 
 -- | The path of the @leios.db@ that the node writes under its ChainDB
--- directory, or 'Nothing' for 'NoLeiosDb'.
+-- directory. Dies if that file does not exist.
 --
 -- The tool derives that path from @--db@ rather than take one of its own. An
 -- operator who puts the file elsewhere can symlink it into place.
 --
 -- A missing file is fatal, because a tool cannot tell whether the chain holds a
--- cert-RB before it reads the chain. The caller passes 'NoLeiosDb' to say that
--- the chain holds no cert-RB.
+-- cert-RB before it reads the chain. The operator passes @--no-leios-db@ to say
+-- that the chain holds no cert-RB.
 --
 -- Hence this check, rather than a check inside the SQLite backend: that backend
 -- opens with 'SQLOpenCreate' and it creates the schema when it finds no file.
 -- So without this check the tool would write an empty leios.db into the node's
 -- directory and fail only at the first cert-RB.
-leiosDbPath ::
-  LeiosDbSource ->
+requireNodeLeiosDb ::
   -- | The ChainDB directory.
   FilePath ->
-  IO (Maybe FilePath)
-leiosDbPath NoLeiosDb _dbDir = pure Nothing
-leiosDbPath NodeLeiosDb dbDir = do
+  IO FilePath
+requireNodeLeiosDb dbDir = do
   let path = dbDir FilePath.</> "leios.db"
   exists <- Directory.doesFileExist path
   unless exists $
@@ -44,4 +42,4 @@ leiosDbPath NodeLeiosDb dbDir = do
         <> "and the transactions that it puts on the chain are in the "
         <> "endorser block that it certifies, which the LeiosDb holds. "
         <> "Pass --no-leios-db if this chain holds no such block."
-  pure (Just path)
+  pure path
