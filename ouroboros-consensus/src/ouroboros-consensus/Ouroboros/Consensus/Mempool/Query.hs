@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -112,6 +113,7 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
             else readUntickedTables
       computeSnapshot
         resolveValues
+        mpEnvTimeoutConfig
         cfg
         slot
         ticked
@@ -120,11 +122,8 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
   MempoolEnv
     { mpEnvStateVar = istate
     , mpEnvLedgerCfg = cfg
+    , mpEnvTimeoutConfig
     } = mpEnv
-
--- TODO(bladyjoker): Make it configurable?
-snapshotStepTimeLimit :: DiffTime
-snapshotStepTimeLimit = 0.1
 
 snapshotStepTxsPerStep :: Int
 snapshotStepTxsPerStep = 100
@@ -133,12 +132,13 @@ computeSnapshot ::
   forall blk m.
   (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  Maybe MempoolTimeoutConfig ->
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
   TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
   m (MempoolSnapshot blk)
-computeSnapshot resolveValues cfg slot baseLedgerStDiff txsToApply = do
+computeSnapshot resolveValues mTimeoutConfig cfg slot baseLedgerStDiff txsToApply = do
   ReapplyStepState{..} <-
     reapplyUntilTimeout
       snapshotStepTimeLimit
@@ -151,3 +151,7 @@ computeSnapshot resolveValues cfg slot baseLedgerStDiff txsToApply = do
 
   let tip = castPoint $ getTip baseLedgerStDiff
   return $! snapshot slot tip appliedTxIds appliedTxs
+ where
+  snapshotStepTimeLimit = case mTimeoutConfig of
+    Nothing -> 0.1
+    Just MempoolTimeoutConfig{mempoolTimeoutCapacity} -> mempoolTimeoutCapacity / 10

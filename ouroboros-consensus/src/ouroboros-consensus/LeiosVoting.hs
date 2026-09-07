@@ -340,6 +340,8 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           seatId <-
             (getLeiosCommittee ls >>= getLeiosSeatId vk) ?>= NotOnCommittee
 
+          -- FIXME: Check the EB references size, txs size, ex units and ref scripts capacities
+
           lift (validateEbClosure lcfg leiosConn txCache readTables point ls) >>= \case
             EbClosureInvalid err ->
               -- TODO: Text in error

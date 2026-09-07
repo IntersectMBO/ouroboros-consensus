@@ -615,6 +615,8 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             protocolStateLeiosAnnouncement @blk cds
               ?>= ExtValidationErrorLeios (LeiosCertificateWithoutAnnouncement cert)
 
+          -- FIXME: Check the min certification gap between announcement and certification
+
           -- A CertRB always has a (non-genesis) announcing parent; if
           -- we cannot determine one, it would be certifying at genesis.
           announcingRbHashValue <-
@@ -638,6 +640,8 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 ExtValidationErrorLeios
                   (LeiosInvalidCertificate cert announcedPoint announcingRbHashValue invalid)
             Right _weight -> pure ()
+
+          -- FIXME: Check the EB references size, txs size, ex units and ref scripts capacities
 
           -- get the UTXO-HD keys of the RB we are applying the cert onto
           let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
