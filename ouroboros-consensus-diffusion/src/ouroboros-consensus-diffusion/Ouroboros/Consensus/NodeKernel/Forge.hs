@@ -747,8 +747,6 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
               ebTxs' =
                 let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
                  in drop (length rbTxs') allTxs
-          _ <- evaluate (length rbTxs')
-          _ <- evaluate (length ebTxs')
           pure (rbTxs', ebTxs', rbTxsSize', snap)
       Just (_cert, announcedPoint) -> do
         -- We have a Leios certificate: only take transactions for a new EB, as the RB will
@@ -792,7 +790,6 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
 
             pmTrace'Via (const ()) "take-eb-txs" currentSlot $ do
               let ebTxs' = fst (snapshotTake snap ebCap)
-              _ <- evaluate (length ebTxs')
               pure ([], ebTxs', Data.Measure.zero, snap)
 
   pure (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement)
