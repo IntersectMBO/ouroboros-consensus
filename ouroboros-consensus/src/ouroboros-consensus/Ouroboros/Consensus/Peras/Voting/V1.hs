@@ -33,6 +33,9 @@ import Ouroboros.Consensus.Ledger.SupportsPeras
   ( LedgerStateSupportsPeras (..)
   )
 import Ouroboros.Consensus.Peras.Crypto.BLS (PerasBLSCrypto, PerasPublicKey (..))
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
+  ( unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
+  )
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepStateSupportsPeras (..))
 
@@ -79,7 +82,10 @@ mkPerasVotingCommitteeInput ::
 mkPerasVotingCommitteeInput ledgerState headerState = do
   let epochNonce = getEpochNonce headerState
       poolDistr = getPoolDistr ledgerState
-      stakeDistrWithPublicKeys = extractPerasStakeDistrAndPublicKeys poolDistr
+  -- TODO: replace the following hack with proper on-chain key registration.
+  stakeDistrWithPublicKeys <-
+    bimap V1.PerasTemporaryPublicKeyHackError id $
+      unsafeExtendPerasStakeDistrWithPublicKeysFromEnv poolDistr
   extWFAStakeDistr <-
     bimap V1.PerasVotingWFAError id $
       mkExtWFAStakeDistr
