@@ -503,6 +503,7 @@ test-suite tracing-test
     cardano-ledger-alonzo,
     cardano-ledger-conway,
     cardano-ledger-core,
+    cardano-ledger-dijkstra,
     cardano-ledger-mary,
     cardano-protocol-tpraos,
     containers,
