@@ -107,7 +107,7 @@ consensusRethrowPolicy pb =
     <> mkRethrowPolicy
       ( \_ctx (e :: PerasVoteDbError blk) ->
           case e of
-            MultipleWinnersInRound{} -> ourBug -- TODO: should we instead shutdown the node?
+            MultipleWinnersInRound{} -> ourBug
             ForgingCertError{} -> ourBug
             EpochContextNotFoundForRound{} -> ourBug
       )
