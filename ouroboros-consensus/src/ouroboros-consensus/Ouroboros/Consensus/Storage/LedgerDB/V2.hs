@@ -27,6 +27,7 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (mapMaybe)
+import Data.SOP (All, Top)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
@@ -45,6 +46,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -70,8 +72,10 @@ newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk
 
 mkInitDb ::
   forall m blk backend.
-  ( LedgerSupportsProtocol blk
-  , HasHardForkHistory blk
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , Backend m backend blk
   , IOLike m
   ) =>

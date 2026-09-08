@@ -1,4 +1,8 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Test.Ouroboros.Storage.PerasVoteDB.Model
   ( PerasVoteDbModelError (..)
@@ -19,27 +23,29 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
 import Ouroboros.Consensus.Block.Abstract (StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( IsPerasVote (..)
-  , PerasCert' (..)
-  , PerasParams (..)
+  ( BlockSupportsPeras (..)
+  , IsPerasCert (..)
+  , IsPerasVote (..)
+  , PerasParams
   , PerasRoundNo
+  , PerasSeatIndex
   , PerasVoteId (..)
   , PerasVoteTarget (..)
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
   , VoteWeight (..)
   , getPerasCertPoint
+  , perasWeight
   , weightAboveThreshold
   )
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( WithArrivalTime (..)
-  )
-import Ouroboros.Consensus.Peras.Types (PerasSeatIndex)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)
   , PerasVoteTicketNo
@@ -50,11 +56,15 @@ data VoteEntry blk = VoteEntry
   { veTicketNo :: PerasVoteTicketNo
   -- ^ The ticket number assigned to this vote
   , veVoter :: PerasSeatIndex
-  -- ^ The voter ID
+  -- ^ The seat index of the voter
   , veVote :: WithArrivalTime (ValidatedPerasVote blk)
   -- ^ The vote itself
   }
-  deriving (Show, Eq, Ord, Generic)
+
+deriving instance Show (PerasVote blk) => Show (VoteEntry blk)
+deriving instance Eq (PerasVote blk) => Eq (VoteEntry blk)
+deriving instance Ord (PerasVote blk) => Ord (VoteEntry blk)
+deriving instance Generic (VoteEntry blk)
 
 data PerasVoteDbModelError = MultipleWinnersInRound PerasRoundNo
   deriving (Show, Generic)
@@ -71,9 +81,24 @@ data Model blk = Model
   , certs :: Map PerasRoundNo (ValidatedPerasCert blk)
   -- ^ Forged certificates indexed by round number
   }
-  deriving (Show, Generic)
 
-instance StandardHash blk => ToExpr (Model blk) where
+-- deriving (Show, Generic)
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (Model blk)
+deriving instance Generic (Model blk)
+
+instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  ToExpr (Model blk)
+  where
   toExpr = defaultExprViaShow
 
 initModel :: PerasParams blk -> Model blk
@@ -132,15 +157,20 @@ closeDB model =
     }
 
 addVote ::
-  StandardHash blk =>
+  ( StandardHash blk
+  , Ord (PerasVote blk)
+  , PerasCert blk ~ MockPerasCert blk
+  , IsPerasVote (PerasVote blk) blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   Model blk ->
   ( Either PerasVoteDbModelError (AddPerasVoteResult blk)
   , Model blk
   )
 addVote vote model
-  -- The ID of a vote is a pair (voterId, roundNo). So checking if the voter has
-  -- already voted in this round means checking if the pair (voterId, roundNo)
+  -- The ID of a vote is a pair (seatIndex, roundNo). So checking if the voter has
+  -- already voted in this round means checking if the pair (seatIndex, roundNo)
   -- is already present in the model i.e. if the vote is already in the model.
   -- In which case, we can ignore it.
   --
@@ -165,7 +195,7 @@ addVote vote model
   | reachedQuorum
   , Nothing <- certAtRound =
       -- Also ensure that we didn't already have a quorum before adding this
-      -- vote in a more direct way: the stake represented by the existing votes
+      -- vote in a more direct way: the weight represented by the existing votes
       -- must be below the threshold.
       assert (not hadQuorum) $
         ( Right $
@@ -195,7 +225,7 @@ addVote vote model
   roundNo =
     getPerasVoteRound vote
   votedBlock =
-    getPerasVoteBlock vote
+    getPerasVotePoint vote
   voter =
     getPerasVoteSeatIndex vote
   -- Compute the next ticket number associated to this vote.
@@ -218,8 +248,14 @@ addVote vote model
   -- The extended set of votes including the new one
   extendedVotes =
     Set.insert voteEntry existingVotes
-  -- Get the total stake of a set of votes
-  getTotalStake =
+  -- The extended set of voters including the new one
+  extendedVoters =
+    NESet.unsafeFromSet -- Safe due to insert below
+      . Set.insert voter
+      . Set.map veVoter
+      $ existingVotes
+  -- Get the total weight of a set of votes
+  getTotalWeight =
     VoteWeight
       . sum
       . fmap
@@ -229,18 +265,18 @@ addVote vote model
             . veVote
         )
       . Set.toList
-  -- Total stake represented by the existing votes
-  existingVotesStake =
-    getTotalStake existingVotes
-  -- Total stake represented by the extended set of votes
-  extendedVotesStake =
-    getTotalStake extendedVotes
+  -- Total weight represented by the existing votes
+  existingVotesWeight =
+    getTotalWeight existingVotes
+  -- Total weight represented by the extended set of votes
+  extendedVotesWeight =
+    getTotalWeight extendedVotes
   -- Did we already have a quorum before adding this new vote?
   hadQuorum =
-    weightAboveThreshold (params model) existingVotesStake
+    weightAboveThreshold (params model) existingVotesWeight
   -- Did we reach the quorum threshold with this new vote?
   reachedQuorum =
-    weightAboveThreshold (params model) extendedVotesStake
+    weightAboveThreshold (params model) extendedVotesWeight
   -- The existing certificate (if any) for this round
   certAtRound =
     Map.lookup roundNo (certs model)
@@ -248,9 +284,10 @@ addVote vote model
   freshCert =
     ValidatedPerasCert
       { vpcCert =
-          PerasCert
-            { pcCertRound = getPerasVoteRound vote
-            , pcCertBoostedBlock = getPerasVoteBlock vote
+          MockPerasCert
+            { mockCertRound = roundNo
+            , mockCertBlock = votedBlock
+            , mockCertVoters = extendedVoters
             }
       , vpcCertBoost = perasWeight (params model)
       }

@@ -17,11 +17,12 @@ import Control.Monad (unless)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer (mkTracer, nullTracer, (>$<))
+import Data.SOP (All, Top)
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
@@ -32,6 +33,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
@@ -64,9 +66,11 @@ import Text.Printf (printf)
 
 openLedgerDB ::
   forall blk.
-  ( LedgerSupportsProtocol blk
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   ImmutableDB.ImmutableDB IO blk ->

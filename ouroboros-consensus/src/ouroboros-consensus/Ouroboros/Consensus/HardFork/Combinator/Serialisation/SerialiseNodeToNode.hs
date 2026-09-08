@@ -164,3 +164,21 @@ instance
   where
   encodeNodeToNode = dispatchEncoder `after` (getOneEraGenTxId . getHardForkGenTxId)
   decodeNodeToNode = fmap (HardForkGenTxId . OneEraGenTxId) .: dispatchDecoder
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+instance
+  SerialiseHFC xs =>
+  SerialiseNodeToNode (HardForkBlock xs) (OneEraPerasVote xs)
+  where
+  encodeNodeToNode = dispatchEncoder `after` getOneEraPerasVote
+  decodeNodeToNode = fmap OneEraPerasVote .: dispatchDecoder
+
+instance
+  SerialiseHFC xs =>
+  SerialiseNodeToNode (HardForkBlock xs) (OneEraPerasCert xs)
+  where
+  encodeNodeToNode = dispatchEncoder `after` getOneEraPerasCert
+  decodeNodeToNode = fmap OneEraPerasCert .: dispatchDecoder

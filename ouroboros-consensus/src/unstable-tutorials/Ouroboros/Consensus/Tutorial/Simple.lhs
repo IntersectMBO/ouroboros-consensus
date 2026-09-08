@@ -51,10 +51,21 @@ First, some imports we'll need:
 >    Header, StorageConfig, ChainHash, HasHeader(..), HeaderFields(..),
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
->   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
+>    (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
 > import Ouroboros.Consensus.Ticked ( Ticked, Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
->   (BlockSupportsProtocol (tiebreakerView, validateView))
+>    ( BlockSupportsProtocol (tiebreakerView, validateView)
+>    , BlockSupportsPeras (..)
+>    , VoidPerasCert
+>    , VoidPerasCrypto
+>    , VoidPerasError
+>    , VoidPerasVote
+>    , VoidPerasVotingCommitteeScheme
+>    , defaultForgePerasCert
+>    , defaultForgePerasVoteIfEligible
+>    , defaultVerifyPerasCert
+>    , defaultVerifyPerasVote
+>    )
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
@@ -396,7 +407,20 @@ will know nothing about the structure of the data - instead there are other
 typeclasses needed to build an interface to derive things that are needed from
 this value.  We'll implement those typeclasses next.
 
+We also need to instantiate `BlockSupportsPeras` for `BlockC`. Since `BlockC`
+does not support Peras, we use the void Peras types and default implementations.
 
+> instance BlockSupportsPeras BlockC where
+>   type PerasVote BlockC = VoidPerasVote BlockC
+>   type PerasCert BlockC = VoidPerasCert BlockC
+>   type PerasError BlockC = VoidPerasError BlockC
+>   type PerasCrypto BlockC = VoidPerasCrypto BlockC
+>   type PerasVotingCommitteeScheme BlockC = VoidPerasVotingCommitteeScheme
+>   forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+>   verifyPerasVote = defaultVerifyPerasVote
+>   forgePerasCert = defaultForgePerasCert
+>   verifyPerasCert = defaultVerifyPerasCert
+>   getPerasCertInBlock _ = Right Nothing
 
 Interface to the Block Header
 -----------------------------

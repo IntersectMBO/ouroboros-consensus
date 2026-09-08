@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPerasVotesAfter
   , getPerasVoteIds
   , getLatestPerasCertOnChainRound
+  , getPerasEpochContextResolver
   , getStatistics
   , getTipBlock
   , getTipHeader
@@ -49,6 +50,7 @@ import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable
@@ -61,6 +63,8 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver)
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , takeVolatileSuffix
@@ -370,6 +374,23 @@ getPerasVoteIds ::
   ChainDbEnv m blk -> STM m (Set PerasVoteId)
 getPerasVoteIds CDB{..} = PerasVoteDB.getVoteIds cdbPerasVoteDB
 
+getLatestPerasCertOnChainRound ::
+  IOLike m =>
+  ChainDbEnv m blk ->
+  STM m (Maybe PerasRoundNo)
+getLatestPerasCertOnChainRound CDB{..} = do
+  strictMaybeToMaybe
+    . latestPerasCertOnChainRound
+    . perasState
+    <$> LedgerDB.getVolatileTip cdbLedgerDB
+
+getPerasEpochContextResolver ::
+  MonadSTM m =>
+  ChainDbEnv m blk ->
+  STM m (PerasEpochContextResolver blk)
+getPerasEpochContextResolver =
+  fmap (perasEpochContextResolver . perasState) . getCurrentLedger
+
 -- | Wait until the slot of the given point is smaller or equal than the immutable tip slot,
 --   and then return:
 --   - the block at the target slot if there is a block in the immutable DB at that slot;
@@ -403,14 +424,6 @@ waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
           <> show e
           <> ". The ImmutableDB could have been concurrently truncated."
     result@Right{} -> pure result
-
-getLatestPerasCertOnChainRound ::
-  IOLike m =>
-  ChainDbEnv m blk ->
-  STM m (Maybe PerasRoundNo)
-getLatestPerasCertOnChainRound _ = do
-  -- Placeholder until we finish rewiring this into the extended ledger state
-  pure Nothing
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

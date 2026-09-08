@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 module Ouroboros.Consensus.Mock.Node.BFT
   ( MockBftBlock
   , blockForgingBft
@@ -10,7 +12,8 @@ import Ouroboros.Consensus.Block.Forging (BlockForging)
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Node
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -26,34 +29,40 @@ protocolInfoBft ::
   HardFork.EraParams ->
   ProtocolInfo MockBftBlock
 protocolInfoBft numCoreNodes nid securityParam eraParams =
-  ProtocolInfo
-    { pInfoConfig =
-        TopLevelConfig
-          { topLevelConfigProtocol =
-              BftConfig
-                { bftParams =
-                    BftParams
-                      { bftNumNodes = numCoreNodes
-                      , bftSecurityParam = securityParam
-                      }
-                , bftSignKey = signKey nid
-                , bftVerKeys =
-                    Map.fromList
-                      [ (CoreId n, verKey n)
-                      | n <- enumCoreNodes numCoreNodes
-                      ]
-                }
-          , topLevelConfigLedger = SimpleLedgerConfig () eraParams defaultMockConfig
-          , topLevelConfigBlock = SimpleBlockConfig
-          , topLevelConfigCodec = SimpleCodecConfig
-          , topLevelConfigStorage = SimpleStorageConfig securityParam
-          , topLevelConfigCheckpoints = emptyCheckpointsMap
-          }
-    , pInfoInitLedger =
-        ExtLedgerState
-          (genesisSimpleLedgerState addrDist)
-          (genesisHeaderState ())
-    }
+  let ledgerConfig = SimpleLedgerConfig () eraParams defaultMockConfig
+   in ProtocolInfo
+        { pInfoConfig =
+            TopLevelConfig
+              { topLevelConfigProtocol =
+                  BftConfig
+                    { bftParams =
+                        BftParams
+                          { bftNumNodes = numCoreNodes
+                          , bftSecurityParam = securityParam
+                          }
+                    , bftSignKey = signKey nid
+                    , bftVerKeys =
+                        Map.fromList
+                          [ (CoreId n, verKey n)
+                          | n <- enumCoreNodes numCoreNodes
+                          ]
+                    }
+              , topLevelConfigLedger = ledgerConfig
+              , topLevelConfigBlock = SimpleBlockConfig
+              , topLevelConfigCodec = SimpleCodecConfig
+              , topLevelConfigStorage = SimpleStorageConfig securityParam
+              , topLevelConfigCheckpoints = emptyCheckpointsMap
+              }
+        , pInfoInitLedger =
+            let ledgerState = genesisSimpleLedgerState addrDist
+                headerState = genesisHeaderState ()
+                perasState = initPerasState ledgerConfig ledgerState headerState
+             in ExtLedgerState
+                  { ledgerState
+                  , headerState
+                  , perasState
+                  }
+        }
  where
   signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN
   signKey (CoreNodeId n) = SignKeyMockDSIGN n

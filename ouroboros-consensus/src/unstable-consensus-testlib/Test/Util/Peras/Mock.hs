@@ -5,9 +5,12 @@
 module Test.Util.Peras.Mock
   ( genMockPerasVotingCommitteeInput
   , genMockPerasVotingCommittee
+  , genMockPerasEpochContext
   , genMockPerasVote
+  , genMockValidatedPerasVote
   , genMockPerasCert
   , genMockPerasCertFullCommittee
+  , genMockValidatedPerasCert
   , genMockPerasVoterIndices
   , pickSeatIndexFromCommittee
   , genVotersSubset
@@ -18,6 +21,14 @@ import Data.Either (fromRight)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
+import Ouroboros.Consensus.Block
+  ( PerasParams (..)
+  )
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( PerasEpochContext (..)
+  , ValidatedPerasCert (..)
+  , ValidatedPerasVote (..)
+  )
 import Ouroboros.Consensus.Committee.Class
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Crypto.Mock
@@ -25,6 +36,7 @@ import Ouroboros.Consensus.Peras.Crypto.Mock
   , MockPerasVotingCommitteeScheme
   , VotingCommittee (..)
   , VotingCommitteeInput (..)
+  , getEligibilityWitness
   , unsafeIntToSeatIndex
   )
 import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
@@ -34,6 +46,7 @@ import Test.Util.Peras.Common
   ( NonEmptyListWithUniqueIds (..)
   , genLedgerStake
   , genNonEmptyListWithUniqueIds
+  , genPerasParams
   , genPointTestBlock
   , genPoolId
   , genRoundNo
@@ -61,6 +74,12 @@ genMockPerasVotingCommittee =
   fromRight (error "mkVotingCommittee cannot fail for the mock committee")
     . mkVotingCommittee
     <$> genMockPerasVotingCommitteeInput
+
+genMockPerasEpochContext :: Gen (PerasEpochContext TestBlock)
+genMockPerasEpochContext =
+  PerasEpochContext
+    <$> genMockPerasVotingCommittee
+    <*> genPerasParams
 
 pickSeatIndexFromCommittee ::
   VotingCommittee
@@ -106,6 +125,28 @@ genMockPerasVote committee = do
       , mockVoteBlock = block
       }
 
+genMockValidatedPerasVote ::
+  PerasEpochContext TestBlock ->
+  Gen (ValidatedPerasVote TestBlock)
+genMockValidatedPerasVote context = do
+  let committee = pecCommittee context
+  vote <- genMockPerasVote committee
+  let voteWeight =
+        case getEligibilityWitness committee (mockVoteSeatIndex vote) of
+          Just witness ->
+            eligiblePartyVoteWeight committee witness
+          Nothing ->
+            error $
+              unlines
+                [ "genMockValidatedPerasVote: seat index of vote generated from"
+                , " the committee should be part of the committee"
+                ]
+  pure
+    ValidatedPerasVote
+      { vpvVote = vote
+      , vpvVoteWeight = voteWeight
+      }
+
 genMockPerasCert ::
   VotingCommittee
     (MockPerasCrypto TestBlock)
@@ -142,4 +183,17 @@ genMockPerasCertFullCommittee committee = do
       { mockCertVoters = voters
       , mockCertRound = roundNo
       , mockCertBlock = block
+      }
+
+genMockValidatedPerasCert ::
+  PerasEpochContext TestBlock ->
+  Gen (ValidatedPerasCert TestBlock)
+genMockValidatedPerasCert context = do
+  let committee = pecCommittee context
+  let params = pecParams context
+  cert <- genMockPerasCertFullCommittee committee
+  pure $
+    ValidatedPerasCert
+      { vpcCert = cert
+      , vpcCertBoost = perasWeight params
       }

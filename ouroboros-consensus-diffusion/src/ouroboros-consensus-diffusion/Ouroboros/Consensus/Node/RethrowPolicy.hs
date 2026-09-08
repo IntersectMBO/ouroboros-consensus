@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Node.RethrowPolicy (consensusRethrowPolicy) where
@@ -10,7 +11,7 @@ import Control.ResourceRegistry
   )
 import Data.Proxy (Proxy)
 import Data.Typeable (Typeable)
-import Ouroboros.Consensus.Block (StandardHash)
+import Ouroboros.Consensus.Block (BlockSupportsPeras (..), StandardHash)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( BlockFetchServerException
@@ -48,7 +49,10 @@ import System.FS.API.Types (FsError)
 -- terminate with a storage layer exception (restart with full recovery).
 consensusRethrowPolicy ::
   forall blk.
-  (Typeable blk, StandardHash blk) =>
+  ( Typeable blk
+  , StandardHash blk
+  , Show (PerasError blk)
+  ) =>
   Proxy blk ->
   RethrowPolicy
 consensusRethrowPolicy pb =
@@ -103,8 +107,9 @@ consensusRethrowPolicy pb =
     <> mkRethrowPolicy
       ( \_ctx (e :: PerasVoteDbError blk) ->
           case e of
-            MultipleWinnersInRound{} -> ourBug -- TODO: should we instead shutdown the node?
+            MultipleWinnersInRound{} -> ourBug
             ForgingCertError{} -> ourBug
+            EpochContextNotFoundForRound{} -> ourBug
       )
     -- Some chain sync client exceptions indicate malicious behaviour,
     -- others merely mean that we should disconnect from this client

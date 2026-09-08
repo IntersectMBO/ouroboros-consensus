@@ -94,6 +94,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
@@ -466,6 +467,8 @@ data ChainDB m blk = ChainDB
   -- given one, in ascending order.
   , getPerasVoteIds :: STM m (Set PerasVoteId)
   -- ^ Get the set of all Peras vote IDs currently in the database.
+  , getPerasEpochContextResolverHandle :: PerasEpochContextResolverHandle m blk
+  -- ^ Returns a handle to obtain the 'PerasEpochContext' for a given 'PerasRoundNo'
   , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
   -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
   --   - returns the block when it becomes the immutable tip,

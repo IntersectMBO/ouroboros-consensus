@@ -47,9 +47,10 @@
 --
 -- = Quorum Threshold and Multiple Winners
 --
--- The quorum threshold is parameterized via 'PerasParams'. Depending on this
--- configuration and the weight distribution, it may be theoretically possible
--- for multiple targets to exceed the threshold within the same round.
+-- The quorum threshold is parameterized via 'PerasParams' inside
+-- 'PerasEpochContext'. Depending on this configuration and the weight
+-- distribution, it may be theoretically possible for multiple targets to exceed
+-- the threshold within the same round.
 --
 -- This module treats multiple winners as an error condition and rejects votes
 -- that would cause this, raising instead a 'RoundVoteStateLoserAboveQuorum'
@@ -90,18 +91,25 @@ module Ouroboros.Consensus.Peras.Vote.Aggregation
   , PerasTargetVoteState
   , getPerasTargetVoteStateTotalWeight
   , getPerasTargetVoteStateBlock
+  , PerasVoteCollectionWithQuorum (..)
   ) where
 
 import Control.Exception (assert)
+import Control.Monad.Class.MonadSTM (MonadSTM (..))
+import Data.Bifunctor (Bifunctor (..))
 import Data.Functor.Compose (Compose (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime)
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextNotFoundForRound
+  , PerasEpochContextResolverHandle (..)
+  , resolveRoundNo
+  )
 
 {-------------------------------------------------------------------------------
   Voting state for a given Peras round
@@ -110,6 +118,7 @@ import Ouroboros.Consensus.BlockchainTime (WithArrivalTime)
 -- | Current vote state for a given round
 data PerasRoundVoteState blk = PerasRoundVoteState
   { prvsRoundNo :: !PerasRoundNo
+  , prvsEpochContext :: !(PerasEpochContext blk)
   , prvsState :: !(Either (NoQuorum blk) (Quorum blk))
   }
 
@@ -234,18 +243,27 @@ getPerasRoundVoteStateMaxTargetedSlot PerasRoundVoteState{prvsState} =
 
 -- | Create a fresh round vote state for the given round number
 freshRoundVoteState ::
+  MonadSTM m =>
   PerasRoundNo ->
-  PerasRoundVoteState blk
-freshRoundVoteState roundNo =
-  PerasRoundVoteState
-    { prvsRoundNo = roundNo
-    , prvsState =
-        Left
-          NoQuorum
-            { candidateStates =
-                Map.empty
-            }
-    }
+  PerasEpochContextResolverHandle m blk ->
+  STM m (Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk))
+freshRoundVoteState roundNo resolverHandle = do
+  resolver <- getPerasEpochContextResolver resolverHandle
+  pure $
+    bimap RoundVoteStateEpochContextNotFound mkFreshRoundVoteState $
+      resolveRoundNo resolver roundNo
+ where
+  mkFreshRoundVoteState context =
+    PerasRoundVoteState
+      { prvsRoundNo = roundNo
+      , prvsEpochContext = context
+      , prvsState =
+          Left
+            NoQuorum
+              { candidateStates =
+                  Map.empty
+              }
+      }
 
 -- | Errors that may occur when updating the round vote state with a new vote
 data UpdateRoundVoteStateError blk
@@ -254,6 +272,8 @@ data UpdateRoundVoteStateError blk
       (PerasTargetVoteState blk 'Loser)
   | RoundVoteStateForgingCertError
       (PerasError blk)
+  | RoundVoteStateEpochContextNotFound
+      PerasEpochContextNotFoundForRound
 
 -- | Add a vote to an existing round vote aggregate.
 --
@@ -263,13 +283,12 @@ data UpdateRoundVoteStateError blk
 -- quorum) or if forging the certificate fails.
 updatePerasRoundVoteState ::
   forall blk.
-  StandardHash blk =>
+  BlockSupportsPeras blk =>
   WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasParams blk ->
   PerasRoundVoteState blk ->
   Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk)
-updatePerasRoundVoteState vote params roundState =
-  assert (getPerasVoteRound vote == prvsRoundNo roundState) $ do
+updatePerasRoundVoteState vote roundState =
+  assert (getPerasVoteRound vote == getPerasRoundVoteStateRound roundState) $ do
     case roundState of
       -- Quorum not yet reached
       state@PerasRoundVoteState
@@ -281,9 +300,9 @@ updatePerasRoundVoteState vote params roundState =
         } -> do
           let updateMaybeCandidateState = \case
                 Nothing ->
-                  candidateOrWinnerVoteStateSingleton params vote
+                  candidateOrWinnerVoteStateSingleton (prvsEpochContext roundState) vote
                 Just oldCandidateState ->
-                  updateCandidateVoteState params vote oldCandidateState
+                  updateCandidateVoteState (prvsEpochContext roundState) vote oldCandidateState
           candidateOrWinnerState <-
             updateMaybeCandidateState (Map.lookup (getPerasVotePoint vote) candidateStates)
           case candidateOrWinnerState of
@@ -312,6 +331,7 @@ updatePerasRoundVoteState vote params roundState =
                 PerasRoundVoteState
                   { prvsRoundNo =
                       prvsRoundNo roundState
+                  , prvsEpochContext = prvsEpochContext roundState
                   , prvsState =
                       Right
                         Quorum
@@ -355,9 +375,9 @@ updatePerasRoundVoteState vote params roundState =
             else do
               let updateMaybeLoserVoteState = \case
                     Nothing ->
-                      loserVoteStateSingleton params winnerState vote
+                      loserVoteStateSingleton (prvsEpochContext roundState) winnerState vote
                     Just oldLoserState ->
-                      updateLoserVoteState params winnerState vote oldLoserState
+                      updateLoserVoteState (prvsEpochContext roundState) winnerState vote oldLoserState
 
               loserStates' <-
                 Map.alterF (\mState -> Just <$> updateMaybeLoserVoteState mState) votePoint loserStates
@@ -380,49 +400,59 @@ updatePerasRoundVoteState vote params roundState =
 -- May fail if the state transition is invalid (e.g., a loser going above
 -- quorum) or if forging the certificate fails.
 updatePerasRoundVoteStates ::
-  forall blk.
-  StandardHash blk =>
+  forall m blk.
+  (BlockSupportsPeras blk, MonadSTM m) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
-  PerasParams blk ->
+  PerasEpochContextResolverHandle m blk ->
   Map PerasRoundNo (PerasRoundVoteState blk) ->
-  Either
-    (UpdateRoundVoteStateError blk)
-    (PerasRoundVoteState blk, Map PerasRoundNo (PerasRoundVoteState blk))
-updatePerasRoundVoteStates vote params =
+  STM
+    m
+    ( Either
+        (UpdateRoundVoteStateError blk)
+        (PerasRoundVoteState blk, Map PerasRoundNo (PerasRoundVoteState blk))
+    )
+updatePerasRoundVoteStates vote epochContextResolverHandle =
   alterMapAndReturnUpdatedValue
     updateMaybePerasRoundVoteState
     (getPerasVoteRound vote)
  where
-  -- We use the Functor instance of `Compose (Either e) ((,) s)` ≅
-  -- `λt. Either e (s, t)` in `Map.alterF`. That way, we can return both the
+  -- We use the Functor instance of `Compose (STM m) (Compose (Either e) ((,) s))` ≅
+  -- `λt. STM m (Either e (s, t))` in `Map.alterF`. That way, we can return both the
   -- updated map and the updated leaf in one pass, and still handle errors.
   alterMapAndReturnUpdatedValue ::
     Ord k =>
-    (Maybe a -> Either e (a, a)) ->
+    (Maybe a -> STM m (Either e (a, a))) ->
     k ->
     Map k a ->
-    Either e (a, Map k a)
+    STM m (Either e (a, Map k a))
   alterMapAndReturnUpdatedValue f k =
-    getCompose . Map.alterF (fmap Just . (Compose . f)) k
+    getCompose . getCompose . Map.alterF (fmap Just . (Compose . Compose . f)) k
 
   -- If there is no existing state for the vote's round, create a fresh one.
   existingOrFreshRoundVoteState ::
     Maybe (PerasRoundVoteState blk) ->
-    PerasRoundVoteState blk
-  existingOrFreshRoundVoteState =
-    fromMaybe (freshRoundVoteState (getPerasVoteRound vote))
+    STM m (Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk))
+  existingOrFreshRoundVoteState = \case
+    Nothing -> freshRoundVoteState (getPerasVoteRound vote) epochContextResolverHandle
+    Just roundState -> pure (Right roundState)
 
   -- Update the round state, creating a fresh one if necessary, and returning
   -- the updated state.
   updateMaybePerasRoundVoteState ::
     Maybe (PerasRoundVoteState blk) ->
-    Either
-      (UpdateRoundVoteStateError blk)
-      (PerasRoundVoteState blk, PerasRoundVoteState blk)
+    STM
+      m
+      ( Either
+          (UpdateRoundVoteStateError blk)
+          (PerasRoundVoteState blk, PerasRoundVoteState blk)
+      )
   updateMaybePerasRoundVoteState mRoundState = do
-    let roundState = existingOrFreshRoundVoteState mRoundState
-    newRoundState <- updatePerasRoundVoteState vote params roundState
-    pure (newRoundState, newRoundState)
+    existingOrFreshRoundVoteState mRoundState >>= \case
+      Left err -> pure (Left err)
+      Right roundState -> do
+        case updatePerasRoundVoteState vote roundState of
+          Left err -> pure (Left err)
+          Right newRoundState -> pure (Right (newRoundState, newRoundState))
 
 {-------------------------------------------------------------------------------
   Peras round vote state pattern synonyms
@@ -543,28 +573,29 @@ ptvsVoteCollection = \case
 
 candidateOrWinnerVoteStateSingleton ::
   BlockSupportsPeras blk =>
-  PerasParams blk ->
+  PerasEpochContext blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   Either
     (UpdateRoundVoteStateError blk)
     (PerasVoteStateCandidateOrWinner blk)
-candidateOrWinnerVoteStateSingleton params vote =
+candidateOrWinnerVoteStateSingleton epochContext vote =
   let voteCollection = perasVoteCollectionSingleton vote
-   in case perasVoteCollectionCheckQuorum params voteCollection of
+   in case perasVoteCollectionCheckQuorum (pecParams epochContext) voteCollection of
         Just votesWithQuorum -> do
-          cert <- forgePerasCert params votesWithQuorum `onErr` RoundVoteStateForgingCertError
+          cert <- forgePerasCert epochContext votesWithQuorum `onErr` RoundVoteStateForgingCertError
           pure $ BecameWinner $ PerasTargetVoteWinner voteCollection cert
         Nothing ->
           pure $ RemainedCandidate $ PerasTargetVoteCandidate voteCollection
 
 loserVoteStateSingleton ::
-  PerasParams blk ->
+  BlockSupportsPeras blk =>
+  PerasEpochContext blk ->
   PerasTargetVoteState blk 'Winner ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   Either (UpdateRoundVoteStateError blk) (PerasTargetVoteState blk 'Loser)
-loserVoteStateSingleton params winnerState vote =
+loserVoteStateSingleton epochContext winnerState vote =
   let voteCollection = perasVoteCollectionSingleton vote
-   in case perasVoteCollectionCheckQuorum params voteCollection of
+   in case perasVoteCollectionCheckQuorum (pecParams epochContext) voteCollection of
         Just _ ->
           Left $ RoundVoteStateLoserAboveQuorum winnerState (PerasTargetVoteLoser voteCollection)
         Nothing ->
@@ -590,20 +621,20 @@ data PerasVoteStateCandidateOrWinner blk
 --
 -- May fail if the candidate is elected winner but forging the certificate fails.
 updateCandidateVoteState ::
-  StandardHash blk =>
-  PerasParams blk ->
+  BlockSupportsPeras blk =>
+  PerasEpochContext blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Candidate ->
   Either
     (UpdateRoundVoteStateError blk)
     (PerasVoteStateCandidateOrWinner blk)
-updateCandidateVoteState params vote oldState =
+updateCandidateVoteState epochContext vote oldState =
   let
     newVoteCollection = perasVoteCollectionAddVote vote (ptvsVoteCollection oldState)
    in
-    case perasVoteCollectionCheckQuorum params newVoteCollection of
+    case perasVoteCollectionCheckQuorum (pecParams epochContext) newVoteCollection of
       Just votesWithQuorum -> do
-        cert <- forgePerasCert params votesWithQuorum `onErr` RoundVoteStateForgingCertError
+        cert <- forgePerasCert epochContext votesWithQuorum `onErr` RoundVoteStateForgingCertError
         pure $ BecameWinner (PerasTargetVoteWinner newVoteCollection cert)
       Nothing -> do
         pure $ RemainedCandidate (PerasTargetVoteCandidate newVoteCollection)
@@ -614,16 +645,16 @@ updateCandidateVoteState params vote oldState =
 --
 -- May fail if the loser goes above quorum by adding the vote.
 updateLoserVoteState ::
-  StandardHash blk =>
-  PerasParams blk ->
+  BlockSupportsPeras blk =>
+  PerasEpochContext blk ->
   PerasTargetVoteState blk 'Winner ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Loser ->
   Either (UpdateRoundVoteStateError blk) (PerasTargetVoteState blk 'Loser)
-updateLoserVoteState params winnerState vote oldState =
+updateLoserVoteState epochContext winnerState vote oldState =
   assert (getPerasVoteTarget vote == pvcTarget (ptvsVoteCollection oldState)) $ do
     let newVoteCollection = perasVoteCollectionAddVote vote (ptvsVoteCollection oldState)
-     in case perasVoteCollectionCheckQuorum params newVoteCollection of
+     in case perasVoteCollectionCheckQuorum (pecParams epochContext) newVoteCollection of
           Just _ ->
             Left $ RoundVoteStateLoserAboveQuorum winnerState (PerasTargetVoteLoser newVoteCollection)
           Nothing ->

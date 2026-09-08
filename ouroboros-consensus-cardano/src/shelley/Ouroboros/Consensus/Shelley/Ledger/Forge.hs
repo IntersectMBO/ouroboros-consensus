@@ -49,6 +49,8 @@ forgeShelleyBlock ::
   BlockNo ->
   -- | Current slot number
   SlotNo ->
+  -- | Optional Peras certificate to include in the block
+  Maybe (PerasCert (ShelleyBlock proto era)) ->
   -- | Current ledger
   TickedLedgerState (ShelleyBlock proto era) mk ->
   -- | Txs to include
@@ -61,6 +63,7 @@ forgeShelleyBlock
   cfg
   curNo
   curSlot
+  _mbPerasCert -- Ignored for now
   tickedLedger
   txs
   isLeader = do

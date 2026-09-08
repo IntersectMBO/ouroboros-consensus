@@ -27,6 +27,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Node.Abstract
+import Ouroboros.Consensus.Mock.Node.Peras ()
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation

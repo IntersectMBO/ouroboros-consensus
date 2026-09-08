@@ -239,17 +239,23 @@ library
     Ouroboros.Consensus.Peras.Cert.Class
     Ouroboros.Consensus.Peras.Cert.Inclusion
     Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
+    Ouroboros.Consensus.Peras.Cert.Mock
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Context
     Ouroboros.Consensus.Peras.Crypto.BLS
+    Ouroboros.Consensus.Peras.Crypto.Mock
+    Ouroboros.Consensus.Peras.Error.Mock
+    Ouroboros.Consensus.Peras.Error.V1
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Void
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Class
+    Ouroboros.Consensus.Peras.Vote.Mock
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Adapter
+    Ouroboros.Consensus.Peras.Voting.Mock
     Ouroboros.Consensus.Peras.Voting.Rules
     Ouroboros.Consensus.Peras.Voting.Trace
     Ouroboros.Consensus.Peras.Voting.View
@@ -375,6 +381,7 @@ library
     containers >=0.5 && <0.9,
     contra-tracer ^>=0.2.1,
     deepseq,
+    extra,
     FailT ^>=0.1.2,
     filelock,
     fs-api ^>=0.4,
@@ -398,7 +405,7 @@ library
     singletons ^>=3,
     small-steps ^>=1.1,
     sop-core ^>=0.5,
-    sop-extras ^>=0.4.1,
+    sop-extras ^>=0.4.2,
     streaming,
     strict >=0.1 && <0.6,
     strict-checked-vars ^>=0.2,
@@ -450,10 +457,6 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: ouroboros-consensus/src/unstable-consensus-testlib
   exposed-modules:
-    Ouroboros.Consensus.Peras.Cert.Mock
-    Ouroboros.Consensus.Peras.Crypto.Mock
-    Ouroboros.Consensus.Peras.Error.Mock
-    Ouroboros.Consensus.Peras.Vote.Mock
     Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
@@ -536,7 +539,6 @@ library unstable-consensus-testlib
     contra-tracer,
     deepseq,
     directory,
-    extra,
     file-embed,
     filepath,
     fs-api,
@@ -840,7 +842,6 @@ test-suite storage-test
     cardano-ledger-binary:testlib,
     cardano-ledger-core:cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
-    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -853,6 +854,7 @@ test-suite storage-test
     io-sim,
     mempack,
     mtl,
+    nonempty-containers,
     nothunks,
     ouroboros-consensus:{lsm, ouroboros-consensus},
     ouroboros-network:{api, api-tests-lib, protocols-tests-lib},
@@ -1385,6 +1387,7 @@ library cardano
     Ouroboros.Consensus.Byron.Ledger.PBFT
     Ouroboros.Consensus.Byron.Ledger.Serialisation
     Ouroboros.Consensus.Byron.Node
+    Ouroboros.Consensus.Byron.Node.Peras
     Ouroboros.Consensus.Byron.Node.Serialisation
     Ouroboros.Consensus.Byron.Protocol
     Ouroboros.Consensus.Cardano
