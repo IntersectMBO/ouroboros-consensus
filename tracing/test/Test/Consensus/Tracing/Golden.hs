@@ -18,10 +18,28 @@ module Test.Consensus.Tracing.Golden (tests) where
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import Cardano.Ledger.Address (AccountAddress (..), AccountId (..))
 import Cardano.Ledger.Alonzo.Scripts (AsItem (..), AsIx (..))
-import Cardano.Ledger.BaseTypes (Mismatch (..), Network (..), Relation (..), TxIx (..))
+import Cardano.Ledger.BaseTypes
+  ( Anchor (..)
+  , Mismatch (..)
+  , Network (..)
+  , Relation (..)
+  , StrictMaybe (..)
+  , TxIx (..)
+  , Url
+  , textToUrl
+  )
+import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Conway (ConwayEra)
+import Cardano.Ledger.Conway.Governance
+  ( GovAction (..)
+  , ProposalProcedure (..)
+  , Voter (..)
+  )
 import Cardano.Ledger.Conway.Scripts (ConwayPlutusPurpose (..))
+import Cardano.Ledger.Conway.TxCert (ConwayDelegCert (..), ConwayTxCert (..))
 import Cardano.Ledger.Credential (Credential (..))
+import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.Dijkstra.Scripts (DijkstraPlutusPurpose (..))
 import Cardano.Ledger.Hashes
   ( KeyHash (..)
   , KeyRole (..)
@@ -36,6 +54,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.NonEmpty (NonEmptyMap)
 import qualified Data.Map.NonEmpty as NonEmptyMap
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -86,6 +105,7 @@ shelleyRender =
         ( "renderRewardAccount mainnet/script"
         , renderRewardAccount (accountAddress Mainnet (ScriptHashObj (scriptHash '4')))
         )
+      , ("renderTxIn", renderTxIn txIn)
       ]
     , -- Every purpose, by index. This is the ExtraRedeemers field, and it has to
       -- keep matching cardano-api's toScriptIndex + ToJSON ScriptWitnessIndex:
@@ -93,11 +113,18 @@ shelleyRender =
       [ ("renderScriptIndex " <> label, json (renderScriptIndex purpose))
       | (label, purpose) <- purposesByIndex
       ]
-    , -- Note the asymmetry: spending and rewarding render their item directly,
-      -- minting wraps it in {"item": ...} via ToJSON (AsItem ix it). That is what
-      -- cardano-api did.
+    , -- Note the asymmetry: spending, rewarding and guarding render their item
+      -- directly, the other four wrap it in {"item": ...} via
+      -- ToJSON (AsItem ix it). That is what cardano-api did.
       [ ("renderScriptPurpose " <> label, json (renderScriptPurpose purpose))
       | (label, purpose) <- purposesByItem
+      ]
+    , -- Guarding only exists from Dijkstra on, so it needs its own era. Going
+      -- through DijkstraPlutusPurpose also exercises the other AnyEraScript
+      -- instance, rather than only Conway's.
+
+      [ ("renderScriptIndex guarding", json (renderScriptIndex guardingByIndex))
+      , ("renderScriptPurpose guarding", json (renderScriptPurpose guardingByItem))
       ]
     ,
       [ ("renderMissingRedeemers", json (renderMissingRedeemers missingRedeemers))
@@ -119,8 +146,33 @@ purposesByItem :: [(String, ConwayPlutusPurpose AsItem ConwayEra)]
 purposesByItem =
   [ ("spending", ConwaySpending (AsItem txIn))
   , ("minting", ConwayMinting (AsItem (PolicyID (scriptHash '5'))))
+  , ("certifying", ConwayCertifying (AsItem txCert))
   , ("withdrawing", ConwayWithdrawing (AsItem (accountAddress Mainnet (KeyHashObj (keyHash '6')))))
+  , ("voting", ConwayVoting (AsItem (StakePoolVoter (keyHash 'b'))))
+  , ("proposing", ConwayProposing (AsItem proposal))
   ]
+
+guardingByIndex :: DijkstraPlutusPurpose AsIx DijkstraEra
+guardingByIndex = DijkstraGuarding (AsIx 6)
+
+guardingByItem :: DijkstraPlutusPurpose AsItem DijkstraEra
+guardingByItem = DijkstraGuarding (AsItem (scriptHash 'f'))
+
+txCert :: ConwayTxCert ConwayEra
+txCert = ConwayTxCertDeleg (ConwayRegCert (KeyHashObj (keyHash 'c')) SNothing)
+
+proposal :: ProposalProcedure ConwayEra
+proposal =
+  ProposalProcedure
+    { pProcDeposit = Coin 1000
+    , pProcReturnAddr = accountAddress Mainnet (KeyHashObj (keyHash 'd'))
+    , pProcGovAction = InfoAction
+    , pProcAnchor =
+        Anchor
+          { anchorUrl = url "https://example.com"
+          , anchorDataHash = unsafeMakeSafeHash (hash 'e')
+          }
+    }
 
 missingRedeemers :: NonEmpty.NonEmpty (ConwayPlutusPurpose AsItem ConwayEra, ScriptHash)
 missingRedeemers =
@@ -156,6 +208,11 @@ accountAddress n c = AccountAddress n (AccountId c)
 
 txIn :: TxIn
 txIn = TxIn (TxId (unsafeMakeSafeHash (hash 'a'))) (TxIx 0)
+
+-- | 'textToUrl' only rejects text longer than the given bound, which the
+-- literals here are not.
+url :: Text -> Url
+url t = fromMaybe (error ("golden: not a URL: " <> Text.unpack t)) (textToUrl 64 t)
 
 --
 
