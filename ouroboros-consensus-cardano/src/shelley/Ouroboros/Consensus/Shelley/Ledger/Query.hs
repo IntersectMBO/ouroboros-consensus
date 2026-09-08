@@ -882,7 +882,7 @@ decodeShelleyQuery = do
       case peerKind of
         0 -> pure $ SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers)
         1 -> pure $ SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers)
-        _ -> failmsg $ "invalid peer kind tag " <> show tag
+        _ -> failmsg $ "invalid peer kind " <> show peerKind
     (2, 35) -> requireCG $ SomeBlockQuery . QueryStakePoolDefaultVote <$> LC.fromEraCBOR @era
     (2, 36) -> SomeBlockQuery . GetPoolDistr2 <$> fromCBOR
     (1, 37) -> return $ SomeBlockQuery GetStakeDistribution2
