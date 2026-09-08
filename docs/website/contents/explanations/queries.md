@@ -146,7 +146,7 @@ and the serialization of the arguments.
 | 8   | `DebugEpochState`                         |                                     |                                                                                               | `EpochState era`                                             |
 | 9   | `GetCBOR`                                 | the version of the internal query   | `BlockQuery (ShelleyBlock proto era) fp result`                                               | `BlockQuery (ShelleyBlock proto era) fp (Serialised result)` |
 | 10  | `GetFilteredDelegationsAndRewardAccounts` |                                     | `Set (Credential Staking)`                                                                    | `(Delegations, Map (Credential Staking) Coin)`               |
-| 11  | `GetGenesisConfig`                        |                                     |                                                                                               | `CompactGenesis` ‡                                           |
+| 11  | `GetGenesisConfig`                        |                                     |                                                                                               | `CompactGenesis`                                             |
 | 12  | `DebugNewEpochState`                      |                                     |                                                                                               | `NewEpochState era`                                          |
 | 13  | `DebugChainDepState`                      |                                     |                                                                                               | `ChainDepState proto`                                        |
 | 14  | `GetRewardProvenance`                     |                                     |                                                                                               | `RewardProvenance`                                           |
@@ -168,8 +168,8 @@ and the serialization of the arguments.
 | 31  | `GetProposals`                            | †                                   | `Set GovActionId`                                                                             | `Seq (GovActionState era)`                                   |
 | 32  | `GetRatifyState`                          | †                                   |                                                                                               | `RatifyState era`                                            |
 | 33  | `GetFuturePParams`                        |                                     |                                                                                               | `Maybe (PParams era)`                                        |
-| 34  | `GetBigLedgerPeerSnapshot`                |                                     |                                                                                               | `LedgerPeerSnapshot` ‡                                       |
-| 35  | `GetStakePoolDefaultVote`                 | †                                   | `KeyHash StakePool`                                                                           | `DefaultVote`                                                |
+| 34  | `GetLedgerPeerSnapshot`                   |                                     | `SingLedgerPeersKind`, encoded as `0` (all peers) or `1` (big peers)                          | `LedgerPeerSnapshot`                                         |
+| 35  | `QueryStakePoolDefaultVote`               | †                                   | `KeyHash StakePool`                                                                           | `DefaultVote`                                                |
 | 36  | `GetPoolDistr2`                           |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `PoolDistr`                                                  |
 | 37  | `GetStakeDistribution2`                   |                                     |                                                                                               | `PoolDistr`                                                  |
 | 38  | `GetMaxMajorProtocolVersion`              |                                     |                                                                                               | `MaxMajorProtVer`                                            |
@@ -178,8 +178,3 @@ and the serialization of the arguments.
 †: Even if an appropriate version is enabled, these queries can only be answered
 when the corresponding era is Conway or later, as they relate to governance
 concepts only present starting on Conway.
-
-‡: The format of the result of these queries depend on the particular
-`NodeToClientVersion` negotiated. For now, do check
-[`encodeShelleyResult`](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus-cardano/Ouroboros-Consensus-Shelley-Ledger-Query.html#v:encodeShelleyResult)
-to see what exactly changes.
