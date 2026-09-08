@@ -228,15 +228,15 @@ data Query blk result where
     SingI footprint => BlockQuery blk footprint result -> Query blk result
   -- | Get the 'SystemStart' time.
   --
-  -- Supported by 'QueryVersion' >= 'QueryVersion1'.
+  -- Supported by 'QueryVersion' >= 'QueryVersion3'.
   GetSystemStart :: Query blk SystemStart
   -- | Get the 'GetChainBlockNo' time.
   --
-  -- Supported by 'QueryVersion' >= 'QueryVersion2'.
+  -- Supported by 'QueryVersion' >= 'QueryVersion3'.
   GetChainBlockNo :: Query blk (WithOrigin BlockNo)
   -- | Get the 'GetChainPoint' time.
   --
-  -- Supported by 'QueryVersion' >= 'QueryVersion2'.
+  -- Supported by 'QueryVersion' >= 'QueryVersion3'.
   GetChainPoint :: Query blk (Point blk)
   -- | Get the ledger config. Note that this is a debug query, so we are not
   -- (yet) guaranteeing stability across node versions.
@@ -333,10 +333,10 @@ queryIsSupportedOnVersion ::
   BlockNodeToClientVersion blk ->
   Bool
 queryIsSupportedOnVersion q qv bv = case q of
-  BlockQuery q' -> qv >= QueryVersion1 && blockQueryIsSupportedOnVersion q' bv
-  GetSystemStart{} -> qv >= QueryVersion1
-  GetChainBlockNo{} -> qv >= QueryVersion2
-  GetChainPoint{} -> qv >= QueryVersion2
+  BlockQuery q' -> qv >= QueryVersion3 && blockQueryIsSupportedOnVersion q' bv
+  GetSystemStart{} -> qv >= QueryVersion3
+  GetChainBlockNo{} -> qv >= QueryVersion3
+  GetChainPoint{} -> qv >= QueryVersion3
   DebugLedgerConfig{} -> qv >= QueryVersion3
 
 querySupportedVersions ::
@@ -474,8 +474,6 @@ queryDecodeNodeToClient ::
   Decoder s (SomeSecond Query blk)
 queryDecodeNodeToClient codecConfig queryVersion blockVersion =
   case queryVersion of
-    QueryVersion1 -> handleTopLevelQuery
-    QueryVersion2 -> handleTopLevelQuery
     QueryVersion3 -> handleTopLevelQuery
  where
   handleTopLevelQuery :: Decoder s (SomeSecond Query blk)
@@ -483,10 +481,10 @@ queryDecodeNodeToClient codecConfig queryVersion blockVersion =
     size <- decodeListLen
     tag <- decodeWord8
     case (size, tag) of
-      (2, 0) -> requireVersion QueryVersion1 =<< decodeBlockQuery
-      (1, 1) -> requireVersion QueryVersion1 $ SomeSecond GetSystemStart
-      (1, 2) -> requireVersion QueryVersion2 $ SomeSecond GetChainBlockNo
-      (1, 3) -> requireVersion QueryVersion2 $ SomeSecond GetChainPoint
+      (2, 0) -> requireVersion QueryVersion3 =<< decodeBlockQuery
+      (1, 1) -> requireVersion QueryVersion3 $ SomeSecond GetSystemStart
+      (1, 2) -> requireVersion QueryVersion3 $ SomeSecond GetChainBlockNo
+      (1, 3) -> requireVersion QueryVersion3 $ SomeSecond GetChainPoint
       (1, 4) -> requireVersion QueryVersion3 $ SomeSecond DebugLedgerConfig
       _ -> fail $ "Query: invalid size and tag" <> show (size, tag)
 

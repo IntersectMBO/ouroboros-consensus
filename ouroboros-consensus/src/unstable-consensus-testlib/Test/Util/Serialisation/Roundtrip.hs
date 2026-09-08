@@ -415,8 +415,6 @@ instance
       -- This case statement will cause a warning when we add a new top
       -- level query and hence a new QueryVersion. In that case we should
       -- support such top level `Query` constructors in this Arbitrary instance.
-      Query.QueryVersion1 -> genTopLevelQuery1
-      Query.QueryVersion2 -> genTopLevelQuery2
       Query.QueryVersion3 -> genTopLevelQuery3
    where
     mkEntry ::
@@ -427,22 +425,6 @@ instance
     mkEntry qv q = do
       blockV <- arbitrary
       return (WithVersion (qv, blockV) (SomeSecond q))
-
-    genTopLevelQuery1 =
-      let version = Query.QueryVersion1
-       in frequency
-            [ (15, arbitraryBlockQuery version)
-            , (1, mkEntry version GetSystemStart)
-            ]
-
-    genTopLevelQuery2 =
-      let version = Query.QueryVersion2
-       in frequency
-            [ (15, arbitraryBlockQuery version)
-            , (1, mkEntry version GetSystemStart)
-            , (1, mkEntry version GetChainBlockNo)
-            , (1, mkEntry version GetChainPoint)
-            ]
 
     genTopLevelQuery3 =
       let version = Query.QueryVersion3
