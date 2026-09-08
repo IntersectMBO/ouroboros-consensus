@@ -980,17 +980,23 @@ decodeShelleyResult v query = case query of
   GetMaxMajorProtocolVersion -> fromCBOR
   GetDRepDelegations{} -> LC.fromEraCBOR @era
 
+-- | The codec for the result of 'GetGenesisConfig'.
+--
+-- 'ShelleyNodeToClientVersion15' uses the 15-field encoding of
+-- 'encodeShelleyGenesisNoExtraConfig', which omits @sgExtraConfig@.
+--
+-- Matching on the constructors is deliberate: a new 'ShelleyNodeToClientVersion'
+-- makes this pattern match non-exhaustive, and that new version should use plain
+-- 'toCBOR'/'fromCBOR', ie the ledger's own 'ShelleyGenesis' codec including
+-- @sgExtraConfig@.
 genesisConfigEnDecoding ::
   forall s.
   ShelleyNodeToClientVersion ->
   (CompactGenesis -> Encoding, Decoder s CompactGenesis)
-genesisConfigEnDecoding v
-  | v > ShelleyNodeToClientVersion15 =
-      (toCBOR, fromCBOR)
-  | otherwise =
-      ( encodeShelleyGenesisNoExtraConfig . getCompactGenesis
-      , compactGenesis <$> decodeShelleyGenesisNoExtraConfig
-      )
+genesisConfigEnDecoding ShelleyNodeToClientVersion15 =
+  ( encodeShelleyGenesisNoExtraConfig . getCompactGenesis
+  , compactGenesis <$> decodeShelleyGenesisNoExtraConfig
+  )
 
 {-------------------------------------------------------------------------------
  Instances to implement BlockSupportsHFLedgerQuery
