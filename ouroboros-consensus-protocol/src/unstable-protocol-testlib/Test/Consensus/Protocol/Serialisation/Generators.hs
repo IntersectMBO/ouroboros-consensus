@@ -23,7 +23,7 @@ import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , EbHash (MkEbHash)
   )
-import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
+import Ouroboros.Consensus.Protocol.Praos (BasePraosState (PraosState), PraosState)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)

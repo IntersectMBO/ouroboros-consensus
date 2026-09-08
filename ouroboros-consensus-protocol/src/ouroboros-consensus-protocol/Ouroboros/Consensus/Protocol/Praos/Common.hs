@@ -6,7 +6,11 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -25,6 +29,17 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
   , instantiatePraosCredentials
+
+    -- * Leios
+  , PraosExtension (..)
+  , HasLeiosProof
+  , WhetherHasLeios (..)
+  , WhetherHasLeiosDecided (..)
+  , KnownPraosExtension (..)
+  , SingPraosExtension (..)
+  , StrictMaybeLeios (..)
+  , mkStrictMaybeLeios
+  , toHasLeiosProof
   ) where
 
 import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN)
@@ -35,18 +50,24 @@ import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.KESAgent.KES.Crypto as Agent
 import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Binary (FromCBOR, ToCBOR)
+import Cardano.Ledger.Binary (FromCBOR (..), ToCBOR (..))
 import Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
+import Control.DeepSeq (NFData (..))
 import qualified Control.Tracer as Tracer
 import Data.Function (on)
+import Data.Kind (Constraint, Type)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
+import Data.Proxy (Proxy (Proxy))
+import Data.Type.Equality ((:~:) (Refl))
+import Data.Typeable (Typeable, typeRep)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import GHC.Show (showSpace)
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -359,3 +380,123 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
   getPraosNonces :: proxy p -> ChainDepState p -> PraosNonces
 
   getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash BlockIssuer) Word64
+
+-----
+
+-- | Which optional extensions to the base Praos protocol are enabled.
+--
+-- We define them here, as part of Praos, because we want exactly one single
+-- source of truth (this module) to explicitly determine how the the base
+-- protocol and whichever of its extensions are enabled simultaneously to
+-- interact /as a @ConsensusProtocol@/.
+--
+-- We define one constructor per the set of extensions that are known to be
+-- simultaneously compatible.
+data PraosExtension = PextNone | PextLeios
+
+-- | When possible, use 'WhetherHasLeiosDecided' instead
+type SingPraosExtension :: PraosExtension -> Type
+data SingPraosExtension pext where
+  SingPextNone :: SingPraosExtension PextNone
+  SingPextLeios :: SingPraosExtension PextLeios
+
+-- | A 'Bool' isomorph for better type errors
+data WhetherHasLeios = PextHasLeios | PextDoesNotHaveLeios
+
+data WhetherHasLeiosDecided pext =
+    (PraosExtensionHasLeios pext ~ PextHasLeios) => PextHasLeiosDecided
+  |
+    (PraosExtensionHasLeios pext ~ PextDoesNotHaveLeios) => PextDoesNotHaveLeiosDecided
+
+type KnownPraosExtension :: PraosExtension -> Constraint
+class Typeable pext => KnownPraosExtension pext where
+  type PraosExtensionHasLeios pext :: WhetherHasLeios
+  praosExtensionHasLeios :: proxy pext -> WhetherHasLeiosDecided pext
+  -- | When possible, use 'praosExtensionHasLeios' instead
+  singPraosExtension :: proxy pext -> SingPraosExtension pext
+
+instance KnownPraosExtension PextNone where
+  type PraosExtensionHasLeios _ = PextDoesNotHaveLeios
+  praosExtensionHasLeios = const PextDoesNotHaveLeiosDecided
+  singPraosExtension = const SingPextNone
+
+instance KnownPraosExtension PextLeios where
+  type PraosExtensionHasLeios _ = PextHasLeios
+  praosExtensionHasLeios = const PextHasLeiosDecided
+  singPraosExtension = const SingPextLeios
+
+-----
+
+-- | Newtype wrapper to avoid NoThunks orphan
+type HasLeiosProof :: PraosExtension -> Type
+newtype HasLeiosProof pext =
+    MkHasLeiosProof (PraosExtensionHasLeios pext :~: PextHasLeios)
+  deriving (Eq, Show)
+
+deriving via OnlyCheckWhnf (HasLeiosProof pext) instance Typeable pext => NoThunks (HasLeiosProof pext)
+
+toHasLeiosProof :: WhetherHasLeiosDecided pext -> Maybe (HasLeiosProof pext)
+toHasLeiosProof = \case
+  PextHasLeiosDecided -> Just $ MkHasLeiosProof Refl
+  PextDoesNotHaveLeiosDecided -> Nothing
+
+-----
+
+type StrictMaybeLeios :: PraosExtension -> Type -> Type
+-- | Like 'StrictMaybe', but it's @SJust@ if and only if 'PraosExtensionHasLeios'
+data StrictMaybeLeios pext a where
+  -- | Encoding and decoding this is a complete noop.
+  SNothingLeios :: (PraosExtensionHasLeios pext ~ PextDoesNotHaveLeios) => StrictMaybeLeios pext a
+  -- | Encoding and decoding this has no extra wrapper.
+  SJustLeios :: (PraosExtensionHasLeios pext ~ PextHasLeios) => !a -> StrictMaybeLeios pext a
+
+instance Functor (StrictMaybeLeios pext) where
+  fmap f = \case
+    SNothingLeios -> SNothingLeios
+    SJustLeios a -> SJustLeios $ f a
+
+instance Foldable (StrictMaybeLeios pext) where
+  foldMap f = \case
+    SNothingLeios -> mempty
+    SJustLeios a -> f a
+
+instance Traversable (StrictMaybeLeios pext) where
+  traverse f = \case
+    SNothingLeios -> pure SNothingLeios
+    SJustLeios a -> SJustLeios <$> f a
+
+mkStrictMaybeLeios :: forall pext a.
+  KnownPraosExtension pext =>
+  ((PraosExtensionHasLeios pext ~ PextHasLeios) => a) ->
+  StrictMaybeLeios pext a
+mkStrictMaybeLeios k = case praosExtensionHasLeios (Proxy @pext) of
+    PextHasLeiosDecided -> SJustLeios k
+    PextDoesNotHaveLeiosDecided -> SNothingLeios
+
+instance Eq a => Eq (StrictMaybeLeios pext a) where
+  SNothingLeios == SNothingLeios = True
+  SJustLeios a == SJustLeios b = a == b
+
+instance Ord a => Ord (StrictMaybeLeios pext a) where
+  compare SNothingLeios SNothingLeios = EQ
+  compare (SJustLeios a) (SJustLeios b) = compare a b
+
+instance Show a => Show (StrictMaybeLeios pext a) where
+  showsPrec p = \case
+      SNothingLeios -> showString "SNothingLeios"
+      SJustLeios a -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows a
+
+instance NFData a => NFData (StrictMaybeLeios pext a) where
+  rnf = \case
+      SNothingLeios -> ()
+      SJustLeios a -> rnf a
+
+instance (Typeable pext, NoThunks a) => NoThunks (StrictMaybeLeios pext a) where
+  showTypeOf _ = unwords
+      [ "StrictMaybeLeios"
+      , "(" ++ show (typeRep (Proxy @pext)) ++ ")"
+      , "(" ++ showTypeOf (Proxy @a) ++ ")"
+      ]
+  wNoThunks ctxt = \case
+      SNothingLeios -> wNoThunks ctxt ()
+      SJustLeios a -> wNoThunks ctxt a
