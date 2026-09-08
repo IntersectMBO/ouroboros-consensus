@@ -601,16 +601,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           ledgerView <- getLedgerView trace cfg currentSlot unticked
 
-          -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
-          -- only need the ticked 'ChainDepState' to check the whether we're a leader.
-          -- This is much cheaper than ticking the entire 'ExtLedgerState'.
-          let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
-              tickedChainDepState =
-                tickChainDepState
-                  (configConsensus cfg)
-                  ledgerView
-                  currentSlot
-                  (headerStateChainDep (headerState unticked))
+          let tickedChainDepState = getTickedChainDepState cfg currentSlot unticked ledgerView
 
           -- Check if we are the leader
           proof <- do
@@ -921,6 +912,23 @@ getLedgerView trace cfg currentSlot unticked = do
 
   trace $ TraceLedgerView currentSlot
   pure ledgerView
+
+getTickedChainDepState ::
+  RunNode blk =>
+  TopLevelConfig blk ->
+  SlotNo ->
+  ExtLedgerState blk EmptyMK ->
+  LedgerView (BlockProtocol blk) ->
+  Ticked (ChainDepState (BlockProtocol blk))
+getTickedChainDepState cfg currentSlot unticked ledgerView =
+  -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
+  -- only need the ticked 'ChainDepState' to check whether we're a leader.
+  -- This is much cheaper than ticking the entire 'ExtLedgerState'.
+  tickChainDepState
+    (configConsensus cfg)
+    ledgerView
+    currentSlot
+    (headerStateChainDep (headerState unticked))
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
