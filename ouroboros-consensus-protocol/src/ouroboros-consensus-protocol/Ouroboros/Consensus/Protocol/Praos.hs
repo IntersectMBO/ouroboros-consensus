@@ -16,7 +16,10 @@
 
 module Ouroboros.Consensus.Protocol.Praos
   ( ConsensusConfig (..)
+  , BasePraos
+  , Leios
   , Praos
+  , PraosExtensions (..)
   , PraosCannotForge (..)
   , PraosCrypto
   , PraosFields (..)
@@ -138,7 +141,14 @@ import Ouroboros.Consensus.Util.Versioned
   , encodeVersion
   )
 
-data Praos c
+-- | Which optional extensions to the base Praos protocol are enabled.
+data PraosExtensions = NoExtensions | ExtLeios
+
+data BasePraos (exts :: PraosExtensions) c
+
+type Praos = BasePraos NoExtensions
+
+type Leios = BasePraos ExtLeios
 
 class
   ( Crypto c
