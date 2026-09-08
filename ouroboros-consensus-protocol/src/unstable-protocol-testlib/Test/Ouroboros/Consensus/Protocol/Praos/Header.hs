@@ -101,7 +101,7 @@ import Ouroboros.Consensus.Protocol.Praos.Header
   , HeaderBody (..)
   , pattern Header
   )
-import Ouroboros.Consensus.Protocol.Praos.VRF
+import Cardano.Protocol.Praos.VRF
   ( InputVRF
   , mkInputVRF
   , vrfLeaderValue

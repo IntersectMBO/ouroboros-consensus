@@ -39,10 +39,13 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , SingPraosExtension (..)
   , StrictMaybeLeios (..)
   , toHasLeiosProof
+  , fromCodecEbAnnouncement
+  , toCodecEbAnnouncement
   ) where
 
 import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN)
 import Cardano.Crypto.DSIGN.Class (SignKeyDSIGN)
+import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES.Class as KES
 import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
@@ -50,12 +53,19 @@ import qualified Cardano.KESAgent.KES.Crypto as Agent
 import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Ledger.Hashes
+  ( HASH
+  , extractHash
+  , unsafeMakeSafeHash
+  )
 import Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
 import Control.DeepSeq (NFData (..))
+import qualified Data.ByteString as BS
 import qualified Control.Tracer as Tracer
 import Data.Function (on)
 import Data.Kind (Constraint, Type)
@@ -67,6 +77,7 @@ import Data.Typeable (Typeable, typeRep)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Show (showSpace)
+import LeiosDemoTypes (EbAnnouncement (..), EbHash (MkEbHash))
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -491,3 +502,41 @@ instance (Typeable whether, NoThunks a) => NoThunks (StrictMaybeLeios whether a)
   wNoThunks ctxt = \case
       SNothingLeios -> wNoThunks ctxt ()
       SJustLeios a -> wNoThunks ctxt a
+
+-----
+
+-- | The announcement as 'LeiosDemoTypes' spells it.
+--
+-- The two records differ only in how they identify the endorser block: upstream
+-- carries a 'SafeHash', 'LeiosDemoTypes' the raw bytes.
+fromCodecEbAnnouncement :: LeiosCodec.EbAnnouncement -> EbAnnouncement
+fromCodecEbAnnouncement ann =
+  EbAnnouncement
+    { ebAnnouncementHash =
+        MkEbHash $ Hash.hashToBytes $ extractHash $ LeiosCodec.ebAnnouncementHash ann
+    , ebAnnouncementSize = LeiosCodec.ebAnnouncementSize ann
+    }
+
+-- | The inverse of 'fromCodecEbAnnouncement'.
+--
+-- Partial, where 'fromCodecEbAnnouncement' is total: an 'EbHash' is raw bytes of
+-- any length, whereas upstream's 'SafeHash' is exactly 'Hash.hashSize' of them.
+-- Every 'EbHash' reaching here was built by hashing an endorser block, so a
+-- wrong length means whatever produced it is at fault, not the input.
+toCodecEbAnnouncement :: EbAnnouncement -> LeiosCodec.EbAnnouncement
+toCodecEbAnnouncement ann =
+  LeiosCodec.EbAnnouncement
+    { LeiosCodec.ebAnnouncementHash = unsafeMakeSafeHash hash
+    , LeiosCodec.ebAnnouncementSize = ebAnnouncementSize ann
+    }
+ where
+  MkEbHash bytes = ebAnnouncementHash ann
+
+  hash = case Hash.hashFromBytes bytes of
+    Just h -> h
+    Nothing ->
+      error $
+        "toCodecEbAnnouncement: EbHash of "
+          <> show (BS.length bytes)
+          <> " bytes, but a SafeHash needs "
+          <> show (Hash.hashSize (Proxy @HASH))

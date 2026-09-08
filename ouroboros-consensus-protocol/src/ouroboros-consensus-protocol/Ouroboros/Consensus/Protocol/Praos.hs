@@ -59,7 +59,7 @@ import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import Cardano.Ledger.Dijkstra (DijkstraEra)
-import Cardano.Ledger.Hashes (HASH, extractHash, unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (HASH)
 import Cardano.Ledger.Keys
   ( DSIGN
   , KeyHash
@@ -100,12 +100,17 @@ import Cardano.Slotting.Slot
   )
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.Praos.BlockHeader as PraosCodec
+import Cardano.Protocol.Praos.VRF
+  ( InputVRF
+  , mkInputVRF
+  , vrfLeaderValue
+  , vrfNonceValue
+  )
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (decode, encode))
 import Control.Exception (throw)
 import Control.Monad (unless)
 import Control.Monad.Except (Except, runExcept, throwError)
-import qualified Data.ByteString as BS
 import Data.Coerce (coerce)
 import Data.Functor.Identity (runIdentity)
 import Data.Kind (Type)
@@ -115,10 +120,7 @@ import Data.Proxy (Proxy (Proxy))
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes
-  ( EbAnnouncement (..)
-  , EbHash (MkEbHash)
-  )
+import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -128,12 +130,6 @@ import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos.Common
-import Ouroboros.Consensus.Protocol.Praos.VRF
-  ( InputVRF
-  , mkInputVRF
-  , vrfLeaderValue
-  , vrfNonceValue
-  )
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos
   ( ConsensusConfig (TPraosConfig, tpraosEpochInfo, tpraosParams)
@@ -557,10 +553,14 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
       --     chain-dep state has no announcement, so the first header can't set
       --     its cert bit)
       --   * LeiosCertTooYoung - check the slot gap against L
-      --   * LeiosEbTooBig - the maximum EB body size
-      --   * LeiosEbTxsTooBig - the maximum EB closure size
-      --   * LeiosEbCertExclusivity - the set cert bit requires the no txs
+      --   * LeiosEbTooBig - the maximum EB body size. NB the closure size
+      --     cannot be checked here: the announcement carries only the one
+      --     size, and it is the body size
       --   * etc
+      --
+      -- NB cert/txs exclusivity is not among these: it is a property of the
+      -- body, and 'blockMatchesHeader' already enforces it where the body is
+      -- in hand.
 
       -- First, we check the KES signature, which validates that the issuer is
       -- in fact who they say they are.
@@ -618,42 +618,6 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
       newEvolvingNonce = praosStateEvolvingNonce cs ⭒ eta
       OCert _ n _ _ = Views.hvOCert b
       hk = hashKey $ Views.hvVK b
-
--- | The announcement as 'LeiosDemoTypes' spells it.
---
--- The two records differ only in how they identify the endorser block: the
--- ledger codec carries a 'SafeHash', 'LeiosDemoTypes' the raw bytes.
-fromCodecEbAnnouncement :: LeiosCodec.EbAnnouncement -> EbAnnouncement
-fromCodecEbAnnouncement ann =
-  EbAnnouncement
-    { ebAnnouncementHash =
-        MkEbHash $ Hash.hashToBytes $ extractHash $ LeiosCodec.ebAnnouncementHash ann
-    , ebAnnouncementSize = LeiosCodec.ebAnnouncementSize ann
-    }
-
--- | The inverse of 'fromCodecEbAnnouncement'.
---
--- Partial, where 'fromCodecEbAnnouncement' is total: an 'EbHash' is raw bytes
--- of any length, whereas the codec's 'SafeHash' is exactly 'Hash.sizeHash' of
--- them. Every 'EbHash' reaching here was built by hashing an endorser block, so
--- a wrong length means whatever produced it is at fault, not the input.
-toCodecEbAnnouncement :: EbAnnouncement -> LeiosCodec.EbAnnouncement
-toCodecEbAnnouncement ann =
-  LeiosCodec.EbAnnouncement
-    { LeiosCodec.ebAnnouncementHash = unsafeMakeSafeHash hash
-    , LeiosCodec.ebAnnouncementSize = ebAnnouncementSize ann
-    }
- where
-  MkEbHash bytes = ebAnnouncementHash ann
-
-  hash = case Hash.hashFromBytes bytes of
-    Just h -> h
-    Nothing ->
-      error $
-        "toCodecEbAnnouncement: EbHash of "
-          <> show (BS.length bytes)
-          <> " bytes, but a SafeHash needs "
-          <> show (Hash.hashSize (Proxy @HASH))
 
 -- | Check whether this node meets the leader threshold to issue a block.
 meetsLeaderThreshold ::

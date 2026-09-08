@@ -29,7 +29,7 @@ import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
   )
-import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
+import Cardano.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Cardano.StrictContainers.Instances ()
 import Test.Crypto.KES ()
