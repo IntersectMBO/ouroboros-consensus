@@ -64,7 +64,7 @@ import Cardano.Ledger.Slot (Duration (Duration), (+*))
 import qualified Cardano.Ledger.State as SL
 import Cardano.Protocol.Crypto (Crypto, KES, StandardCrypto, VRF)
 import qualified Cardano.Protocol.TPraos.API as SL
-import Cardano.Protocol.TPraos.BHeader
+import Cardano.Protocol.TPraos.BlockHeader
   ( BoundedNatural (bvValue)
   , checkLeaderNatValue
   , prevHashToNonce
