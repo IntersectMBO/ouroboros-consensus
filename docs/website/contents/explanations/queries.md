@@ -73,6 +73,28 @@ instead we focus on the Cardano version. All the current versions imply also
 |-----------------------|--------------------------------|--------------------------------|
 | `NodeToClientV_23`    | `CardanoNodeToClientVersion19` | `ShelleyNodeToClientVersion15` |
 
+What determines when a version may be dropped is the `cardano-node` release
+that first shipped it, since a client built against an older `cardano-node` can
+offer nothing newer than that release's maximum:
+
+| `NodeToClientVersion` | First shipped in `cardano-node` |
+|-----------------------|---------------------------------|
+| `NodeToClientV_16`    | 9.0.0                           |
+| `NodeToClientV_17`    | 9.2.0                           |
+| `NodeToClientV_18`    | 10.1.1                          |
+| `NodeToClientV_19`    | 10.2.1                          |
+| `NodeToClientV_20`    | 10.3.1                          |
+| `NodeToClientV_21`    | 10.6.0                          |
+| `NodeToClientV_22`    | 10.6.0                          |
+| `NodeToClientV_23`    | 10.7.0                          |
+
+Note that 11.x introduced no new version: 10.7.1 and 11.0.1 both use
+`ouroboros-consensus-3.0.1.0` and so offer the very same set.
+
+This table is mirrored by the comment on
+[`supportedNodeToClientVersions`](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus-cardano/Ouroboros-Consensus-Cardano-Node.html)
+for `CardanoBlock`; keep the two in sync when a new version is added.
+
 ## Codecs
 
 Queries are sent over the LocalStateQuery mini-protocol (section 3.13 in [the
