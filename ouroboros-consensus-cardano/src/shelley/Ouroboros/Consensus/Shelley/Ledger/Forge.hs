@@ -22,7 +22,7 @@ import qualified Cardano.Ledger.Core as SL
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import Cardano.Prelude (nonEmpty)
-import qualified Cardano.Protocol.TPraos.BHeader as SL
+import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
 import Control.Monad (when)
 import Control.Tracer (traceWith)

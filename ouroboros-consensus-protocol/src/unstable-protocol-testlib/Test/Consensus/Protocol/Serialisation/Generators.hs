@@ -8,7 +8,7 @@ module Test.Consensus.Protocol.Serialisation.Generators () where
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
-import Cardano.Protocol.TPraos.BHeader (HashHeader, PrevHash (..))
+import Cardano.Protocol.TPraos.BlockHeader (HashHeader, PrevHash (..))
 import Cardano.Protocol.TPraos.OCert
   ( KESPeriod (KESPeriod)
   , OCert (OCert)

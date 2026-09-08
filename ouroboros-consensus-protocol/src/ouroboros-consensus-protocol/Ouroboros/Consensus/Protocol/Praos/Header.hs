@@ -86,7 +86,7 @@ import Cardano.Ledger.MemoBytes
   , mkMemoized
   )
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
-import Cardano.Protocol.TPraos.BHeader (PrevHash)
+import Cardano.Protocol.TPraos.BlockHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)

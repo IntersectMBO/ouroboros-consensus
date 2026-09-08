@@ -15,7 +15,7 @@ import Cardano.Ledger.Chain (ChainChecksPParams (..))
 import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (KES, VRF)
-import Cardano.Protocol.TPraos.BHeader (PrevHash)
+import Cardano.Protocol.TPraos.BlockHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Slot (SlotNo)
 import Data.Word (Word16, Word32)

@@ -42,7 +42,7 @@ import Cardano.Ledger.Binary (runByteBuilder)
 import Cardano.Ledger.Hashes (HASH)
 import Cardano.Ledger.Slot (SlotNo (SlotNo))
 import Cardano.Protocol.Crypto (Crypto (VRF))
-import Cardano.Protocol.TPraos.BHeader
+import Cardano.Protocol.TPraos.BlockHeader
   ( BoundedNatural
   , assertBoundedNatural
   )

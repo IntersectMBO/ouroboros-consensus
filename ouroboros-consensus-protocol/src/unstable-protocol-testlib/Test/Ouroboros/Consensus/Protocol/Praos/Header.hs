@@ -66,7 +66,7 @@ import Cardano.Ledger.Keys
   , hashKey
   , signedDSIGN
   )
-import Cardano.Protocol.TPraos.BHeader
+import Cardano.Protocol.TPraos.BlockHeader
   ( HashHeader (..)
   , PrevHash (..)
   , checkLeaderNatValue
