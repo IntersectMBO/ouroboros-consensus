@@ -9,10 +9,19 @@
 --
 -- These need no trace values: everything here is derived from 'allNamespaces'
 -- and the namespace-indexed methods. That makes them cheap enough to run over
--- every traced type, and they catch the mistakes that are easy to make when
--- writing an instance by hand -- a namespace left out of 'allNamespaces', a
--- typo that makes a namespace unreachable, a missing severity (which silently
--- makes the message unconfigurable) or missing documentation.
+-- every traced type. What they check is that every namespace in
+-- 'allNamespaces' is well formed: it is non-empty and unique, and it has a
+-- severity (a missing one silently makes the message unconfigurable), a
+-- privacy, a detail level and documentation, each of which has to be
+-- answerable from the namespace alone, since the methods are queried with no
+-- trace value. And that trace-dispatcher accepts the resulting tree, so that
+-- every namespace is addressable.
+--
+-- What they do not check is the other direction: 'namespaceFor' is never
+-- called, so a constructor whose namespace is missing from 'allNamespaces',
+-- or a typo that appears in both places, still passes. Catching that needs
+-- trace values, and these types have neither 'Arbitrary' nor 'Enum'
+-- instances.
 module Test.Consensus.Tracing.MetaTrace (tests) where
 
 import Cardano.Logging
