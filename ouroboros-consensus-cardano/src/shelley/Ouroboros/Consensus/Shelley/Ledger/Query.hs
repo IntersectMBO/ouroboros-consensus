@@ -84,7 +84,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
-  , ledgerPeerSnapshotSupportsSRV
   )
 import Ouroboros.Consensus.Shelley.Ledger.PeerSelection ()
 import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
@@ -875,6 +874,9 @@ decodeShelleyQuery = do
     (2, 31) -> requireCG $ SomeBlockQuery . GetProposals <$> LC.fromEraCBOR @era
     (1, 32) -> requireCG $ return $ SomeBlockQuery GetRatifyState
     (1, 33) -> requireCG $ return $ SomeBlockQuery GetFuturePParams
+    (1, 34) ->
+      failmsg
+        "GetLedgerPeerSnapshot takes a peer kind: send [34, 0] for all peers or [34, 1] for big peers,"
     (2, 34) -> do
       peerKind <- CBOR.decodeWord8
       case peerKind of
@@ -927,7 +929,7 @@ encodeShelleyResult v query = case query of
   GetProposals{} -> LC.toEraCBOR @era
   GetRatifyState{} -> LC.toEraCBOR @era
   GetFuturePParams{} -> LC.toEraCBOR @era
-  GetLedgerPeerSnapshot{} -> encodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
+  GetLedgerPeerSnapshot{} -> encodeLedgerPeerSnapshot
   QueryStakePoolDefaultVote{} -> LC.toEraCBOR @era
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era

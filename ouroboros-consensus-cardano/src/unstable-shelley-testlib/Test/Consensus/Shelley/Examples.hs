@@ -57,6 +57,7 @@ import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.Block (Serialised (..))
+import Ouroboros.Network.Magic (NetworkMagic (..))
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import Ouroboros.Network.PeerSelection.RelayAccessPoint
 import qualified Test.Cardano.Ledger.Babbage.Examples as Babbage
@@ -149,18 +150,17 @@ fromShelleyLedgerExamples
           ( "GetBigLedgerPeerSnapshot"
           , SomeResult
               (GetLedgerPeerSnapshot SingBigLedgerPeers)
-              ( LedgerPeerSnapshotV2
-                  ( NotOrigin slotNo
-                  ,
-                    [
-                      ( AccPoolStake 0.9
-                      ,
-                        ( PoolStake 0.9
-                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
-                        )
+              ( LedgerBigPeerSnapshotV23
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH>"))
+                  (NetworkMagic 42)
+                  [
+                    ( AccPoolStake 0.9
+                    ,
+                      ( PoolStake 0.9
+                      , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                       )
-                    ]
-                  )
+                    )
+                  ]
               )
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
@@ -287,18 +287,17 @@ fromShelleyLedgerExamplesPraos
           ( "GetBigLedgerPeerSnapshot"
           , SomeResult
               (GetLedgerPeerSnapshot SingBigLedgerPeers)
-              ( LedgerPeerSnapshotV2
-                  ( NotOrigin slotNo
-                  ,
-                    [
-                      ( AccPoolStake 0.9
-                      ,
-                        ( PoolStake 0.9
-                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
-                        )
+              ( LedgerBigPeerSnapshotV23
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH>"))
+                  (NetworkMagic 42)
+                  [
+                    ( AccPoolStake 0.9
+                    ,
+                      ( PoolStake 0.9
+                      , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                       )
-                    ]
-                  )
+                    )
+                  ]
               )
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)

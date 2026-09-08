@@ -4,13 +4,11 @@
 module Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
   , ShelleyNodeToNodeVersion (..)
-  , ledgerPeerSnapshotSupportsSRV
   ) where
 
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Shelley.Ledger.Block
-import Ouroboros.Network.PeerSelection.LedgerPeers.Type (LedgerPeerSnapshotSRVSupport (..))
 
 data ShelleyNodeToNodeVersion = ShelleyNodeToNodeVersion1
   deriving (Show, Eq, Ord, Enum, Bounded)
@@ -20,9 +18,6 @@ data ShelleyNodeToClientVersion
     -- New queries introduced: QueryDRepDelegations
     ShelleyNodeToClientVersion15
   deriving (Show, Eq, Ord, Enum, Bounded)
-
-ledgerPeerSnapshotSupportsSRV :: ShelleyNodeToClientVersion -> LedgerPeerSnapshotSRVSupport
-ledgerPeerSnapshotSupportsSRV ShelleyNodeToClientVersion15 = LedgerPeerSnapshotSupportsSRV
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
   type BlockNodeToNodeVersion (ShelleyBlock proto era) = ShelleyNodeToNodeVersion
