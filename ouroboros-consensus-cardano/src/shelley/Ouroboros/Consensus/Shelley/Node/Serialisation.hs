@@ -42,7 +42,8 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
-import Ouroboros.Consensus.Protocol.Praos (PraosState)
+import Ouroboros.Consensus.Protocol.Praos (BasePraosState)
+import Ouroboros.Consensus.Protocol.Praos.Common (KnownPraosExtension)
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
@@ -106,11 +107,17 @@ instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) TPra
 instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) TPraosState where
   decodeDisk _ = decode
 
-instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) PraosState where
+instance
+  (ShelleyCompatible proto era, KnownPraosExtension pext) =>
+  EncodeDisk (ShelleyBlock proto era) (BasePraosState pext)
+  where
   encodeDisk _ = encode
 
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) PraosState where
+instance
+  (ShelleyCompatible proto era, KnownPraosExtension pext) =>
+  DecodeDisk (ShelleyBlock proto era) (BasePraosState pext)
+  where
   decodeDisk _ = decode
 
 instance

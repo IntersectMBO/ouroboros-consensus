@@ -19,9 +19,9 @@ module Ouroboros.Consensus.Shelley.HFEras
 
 import Cardano.Ledger.Dijkstra.Era (DijkstraEraBlockHeader (..))
 import Cardano.Protocol.Crypto
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Header (Header)
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.Eras
@@ -60,7 +60,7 @@ type StandardBabbageBlock = ShelleyBlock (Praos StandardCrypto) BabbageEra
 
 type StandardConwayBlock = ShelleyBlock (Praos StandardCrypto) ConwayEra
 
-type StandardDijkstraBlock = ShelleyBlock (Praos StandardCrypto) DijkstraEra
+type StandardDijkstraBlock = ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra
 
 {-------------------------------------------------------------------------------
   ShelleyCompatible
@@ -86,8 +86,8 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) BabbageEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
-instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra where
+instance Praos.PraosCrypto c => ShelleyCompatible (PraosWithLeios c) DijkstraEra where
   workaroundLedgerIssue5937 = encodeShelleyBlockWorkaroundLedgerIssue5937
 
-instance Crypto c => DijkstraEraBlockHeader (Header c) DijkstraEra where
+instance Crypto c => DijkstraEraBlockHeader (LeiosCodec.Header c) DijkstraEra where
   prevNonceBlockHeaderL = error "Not implemented. Peras placeholder"

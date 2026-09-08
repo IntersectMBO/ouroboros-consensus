@@ -53,7 +53,7 @@ import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ledger.Tables
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger
   ( BigEndianTxIn
@@ -110,7 +110,7 @@ data CardanoTxOut c
   | AlonzoTxOut !(TxOut (LedgerState (ShelleyBlock (TPraos c) AlonzoEra)))
   | BabbageTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) BabbageEra)))
   | ConwayTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) ConwayEra)))
-  | DijkstraTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) DijkstraEra)))
+  | DijkstraTxOut !(TxOut (LedgerState (ShelleyBlock (PraosWithLeios c) DijkstraEra)))
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
