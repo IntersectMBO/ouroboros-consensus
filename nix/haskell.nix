@@ -65,13 +65,21 @@ let
         packages.cardano-ledger-dijkstra.components.library.doHaddock = false;
         packages.cardano-ledger-mary.components.library.doHaddock = false;
         packages.cardano-ledger-shelley.components.library.doHaddock = false;
-        # Options related to tasty and tasty-golden:
-        packages.ouroboros-consensus.components.tests =
-          lib.listToAttrs (map
-            (n: lib.nameValuePair "${n}-test" {
-              testFlags = lib.mkForce [ "--no-create --hide-successes" ];
-              extraSrcFiles = [ "ouroboros-consensus-cardano/golden/${n}/**/*" ];
-            }) [ "byron" "shelley" "cardano" ]);
+        # Options related to tasty and tasty-golden. The golden files live
+        # outside their test component's hs-source-dirs, so each one has to be
+        # listed here; otherwise haskell.nix prunes it out of the component
+        # source and tasty-golden creates it and passes instead of comparing.
+        packages.ouroboros-consensus.components.tests = lib.mapAttrs
+          (_: golden: {
+            testFlags = lib.mkForce [ "--no-create --hide-successes" ];
+            extraSrcFiles = [ "${golden}/**/*" ];
+          })
+          {
+            byron-test = "ouroboros-consensus-cardano/golden/byron";
+            shelley-test = "ouroboros-consensus-cardano/golden/shelley";
+            cardano-test = "ouroboros-consensus-cardano/golden/cardano";
+            tracing-test = "tracing/golden";
+          };
       }
       ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
         # https://github.com/input-output-hk/haskell.nix/issues/2332
