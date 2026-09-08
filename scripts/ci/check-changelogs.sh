@@ -18,6 +18,7 @@ libraries=("ouroboros-consensus/src/ouroboros-consensus"
            "ouroboros-consensus-cardano/src/ouroboros-consensus-cardano"
            "ouroboros-consensus-cardano/src/byron"
            "ouroboros-consensus-cardano/src/shelley"
+           "tracing"
           )
 
 echo "####### Checking for Haskell changes"
