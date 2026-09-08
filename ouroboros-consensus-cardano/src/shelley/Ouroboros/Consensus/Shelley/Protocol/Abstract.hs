@@ -62,8 +62,11 @@ import Ouroboros.Consensus.Protocol.Abstract
   , ValidateView
   )
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Common (HasMaxMajorProtVer)
-import Ouroboros.Consensus.Protocol.Praos.Header (HeaderLeiosExtension)
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( HasMaxMajorProtVer
+  , StrictMaybeLeios
+  , WhetherHasLeios
+  )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -150,6 +153,13 @@ default_pHeaderLeiosContainsCert = const False
 --    header (made specific to KES-using protocols through the need to handle
 --    the hot key).
 class ProtocolHeaderSupportsKES proto where
+  -- | Whether this protocol's header carries the Leios fields.
+  --
+  -- Unlike 'ShelleyProtocolHeader' this is not injective — several protocols
+  -- have no Leios — but it only ever indexes a 'StrictMaybeLeios', so nothing
+  -- needs to invert it.
+  type ProtoHasLeios proto :: WhetherHasLeios
+
   -- | Extract the "slots per KES period" value from the protocol config.
   --
   --   Note that we do not require `ConsensusConfig` in 'verifyHeaderIntegrity'
@@ -181,8 +191,9 @@ class ProtocolHeaderSupportsKES proto where
     Int ->
     -- | Protocol version
     ProtVer ->
-    -- | Optional fields for Leios
-    StrictMaybe HeaderLeiosExtension ->
+    -- | Optional fields for Leios: whether the body carries a certificate, and
+    -- this header's announcement, if any
+    StrictMaybeLeios (ProtoHasLeios proto) (Bool, StrictMaybe EbAnnouncement) ->
     m (ShelleyProtocolHeader proto)
 
   -- | Extract the most recently announced (and not yet certified) Leios EB
