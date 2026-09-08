@@ -1,8 +1,10 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -17,7 +19,11 @@ import qualified Cardano.Protocol.Praos.BlockHeader as Praos
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Cardano.Slotting.EpochInfo
 import Control.Monad (replicateM)
+import qualified Data.ByteString.Short as SBS
 import Data.Coerce (coerce)
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Ratio ((%))
+import Data.Word (Word16)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -32,6 +38,19 @@ import Ouroboros.Consensus.Shelley.Node.Common ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Network.Block (mkSerialised)
+import Ouroboros.Network.Magic (NetworkMagic (..))
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type
+  ( AccPoolStake (..)
+  , LedgerPeerSnapshot (..)
+  , LedgerPeersKind (..)
+  , PoolStake (..)
+  , RawBlockHash (..)
+  , SingLedgerPeersKind (..)
+  )
+import Ouroboros.Network.PeerSelection.RelayAccessPoint
+  ( IP (..)
+  , LedgerRelayAccessPoint (..)
+  )
 import Test.Cardano.Ledger.Shelley.Constants
   ( defaultConstants
   , numCoreNodes
@@ -169,6 +188,8 @@ instance CanMock proto era => Arbitrary (SomeBlockQuery (BlockQuery (ShelleyBloc
       , pure $ SomeBlockQuery GetGenesisConfig
       , pure $ SomeBlockQuery DebugNewEpochState
       , pure $ SomeBlockQuery GetStakeDistribution2
+      , pure $ SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers)
+      , pure $ SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers)
       ]
 
 instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeResult (ShelleyBlock proto era)) where
@@ -187,7 +208,68 @@ instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeRes
       , SomeResult GetGenesisConfig . compactGenesis <$> arbitrary
       , SomeResult DebugNewEpochState <$> arbitrary
       , SomeResult GetStakeDistribution2 <$> arbitrary
+      , SomeResult (GetLedgerPeerSnapshot SingBigLedgerPeers) <$> genBigLedgerPeerSnapshot
+      , SomeResult (GetLedgerPeerSnapshot SingAllLedgerPeers) <$> genAllLedgerPeerSnapshot
       ]
+
+{-------------------------------------------------------------------------------
+  Generators for ledger peer snapshots
+
+  Plain 'Gen's rather than 'Arbitrary' instances, to avoid clashing with the
+  orphan instances @ouroboros-network@'s test library defines for some of these
+  types.
+-------------------------------------------------------------------------------}
+
+genBigLedgerPeerSnapshot :: Gen (LedgerPeerSnapshot BigLedgerPeers)
+genBigLedgerPeerSnapshot =
+  LedgerBigPeerSnapshotV23
+    <$> genLedgerPeerSnapshotPoint
+    <*> (NetworkMagic <$> arbitrary)
+    <*> listOf
+      ( (,)
+          <$> (AccPoolStake <$> genStake)
+          <*> ((,) <$> (PoolStake <$> genStake) <*> genRelays)
+      )
+
+genAllLedgerPeerSnapshot :: Gen (LedgerPeerSnapshot AllLedgerPeers)
+genAllLedgerPeerSnapshot =
+  LedgerAllPeerSnapshotV23
+    <$> genLedgerPeerSnapshotPoint
+    <*> (NetworkMagic <$> arbitrary)
+    <*> listOf ((,) <$> (PoolStake <$> genStake) <*> genRelays)
+
+-- | Both 'GenesisPoint' and 'BlockPoint' have their own encoding, so generate
+-- both.
+genLedgerPeerSnapshotPoint :: Gen (Point RawBlockHash)
+genLedgerPeerSnapshotPoint =
+  oneof
+    [ pure GenesisPoint
+    , BlockPoint
+        <$> (SlotNo <$> arbitrary)
+        <*> (RawBlockHash . SBS.pack <$> vectorOf 32 arbitrary)
+    ]
+
+-- | Stake is documented to be in @[0, 1]@.
+genStake :: Gen Rational
+genStake = (% 1000) <$> choose (0, 1000)
+
+genRelays :: Gen (NonEmpty LedgerRelayAccessPoint)
+genRelays =
+  (:|)
+    <$> genLedgerRelayAccessPoint
+    <*> listOf genLedgerRelayAccessPoint
+
+genLedgerRelayAccessPoint :: Gen LedgerRelayAccessPoint
+genLedgerRelayAccessPoint =
+  oneof
+    [ LedgerRelayAccessAddress <$> genIP <*> genPort
+    , LedgerRelayAccessDomain <$> genDomain <*> genPort
+    , LedgerRelayAccessSRVDomain <$> genDomain
+    ]
+ where
+  genIP = elements [IPv4 "1.1.1.1", IPv4 "3.3.3.3", IPv6 "2001:db8::1"]
+  genDomain = elements ["test1.", "test2.", "test3."]
+  genPort = fromIntegral <$> (arbitrary :: Gen Word16)
 
 instance Arbitrary NonMyopicMemberRewards where
   arbitrary = NonMyopicMemberRewards <$> arbitrary

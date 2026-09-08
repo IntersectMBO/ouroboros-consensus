@@ -131,6 +131,7 @@ fromShelleyLedgerExamples
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
         , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
+        , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
         ]
@@ -159,6 +160,20 @@ fromShelleyLedgerExamples
                       ( PoolStake 0.9
                       , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                       )
+                    )
+                  ]
+              )
+          )
+        ,
+          ( "GetAllLedgerPeerSnapshot"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingAllLedgerPeers)
+              ( LedgerAllPeerSnapshotV23
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH>"))
+                  (NetworkMagic 42)
+                  [
+                    ( PoolStake 0.9
+                    , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                     )
                   ]
               )
@@ -268,6 +283,7 @@ fromShelleyLedgerExamplesPraos
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
         , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
+        , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
         ]
@@ -296,6 +312,20 @@ fromShelleyLedgerExamplesPraos
                       ( PoolStake 0.9
                       , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                       )
+                    )
+                  ]
+              )
+          )
+        ,
+          ( "GetAllLedgerPeerSnapshot"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingAllLedgerPeers)
+              ( LedgerAllPeerSnapshotV23
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH>"))
+                  (NetworkMagic 42)
+                  [
+                    ( PoolStake 0.9
+                    , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                     )
                   ]
               )
