@@ -69,6 +69,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
+import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime)
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandle (..)
@@ -601,7 +602,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           ledgerView <- getLedgerView trace cfg currentSlot unticked
 
-          let tickedChainDepState = getTickedChainDepState cfg currentSlot unticked ledgerView
+          tickedChainDepState <- getTickedChainDepState cfg currentSlot unticked ledgerView
 
           proof <-
             getIsLeaderProof
@@ -616,28 +617,13 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
-          mempoolSnapshot <-
-            lift $
-              getSnapshotFor
-                mempool
-                currentSlot
-                tickedLedgerState
-                (roforkerReadTables forker)
-
-          let (txs, txssz) =
-                snapshotTake mempoolSnapshot $
-                  blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-          -- NB respect the capacity of the ledger state we're extending,
-          -- which is /not/ 'snapshotLedgerState'
-
-          -- force the mempool's computation before the tracer event
-          _ <- evaluate (length txs)
+          (txs, txssz, snapSize) <- getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker
 
           pure
             ( txs
             , txssz
             , proof
-            , snapshotMempoolSize mempoolSnapshot
+            , snapSize
             , forgetLedgerTables tickedLedgerState
             , ledgerTipPoint (ledgerState unticked)
             )
@@ -872,22 +858,23 @@ getLedgerView trace cfg currentSlot unticked = do
   trace $ TraceLedgerView currentSlot
   pure ledgerView
 
+-- | Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
+-- only need the ticked 'ChainDepState' to check whether we're a leader.
+-- This is much cheaper than ticking the entire 'ExtLedgerState'.
 getTickedChainDepState ::
-  RunNode blk =>
+  (IOLike m, RunNode blk) =>
   TopLevelConfig blk ->
   SlotNo ->
   ExtLedgerState blk EmptyMK ->
   LedgerView (BlockProtocol blk) ->
-  Ticked (ChainDepState (BlockProtocol blk))
+  WithEarlyExit m (Ticked (ChainDepState (BlockProtocol blk)))
 getTickedChainDepState cfg currentSlot unticked ledgerView =
-  -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
-  -- only need the ticked 'ChainDepState' to check whether we're a leader.
-  -- This is much cheaper than ticking the entire 'ExtLedgerState'.
-  tickChainDepState
-    (configConsensus cfg)
-    ledgerView
-    currentSlot
-    (headerStateChainDep (headerState unticked))
+  pure $
+    tickChainDepState
+      (configConsensus cfg)
+      ledgerView
+      currentSlot
+      (headerStateChainDep (headerState unticked))
 
 -- | Check whether we are leader for 'currentSlot', given the ticked
 -- 'ChainDepState', and obtain the leadership proof if so.
@@ -972,6 +959,34 @@ traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
   _ <- evaluate mempoolHash
 
   trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+
+-- | Get a consistent snapshot of the mempool for the given ticked ledger state
+-- and select transactions up to block capacity.
+getTransactionsToForge ::
+  (IOLike m, RunNode blk) =>
+  TopLevelConfig blk ->
+  Mempool m blk ->
+  SlotNo ->
+  Ticked LedgerState blk DiffMK ->
+  ReadOnlyForker m l blk ->
+  WithEarlyExit m ([Validated (GenTx blk)], TxMeasureWithDiffTime blk, MempoolSize)
+getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $ do
+  mempoolSnapshot <-
+    getSnapshotFor
+      mempool
+      currentSlot
+      tickedLedgerState
+      (roforkerReadTables forker)
+
+  let (txs, txssz) =
+        snapshotTake mempoolSnapshot $
+          blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+  -- NB respect the capacity of the ledger state we're extending,
+  -- which is /not/ 'snapshotLedgerState'
+
+  _ <- evaluate (length txs)
+
+  pure (txs, txssz, snapshotMempoolSize mempoolSnapshot)
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
