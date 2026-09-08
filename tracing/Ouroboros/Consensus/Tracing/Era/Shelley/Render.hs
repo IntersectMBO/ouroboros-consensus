@@ -32,6 +32,7 @@ import Cardano.Ledger.Api.Scripts
   ( AnyEraScript
   , PlutusPurpose
   , pattern AnyEraCertifyingPurpose
+  , pattern AnyEraGuardingPurpose
   , pattern AnyEraMintingPurpose
   , pattern AnyEraProposingPurpose
   , pattern AnyEraSpendingPurpose
@@ -99,18 +100,6 @@ unsafeHrp t = case Bech32.humanReadablePartFromText t of
   Right hrp -> hrp
   Left err -> error ("renderRewardAccount: invalid HRP " <> show t <> ": " <> show err)
 
--- | Rendered in place of a plutus purpose that none of the @AnyEraScript@
--- projections below matched.
---
--- Those projections cover every purpose the ledger currently defines, but they
--- are pattern synonyms without a @COMPLETE@ pragma, so GHC cannot check that
--- for us and a purpose added by a future ledger era would fall through here.
--- Render a marker rather than @null@: a @null@ is indistinguishable from a
--- purpose that legitimately rendered as one, whereas this is greppable in the
--- logs and shows up as a distinct shape in the trace schemas.
-unknownPurpose :: Value
-unknownPurpose = Aeson.object ["kind" .= Aeson.String "UnknownPlutusPurpose"]
-
 -- | Render a transaction input as @\<txid hex\>#\<index\>@.
 --
 -- Deliberately not @cardano-ledger@'s @ToJSON TxIn@: that one shows the index
@@ -123,6 +112,12 @@ renderTxIn (TxIn (TxId h) (TxIx ix)) =
 -- | Render a plutus script purpose (as an item), era-generically via
 -- @cardano-ledger-api@'s @AnyEraScript@ projections. Replaces @cardano-api@'s
 -- per-era @renderAlonzoPlutusPurpose@/@renderConwayPlutusPurpose@.
+--
+-- The projections are pattern synonyms, but @cardano-ledger-api@ ships a
+-- @COMPLETE@ pragma covering all seven of them, so GHC does check exhaustiveness
+-- here. Matching all seven rather than falling through to a catch-all means the
+-- next ledger era shows up as a warning at compile time instead of as an
+-- unrenderable purpose in an operator's logs.
 renderScriptPurpose ::
   ( AnyEraScript era
   , ToJSON (Ledger.TxCert era)
@@ -130,11 +125,14 @@ renderScriptPurpose ::
   ) =>
   PlutusPurpose AsItem era ->
   Value
--- Note the asymmetry in whether the 'AsItem' wrapper is unwrapped: spending and
--- rewarding render their item directly, the other four go through
+-- Note the asymmetry in whether the 'AsItem' wrapper is unwrapped: spending,
+-- rewarding and guarding render their item directly, the other four go through
 -- @ToJSON (AsItem ix it)@ and so come out wrapped in an @{"item": ...}@ object.
--- That is what @cardano-api@'s renderer did, so it is what consumers parse;
--- changing it is a deliberate format change, not a cleanup to make here.
+-- That is what @cardano-api@'s renderer did for the six purposes it knew about,
+-- so it is what consumers parse; changing it is a deliberate format change, not
+-- a cleanup to make here. Guarding is new in Dijkstra and has no @cardano-api@
+-- rendering to preserve, so it renders directly, like the other two purposes
+-- for which we have a dedicated renderer.
 renderScriptPurpose = \case
   AnyEraSpendingPurpose (AsItem txin) ->
     Aeson.object ["spending" .= Aeson.String (renderTxIn txin)]
@@ -148,7 +146,8 @@ renderScriptPurpose = \case
     Aeson.object ["voting" .= toJSON voter]
   AnyEraProposingPurpose proposal ->
     Aeson.object ["proposing" .= toJSON proposal]
-  _ -> unknownPurpose
+  AnyEraGuardingPurpose (AsItem sHash) ->
+    Aeson.object ["guarding" .= Aeson.String (renderScriptHash sHash)]
 
 -- | Render a plutus script purpose given by its index (redeemer pointer),
 -- era-generically.
@@ -157,7 +156,9 @@ renderScriptPurpose = \case
 -- @ToJSON ScriptWitnessIndex@ emitted: a @kind@ naming the witness index
 -- constructor and the index itself under @value@. The constructor names are
 -- @cardano-api@'s and do not all match the purpose names used by
--- 'renderScriptPurpose' above.
+-- 'renderScriptPurpose' above. @ScriptWitnessIndexGuarding@ is the exception:
+-- @cardano-api@ has no constructor for the Dijkstra-era guarding purpose, so
+-- that name is ours, following the same scheme.
 renderScriptIndex :: AnyEraScript era => PlutusPurpose AsIx era -> Value
 renderScriptIndex = \case
   AnyEraSpendingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexTxIn" ix
@@ -166,7 +167,7 @@ renderScriptIndex = \case
   AnyEraCertifyingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexCertificate" ix
   AnyEraVotingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexVoting" ix
   AnyEraProposingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexProposing" ix
-  _ -> unknownPurpose
+  AnyEraGuardingPurpose (AsIx ix) -> witnessIndex "ScriptWitnessIndexGuarding" ix
  where
   witnessIndex :: Text -> Word32 -> Value
   witnessIndex kind ix = Aeson.object ["kind" .= kind, "value" .= ix]
