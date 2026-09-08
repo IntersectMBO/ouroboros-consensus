@@ -469,7 +469,6 @@ library tracing
     cardano-ledger-core,
     cardano-ledger-dijkstra,
     cardano-ledger-shelley,
-    cardano-prelude,
     cardano-protocol,
     cardano-protocol-tpraos,
     cardano-slotting,

@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Tracing.ChainDB
   ) where
 
 import Cardano.Logging
-import Cardano.Prelude (maximumDef)
 import Data.Aeson (Object, ToJSON, Value (Object, String), object, toJSON, (.=))
 import qualified Data.ByteString.Base16 as B16
 import Data.Int (Int64)
@@ -909,12 +908,12 @@ instance MetaTrace (ChainDB.TraceAddBlockEvent blk) where
   severityFor
     (Namespace _ ["AddedToCurrentChain"])
     (Just (ChainDB.AddedToCurrentChain events _ _ _ _)) =
-      Just $ maximumDef Notice (map sevLedgerEvent events)
+      Just $ foldr (max . sevLedgerEvent) Notice events
   severityFor (Namespace _ ["AddedToCurrentChain"]) Nothing = Just Notice
   severityFor
     (Namespace _ ["SwitchedToAFork"])
     (Just (ChainDB.SwitchedToAFork events _ _ _ _)) =
-      Just $ maximumDef Notice (map sevLedgerEvent events)
+      Just $ foldr (max . sevLedgerEvent) Notice events
   severityFor (Namespace _ ["SwitchedToAFork"]) _ =
     Just Notice
   severityFor
