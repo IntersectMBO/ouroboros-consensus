@@ -443,7 +443,7 @@ library lsm
     Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     blockio,
     bytestring,
     containers,
@@ -475,7 +475,7 @@ library lmdb
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
 
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-lmdb >=0.4,
     cardano-lmdb-simple ^>=0.8,
@@ -562,7 +562,7 @@ library unstable-consensus-testlib
 
   build-depends:
     QuickCheck >=2.15,
-    base,
+    base >=4.14 && <4.23,
     base16-bytestring,
     binary,
     bytestring,
@@ -646,7 +646,7 @@ library unstable-mock-block
     Ouroboros.Consensus.Mock.Protocol.Praos
 
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     bimap,
     bytestring,
     cardano-binary,
@@ -673,7 +673,7 @@ library unstable-mempool-test-utils
   hs-source-dirs: ouroboros-consensus/src/unstable-mempool-test-utils
   exposed-modules: Test.Consensus.Mempool.Mocked
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     contra-tracer,
     deepseq,
     io-classes:strict-stm,
@@ -688,7 +688,7 @@ library unstable-tutorials
     Ouroboros.Consensus.Tutorial.WithEpoch
 
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-ledger-core,
     containers,
     deepseq,
@@ -722,7 +722,7 @@ test-suite leios-txcache-bounds-checked
 
   ghc-options: -fcheck-prim-bounds
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     containers,
     primitive,
     tasty,
@@ -780,7 +780,7 @@ test-suite consensus-test
     aeson,
     array,
     async,
-    base,
+    base >=4.14 && <4.23,
     base-deriving-via,
     bytestring,
     cardano-binary,
@@ -852,7 +852,7 @@ test-suite consensus-infra-test
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     cardano-ledger-core,
     io-classes,
     io-sim,
@@ -914,7 +914,7 @@ test-suite storage-test
   build-depends:
     QuickCheck,
     aeson,
-    base,
+    base >=4.14 && <4.23,
     bifunctors,
     bytestring,
     cardano-binary,
@@ -971,7 +971,7 @@ benchmark mempool-bench
 
   build-depends:
     aeson,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-ledger-core,
     cardano-slotting,
@@ -1011,7 +1011,7 @@ benchmark mempool-state-bench
 
   build-depends:
     async,
-    base,
+    base >=4.14 && <4.23,
     cardano-ledger-core,
     cardano-slotting,
     containers,
@@ -1036,7 +1036,7 @@ benchmark ChainSync-client-bench
   other-modules: Bench.Consensus.ChainSyncClient.Driver
   build-depends:
     array,
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     cardano-ledger-core,
     containers,
@@ -1056,7 +1056,7 @@ benchmark PerasCertDB-bench
   main-is: Main.hs
   other-modules:
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-ledger-core,
     ouroboros-consensus,
     ouroboros-network:api,
@@ -1071,7 +1071,7 @@ benchmark leios-db-bench
   ghc-options: -with-rtsopts=-N4
   build-depends:
     async,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-slotting,
     contra-tracer,
@@ -1092,7 +1092,7 @@ benchmark leios-txcache-bench
   if !os(linux)
     buildable: False
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-slotting,
     containers,
@@ -1112,7 +1112,7 @@ test-suite doctest
   default-language: Haskell2010
   ghc-options: -Wno-unused-packages
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     latex-svg-image,
 
 library protocol
@@ -1132,7 +1132,7 @@ library protocol
 
   build-depends:
     Win32-network ^>=0.2,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-binary,
     cardano-crypto-class:cardano-crypto-class,
@@ -1169,7 +1169,7 @@ library unstable-protocol-testlib
   build-depends:
     QuickCheck,
     aeson,
-    base,
+    base >=4.14 && <4.23,
     base16-bytestring,
     bytestring,
     cardano-binary,
@@ -1196,7 +1196,7 @@ test-suite protocol-test
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-protocol-tpraos,
@@ -1233,7 +1233,7 @@ library diffusion
 
   build-depends:
     aeson,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-base,
     cardano-binary,
@@ -1285,7 +1285,7 @@ library unstable-diffusion-testlib
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-diffusion:cardano-diffusion,
     cardano-ledger-core,
@@ -1322,7 +1322,7 @@ library unstable-mock-testlib
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-crypto-class:{cardano-crypto-class, testlib},
     containers,
@@ -1337,7 +1337,7 @@ test-suite diffusion-infra-test
   main-is: Main.hs
   other-modules: Test.ThreadNet.Util.Tests
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-ledger-core,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     tasty,
@@ -1359,7 +1359,7 @@ test-suite mock-test
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-ledger-core,
     cborg,
@@ -1432,7 +1432,7 @@ test-suite consensus-diffusion-test
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     binary,
     bytestring,
     cardano-binary,
@@ -1547,7 +1547,7 @@ library cardano
 
   build-depends:
     aeson,
-    base,
+    base >=4.14 && <4.23,
     base-deriving-via,
     bytestring,
     cardano-base,
@@ -1614,7 +1614,7 @@ library unstable-byronspec
     Ouroboros.Consensus.ByronSpec.Ledger.Rules
 
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     bimap,
     byron-spec-chain,
     byron-spec-ledger,
@@ -1649,7 +1649,7 @@ library unstable-byron-testlib
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     base64-bytestring,
     byron-spec-ledger,
     bytestring,
@@ -1683,7 +1683,7 @@ test-suite byron-test
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     binary-search,
     byron-spec-chain,
     byron-spec-ledger,
@@ -1721,7 +1721,7 @@ library unstable-shelley-testlib
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-crypto-class,
     cardano-data,
@@ -1767,7 +1767,7 @@ test-suite shelley-test
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     bytestring,
     cardano-crypto-leios,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
@@ -1817,7 +1817,7 @@ library unstable-cardano-testlib
 
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-ledger-alonzo:testlib,
@@ -1873,9 +1873,10 @@ test-suite cardano-test
     Test.ThreadNet.ShelleyAllegra
 
   other-modules: Paths_ouroboros_consensus
+  autogen-modules: Paths_ouroboros_consensus
   build-depends:
     QuickCheck,
-    base,
+    base >=4.14 && <4.23,
     base16-bytestring,
     bytestring,
     cardano-crypto-leios:testlib,
@@ -1973,7 +1974,7 @@ library unstable-cardano-tools
   build-depends:
     QuickCheck,
     aeson,
-    base,
+    base >=4.14 && <4.23,
     base16-bytestring,
     bytestring,
     cardano-crypto,
@@ -2035,7 +2036,7 @@ executable db-analyser
   hs-source-dirs: ouroboros-consensus-cardano/app
   main-is: db-analyser.hs
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     optparse-applicative,
     ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools},
@@ -2066,7 +2067,7 @@ executable run-threadnet
   hs-source-dirs: ouroboros-consensus-cardano/app
   main-is: run-threadnet.hs
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     optparse-applicative,
     ouroboros-consensus:unstable-cardano-tools,
@@ -2077,7 +2078,7 @@ executable db-immutaliser
   hs-source-dirs: ouroboros-consensus-cardano/app
   main-is: db-immutaliser.hs
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     optparse-applicative,
     ouroboros-consensus:unstable-cardano-tools,
@@ -2088,7 +2089,7 @@ executable db-synthesizer
   hs-source-dirs: ouroboros-consensus-cardano/app
   main-is: db-synthesizer.hs
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     optparse-applicative,
     ouroboros-consensus,
@@ -2102,7 +2103,7 @@ executable db-truncater
   hs-source-dirs: ouroboros-consensus-cardano/app
   main-is: db-truncater.hs
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     optparse-applicative,
     ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools},
@@ -2118,7 +2119,7 @@ executable immdb-server
   main-is: immdb-server.hs
   build-depends:
     aeson,
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     cardano-slotting,
     network,
@@ -2133,7 +2134,7 @@ executable leios-schedule-gen
   main-is: leios-schedule-gen.hs
   build-depends:
     aeson,
-    base,
+    base >=4.14 && <4.23,
     base16-bytestring,
     bytestring,
     cardano-binary,
@@ -2160,7 +2161,7 @@ library unstable-snapshot-conversion
 
   build-depends:
     ansi-terminal,
-    base,
+    base >=4.14 && <4.23,
     cardano-ledger-binary,
     cardano-ledger-core,
     cardano-ledger-shelley,
@@ -2184,7 +2185,7 @@ executable snapshot-converter
   hs-source-dirs: ouroboros-consensus-cardano/app
   main-is: snapshot-converter.hs
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     filepath,
     fsnotify,
@@ -2207,7 +2208,7 @@ test-suite tools-test
   build-depends:
     QuickCheck,
     aeson,
-    base,
+    base >=4.14 && <4.23,
     ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
     tasty,
     tasty-hunit,
@@ -2223,7 +2224,7 @@ executable gen-header
   hs-source-dirs: ouroboros-consensus-cardano/app
   main-is: gen-header.hs
   build-depends:
-    base,
+    base >=4.14 && <4.23,
     cardano-crypto-class,
     optparse-applicative,
     ouroboros-consensus:unstable-cardano-tools,
