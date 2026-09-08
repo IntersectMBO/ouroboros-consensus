@@ -89,8 +89,8 @@ prop_smoke =
               outboundPool <- newCertDB watValidatedCerts
               inboundPool <- newCertDB []
 
-              let outboundPoolReader = makePerasCertPoolReaderFromCertDB outboundPool
-                  inboundPoolWriter = makePerasCertPoolWriterFromCertDB mockSystemTime inboundPool epochContextResolverHandle
+              let outboundPoolReader = makeTestPerasCertPoolReaderFromCertDB outboundPool
+                  inboundPoolWriter = makeTestPerasCertPoolWriterFromCertDB mockSystemTime inboundPool epochContextResolverHandle
                   getAllInboundPoolContent = do
                     certsMap <-
                       atomically $

@@ -92,8 +92,8 @@ prop_smoke =
               outboundPool <- newVoteDB epochContextResolverHandle watValidatedVotes
               inboundPool <- newVoteDB epochContextResolverHandle []
 
-              let outboundPoolReader = makePerasVotePoolReaderFromVoteDB outboundPool
-                  inboundPoolWriter = makePerasVotePoolWriterFromVoteDB mockSystemTime inboundPool epochContextResolverHandle
+              let outboundPoolReader = makeTestPerasVotePoolReaderFromVoteDB outboundPool
+                  inboundPoolWriter = makeTestPerasVotePoolWriterFromVoteDB mockSystemTime inboundPool epochContextResolverHandle
                   getAllInboundPoolContent = do
                     votesMap <-
                       atomically $

@@ -4,10 +4,12 @@
 -- certificates from the 'PerasCertDB' (or the 'ChainDB' which is wrapping the
 -- 'PerasCertDB').
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
-  ( makePerasCertPoolReaderFromCertDB
-  , makePerasCertPoolWriterFromCertDB
-  , makePerasCertPoolReaderFromChainDB
+  ( makePerasCertPoolReaderFromChainDB
   , makePerasCertPoolWriterFromChainDB
+
+    -- * For testing purposes
+  , makeTestPerasCertPoolReaderFromCertDB
+  , makeTestPerasCertPoolWriterFromCertDB
   ) where
 
 import Data.Foldable (traverse_)
@@ -67,11 +69,11 @@ makePerasCertPoolReader getCertsAfterSTM =
               certsAfterLastKnown
     }
 
-makePerasCertPoolReaderFromCertDB ::
+makeTestPerasCertPoolReaderFromCertDB ::
   IOLike m =>
   PerasCertDB m blk ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
-makePerasCertPoolReaderFromCertDB perasCertDB =
+makeTestPerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReader
     (PerasCertDB.getCertsAfter perasCertDB)
 
@@ -91,13 +93,13 @@ makePerasCertPoolReaderFromChainDB chainDB =
 -- for tests against the 'PerasCertDB' in isolation; for actual production use,
 -- see 'makePerasCertPoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' with proper handling of chain selection side-effects.
-makePerasCertPoolWriterFromCertDB ::
+makeTestPerasCertPoolWriterFromCertDB ::
   (StandardHash blk, Typeable blk, IOLike m) =>
   SystemTime m ->
   PerasCertDB m blk ->
   PerasEpochContextResolverHandle m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
-makePerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
+makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
   ObjectPoolWriter
     { opwObjectId = getPerasCertRound
     , opwAddObjects = \certs -> do

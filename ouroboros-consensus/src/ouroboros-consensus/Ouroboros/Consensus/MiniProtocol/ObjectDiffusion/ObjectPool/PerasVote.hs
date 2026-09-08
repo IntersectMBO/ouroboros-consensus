@@ -4,10 +4,12 @@
 -- votes from the 'PerasVoteDB' (or the 'ChainDB' which is wrapping the
 -- 'PerasVoteDB').
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
-  ( makePerasVotePoolReaderFromVoteDB
-  , makePerasVotePoolWriterFromVoteDB
-  , makePerasVotePoolReaderFromChainDB
+  ( makePerasVotePoolReaderFromChainDB
   , makePerasVotePoolWriterFromChainDB
+
+    -- * For testing purposes
+  , makeTestPerasVotePoolReaderFromVoteDB
+  , makeTestPerasVotePoolWriterFromVoteDB
   ) where
 
 import Data.Foldable (traverse_)
@@ -65,11 +67,11 @@ makePerasVotePoolReader getVotesAfterSTM =
             pure $ Map.map (vpvVote . forgetArrivalTime) votesAfterLastKnown
     }
 
-makePerasVotePoolReaderFromVoteDB ::
+makeTestPerasVotePoolReaderFromVoteDB ::
   IOLike m =>
   PerasVoteDB m blk ->
   ObjectPoolReader PerasVoteId (PerasVote blk) PerasVoteTicketNo m
-makePerasVotePoolReaderFromVoteDB perasVoteDB =
+makeTestPerasVotePoolReaderFromVoteDB perasVoteDB =
   makePerasVotePoolReader
     (PerasVoteDB.getVotesAfter perasVoteDB)
 
@@ -91,13 +93,13 @@ makePerasVotePoolReaderFromChainDB chainDB =
 -- for tests against the 'PerasVoteDB' in isolation; for actual production use,
 -- see 'makePerasVotePoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' and thus properly handles the produced certs.
-makePerasVotePoolWriterFromVoteDB ::
+makeTestPerasVotePoolWriterFromVoteDB ::
   (StandardHash blk, Typeable blk, IOLike m) =>
   SystemTime m ->
   PerasVoteDB m blk ->
   PerasEpochContextResolverHandle m blk ->
   ObjectPoolWriter PerasVoteId (PerasVote blk) m
-makePerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
+makeTestPerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
     , opwAddObjects = \votes -> do
