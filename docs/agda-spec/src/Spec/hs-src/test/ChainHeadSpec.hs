@@ -38,19 +38,26 @@ oc = MkOCert
   , ocΣ   = 345
   }
 
+aeb :: AnnouncedEB
+aeb = MkAnnouncedEB
+  { aebHash = 1000
+  , aebSize = 10
+  }
+
 bhb :: BHBody
 bhb = MkBHBody
-  { bhbPrevHeader = Just 2
-  , bhbIssuerVk   = 456
-  , bhbVrfVk      = 567
-  , bhbBlockNo    = 1
-  , bhbSlot       = 2
-  , bhbVrfRes     = 678
-  , bhbVrfPrf     = 789
-  , bhbBodySize   = 1
-  , bhbBodyHash   = 890
-  , bhbOc         = oc
-  , bhbPv         = (1, 0)
+  { bhbPrevHeader  = Just 2
+  , bhbIssuerVk    = 456
+  , bhbVrfVk       = 567
+  , bhbBlockNo     = 1
+  , bhbSlot        = 2
+  , bhbVrfRes      = 678
+  , bhbVrfPrf      = 789
+  , bhbBodySize    = 1
+  , bhbBodyHash    = 890
+  , bhbOc          = oc
+  , bhbPv          = (1, 0)
+  , bhbAnnouncedEB = Just aeb
   }
 
 bh :: BHeader
