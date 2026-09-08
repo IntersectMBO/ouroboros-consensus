@@ -38,7 +38,6 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , KnownPraosExtension (..)
   , SingPraosExtension (..)
   , StrictMaybeLeios (..)
-  , mkStrictMaybeLeios
   , toHasLeiosProof
   ) where
 
@@ -409,7 +408,7 @@ data WhetherHasLeiosDecided pext =
     (PraosExtensionHasLeios pext ~ PextDoesNotHaveLeios) => PextDoesNotHaveLeiosDecided
 
 type KnownPraosExtension :: PraosExtension -> Constraint
-class Typeable pext => KnownPraosExtension pext where
+class (Typeable pext, Typeable (PraosExtensionHasLeios pext)) => KnownPraosExtension pext where
   type PraosExtensionHasLeios pext :: WhetherHasLeios
   praosExtensionHasLeios :: proxy pext -> WhetherHasLeiosDecided pext
   -- | When possible, use 'praosExtensionHasLeios' instead
@@ -442,59 +441,51 @@ toHasLeiosProof = \case
 
 -----
 
-type StrictMaybeLeios :: PraosExtension -> Type -> Type
+type StrictMaybeLeios :: WhetherHasLeios -> Type -> Type
 -- | Like 'StrictMaybe', but it's @SJust@ if and only if 'PraosExtensionHasLeios'
-data StrictMaybeLeios pext a where
+data StrictMaybeLeios whether a where
   -- | Encoding and decoding this is a complete noop.
-  SNothingLeios :: (PraosExtensionHasLeios pext ~ PextDoesNotHaveLeios) => StrictMaybeLeios pext a
+  SNothingLeios :: StrictMaybeLeios PextDoesNotHaveLeios a
   -- | Encoding and decoding this has no extra wrapper.
-  SJustLeios :: (PraosExtensionHasLeios pext ~ PextHasLeios) => !a -> StrictMaybeLeios pext a
+  SJustLeios :: !a -> StrictMaybeLeios PextHasLeios a
 
-instance Functor (StrictMaybeLeios pext) where
+instance Functor (StrictMaybeLeios whether) where
   fmap f = \case
     SNothingLeios -> SNothingLeios
     SJustLeios a -> SJustLeios $ f a
 
-instance Foldable (StrictMaybeLeios pext) where
+instance Foldable (StrictMaybeLeios whether) where
   foldMap f = \case
     SNothingLeios -> mempty
     SJustLeios a -> f a
 
-instance Traversable (StrictMaybeLeios pext) where
+instance Traversable (StrictMaybeLeios whether) where
   traverse f = \case
     SNothingLeios -> pure SNothingLeios
     SJustLeios a -> SJustLeios <$> f a
 
-mkStrictMaybeLeios :: forall pext a.
-  KnownPraosExtension pext =>
-  ((PraosExtensionHasLeios pext ~ PextHasLeios) => a) ->
-  StrictMaybeLeios pext a
-mkStrictMaybeLeios k = case praosExtensionHasLeios (Proxy @pext) of
-    PextHasLeiosDecided -> SJustLeios k
-    PextDoesNotHaveLeiosDecided -> SNothingLeios
-
-instance Eq a => Eq (StrictMaybeLeios pext a) where
+instance Eq a => Eq (StrictMaybeLeios whether a) where
   SNothingLeios == SNothingLeios = True
   SJustLeios a == SJustLeios b = a == b
 
-instance Ord a => Ord (StrictMaybeLeios pext a) where
+instance Ord a => Ord (StrictMaybeLeios whether a) where
   compare SNothingLeios SNothingLeios = EQ
   compare (SJustLeios a) (SJustLeios b) = compare a b
 
-instance Show a => Show (StrictMaybeLeios pext a) where
+instance Show a => Show (StrictMaybeLeios whether a) where
   showsPrec p = \case
       SNothingLeios -> showString "SNothingLeios"
       SJustLeios a -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows a
 
-instance NFData a => NFData (StrictMaybeLeios pext a) where
+instance NFData a => NFData (StrictMaybeLeios whether a) where
   rnf = \case
       SNothingLeios -> ()
       SJustLeios a -> rnf a
 
-instance (Typeable pext, NoThunks a) => NoThunks (StrictMaybeLeios pext a) where
+instance (Typeable whether, NoThunks a) => NoThunks (StrictMaybeLeios whether a) where
   showTypeOf _ = unwords
       [ "StrictMaybeLeios"
-      , "(" ++ show (typeRep (Proxy @pext)) ++ ")"
+      , "(" ++ show (typeRep (Proxy @whether)) ++ ")"
       , "(" ++ showTypeOf (Proxy @a) ++ ")"
       ]
   wNoThunks ctxt = \case

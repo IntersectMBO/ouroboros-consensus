@@ -315,7 +315,7 @@ data BasePraosState pext = PraosState
   , praosStateLastEpochBlockNonce :: !Nonce
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
-  , praosStateLeiosAnnouncement :: !(StrictMaybeLeios pext (StrictMaybe EbAnnouncement))
+  , praosStateLeiosAnnouncement :: !(StrictMaybeLeios (PraosExtensionHasLeios pext) (StrictMaybe EbAnnouncement))
   -- ^ The Leios 'EbAnnouncement' from the most recently applied header on
   -- this chain — overwritten on every header tick (so a header with no
   -- announcement clears the field). The 'ResolveLeiosBlock' instance for
@@ -340,9 +340,9 @@ countOfFieldsInPraosState _ =
     praos + leios
   where
     praos = 8
-    leios = case mkStrictMaybeLeios @pext () of
-        SNothingLeios -> 0
-        SJustLeios () -> 1
+    leios = case praosExtensionHasLeios (Proxy @pext) of
+      PextDoesNotHaveLeiosDecided -> 0
+      PextHasLeiosDecided -> 1
 
 instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
   encode
@@ -388,12 +388,17 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra
-        <*> traverse (\() -> fmap @StrictMaybe fromCodecEbAnnouncement <$> fromEraCBOR @DijkstraEra) (mkStrictMaybeLeios @pext ())
+        <*> traverse
+              (\() -> fmap @StrictMaybe fromCodecEbAnnouncement <$> fromEraCBOR @DijkstraEra)
+              (case praosExtensionHasLeios (Proxy @pext) of
+                PextDoesNotHaveLeiosDecided -> SNothingLeios
+                PextHasLeiosDecided -> SJustLeios ()
+              )
 
 data instance Ticked (BasePraosState pext) = TickedPraosState
   { tickedPraosStateChainDepState :: PraosState pext
   , tickedPraosStateLedgerView :: Views.PraosLedgerView
-  , tickedPraosStateLeiosLedgerView :: StrictMaybeLeios pext ()  -- TODO
+  , tickedPraosStateLeiosLedgerView :: StrictMaybeLeios (PraosExtensionHasLeios pext) ()  -- TODO
   }
 
 -----
@@ -505,7 +510,9 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
       TickedPraosState
         { tickedPraosStateChainDepState = st'
         , tickedPraosStateLedgerView = lv
-        , tickedPraosStateLeiosLedgerView = mkStrictMaybeLeios @pext ()
+        , tickedPraosStateLeiosLedgerView = case praosExtensionHasLeios (Proxy @pext) of
+            PextDoesNotHaveLeiosDecided -> SNothingLeios
+            PextHasLeiosDecided -> SJustLeios ()
         }
      where
       newEpoch =
@@ -922,7 +929,9 @@ instance KnownPraosExtension pext => TranslateProto (TPraos c) (BasePraos pext c
       , praosStatePreviousEpochNonce = epochNonce -- same as current epoch nonce
       , praosStateLabNonce = csLabNonce
       , praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
-      , praosStateLeiosAnnouncement = mkStrictMaybeLeios SNothing
+      , praosStateLeiosAnnouncement = case praosExtensionHasLeios (Proxy @pext) of
+          PextDoesNotHaveLeiosDecided -> SNothingLeios
+          PextHasLeiosDecided -> SJustLeios SNothing
       }
    where
     SL.ChainDepState{SL.csProtocol, SL.csTickn, SL.csLabNonce} =
