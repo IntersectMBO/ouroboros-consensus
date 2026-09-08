@@ -196,7 +196,7 @@ conwayToDijkstraLedgerStateTranslation ::
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos Crypto) ConwayEra)
-    (ShelleyBlock (Praos Crypto) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios Crypto) DijkstraEra)
 PCons
   byronToShelleyLedgerStateTranslation
   ( PCons
@@ -439,7 +439,7 @@ instance
   Arbitrary
     ( TestSetup
         (ShelleyBlock (Praos Crypto) ConwayEra)
-        (ShelleyBlock (Praos Crypto) DijkstraEra)
+        (ShelleyBlock (PraosWithLeios Crypto) DijkstraEra)
     )
   where
   arbitrary =
