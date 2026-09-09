@@ -5,9 +5,7 @@
 
 -- | Generators suitable for serialisation. Note that these are not guaranteed
 -- to be semantically correct at all, only structurally correct.
-module Test.Consensus.Protocol.Serialisation.Generators
-  ( extendHeaderBodyWithLeios
-  ) where
+module Test.Consensus.Protocol.Serialisation.Generators () where
 
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
@@ -45,6 +43,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
       , PextHasLeiosDecided
       )
   )
+import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Cardano.StrictContainers.Instances ()
 import Test.Crypto.KES ()
@@ -99,29 +98,6 @@ instance Praos.PraosCrypto c => Arbitrary (Header c) where
 
 instance Arbitrary Leios.EbAnnouncement where
   arbitrary = toCodecEbAnnouncement <$> arbitrary
-
--- | The Leios header body is the Praos one plus the two Leios fields.
-extendHeaderBodyWithLeios ::
-  HeaderBody c ->
-  -- | Whether the block body carries a Leios certificate
-  Bool ->
-  StrictMaybe Leios.EbAnnouncement ->
-  Leios.HeaderBody c
-extendHeaderBodyWithLeios pb containsCert ann =
-  Leios.HeaderBody
-    { Leios.hbBlockNo = hbBlockNo pb
-    , Leios.hbSlotNo = hbSlotNo pb
-    , Leios.hbPrev = hbPrev pb
-    , Leios.hbVk = hbVk pb
-    , Leios.hbVrfVk = hbVrfVk pb
-    , Leios.hbVrfRes = hbVrfRes pb
-    , Leios.hbBodySize = hbBodySize pb
-    , Leios.hbBodyHash = hbBodyHash pb
-    , Leios.hbOCert = hbOCert pb
-    , Leios.hbProtVer = hbProtVer pb
-    , Leios.hbBlockBodyContainsLeiosCert = containsCert
-    , Leios.hbEbAnnouncement = ann
-    }
 
 instance Praos.PraosCrypto c => Arbitrary (Leios.HeaderBody c) where
   arbitrary = extendHeaderBodyWithLeios <$> arbitrary <*> arbitrary <*> arbitrary
