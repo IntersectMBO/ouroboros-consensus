@@ -96,6 +96,7 @@ record BlockStructure : Type₁ where
       oc          : OCert             -- operational certificate
       pv          : ProtVer           -- protocol version
       announcedEB : Maybe AnnouncedEB -- announced endorser block
+      certifiedEB : Bool              -- certifies the preceding endorser block
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Block Types}
