@@ -255,7 +255,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs _leiosDb = do
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+    result <- lift $ ChainDB.addBlockAsync chainDB noPunish (pointSlot bcPrevPoint) newBlock
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 
     when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $
