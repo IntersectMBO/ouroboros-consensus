@@ -120,7 +120,7 @@ import Data.Proxy (Proxy (Proxy))
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, decodeEbAnnouncement, encodeEbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -137,8 +137,13 @@ import Ouroboros.Consensus.Protocol.TPraos
   , TPraosState (tpraosStateChainDepState, tpraosStateLastSlot)
   )
 import Ouroboros.Consensus.Ticked (Ticked)
+import Ouroboros.Consensus.Util.CBOR
+  ( decodeNullStrictMaybe
+  , encodeNullStrictMaybe
+  )
 import Ouroboros.Consensus.Util.Versioned
   ( VersionDecoder (Decode)
+  , VersionNumber
   , decodeVersion
   , encodeVersion
   )
@@ -340,6 +345,20 @@ countOfFieldsInPraosState _ =
       PextDoesNotHaveLeiosDecided -> 0
       PextHasLeiosDecided -> 1
 
+-- | @pext@ selects the codec, so each extension's version numbers are their own
+-- namespace: these two are unrelated formats that merely both start counting.
+--
+-- 'PextNone' is mainnet's, and so keeps the version mainnet writes. 'PextLeios'
+-- starts at 1, which is what the code before 'BasePraos' wrote for Dijkstra --
+-- back when Dijkstra was paired with 'Praos' -- with the same fields in the
+-- same order. A node already running the Leios prototype can therefore still
+-- decode the chain-dep state in the snapshots it has on disk.
+versionOfPraosState ::
+  forall pext proxy. KnownPraosExtension pext => proxy pext -> VersionNumber
+versionOfPraosState _ = case praosExtensionHasLeios (Proxy @pext) of
+  PextDoesNotHaveLeiosDecided -> 0
+  PextHasLeiosDecided -> 1
+
 instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
   encode
     PraosState
@@ -353,7 +372,7 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
       , praosStateLastEpochBlockNonce
       , praosStateLeiosAnnouncement
       } =
-      encodeVersion 0 $
+      encodeVersion (versionOfPraosState (Proxy @pext)) $
         mconcat
           [ CBOR.encodeListLen (countOfFieldsInPraosState (Proxy @pext))
           , toCBOR praosStateLastSlot
@@ -364,16 +383,16 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
           , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
           , toEraCBOR @ShelleyEra praosStateLabNonce
           , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
-          , foldMap (toEraCBOR @DijkstraEra . fmap @StrictMaybe toCodecEbAnnouncement) praosStateLeiosAnnouncement
+          , foldMap (encodeNullStrictMaybe encodeEbAnnouncement) praosStateLeiosAnnouncement
           ]
 
   decode =
     decodeVersion
-      [ (0, Decode decodePraosStateV0)
+      [ (versionOfPraosState (Proxy @pext), Decode decodePraosState)
       ]
    where
-    decodePraosStateV0 :: forall s. Decoder s (BasePraosState pext)
-    decodePraosStateV0 = do
+    decodePraosState :: forall s. Decoder s (BasePraosState pext)
+    decodePraosState = do
       enforceSize "PraosState" (countOfFieldsInPraosState (Proxy @pext))
       PraosState
         <$> fromCBOR
@@ -385,7 +404,7 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra
         <*> traverse
-              (\() -> fmap @StrictMaybe fromCodecEbAnnouncement <$> fromEraCBOR @DijkstraEra)
+              (\() -> decodeNullStrictMaybe decodeEbAnnouncement)
               (case praosExtensionHasLeios (Proxy @pext) of
                 PextDoesNotHaveLeiosDecided -> SNothingLeios
                 PextHasLeiosDecided -> SJustLeios ()
