@@ -24,9 +24,12 @@ import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
-import Cardano.Ledger.BaseTypes (boundRational, unsafeNonZero)
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), boundRational, unsafeNonZero)
 import Cardano.Ledger.Core (MaxPledgeLeverage (..), TxOut)
 import Cardano.Ledger.Dijkstra.PParams
+import Cardano.Ledger.Plutus.CostModels (costModelInitParamCount, mkCostModel)
+import Cardano.Ledger.Plutus.ExUnits (ExUnits (..), OrdExUnits (..))
+import Cardano.Ledger.Plutus.Language (Language (PlutusV4))
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
 import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
 import Cardano.Ledger.TxIn (TxIn)
@@ -201,7 +204,13 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
 -- | An empty Dijkstra genesis to be provided when none is specified in the config.
 emptyDijkstraGenesis :: SL.DijkstraGenesis
 emptyDijkstraGenesis =
-  let upgradePParamsDef =
+  let emptyPlutusV4CostModel =
+        -- An all-zero cost model: this genesis is only ever used as a
+        -- placeholder when no real one is configured, so the actual costs
+        -- don't matter, only that the value type-checks.
+        either (error "emptyDijkstraGenesis: impossible") id $
+          mkCostModel PlutusV4 (replicate (costModelInitParamCount PlutusV4) 0)
+      upgradePParamsDef =
         UpgradeDijkstraPParams
           { udppMaxRefScriptSizePerBlock = 1048576
           , udppMaxRefScriptSizePerTx = 204800
@@ -209,6 +218,19 @@ emptyDijkstraGenesis =
           , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
           , udppMaxPledgeLeverage = MaxPledgeLeverage SNothing
           , udppMinPoolMargin = fromMaybe (error "impossible") $ boundRational 0.015
+          , udppPlutusV4CostModel = emptyPlutusV4CostModel
+          , -- Feasible values of CIP-164 Table 7 (as used by cardano-ledger's own
+            -- exampleDijkstraGenesis), since this genesis is never actually used
+            -- to run a live chain.
+            udppLeiosAnnouncementPeriodLength = Milliseconds32 1000 -- L_hdr
+          , udppLeiosVotePeriodLength = Milliseconds32 4000 -- L_vote
+          , udppLeiosDiffusionPeriodLength = Milliseconds32 7000 -- L_diff
+          , udppLeiosCommitteeSize = 900 -- N_c
+          , udppLeiosQuorumStakeThreshold = fromMaybe (error "impossible") $ boundRational 0.75 -- tau
+          , udppMaxEndorserBlockReferencesSize = 512 * 1024 -- 512 KiB
+          , udppMaxEndorserBlockTxsSize = 12 * 1024 * 1024 -- 12 MiB
+          , udppMaxEndorserBlockExUnits = OrdExUnits $ ExUnits 7000000000 2000000000000
+          , udppMaxRefScriptSizePerEndorserBlock = 12 * 1024 * 1024 -- 12 MiB
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 
