@@ -89,6 +89,7 @@ import Cardano.Slotting.EpochInfo
   ( EpochInfo
   , epochInfoEpoch
   , epochInfoFirst
+  , epochInfoSlotLength
   , hoistEpochInfo
   )
 import Cardano.Slotting.Slot
@@ -108,7 +109,7 @@ import Cardano.Protocol.Praos.VRF
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (decode, encode))
 import Control.Exception (throw)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Control.Monad.Except (Except, runExcept, throwError)
 import Data.Coerce (coerce)
 import Data.Functor.Identity (runIdentity)
@@ -116,10 +117,15 @@ import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
-import Data.Typeable (Typeable)
-import Data.Word (Word64)
+import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement, decodeEbAnnouncement, encodeEbAnnouncement)
+import LeiosDemoTypes
+  ( EbAnnouncement
+  , decodeEbAnnouncement
+  , ebAnnouncementSize
+  , encodeEbAnnouncement
+  , minCertificationSlot
+  )
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -455,20 +461,35 @@ data BasePraosValidationErr pext c
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash SL.BlockIssuer) -- stake pool key hash
-  | TodoLeios !(HasLeiosProof pext) String
-      -- TODO Leios validation-error constructors belongs here, for the header
-      -- checks described in 'updateChainDepState'. Deferred for now:
-      -- 'PraosValidationErr' is used downstream (e.g. cardano-node tracers), so
-      -- extending it would incur downstream integration work
+  | -- | The header sets its cert bit, but its predecessor announced no endorser
+    -- block, so there is nothing for the certificate to certify.
+    LeiosCertWithoutAnnouncement !(HasLeiosProof (PraosExtensionHasLeios pext))
+  | -- | The header sets its cert bit too soon after its predecessor's
+    -- announcement: the announcement, voting and diffusion periods have not all
+    -- elapsed.
+    LeiosCertTooYoung
+      !(HasLeiosProof (PraosExtensionHasLeios pext))
+      !SlotNo -- announcing (ie predecessor's) slot
+      !SlotNo -- this header's slot
+      !SlotNo -- the earliest slot this header could have certified in
+  | -- | The header announces an endorser block larger than the protocol
+    -- parameters allow.
+    LeiosEbTooBig
+      !(HasLeiosProof (PraosExtensionHasLeios pext))
+      !Word32 -- announced size
+      !Word32 -- maximum
   deriving Generic
 
+-- | Every Leios constructor of 'BasePraosValidationErr' carries a
+-- 'HasLeiosProof', so at 'PextNone' --- which is mainnet's --- none of them can
+-- be constructed and the inhabited set is exactly what it was before Leios.
 type PraosValidationErr c = BasePraosValidationErr PextNone c
 
-deriving instance (PraosCrypto c, Typeable pext) => Eq (BasePraosValidationErr pext c)
+deriving instance (PraosCrypto c, KnownPraosExtension pext) => Eq (BasePraosValidationErr pext c)
 
-deriving instance (PraosCrypto c, Typeable pext) => NoThunks (BasePraosValidationErr pext c)
+deriving instance (PraosCrypto c, KnownPraosExtension pext) => NoThunks (BasePraosValidationErr pext c)
 
-deriving instance (PraosCrypto c, Typeable pext) => Show (BasePraosValidationErr pext c)
+deriving instance (PraosCrypto c, KnownPraosExtension pext) => Show (BasePraosValidationErr pext c)
 
 instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePraos pext c) where
   type ChainDepState (BasePraos pext c) = BasePraosState pext
@@ -476,7 +497,7 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
   type CanBeLeader (BasePraos pext c) = PraosCanBeLeader c
   type TiebreakerView (BasePraos pext c) = PraosTiebreakerView c
   type LedgerView (BasePraos pext c) = Views.BasePraosLedgerView pext
-  type ValidationErr (BasePraos pext c) = PraosValidationErr c
+  type ValidationErr (BasePraos pext c) = BasePraosValidationErr pext c
   type ValidateView (BasePraos pext c) = Views.BaseHeaderView pext c
 
   protocolSecurityParam = praosSecurityParam . praosParams
@@ -546,12 +567,6 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
 
   -- Validate and update the chain dependent state as a result of processing a
   -- new header.
-  --
-  -- This consists of:
-  -- - Validate the VRF checks
-  -- - Validate the KES checks
-  -- - Call 'reupdateChainDepState'
-  --
   updateChainDepState
     cfg@( PraosConfig
             PraosParams{praosLeaderF}
@@ -560,21 +575,14 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
     b
     slot
     tcs = do
-      -- TODO enforce the Leios header checks here (needs 'PraosValidationErr'
-      -- constructors; see above):
-      --   * LeiosCertRBWithoutAnnouncement - the set cert bit requires
-      --     predecessor's chain-dep state has an announcement (genesis
-      --     chain-dep state has no announcement, so the first header can't set
-      --     its cert bit)
-      --   * LeiosCertTooYoung - check the slot gap against L
-      --   * LeiosEbTooBig - the maximum EB body size. NB the closure size
-      --     cannot be checked here: the announcement carries only the one
-      --     size, and it is the body size
-      --   * etc
+      -- The Leios header checks. Cheap, so they run before the signature
+      -- checks.
       --
       -- NB cert/txs exclusivity is not among these: it is a property of the
       -- body, and 'blockMatchesHeader' already enforces it where the body is
-      -- in hand.
+      -- in hand. Nor is the EB closure's size: the announcement carries only
+      -- one size, and it is the body's.
+      leiosHeaderChecks cfg lv b slot cs
 
       -- First, we check the KES signature, which validates that the issuer is
       -- in fact who they say they are.
@@ -589,12 +597,6 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
       cs = tickedPraosStateChainDepState tcs
 
   -- Re-update the chain dependent state as a result of processing a header.
-  --
-  -- This consists of:
-  -- - Update the last applied block hash.
-  -- - Update the evolving and (potentially) candidate nonces based on the
-  --   position in the epoch.
-  -- - Update the operational certificate counter.
   reupdateChainDepState
     _cfg@( PraosConfig
              PraosParams{praosRandomnessStabilisationWindow}
@@ -663,7 +665,7 @@ validateVRFSignature ::
   Views.BasePraosLedgerView pext ->
   ActiveSlotCoeff ->
   Views.BaseHeaderView pext c ->
-  Except (PraosValidationErr c) ()
+  Except (BasePraosValidationErr pext c) ()
 validateVRFSignature eta0 (Views.plvPoolDistr -> SL.PoolDistr pd _) =
   doValidateVRFSignature eta0 pd
 
@@ -676,7 +678,7 @@ doValidateVRFSignature ::
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   ActiveSlotCoeff ->
   Views.BaseHeaderView pext c ->
-  Except (PraosValidationErr c) ()
+  Except (BasePraosValidationErr pext c) ()
 doValidateVRFSignature eta0 pd f b = do
   case Map.lookup hk pd of
     Nothing -> throwError $ VRFKeyUnknown hk
@@ -701,13 +703,61 @@ doValidateVRFSignature eta0 pd f b = do
   vrfLeaderVal = vrfLeaderValue (Proxy @c) vrfCert
   slot = Views.hvSlotNo b
 
+-- | The Leios-specific checks on a header, called by 'updateChainDepState'
+leiosHeaderChecks :: forall pext c.
+  KnownPraosExtension pext =>
+  ConsensusConfig (BasePraos pext c) ->
+  Views.BasePraosLedgerView pext ->
+  Views.BaseHeaderView pext c ->
+  SlotNo ->
+  BasePraosState pext ->
+  Except (BasePraosValidationErr pext c) ()
+leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
+  case praosExtensionHasLeios (Proxy @pext) of
+    PextDoesNotHaveLeiosDecided -> pure ()
+    PextHasLeiosDecided -> do
+      let SJustLeios (containsCert, mbAnn) = Views.hvLeios b
+          SJustLeios llv = Views.plvLeios lv
+          SJustLeios announcedByPredecessor = praosStateLeiosAnnouncement cs
+
+      -- Note that the genesis state doesn't announce an EB.
+      when containsCert $
+        case (announcedByPredecessor, praosStateLastSlot cs) of
+          (SJust{}, NotOrigin announcingSlot) -> do
+            let earliestAllowed =
+                  minCertificationSlot
+                    ( runIdentity $
+                        epochInfoSlotLength
+                          (History.toPureEpochInfo praosEpochInfo)
+                          slot
+                    )
+                    (Views.llvAnnouncementPeriodLength llv)
+                    (Views.llvVotePeriodLength llv)
+                    (Views.llvDiffusionPeriodLength llv)
+                    announcingSlot
+            when (slot < earliestAllowed) $
+              throwError $
+                LeiosCertTooYoung mkHasLeiosProof announcingSlot slot earliestAllowed
+          -- A state that announced an EB has necessarily applied a header, so
+          -- 'Origin' is the same situation as announcing nothing.
+          _ -> throwError $ LeiosCertWithoutAnnouncement mkHasLeiosProof
+
+      case mbAnn of
+        SNothing -> pure ()
+        SJust ann -> do
+          let announced = ebAnnouncementSize ann
+              maximum' = Views.llvMaxEbBodySize llv
+          when (announced > maximum') $
+            throwError $
+              LeiosEbTooBig mkHasLeiosProof announced maximum'
+
 validateKESSignature ::
   (KnownPraosExtension pext, PraosCrypto c) =>
   ConsensusConfig (BasePraos pext c) ->
   LedgerView (BasePraos pext c) ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.BaseHeaderView pext c ->
-  Except (PraosValidationErr c) ()
+  Except (BasePraosValidationErr pext c) ()
 validateKESSignature
   _cfg@( PraosConfig
            PraosParams{praosMaxKESEvo, praosSlotsPerKESPeriod}
@@ -740,7 +790,7 @@ doValidateKESSignature ::
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.BaseHeaderView pext c ->
-  Except (PraosValidationErr c) ()
+  Except (BasePraosValidationErr pext c) ()
 doValidateKESSignature = doValidateKESSignatureWorker UpperBoundOCERT
 
 -- | The worker underlying 'doValidateKESSignature', parameterized by whether to
@@ -753,7 +803,7 @@ doValidateKESSignatureWorker :: forall pext c.
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.BaseHeaderView pext c ->
-  Except (PraosValidationErr c) ()
+  Except (BasePraosValidationErr pext c) ()
 doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
   do
     c0 <= kp ?! KESBeforeStartOCERT c0 kp
