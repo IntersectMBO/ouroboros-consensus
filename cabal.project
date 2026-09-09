@@ -14,36 +14,56 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2026-07-31T11:39:47Z
+  , hackage.haskell.org 2026-09-02T14:05:07Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-08-17T11:09:16Z
+  , cardano-haskell-packages 2026-09-02T08:49:12Z
 
-packages: .
-
--- Temp: pin cardano-ledger to PR IntersectMBO/cardano-ledger#5992
 source-repository-package
   type: git
-  location: https://github.com/IntersectMBO/cardano-ledger.git
-  tag: c99f7c8addf270a09d852880bfa0a27340f8e7c3
-  --sha256: sha256-RKXVMS5glorTkL59J4rfyytyPflDWNB0GyLMrwfWZc4=
+  location: https://github.com/input-output-hk/kes-agent
+  tag: 4625f3cf543566517d08882e659c97932d106d86
+  --sha256: sha256-CSHWndpeJFqCEFNT6ysfyN6x+O4vZ9TtYOOsZKcLnIA=
   subdir:
-    libs/cardano-ledger-core
-    libs/cardano-ledger-api
-    libs/cardano-ledger-binary
-    libs/cardano-protocol
-    libs/cardano-protocol-tpraos
-    libs/cardano-data
-    libs/small-steps
-    libs/vector-map
-    libs/non-integral
-    eras/shelley/impl
-    eras/shelley/test-suite
-    eras/mary/impl
+    kes-agent
+    kes-agent-crypto
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  tag: fb723848a28256fe372ea9ba692eccded6a12a53
+  --sha256: sha256-iL61RTn4OPRNzzPn/2YcVJNMJYolXghaQ9cDG/DOOWM=
+  subdir:
     eras/allegra/impl
     eras/alonzo/impl
     eras/babbage/impl
+    eras/byron/chain/executable-spec
+    eras/byron/crypto
+    eras/byron/ledger/executable-spec
+    eras/byron/ledger/impl
     eras/conway/impl
     eras/dijkstra/impl
+    eras/mary/impl
+    eras/shelley/impl
+    eras/shelley/test-suite
+    libs/cardano-data
+    libs/cardano-ledger-api
+    libs/cardano-ledger-binary
+    libs/cardano-ledger-core
+    libs/cardano-protocol
+    libs/cardano-protocol-tpraos
+    libs/non-integral
+    libs/small-steps
+    libs/vector-map
+
+source-repository-package
+  type: git
+  location: https://github.com/intersectmbo/cardano-base.git
+  --sha256: sha256-WUBluY6UqvBkS5cNsJnKMOaW+1dTfL3mg8iq/kVPV0o=
+  tag: d92e2e3841eaad354c5e1ef77b458b347f471271
+  subdir: cardano-crypto-leios
+
+packages: .
+
 
 -- We want to always build the test-suites and benchmarks
 tests: true
