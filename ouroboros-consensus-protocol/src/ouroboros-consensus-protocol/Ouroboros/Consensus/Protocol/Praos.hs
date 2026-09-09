@@ -326,7 +326,7 @@ data BasePraosState pext = PraosState
   }
   deriving (Generic, Show, Eq)
 
-type PraosState = BasePraosState
+type PraosState = BasePraosState PextNone
 
 instance KnownPraosExtension pext => NoThunks (BasePraosState pext)
 
@@ -411,7 +411,7 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
               )
 
 data instance Ticked (BasePraosState pext) = TickedPraosState
-  { tickedPraosStateChainDepState :: PraosState pext
+  { tickedPraosStateChainDepState :: BasePraosState pext
   , tickedPraosStateLedgerView :: Views.BasePraosLedgerView pext
   }
 
@@ -852,8 +852,11 @@ praosCheckCanForge
   PraosProtocolSupportsNode
 -------------------------------------------------------------------------------}
 
-instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
-  type PraosProtocolSupportsNodeCrypto (Praos c) = c
+instance
+  (PraosCrypto c, KnownPraosExtension pext) =>
+  PraosProtocolSupportsNode (BasePraos pext c)
+  where
+  type PraosProtocolSupportsNodeCrypto (BasePraos pext c) = c
 
   getPraosNonces _prx cdst =
     PraosNonces
