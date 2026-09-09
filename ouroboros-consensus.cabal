@@ -1799,6 +1799,7 @@ test-suite shelley-test
     cardano-ledger-core,
     cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-shelley,
+    cardano-protocol,
     cardano-protocol-tpraos,
     cardano-slotting,
     cborg,
