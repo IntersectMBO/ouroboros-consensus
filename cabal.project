@@ -56,12 +56,13 @@ allow-older:
 constraints:
   , any.crypton < 1.1
 
--- Points to ouroboros-network/leios-prototype
+-- Points to the `matchedBlock` commit on top of
+-- ouroboros-network/leios-prototype
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: 4b3ab7664f609a1aee0f0c24dcfcfd0ab899fc42
-  --sha256: sha256-fIqpI2whstetodpiONmUDVgnhTpzXeq1/gmzuHItK5A=
+  tag: a48ea7a88cd8cc0349013c3b9f99fd3444f26c3b
+  --sha256: sha256-VY0/lP3VFMKwQyCTE7PKzZyBjsR1ZSF77ftwEhn2U/U=
   subdir:
     ouroboros-network
     cardano-diffusion
@@ -76,13 +77,13 @@ source-repository-package
   subdir:
     typed-protocols
 
--- Points to cardano-ledger/leios-prototype, which carries the ledger-master
--- integration this branch builds against.
+-- Points to the DijksraForecasting PR on top of cardano-ledger/leios-prototype,
+-- which carries the ledger-master integration this branch builds against.
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: 1587f21a7d1306dc590c2749a5c66232ef66aad0
-  --sha256: sha256-zGKFgOU+p0uMTNbIm0Em6GMYMUVZMJsJtynzXG46E58=
+  tag: bc4a3fe8133c8ee7fb93025cf113e06574d388a0
+  --sha256: sha256-/Djrjbuz8POekLg7L5Ti/IoxMpepMBt2X2/f3tI0mQM=
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api
