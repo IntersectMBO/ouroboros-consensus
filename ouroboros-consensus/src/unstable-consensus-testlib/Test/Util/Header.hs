@@ -10,7 +10,12 @@ module Test.Util.Header
 import Cardano.Slotting.EpochInfo.API (epochInfoSlotToRelativeTime)
 import Data.Functor.Identity (runIdentity)
 import Data.Typeable (Typeable)
-import Ouroboros.Consensus.Block (Header, blockSlot)
+import Ouroboros.Consensus.Block
+  ( Header
+  , SlotNo
+  , WithOrigin (NotOrigin)
+  , blockSlot
+  )
 import Ouroboros.Consensus.Config (TopLevelConfig)
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
   ( ImmutableEraParams
@@ -38,18 +43,28 @@ attachSlotTimeToFragment ::
   TopLevelConfig blk ->
   AnchoredFragment (Header blk) ->
   AnchoredFragment (HeaderWithTime blk)
-attachSlotTimeToFragment cfg = AF.mapAnchoredFragment (attachSlotTime cfg)
+attachSlotTimeToFragment cfg frag =
+  AF.fromOldestFirst (AF.castAnchor (AF.anchor frag)) $
+    zipWith
+      (attachSlotTime cfg)
+      (AF.anchorToSlotNo (AF.anchor frag) : map (NotOrigin . blockSlot) hdrs)
+      hdrs
+ where
+  hdrs = AF.toOldestFirst frag
 
 attachSlotTime ::
   (AF.HasHeader (Header blk), ImmutableEraParams blk) =>
   TopLevelConfig blk ->
+  -- | The slot of the header's predecessor
+  WithOrigin SlotNo ->
   Header blk ->
   HeaderWithTime blk
-attachSlotTime cfg hdr =
+attachSlotTime cfg predSlot hdr =
   HeaderWithTime
     { hwtHeader = hdr
     , hwtSlotRelativeTime =
         runIdentity $ epochInfoSlotToRelativeTime ei (blockSlot hdr)
+    , hwtPredecessorSlot = predSlot
     }
  where
   ei = immutableEpochInfo cfg

@@ -46,6 +46,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   , ChainSyncLoPBucketEnabledConfig (..)
   , viewChainSyncState
   )
+import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
@@ -177,7 +178,7 @@ startChainSyncConnectionThread ::
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
   ChainDbView m blk ->
-  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk (BlockFetchClientInterface.MatchedBlock blk) m ->
   SharedResources m blk ->
   ChainSyncResources m blk ->
   ChainSyncTimeout ->
@@ -227,7 +228,7 @@ startBlockFetchConnectionThread ::
   ResourceRegistry m ->
   Tracer m (TraceEvent blk) ->
   StateViewTracers blk m ->
-  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk (BlockFetchClientInterface.MatchedBlock blk) m ->
   KeepAliveRegistry PeerId m ->
   ControlMessageSTM m ->
   SharedResources m blk ->

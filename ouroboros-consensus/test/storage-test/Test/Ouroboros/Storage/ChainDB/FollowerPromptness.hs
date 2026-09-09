@@ -159,11 +159,20 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
           Chain.AddBlock hdrHash -> addTiming varFollowerInstrTimings hdrHash
           Chain.RollBack _ -> pure ()
 
-  -- Add all blocks to the ChainDB.
-  let addBlock = ChainDB.addBlock_ chainDB Punishment.noPunishment
-  for_ chainUpdates \case
-    AddBlock blk -> addBlock blk
-    SwitchFork _ blks -> for_ blks addBlock
+  -- Add all blocks to the ChainDB, each with its predecessor's slot: the
+  -- previous block of the same update, or else the tip the update extends.
+  let addBlocks tipSlot = \case
+        [] -> pure tipSlot
+        blk : blks -> do
+          ChainDB.addBlock_ chainDB Punishment.noPunishment tipSlot blk
+          addBlocks (NotOrigin (blockSlot blk)) blks
+      addUpdates tipSlot = \case
+        [] -> pure ()
+        AddBlock blk : upds ->
+          addBlocks tipSlot [blk] >>= \tipSlot' -> addUpdates tipSlot' upds
+        SwitchFork p blks : upds ->
+          addBlocks (pointSlot p) blks >>= \tipSlot' -> addUpdates tipSlot' upds
+  addUpdates Origin chainUpdates
 
   tentativeHeaderSetTimings <- readTVarIO varTentativeSetTimings
   tentativeHeaderUnsetTimings <- readTVarIO varTentativeUnsetTimings

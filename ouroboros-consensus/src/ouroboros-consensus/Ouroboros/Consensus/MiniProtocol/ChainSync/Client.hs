@@ -1188,14 +1188,22 @@ withTime fragment (HeaderStateHistory history) =
     )
     $ AF.fromOldestFirst
       (AF.castAnchor $ AF.anchor fragment)
-    $ fmap addTimeToHeader
-    $ zip (AF.toOldestFirst fragment) (AF.toOldestFirst history)
+    $ fmap enrichHeader
+    $ zip3
+      ( AF.anchorToSlotNo (AF.anchor fragment)
+          : map (NotOrigin . blockSlot) (AF.toOldestFirst fragment)
+      )
+      (AF.toOldestFirst fragment)
+      (AF.toOldestFirst history)
  where
-  addTimeToHeader :: (Header blk, HeaderStateWithTime blk) -> HeaderWithTime blk
-  addTimeToHeader (hdr, hsWt) =
+  enrichHeader ::
+    (WithOrigin SlotNo, Header blk, HeaderStateWithTime blk) ->
+    HeaderWithTime blk
+  enrichHeader (predSlot, hdr, hsWt) =
     HeaderWithTime
       { hwtHeader = hdr
       , hwtSlotRelativeTime = hswtSlotTime hsWt
+      , hwtPredecessorSlot = predSlot
       }
 
 {-------------------------------------------------------------------------------
@@ -1949,6 +1957,7 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
       HeaderWithTime
         { hwtHeader = hdr
         , hwtSlotRelativeTime = hdrSlotTime
+        , hwtPredecessorSlot = AF.headSlot theirFrag
         }
     theirFrag' = theirFrag :> validatedHdr
     -- Advance the most recent intersection if we have the same

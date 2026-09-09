@@ -187,7 +187,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ The node's mempool
   , getTopLevelConfig :: TopLevelConfig blk
   -- ^ The node's top-level static configuration
-  , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+  , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk (BlockFetchClientInterface.MatchedBlock blk) m
   -- ^ The fetch client registry, used for the block fetch clients.
   , getKeepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
   -- ^ The keep-alive registry, used by block-fetch decision logic to read
@@ -681,8 +681,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
   , blockFetchInterface ::
-      BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
-  , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+      BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk (BlockFetchClientInterface.MatchedBlock blk) m
+  , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk (BlockFetchClientInterface.MatchedBlock blk) m
   , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
@@ -780,7 +780,7 @@ initInternalState
         chainDbView =
           BlockFetchClientInterface.defaultChainDbView chainDB
         blockFetchInterface ::
-          BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+          BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk (BlockFetchClientInterface.MatchedBlock blk) m
         blockFetchInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
             (dbfTracer tracers)
