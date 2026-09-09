@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Protocol.Praos.Views
   , PraosLedgerView
   , initialLeiosLedgerView
   , forecastToBasePraosLedgerView
+  , extendHeaderBodyWithLeios
   ) where
 
 import Cardano.Crypto.KES (SignedKES)
@@ -59,6 +60,30 @@ type BaseHeaderBody :: PraosExtension -> Type -> Type
 type family BaseHeaderBody pext :: Type -> Type where
   BaseHeaderBody PextNone = PraosCodec.HeaderBody
   BaseHeaderBody PextLeios = LeiosCodec.HeaderBody
+
+-- | The Leios header body is the Praos one plus the two Leios fields, so
+-- whoever builds one builds the Praos body first and hands it here.
+extendHeaderBodyWithLeios ::
+  PraosCodec.HeaderBody c ->
+  -- | Whether the block body carries a Leios certificate
+  Bool ->
+  StrictMaybe LeiosCodec.EbAnnouncement ->
+  LeiosCodec.HeaderBody c
+extendHeaderBodyWithLeios pb containsCert ann =
+  LeiosCodec.HeaderBody
+    { LeiosCodec.hbBlockNo = PraosCodec.hbBlockNo pb
+    , LeiosCodec.hbSlotNo = PraosCodec.hbSlotNo pb
+    , LeiosCodec.hbPrev = PraosCodec.hbPrev pb
+    , LeiosCodec.hbVk = PraosCodec.hbVk pb
+    , LeiosCodec.hbVrfVk = PraosCodec.hbVrfVk pb
+    , LeiosCodec.hbVrfRes = PraosCodec.hbVrfRes pb
+    , LeiosCodec.hbBodySize = PraosCodec.hbBodySize pb
+    , LeiosCodec.hbBodyHash = PraosCodec.hbBodyHash pb
+    , LeiosCodec.hbOCert = PraosCodec.hbOCert pb
+    , LeiosCodec.hbProtVer = PraosCodec.hbProtVer pb
+    , LeiosCodec.hbBlockBodyContainsLeiosCert = containsCert
+    , LeiosCodec.hbEbAnnouncement = ann
+    }
 
 {-------------------------------------------------------------------------------
   Header view

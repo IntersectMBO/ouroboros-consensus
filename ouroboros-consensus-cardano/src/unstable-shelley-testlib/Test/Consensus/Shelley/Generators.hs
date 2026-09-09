@@ -39,6 +39,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
   ( KnownPraosExtension (singPraosExtension)
   , SingPraosExtension (SingPextLeios, SingPextNone)
   )
+import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
@@ -65,9 +66,7 @@ import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators
 import Test.Cardano.Ledger.Shelley.Serialisation.Generators ()
 import Test.Cardano.Ledger.ShelleyMA.Serialisation.Generators ()
 import Test.Cardano.Protocol.TPraos.Arbitrary (genBlock)
-import Test.Consensus.Protocol.Serialisation.Generators
-  ( extendHeaderBodyWithLeios
-  )
+import Test.Consensus.Protocol.Serialisation.Generators ()
 import Test.Consensus.Shelley.MockCrypto (CanMock)
 import Test.QuickCheck hiding (Result)
 import Test.Util.Orphans.Arbitrary ()

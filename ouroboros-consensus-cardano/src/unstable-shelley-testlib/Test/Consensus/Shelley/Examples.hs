@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (BasePraos, Praos, PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos.Common
+import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Ouroboros.Consensus.Protocol.TPraos
   ( TPraos
   , TPraosState (TPraosState)
@@ -76,9 +77,6 @@ import Test.Cardano.Protocol.TPraos.Examples
   , ledgerExamplesMary
   , ledgerExamplesShelley
   , ledgerExamplesTPraos
-  )
-import Test.Consensus.Protocol.Serialisation.Generators
-  ( extendHeaderBodyWithLeios
   )
 import Test.Consensus.Shelley.Generators (praosHeaderBodyFromTPraos)
 import Test.Util.Orphans.Arbitrary ()

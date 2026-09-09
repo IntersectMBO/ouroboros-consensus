@@ -42,6 +42,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
   , SingPraosExtension (..)
   , StrictMaybeLeios (..)
   , fromCodecEbAnnouncement
+  , toCodecEbAnnouncement
   )
 import Ouroboros.Consensus.Protocol.Praos.Views
 import Ouroboros.Consensus.Protocol.Signed
@@ -252,8 +253,42 @@ instance
       | otherwise =
           0
 
-  -- TODO
-  mkHeader = error "TODO mkHeader for BasePraos"
+  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer leios =
+    -- Each branch refines @pext@, so the body type is concrete: both the KES
+    -- 'Signable' dictionary and the header constructor are then available.
+    case singPraosExtension (Proxy @pext) of
+      SingPextNone -> do
+        PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il praosBody
+        pure $ PraosCodec.Header praosToSign praosSignature
+      SingPextLeios -> case leios of
+        SJustLeios (containsCert, mbAnn) -> do
+          PraosFields{praosSignature, praosToSign} <-
+            forgePraosFields hk cbl il $ \ts ->
+              extendHeaderBodyWithLeios
+                (praosBody ts)
+                containsCert
+                (toCodecEbAnnouncement <$> mbAnn)
+          pure $ LeiosCodec.Header praosToSign praosSignature
+   where
+    praosBody
+      PraosToSign
+        { praosToSignIssuerVK
+        , praosToSignVrfVK
+        , praosToSignVrfRes
+        , praosToSignOCert
+        } =
+        PraosCodec.HeaderBody
+          { PraosCodec.hbBlockNo = blockNo
+          , PraosCodec.hbSlotNo = slotNo
+          , PraosCodec.hbPrev = prevHash
+          , PraosCodec.hbVk = praosToSignIssuerVK
+          , PraosCodec.hbVrfVk = praosToSignVrfVK
+          , PraosCodec.hbVrfRes = praosToSignVrfRes
+          , PraosCodec.hbBodySize = fromIntegral sz
+          , PraosCodec.hbBodyHash = bbHash
+          , PraosCodec.hbOCert = praosToSignOCert
+          , PraosCodec.hbProtVer = protVer
+          }
 
   protocolStateLeiosInfo _ cs =
     case praosStateLeiosAnnouncement cs of
