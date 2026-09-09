@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
@@ -38,7 +39,7 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , KnownPraosExtension (..)
   , SingPraosExtension (..)
   , StrictMaybeLeios (..)
-  , toHasLeiosProof
+  , mkHasLeiosProof
   , fromCodecEbAnnouncement
   , toCodecEbAnnouncement
   ) where
@@ -440,17 +441,18 @@ instance KnownPraosExtension PextLeios where
 -----
 
 -- | Newtype wrapper to avoid 'NoThunks' orphan
-type HasLeiosProof :: PraosExtension -> Type
-newtype HasLeiosProof pext =
-    MkHasLeiosProof (PraosExtensionHasLeios pext :~: PextHasLeios)
+--
+-- We're using ':~:' at all merely so we can still use @deriving@ for exception
+-- sum types.
+type HasLeiosProof :: WhetherHasLeios -> Type
+newtype HasLeiosProof whether =
+    MkHasLeiosProof (whether :~: PextHasLeios)
   deriving (Eq, Show)
 
-deriving via OnlyCheckWhnf (HasLeiosProof pext) instance Typeable pext => NoThunks (HasLeiosProof pext)
+deriving via OnlyCheckWhnf (HasLeiosProof whether) instance Typeable whether => NoThunks (HasLeiosProof whether)
 
-toHasLeiosProof :: WhetherHasLeiosDecided pext -> Maybe (HasLeiosProof pext)
-toHasLeiosProof = \case
-  PextHasLeiosDecided -> Just $ MkHasLeiosProof Refl
-  PextDoesNotHaveLeiosDecided -> Nothing
+mkHasLeiosProof :: HasLeiosProof PextHasLeios
+mkHasLeiosProof = MkHasLeiosProof Refl
 
 -----
 
@@ -465,35 +467,43 @@ data StrictMaybeLeios whether a where
 instance Functor (StrictMaybeLeios whether) where
   fmap f = \case
     SNothingLeios -> SNothingLeios
-    SJustLeios a -> SJustLeios $ f a
+    SJustLeios x -> SJustLeios $ f x
+
+instance Applicative (StrictMaybeLeios PextDoesNotHaveLeios) where
+  pure = const SNothingLeios
+  SNothingLeios <*> SNothingLeios = SNothingLeios
+
+instance Applicative (StrictMaybeLeios PextHasLeios) where
+  pure = SJustLeios
+  SJustLeios f <*> SJustLeios x = SJustLeios $ f x
 
 instance Foldable (StrictMaybeLeios whether) where
   foldMap f = \case
     SNothingLeios -> mempty
-    SJustLeios a -> f a
+    SJustLeios x -> f x
 
 instance Traversable (StrictMaybeLeios whether) where
   traverse f = \case
     SNothingLeios -> pure SNothingLeios
-    SJustLeios a -> SJustLeios <$> f a
+    SJustLeios x -> SJustLeios <$> f x
 
 instance Eq a => Eq (StrictMaybeLeios whether a) where
   SNothingLeios == SNothingLeios = True
-  SJustLeios a == SJustLeios b = a == b
+  SJustLeios x == SJustLeios y = x == y
 
 instance Ord a => Ord (StrictMaybeLeios whether a) where
   compare SNothingLeios SNothingLeios = EQ
-  compare (SJustLeios a) (SJustLeios b) = compare a b
+  compare (SJustLeios x) (SJustLeios y) = compare x y
 
 instance Show a => Show (StrictMaybeLeios whether a) where
   showsPrec p = \case
       SNothingLeios -> showString "SNothingLeios"
-      SJustLeios a -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows a
+      SJustLeios x -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows x
 
 instance NFData a => NFData (StrictMaybeLeios whether a) where
   rnf = \case
       SNothingLeios -> ()
-      SJustLeios a -> rnf a
+      SJustLeios x -> rnf x
 
 instance (Typeable whether, NoThunks a) => NoThunks (StrictMaybeLeios whether a) where
   showTypeOf _ = unwords
@@ -503,7 +513,7 @@ instance (Typeable whether, NoThunks a) => NoThunks (StrictMaybeLeios whether a)
       ]
   wNoThunks ctxt = \case
       SNothingLeios -> wNoThunks ctxt ()
-      SJustLeios a -> wNoThunks ctxt a
+      SJustLeios x -> wNoThunks ctxt x
 
 -----
 
