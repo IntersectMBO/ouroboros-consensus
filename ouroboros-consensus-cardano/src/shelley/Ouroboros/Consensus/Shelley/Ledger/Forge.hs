@@ -38,7 +38,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   , forgeLeiosEb
   , hashLeiosEb
-  , leiosEbBytesSize
+  , encodeLeiosEbSize
   )
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
@@ -163,7 +163,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
     Just ebTxs -> do
       let forgedEb = forgeLeiosEb fbCurrentSlotNo ebTxs
           ebHash = hashLeiosEb forgedEb.body
-          ebSize = leiosEbBytesSize forgedEb.body
+          ebSize = encodeLeiosEbSize forgedEb.body
           ebAnn =
             EbAnnouncement
               { ebAnnouncementHash = ebHash
