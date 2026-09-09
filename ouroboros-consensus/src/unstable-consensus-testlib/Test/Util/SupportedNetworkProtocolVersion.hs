@@ -27,21 +27,27 @@ import Test.Tasty.HUnit
 --
 --  * without holes, since the handshake picks the highest version both sides
 --    know, and a gap in the middle only makes the negotiated version harder to
---    reason about for no benefit.
+--    reason about for no benefit;
+--
+--  * including 'latestReleasedNodeVersion', which pins where the run starts.
+--    Without it nothing constrains the oldest supported version, and dropping
+--    one version too many would refuse every client that offers at most the
+--    latest released one.
 contiguousSupportedNetworkProtocolVersions ::
   forall blk.
   (Typeable blk, SupportedNetworkProtocolVersion blk) =>
   Proxy blk ->
   Assertion
 contiguousSupportedNetworkProtocolVersions p = do
-  testVersions supportedNodeToNodeVersions
-  testVersions supportedNodeToClientVersions
+  testVersions fst supportedNodeToNodeVersions
+  testVersions snd supportedNodeToClientVersions
  where
   testVersions ::
     (Show v, Ord v, Enum v, Bounded v) =>
+    ((Maybe NodeToNodeVersion, Maybe NodeToClientVersion) -> Maybe v) ->
     (Proxy blk -> Map v a) ->
     Assertion
-  testVersions f = do
+  testVersions prj f = do
     assertBool
       ("no supported versions for " <> blkName)
       (not (Set.null mappedVersions))
@@ -59,6 +65,9 @@ contiguousSupportedNetworkProtocolVersions p = do
           <> show (Set.toList holes)
       )
       (Set.null holes)
+    assertBool
+      ("the latest released version is not supported by " <> blkName)
+      (maybe True (`Set.member` mappedVersions) (prj (latestReleasedNodeVersion p)))
    where
     blkName = show (typeRep p)
     mappedVersions = Map.keysSet $ f p
