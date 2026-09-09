@@ -134,7 +134,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -1021,7 +1021,7 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra) where
   getCurrentThreshold = const Nothing
   getMinCertificationGap _ _ = Nothing
 
-instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
+instance HasLeiosVoting (ShelleyBlock (PraosWithLeios c) DijkstraEra) where
   -- The ledger already seats the committee, on the stake snapshot, at the era
   -- boundary; take it from there rather than selecting a second time here.
   --

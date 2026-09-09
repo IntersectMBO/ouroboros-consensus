@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
   , default_pHeaderLeiosContainsCert
+  , default_pHeaderLeiosEbAnnouncement
   , ProtocolHeaderSupportsKES (..)
   , ProtocolHeaderSupportsProtocol (..)
   , ShelleyHash (..)
@@ -30,7 +31,7 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
-import Cardano.Ledger.BaseTypes (ProtVer, StrictMaybe)
+import Cardano.Ledger.BaseTypes (ProtVer, StrictMaybe (SNothing))
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
@@ -130,6 +131,11 @@ class
   -- the header/body envelope.
   pHeaderLeiosContainsCert :: ShelleyProtocolHeader proto -> Bool
 
+  -- | The endorser block this header announces. 'SNothing' for
+  -- protocols/headers without Leios support, which use
+  -- 'default_pHeaderLeiosEbAnnouncement'.
+  pHeaderLeiosEbAnnouncement :: ShelleyProtocolHeader proto -> StrictMaybe EbAnnouncement
+
   type EnvelopeCheckError proto :: Type
 
   -- | Carry out any protocol-specific envelope checks. For example, this might
@@ -146,6 +152,12 @@ class
 -- @'pHeaderLeiosContainsCert' = 'default_pHeaderLeiosContainsCert'@ explicitly.
 default_pHeaderLeiosContainsCert :: ShelleyProtocolHeader proto -> Bool
 default_pHeaderLeiosContainsCert = const False
+
+-- | The 'pHeaderLeiosEbAnnouncement' for protocols/headers without Leios
+-- support: a header that cannot announce an endorser block never does.
+default_pHeaderLeiosEbAnnouncement ::
+  ShelleyProtocolHeader proto -> StrictMaybe EbAnnouncement
+default_pHeaderLeiosEbAnnouncement = const SNothing
 
 -- | `ProtocolHeaderSupportsKES` describes functionality common to protocols
 --    using key evolving signature schemes. This includes verifying the header

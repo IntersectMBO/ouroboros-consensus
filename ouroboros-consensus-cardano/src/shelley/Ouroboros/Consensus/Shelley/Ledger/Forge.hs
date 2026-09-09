@@ -47,7 +47,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Header (HeaderLeiosExtension (..))
+import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -57,7 +57,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Integrity
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
-  , ProtocolHeaderSupportsKES (configSlotsPerKESPeriod)
+  , ProtocolHeaderSupportsKES (ProtoHasLeios, configSlotsPerKESPeriod)
   , mkHeader
   )
 
@@ -70,9 +70,10 @@ forgeShelleyBlock ::
   (ShelleyCompatible proto era, Monad m) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
+  StrictMaybeLeios (ProtoHasLeios proto) () ->
   ForgeBlockArgs m (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
-forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
+forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
   -- Forge an RB and attempt to announce an EB and/or certify a previously announced one:
   --
   --  * Certify: if the forge loop decided to certify a previously-announced
@@ -81,10 +82,17 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   --  * Announce: forge and store a new EB from 'fbEbTxs' and announce it on this RB's header.
   --    When we are also certifying, 'fbEbTxs' contains transactions from the mempool that has already
   --    been rebased onto the post-certificate ledger state.
-  mayEbAnn <-
-    case Typeable.eqT @era @DijkstraEra of
-      Just Refl -> mkEb
-      Nothing -> pure Nothing
+  -- Matching the token refines 'ProtoHasLeios', which is what lets the Leios
+  -- branch build the header fields below.
+  (mayEbAnn, leiosFields) <-
+    case leiosToken of
+      SNothingLeios -> pure (Nothing, SNothingLeios)
+      SJustLeios () -> do
+        ann <- mkEb
+        pure
+          ( ann
+          , SJustLeios (isJust fbMayLeiosCert, maybeToStrictMaybe (snd <$> ann))
+          )
   let rbBody = mkBody fbMayLeiosCert
       actualRbBodySize = SL.blockBodySize protocolVersion rbBody
   hdr <-
@@ -98,11 +106,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       (SL.hashBlockBody @era rbBody)
       actualRbBodySize
       protocolVersion
-      $ SJust
-        HeaderLeiosExtension
-          { containsCert = isJust fbMayLeiosCert
-          , ebAnnouncement = maybeToStrictMaybe $ snd <$> mayEbAnn
-          }
+      leiosFields
 
   let blk = mkShelleyBlock $ SL.Block hdr rbBody
   case fst <$> mayEbAnn of

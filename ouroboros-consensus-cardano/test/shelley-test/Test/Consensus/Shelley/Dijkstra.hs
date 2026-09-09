@@ -55,9 +55,9 @@ prop_leiosBodyWithCertAndTxsRejected =
       "blockMatchesHeader should be False when body contains both Cert and Txs"
       (not (blockMatchesHeader (getHeader blk) blk))
  where
-  genBlockWithTxsAndCert :: Gen (ShelleyBlock (Praos StandardCrypto) DijkstraEra)
+  genBlockWithTxsAndCert :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
   genBlockWithTxsAndCert = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
     txsBody <-
       genSmallDijkstraTxsBlockBody @DijkstraEra `suchThat` (\b -> not (null (b ^. Core.txSeqBlockBodyL)))
     cert <- arbitrary :: Gen LeiosCert
@@ -87,9 +87,9 @@ prop_leiosCertFlagMismatchRejected =
                not (blockMatchesHeader (getHeader blk) blk)
          )
  where
-  genBlockCertHeaderAndTxsBody :: Gen (ShelleyBlock (Praos StandardCrypto) DijkstraEra)
+  genBlockCertHeaderAndTxsBody :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
   genBlockCertHeaderAndTxsBody = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
     txsBody <- genSmallDijkstraTxsBlockBody @DijkstraEra
     let Header hbody sig = shelleyHeaderRaw shelleyHdr
     return $
@@ -104,9 +104,9 @@ prop_leiosCertFlagMismatchRejected =
           )
           txsBody
 
-  genBlockTxsHeaderAndCertBody :: Gen (ShelleyBlock (Praos StandardCrypto) DijkstraEra)
+  genBlockTxsHeaderAndCertBody :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
   genBlockTxsHeaderAndCertBody = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
     certBody <- genSmallDijkstraCertBlockBody @DijkstraEra
     let Header hbody sig = shelleyHeaderRaw shelleyHdr
     return $
