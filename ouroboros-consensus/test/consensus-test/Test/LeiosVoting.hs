@@ -33,7 +33,7 @@ import LeiosDemoTypes
   , TxHash
   , hashLeiosEb
   , hashLeiosTx
-  , leiosEbBytesSize
+  , encodeLeiosEbSize
   , serializeEbBody
   )
 import LeiosTxCache
@@ -219,7 +219,7 @@ withHarness :: [Bool] -> [TestTx] -> (Harness -> IO a) -> IO a
 withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
   withLeiosDb db $ \conn -> do
-    leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody conn point eb
     void $ leiosDbInsertTxs conn [(txHashOf tx, txBytes tx) | tx <- txs]
 

@@ -121,7 +121,7 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , LeiosPoint (..)
   , TxHash (..)
-  , leiosEbBytesSize
+  , encodeLeiosEbSize
   )
 import LeiosUtils.CallTrace
   ( CallEvent (..)
@@ -426,7 +426,7 @@ populateDb opts db = do
         point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
         eb = genEb opts ebIdx
         txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
-    leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
     _ <- leiosDbInsertEbBody conn point eb
     _ <- leiosDbInsertTxs conn txs
     pure (slot, hashBytes)
@@ -546,7 +546,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
         snd
           <$> timed
             ( do
-                leiosDbInsertEbPoint c point (leiosEbBytesSize eb)
+                leiosDbInsertEbPoint c point (encodeLeiosEbSize eb)
                 _ <- leiosDbInsertEbBody c point eb
                 _ <- leiosDbInsertTxs c txs
                 pure ()
@@ -893,7 +893,7 @@ renderSummary opts results =
   ebGeometry = case optDbPath opts of
     Just _ -> []
     Nothing ->
-      [ "  EB body               = " <> showKb (fromIntegral (leiosEbBytesSize (genEb opts 0)))
+      [ "  EB body               = " <> showKb (fromIntegral (encodeLeiosEbSize (genEb opts 0)))
       , "  EB closure            = " <> showKb (optTxsPerEb opts * optTxBytes opts)
       , "  txs per EB            = " <> show (optTxsPerEb opts)
       , "  tx size               = " <> show (optTxBytes opts) <> " B"
