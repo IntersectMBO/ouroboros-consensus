@@ -78,20 +78,24 @@ The user can use snapshots created by the node or they can create their own snap
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
-#### --stubbed-leios-db
+#### --leios-db and --no-leios-db
 
 ```
-[--stubbed-leios-db]
+[--leios-db PATH | --no-leios-db]
 ```
-
-Run with an empty in-memory Leios database, rather than the `leios.db` file under the `--db` path.
 
 A Praos block (a Leios ranking block) that carries a certificate has an empty body on the wire.
 Its transactions are in the endorser block (EB) that it certifies, and those live in the Leios database, not in the ImmutableDB.
-So the tool reads `DB_PATH/leios.db`, which is where the node writes that database, and it refuses to start when that file is absent.
-If your node writes the file elsewhere, symlink it into `DB_PATH`.
+So the tool reads that database, and it refuses to start when it finds no such file.
 
-Pass this flag for a chain that holds no certifying block, such as a chain that predates Leios.
+Without `--leios-db` the tool reads `DB_PATH/leios.db`.
+That is where a node with the default `LeiosDbConfig` writes it, as long as the node keeps all its databases under one path.
+A node that splits the immutable path from the volatile one writes the file under the volatile path.
+A node can also name another file in its configuration.
+Pass `--leios-db` in both cases.
+
+`--no-leios-db` runs with an empty in-memory Leios database and reads no file.
+Pass it for a chain that holds no certifying block, such as a chain that predates Leios.
 The tool cannot tell such a chain from a Leios one before it reads the chain, so it cannot make that call itself.
 If you pass the flag on a chain that does hold a certifying block, the analysis stops at that block.
 
@@ -206,7 +210,7 @@ Lastly the user can provide the analysis that should be run on the chain:
   Therefore, it is recommended to start with NUM=1, and only use NUM=2 when you
   want to test the performance impact of a more filled mempool.
 
-  On a Leios chain, this pass reads the Leios database, so do not pass `--stubbed-leios-db`.
+  On a Leios chain, this pass reads the Leios database, so do not pass `--no-leios-db`.
   A block that certifies an EB has an empty body.
   The txs that it causes the ledger to apply are in the EB that it certifies, and the Leios database holds them.
   This pass adds them to the mempool, and it reports their count and their total size in the `ebNumTxs` and `ebTxsByteSize` columns.
@@ -242,6 +246,7 @@ export NODE_DIR="/path/to/cardano-node-data/db-leios"
 That directory holds `config.json`, the genesis files, and `db/`.
 `db/` is the chain database. It holds `immutable/`, `volatile/`, `ledger/`, and,
 on a Leios chain, `leios.db`.
+The node configuration decides the name and the directory of that last file, so pass `--leios-db` when it is not there.
 
 #### Checking the Leios analyses
 
@@ -403,6 +408,48 @@ The tool expects the given ChainDB path (`--db` option) to *not* be present. Sho
 #### limiting synthesis
 
 A limit must be specified up to which the tool synthesizes a ChainDB. Possible limits are either the number of slots processed (`-s`), the number of epochs processed (`-e`) or the absolute number of blocks in the resulting ChainDB (`-b`).
+
+## db-truncater
+
+Cut a chain back to a given slot or block number.
+The tool edits the ImmutableDB in place, so the truncation is destructive and irreversible.
+
+Basic usage:
+```sh
+cabal run db-truncater -- \
+  --db /path/to/chaindb \
+  --truncate-after-slot 42 \
+  --config /path/to/config.json
+```
+
+Pass either `--truncate-after-slot SLOT_NUMBER` or `--truncate-after-block BLOCK_NUMBER`.
+The tool finds the last block at or below that point and makes it the new tip.
+If the ImmutableDB tip already sits at or below that point, the tool changes nothing.
+
+The tool does not touch the VolatileDB or the ledger snapshots.
+Both still describe the longer chain after a truncation.
+
+Additional flags:
+
+ - `--verbose`: Trace the ImmutableDB events to stderr.
+
+### The Leios database
+
+On a Leios chain the tool also cuts the Leios database back to the new tip.
+It truncates the ImmutableDB first, because the other order can leave a certifying block whose endorser block (EB) is gone.
+It then does three things to the Leios database:
+
+1. Delete the EBs announced after the new tip slot, with their bodies.
+2. Delete the transactions that no EB references any more.
+3. Vacuum the file, which returns the freed pages to the filesystem.
+
+Step 3 rewrites the file, so it needs free space of about the size of the file.
+SQLite puts that copy in the system temp directory, not beside the database.
+Set `SQLITE_TMPDIR` if that filesystem is small.
+
+Without `--leios-db` the tool reads `DB_PATH/leios.db`, and it refuses to start when that file is absent.
+Pass `--no-leios-db` for a chain that holds no certifying block, such as a chain that predates Leios.
+See the db-analyser section on those two flags for the paths a node writes and for why the tool cannot make the call itself.
 
 ## ImmDB Server
 

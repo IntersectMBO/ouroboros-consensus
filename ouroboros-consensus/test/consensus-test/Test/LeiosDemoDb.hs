@@ -30,6 +30,7 @@ import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosEbNotification (..)
+  , deleteDanglingTxs
   , leiosDbBatchRetrieveTxs
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
@@ -39,6 +40,7 @@ import LeiosDemoDb
   , leiosDbScanEbPoints
   , newLeiosDBInMemory
   , newLeiosDBSQLite
+  , truncateLeiosDbAfterSlot
   , withLeiosDb
   )
 import LeiosDemoTypes
@@ -77,6 +79,17 @@ tests :: TestTree
 tests =
   testGroup "LeiosDemoDb" $
     forEachImplementation mkTestGroups
+      <> [ testGroup
+             "truncateLeiosDbAfterSlot"
+             [ testCase "drops the EBs announced after the slot, with their bodies" $
+                 withFreshSQLiteFile test_truncateDropsEbsAfterSlot
+             ]
+         , testGroup
+             "deleteDanglingTxs"
+             [ testCase "keeps the txs an EB references" $
+                 withFreshSQLiteFile test_deleteDanglingTxs
+             ]
+         ]
 
 -- | Database creation strategy for different implementations.
 data DbImpl
@@ -98,6 +111,20 @@ withFreshDb SQLite action = do
     )
     snd
     (action . fst)
+
+-- | Create a fresh SQLite database and hand its path to the action, which
+-- 'truncateLeiosDbAfterSlot' needs.
+withFreshSQLiteFile :: (FilePath -> LeiosDbHandle IO -> IO a) -> IO a
+withFreshSQLiteFile action = do
+  sysTmp <- getCanonicalTemporaryDirectory
+  bracket
+    (createTempDirectory sysTmp "leios-test")
+    removeDirectoryRecursive
+    ( \tmpDir -> do
+        let dbPath = tmpDir <> "/test.db"
+        db <- newLeiosDBSQLite nullTracer dbPath
+        action dbPath db
+    )
 
 -- | Run tests for each database implementation (InMemory and SQLite).
 forEachImplementation :: (DbImpl -> [TestTree]) -> [TestTree]
@@ -813,3 +840,57 @@ prop_completedEbNoBody impl =
         result === Nothing
           & counterexample "Expected Nothing for EB with no body inserted"
           & tabulate "lookupEbClosure (no body)" [timeBucket queryTime]
+
+-- * truncateLeiosDbAfterSlot
+
+test_truncateDropsEbsAfterSlot :: FilePath -> LeiosDbHandle IO -> IO ()
+test_truncateDropsEbsAfterSlot dbPath db = do
+  let eb = mkTestEb 2
+      keptHash = mkTestEbHash 1
+      droppedHash = mkTestEbHash 2
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con (MkLeiosPoint 5 keptHash) (leiosEbBytesSize eb)
+    void $ leiosDbInsertEbBody con (MkLeiosPoint 5 keptHash) eb
+    -- The kept EB is announced again at a slot the truncation drops.
+    leiosDbInsertEbPoint con (MkLeiosPoint 15 keptHash) (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con (MkLeiosPoint 15 droppedHash) (leiosEbBytesSize eb)
+    void $ leiosDbInsertEbBody con (MkLeiosPoint 15 droppedHash) eb
+
+  truncateLeiosDbAfterSlot dbPath 10
+
+  withLeiosDb db $ \con -> do
+    points <- leiosDbScanEbPoints con
+    points @?= [(5, keptHash)]
+    keptBody <- leiosDbLookupEbBody con keptHash
+    keptBody @?= V.toList (leiosEbTxs eb)
+    droppedBody <- leiosDbLookupEbBody con droppedHash
+    droppedBody @?= []
+
+-- * deleteDanglingTxs
+
+test_deleteDanglingTxs :: FilePath -> LeiosDbHandle IO -> IO ()
+test_deleteDanglingTxs dbPath db = do
+  let eb = mkTestEb 2
+      ebHash = mkTestEbHash 1
+      danglingTx = mkTestTxHash 9
+      txBytes = BS.replicate 10 0
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con (MkLeiosPoint 5 ebHash) (leiosEbBytesSize eb)
+    void $ leiosDbInsertEbBody con (MkLeiosPoint 5 ebHash) eb
+    void $
+      leiosDbInsertTxs con $
+        (danglingTx, txBytes) : [(txHash, txBytes) | (txHash, _) <- V.toList (leiosEbTxs eb)]
+
+  deleteDanglingTxs dbPath
+
+  withLeiosDb db $ \con -> do
+    closure <- leiosDbLookupEbClosure con ebHash
+    fmap (map fst) closure @?= Just (map fst (V.toList (leiosEbTxs eb)))
+    -- A closure resolves only when the db holds every tx the body names. So
+    -- this probe resolves only if the delete missed the dangling tx.
+    let probeEb = MkLeiosEb (V.fromList [(danglingTx, 10)])
+        probePoint = MkLeiosPoint 6 (mkTestEbHash 2)
+    leiosDbInsertEbPoint con probePoint (leiosEbBytesSize probeEb)
+    void $ leiosDbInsertEbBody con probePoint probeEb
+    probeClosure <- leiosDbLookupEbClosure con probePoint.pointEbHash
+    probeClosure @?= Nothing

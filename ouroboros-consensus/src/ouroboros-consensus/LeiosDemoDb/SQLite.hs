@@ -10,6 +10,11 @@ module LeiosDemoDb.SQLite
   ( newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
 
+    -- * Re-exported for internal tooling
+  , truncateLeiosDbAfterSlot
+  , deleteDanglingTxs
+  , vacuumLeiosDb
+
     -- * SQL strings (re-exported for leiosdemo app)
   , sql_schema
   , sql_insert_eb
@@ -483,6 +488,72 @@ sqlFilterMissingTxs conn txHashes =
       DB.Row -> do
         txHash <- MkTxHash <$> DB.columnBlob stmt 0
         loop (txHash : acc)
+
+-- | Delete the EBs announced after the given slot.
+--
+-- For internal tooling.
+truncateLeiosDbAfterSlot :: HasCallStack => FilePath -> SlotNo -> IO ()
+truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
+  withExistingLeiosDbFile dbPath $ \db ->
+    -- One transaction, so a crash cannot leave an EB that is still announced
+    -- but has no body.
+    dbWithTransactionAs "BEGIN IMMEDIATE" db $
+      dbExec db (fromString deletes)
+ where
+  deletes =
+    unlines
+      [ "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      , "DELETE FROM ebsMissingTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
+      ]
+
+  -- The EBs whose bodies the truncation drops.
+  --
+  -- 'ebs' holds one row per announcement, so the same EB hash can appear at
+  -- several slots. 'ebTxs' and 'ebsMissingTxs' hold one copy per hash and carry
+  -- no slot. So an EB announced at slot 5 and again at slot 15 keeps its body
+  -- when the cut is at slot 10. That is what the EXCEPT does: take the hashes
+  -- announced after the cut, then remove the ones also announced at or before
+  -- it.
+  droppedHashes =
+    "SELECT ebHashBytes FROM ebs WHERE ebSlot > "
+      <> show slot
+      <> " EXCEPT SELECT ebHashBytes FROM ebs WHERE ebSlot <= "
+      <> show slot
+
+-- | Delete the transactions that no EB references.
+--
+-- For internal tooling.
+deleteDanglingTxs :: HasCallStack => FilePath -> IO ()
+deleteDanglingTxs dbPath =
+  withExistingLeiosDbFile dbPath $ \db ->
+    dbExec db . fromString $
+      "DELETE FROM txs WHERE txHashBytes NOT IN (SELECT txHashBytes FROM ebTxs)"
+
+-- | Shrink a LeiosDb file to the space its rows need.
+--
+-- A delete frees pages inside the file without returning them to the
+-- filesystem. This rewrites the file, so it needs free space of about the size
+-- of the file. For internal tooling.
+vacuumLeiosDb :: HasCallStack => FilePath -> IO ()
+vacuumLeiosDb dbPath =
+  withExistingLeiosDbFile dbPath $ \db ->
+    dbExec db (fromString "VACUUM")
+
+-- | Open the LeiosDb file at the given path, which must already exist.
+--
+-- Unrelated to 'withLeiosDb', which brackets a 'LeiosDbConnection' that a
+-- 'LeiosDbHandle' opens.
+--
+-- No 'SQLOpenCreate', unlike 'openSQLiteConnection': a wrong path must fail
+-- rather than gain an empty database. No 'busy_timeout' either, so a write that
+-- meets the node's own write lock gives up after the retries in 'withDie'
+-- rather than block.
+withExistingLeiosDbFile :: FilePath -> (DB.Database -> IO a) -> IO a
+withExistingLeiosDbFile dbPath =
+  MonadThrow.bracket
+    (open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault)
+    (void . DB.close)
 
 -- | Build a JSON array of hex-encoded blobs: @["aabb...","1234...",...]@.
 -- Consumed on the SQL side via @json_each(?)@ + @unhex(je.value)@.

@@ -17,6 +17,11 @@ module LeiosDemoDb
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
 
+    -- * Re-exported for internal tooling
+  , truncateLeiosDbAfterSlot
+  , deleteDanglingTxs
+  , vacuumLeiosDb
+
     -- * SQL (re-exported for leiosdemo app)
   , sql_schema
   , sql_insert_eb
@@ -38,11 +43,14 @@ import LeiosDemoDb.InMemory
   , newLeiosDBInMemoryWith
   )
 import LeiosDemoDb.SQLite
-  ( newLeiosDBSQLite
+  ( deleteDanglingTxs
+  , newLeiosDBSQLite
   , newLeiosDBSQLiteFromEnv
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx
   , sql_schema
+  , truncateLeiosDbAfterSlot
+  , vacuumLeiosDb
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
