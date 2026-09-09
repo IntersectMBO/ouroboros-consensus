@@ -57,17 +57,17 @@ import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos
-  ( ConsensusConfig (..)
+  ( BasePraosState (..)
+  , ConsensusConfig (..)
   , Praos
   , PraosCrypto
-  , PraosWithLeios
   , PraosParams (..)
-  , BasePraosState (..)
+  , PraosWithLeios
   , Ticked (..)
   , WhetherToUpperBoundOCERT (..)
   )
-import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
 import qualified Ouroboros.Consensus.Protocol.Praos as PP
+import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
 import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
@@ -88,16 +88,16 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
   , shelleyLedgerGlobals
   )
+import Ouroboros.Consensus.Shelley.Ledger.Mempool
+  ( GenTx (ShelleyTx)
+  , mkShelleyTx
+  , mkShelleyValidatedTx
+  )
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( pHeaderIssuer
   , pHeaderLeiosContainsCert
   , pHeaderLeiosEbAnnouncement
   , pHeaderSlot
-  )
-import Ouroboros.Consensus.Shelley.Ledger.Mempool
-  ( GenTx (ShelleyTx)
-  , mkShelleyTx
-  , mkShelleyValidatedTx
   )
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
