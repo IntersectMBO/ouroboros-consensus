@@ -14,9 +14,11 @@
 module Ouroboros.Consensus.Shelley.Node.Peras () where
 
 import Cardano.Ledger.Api
+import Control.Monad (when)
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
+  , ValidatedPerasCert (..)
   , VoidPerasCert
   , VoidPerasCrypto
   , VoidPerasError
@@ -35,6 +37,7 @@ import Ouroboros.Consensus.Peras.Context
   )
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import Ouroboros.Consensus.Peras.Params (dijkstraPerasMaxCertSize)
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
@@ -234,6 +237,12 @@ instance
   type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = V1.PerasVotingCommitteeScheme
   forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
   verifyPerasVote = defaultVerifyPerasVote
-  forgePerasCert = defaultForgePerasCert
+  forgePerasCert ctx votes = do
+    cert <- defaultForgePerasCert ctx votes
+    let sizeUpperBound = V1.perasCertSizeUpperBound $ vpcCert cert
+    when (sizeUpperBound > dijkstraPerasMaxCertSize) $
+      Left $
+        V1.PerasCertTooLargeError sizeUpperBound dijkstraPerasMaxCertSize
+    pure cert
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock _ = Right Nothing
