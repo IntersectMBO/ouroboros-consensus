@@ -79,7 +79,7 @@ import LeiosDemoTypes
   , emptyLeiosOutstanding
   , hashLeiosEb
   , hashLeiosTx
-  , leiosEbBytesSize
+  , encodeLeiosEbSize
   , newLeiosPeerVars
   )
 import qualified LeiosDemoTypes as Leios
@@ -432,18 +432,18 @@ applyCmd conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
-    recordAnnouncedEb kv SNothing (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+    recordAnnouncedEb kv SNothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure []
   Offer ids slot -> do
     recordEbBodyOffer
       kv
       peerVars
       TxsClosureNotAlsoOffered
-      (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+      (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure []
   ArriveBody ids slot -> do
     let eb = ebOf ids
-        req = MkLeiosBlockRequest (pointOf ids slot) (leiosEbBytesSize eb)
+        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
     processLeiosBlock
       nullTracer
       nullTracer
@@ -763,7 +763,7 @@ raceSameHashMultiSlot = do
         peerId = MkPeerId (0 :: Int)
         ids = [0, 1] :: TestEb
         eb = ebOf ids
-        ebBytesSize = leiosEbBytesSize eb
+        ebBytesSize = encodeLeiosEbSize eb
         -- One hash (same ids), three different slots.
         offerPoint = pointOf ids 10
         announcePoint = pointOf ids 11

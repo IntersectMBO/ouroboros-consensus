@@ -12,7 +12,7 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , TxHash (..)
   , encodeLeiosEb
-  , leiosEbBytesSize
+  , encodeLeiosEbSize
   , maxTxsPerEb
   , selectCommitteeByStake
   )
@@ -42,17 +42,17 @@ tests :: TestTree
 tests =
   testGroup
     "LeiosDemoTypes"
-    [ testProperty "leiosEbBytesSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
+    [ testProperty "encodeLeiosEbSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
     , testProperty
         "selectCommitteeByStake orders by stake and bounds by committee size"
         prop_selectCommitteeByStake
     ]
 
--- | Minimum tx size as per the ASSUMPTION in 'leiosEbBytesSize'.
+-- | Minimum tx size as per the ASSUMPTION in 'encodeLeiosEbSize'.
 minTxBytesSize :: Int
 minTxBytesSize = 55
 
--- | Maximum tx size as per the ASSUMPTION in 'leiosEbBytesSize'.
+-- | Maximum tx size as per the ASSUMPTION in 'encodeLeiosEbSize'.
 maxTxBytesSize :: Int
 maxTxBytesSize = 2 ^ (14 :: Int)
 
@@ -96,14 +96,14 @@ genEb numTxs = do
  where
   genTxItem = (,) <$> genTxHash <*> genTxBytesSize
 
--- | The analytical 'leiosEbBytesSize' must agree with the actual length of
+-- | The analytical 'encodeLeiosEbSize' must agree with the actual length of
 -- the CBOR encoding produced by 'encodeLeiosEb'.
 prop_ebBytesSizeConsistent :: Property
 prop_ebBytesSizeConsistent =
   forAll (genNumItems >>= genEb) $ \eb ->
     let encoded = serialize' $ encodeLeiosEb eb
         actualSize = fromIntegral (BS.length encoded) :: BytesSize
-        estimatedSize = leiosEbBytesSize eb
+        estimatedSize = encodeLeiosEbSize eb
      in counterexample
           ("items: " <> show (V.length (leiosEbTxs eb)))
           (estimatedSize === actualSize)
