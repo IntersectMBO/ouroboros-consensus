@@ -100,6 +100,7 @@ import GHC.Generics (Generic)
 import LeiosDemoDb.Common (LeiosDbHandle)
 import LeiosDemoTypes (AcquiredLeiosEbs, EbHash)
 import LeiosUtils.CallTrace (SomeJsonCallTrace)
+import LeiosValidClaims (ValidClaims)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -405,6 +406,22 @@ data ChainDbEnv m blk = CDB
   -- from the LeiosDb, grown by 'leiosAcquiredEbsRunner' from closure-completion
   -- notifications (which also enqueue a 'ChainSelReprocessLeiosEb'), and pruned
   -- by age as a GC is scheduled.
+  , cdbLeiosValidClaims :: !(StrictTVar m ValidClaims)
+  -- ^ The Leios claims we have verified a certificate for, if the slot of the
+  -- announcing block is >= the slot of the imm tip. ChainSel verifies the
+  -- certificate in a CertRB before selecting it, and records the claim here so
+  -- that the several CertRBs that can make the same claim only pay for
+  -- verification once. Pruned as a GC is scheduled, like 'cdbAcquiredLeiosEbs'.
+  --
+  -- It's empty upon node startup; it's fine to redo some work once per
+  -- execution of the node. The fundamental motivation for 'cdbValidClaims' is
+  -- so that ChainSel won't pipeline a CertRB whose cert's claim is false. By
+  -- restricting ChainSel to only potentially pipeline an RB when that RB /first
+  -- arrives/ (see
+  -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel.TentativeHeaderPermission'),
+  -- we avoid the risk of pipelining an invalid CertRB that was in the VolDB at
+  -- node startup (which could otherwise happen due to its EB closure arriving
+  -- during the current execution, for example).
   , cdbLeiosDb :: !(LeiosDbHandle m)
   , cdbLeiosEvictTxCache :: !(SlotNo -> m ())
   -- ^ Prune the LeiosTxCache to a slot; run just before 'leiosDbGarbageCollect'
