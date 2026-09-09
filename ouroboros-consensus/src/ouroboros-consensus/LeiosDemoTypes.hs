@@ -83,6 +83,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
+import qualified Data.ByteString.Base16 as Base16
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
 import Data.IntMap.NonEmpty (NEIntMap)
@@ -102,6 +103,7 @@ import qualified Data.Set.NonEmpty as NESet
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
@@ -1780,6 +1782,9 @@ data TraceLeiosPeer
   | TraceLeiosPeerDbException LeiosDbException
   | -- | This upstream peer relayed a valid, newly-counted EB announcement.
     TraceLeiosPeerAnnouncement !AnnouncementEquivocation !AnnouncementFields
+  | -- | Trace time when an EB was received.  Note that this message is traced
+    -- when the EB is processed.
+    TraceLeiosReceivedEb LeiosPoint (Maybe NominalDiffTime)
   deriving Show
 
 -----
@@ -1801,6 +1806,13 @@ traceLeiosPeerToObject = \case
       [ fromString "kind" .= Aeson.String "LeiosPeerAnnouncement"
       , announcementFieldsToObject acc
       , announcementEquivocationToObject equivocation
+      ]
+  TraceLeiosReceivedEb (MkLeiosPoint slotNo (MkEbHash ebHash)) time ->
+    mconcat
+      [ fromString "kind" .= Aeson.String "LeiosReceivedEb"
+      , fromString "slotNo" .= slotNo
+      , fromString "ebHash" .= T.decodeUtf8Lenient (Base16.encode ebHash)
+      , fromString "time" .= time
       ]
 
 -- | Consensus-side severity; cardano-node maps it to its @SeverityS@.
@@ -2065,6 +2077,7 @@ leiosPeerNSOf = \case
   MkTraceLeiosPeer{} -> LPNSMsg
   TraceLeiosPeerDbException{} -> LPNSDbException
   TraceLeiosPeerAnnouncement{} -> LPNSAnnouncement
+  TraceLeiosReceivedEb{} -> LPNSMsg
 
 leiosPeerNSInfo :: LeiosPeerNS -> LeiosNSInfo
 leiosPeerNSInfo = \case
@@ -2085,6 +2098,10 @@ traceLeiosPeerForHuman = \case
   TraceLeiosPeerDbException e -> "Leios peer DB exception: " <> T.pack (show e)
   TraceLeiosPeerAnnouncement equiv fields ->
     "EB announcement from peer (" <> T.pack (show equiv) <> "): " <> T.pack (show fields)
+  TraceLeiosReceivedEb point (Just time) ->
+    "EB received " <> T.pack (show point) <> " at " <> T.pack (show time)
+  TraceLeiosReceivedEb point Nothing ->
+    "EB received " <> T.pack (show point)
 
 -- * Protocol parameters
 
