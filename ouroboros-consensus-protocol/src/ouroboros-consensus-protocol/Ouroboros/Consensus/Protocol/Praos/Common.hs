@@ -396,12 +396,13 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
 -- | Which optional extensions to the base Praos protocol are enabled.
 --
 -- We define them here, as part of Praos, because we want exactly one single
--- source of truth (this module) to explicitly determine how the the base
--- protocol and whichever of its extensions are enabled simultaneously to
--- interact /as a @ConsensusProtocol@/.
+-- source of truth (this subtree of the module hierarchy) to explicitly
+-- determine how the base protocol and whichever of its extensions are enabled
+-- simultaneously to interact /as a @ConsensusProtocol@/.
 --
--- We define one constructor per the set of extensions that are known to be
--- simultaneously compatible.
+-- We define one constructor per each subset extensions that are known to be
+-- simultaneously compatible and worthwhile. (For now it's just Leios, but more
+-- extensions are planned, such as Phalanx.)
 data PraosExtension = PextNone | PextLeios
 
 -- | When possible, use 'WhetherHasLeiosDecided' instead
@@ -422,7 +423,8 @@ type KnownPraosExtension :: PraosExtension -> Constraint
 class (Typeable pext, Typeable (PraosExtensionHasLeios pext)) => KnownPraosExtension pext where
   type PraosExtensionHasLeios pext :: WhetherHasLeios
   praosExtensionHasLeios :: proxy pext -> WhetherHasLeiosDecided pext
-  -- | When possible, use 'praosExtensionHasLeios' instead
+  -- | When possible, use 'praosExtensionHasLeios' instead, since it's less
+  -- informative
   singPraosExtension :: proxy pext -> SingPraosExtension pext
 
 instance KnownPraosExtension PextNone where
@@ -437,7 +439,7 @@ instance KnownPraosExtension PextLeios where
 
 -----
 
--- | Newtype wrapper to avoid NoThunks orphan
+-- | Newtype wrapper to avoid 'NoThunks' orphan
 type HasLeiosProof :: PraosExtension -> Type
 newtype HasLeiosProof pext =
     MkHasLeiosProof (PraosExtensionHasLeios pext :~: PextHasLeios)
