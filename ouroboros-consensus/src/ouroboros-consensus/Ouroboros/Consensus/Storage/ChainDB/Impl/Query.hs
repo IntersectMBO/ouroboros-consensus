@@ -94,6 +94,8 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (..)
   , ChainDbFailure (..)
+  , PerasCertInclusionViewError (..)
+  , PerasVotingViewError (..)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -422,25 +424,39 @@ getPerasVotingView ::
   LedgerConfig blk ->
   PerasRoundNo ->
   ChainDbEnv m blk ->
-  STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+  STM
+    m
+    ( Either
+        PerasVotingViewError
+        (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+    )
 getPerasVotingView ledgerConfig roundNo env = do
   resolver <-
     getPerasEpochContextResolver env
-  perasParams <-
-    either throwSTM (pure . pecParams) $
-      resolveRoundNo resolver roundNo
-  latestCertSeen <-
-    withOriginFromMaybe <$> getLatestPerasCertSeen env
-  latestCertOnChainRoundNo <-
-    withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
-  currentChain <-
-    getCurrentChain env
-  summary <-
-    hardForkSummary ledgerConfig . ledgerState <$> getCurrentLedger env
-  either throwSTM pure $
-    runPerasQry summary $
-      perasChainAtCandidateBlock (perasBlockMinSlots perasParams) roundNo currentChain
-        >>= mkPerasVotingView perasParams roundNo latestCertSeen latestCertOnChainRoundNo
+  case resolveRoundNo resolver roundNo of
+    Left err ->
+      pure $ Left $ PerasVotingViewEpochContextNotFoundForRound err
+    Right epochContext -> do
+      latestCertSeen <-
+        withOriginFromMaybe <$> getLatestPerasCertSeen env
+      latestCertOnChainRoundNo <-
+        withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
+      currentChain <-
+        getCurrentChain env
+      summary <-
+        hardForkSummary ledgerConfig . ledgerState <$> getCurrentLedger env
+      let params =
+            pecParams epochContext
+      let blockMinSlots =
+            perasBlockMinSlots params
+      case ( runPerasQry summary $ do
+               mkPerasVotingView params roundNo latestCertSeen latestCertOnChainRoundNo
+                 =<< perasChainAtCandidateBlock blockMinSlots roundNo currentChain
+           ) of
+        Left err ->
+          pure $ Left $ PerasVotingViewQryException err
+        Right view ->
+          pure $ Right view
 
 getPerasCertInclusionView ::
   ( IOLike m
@@ -448,29 +464,36 @@ getPerasCertInclusionView ::
   ) =>
   PerasRoundNo ->
   ChainDbEnv m blk ->
-  STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+  STM
+    m
+    ( Either
+        PerasCertInclusionViewError
+        (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+    )
 getPerasCertInclusionView roundNo env = do
   getLatestPerasCertSeen env >>= \case
     Nothing ->
-      pure Nothing
+      pure $ Right Nothing
     Just latestCertSeen -> do
       resolver <-
         getPerasEpochContextResolver env
-      perasParams <-
-        either throwSTM (pure . pecParams) $
-          resolveRoundNo resolver roundNo
-      latestCertOnChainRoundNo <-
-        withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
-      certsInChainDB <-
-        getPerasCertIds env
-      pure $
-        Just $
-          mkPerasCertInclusionView
-            perasParams
-            roundNo
-            (forgetBoostedBlockStatus latestCertSeen)
-            latestCertOnChainRoundNo
-            certsInChainDB
+      case resolveRoundNo resolver roundNo of
+        Left err ->
+          pure $ Left (PerasCertInclusionEpochContextNotFoundForRound err)
+        Right epochContext -> do
+          latestCertOnChainRoundNo <-
+            withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
+          certsInChainDB <-
+            getPerasCertIds env
+          pure $
+            Right $
+              Just $
+                mkPerasCertInclusionView
+                  (pecParams epochContext)
+                  roundNo
+                  (forgetBoostedBlockStatus latestCertSeen)
+                  latestCertOnChainRoundNo
+                  certsInChainDB
 
 getTimeResolutionContext ::
   MonadSTM m =>

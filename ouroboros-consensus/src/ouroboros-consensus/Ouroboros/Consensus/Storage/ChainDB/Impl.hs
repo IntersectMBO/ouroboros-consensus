@@ -60,14 +60,16 @@ import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionViewHandle (..))
 import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext
   , TimeResolutionContextHandle (..)
   )
-import Ouroboros.Consensus.Peras.Voting.View (PerasVotingViewHandle (..))
-import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import Ouroboros.Consensus.Storage.ChainDB.API
+  ( ChainDB
+  , PerasCertInclusionViewHandle (..)
+  , PerasVotingViewHandle (..)
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
   ( ChainDbArgs
