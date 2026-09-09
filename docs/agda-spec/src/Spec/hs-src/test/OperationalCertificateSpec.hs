@@ -53,6 +53,7 @@ bhb = MkBHBody
   , bhbOc          = oc
   , bhbPv          = (1, 0)
   , bhbAnnouncedEB = Just aeb
+  , bhbCertifiedEB = False
   }
 
 bh :: BHeader
