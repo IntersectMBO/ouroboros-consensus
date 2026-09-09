@@ -58,7 +58,6 @@ import Cardano.Ledger.BaseTypes
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
-import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Hashes (HASH)
 import Cardano.Ledger.Keys
   ( DSIGN
