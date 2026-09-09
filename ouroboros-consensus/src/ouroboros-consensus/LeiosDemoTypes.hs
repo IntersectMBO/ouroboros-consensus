@@ -120,12 +120,14 @@ import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
+import Ouroboros.Consensus.Block.Abstract (BlockProtocol)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
   , txMeasureMetricTxSizeBytes
   )
+import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
@@ -1217,6 +1219,28 @@ data LeiosExtValidationError
     LeiosCertificateAfterGenesis !LeiosCert !LeiosPoint
   | -- | The certificate failed committee / threshold / signature verification.
     LeiosInvalidCertificate !LeiosCert !LeiosPoint !RbHash !VerificationError
+  | -- | ChainSel's forecast-based check rejected the CertRB before chain
+    -- selection reached it.
+    --
+    -- That check runs before the announcing block's ledger state exists, so
+    -- unlike the constructors above it cannot report which EB was announced.
+    LeiosCertificateForecastRejected
+      !LeiosCert
+      -- | The slot of the CertRB's predecessor, ie of the announcing block
+      -- The CertRB's own point is already on the enclosing tracer event.
+      !(WithOrigin SlotNo)
+      !LeiosForecastRejection
+  deriving stock (Eq, Show, Generic)
+
+-- | Why ChainSel's forecast-based check rejected a CertRB.
+data LeiosForecastRejection
+  = -- | The CertRB's predecessor is genesis, so it would certify at genesis.
+    LeiosForecastAfterGenesis
+  | -- | The forecast view has no Leios committee or no quorum threshold. A
+    -- CertRB in such an era is itself a protocol violation.
+    LeiosForecastMissingCommittee !RbHash
+  | -- | The certificate failed committee / threshold / signature verification.
+    LeiosForecastInvalidCertificate !RbHash !VerificationError
   deriving stock (Eq, Show, Generic)
 
 deriving via
@@ -1240,6 +1264,22 @@ class HasLeiosVoting blk where
   -- | The currently active quorum threshold for the given ledger state, or
   -- 'Nothing' if the protocol parameter does not yet exist on the current era.
   getCurrentThreshold :: LedgerState blk EmptyMK -> Maybe Weight
+
+  -- | The committee and quorum threshold according to a /forecast/ ledger view
+  -- rather than an applied ledger state.
+  --
+  -- ChainSel validates the certificate in a CertRB before it has applied that
+  -- block's predecessor, so it has no ledger state to read the committee off;
+  -- it forecasts the view instead. The two must agree wherever both are
+  -- available: this is the same committee 'getLeiosCommittee' would return for
+  -- a state at the forecast slot.
+  -- The proxy fixes the block type: 'LedgerView' is a non-injective family, so
+  -- the view alone does not determine it.
+  getLeiosCommitteeFromView ::
+    proxy blk ->
+    LedgerView (BlockProtocol blk) ->
+    Maybe (LeiosCommittee, Weight)
+  getLeiosCommitteeFromView _ _ = Nothing
 
   -- | Slots that must elapse between an EB's announcement and the block that
   -- may certify it, per 'minCertificationGap'. Reading it needs the era's

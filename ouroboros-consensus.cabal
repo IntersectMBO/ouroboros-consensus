@@ -119,6 +119,7 @@ library
     LeiosTxCache.Reference
     LeiosUtils.CallTrace
     LeiosUtils.TimeBoundedLoop
+    LeiosValidClaims
     LeiosVoteState
     LeiosVoting
     Ouroboros.Consensus.Block

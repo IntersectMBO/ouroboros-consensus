@@ -57,6 +57,7 @@ import LeiosDemoTypes
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsFromList
   )
+import LeiosValidClaims (emptyValidClaims)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -229,6 +230,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
     varAcquiredLeiosEbs <-
       newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
+    varLeiosValidClaims <- newTVarIO emptyValidClaims
     chain <-
       ChainSel.initialChainSelection
         immutableDB
@@ -291,6 +293,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
+            , cdbLeiosValidClaims = varLeiosValidClaims
             , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
             , cdbLeiosEvictTxCache = Args.cdbsLeiosEvictTxCache cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
