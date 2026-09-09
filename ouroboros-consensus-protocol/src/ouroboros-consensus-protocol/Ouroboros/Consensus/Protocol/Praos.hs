@@ -126,6 +126,7 @@ import LeiosDemoTypes
   , encodeEbAnnouncement
   , minCertificationSlot
   )
+import qualified LeiosDemoTypes as Leios
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -461,23 +462,7 @@ data BasePraosValidationErr pext c
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash SL.BlockIssuer) -- stake pool key hash
-  | -- | The header sets its cert bit, but its predecessor announced no endorser
-    -- block, so there is nothing for the certificate to certify.
-    LeiosCertWithoutAnnouncement !(HasLeiosProof (PraosExtensionHasLeios pext))
-  | -- | The header sets its cert bit too soon after its predecessor's
-    -- announcement: the announcement, voting and diffusion periods have not all
-    -- elapsed.
-    LeiosCertTooYoung
-      !(HasLeiosProof (PraosExtensionHasLeios pext))
-      !SlotNo -- announcing (ie predecessor's) slot
-      !SlotNo -- this header's slot
-      !SlotNo -- the earliest slot this header could have certified in
-  | -- | The header announces an endorser block larger than the protocol
-    -- parameters allow.
-    LeiosEbTooBig
-      !(HasLeiosProof (PraosExtensionHasLeios pext))
-      !Word32 -- announced size
-      !Word32 -- maximum
+  | LeiosHeaderErr !(HasLeiosProof (PraosExtensionHasLeios pext)) Leios.LeiosHeaderErr
   deriving Generic
 
 -- | Every Leios constructor of 'BasePraosValidationErr' carries a
@@ -737,10 +722,13 @@ leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
                     announcingSlot
             when (slot < earliestAllowed) $
               throwError $
-                LeiosCertTooYoung mkHasLeiosProof announcingSlot slot earliestAllowed
+                LeiosHeaderErr mkHasLeiosProof $
+                  Leios.LeiosCertTooYoung announcingSlot slot earliestAllowed
           -- A state that announced an EB has necessarily applied a header, so
           -- 'Origin' is the same situation as announcing nothing.
-          _ -> throwError $ LeiosCertWithoutAnnouncement mkHasLeiosProof
+          _ ->
+            throwError $
+              LeiosHeaderErr mkHasLeiosProof Leios.LeiosCertWithoutAnnouncement
 
       case mbAnn of
         SNothing -> pure ()
@@ -749,7 +737,8 @@ leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
               maximum' = Views.llvMaxEbBodySize llv
           when (announced > maximum') $
             throwError $
-              LeiosEbTooBig mkHasLeiosProof announced maximum'
+              LeiosHeaderErr mkHasLeiosProof $
+                Leios.LeiosEbTooBig announced maximum'
 
 validateKESSignature ::
   (KnownPraosExtension pext, PraosCrypto c) =>

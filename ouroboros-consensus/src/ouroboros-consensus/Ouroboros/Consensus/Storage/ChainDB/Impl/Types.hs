@@ -98,7 +98,7 @@ import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import LeiosDemoDb.Common (LeiosDbHandle)
-import LeiosDemoTypes (AcquiredLeiosEbs, EbHash)
+import LeiosDemoTypes (AcquiredLeiosEbs, EbHash, TraceLeiosChainSel)
 import LeiosUtils.CallTrace (SomeJsonCallTrace)
 import LeiosValidClaims (ValidClaims)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
@@ -1017,6 +1017,8 @@ data TraceAddBlockEvent blk
   | -- | Herald of 'AddedToCurrentChain' or 'SwitchedToAFork'. Lists the tip of
     -- the new chain.
     ChangingSelection (Point blk)
+  | -- | A Leios event from ChainSel.
+    AddBlockLeiosEvent (TraceLeiosChainSel blk)
   | -- | A call-trace event emitted by the 'addBlockRunner' thread.
     TraceAddBlockCall SomeJsonCallTrace
 

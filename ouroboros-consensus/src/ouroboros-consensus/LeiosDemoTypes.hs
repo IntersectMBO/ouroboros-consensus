@@ -120,7 +120,12 @@ import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
-import Ouroboros.Consensus.Block.Abstract (BlockProtocol)
+import Ouroboros.Consensus.Block.Abstract (BlockProtocol, StandardHash)
+import Ouroboros.Consensus.Block.RealPoint
+  ( RealPoint
+  , realPointHash
+  , realPointSlot
+  )
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
@@ -2125,6 +2130,238 @@ traceLeiosPeerForHuman = \case
   TraceLeiosPeerDbException e -> "Leios peer DB exception: " <> T.pack (show e)
   TraceLeiosPeerAnnouncement equiv fields ->
     "EB announcement from peer (" <> T.pack (show equiv) <> "): " <> T.pack (show fields)
+
+
+-- * ChainSel's Leios events and header errors
+
+-- | Leios events from ChainSel, injected into @TraceAddBlockEvent@
+--
+-- Its own type so that constructors can be added or altered without touching
+-- cardano-node, which reaches everything it needs through
+-- 'traceLeiosChainSelToObject', 'traceLeiosChainSelForHuman' and the
+-- @leiosChainSelNS*@ functions below.
+data TraceLeiosChainSel blk
+  = -- | A CertRB's certificate verified, so its claim is now recorded.
+    --
+    -- Carries the CertRB, the announcing block --- whose hash is the claim and
+    -- whose slot the claim is aged by --- and the resulting number of claims
+    -- held.
+    TraceLeiosValidClaim !(RealPoint blk) !(RealPoint blk) !Int
+  | -- | A CertRB whose predecessor is no older than the immutable tip yielded
+    -- no candidate at all.
+    --
+    -- A hint rather than a fault. The predecessor is not below the immutable
+    -- tip, so the CertRB is not ruled out by the tip having moved past it. Two
+    -- innocent explanations remain: the predecessor has not arrived yet, since
+    -- its slot comes from the header chain and so is known before its block is;
+    -- or the endorser block's closure has not been acquired, so the CertRB is
+    -- parked.
+    --
+    -- Carries the CertRB, its predecessor's slot and the immutable tip's slot.
+    TraceLeiosCertRbWithoutCandidate
+      !(RealPoint blk)
+      !(WithOrigin SlotNo)
+      !(WithOrigin SlotNo)
+  deriving (Eq, Show, Generic)
+
+traceLeiosChainSelToObject ::
+  StandardHash blk => TraceLeiosChainSel blk -> Aeson.Object
+traceLeiosChainSelToObject = \case
+  TraceLeiosValidClaim pt announcingPt held ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosValidClaim"
+      , "blockSlot" .= realPointSlot pt
+      , "blockHash" .= T.pack (show (realPointHash pt))
+      , "announcingSlot" .= realPointSlot announcingPt
+      , "announcingHash" .= T.pack (show (realPointHash announcingPt))
+      , "claimsHeld" .= held
+      ]
+  TraceLeiosCertRbWithoutCandidate pt predSlot immTipSlot ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosCertRbWithoutCandidate"
+      , "blockSlot" .= realPointSlot pt
+      , "blockHash" .= T.pack (show (realPointHash pt))
+      , "predecessorSlot" .= predSlot
+      , "immutableTipSlot" .= immTipSlot
+      ]
+
+traceLeiosChainSelForHuman :: StandardHash blk => TraceLeiosChainSel blk -> Text
+traceLeiosChainSelForHuman = \case
+  TraceLeiosValidClaim pt announcingPt held ->
+    "Verified the Leios certificate in "
+      <> T.pack (show pt)
+      <> ", claiming the endorser block announced by "
+      <> T.pack (show announcingPt)
+      <> "; "
+      <> T.pack (show held)
+      <> " claims held"
+  TraceLeiosCertRbWithoutCandidate pt predSlot immTipSlot ->
+    "No candidate involves the CertRB "
+      <> T.pack (show pt)
+      <> ", whose predecessor is in slot "
+      <> T.pack (show predSlot)
+      <> ", at or after the immutable tip in slot "
+      <> T.pack (show immTipSlot)
+
+data LeiosChainSelNS
+  = LCSNSValidClaim
+  | LCSNSCertRbWithoutCandidate
+  deriving (Eq, Show, Enum, Bounded)
+
+leiosChainSelNSOf :: TraceLeiosChainSel blk -> LeiosChainSelNS
+leiosChainSelNSOf = \case
+  TraceLeiosValidClaim{} -> LCSNSValidClaim
+  TraceLeiosCertRbWithoutCandidate{} -> LCSNSCertRbWithoutCandidate
+
+leiosChainSelNSInfo :: LeiosChainSelNS -> LeiosNSInfo
+leiosChainSelNSInfo = \case
+  LCSNSValidClaim -> LeiosNSInfo ["LeiosValidClaim"] LSDebug []
+  LCSNSCertRbWithoutCandidate ->
+    LeiosNSInfo ["LeiosCertRbWithoutCandidate"] LSWarning []
+
+leiosChainSelNSPaths :: [[Text]]
+leiosChainSelNSPaths =
+  [nsiPath (leiosChainSelNSInfo ns) | ns <- [minBound .. maxBound]]
+
+leiosChainSelNSByPath :: [Text] -> Maybe LeiosNSInfo
+leiosChainSelNSByPath p =
+  lookup
+    p
+    [(nsiPath i, i) | ns <- [minBound .. maxBound], let i = leiosChainSelNSInfo ns]
+
+-- | Why a Leios header check rejected a header
+--
+-- Wrapped by @BasePraosValidationErr@'s @LeiosHeaderErr@ constructor. Its own
+-- type for the same reason as 'TraceLeiosChainSel': cardano-node reaches it
+-- only through 'leiosHeaderErrToObject'.
+data LeiosHeaderErr
+  = -- | The header sets its cert bit, but its predecessor announced no endorser
+    -- block, so there is nothing for the certificate to certify.
+    LeiosCertWithoutAnnouncement
+  | -- | The header sets its cert bit too soon after its predecessor's
+    -- announcement: the announcement, voting and diffusion periods have not all
+    -- elapsed.
+    --
+    -- Carries the announcing block's slot, this header's slot, and the earliest
+    -- slot in which this header could have certified.
+    LeiosCertTooYoung !SlotNo !SlotNo !SlotNo
+  | -- | The header announces an endorser block larger than the protocol
+    -- parameters allow. Carries the announced size and the maximum.
+    LeiosEbTooBig !Word32 !Word32
+  deriving (Eq, Show, Generic)
+
+deriving via
+  OnlyCheckWhnfNamed "LeiosHeaderErr" LeiosHeaderErr
+  instance
+    NoThunks LeiosHeaderErr
+
+leiosHeaderErrToObject :: LeiosHeaderErr -> Aeson.Object
+leiosHeaderErrToObject = \case
+  LeiosCertWithoutAnnouncement ->
+    mconcat ["kind" .= Aeson.String "LeiosCertWithoutAnnouncement"]
+  LeiosCertTooYoung announcingSlot slot earliestAllowed ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosCertTooYoung"
+      , "announcingSlot" .= announcingSlot
+      , "slot" .= slot
+      , "earliestAllowedSlot" .= earliestAllowed
+      ]
+  LeiosEbTooBig announced maxSize ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosEbTooBig"
+      , "announcedEndorserBlockSize" .= announced
+      , "maxEndorserBlockSize" .= maxSize
+      ]
+
+
+-- | As 'leiosHeaderErrToObject', for the errors ChainSel and the LedgerDB raise
+-- about a CertRB.
+leiosExtValidationErrorToObject :: LeiosExtValidationError -> Aeson.Object
+leiosExtValidationErrorToObject = \case
+  LeiosCertificateWithoutAnnouncement cert ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosCertificateWithoutAnnouncement"
+      , "certificate" .= T.pack (show cert)
+      ]
+  LeiosMissingCommittee point cert ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosMissingCommittee"
+      , "announcedEb" .= T.pack (show point)
+      , "certificate" .= T.pack (show cert)
+      ]
+  LeiosMissingThreshold ->
+    mconcat ["kind" .= Aeson.String "LeiosMissingThreshold"]
+  LeiosCertificateAfterGenesis cert point ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosCertificateAfterGenesis"
+      , "certificate" .= T.pack (show cert)
+      , "announcedEb" .= T.pack (show point)
+      ]
+  LeiosInvalidCertificate cert point rbHash verErr ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosInvalidCertificate"
+      , "certificate" .= T.pack (show cert)
+      , "announcedEb" .= T.pack (show point)
+      , "announcingRb" .= T.pack (prettyRbHash rbHash)
+      , "verificationError" .= T.pack (show verErr)
+      ]
+  LeiosCertificateForecastRejected cert predSlot why ->
+    mconcat $
+      [ "kind" .= Aeson.String "LeiosCertificateForecastRejected"
+      , "certificate" .= T.pack (show cert)
+      , "predecessorSlot" .= predSlot
+      ]
+        <> leiosForecastRejectionFields why
+
+leiosForecastRejectionFields :: LeiosForecastRejection -> [Aeson.Object]
+leiosForecastRejectionFields = \case
+  LeiosForecastAfterGenesis ->
+    ["reason" .= Aeson.String "AfterGenesis"]
+  LeiosForecastMissingCommittee rbHash ->
+    [ "reason" .= Aeson.String "MissingCommittee"
+    , "announcingRb" .= T.pack (prettyRbHash rbHash)
+    ]
+  LeiosForecastInvalidCertificate rbHash verErr ->
+    [ "reason" .= Aeson.String "InvalidCertificate"
+    , "announcingRb" .= T.pack (prettyRbHash rbHash)
+    , "verificationError" .= T.pack (show verErr)
+    ]
+
+leiosExtValidationErrorForHuman :: LeiosExtValidationError -> Text
+leiosExtValidationErrorForHuman = \case
+  LeiosCertificateWithoutAnnouncement cert ->
+    "CertRB carries a Leios certificate but its predecessor announced no EB: "
+      <> T.pack (show cert)
+  LeiosMissingCommittee point cert ->
+    "CertRB for "
+      <> T.pack (show point)
+      <> " but there is no Leios committee to verify its certificate: "
+      <> T.pack (show cert)
+  LeiosMissingThreshold ->
+    "CertRB validation, but no quorum stake threshold in pparams"
+  LeiosCertificateAfterGenesis cert point ->
+    "CertRB for "
+      <> T.pack (show point)
+      <> " has no announcing ranking block (would certify at genesis): "
+      <> T.pack (show cert)
+  LeiosInvalidCertificate cert point rbHash verErr ->
+    "Invalid Leios certificate for "
+      <> T.pack (show point)
+      <> " announced by ranking block "
+      <> T.pack (prettyRbHash rbHash)
+      <> ": "
+      <> T.pack (show verErr)
+      <> " ("
+      <> T.pack (show cert)
+      <> ")"
+  LeiosCertificateForecastRejected cert predSlot why ->
+    "ChainSel's forecast-based check rejected the CertRB whose predecessor is in slot "
+      <> T.pack (show predSlot)
+      <> ": "
+      <> T.pack (show why)
+      <> " ("
+      <> T.pack (show cert)
+      <> ")"
 
 -- * Protocol parameters
 
