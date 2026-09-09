@@ -31,8 +31,8 @@ open import Spec.ChainHead crypto nonces es bs af li rs
 instance
 
   prtlSeqChecks⁇ : prtlSeqChecks ⁇²
-  prtlSeqChecks⁇ {nothing}                    {_}  .dec = yes tt
-  prtlSeqChecks⁇ {lab@(just ⟦ bℓ , sℓ , _ ⟧ℓ)} {bh} .dec =
+  prtlSeqChecks⁇ {nothing}                         {_}  .dec = yes tt
+  prtlSeqChecks⁇ {lab@(just ⟦ bℓ , sℓ , _ , _ ⟧ℓ)} {bh} .dec =
     sℓ     <? slot       ×-dec
     bℓ + 1 ≟  blockNo    ×-dec
     ph     ≟  prevHeader
@@ -48,6 +48,13 @@ chainChecks? maxpv (maxBHSize , maxBBSize , protocolVersion) bh =
   where
     m = proj₁ protocolVersion
     open BHeader; open BHBody (bh .body)
+
+certChecks? : ∀ ps lab b s → Dec (certChecks ps lab b s)
+certChecks? _  _                               false _ = yes tt
+certChecks? _  nothing                         true  _ = no λ ()
+certChecks? _  (just ⟦ _ , _  , _ , nothing ⟧ℓ) true  _ = no λ ()
+certChecks? ps (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s =
+  slotToTime sℓ + certificationDelay ps ≤? slotToTime s
 
 instance
 
@@ -67,7 +74,7 @@ instance
 
       e₁      = getEpoch nes
       nₚₕ     = prevHashToNonce (lastAppliedHash lab)
-      lab′    = just ⟦ blockNo , slot , headerHash bh ⟧ℓ
+      lab′    = just ⟦ blockNo , slot , headerHash bh , announcedEB ⟧ℓ
       ticknΓ  = ⟦ ηc , nₚₕ ⟧ᵗᵉ
       ticknSt = ⟦ η₀ , ηh ⟧ᵗˢ
       prtclSt = ⟦ cs , ηv , ηc ⟧ᵖˢ
@@ -84,13 +91,16 @@ instance
             pd = extractPoolDistr (getPoolDelegatedStake forecast)
           case chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh of λ where
             (no ¬cc) → failure (genErrors ¬cc)
-            (yes cc) → do
-              (⟦ η₀′ , _ ⟧ᵗˢ , ticknStep) ← computeTICKN ticknΓ ticknSt ne
-              (_             , prtclStep) ← computePRTCL ⟦ pd , η₀′ ⟧ᵖᵉ prtclSt bh
-              success (-, Chain-Head (psc , tickfStep , cc , ticknStep , prtclStep))
+            (yes cc) →
+              case certChecks? (leiosPeriods pp) lab certifiedEB slot of λ where
+                (no ¬ec) → failure (genErrors ¬ec)
+                (yes ec) → do
+                  (⟦ η₀′ , _ ⟧ᵗˢ , ticknStep) ← computeTICKN ticknΓ ticknSt ne
+                  (_             , prtclStep) ← computePRTCL ⟦ pd , η₀′ ⟧ᵖᵉ prtclSt bh
+                  success (-, Chain-Head (psc , tickfStep , cc , ec , ticknStep , prtclStep))
 
       completeness : ∀ s′ → nes ⊢ s ⇀⦇ bh ,CHAINHEAD⦈ s′ → (proj₁ <$> computeProof) ≡ success s′
-      completeness ⟦ cs′ , η₀′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ (Chain-Head (psc , tickfStep , cc , ticknStep , prtclStep))
+      completeness ⟦ cs′ , η₀′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ (Chain-Head (psc , tickfStep , cc , ec , ticknStep , prtclStep))
         with ¿ prtlSeqChecks ¿² lab bh
       ... | no ¬psc = contradiction psc ¬psc
       ... | yes _
@@ -100,6 +110,9 @@ instance
           (let pp = getPParams forecast; open PParams
            in chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh)
       ... | no ¬cc = contradiction cc ¬cc
+      ... | yes _
+        with certChecks? (leiosPeriods (getPParams forecast)) lab certifiedEB slot
+      ... | no ¬ec = contradiction ec ¬ec
       ... | yes _
         with
           (let e₂ = getEpoch forecast; ne = (e₁ ≠ e₂)

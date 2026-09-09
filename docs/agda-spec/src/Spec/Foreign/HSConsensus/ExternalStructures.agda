@@ -142,7 +142,15 @@ instance
   HSLedgerInterface : LedgerInterface
   HSLedgerInterface = record
     { NewEpochState         = ℕ
-    ; getPParams            = const $ record { maxHeaderSize = 1; maxBlockSize = 2; pv = 1 , 0 }
+    -- NOTE: With a slot length of 1000ms, the certification delay these imply is
+    -- 3 * 1000 + 2000 + 3000 = 8000ms, i.e. 8 slots.
+    ; getPParams            = const $ record
+                                { maxHeaderSize        = 1
+                                ; maxBlockSize         = 2
+                                ; pv                   = 1 , 0
+                                ; leiosHeaderPeriod    = 1000
+                                ; leiosVotingPeriod    = 2000
+                                ; leiosDiffusionPeriod = 3000 }
     ; getEpoch              = const 1
     ; getPoolDelegatedStake = const $ fromListᵐ ((457 , (10 , 568)) ∷ (111 , (10 , 222)) ∷ (333 , (10 , 444)) ∷ [])
     ; adoptGenesisDelegs    = _+_
