@@ -3,6 +3,7 @@ module Cardano.Tools.DBSynthesizer.Types (module Cardano.Tools.DBSynthesizer.Typ
 import Cardano.Node.Types (ProtocolFilepaths)
 import Data.Aeson as Aeson (Value)
 import Data.Word (Word64)
+import LeiosDemoTypes (LeiosSigningKey)
 import Ouroboros.Consensus.Block.Abstract (SlotNo)
 import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis)
 
@@ -19,6 +20,7 @@ data NodeConfigStub = NodeConfigStub
 data NodeFilePaths = NodeFilePaths
   { nfpConfig :: !FilePath
   , nfpChainDB :: !FilePath
+  , nfpPaymentKey :: !(Maybe FilePath)
   }
   deriving Show
 
@@ -27,6 +29,7 @@ data NodeCredentials = NodeCredentials
   , credVRFFile :: !(Maybe FilePath)
   , credKESFile :: !(Maybe FilePath)
   , credBulkFile :: !(Maybe FilePath)
+  , credBlsFile :: !(Maybe FilePath)
   }
   deriving Show
 
@@ -57,5 +60,6 @@ data DBSynthesizerConfig = DBSynthesizerConfig
   , confProtocolCredentials :: ProtocolFilepaths
   , confShelleyGenesis :: ShelleyGenesis
   , confDbDir :: FilePath
+  , confVotingKey :: Maybe LeiosSigningKey
+  -- ^ The BLS key that the forger votes with, from @--shelley-bls-key@.
   }
-  deriving Show

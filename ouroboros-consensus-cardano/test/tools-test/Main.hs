@@ -47,6 +47,7 @@ testNodeFilePaths =
   NodeFilePaths
     { nfpConfig = nodeConfig
     , nfpChainDB = chainDB
+    , nfpPaymentKey = Nothing
     }
 
 testNodeCredentials :: NodeCredentials
@@ -56,6 +57,7 @@ testNodeCredentials =
     , credVRFFile = Nothing
     , credKESFile = Nothing
     , credBulkFile = Just "ouroboros-consensus-cardano/test/tools-test/disk/config/bulk-creds-k2.json"
+    , credBlsFile = Nothing
     }
 
 testImmutaliserConfig :: DBImmutaliser.Opts
@@ -82,9 +84,10 @@ testAnalyserConfig =
     , validation = Just ValidateAllBlocks
     , analysis = CountBlocks
     , confLimit = Unlimited
-    , -- The synthesized chain holds no certifying block, and DBSynthesizer
-      -- writes no leios.db, so the empty in-memory LeiosDb stub is both enough
-      -- and the only option.
+    , -- The stub generator below makes no transactions, so DBSynthesizer
+      -- announces no endorser block and forges no certifying block. The chain
+      -- then needs nothing from the leios.db that DBSynthesizer writes, and the
+      -- empty in-memory LeiosDb stub is enough.
       leiosDbSource = NoLeiosDb
     }
 
@@ -179,7 +182,7 @@ blockCountTest logStep = do
           ++ " blocks"
     _ -> assertFailure $ "analysis after truncation returned " ++ show resultTruncated
  where
-  genTxs _ _ _ _ = pure []
+  genTxs _ _ _ _ _ = pure ([], [], pure ())
 
   mkEbHash c = MkEbHash (fromString (replicate 32 c))
 
