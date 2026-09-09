@@ -67,7 +67,6 @@ import LeiosDemoTypes
   ( BytesSize
   , HasLeiosVoting (..)
   , LeiosPoint
-  , maxEBClosureSize
   )
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block

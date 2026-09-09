@@ -46,9 +46,11 @@ import Cardano.Ledger.Binary
   , DecCBOR (decCBOR)
   , EncCBOR (..)
   , decodeBool
+  , decodeFixedSized
   , decodeListLen
   , decodeNullStrictMaybe
   , encodeBool
+  , encodeFixedSized
   , encodeListLen
   , encodeNullStrictMaybe
   , fromPlainDecoder
@@ -57,12 +59,6 @@ import Cardano.Ledger.Binary
   , unCBORGroup
   )
 import Cardano.Ledger.Binary.Coders
-import Cardano.Ledger.Binary.Crypto
-  ( decodeSignedKES
-  , decodeVerKeyVRF
-  , encodeSignedKES
-  , encodeVerKeyVRF
-  )
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Ledger.Block (Block (..), EraBlockHeader (..))
 import Cardano.Ledger.Core (Era)
@@ -86,7 +82,7 @@ import Cardano.Ledger.MemoBytes
   , mkMemoized
   )
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
-import Cardano.Protocol.TPraos.BHeader (PrevHash)
+import Cardano.Protocol.TPraos.BlockHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
@@ -234,7 +230,7 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
         <> encCBOR hbSlotNo
         <> encCBOR hbPrev
         <> encCBOR hbVk
-        <> encodeVerKeyVRF hbVrfVk
+        <> encodeFixedSized hbVrfVk
         <> encCBOR hbVrfRes
         <> encCBOR hbBodySize
         <> encCBOR hbBodyHash
@@ -258,7 +254,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
     hbSlotNo <- decCBOR
     hbPrev <- decCBOR
     hbVk <- decCBOR
-    hbVrfVk <- decodeVerKeyVRF
+    hbVrfVk <- decodeFixedSized
     hbVrfRes <- decCBOR
     hbBodySize <- decCBOR
     hbBodyHash <- decCBOR
@@ -293,13 +289,13 @@ encodeHeaderRaw ::
   HeaderRaw crypto ->
   Encode (Closed Dense) (HeaderRaw crypto)
 encodeHeaderRaw (HeaderRaw body sig) =
-  Rec HeaderRaw !> To body !> E encodeSignedKES sig
+  Rec HeaderRaw !> To body !> E encodeFixedSized sig
 
 instance Crypto crypto => EncCBOR (HeaderRaw crypto) where
   encCBOR = encode . encodeHeaderRaw
 
 instance Crypto crypto => DecCBOR (HeaderRaw crypto) where
-  decCBOR = decode $ RecD HeaderRaw <! From <! D decodeSignedKES
+  decCBOR = decode $ RecD HeaderRaw <! From <! D decodeFixedSized
 
 instance Crypto crypto => DecCBOR (Annotator (HeaderRaw crypto)) where
   decCBOR = pure <$> decCBOR

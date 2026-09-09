@@ -23,6 +23,7 @@ import Cardano.Ledger.Api
   , TxOut
   , addrTxOutL
   , bodyTxL
+  , emptyPParams
   , eraProtVerLow
   , inputsTxBodyL
   , mkBasicTx
@@ -38,6 +39,13 @@ import Cardano.Ledger.BaseTypes (ProtVer (..), StrictMaybe (..), TxIx (..), know
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core (TopTx, sizeTxF, txSeqBlockBodyL)
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Dijkstra.Genesis (DijkstraGenesis (..))
+import Cardano.Ledger.Dijkstra.PParams
+  ( UpgradeDijkstraPParams (..)
+  , ppLeiosAnnouncementPeriodLengthL
+  , ppLeiosDiffusionPeriodLengthL
+  , ppLeiosVotePeriodLengthL
+  )
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
   ( esLState
   , lsCertState
@@ -137,7 +145,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
-import qualified Test.Cardano.Ledger.Shelley.Examples as Shelley (lePParams, leTranslationContext)
+import qualified Test.Cardano.Ledger.Shelley.Examples as Shelley (leTranslationContext)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Dijkstra), hardForkInto)
 import Test.QuickCheck
   ( Property
@@ -599,14 +607,25 @@ prop_leios seed =
 
 -- | The certification gap the simulated nodes run with.
 --
--- 'minCertificationGap' derives it from the protocol parameters and the slot
--- length, and
--- 'runThreadNet'' hard-forks into Dijkstra with the ledger's example parameters,
--- so reading it from the same examples value keeps the two in step.
+-- The gap comes from the Leios periods in the Dijkstra genesis that
+-- 'runThreadNet'' passes to 'mkLatestTransitionConfig'. Do not read them from
+-- 'Shelley.lePParams': that field is the default 'PParams', where every Leios
+-- period is 0 ms, and a zero gap makes every property that uses 'minCertGap'
+-- vacuous.
 minCertGap :: Word64
-minCertGap =
-  unSlotNo $
-    minCertificationGap slotLength (Shelley.lePParams Dijkstra.ledgerExamples)
+minCertGap = unSlotNo $ minCertificationGap slotLength dijkstraPParams
+
+-- | The Leios periods the nodes hard-fork into Dijkstra with. The rest of the
+-- record stays empty because 'minCertificationGap' reads nothing else.
+dijkstraPParams :: PParams DijkstraEra
+dijkstraPParams =
+  emptyPParams
+    & ppLeiosAnnouncementPeriodLengthL .~ udppLeiosAnnouncementPeriodLength upgrade
+    & ppLeiosVotePeriodLengthL .~ udppLeiosVotePeriodLength upgrade
+    & ppLeiosDiffusionPeriodLengthL .~ udppLeiosDiffusionPeriodLength upgrade
+ where
+  upgrade =
+    dgUpgradePParams $ Shelley.leTranslationContext Dijkstra.ledgerExamples
 
 -- | A late-joining node must not crash on a CertRB whose certified EB
 -- closure it never observed live.

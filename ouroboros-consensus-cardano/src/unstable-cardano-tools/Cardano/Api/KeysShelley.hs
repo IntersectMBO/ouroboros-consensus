@@ -46,7 +46,6 @@ import qualified Cardano.Crypto.Seed as Crypto
 import qualified Cardano.Crypto.Wallet as Crypto.HD
 import Cardano.Ledger.Binary (rawDecodeFixedSized, rawEncodeFixedSized)
 import qualified Cardano.Ledger.Binary.Plain as Plain
-import Data.Typeable (Typeable)
 import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys as Shelley
 import Data.Aeson.Types
@@ -61,6 +60,7 @@ import qualified Data.ByteString as BS
 import Data.Maybe
 import Data.String (IsString (..))
 import qualified Data.Text as Text
+import Data.Typeable (Typeable)
 
 --
 -- Shelley payment keys

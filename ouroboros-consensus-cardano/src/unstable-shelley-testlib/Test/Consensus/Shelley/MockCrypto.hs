@@ -28,7 +28,7 @@ import qualified Cardano.Ledger.Shelley.Core as Core
 import Cardano.Ledger.Shelley.LedgerState (StashedAVVMAddresses)
 import Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Protocol.TPraos.API as SL
-import qualified Cardano.Protocol.TPraos.BHeader as SL
+import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.State.Transition.Extended (PredicateFailure)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol

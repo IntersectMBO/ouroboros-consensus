@@ -5,7 +5,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -266,7 +265,11 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
   -- of accidental discrepancies. 'onForgedLeiosEb' hands our freshly-forged EB's
   -- announcement, body, and closure to the very handlers those mini-protocol
   -- messages use.
-  lift $ forM_ mForgedEb $ onForgedLeiosEb (getHeader newBlock)
+  forgeTrace'Via
+    (const ())
+    "on-forged-leios-eb"
+    currentSlot
+    (lift $ forM_ mForgedEb $ onForgedLeiosEb (getHeader newBlock))
 
   forgeTrace'Via
     (const ())
@@ -748,8 +751,6 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
               ebTxs' =
                 let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
                  in drop (length rbTxs') allTxs
-          _ <- evaluate (length rbTxs')
-          _ <- evaluate (length ebTxs')
           pure (rbTxs', ebTxs', rbTxsSize', snap)
       Just (_cert, announcedPoint) -> do
         -- We have a Leios certificate: only take transactions for a new EB, as the RB will
@@ -793,7 +794,6 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
 
             pmTrace'Via (const ()) "take-eb-txs" currentSlot $ do
               let ebTxs' = fst (snapshotTake snap ebCap)
-              _ <- evaluate (length ebTxs')
               pure ([], ebTxs', Data.Measure.zero, snap)
 
   pure (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement)
