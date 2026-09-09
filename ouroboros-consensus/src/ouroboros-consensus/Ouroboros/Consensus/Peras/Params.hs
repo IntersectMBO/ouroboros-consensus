@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -30,6 +31,7 @@ module Ouroboros.Consensus.Peras.Params
 
     -- * Era-dependent default values
   , dijkstraPerasRoundLength
+  , dijkstraPerasMaxCertSize
 
     -- * 'PerasEnabled' wrapper
   , PerasEnabled
@@ -58,6 +60,7 @@ import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Committee.Types as Committee
+import Ouroboros.Consensus.Peras.Types (PerasCertSize (..))
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike (NoThunks)
 import Quiet (Quiet (..))
@@ -240,6 +243,13 @@ defaultPerasParams =
 -- | Default value for 'PerasRoundLength' in the Dijkstra eras.
 dijkstraPerasRoundLength :: PerasEnabled PerasRoundLength
 dijkstraPerasRoundLength = PerasEnabled (PerasRoundLength 90)
+
+-- | Maximum size of a Peras certificate in bytes, for the Dijkstra eras.
+-- Maximum block size is 90_112 bytes in mainnet as of 2026-08-06. Taking half that
+-- value still allows for extreme leeway:  WFA^LS certificates would only reach that
+-- size if we have around 800 non-persistent seats in the voting committee.
+dijkstraPerasMaxCertSize :: PerasCertSize
+dijkstraPerasMaxCertSize = PerasCertSize 40_000
 
 -- * 'PerasEnabled' wrapper
 

@@ -23,8 +23,13 @@
 -- performed on the certificate later on.
 module Ouroboros.Consensus.Peras.Cert.V1
   ( PerasCert (..)
-  , castPerasCert
   , PerasCertVoters (..)
+  , castPerasCert
+  , perasCertSizeUpperBound
+
+    -- * Exported for testing purposes only
+  , numberOfNonPersistentVoters
+  , numberOfVoters
   ) where
 
 import Cardano.Binary
@@ -64,6 +69,7 @@ import Ouroboros.Consensus.Peras.Crypto.BLS
 import Ouroboros.Consensus.Peras.Types
   ( BoostedBlock
   , PerasBoostedBlock (..)
+  , PerasCertSize
   , PerasRoundNo
   , PerasSeatIndex (..)
   )
@@ -405,3 +411,33 @@ instance
           Nothing
         nonPersistentSeats ->
           Just (NonEmpty.fromList nonPersistentSeats)
+
+perasCertSizeUpperBound :: PerasCert blk -> PerasCertSize
+perasCertSizeUpperBound cert =
+  (`div` 8) $
+    constSize
+      + numVoters * sizePerVoter
+      + numNonPersistentVoters * extraSizePerNonPersistentVoter
+ where
+  numNonPersistentVoters = fromIntegral $ numberOfNonPersistentVoters cert
+  numVoters = fromIntegral $ numberOfVoters cert
+  -- Each of the following three sizes is an upper bound (in bits, not bytes).
+  -- For a rationale of their value, see
+  -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2187#discussion_r3955585768
+  constSize = 140 * 8
+  sizePerVoter = 1
+  extraSizePerNonPersistentVoter = 50 * 8
+
+numberOfNonPersistentVoters :: PerasCert blk -> Int
+numberOfNonPersistentVoters =
+  foldr
+    ( \case
+        PersistentPerasVoteEligibilityProof -> id
+        NonPersistentPerasVoteEligibilityProof _ -> (+ 1)
+    )
+    0
+    . unPerasCertVoters
+    . pcVoters
+
+numberOfVoters :: PerasCert blk -> Int
+numberOfVoters = length . unPerasCertVoters . pcVoters
