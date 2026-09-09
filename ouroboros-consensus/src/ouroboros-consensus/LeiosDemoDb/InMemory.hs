@@ -110,7 +110,7 @@ newLeiosDBInMemoryWith stateVar = do
       , -- No-op for now; see 'leiosDbPromoteToImmutable'.
         leiosDbPromoteToImmutable = \_point -> pure ()
       , -- The in-memory implementation does not track stats.
-        leiosDbSampleStats = pure (LeiosDbStats 0 0 0 0)
+        leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , open =
           pure $
             LeiosDbConnection

@@ -189,7 +189,8 @@ data BenchEnv = BenchEnv
 -- This setup cost is not included in the timed measurements.
 setupBenchEnv :: FilePath -> IO BenchEnv
 setupBenchEnv tmpDir = do
-  db <- newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.db")
+  db <-
+    newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.db.vol") (tmpDir <> "/bench.db.imm")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
     withLeiosDb db (`insertOneEb` i)
