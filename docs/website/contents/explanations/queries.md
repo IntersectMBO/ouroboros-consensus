@@ -62,14 +62,14 @@ The top-level available queries depend on the `NodeToClientVersion`.
 |---------------------|---------------|---------------------------------------------------------------------------------------|
 |`NodeToClientV_23`   |`QueryVersion3`|`BlockQuery`, `GetSystemStart`, `GetChainBlockNo`, `GetChainPoint`, `DebugLedgerConfig`|
 
-Particular block-query versions are of type `BlockNodeToNodeVersion blk`, which
-is associated with the global `NodeToClientVersion` in
+Particular block-query versions are of type `BlockNodeToClientVersion blk`,
+which is associated with the global `NodeToClientVersion` in
 `supportedNodeToClientVersions`. There exist associations for the Byron and
 Shelley blocks alone but those are in principle uninteresting for mainnet, and
 instead we focus on the Cardano version. All the current versions imply also
 `HardForkSpecificNodeToClientVersion3` and `ByronNodeToClientVersion1`:
 
-| `NodeToClientVersion` | `BlockNodeToNodeVersion blk`   | `ShelleyNodeToClientVersion`   |
+| `NodeToClientVersion` | `BlockNodeToClientVersion blk` | `ShelleyNodeToClientVersion`   |
 |-----------------------|--------------------------------|--------------------------------|
 | `NodeToClientV_23`    | `CardanoNodeToClientVersion19` | `ShelleyNodeToClientVersion15` |
 
@@ -185,17 +185,17 @@ and the serialization of the arguments.
 | 26  | `GetDRepStakeDistr`                       | †                                   | `Set DRep`                                                                                    | `Map DRep Coin`                                              |
 | 27  | `GetCommitteeMembersState`                | †                                   | `Set (Credential ColdCommitteeRole)`, `Set (Credential HotCommitteeRole)`, `Set MemberStatus` | `CommitteeMembersState`                                      |
 | 28  | `GetFilteredVoteDelegatees`               | †                                   | `Set (Credential Staking)`                                                                    | `VoteDelegatees`                                             |
-| 29  | `GetAccountState`                         | †                                   |                                                                                               | `ChainAccountState`                                          |
+| 29  | `GetAccountState`                         |                                     |                                                                                               | `ChainAccountState`                                          |
 | 30  | `GetSPOStakeDistr`                        | †                                   | `Set (KeyHash StakePool)`                                                                     | `Map (KeyHash StakePool) Coin`                               |
 | 31  | `GetProposals`                            | †                                   | `Set GovActionId`                                                                             | `Seq (GovActionState era)`                                   |
 | 32  | `GetRatifyState`                          | †                                   |                                                                                               | `RatifyState era`                                            |
-| 33  | `GetFuturePParams`                        |                                     |                                                                                               | `Maybe (PParams era)`                                        |
+| 33  | `GetFuturePParams`                        | †                                   |                                                                                               | `Maybe (PParams era)`                                        |
 | 34  | `GetLedgerPeerSnapshot`                   |                                     | `SingLedgerPeersKind`, encoded as `0` (all peers) or `1` (big peers)                          | `LedgerPeerSnapshot`                                         |
 | 35  | `QueryStakePoolDefaultVote`               | †                                   | `KeyHash StakePool`                                                                           | `DefaultVote`                                                |
 | 36  | `GetPoolDistr2`                           |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `PoolDistr`                                                  |
 | 37  | `GetStakeDistribution2`                   |                                     |                                                                                               | `PoolDistr`                                                  |
 | 38  | `GetMaxMajorProtocolVersion`              |                                     |                                                                                               | `MaxMajorProtVer`                                            |
-| 39  | `GetDRepDelegations`                      |                                     | `Set DRep`                                                                                    | `(Map DRep (Set (Credential Staking)))`                      |
+| 39  | `GetDRepDelegations`                      | †                                   | `Set DRep`                                                                                    | `(Map DRep (Set (Credential Staking)))`                      |
 
 †: Even if an appropriate version is enabled, these queries can only be answered
 when the corresponding era is Conway or later, as they relate to governance
