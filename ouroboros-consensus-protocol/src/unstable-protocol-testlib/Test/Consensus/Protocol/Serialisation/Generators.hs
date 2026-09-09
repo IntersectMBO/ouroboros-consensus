@@ -9,7 +9,6 @@ module Test.Consensus.Protocol.Serialisation.Generators () where
 
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
-import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import Cardano.Protocol.Praos.BlockHeader
   ( Header (Header)
