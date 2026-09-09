@@ -64,14 +64,18 @@ ChainHeadEnv = NewEpochState
 record LastAppliedBlock : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_,_⟧ℓ
+  constructor ⟦_,_,_,_⟧ℓ
   field
 \end{code}
-\begin{code}  
-    bℓ : BlockNo    -- last block number
-    sℓ : Slot       -- last slot
-    h  : HashHeader -- latest header hash
-
+\begin{code}
+    bℓ  : BlockNo           -- last block number
+    sℓ  : Slot              -- last slot
+    h   : HashHeader        -- latest header hash
+    aeb : Maybe AnnouncedEB -- endorser block announced by the last block
+\end{code}
+\end{AgdaSuppressSpace}
+\begin{AgdaSuppressSpace}
+\begin{code}
 record ChainHeadState : Type where
 \end{code}
 \begin{code}[hide]
@@ -94,6 +98,13 @@ data
 \begin{code}
   _⊢_⇀⦇_,CHAINHEAD⦈_ : ChainHeadEnv → ChainHeadState → BHeader → ChainHeadState → Type
 \end{code}
+\end{AgdaAlign}
+\caption{Chain Head transition system types}
+\label{fig:ts-types:chainhead}
+\end{figure*}
+
+\begin{figure*}[h]
+\begin{AgdaAlign}
 \emph{Chain Head helper functions}
 \begin{code}
 extractPoolDistr : PoolDelegatedStake → PoolDistr
@@ -115,23 +126,42 @@ chainChecks maxpv (maxBHSize , maxBBSize , protocolVersion) bh =
     open BHeader; open BHBody (bh .body)
 
 lastAppliedHash : Maybe LastAppliedBlock → Maybe HashHeader
-lastAppliedHash nothing               = nothing
-lastAppliedHash (just ⟦ _ , _ , h ⟧ℓ) = just h
+lastAppliedHash nothing                   = nothing
+lastAppliedHash (just ⟦ _ , _ , h , _ ⟧ℓ) = just h
 
 prtlSeqChecks : Maybe LastAppliedBlock → BHeader → Type
-prtlSeqChecks nothing                    bh = ⊤
-prtlSeqChecks lab@(just ⟦ bℓ , sℓ , _ ⟧ℓ) bh = sℓ < slot × bℓ + 1 ≡ blockNo × ph ≡ prevHeader
+prtlSeqChecks nothing                         bh = ⊤
+prtlSeqChecks lab@(just ⟦ bℓ , sℓ , _ , _ ⟧ℓ) bh = sℓ < slot × bℓ + 1 ≡ blockNo × ph ≡ prevHeader
   where
     open BHeader; open BHBody (bh .body)
     ph = lastAppliedHash lab
 \end{code}
+\begin{code}
+LeiosPeriods : Type
+LeiosPeriods = Milliseconds × Milliseconds × Milliseconds
+
+leiosPeriods : PParams → LeiosPeriods
+leiosPeriods pp = leiosHeaderPeriod , leiosVotingPeriod , leiosDiffusionPeriod
+  where open PParams pp
+
+certificationDelay : LeiosPeriods → Milliseconds
+certificationDelay (hdr , vote , diff) = 3 * hdr + vote + diff
+
+certChecks : LeiosPeriods → Maybe LastAppliedBlock → Bool → Slot → Type
+certChecks _  _                                false _ = ⊤
+certChecks _  nothing                          true  _ = ⊥
+certChecks _  (just ⟦ _ , _  , _ , nothing ⟧ℓ) true  _ = ⊥
+certChecks ps (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s =
+  slotToTime sℓ + certificationDelay ps ≤ slotToTime s
+\end{code}
 \end{AgdaAlign}
-\caption{Chain Head transition system types and functions}
-\label{fig:ts-types:chainhead}
+\caption{Chain Head transition system functions}
+\label{fig:ts-funs:chainhead}
 \end{figure*}
 
 The transition checks the following things
-(via the functions \afun{chainChecks} and \afun{prtlSeqChecks} from Figure~\ref{fig:ts-types:chainhead}):
+(via the functions \afun{chainChecks}, \afun{prtlSeqChecks} and \afun{certChecks}
+from Figure~\ref{fig:ts-funs:chainhead}):
 \begin{itemize}
 \item The slot in the block header body is larger than the last slot recorded.
 \item The block number increases by exactly one.
@@ -143,7 +173,32 @@ The transition checks the following things
   maximal size that the protocol parameters allow for block bodies.
 \item The node is not obsolete, meaning that the major component of the
   protocol version in the protocol parameters is not bigger than the constant \afld{MaxMajorPV}.
+\item If the block header claims to certify an endorser block, then the last applied
+  block announced one, and enough slots have elapsed since it did.
 \end{itemize}
+
+The last of these checks deserves comment, since it is the only one concerned with
+endorser blocks. A block header carries a flag \afld{certifiedEB} recording whether the
+block certifies the endorser block announced by its predecessor; the hash of that
+endorser block is not repeated in the header, as it is already available from the
+predecessor's \afld{announcedEB} field. Consequently the last applied block must
+retain what it announced, which is why \afld{LastAppliedBlock} carries an
+\afld{aeb} field.
+
+A certificate may only be included once $3 L_\text{hdr} + L_\text{vote} +
+L_\text{diff}$ has elapsed since the block that announced the endorser
+block~\cite{cip_164}, so that the endorser block has had time to reach the whole
+network. These three protocol parameters are wall-clock durations, so the comparison
+is made in wall-clock time: the two slots are mapped to times by \slotToTime, rather
+than the delay being converted to a number of slots. Because a header
+that sets \afld{certifiedEB} obliges the corresponding body to carry a matching
+certificate, this constraint can be checked on the header alone --- exactly the kind
+of check that Property~\ref{prop:header-only-validation} exists to license.
+
+Note that the \afld{size} component of \afld{announcedEB} is deliberately \emph{not}
+checked here. As specified in \cite{cip_164}, an incorrect announced size invalidates
+neither the header nor the block; it merely costs the block producer the votes of
+honest nodes, which validate the endorser block itself.
 
 \begin{figure*}[h]
 \begin{code}[hide]
@@ -165,11 +220,12 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
         pp   = getPParams forecast; open PParams
         nₚₕ  = prevHashToNonce (lastAppliedHash lab)
         pd   = extractPoolDistr (getPoolDelegatedStake forecast)
-        lab′ = just ⟦ blockNo , slot , headerHash bh ⟧ℓ
+        lab′ = just ⟦ blockNo , slot , headerHash bh , announcedEB ⟧ℓ
     in
     ∙ prtlSeqChecks lab bh
     ∙ _ ⊢ nes ⇀⦇ slot ,TICKF⦈ forecast
     ∙ chainChecks MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh
+    ∙ certChecks (leiosPeriods pp) lab certifiedEB slot
     ∙ ⟦ ηc , nₚₕ ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η₀′ , ηh′ ⟧ᵗˢ
     ∙ ⟦ pd , η₀′ ⟧ᵖᵉ ⊢ ⟦ cs , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , ηv′ , ηc′ ⟧ᵖˢ
     ────────────────────────────────
@@ -195,4 +251,10 @@ has the following predicate failures:
   there is a \emph{BlockSizeTooLarge} failure.
 \item If the major component of the protocol version is larger than \afld{MaxMajorPV},
   there is a \emph{ObsoleteNode} failure.
+\item If the block header certifies an endorser block but there is no last applied
+  block, or the last applied block announced no endorser block, there is a
+  \emph{NoEndorserBlockToCertify} failure.
+\item If the block header certifies an endorser block but less than
+  $3 L_\text{hdr} + L_\text{vote} + L_\text{diff}$ has elapsed since the last
+  applied block, there is a \emph{CertifiedTooEarly} failure.
 \end{enumerate}
