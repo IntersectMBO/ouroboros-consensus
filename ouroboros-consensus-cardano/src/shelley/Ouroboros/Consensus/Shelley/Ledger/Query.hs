@@ -339,10 +339,11 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
 --
 -- WARNING: never modify an existing query that has been incorporated in a
 -- release of the node, as it will break compatibility with deployed nodes.
--- Instead, add a new query. To remove the old query, first to stop supporting
--- it by modifying 'querySupportedVersion' (@< X@) and when the version is no
--- longer used (because mainnet has hard-forked to a newer version), it can be
--- removed.
+-- Instead, add a new query. To remove the old query, first stop supporting it
+-- by restricting its case in 'blockQueryIsSupportedOnVersion', and once no
+-- supported version answers it (because mainnet has hard-forked to a newer
+-- version), delete it. Its CBOR tag is then spent: never reassign it to
+-- another query, as deployed clients still encode the removed one with it.
 
 instance
   (Typeable era, Typeable proto) =>

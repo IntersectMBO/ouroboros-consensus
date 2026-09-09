@@ -163,6 +163,8 @@ and the serialization of the arguments.
 | 1   | `GetEpochNo`                              |                                     |                                                                                               | `EpochNo`                                                    |
 | 2   | `GetNonMyopicMemberRewards`               |                                     | `Set (Either Coin (Credential Staking))`                                                      | `NonMyopicMemberRewards`                                     |
 | 3   | `GetCurrentPParams`                       |                                     |                                                                                               | `PParams era`                                                |
+| 4   | *(removed, do not reuse)*                 |                                     |                                                                                               |                                                              |
+| 5   | *(removed, do not reuse)*                 |                                     |                                                                                               |                                                              |
 | 6   | `GetUTxOByAddress`                        |                                     | `Set Addr`                                                                                    | `UTxO era`                                                   |
 | 7   | `GetUTxOWhole`                            |                                     |                                                                                               | `UTxO era`                                                   |
 | 8   | `DebugEpochState`                         |                                     |                                                                                               | `EpochState era`                                             |
@@ -178,6 +180,7 @@ and the serialization of the arguments.
 | 18  | `GetRewardInfoPools`                      |                                     |                                                                                               | `(RewardParams, Map (KeyHash StakePool) RewardInfoPool)`     |
 | 19  | `GetPoolState`                            |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `QueryPoolStateResult`                                       |
 | 20  | `GetStakeSnapshots`                       |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `StakeSnapshots`                                             |
+| 21  | *(removed, do not reuse)*                 |                                     |                                                                                               |                                                              |
 | 22  | `GetStakeDelegDeposits`                   |                                     | `Set StakeCredential`                                                                         | `Map StakeCredential Coin`                                   |
 | 23  | `GetConstitution`                         | †                                   |                                                                                               | `Constitution era`                                           |
 | 24  | `GetGovState`                             |                                     |                                                                                               | `GovState era`                                               |
@@ -196,6 +199,9 @@ and the serialization of the arguments.
 | 37  | `GetStakeDistribution2`                   |                                     |                                                                                               | `PoolDistr`                                                  |
 | 38  | `GetMaxMajorProtocolVersion`              |                                     |                                                                                               | `MaxMajorProtVer`                                            |
 | 39  | `GetDRepDelegations`                      | †                                   | `Set DRep`                                                                                    | `(Map DRep (Set (Credential Staking)))`                      |
+
+A removed query's tag stays spent: it is never reassigned, because deployed
+clients still encode the removed query with it.
 
 †: Even if an appropriate version is enabled, these queries can only be answered
 when the corresponding era is Conway or later, as they relate to governance
