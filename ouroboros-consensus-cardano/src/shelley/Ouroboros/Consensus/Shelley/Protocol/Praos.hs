@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -20,7 +21,7 @@ import Cardano.Ledger.BaseTypes (ProtVer (ProtVer))
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
 import Cardano.Ledger.Hashes (EraIndependentBlockBody, HASH)
 import Cardano.Ledger.Slot (SlotNo (unSlotNo))
-import Cardano.Protocol.Crypto (Crypto)
+import Cardano.Protocol.Crypto (Crypto, KES)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.Praos.BlockHeader as PraosCodec
 import Cardano.Protocol.TPraos.OCert
@@ -30,14 +31,16 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.Block (BlockNo)
 import Data.Either (isRight)
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Proxy (Proxy (Proxy))
 import Data.Word (Word32)
 import LeiosDemoTypes (EbAnnouncement)
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
-  ( KnownPraosExtension
+  ( KnownPraosExtension (singPraosExtension)
   , MaxMajorProtVer (MaxMajorProtVer)
   , PraosExtension (..)
   , PraosExtensionHasLeios
+  , SingPraosExtension (..)
   , StrictMaybeLeios (..)
   , fromCodecEbAnnouncement
   )
@@ -188,6 +191,7 @@ instance
   pHeaderSize = fromIntegral . shvSize . headerToShelleyView @pext
   pHeaderBlockSize = fromIntegral . shvBodySize . headerToShelleyView @pext
   pHeaderLeiosContainsCert = shvLeiosContainsCert . headerToShelleyView @pext
+  pHeaderLeiosEbAnnouncement = shvLeiosEbAnnouncement . headerToShelleyView @pext
 
   type EnvelopeCheckError _ = EnvelopeError
 
@@ -221,9 +225,19 @@ instance
   configSlotsPerKESPeriod cfg = praosSlotsPerKESPeriod $ praosParams cfg
 
   verifyHeaderIntegrity slotsPerKESPeriod hdr =
-    isRight $ KES.verifySignedKES () ocertVkHot t (hvSigned hv) (hvSignature hv)
+    withSignableDict $
+      isRight $
+        KES.verifySignedKES () ocertVkHot t (hvSigned hv) (hvSignature hv)
    where
     hv = headerToView @pext hdr
+
+    -- Each branch refines @pext@, so the body type reduces to one 'PraosCrypto'
+    -- covers; it cannot be discharged for an abstract @pext@.
+    withSignableDict :: (KES.Signable (KES c) (BaseHeaderBody pext c) => r) -> r
+    withSignableDict k = case singPraosExtension (Proxy @pext) of
+      SingPextNone -> k
+      SingPextLeios -> k
+
     SL.OCert
       { ocertVkHot
       , ocertKESPeriod = SL.KESPeriod startOfKesPeriod
@@ -277,9 +291,9 @@ type instance Signed (LeiosCodec.Header c) = LeiosCodec.HeaderBody c
 instance PraosCrypto c => SignedHeader (LeiosCodec.Header c) where
   headerSigned = LeiosCodec.headerBody
 
-instance
-  ( PraosCrypto c
-  , KnownPraosExtension pext
-  , HasPraosExtensionHeader pext
-  ) =>
-  ShelleyProtocol (BasePraos pext c)
+-- Concrete per extension, rather than one instance over @pext@: the
+-- superclasses need 'Typeable' and 'SignedHeader' of the header type, which
+-- only reduce once the extension is known.
+instance PraosCrypto c => ShelleyProtocol (BasePraos PextNone c)
+
+instance PraosCrypto c => ShelleyProtocol (BasePraos PextLeios c)

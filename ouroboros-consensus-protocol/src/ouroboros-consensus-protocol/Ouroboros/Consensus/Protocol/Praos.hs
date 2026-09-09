@@ -812,7 +812,7 @@ data PraosCannotForge c
 deriving instance PraosCrypto c => Show (PraosCannotForge c)
 
 praosCheckCanForge ::
-  ConsensusConfig (Praos c) ->
+  ConsensusConfig (BasePraos pext c) ->
   SlotNo ->
   HotKey.KESInfo ->
   Either (PraosCannotForge c) ()
@@ -919,3 +919,32 @@ infix 1 ?!
 (Left e1) ?!: f = throwError $ f e1
 
 infix 1 ?!:
+
+-- | Crossing from the base protocol into the Leios extension.
+--
+-- Everything carries over unchanged; only the Leios announcement has to be
+-- introduced, and it starts empty, since no header of the extension we are
+-- leaving could have carried one.
+instance TranslateProto (BasePraos PextNone c) (BasePraos PextLeios c) where
+  -- 'id' only until 'LedgerView' gains the Leios data, at which point this has
+  -- to conjure that half from a state that has none. The answer will be the
+  -- degenerate view -- an empty committee, and a /positive/ quorum so that
+  -- nothing can be certified against it. That is not merely a boundary
+  -- artefact: the snapshots in force for the first epochs after this fork were
+  -- built by the previous era's SNAP, which seats no committee, so the
+  -- degenerate view is the real state of affairs until a Leios-seated snapshot
+  -- rotates in.
+  translateLedgerView _ = id
+
+  translateChainDepState _ st =
+    PraosState
+      { praosStateLastSlot = praosStateLastSlot st
+      , praosStateOCertCounters = praosStateOCertCounters st
+      , praosStateEvolvingNonce = praosStateEvolvingNonce st
+      , praosStateCandidateNonce = praosStateCandidateNonce st
+      , praosStateEpochNonce = praosStateEpochNonce st
+      , praosStatePreviousEpochNonce = praosStatePreviousEpochNonce st
+      , praosStateLabNonce = praosStateLabNonce st
+      , praosStateLastEpochBlockNonce = praosStateLastEpochBlockNonce st
+      , praosStateLeiosAnnouncement = SJustLeios SNothing
+      }
