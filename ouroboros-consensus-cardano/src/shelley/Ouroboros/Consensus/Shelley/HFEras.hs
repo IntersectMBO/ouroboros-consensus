@@ -19,9 +19,9 @@ module Ouroboros.Consensus.Shelley.HFEras
 
 import Cardano.Ledger.Dijkstra.Era (DijkstraEraBlockHeader (..))
 import Cardano.Protocol.Crypto
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.Eras
