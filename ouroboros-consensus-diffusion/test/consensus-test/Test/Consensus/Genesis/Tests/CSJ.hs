@@ -24,6 +24,9 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( TraceChainSyncClientEvent (..)
   )
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
+  ( TraceEventCsj (..)
+  )
 import Ouroboros.Consensus.Util.Condense
   ( Condense
   , PaddingDirection (..)
@@ -117,11 +120,21 @@ data NumHonestSchedulesFlag = OneScheduleForAllPeers | OneSchedulePerHonestPeer
 --
 -- Regardless, the final property is that “honest” headers should only ever be
 -- downloaded at most once from honest peers. They may however be downloaded
--- several times from adversaries. This is true except when almost caught-up:
--- when the dynamo or objector is caught-up, it gets disengaged and one of the
--- jumpers takes its place and starts serving headers. This might lead to
--- duplication of headers, but only in a window of @jumpSize@ slots near the tip
--- of the chain.
+-- several times from adversaries. There are two exceptions:
+--
+-- * When almost caught-up: when the dynamo or objector is caught-up, it gets
+--   disengaged and one of the jumpers takes its place and starts serving
+--   headers. This might lead to duplication of headers, but only in a window
+--   of @jumpSize@ slots near the tip of the chain.
+--
+-- * When an honest peer is promoted to objector: the objector restarts
+--   ChainSync from its dissent point with the dynamo, which can be arbitrarily
+--   deep when the dynamo is adversarial (e.g. a stalling adversary whose fork
+--   is near genesis). Each such promotion may thus re-download every header
+--   between the dissent point and the tip, and several honest peers can be
+--   promoted in sequence while a single adversarial dynamo is being dealt
+--   with (each objector that catches up disengages and the next dissenting
+--   jumper takes the seat).
 testCsj ::
   forall blk.
   ( HasHeader blk
@@ -178,15 +191,38 @@ testCsj description adversariesFlag numHonestSchedules = do
                   _ -> Nothing
               )
               svTrace
-          -- We receive headers at most once from honest peer. The only
-          -- exception is when an honest peer gets to be the objector, until an
-          -- adversary dies, and then the dynamo. In that specific case, we
-          -- might re-download jumpSize blocks. TODO: If we ever choose to
-          -- promote objectors to dynamo to reuse their state, then we could
-          -- make this bound tighter.
+          -- Promotions of honest peers to objector. The first objector
+          -- election is traced as 'BecomingObjector' (attributed to the new
+          -- objector); replacements of a vacating objector are traced as
+          -- 'NoLongerObjector' carrying the newly elected objector.
+          honestObjectorPromotions =
+            length $
+              mapMaybe
+                ( \case
+                    TraceCsjEvent pid (BecomingObjector _)
+                      | Peers.HonestPeer _ <- pid -> Just pid
+                    TraceCsjEvent _ (NoLongerObjector (Just pid) _)
+                      | Peers.HonestPeer _ <- pid -> Just pid
+                    _ -> Nothing
+                )
+                svTrace
+          -- We receive headers at most once from honest peers, with two
+          -- exceptions (see the haddock of 'testCsj'):
+          --
+          -- - Each promotion of an honest peer to objector entitles it to one
+          --   re-download of the headers between its dissent point with the
+          --   dynamo and the tip; the dissent point is not recorded in the
+          --   trace, so we conservatively allow each promotion to re-download
+          --   every header once.
+          --
+          -- - When an honest peer gets to be the objector, until an adversary
+          --   dies, and then the dynamo, we might re-download jumpSize blocks.
+          --   TODO: If we ever choose to promote objectors to dynamo to reuse
+          --   their state, then we could make this bound tighter.
           receivedHeadersAtMostOnceFromHonestPeers =
             length headerHonestDownloadEvents
               <= length (nub $ snd <$> headerHonestDownloadEvents)
+                * (1 + honestObjectorPromotions)
                 + (fromIntegral $ unSlotNo $ csjpJumpSize $ gtCSJParams gt)
          in
           tabulate
@@ -196,7 +232,9 @@ testCsj description adversariesFlag numHonestSchedules = do
                 else "There exist headers that have to be downloaded exactly once"
             ]
             $ counterexample
-              ( "Downloaded headers (except jumpSize slots near the tip):\n"
+              ( "Honest objector promotions: "
+                  ++ show honestObjectorPromotions
+                  ++ "\nDownloaded headers (except jumpSize slots near the tip):\n"
                   ++ ( unlines $
                          fmap ("  " ++) $
                            zipWith
