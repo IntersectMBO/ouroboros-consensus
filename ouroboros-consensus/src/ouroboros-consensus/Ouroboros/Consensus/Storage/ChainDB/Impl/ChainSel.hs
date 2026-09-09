@@ -59,6 +59,10 @@ import LeiosDemoTypes
       , LeiosForecastInvalidCertificate
       , LeiosForecastMissingCommittee
       )
+  , TraceLeiosChainSel
+      ( TraceLeiosCertRbWithoutCandidate
+      , TraceLeiosValidClaim
+      )
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsSetMember
   , pointEbHash
@@ -466,6 +470,7 @@ chainSelAddBlock cdb@CDB{..} _cctx BlockToAdd{blockToAdd = b, ..} = do
               cdb
               (BlockCache.singleton b)
               hdr
+              (Just blockPredecessorSlot)
               tentativeHeaderPermission
               blockPunish
           Left leiosErr -> lift $ do
@@ -515,6 +520,7 @@ chainSelAddPerasCert ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
@@ -569,6 +575,7 @@ chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
             cdb
             BlockCache.empty
             boostedHdr
+            Nothing
             MayNotSetTentativeHeader
             noPunishment
 
@@ -746,10 +753,9 @@ precheckLeiosCert ::
   m (Either LeiosExtValidationError TentativeHeaderPermission)
 precheckLeiosCert CDB{..} predSlot b = case blockLeiosCert b of
   Nothing -> pure $ Right MaySetTentativeHeader
-  Just cert -> case (announcingRbHash b, predSlot) of
-    (Nothing, _) -> reject cert LeiosForecastAfterGenesis
-    (_, Origin) -> reject cert LeiosForecastAfterGenesis
-    (Just rbHash, NotOrigin announcingSlot) -> do
+  Just cert -> case (announcingRbHash b, blockPrevHash b, predSlot) of
+    (Just rbHash, BlockHash announcingHash, NotOrigin announcingSlot) -> do
+      let announcingPoint = RealPoint announcingSlot announcingHash
       (known, immTip) <-
         atomically $
           (,)
@@ -797,10 +803,21 @@ precheckLeiosCert CDB{..} predSlot b = case blockLeiosCert b of
                   Left invalid ->
                     reject cert $ LeiosForecastInvalidCertificate rbHash invalid
                   Right _weight -> do
-                    atomically $
+                    size <- atomically $ do
                       modifyTVar cdbLeiosValidClaims $
                         LeiosValidClaims.insertValidClaim announcingSlot rbHash
+                      LeiosValidClaims.sizeValidClaims
+                        <$> readTVar cdbLeiosValidClaims
+                    traceWith (TraceAddBlockEvent >$< cdbTracer) $
+                      AddBlockLeiosEvent $
+                        TraceLeiosValidClaim
+                          (blockRealPoint b)
+                          announcingPoint
+                          size
                     pure $ Right MaySetTentativeHeader
+    -- Certifying at genesis: all three of these say there is no announcing
+    -- block, so they cannot disagree.
+    _ -> reject cert LeiosForecastAfterGenesis
  where
   reject cert why =
     pure $ Left $ LeiosCertificateForecastRejected cert predSlot why
@@ -886,16 +903,27 @@ chainSelectionForBlock ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
   BlockCache blk ->
   Header blk ->
+  -- | The slot of the block's predecessor, when a block /arriving/ triggered
+  -- this chain selection; 'Nothing' otherwise. Independent of the permission
+  -- below, since an arrival we could not verify is still an arrival.
+  Maybe (WithOrigin SlotNo) ->
   -- | See 'TentativeHeaderPermission'; only 'chainSelAddBlock' may grant it.
   TentativeHeaderPermission ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr tentativeHeaderPermission punish = electric $ do
+chainSelectionForBlock
+  cdb@CDB{..}
+  blockCache
+  hdr
+  mbPredecessorSlot
+  tentativeHeaderPermission
+  punish = electric $ do
   (invalid, curChain, weights) <-
     atomically $
       (,,)
@@ -941,7 +969,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr tentativeHeaderPermission puni
 
         let traceNoChange = traceWith addBlockTracer $ StoreButDontChange p
 
-            chainSelEnv = mkChainSelEnv cdb blockCache weights curChain tentativeHeaderPermission (Just (p, punish))
+            chainSelEnv =
+              mkChainSelEnv
+                cdb
+                blockCache
+                weights
+                curChain
+                tentativeHeaderPermission
+                (Just (p, punish))
 
         case NE.nonEmpty chainDiffs of
           Just chainDiffs' -> do
@@ -953,7 +988,18 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr tentativeHeaderPermission puni
                 chainDiffs'
                 (switchTo cdb weights (Just p))
           -- No candidate better than our chain.
-          Nothing -> traceNoChange
+          Nothing -> do
+            traceNoChange
+            -- See 'TraceLeiosCertRbWithoutCandidate'.
+            whenJust mbPredecessorSlot $ \predecessorSlot ->
+              let immTipSlot = AF.anchorToSlotNo (AF.anchor curChain)
+               in when
+                    ( headerContainsLeiosCert hdr
+                        && predecessorSlot >= immTipSlot
+                    )
+                    $ traceWith addBlockTracer
+                    $ AddBlockLeiosEvent
+                    $ TraceLeiosCertRbWithoutCandidate p predecessorSlot immTipSlot
  where
   -- Note that we may have extended the chain, but have not trimmed it to
   -- @k@ blocks/headers. That is the job of the background thread, which
