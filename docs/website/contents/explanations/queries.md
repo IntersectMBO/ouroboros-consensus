@@ -146,8 +146,8 @@ We will discuss the codecs of the Shelley eras' queries in the section below.
 
 The encoding of results is a CBOR encoding of the value, done without any
 tagging or prefixing. As the client knows which query it sent, it can infer how
-to decode the result. Sometimes the encoding of the result changes depending on
-the particular `NodeToClientVersion` negotiated.
+to decode the result. One result does not use the codec of its own type, see
+tag 11 in the table below.
 
 ## Shelley queries
 
@@ -168,7 +168,7 @@ and the serialization of the arguments.
 | 8   | `DebugEpochState`                         |                                     |                                                                                               | `EpochState era`                                             |
 | 9   | `GetCBOR`                                 | the version of the internal query   | `BlockQuery (ShelleyBlock proto era) fp result`                                               | `BlockQuery (ShelleyBlock proto era) fp (Serialised result)` |
 | 10  | `GetFilteredDelegationsAndRewardAccounts` |                                     | `Set (Credential Staking)`                                                                    | `(Delegations, Map (Credential Staking) Coin)`               |
-| 11  | `GetGenesisConfig`                        |                                     |                                                                                               | `CompactGenesis`                                             |
+| 11  | `GetGenesisConfig`                        |                                     |                                                                                               | `CompactGenesis`, 15 fields, no `sgExtraConfig`              |
 | 12  | `DebugNewEpochState`                      |                                     |                                                                                               | `NewEpochState era`                                          |
 | 13  | `DebugChainDepState`                      |                                     |                                                                                               | `ChainDepState proto`                                        |
 | 14  | `GetRewardProvenance`                     |                                     |                                                                                               | `RewardProvenance`                                           |
