@@ -68,7 +68,7 @@ import Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
   ( HeaderWithTime (..)
-  , mkHeaderWithTime
+  , mkHeadersWithTime
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -313,6 +313,7 @@ addBlockAsync ::
   (IOLike m, HasHeader blk) =>
   ChainDbEnv m blk ->
   InvalidBlockPunishment m ->
+  WithOrigin SlotNo ->
   blk ->
   m (AddBlockPromise m blk)
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
@@ -1053,12 +1054,11 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
             diffWithTime =
               -- the new ledger state can translate the slots of the new
               -- headers
-              Diff.map
-                ( mkHeaderWithTime
-                    lcfg
-                    (ledgerState newLedger)
-                )
-                chainDiff
+              ChainDiff (Diff.getRollback chainDiff) $
+                mkHeadersWithTime
+                  lcfg
+                  (ledgerState newLedger)
+                  (Diff.getSuffix chainDiff)
             newChainWithTime =
               case Diff.apply curChainWithTime diffWithTime of
                 Nothing -> error "chainDiff failed for HeaderWithTime"

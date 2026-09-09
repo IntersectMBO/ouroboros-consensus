@@ -68,6 +68,7 @@ module Ouroboros.Consensus.HeaderValidation
     -- * Header with time
   , HeaderWithTime (..)
   , mkHeaderWithTime
+  , mkHeadersWithTime
   ) where
 
 import Cardano.Binary (enforceSize)
@@ -104,6 +105,7 @@ import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Assert
 import qualified Ouroboros.Consensus.Util.CBOR as Util.CBOR
+import qualified Ouroboros.Network.AnchoredFragment as AF
 
 {-------------------------------------------------------------------------------
   Preliminary: annotated tip
@@ -597,15 +599,24 @@ deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
   Header with time
 -------------------------------------------------------------------------------}
 
--- | A header paired with the time of the slot that it inhabits.
+-- | A header paired with what the chain it arrived on says about it.
 --
--- Note that the header's slot was translated to this time (in the ChainSync
--- client) according to the header's chain. This clarification may be helpful,
--- since it's possible that some other chain would translate that same slot to
--- a different time.
+-- Note that the header's slot was translated to 'hwtSlotRelativeTime' (in the
+-- ChainSync client) according to the header's chain. This clarification may be
+-- helpful, since it's possible that some other chain would translate that same
+-- slot to a different time.
+--
+-- TODO rename this type, eg to @EnrichedHeader@: it no longer merely adds a
+-- time, and the @hwt@ prefix on its fields is similarly outdated.
 data HeaderWithTime blk = HeaderWithTime
   { hwtHeader :: !(Header blk)
   , hwtSlotRelativeTime :: !RelativeTime
+  , hwtPredecessorSlot :: !(WithOrigin SlotNo)
+  -- ^ The slot of the header's predecessor on the chain it arrived on.
+  --
+  -- The header commits only to its predecessor's hash, so this is knowledge
+  -- of that chain rather than of the header. It is nonetheless unambiguous,
+  -- since every chain carrying this header carries the same predecessor.
   }
   deriving Generic
 
@@ -658,10 +669,12 @@ mkHeaderWithTime ::
   ) =>
   LedgerConfig blk ->
   LedgerState blk mk ->
+  -- | The slot of the header's predecessor
+  WithOrigin SlotNo ->
   Header blk ->
   HeaderWithTime blk
 {-# INLINE mkHeaderWithTime #-}
-mkHeaderWithTime cfg lst = \hdr ->
+mkHeaderWithTime cfg lst = \predSlot hdr ->
   let summary = hardForkSummary cfg lst
       slot = realPointSlot $ headerRealPoint hdr
       qry = Qry.slotToWallclock slot
@@ -669,7 +682,32 @@ mkHeaderWithTime cfg lst = \hdr ->
    in HeaderWithTime
         { hwtHeader = hdr
         , hwtSlotRelativeTime = slotTime
+        , hwtPredecessorSlot = predSlot
         }
+
+-- | Convert a fragment of 'Header's to 'HeaderWithTime's
+--
+-- Each header's predecessor is the header before it on the fragment, except
+-- for the oldest, whose predecessor is the fragment's anchor.
+--
+-- PREREQ: as 'mkHeaderWithTime', for every header on the fragment.
+mkHeadersWithTime ::
+  ( HasHardForkHistory blk
+  , HasHeader (Header blk)
+  , Typeable blk
+  ) =>
+  LedgerConfig blk ->
+  LedgerState blk mk ->
+  AF.AnchoredFragment (Header blk) ->
+  AF.AnchoredFragment (HeaderWithTime blk)
+mkHeadersWithTime cfg lst frag =
+  AF.fromOldestFirst (AF.castAnchor (AF.anchor frag)) $
+    zipWith
+      (mkHeaderWithTime cfg lst)
+      (AF.anchorToSlotNo (AF.anchor frag) : map (NotOrigin . blockSlot) hdrs)
+      hdrs
+ where
+  hdrs = AF.toOldestFirst frag
 
 {-------------------------------------------------------------------------------
   Serialisation
