@@ -990,7 +990,7 @@ runThreadNetwork
                 -- ChainDB will reject it as invalid, and
                 -- 'Test.ThreadNet.General.prop_general' will eventually fail
                 -- because of a block rejection.
-                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment ebb
+                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment (pointSlot p) ebb
                 pure blk
 
       -- This variable holds the number of the earliest slot in which the

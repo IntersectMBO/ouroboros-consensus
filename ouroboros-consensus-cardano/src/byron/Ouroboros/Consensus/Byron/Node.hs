@@ -302,7 +302,7 @@ instance NodeInitStorage ByronBlock where
     tip <- ledgerTipPoint <$> getCurrentLedger
     case tip of
       BlockPoint{} -> return ()
-      GenesisPoint -> addBlock genesisEBB
+      GenesisPoint -> addBlock Origin genesisEBB
    where
     genesisEBB =
       forgeEBB (getByronBlockConfig cfg) (SlotNo 0) (BlockNo 0) GenesisHash
