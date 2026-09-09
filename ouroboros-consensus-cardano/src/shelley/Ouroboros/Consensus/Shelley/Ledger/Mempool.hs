@@ -806,7 +806,12 @@ leiosEndorserBlockMeasure st =
  where
   ByteSize32 framing = Leios.encodeLeiosEbMaxFramingSize
 
-  referencesLimit = pparams ^. ppMaxEndorserBlockReferencesSizeL
+  -- Capped by the codec's message limit: an EB no peer will accept is worse
+  -- than a smaller EB.
+  -- XXX: Silent cap, improve detectability
+  referencesLimit =
+    min Leios.maxMsgLeiosBlockBytesSize $
+      pparams ^. ppMaxEndorserBlockReferencesSizeL
 
   conway = blockCapacityConwayMeasure st
 
