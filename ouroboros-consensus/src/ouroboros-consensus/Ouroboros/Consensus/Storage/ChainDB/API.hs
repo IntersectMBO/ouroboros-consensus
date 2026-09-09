@@ -144,7 +144,10 @@ import System.FS.API.Types (FsError)
 -- to conform to the unified interface we provide here.
 data ChainDB m blk = ChainDB
   { addBlockAsync ::
-      InvalidBlockPunishment m -> WithOrigin SlotNo -> blk -> m (AddBlockPromise m blk)
+      InvalidBlockPunishment m ->
+      WithOrigin SlotNo ->
+      blk ->
+      m (AddBlockPromise m blk)
   -- ^ Add a block to the heap of blocks
   --
   -- We do /not/ assume that the block is valid (under the legder rules);

@@ -66,8 +66,8 @@ import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
 import Control.DeepSeq (NFData (..))
-import qualified Data.ByteString as BS
 import qualified Control.Tracer as Tracer
+import qualified Data.ByteString as BS
 import Data.Function (on)
 import Data.Kind (Constraint, Type)
 import Data.Map.Strict (Map)
@@ -415,15 +415,15 @@ data SingPraosExtension pext where
 -- | A 'Bool' isomorph for better type errors
 data WhetherHasLeios = PextHasLeios | PextDoesNotHaveLeios
 
-data WhetherHasLeiosDecided pext =
-    (PraosExtensionHasLeios pext ~ PextHasLeios) => PextHasLeiosDecided
-  |
-    (PraosExtensionHasLeios pext ~ PextDoesNotHaveLeios) => PextDoesNotHaveLeiosDecided
+data WhetherHasLeiosDecided pext
+  = PraosExtensionHasLeios pext ~ PextHasLeios => PextHasLeiosDecided
+  | PraosExtensionHasLeios pext ~ PextDoesNotHaveLeios => PextDoesNotHaveLeiosDecided
 
 type KnownPraosExtension :: PraosExtension -> Constraint
 class (Typeable pext, Typeable (PraosExtensionHasLeios pext)) => KnownPraosExtension pext where
   type PraosExtensionHasLeios pext :: WhetherHasLeios
   praosExtensionHasLeios :: proxy pext -> WhetherHasLeiosDecided pext
+
   -- | When possible, use 'praosExtensionHasLeios' instead, since it's less
   -- informative
   singPraosExtension :: proxy pext -> SingPraosExtension pext
@@ -445,11 +445,14 @@ instance KnownPraosExtension PextLeios where
 -- We're using ':~:' at all merely so we can still use @deriving@ for exception
 -- sum types.
 type HasLeiosProof :: WhetherHasLeios -> Type
-newtype HasLeiosProof whether =
-    MkHasLeiosProof (whether :~: PextHasLeios)
+newtype HasLeiosProof whether
+  = MkHasLeiosProof (whether :~: PextHasLeios)
   deriving (Eq, Show)
 
-deriving via OnlyCheckWhnf (HasLeiosProof whether) instance Typeable whether => NoThunks (HasLeiosProof whether)
+deriving via
+  OnlyCheckWhnf (HasLeiosProof whether)
+  instance
+    Typeable whether => NoThunks (HasLeiosProof whether)
 
 mkHasLeiosProof :: HasLeiosProof PextHasLeios
 mkHasLeiosProof = MkHasLeiosProof Refl
@@ -457,6 +460,7 @@ mkHasLeiosProof = MkHasLeiosProof Refl
 -----
 
 type StrictMaybeLeios :: WhetherHasLeios -> Type -> Type
+
 -- | Like 'StrictMaybe', but it's @SJust@ if and only if 'PraosExtensionHasLeios'
 data StrictMaybeLeios whether a where
   -- | Encoding and decoding this is a complete noop.
@@ -497,23 +501,24 @@ instance Ord a => Ord (StrictMaybeLeios whether a) where
 
 instance Show a => Show (StrictMaybeLeios whether a) where
   showsPrec p = \case
-      SNothingLeios -> showString "SNothingLeios"
-      SJustLeios x -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows x
+    SNothingLeios -> showString "SNothingLeios"
+    SJustLeios x -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows x
 
 instance NFData a => NFData (StrictMaybeLeios whether a) where
   rnf = \case
-      SNothingLeios -> ()
-      SJustLeios x -> rnf x
+    SNothingLeios -> ()
+    SJustLeios x -> rnf x
 
 instance (Typeable whether, NoThunks a) => NoThunks (StrictMaybeLeios whether a) where
-  showTypeOf _ = unwords
+  showTypeOf _ =
+    unwords
       [ "StrictMaybeLeios"
       , "(" ++ show (typeRep (Proxy @whether)) ++ ")"
       , "(" ++ showTypeOf (Proxy @a) ++ ")"
       ]
   wNoThunks ctxt = \case
-      SNothingLeios -> wNoThunks ctxt ()
-      SJustLeios x -> wNoThunks ctxt x
+    SNothingLeios -> wNoThunks ctxt ()
+    SJustLeios x -> wNoThunks ctxt x
 
 -----
 

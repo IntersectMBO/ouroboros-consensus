@@ -69,7 +69,10 @@ data ChainDbView m blk = ChainDbView
   , getIsFetched :: STM m (Point blk -> Bool)
   , getMaxSlotNo :: STM m MaxSlotNo
   , addBlockAsync ::
-      InvalidBlockPunishment m -> WithOrigin SlotNo -> blk -> m (AddBlockPromise m blk)
+      InvalidBlockPunishment m ->
+      WithOrigin SlotNo ->
+      blk ->
+      m (AddBlockPromise m blk)
   , getChainSelStarvation :: STM m ChainSelStarvation
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   }

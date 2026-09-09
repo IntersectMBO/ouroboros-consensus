@@ -66,6 +66,16 @@ import Cardano.Ledger.Keys
   , hashKey
   , signedDSIGN
   )
+import Cardano.Protocol.Praos.BlockHeader
+  ( Header
+  , HeaderBody (..)
+  , pattern Header
+  )
+import Cardano.Protocol.Praos.VRF
+  ( InputVRF
+  , mkInputVRF
+  , vrfLeaderValue
+  )
 import Cardano.Protocol.TPraos.BlockHeader
   ( HashHeader (..)
   , PrevHash (..)
@@ -97,16 +107,6 @@ import GHC.Generics (Generic)
 import Ouroboros.Consensus.Protocol.Praos
   ( BasePraosValidationErr (..)
   , PraosValidationErr
-  )
-import Cardano.Protocol.Praos.BlockHeader
-  ( Header
-  , HeaderBody (..)
-  , pattern Header
-  )
-import Cardano.Protocol.Praos.VRF
-  ( InputVRF
-  , mkInputVRF
-  , vrfLeaderValue
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 import Test.QuickCheck

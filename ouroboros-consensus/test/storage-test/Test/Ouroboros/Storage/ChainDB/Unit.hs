@@ -414,7 +414,9 @@ class SupportsUnitTest m where
 
   addBlock ::
     -- | The slot of the block's predecessor
-    WithOrigin SlotNo -> Block m -> m (Block m)
+    WithOrigin SlotNo ->
+    Block m ->
+    m (Block m)
 
   newFollower ::
     m (FollowerId m)
