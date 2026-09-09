@@ -117,8 +117,8 @@ import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
-import Lens.Micro ((^.))
 import LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
+import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerConfig, LedgerState)
@@ -1555,13 +1555,38 @@ jsonLeiosDb = \case
       , "attempt" .= attempt
       , "waitedMs" .= waitedMs
       ]
-  TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, dbFileBytes, walBytes} ->
+  TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosDbStats"
       , "volatileEbs" .= volatileEbs
       , "immutableEbs" .= immutableEbs
-      , "dbFileBytes" .= dbFileBytes
       , "walBytes" .= walBytes
+      ]
+  TraceLeiosDbCopiedToImmutable copiedEbs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopiedToImmutable"
+      , "copiedEbs" .= copiedEbs
+      ]
+  TraceLeiosDbEvicted evictedEbs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbEvicted"
+      , "evictedEbs" .= evictedEbs
+      ]
+  TraceLeiosDbGCError reason ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbSweepError"
+      , "reason" .= reason
+      ]
+  TraceLeiosDbCopyQueueFull ebHash ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopyQueueFull"
+      , "ebHash" .= ebHash
+      ]
+  TraceLeiosDbCopyError ebHash reason ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbCopyError"
+      , "ebHash" .= ebHash
+      , "reason" .= reason
       ]
   -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
   -- the forge loop's call traces, so one dashboard query shape covers both.
@@ -1856,6 +1881,12 @@ data LeiosKernelNS
   | LKNSEbValidated
   | LKNSDbException
   | LKNSDb
+  | LKNSDbCall
+  | LKNSDbCopied
+  | LKNSDbEvicted
+  | LKNSDbSweepError
+  | LKNSDbCopyQueueFull
+  | LKNSDbCopyError
   | LKNSCertifiedAndAnnounced
   | LKNSAnnouncementAccepted
   | LKNSFetchDecision
@@ -1881,6 +1912,15 @@ leiosKernelNSOf = \case
   TraceLeiosVoteScheduled{} -> LKNSVoteScheduled
   TraceLeiosEbValidated{} -> LKNSEbValidated
   TraceLeiosDbException{} -> LKNSDbException
+  -- Call spans and the copier/sweeper events get their own namespaces under
+  -- Db so their severity and frequency can be configured apart from the stats
+  -- gauges (a dozen span events per GC vs one stats event).
+  TraceLeiosDb TraceLeiosDbCall{} -> LKNSDbCall
+  TraceLeiosDb TraceLeiosDbCopiedToImmutable{} -> LKNSDbCopied
+  TraceLeiosDb TraceLeiosDbEvicted{} -> LKNSDbEvicted
+  TraceLeiosDb TraceLeiosDbGCError{} -> LKNSDbSweepError
+  TraceLeiosDb TraceLeiosDbCopyQueueFull{} -> LKNSDbCopyQueueFull
+  TraceLeiosDb TraceLeiosDbCopyError{} -> LKNSDbCopyError
   TraceLeiosDb{} -> LKNSDb
   TraceLeiosCertifiedAndAnnounced{} -> LKNSCertifiedAndAnnounced
   TraceLeiosAnnouncementAccepted{} -> LKNSAnnouncementAccepted
@@ -1934,7 +1974,53 @@ leiosKernelNSInfo = \case
   LKNSVoteScheduled -> LeiosNSInfo ["VoteScheduled"] LSInfo []
   LKNSEbValidated -> LeiosNSInfo ["EbValidated"] LSInfo []
   LKNSDbException -> LeiosNSInfo ["DbException"] LSError []
-  LKNSDb -> LeiosNSInfo ["Db"] LSInfo []
+  -- Sampled on a timer by the node, so these gauges exist from node start.
+  LKNSDb ->
+    LeiosNSInfo
+      ["Db"]
+      LSInfo
+      [
+        ( "leiosDbVolatileEbs"
+        , "LeiosDb: announced EB rows in the volatile partition (an EB copied but not yet garbage collected counts in both partitions)"
+        )
+      , ("leiosDbImmutableEbs", "LeiosDb: EBs in the immutable partition")
+      , ("leiosDbWalBytes", "LeiosDb: current size of the volatile partition's write-ahead log in bytes")
+      ]
+  LKNSDbCall -> LeiosNSInfo ["Db", "Call"] LSDebug []
+  -- Accumulating counters, bumped per copier commit / GC pass.
+  LKNSDbCopied ->
+    LeiosNSInfo
+      ["Db", "Copied"]
+      LSInfo
+      [("leiosDbCopiedEbs", "LeiosDb: EBs copied into the immutable partition")]
+  LKNSDbEvicted ->
+    LeiosNSInfo
+      ["Db", "Evicted"]
+      LSInfo
+      [("leiosDbEvictedEbs", "LeiosDb: announcement rows garbage collected from the volatile partition")]
+  -- The sweeper drops its connection and retries, but repeated failures mean
+  -- eviction is not keeping up.
+  LKNSDbSweepError ->
+    LeiosNSInfo
+      ["Db", "SweepError"]
+      LSWarning
+      [("leiosDbSweepErrors", "LeiosDb: failed sweep passes (retried)")]
+  -- Both mean the copier fell behind or failed; harmless for data (the EB
+  -- stays pinned and GC self-heal retries) but worth an operator's eye.
+  LKNSDbCopyQueueFull ->
+    LeiosNSInfo
+      ["Db", "CopyQueueFull"]
+      LSWarning
+      [
+        ( "leiosDbCopyQueueFull"
+        , "LeiosDb: promotions dropped on a full copy queue (re-delivered by GC self-heal)"
+        )
+      ]
+  LKNSDbCopyError ->
+    LeiosNSInfo
+      ["Db", "CopyError"]
+      LSWarning
+      [("leiosDbCopyErrors", "LeiosDb: failed copy attempts (the EB stays pinned and is retried)")]
   LKNSCertifiedAndAnnounced -> LeiosNSInfo ["CertifiedAndAnnounced"] LSInfo []
   LKNSAnnouncementAccepted -> LeiosNSInfo ["AnnouncementAccepted"] LSInfo []
   LKNSFetchDecision -> LeiosNSInfo ["FetchDecision"] LSInfo []
@@ -2027,6 +2113,19 @@ traceLeiosKernelForHuman = \case
   TraceLeiosNotVoted{ebPoint, reason} ->
     "Leios not voted for " <> T.pack (show ebPoint) <> ": " <> T.pack (show reason)
   TraceLeiosDbException e -> "Leios DB exception: " <> T.pack (show e)
+  TraceLeiosDb (TraceLeiosDbCopiedToImmutable copiedEbs) ->
+    "Leios DB copied to the immutable partition: ebs=" <> showT copiedEbs
+  TraceLeiosDb (TraceLeiosDbEvicted evictedEbs) ->
+    "Leios DB evicted from the volatile partition: ebs=" <> showT evictedEbs
+  TraceLeiosDb (TraceLeiosDbGCError reason) ->
+    "Leios DB sweep pass failed (will be retried): " <> T.pack reason
+  TraceLeiosDb (TraceLeiosDbCopyQueueFull ebHash) ->
+    "Leios DB copy queue full, dropped " <> T.pack ebHash <> " (harmless: GC self-heal re-delivers)"
+  TraceLeiosDb (TraceLeiosDbCopyError ebHash reason) ->
+    "Leios DB copy failed for "
+      <> T.pack ebHash
+      <> " (the EB stays pinned and will be retried): "
+      <> T.pack reason
   TraceLeiosDb ev -> "Leios DB event: " <> T.pack (show ev)
   TraceLeiosCertifiedAndAnnounced{atSlot, rbHash} ->
     "RB certified an EB and announced a new one at slot "

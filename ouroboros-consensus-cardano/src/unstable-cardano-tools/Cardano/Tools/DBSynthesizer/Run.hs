@@ -197,11 +197,14 @@ synthesize ::
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confVotingKey} runP =
   withRegistry $ \registry -> do
     -- The node writes its LeiosDb next to the other ChainDB files.
-    -- The tool derives that path from --db. That is also where
-    -- db-analyser looks for it.
+    -- The tool derives that paths for the volatile and immutable partitions from --db.
+    -- That is also where db-analyser looks for it.
     leiosTracer <- mkLeiosTracer
     leiosDbHandle <-
-      newLeiosDBSQLite (TraceLeiosDb >$< leiosTracer) (confDbDir </> "leios.db")
+      newLeiosDBSQLite
+        (TraceLeiosDb >$< leiosTracer)
+        (confDbDir </> "leios.db.vol")
+        (confDbDir </> "leios.db.imm")
     (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) <-
       protocolInfoCardano (SomeHasFS (ioHasFS (MountPoint confDbDir))) runP
     let

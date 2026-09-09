@@ -39,6 +39,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Impl
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
+import qualified System.FilePath as FilePath
 import System.IO
 import Prelude hiding (truncate)
 
@@ -51,9 +52,14 @@ truncate ::
 truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leiosDbSource} args = do
   -- Check the file before the ImmutableDB truncation, so a missing LeiosDb
   -- fails before the tool deletes any block.
-  mLeiosDbPath <- case leiosDbSource of
+  mLeiosDbPaths <- case leiosDbSource of
     NoLeiosDb -> pure Nothing
-    LeiosDbFile mPath -> Just <$> requireLeiosDbFile dbDir mPath
+    LeiosDbFiles -> do
+      let volLeiosDBFile = dbDir FilePath.</> "leios.db.vol"
+          immLeiosDBFile = dbDir FilePath.</> "leios.db.imm"
+      requireLeiosDbFile volLeiosDBFile
+      requireLeiosDbFile immLeiosDBFile
+      pure . Just $ (volLeiosDBFile, immLeiosDBFile)
   withRegistry $ \registry -> do
     lock <- mkLock
     immutableDBTracer <- mkTracer lock verbose
@@ -110,11 +116,17 @@ truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leiosDbSource} args = 
               deleteAfter internal (At newTip)
               -- Truncate the LeiosDb after the ImmutableDB. The other order
               -- can leave a cert-RB whose EB is gone.
-              forM_ mLeiosDbPath $ \path ->
+              forM_ mLeiosDbPaths $ \(volLeiosDbPath, immLeiosDbPath) ->
                 (`onException` hPutStrLn stderr (leiosDbCutFailed newTip)) $ do
-                  truncateLeiosDbAfterSlot path (tipSlotNo newTip)
-                  deleteDanglingTxs path
-                  vacuumLeiosDb path
+                  -- truncate both the volatile and the immutable LeiosDB partitions,
+                  -- even though the volatile one likely does not need truncation.
+                  truncateLeiosDbFile volLeiosDbPath (tipSlotNo newTip)
+                  truncateLeiosDbFile immLeiosDbPath (tipSlotNo newTip)
+ where
+  truncateLeiosDbFile path slot = do
+    truncateLeiosDbAfterSlot path slot
+    deleteDanglingTxs path
+    vacuumLeiosDb path
 
 leiosDbCutFailed :: Tip blk -> String
 leiosDbCutFailed newTip =

@@ -16,7 +16,9 @@ module LeiosDemoDb
 
     -- * SQLite implementation
   , newLeiosDBSQLiteFromEnv
+  , newLeiosDBSQLiteWithGcPacing
   , newLeiosDBSQLite
+  , newLeiosDBSQLiteReadOnly
 
     -- * Re-exported for internal tooling
   , truncateLeiosDbAfterSlot
@@ -48,6 +50,8 @@ import LeiosDemoDb.SQLite
   ( deleteDanglingTxs
   , newLeiosDBSQLite
   , newLeiosDBSQLiteFromEnv
+  , newLeiosDBSQLiteReadOnly
+  , newLeiosDBSQLiteWithGcPacing
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx

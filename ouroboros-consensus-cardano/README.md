@@ -78,21 +78,15 @@ The user can use snapshots created by the node or they can create their own snap
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
-#### --leios-db and --no-leios-db
+#### --no-leios-db
 
 ```
-[--leios-db PATH | --no-leios-db]
+[--no-leios-db]
 ```
 
 A Praos block (a Leios ranking block) that carries a certificate has an empty body on the wire.
 Its transactions are in the endorser block (EB) that it certifies, and those live in the Leios database, not in the ImmutableDB.
-So the tool reads that database, and it refuses to start when it finds no such file.
-
-Without `--leios-db` the tool reads `DB_PATH/leios.db`.
-That is where a node with the default `LeiosDbConfig` writes it, as long as the node keeps all its databases under one path.
-A node that splits the immutable path from the volatile one writes the file under the volatile path.
-A node can also name another file in its configuration.
-Pass `--leios-db` in both cases.
+So the tool reads that database directory, and it refuses to start when it does not find the LeiosDB `db/leios.db.vol` and `db/leios.db.imm` files.
 
 `--no-leios-db` runs with an empty in-memory Leios database and reads no file.
 Pass it for a chain that holds no certifying block, such as a chain that predates Leios.
