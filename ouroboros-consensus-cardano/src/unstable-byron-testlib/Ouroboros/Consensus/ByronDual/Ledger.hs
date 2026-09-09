@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -38,8 +39,6 @@ import Ouroboros.Consensus.Byron.Crypto.DSIGN
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.ByronSpec.Ledger
-import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
@@ -212,19 +211,9 @@ bridgeTransactionIds =
 
 forgeDualByronBlock ::
   HasCallStack =>
-  TopLevelConfig DualByronBlock ->
-  -- | Current block number
-  BlockNo ->
-  -- | Current slot number
-  SlotNo ->
-  -- | Ledger
-  TickedLedgerState DualByronBlock mk ->
-  -- | Txs to add in the block
-  [Validated (GenTx DualByronBlock)] ->
-  -- | Leader proof ('IsLeader')
-  PBftIsLeader PBftByronCrypto ->
+  ForgeBlockArgs DualByronBlock ->
   DualByronBlock
-forgeDualByronBlock cfg curBlockNo curSlotNo tickedLedger vtxs isLeader =
+forgeDualByronBlock ForgeBlockArgs{..} =
   -- NOTE: We do not /elaborate/ the real Byron block from the spec one, but
   -- instead we /forge/ it. This is important, because we want to test that
   -- codepath. This does mean that we do not get any kind of "bridge" between
@@ -234,27 +223,30 @@ forgeDualByronBlock cfg curBlockNo curSlotNo tickedLedger vtxs isLeader =
   DualBlock
     { dualBlockMain = main
     , dualBlockAux = Just aux
-    , dualBlockBridge = mconcat $ map vDualGenTxBridge vtxs
+    , dualBlockBridge = mconcat $ map vDualGenTxBridge fbTxs
     }
  where
   main :: ByronBlock
   main =
-    forgeByronBlock
-      (dualTopLevelConfigMain cfg)
-      curBlockNo
-      curSlotNo
-      (tickedDualLedgerStateMain tickedLedger)
-      (map vDualGenTxMain vtxs)
-      isLeader
+    forgeByronBlock $
+      ForgeBlockArgs
+        { fbConfig = dualTopLevelConfigMain fbConfig
+        , fbCurrentBlockNo
+        , fbCurrentSlotNo
+        , fbPerasCert = Nothing -- Doesn't support Peras
+        , fbCurrentTickedLedgerState = tickedDualLedgerStateMain fbCurrentTickedLedgerState
+        , fbTxs = map vDualGenTxMain fbTxs
+        , fbIsLeader
+        }
 
   aux :: ByronSpecBlock
   aux =
     forgeByronSpecBlock
-      curBlockNo
-      curSlotNo
-      (tickedDualLedgerStateAux tickedLedger)
-      (map vDualGenTxAux vtxs)
+      fbCurrentBlockNo
+      fbCurrentSlotNo
+      (tickedDualLedgerStateAux fbCurrentTickedLedgerState)
+      (map vDualGenTxAux fbTxs)
       ( bridgeToSpecKey
-          (tickedDualLedgerStateBridge tickedLedger)
-          (hashVerKey . deriveVerKeyDSIGN . pbftIsLeaderSignKey $ isLeader)
+          (tickedDualLedgerStateBridge fbCurrentTickedLedgerState)
+          (hashVerKey . deriveVerKeyDSIGN . pbftIsLeaderSignKey $ fbIsLeader)
       )

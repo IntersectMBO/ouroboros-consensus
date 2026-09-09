@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 -- TODO: Ledger has a few deprecations that we are ignoring for now
@@ -21,7 +22,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
+import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -40,54 +41,39 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 -------------------------------------------------------------------------------}
 
 forgeShelleyBlock ::
-  forall m era proto mk.
+  forall m era proto.
   (ShelleyCompatible proto era, Monad m) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
-  TopLevelConfig (ShelleyBlock proto era) ->
-  -- | Current block number
-  BlockNo ->
-  -- | Current slot number
-  SlotNo ->
-  -- | Optional Peras certificate to include in the block
-  Maybe (PerasCert (ShelleyBlock proto era)) ->
-  -- | Current ledger
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  -- | Txs to include
-  [Validated (GenTx (ShelleyBlock proto era))] ->
-  IsLeader proto ->
+  ForgeBlockArgs (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era)
 forgeShelleyBlock
   hotKey
   cbl
-  cfg
-  curNo
-  curSlot
-  _mbPerasCert -- Ignored for now
-  tickedLedger
-  txs
-  isLeader = do
-    hdr <-
-      mkHeader @_ @(ProtoCrypto proto)
-        hotKey
-        cbl
-        isLeader
-        curSlot
-        curNo
-        prevHash
-        (SL.hashBlockBody @era body)
-        actualBodySize
-        protocolVersion
-    let blk = mkShelleyBlock $ SL.Block hdr body
-    return $
-      assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
-        blk
+  ForgeBlockArgs{..} =
+    do
+      hdr <-
+        mkHeader @_ @(ProtoCrypto proto)
+          hotKey
+          cbl
+          fbIsLeader
+          fbCurrentSlotNo
+          fbCurrentBlockNo
+          prevHash
+          (SL.hashBlockBody @era body)
+          actualBodySize
+          protocolVersion
+      let blk = mkShelleyBlock $ SL.Block hdr body
+      return $
+        assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
+          blk
    where
-    protocolVersion = shelleyProtocolVersion $ configBlock cfg
+    protocolVersion = shelleyProtocolVersion $ configBlock fbConfig
 
     body =
       SL.mkBasicBlockBody
-        & SL.txSeqBlockBodyL .~ Seq.fromList (fmap extractTx txs)
+        & SL.txSeqBlockBodyL
+          .~ Seq.fromList (fmap extractTx fbTxs)
 
     actualBodySize = SL.blockBodySize protocolVersion body
 
@@ -99,4 +85,4 @@ forgeShelleyBlock
       toShelleyPrevHash @proto
         . castHash
         . getTipHash
-        $ tickedLedger
+        $ fbCurrentTickedLedgerState

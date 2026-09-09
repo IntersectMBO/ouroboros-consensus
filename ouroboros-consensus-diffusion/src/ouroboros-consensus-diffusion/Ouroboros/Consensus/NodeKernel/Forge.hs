@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -87,7 +86,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (txs, txssz, proof, snapSize, tickedLedgerState, forgingOnTopOf) <-
+  (fbArgs, txssz, snapSize, forgingOnTopOf) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -116,27 +115,25 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
 
         (txs, txssz, snapSize) <- getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker
 
+        let fbArgs =
+              Block.ForgeBlockArgs
+                { Block.fbConfig = cfg
+                , Block.fbCurrentBlockNo = bcBlockNo
+                , Block.fbCurrentSlotNo = currentSlot
+                , Block.fbPerasCert = Nothing -- No PerasCert for now
+                , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
+                , Block.fbTxs = txs
+                , Block.fbIsLeader = proof
+                }
         pure
-          ( txs
+          ( fbArgs
           , txssz
-          , proof
           , snapSize
-          , forgetLedgerTables tickedLedgerState
           , ledgerTipPoint (ledgerState unticked)
           )
 
   -- Actually produce the block
-  newBlock <-
-    lift $
-      Block.forgeBlock
-        blockForging
-        cfg
-        bcBlockNo
-        currentSlot
-        Nothing -- No PerasCert for now
-        tickedLedgerState
-        txs
-        proof
+  newBlock <- lift $ Block.forgeBlock blockForging fbArgs
 
   trace $
     TraceForgedBlock
@@ -146,7 +143,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
       snapSize
       txssz
 
-  addBlockToChainDB trace chainDB mempool currentSlot txs newBlock
+  addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext

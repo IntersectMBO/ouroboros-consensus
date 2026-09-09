@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Mock.Ledger.Forge
@@ -8,13 +9,13 @@ module Ouroboros.Consensus.Mock.Ledger.Forge
   ) where
 
 import Cardano.Binary (toCBOR)
-import Cardano.Crypto.Hash (HashAlgorithm, hashWithSerialiser)
+import Cardano.Crypto.Hash (hashWithSerialiser)
 import Codec.Serialise (Serialise (..), serialise)
 import qualified Data.ByteString.Lazy as Lazy
-import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.SupportsMempool (LedgerSupportsMempool (txForgetValidated))
 import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Network.SizeInBytes
@@ -36,36 +37,27 @@ newtype ForgeExt c ext = ForgeExt
   }
 
 forgeSimple ::
-  forall c ext mk.
-  (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext) =>
+  forall c ext.
+  MockProtocolSpecific c ext =>
   ForgeExt c ext ->
-  TopLevelConfig (SimpleBlock c ext) ->
-  -- | Current block number
-  BlockNo ->
-  -- | Current slot number
-  SlotNo ->
-  -- | Current ledger
-  TickedLedgerState (SimpleBlock c ext) mk ->
-  -- | Txs to include
-  [GenTx (SimpleBlock c ext)] ->
-  IsLeader (BlockProtocol (SimpleBlock c ext)) ->
+  ForgeBlockArgs (SimpleBlock c ext) ->
   SimpleBlock c ext
-forgeSimple ForgeExt{forgeExt} cfg curBlock curSlot tickedLedger txs proof =
-  forgeExt cfg proof $
+forgeSimple ForgeExt{forgeExt} ForgeBlockArgs{..} =
+  forgeExt fbConfig fbIsLeader $
     SimpleBlock
       { simpleHeader = mkSimpleHeader encode stdHeader ()
       , simpleBody = body
       }
  where
   body :: SimpleBody
-  body = SimpleBody{simpleTxs = map simpleGenTx txs}
+  body = SimpleBody{simpleTxs = (simpleGenTx . txForgetValidated) <$> fbTxs}
 
   stdHeader :: SimpleStdHeader c ext
   stdHeader =
     SimpleStdHeader
-      { simplePrev = castHash $ getTipHash tickedLedger
-      , simpleSlotNo = curSlot
-      , simpleBlockNo = curBlock
+      { simplePrev = castHash $ getTipHash fbCurrentTickedLedgerState
+      , simpleSlotNo = fbCurrentSlotNo
+      , simpleBlockNo = fbCurrentBlockNo
       , simpleBodyHash = hashWithSerialiser toCBOR body
       , simpleBodySize = bodySize
       }

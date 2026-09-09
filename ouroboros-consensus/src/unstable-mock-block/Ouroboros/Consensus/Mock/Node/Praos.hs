@@ -21,7 +21,6 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
-import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -140,16 +139,11 @@ praosBlockForging cid initHotKey = do
               . second forgeStateUpdateInfoFromUpdateInfo
               . evolveKey sno
       , checkCanForge = \_ _ _ _ _ -> return ()
-      , forgeBlock = \cfg bno sno _mbPerasCert tickedLedgerSt txs isLeader -> do
+      , forgeBlock = \fbArgs -> do
           hotKey <- readMVar varHotKey
           return $
             forgeSimple
               (forgePraosExt hotKey)
-              cfg
-              bno
-              sno
-              tickedLedgerSt
-              (map txForgetValidated txs)
-              isLeader
+              fbArgs
       , finalize = pure ()
       }

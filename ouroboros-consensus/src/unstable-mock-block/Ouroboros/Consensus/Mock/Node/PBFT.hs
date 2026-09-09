@@ -17,7 +17,6 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
-import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -113,15 +112,6 @@ pbftBlockForging canBeLeader =
             canBeLeader
             slot
             tickedPBftState
-    , forgeBlock = \cfg slot bno _mbPerasCert lst txs proof ->
-        return $
-          forgeSimple
-            forgePBftExt
-            cfg
-            slot
-            bno
-            lst
-            (map txForgetValidated txs)
-            proof
+    , forgeBlock = return . forgeSimple forgePBftExt
     , finalize = pure ()
     }

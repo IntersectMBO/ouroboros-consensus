@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -492,16 +493,28 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno mbPerasCert tickedLgrSt txs isLeader ->
-          project' (Proxy @(I blk))
-            <$> forgeBlock
-              (inject cfg)
-              bno
-              sno
-              (injectPerasCert mbPerasCert)
-              (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
-              (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
-              (inject' (Proxy @(WrapIsLeader blk)) isLeader)
+      , forgeBlock =
+          \ForgeBlockArgs
+             { fbConfig
+             , fbCurrentBlockNo
+             , fbCurrentSlotNo
+             , fbPerasCert
+             , fbCurrentTickedLedgerState
+             , fbTxs
+             , fbIsLeader
+             } ->
+              project' (Proxy @(I blk))
+                <$> forgeBlock
+                  ForgeBlockArgs
+                    { fbConfig = inject fbConfig
+                    , fbCurrentBlockNo = fbCurrentBlockNo
+                    , fbCurrentSlotNo = fbCurrentSlotNo
+                    , fbPerasCert = injectPerasCert fbPerasCert
+                    , fbCurrentTickedLedgerState =
+                        getFlipTickedLedgerState (inject (FlipTickedLedgerState fbCurrentTickedLedgerState))
+                    , fbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
+                    , fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) fbIsLeader
+                    }
       }
    where
     injectPerasCert :: Maybe (PerasCert blk) -> Maybe (PerasCert (HardForkBlock '[blk]))
@@ -542,16 +555,28 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno mbPerasCert tickedLgrSt txs isLeader ->
-          inject' (Proxy @(I blk))
-            <$> forgeBlock
-              (project cfg)
-              bno
-              sno
-              (projectPerasCert mbPerasCert)
-              (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
-              (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
-              (project' (Proxy @(WrapIsLeader blk)) isLeader)
+      , forgeBlock =
+          \ForgeBlockArgs
+             { fbConfig
+             , fbCurrentBlockNo
+             , fbCurrentSlotNo
+             , fbPerasCert
+             , fbCurrentTickedLedgerState
+             , fbTxs
+             , fbIsLeader
+             } ->
+              inject' (Proxy @(I blk))
+                <$> forgeBlock
+                  ForgeBlockArgs
+                    { fbConfig = project fbConfig
+                    , fbCurrentBlockNo = fbCurrentBlockNo
+                    , fbCurrentSlotNo = fbCurrentSlotNo
+                    , fbPerasCert = projectPerasCert fbPerasCert
+                    , fbCurrentTickedLedgerState =
+                        getFlipTickedLedgerState (project (FlipTickedLedgerState fbCurrentTickedLedgerState))
+                    , fbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
+                    , fbIsLeader = project' (Proxy @(WrapIsLeader blk)) fbIsLeader
+                    }
       }
    where
     projectPerasCert :: Maybe (PerasCert (HardForkBlock '[blk])) -> Maybe (PerasCert blk)

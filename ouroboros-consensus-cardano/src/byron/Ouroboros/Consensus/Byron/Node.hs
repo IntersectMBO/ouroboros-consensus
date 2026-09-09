@@ -141,8 +141,7 @@ byronBlockForging creds =
           canBeLeader
           slot
           tickedPBftState
-    , forgeBlock = \cfg bno slot _mbPerasCert st txs proof ->
-        return $ forgeByronBlock cfg bno slot st txs proof
+    , forgeBlock = return . forgeByronBlock
     , finalize = pure ()
     }
  where

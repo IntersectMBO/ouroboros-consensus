@@ -879,17 +879,9 @@ runThreadNetwork
           <$> allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
 
       let customForgeBlock ::
-            BlockForging m blk ->
-            TopLevelConfig blk ->
-            BlockNo ->
-            SlotNo ->
-            Maybe (PerasCert blk) ->
-            TickedLedgerState blk mk ->
-            [Validated (GenTx blk)] ->
-            IsLeader (BlockProtocol blk) ->
-            m blk
-          customForgeBlock origBlockForging cfg' currentBno currentSlot mbPerasCert tickedLdgSt txs prf = do
-            let currentEpoch = HFF.futureSlotToEpoch future currentSlot
+            BlockForging m blk -> ForgeBlockArgs blk -> m blk
+          customForgeBlock origBlockForging args@ForgeBlockArgs{..} = do
+            let currentEpoch = HFF.futureSlotToEpoch future fbCurrentSlotNo
 
             -- EBBs are only ever possible in the first era
             let inFirstEra = HFF.futureEpochInFirstEra future currentEpoch
@@ -901,7 +893,7 @@ runThreadNetwork
                   EpochSize y = epochSize0
 
             let p :: Point blk
-                p = castPoint $ getTip tickedLdgSt
+                p = castPoint $ getTip fbCurrentTickedLedgerState
 
             let needEBB = inFirstEra && NotOrigin ebbSlot > pointSlot p
             case mbForgeEbbEnv <* guard needEBB of
@@ -909,17 +901,11 @@ runThreadNetwork
                 -- no EBB needed, forge without making one
                 forgeBlock
                   origBlockForging
-                  cfg'
-                  currentBno
-                  currentSlot
-                  mbPerasCert
-                  (forgetLedgerTables tickedLdgSt)
-                  txs
-                  prf
+                  args
               Just forgeEbbEnv -> do
                 -- The EBB shares its BlockNo with its predecessor (if
                 -- there is one)
-                let ebbBno = case currentBno of
+                let ebbBno = case fbCurrentBlockNo of
                       -- We assume this invariant:
                       --
                       -- If forging of EBBs is enabled then the node
@@ -941,14 +927,14 @@ runThreadNetwork
                 -- if it is valid, we retick to the /same/ slot
                 let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
                     tables = emptyLedgerTables -- EBBs need no input tables
-                tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
+                tickedLdgSt' <- case Exc.runExcept $ apply ebb (fbCurrentTickedLedgerState `withLedgerTables` tables) of
                   Left e -> Exn.throw $ JitEbbError @blk e
                   Right st ->
                     pure $
                       applyChainTick
                         OmitLedgerEvents
                         (configLedger pInfoConfig)
-                        currentSlot
+                        fbCurrentSlotNo
                         (forgetLedgerTables st)
 
                 -- forge the block usings the ledger state that includes
@@ -956,13 +942,7 @@ runThreadNetwork
                 blk <-
                   forgeBlock
                     origBlockForging
-                    cfg'
-                    currentBno
-                    currentSlot
-                    mbPerasCert
-                    (forgetLedgerTables tickedLdgSt')
-                    txs
-                    prf
+                    args{fbCurrentTickedLedgerState = forgetLedgerTables tickedLdgSt'}
 
                 -- If the EBB or the subsequent block is invalid, then the
                 -- ChainDB will reject it as invalid, and

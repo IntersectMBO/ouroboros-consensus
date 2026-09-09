@@ -1,4 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Byron.Ledger.Forge
@@ -44,21 +45,8 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Protocol.PBFT
 
-forgeByronBlock ::
-  HasCallStack =>
-  TopLevelConfig ByronBlock ->
-  -- | Current block number
-  BlockNo ->
-  -- | Current slot number
-  SlotNo ->
-  -- | Current ledger
-  TickedLedgerState ByronBlock mk ->
-  -- | Txs to include
-  [Validated (GenTx ByronBlock)] ->
-  -- | Leader proof ('IsLeader')
-  PBftIsLeader PBftByronCrypto ->
-  ByronBlock
-forgeByronBlock cfg = forgeRegularBlock (configBlock cfg)
+forgeByronBlock :: HasCallStack => ForgeBlockArgs ByronBlock -> ByronBlock
+forgeByronBlock = forgeRegularBlock
 
 forgeEBB ::
   BlockConfig ByronBlock ->
@@ -131,25 +119,17 @@ initBlockPayloads =
 
 forgeRegularBlock ::
   HasCallStack =>
-  BlockConfig ByronBlock ->
-  -- | Current block number
-  BlockNo ->
-  -- | Current slot number
-  SlotNo ->
-  -- | Current ledger
-  TickedLedgerState ByronBlock mk ->
-  -- | Txs to include
-  [Validated (GenTx ByronBlock)] ->
-  -- | Leader proof ('IsLeader')
-  PBftIsLeader PBftByronCrypto ->
+  ForgeBlockArgs ByronBlock ->
   ByronBlock
-forgeRegularBlock cfg bno sno st txs isLeader =
+forgeRegularBlock ForgeBlockArgs{..} =
   forge $
     forgePBftFields
       (mkByronContextDSIGN cfg)
-      isLeader
+      fbIsLeader
       (reAnnotate byronProtVer $ Annotated toSign ())
  where
+  cfg = configBlock fbConfig
+
   epochSlots :: CC.Slot.EpochSlots
   epochSlots = byronEpochSlots cfg
 
@@ -158,7 +138,7 @@ forgeRegularBlock cfg bno sno st txs isLeader =
     foldr
       extendBlockPayloads
       initBlockPayloads
-      txs
+      fbTxs
 
   txPayload :: CC.UTxO.TxPayload
   txPayload = CC.UTxO.mkTxPayload (bpTxs blockPayloads)
@@ -203,28 +183,28 @@ forgeRegularBlock cfg bno sno st txs isLeader =
   proof = CC.Block.mkProof body
 
   prevHeaderHash :: CC.Block.HeaderHash
-  prevHeaderHash = case getTipHash st of
+  prevHeaderHash = case getTipHash fbCurrentTickedLedgerState of
     GenesisHash ->
       error
         "the first block on the Byron chain must be an EBB"
     BlockHash (ByronHash h) -> h
 
   epochAndSlotCount :: CC.Slot.EpochAndSlotCount
-  epochAndSlotCount = CC.Slot.fromSlotNumber epochSlots (coerce sno)
+  epochAndSlotCount = CC.Slot.fromSlotNumber epochSlots (coerce fbCurrentSlotNo)
 
   toSign :: CC.Block.ToSign
   toSign =
     CC.Block.ToSign
       { CC.Block.tsHeaderHash = prevHeaderHash
       , CC.Block.tsSlot = epochAndSlotCount
-      , CC.Block.tsDifficulty = coerce bno
+      , CC.Block.tsDifficulty = coerce fbCurrentBlockNo
       , CC.Block.tsBodyProof = proof
       , CC.Block.tsProtocolVersion = byronProtocolVersion cfg
       , CC.Block.tsSoftwareVersion = byronSoftwareVersion cfg
       }
 
   dlgCertificate :: CC.Delegation.Certificate
-  dlgCertificate = pbftIsLeaderDlgCert isLeader
+  dlgCertificate = pbftIsLeaderDlgCert fbIsLeader
 
   headerGenesisKey :: Crypto.VerificationKey
   VerKeyByronDSIGN headerGenesisKey = dlgCertGenVerKey dlgCertificate
@@ -253,8 +233,8 @@ forgeRegularBlock cfg bno sno st txs isLeader =
       CC.Block.AHeader
         { CC.Block.aHeaderProtocolMagicId = ann (Crypto.getProtocolMagicId (byronProtocolMagic cfg))
         , CC.Block.aHeaderPrevHash = ann prevHeaderHash
-        , CC.Block.aHeaderSlot = ann (coerce sno)
-        , CC.Block.aHeaderDifficulty = ann (coerce bno)
+        , CC.Block.aHeaderSlot = ann (coerce fbCurrentSlotNo)
+        , CC.Block.aHeaderDifficulty = ann (coerce fbCurrentBlockNo)
         , CC.Block.headerProtocolVersion = byronProtocolVersion cfg
         , CC.Block.headerSoftwareVersion = byronSoftwareVersion cfg
         , CC.Block.aHeaderProof = ann proof
