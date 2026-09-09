@@ -2184,17 +2184,51 @@ maxEBClosureSize = ByteSize32 12_000_000
 -- slot has not elapsed.
 minCertificationGap :: DijkstraEraPParams era => SlotLength -> PParams era -> SlotNo
 minCertificationGap slotLength pp =
+  certificationGapOfPeriods
+    slotLength
+    (pp ^. ppLeiosAnnouncementPeriodLengthL)
+    (pp ^. ppLeiosVotePeriodLengthL)
+    (pp ^. ppLeiosDiffusionPeriodLengthL)
+
+-- | The earliest slot at which a block may certify an endorser block announced
+-- in the given slot
+--
+-- 'certificationGapOfPeriods' rounds up because a block is forged at its slot's
+-- onset, so the answer is the first slot whose onset is far enough after the
+-- announcement. In the most-extreme-but-still-nonzero case, supppose all three
+-- periods are 1ms. Their 5ms total is a fraction of any realistic slot, and the
+-- gap rounds up to one: an announcement at the start of slot @X@ admits a
+-- CertRB in slot @X + 1@.  Rounding down would give a gap of zero and admit one
+-- in slot @X@ itself, which is nonsensical.
+--
+-- The header checks in @updateChainDepState@ have the periods from a forecast
+-- ledger view rather than a ledger state, so they cannot go through
+-- 'minCertificationGap'. Sharing 'certificationGapOfPeriods' is what keeps the
+-- two from drifting.
+minCertificationSlot ::
+  SlotLength ->
+  -- | Announcement period length
+  Milliseconds32 ->
+  -- | Vote period length
+  Milliseconds32 ->
+  -- | Diffusion period length
+  Milliseconds32 ->
+  -- | Slot of the announcing block
+  SlotNo ->
+  SlotNo
+minCertificationSlot slotLength announcement vote diffusion announcingSlot =
+  announcingSlot + certificationGapOfPeriods slotLength announcement vote diffusion
+
+-- | Aka @L@
+certificationGapOfPeriods ::
+  SlotLength -> Milliseconds32 -> Milliseconds32 -> Milliseconds32 -> SlotNo
+certificationGapOfPeriods slotLength announcement vote diffusion =
   SlotNo . fromIntegral $ (totalMs + slotMs - 1) `div` slotMs
  where
-  totalMs =
-    3 * ms (pp ^. ppLeiosAnnouncementPeriodLengthL)
-      + ms (pp ^. ppLeiosVotePeriodLengthL)
-      + ms (pp ^. ppLeiosDiffusionPeriodLengthL)
+  totalMs = 3 * ms announcement + ms vote + ms diffusion
   ms = toInteger . unMilliseconds32
-  -- A zero-length slot is not something the ledger can express, but dividing by
-  -- it would be, so refuse rather than invent an answer.
   slotMs = case slotLengthToMillisec slotLength of
-    0 -> error "minCertificationGap: zero slot length"
+    0 -> error "certificationGapOfPeriods: zero slot length"
     n -> n
 
 -- * Utilities for prototyping
