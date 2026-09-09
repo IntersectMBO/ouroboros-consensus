@@ -511,9 +511,6 @@ instance
     GetMaxMajorProtocolVersion -> const True
     GetDRepDelegations{} -> const True
 
--- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
--- must be added. See #2830 for a template on how to do this.
-
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip =
     Just Refl
