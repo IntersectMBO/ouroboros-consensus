@@ -135,6 +135,8 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (SJustLeios))
+import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -1055,3 +1057,16 @@ instance HasLeiosVoting (ShelleyBlock (PraosWithLeios c) DijkstraEra) where
         ^. ppLeiosQuorumStakeThresholdL
         -- TODO: Use UnitInterval further upstream
         & unboundRational
+
+  -- The forecast counterpart of the two accessors above. Reading them from the
+  -- view rather than the state is what lets ChainSel validate a CertRB's
+  -- certificate before it has applied the block's predecessor.
+  --
+  -- 'SNothingLeios' is unreachable at this extension, so this is total.
+  getLeiosCommitteeFromView _ lv =
+    case Views.plvLeios lv of
+      SJustLeios llv ->
+        Just
+          ( Views.llvCommittee llv
+          , unboundRational (Views.llvQuorumStakeThreshold llv)
+          )
