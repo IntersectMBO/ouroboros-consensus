@@ -66,7 +66,7 @@ Henceforth, we call an unreleased version "experimental" (ie only used for demo 
 
 ### Checks
 
-The supported query versions are only enforced in the [Shelley query encoder][shelley-encodeNodeToClient], ie in code run by clients. The server will currently answer queries even if the negotiated version is not in the supported version range for that query (which might be the case with a custom client implementation, or when one forgot to enable experimental protocols), following the robustness principle (ie "be conservative in what you send, be liberal in what you accept").
+The supported query versions are only enforced in the [Shelley query encoder][shelley-encodeNodeToClient], ie in code run by clients. The server will currently answer queries even if the negotiated version is not in the supported version range for that query (which might be the case with a custom client implementation, or when one forgot to enable experimental protocols), following the robustness principle (ie "be conservative in what you send, be liberal in what you accept"). This holds only for the queries the decoder still accepts: removing a query removes its case from the decoder, so a client that sends a removed query gets a decode failure rather than an answer.
 
 As an example, consider a query $Q$ that is enabled after version $x$, and consider a connection between a client and a node that negotiated version $y$. If $y < x$, then the client will throw an exception before sending $Q$ as the negotiated version is too old, so the server probably won't understand the query. But if the server does actually understand the query, and the client uses a custom implementation that does not perform the check on $x$ and $y$, then the server will reply as normal despite $y < x$.
 
