@@ -7,15 +7,22 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Consensus.Shelley.Generators (SomeResult (..)) where
+module Test.Consensus.Shelley.Generators
+  ( SomeResult (..)
+  , praosHeaderBodyFromTPraos
+  , translateTPraosHeader
+  ) where
 
 import Cardano.Ledger.Core (TranslationContext)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (InstantStake)
 import Cardano.Protocol.Crypto (Crypto)
+import qualified Cardano.Protocol.Leios.BlockHeader as Leios
+import qualified Cardano.Protocol.Praos.BlockHeader as Praos
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Cardano.Slotting.EpochInfo
 import Control.Monad (replicateM)
@@ -26,13 +33,20 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (BasePraos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( KnownPraosExtension (singPraosExtension)
+  , SingPraosExtension (SingPextLeios, SingPextNone)
+  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node.Common ()
+import Ouroboros.Consensus.Shelley.Protocol.Abstract
+  ( ShelleyProtocolHeader
+  , pHeaderHash
+  )
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Network.Block (mkSerialised)
@@ -51,7 +65,9 @@ import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators
 import Test.Cardano.Ledger.Shelley.Serialisation.Generators ()
 import Test.Cardano.Ledger.ShelleyMA.Serialisation.Generators ()
 import Test.Cardano.Protocol.TPraos.Arbitrary (genBlock)
-import Test.Consensus.Protocol.Serialisation.Generators ()
+import Test.Consensus.Protocol.Serialisation.Generators
+  ( extendHeaderBodyWithLeios
+  )
 import Test.Consensus.Shelley.MockCrypto (CanMock)
 import Test.QuickCheck hiding (Result)
 import Test.Util.Orphans.Arbitrary ()
@@ -81,8 +97,11 @@ instance
     mkShelleyBlock <$> genBlock allPoolKeys
 
 instance
-  (Praos.PraosCrypto crypto, CanMock (Praos crypto) era) =>
-  Arbitrary (ShelleyBlock (Praos crypto) era)
+  ( Praos.PraosCrypto crypto
+  , CanMock (BasePraos pext crypto) era
+  , Arbitrary (ShelleyProtocolHeader (BasePraos pext crypto))
+  ) =>
+  Arbitrary (ShelleyBlock (BasePraos pext crypto) era)
   where
   arbitrary = mkShelleyBlock <$> blk
    where
@@ -100,47 +119,58 @@ instance
         genIssuerKeys defaultConstants
     Coherent . mkShelleyBlock <$> genCoherentBlock allPoolKeys
 
+-- | The Praos header body of a TPraos one, which carries the same fields.
+praosHeaderBodyFromTPraos :: SL.BHBody c -> Praos.HeaderBody c
+praosHeaderBodyFromTPraos bhBody =
+  Praos.HeaderBody
+    { Praos.hbBlockNo = SL.bheaderBlockNo bhBody
+    , Praos.hbSlotNo = SL.bheaderSlotNo bhBody
+    , Praos.hbPrev = SL.bheaderPrev bhBody
+    , Praos.hbVk = SL.bheaderVk bhBody
+    , Praos.hbVrfVk = SL.bheaderVrfVk bhBody
+    , Praos.hbVrfRes = coerce $ SL.bheaderEta bhBody
+    , Praos.hbBodySize = SL.bsize bhBody
+    , Praos.hbBodyHash = SL.bhash bhBody
+    , Praos.hbOCert = SL.bheaderOCert bhBody
+    , Praos.hbProtVer = SL.bprotver bhBody
+    }
+
+-- | Rebuild a TPraos header as this extension's header.
+--
+-- In 'Gen' because an extension may add fields the TPraos header has no
+-- counterpart for. Only the generators that borrow upstream's coherent-block
+-- generator need this; see the 'Coherent' instance below.
+translateTPraosHeader ::
+  forall pext c.
+  (KnownPraosExtension pext, Crypto c) =>
+  SL.BHeader c ->
+  Gen (ShelleyProtocolHeader (BasePraos pext c))
+translateTPraosHeader (SL.BHeader bhBody bhSig) =
+  case singPraosExtension (Proxy @pext) of
+    SingPextNone -> pure $ Praos.Header hBody (coerce bhSig)
+    SingPextLeios ->
+      flip Leios.Header (coerce bhSig)
+        <$> (extendHeaderBodyWithLeios hBody <$> arbitrary <*> arbitrary)
+ where
+  hBody = praosHeaderBodyFromTPraos bhBody
+
 -- | Create a coherent Praos block
 --
 --   TODO Establish a coherent block without doing this translation from a
 --   TPraos header.
 instance
-  CanMock (Praos crypto) era =>
-  Arbitrary (Coherent (ShelleyBlock (Praos crypto) era))
+  ( CanMock (BasePraos pext crypto) era
+  , KnownPraosExtension pext
+  ) =>
+  Arbitrary (Coherent (ShelleyBlock (BasePraos pext crypto) era))
   where
   arbitrary = do
     allPoolKeys <-
       replicateM (fromIntegral $ numCoreNodes defaultConstants) $
         genIssuerKeys defaultConstants
-    blk <- genCoherentBlock allPoolKeys
-    Coherent . mkBlk <$> pure blk
-   where
-    mkBlk sleBlock =
-      mkShelleyBlock $
-        let
-          SL.Block hdr1 bdy = sleBlock
-         in
-          SL.Block (translateHeader hdr1) bdy
-
-    translateHeader :: Crypto c => SL.BHeader c -> Praos.Header c
-    translateHeader (SL.BHeader bhBody bhSig) =
-      Praos.Header hBody hSig
-     where
-      hBody =
-        Praos.HeaderBody
-          { Praos.hbBlockNo = SL.bheaderBlockNo bhBody
-          , Praos.hbSlotNo = SL.bheaderSlotNo bhBody
-          , Praos.hbPrev = SL.bheaderPrev bhBody
-          , Praos.hbVk = SL.bheaderVk bhBody
-          , Praos.hbVrfVk = SL.bheaderVrfVk bhBody
-          , Praos.hbVrfRes = coerce $ SL.bheaderEta bhBody
-          , Praos.hbBodySize = SL.bsize bhBody
-          , Praos.hbBodyHash = SL.bhash bhBody
-          , Praos.hbOCert = SL.bheaderOCert bhBody
-          , Praos.hbProtVer = SL.bprotver bhBody
-          , Praos.hbLeiosExt = SNothing
-          }
-      hSig = coerce bhSig
+    SL.Block hdr1 bdy <- genCoherentBlock allPoolKeys
+    hdr <- translateTPraosHeader hdr1
+    pure $ Coherent $ mkShelleyBlock $ SL.Block hdr bdy
 
 instance
   CanMock (TPraos crypto) era =>
@@ -149,12 +179,14 @@ instance
   arbitrary = getHeader <$> arbitrary
 
 instance
-  CanMock (Praos crypto) era =>
-  Arbitrary (Header (ShelleyBlock (Praos crypto) era))
+  ( CanMock (BasePraos pext crypto) era
+  , Arbitrary (ShelleyProtocolHeader (BasePraos pext crypto))
+  ) =>
+  Arbitrary (Header (ShelleyBlock (BasePraos pext crypto) era))
   where
   arbitrary = do
     hdr <- arbitrary
-    pure $ ShelleyHeader hdr (ShelleyHash $ Praos.headerHash hdr)
+    pure $ ShelleyHeader hdr (pHeaderHash hdr)
 
 instance Arbitrary ShelleyHash where
   arbitrary = ShelleyHash <$> arbitrary

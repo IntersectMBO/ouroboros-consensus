@@ -89,14 +89,16 @@ import Data.Coerce (coerce)
 import Data.Foldable (toList)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust, fromMaybe)
-import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy (Proxy (..))
 import Data.Ratio ((%))
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Protocol.Praos (PraosValidationErr (..))
-import Ouroboros.Consensus.Protocol.Praos.Header
+import Ouroboros.Consensus.Protocol.Praos
+  ( BasePraosValidationErr (..)
+  , PraosValidationErr
+  )
+import Cardano.Protocol.Praos.BlockHeader
   ( Header
   , HeaderBody (..)
   , pattern Header
@@ -445,7 +447,6 @@ genHeaderBody context = do
   hbBodyHash <- genHash
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
   let hbProtVer = protocolVersionZero
-      hbLeiosExt = SNothing -- XXX: Never contains leios fields
       headerBody = HeaderBody{..}
   pure $ (headerBody, kesPeriod)
  where

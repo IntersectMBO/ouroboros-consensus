@@ -38,7 +38,6 @@ import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( KnownPraosExtension (singPraosExtension)
   , MaxMajorProtVer (MaxMajorProtVer)
-  , PraosExtension (..)
   , PraosExtensionHasLeios
   , SingPraosExtension (..)
   , StrictMaybeLeios (..)

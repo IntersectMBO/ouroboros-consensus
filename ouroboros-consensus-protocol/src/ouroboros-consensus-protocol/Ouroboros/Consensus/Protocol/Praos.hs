@@ -393,8 +393,7 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
 
 data instance Ticked (BasePraosState pext) = TickedPraosState
   { tickedPraosStateChainDepState :: PraosState pext
-  , tickedPraosStateLedgerView :: Views.PraosLedgerView
-  , tickedPraosStateLeiosLedgerView :: StrictMaybeLeios (PraosExtensionHasLeios pext) ()  -- TODO
+  , tickedPraosStateLedgerView :: Views.BasePraosLedgerView pext
   }
 
 -----
@@ -458,7 +457,7 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
   type IsLeader (BasePraos pext c) = PraosIsLeader c
   type CanBeLeader (BasePraos pext c) = PraosCanBeLeader c
   type TiebreakerView (BasePraos pext c) = PraosTiebreakerView c
-  type LedgerView (BasePraos pext c) = Views.PraosLedgerView
+  type LedgerView (BasePraos pext c) = Views.BasePraosLedgerView pext
   type ValidationErr (BasePraos pext c) = PraosValidationErr c
   type ValidateView (BasePraos pext c) = Views.BaseHeaderView pext c
 
@@ -506,9 +505,6 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
       TickedPraosState
         { tickedPraosStateChainDepState = st'
         , tickedPraosStateLedgerView = lv
-        , tickedPraosStateLeiosLedgerView = case praosExtensionHasLeios (Proxy @pext) of
-            PextDoesNotHaveLeiosDecided -> SNothingLeios
-            PextHasLeiosDecided -> SJustLeios ()
         }
      where
       newEpoch =
@@ -646,7 +642,7 @@ validateVRFSignature ::
   forall pext c.
   PraosCrypto c =>
   Nonce ->
-  Views.PraosLedgerView ->
+  Views.BasePraosLedgerView pext ->
   ActiveSlotCoeff ->
   Views.BaseHeaderView pext c ->
   Except (PraosValidationErr c) ()
@@ -881,6 +877,9 @@ instance KnownPraosExtension pext => TranslateProto (TPraos c) (BasePraos pext c
       , Views.plvMaxHeaderSize = SL.ccMaxBHSize tplvChainChecks
       , Views.plvMaxBodySize = SL.ccMaxBBSize tplvChainChecks
       , Views.plvProtocolVersion = SL.ccProtocolVersion tplvChainChecks
+      , Views.plvLeios = case praosExtensionHasLeios (Proxy @pext) of
+          PextDoesNotHaveLeiosDecided -> SNothingLeios
+          PextHasLeiosDecided -> SJustLeios Views.initialLeiosLedgerView
       }
 
   translateChainDepState _ tpState =
@@ -926,15 +925,16 @@ infix 1 ?!:
 -- introduced, and it starts empty, since no header of the extension we are
 -- leaving could have carried one.
 instance TranslateProto (BasePraos PextNone c) (BasePraos PextLeios c) where
-  -- 'id' only until 'LedgerView' gains the Leios data, at which point this has
-  -- to conjure that half from a state that has none. The answer will be the
-  -- degenerate view -- an empty committee, and a /positive/ quorum so that
-  -- nothing can be certified against it. That is not merely a boundary
-  -- artefact: the snapshots in force for the first epochs after this fork were
-  -- built by the previous era's SNAP, which seats no committee, so the
-  -- degenerate view is the real state of affairs until a Leios-seated snapshot
-  -- rotates in.
-  translateLedgerView _ = id
+  -- The Leios data has to be conjured from a state that has none; see
+  -- 'Views.initialLeiosLedgerView'.
+  translateLedgerView _ lv =
+    Views.PraosLedgerView
+      { Views.plvPoolDistr = Views.plvPoolDistr lv
+      , Views.plvMaxHeaderSize = Views.plvMaxHeaderSize lv
+      , Views.plvMaxBodySize = Views.plvMaxBodySize lv
+      , Views.plvProtocolVersion = Views.plvProtocolVersion lv
+      , Views.plvLeios = SJustLeios Views.initialLeiosLedgerView
+      }
 
   translateChainDepState _ st =
     PraosState

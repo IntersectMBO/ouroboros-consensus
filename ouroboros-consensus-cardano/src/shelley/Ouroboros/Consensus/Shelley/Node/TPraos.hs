@@ -52,7 +52,6 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
-import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras

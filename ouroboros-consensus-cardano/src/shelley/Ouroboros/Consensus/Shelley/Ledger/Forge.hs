@@ -28,7 +28,7 @@ import Control.Monad (when)
 import Control.Tracer (traceWith)
 import Data.ByteString.Short (fromShort)
 import Data.Maybe (isJust)
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
+import Data.Maybe.Strict (maybeToStrictMaybe)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoTypes
