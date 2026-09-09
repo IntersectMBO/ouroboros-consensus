@@ -36,11 +36,11 @@ import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( KnownPraosExtension (praosExtensionHasLeios)
   , StrictMaybeLeios (SJustLeios, SNothingLeios)
-  , toCodecEbAnnouncement
   , WhetherHasLeiosDecided
-      ( PextDoesNotHaveLeiosDecided
-      , PextHasLeiosDecided
-      )
+    ( PextDoesNotHaveLeiosDecided
+    , PextHasLeiosDecided
+    )
+  , toCodecEbAnnouncement
   )
 import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()

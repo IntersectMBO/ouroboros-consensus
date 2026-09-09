@@ -323,7 +323,8 @@ pattern EraMary :: K () (ShelleyBlock (TPraos c) MaryEra) -> EraIndex (CardanoEr
 pattern EraAlonzo :: K () (ShelleyBlock (TPraos c) AlonzoEra) -> EraIndex (CardanoEras c)
 pattern EraBabbage :: K () (ShelleyBlock (Praos c) BabbageEra) -> EraIndex (CardanoEras c)
 pattern EraConway :: K () (ShelleyBlock (Praos c) ConwayEra) -> EraIndex (CardanoEras c)
-pattern EraDijkstra :: K () (ShelleyBlock (PraosWithLeios c) DijkstraEra) -> EraIndex (CardanoEras c)
+pattern EraDijkstra ::
+  K () (ShelleyBlock (PraosWithLeios c) DijkstraEra) -> EraIndex (CardanoEras c)
 
 pattern EraByron x = EraIndex (TagByron x)
 pattern EraShelley x = EraIndex (TagShelley x)

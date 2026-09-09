@@ -2131,7 +2131,6 @@ traceLeiosPeerForHuman = \case
   TraceLeiosPeerAnnouncement equiv fields ->
     "EB announcement from peer (" <> T.pack (show equiv) <> "): " <> T.pack (show fields)
 
-
 -- * ChainSel's Leios events and header errors
 
 -- | Leios events from ChainSel, injected into @TraceAddBlockEvent@
@@ -2272,7 +2271,6 @@ leiosHeaderErrToObject = \case
       , "announcedEndorserBlockSize" .= announced
       , "maxEndorserBlockSize" .= maxSize
       ]
-
 
 -- | As 'leiosHeaderErrToObject', for the errors ChainSel and the LedgerDB raise
 -- about a CertRB.

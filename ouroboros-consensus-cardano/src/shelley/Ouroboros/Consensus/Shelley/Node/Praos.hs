@@ -35,8 +35,8 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node.Common
   ( ShelleyLeaderCredentials (..)
   )
-import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoHasLeios)
+import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
 {-------------------------------------------------------------------------------
