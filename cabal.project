@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2026-08-12T02:21:36Z
+  , hackage.haskell.org 2026-09-07T04:49:09Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-08-17T11:09:16Z
+  , cardano-haskell-packages 2026-09-04T09:27:20Z
 
 active-repositories:
   , :rest
@@ -24,12 +24,34 @@ active-repositories:
 
 packages: .
 
--- Temp: pin cardano-ledger to PR IntersectMBO/cardano-ledger#5992
+-- TEMPORARY: the kes-agent fork pinned below (PR #105) still caps
+-- cardano-crypto-class at ^>=2.5 (i.e. <2.6), predating its own
+-- FixedSizeCodec migration that (per that SRP's comment) already made it
+-- compatible with cardano-crypto-class-2.6.0.0. Relaxing the bound against
+-- its already-fetched code is safe. Remove alongside that SRP once
+-- upstream catches up.
+allow-newer:
+  kes-agent:cardano-crypto-class,
+  kes-agent-crypto:cardano-crypto-class,
+  ouroboros-consensus:cardano-ledger-shelley,
+  ouroboros-consensus:cardano-ledger-alonzo,
+  ouroboros-consensus:cardano-ledger-babbage,
+  ouroboros-consensus:cardano-ledger-conway,
+  ouroboros-consensus:small-steps,
+  ouroboros-consensus:cardano-crypto-class,
+
+-- TEMPORARY: cardano-ledger PR #5992 merged into master as
+-- dae069780697449fbd9cda47f03fb72745b0b8c0. Pinned to master's tip (not
+-- yet in a CHaP release) -- remove once a release picks it up.
+-- Includes eras/byron/ledger/executable-spec (byron-spec-ledger) and
+-- eras/byron/chain/executable-spec (byron-spec-chain) because CHaP's
+-- released versions predate small-steps-1.2.0.0's new `Ord
+-- (PredicateFailure a)` superclass on STS; master's versions of both (not
+-- yet released either) derive Ord on their PredicateFailure types.
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger.git
-  tag: c99f7c8addf270a09d852880bfa0a27340f8e7c3
-  --sha256: sha256-RKXVMS5glorTkL59J4rfyytyPflDWNB0GyLMrwfWZc4=
+  tag: dae069780697449fbd9cda47f03fb72745b0b8c0
   subdir:
     libs/cardano-ledger-core
     libs/cardano-ledger-api
@@ -40,6 +62,8 @@ source-repository-package
     libs/small-steps
     libs/vector-map
     libs/non-integral
+    eras/byron/ledger/executable-spec
+    eras/byron/chain/executable-spec
     eras/shelley/impl
     eras/shelley/test-suite
     eras/mary/impl
@@ -48,6 +72,27 @@ source-repository-package
     eras/babbage/impl
     eras/conway/impl
     eras/dijkstra/impl
+
+-- TEMPORARY: cardano-ledger-binary (see the SRP above) now needs
+-- cardano-crypto-leios >=0.3, but the highest release on CHaP is 0.2.0.0
+-- and 0.3.0.0 isn't tagged upstream yet -- it only exists on cardano-base's
+-- master. Remove once a 0.3.0.0 release lands on CHaP.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base
+  tag: d92e2e3841eaad354c5e1ef77b458b347f471271
+  subdir: cardano-crypto-leios
+
+-- TEMPORARY: cardano-ledger-binary (see the SRP above) now needs
+-- cuddle >=1.8, but CHaP's `active-repositories:override` masks Hackage's
+-- newer releases behind its own cap of 1.2.0.0 for any package CHaP also
+-- carries. A direct git SRP isn't subject to that override, so pin cuddle
+-- here to bypass it. Remove once CHaP's cuddle catches up (or the
+-- override is dropped).
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cuddle
+  tag: 416f7aeaa510d4be5ea8f1d26d4cdd5501629058
 
 -- We want to always build the test-suites and benchmarks
 tests: true
@@ -71,3 +116,18 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+-- TEMPORARY: cardano-ledger PR #5999 (erikd/ram) merged into master as
+-- dae069780697449fbd9cda47f03fb72745b0b8c0, which switches
+-- cardano-crypto-wrapper from `memory` to `ram` (crypton >=1.1's
+-- replacement for `memory`), so it builds against crypton >=1.1. This is
+-- the only package in the chain that needs an actual source change; the
+-- allow-newer entries above cover everything else, which just has an
+-- overly conservative cardano-crypto-class upper bound. Pinned to
+-- master's tip (not yet in a CHaP release) -- remove once a release
+-- picks it up.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  tag: dae069780697449fbd9cda47f03fb72745b0b8c0
+  subdir: eras/byron/crypto
