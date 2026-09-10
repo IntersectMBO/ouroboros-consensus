@@ -1,10 +1,15 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -64,6 +69,8 @@ module Ouroboros.Consensus.Block.SupportsPeras
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeListLenOf, encodeListLen)
+import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.Hashes (KeyHash (..))
 import Control.Exception (assert)
 import Control.Exception.Base (Exception)
 import Control.Monad.Error.Class (MonadError (..))
@@ -94,6 +101,9 @@ import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Peras.Void
 import Ouroboros.Consensus.Peras.Vote.Class
 import Ouroboros.Consensus.Peras.Voting.Adapter
+import Ouroboros.Consensus.Util.Orphans ()
+import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
 
 -- * Voting committee types for Peras
 
@@ -278,6 +288,49 @@ class
   getPerasCertInBlock ::
     blk ->
     Either (PerasError blk) (Maybe (PerasCert blk))
+
+  -- | Read the private key for Peras voting from the env vars.
+  --
+  -- NOTE: this is a temporary workaround for testnet, this is supposed to be
+  -- replaced for Peras-to-mainnet with proper key registration and retrieval
+  -- mechanisms.
+  readPerasPrivateKeyFromEnv ::
+    proxy blk ->
+    Either String (PrivateKey (PerasCrypto blk))
+  default readPerasPrivateKeyFromEnv ::
+    PrivateKey (PerasCrypto blk) ~ () =>
+    proxy blk ->
+    Either String (PrivateKey (PerasCrypto blk))
+  readPerasPrivateKeyFromEnv _ =
+    Right ()
+
+  -- | Read the PoolId from the environment variable 'PERAS_POOL_ID'.
+  --
+  -- NOTE: this is a temporary workaround for testnet, we still need to figure
+  -- out how to properly thread the PoolId throughout a node creation for
+  -- Peras-to-mainnet.
+  readPerasPoolIdFromEnv ::
+    proxy blk ->
+    Either String PoolId
+  default readPerasPoolIdFromEnv ::
+    proxy blk ->
+    Either String PoolId
+  readPerasPoolIdFromEnv _ =
+    unsafePerformIO $
+      lookupEnv envVar >>= \case
+        Nothing -> do
+          pure $ Left $ "Environment variable " <> envVar <> "not set."
+        Just rawKey -> do
+          pure $ decodeKey rawKey
+   where
+    envVar =
+      "PERAS_POOL_ID"
+
+    decodeKey key =
+      case Hash.hashFromStringAsHex key of
+        Just hash -> Right $ PoolId (KeyHash hash)
+        Nothing -> Left $ "failed to decode PoolId, invalid hash bytes: " <> show key
+  {-# NOINLINE readPerasPoolIdFromEnv #-}
 
 -- | Forge a Peras vote if the given pool is eligible to vote in the given round.
 defaultForgePerasVoteIfEligible ::
