@@ -30,6 +30,7 @@ import Cardano.Ledger.BaseTypes
   )
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
 import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
+import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (LeiosCommittee, emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (KES, VRF)
@@ -187,7 +188,7 @@ type ForecastsLeios :: PraosExtension -> Type -> Constraint
 
 -- | The Leios part of an era's forecast, as this extension sees it.
 --
--- Reading that part needs 'SL.DijkstraEraForecast', which the extensions
+-- Reading that part needs 'Dijkstra.DijkstraEraForecast', which the extensions
 -- without Leios must not demand of their eras. 'KnownPraosExtension' cannot
 -- serve here: refining @pext@ says nothing about @era@, and it is an @era@
 -- dictionary that is missing.
@@ -200,7 +201,7 @@ class ForecastsLeios pext era where
 instance ForecastsLeios PextNone era where
   forecastToLeiosPart _ _ = SNothingLeios
 
-instance SL.DijkstraEraForecast era => ForecastsLeios PextLeios era where
+instance Dijkstra.DijkstraEraForecast era => ForecastsLeios PextLeios era where
   forecastToLeiosPart _ = SJustLeios . forecastToLeiosLedgerView
 
 forecastToBasePraosLedgerView ::
@@ -221,15 +222,15 @@ forecastToBasePraosLedgerView f =
 
 forecastToLeiosLedgerView ::
   forall t era.
-  SL.DijkstraEraForecast era =>
+  Dijkstra.DijkstraEraForecast era =>
   SL.Forecast t era ->
   LeiosLedgerView
 forecastToLeiosLedgerView f =
   LeiosLedgerView
-    { llvCommittee = f ^. SL.leiosCommitteeForecastL @era @t
-    , llvQuorumStakeThreshold = f ^. SL.leiosQuorumStakeThresholdForecastL @era @t
-    , llvAnnouncementPeriodLength = f ^. SL.leiosAnnouncementPeriodLengthForecastL @era @t
-    , llvVotePeriodLength = f ^. SL.leiosVotePeriodLengthForecastL @era @t
-    , llvDiffusionPeriodLength = f ^. SL.leiosDiffusionPeriodLengthForecastL @era @t
-    , llvMaxEbBodySize = f ^. SL.maxEndorserBlockReferencesSizeForecastL @era @t
+    { llvCommittee = f ^. Dijkstra.leiosCommitteeForecastL @era @t
+    , llvQuorumStakeThreshold = f ^. Dijkstra.leiosQuorumStakeThresholdForecastL @era @t
+    , llvAnnouncementPeriodLength = f ^. Dijkstra.leiosAnnouncementPeriodLengthForecastL @era @t
+    , llvVotePeriodLength = f ^. Dijkstra.leiosVotePeriodLengthForecastL @era @t
+    , llvDiffusionPeriodLength = f ^. Dijkstra.leiosDiffusionPeriodLengthForecastL @era @t
+    , llvMaxEbBodySize = f ^. Dijkstra.maxEndorserBlockReferencesSizeForecastL @era @t
     }

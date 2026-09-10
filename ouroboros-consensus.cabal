@@ -1137,6 +1137,7 @@ library protocol
     cardano-crypto-class:cardano-crypto-class,
     cardano-ledger-binary,
     cardano-ledger-core,
+    cardano-ledger-dijkstra,
     cardano-ledger-shelley ^>=1.20,
     cardano-protocol >=0.1.1 && <0.2,
     cardano-protocol-tpraos ^>=1.6,
