@@ -28,7 +28,6 @@ module Ouroboros.Consensus.Peras.Voting.View
   , PerasVotingView (..)
   , WithBoostedBlockStatus (..)
   , mkPerasVotingView
-  , PerasVotingViewHandle (..)
   )
 where
 
@@ -66,7 +65,6 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( WithBoostedBlockStatus (..)
   , forgetBoostedBlockStatus
   )
-import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -282,10 +280,3 @@ mkPerasVotingView
         . AF.castAnchor
         . AF.headAnchor
         $ chainAtCandidateBlock
-
--- | Handle for querying the Peras voting view via STM.
-newtype PerasVotingViewHandle m blk
-  = PerasVotingViewHandle
-      ( PerasRoundNo ->
-        STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
-      )
