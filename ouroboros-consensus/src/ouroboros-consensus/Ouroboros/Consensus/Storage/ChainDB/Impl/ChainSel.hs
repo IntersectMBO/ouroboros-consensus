@@ -1721,7 +1721,7 @@ isPipelineable ::
   ChainDiff (Header blk) ->
   Maybe (Header blk, TentativeHeaderState blk)
 isPipelineable permission bcfg st ChainDiff{..}
-  | permitted = Nothing
+  | not permitted = Nothing
   | -- we apply exactly one header
     AF.Empty _ :> hdr <- getSuffix
   , Just st' <- updateTentativeHeaderState bcfg hdr st
