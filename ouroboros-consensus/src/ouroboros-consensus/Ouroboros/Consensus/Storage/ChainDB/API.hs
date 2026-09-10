@@ -30,6 +30,12 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , addPerasCertSync
   , addPerasVoteSync
 
+    -- * Peras stateful handles
+  , PerasVotingViewHandle (..)
+  , isPerasVotingAllowedWithHandle
+  , PerasCertInclusionViewHandle (..)
+  , needCertWithHandle
+
     -- * Trigger chain selection
   , ChainSelectionPromise (..)
   , triggerChainSelection
@@ -94,7 +100,17 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Cert.Inclusion
+  ( PerasCertInclusionRulesDecision
+  , PerasCertInclusionView
+  , needCert
+  )
 import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Voting.Rules
+  ( PerasVotingRulesDecision
+  , isPerasVotingAllowed
+  )
+import Ouroboros.Consensus.Peras.Voting.View (PerasVotingView)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
@@ -644,6 +660,41 @@ addPerasVoteSync chainDB vote = do
     Nothing -> return Nothing
     Just certPromise -> Just <$> waitPerasCertProcessed certPromise
   return (voteRes, mCertRes)
+
+{-------------------------------------------------------------------------------
+  Peras stateful handles
+-------------------------------------------------------------------------------}
+
+-- | Handle for querying the Peras voting view via STM.
+newtype PerasVotingViewHandle m blk
+  = PerasVotingViewHandle
+      ( PerasRoundNo ->
+        STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+      )
+
+isPerasVotingAllowedWithHandle ::
+  (IsPerasCert (WithArrivalTime (ValidatedPerasCert blk)) blk, MonadSTM m) =>
+  PerasVotingViewHandle m blk ->
+  PerasRoundNo ->
+  STM m (PerasVotingRulesDecision blk)
+isPerasVotingAllowedWithHandle (PerasVotingViewHandle getPerasVotingView) =
+  fmap isPerasVotingAllowed . getPerasVotingView
+
+-- | Handle for querying the Peras certificate inclusion rules via STM.
+newtype PerasCertInclusionViewHandle m blk
+  = PerasCertInclusionViewHandle
+      ( PerasRoundNo ->
+        STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+      )
+
+-- | Query the Peras certificate inclusion rules via STM.
+needCertWithHandle ::
+  MonadSTM m =>
+  PerasCertInclusionViewHandle m blk ->
+  PerasRoundNo ->
+  STM m (Maybe (PerasCertInclusionRulesDecision (WithArrivalTime (ValidatedPerasCert blk))))
+needCertWithHandle (PerasCertInclusionViewHandle getPerasCertInclusionView) =
+  fmap (fmap needCert) . getPerasCertInclusionView
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point
