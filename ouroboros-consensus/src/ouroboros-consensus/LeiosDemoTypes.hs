@@ -1415,7 +1415,7 @@ data TraceLeiosKernel
       , tally :: Weight
       , threshold :: Weight
       }
-  | TraceLeiosCertified {rbHash :: RbHash}
+  | TraceLeiosCertified {rbHash :: RbHash, ebAge :: Maybe NominalDiffTime}
   | -- | A vote is scheduled to happen.
     TraceLeiosVoteScheduled
       {ebPoint :: LeiosPoint, voteIn :: NominalDiffTime, deadlineIn :: NominalDiffTime}
@@ -1457,6 +1457,14 @@ data AnnouncementFields = MkAnnouncementFields
   , announcementRbHash :: !RbHash
   }
   deriving (Eq, Show)
+
+announcementLeiosPoint :: AnnouncementFields -> LeiosPoint
+announcementLeiosPoint MkAnnouncementFields {
+    announcementElection = MkElId slot _,
+    announcementEbHash = ebHash
+  }
+  =
+  MkLeiosPoint slot ebHash
 
 -- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
 -- partitioned by the arriving item's /prior/ state in the LeiosTxCache. The four

@@ -582,6 +582,7 @@ initNodeKernel
         runLeiosVoting
           (leiosKernelTracer tracers)
           (configLedger cfg)
+          (\now point -> flip (Leios.ebPointAge now) point . Leios.ebState <$> MVar.readMVar getLeiosOutstanding)
           chainDB
           systemTime
           leiosDB

@@ -1566,6 +1566,9 @@ ancEbHash = announcementEbHash . ancAnnouncementFields
 ancRbHash :: AnnouncingHeader blk -> RbHash
 ancRbHash = Leios.announcementRbHash . ancAnnouncementFields
 
+ancLeiosPoint :: AnnouncingHeader blk -> LeiosPoint
+ancLeiosPoint = Leios.announcementLeiosPoint . ancAnnouncementFields
+
 -- | The central-state handling shared by an incoming LeiosNotify
 -- 'MsgLeiosBlockAnnouncement' and a ChainSync 'MsgRollForward' that announces an
 -- EB: run 'Announcements.onAnnouncementCentral' (relay + dedup) and, for a

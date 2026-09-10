@@ -598,8 +598,17 @@ mkHandlers
                               , threshold = vtThreshold
                               }
                           case mCert of
-                            Just _ ->
-                              traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
+                            Just _ -> do
+                              (_, Announcements.MkPeerState { Announcements.liveByRbHash }) <- Prim.readMutVar peerStateVar
+                              now <- systemTimeCurrent systemTime
+                              let rbHash = Leios.announcingRbHash vote
+                              ebAge <- case Map.lookup rbHash liveByRbHash of
+                                    Nothing -> pure Nothing
+                                    Just anc -> do
+                                      state <-Leios.ebState <$> MVar.readMVar getLeiosOutstanding
+                                      let ebPoint = Leios.ancLeiosPoint (Announcements.lastAnnouncement anc)
+                                      return $ Leios.ebPointAge now state ebPoint
+                              traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote, ebAge}
                             Nothing -> pure ()
                         _ -> pure ()
               )
