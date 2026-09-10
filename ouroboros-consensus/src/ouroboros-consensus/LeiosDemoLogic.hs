@@ -144,7 +144,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike)
+import Ouroboros.Consensus.Util.IOLike (IOLike, forkIO)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
@@ -905,8 +905,12 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
                 Map.fromListWith (+) [(txh, 1) | (txh, _) <- V.toList v]
       when (not (null duplicateTxHashes)) $ do
         invalidReply $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
-  -- ingest it
-  (bodyClass, mempoolNotCache, mempoolAndCache) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+  -- ingest it. The lock decides 'shouldPersist' (a genuinely novel, still-relevant
+  -- body) under exclusion and hands it to 'persistAndIngest' below. That is the
+  -- only novelty check we need: keyed off the lock, two peers delivering the same
+  -- body cannot both write it (the second sees 'novel = False'), so we neither
+  -- re-pay the ~16k-row write nor emit a storm of 'LeiosDbInsertCollision's.
+  (shouldPersist, bodyClass, mempoolNotCache, mempoolAndCache) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
         novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
@@ -942,22 +946,18 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
         pure
           ( outstandingCleaned
           ,
-            ( (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
+            ( False
+            , (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
             , Map.empty
             , Map.empty
             )
           )
       else do
-        -- TODO don't hold the outstanding mvar during this IO
-        mbTxCacheMissesFromBody <- traceException tracer TraceLeiosPeerDbException $ do
-          -- FIXME: Once proper EB announcements are wired in, the point
-          -- MUST already be present here (announcement handling inserts
-          -- it) and this should become an assertion. Today we still tolerate
-          -- receiving an EB body without a prior announcement, so we insert
-          -- the point idempotently as a stop-gap and trace a warning.
-          traceWith ktracer $ TraceLeiosBlockPointMissing point
-          leiosDbInsertEbPoint db point ebBytesSize
-          completedByBody <- leiosDbInsertEbBody db point eb
+        -- Register the body's entries in the in-memory tx cache and classify the
+        -- fetch set -- all in-memory, no disk IO under the lock. Persistence and
+        -- the mempool-tx copy happen after this lock (forked for received bodies;
+        -- see 'persistAndIngest' below).
+        mbTxCacheMissesFromBody <- do
           mbSummaryTxCacheMisses <-
             insertBody
               txCache
@@ -967,9 +967,6 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
               (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
           traceWith ktracer $
             TraceLeiosBlockAcquired point (ebPointAge now (Leios.ebState outstanding) point)
-          forM_ completedByBody $ \p ->
-            traceWith ktracer $
-              TraceLeiosBlockTxsAcquired p (ebPointAge now (Leios.ebState outstanding) p)
           -- The 'TraceLeiosBodyHits' trace is deferred to after the mempool pull
           -- below, so it can report the mempool-hit count alongside this cache
           -- summary.
@@ -1031,30 +1028,67 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
                 (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
                 missedBoth
             !outstanding' = Leios.insertAcquiredEbBody ebHash jobPool outstandingCleaned
-        pure (outstanding', (bodyClass, mempoolNotCache, mempoolAndCache))
+        pure (outstanding', (True, bodyClass, mempoolNotCache, mempoolAndCache))
   void $ MVar.tryPutMVar readyVar ()
   case source of
     ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
     ReceivedBlockFrom{} -> traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
-  -- Last: ingest the txs we found in our own mempool (they were removed from the
-  -- fetch job set above). This pays disk latency, so it's synchronous here.
+  -- The DB-heavy tail: persist the body (~16k reference rows) and copy the
+  -- mempool-resident txs into the DB. Both were previously synchronous on this
+  -- per-peer mini-protocol thread, so successive bodies from one peer serialised
+  -- behind each other's writes -- inflating announcement->body latency and, via
+  -- the delayed onward offer, multi-hop propagation.
   --
-  -- Overlap (in both the mempool and the cache): already persisted in the DB, so
-  -- only upgrade them to Applied in the cache -- no (redundant) DB insert.
-  unless (Map.null mempoolAndCache) $
-    withLockedInsertAppliedTx txCache $ \w0 step ->
-      foldM (\w txh -> step w txh ()) w0 (Map.keys mempoolAndCache)
-  -- Mempool-only (not in the cache): full ingest into the DB and cache.
-  unless (Map.null mempoolNotCache) $
-    processLeiosBlockTxs
-      ktracer
-      tracer
-      (outstandingVar, readyVar)
-      txCache
-      db
-      systemTime
-      (MempoolTxs point mempoolNotCache)
+  -- HACK: for received bodies we fire-and-forget this onto a fresh thread so the
+  -- mini-protocol thread returns immediately and the fetch loop (already woken
+  -- via 'readyVar' above) proceeds at memory speed. THIS IS A HACK. The real
+  -- shape is a single writer thread draining a BOUNDED QUEUE, which would:
+  --   (1) not spawn an unbounded number of background writers under load (they
+  --       still contend on the single SQLite writer, and nothing bounds them);
+  --   (2) not silently drop exceptions (a throw here dies with the forked
+  --       thread; only DB exceptions are even traced);
+  --   (3) preserve ordering -- the body write initialises the 'missingTxCount'
+  --       that fetched-tx ingestion decrements, and waking 'readyVar' before
+  --       this write lands leaves a small race (in practice the write completes
+  --       long before a fetch round-trips);
+  --   (4) close the persist-after-mark window where we briefly advertise a body
+  --       we cannot yet serve.
+  -- The forge path stays synchronous: its EB must be on disk before the
+  -- referencing RB propagates.
+  let persistAndIngest = do
+        completedByBody <-
+          if not shouldPersist
+            then pure []
+            else traceException tracer TraceLeiosPeerDbException $ do
+              -- FIXME: once EB announcements are wired in the point MUST already
+              -- be present (announcement handling inserts it); until then insert
+              -- it idempotently as a stop-gap and trace a warning.
+              traceWith ktracer $ TraceLeiosBlockPointMissing point
+              leiosDbInsertEbPoint db point ebBytesSize
+              leiosDbInsertEbBody db point eb
+        unless (null completedByBody) $ do
+          st <- Leios.ebState <$> MVar.readMVar outstandingVar
+          forM_ completedByBody $ \p ->
+            traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
+        -- Overlap (in both the mempool and the cache): already persisted, so only
+        -- upgrade them to Applied in the cache -- no (redundant) DB insert.
+        unless (Map.null mempoolAndCache) $
+          withLockedInsertAppliedTx txCache $ \w0 step ->
+            foldM (\w txh -> step w txh ()) w0 (Map.keys mempoolAndCache)
+        -- Mempool-only (not in the cache): full ingest into the DB and cache.
+        unless (Map.null mempoolNotCache) $
+          processLeiosBlockTxs
+            ktracer
+            tracer
+            (outstandingVar, readyVar)
+            txCache
+            db
+            systemTime
+            (MempoolTxs point mempoolNotCache)
+  case source of
+    ForgedBlock{} -> persistAndIngest
+    ReceivedBlockFrom{} -> void $ forkIO persistAndIngest
 
 -- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
 -- mempool (the forge, which already holds the whole closure, and tests): keep
