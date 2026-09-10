@@ -730,13 +730,16 @@ blockCapacityDijkstraMeasure ::
 blockCapacityDijkstraMeasure st =
   DijkstraMeasure
     { conwayMeasure = conway
-    , -- Ranking blocks carry transactions, not references, so this component
-      -- must never be the one that stops a fill. A reference (hash plus size)
-      -- is smaller than any valid transaction, so the block's own byte capacity
-      -- is a ceiling the references sum cannot reach before 'byteSize' does --
-      -- and unlike 'maxBound' it survives the 'stimes' in
-      -- 'computeMempoolCapacity' without wrapping.
-      referencesSize = IgnoringOverflow $ txMeasureByteSize conway
+    , -- Ranking blocks carry transactions, not references, so this must never
+      -- bound a fill. It has to be 'maxBound' specifically, not merely large:
+      -- 'partitionMempool' takes the EB with @snapshotTake snap (rbCap + ebCap)@,
+      -- and only @maxBound + ebCap@ wraps (under 'IgnoringOverflow') back to
+      -- ~ebCap, so the ranking block contributes nothing to the EB's reference
+      -- budget. A finite value here inflates it and the EB overshoots
+      -- @maxEndorserBlockReferencesSize@. 'computeMempoolCapacity' 'stimes' also
+      -- wraps @maxBound + maxBound@ to ~maxBound, so the mempool stays unbounded
+      -- on this axis too.
+      referencesSize = maxBound
     }
  where
   conway = blockCapacityConwayMeasure st
