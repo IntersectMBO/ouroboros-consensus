@@ -255,6 +255,7 @@ runLeiosVoting ::
   ) =>
   Tracer m TraceLeiosKernel ->
   LedgerConfig blk ->
+  (RelativeTime -> LeiosPoint -> m (Maybe NominalDiffTime)) ->
   ChainDB m blk ->
   SystemTime m ->
   LeiosDbHandle m ->
@@ -262,7 +263,7 @@ runLeiosVoting ::
   LeiosVoteState m ->
   Maybe LeiosSigningKey ->
   m ()
-runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
+runLeiosVoting tracer lcfg ebPointAge chainDB systemTime leiosDB txCache voteState = \case
   Nothing ->
     traceWith tracer $
       MkTraceLeiosKernel
@@ -371,7 +372,9 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
                   -- point if subsequent votes also come in; consumers (e.g.
                   -- ThreadNet's 'propCertifying') dedupe.
                   case mCert of
-                    Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
+                    Just _ -> do
+                      ebAge <- ebPointAge now point
+                      traceWith tracer TraceLeiosCertified{rbHash, ebAge}
                     Nothing -> pure ()
                 -- A trace rather than an 'error', which under
                 -- 'forkLinkedThread' would take the node down.

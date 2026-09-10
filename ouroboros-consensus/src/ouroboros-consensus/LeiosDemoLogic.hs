@@ -26,7 +26,7 @@ import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
-import Data.Foldable (fold)
+import Data.Foldable (fold, traverse_)
 import Data.Functor (void, (<&>))
 import qualified Data.IntMap as IntMap
 import qualified Data.IntMap.NonEmpty as NEIntMap
@@ -166,6 +166,13 @@ traceException tracer toTrace action =
   per tx, and the serialized body is the @b@.
 -------------------------------------------------------------------------------}
 
+headerRbHash ::
+  forall blk.
+  (ConvertRawHash blk, HasHeader (Header blk)) =>
+  Header blk ->
+  RbHash
+headerRbHash = MkRbHash . toRawHash (Proxy @blk) . headerHash
+
 -- | Insert an EB announcement into the tx-cache index, keyed by the announced
 -- slot, the announcing RB header's hash, and the announced EB hash. Evicted
 -- bodies\/txs are discarded; they can be useful for debugging/etc.
@@ -179,7 +186,7 @@ recordAnnouncementInTxCache ::
 recordAnnouncementInTxCache txCache ancHdr point =
   void $ txCache.insertAnnouncement point.pointSlotNo rbh point.pointEbHash
  where
-  rbh = MkRbHash (toRawHash (Proxy @blk) (headerHash (ancHeader ancHdr)))
+  rbh = headerRbHash (ancHeader ancHdr)
 
 -- | Register a locally-forged EB in the tx-cache: its announcement, its
 -- body, and each of its txs as already-applied (the forger drew them from its
@@ -682,7 +689,7 @@ offsetsToBitmap offsets =
 -- for processing on the main peer thread. The collector must not touch
 -- the 'LeiosDbConnection' — it belongs to the main peer thread.
 data PendingResponse
-  = PendingBlockResponse !LeiosBlockRequest !LeiosEb
+  = PendingBlockResponse !LeiosBlockRequest !LeiosEb !RelativeTime
   | PendingBlockTxsResponse !LeiosBlockTxsRequest !(V.Vector LeiosTx)
 
 nextLeiosFetchClientCommand ::
@@ -727,7 +734,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemT
   drainResponses = do
     pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
     forM_ pending $ \case
-      PendingBlockResponse req eb ->
+      PendingBlockResponse req eb receivedTime ->
         processLeiosBlock
           ktracer
           tracer
@@ -736,7 +743,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemT
           db
           systemTime
           pullFromMempool
-          (ReceivedBlockFrom peerId req)
+          (ReceivedBlockFrom peerId req receivedTime)
           eb
       PendingBlockTxsResponse req txs ->
         processLeiosBlockTxs
@@ -791,9 +798,10 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemT
     LeiosBlockRequest req@(MkLeiosBlockRequest p _ebBytesSize) ->
       LF.MkSomeLeiosFetchJob
         (LF.MsgLeiosBlockRequest p)
-        ( pure $ \(LF.MsgLeiosBlock eb) ->
+        ( pure $ \(LF.MsgLeiosBlock eb) -> do
+            now <- systemTimeCurrent systemTime
             StrictSTM.atomically $
-              LazySTM.writeTQueue responseQ (PendingBlockResponse req eb)
+              LazySTM.writeTQueue responseQ (PendingBlockResponse req eb now)
         )
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p jobs) ->
       -- The wire request is just the point + bitmap; the bitmap is the union of
@@ -816,7 +824,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemT
 -- emitting fetch-arrival telemetry (which would otherwise pollute the metrics
 -- with self-produced data).
 data LeiosBlockSource pid
-  = ReceivedBlockFrom (PeerId pid) LeiosBlockRequest
+  = ReceivedBlockFrom (PeerId pid) LeiosBlockRequest RelativeTime
   | -- | A locally-forged EB, carrying the point the forge assigned it.
     ForgedBlock !LeiosPoint
 
@@ -865,13 +873,14 @@ processLeiosBlock ::
   ) ->
   LeiosBlockSource pid ->
   LeiosEb ->
+  -- ^ time when then `LeiosEb` was received
   m ()
 processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTime pullFromMempool source eb = do
   now <- systemTimeCurrent systemTime
   -- validate it
-  let (mbPeer, point, ebBytesSize) = case source of
-        ReceivedBlockFrom peerId (MkLeiosBlockRequest p sz) -> (Just peerId, p, sz)
-        ForgedBlock p -> (Nothing, p, leiosEbBytesSize eb)
+  let (mbPeer, point, ebBytesSize, mbReceivedTime) = case source of
+        ReceivedBlockFrom peerId (MkLeiosBlockRequest p sz) t -> (Just peerId, p, sz, Just t)
+        ForgedBlock p -> (Nothing, p, leiosEbBytesSize eb, Nothing)
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   let MkLeiosPoint _ebSlot ebHash = point
   let ebBytesSize' = leiosEbBytesSize eb
@@ -907,6 +916,9 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
         invalidReply $ "MsgLeiosBlock duplicate tx hashes: " <> show duplicateTxHashes
   -- ingest it
   (bodyClass, mempoolNotCache, mempoolAndCache) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+    traverse_
+      (\receivedTime -> traceWith tracer (TraceLeiosReceivedEb point (ebPointAge receivedTime outstanding.ebState point)))
+      mbReceivedTime
     let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
         novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
@@ -1518,10 +1530,15 @@ instance HasHeader (Header blk) => Eq (AnnouncingHeader blk) where
 -- | Interpret a header as a relayed EB announcement, or 'Nothing' if it carries
 -- no announcement (so it should not have been relayed as one). Parsing the
 -- announcement once here keeps it total for all later consumers (e.g. tracing).
-mkAnnouncingHeader :: ResolveLeiosBlock blk => Header blk -> Maybe (AnnouncingHeader blk)
+mkAnnouncingHeader ::
+  (ConvertRawHash blk, HasHeader (Header blk), ResolveLeiosBlock blk) =>
+  Header blk ->
+  Maybe (AnnouncingHeader blk)
 mkAnnouncingHeader h =
   headerLeiosAnnouncement h <&> \(MkLeiosPoint _ebSlot ebHash, ebBodySize) ->
-    UnsafeMkAnnouncingHeader h (MkAnnouncementFields (headerElId h) ebHash ebBodySize)
+    UnsafeMkAnnouncingHeader h (MkAnnouncementFields (headerElId h) ebHash ebBodySize rbHash)
+  where
+    rbHash = headerRbHash h
 
 -- | The other safe constructor of an 'AnnouncingHeader': for a header we already
 -- know announces a specific EB because we forged it. Unlike 'mkAnnouncingHeader'
@@ -1529,14 +1546,28 @@ mkAnnouncingHeader h =
 -- announcement fields come straight from the 'ForgedLeiosEb' whose EB the header
 -- announces by construction.
 mkForgedAnnouncingHeader ::
-  ResolveLeiosBlock blk => Header blk -> Leios.ForgedLeiosEb -> AnnouncingHeader blk
+  (ConvertRawHash blk, HasHeader (Header blk), ResolveLeiosBlock blk) =>
+  Header blk ->
+  Leios.ForgedLeiosEb ->
+  AnnouncingHeader blk
 mkForgedAnnouncingHeader h forgedEb =
   UnsafeMkAnnouncingHeader h $
-    MkAnnouncementFields (headerElId h) forgedEb.point.pointEbHash (leiosEbBytesSize forgedEb.body)
+    MkAnnouncementFields (headerElId h) forgedEb.point.pointEbHash (leiosEbBytesSize forgedEb.body) rbHash
+  where
+    rbHash = headerRbHash h
 
 -- | The election of an 'AnnouncingHeader'.
 ancElId :: AnnouncingHeader blk -> ElId
 ancElId = announcementElection . ancAnnouncementFields
+
+ancEbHash :: AnnouncingHeader blk -> EbHash
+ancEbHash = announcementEbHash . ancAnnouncementFields
+
+ancRbHash :: AnnouncingHeader blk -> RbHash
+ancRbHash = Leios.announcementRbHash . ancAnnouncementFields
+
+ancLeiosPoint :: AnnouncingHeader blk -> LeiosPoint
+ancLeiosPoint = Leios.announcementLeiosPoint . ancAnnouncementFields
 
 -- | The central-state handling shared by an incoming LeiosNotify
 -- 'MsgLeiosBlockAnnouncement' and a ChainSync 'MsgRollForward' that announces an
@@ -1578,6 +1609,7 @@ processAnnouncementCentrally
       Announcements.onAnnouncementCentral
         (contramap (traceNewAnnouncement provenance) kernelTracer)
         ancElId
+        ancRbHash
         ( \_elSt -> do
             -- A received announcement lists the EB for fetching; one we forged is
             -- instead marked 'BodyImminent' in 'ebState' so the fetch logic never
@@ -1767,14 +1799,15 @@ recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
 
 prunePeerStateToImmTip ::
   LedgerSupportsProtocol blk =>
+  (anc -> ElId) ->
   ExtLedgerState blk EmptyMK ->
   SlotNo ->
   PeerState anc ->
   (SlotNo, PeerState anc)
-prunePeerStateToImmTip immLedger latestPruneSlot peerSt =
+prunePeerStateToImmTip getElId immLedger latestPruneSlot peerSt =
   case getTipSlot (ledgerState immLedger) of
     NotOrigin immTipSlot
-      | latestPruneSlot < immTipSlot -> (immTipSlot, prunePeerState immTipSlot peerSt)
+      | latestPruneSlot < immTipSlot -> (immTipSlot, prunePeerState immTipSlot getElId peerSt)
     _ -> (latestPruneSlot, peerSt)
 
 -- | The just-counted announcement's fields, and whether it equivocates a prior
