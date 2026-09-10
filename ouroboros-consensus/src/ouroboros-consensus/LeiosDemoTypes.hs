@@ -1278,8 +1278,6 @@ class HasLeiosVoting blk where
   -- it forecasts the view instead. The two must agree wherever both are
   -- available: this is the same committee 'getLeiosCommittee' would return for
   -- a state at the forecast slot.
-  -- The proxy fixes the block type: 'LedgerView' is a non-injective family, so
-  -- the view alone does not determine it.
   getLeiosCommitteeFromView ::
     proxy blk ->
     LedgerView (BlockProtocol blk) ->
