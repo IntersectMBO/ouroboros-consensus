@@ -276,6 +276,13 @@ instance
                 (toCodecEbAnnouncement <$> mbAnn)
           pure (LeiosCodec.Header praosToSign praosSignature :: LeiosCodec.Header c)
    where
+    -- The signature is load-bearing. Without it 'MonoLocalBinds' still gives
+    -- this a @crypto@ metavariable, but one born out here, which each branch
+    -- below then has to solve inside its @pext@ refinement, where it is
+    -- untouchable. 9.12 copes; 9.6 and 9.10 do not. The annotations on the two
+    -- header constructions are for the same reason: both 'Header's are pattern
+    -- synonyms carrying a @Crypto crypto@ constraint.
+    praosBody :: PraosToSign c -> PraosCodec.HeaderBody c
     praosBody
       PraosToSign
         { praosToSignIssuerVK
