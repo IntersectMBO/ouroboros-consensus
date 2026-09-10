@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -15,7 +16,7 @@ import Cardano.Tools.DBSynthesizer.Types
   ( ForgeLimit (..)
   , ForgeResult (..)
   )
-import Control.Monad (when)
+import Control.Monad (forM_, void, when)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Class (liftIO)
 import qualified Control.Monad.Trans.Class as Trans
@@ -26,13 +27,18 @@ import Data.Either (isRight)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb
+  ( LeiosDbConnection (leiosDbInsertEbBody, leiosDbInsertEbPoint, leiosDbInsertTxs)
+  )
 import LeiosDemoTypes
-  ( LeiosSigningKey
+  ( ForgedLeiosEb (..)
+  , LeiosPoint (..)
+  , LeiosSigningKey
   , RbHash (MkRbHash)
   , TraceLeiosKernel (..)
   , getLeiosSeatId
   , leiosCommitteeSize
+  , leiosEbBytesSize
   , signLeiosVote
   )
 import LeiosVoteState
@@ -111,7 +117,7 @@ initialForgeState = ForgeState 0 0 0 0
 --
 -- The first list fills the ranking block. The second fills the endorser block
 -- that the ranking block announces. An empty second list announces no endorser
--- block, because 'mkAndStoreEb' forges none for an empty list.
+-- block, because 'forgeBlock' makes no endorser block for an empty list.
 --
 -- The 'Bool' says whether this block certifies the endorser block that its
 -- parent announced. Such a block must get no transactions, because 'mkBody'
@@ -191,14 +197,33 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
               Nothing -> "none, our key holds no seat"
               Just seat -> show seat
 
+  -- Write the endorser block that this block announces, and its tx closure, to
+  -- the LeiosDb. Without these writes no later block certifies the endorser
+  -- block, because 'decideLeiosCertify' reads the closure back out of the
+  -- LeiosDb.
+  --
+  -- The node writes the same three rows in 'onForgedLeiosEb', which also
+  -- inserts the announcement into the LeiosTxCache and sends it over
+  -- LeiosNotify. This tool has neither, so only the writes are left. A forger
+  -- that gains either one must call 'onForgedLeiosEb' instead of repeating
+  -- these writes: the body write is what triggers the LeiosNotify offer, and
+  -- both LeiosNotify and the LeiosTxCache require the announcement first.
+  storeEb :: ForgedLeiosEb -> IO ()
+  storeEb forgedEb = do
+    leiosDbInsertEbPoint leiosDb forgedEb.point (leiosEbBytesSize forgedEb.body)
+    void $ leiosDbInsertEbBody leiosDb forgedEb.point forgedEb.body
+    void $ leiosDbInsertTxs leiosDb forgedEb.txClosure
+    traceWith leiosTracer $
+      TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
+
   -- Vote for the endorser block that this block announces. The vote signs the
   -- announcing block's hash, not the endorser block's.
   --
   -- 'runLeiosVoting' applies four checks that this function does not. Three of
-  -- them hold here already. 'forgeBlock' stores the closure before it returns,
-  -- so the closure is on disk. The caller votes only after the ChainDB adopts
-  -- the block, so the announcing block is the tip. The vote goes out in the
-  -- announcing slot, so it is inside the vote window.
+  -- them hold here already. 'storeEb' writes the closure before this function
+  -- runs, so the closure is on disk. The caller votes only after the ChainDB
+  -- adopts the block, so the announcing block is the tip. The vote goes out in
+  -- the announcing slot, so it is inside the vote window.
   --
   -- The fourth is the wait of 'lHdrWaitSlots' after the announcing slot, which
   -- gives an equivocating announcement time to arrive. One forger makes this
@@ -210,7 +235,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
     [Validated (GenTx blk)] ->
     IO ()
   voteFor leiosVoteState newBlock ebTxs
-    -- 'mkAndStoreEb' announces an endorser block exactly when it is given
+    -- 'forgeBlock' announces an endorser block exactly when it is given
     -- transactions. So an empty list means this block announced none, and there
     -- is nothing to vote for.
     | null ebTxs = pure ()
@@ -364,9 +389,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
             tickedLedgerState
 
     -- Actually produce the block
-    --
-    -- TODO the block may be accompanied by an EB, which is entirely ignored
-    (newBlock, _mForgedEb) <-
+    (newBlock, mForgedEb) <-
       lift $
         Block.forgeBlock
           blockForging'
@@ -383,6 +406,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
             , fbLeiosVoteState = leiosVoteState
             , fbMayLeiosCert = fst <$> mCert
             }
+
+    lift $ forM_ mForgedEb storeEb
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment
