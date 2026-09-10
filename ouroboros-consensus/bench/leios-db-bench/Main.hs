@@ -7,14 +7,14 @@
 -- The following roles run concurrently against the same SQLite handle:
 --
 -- * __Fetch clients__ (configurable, default 3 threads): each inserts 20 fresh
---   EBs via 'leiosDbInsertEbPoint' → 'leiosDbInsertEbBody' → 'leiosDbInsertTxs'.
+--   EBs via 'writeEbPoint' → 'writeEbBody' → 'writeTxs'.
 --
 -- * __Fetch servers__ (configurable, default 3 threads): each does 30
---   'leiosDbLookupEbBody' + 10 'leiosDbBatchRetrieveTxs' calls cycling through
+--   'lookupEbBody' + 10 'batchRetrieveTxs' calls cycling through
 --   the pre-populated EBs.
 --
 -- * __Chain-sel reader__ (1 thread): mimics the block-apply path via
---   'leiosDbLookupEbClosure' — the same read that 'resolveLeiosClosure'
+--   'lookupEbClosure' — the same read that 'resolveLeiosClosure'
 --   issues per Dijkstra-era CertRB.
 --
 -- * __GC ticker__ (1 thread): periodic 'leiosDbGarbageCollect' calls (a
@@ -33,7 +33,7 @@ module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (debugTracer, (>$<))
 import qualified Data.ByteString as BS
@@ -42,17 +42,16 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
-  ( LeiosDbConnection
-  , LeiosDbHandle (..)
-  , leiosDbBatchRetrieveTxs
+  ( LeiosDbHandle (..)
+  , LeiosDbWriter (..)
+  , Promise (await)
+  , batchRetrieveTxs
   , leiosDbGarbageCollect
-  , leiosDbInsertEbBody
-  , leiosDbInsertEbPoint
-  , leiosDbInsertTxs
-  , leiosDbLookupEbBody
-  , leiosDbLookupEbClosure
+  , lookupEbBody
+  , lookupEbClosure
   , newLeiosDBSQLite
-  , withLeiosDb
+  , withReader
+  , withWriter
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -144,16 +143,16 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
 -- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
 fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
 fetchClient db range =
-  withLeiosDb db $ \c ->
-    forM_ range (insertOneEb c)
+  withWriter db $ \w ->
+    forM_ range (insertOneEb w)
 
 -- | Mirrors chain-selection's block-apply path: repeated
--- 'leiosDbLookupEbClosure' for the tx closure of each certified EB.
+-- 'lookupEbClosure' for the tx closure of each certified EB.
 chainSelReader :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
 chainSelReader db points =
-  withLeiosDb db $ \c ->
+  withReader db $ \r ->
     forM_ (take numChainSelReads (cycle points)) $ \p ->
-      leiosDbLookupEbClosure c p.pointEbHash
+      lookupEbClosure r p.pointEbHash
 
 -- | Fires periodic garbage-collect calls. Handle-level operation; touches
 -- every table when implemented (currently a no-op backend-side, but the
@@ -166,9 +165,9 @@ gcTicker db =
 -- | Mirrors a fetch server: looks up EB bodies and retrieves TX batches.
 fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()
 fetchServer db points i =
-  withLeiosDb db $ \c -> do
-    forM_ ebPoints $ \p -> leiosDbLookupEbBody c p.pointEbHash
-    forM_ txPoints $ \p -> leiosDbBatchRetrieveTxs c p.pointEbHash sampleOffsets
+  withReader db $ \r -> do
+    forM_ ebPoints $ \p -> lookupEbBody r p.pointEbHash
+    forM_ txPoints $ \p -> batchRetrieveTxs r p.pointEbHash sampleOffsets
  where
   sampleOffsets = [0, 10 .. txsPerEb - 1]
   ebPoints = take 30 $ drop (i * 30) (cycle points)
@@ -193,7 +192,7 @@ setupBenchEnv tmpDir = do
     newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.db.vol") (tmpDir <> "/bench.db.imm")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
-    withLeiosDb db (`insertOneEb` i)
+    withWriter db (`insertOneEb` i)
     when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
       putStr (show (i + 1) <> " ") >> hFlush stdout
   putStrLn "done"
@@ -237,8 +236,8 @@ showTime t
 -- * DB helpers
 
 -- | Insert one complete EB (point + body + all TXs) by index.
-insertOneEb :: Monad m => LeiosDbConnection m -> Int -> m ()
-insertOneEb conn ebIdx = do
+insertOneEb :: Monad m => LeiosDbWriter m -> Int -> m ()
+insertOneEb writer ebIdx = do
   let point = genPoint ebIdx
       eb = genEb ebIdx
       txs =
@@ -246,10 +245,10 @@ insertOneEb conn ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         , let h = genTxHash ebIdx txIdx
         ]
-  leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
-  _ <- leiosDbInsertEbBody conn point eb
-  _ <- leiosDbInsertTxs conn txs
-  pure ()
+  _ <- writeEbPoint writer point (encodeLeiosEbSize eb)
+  _ <- writeEbBody writer point eb
+  -- The queue is FIFO, so awaiting the last write covers all three.
+  void . await =<< writeTxs writer txs
 
 -- * Deterministic data generation
 

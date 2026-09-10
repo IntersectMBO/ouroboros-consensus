@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module LeiosDemoDb.InMemory
@@ -32,10 +33,12 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import LeiosDemoDb.Common
   ( CompletedEbs
-  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbReader (..)
   , LeiosDbStats (..)
+  , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , Promise (..)
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -62,7 +65,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- @(slot, hash)@ point has its own entry and completes
   -- independently.
   , imEbBodiesDownloaded :: !(Set LeiosPoint)
-  -- ^ Subset of 'imEbPoints' for which 'leiosDbInsertEbBody' has been
+  -- ^ Subset of 'imEbPoints' for which 'writeEbBody' has been
   -- called. Only these points are considered for completion.
   , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
   -- ^ EB tx-hash list, keyed by content hash. Shared across every
@@ -75,7 +78,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- treat the re-notification as fatal ('AlreadyKnown' from
   -- 'addVote'). Each point carries the EB's hash and its announcer slot,
   -- so this is also the source for
-  -- 'leiosDbScanCompleteEbClosuresNotOlderThanSlot'.
+  -- 'scanCompleteEbClosuresNotOlderThanSlot'.
   }
   deriving stock Generic
   deriving anyclass NoThunks
@@ -111,22 +114,47 @@ newLeiosDBInMemoryWith stateVar = do
         leiosDbPromoteToImmutable = \_point -> pure ()
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
-      , open =
-          pure $
-            LeiosDbConnection
-              { close = pure ()
-              , leiosDbScanEbPoints = imScanEbPoints stateVar
-              , -- ThreadNet persists 'stateVar' across simulated restarts, so on
-                -- restart this seeds the restored acquired-EB-closures set.
-                leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
-              , leiosDbInsertEbPoint = imInsertEbPoint stateVar
-              , leiosDbLookupEbBody = imLookupEbBody stateVar
-              , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan
-              , leiosDbInsertTxs = imInsertTxs stateVar notificationChan
-              , leiosDbBatchRetrieveTxs = imBatchRetrieveTxs stateVar
-              , leiosDbLookupEbClosure = imLookupEbClosure stateVar
-              }
+      , openReader = openInMemoryReader stateVar
+      , openWriter = openInMemoryWriter stateVar notificationChan
       }
+
+-- | Reads off the 'StrictTVar'. Nothing to open or close.
+openInMemoryReader :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbReader m)
+openInMemoryReader stateVar =
+  pure
+    LeiosDbReader
+      { close = pure ()
+      , lookupEbBody = imLookupEbBody stateVar
+      , lookupEbClosure = imLookupEbClosure stateVar
+      , batchRetrieveTxs = imBatchRetrieveTxs stateVar
+      , scanEbPoints = imScanEbPoints stateVar
+      , -- ThreadNet persists 'stateVar' across simulated restarts, so on
+        -- restart this seeds the restored acquired-EB-closures set.
+        scanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
+      }
+
+-- | No worker and no queue: the state is a 'StrictTVar', so each write is
+-- already atomic and its 'Promise' comes back already resolved.
+openInMemoryWriter ::
+  IOLike m =>
+  StrictTVar m InMemoryLeiosDb ->
+  StrictTChan m LeiosEbNotification ->
+  m (LeiosDbWriter m)
+openInMemoryWriter stateVar notificationChan =
+  pure
+    LeiosDbWriter
+      { close = pure ()
+      , writeEbPoint = \point ebBytesSize ->
+          resolved (imInsertEbPoint stateVar point ebBytesSize)
+      , writeEbBody = \point eb ->
+          resolved (imInsertEbBody stateVar notificationChan point eb)
+      , writeTxs = \txs ->
+          resolved (imInsertTxs stateVar notificationChan txs)
+      }
+ where
+  resolved action = do
+    x <- action
+    pure (Promise (pure x))
 
 -- * Top-level implementations
 
@@ -167,7 +195,7 @@ imInsertEbBody stateVar notificationChan point eb = do
   let items = leiosEbBodyItems eb
       ebBytesSize = encodeLeiosEbSize eb
   when (null items) $
-    error "leiosDbInsertEbBody: empty EB body (programmer error)"
+    error "writeEbBody: empty EB body (programmer error)"
   atomically $ do
     let entries =
           IntMap.fromList
@@ -187,14 +215,14 @@ imInsertEbBody stateVar notificationChan point eb = do
             Map.insertWith (\_ old -> old) point.pointEbHash entries (imEbBodies s)
         , -- Mark this point as downloaded. Other points referencing
           -- the same EB hash are unaffected; each needs its own
-          -- 'leiosDbInsertEbBody' to be considered complete.
+          -- 'writeEbBody' to be considered complete.
           imEbBodiesDownloaded =
             Set.insert point (imEbBodiesDownloaded s)
         }
     writeTChan notificationChan $ AcquiredEb point ebBytesSize
     -- If every tx referenced by this body is already present, the closure
     -- is complete the moment the body lands — no subsequent
-    -- 'leiosDbInsertTxs' will fire for this point, so we must notify here.
+    -- 'writeTxs' will fire for this point, so we must notify here.
     -- Only trigger for a novel point ('imCompletedEbs' is our idempotency
     -- guard). This mirrors what 'imInsertTxs' does when the last missing
     -- tx of an already-downloaded body arrives.
@@ -262,7 +290,7 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
     writeTChan notificationChan (AcquiredEbTxs point)
   pure completed
 
--- | Implements 'leiosDbScanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
+-- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
 -- announced no older than the given slot.
 --
 -- Derived from 'imCompletedEbs': an EB's greatest announcer slot is no older

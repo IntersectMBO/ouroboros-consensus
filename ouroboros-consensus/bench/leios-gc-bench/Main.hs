@@ -108,12 +108,14 @@ import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
 import qualified Database.SQLite3 as SQL
 import LeiosDemoDb
-  ( LeiosDbConnection (..)
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
   , LeiosDbStats (..)
+  , LeiosDbWriter (..)
+  , Promise (await)
   , TraceLeiosDb (..)
   , newLeiosDBSQLite
   , newLeiosDBSQLiteWithGcPacing
+  , withReader
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -168,7 +170,7 @@ main = do
           hPutStrLn stderr $ "Copying the database " <> immFixture <> " -> " <> benchImm
           copyFile immFixture benchImm
         db <- mkDb
-        close =<< open db
+        withReader db $ \_ -> pure ()
         schedule <- readEbSchedule benchVol
         pure (db, schedule)
       Nothing -> do
@@ -419,18 +421,19 @@ validateOpts opts = do
 -- slots, and return the (slot, hash) schedule ascending in slot.
 populateDb :: Opts -> LeiosDbHandle IO -> IO [(Word64, BS.ByteString)]
 populateDb opts db = do
-  conn <- open db
+  writer <- openWriter db
   schedule <- forM [0 .. populationEbs - 1] $ \ebIdx -> do
     let slot = fromIntegral (ebIdx * slotsPerEb) :: Word64
         MkEbHash hashBytes = genEbHash ebIdx
         point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
         eb = genEb opts ebIdx
         txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
-    leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
-    _ <- leiosDbInsertEbBody conn point eb
-    _ <- leiosDbInsertTxs conn txs
+    _ <- writeEbPoint writer point (encodeLeiosEbSize eb)
+    _ <- writeEbBody writer point eb
+    -- The queue is FIFO, so awaiting the last write covers all three.
+    _ <- await =<< writeTxs writer txs
     pure (slot, hashBytes)
-  close conn
+  close writer
   pure schedule
 
 -- | Drop the tx -> referencing-EB index from the volatile partition
@@ -531,13 +534,13 @@ runPhases ::
   Int ->
   IO [PhaseResult]
 runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
-  conn <- open db
+  writer <- openWriter db
   remainingRef <- newIORef schedule
   promotedRef <- newIORef (0 :: Int)
   freshRef <- newIORef (0 :: Int)
   -- Time one fresh full-EB insertion (announcement + body + txs) through the
   -- given connection; the fresh EBs live at slots no frontier ever reaches.
-  let timedInsertEbWith c = do
+  let timedInsertEbWith w = do
         k <- atomicModifyIORef' freshRef (\cnt -> (cnt + 1, cnt))
         let ebIdx = 10_000_000 + k
             point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
@@ -546,9 +549,10 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
         snd
           <$> timed
             ( do
-                leiosDbInsertEbPoint c point (encodeLeiosEbSize eb)
-                _ <- leiosDbInsertEbBody c point eb
-                _ <- leiosDbInsertTxs c txs
+                _ <- writeEbPoint w point (encodeLeiosEbSize eb)
+                _ <- writeEbBody w point eb
+                -- Awaiting the last write times all three to durability.
+                _ <- await =<< writeTxs w txs
                 pure ()
             )
   _ <- flushEvents -- discard events from handle setup
@@ -573,7 +577,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
             due = due0 ++ dueExtra
         writeIORef remainingRef rest
         -- 1. quiescent full-EB insertion latency at the current load
-        insertWalls <- replicateM insertSamples (timedInsertEbWith conn)
+        insertWalls <- replicateM insertSamples (timedInsertEbWith writer)
         resident <- volatileEbs <$> leiosDbSampleStats db
         -- 2. promote a fraction, wait for the copier to land them
         let nPromote =
@@ -614,7 +618,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
                 }
         putStrLn (renderPhase i result)
         pure (Just result)
-  close conn
+  close writer
   pure (catMaybes results)
  where
   awaitCopier target = go (0 :: Int)

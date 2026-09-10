@@ -28,7 +28,9 @@ import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb
-  ( LeiosDbConnection (leiosDbInsertEbBody, leiosDbInsertEbPoint, leiosDbInsertTxs)
+  ( LeiosDbReader
+  , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
+  , Promise (await)
   )
 import LeiosDemoTypes
   ( ForgedLeiosEb (..)
@@ -153,10 +155,11 @@ runForge ::
   -- | The BLS key that this forger votes with, if it has one.
   Maybe LeiosSigningKey ->
   GenTxs blk ->
-  LeiosDbConnection IO ->
+  LeiosDbReader IO ->
+  LeiosDbWriter IO ->
   Tracer IO TraceLeiosKernel ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDb leiosTracer = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDbReader leiosDbWriter leiosTracer = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   leiosVoteState <- newLeiosVoteState committee
@@ -210,9 +213,11 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   -- both LeiosNotify and the LeiosTxCache require the announcement first.
   storeEb :: ForgedLeiosEb -> IO ()
   storeEb forgedEb = do
-    leiosDbInsertEbPoint leiosDb forgedEb.point (encodeLeiosEbSize forgedEb.body)
-    void $ leiosDbInsertEbBody leiosDb forgedEb.point forgedEb.body
-    void $ leiosDbInsertTxs leiosDb forgedEb.txClosure
+    _ <- writeEbPoint leiosDbWriter forgedEb.point (encodeLeiosEbSize forgedEb.body)
+    _ <- writeEbBody leiosDbWriter forgedEb.point forgedEb.body
+    writeTxs leiosDbWriter forgedEb.txClosure
+      -- Awaiting the last write flushes all three
+      >>= void . await
     traceWith leiosTracer $
       TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
 
@@ -369,7 +374,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
     mCert <-
       lift $
         decideLeiosCertify
-          leiosDb
+          leiosDbReader
           leiosVoteState
           leiosTracer
           (configLedger cfg)

@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -17,7 +18,7 @@ module LeiosDemoDb.SQLite
   , deleteDanglingTxs
   , vacuumLeiosDb
 
-    -- * SQL strings (re-exported for leiosdemo app)
+    -- * SQL strings (re-exported for leios-schedule-gen)
   , sql_schema
   , sql_insert_eb
   , sql_insert_ebBody
@@ -30,11 +31,15 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTBQueue
   , StrictTChan
+  , StrictTMVar
   , dupTChan
   , isFullTBQueue
   , newBroadcastTChan
+  , newEmptyTMVarIO
   , newTBQueueIO
+  , putTMVar
   , readTBQueue
+  , readTMVar
   , writeTBQueue
   , writeTChan
   )
@@ -73,9 +78,11 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoDb.Common
   ( CompletedEbs
-  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , Promise (..)
   )
 import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..))
@@ -121,8 +128,10 @@ newLeiosDBSQLiteFromEnv tracer = do
 
 -- | Create a new Leios database using the SQLite implementation.
 --
--- Each call to 'open' on the returned handle creates a new SQLite connection.
--- Connections are not thread-safe and should not be shared across threads.
+-- Each call to 'openReader' on the returned handle creates new SQLite
+-- connections; readers are not thread-safe and should not be shared across
+-- threads. All writers submit to the one write connection created here, on
+-- its own worker thread.
 --
 -- Note: this will also start two background treads that implement garbage collection.
 newLeiosDBSQLite :: Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
@@ -156,6 +165,12 @@ newLeiosDBSQLiteWithGcPacing tracer volLeiosDbPath immLeiosDbPath gcBatchSize gc
   -- LeiosDB GC sweeper thread
   sweepDoorbell <- newMVar ()
   startSweeper tracer statsVar volLeiosDbPath sweepDoorbell gcBatchSize gcBatchPauseMicros
+
+  -- The database's one ingest writer: a write connection and the worker
+  -- thread draining the write queue, created with the database and never
+  -- torn down (the maintenance threads above write through their own
+  -- connections).
+  writeQueue <- startWriter tracer statsVar notificationChan volLeiosDbPath immLeiosDbPath
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =
@@ -164,7 +179,8 @@ newLeiosDBSQLiteWithGcPacing tracer volLeiosDbPath immLeiosDbPath gcBatchSize gc
           sqlGarbageCollect tracer gcRootCtx volLeiosDbPath copyQueue sweepDoorbell
       , leiosDbPromoteToImmutable = sqlPromoteToImmutable tracer volLeiosDbPath copyQueue
       , leiosDbSampleStats = readIORef statsVar
-      , open = openSQLiteConnection tracer volLeiosDbPath immLeiosDbPath notificationChan statsVar
+      , openReader = openSQLiteReader tracer volLeiosDbPath immLeiosDbPath statsVar
+      , openWriter = pure (sqliteWriter writeQueue)
       }
 
 -- | Open LeiosDB for read-only operations.
@@ -182,10 +198,16 @@ newLeiosDBSQLiteReadOnly tracer volLeiosDbPath immLeiosDbPath = do
       , leiosDbGarbageCollect = \_ -> pure ()
       , leiosDbPromoteToImmutable = \_ -> pure ()
       , leiosDbSampleStats = readIORef statsVar
-      , open = do
+      , openReader = do
           volDb <- openReadOnlyRawConnection volLeiosDbPath
           immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
-          mkSQLiteConnection tracer notificationChan statsVar volDb immDb
+          sqliteReader <$> mkConn tracer statsVar volDb immDb
+      , openWriter =
+          throwIO
+            LeiosDbException
+              { errorMessage = "newLeiosDBSQLiteReadOnly: no writer on a read-only database"
+              , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+              }
       }
 
 -- | Initialise 'LeiosDbStats' by counting the EB rows of both partitions.
@@ -1039,55 +1061,150 @@ useStmt :: DB.Statement -> IO a -> IO a
 useStmt stmt action =
   action `MonadThrow.finally` (void $ DB.reset stmt)
 
-openSQLiteConnection ::
+-- | Open a reader: fresh connections to both partitions, so any number of
+-- readers may run concurrently.
+openSQLiteReader ::
   Tracer IO TraceLeiosDb ->
   FilePath ->
   FilePath ->
-  StrictTChan IO LeiosEbNotification ->
   IORef LeiosDbStats ->
-  IO (LeiosDbConnection IO)
-openSQLiteConnection tracer volPath immPath notificationChan statsVar = do
+  IO (LeiosDbReader IO)
+openSQLiteReader tracer volPath immPath statsVar = do
   volDb <- openVolRawConnection volPath
   immDb <- orCloseOnError volDb $ openRawConnection immPath
-  mkSQLiteConnection tracer notificationChan statsVar volDb immDb
+  sqliteReader <$> mkConn tracer statsVar volDb immDb
 
--- | The 'LeiosDbConnection' over two open partition connections.
-mkSQLiteConnection ::
+-- | Build a 'Conn' over two open partition connections, preparing every
+-- statement; 'closeConn' undoes it.
+mkConn ::
   Tracer IO TraceLeiosDb ->
-  StrictTChan IO LeiosEbNotification ->
   IORef LeiosDbStats ->
   DB.Database ->
   DB.Database ->
-  IO (LeiosDbConnection IO)
-mkSQLiteConnection tracer notificationChan statsVar volDb immDb = do
+  IO Conn
+mkConn tracer statsVar volDb immDb = do
   stmts <- prepareVolStmts volDb
   immStmts <- prepareImmStmts immDb
-  let conn =
-        Conn
-          { conVolDb = volDb
-          , connVolStmts = stmts
-          , connTracer = tracer
-          , connStats = statsVar
-          , conImmDb = immDb
-          , connImmStmts = immStmts
-          }
-      notify = atomically . writeTChan notificationChan
-  pure $
-    LeiosDbConnection
-      { close = do
-          finalizeImmStmts (connImmStmts conn)
-          void (DB.close (conImmDb conn))
-          finalizeVolStmts (connVolStmts conn)
-          void (DB.close (conVolDb conn))
-      , leiosDbScanEbPoints = sqlScanEbPoints conn
-      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
-      , leiosDbInsertEbPoint = sqlInsertEbPoint conn
-      , leiosDbLookupEbBody = sqlLookupEbBody conn
-      , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
-      , leiosDbInsertTxs = sqlInsertTxs tracer conn notify
-      , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs conn
-      , leiosDbLookupEbClosure = sqlLookupEbClosure conn
+  pure
+    Conn
+      { conVolDb = volDb
+      , connVolStmts = stmts
+      , connTracer = tracer
+      , connStats = statsVar
+      , conImmDb = immDb
+      , connImmStmts = immStmts
       }
+
+closeConn :: Conn -> IO ()
+closeConn conn = do
+  finalizeImmStmts (connImmStmts conn)
+  void (DB.close (conImmDb conn))
+  finalizeVolStmts (connVolStmts conn)
+  void (DB.close (conVolDb conn))
+
+-- | The read half of the API over a 'Conn'.
+sqliteReader :: Conn -> LeiosDbReader IO
+sqliteReader conn =
+  LeiosDbReader
+    { close = closeConn conn
+    , scanEbPoints = sqlScanEbPoints conn
+    , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
+    , lookupEbBody = sqlLookupEbBody conn
+    , batchRetrieveTxs = sqlBatchRetrieveTxs conn
+    , lookupEbClosure = sqlLookupEbClosure conn
+    }
+
+-- * The single ingest writer
+
+-- | One queued write, carrying the variable its result lands in.
+--
+-- TODO: the maintenance writes (pin, GC mark, copy, sweep) should also become
+-- jobs here, making the single-writer property total and the in-process busy
+-- retries dead code -- the worker can then schedule them queue-aware (yield
+-- to pending ingest writes) instead of the sweeper's blind pacing. Needs the
+-- vol ATTACH on the writer's imm connection and a non-fatal failure mode for
+-- maintenance jobs.
+data WriteJob
+  = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
+  | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
+  | WriteTxs ![(TxHash, ByteString)] !(WriteResult CompletedEbs)
+  | -- | Does nothing; awaiting it after the queue's FIFO order means every
+    -- write submitted before it has landed.
+    Flush !(WriteResult ())
+
+type WriteResult a = StrictTMVar IO (Either SomeException a)
+
+-- | Depth of the write queue. One slot per producer that can be mid-write --
+-- each upstream peer's fetch client, plus the forge -- and a little slack.
+-- Deliberately shallow: depth beyond that adds no throughput (there is one
+-- worker) and only delays the commit-time notifications that gate vote
+-- scheduling and chain selection. A producer that outruns the disk blocks on
+-- submission, which is the backpressure.
+writerQueueDepth :: Natural
+writerQueueDepth = numUpstreamPeers + forge + slack
+ where
+  numUpstreamPeers = 20
+  forge = 1
+  slack = 2
+
+-- | Open the write connection and start the worker draining the write queue.
+--
+-- The worker publishes each write's outcome into its job's 'WriteResult' and
+-- then rethrows a failure: publishing first lets an awaiting producer see the
+-- exception rather than block on a promise the dying worker would never fill,
+-- and a failed write is not survivable (no caller catches
+-- 'LeiosDbException') -- producers still submitting eventually block on the
+-- full queue and go down as blocked-indefinitely.
+startWriter ::
+  Tracer IO TraceLeiosDb ->
+  IORef LeiosDbStats ->
+  StrictTChan IO LeiosEbNotification ->
+  FilePath ->
+  FilePath ->
+  IO (StrictTBQueue IO WriteJob)
+startWriter tracer statsVar notificationChan volPath immPath = do
+  volDb <- openVolRawConnection volPath
+  immDb <- orCloseOnError volDb $ openRawConnection immPath
+  conn <- mkConn tracer statsVar volDb immDb
+  queue <- newTBQueueIO writerQueueDepth
+  let notify = atomically . writeTChan notificationChan
+  threadId <- forkIO $ untilOrphaned $ forever $ do
+    job <- IO.atomically $ readTBQueue queue
+    case job of
+      WriteEbPoint point size resultVar ->
+        publish resultVar (sqlInsertEbPoint conn point size)
+      WriteEbBody point eb resultVar ->
+        publish resultVar (sqlInsertEbBody tracer conn notify point eb)
+      WriteTxs txs resultVar ->
+        publish resultVar (sqlInsertTxs tracer conn notify txs)
+      Flush resultVar ->
+        publish resultVar (pure ())
+  labelThread threadId "leiosdb-writer"
+  pure queue
+ where
+  publish :: WriteResult a -> IO a -> IO ()
+  publish resultVar action = do
+    result <- MonadThrow.try action
+    atomically $ putTMVar resultVar result
+    either throwIO (\_ -> pure ()) result
+
+-- | The write half of the API: every operation is queued for the worker of
+-- 'startWriter', and the 'Promise' waits for that job's result.
+sqliteWriter :: StrictTBQueue IO WriteJob -> LeiosDbWriter IO
+sqliteWriter queue =
+  LeiosDbWriter
+    { -- Not a teardown -- the write connection outlives every writer.
+      close = void . await =<< submit Flush
+    , writeEbPoint = \point size -> submit (WriteEbPoint point size)
+    , writeEbBody = \point eb -> submit (WriteEbBody point eb)
+    , writeTxs = \txs -> submit (WriteTxs txs)
+    }
+ where
+  submit :: (WriteResult a -> WriteJob) -> IO (Promise IO a)
+  submit mkJob = do
+    resultVar <- newEmptyTMVarIO
+    atomically $ writeTBQueue queue (mkJob resultVar)
+    pure $ Promise (either throwIO pure =<< atomically (readTMVar resultVar))
 
 -- * Top-level implementations
 
@@ -1213,7 +1330,7 @@ sqlInsertEbBody ::
   IO CompletedEbs
 sqlInsertEbBody tracer conn notify point eb = do
   when (null items) $
-    error "leiosDbInsertEbBody: empty EB body (programmer error)"
+    error "writeEbBody: empty EB body (programmer error)"
   completedNow <- dbWithWriteTransaction conn $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
@@ -1461,10 +1578,10 @@ vacuumLeiosDb dbPath =
 
 -- | Open the LeiosDb file at the given path, which must already exist.
 --
--- Unrelated to 'withLeiosDb', which brackets a 'LeiosDbConnection' that a
+-- Unrelated to 'withReader', which brackets a 'LeiosDbReader' that a
 -- 'LeiosDbHandle' opens.
 --
--- No 'SQLOpenCreate', unlike 'openSQLiteConnection': a wrong path must fail
+-- No 'SQLOpenCreate', unlike 'openSQLiteReader': a wrong path must fail
 -- rather than gain an empty database. No 'busy_timeout' either, so a write that
 -- meets the node's own write lock gives up after the retries in 'withDie'
 -- rather than block.

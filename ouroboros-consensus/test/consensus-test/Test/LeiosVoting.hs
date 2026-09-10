@@ -18,10 +18,13 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.Function ((&))
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
-  ( LeiosDbConnection (..)
-  , LeiosDbHandle
+  ( LeiosDbHandle
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
+  , Promise (..)
   , newLeiosDBInMemory
-  , withLeiosDb
+  , withReader
+  , withWriter
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -183,17 +186,17 @@ runValidateTwice acquired txs = withHarness acquired txs $ \h -> do
   pure (first', tagged, second')
 
 data Harness = Harness
-  { hConn :: LeiosDbConnection IO
+  { hReader :: LeiosDbReader IO
   , hCache :: LeiosTxCache IO () () SerializedEbBody
   , hPoint :: LeiosPoint
   }
 
 validateOnce :: Harness -> [TestTx] -> IO (Verdict, [Bool])
-validateOnce Harness{hConn, hCache, hPoint} txs = do
+validateOnce Harness{hReader, hCache, hPoint} txs = do
   verdict <-
     validateEbClosure
       testLedgerConfigNoSizeLimits
-      hConn
+      hReader
       hCache
       -- Restricted to what was asked for, not the whole UTxO: a closure whose
       -- key sets came back empty would otherwise still validate, and the
@@ -219,10 +222,10 @@ validateOnce Harness{hConn, hCache, hPoint} txs = do
 withHarness :: [Bool] -> [TestTx] -> (Harness -> IO a) -> IO a
 withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
-  withLeiosDb db $ \conn -> do
-    leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
-    void $ leiosDbInsertEbBody conn point eb
-    void $ leiosDbInsertTxs conn [(txHashOf tx, txBytes tx) | tx <- txs]
+  withReader db $ \reader -> withWriter db $ \writer -> do
+    void $ await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
+    void $ await =<< writeEbBody writer point eb
+    void $ await =<< writeTxs writer [(txHashOf tx, txBytes tx) | tx <- txs]
 
     cache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     void $ insertAnnouncement cache (pointSlotNo point) rbHash (pointEbHash point)
@@ -240,7 +243,7 @@ withHarness acquired txs k = do
         w0
         (zip txs acquired)
 
-    k Harness{hConn = conn, hCache = cache, hPoint = point}
+    k Harness{hReader = reader, hCache = cache, hPoint = point}
  where
   eb = ebOf txs
   point = MkLeiosPoint (SlotNo 1) (hashLeiosEb eb)
