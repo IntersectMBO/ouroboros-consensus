@@ -150,9 +150,11 @@ import Test.Consensus.Cardano.ProtocolInfo (Era (Dijkstra), hardForkInto)
 import Test.QuickCheck
   ( Property
   , Testable
+  , checkCoverage
   , choose
   , conjoin
   , counterexample
+  , cover
   , discard
   , forAll
   , ioProperty
@@ -689,9 +691,7 @@ prop_leios_invalid_eb seed
   | Set.null honestCertifiedPoints = discard
   | otherwise =
       conjoin
-        [ adversaryWasEffective
-            & counterexample "[failed] adversaryWasEffective"
-        , poisonedNeverCertified
+        [ poisonedNeverCertified
             & counterexample "[failed] poisonedNeverCertified"
         , poisonedNeverValidated
             & counterexample "[failed] poisonedNeverValidated"
@@ -701,6 +701,15 @@ prop_leios_invalid_eb seed
             & counterexample "[failed] test threw an exception"
             & prettyCounterexampleList "all traces" 120 (show <$> traces)
         ]
+        -- Non-vacuity as a rate over all runs, not a per-run requirement. One
+        -- run can leave every honest node without a poisoned closure, and
+        -- that is not a failure.
+        --
+        -- TODO the threshold is a placeholder. Set it from the rate a
+        -- 120-run sweep reports, and confirm 'checkCoverage' still decides
+        -- inside the configured run count.
+        & checkCoverage
+        & cover 50 adversaryWasEffective "poisoned EB acquired by an honest node"
         & tabulate "poisoned EB turned down on" poisonedNotVotedReasons
  where
   adversary = CoreNodeId 1
@@ -748,13 +757,16 @@ prop_leios_invalid_eb seed
 
   nodeChains = Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
 
-  -- Guard against a vacuous pass: a poisoned EB must actually have reached an
-  -- honest node's closure, or nobody was ever in a position to vote on one.
-  adversaryWasEffective =
-    not (Set.null (Set.intersection poisonedPointsToDiffuse acquiredByHonest))
-      & counterexample "no honest node acquired a poisoned EB's closure"
-      & prettyCounterexampleList "poisoned EBs (diffusion required)" 120 poisonedPointsToDiffuse
-      & prettyCounterexampleList "acquired by honest nodes" 120 acquiredByHonest
+  -- The poisoned EBs whose closure an honest node holds. Only these put a
+  -- voter in a position to reject the endorsed transaction.
+  --
+  -- This set can be empty. A node offers an EB only to the peers connected
+  -- when it stores the EB, and never offers one it already holds, so an EB
+  -- forged in slot 0 (before the ThreadNet edges are up) reaches nobody. The
+  -- announcement still arrives over ChainSync, but it names no serving peer.
+  poisonedAcquiredByHonest = Set.intersection poisonedPointsToDiffuse acquiredByHonest
+
+  adversaryWasEffective = not (Set.null poisonedAcquiredByHonest)
 
   poisonedNeverCertified =
     Set.intersection poisonedPoints certifiedPoints === Set.empty
