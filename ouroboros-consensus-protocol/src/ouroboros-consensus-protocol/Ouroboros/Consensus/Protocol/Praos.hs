@@ -466,9 +466,10 @@ data BasePraosValidationErr pext c
   | LeiosHeaderErr !(HasLeiosProof (PraosExtensionHasLeios pext)) Leios.LeiosHeaderErr
   deriving Generic
 
--- | Every Leios constructor of 'BasePraosValidationErr' carries a
--- 'HasLeiosProof', so at 'PextNone' --- which is mainnet's --- none of them can
--- be constructed and the inhabited set is exactly what it was before Leios.
+-- | The one Leios constructor (the embedder) of 'BasePraosValidationErr'
+-- carries a 'HasLeiosProof', so at 'PextNone' --- which is mainnet's /before/
+-- Leios\/Dijkstra --- none of them can be constructed and the inhabited set is
+-- exactly what it was before Leios.
 type PraosValidationErr c = BasePraosValidationErr PextNone c
 
 deriving instance (PraosCrypto c, KnownPraosExtension pext) => Eq (BasePraosValidationErr pext c)

@@ -138,10 +138,6 @@ data BasePraosLedgerView pext = PraosLedgerView
   , plvProtocolVersion :: !ProtVer
   -- ^ Current protocol version
   , plvLeios :: !(StrictMaybeLeios (PraosExtensionHasLeios pext) LeiosLedgerView)
-  -- ^ The Leios data, statically absent unless the extension has Leios.
-  --
-  -- One field rather than one per datum, so the committee and the parameters
-  -- cannot disagree about whether Leios is enabled.
   }
 
 deriving instance Show (BasePraosLedgerView pext)
@@ -174,12 +170,8 @@ data LeiosLedgerView = LeiosLedgerView
 -- Nothing can be certified against it: the committee is empty and the quorum is
 -- the entire weight. This is the truth rather than a placeholder, both before
 -- the Leios era and during its first epochs, until a snapshot seated by the new
--- era's rules rotates in.
---
--- The remaining parameters have no counterpart in such a state, so they admit
--- anything. They only bound an endorser block, whose contents are checked again
--- against the era's parameters proper, whereas an over-permissive committee
--- would be unsound.
+-- era's rules rotates in. And so the other parameter values don't actually
+-- matter.
 initialLeiosLedgerView :: LeiosLedgerView
 initialLeiosLedgerView =
   LeiosLedgerView
@@ -211,7 +203,6 @@ instance ForecastsLeios PextNone era where
 instance SL.DijkstraEraForecast era => ForecastsLeios PextLeios era where
   forecastToLeiosPart _ = SJustLeios . forecastToLeiosLedgerView
 
--- | Build a 'BasePraosLedgerView' from a ledger 'SL.Forecast'
 forecastToBasePraosLedgerView ::
   forall pext t era.
   (ForecastsLeios pext era, SL.EraForecast era) =>
