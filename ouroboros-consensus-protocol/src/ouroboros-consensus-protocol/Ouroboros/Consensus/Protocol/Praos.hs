@@ -116,7 +116,7 @@ import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
-import Data.Word (Word32, Word64)
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import LeiosDemoTypes
   ( EbAnnouncement
@@ -839,7 +839,15 @@ doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKES
     | otherwise =
         Nothing
 
-  withSignableDict :: (KES.Signable (KES c) (Views.BaseHeaderBody pext c) => r) -> r
+  -- The result type is fixed rather than polymorphic in @r@: inside the
+  -- implication this constraint introduces, an @r@ would be untouchable, so
+  -- GHC could not solve it against the caller's type (it manages on 9.12 but
+  -- not on 9.6 or 9.10).
+  withSignableDict ::
+    ( KES.Signable (KES c) (Views.BaseHeaderBody pext c) =>
+      Except (BasePraosValidationErr pext c) ()
+    ) ->
+    Except (BasePraosValidationErr pext c) ()
   withSignableDict k = case singPraosExtension (Proxy @pext) of
     SingPextNone -> k
     SingPextLeios -> k

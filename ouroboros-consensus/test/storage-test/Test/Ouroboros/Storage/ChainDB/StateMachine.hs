@@ -107,7 +107,7 @@ import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import qualified LeiosDemoDb as LeiosDb
-import LeiosDemoTypes (HasLeiosVoting)
+import LeiosDemoTypes (HasLeiosVoting, TraceLeiosChainSel)
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -1581,6 +1581,8 @@ deriving instance SOP.Generic (TraceCopyToImmutableDBEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceCopyToImmutableDBEvent blk)
 deriving instance SOP.Generic (TraceValidationEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceValidationEvent blk)
+deriving instance SOP.Generic (TraceLeiosChainSel blk)
+deriving instance SOP.HasDatatypeInfo (TraceLeiosChainSel blk)
 deriving instance SOP.Generic (TraceInitChainSelEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceInitChainSelEvent blk)
 deriving instance SOP.Generic (TraceOpenEvent blk)
@@ -2154,6 +2156,7 @@ traceEventName = \case
       PipeliningEvent{} -> "PipeliningEvent"
       ChangingSelection{} -> "ChangingSelection"
       TraceAddBlockCall{} -> "TraceAddBlockCall"
+      AddBlockLeiosEvent ev' -> "Leios." <> constrName ev'
   TraceFollowerEvent ev -> "Follower." <> constrName ev
   TraceCopyToImmutableDBEvent ev -> "CopyToImmutableDB." <> constrName ev
   TraceInitChainSelEvent ev ->
