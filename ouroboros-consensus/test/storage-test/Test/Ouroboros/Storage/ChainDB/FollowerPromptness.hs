@@ -24,7 +24,6 @@ import Control.Monad (forever)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), contramapM, mkTracer, traceWith)
-import Data.Foldable (for_)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
