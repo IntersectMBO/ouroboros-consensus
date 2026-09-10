@@ -144,7 +144,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, forkIO)
+import Ouroboros.Consensus.Util.IOLike (IOLike, forkIO, newMVar, withMVar)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
@@ -1056,7 +1056,8 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
   --       we cannot yet serve.
   -- The forge path stays synchronous: its EB must be on disk before the
   -- referencing RB propagates.
-  let persistAndIngest = do
+  sharedConnection <- newMVar db
+  let persistAndIngest = withMVar sharedConnection $ \conn -> do
         completedByBody <-
           if not shouldPersist
             then pure []
@@ -1065,8 +1066,8 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
               -- be present (announcement handling inserts it); until then insert
               -- it idempotently as a stop-gap and trace a warning.
               traceWith ktracer $ TraceLeiosBlockPointMissing point
-              leiosDbInsertEbPoint db point ebBytesSize
-              leiosDbInsertEbBody db point eb
+              leiosDbInsertEbPoint conn point ebBytesSize
+              leiosDbInsertEbBody conn point eb
         unless (null completedByBody) $ do
           st <- Leios.ebState <$> MVar.readMVar outstandingVar
           forM_ completedByBody $ \p ->
@@ -1083,7 +1084,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
             tracer
             (outstandingVar, readyVar)
             txCache
-            db
+            conn
             systemTime
             (MempoolTxs point mempoolNotCache)
   case source of
