@@ -20,7 +20,6 @@ import qualified Data.Map.Strict as Map
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Node.Abstract
@@ -103,16 +102,7 @@ simpleBlockForging aCanBeLeader aForgeExt =
     , canBeLeader = aCanBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot _mbPerasCert lst txs proof ->
-        return $
-          forgeSimple
-            aForgeExt
-            cfg
-            bno
-            slot
-            lst
-            (map txForgetValidated txs)
-            proof
+    , forgeBlock = return . forgeSimple aForgeExt
     , finalize = pure ()
     }
  where

@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -307,135 +308,124 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  TopLevelConfig (HardForkBlock xs) ->
-  BlockNo ->
-  SlotNo ->
-  Maybe (PerasCert (HardForkBlock xs)) ->
-  TickedLedgerState (HardForkBlock xs) EmptyMK ->
-  [Validated (GenTx (HardForkBlock xs))] ->
-  HardForkIsLeader xs ->
+  ForgeBlockArgs (HardForkBlock xs) ->
   m (HardForkBlock xs)
-hardForkForgeBlock
-  blockForging
-  cfg
-  bno
-  sno
-  mbPerasCert
-  (TickedHardForkLedgerState transition ledgerState)
-  txs
-  isLeader =
-    fmap (HardForkBlock . OneEraBlock)
-      $ hsequence
-      $ hizipWith3
-        forgeBlockOne
-        cfgs
-        (OptNP.toNP blockForging)
-      -- We know both NSs must be from the same era, because they were all
-      -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
-      -- it statically.
-      $ Match.mustMatchNS
-        "IsLeader"
-        (getOneEraIsLeader isLeader)
-      $ injectValidatedTxs ledgerState
-   where
-    cfgs = distribTopLevelConfig ei cfg
-    ei =
-      State.epochInfoPrecomputedTransitionInfo
-        (hardForkLedgerConfigShape (configLedger cfg))
-        transition
-        ledgerState
+hardForkForgeBlock blockForging ForgeBlockArgs{..} =
+  fmap (HardForkBlock . OneEraBlock)
+    $ hsequence
+    $ hizipWith3
+      forgeBlockOne
+      cfgs
+      (OptNP.toNP blockForging)
+    -- We know both NSs must be from the same era, because they were all
+    -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
+    -- it statically.
+    $ Match.mustMatchNS
+      "IsLeader"
+      (getOneEraIsLeader fbIsLeader)
+    $ injectValidatedTxs ledgerState
+ where
+  TickedHardForkLedgerState transition ledgerState = fbCurrentTickedLedgerState
+  cfgs = distribTopLevelConfig ei fbConfig
+  ei =
+    State.epochInfoPrecomputedTransitionInfo
+      (hardForkLedgerConfigShape (configLedger fbConfig))
+      transition
+      ledgerState
 
-    missingBlockForgingImpossible :: EraIndex xs -> String
-    missingBlockForgingImpossible eraIndex =
-      "impossible: current era lacks block forging but we have an IsLeader proof "
-        <> show eraIndex
+  missingBlockForgingImpossible :: EraIndex xs -> String
+  missingBlockForgingImpossible eraIndex =
+    "impossible: current era lacks block forging but we have an IsLeader proof "
+      <> show eraIndex
 
-    -- If we crossed an era boundary in this forge, the transactions were
-    -- revalidated against the tip in the new era so:
-    --
-    --  * Re-matching them MUST leave them in the right era via returning
-    --    'ReapplyTxs'.
-    --
-    --  * There should be no rejected-by-untranslatable transactions.
-    --
-    -- Otherwise there is a bug.
-    injectValidatedTxs ::
-      State.HardForkState f xs ->
-      NS (Product f ([] :.: WrapValidatedGenTx)) xs
-    injectValidatedTxs st =
-      case rematchValidatedTxs getHardForkValidatedGenTx st $ map (\x -> (x, (), ())) txs of
-        ([], hfs) ->
-          hmap
-            ( \case
-                Pair _ ApplyTxs{} ->
-                  error
-                    "Impossible! we have translated the txs to the current era, but they should already be in this era!"
-                Pair a (ReapplyTxs b) -> Pair a $ Comp $ map (\(x, (), ()) -> x) b
-            )
-            $ State.tip hfs
-        (_ : _, _) ->
-          error
-            "Impossible! some transactions were rejected as untranslatable by rematchValidatedTxs but all of them have been translated and applied just now."
-
-    -- If we crossed an era boundary in this forge, and we are supposed to
-    -- include a Peras certificate in this block, we must ensure that the
-    -- certificate being passed to us (i.e., the latest certificate seen) is
-    -- from the same era as the block being forged. Otherwise, we drop it
-    -- (treating it as absent), since inter-era certificate inclusion is not
-    -- supported for now. In the unlikely event of recovering from a cooldown
-    -- period that crosses an era boundary, one should jumpstart the voting
-    -- process again via the same type of governance action that started this
-    -- process in the first place, but in the new era.
-    injectPerasCertIfSameEra ::
-      Index xs blk ->
-      PerasCert (HardForkBlock xs) ->
-      Maybe (PerasCert blk)
-    injectPerasCertIfSameEra index hardForkPerasCert =
-      case ( Match.matchNS
-               (getIndex index)
-               (getOneEraPerasCert hardForkPerasCert)
-           ) of
-        -- The Peras certificate is from a different era than the block being
-        -- forged, so we drop it (treating it as absent).
-        Left _mismatch ->
-          Nothing
-        -- The Peras certificate is from the same era as the block being forged,
-        -- so we keep it and pass it down to the current era's 'forgeBlock'.
-        Right nsPair ->
-          hcollapse $
-            hmap (\(Pair Refl (WrapPerasCert cert)) -> K (Just cert)) $
-              nsPair
-
-    -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
-    forgeBlockOne ::
-      Index xs blk ->
-      TopLevelConfig blk ->
-      (Maybe :.: BlockForging m) blk ->
-      Product
-        WrapIsLeader
-        ( Product
-            (FlipTickedLedgerState EmptyMK)
-            ([] :.: WrapValidatedGenTx)
-        )
-        blk ->
-      m blk
-    forgeBlockOne
-      index
-      cfg'
-      (Comp mBlockForging')
-      ( Pair
-          (WrapIsLeader isLeader')
-          (Pair (FlipTickedLedgerState ledgerState') (Comp txs'))
-        ) =
-        forgeBlock
-          ( fromMaybe
-              (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
-              mBlockForging'
+  -- If we crossed an era boundary in this forge, the transactions were
+  -- revalidated against the tip in the new era so:
+  --
+  --  * Re-matching them MUST leave them in the right era via returning
+  --    'ReapplyTxs'.
+  --
+  --  * There should be no rejected-by-untranslatable transactions.
+  --
+  -- Otherwise there is a bug.
+  injectValidatedTxs ::
+    State.HardForkState f xs ->
+    NS (Product f ([] :.: WrapValidatedGenTx)) xs
+  injectValidatedTxs st =
+    case rematchValidatedTxs getHardForkValidatedGenTx st $ map (\x -> (x, (), ())) fbTxs of
+      ([], hfs) ->
+        hmap
+          ( \case
+              Pair _ ApplyTxs{} ->
+                error
+                  "Impossible! we have translated the txs to the current era, but they should already be in this era!"
+              Pair a (ReapplyTxs b) -> Pair a $ Comp $ map (\(x, (), ()) -> x) b
           )
-          cfg'
-          bno
-          sno
-          (mbPerasCert >>= injectPerasCertIfSameEra index)
-          ledgerState'
-          (map unwrapValidatedGenTx txs')
-          isLeader'
+          $ State.tip hfs
+      (_ : _, _) ->
+        error
+          "Impossible! some transactions were rejected as untranslatable by rematchValidatedTxs but all of them have been translated and applied just now."
+
+  -- If we crossed an era boundary in this forge, and we are supposed to
+  -- include a Peras certificate in this block, we must ensure that the
+  -- certificate being passed to us (i.e., the latest certificate seen) is
+  -- from the same era as the block being forged. Otherwise, we drop it
+  -- (treating it as absent), since inter-era certificate inclusion is not
+  -- supported for now. In the unlikely event of recovering from a cooldown
+  -- period that crosses an era boundary, one should jumpstart the voting
+  -- process again via the same type of governance action that started this
+  -- process in the first place, but in the new era.
+  injectPerasCertIfSameEra ::
+    Index xs blk ->
+    PerasCert (HardForkBlock xs) ->
+    Maybe (PerasCert blk)
+  injectPerasCertIfSameEra index hardForkPerasCert =
+    case ( Match.matchNS
+             (getIndex index)
+             (getOneEraPerasCert hardForkPerasCert)
+         ) of
+      -- The Peras certificate is from a different era than the block being
+      -- forged, so we drop it (treating it as absent).
+      Left _mismatch ->
+        Nothing
+      -- The Peras certificate is from the same era as the block being forged,
+      -- so we keep it and pass it down to the current era's 'forgeBlock'.
+      Right nsPair ->
+        hcollapse $
+          hmap (\(Pair Refl (WrapPerasCert cert)) -> K (Just cert)) $
+            nsPair
+
+  -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
+  forgeBlockOne ::
+    Index xs blk ->
+    TopLevelConfig blk ->
+    (Maybe :.: BlockForging m) blk ->
+    Product
+      WrapIsLeader
+      ( Product
+          (FlipTickedLedgerState EmptyMK)
+          ([] :.: WrapValidatedGenTx)
+      )
+      blk ->
+    m blk
+  forgeBlockOne
+    index
+    cfg'
+    (Comp mBlockForging')
+    ( Pair
+        (WrapIsLeader isLeader')
+        (Pair (FlipTickedLedgerState ledgerState') (Comp txs'))
+      ) =
+      forgeBlock
+        ( fromMaybe
+            (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
+            mBlockForging'
+        )
+        ForgeBlockArgs
+          { fbConfig = cfg'
+          , fbCurrentBlockNo = fbCurrentBlockNo
+          , fbCurrentSlotNo = fbCurrentSlotNo
+          , fbPerasCert = fbPerasCert >>= injectPerasCertIfSameEra index
+          , fbCurrentTickedLedgerState = ledgerState'
+          , fbTxs = map unwrapValidatedGenTx txs'
+          , fbIsLeader = isLeader'
+          }

@@ -64,8 +64,7 @@ dualByronBlockForging creds =
     , updateForgeState = \cfg ->
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
-    , forgeBlock = \cfg slot bno _mbPerasCert lst txs proof ->
-        return $ forgeDualByronBlock cfg slot bno lst txs proof
+    , forgeBlock = return . forgeDualByronBlock
     , finalize = return ()
     }
  where

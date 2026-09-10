@@ -365,31 +365,25 @@ type instance CannotForge BlockA = Void
 type instance ForgeStateInfo BlockA = ()
 type instance ForgeStateUpdateError BlockA = Void
 
-forgeBlockA ::
-  TopLevelConfig BlockA ->
-  BlockNo ->
-  SlotNo ->
-  TickedLedgerState BlockA mk ->
-  [GenTx BlockA] ->
-  IsLeader (BlockProtocol BlockA) ->
-  BlockA
-forgeBlockA tlc bno sno (TickedLedgerStateA st) _txs _ =
+forgeBlockA :: ForgeBlockArgs BlockA -> BlockA
+forgeBlockA ForgeBlockArgs{..} =
   BlkA
     { blkA_header =
         HdrA
           { hdrA_fields =
               HeaderFields
-                { headerFieldHash = Lazy.toStrict . B.encode $ unSlotNo sno
-                , headerFieldSlot = sno
-                , headerFieldBlockNo = bno
+                { headerFieldHash = Lazy.toStrict . B.encode $ unSlotNo fbCurrentSlotNo
+                , headerFieldSlot = fbCurrentSlotNo
+                , headerFieldBlockNo = fbCurrentBlockNo
                 }
-          , hdrA_prev = ledgerTipHash st
+          , hdrA_prev = ledgerTipHash lst
           }
-    , blkA_body = Map.findWithDefault [] sno (lcfgA_forgeTxs ledgerConfig)
+    , blkA_body = Map.findWithDefault [] fbCurrentSlotNo (lcfgA_forgeTxs ledgerConfig)
     }
  where
+  TickedLedgerStateA lst = fbCurrentTickedLedgerState
   ledgerConfig :: PartialLedgerConfig BlockA
-  ledgerConfig = snd $ configLedger tlc
+  ledgerConfig = snd $ configLedger fbConfig
 
 blockForgingA :: Monad m => BlockForging m BlockA
 blockForgingA =
@@ -398,9 +392,7 @@ blockForgingA =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot _mbPerasCert st txs proof ->
-        return $
-          forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
+    , forgeBlock = return . forgeBlockA
     , finalize = return ()
     }
 

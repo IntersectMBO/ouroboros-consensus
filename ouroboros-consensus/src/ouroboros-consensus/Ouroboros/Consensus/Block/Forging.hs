@@ -21,6 +21,9 @@ module Ouroboros.Consensus.Block.Forging
 
     -- * 'UpdateInfo'
   , UpdateInfo (..)
+
+    -- * 'ForgeBlockArgs'
+  , ForgeBlockArgs (..)
   ) where
 
 import Control.Tracer (Tracer, traceWith)
@@ -119,30 +122,8 @@ data BlockForging m blk = BlockForging
   -- to see whether we can actually forge a block.
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
-  , forgeBlock ::
-      TopLevelConfig blk ->
-      BlockNo -> -- Current block number
-      SlotNo -> -- Current slot number
-      Maybe (PerasCert blk) -> -- Optional Peras certificate to include
-      TickedLedgerState blk EmptyMK -> -- Current ledger state
-      [Validated (GenTx blk)] -> -- Transactions to include
-      IsLeader (BlockProtocol blk) -> -- Proof we are leader
-      m blk
+  , forgeBlock :: ForgeBlockArgs blk -> m blk
   -- ^ Forge a block
-  --
-  -- The function is passed the prefix of the mempool that will fit within
-  -- a valid block; this is a set of transactions that is guaranteed to be
-  -- consistent with the ledger state (also provided as an argument) and
-  -- with each other (when applied in order). All of them should be
-  -- included in the forged block, since the mempool ensures they can fit.
-  --
-  -- NOTE: do not refer to the consensus or ledger config in the closure,
-  -- because they might contain an @EpochInfo Identity@, which will be
-  -- incorrect when used as part of the hard fork combinator. Use the
-  -- given 'TopLevelConfig' instead, as it is guaranteed to be correct
-  -- even when used as part of the hard fork combinator.
-  --
-  -- PRECONDITION: 'checkCanForge' returned @Right ()@.
   , finalize :: m ()
   -- ^ Clean up any unmanaged resources.
   --
@@ -245,3 +226,42 @@ forgeStateUpdateInfoFromUpdateInfo ::
 forgeStateUpdateInfoFromUpdateInfo = \case
   Updated info -> ForgeStateUpdated info
   UpdateFailed err -> ForgeStateUpdateFailed err
+
+{-------------------------------------------------------------------------------
+  ForgeBlockArgs
+-------------------------------------------------------------------------------}
+
+-- | Arguments to 'forgeBlock' aggregated into a single record.
+data ForgeBlockArgs blk = ForgeBlockArgs
+  { fbConfig :: !(TopLevelConfig blk)
+  -- ^ The node's top-level config.
+  , fbCurrentBlockNo :: !BlockNo
+  -- ^ The block number of the block to be forged.
+  , fbCurrentSlotNo :: !SlotNo
+  -- ^ The slot number of the block to be forged.
+  , fbPerasCert :: !(Maybe (PerasCert blk))
+  -- ^ Optional Peras certificate to include in the forged block
+  --
+  -- For 'blk' that supports Peras 'Nothing' means no certificate.
+  -- For 'blk' that doesn't support Peras it's always 'Nothing'.
+  , fbCurrentTickedLedgerState :: !(TickedLedgerState blk EmptyMK)
+  -- ^ The current ledger state ticked to 'fbCurrentSlotNo'.
+  , fbTxs :: ![Validated (GenTx blk)]
+  -- ^ The transactions to include in the forged block.
+  --
+  -- The function is passed the prefix of the mempool that will fit within
+  -- a valid block; this is a set of transactions that is guaranteed to be
+  -- consistent with the ledger state 'fbCurrentTickedLedgerState' and
+  -- with each other (when applied in order). All of them should be
+  -- included in the forged block, since the mempool ensures they can fit.
+  --
+  -- NOTE: do not refer to the consensus or ledger config in the closure,
+  -- because they might contain an @EpochInfo Identity@, which will be
+  -- incorrect when used as part of the hard fork combinator. Use the
+  -- given 'fbConfig' instead, as it is guaranteed to be correct
+  -- even when used as part of the hard fork combinator.
+  --
+  -- PRECONDITION: 'checkCanForge' returned @Right ()@.
+  , fbIsLeader :: !(IsLeader (BlockProtocol blk))
+  -- ^ Proof that the node is the slot leader.
+  }

@@ -26,6 +26,7 @@ import Data.Word (Word64)
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
+  , ForgeBlockArgs (..)
   , ShouldForge (..)
   , checkShouldForge
   )
@@ -228,13 +229,15 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
       lift $
         Block.forgeBlock
           blockForging'
-          cfg
-          bcBlockNo
-          currentSlot
-          Nothing -- DBSynthesizer does not include Peras certs in blocks for now
-          (forgetLedgerTables tickedLedgerState)
-          txs
-          proof
+          Block.ForgeBlockArgs
+            { Block.fbConfig = cfg
+            , Block.fbCurrentBlockNo = bcBlockNo
+            , Block.fbCurrentSlotNo = currentSlot
+            , Block.fbPerasCert = Nothing -- DBSynthesizer does not include Peras certs in blocks for now
+            , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
+            , Block.fbTxs = txs
+            , Block.fbIsLeader = proof
+            }
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment

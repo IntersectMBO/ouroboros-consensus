@@ -7,7 +7,8 @@
 
 module Test.Consensus.Byron.Examples
   ( -- * Setup
-    cfg
+    topLevelConfig
+  , blockConfig
   , codecConfig
   , leaderCredentials
   , ledgerConfig
@@ -37,7 +38,9 @@ import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Crypto.DSIGN (SignKeyDSIGN (..))
 import Ouroboros.Consensus.Byron.Ledger
-import Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials (..))
+import Ouroboros.Consensus.Byron.Node
+  ( ByronLeaderCredentials (..)
+  )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -45,6 +48,9 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Node.ProtocolInfo
+  ( NumCoreNodes (NumCoreNodes)
+  )
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
@@ -55,6 +61,7 @@ import qualified Test.Cardano.Chain.Common.Example as CC
 import qualified Test.Cardano.Chain.Genesis.Dummy as CC
 import qualified Test.Cardano.Chain.UTxO.Example as CC
 import qualified Test.Cardano.Chain.Update.Example as CC
+import Test.ThreadNet.Infra.Byron.Genesis (byronPBftParams)
 import Test.ThreadNet.Infra.Byron.ProtocolInfo (mkLeaderCredentials)
 import Test.Util.Serialisation.Examples
   ( Examples (Examples)
@@ -78,8 +85,22 @@ secParam = SecurityParam $ knownNonZeroBounded @2
 windowSize :: S.WindowSize
 windowSize = S.WindowSize 2
 
-cfg :: BlockConfig ByronBlock
-cfg =
+topLevelConfig :: TopLevelConfig ByronBlock
+topLevelConfig =
+  TopLevelConfig
+    { topLevelConfigProtocol = pbftConfig
+    , topLevelConfigLedger = CC.dummyConfig
+    , topLevelConfigBlock = blockConfig
+    , topLevelConfigCodec = codecConfig
+    , topLevelConfigStorage = ByronStorageConfig blockConfig
+    , topLevelConfigCheckpoints = emptyCheckpointsMap
+    }
+
+pbftConfig :: ConsensusConfig (PBft c)
+pbftConfig = PBftConfig{pbftParams = byronPBftParams secParam (NumCoreNodes 1)}
+
+blockConfig :: BlockConfig ByronBlock
+blockConfig =
   ByronConfig
     { byronGenesisConfig = CC.dummyConfig
     , byronProtocolVersion = CC.exampleProtocolVersion
@@ -132,13 +153,18 @@ examples =
 
 exampleBlock :: ByronBlock
 exampleBlock =
-  forgeRegularBlock
-    cfg
-    (BlockNo 1)
-    (SlotNo 1)
-    (applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) (forgetLedgerTables ledgerStateAfterEBB))
-    [ValidatedByronTx exampleGenTx]
-    (fakeMkIsLeader leaderCredentials)
+  forgeRegularBlock $
+    ForgeBlockArgs
+      { fbConfig = topLevelConfig
+      , fbCurrentBlockNo = BlockNo 1
+      , fbCurrentSlotNo = SlotNo 1
+      , fbPerasCert = Nothing -- Doesn't support Peras
+      , fbCurrentTickedLedgerState =
+          forgetLedgerTables $
+            applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) (forgetLedgerTables ledgerStateAfterEBB)
+      , fbTxs = [ValidatedByronTx exampleGenTx]
+      , fbIsLeader = fakeMkIsLeader leaderCredentials
+      }
  where
   -- \| Normally, we'd have to use 'checkIsLeader' to produce this proof.
   fakeMkIsLeader (ByronLeaderCredentials signKey dlgCert _ _) =
@@ -148,7 +174,7 @@ exampleBlock =
       }
 
 exampleEBB :: ByronBlock
-exampleEBB = forgeEBB cfg (SlotNo 0) (BlockNo 0) GenesisHash
+exampleEBB = forgeEBB blockConfig (SlotNo 0) (BlockNo 0) GenesisHash
 
 exampleSerialisedBlock :: Serialised ByronBlock
 exampleSerialisedBlock = Serialised "<BLOCK>"
