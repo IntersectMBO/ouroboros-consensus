@@ -655,6 +655,29 @@ data LeiosDecisionStats = MkLeiosDecisionStats
   }
   deriving (Eq, Show, Generic)
 
+-- | A breakdown of one decision-loop iteration into where its wall-clock went:
+-- the wait for a wake, the wait to acquire the outstanding-state lock, the pure
+-- decision compute, the total lock hold, and the post-lock request apply. Lets
+-- us tell rate-limit deferral from lock contention from compute cost rather
+-- than infer it. See the loop in 'Ouroboros.Consensus.NodeKernel'.
+data LeiosFetchLoopTiming = MkLeiosFetchLoopTiming
+  { lftWaitReady :: !NominalDiffTime
+  -- ^ Blocked on 'getLeiosReady' alone (idle between iterations), excluding the
+  -- rate-limit sleep.
+  , lftRateLimit :: !NominalDiffTime
+  -- ^ The leaky-bucket 'threadDelay' after the wake (0 when the gap since the
+  -- last iteration already exceeded the floor).
+  , lftLockWait :: !NominalDiffTime
+  -- ^ Blocked acquiring 'getLeiosOutstanding' (contention with arrival handlers).
+  , lftCompute :: !NominalDiffTime
+  -- ^ Running the pure 'leiosFetchLogicIteration'.
+  , lftHold :: !NominalDiffTime
+  -- ^ Total critical section (lock held): compute plus in-lock traces/stats.
+  , lftApply :: !NominalDiffTime
+  -- ^ Post-lock: dropping dead offers and pushing requests to peers.
+  }
+  deriving (Eq, Show, Generic)
+
 summarizeDecisions ::
   Foldable t => Map k (t LeiosFetchRequest) -> LeiosDecisionStats
 summarizeDecisions decs =
@@ -1467,7 +1490,11 @@ data TraceLeiosKernel
     TraceLeiosFetchTxsArrival !FetchArrivalBytes
   | -- | One completed iteration of the LeiosFetch decision logic: its wall-clock
     -- duration and a size sample of the resulting 'LeiosOutstanding' state.
-    TraceLeiosFetchDecision !NominalDiffTime !LeiosOutstandingStats !LeiosDecisionStats
+    TraceLeiosFetchDecision
+      !NominalDiffTime
+      !LeiosOutstandingStats
+      !LeiosDecisionStats
+      !LeiosFetchLoopTiming
 
 -- | The data of a relayed EB announcement, shared by 'TraceLeiosPeerAnnouncement'
 -- and 'TraceLeiosAnnouncementAccepted'. A separate record so its selectors are
@@ -1591,13 +1618,20 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosFetchTxsArrival"
       , fabObject fab
       ]
-  TraceLeiosFetchDecision d stats dec ->
+  TraceLeiosFetchDecision d stats dec timing ->
     let inflight = summarizePeerDist (losInflightBytesDesc stats)
         offers = summarizePeerDist (losOffersDesc stats)
+        ms t = realToFrac t * 1000 :: Double
      in mconcat
           [ "kind" .= Aeson.String "LeiosFetchDecision"
           , "durationSeconds" .= (realToFrac d :: Double)
           , "durationMillis" .= (realToFrac d * 1000 :: Double)
+          , "waitReadyMillis" .= ms (lftWaitReady timing)
+          , "rateLimitMillis" .= ms (lftRateLimit timing)
+          , "lockWaitMillis" .= ms (lftLockWait timing)
+          , "computeMillis" .= ms (lftCompute timing)
+          , "holdMillis" .= ms (lftHold timing)
+          , "applyMillis" .= ms (lftApply timing)
           , "decisionPeers" .= ldsPeers dec
           , "decisionRequests" .= ldsRequests dec
           , "decisionBodyRequests" .= ldsBodyRequests dec
@@ -2054,7 +2088,7 @@ traceLeiosKernelForHuman = \case
       <> T.pack (show fields)
       <> " age="
       <> showT mbAge
-  TraceLeiosFetchDecision d stats dec ->
+  TraceLeiosFetchDecision d stats dec _timing ->
     "LeiosFetch decision took "
       <> showT d
       <> "; issued "
