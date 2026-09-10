@@ -103,6 +103,7 @@ library
     LeiosDemoDb.InMemory
     LeiosDemoDb.SQLite
     LeiosDemoDb.Trace
+    LeiosDemoDb.Writer
     LeiosDemoException
     LeiosDemoLogic
     LeiosDemoLogic.Announcements
@@ -1075,6 +1076,7 @@ benchmark leios-db-bench
     bytestring,
     cardano-slotting,
     contra-tracer,
+    directory,
     io-classes:si-timers,
     ouroboros-consensus,
     temporary,

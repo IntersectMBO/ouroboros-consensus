@@ -62,7 +62,7 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Typeable
 import Data.Void (Void)
-import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
+import LeiosDemoDb (LeiosDbHandle, LeiosDbReader, withReader)
 import qualified LeiosDemoDb as LeiosDb
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
@@ -118,7 +118,7 @@ import Ouroboros.Network.Protocol.LocalTxSubmission.Type
 -- | Protocol handlers for node-to-client (local) communication
 data Handlers m peer blk = Handlers
   { hChainSyncServer ::
-      LeiosDbConnection m ->
+      LeiosDbReader m ->
       ChainDB.Follower m blk (ChainDB.WithPoint blk (Header blk, Serialised blk)) ->
       ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
   , hTxSubmissionServer ::
@@ -457,7 +457,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
     m ((), Maybe bCS)
   aChainSyncServer them channel = do
     labelThisThread "LocalChainSyncServer"
-    bracket (open kernelLeiosDB) LeiosDb.close $ \leiosConn ->
+    withReader kernelLeiosDB $ \leiosConn ->
       bracketWithPrivateRegistry
         (chainSyncBlockServerFollower (getChainDB kernel))
         ChainDB.followerClose

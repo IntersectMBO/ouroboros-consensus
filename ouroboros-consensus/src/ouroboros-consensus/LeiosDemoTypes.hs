@@ -784,7 +784,7 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 --
 -- The 'cdbAcquiredLeiosEbs' field of the ChainDB (which gates ChainSel for
 -- CertRBs) is initialized in the exact same way: from
--- 'LeiosDemoDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot', already
+-- 'LeiosDemoDb.scanCompleteEbClosuresNotOlderThanSlot', already
 -- restricted to announcers no older than the immutable tip. And, it's
 -- necessarily initialized earlier, as part of the ChainDB. But for the sake of
 -- modularity/independence (see the TODO below), we're not reusing it to
@@ -1592,18 +1592,6 @@ jsonLeiosDb = \case
       [ "kind" .= Aeson.String "LeiosDbInsertCollision"
       , "table" .= table
       , "key" .= key
-      ]
-  TraceLeiosDbBusyRetry attempt waitedMs ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbBusyRetry"
-      , "attempt" .= attempt
-      , "waitedMs" .= waitedMs
-      ]
-  TraceLeiosDbBusyStuck attempt waitedMs ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbBusyStuck"
-      , "attempt" .= attempt
-      , "waitedMs" .= waitedMs
       ]
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object

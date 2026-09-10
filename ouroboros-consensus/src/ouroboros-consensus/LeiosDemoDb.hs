@@ -1,9 +1,14 @@
 module LeiosDemoDb
   ( -- * API
-    withLeiosDb
-  , LeiosDbHandle (..)
+    LeiosDbHandle (..)
   , LeiosEbNotification (..)
-  , LeiosDbConnection (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , withReader
+  , withWriter
+  , allocateReader
+  , allocateWriter
   , CompletedEbs
   , TraceLeiosDb (..)
 
@@ -14,7 +19,8 @@ module LeiosDemoDb
   , InMemoryLeiosDb (..)
 
     -- * SQLite implementation
-  , newLeiosDBSQLiteFromEnv
+  , withLeiosDBSQLiteFromEnv
+  , withLeiosDBSQLite
   , newLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -31,10 +37,15 @@ module LeiosDemoDb
 
 import LeiosDemoDb.Common
   ( CompletedEbs
-  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
   , LeiosEbNotification (..)
-  , withLeiosDb
+  , Promise (..)
+  , allocateReader
+  , allocateWriter
+  , withReader
+  , withWriter
   )
 import LeiosDemoDb.InMemory
   ( InMemoryLeiosDb (..)
@@ -45,12 +56,13 @@ import LeiosDemoDb.InMemory
 import LeiosDemoDb.SQLite
   ( deleteDanglingTxs
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteFromEnv
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx
   , sql_schema
   , truncateLeiosDbAfterSlot
   , vacuumLeiosDb
+  , withLeiosDBSQLite
+  , withLeiosDBSQLiteFromEnv
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))

@@ -127,7 +127,7 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
             (leiosScheduler getSlotDelay leiosNotifyContext leiosSchedule)
         pure leiosNotifyContext
   let mkLeiosFetchContext = do
-        leiosConn <- LeiosDemoDb.open leiosDb -- XXX: leaks resources
+        leiosConn <- LeiosDemoDb.openReader leiosDb -- XXX: leaks resources
         LeiosLogic.MkSomeLeiosFetchContext
           <$> LeiosLogic.newLeiosFetchContext leiosConn
   ImmutableDB.withDB

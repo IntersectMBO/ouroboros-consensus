@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -7,7 +7,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module LeiosDemoDb.SQLite
-  ( newLeiosDBSQLiteFromEnv
+  ( withLeiosDBSQLiteFromEnv
+  , withLeiosDBSQLite
   , newLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -24,14 +25,13 @@ module LeiosDemoDb.SQLite
 
 import Cardano.Prelude (forM_, traverse_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , dupTChan
   , newBroadcastTChan
   , writeTChan
   )
-import Control.Exception (throwIO)
+import Control.Exception (bracket, throwIO)
 import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow (generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
@@ -50,16 +50,18 @@ import Database.SQLite3
   , open2
   )
 import qualified Database.SQLite3.Direct as DB
-import GHC.Clock (getMonotonicTime)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoDb.Common
   ( CompletedEbs
-  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , Promise (..)
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
+import LeiosDemoDb.Writer (Submit (..), newWorker)
 import LeiosDemoException (LeiosDbException (..))
 import LeiosDemoTypes
   ( BytesSize
@@ -74,40 +76,68 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (die)
-import System.Random (randomIO)
 
 -- * Public API
 
--- | Create a new Leios database connection from environment variable.
--- This looks up the LEIOS_DB_PATH environment variable and opens the database.
-newLeiosDBSQLiteFromEnv :: Tracer IO TraceLeiosDb -> IO (LeiosDbHandle IO)
-newLeiosDBSQLiteFromEnv tracer = do
+-- | 'withLeiosDBSQLite' on the path in @LEIOS_DB_PATH@.
+withLeiosDBSQLiteFromEnv ::
+  Tracer IO TraceLeiosDb ->
+  (LeiosDbHandle IO -> IO a) ->
+  IO a
+withLeiosDBSQLiteFromEnv tracer action = do
   dbPath <-
     lookupEnv "LEIOS_DB_PATH" >>= \case
       Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
       Just x -> pure x
-  newLeiosDBSQLite tracer dbPath
+  withLeiosDBSQLite tracer dbPath action
 
--- | Create a new Leios database using the SQLite implementation at given file
--- path.
+-- | Open a Leios database on the given file, for the duration of the action.
 --
--- Each call to 'open' on the returned handle creates a new SQLite connection.
--- Connections are not thread-safe and should not be shared across threads.
+-- The database owns the write connection and its worker: SQLite admits one
+-- writer, so there is exactly one, created here and torn down on exit.
+-- 'openWriter' hands that one out; 'openReader' opens a connection per reader.
+withLeiosDBSQLite ::
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  (LeiosDbHandle IO -> IO a) ->
+  IO a
+withLeiosDBSQLite tracer dbPath action = do
+  notificationChan <- atomically newBroadcastTChan
+  bracket (startWriter tracer dbPath) swStop $ \shared ->
+    action (sqliteHandle shared notificationChan tracer dbPath)
+
+-- | 'withLeiosDBSQLite' for an owner whose lifetime /is/ the process: the
+-- write connection and its worker are never torn down.
+--
+-- For the node, which holds one database until it exits, that is what scoping
+-- would achieve anyway. Anything that opens databases repeatedly -- tests, the
+-- benchmark -- wants 'withLeiosDBSQLite' instead, or it accumulates a
+-- connection and a thread per database.
 newLeiosDBSQLite :: Tracer IO TraceLeiosDb -> FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite tracer dbPath = do
   notificationChan <- atomically newBroadcastTChan
-  pure $
-    LeiosDbHandle
-      { subscribeEbNotifications =
-          atomically (dupTChan notificationChan)
-      , -- No-op for now; see 'leiosDbGarbageCollect'. A real implementation
-        -- would open a transient connection and evict the no-longer-needed rows.
-        leiosDbGarbageCollect = \_slotNo -> pure ()
-      , -- No-op for now; see 'leiosDbPromoteToImmutable'. A real implementation
-        -- would copy the EB's body and closure rows into immutable storage.
-        leiosDbPromoteToImmutable = \_point -> pure ()
-      , open = openSQLiteConnection tracer dbPath notificationChan
-      }
+  shared <- startWriter tracer dbPath
+  pure (sqliteHandle shared notificationChan tracer dbPath)
+
+sqliteHandle ::
+  SharedWriter ->
+  StrictTChan IO LeiosEbNotification ->
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  LeiosDbHandle IO
+sqliteHandle shared notificationChan tracer dbPath =
+  LeiosDbHandle
+    { subscribeEbNotifications =
+        atomically (dupTChan notificationChan)
+    , -- No-op for now; see 'leiosDbGarbageCollect'. A real implementation
+      -- would open a transient connection and evict the no-longer-needed rows.
+      leiosDbGarbageCollect = \_slotNo -> pure ()
+    , -- No-op for now; see 'leiosDbPromoteToImmutable'. A real implementation
+      -- would copy the EB's body and closure rows into immutable storage.
+      leiosDbPromoteToImmutable = \_point -> pure ()
+    , openReader = openSQLiteReader tracer dbPath
+    , openWriter = pure (sqliteWriter shared notificationChan tracer)
+    }
 
 -- * Connection management
 
@@ -199,14 +229,112 @@ useStmt :: DB.Statement -> IO a -> IO a
 useStmt stmt action =
   action `MonadThrow.finally` (void $ DB.reset stmt)
 
-openSQLiteConnection ::
+-- | Page cache for the writer connection, in KiB. Override with
+-- @LEIOS_DB_WRITER_CACHE_KIB@ to sweep it; see the @leios-db-bench@ benchmark.
+writerCacheKiB :: IO Int
+writerCacheKiB =
+  lookupEnv "LEIOS_DB_WRITER_CACHE_KIB" >>= \case
+    Just v | [(n, "")] <- reads v -> pure n
+    _ -> pure defaultWriterCacheKiB
+
+-- Modest on purpose. A sweep from 2 MiB to 512 MiB moved the uncontended
+-- (minimum) time by ~8%, i.e. not at all, so there is nothing to justify
+-- spending hundreds of MiB per node here.
+defaultWriterCacheKiB :: Int
+defaultWriterCacheKiB = 16384
+
+-- | What a connection is for. Since the single writer is the only thread that
+-- ever writes, and every other connection only reads, the two can be opened
+-- differently -- which was not expressible while any connection might do
+
+-- | The write connection and its worker. One per database, created with it.
+data SharedWriter = SharedWriter
+  { swConn :: !Conn
+  , swSubmit :: !(Submit IO)
+  , swStop :: !(IO ())
+  -- ^ Drain the queue, stop the worker, close the connection.
+  }
+
+-- | Depth of the write queue; see 'newWorker'.
+writerQueueDepth :: Int
+writerQueueDepth = numUpstreamPeers + forge + slack
+ where
+  numUpstreamPeers = 20
+  forge = 1
+  slack = 2
+
+startWriter :: Tracer IO TraceLeiosDb -> FilePath -> IO SharedWriter
+startWriter tracer dbPath = do
+  (conn, closeConn) <- openConn WriterRole tracer dbPath
+  (submit, stopWorker) <- newWorker writerQueueDepth
+  pure
+    SharedWriter
+      { swConn = conn
+      , swSubmit = submit
+      , swStop = stopWorker >> closeConn
+      }
+
+-- | The database's one writer. Nothing is allocated here, so nothing has to be
+-- reference counted: every caller submits to the same worker.
+sqliteWriter ::
+  SharedWriter ->
+  StrictTChan IO LeiosEbNotification ->
+  Tracer IO TraceLeiosDb ->
+  LeiosDbWriter IO
+sqliteWriter shared notificationChan tracer =
+  LeiosDbWriter
+    { -- Not a teardown -- the connection outlives every writer. Submitting a
+      -- no-op and waiting for it flushes: the queue is FIFO, so when this
+      -- lands, everything this caller submitted already has.
+      close = void . await =<< submit (pure ())
+    , writeEbPoint = \point ebBytesSize ->
+        submit (sqlInsertEbPoint conn point ebBytesSize)
+    , writeEbBody = \point eb ->
+        submit (sqlInsertEbBody tracer conn notify point eb)
+    , writeTxs = \txs ->
+        submit (sqlInsertTxs tracer conn notify txs)
+    }
+ where
+  Submit submit = swSubmit shared
+  conn = swConn shared
+  notify = atomically . writeTChan notificationChan
+
+-- | Open a reader. Each gets its own connection, so any number may run
+-- concurrently.
+openSQLiteReader :: Tracer IO TraceLeiosDb -> FilePath -> IO (LeiosDbReader IO)
+openSQLiteReader tracer dbPath = do
+  (conn, closeConn) <- openConn ReaderRole tracer dbPath
+  pure
+    LeiosDbReader
+      { close = closeConn
+      , lookupEbBody = sqlLookupEbBody conn
+      , lookupEbClosure = sqlLookupEbClosure conn
+      , batchRetrieveTxs = sqlBatchRetrieveTxs conn
+      , scanEbPoints = sqlScanEbPoints conn
+      , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
+      }
+
+-- | What a connection is for. Since the single writer is the only thread that
+-- ever writes, and every other connection only reads, the two can be opened
+-- differently -- which was not expressible while any connection might do
+-- anything.
+data ConnRole
+  = -- | The one connection owned by 'LeiosDemoDb.Writer'.
+    WriterRole
+  | -- | Serving peers, chain selection, the forge's closure reads.
+    ReaderRole
+  deriving (Eq, Show)
+
+-- | Open one connection, tuned for its role, and return it with its closer.
+-- The callers above turn it into a reader or hand it to the write worker.
+openConn ::
+  ConnRole ->
   Tracer IO TraceLeiosDb ->
   FilePath ->
-  StrictTChan IO LeiosEbNotification ->
-  IO (LeiosDbConnection IO)
-openSQLiteConnection tracer dbPath notificationChan = do
+  IO (Conn, IO ())
+openConn role tracer dbPath = do
   shouldInitSchema <- not <$> doesFileExist dbPath
-  db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
+  db <- open2 (fromString dbPath) openFlags SQLVFSDefault
   traverse_ (dbExec db) $
     [ -- First, before any pragma that takes a lock -- 'journal_mode' does. Until
       -- this runs the timeout is zero, so a contended lock is refused outright
@@ -239,21 +367,40 @@ openSQLiteConnection tracer dbPath notificationChan = do
     ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
+  -- Strictly after the schema, which a read-limited connection could not
+  -- create. A reader can legitimately be the first to open a fresh database --
+  -- the ChainDB scans for acquired closures at startup, before the kernel
+  -- builds the writer.
+  rolePragmas >>= traverse_ (dbExec db . fromString)
   stmts <- prepareStmts db
   let conn = Conn{connDb = db, connStmts = stmts, connTracer = tracer}
-      notify = atomically . writeTChan notificationChan
-  pure $
-    LeiosDbConnection
-      { close = finalizeStmts stmts >> void (DB.close db)
-      , leiosDbScanEbPoints = sqlScanEbPoints conn
-      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
-      , leiosDbInsertEbPoint = sqlInsertEbPoint conn
-      , leiosDbLookupEbBody = sqlLookupEbBody conn
-      , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
-      , leiosDbInsertTxs = sqlInsertTxs tracer conn notify
-      , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs conn
-      , leiosDbLookupEbClosure = sqlLookupEbClosure conn
-      }
+  pure (conn, finalizeStmts stmts >> void (DB.close db))
+ where
+  -- 'SQLOpenNoMutex' (multi-thread mode) drops SQLite's own per-connection
+  -- mutex. Safe only because no connection is shared between threads: the
+  -- writer's belongs to its worker, and each reader opens its own.
+  --
+  -- Readers stay 'SQLOpenReadWrite' rather than 'SQLOpenReadOnly', and are held
+  -- to reads by 'query_only' below instead. A read-only connection cannot
+  -- create or recover the -wal/-shm sidecars, which would make opening order
+  -- load-bearing; this keeps the enforcement without the ordering constraint.
+  openFlags = [SQLOpenReadWrite, SQLOpenCreate, SQLOpenNoMutex]
+
+  rolePragmas = case role of
+    -- The writer is the only connection that dirties pages, and it scatters
+    -- across two hash-keyed indexes, so it is the only one worth a large page
+    -- cache. (Negative = KiB rather than pages.)
+    WriterRole -> do
+      kib <- writerCacheKiB
+      pure ["pragma cache_size = -" <> show kib <> ";"]
+    -- A generous mmap window: these are the read-heavy paths, and on a large
+    -- database reads dominate the workload.
+    --
+    -- Deliberately /not/ 'query_only': in-process writes all go through the
+    -- writer, but 'open' is still a general-purpose connection that the
+    -- leiosdemo app and the tests write through, so enforcing read-only here
+    -- would break them. The single-writer property is structural, not a pragma.
+    ReaderRole -> pure ["pragma mmap_size = 1073741824;"]
 
 -- * Top-level implementations
 
@@ -826,55 +973,9 @@ dbWithTransaction = dbWithTransactionAs "BEGIN"
 -- start over. Taking the lock at BEGIN removes the upgrade, so contention
 -- surfaces here instead, where waiting actually resolves it.
 dbWithWriteTransaction :: HasCallStack => Conn -> IO a -> IO a
-dbWithWriteTransaction conn k = getMonotonicTime >>= go 0
+dbWithWriteTransaction conn = dbWithTransactionAs "BEGIN IMMEDIATE" db
  where
-  Conn{connDb = db, connTracer = tracer} = conn
-
-  -- After this many refusals, a write transaction is no longer merely
-  -- contended.
-  --
-  -- This picks which constructor gets traced and nothing else. Crossing it does
-  -- not change how long we wait, does not throw, and does not abandon anything
-  -- -- 'dbWithWriteTransaction' retries forever either way. It exists only so
-  -- that the severity in the log matches the severity of the situation.
-  --
-  -- Each attempt is a full 'busy_timeout', so this is about half a minute of one
-  -- writer making no progress, re-traced every half minute it stays that way.
-  busyStuckAfter = 30
-
-  go !attempt t0 =
-    fmap (first fst) (DB.exec db (fromString "BEGIN IMMEDIATE")) >>= \case
-      Left DB.ErrorBusy -> do
-        -- Unbounded, deliberately. Nothing is held while waiting here -- that is
-        -- the whole point of taking the lock at BEGIN -- so waiting costs
-        -- latency and nothing else, whereas giving up throws, and a throw on
-        -- this path kills the Leios threads outright. Past
-        -- 'busyStuckAfter' attempts that is no longer ordinary contention, so
-        -- say so at a severity someone will notice, and keep waiting.
-        --
-        -- The wait is measured, not accumulated: most of it happens inside
-        -- SQLite's own busy handler, so summing the sleeps below would report a
-        -- fraction of the truth and disagree with the log timestamps.
-        now <- getMonotonicTime
-        let n = attempt + 1
-            waitedMs = 1000 * (now - t0)
-        traceWith tracer $
-          if n >= busyStuckAfter && n `mod` busyStuckAfter == 0
-            then TraceLeiosDbBusyStuck n waitedMs
-            else TraceLeiosDbBusyRetry n waitedMs
-        busyBackoff
-        go n t0
-      Left e -> throwDbException db e
-      Right () ->
-        fmap fst $
-          generalBracket
-            (pure ())
-            ( \() -> \case
-                MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
-                MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
-                MonadThrow.ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
-            )
-            (\() -> k)
+  Conn{connDb = db} = conn
 
 dbWithTransactionAs :: HasCallStack => String -> DB.Database -> IO a -> IO a
 dbWithTransactionAs begin db k =
@@ -899,22 +1000,11 @@ dbStep1 stmt = withDieDoneStmt stmt $ DB.stepNoCB stmt
 -- violation (duplicate key). Other errors are thrown as usual.
 dbStepInsert :: HasCallStack => DB.Statement -> IO Bool
 dbStepInsert stmt =
-  go maxBusyRetries (DB.stepNoCB stmt)
- where
-  go 0 io =
-    io >>= \case
-      Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
-      Right DB.Done -> pure True
-      Right DB.Row -> error "dbStepInsert: unexpected Row result"
-  go n io =
-    io >>= \case
-      Left DB.ErrorBusy -> do
-        busyBackoff
-        go (n - 1) io
-      Left DB.ErrorConstraint -> pure False
-      Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
-      Right DB.Done -> pure True
-      Right DB.Row -> error "dbStepInsert: unexpected Row result"
+  DB.stepNoCB stmt >>= \case
+    Left DB.ErrorConstraint -> pure False
+    Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
+    Right DB.Done -> pure True
+    Right DB.Row -> error "dbStepInsert: unexpected Row result"
 
 -- | Step an INSERT statement, absorbing UNIQUE/PRIMARY KEY violations and
 -- emitting a 'TraceLeiosDbInsertCollision' for each one. The caller supplies a
@@ -939,50 +1029,19 @@ dbStepInsertOrTrace tracer table key stmt = do
 
 -- ** Error "handling"
 
--- | How many times a busy statement is re-attempted /after/ SQLite's own
--- 'busy_timeout' has already expired on that attempt, before it throws.
+-- | Execute a database action that may return an error, throwing
+-- 'LeiosDbException' (which no caller catches -- the node dies) if it does.
 --
--- Exhausting these throws 'LeiosDbException', which no caller catches: it leaves
--- the Leios thread it was raised in, and the node dies. That is the intent.
--- Unlike 'dbWithWriteTransaction', these retries happen /inside/ an open
--- transaction, so waiting is not free -- the transaction holds its snapshot
--- throughout, and a connection that sits on a stale snapshot indefinitely is
--- exactly what pins the WAL and stops back-fill. Half a minute of a statement
--- refusing inside a transaction is not contention, it is a deadlock, and dying
--- is better than silently wedging the log.
---
--- With 'busy_timeout' doing the real waiting, each attempt costs about a
--- timeout, so the ceiling is linear -- roughly 30 s -- rather than the quadratic
--- 83 minutes the escalating sleep used to reach at the old value of 10000.
-maxBusyRetries :: Int
-maxBusyRetries = 30
-
--- | A short fixed pause between attempts.
---
--- Deliberately not escalating.
-busyBackoff :: IO ()
-busyBackoff = do
-  jitter <- (`mod` 5000) <$> randomIO
-  threadDelay (20000 + jitter)
-
--- | Execute a database action that may return an error. If the error is
--- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with linear backoff and
--- jitter. Otherwise and after exhausting retries, throws a 'LeiosDbException'
--- with the error message from the database.
+-- No @SQLITE_BUSY@ retry loop: writes are serialised through the single
+-- writer, so no second writer in this process can refuse one, and
+-- @busy_timeout@ absorbs the only remaining case -- another process (the
+-- leiosdemo app, the DB analyser) holding the write lock -- down in C, with no
+-- Haskell-level sleeping.
 withDie :: HasCallStack => DB.Database -> IO (Either DB.Error a) -> IO a
-withDie db = go maxBusyRetries
- where
-  go 0 io =
-    io >>= \case
-      Left e -> throwDbException db e
-      Right x -> pure x
-  go n io =
-    io >>= \case
-      Left DB.ErrorBusy -> do
-        busyBackoff
-        go (n - 1) io
-      Left e -> throwDbException db e
-      Right x -> pure x
+withDie db io =
+  io >>= \case
+    Left e -> throwDbException db e
+    Right x -> pure x
 
 withDieStmt :: HasCallStack => DB.Statement -> IO (Either DB.Error a) -> IO a
 withDieStmt stmt io = do

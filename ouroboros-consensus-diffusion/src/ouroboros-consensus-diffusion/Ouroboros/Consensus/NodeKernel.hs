@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -229,6 +230,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     getLeiosDB :: LeiosDbHandle m
   -- ^ Factory for opening per-thread connections to the Leios demo DB
   -- and subscribing to EB-notification events.
+  , getLeiosDbWriter :: LeiosDb.LeiosDbWriter m
+  -- ^ The node's single Leios DB writer. Every write goes through it, so no
+  -- connection is ever driven by two threads; the forge awaits its writes,
+  -- the fetch path does not.
   , getLeiosVoteState :: LeiosVoteState m
   -- ^ Aggregated vote state across all peers. Empty in S4; populated
   -- by the voting thread in S5.
@@ -289,7 +294,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosDB :: LeiosDbHandle m
   -- ^ Factory for opening per-thread Leios DB connections. Each consumer
   -- (forge loop, leios fetch logic, LeiosNotify / LeiosFetch handlers)
-  -- opens its own connection from this handle. 'LeiosDbConnection' is
+  -- opens its own connection from this handle. 'LeiosDbReader' is
   -- documented as not thread-safe, so connections must not be shared.
   , leiosTxCache :: LeiosTxCache m () () Leios.SerializedEbBody
   -- ^ The in-memory tx-presence index. Created in "Ouroboros.Consensus.Node"
@@ -349,6 +354,7 @@ initNodeKernel
           , leiosTxCache = getLeiosTxCache
           , leiosPeersVars = getLeiosPeersVars
           , leiosVoteState
+          , leiosDbWriter
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
@@ -680,6 +686,7 @@ initNodeKernel
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
         , getLeiosDB = leiosDB
+        , getLeiosDbWriter = leiosDbWriter
         , getLeiosVoteState = leiosVoteState
         , getLeiosPeersVars = getLeiosPeersVars
         , getLeiosOutstanding = getLeiosOutstanding
@@ -734,6 +741,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
   , leiosDB :: LeiosDbHandle m
+  , leiosDbWriter :: LeiosDb.LeiosDbWriter m
   , -- Leios fetch-logic state; consumed in 'initNodeKernel'.
     leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , leiosReady :: MVar.MVar m ()
@@ -809,12 +817,16 @@ initInternalState
           NotOrigin s -> s
     leiosOutstanding <- do
       acquiredClosures <-
-        LeiosDb.withLeiosDb leiosDB $ \leiosConn ->
-          LeiosDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot leiosConn immTipSlot
+        LeiosDb.withReader leiosDB $ \leiosConn ->
+          LeiosDb.scanCompleteEbClosuresNotOlderThanSlot leiosConn immTipSlot
       MVar.newMVar $
         Leios.initializeLeiosOutstanding leiosFetchRng acquiredClosures immTipSlot
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
+    -- One writer for the whole node: the forge and every peer's fetch client
+    -- submit to it, so no Leios DB connection is ever driven by two threads.
+    leiosDbWriter <-
+      LeiosDb.allocateWriter registry leiosDB
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
@@ -897,7 +909,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                           leiosCentralState
                           (leiosOutstanding, leiosReady)
                           leiosTxCache
-                          leiosConn
+                          leiosDbWriter
                           systemTime
                           -- Safe here: the forge hands us a corresponding header
                           -- and closure.
@@ -910,17 +922,17 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   label :: String
   label = "NodeKernel.blockForging"
 
-  -- 'LeiosDbConnection' is not thread-safe, so we open one per
+  -- 'LeiosDbReader' is not thread-safe, so we open one per
   -- forge-credentials thread (and close it when the thread exits).
   allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    leiosConn <- LeiosDb.open leiosDB
+    leiosConn <- LeiosDb.openReader leiosDB
     rootCCtx <- rootCallCtx "Forge"
     pure (bf, leiosConn, rootCCtx)
 
   finalizeForging (bf, leiosConn, _) = do
-    LeiosDb.close leiosConn
+    leiosConn.close
     finalize bf
 
 {-------------------------------------------------------------------------------

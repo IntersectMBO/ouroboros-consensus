@@ -27,7 +27,7 @@ import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor ((<&>))
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoTypes (LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -119,7 +119,7 @@ chainSyncBlocksServer ::
   Tracer m (TraceChainSyncServerEvent blk) ->
   ChainDB m blk ->
   CodecConfig blk ->
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
   ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
 chainSyncBlocksServer tracer chainDB ccfg leiosDb flr = ChainSyncServer $ do

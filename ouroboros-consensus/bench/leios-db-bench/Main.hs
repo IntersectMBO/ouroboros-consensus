@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
@@ -10,11 +11,11 @@
 --   EBs via 'leiosDbInsertEbPoint' → 'leiosDbInsertEbBody' → 'leiosDbInsertTxs'.
 --
 -- * __Fetch servers__ (configurable, default 3 threads): each does 30
---   'leiosDbLookupEbBody' + 10 'leiosDbBatchRetrieveTxs' calls cycling through
+--   'lookupEbBody' + 10 'batchRetrieveTxs' calls cycling through
 --   the pre-populated EBs.
 --
 -- * __Chain-sel reader__ (1 thread): mimics the block-apply path via
---   'leiosDbLookupEbClosure' — the same read that 'resolveLeiosClosure'
+--   'lookupEbClosure' — the same read that 'resolveLeiosClosure'
 --   issues per Dijkstra-era CertRB.
 --
 -- * __GC ticker__ (1 thread): periodic 'leiosDbGarbageCollect' calls (a
@@ -33,7 +34,7 @@ module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (debugTracer, (>$<))
 import qualified Data.ByteString as BS
@@ -42,17 +43,18 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
-  ( LeiosDbConnection
-  , LeiosDbHandle (..)
-  , leiosDbBatchRetrieveTxs
+  ( LeiosDbHandle (..)
+  , LeiosDbReader
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , batchRetrieveTxs
   , leiosDbGarbageCollect
-  , leiosDbInsertEbBody
-  , leiosDbInsertEbPoint
-  , leiosDbInsertTxs
-  , leiosDbLookupEbBody
-  , leiosDbLookupEbClosure
-  , newLeiosDBSQLite
-  , withLeiosDb
+  , lookupEbBody
+  , lookupEbClosure
+  , scanEbPoints
+  , withLeiosDBSQLite
+  , withReader
+  , withWriter
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -62,19 +64,27 @@ import LeiosDemoTypes
   , TxHash (..)
   , encodeLeiosEbSize
   )
+import System.Directory (copyFile, doesFileExist, getFileSize)
+import System.Environment (lookupEnv)
 import System.IO (hFlush, stdout)
 import System.IO.Temp (withSystemTempDirectory)
 
 main :: IO ()
 main = do
+  mSeed <- lookupEnv seedEnvVar
   putStr $
     unlines
       [ "LeiosDemoDb concurrent benchmark"
       , ""
       , "Database setup:"
-      , "  EBs pre-populated : " <> show numPrePopulatedEbs
-      , "  TXs per EB        : " <> show txsPerEb
-      , "  Total TXs         : " <> show (numPrePopulatedEbs * txsPerEb)
+      , case mSeed of
+          Nothing ->
+            "  synthetic         : "
+              <> show numPrePopulatedEbs
+              <> " EBs × "
+              <> show txsPerEb
+              <> " TXs"
+          Just p -> "  recorded seed     : " <> p
       , ""
       , "Concurrent workload per iteration:"
       , "  Fetch clients   (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
@@ -82,12 +92,84 @@ main = do
       , "  Chain-sel reader(×1): " <> show numChainSelReads <> " lookupEbClosure calls"
       , "  GC ticker       (×1): " <> show numGcTicks <> " garbageCollect calls"
       , ""
-      , "Runs: 1 warmup + " <> show numRuns <> " timed"
+      , "Runs: 1 warmup + " <> show numRuns <> " timed, per write mode"
       , ""
       ]
-  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
-    env <- setupBenchEnv tmpDir
-    runBench (benchConcurrentAll env)
+  modes <- selectedModes
+  forM_ modes $ \mode -> do
+    putStrLn $ describeMode mode
+    withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
+      withBenchDb mSeed tmpDir $ \db -> do
+        points <- benchPoints mSeed db
+        writerIdx <- newIORef numPrePopulatedEbs
+        let env = BenchEnv db points writerIdx
+        withWriter db $ \writer ->
+          runBench $ benchConcurrentAll env (clientWrites mode writer)
+    putStrLn ""
+
+-- | Which write modes to run, as a comma-separated list of constructor names
+-- in @LEIOS_DB_BENCH_MODES@ (default: all). Restricting to one mode matters
+-- when seeding from a recording, since each mode copies the seed afresh.
+selectedModes :: IO [WriteMode]
+selectedModes =
+  lookupEnv "LEIOS_DB_BENCH_MODES" >>= \case
+    Nothing -> pure [minBound .. maxBound]
+    Just spec -> case traverse parse (splitOn ',' spec) of
+      Just ms -> pure ms
+      Nothing -> fail ("LEIOS_DB_BENCH_MODES: cannot parse " <> spec)
+ where
+  parse name = lookup name [(show m, m) | m <- [minBound .. maxBound]]
+  splitOn c str = case break (== c) str of
+    (chunk, []) -> [chunk]
+    (chunk, _ : rest) -> chunk : splitOn c rest
+
+-- | Point an existing (recorded) @leios.db@ at the benchmark, e.g. one of the
+-- multi-GB devnet databases. It is copied into the temp dir first, so the
+-- recording is never mutated -- budget the disk and the copy time.
+seedEnvVar :: String
+seedEnvVar = "LEIOS_DB_BENCH_SEED"
+
+-- | How the fetch clients get their writes to disk.
+-- | Writes all go through 'LeiosDbWriter'; what varies is whether the client
+-- waits for them. (Concurrent per-client write connections are no longer
+-- expressible, which is the point of that API.)
+data WriteMode
+  = -- | Each write awaited before the next is submitted.
+    Awaited
+  | -- | Promises dropped: what a fetch client actually pays before returning
+    -- to its mini-protocol. The last promise is awaited, so the timing still
+    -- covers durability.
+    FireAndForget
+  deriving (Bounded, Enum, Eq, Show)
+
+describeMode :: WriteMode -> String
+describeMode = \case
+  Awaited -> "Awaited (each write waited for)"
+  FireAndForget -> "FireAndForget (promises dropped, last one awaited)"
+
+-- | Submit one EB (point, body, txs), and hand back the action that waits for
+-- it to be durable.
+type InsertEb = Int -> IO (IO ())
+
+-- | Give a client body an 'InsertEb', owning whatever connection that needs
+-- for the body's lifetime (one per client, as a fetch client has).
+type ClientWrites = (InsertEb -> IO ()) -> IO ()
+
+-- | Submit an EB's three writes. Awaiting the last is enough to know all
+-- three landed: the writer is FIFO.
+clientWrites :: WriteMode -> LeiosDbWriter IO -> ClientWrites
+clientWrites mode writer body =
+  body $ \ebIdx -> do
+    let point = genPoint ebIdx
+        eb = genEb ebIdx
+        txs = [(h, genTx h) | txIdx <- [0 .. txsPerEb - 1], let h = genTxHash ebIdx txIdx]
+        waitFor p = case mode of
+          Awaited -> void (await p)
+          FireAndForget -> pure ()
+    writeEbPoint writer point (encodeLeiosEbSize eb) >>= waitFor
+    writeEbBody writer point eb >>= waitFor
+    lastWrite <- writeTxs writer txs
+    pure (void (await lastWrite))
 
 -- * Configuration
 
@@ -122,15 +204,15 @@ numRuns = 5
 -- * The benchmark
 
 -- | All production roles running concurrently against one DB handle.
-benchConcurrentAll :: BenchEnv -> IO ()
-benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerIdxRef} = do
+benchConcurrentAll :: BenchEnv -> ClientWrites -> IO ()
+benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerIdxRef} clientWrites = do
   startIdx <-
     atomicModifyIORef'
       writerIdxRef
       (\n -> (n + numFetchClients * ebsPerClient, n))
   cs <- async (chainSelReader db points)
   gc <- async (gcTicker db)
-  clients <- forM (clientRanges startIdx) $ \range -> async (fetchClient db range)
+  clients <- forM (clientRanges startIdx) $ \range -> async (fetchClient clientWrites range)
   mapConcurrently_ (fetchServer db points) [0 .. numFetchServers - 1]
   wait cs >> wait gc
   forM_ clients wait
@@ -142,18 +224,23 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
     ]
 
 -- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
-fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
-fetchClient db range =
-  withLeiosDb db $ \c ->
-    forM_ range (insertOneEb c)
+--
+-- Awaits are collected and settled at the end, so an asynchronous write mode
+-- is still timed to durability -- what it saves is the client's own blocking,
+-- not the work.
+fetchClient :: ClientWrites -> [Int] -> IO ()
+fetchClient clientWrites range =
+  clientWrites $ \insertEb -> do
+    awaits <- forM range insertEb
+    sequence_ awaits
 
 -- | Mirrors chain-selection's block-apply path: repeated
--- 'leiosDbLookupEbClosure' for the tx closure of each certified EB.
+-- 'lookupEbClosure' for the tx closure of each certified EB.
 chainSelReader :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
 chainSelReader db points =
-  withLeiosDb db $ \c ->
+  withReader db $ \c ->
     forM_ (take numChainSelReads (cycle points)) $ \p ->
-      leiosDbLookupEbClosure c p.pointEbHash
+      lookupEbClosure c p.pointEbHash
 
 -- | Fires periodic garbage-collect calls. Handle-level operation; touches
 -- every table when implemented (currently a no-op backend-side, but the
@@ -166,9 +253,9 @@ gcTicker db =
 -- | Mirrors a fetch server: looks up EB bodies and retrieves TX batches.
 fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()
 fetchServer db points i =
-  withLeiosDb db $ \c -> do
-    forM_ ebPoints $ \p -> leiosDbLookupEbBody c p.pointEbHash
-    forM_ txPoints $ \p -> leiosDbBatchRetrieveTxs c p.pointEbHash sampleOffsets
+  withReader db $ \c -> do
+    forM_ ebPoints $ \p -> lookupEbBody c p.pointEbHash
+    forM_ txPoints $ \p -> batchRetrieveTxs c p.pointEbHash sampleOffsets
  where
   sampleOffsets = [0, 10 .. txsPerEb - 1]
   ebPoints = take 30 $ drop (i * 30) (cycle points)
@@ -185,20 +272,49 @@ data BenchEnv = BenchEnv
   -- a fresh range of EB indices for writers (avoids duplicate-key errors).
   }
 
--- | Create a fresh SQLite DB and insert 'numPrePopulatedEbs' complete EBs.
--- This setup cost is not included in the timed measurements.
-setupBenchEnv :: FilePath -> IO BenchEnv
-setupBenchEnv tmpDir = do
-  db <- newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.db")
-  putStr "Inserting EBs: " >> hFlush stdout
-  forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
-    withLeiosDb db (`insertOneEb` i)
-    when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
-      putStr (show (i + 1) <> " ") >> hFlush stdout
-  putStrLn "done"
-  let points = [genPoint i | i <- [0 .. numPrePopulatedEbs - 1]]
-  writerIdx <- newIORef numPrePopulatedEbs
-  pure $ BenchEnv db points writerIdx
+-- | Open the benchmark database: either a fresh one pre-populated with
+-- 'numPrePopulatedEbs' synthetic EBs, or a copy of a recorded one.
+--
+-- Setup cost is not included in the timed measurements.
+withBenchDb :: Maybe FilePath -> FilePath -> (LeiosDbHandle IO -> IO a) -> IO a
+withBenchDb mSeed tmpDir action = case mSeed of
+  Just seed -> do
+    exists <- doesFileExist seed
+    when (not exists) $ fail (seedEnvVar <> ": no such file: " <> seed)
+    size <- getFileSize seed
+    putStr ("Copying recorded DB (" <> show (size `div` 1_000_000) <> " MB): ")
+      >> hFlush stdout
+    copyFile seed dbPath
+    -- The sidecars matter: a recording checkpointed lazily keeps committed
+    -- pages in the WAL, so copying only the .db silently loses them.
+    forM_ ["-wal", "-shm"] $ \ext -> do
+      let from = seed <> ext
+      present <- doesFileExist from
+      when present $ copyFile from (dbPath <> ext)
+    putStrLn "done"
+    withLeiosDBSQLite (show >$< debugTracer) dbPath action
+  Nothing -> withLeiosDBSQLite (show >$< debugTracer) dbPath $ \db -> do
+    putStr "Inserting EBs: " >> hFlush stdout
+    forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
+      withWriter db (`insertOneEb` i)
+      when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
+        putStr (show (i + 1) <> " ") >> hFlush stdout
+    putStrLn "done"
+    action db
+ where
+  dbPath = tmpDir <> "/bench.db"
+
+-- | The EBs the read-side roles cycle through: whatever the recording holds,
+-- or the synthetic ones we just inserted.
+benchPoints :: Maybe FilePath -> LeiosDbHandle IO -> IO [LeiosPoint]
+benchPoints mSeed db = case mSeed of
+  Nothing -> pure [genPoint i | i <- [0 .. numPrePopulatedEbs - 1]]
+  Just _ -> do
+    recorded <- withReader db scanEbPoints
+    let points = [MkLeiosPoint slot ebHash | (slot, ebHash) <- take numPrePopulatedEbs recorded]
+    when (null points) $ fail "recorded DB has no EB points to read"
+    putStrLn $ "  reading " <> show (length points) <> " recorded EBs"
+    pure points
 
 -- * Timing
 
@@ -236,8 +352,8 @@ showTime t
 -- * DB helpers
 
 -- | Insert one complete EB (point + body + all TXs) by index.
-insertOneEb :: Monad m => LeiosDbConnection m -> Int -> m ()
-insertOneEb conn ebIdx = do
+insertOneEb :: LeiosDbWriter IO -> Int -> IO ()
+insertOneEb writer ebIdx = do
   let point = genPoint ebIdx
       eb = genEb ebIdx
       txs =
@@ -245,10 +361,9 @@ insertOneEb conn ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         , let h = genTxHash ebIdx txIdx
         ]
-  leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
-  _ <- leiosDbInsertEbBody conn point eb
-  _ <- leiosDbInsertTxs conn txs
-  pure ()
+  _ <- writeEbPoint writer point (encodeLeiosEbSize eb)
+  _ <- writeEbBody writer point eb
+  void . await =<< writeTxs writer txs
 
 -- * Deterministic data generation
 
