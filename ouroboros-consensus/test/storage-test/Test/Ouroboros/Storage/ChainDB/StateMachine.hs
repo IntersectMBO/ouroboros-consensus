@@ -881,6 +881,14 @@ data GenState blk
   -- 'genAddPerasCert'. We don't want to discard these because they can be used
   -- to fill gaps between existing blocks added via 'AddBlock', simulating
   -- blocks and certificates arriving out of order.
+  , generatedSlots :: Map (HeaderHash blk) SlotNo
+  -- ^ The slot of every block ever generated, so that 'genAddBlock' can supply
+  -- a block's predecessor slot.
+  --
+  -- Never pruned, unlike the model's own stores: garbage collection drops a
+  -- block from the VolatileDB, and only a block that was copied reaches the
+  -- ImmutableDB, so 'Model.blocks' can lose a predecessor that a later
+  -- generated block still names.
   }
   deriving Generic
 
@@ -896,6 +904,7 @@ emptyGenState :: GenState blk
 emptyGenState =
   GenState
     { seenBlocks = Map.empty
+    , generatedSlots = Map.empty
     }
 
 -- | Use the extra state stored in a generated command to update a model's
@@ -907,8 +916,8 @@ updateGenState ::
   GenState blk
 updateGenState cmd gs =
   case unAt cmd of
-    AddBlock _ _ (Persistent blks) -> saveSeenBlocks blks gs
-    AddPerasCert _ (Persistent blks) -> saveSeenBlocks blks gs
+    AddBlock blk _ (Persistent blks) -> saveSeenBlocks blks $ saveSlots (blk : blks) gs
+    AddPerasCert _ (Persistent blks) -> saveSeenBlocks blks $ saveSlots blks gs
     _ -> gs
  where
   saveSeenBlocks blks gs' =
@@ -917,6 +926,14 @@ updateGenState cmd gs =
           Map.union
             (Map.fromList [(blockHash blk, blk) | blk <- blks])
             (seenBlocks gs')
+      }
+
+  saveSlots blks gs' =
+    gs'
+      { generatedSlots =
+          Map.union
+            (Map.fromList [(blockHash blk, blockSlot blk) | blk <- blks])
+            (generatedSlots gs')
       }
 
 -- | Execution model
@@ -1235,20 +1252,21 @@ generator loe genBlock m@Model{..} =
 
   -- Every block the generators build sits on top of a block they have already
   -- built, so its predecessor is either genesis or one of the blocks below,
-  -- even when it is a gap block that will never be added to the ChainDB.
+  -- even when it is a gap block that will never be added to the ChainDB or one
+  -- whose predecessor the model has since garbage-collected.
   predecessorSlot :: Persistent [blk] -> blk -> WithOrigin SlotNo
   predecessorSlot (Persistent gapBlks) blk = case blockPrevHash blk of
     GenesisHash -> Origin
     BlockHash h -> case Map.lookup h generated of
       Nothing -> error "genAddBlock: predecessor was never generated"
-      Just predBlk -> NotOrigin $ blockSlot predBlk
+      Just predSlot -> NotOrigin predSlot
    where
     generated =
-      Map.unions
-        [ Map.fromList [(blockHash b, b) | b <- gapBlks]
-        , Model.blocks dbModel
-        , seenBlocks genState
-        ]
+      Map.union
+        -- The blocks this very call generated are not in 'generatedSlots' yet;
+        -- 'updateGenState' only sees the command once it is built.
+        (Map.fromList [(blockHash b, blockSlot b) | b <- gapBlks])
+        (generatedSlots genState)
 
   genAddPerasCert :: Gen (Cmd blk it flr)
   genAddPerasCert = do
