@@ -259,7 +259,13 @@ instance
     case singPraosExtension (Proxy @pext) of
       SingPextNone -> do
         PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il praosBody
-        pure $ PraosCodec.Header praosToSign praosSignature
+        -- The annotations here and below are load-bearing: 'PraosCodec.Header'
+        -- and 'LeiosCodec.Header' are pattern synonyms carrying a @Crypto
+        -- crypto@ constraint, so without one GHC has to solve that @crypto@
+        -- inside two implications --- the synonym's and this branch's @pext@
+        -- refinement --- where it is untouchable. 9.12 copes; 9.6 and 9.10 do
+        -- not.
+        pure (PraosCodec.Header praosToSign praosSignature :: PraosCodec.Header c)
       SingPextLeios -> case leios of
         SJustLeios (containsCert, mbAnn) -> do
           PraosFields{praosSignature, praosToSign} <-
@@ -268,7 +274,7 @@ instance
                 (praosBody ts)
                 containsCert
                 (toCodecEbAnnouncement <$> mbAnn)
-          pure $ LeiosCodec.Header praosToSign praosSignature
+          pure (LeiosCodec.Header praosToSign praosSignature :: LeiosCodec.Header c)
    where
     praosBody
       PraosToSign
