@@ -33,6 +33,7 @@ import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
   ( OutboundConnectionsState (..)
   )
+import Cardano.Slotting.Slot (WithOrigin (..))
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
@@ -54,6 +55,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy
 import Data.Set (Set, member)
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Data.Word (Word64)
@@ -111,6 +113,7 @@ import Ouroboros.Consensus.Peras.Context
   , runQueryWithContextHandle
   )
 import Ouroboros.Consensus.Peras.Voting.Rules (PerasVotingRulesDecision (..))
+import Ouroboros.Consensus.Peras.Weight (weightBoostOfFragment)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( ChainDB
@@ -268,6 +271,42 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
   }
 
+debugLog :: IOLike m => Tracer m TestnetTrace -> String -> m ()
+debugLog tracer logMsg = do
+  traceWith tracer $ DebugLog $ Text.pack logMsg
+
+advertController ::
+  (IOLike m, StandardHash blk, HasHeader (Header blk)) =>
+  Tracer m TestnetTrace -> ChainDB m blk -> m b
+advertController tracer chainDB = forever $ do
+  certs <- atomically $ ChainDB.getPerasCertIds chainDB
+  votes <- atomically $ ChainDB.getPerasVoteIds chainDB
+  currChain <- atomically $ ChainDB.getCurrentChain chainDB
+  perasWeights0 <- atomically $ ChainDB.getPerasWeightSnapshot chainDB
+  point <- atomically $ ChainDB.getTipPoint chainDB
+  blockNum0 <- atomically $ ChainDB.getTipBlockNo chainDB
+  let chainLen = AF.length $ currChain
+      perasWeights = forgetFingerprint perasWeights0
+      boost = unPerasWeight (weightBoostOfFragment perasWeights currChain)
+      (slotNo, blockHashStr) =
+        case point of
+          GenesisPoint -> (0, "")
+          BlockPoint s h -> (unSlotNo s, show h)
+      blockNum =
+        case blockNum0 of
+          Origin -> 0
+          At bn -> unBlockNo bn
+  traceWith tracer $
+    AdvertLog
+      (Set.size certs)
+      (Set.size votes)
+      chainLen
+      boost
+      slotNo
+      blockHashStr
+      blockNum
+  SI.threadDelay 3
+
 initNodeKernel ::
   forall m addrNTN addrNTC blk.
   ( IOLike m
@@ -298,6 +337,8 @@ initNodeKernel
     , miniProtocolParameters
     , systemTime
     } = do
+    debugLog (testnetTracer tracers) "Initialized the Node Kernal"
+
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
@@ -414,6 +455,10 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
         blockForgingController st (LazySTM.takeTMVar blockForgingVar)
+
+    void $
+      forkLinkedThread registry "NodeKernel.objDiffusionAdvert" $
+        advertController (testnetTracer tracers) chainDB
 
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
