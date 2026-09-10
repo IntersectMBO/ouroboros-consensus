@@ -480,96 +480,142 @@ initNodeKernel
     -- announcements, LeiosFetch clients on response, etc.) 'tryPutMVar' on
     -- 'getLeiosReady' to schedule another iteration.
     void $
-      forkLinkedThread registry "NodeKernel.leiosFetchLogic" $
-        forever $ do
-          let leiosTr = leiosKernelTracer tracers
-          traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
-          () <- MVar.takeMVar getLeiosReady
-          iterationStart <- getMonotonicTime
-          leiosPeersVars <- LazySTM.readTVarIO getLeiosPeersVars
-          offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
-          let livePeers = Map.keysSet leiosPeersVars
-          (newRequests, offerDrops, outstandingStats) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
-            -- Re-read the live peers while holding the -- 'getLeiosOutstanding'
-            -- lock. This is used to avoid losing an update to
-            -- 'getLeiosOutstanding' that 'removePeerFromOutstanding' may have
-            -- made (due to a 'bracketLeiosPeer' exiting) after the peers were
-            -- read just above. Basically: don't assign new requests to a peer
-            -- that just disconnected, since the replies would never arrive /AND/
-            -- those requests would then remain in 'getLeiosOutstanding' forever.
-            stillLivePeers <- LazySTM.readTVarIO getLeiosPeersVars
-            -- FIXME(bladyjoker): Capping these 2 traces because they grow in tens of MBs. Let's make a separate event for them and use Cardano config to silence/voice them.
-            traceWith leiosTr $
-              MkTraceLeiosKernel $
-                "leiosFetchLogic: outstanding "
-                  <> take 1000 (Leios.prettyLeiosOutstanding outstanding)
-            traceWith leiosTr $
-              MkTraceLeiosKernel $
-                "leiosFetchLogic: offerings "
-                  <> take 1000 (Leios.prettyOfferings offerings)
-            currentSlot <- atomically (getCurrentSlot btime)
-            let mbCurrentSlot = case currentSlot of
-                  CurrentSlot s -> Just s
-                  CurrentSlotUnknown -> Nothing
-            let bigLedgerPeers = Map.map Leios.whetherBigLedgerPeer stillLivePeers
-            let (!outstanding', requests, offerDrops) =
-                  Leios.leiosFetchLogicIteration
-                    Leios.demoLeiosFetchStaticEnv
-                    mbCurrentSlot
-                    (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
-                    bigLedgerPeers
-                    outstanding
-            pure
-              ( outstanding'
-              ,
-                ( requests
-                , offerDrops
-                , Leios.leiosOutstandingStats (Map.size offerings) (map Map.size (Map.elems offerings)) outstanding'
-                )
-              )
-          -- Drop dead offers: exactly the EBs the decision pass found we already
-          -- fully hold (computed while it walked those offers -- no extra scan).
-          -- This is the timely offer-pruning; the imm-tip Watcher prune is a
-          -- backstop for when this loop is idle.
-          -- TODO this loop is rate-limited, so although a completing acquisition
-          -- wakes it via 'getLeiosReady', this can still lag until the next allowed
-          -- iteration; someday drop the offer at the acquiring moment itself.
-          forM_ (Map.toList offerDrops) $ \(dropPeer, dropped) ->
-            case Map.lookup dropPeer leiosPeersVars of
-              Nothing -> pure ()
-              Just vars ->
-                MVar.modifyMVar_ (Leios.offerings vars) $
-                  pure . (`Map.withoutKeys` NESet.toSet dropped)
-          traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"
-          let decisionsTargetedKeys = Map.keysSet newRequests
-              droppableKeys =
-                decisionsTargetedKeys `Set.difference` livePeers
-          traceWith leiosTr $
-            MkTraceLeiosKernel $
-              "leiosFetchLogic: "
-                ++ show (sum (fmap length newRequests))
-                ++ " new reqs"
-          unless (Set.null droppableKeys) $
-            traceWith leiosTr $
-              MkTraceLeiosKernel $
-                "leiosFetchLogic: WARNING dropping "
-                  ++ show (Set.size droppableKeys)
-                  ++ " peer-targeted decisions because target not in leiosPeersVars"
-          (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
-            atomically $
-              StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> NESeq.toSeq reqs)
-          iterationEnd <- getMonotonicTime
-          let loopInterval = 0.5 :: SI.DiffTime
-              duration = iterationEnd `diffTime` iterationStart
-          -- Structured, Loki-queryable telemetry for the decision loop: the
-          -- iteration's duration (the worst-case-latency signal the LeiosTxCache
-          -- bounds) and a size sample of the (now well-pruned) outstanding state.
-          traceWith leiosTr $
-            TraceLeiosFetchDecision
-              (realToFrac duration)
-              outstandingStats
-              (Leios.summarizeDecisions newRequests)
-          threadDelay $ loopInterval - duration
+      forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ do
+        let leiosTr = leiosKernelTracer tracers
+        -- Leaky-bucket rate limit: block for a wake, then enforce at least
+        -- 'loopInterval' since the /previous/ iteration began -- waiting only
+        -- the remainder, never a fresh full period. Under light load the gap
+        -- already exceeds the floor, so an arrival is served at once; under
+        -- flood, arrivals coalesce into the single-slot 'getLeiosReady' during
+        -- the short wait and the next iteration handles them together.
+        let loopInterval = 0.05 :: SI.DiffTime
+        t0 <- getMonotonicTime
+        let go lastTick = do
+              traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
+              waitStart <- getMonotonicTime
+              () <- MVar.takeMVar getLeiosReady
+              afterWake <- getMonotonicTime
+              let sinceTick = afterWake `diffTime` lastTick
+              when (sinceTick < loopInterval) $
+                threadDelay (loopInterval - sinceTick)
+              iterationStart <- getMonotonicTime
+              leiosPeersVars <- LazySTM.readTVarIO getLeiosPeersVars
+              offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
+              let livePeers = Map.keysSet leiosPeersVars
+              lockReqStart <- getMonotonicTime
+              (newRequests, offerDrops, outstandingStats, lockAcquired, computeDur) <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+                lockAcquired <- getMonotonicTime
+                -- Re-read the live peers while holding the -- 'getLeiosOutstanding'
+                -- lock. This is used to avoid losing an update to
+                -- 'getLeiosOutstanding' that 'removePeerFromOutstanding' may have
+                -- made (due to a 'bracketLeiosPeer' exiting) after the peers were
+                -- read just above. Basically: don't assign new requests to a peer
+                -- that just disconnected, since the replies would never arrive /AND/
+                -- those requests would then remain in 'getLeiosOutstanding' forever.
+                stillLivePeers <- LazySTM.readTVarIO getLeiosPeersVars
+                -- FIXME(bladyjoker): Capping these 2 traces because they grow in tens of MBs. Let's make a separate event for them and use Cardano config to silence/voice them.
+                traceWith leiosTr $
+                  MkTraceLeiosKernel $
+                    "leiosFetchLogic: outstanding "
+                      <> take 1000 (Leios.prettyLeiosOutstanding outstanding)
+                traceWith leiosTr $
+                  MkTraceLeiosKernel $
+                    "leiosFetchLogic: offerings "
+                      <> take 1000 (Leios.prettyOfferings offerings)
+                currentSlot <- atomically (getCurrentSlot btime)
+                let mbCurrentSlot = case currentSlot of
+                      CurrentSlot s -> Just s
+                      CurrentSlotUnknown -> Nothing
+                let bigLedgerPeers = Map.map Leios.whetherBigLedgerPeer stillLivePeers
+                computeStart <- getMonotonicTime
+                let (!outstanding', !requests, !offerDrops) =
+                      Leios.leiosFetchLogicIteration
+                        Leios.demoLeiosFetchStaticEnv
+                        mbCurrentSlot
+                        (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
+                        bigLedgerPeers
+                        outstanding
+                computeEnd <- getMonotonicTime
+                pure
+                  ( outstanding'
+                  ,
+                    ( requests
+                    , offerDrops
+                    , Leios.leiosOutstandingStats (Map.size offerings) (map Map.size (Map.elems offerings)) outstanding'
+                    , lockAcquired
+                    , computeEnd `diffTime` computeStart
+                    )
+                  )
+              -- Drop dead offers: exactly the EBs the decision pass found we already
+              -- fully hold (computed while it walked those offers -- no extra scan).
+              -- This is the timely offer-pruning; the imm-tip Watcher prune is a
+              -- backstop for when this loop is idle.
+              -- TODO this loop is rate-limited, so although a completing acquisition
+              -- wakes it via 'getLeiosReady', this can still lag until the next allowed
+              -- iteration; someday drop the offer at the acquiring moment itself.
+              afterLock <- getMonotonicTime
+              forM_ (Map.toList offerDrops) $ \(dropPeer, dropped) ->
+                case Map.lookup dropPeer leiosPeersVars of
+                  Nothing -> pure ()
+                  Just vars ->
+                    MVar.modifyMVar_ (Leios.offerings vars) $
+                      pure . (`Map.withoutKeys` NESet.toSet dropped)
+              traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"
+              let decisionsTargetedKeys = Map.keysSet newRequests
+                  droppableKeys =
+                    decisionsTargetedKeys `Set.difference` livePeers
+              traceWith leiosTr $
+                MkTraceLeiosKernel $
+                  "leiosFetchLogic: "
+                    ++ show (sum (fmap length newRequests))
+                    ++ " new reqs"
+              unless (Set.null droppableKeys) $
+                traceWith leiosTr $
+                  MkTraceLeiosKernel $
+                    "leiosFetchLogic: WARNING dropping "
+                      ++ show (Set.size droppableKeys)
+                      ++ " peer-targeted decisions because target not in leiosPeersVars"
+              (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
+                atomically $
+                  StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> NESeq.toSeq reqs)
+              iterationEnd <- getMonotonicTime
+              -- FIXME: with the leaky-bucket floor above, the remaining latency
+              -- lever is the critical section. The whole iteration (offerings
+              -- read + 'leiosFetchLogicIteration' + stats) runs inside
+              -- 'MVar.modifyMVar getLeiosOutstanding', so it holds that one MVar
+              -- for its entire compute -- and every arrival handler
+              -- ('recordAnnouncedEb', 'recordEbBodyOffer', body ingest, closure
+              -- completion) needs the same MVar, so under load the pipeline can
+              -- still serialise behind it. Shrink it: 'leiosFetchLogicIteration'
+              -- is pure, so snapshot the state, compute off-lock, and merge the
+              -- result back under a short lock (or split the loop's in-flight
+              -- bookkeeping from the shared announce/body state so it never
+              -- writes the map at all). See the 'timing' breakdown to gauge it.
+              let duration = iterationEnd `diffTime` iterationStart
+                  -- Where the iteration's wall-clock actually went, so rate-limit
+                  -- deferral, lock contention and compute cost can be told apart.
+                  timing =
+                    Leios.MkLeiosFetchLoopTiming
+                      { Leios.lftWaitReady = realToFrac (afterWake `diffTime` waitStart)
+                      , Leios.lftRateLimit = realToFrac (iterationStart `diffTime` afterWake)
+                      , Leios.lftLockWait = realToFrac (lockAcquired `diffTime` lockReqStart)
+                      , Leios.lftCompute = realToFrac computeDur
+                      , Leios.lftHold = realToFrac (afterLock `diffTime` lockAcquired)
+                      , Leios.lftApply = realToFrac (iterationEnd `diffTime` afterLock)
+                      }
+              -- Structured, Loki-queryable telemetry for the decision loop: the
+              -- iteration's duration (the worst-case-latency signal the LeiosTxCache
+              -- bounds) and a size sample of the (now well-pruned) outstanding state.
+              traceWith leiosTr $
+                TraceLeiosFetchDecision
+                  (realToFrac duration)
+                  outstandingStats
+                  (Leios.summarizeDecisions newRequests)
+                  timing
+              -- Recurse: the leaky-bucket wait at the top of 'go' bounds the
+              -- iteration rate off this iteration's start.
+              go iterationStart
+        go t0
 
     -- The Leios voting thread: when this node has a voting key, subscribe
     -- to local "EB closure acquired" notifications and emit a vote for
