@@ -72,8 +72,6 @@ instance
         (\(Current _ wlv) -> K (getLeiosCommitteeFromView (eraProxy wlv) (unwrapLedgerView wlv)))
         (Telescope.tip tele)
    where
-    -- The wrapper is a newtype, hence injective, so matching on it is what
-    -- recovers the era that the non-injective 'LedgerView' loses.
     eraProxy :: WrapLedgerView blk -> Proxy blk
     eraProxy _ = Proxy
 
