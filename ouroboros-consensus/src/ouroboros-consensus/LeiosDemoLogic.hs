@@ -166,6 +166,13 @@ traceException tracer toTrace action =
   per tx, and the serialized body is the @b@.
 -------------------------------------------------------------------------------}
 
+headerRbHash ::
+  forall blk.
+  (ConvertRawHash blk, HasHeader (Header blk)) =>
+  Header blk ->
+  RbHash
+headerRbHash = MkRbHash . toRawHash (Proxy @blk) . headerHash
+
 -- | Insert an EB announcement into the tx-cache index, keyed by the announced
 -- slot, the announcing RB header's hash, and the announced EB hash. Evicted
 -- bodies\/txs are discarded; they can be useful for debugging/etc.
@@ -179,7 +186,7 @@ recordAnnouncementInTxCache ::
 recordAnnouncementInTxCache txCache ancHdr point =
   void $ txCache.insertAnnouncement point.pointSlotNo rbh point.pointEbHash
  where
-  rbh = MkRbHash (toRawHash (Proxy @blk) (headerHash (ancHeader ancHdr)))
+  rbh = headerRbHash (ancHeader ancHdr)
 
 -- | Register a locally-forged EB in the tx-cache: its announcement, its
 -- body, and each of its txs as already-applied (the forger drew them from its
@@ -1523,10 +1530,15 @@ instance HasHeader (Header blk) => Eq (AnnouncingHeader blk) where
 -- | Interpret a header as a relayed EB announcement, or 'Nothing' if it carries
 -- no announcement (so it should not have been relayed as one). Parsing the
 -- announcement once here keeps it total for all later consumers (e.g. tracing).
-mkAnnouncingHeader :: ResolveLeiosBlock blk => Header blk -> Maybe (AnnouncingHeader blk)
+mkAnnouncingHeader ::
+  (ConvertRawHash blk, HasHeader (Header blk), ResolveLeiosBlock blk) =>
+  Header blk ->
+  Maybe (AnnouncingHeader blk)
 mkAnnouncingHeader h =
   headerLeiosAnnouncement h <&> \(MkLeiosPoint _ebSlot ebHash, ebBodySize) ->
-    UnsafeMkAnnouncingHeader h (MkAnnouncementFields (headerElId h) ebHash ebBodySize)
+    UnsafeMkAnnouncingHeader h (MkAnnouncementFields (headerElId h) ebHash ebBodySize rbHash)
+  where
+    rbHash = headerRbHash h
 
 -- | The other safe constructor of an 'AnnouncingHeader': for a header we already
 -- know announces a specific EB because we forged it. Unlike 'mkAnnouncingHeader'
@@ -1534,14 +1546,25 @@ mkAnnouncingHeader h =
 -- announcement fields come straight from the 'ForgedLeiosEb' whose EB the header
 -- announces by construction.
 mkForgedAnnouncingHeader ::
-  ResolveLeiosBlock blk => Header blk -> Leios.ForgedLeiosEb -> AnnouncingHeader blk
+  (ConvertRawHash blk, HasHeader (Header blk), ResolveLeiosBlock blk) =>
+  Header blk ->
+  Leios.ForgedLeiosEb ->
+  AnnouncingHeader blk
 mkForgedAnnouncingHeader h forgedEb =
   UnsafeMkAnnouncingHeader h $
-    MkAnnouncementFields (headerElId h) forgedEb.point.pointEbHash (leiosEbBytesSize forgedEb.body)
+    MkAnnouncementFields (headerElId h) forgedEb.point.pointEbHash (leiosEbBytesSize forgedEb.body) rbHash
+  where
+    rbHash = headerRbHash h
 
 -- | The election of an 'AnnouncingHeader'.
 ancElId :: AnnouncingHeader blk -> ElId
 ancElId = announcementElection . ancAnnouncementFields
+
+ancEbHash :: AnnouncingHeader blk -> EbHash
+ancEbHash = announcementEbHash . ancAnnouncementFields
+
+ancRbHash :: AnnouncingHeader blk -> RbHash
+ancRbHash = Leios.announcementRbHash . ancAnnouncementFields
 
 -- | The central-state handling shared by an incoming LeiosNotify
 -- 'MsgLeiosBlockAnnouncement' and a ChainSync 'MsgRollForward' that announces an
@@ -1583,6 +1606,7 @@ processAnnouncementCentrally
       Announcements.onAnnouncementCentral
         (contramap (traceNewAnnouncement provenance) kernelTracer)
         ancElId
+        ancRbHash
         ( \_elSt -> do
             -- A received announcement lists the EB for fetching; one we forged is
             -- instead marked 'BodyImminent' in 'ebState' so the fetch logic never
@@ -1772,14 +1796,15 @@ recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
 
 prunePeerStateToImmTip ::
   LedgerSupportsProtocol blk =>
+  (anc -> ElId) ->
   ExtLedgerState blk EmptyMK ->
   SlotNo ->
   PeerState anc ->
   (SlotNo, PeerState anc)
-prunePeerStateToImmTip immLedger latestPruneSlot peerSt =
+prunePeerStateToImmTip getElId immLedger latestPruneSlot peerSt =
   case getTipSlot (ledgerState immLedger) of
     NotOrigin immTipSlot
-      | latestPruneSlot < immTipSlot -> (immTipSlot, prunePeerState immTipSlot peerSt)
+      | latestPruneSlot < immTipSlot -> (immTipSlot, prunePeerState immTipSlot getElId peerSt)
     _ -> (latestPruneSlot, peerSt)
 
 -- | The just-counted announcement's fields, and whether it equivocates a prior

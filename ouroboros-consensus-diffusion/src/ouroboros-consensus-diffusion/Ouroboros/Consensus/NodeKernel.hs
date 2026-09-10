@@ -599,7 +599,7 @@ initNodeKernel
               Origin -> pure ()
               NotOrigin immTipSlot -> do
                 MVar.modifyMVar_ getLeiosCentralState $
-                  pure . Announcements.pruneCentralState immTipSlot
+                  pure . Announcements.pruneCentralState immTipSlot Leios.ancElId
                 MVar.modifyMVar_ getLeiosOutstanding $
                   pure . snd . Leios.pruneOutstandingToImmTip immTipSlot
                 -- Backstop offer-prune: offers are keyed by point (slot-ordered),

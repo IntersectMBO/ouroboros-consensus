@@ -1454,6 +1454,7 @@ data AnnouncementFields = MkAnnouncementFields
   { announcementElection :: !ElId
   , announcementEbHash :: !EbHash
   , announcementEbBodySize :: !BytesSize
+  , announcementRbHash :: !RbHash
   }
   deriving (Eq, Show)
 
@@ -1750,12 +1751,13 @@ traceLeiosKernelToObject = \case
 
 announcementFieldsToObject :: AnnouncementFields -> Aeson.Object
 announcementFieldsToObject
-  (MkAnnouncementFields (MkElId (SlotNo electionSlot) poolId) ebHash ebBodySize) =
+  (MkAnnouncementFields (MkElId (SlotNo electionSlot) poolId) ebHash ebBodySize rbHash) =
     mconcat
       [ "electionSlot" .= electionSlot
       , "electionPool" .= BS8.unpack (BS16.encode (SBS.fromShort poolId))
       , "ebHash" .= prettyEbHash ebHash
       , "ebBodySize" .= ebBodySize
+      , "rbHash" .= prettyRbHash rbHash
       ]
 
 announcementEquivocationToObject :: AnnouncementEquivocation -> Aeson.Object

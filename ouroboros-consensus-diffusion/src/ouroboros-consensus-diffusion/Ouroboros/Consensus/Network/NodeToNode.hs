@@ -525,6 +525,7 @@ mkHandlers
                         Announcements.onAnnouncement
                           (contramap Leios.tracePeerAnnouncement tracer)
                           Leios.ancElId
+                          Leios.ancRbHash
                           ( \ancH ->
                               Leios.announcementValidity
                                 systemTime
@@ -556,7 +557,7 @@ mkHandlers
                       Left err -> throwIO $ Leios.ReactToAnnouncementError err
                       Right x -> pure x
                     let (!latestPruneSlot', !peerSt2) =
-                          Leios.prunePeerStateToImmTip immLedger latestPruneSlot peerSt1
+                          Leios.prunePeerStateToImmTip Leios.ancElId immLedger latestPruneSlot peerSt1
                     Prim.writeMutVar peerStateVar (latestPruneSlot', peerSt2)
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
