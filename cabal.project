@@ -45,8 +45,8 @@ source-repository-package
     eras/conway/impl
     eras/dijkstra/impl
 
--- Temp: pin ouroboros-network to PR IntersectMBO/ouroboros-network#5426, where
--- NodeToClientV_23 is the only NodeToClient version.
+-- Temp: pin ouroboros-network to main, where NodeToClientV_23 is the only
+-- NodeToClient version. Drop once these packages are released to CHaP.
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network.git
