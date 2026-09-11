@@ -599,6 +599,10 @@ sql_schema =
     , "  PRIMARY KEY (ebHashBytes, txOffset)"
     , ");"
     , "CREATE INDEX idx_ebTxs_pending ON ebTxs(txHashBytes) WHERE txBytes IS NULL;"
+    , -- Covering index for lookupEbBody: SELECT txHashBytes, txBytesSize … WHERE ebHashBytes = ?
+      -- All needed columns are in the index so SQLite never touches the main table rows
+      -- (which carry txBytes blobs up to 16 KiB each).
+      "CREATE INDEX idx_ebTxs_body ON ebTxs(ebHashBytes, txOffset, txHashBytes, txBytesSize);"
     ]
 
 sql_scan_ebs :: String
