@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -55,21 +55,17 @@ import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos
-  ( ConsensusConfig (..)
+  ( BasePraosState (..)
+  , ConsensusConfig (..)
   , Praos
   , PraosCrypto
   , PraosParams (..)
-  , PraosState (..)
+  , PraosWithLeios
   , Ticked (..)
   , WhetherToUpperBoundOCERT (..)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as PP
-import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header (..)
-  , HeaderBody (..)
-  , hbLeiosContainsCert
-  , hbLeiosEbAnnouncement
-  )
+import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
 import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
@@ -96,6 +92,12 @@ import Ouroboros.Consensus.Shelley.Ledger.Mempool
   , mkShelleyTx
   , mkShelleyValidatedTx
   )
+import Ouroboros.Consensus.Shelley.Protocol.Abstract
+  ( pHeaderIssuer
+  , pHeaderLeiosContainsCert
+  , pHeaderLeiosEbAnnouncement
+  , pHeaderSlot
+  )
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
@@ -117,8 +119,8 @@ instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)
 
 instance
   forall c.
-  (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
-  ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
+  (PraosCrypto c, ShelleyCompatible (PraosWithLeios c) DijkstraEra) =>
+  ResolveLeiosBlock (ShelleyBlock (PraosWithLeios c) DijkstraEra)
   where
   -- The on-wire bytes and 'TxHash' a forged EB records for each tx (see
   -- 'forgeLeiosEb'): 'serialize'' the tx, and hash exactly those bytes. Matching
@@ -229,28 +231,26 @@ instance
   blockLeiosCert blk =
     strictMaybeToMaybe $ blk.shelleyBlockRaw.blockBody ^. leiosCertBlockBodyL
 
-  headerContainsLeiosCert hdr = hbLeiosContainsCert headerBody
-   where
-    Header{headerBody} = shelleyHeaderRaw hdr
+  headerContainsLeiosCert = pHeaderLeiosContainsCert . shelleyHeaderRaw
 
   headerLeiosAnnouncement hdr = do
-    ann <- strictMaybeToMaybe $ hbLeiosEbAnnouncement headerBody
+    ann <- strictMaybeToMaybe $ pHeaderLeiosEbAnnouncement raw
     pure
       ( MkLeiosPoint
-          { pointSlotNo = headerBody.hbSlotNo
+          { pointSlotNo = pHeaderSlot raw
           , pointEbHash = ann.ebAnnouncementHash
           }
       , ann.ebAnnouncementSize
       )
    where
-    Header{headerBody} = shelleyHeaderRaw hdr
+    raw = shelleyHeaderRaw hdr
 
   headerElId hdr =
     MkElId
-      headerBody.hbSlotNo
-      (Crypto.hashToBytesShort . unKeyHash . SL.hashKey $ headerBody.hbVk)
+      (pHeaderSlot raw)
+      (Crypto.hashToBytesShort . unKeyHash . SL.hashKey $ pHeaderIssuer raw)
    where
-    Header{headerBody} = shelleyHeaderRaw hdr
+    raw = shelleyHeaderRaw hdr
 
   -- The announcement is validated out-of-context against a (possibly lagging)
   -- immutable tip. We skip the OCERT counter's upper bound
@@ -289,7 +289,9 @@ instance
         hv
 
   protocolStateLeiosAnnouncement st = do
-    ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st
+    -- 'SNothingLeios' is unreachable at this extension, so this is total.
+    ann <- case praosStateLeiosAnnouncement st of
+      SJustLeios mbAnn -> strictMaybeToMaybe mbAnn
     pure
       ( MkLeiosPoint
           { pointSlotNo = fromWithOrigin (SlotNo 0) st.praosStateLastSlot
@@ -303,7 +305,7 @@ instance
     case blockPrevHash blk of
       GenesisHash -> Nothing
       BlockHash h ->
-        Just $ MkRbHash $ toRawHash (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) h
+        Just $ MkRbHash $ toRawHash (Proxy @(ShelleyBlock (PraosWithLeios c) DijkstraEra)) h
 
 -- | Deserialise a transaction supplied as Leios-stored bytes.
 deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era

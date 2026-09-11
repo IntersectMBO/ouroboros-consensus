@@ -281,6 +281,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       chainDB
       mempool
       currentSlot
+      (pointSlot bcPrevPoint)
       (Block.fbRbTxs forgeBlockArgs)
       (Block.fbEbTxs forgeBlockArgs)
       newBlock
@@ -494,11 +495,14 @@ addBlockToChainDB ::
   ChainDB m blk ->
   Mempool m blk ->
   SlotNo ->
+  -- | The slot of the block we are extending, from the 'BlockContext' this
+  -- block was forged against.
+  WithOrigin SlotNo ->
   [Validated (GenTx blk)] ->
   [Validated (GenTx blk)] ->
   blk ->
   WithEarlyExit m ()
-addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
+addBlockToChainDB trace chainDB mempool currentSlot predSlot rbTxs ebTxs newBlock = do
   let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
   -- Make sure that if an async exception is thrown while a block is
   -- added to the chain db, we will remove txs from the mempool.
@@ -508,7 +512,7 @@ addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
   -- 'uninterruptibleMask_' to make sure that async exceptions do not
   -- interrupt it.
   uninterruptibleMask_ $ do
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+    result <- lift $ ChainDB.addBlockAsync chainDB noPunish predSlot newBlock
     -- Block until we have processed the block
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 

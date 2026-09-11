@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -18,6 +19,7 @@ import Cardano.Slotting.Slot (unSlotNo)
 import Data.Either (isRight)
 import Data.Word (Word32)
 import Numeric.Natural (Natural)
+import Ouroboros.Consensus.Protocol.Praos.Common (WhetherHasLeios (..))
 import Ouroboros.Consensus.Protocol.Signed
   ( Signed
   , SignedHeader (headerSigned)
@@ -42,6 +44,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ShelleyProtocol
   , ShelleyProtocolHeader
   , default_pHeaderLeiosContainsCert
+  , default_pHeaderLeiosEbAnnouncement
   )
 import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError
@@ -62,6 +65,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
   pHeaderSize = fromIntegral . originalBytesSize
   pHeaderBlockSize = fromIntegral @Word32 @Natural . SL.bsize . SL.bhbody
   pHeaderLeiosContainsCert = default_pHeaderLeiosContainsCert
+  pHeaderLeiosEbAnnouncement = default_pHeaderLeiosEbAnnouncement
 
   type EnvelopeCheckError _ = EnvelopeError
 
@@ -79,6 +83,8 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
     MaxMajorProtVer maxPV = tpraosMaxMajorPV (tpraosParams cfg)
 
 instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
+  type ProtoHasLeios (TPraos c) = PextDoesNotHaveLeios
+
   configSlotsPerKESPeriod cfg = tpraosSlotsPerKESPeriod $ tpraosParams cfg
   verifyHeaderIntegrity slotsPerKESPeriod hdr =
     isRight $ SL.verifySignedKES () ocertVkHot t hdrBody hdrSignature

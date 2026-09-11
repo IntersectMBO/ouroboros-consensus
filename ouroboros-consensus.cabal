@@ -119,6 +119,7 @@ library
     LeiosTxCache.Reference
     LeiosUtils.CallTrace
     LeiosUtils.TimeBoundedLoop
+    LeiosValidClaims
     LeiosVoteState
     LeiosVoting
     Ouroboros.Consensus.Block
@@ -1125,8 +1126,6 @@ library protocol
     Ouroboros.Consensus.Protocol.Praos
     Ouroboros.Consensus.Protocol.Praos.AgentClient
     Ouroboros.Consensus.Protocol.Praos.Common
-    Ouroboros.Consensus.Protocol.Praos.Header
-    Ouroboros.Consensus.Protocol.Praos.VRF
     Ouroboros.Consensus.Protocol.Praos.Views
     Ouroboros.Consensus.Protocol.TPraos
 
@@ -1138,13 +1137,15 @@ library protocol
     cardano-crypto-class:cardano-crypto-class,
     cardano-ledger-binary,
     cardano-ledger-core,
+    cardano-ledger-dijkstra,
     cardano-ledger-shelley ^>=1.20,
-    cardano-protocol ^>=0.1.1.0,
+    cardano-protocol >=0.1.1 && <0.2,
     cardano-protocol-tpraos ^>=1.6,
     cardano-slotting,
     cborg,
     containers,
     contra-tracer,
+    deepseq,
     io-classes,
     io-sim,
     kes-agent ^>=1.3,
@@ -1178,9 +1179,9 @@ library unstable-protocol-testlib
     cardano-ledger-binary,
     cardano-ledger-core,
     cardano-ledger-shelley-test,
-    cardano-protocol ^>=0.1.1.0,
+    cardano-protocol,
     cardano-slotting,
-    cardano-strict-containers:{cardano-strict-containers, testlib},
+    cardano-strict-containers:testlib,
     containers,
     ouroboros-consensus,
     ouroboros-consensus:protocol,
@@ -1568,7 +1569,7 @@ library cardano
     cardano-ledger-mary ^>=1.11,
     cardano-ledger-shelley,
     cardano-prelude,
-    cardano-protocol ^>=0.1.1.0,
+    cardano-protocol,
     cardano-protocol-tpraos,
     cardano-slotting,
     cardano-strict-containers,
@@ -1735,7 +1736,7 @@ library unstable-shelley-testlib
     cardano-ledger-shelley:{cardano-ledger-shelley, testlib},
     cardano-ledger-shelley-ma-test,
     cardano-ledger-shelley-test,
-    cardano-protocol ^>=0.1.1.0,
+    cardano-protocol,
     cardano-protocol-tpraos:{cardano-protocol-tpraos, testlib},
     cardano-slotting,
     cardano-strict-containers,
@@ -1777,7 +1778,7 @@ test-suite shelley-test
     cardano-ledger-core,
     cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-shelley,
-    cardano-protocol-tpraos,
+    cardano-protocol,
     cardano-slotting,
     cborg,
     constraints,

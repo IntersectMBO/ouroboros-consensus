@@ -17,7 +17,8 @@
 -- and @newTipSlotInEpoch@ and for that we need a @Summary@ which needs the
 -- header state that only the ExtLedgerState contains.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
-  ( addBlockAsync
+  ( TentativeHeaderPermission (..)
+  , addBlockAsync
   , addPerasCertAsync
   , chainSelSync
   , chainSelectionForBlock
@@ -31,7 +32,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
 import Control.Monad (forM_, join, void, when)
-import Control.Monad.Except ()
+import Control.Monad.Except (runExcept)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
 import Control.Tracer (Tracer, nullTracer, traceWith, (>$<))
@@ -51,24 +52,38 @@ import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( AcquiredLeiosEbsSet
   , EbHash
+  , HasLeiosVoting (getLeiosCommitteeFromView)
+  , LeiosExtValidationError (LeiosCertificateForecastRejected)
+  , LeiosForecastRejection
+    ( LeiosForecastAfterGenesis
+    , LeiosForecastInvalidCertificate
+    , LeiosForecastMissingCommittee
+    )
+  , TraceLeiosChainSel
+    ( TraceLeiosCertRbWithoutCandidate
+    , TraceLeiosValidClaim
+    )
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsSetMember
   , pointEbHash
+  , verifyLeiosCert
   )
 import LeiosUtils.CallTrace
   ( CallCtx
   , SomeJsonCallTrace (SomeJsonCallTrace)
   )
+import qualified LeiosValidClaims
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Forecast (Forecast (forecastAt, forecastFor))
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
 import qualified Ouroboros.Consensus.Fragment.Diff as Diff
 import Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
   ( HeaderWithTime (..)
-  , mkHeaderWithTime
+  , mkHeadersWithTime
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -280,6 +295,7 @@ initialChainSelection
             , varTentativeState
             , varTentativeHeader
             , punish = Nothing
+            , tentativeHeaderPermission = MayNotSetTentativeHeader
             , getTentativeFollowers = pure []
             }
 
@@ -313,6 +329,7 @@ addBlockAsync ::
   (IOLike m, HasHeader blk) =>
   ChainDbEnv m blk ->
   InvalidBlockPunishment m ->
+  WithOrigin SlotNo ->
   blk ->
   m (AddBlockPromise m blk)
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
@@ -346,6 +363,8 @@ chainSelSync ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
@@ -399,6 +418,8 @@ chainSelAddBlock ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
@@ -443,7 +464,25 @@ chainSelAddBlock cdb@CDB{..} _cctx BlockToAdd{blockToAdd = b, ..} = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+        lift (precheckLeiosCert cdb blockPredecessorSlot b) >>= \case
+          Right tentativeHeaderPermission ->
+            chainSelectionForBlock
+              cdb
+              (BlockCache.singleton b)
+              hdr
+              (Just blockPredecessorSlot)
+              tentativeHeaderPermission
+              blockPunish
+          Left leiosErr -> lift $ do
+            let e = ExtValidationErrorLeios leiosErr
+            traceWith (AddBlockValidation >$< addBlockTracer) $
+              InvalidBlock e (blockRealPoint b)
+            addInvalidBlock cdbInvalid e (blockRealPoint b)
+            -- The rejected certificate is the block's own, so this punishes the
+            -- block itself rather than its prefix.
+            InvalidBlockPunishment.enact
+              blockPunish
+              InvalidBlockPunishment.BlockItself
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -481,6 +520,7 @@ chainSelAddPerasCert ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
@@ -531,7 +571,14 @@ chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
 
     -- Trigger chain selection for the boosted block.
     lift $ lift $ traceWith tracer $ ChainSelectionForBoostedBlock certRound boostedBlock
-    lift $ chainSelectionForBlock cdb BlockCache.empty boostedHdr noPunishment
+    lift $
+      chainSelectionForBlock
+        cdb
+        BlockCache.empty
+        boostedHdr
+        Nothing
+        MayNotSetTentativeHeader
+        noPunishment
 
   -- Deliver promise indicating that we processed the cert.
   lift $ atomically $ putTMVar varProcessed ()
@@ -589,7 +636,7 @@ chainSelReprocessLeiosEb cdb@CDB{..} ebHash = lift $ do
       , VolatileDB.biHasLeiosCert bi
       ]
 
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain MayNotSetTentativeHeader Nothing
 
   chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
     for
@@ -656,7 +703,7 @@ chainSelReprocessLoEBlocks cdb@CDB{..} varProcessed = lift $ do
       , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
       ]
 
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain MayNotSetTentativeHeader Nothing
 
   chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
     for
@@ -674,6 +721,119 @@ chainSelReprocessLoEBlocks cdb@CDB{..} varProcessed = lift $ do
     Nothing -> pure ()
 
   atomically $ putTMVar varProcessed ()
+
+-- | Verify the certificate in a CertRB before chain selection considers it
+--
+-- ChainSel would otherwise only discover an invalid certificate once it applied
+-- the block. That only reason that's too late is because downstream peers'
+-- LeiosFetch interprets the header of a CertRB to be an offer of the certified
+-- EB. And the downstream LeiosFetch would disconnect from us if we claimed more
+-- than one EB were certified for the same election (which Leios goes to great
+-- lengths to ensure is only possible if the adversary has already defeated the
+-- network).
+--
+-- Only positive verdicts are cached; see 'LeiosValidClaims'.
+--
+-- 'Left' means the CertRB is invalid. 'Right' says whether its header may be
+-- pipelined, which it may only if this function verified the certificate (or
+-- had already verified one making the same claim): every way of declining to
+-- reach a verdict yields 'MayNotSetTentativeHeader' rather than a crash or an
+-- unchecked pipelining.
+precheckLeiosCert ::
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  ) =>
+  ChainDbEnv m blk ->
+  -- | The slot of the block's predecessor, ie of the announcing block
+  WithOrigin SlotNo ->
+  blk ->
+  m (Either LeiosExtValidationError TentativeHeaderPermission)
+precheckLeiosCert CDB{..} predSlot b = case blockLeiosCert b of
+  Nothing -> pure $ Right MaySetTentativeHeader
+  Just cert -> case (announcingRbHash b, blockPrevHash b, predSlot) of
+    (Just rbHash, BlockHash announcingHash, NotOrigin announcingSlot) -> do
+      let announcingPoint = RealPoint announcingSlot announcingHash
+      (known, immTip) <-
+        atomically $
+          (,)
+            <$> (LeiosValidClaims.memberValidClaim rbHash <$> readTVar cdbLeiosValidClaims)
+            <*> (ledgerState <$> LedgerDB.getImmutableTip cdbLedgerDB)
+      let immForecast = ledgerViewForecastAt (configLedger cdbTopLevelConfig) immTip
+      if
+        -- We've already validated cert that makes the same claim as this one,
+        -- so we already know it's safe to pipeline this header, even if /this/
+        -- cert is invalid.
+        | known -> pure $ Right MaySetTentativeHeader
+        -- The announcing block precedes the immutable tip, so it is on a fork
+        -- below it and no candidate through this CertRB can ever be selected.
+        -- There is nothing to protect, and the forecast's precondition forbids
+        -- looking that far back anyway.
+        --
+        -- There's only a small window in which BlockFetch would have requested
+        -- this block and that it would arrive too late to be effective; the
+        -- imminent 'chainSelectionForBlock' will similarly ignore it, because
+        -- it's unreachable from our current selection.
+        | NotOrigin announcingSlot < forecastAt immForecast ->
+            pure $ Right MayNotSetTentativeHeader
+        | otherwise -> case runExcept $ forecastFor immForecast announcingSlot of
+            -- We cannot reach the announcing block's slot from the immutable
+            -- tip, so we cannot verify this certificate; decline to pipeline
+            -- instead. Blocking until the window advances is not an option,
+            -- since ChainSel is single-threaded and is the only thing that
+            -- could advance it.
+            --
+            -- Rare, because it needs the volatile window --- at most @k@ blocks
+            -- --- to span more slots than the stability window the forecast
+            -- ranges over.
+            --
+            -- TODO forecasting from the immutable tip is the reason this case
+            -- exists at all, and it is avoidable: ChainSync and the leadership
+            -- check already forecast to this very slot, from an anchor at or
+            -- after the immutable tip. Caching that 'LedgerView' on the header
+            -- alongside the already-cached predecessor slot would make this
+            -- branch unreachable by construction.
+            Left _outsideForecastRange -> pure $ Right MayNotSetTentativeHeader
+            Right leiosLedgerView -> case getLeiosCommitteeFromView (Proxy @blk) leiosLedgerView of
+              Nothing -> reject cert $ LeiosForecastMissingCommittee rbHash
+              Just (committee, threshold) ->
+                case verifyLeiosCert committee threshold rbHash cert of
+                  Left invalid ->
+                    reject cert $ LeiosForecastInvalidCertificate rbHash invalid
+                  Right _weight -> do
+                    size <- atomically $ do
+                      modifyTVar cdbLeiosValidClaims $
+                        LeiosValidClaims.insertValidClaim announcingSlot rbHash
+                      LeiosValidClaims.sizeValidClaims
+                        <$> readTVar cdbLeiosValidClaims
+                    traceWith (TraceAddBlockEvent >$< cdbTracer) $
+                      AddBlockLeiosEvent $
+                        TraceLeiosValidClaim
+                          (blockRealPoint b)
+                          announcingPoint
+                          size
+                    pure $ Right MaySetTentativeHeader
+    -- Certifying at genesis: all three of these say there is no announcing
+    -- block, so they cannot disagree.
+    _ -> reject cert LeiosForecastAfterGenesis
+ where
+  reject cert why =
+    pure $ Left $ LeiosCertificateForecastRejected cert predSlot why
+
+-- | Record the invalid block in the given map and change its fingerprint
+addInvalidBlock ::
+  (IOLike m, StandardHash blk) =>
+  StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
+  ExtValidationError blk ->
+  RealPoint blk ->
+  m ()
+addInvalidBlock varInvalid e (RealPoint slot hash) = atomically $
+  modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
+    WithFingerprint
+      (Map.insert hash (InvalidBlockInfo e slot) invalid)
+      (succ fp)
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain
@@ -742,85 +902,116 @@ chainSelectionForBlock ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
   BlockCache blk ->
   Header blk ->
+  -- | The slot of the block's predecessor, when a block /arriving/ triggered
+  -- this chain selection; 'Nothing' otherwise. Independent of the permission
+  -- below, since an arrival we could not verify is still an arrival.
+  Maybe (WithOrigin SlotNo) ->
+  -- | See 'TentativeHeaderPermission'; only 'chainSelAddBlock' may grant it.
+  TentativeHeaderPermission ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
-  (invalid, curChain, weights) <-
-    atomically $
-      (,,)
-        <$> (forgetFingerprint <$> readTVar cdbInvalid)
-        <*> Query.getCurrentChain cdb
-        <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+chainSelectionForBlock
+  cdb@CDB{..}
+  blockCache
+  hdr
+  mbPredecessorSlot
+  tentativeHeaderPermission
+  punish = electric $ do
+    (invalid, curChain, weights) <-
+      atomically $
+        (,,)
+          <$> (forgetFingerprint <$> readTVar cdbInvalid)
+          <*> Query.getCurrentChain cdb
+          <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
 
-  -- The current chain we're working with here is not longer than @k@ blocks
-  -- (see 'getCurrentChain' and 'cdbChain'), which is easier to reason about
-  -- when doing chain selection, etc.
-  assert (fromIntegral (AF.length curChain) <= unNonZero k) pure ()
+    -- The current chain we're working with here is not longer than @k@ blocks
+    -- (see 'getCurrentChain' and 'cdbChain'), which is easier to reason about
+    -- when doing chain selection, etc.
+    assert (fromIntegral (AF.length curChain) <= unNonZero k) pure ()
 
-  let
-    immBlockNo :: WithOrigin BlockNo
-    immBlockNo = AF.anchorBlockNo curChain
+    let
+      immBlockNo :: WithOrigin BlockNo
+      immBlockNo = AF.anchorBlockNo curChain
 
-  if
-    -- The chain might have grown since we added the block such that the
-    -- block is older than the immutable tip.
-    | olderThanImmTip hdr immBlockNo -> do
-        traceWith addBlockTracer $ IgnoreBlockOlderThanImmTip p
+    if
+      -- The chain might have grown since we added the block such that the
+      -- block is older than the immutable tip.
+      | olderThanImmTip hdr immBlockNo -> do
+          traceWith addBlockTracer $ IgnoreBlockOlderThanImmTip p
 
-    -- The block is invalid
-    | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
-        traceWith addBlockTracer $ IgnoreInvalidBlock p reason
+      -- The block is invalid
+      | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
+          traceWith addBlockTracer $ IgnoreInvalidBlock p reason
 
-        -- We wouldn't know the block is invalid if its prefix was invalid,
-        -- hence 'InvalidBlockPunishment.BlockItself'.
-        InvalidBlockPunishment.enact
-          punish
-          InvalidBlockPunishment.BlockItself
+          -- We wouldn't know the block is invalid if its prefix was invalid,
+          -- hence 'InvalidBlockPunishment.BlockItself'.
+          InvalidBlockPunishment.enact
+            punish
+            InvalidBlockPunishment.BlockItself
 
-    -- Try to select a chain involving the block.
-    | otherwise -> do
-        -- Construct all 'ChainDiff's involving the block.
-        chainDiffs <-
-          constructPreferableCandidates
-            cdb
-            weights
-            curChain
-            (Map.singleton (headerHash hdr) hdr)
-            (headerRealPoint hdr)
+      -- Try to select a chain involving the block.
+      | otherwise -> do
+          -- Construct all 'ChainDiff's involving the block.
+          chainDiffs <-
+            constructPreferableCandidates
+              cdb
+              weights
+              curChain
+              (Map.singleton (headerHash hdr) hdr)
+              (headerRealPoint hdr)
 
-        let traceNoChange = traceWith addBlockTracer $ StoreButDontChange p
+          let traceNoChange = traceWith addBlockTracer $ StoreButDontChange p
 
-            chainSelEnv = mkChainSelEnv cdb blockCache weights curChain (Just (p, punish))
+              chainSelEnv =
+                mkChainSelEnv
+                  cdb
+                  blockCache
+                  weights
+                  curChain
+                  tentativeHeaderPermission
+                  (Just (p, punish))
 
-        case NE.nonEmpty chainDiffs of
-          Just chainDiffs' -> do
-            -- Find the best valid candidate and, if valid, perform a
-            -- switch. Log if none were found.
-            flip whenNothing traceNoChange
-              =<< chainSelection
-                chainSelEnv
-                chainDiffs'
-                (switchTo cdb weights (Just p))
-          -- No candidate better than our chain.
-          Nothing -> traceNoChange
- where
-  -- Note that we may have extended the chain, but have not trimmed it to
-  -- @k@ blocks/headers. That is the job of the background thread, which
-  -- will first copy the blocks/headers to trim (from the end of the
-  -- fragment) from the VolatileDB to the ImmutableDB.
+          case NE.nonEmpty chainDiffs of
+            Just chainDiffs' -> do
+              -- Find the best valid candidate and, if valid, perform a
+              -- switch. Log if none were found.
+              flip whenNothing traceNoChange
+                =<< chainSelection
+                  chainSelEnv
+                  chainDiffs'
+                  (switchTo cdb weights (Just p))
+            -- No candidate better than our chain.
+            Nothing -> do
+              traceNoChange
+              -- See 'TraceLeiosCertRbWithoutCandidate'.
+              whenJust mbPredecessorSlot $ \predecessorSlot ->
+                let immTipSlot = AF.anchorToSlotNo (AF.anchor curChain)
+                 in when
+                      ( headerContainsLeiosCert hdr
+                          && predecessorSlot >= immTipSlot
+                      )
+                      $ traceWith addBlockTracer
+                      $ AddBlockLeiosEvent
+                      $ TraceLeiosCertRbWithoutCandidate p predecessorSlot immTipSlot
+   where
+    -- Note that we may have extended the chain, but have not trimmed it to
+    -- @k@ blocks/headers. That is the job of the background thread, which
+    -- will first copy the blocks/headers to trim (from the end of the
+    -- fragment) from the VolatileDB to the ImmutableDB.
 
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
+    SecurityParam k = configSecurityParam cdbTopLevelConfig
 
-  p :: RealPoint blk
-  p = headerRealPoint hdr
+    p :: RealPoint blk
+    p = headerRealPoint hdr
 
-  addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
-  addBlockTracer = TraceAddBlockEvent >$< cdbTracer
+    addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
+    addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
 -- | Construct all candidates involving the given block (represented by a
 -- 'RealPoint') that are preferable to the current chain.
@@ -1053,12 +1244,11 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
             diffWithTime =
               -- the new ledger state can translate the slots of the new
               -- headers
-              Diff.map
-                ( mkHeaderWithTime
-                    lcfg
-                    (ledgerState newLedger)
-                )
-                chainDiff
+              ChainDiff (Diff.getRollback chainDiff) $
+                mkHeadersWithTime
+                  lcfg
+                  (ledgerState newLedger)
+                  (Diff.getSuffix chainDiff)
             newChainWithTime =
               case Diff.apply curChainWithTime diffWithTime of
                 Nothing -> error "chainDiff failed for HeaderWithTime"
@@ -1188,6 +1378,7 @@ data ChainSelEnv m blk = ChainSelEnv
   , blockCache :: BlockCache blk
   , weights :: PerasWeightSnapshot blk
   , curChain :: AnchoredFragment (Header blk)
+  , tentativeHeaderPermission :: TentativeHeaderPermission
   , punish :: Maybe (RealPoint blk, InvalidBlockPunishment m)
   -- ^ The block that this chain selection invocation is processing, and the
   -- punish action for the peer that sent that block; see
@@ -1207,6 +1398,21 @@ data ChainSelEnv m blk = ChainSelEnv
   -- 'InvalidBlockPunishment' combinators.
   }
 
+-- | Whether a chain selection may set the tentative header
+--
+-- Only the chain selection that a block's /arrival/ triggers may, ie
+-- 'chainSelAddBlock' handling a 'ChainSelAddBlock'. That is what lets
+-- \"pipelined\" imply \"arrived during this execution, and so was checked by
+-- 'precheckLeiosCert'\". Every other trigger reconsiders blocks that have been
+-- in the VolatileDB for arbitrarily long, including since a previous execution:
+-- an EB closure completing ('chainSelReprocessLeiosEb'), the LoE fragment
+-- moving ('chainSelReprocessLoEBlocks'), or a Peras certificate boosting a
+-- block ('chainSelAddPerasCert').
+data TentativeHeaderPermission
+  = MaySetTentativeHeader
+  | MayNotSetTentativeHeader
+  deriving (Eq, Show)
+
 mkChainSelEnv ::
   IOLike m =>
   ChainDbEnv m blk ->
@@ -1216,10 +1422,11 @@ mkChainSelEnv ::
   PerasWeightSnapshot blk ->
   -- | See 'curChain'
   AnchoredFragment (Header blk) ->
+  TentativeHeaderPermission ->
   -- | See 'punish'.
   Maybe (RealPoint blk, InvalidBlockPunishment m) ->
   ChainSelEnv m blk
-mkChainSelEnv CDB{..} blockCache weights curChain punish =
+mkChainSelEnv CDB{..} blockCache weights curChain tentativeHeaderPermission punish =
   ChainSelEnv
     { lgrDB = cdbLedgerDB
     , bcfg = configBlock cdbTopLevelConfig
@@ -1236,6 +1443,7 @@ mkChainSelEnv CDB{..} blockCache weights curChain punish =
         TraceAddBlockEvent . AddBlockValidation >$< cdbTracer
     , pipeliningTracer =
         TraceAddBlockEvent . PipeliningEvent >$< cdbTracer
+    , tentativeHeaderPermission
     , punish
     }
 
@@ -1328,7 +1536,7 @@ chainSelection chainSelEnv chainDiffs onSuccess =
     setTentativeHeader :: m (Maybe (Header blk, TentativeHeaderState blk))
     setTentativeHeader = do
       pipeliningResult <-
-        (\ts -> isPipelineable bcfg ts candidate)
+        (\ts -> isPipelineable tentativeHeaderPermission bcfg ts candidate)
           <$> readTVarIO varTentativeState
       whenJust pipeliningResult $ \(tentativeHeader, _) -> do
         let setTentative = SetTentativeHeader tentativeHeader
@@ -1453,7 +1661,7 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
       ValidateLedgerError (AnnLedgerError lastValid pt e) -> do
         let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
         traceWith validationTracer (InvalidBlock e pt)
-        addInvalidBlock e pt
+        addInvalidBlock varInvalid e pt
         traceWith validationTracer (ValidCandidate (Diff.getSuffix chainDiff'))
 
         -- punish the peer who sent a block if it is invalid or a block from its
@@ -1496,14 +1704,6 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
 
   traceUpdate = traceWith $ UpdateLedgerDbTraceEvent >$< validationTracer
 
-  -- \| Record the invalid block in 'cdbInvalid' and change its fingerprint.
-  addInvalidBlock :: ExtValidationError blk -> RealPoint blk -> m ()
-  addInvalidBlock e (RealPoint slot hash) = atomically $
-    modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
-      WithFingerprint
-        (Map.insert hash (InvalidBlockInfo e slot) invalid)
-        (succ fp)
-
 {-------------------------------------------------------------------------------
   Diffusion pipelining
 -------------------------------------------------------------------------------}
@@ -1515,11 +1715,13 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
 -- PRECONDITION: The 'ChainDiff' fits on top of the current chain and is better.
 isPipelineable ::
   (HasHeader (Header blk), BlockSupportsDiffusionPipelining blk) =>
+  TentativeHeaderPermission ->
   BlockConfig blk ->
   TentativeHeaderState blk ->
   ChainDiff (Header blk) ->
   Maybe (Header blk, TentativeHeaderState blk)
-isPipelineable bcfg st ChainDiff{..}
+isPipelineable permission bcfg st ChainDiff{..}
+  | not permitted = Nothing
   | -- we apply exactly one header
     AF.Empty _ :> hdr <- getSuffix
   , Just st' <- updateTentativeHeaderState bcfg hdr st
@@ -1527,6 +1729,10 @@ isPipelineable bcfg st ChainDiff{..}
     getRollback == 0 =
       Just (hdr, st')
   | otherwise = Nothing
+ where
+  permitted = case permission of
+    MayNotSetTentativeHeader -> False
+    MaySetTentativeHeader -> True
 
 {-------------------------------------------------------------------------------
   Helpers

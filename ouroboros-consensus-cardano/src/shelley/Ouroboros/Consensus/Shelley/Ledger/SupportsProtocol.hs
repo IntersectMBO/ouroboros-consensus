@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -13,11 +14,9 @@
 -- instance for 'ShelleyBlock'.
 module Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol () where
 
-import qualified Cardano.Ledger.Core as LedgerCore
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import Control.Monad.Except (MonadError (throwError))
-import qualified Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.History.Util
@@ -25,15 +24,16 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (..)
   )
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (BasePraos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos (PraosCrypto)
+import Ouroboros.Consensus.Protocol.Praos.Common (KnownPraosExtension)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract ()
-import Ouroboros.Consensus.Shelley.Protocol.Praos ()
+import Ouroboros.Consensus.Shelley.Protocol.Praos (HasPraosExtensionHeader)
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 
 instance
@@ -77,31 +77,27 @@ instance
     maxFor = addSlots swindow $ succWithOrigin at
 
 instance
-  ( ShelleyCompatible (Praos crypto) era
+  ( ShelleyCompatible (BasePraos pext crypto) era
+  , KnownPraosExtension pext
+  , HasPraosExtensionHeader pext
+  , Praos.ForecastsLeios pext era
   , SL.EraForecast era
   , Praos.PraosCrypto crypto
   ) =>
-  LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
+  LedgerSupportsProtocol (ShelleyBlock (BasePraos pext crypto) era)
   where
-  protocolLedgerView _cfg st =
-    let nes = tickedShelleyLedgerState st
-
-        SL.NewEpochState{nesPd} = nes
-
-        pparam :: forall a. Lens.Micro.Lens' (LedgerCore.PParams era) a -> a
-        pparam lens = getPParams nes Lens.Micro.^. lens
-     in Praos.PraosLedgerView
-          { Praos.plvPoolDistr = nesPd
-          , Praos.plvMaxBodySize = pparam LedgerCore.ppMaxBBSizeL
-          , Praos.plvMaxHeaderSize = pparam LedgerCore.ppMaxBHSizeL
-          , Praos.plvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
-          }
+  -- 'SL.currentForecast' is 'SL.mkForecast': a projection of the state, with no
+  -- TICKF. 'SL.futureForecast' is TICKF and then that same projection. Reusing
+  -- it here is what makes this method and 'ledgerViewForecastAt' agree by
+  -- construction, instead of by two copies of the projection staying in step.
+  protocolLedgerView _cfg =
+    Praos.forecastToBasePraosLedgerView . SL.currentForecast . tickedShelleyLedgerState
 
   ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
     if
       | NotOrigin for == at ->
           return $
-            Praos.forecastToPraosLedgerView (SL.currentForecast shelleyLedgerState)
+            Praos.forecastToBasePraosLedgerView (SL.currentForecast shelleyLedgerState)
       | for < maxFor ->
           return $ futureLedgerView for
       | otherwise ->
@@ -117,9 +113,9 @@ instance
     swindow = SL.stabilityWindow globals
     at = ledgerTipSlot ledgerState
 
-    futureLedgerView :: SlotNo -> Praos.PraosLedgerView
+    futureLedgerView :: SlotNo -> Praos.BasePraosLedgerView pext
     futureLedgerView for =
-      Praos.forecastToPraosLedgerView $
+      Praos.forecastToBasePraosLedgerView $
         SL.futureForecast globals for shelleyLedgerState
 
     -- Exclusive upper bound

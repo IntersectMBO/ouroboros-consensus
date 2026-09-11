@@ -107,7 +107,7 @@ import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import qualified LeiosDemoDb as LeiosDb
-import LeiosDemoTypes (HasLeiosVoting)
+import LeiosDemoTypes (HasLeiosVoting, TraceLeiosChainSel)
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -198,9 +198,15 @@ newtype Persistent a = Persistent {unPersistent :: a}
 
 -- | Commands
 data Cmd blk it flr
-  = -- | Add a block, with (possibly) some gap blocks leading to it.
+  = -- | Add a block, with the slot of its predecessor and (possibly) some gap
+    -- blocks leading to it.
+    --
+    -- The generator supplies the predecessor's slot because it knows it even
+    -- when the predecessor is a gap block that was never added, just as the
+    -- real node knows it from the header that incurred the fetch request.
+    --
     -- For more information about gap blocks, refer to 'GenState' below.
-    AddBlock blk (Persistent [blk])
+    AddBlock blk (WithOrigin SlotNo) (Persistent [blk])
   | -- | Add a Peras cert for a block, with (possibly) some gap blocks leading to it.
     -- For more information about gap blocks, refer to 'GenState' below.
     AddPerasCert (WithArrivalTime (ValidatedPerasCert blk)) (Persistent [blk])
@@ -444,7 +450,7 @@ run ::
   m (Success blk (TestIterator m blk) (TestFollower m blk))
 run cfg env@ChainDBEnv{varDB, ..} cmd =
   readTVarIO varDB >>= \st@ChainDBState{chainDB = chainDB@ChainDB{..}, internal} -> case cmd of
-    AddBlock blk _ -> Point <$> advanceAndAdd st blk
+    AddBlock blk predSlot _ -> Point <$> advanceAndAdd st predSlot blk
     AddPerasCert cert _ -> Unit <$> addPerasCertSync chainDB cert
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
@@ -478,10 +484,11 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
   follower = fmap Flr . giveWithEq
   ignore _ = Unit ()
 
-  advanceAndAdd :: ChainDBState m blk -> blk -> m (Point blk)
-  advanceAndAdd ChainDBState{chainDB} blk = do
+  advanceAndAdd ::
+    ChainDBState m blk -> WithOrigin SlotNo -> blk -> m (Point blk)
+  advanceAndAdd ChainDBState{chainDB} predSlot blk = do
     -- `blockProcessed` always returns 'Just'
-    res <- addBlock chainDB InvalidBlockPunishment.noPunishment blk
+    res <- addBlock chainDB InvalidBlockPunishment.noPunishment predSlot blk
     return $ case res of
       FailedToAddBlock f -> error $ "advanceAndAdd: block not added - " ++ f
       SuccesfullyAddedBlock pt -> pt
@@ -701,7 +708,7 @@ runPure ::
   DBModel blk ->
   (Resp blk IteratorId FollowerId, DBModel blk)
 runPure cfg = \case
-  AddBlock blk _ -> ok Point $ update (add blk)
+  AddBlock blk _ _ -> ok Point $ update (add blk)
   AddPerasCert cert _ -> ok Unit $ ((),) . update (Model.addPerasCert cfg cert)
   GetCurrentChain -> ok Chain $ query (Model.volatileChain k getHeader)
   GetTipBlock -> ok MbBlock $ query Model.tipBlock
@@ -874,6 +881,14 @@ data GenState blk
   -- 'genAddPerasCert'. We don't want to discard these because they can be used
   -- to fill gaps between existing blocks added via 'AddBlock', simulating
   -- blocks and certificates arriving out of order.
+  , generatedSlots :: Map (HeaderHash blk) SlotNo
+  -- ^ The slot of every block ever generated, so that 'genAddBlock' can supply
+  -- a block's predecessor slot.
+  --
+  -- Never pruned, unlike the model's own stores: garbage collection drops a
+  -- block from the VolatileDB, and only a block that was copied reaches the
+  -- ImmutableDB, so 'Model.blocks' can lose a predecessor that a later
+  -- generated block still names.
   }
   deriving Generic
 
@@ -889,6 +904,7 @@ emptyGenState :: GenState blk
 emptyGenState =
   GenState
     { seenBlocks = Map.empty
+    , generatedSlots = Map.empty
     }
 
 -- | Use the extra state stored in a generated command to update a model's
@@ -900,8 +916,8 @@ updateGenState ::
   GenState blk
 updateGenState cmd gs =
   case unAt cmd of
-    AddBlock _ (Persistent blks) -> saveSeenBlocks blks gs
-    AddPerasCert _ (Persistent blks) -> saveSeenBlocks blks gs
+    AddBlock blk _ (Persistent blks) -> saveSeenBlocks blks $ saveSlots (blk : blks) gs
+    AddPerasCert _ (Persistent blks) -> saveSeenBlocks blks $ saveSlots blks gs
     _ -> gs
  where
   saveSeenBlocks blks gs' =
@@ -910,6 +926,14 @@ updateGenState cmd gs =
           Map.union
             (Map.fromList [(blockHash blk, blk) | blk <- blks])
             (seenBlocks gs')
+      }
+
+  saveSlots blks gs' =
+    gs'
+      { generatedSlots =
+          Map.union
+            (Map.fromList [(blockHash blk, blockSlot blk) | blk <- blks])
+            (generatedSlots gs')
       }
 
 -- | Execution model
@@ -1224,7 +1248,25 @@ generator loe genBlock m@Model{..} =
   genAddBlock :: Gen (Cmd blk it flr)
   genAddBlock = do
     (blk, gapBlks) <- genBlock m
-    pure $ AddBlock blk gapBlks
+    pure $ AddBlock blk (predecessorSlot gapBlks blk) gapBlks
+
+  -- Every block the generators build sits on top of a block they have already
+  -- built, so its predecessor is either genesis or one of the blocks below,
+  -- even when it is a gap block that will never be added to the ChainDB or one
+  -- whose predecessor the model has since garbage-collected.
+  predecessorSlot :: Persistent [blk] -> blk -> WithOrigin SlotNo
+  predecessorSlot (Persistent gapBlks) blk = case blockPrevHash blk of
+    GenesisHash -> Origin
+    BlockHash h -> case Map.lookup h generated of
+      Nothing -> error "genAddBlock: predecessor was never generated"
+      Just predSlot -> NotOrigin predSlot
+   where
+    generated =
+      Map.union
+        -- The blocks this very call generated are not in 'generatedSlots' yet;
+        -- 'updateGenState' only sees the command once it is built.
+        (Map.fromList [(blockHash b, blockSlot b) | b <- gapBlks])
+        (generatedSlots genState)
 
   genAddPerasCert :: Gen (Cmd blk it flr)
   genAddPerasCert = do
@@ -1348,6 +1390,11 @@ shrinker ::
 shrinker _ = const [] -- TODO: implement the shrinker. Command
 -- 'PersistBlksThenGC' should be shrunk to
 -- ['PersistBlks']
+--
+-- TODO If the shrinker removes generated /blocks/ from the generated chains,
+-- then the predecessor slots recorded in the 'AddBlock' commands might become
+-- stale... but so would their hashes, so maybe the invariant on those two
+-- fields isn't an additional problem.
 
 {-------------------------------------------------------------------------------
   The final state machine
@@ -1552,6 +1599,8 @@ deriving instance SOP.Generic (TraceCopyToImmutableDBEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceCopyToImmutableDBEvent blk)
 deriving instance SOP.Generic (TraceValidationEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceValidationEvent blk)
+deriving instance SOP.Generic (TraceLeiosChainSel blk)
+deriving instance SOP.HasDatatypeInfo (TraceLeiosChainSel blk)
 deriving instance SOP.Generic (TraceInitChainSelEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceInitChainSelEvent blk)
 deriving instance SOP.Generic (TraceOpenEvent blk)
@@ -2125,6 +2174,7 @@ traceEventName = \case
       PipeliningEvent{} -> "PipeliningEvent"
       ChangingSelection{} -> "ChangingSelection"
       TraceAddBlockCall{} -> "TraceAddBlockCall"
+      AddBlockLeiosEvent ev' -> "Leios." <> constrName ev'
   TraceFollowerEvent ev -> "Follower." <> constrName ev
   TraceCopyToImmutableDBEvent ev -> "CopyToImmutableDB." <> constrName ev
   TraceInitChainSelEvent ev ->

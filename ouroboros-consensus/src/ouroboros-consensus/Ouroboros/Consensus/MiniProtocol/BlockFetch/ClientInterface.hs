@@ -6,6 +6,7 @@
 -- | Initialization of the 'BlockFetchConsensusInterface'
 module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface
   ( ChainDbView (..)
+  , MatchedBlock (..)
   , defaultChainDbView
   , mkBlockFetchConsensusInterface
   , readFetchModeDefault
@@ -67,7 +68,11 @@ data ChainDbView m blk = ChainDbView
   , getCurrentChainWithTime :: STM m (AnchoredFragment (HeaderWithTime blk))
   , getIsFetched :: STM m (Point blk -> Bool)
   , getMaxSlotNo :: STM m MaxSlotNo
-  , addBlockAsync :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
+  , addBlockAsync ::
+      InvalidBlockPunishment m ->
+      WithOrigin SlotNo ->
+      blk ->
+      m (AddBlockPromise m blk)
   , getChainSelStarvation :: STM m ChainSelStarvation
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   }
@@ -129,6 +134,18 @@ readFetchModeDefault
               then FetchModeDeadline
               else FetchModeBulkSync
 
+-- | A block that matched the header the BlockFetch client requested it for,
+-- paired with what that header knows and the block itself does not
+--
+-- The BlockFetch client derives this from the header and the block together,
+-- which is what ties the annotation to the very header this block was matched
+-- against.
+data MatchedBlock blk = MatchedBlock
+  { matchedBlock :: !blk
+  , matchedBlockPredecessorSlot :: !(WithOrigin SlotNo)
+  -- ^ 'hwtPredecessorSlot' of that header
+  }
+
 mkBlockFetchConsensusInterface ::
   forall m peer blk.
   ( IOLike m
@@ -145,7 +162,7 @@ mkBlockFetchConsensusInterface ::
   -- | See 'readFetchMode'.
   STM m FetchMode ->
   DiffusionPipeliningSupport ->
-  BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
+  BlockFetchConsensusInterface peer (HeaderWithTime blk) blk (MatchedBlock blk) m
 mkBlockFetchConsensusInterface
   csjTracer
   bcfg
@@ -159,8 +176,15 @@ mkBlockFetchConsensusInterface
     getCandidates :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     getCandidates = CSClient.viewChainSyncState (CSClient.cschcMap csHandlesCol) CSClient.csCandidate
 
-    blockMatchesHeader :: HeaderWithTime blk -> blk -> Bool
-    blockMatchesHeader hwt b = Block.blockMatchesHeader (hwtHeader hwt) b
+    blockMatchesHeader :: HeaderWithTime blk -> blk -> Maybe (MatchedBlock blk)
+    blockMatchesHeader hwt b
+      | Block.blockMatchesHeader (hwtHeader hwt) b =
+          Just
+            MatchedBlock
+              { matchedBlock = b
+              , matchedBlockPredecessorSlot = hwtPredecessorSlot hwt
+              }
+      | otherwise = Nothing
 
     readCandidateChains :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     readCandidateChains = getCandidates
@@ -173,7 +197,7 @@ mkBlockFetchConsensusInterface
 
     -- See 'mkAddFetchedBlock_'
     mkAddFetchedBlock ::
-      STM m (Point blk -> blk -> m ())
+      STM m (Point blk -> MatchedBlock blk -> m ())
     mkAddFetchedBlock = do
       pipeliningPunishment <- InvalidBlockPunishment.mkForDiffusionPipelining
       pure $ mkAddFetchedBlock_ pipeliningPunishment pipelining
@@ -188,9 +212,10 @@ mkBlockFetchConsensusInterface
       ) ->
       DiffusionPipeliningSupport ->
       Point blk ->
-      blk ->
+      MatchedBlock blk ->
       m ()
-    mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt blk = void $ do
+    mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt matched = void $ do
+      let MatchedBlock blk predSlot = matched
       disconnect <- InvalidBlockPunishment.mkPunishThisThread
       -- A BlockFetch peer can either send an entire range or none of the
       -- range; anything else will incur a disconnect. And in 'FetchDeadline'
@@ -226,6 +251,7 @@ mkBlockFetchConsensusInterface
       addBlockAsync
         chainDB
         punishment
+        predSlot
         blk
 
     readFetchedMaxSlotNo :: STM m MaxSlotNo

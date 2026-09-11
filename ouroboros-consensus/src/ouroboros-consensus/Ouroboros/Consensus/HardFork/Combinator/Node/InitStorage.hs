@@ -68,8 +68,8 @@ instance CanHardFork xs => NodeInitStorage (HardForkBlock xs) where
         nodeInitChainDB
           cfg'
           InitChainDB
-            { addBlock =
-                addBlock initChainDB
+            { addBlock = \predSlot ->
+                addBlock initChainDB predSlot
                   . injectNS' (Proxy @I) index
             , getCurrentLedger = return currentLedger
             }

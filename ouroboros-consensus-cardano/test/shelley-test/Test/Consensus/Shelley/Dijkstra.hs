@@ -1,4 +1,3 @@
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -11,13 +10,12 @@ import qualified Cardano.Ledger.Block as SL (pattern Block)
 import qualified Cardano.Ledger.Core as Core (hashBlockBody, txSeqBlockBodyL)
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Protocol.Crypto (StandardCrypto)
-import Lens.Micro ((&), (.~), (^.))
-import Ouroboros.Consensus.Protocol.Praos (Praos)
-import Ouroboros.Consensus.Protocol.Praos.Header
+import Cardano.Protocol.Leios.BlockHeader
   ( HeaderBody (..)
-  , HeaderLeiosExtension (..)
   , pattern Header
   )
+import Lens.Micro ((&), (.~), (^.))
+import Ouroboros.Consensus.Protocol.Praos (PraosWithLeios)
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
@@ -55,9 +53,9 @@ prop_leiosBodyWithCertAndTxsRejected =
       "blockMatchesHeader should be False when body contains both Cert and Txs"
       (not (blockMatchesHeader (getHeader blk) blk))
  where
-  genBlockWithTxsAndCert :: Gen (ShelleyBlock (Praos StandardCrypto) DijkstraEra)
+  genBlockWithTxsAndCert :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
   genBlockWithTxsAndCert = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
     txsBody <-
       genSmallDijkstraTxsBlockBody @DijkstraEra `suchThat` (\b -> not (null (b ^. Core.txSeqBlockBodyL)))
     cert <- arbitrary :: Gen LeiosCert
@@ -70,7 +68,8 @@ prop_leiosBodyWithCertAndTxsRejected =
           ( Header
               hbody
                 { hbBodyHash = Core.hashBlockBody body
-                , hbLeiosExt = SJust HeaderLeiosExtension{containsCert, ebAnnouncement = SNothing}
+                , hbBlockBodyContainsLeiosCert = containsCert
+                , hbEbAnnouncement = SNothing
                 }
               sig -- invalid
           )
@@ -87,9 +86,9 @@ prop_leiosCertFlagMismatchRejected =
                not (blockMatchesHeader (getHeader blk) blk)
          )
  where
-  genBlockCertHeaderAndTxsBody :: Gen (ShelleyBlock (Praos StandardCrypto) DijkstraEra)
+  genBlockCertHeaderAndTxsBody :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
   genBlockCertHeaderAndTxsBody = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
     txsBody <- genSmallDijkstraTxsBlockBody @DijkstraEra
     let Header hbody sig = shelleyHeaderRaw shelleyHdr
     return $
@@ -98,19 +97,27 @@ prop_leiosCertFlagMismatchRejected =
           ( Header
               hbody
                 { hbBodyHash = Core.hashBlockBody txsBody
-                , hbLeiosExt = SJust HeaderLeiosExtension{containsCert = True, ebAnnouncement = SNothing}
+                , hbBlockBodyContainsLeiosCert = True
+                , hbEbAnnouncement = SNothing
                 }
               sig -- invalid
           )
           txsBody
 
-  genBlockTxsHeaderAndCertBody :: Gen (ShelleyBlock (Praos StandardCrypto) DijkstraEra)
+  genBlockTxsHeaderAndCertBody :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
   genBlockTxsHeaderAndCertBody = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
     certBody <- genSmallDijkstraCertBlockBody @DijkstraEra
     let Header hbody sig = shelleyHeaderRaw shelleyHdr
     return $
       mkShelleyBlock $
         SL.Block
-          (Header hbody{hbBodyHash = Core.hashBlockBody certBody, hbLeiosExt = SNothing} sig)
+          ( Header
+              hbody
+                { hbBodyHash = Core.hashBlockBody certBody
+                , hbBlockBodyContainsLeiosCert = False
+                , hbEbAnnouncement = SNothing
+                }
+              sig -- invalid
+          )
           certBody

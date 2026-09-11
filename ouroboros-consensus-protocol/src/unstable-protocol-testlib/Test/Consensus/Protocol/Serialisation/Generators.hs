@@ -1,4 +1,6 @@
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Generators suitable for serialisation. Note that these are not guaranteed
@@ -7,7 +9,12 @@ module Test.Consensus.Protocol.Serialisation.Generators () where
 
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
-import Cardano.Ledger.BaseTypes (StrictMaybe (..))
+import qualified Cardano.Protocol.Leios.BlockHeader as Leios
+import Cardano.Protocol.Praos.BlockHeader
+  ( Header (Header)
+  , HeaderBody (..)
+  )
+import Cardano.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Cardano.Protocol.TPraos.BlockHeader (HashHeader, PrevHash (..))
 import Cardano.Protocol.TPraos.OCert
   ( KESPeriod (KESPeriod)
@@ -19,17 +26,23 @@ import Cardano.Slotting.Slot
   , WithOrigin (At, Origin)
   )
 import qualified Data.ByteString as BS
+import Data.Proxy (Proxy (Proxy))
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , EbHash (MkEbHash)
   )
-import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
+import Ouroboros.Consensus.Protocol.Praos (BasePraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header (..)
-  , HeaderBody (..)
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( KnownPraosExtension (praosExtensionHasLeios)
+  , StrictMaybeLeios (SJustLeios, SNothingLeios)
+  , WhetherHasLeiosDecided
+    ( PextDoesNotHaveLeiosDecided
+    , PextHasLeiosDecided
+    )
+  , toCodecEbAnnouncement
   )
-import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
+import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Cardano.StrictContainers.Instances ()
 import Test.Crypto.KES ()
@@ -73,10 +86,6 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> arbitrary
           <*> ocert
           <*> arbitrary
-          -- FIXME: Cannot generate HeaderLeiosExtension because we don't know
-          -- for which era/protocol version this header is. However, Dijkstra is
-          -- currently disabled anyways in Test.Consensus.Cardano.Generators
-          <*> pure SNothing
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do
@@ -86,7 +95,21 @@ instance Praos.PraosCrypto c => Arbitrary (Header c) where
     let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Header hBody hSig
 
-instance Arbitrary PraosState where
+instance Arbitrary Leios.EbAnnouncement where
+  arbitrary = toCodecEbAnnouncement <$> arbitrary
+
+instance Praos.PraosCrypto c => Arbitrary (Leios.HeaderBody c) where
+  arbitrary = extendHeaderBodyWithLeios <$> arbitrary <*> arbitrary <*> arbitrary
+
+instance Praos.PraosCrypto c => Arbitrary (Leios.Header c) where
+  arbitrary = do
+    hBody <- arbitrary
+    period <- arbitrary
+    sKey <- arbitrary
+    let hSig = unsoundPureSignedKES () period hBody sKey
+    pure $ Leios.Header hBody hSig
+
+instance KnownPraosExtension pext => Arbitrary (BasePraosState pext) where
   arbitrary =
     PraosState
       <$> oneof
@@ -100,4 +123,9 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> pure SNothing
+      <*> traverse
+        (\() -> arbitrary)
+        ( case praosExtensionHasLeios (Proxy @pext) of
+            PextDoesNotHaveLeiosDecided -> SNothingLeios
+            PextHasLeiosDecided -> SJustLeios ()
+        )

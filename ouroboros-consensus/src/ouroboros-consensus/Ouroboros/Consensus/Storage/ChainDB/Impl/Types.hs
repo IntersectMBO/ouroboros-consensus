@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , getEnv
   , getEnv1
   , getEnv2
+  , getEnv3
   , getEnvTrans2
   , getEnvSTM
   , getEnvSTM1
@@ -97,8 +98,9 @@ import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import LeiosDemoDb.Common (LeiosDbHandle)
-import LeiosDemoTypes (AcquiredLeiosEbs, EbHash)
+import LeiosDemoTypes (AcquiredLeiosEbs, EbHash, TraceLeiosChainSel)
 import LeiosUtils.CallTrace (SomeJsonCallTrace)
+import LeiosValidClaims (ValidClaims)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -213,6 +215,17 @@ getEnv2 ::
   b ->
   m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
+
+-- | Variant of getEnv for functions taking three arguments.
+getEnv3 ::
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  ChainDbHandle m blk ->
+  (ChainDbEnv m blk -> a -> b -> c -> m r) ->
+  a ->
+  b ->
+  c ->
+  m r
+getEnv3 h f a b c = getEnv h (\env -> f env a b c)
 
 -- | Variant 'of 'getEnv' for functions taking two arguments.
 getEnvTrans2 ::
@@ -393,6 +406,22 @@ data ChainDbEnv m blk = CDB
   -- from the LeiosDb, grown by 'leiosAcquiredEbsRunner' from closure-completion
   -- notifications (which also enqueue a 'ChainSelReprocessLeiosEb'), and pruned
   -- by age as a GC is scheduled.
+  , cdbLeiosValidClaims :: !(StrictTVar m ValidClaims)
+  -- ^ The Leios claims we have verified a certificate for, if the slot of the
+  -- announcing block is >= the slot of the imm tip. ChainSel verifies the
+  -- certificate in a CertRB before selecting it, and records the claim here so
+  -- that the several CertRBs that can make the same claim only pay for
+  -- verification once. Pruned as a GC is scheduled, like 'cdbAcquiredLeiosEbs'.
+  --
+  -- It's empty upon node startup; it's fine to redo some work once per
+  -- execution of the node. The fundamental motivation for 'cdbValidClaims' is
+  -- so that ChainSel won't pipeline a CertRB whose cert's claim is false. By
+  -- restricting ChainSel to only potentially pipeline an RB when that RB /first
+  -- arrives/ (see
+  -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel.TentativeHeaderPermission'),
+  -- we avoid the risk of pipelining an invalid CertRB that was in the VolDB at
+  -- node startup (which could otherwise happen due to its EB closure arriving
+  -- during the current execution, for example).
   , cdbLeiosDb :: !(LeiosDbHandle m)
   , cdbLeiosEvictTxCache :: !(SlotNo -> m ())
   -- ^ Prune the LeiosTxCache to a slot; run just before 'leiosDbGarbageCollect'
@@ -595,6 +624,11 @@ data BlockToAdd m blk = BlockToAdd
   { blockPunish :: !(InvalidBlockPunishment m)
   -- ^ Executed immediately upon determining this block or one from its prefix
   -- is invalid.
+  , blockPredecessorSlot :: !(WithOrigin SlotNo)
+  -- ^ The slot of this block's predecessor.
+  --
+  -- Leios uses this to validate the certificate in a CertRB /before/ chain
+  -- selection, which is necessary for The Recovery Path.
   , blockToAdd :: !blk
   , varBlockWrittenToDisk :: !(StrictTMVar m Bool)
   -- ^ Used for the 'blockWrittenToDisk' field of 'AddBlockPromise'.
@@ -639,14 +673,16 @@ addBlockToAdd ::
   Tracer m (TraceAddBlockEvent blk) ->
   ChainSelQueue m blk ->
   InvalidBlockPunishment m ->
+  WithOrigin SlotNo ->
   blk ->
   m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish blk = do
+addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish predSlot blk = do
   varBlockWrittenToDisk <- newEmptyTMVarIO
   varBlockProcessed <- newEmptyTMVarIO
   let !toAdd =
         BlockToAdd
           { blockPunish = punish
+          , blockPredecessorSlot = predSlot
           , blockToAdd = blk
           , varBlockWrittenToDisk
           , varBlockProcessed
@@ -981,6 +1017,8 @@ data TraceAddBlockEvent blk
   | -- | Herald of 'AddedToCurrentChain' or 'SwitchedToAFork'. Lists the tip of
     -- the new chain.
     ChangingSelection (Point blk)
+  | -- | A Leios event from ChainSel.
+    AddBlockLeiosEvent (TraceLeiosChainSel blk)
   | -- | A call-trace event emitted by the 'addBlockRunner' thread.
     TraceAddBlockCall SomeJsonCallTrace
 

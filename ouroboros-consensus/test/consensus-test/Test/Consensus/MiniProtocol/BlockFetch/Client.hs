@@ -94,7 +94,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.ChainDB
 import Test.Util.ChainUpdates
-import Test.Util.Header (attachSlotTime)
+import Test.Util.Header (attachSlotTimeToFragment)
 import Test.Util.LogicalClock (Tick (..))
 import qualified Test.Util.LogicalClock as LogicalClock
 import Test.Util.Orphans.IOLike ()
@@ -169,7 +169,9 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       blockFetchConsensusInterface =
         mkTestBlockFetchConsensusInterface
           ( Map.map
-              (AF.mapAnchoredFragment (attachSlotTime topLevelConfig . getHeader))
+              ( attachSlotTimeToFragment topLevelConfig
+                  . AF.mapAnchoredFragment getHeader
+              )
               <$> getCandidates
           )
           chainDbView
@@ -323,7 +325,12 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
   mkTestBlockFetchConsensusInterface ::
     STM m (Map PeerId (AnchoredFragment (HeaderWithTime TestBlock))) ->
     BlockFetchClientInterface.ChainDbView m TestBlock ->
-    BlockFetchConsensusInterface PeerId (HeaderWithTime TestBlock) TestBlock m
+    BlockFetchConsensusInterface
+      PeerId
+      (HeaderWithTime TestBlock)
+      TestBlock
+      (BlockFetchClientInterface.MatchedBlock TestBlock)
+      m
   mkTestBlockFetchConsensusInterface getCandidates chainDbView =
     ( BlockFetchClientInterface.mkBlockFetchConsensusInterface @m @PeerId
         nullTracer

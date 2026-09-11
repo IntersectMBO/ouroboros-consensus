@@ -247,7 +247,7 @@ instance NodeInitStorage DualByronBlock where
     tip <- ledgerTipPoint <$> getCurrentLedger
     case tip of
       BlockPoint{} -> return ()
-      GenesisPoint -> addBlock genesisEBB
+      GenesisPoint -> addBlock Origin genesisEBB
    where
     genesisEBB :: DualByronBlock
     genesisEBB =
