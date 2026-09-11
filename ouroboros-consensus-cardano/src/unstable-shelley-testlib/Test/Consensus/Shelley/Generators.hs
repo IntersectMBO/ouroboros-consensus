@@ -383,15 +383,9 @@ arbitraryFixedEpochInfo = fixedEpochInfo <$> arbitrary <*> arbitrary
   Versioned generators for serialisation
 -------------------------------------------------------------------------------}
 
--- | Some 'Query's are only supported by 'ShelleyNodeToClientVersion2', so we
--- make sure to not generate those queries in combination with
--- 'ShelleyNodeToClientVersion1'.
 instance
   CanMock proto era =>
   Arbitrary
     (WithVersion ShelleyNodeToClientVersion (SomeBlockQuery (BlockQuery (ShelleyBlock proto era))))
   where
-  arbitrary = do
-    query@(SomeBlockQuery q) <- arbitrary
-    version <- arbitrary `suchThat` blockQueryIsSupportedOnVersion q
-    return $ WithVersion version query
+  arbitrary = WithVersion <$> arbitrary <*> arbitrary
