@@ -29,10 +29,10 @@ import Test.Tasty.HUnit
 --    know, and a gap in the middle only makes the negotiated version harder to
 --    reason about for no benefit;
 --
---  * including 'latestReleasedNodeVersion', which pins where the run starts.
---    Without it nothing constrains the oldest supported version, and dropping
---    one version too many would refuse every client that offers at most the
---    latest released one.
+--  * containing 'latestReleasedNodeVersion', which caps how far the oldest
+--    supported version can rise. The diffusion layer truncates the advertised
+--    map at the released version, so a released version below the run leaves
+--    nothing to advertise.
 contiguousSupportedNetworkProtocolVersions ::
   forall blk.
   (Typeable blk, SupportedNetworkProtocolVersion blk) =>
