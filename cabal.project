@@ -45,6 +45,18 @@ source-repository-package
     eras/conway/impl
     eras/dijkstra/impl
 
+-- Temporary dependency on https://github.com/IntersectMBO/ouroboros-network/pull/5431.
+-- Replace with an upstream main commit or release before merging.
+source-repository-package
+  type: git
+  location: https://github.com/tweag/ouroboros-network.git
+  tag: 86b8725930a263ceddf2d7e19d60799febbf8f6f
+  --sha256: sha256-QS5M7rkeH6eqi84GsIuYZmFZ/7yLrZv/ppkud3bBnCk=
+  subdir:
+    network-mux
+    ouroboros-network
+    cardano-diffusion
+
 -- We want to always build the test-suites and benchmarks
 tests: true
 benchmarks: true

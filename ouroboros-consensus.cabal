@@ -223,12 +223,14 @@ library
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+    Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
     Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
+    Ouroboros.Consensus.MiniProtocol.Util.Idling
     Ouroboros.Consensus.Node.GsmState
     Ouroboros.Consensus.Node.InitStorage
     Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -1109,6 +1111,7 @@ library diffusion
     Ouroboros.Consensus.Node.ExitPolicy
     Ouroboros.Consensus.Node.Genesis
     Ouroboros.Consensus.Node.GSM
+    Ouroboros.Consensus.Node.GSM.PeerState
     Ouroboros.Consensus.Node.Recovery
     Ouroboros.Consensus.Node.RethrowPolicy
     Ouroboros.Consensus.Node.Tracers
@@ -1141,8 +1144,10 @@ library diffusion
     random ^>=1.3,
     resource-registry,
     safe-wild-cards ^>=1.0,
+    semialign,
     serialise,
     text,
+    these,
     time,
     transformers,
     typed-protocols:{stateful, typed-protocols},
@@ -1280,6 +1285,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Genesis.TestSuite.SmallKey
     Test.Consensus.Genesis.TestSuite.SmallKey.Tests
     Test.Consensus.GSM
+    Test.Consensus.GSM.PeerState
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B

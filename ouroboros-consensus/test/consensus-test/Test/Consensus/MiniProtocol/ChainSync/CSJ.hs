@@ -5,6 +5,10 @@
 -- | Narrow tests for ChainSync Jumping
 module Test.Consensus.MiniProtocol.ChainSync.CSJ (tests) where
 
+import Cardano.Network.NodeToNode.Version
+  ( NodeToNodeVersion (NodeToNodeV_16)
+  , PerasSupport (PerasSupported, PerasUnsupported)
+  )
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar
 import Control.Monad (void)
 import Control.Monad.Class.MonadTimer (MonadTimer)
@@ -207,6 +211,7 @@ runTest TestSetup = withRegistry $ \registry -> do
           (pure GSM.CaughtUp)
           peer
           version
+          (if version >= NodeToNodeV_16 then PerasSupported else PerasUnsupported)
           lopBucketConfig
           (CSJEnabled csjConfig)
           diffusionPipelining
