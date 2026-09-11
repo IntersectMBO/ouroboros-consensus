@@ -49,6 +49,7 @@ import Data.List (intercalate)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (isJust)
+import qualified Data.Set as Set
 import Data.Word (Word64)
 import qualified GHC.Conc.Sync as IO
 
@@ -308,11 +309,12 @@ foldCallTrace = flip (foldM foldFn)
     let
       cid = callId ctCallInfo
       may `errN` err = maybe (Left (err, ct)) Right may
-      may `errJ` err = maybe (Right ()) (\_ -> Left (err, ct)) may
+      b `errB` err = if b then Left (err, ct) else Right ()
      in
       case ctEvent of
         CallStart -> do
-          _ci <- Map.lookup cid csActiveCalls `errJ` "Starting a Call that is already active"
+          (cid `Set.member` (Map.keysSet csInactiveCalls `Set.union` Map.keysSet csActiveCalls))
+            `errB` "Call Id must be unique over all time"
           parCi <-
             ciCallParent ctCallInfo `errN` "Starting a root Call! Only root Call has no parent"
           when (isJust (ciCallParent parCi)) $
