@@ -69,6 +69,7 @@ import Ouroboros.Network.Block
   , Tip (TipGenesis)
   , tipFromHeader
   )
+import Ouroboros.Network.PerasSupport (PerasSupport (PerasSupported))
 import Test.Consensus.BlockTree
 import Test.Consensus.Genesis.Setup
 import Test.Consensus.Genesis.Setup.Classifiers
@@ -237,6 +238,7 @@ prop_densityDisconnectStatic =
       { csCandidate = frag
       , csLatestSlot = SJust (AF.headSlot frag)
       , csIdling = False
+      , csPerasSupport = PerasSupported
       }
   gen = do
     gt <- genChains (QC.choose (1, 4))
@@ -476,6 +478,7 @@ evolveBranches EvolvingPeers{k, sgen, peers = initialPeers, fullTree} =
             { csCandidate = attachTimeUsingTestConfig csCandidate
             , csIdling = False
             , csLatestSlot = SJust (AF.headSlot csCandidate)
+            , csPerasSupport = PerasSupported
             }
       -- Run GDD.
       (loeFrag, suffixes) =
