@@ -326,7 +326,9 @@ foldCallTrace = flip (foldM foldFn)
               { csActiveCalls = Map.insert cid ctCallInfo csActiveCalls
               }
         CallEnd _res cm -> do
-          _ <- Map.lookup cid csActiveCalls `errN` "Ending a Call that is not active"
+          startCi <- Map.lookup cid csActiveCalls `errN` "Ending a Call that is not active"
+          (ciThread startCi /= ciThread ctCallInfo)
+            `errB` "Call ended on a different thread than it started"
           return
             st
               { csActiveCalls = Map.delete cid csActiveCalls
