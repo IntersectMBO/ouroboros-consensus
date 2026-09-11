@@ -67,8 +67,8 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
+  , encodeLeiosEbSize
   , leiosEbBodyItems
-  , leiosEbBytesSize
   )
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import System.Directory (doesFileExist)
@@ -360,7 +360,7 @@ sqlInsertEbBody tracer conn notify point eb = do
   pure completedNow
  where
   items = leiosEbBodyItems eb
-  ebBytesSize = leiosEbBytesSize eb
+  ebBytesSize = encodeLeiosEbSize eb
   Conn{connStmts} = conn
   Stmts
     { stInsertEbTxsRow

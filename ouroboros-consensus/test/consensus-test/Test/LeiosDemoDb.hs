@@ -49,7 +49,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , RbHash (..)
   , TxHash (..)
-  , leiosEbBytesSize
+  , encodeLeiosEbSize
   , leiosEbTxs
   )
 import System.Directory (removeDirectoryRecursive)
@@ -338,7 +338,7 @@ prop_ebsInsertThenLookup impl =
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         let expectedTxs = V.toList (leiosEbTxs eb)
-        leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+        leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
         (_, insertTime) <- timed $ leiosDbInsertEbBody con point eb
         (result, lookupTime) <- timed $ leiosDbLookupEbBody con point.pointEbHash
         pure $
@@ -369,7 +369,7 @@ prop_txsInsertThenRetrieve impl =
       forAllBlind (sublistOf [0 .. numTxs - 1]) $ \offsetsToInsert ->
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
           -- Insert the EB first (point then body)
-          leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+          leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
           void $ leiosDbInsertEbBody con point eb
           -- Get the txHashes from the EB for the offsets we want to insert
           let ebTxList = V.toList (leiosEbTxs eb)
@@ -425,7 +425,7 @@ test_singleSubscriber db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
@@ -443,7 +443,7 @@ test_multipleSubscribers db = do
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 5
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point eb
   -- All subscribers should receive the notification
   notif1 <- atomically $ readTChan chan1
@@ -459,9 +459,9 @@ test_correctData db = do
   chan <- subscribeEbNotifications db
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 10
-      expectedSize = leiosEbBytesSize eb
+      expectedSize = encodeLeiosEbSize eb
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
@@ -480,7 +480,7 @@ test_lateSubscriber db = do
   let point1 = mkTestPoint (SlotNo 1) 1
       eb1 = mkTestEb 2
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con point1 (leiosEbBytesSize eb1)
+    leiosDbInsertEbPoint con point1 (encodeLeiosEbSize eb1)
     void $ leiosDbInsertEbBody con point1 eb1
   -- Now subscribe
   chan <- subscribeEbNotifications db
@@ -493,7 +493,7 @@ test_lateSubscriber db = do
   let point2 = mkTestPoint (SlotNo 2) 2
       eb2 = mkTestEb 3
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con point2 (leiosEbBytesSize eb2)
+    leiosDbInsertEbPoint con point2 (encodeLeiosEbSize eb2)
     void $ leiosDbInsertEbBody con point2 eb2
   notification <- atomically $ readTChan chan
   assertOfferBlock point2 notification
@@ -510,7 +510,7 @@ test_multipleNotifications db = do
   -- Insert all (point then body for each)
   withLeiosDb db $ \con ->
     forM_ (zip points ebs) $ \(point, eb) -> do
-      leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+      leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
       void $ leiosDbInsertEbBody con point eb
   -- Read all notifications and verify order
   notifications <- replicateM 5 (atomically $ readTChan chan)
@@ -527,7 +527,7 @@ test_noOfferBlockTxsBeforeComplete db = do
       eb = mkTestEb 3 -- 3 transactions
       ebTxList = V.toList (leiosEbTxs eb)
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point eb
     -- Consume the LeiosOfferBlock notification
     _ <- atomically $ readTChan chan
@@ -553,7 +553,7 @@ test_offerBlockTxs db = do
       ebTxList = V.toList (leiosEbTxs eb)
   withLeiosDb db $ \con -> do
     -- Insert the EB (point then body)
-    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point eb
     -- Consume the LeiosOfferBlock notification
     _ <- atomically $ readTChan chan
@@ -597,7 +597,7 @@ test_offerBlockTxsWhenBodyArrivesAfterTxs db = do
     -- complete, so we expect BOTH notifications in sequence. Use a
     -- timeout on the reads: without the fix the second read would block
     -- forever, so we surface the failure explicitly instead of hanging.
-    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point eb
     acquiredEb <- readTChanWithin 1_000_000 chan "AcquiredEb"
     assertOfferBlock point acquiredEb
@@ -614,7 +614,7 @@ test_noReNotifyCompletedEbs db = do
       ebTxList = V.toList (leiosEbTxs eb)
   withLeiosDb db $ \con -> do
     -- Insert and complete the EB
-    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point eb
     -- Consume the AcquiredEb notification
     acquiredEb <- atomically $ tryReadTChan chan
@@ -652,7 +652,7 @@ test_noReNotifyOnRelatedTxReinsert db = do
       eb = mkTestEb 2
       ebTxList = V.toList (leiosEbTxs eb)
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point eb
     acquiredEb <- atomically $ tryReadTChan chan
     case acquiredEb of
@@ -700,8 +700,8 @@ test_multipleSlotsSameHash db = do
             Just n -> go (n : acc)
   withLeiosDb db $ \con -> do
     -- Announce the same EB at two slots and insert the body twice.
-    leiosDbInsertEbPoint con point1 (leiosEbBytesSize eb)
-    leiosDbInsertEbPoint con point2 (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point1 (encodeLeiosEbSize eb)
+    leiosDbInsertEbPoint con point2 (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con point1 eb
     void $ leiosDbInsertEbBody con point2 eb
     -- Drain the two AcquiredEb notifications (order matches insertion).
@@ -763,7 +763,7 @@ prop_completedEbComplete impl =
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind genTxBytes $ \txBytes ->
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-          leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+          leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
           void $ leiosDbInsertEbBody con point eb
           let ebTxList = V.toList (leiosEbTxs eb)
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- ebTxList]
@@ -793,7 +793,7 @@ prop_completedEbMissingTxs impl =
   forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-        leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+        leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
         void $ leiosDbInsertEbBody con point eb
         (result, queryTime) <- timed $ leiosDbLookupEbClosure con (pointEbHash point)
         pure $
@@ -809,7 +809,7 @@ prop_completedEbPartialTxs impl =
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind genTxBytes $ \txBytes ->
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-          leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+          leiosDbInsertEbPoint con point (encodeLeiosEbSize eb)
           void $ leiosDbInsertEbBody con point eb
           -- Insert only the first half of txs, leaving at least one missing
           let ebTxList = V.toList (leiosEbTxs eb)

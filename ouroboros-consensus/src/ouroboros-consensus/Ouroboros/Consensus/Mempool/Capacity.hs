@@ -65,6 +65,21 @@ computeMempoolCapacity ::
 computeMempoolCapacity cfg st override =
   capacity
  where
+  -- FIXME: this sizes the mempool from the ranking (Praos) block capacity only,
+  -- and only from protocol parameters via 'blockCapacityTxMeasure'. Under Leios
+  -- the mempool also feeds Endorser Blocks, whose capacity is
+  -- 'ebCapacityTxMeasure', and a single EB can be many Praos blocks' worth, so
+  -- the default (blockCount = 2) does not hold even one EB.
+  --
+  -- Today the only fix is 'MempoolCapacityBytesOverride', which is per-operator
+  -- node config, not a protocol parameter. That is acceptable for the forge time
+  -- cap (a genuine local latency/resource tradeoff), but mempool size is not
+  -- local: an operator whose mempool is too small forges undersized EBs no
+  -- matter what the ledger parameters allow, so it caps network throughput from
+  -- one node's config. The default should instead be derived from the
+  -- parameters, e.g. a small multiple of @blockCapacity + ebCapacity@ (both
+  -- already parameter-derived here), so no override is needed for correctness
+  -- and the effective size is network-consistent.
   oneBlock = blockCapacityTxMeasure cfg st
   ByteSize32 oneBlockBytes = txMeasureByteSize oneBlock
 

@@ -25,14 +25,12 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , Invalidated (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
-  , TxCount (..)
   , TxId
   , TxLimits (..)
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
   , nothingMkMempoolApplyTxError
-  , oneTxCount
   ) where
 
 import Codec.Serialise (Serialise)
@@ -422,22 +420,6 @@ newtype ByteSize32 = ByteSize32 {unByteSize32 :: Word32}
     NoThunks
     via OnlyCheckWhnfNamed "ByteSize" ByteSize32
 
--- | A count of transactions, e.g. in an Endorser Block.
-newtype TxCount = TxCount {unTxCount :: Word32}
-  deriving stock Show
-  deriving newtype (Eq, Ord, Bounded)
-  deriving newtype NFData
-  deriving newtype Serialise
-  deriving
-    (Monoid, Semigroup)
-    via (InstantiatedAt Measure (IgnoringOverflow TxCount))
-  deriving
-    NoThunks
-    via OnlyCheckWhnfNamed "TxCount" TxCount
-
-oneTxCount :: IgnoringOverflow TxCount
-oneTxCount = IgnoringOverflow . TxCount $ 1
-
 -- | @'IgnoringOverflow' a@ has the same semantics as @a@, except it ignores
 -- the fact that @a@ can overflow.
 --
@@ -459,12 +441,6 @@ newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
   deriving newtype TxMeasureMetrics
 
 instance Measure (IgnoringOverflow ByteSize32) where
-  zero = coerce (0 :: Word32)
-  plus = coerce $ (+) @Word32
-  min = coerce $ min @Word32
-  max = coerce $ max @Word32
-
-instance Measure (IgnoringOverflow TxCount) where
   zero = coerce (0 :: Word32)
   plus = coerce $ (+) @Word32
   min = coerce $ min @Word32

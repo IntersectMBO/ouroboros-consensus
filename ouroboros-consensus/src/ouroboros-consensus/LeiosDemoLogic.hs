@@ -97,13 +97,13 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   , TxHash (..)
+  , encodeLeiosEbSize
   , fetchArrivalEvicted
   , fetchArrivalExtra
   , fetchArrivalGood
   , fetchArrivalInvalid
   , hashLeiosEb
   , hashLeiosTx
-  , leiosEbBytesSize
   , leiosEbTxs
   , maxTxsPerEb
   )
@@ -871,10 +871,10 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
   -- validate it
   let (mbPeer, point, ebBytesSize) = case source of
         ReceivedBlockFrom peerId (MkLeiosBlockRequest p sz) -> (Just peerId, p, sz)
-        ForgedBlock p -> (Nothing, p, leiosEbBytesSize eb)
+        ForgedBlock p -> (Nothing, p, encodeLeiosEbSize eb)
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   let MkLeiosPoint _ebSlot ebHash = point
-  let ebBytesSize' = leiosEbBytesSize eb
+  let ebBytesSize' = encodeLeiosEbSize eb
   -- A failed-validation body: attribute the whole body to 'fabInvalid'.
   let invalidReply reason =
         traceWith ktracer (TraceLeiosFetchBodyArrival (fetchArrivalInvalid ebBytesSize'))
@@ -886,7 +886,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
     ReceivedBlockFrom{} -> do
       -- FIXME: 'ebBytesSize' here is the size we recorded from the peer
       -- offer at 'MsgLeiosBlockOffer' time (carried through the request),
-      -- not the chain-authoritative 'leiosEbBytesSize' from the parent
+      -- not the chain-authoritative 'encodeLeiosEbSize' from the parent
       -- RB's 'headerLeiosAnnouncement'. EB announcements are not yet
       -- implemented; once they are, validate against the announced size
       -- so that a peer cannot poison this check by sending a bad-size
@@ -1532,7 +1532,7 @@ mkForgedAnnouncingHeader ::
   ResolveLeiosBlock blk => Header blk -> Leios.ForgedLeiosEb -> AnnouncingHeader blk
 mkForgedAnnouncingHeader h forgedEb =
   UnsafeMkAnnouncingHeader h $
-    MkAnnouncementFields (headerElId h) forgedEb.point.pointEbHash (leiosEbBytesSize forgedEb.body)
+    MkAnnouncementFields (headerElId h) forgedEb.point.pointEbHash (encodeLeiosEbSize forgedEb.body)
 
 -- | The election of an 'AnnouncingHeader'.
 ancElId :: AnnouncingHeader blk -> ElId

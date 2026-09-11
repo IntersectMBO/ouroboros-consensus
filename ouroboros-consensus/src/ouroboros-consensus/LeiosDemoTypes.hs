@@ -9,7 +9,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
@@ -131,6 +130,7 @@ import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
+import Ouroboros.Network.Protocol.Limits (largeByteLimit)
 import System.Random (StdGen)
 import Text.Pretty.Simple (pShow)
 
@@ -1029,7 +1029,9 @@ forgeLeiosEb slot txs =
   serializedTxs =
     [ (hashTx tx, byteSize, bytes)
     | tx <- toList txs
-    , let bytes = serialize' tx
+    , -- FIXME: This is using EncCBOR which is 'toCBORForMempoolSubmission', but
+    -- we should be using 'toCBORForBlockInclusion'
+    let bytes = serialize' tx
     , let byteSize = fromIntegral $ BS.length bytes
     ]
 
@@ -1039,13 +1041,48 @@ leiosEbBodyItems eb =
     & V.imap (\ix (txh, size) -> (ix, txh, size))
     & toList
 
-leiosEbBytesSize :: LeiosEb -> BytesSize
-leiosEbBytesSize (MkLeiosEb items) =
-  cborIntBytesSize (length items) + sum (fmap (each . snd) items)
- where
-  each sz = cborBytesSize 32 + cborIntBytesSize sz
+hashLeiosEb :: LeiosEb -> EbHash
+hashLeiosEb =
+  MkEbHash . Hash.hashToBytes . Hash.hashWith @HASH id . serialize' . encodeLeiosEb
 
+-- | Encode a 'LeiosEb' with all its items. Must not add more overhead than
+-- 'encodeLeiosEbMaxFramingSize' and individual item encodings must match
+-- 'encodeLeiosEbItemSize'.
+encodeLeiosEb :: LeiosEb -> Encoding
+encodeLeiosEb (MkLeiosEb v) =
+  foldl
+    ( \acc (MkTxHash bytes, txBytesSize) ->
+        acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
+    )
+    (CBOR.encodeMapLen $ fromIntegral $ length v)
+    v
+
+-- | The widest the map-length prefix 'encodeLeiosEb' writes ahead of the items
+-- can get. CBOR map headers have the same widths as 'cborIntBytesSize', and the
+-- item count fits 'BytesSize'.
+--
+-- A capacity expressed in references ('encodeLeiosEbItemSize' each) subtracts
+-- this once at the block level; no single transaction can be charged for it.
+encodeLeiosEbMaxFramingSize :: ByteSize32
+encodeLeiosEbMaxFramingSize = ByteSize32 $ cborIntBytesSize (maxBound :: BytesSize)
+
+-- | The bytes one reference occupies for a transaction of the given size: the
+-- hash and the size itself, exactly as 'encodeLeiosEb' writes them.
+--
+-- Also used on the Dijkstra transaction measure, so the mempool charges a
+-- transaction what it will actually cost in the reference list rather than an
+-- approximation of it.
+encodeLeiosEbItemSize :: ByteSize32 -> ByteSize32
+encodeLeiosEbItemSize (ByteSize32 txSize) =
+  ByteSize32 $ cborBytesSize 32 + cborIntBytesSize txSize
+ where
   cborBytesSize len = cborIntBytesSize len + len
+
+-- | Compute the size of a 'LeiosEb' encoded via 'encodeLeiosEb'.
+encodeLeiosEbSize :: LeiosEb -> BytesSize
+encodeLeiosEbSize (MkLeiosEb items) =
+  cborIntBytesSize (length items)
+    + sum (fmap (unByteSize32 . encodeLeiosEbItemSize . ByteSize32 . snd) items)
 
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.
@@ -1055,19 +1092,6 @@ cborIntBytesSize n
   | n < 0x100 = 2
   | n < 0x10000 = 3
   | otherwise = 5
-
-hashLeiosEb :: LeiosEb -> EbHash
-hashLeiosEb =
-  MkEbHash . Hash.hashToBytes . Hash.hashWith @HASH id . serialize' . encodeLeiosEb
-
-encodeLeiosEb :: LeiosEb -> Encoding
-encodeLeiosEb (MkLeiosEb v) =
-  foldl
-    ( \acc (MkTxHash bytes, txBytesSize) ->
-        acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
-    )
-    (CBOR.encodeMapLen $ fromIntegral $ length v)
-    v
 
 decodeLeiosEb :: Decoder s LeiosEb
 decodeLeiosEb = do
@@ -1311,7 +1335,7 @@ messageLeiosFetchToObject = \case
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlock"
       , "ebHash" .= prettyEbHash (hashLeiosEb eb)
-      , "ebBytesSize" .= Aeson.Number (fromIntegral $ leiosEbBytesSize eb)
+      , "ebBytesSize" .= Aeson.Number (fromIntegral $ encodeLeiosEbSize eb)
       ]
   MsgLeiosBlockTxsRequest (MkLeiosPoint ebSlot ebHash) bitmaps ->
     mconcat
@@ -1647,7 +1671,7 @@ traceLeiosKernelToObject = \case
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       , "numTxs" .= length (leiosEbTxs eb)
-      , "ebSize" .= leiosEbBytesSize eb
+      , "ebSize" .= encodeLeiosEbSize eb
       , "closureSize" .= unByteSize32 (txMeasureMetricTxSizeBytes ebMeasure)
       , "mempoolRestSize" .= unByteSize32 (txMeasureMetricTxSizeBytes mempoolRestMeasure)
       ]
@@ -2086,55 +2110,40 @@ traceLeiosPeerForHuman = \case
   TraceLeiosPeerAnnouncement equiv fields ->
     "EB announcement from peer (" <> T.pack (show equiv) <> "): " <> T.pack (show fields)
 
--- * Protocol parameters
+-- * Protocol limits and parameters
 
--- FIXME: the node-to-node limits below are still constants, and it is not clear
--- that they can stay that way. The ledger now has protocol parameters for the
--- same quantities (@maxEndorserBlockReferencesSize@, @maxEndorserBlockTxsSize@),
--- so governance can raise a capacity past what these allow the network layer to
--- carry, and nothing rejects that today. This is not hypothetical: the ledger's
--- own example parameters are 512 KiB and 12 MiB against the 500 kB and 12 MB
--- here, so the capacity is clamped where it is read. Either the ledger has to bound the
--- parameters by the wire limits, or the node has to refuse such a ledger state
--- at startup, or these have to become negotiated rather than fixed.
+-- The node-to-node limits below are constants, but no longer a policy of their
+-- own: they restate the LeiosFetch codec's message limit, so the buffers sized
+-- from them hold anything a peer can deliver. Governance raising
+-- @maxEndorserBlockReferencesSize@ past the message limit yields a capped EB
+-- rather than an undiffusable one ('leiosEndorserBlockMeasure') -- silently,
+-- today; a trace when that cap bites would be worth adding.
 
--- | The largest Leios block message we will send or accept.
+-- | The largest Leios block message we will send or accept: the LeiosFetch
+-- codec's own byte limit for its Block state ('byteLimitsLeiosFetch' returns
+-- 'largeByteLimit' there), so everything sized from this holds anything a peer
+-- can deliver, by construction.
 maxMsgLeiosBlockBytesSize :: BytesSize
-maxMsgLeiosBlockBytesSize = 500 * 10 ^ (3 :: Int) -- from CIP-0164's recommendations
+maxMsgLeiosBlockBytesSize = fromIntegral largeByteLimit
 
-minEbItemBytesSize :: BytesSize
-minEbItemBytesSize = 32 + hashOverhead + minSizeOverhead
- where
-  hashOverhead = 1 + 1 -- bytestring major byte + a length = 32
-  minSizeOverhead = 1 + 1 -- int major byte + a value at low as 55
-
--- | How many transactions an EB of the given reference-list size can name.
+-- | The most transactions any EB the codec will accept can name. Sizes the
+-- fetch buffers and bounds the wire bitmaps.
 --
--- Called with 'maxMsgLeiosBlockBytesSize' this is the wire bound, which sizes
--- the buffers; called with the @maxEndorserBlockReferencesSize@ protocol
--- parameter it is the capacity the mempool is allowed to fill.
-maxEbTxCount :: Integral a => a -> Int
-maxEbTxCount referencesSize =
-  fromIntegral $
-    (fromIntegral referencesSize - msgOverhead - sequenceOverhead)
-      `div` minEbItemBytesSize
- where
-  msgOverhead = 1 + 1 -- short list len + small word
-  sequenceOverhead = 1 + 2 -- sequence major byte + a length > 255
-
--- | The most transactions any EB can name, set by the wire message limit.
---
--- Sizes buffers that are allocated before any ledger state is in reach; the
--- protocol parameter cannot exceed it.
+-- Those buffers are allocated before any ledger state is in reach, which is
+-- why this derives from the codec limit and not from the protocol parameter;
+-- the mempool in turn plans EBs within the codec limit, so a forged EB always
+-- fits the buffers of every honest peer.
 maxTxsPerEb :: Int
-maxTxsPerEb = maxEbTxCount maxMsgLeiosBlockBytesSize
+maxTxsPerEb =
+  (msgLimit - framing) `div` minItemSize
+ where
+  msgLimit = fromIntegral maxMsgLeiosBlockBytesSize
 
--- | The largest EB closure we will fetch.
---
--- FIXME: see the note above -- @maxEndorserBlockTxsSize@ is the ledger's say on
--- the same quantity, and the two are unrelated today.
-maxEBClosureSize :: ByteSize32
-maxEBClosureSize = ByteSize32 12_000_000
+  -- The whole reference list less its framing, over the smallest a reference
+  -- can be: both come from the encoder, so the buffers track it exactly.
+  framing = fromIntegral $ unByteSize32 encodeLeiosEbMaxFramingSize
+
+  minItemSize = fromIntegral $ unByteSize32 (encodeLeiosEbItemSize (ByteSize32 0))
 
 -- | Slots between an EB's announcement and the earliest block that may certify
 -- it: the announcement, voting and diffusion periods must all have elapsed.
