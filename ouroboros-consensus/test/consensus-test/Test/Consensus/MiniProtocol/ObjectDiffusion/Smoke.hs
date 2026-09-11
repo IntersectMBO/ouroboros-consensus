@@ -25,7 +25,10 @@ import Network.TypedProtocol.Codec (AnyMessage)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
-  ( TraceObjectDiffusionInbound (TraceObjectDiffusionInboundServerIdle)
+  ( TraceObjectDiffusionInbound
+      ( TraceObjectDiffusionInboundAwaitReply
+      , TraceObjectDiffusionInboundServerIdle
+      )
   , objectDiffusionInbound
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
@@ -74,11 +77,14 @@ tests =
         "ObjectDiffusion smoke test with mock objects"
         prop_smoke
     , testProperty
-        "ObjectDiffusion delivers an object after an idle response"
-        prop_object_after_idle
+        "ObjectDiffusion delivers an object after an await response"
+        prop_object_after_await
     , testProperty
-        "ObjectDiffusion reports idle only after committing prior objects"
-        prop_idle_after_commit
+        "ObjectDiffusion reports caught up only after committing prior objects"
+        prop_await_after_commit
+    , testProperty
+        "ObjectDiffusion times out after await despite stale pool reads"
+        prop_server_idle_after_stale_reads
     ]
 
 {-------------------------------------------------------------------------------
@@ -204,16 +210,14 @@ prop_smoke =
       (objectDiffusionInboundPeerPipelined inbound)
       >> pure ()
 
--- | Exercise the important distinction from client-side polling: once the
--- server has returned an idle response, the client immediately starts another
--- blocking request. An object added between idle responses must wake that
--- request immediately rather than waiting for another client-side delay.
-prop_object_after_idle :: Property
-prop_object_after_idle =
+-- | Once the server has promptly reported that it is awaiting new objects, an
+-- object added during the ensuing server-agency wait must wake it immediately.
+prop_object_after_await :: Property
+prop_object_after_await =
   case runSimStrictShutdown simulation of
-    Right (mIdle, mDelivered, mTerminated, inboundObjects) ->
-      counterexample "the server did not return client agency while idle" (isJust mIdle)
-        .&&. counterexample "object added after idle was not delivered promptly" (isJust mDelivered)
+    Right (mAwait, mDelivered, mTerminated, inboundObjects) ->
+      counterexample "the server did not promptly report that it was awaiting objects" (isJust mAwait)
+        .&&. counterexample "object added after await was not delivered promptly" (isJust mDelivered)
         .&&. counterexample "peers did not terminate after delivery" (isJust mTerminated)
         .&&. inboundObjects === [object]
     Left err -> counterexample (show err) $ property False
@@ -229,11 +233,11 @@ prop_object_after_idle =
     outboundPool@(SmokeObjectPool outboundObjectsVar) <- newObjectPool []
     inboundPool@(SmokeObjectPool inboundObjectsVar) <- newObjectPool []
     controlMessage <- uncheckedNewTVarM Continue
-    idleSeen <- uncheckedNewTVarM False
+    awaitSeen <- uncheckedNewTVarM False
 
     let inboundTracer = mkTracer $ \event -> case event of
-          TraceObjectDiffusionInboundServerIdle ->
-            atomically $ writeTVar idleSeen True
+          TraceObjectDiffusionInboundAwaitReply ->
+            atomically $ writeTVar awaitSeen True
           _ -> pure ()
         inbound =
           objectDiffusionInbound
@@ -258,7 +262,7 @@ prop_object_after_idle =
             atomically $ modifyTVar peersDone (+ 1)
 
       _outboundThread <-
-        forkLinkedThread reg "ObjectDiffusion post-idle outbound peer" $
+        forkLinkedThread reg "ObjectDiffusion post-await outbound peer" $
           trackDone $
             runPeer
               nullTracer
@@ -266,7 +270,7 @@ prop_object_after_idle =
               outboundChannel
               (objectDiffusionOutboundPeer outbound)
       _inboundThread <-
-        forkLinkedThread reg "ObjectDiffusion post-idle inbound peer" $
+        forkLinkedThread reg "ObjectDiffusion post-await inbound peer" $
           trackDone $
             runPipelinedPeer
               nullTracer
@@ -274,11 +278,10 @@ prop_object_after_idle =
               inboundChannel
               (objectDiffusionInboundPeerPipelined inbound)
 
-      mIdle <- timeout 1.25 $ atomically $ readTVar idleSeen >>= check
+      mAwait <- timeout 0.25 $ atomically $ readTVar awaitSeen >>= check
 
-      -- Add an object after the idle response. A polling client that slept for
-      -- another idle interval would miss the deliberately shorter deadline;
-      -- the immediately reissued blocking request is woken at once.
+      -- Add an object after the await response. The server still has agency,
+      -- so its existing blocking request is woken at once.
       atomically $ modifyTVar outboundObjectsVar (++ [object])
 
       mDelivered <- timeout 0.25 $ atomically $ do
@@ -291,23 +294,22 @@ prop_object_after_idle =
         check (n == 2)
 
       inboundObjects <- atomically $ readTVar inboundObjectsVar
-      pure (mIdle, mDelivered, mTerminated, inboundObjects)
+      pure (mAwait, mDelivered, mTerminated, inboundObjects)
 
--- | Receiving 'MsgServerIdle' is a synchronization point for the inbound
--- peer: every object advertised before it must already have been committed to
--- the local pool. Hold a commit open and verify that no idle event can overtake
--- it.
-prop_idle_after_commit :: Property
-prop_idle_after_commit =
+-- | Receiving 'MsgAwaitReply' is the per-peer caught-up observation. Hold a
+-- commit open and verify that it cannot overtake the commit of any previously
+-- advertised object.
+prop_await_after_commit :: Property
+prop_await_after_commit =
   case runSimStrictShutdown simulation of
-    Right (mCommitStarted, mEarlyIdle, mCommitted, mIdle, mTerminated, inboundObjects) ->
+    Right (mCommitStarted, mEarlyAwait, mCommitted, mAwait, mTerminated, inboundObjects) ->
       counterexample "the inbound peer never started committing the object" (isJust mCommitStarted)
         .&&. counterexample
-          "the inbound peer reported idle before the object commit completed"
-          (not $ isJust mEarlyIdle)
+          "the inbound peer reported caught up before the object commit completed"
+          (not $ isJust mEarlyAwait)
         .&&. counterexample "the inbound peer did not commit the object" (isJust mCommitted)
-        .&&. counterexample "the server did not report idle after the commit" (isJust mIdle)
-        .&&. counterexample "peers did not terminate after the idle response" (isJust mTerminated)
+        .&&. counterexample "the server did not report caught up after the commit" (isJust mAwait)
+        .&&. counterexample "peers did not terminate after the caught-up response" (isJust mTerminated)
         .&&. inboundObjects === [object]
     Left err -> counterexample (show err) $ property False
  where
@@ -324,11 +326,11 @@ prop_idle_after_commit =
     controlMessage <- uncheckedNewTVarM Continue
     commitStarted <- uncheckedNewTVarM False
     allowCommit <- uncheckedNewTVarM False
-    idleSeen <- uncheckedNewTVarM False
+    awaitSeen <- uncheckedNewTVarM False
 
     let inboundTracer = mkTracer $ \event -> case event of
-          TraceObjectDiffusionInboundServerIdle ->
-            atomically $ writeTVar idleSeen True
+          TraceObjectDiffusionInboundAwaitReply ->
+            atomically $ writeTVar awaitSeen True
           _ -> pure ()
         inboundWriter =
           ObjectPoolWriter
@@ -382,13 +384,13 @@ prop_idle_after_commit =
               (objectDiffusionInboundPeerPipelined inbound)
 
       mCommitStarted <- timeout 1 $ atomically $ readTVar commitStarted >>= check
-      mEarlyIdle <- timeout 1.25 $ atomically $ readTVar idleSeen >>= check
+      mEarlyAwait <- timeout 0.25 $ atomically $ readTVar awaitSeen >>= check
 
       atomically $ writeTVar allowCommit True
       mCommitted <- timeout 0.25 $ atomically $ do
         inboundObjects <- readTVar inboundObjectsVar
         check (inboundObjects == [object])
-      mIdle <- timeout 1.25 $ atomically $ readTVar idleSeen >>= check
+      mAwait <- timeout 0.25 $ atomically $ readTVar awaitSeen >>= check
 
       atomically $ writeTVar controlMessage Terminate
       mTerminated <- timeout 3 $ atomically $ do
@@ -396,7 +398,97 @@ prop_idle_after_commit =
         check (n == 2)
 
       inboundObjects <- atomically $ readTVar inboundObjectsVar
-      pure (mCommitStarted, mEarlyIdle, mCommitted, mIdle, mTerminated, inboundObjects)
+      pure (mCommitStarted, mEarlyAwait, mCommitted, mAwait, mTerminated, inboundObjects)
+
+-- | A pool lookup action may become empty because its objects were garbage
+-- collected. Even if the reader continuously offers such stale actions, the
+-- original wait timer must eventually win and return agency to the client.
+prop_server_idle_after_stale_reads :: Property
+prop_server_idle_after_stale_reads =
+  case runSimStrictShutdown simulation of
+    Right (mAwait, mIdle, idleFollowedAwait, mTerminated) ->
+      counterexample "the server did not promptly report that it was awaiting objects" (isJust mAwait)
+        .&&. counterexample "stale pool reads starved the server-idle timeout" (isJust mIdle)
+        .&&. counterexample "the server reported idle before await" idleFollowedAwait
+        .&&. counterexample "peers did not terminate after server-idle" (isJust mTerminated)
+    Left err -> counterexample (show err) $ property False
+ where
+  simulation :: forall s. IOSim s (Maybe (), Maybe (), Bool, Maybe ())
+  simulation = do
+    let maxFifoSize = NumObjectsUnacknowledged 5
+        maxIdsToReq = NumObjectIdsReq 3
+        maxObjectsToReq = NumObjectsReq 2
+        staleReader =
+          ObjectPoolReader
+            { oprObjectId = getSmokeObjectId
+            , oprObjectsAfter = \_ _ ->
+                pure $ Just $ threadDelay 0.1 >> pure Map.empty
+            , oprZeroTicketNo = -1 :: Int
+            }
+
+    inboundPool <- newObjectPool []
+    controlMessage <- uncheckedNewTVarM Continue
+    awaitSeen <- uncheckedNewTVarM False
+    idleSeen <- uncheckedNewTVarM False
+    idleFollowedAwaitVar <- uncheckedNewTVarM True
+
+    let inboundTracer = mkTracer $ \event -> case event of
+          TraceObjectDiffusionInboundAwaitReply ->
+            atomically $ writeTVar awaitSeen True
+          TraceObjectDiffusionInboundServerIdle -> atomically $ do
+            hasAwaited <- readTVar awaitSeen
+            writeTVar idleFollowedAwaitVar hasAwaited
+            writeTVar idleSeen True
+          _ -> pure ()
+        inbound =
+          objectDiffusionInbound
+            inboundTracer
+            (maxFifoSize, maxIdsToReq, maxObjectsToReq)
+            (makeObjectPoolWriter inboundPool)
+            nodeToNodeVersion
+            (readTVar controlMessage)
+        outbound =
+          objectDiffusionOutbound
+            nullTracer
+            maxFifoSize
+            1
+            staleReader
+            nodeToNodeVersion
+
+    withRegistry $ \reg -> do
+      (outboundChannel, inboundChannel) <- createConnectedChannels
+      peersDone <- uncheckedNewTVarM (0 :: Int)
+      let trackDone action = do
+            _ <- action
+            atomically $ modifyTVar peersDone (+ 1)
+
+      _outboundThread <-
+        forkLinkedThread reg "ObjectDiffusion stale-read outbound peer" $
+          trackDone $
+            runPeer
+              nullTracer
+              codecObjectDiffusionId
+              outboundChannel
+              (objectDiffusionOutboundPeer outbound)
+      _inboundThread <-
+        forkLinkedThread reg "ObjectDiffusion stale-read inbound peer" $
+          trackDone $
+            runPipelinedPeer
+              nullTracer
+              codecObjectDiffusionId
+              inboundChannel
+              (objectDiffusionInboundPeerPipelined inbound)
+
+      mAwait <- timeout 0.25 $ atomically $ readTVar awaitSeen >>= check
+      mIdle <- timeout 1.25 $ atomically $ readTVar idleSeen >>= check
+      idleFollowedAwait <- atomically $ readTVar idleFollowedAwaitVar
+
+      atomically $ writeTVar controlMessage Terminate
+      mTerminated <- timeout 3 $ atomically $ do
+        n <- readTVar peersDone
+        check (n == 2)
+
+      pure (mAwait, mIdle, idleFollowedAwait, mTerminated)
 
 --- The core logic of the smoke test is shared between the generic smoke tests for ObjectDiffusion, and the ones specialised to PerasCert/PerasVote diffusion
 prop_smoke_object_diffusion ::

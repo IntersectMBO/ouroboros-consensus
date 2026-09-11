@@ -35,6 +35,8 @@ data TraceObjectDiffusionOutbound objectId object
   = TraceObjectDiffusionOutboundRecvMsgRequestObjectIds NumObjectIdsReq
   | -- | The IDs to be sent in the response
     TraceObjectDiffusionOutboundSendMsgReplyObjectIds [objectId]
+  | -- | No IDs are immediately available, so the server will wait.
+    TraceObjectDiffusionOutboundSendMsgAwaitReply
   | -- | No IDs became available before the bounded blocking wait expired.
     TraceObjectDiffusionOutboundSendMsgServerIdle
   | -- | The IDs of the objects requested.
@@ -161,49 +163,78 @@ objectDiffusionOutbound tracer maxFifoLength idleTimeout ObjectPoolReader{..} _v
         unless (Seq.null outstandingFifo') $
           throwIO ProtocolErrorRequestBlocking
 
-        -- Wait for either new objects or the idle timeout. If objects are
-        -- garbage-collected between the STM notification and the IO read, wait
-        -- again rather than sending an invalid empty blocking reply.
-        idleVar <- registerDelay idleTimeout
-        let getNewContentOrIdle = do
-              result <-
-                atomically $
-                  ( do
-                      maybeNewObjectsAction <-
-                        oprObjectsAfter
-                          lastTicketNo
-                          (fromIntegral numIdsToReq)
-                      case maybeNewObjectsAction of
-                        Nothing -> retry
-                        Just newObjectsAction -> pure (Just newObjectsAction)
-                  )
-                    `orElse` (TVar.readTVar idleVar >>= check >> pure Nothing)
-              case result of
-                Nothing -> pure Nothing
-                Just getNewObjects -> do
-                  content <- getNewObjects
-                  if null content
-                    then getNewContentOrIdle
-                    else pure (Just content)
+        let sendNewContent ::
+              forall phase.
+              Map.Map ticketNo object ->
+              m (OutboundStObjectIds ('StObjectIdsBlocking phase) objectId object m ())
+            sendNewContent newContent = do
+              let sortedNewContent = Map.toAscList newContent
+                  !newIds = oprObjectId . snd <$> sortedNewContent
+                  st'' = updateStNewObjects st' sortedNewContent
 
-        maybeNewContent <- getNewContentOrIdle
-        case maybeNewContent of
-          Nothing -> do
-            -- 'MsgServerIdle' is only valid after 'MsgAwaitReply', so send
-            -- both back to back once the bounded wait has expired.
-            traceWith tracer TraceObjectDiffusionOutboundSendMsgServerIdle
-            pure $ SendMsgAwaitReply $ pure $ SendMsgServerIdle (makeBundle st')
-          Just newContent -> do
-            let sortedNewContent = Map.toAscList newContent
-                !newIds = oprObjectId . snd <$> sortedNewContent
-                st'' = updateStNewObjects st' sortedNewContent
+              traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjectIds newIds)
 
-            traceWith tracer (TraceObjectDiffusionOutboundSendMsgReplyObjectIds newIds)
+              pure $
+                SendMsgReplyObjectIds
+                  (BlockingReply (NonEmpty.fromList $ newIds))
+                  (makeBundle st'')
 
-            pure $
-              SendMsgReplyObjectIds
-                (BlockingReply (NonEmpty.fromList $ newIds))
-                (makeBundle st'')
+            -- After 'MsgAwaitReply' has been sent, wait for either new objects
+            -- or the idle timeout. Check the timer first so a pool reader that
+            -- repeatedly yields stale, garbage-collected actions cannot starve
+            -- the timeout. Reuse the same timer when retrying such actions.
+            waitForNewContentOrIdle ::
+              m (OutboundStObjectIds ('StObjectIdsBlocking 'StMustReply) objectId object m ())
+            waitForNewContentOrIdle = do
+              idleVar <- registerDelay idleTimeout
+              let getNewContentOrIdle = do
+                    result <-
+                      atomically $
+                        (TVar.readTVar idleVar >>= check >> pure Nothing)
+                          `orElse` do
+                            maybeNewObjectsAction <-
+                              oprObjectsAfter
+                                lastTicketNo
+                                (fromIntegral numIdsToReq)
+                            case maybeNewObjectsAction of
+                              Nothing -> retry
+                              Just newObjectsAction -> pure (Just newObjectsAction)
+                    case result of
+                      Nothing -> pure Nothing
+                      Just getNewObjects -> do
+                        content <- getNewObjects
+                        if null content
+                          then getNewContentOrIdle
+                          else pure (Just content)
+
+              maybeNewContent <- getNewContentOrIdle
+              case maybeNewContent of
+                Nothing -> do
+                  traceWith tracer TraceObjectDiffusionOutboundSendMsgServerIdle
+                  pure $ SendMsgServerIdle (makeBundle st')
+                Just newContent -> sendNewContent newContent
+
+            sendAwaitReply ::
+              m (OutboundStObjectIds ('StObjectIdsBlocking 'StCanAwait) objectId object m ())
+            sendAwaitReply = do
+              traceWith tracer TraceObjectDiffusionOutboundSendMsgAwaitReply
+              pure $ SendMsgAwaitReply waitForNewContentOrIdle
+
+        -- Check once without blocking so that the caught-up observation is
+        -- prompt. If the advertised objects disappear before the IO action is
+        -- run, report 'MsgAwaitReply' rather than blocking before that message.
+        maybeNewObjectsAction <-
+          atomically $
+            oprObjectsAfter
+              lastTicketNo
+              (fromIntegral numIdsToReq)
+        case maybeNewObjectsAction of
+          Nothing -> sendAwaitReply
+          Just getNewObjects -> do
+            newContent <- getNewObjects
+            if null newContent
+              then sendAwaitReply
+              else sendNewContent newContent
 
       -----------------------------------------------------------------------
       SingRequestObjectIdsNonBlocking -> do
