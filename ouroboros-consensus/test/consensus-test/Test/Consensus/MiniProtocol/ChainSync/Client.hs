@@ -49,6 +49,7 @@ module Test.Consensus.MiniProtocol.ChainSync.Client (tests) where
 
 import Cardano.Crypto.DSIGN.Mock
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import Cardano.Network.NodeToNode.Version (PerasSupport (PerasSupported, PerasUnsupported))
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Control.Monad (forM_, unless, void, when)
 import Control.Monad.Class.MonadThrow (Handler (..), catches)
@@ -113,7 +114,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
-  ( NodeToNodeVersion
+  ( NodeToNodeVersion (NodeToNodeV_16)
   )
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -596,6 +597,7 @@ runChainSync
               (pure Syncing)
               serverId
               maxBound
+              (if maxBound >= NodeToNodeV_16 then PerasSupported else PerasUnsupported)
               lopBucketConfig
               csjConfig
               diffusionPipelining
