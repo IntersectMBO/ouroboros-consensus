@@ -64,6 +64,10 @@ data TraceObjectDiffusionInbound objectId object
     TraceObjectDiffusionInboundRecvControlMessage ControlMessage
   | TraceObjectDiffusionInboundCanRequestMoreObjects Int
   | TraceObjectDiffusionInboundCannotRequestMoreObjects Int
+  | -- | The server reported that it has no object IDs after its current
+    -- cursor. All previously advertised objects have been processed before
+    -- this event can be emitted.
+    TraceObjectDiffusionInboundServerIdle
   deriving (Eq, Show)
 
 data ObjectDiffusionInboundError objectId object
@@ -443,6 +447,16 @@ objectDiffusionInbound
               numIdsToRequest
               ( \neCollectedIds ->
                   checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
+              )
+              ( WithEffect $ do
+                  traceWith tracer TraceObjectDiffusionInboundServerIdle
+                  pure $!
+                    checkState
+                      st
+                        { numToAckOnNextReq = 0
+                        , numIdsInFlight = 0
+                        }
+                      & go Zero
               )
 
     goReqObjectsAndObjectIdsPipelined ::
