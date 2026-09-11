@@ -142,7 +142,7 @@ setupGsm isHaaSatisfied vars = do
       , GSM.peerIsIdle = isIdling
       , GSM.durationUntilTooOld = Just durationUntilTooOld
       , GSM.equivalent = (==) -- unsound, but harmless in this test
-      , GSM.getChainSyncStates = readTVar varStates
+      , GSM.getPeerStates = traverse readTVar =<< readTVar varStates
       , GSM.getCurrentSelection = readTVar varSelection
       , GSM.minCaughtUpDuration = thrashLimit
       , GSM.setCaughtUpPersistentMark = \b ->
