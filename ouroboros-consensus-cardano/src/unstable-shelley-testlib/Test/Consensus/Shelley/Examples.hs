@@ -53,11 +53,11 @@ import Ouroboros.Consensus.Protocol.TPraos
   )
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
-import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.Block (Serialised (..))
+import Ouroboros.Network.Magic (NetworkMagic (..))
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import Ouroboros.Network.PeerSelection.RelayAccessPoint
 import qualified Test.Cardano.Ledger.Babbage.Examples as Babbage
@@ -128,10 +128,10 @@ fromShelleyLedgerExamples
         [ ("GetLedgerTip", SomeBlockQuery GetLedgerTip)
         , ("GetEpochNo", SomeBlockQuery GetEpochNo)
         , ("GetCurrentPParams", SomeBlockQuery GetCurrentPParams)
-        , ("GetStakeDistribution", SomeBlockQuery GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
         , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
+        , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
         ]
@@ -140,7 +140,6 @@ fromShelleyLedgerExamples
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
         , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
         , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
-        , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr lePoolDistr)
         ,
           ( "NonMyopicMemberRewards"
           , SomeResult
@@ -152,19 +151,38 @@ fromShelleyLedgerExamples
           ( "GetBigLedgerPeerSnapshot"
           , SomeResult
               (GetLedgerPeerSnapshot SingBigLedgerPeers)
-              ( LedgerPeerSnapshotV2
-                  ( NotOrigin slotNo
-                  ,
-                    [
-                      ( AccPoolStake 0.9
-                      ,
-                        ( PoolStake 0.9
-                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
-                        )
+              ( LedgerBigPeerSnapshotV23
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH, padded to 32 bytes>"))
+                  (NetworkMagic 42)
+                  [
+                    ( AccPoolStake 0.9
+                    ,
+                      ( PoolStake 0.9
+                      , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                       )
-                    ]
-                  )
+                    )
+                  ]
               )
+          )
+        ,
+          ( "GetAllLedgerPeerSnapshot"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingAllLedgerPeers)
+              ( LedgerAllPeerSnapshotV23
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH, padded to 32 bytes>"))
+                  (NetworkMagic 42)
+                  [
+                    ( PoolStake 0.9
+                    , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
+                    )
+                  ]
+              )
+          )
+        ,
+          ( "GetBigLedgerPeerSnapshotAtOrigin"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingBigLedgerPeers)
+              (LedgerBigPeerSnapshotV23 GenesisPoint (NetworkMagic 42) [])
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
         ,
@@ -268,10 +286,10 @@ fromShelleyLedgerExamplesPraos
         [ ("GetLedgerTip", SomeBlockQuery GetLedgerTip)
         , ("GetEpochNo", SomeBlockQuery GetEpochNo)
         , ("GetCurrentPParams", SomeBlockQuery GetCurrentPParams)
-        , ("GetStakeDistribution", SomeBlockQuery GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
         , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
+        , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
         ]
@@ -280,7 +298,6 @@ fromShelleyLedgerExamplesPraos
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
         , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
         , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
-        , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr lePoolDistr)
         ,
           ( "NonMyopicMemberRewards"
           , SomeResult
@@ -292,19 +309,38 @@ fromShelleyLedgerExamplesPraos
           ( "GetBigLedgerPeerSnapshot"
           , SomeResult
               (GetLedgerPeerSnapshot SingBigLedgerPeers)
-              ( LedgerPeerSnapshotV2
-                  ( NotOrigin slotNo
-                  ,
-                    [
-                      ( AccPoolStake 0.9
-                      ,
-                        ( PoolStake 0.9
-                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
-                        )
+              ( LedgerBigPeerSnapshotV23
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH, padded to 32 bytes>"))
+                  (NetworkMagic 42)
+                  [
+                    ( AccPoolStake 0.9
+                    ,
+                      ( PoolStake 0.9
+                      , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                       )
-                    ]
-                  )
+                    )
+                  ]
               )
+          )
+        ,
+          ( "GetAllLedgerPeerSnapshot"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingAllLedgerPeers)
+              ( LedgerAllPeerSnapshotV23
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH, padded to 32 bytes>"))
+                  (NetworkMagic 42)
+                  [
+                    ( PoolStake 0.9
+                    , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
+                    )
+                  ]
+              )
+          )
+        ,
+          ( "GetBigLedgerPeerSnapshotAtOrigin"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingBigLedgerPeers)
+              (LedgerBigPeerSnapshotV23 GenesisPoint (NetworkMagic 42) [])
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
         ,

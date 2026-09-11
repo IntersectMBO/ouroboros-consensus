@@ -66,15 +66,26 @@ Henceforth, we call an unreleased version "experimental" (ie only used for demo 
 
 ### Checks
 
-The supported query versions are only enforced in the [Shelley query encoder][shelley-encodeNodeToClient], ie in code run by clients. The server will currently answer queries even if the negotiated version is not in the supported version range for that query (which might be the case with a custom client implementation, or when one forgot to enable experimental protocols), following the robustness principle (ie "be conservative in what you send, be liberal in what you accept").
+The supported query versions are only enforced in the [Shelley query encoder][shelley-encodeNodeToClient], ie in code run by clients. The server will currently answer queries even if the negotiated version is not in the supported version range for that query (which might be the case with a custom client implementation, or when one forgot to enable experimental protocols), following the robustness principle (ie "be conservative in what you send, be liberal in what you accept"). This holds only for the queries the decoder still accepts: removing a query removes its case from the decoder, so a client that sends a removed query gets a decode failure rather than an answer.
 
 As an example, consider a query $Q$ that is enabled after version $x$, and consider a connection between a client and a node that negotiated version $y$. If $y < x$, then the client will throw an exception before sending $Q$ as the negotiated version is too old, so the server probably won't understand the query. But if the server does actually understand the query, and the client uses a custom implementation that does not perform the check on $x$ and $y$, then the server will reply as normal despite $y < x$.
 
-### On newly added golden files
+### On golden files
+
+#### Newly added golden files
 
 When adding a new `ShelleyNodeToClientVersion` or a new `CardanoNodeToClientVersions` new golden files will be generated. Because serialization is [version dependent](https://github.com/IntersectMBO/ouroboros-consensus/pull/95), a new `ShelleyNodeToClientVersion` could also introduce a different serialization. See how function [`decodeShelleyResult`][decodeShelleyResult] uses `ShelleyNodeToClientVersion`. Therefore we have to test the serialization for the new versions.
 
 The golden tests only generate golden files for queries that have examples. So if a newly added query does not have an example, no golden files will be generated for it.
+
+#### Stale golden files of dropped versions
+
+Nothing will tell you about golden files of a version you dropped: [`goldenTest_SerialiseNodeToClient`][goldenTest_SerialiseNodeToClient] builds the directory names from `supportedNodeToClientVersions` and never lists the filesystem, so leftover directories are silently ignored.
+
+So when you remove a `NodeToClientVersion`, a `CardanoNodeToClientVersion` or a `ShelleyNodeToClientVersion`, delete its golden directories by hand. The layout mirrors the `ToGoldenDirectory` instances:
+
+ - node-to-client: `golden/<block>/<QueryVersion>/<BlockNodeToClientVersion>/`, with the `QueryVersion` given by [`nodeToClientVersionToQueryVersion`][nodeToClientVersionToQueryVersion]. Dropping the last `NodeToClientVersion` mapping to some `QueryVersion` makes that whole subtree unreachable.
+ - node-to-node: `golden/<block>/<BlockNodeToNodeVersion>/`.
 
 ## How to version a new query
 
@@ -101,6 +112,8 @@ The golden tests only generate golden files for queries that have examples. So i
 
  6. Follow the compiler warnings.
 
+ 7. If you *dropped* a version along the way, delete the golden directories of the dropped versions; nothing will fail if you forget. See [above](#stale-golden-files-of-dropped-versions).
+
 
 ## Sample pull requests
 
@@ -119,6 +132,8 @@ Old pull-requests that added new queries serve as good reference material when a
 [network-repo]: https://github.com/IntersectMBO/ouroboros-network
 [shelley-supportedNodeToClientVersions]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs#L56-L65
 [decodeShelleyResult]: https://github.com/IntersectMBO/ouroboros-consensus/blob/3d55ae3ca7a9e1c63a19266d35ef5512bbef13ab/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L733
+[goldenTest_SerialiseNodeToClient]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Golden.hs
+[nodeToClientVersionToQueryVersion]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Query/Version.hs
 
 [^conway-queries]: There are already queries that morally are Conway-specific, but still work in older eras, returning something along the lines of `mempty` in that case.
 

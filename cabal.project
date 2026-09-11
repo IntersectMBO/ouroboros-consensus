@@ -45,6 +45,18 @@ source-repository-package
     eras/conway/impl
     eras/dijkstra/impl
 
+-- Temp: pin ouroboros-network to main, where NodeToClientV_23 is the only
+-- NodeToClient version. Drop once these packages are released to CHaP.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network.git
+  tag: 09495ae9e6a063929ac9f2a8a80d210735c3a66e
+  --sha256: sha256-/m3CUFKSnTw8YpyIMhcpdVbHWu6FEqjiQFiPORWLFFI=
+  subdir:
+    ouroboros-network
+    cardano-diffusion
+    network-mux
+
 -- We want to always build the test-suites and benchmarks
 tests: true
 benchmarks: true

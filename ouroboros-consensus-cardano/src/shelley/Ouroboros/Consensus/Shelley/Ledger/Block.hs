@@ -80,7 +80,6 @@ import Ouroboros.Consensus.Protocol.Praos.Common
   )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Shelley.Eras
-import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (pHeaderPrevHash)
@@ -139,9 +138,6 @@ class
     StateSupportsPerasEpochContext (ShelleyBlock proto era)
   , BlockSupportsPeras (ShelleyBlock proto era)
   , MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock proto era) ~ EpochToPerasRoundInfo
-  , -- Backwards compatibility
-    Plain.FromCBOR (LegacyPParams era)
-  , Plain.ToCBOR (LegacyPParams era)
   ) =>
   ShelleyCompatible proto era
 
