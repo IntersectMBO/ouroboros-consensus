@@ -906,7 +906,7 @@ sumChainTxBytes _topConfig _initLedger node = runSimOrThrow $ do
   foldChain leiosDb prevAnn !total (blk : rest) = do
     blk' <- case (blockLeiosCert blk, prevAnn) of
       (Just _, Just point) ->
-        inlineLeiosClosure blk . map snd
+        inlineLeiosClosure blk . map snd . orFail
           <$> resolveLeiosClosure leiosDb (pointEbHash point)
       _ -> pure blk
     let nextAnn = fst <$> headerLeiosAnnouncement (getHeader blk)
@@ -972,7 +972,7 @@ foldWithResolution leiosDb cfg blks initState =
         Nothing ->
           error "foldWithResolution: CertRB but no announcement on parent chain-dep state"
         Just (point, _) -> do
-          closureTxs <- map snd <$> resolveLeiosClosure leiosDb (pointEbHash point)
+          closureTxs <- map snd . orFail <$> resolveLeiosClosure leiosDb (pointEbHash point)
           let ls = ledgerState state
               lcfg = configLedger (getExtLedgerCfg cfg)
           case applyLeiosClosure lcfg closureTxs ls of
@@ -1300,3 +1300,8 @@ elided targetLength s
   suffix = drop (l - halfLength - length elipsis) s
 
   elipsis = "..."
+
+-- | A closure the test cannot read back is a broken fixture, not a scenario
+-- under test, so fail loudly rather than assert against a truncated chain.
+orFail :: Show e => Either e [a] -> [a]
+orFail = either (\e -> error $ "resolveLeiosClosure: " <> show e) id

@@ -1194,10 +1194,10 @@ reproMempoolForge numBlks env = do
             -- reads that closure, so time the read. A block that certifies no
             -- EB skips the read, and its EB figures stay 0.
             --
-            -- 'timed' forces its result to WHNF only, and
-            -- 'resolveLeiosClosure' deserialises each transaction lazily. So
-            -- this figure covers the two LeiosDb queries, and not the
-            -- deserialisation.
+            -- 'timed' forces its result to WHNF only, but
+            -- 'resolveLeiosClosure' now decodes every transaction before it can
+            -- report a bad one, so this figure covers the two LeiosDb queries
+            -- /and/ the deserialisation.
             let mCertifiedEb = certifiedEbHash (parentAnnouncement st) blk
             ((closureTxs, ebTxsBytes), durEbRead, mutEbRead, gcEbRead) <-
               case mCertifiedEb of

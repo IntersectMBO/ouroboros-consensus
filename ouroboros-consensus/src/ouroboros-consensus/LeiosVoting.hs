@@ -42,6 +42,7 @@ import LeiosDemoDb
   )
 import LeiosDemoTypes
   ( HasLeiosVoting (..)
+  , LeiosClosureError (..)
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
   , LeiosSigningKey
@@ -343,6 +344,8 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           -- FIXME: Check the EB references size, txs size, ex units and ref scripts capacities
 
           lift (validateEbClosure lcfg leiosConn txCache readTables point ls) >>= \case
+            EbClosureUnreadable err ->
+              throwE $ ClosureUnavailable err
             EbClosureInvalid err ->
               -- TODO: Text in error
               throwE . EbTxsInvalid . Text.pack $ show err
@@ -406,6 +409,10 @@ data EbClosureVerdict blk
   | -- | A tx did not apply, so this EB must not be certified. Any valid prefix
     -- of txs is recorded as valid in the tx-cache.
     EbClosureInvalid !(ApplyTxErr blk)
+  | -- | The closure could not be read back at all, so nothing was validated.
+    -- Distinct from 'EbClosureInvalid': that one is a verdict on the EB, this
+    -- one is a statement about this node.
+    EbClosureUnreadable !LeiosClosureError
 
 -- | Apply an EB's endorsed transactions to the announcing RB's ledger state,
 -- which is the state they will meet if the EB is ever certified.
@@ -430,20 +437,23 @@ validateEbClosure ::
   LedgerState blk EmptyMK ->
   m (EbClosureVerdict blk)
 validateEbClosure lcfg leiosConn txCache resolveValues point lsBase = do
-  -- Load txs from disk
-  closure <- resolveLeiosClosure leiosConn (pointEbHash point)
-  -- Resolve their input UTxOs
-  -- TODO: This collects ALL inputs, but we would just need the inputs of the
-  -- transitive closure. That is, any chained txs would only require inputs not
-  -- internal to the chain.
-  let keys = foldMap (getTransactionKeySets . snd) closure
-  values <- resolveValues keys
-  -- Determine which txs we can just reapply (the cache hits)
-  decided <- withLookupTx txCache $ \look -> mapM (decide look) closure
-  -- TODO: Temporarily use the Mempool API until we have a dedicated one
-  let st0 = applyMempoolDiffs values keys (applyChainTick OmitLedgerEvents lcfg slot lsBase)
-  goValidate st0 decided 0 0 []
+  resolveLeiosClosure leiosConn (pointEbHash point) >>= \case
+    Left err -> pure $ EbClosureUnreadable err
+    Right closure -> validateClosure closure
  where
+  validateClosure closure = do
+    -- Resolve their input UTxOs
+    -- TODO: This collects ALL inputs, but we would just need the inputs of the
+    -- transitive closure. That is, any chained txs would only require inputs not
+    -- internal to the chain.
+    let keys = foldMap (getTransactionKeySets . snd) closure
+    values <- resolveValues keys
+    -- Determine which txs we can just reapply (the cache hits)
+    decided <- withLookupTx txCache $ \look -> mapM (decide look) closure
+    -- TODO: Temporarily use the Mempool API until we have a dedicated one
+    let st0 = applyMempoolDiffs values keys (applyChainTick OmitLedgerEvents lcfg slot lsBase)
+    goValidate st0 decided 0 0 []
+
   -- The EB's slot is also its announcer's, so ticking to it mirrors what the
   -- apply path does when a later RB certifies this EB.
   slot = pointSlotNo point

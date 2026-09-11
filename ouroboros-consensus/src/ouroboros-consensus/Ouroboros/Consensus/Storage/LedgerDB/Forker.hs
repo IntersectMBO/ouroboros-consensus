@@ -93,6 +93,7 @@ import LeiosDemoTypes
   , EbHash
   , HasLeiosVoting (..)
   , LeiosCert
+  , LeiosClosureError (..)
   , LeiosExtValidationError (..)
   , LeiosPoint (..)
   , RbHash
@@ -785,8 +786,8 @@ class ResolveLeiosBlock blk where
     Monad m =>
     LeiosDbConnection m ->
     EbHash ->
-    m [(TxHash, GenTx blk)]
-  resolveLeiosClosure _ _ = pure []
+    m (Either LeiosClosureError [(TxHash, GenTx blk)])
+  resolveLeiosClosure _ _ = pure (Right [])
 
   -- | Rebuild the 'Validated' token for a closure tx that the LeiosTxCache
   -- reports as already validated, so the voting thread can pick
@@ -934,7 +935,23 @@ resolveLeiosBlock leiosDb cds b =
     Just (announcedPoint, _) ->
       -- NOTE: This produces a block that would fail full validation.
       resolveLeiosClosure leiosDb (pointEbHash announcedPoint)
-        <&> inlineLeiosClosure b . map snd
+        <&> inlineLeiosClosure b . map snd . unsafeClosure
+
+-- | Take the closure or die.
+--
+-- The apply path has no way to proceed without it: chain-sel already selected
+-- a block whose payload is this closure, so carrying on with fewer
+-- transactions would silently diverge the UTxO -- which is what the previous
+-- @pure []@ did, and why this fails loudly instead. Under the intended parking
+-- design chain-sel would not have selected the block yet.
+--
+-- The vote path takes the 'Left' instead; there, not voting is a perfectly good
+-- answer.
+unsafeClosure ::
+  HasCallStack => Either LeiosClosureError [(TxHash, GenTx blk)] -> [(TxHash, GenTx blk)]
+unsafeClosure = \case
+  Right txs -> txs
+  Left err -> error $ "resolveLeiosClosure: " <> show err
 
 -- | The result of resolving an announced EB's closure and applying it a ledger state.
 data LeiosClosureApplied blk = LeiosClosureApplied
@@ -966,7 +983,7 @@ resolveAndApplyLeiosClosure ::
   m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
 resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
-  closureTxs <- map snd <$> resolveLeiosClosure leiosDb ebHash
+  closureTxs <- map snd . unsafeClosure <$> resolveLeiosClosure leiosDb ebHash
   -- UTXO-HD of the whole closure
   let !closureKeys = foldMap' leiosClosureTxKeySets closureTxs <> extraKeys
   closureVals <- readValues closureKeys
