@@ -741,7 +741,7 @@ addBlockRunner fuse cdb@CDB{..} = do
 
   forever $
     -- TODO(bladyjoker): This CallTrace will not emit an End event in the case of an error/exception.
-    CallTrace.callTraceSameThreadVia
+    CallTrace.callTraceVia
       id
       ctrace
       rootCCtx
@@ -754,7 +754,7 @@ addBlockRunner fuse cdb@CDB{..} = do
           withFuse fuse $
             bracketOnError
               ( lift
-                  $ CallTrace.callTraceSameThreadVia
+                  $ CallTrace.callTraceVia
                     (const ())
                     ctrace
                     pcsCCtx

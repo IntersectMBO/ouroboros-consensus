@@ -76,7 +76,7 @@ import qualified LeiosDemoTypes as Leios
 import LeiosTxCache (LeiosTxCache)
 import LeiosUtils.CallTrace
   ( SomeJsonCallTrace (SomeJsonCallTrace)
-  , callTraceSameThread
+  , callTrace
   , rootCallCtx
   )
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
@@ -125,7 +125,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
-import Ouroboros.Consensus.Util.EarlyExit hiding (callTraceSameThread)
+import Ouroboros.Consensus.Util.EarlyExit hiding (callTrace, callTraceVia)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.LeakyBucket
   ( atomicallyWithMonotonicTime
@@ -824,7 +824,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     ( \(bf, leiosDbReader, leiosDbWriter, rootCCtx) -> do
         knownSlotWatcher btime $
           \currentSlot ->
-            callTraceSameThread
+            callTrace
               ( traceWith (forgeTracer tracers)
                   . TraceLabelCreds (forgeLabel bf)
                   . TraceCall

@@ -11,6 +11,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTVar
   , writeTVar
   )
+import Control.Monad.Class.MonadAsync (async, wait)
 import Control.Monad.Class.MonadTimer (MonadDelay (threadDelay))
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.Map as Map
@@ -20,6 +21,7 @@ import LeiosUtils.CallTrace
   , CallTrace
   , callTrace
   , foldCallTraceFromInit
+  , newCallCtx
   , rootCallCtx
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -41,7 +43,40 @@ tests =
               Map.size csInactiveCalls @?= 7
               assertBool "Some measurements were observed" $ csTotalMeasure > mempty
         )
+    , testIOLike
+        "fooBarBazParallel has a correct call trace"
+        fooBarBazParallel
+        ( \t -> case foldCallTraceFromInit t of
+            Left err -> assertFailure $ show err
+            Right CallState{..} -> do
+              csActiveCalls @?= mempty
+              Map.size csInactiveCalls @?= 7
+              assertBool "Some measurements were observed" $ csTotalMeasure > mempty
+        )
     ]
+
+fooBarBazParallel :: IOLike m => m [CallTrace String String]
+fooBarBazParallel = do
+  (tracer, readTrace) <- newRecordingTracer
+  rootCtx <- rootCallCtx "main"
+  _ <-
+    callTrace
+      tracer
+      rootCtx
+      "foobarbaz-parallel"
+      ""
+      ( \mainCtx -> do
+          let fooWorkerCtx = newCallCtx mainCtx "foo-worker"
+              barWorkerCtx = newCallCtx mainCtx "bar-worker"
+              bazWorkerCtx = newCallCtx mainCtx "baz-worker"
+          fooA <- async $ foo tracer fooWorkerCtx "hello foo"
+          barA <- async $ bar tracer barWorkerCtx "hello bar"
+          bazA <- async $ baz tracer bazWorkerCtx "hello baz"
+          _ <- wait fooA
+          _ <- wait barA
+          wait bazA
+      )
+  readTrace
 
 fooBarBaz :: IOLike m => m [CallTrace String String]
 fooBarBaz = do
@@ -51,7 +86,6 @@ fooBarBaz = do
     callTrace
       tracer
       rootCtx
-      "main"
       "foobarbaz"
       ""
       ( \mainCtx -> do
@@ -65,21 +99,21 @@ fooBarBaz = do
 
 foo :: IOLike m => (CallTrace String String -> m ()) -> CallCtx m -> String -> m String
 foo trace ctx fooArg =
-  callTrace trace ctx "main" "foo" fooArg $ \fooCtx -> do
+  callTrace trace ctx "foo" fooArg $ \fooCtx -> do
     threadDelay 1000
     barRes <- bar trace fooCtx "hello bar"
     return $ "bar says: " <> barRes
 
 bar :: IOLike m => (CallTrace String String -> m ()) -> CallCtx m -> String -> m String
 bar trace ctx barArg =
-  callTrace trace ctx "main" "bar" barArg $ \barCtx -> do
+  callTrace trace ctx "bar" barArg $ \barCtx -> do
     threadDelay 1000
     bazRes <- baz trace barCtx "hello baz"
     return $ "baz says: " <> bazRes
 
 baz :: IOLike m => (CallTrace String String -> m ()) -> CallCtx m -> String -> m String
 baz trace ctx bazArg =
-  callTrace trace ctx "main" "baz" bazArg $ \_bazCtx -> do
+  callTrace trace ctx "baz" bazArg $ \_bazCtx -> do
     threadDelay 1000
     return $ "'sup"
 

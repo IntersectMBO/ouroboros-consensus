@@ -14,8 +14,6 @@ module LeiosUtils.CallTrace
   , SomeJsonCallTrace (..)
   , callTrace
   , callTraceVia
-  , callTraceSameThread
-  , callTraceSameThreadVia
   , CallChildId
   , CallId
   , callId
@@ -31,6 +29,7 @@ module LeiosUtils.CallTrace
   , foldCallTrace
   , foldCallTraceFromInit
   , CallState (..)
+  , newCallCtx
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -66,14 +65,18 @@ data CallInfo = CallInfo
   , ciCallParent :: Maybe CallInfo
   -- ^ Parent call info
   , ciCallName :: CallName
-  -- ^ Call name, something like "module.name:function_name"
+  -- ^ Logical call name, should be unique amongst names (ie. like a fully qualified name)
   , ciThread :: ThreadName
-  -- ^ Thread name, something like a OS "thread id" or "forge"
+  -- ^ Logical thread name (ie. like "forge")
   }
   deriving stock (Show, Eq)
 
 data CallCtx m = CallCtx
   { ccCallInfo :: CallInfo
+  , ccThread :: ThreadName
+  -- ^ Execution thread inherited by child calls. Separate from 'ciThread' in
+  -- 'ccCallInfo', which records the thread this call itself ran on and must
+  -- not be mutated (it is embedded as 'ciCallParent' in every child forever).
   , ccNextChildId :: StrictTVar m CallChildId
   }
 
@@ -169,8 +172,6 @@ callTraceVia ::
   (CallTrace a r' -> m ()) ->
   -- | Parent context
   CallCtx m ->
-  -- | Call thread
-  ThreadName ->
   -- | CallName
   CallName ->
   -- | Call argument
@@ -178,8 +179,8 @@ callTraceVia ::
   -- | Continuation with the new call context (to be passed to children calls)
   (CallCtx m -> m r) ->
   m r
-callTraceVia f trace pctx thread cn arg action = do
-  ctx <- childCallCtx pctx thread cn
+callTraceVia f trace pctx cn arg action = do
+  ctx <- childCallCtx pctx cn
   trace (CallTrace (ccCallInfo ctx) arg CallStart)
   (res, callMeasure) <- withMeasure (action ctx)
   trace (CallTrace (ccCallInfo ctx) arg (CallEnd (f res) callMeasure))
@@ -192,8 +193,6 @@ callTrace ::
   (CallTrace a r -> m ()) ->
   -- | Parent context
   CallCtx m ->
-  -- | Call thread
-  ThreadName ->
   -- | CallName
   CallName ->
   -- | Call argument
@@ -202,45 +201,6 @@ callTrace ::
   (CallCtx m -> m r) ->
   m r
 callTrace = callTraceVia id
-
--- | Like 'callTraceVia', but the call runs on the same thread as its parent,
--- so the 'ThreadName' is inherited from the parent context instead of being
--- passed explicitly.
-callTraceSameThreadVia ::
-  forall m a r r'.
-  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  (r -> r') ->
-  -- | Tracing action
-  (CallTrace a r' -> m ()) ->
-  -- | Parent context
-  CallCtx m ->
-  -- | CallName
-  CallName ->
-  -- | Call argument
-  a ->
-  -- | Continuation with the new call context (to be passed to children calls)
-  (CallCtx m -> m r) ->
-  m r
-callTraceSameThreadVia f trace pctx = callTraceVia f trace pctx (ciThread (ccCallInfo pctx))
-
--- | Like 'callTrace', but the call runs on the same thread as its parent, so
--- the 'ThreadName' is inherited from the parent context instead of being
--- passed explicitly.
-callTraceSameThread ::
-  forall m a r.
-  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  -- | Tracing action
-  (CallTrace a r -> m ()) ->
-  -- | Parent context
-  CallCtx m ->
-  -- | CallName
-  CallName ->
-  -- | Call argument
-  a ->
-  -- | Continuation with the new call context (to be passed to children calls)
-  (CallCtx m -> m r) ->
-  m r
-callTraceSameThread = callTraceSameThreadVia id
 
 withMeasure :: (MonadMonotonicTime m, MonadAllocationCounter m) => m r -> m (r, CallMeasure)
 withMeasure action = do
@@ -257,8 +217,8 @@ withMeasure action = do
         }
     )
 
-childCallCtx :: MonadSTM m => CallCtx m -> ThreadName -> CallName -> m (CallCtx m)
-childCallCtx pctx thread cn = do
+childCallCtx :: MonadSTM m => CallCtx m -> CallName -> m (CallCtx m)
+childCallCtx pctx cn = do
   (cid, nextChildIdVar) <- atomically $ do
     n <- readTVar (ccNextChildId pctx)
     writeTVar (ccNextChildId pctx) (n + 1)
@@ -269,11 +229,12 @@ childCallCtx pctx thread cn = do
           { ciCallChildId = cid
           , ciCallParent = Just $ ccCallInfo pctx
           , ciCallName = cn
-          , ciThread = thread
+          , ciThread = ccThread pctx
           }
   return $
     CallCtx
       { ccCallInfo = ci
+      , ccThread = ccThread pctx
       , ccNextChildId = nextChildIdVar
       }
 
@@ -290,12 +251,19 @@ rootCallInfo thread =
 rootCallCtx :: MonadSTM m => ThreadName -> m (CallCtx m)
 rootCallCtx thread = do
   nextChildIdVar <- atomically $ newTVar 0
-
   return
     CallCtx
       { ccCallInfo = rootCallInfo thread
+      , ccThread = thread
       , ccNextChildId = nextChildIdVar
       }
+
+-- | Branch a context onto a new thread. Children of the returned context
+-- appear as children of 'pctx' but tagged with the new thread name.
+-- The parent's child-ID counter is shared, so concurrent workers get
+-- unique sibling IDs.
+newCallCtx :: CallCtx m -> ThreadName -> CallCtx m
+newCallCtx pctx thread = pctx{ccThread = thread}
 
 -- | `callStack` without `root`
 callStack :: CallInfo -> [CallInfo]

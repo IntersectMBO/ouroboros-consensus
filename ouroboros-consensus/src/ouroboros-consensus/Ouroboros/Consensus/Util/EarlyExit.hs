@@ -17,8 +17,6 @@ module Ouroboros.Consensus.Util.EarlyExit
   , withEarlyExit_
   , callTrace
   , callTraceVia
-  , callTraceSameThread
-  , callTraceSameThreadVia
 
     -- * Re-exports
   , lift
@@ -52,7 +50,6 @@ import LeiosUtils.CallTrace
   , CallName
   , CallTrace
   , MonadAllocationCounter (getAllocationCounter)
-  , ThreadName
   )
 import qualified LeiosUtils.CallTrace as CallTrace
 import NoThunks.Class (NoThunks (..))
@@ -135,8 +132,7 @@ exitEarly = earlyExit $ pure Nothing
 -- as an actual 'exitEarly' in 'WithEarlyExit'.
 --
 -- Used to close the loop opened by running such an action via
--- 'withEarlyExit' (see 'callTrace' and
--- 'callTraceSameThread'): the traced result is 'Nothing' rather
+-- 'withEarlyExit' (see 'callTrace'): the traced result is 'Nothing' rather
 -- than a monadic short-circuit /while it is being traced/, and only once
 -- tracing has completed do we turn it back into an early exit.
 earlyExitFromMaybe :: Monad m => m (Maybe r) -> WithEarlyExit m r
@@ -162,8 +158,6 @@ callTrace ::
   (CallTrace a (Maybe r) -> m ()) ->
   -- | Parent context
   CallCtx m ->
-  -- | Call thread
-  ThreadName ->
   -- | CallName
   CallName ->
   -- | Call argument
@@ -186,8 +180,6 @@ callTraceVia ::
   (CallTrace a (Maybe r') -> m ()) ->
   -- | Parent context
   CallCtx m ->
-  -- | Call thread
-  ThreadName ->
   -- | CallName
   CallName ->
   -- | Call argument
@@ -195,40 +187,9 @@ callTraceVia ::
   -- | Continuation with the new call context (to be passed to children calls)
   (CallCtx m -> WithEarlyExit m r) ->
   WithEarlyExit m r
-callTraceVia f trace pctx thread cn arg action =
+callTraceVia f trace pctx cn arg action =
   earlyExitFromMaybe $
-    CallTrace.callTraceVia (fmap f) trace pctx thread cn arg (withEarlyExit . action)
-
--- | Like 'callTraceSameThread', but for a traced action that lives in
--- 'WithEarlyExit'. See 'callTrace'.
---
--- NB: this delegates to 'callTraceSameThread' directly (rather than to
--- 'callTrace') because 'CallCtx' is exported opaquely -- the parent
--- context's thread name isn't available out here to pass along.
-callTraceSameThread ::
-  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  (CallTrace a (Maybe r) -> m ()) ->
-  CallCtx m ->
-  CallName ->
-  a ->
-  (CallCtx m -> WithEarlyExit m r) ->
-  WithEarlyExit m r
-callTraceSameThread = callTraceSameThreadVia id
-
--- | Like 'callTraceSameThread', but the value recorded in the
--- 'CallEnd' is @f r@ rather than @r@ itself. See 'callTraceVia'.
-callTraceSameThreadVia ::
-  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  (r -> r') ->
-  (CallTrace a (Maybe r') -> m ()) ->
-  CallCtx m ->
-  CallName ->
-  a ->
-  (CallCtx m -> WithEarlyExit m r) ->
-  WithEarlyExit m r
-callTraceSameThreadVia f trace pctx cn arg action =
-  earlyExitFromMaybe $
-    CallTrace.callTraceSameThreadVia (fmap f) trace pctx cn arg (withEarlyExit . action)
+    CallTrace.callTraceVia (fmap f) trace pctx cn arg (withEarlyExit . action)
 
 instance
   (forall a'. NoThunks (m a')) =>

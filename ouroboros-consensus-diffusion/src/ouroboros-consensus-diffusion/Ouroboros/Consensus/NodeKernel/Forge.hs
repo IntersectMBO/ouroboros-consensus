@@ -134,7 +134,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       forgeTraceVia ::
         (Aeson.ToJSON a, Aeson.ToJSON r') =>
         (r -> r') -> CallName -> a -> (CallCtx m -> WithEarlyExit m r) -> WithEarlyExit m r
-      forgeTraceVia f = EarlyExit.callTraceSameThreadVia f ctrace forgeCCtx
+      forgeTraceVia f = EarlyExit.callTraceVia f ctrace forgeCCtx
 
       forgeTrace' ::
         (Aeson.ToJSON a, Aeson.ToJSON r) =>
@@ -718,7 +718,7 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
       pmTraceVia ::
         (Aeson.ToJSON a, Aeson.ToJSON r') =>
         (r -> r') -> CallName -> a -> (CallCtx m -> m r) -> m r
-      pmTraceVia f = CallTrace.callTraceSameThreadVia (Just . f) pmCtrace pmCallCtx
+      pmTraceVia f = CallTrace.callTraceVia (Just . f) pmCtrace pmCallCtx
 
       pmTrace'Via ::
         (Aeson.ToJSON a, Aeson.ToJSON r') =>

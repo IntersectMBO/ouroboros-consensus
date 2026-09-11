@@ -94,8 +94,8 @@ module Ouroboros.Consensus.Util
   , electric
   , newFuse
   , withFuse
-  , callTraceSameThread
-  , callTraceSameThreadVia
+  , callTraceVia
+  , callTrace
 
     -- * Type-safe boolean flags
   , Flag (..)
@@ -522,10 +522,8 @@ newtype FuseBlownException = FuseBlownException Text
 runElectric :: Electric m a -> m a
 runElectric (Electric io) = io
 
--- | Like 'CallTrace.callTraceSameThread', but for a traced action that lives
--- in 'Electric'. See 'EarlyExit.callTraceSameThread' for the analogous
--- 'WithEarlyExit' variant and the motivation for this wrapper.
-callTraceSameThread ::
+-- | Like 'CallTrace.callTrace', but for a traced action that lives in 'Electric'.
+callTrace ::
   (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
   (CallTrace a r -> m ()) ->
   CallCtx m ->
@@ -533,11 +531,11 @@ callTraceSameThread ::
   a ->
   (CallCtx m -> Electric m r) ->
   Electric m r
-callTraceSameThread = callTraceSameThreadVia id
+callTrace = callTraceVia id
 
--- | Like 'callTraceSameThread', but the value recorded in the 'CallEnd' is
--- @f r@ rather than @r@ itself. See 'CallTrace.callTraceSameThreadVia'.
-callTraceSameThreadVia ::
+-- | Like 'callTrace', but the value recorded in the 'CallEnd' is
+-- @f r@ rather than @r@ itself. See 'CallTrace.callTraceVia'.
+callTraceVia ::
   (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
   (r -> r') ->
   (CallTrace a r' -> m ()) ->
@@ -546,9 +544,9 @@ callTraceSameThreadVia ::
   a ->
   (CallCtx m -> Electric m r) ->
   Electric m r
-callTraceSameThreadVia f trace pctx cn arg action =
+callTraceVia f trace pctx cn arg action =
   electric $
-    CallTrace.callTraceSameThreadVia f trace pctx cn arg (runElectric . action)
+    CallTrace.callTraceVia f trace pctx cn arg (runElectric . action)
 
 {-------------------------------------------------------------------------------
   Type-safe boolean flags

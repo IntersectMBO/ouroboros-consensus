@@ -353,7 +353,7 @@ chainSelSync ::
   ChainSelMessage m blk ->
   Electric m ()
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLoEBlocks varProcessed) =
-  callTraceSameThreadVia
+  callTraceVia
     id
     (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
     cctx
@@ -361,7 +361,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLoEBlocks varProcessed) =
     ()
     (\_ -> chainSelReprocessLoEBlocks cdb varProcessed)
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLeiosEb ebHash) =
-  callTraceSameThreadVia
+  callTraceVia
     id
     (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
     cctx
@@ -369,7 +369,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLeiosEb ebHash) =
     (show ebHash)
     (\_ -> chainSelReprocessLeiosEb cdb ebHash)
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddBlock bta) =
-  callTraceSameThreadVia
+  callTraceVia
     id
     (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
     cctx
@@ -377,7 +377,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddBlock bta) =
     (show $ blockHash $ blockToAdd bta)
     (\childCCtx -> chainSelAddBlock cdb childCCtx bta)
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddPerasCert cert varProcessed) =
-  callTraceSameThreadVia
+  callTraceVia
     id
     (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
     cctx
