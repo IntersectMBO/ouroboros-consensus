@@ -1095,6 +1095,12 @@ instance Serialise ptype => HasBinaryBlockInfo (TestBlockWith ptype) where
       , headerSize = fromIntegral . BL.length . serialise $ blk
       }
 
+instance Typeable ptype => ToCBOR (Point (TestBlockWith ptype)) where
+  toCBOR = encode
+
+instance Typeable ptype => FromCBOR (Point (TestBlockWith ptype)) where
+  fromCBOR = decode
+
 instance
   ( Serialise ptype
   , PayloadSemantics ptype

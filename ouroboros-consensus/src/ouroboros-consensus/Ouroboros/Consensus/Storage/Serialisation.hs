@@ -68,7 +68,9 @@ import Codec.Serialise
 import qualified Data.ByteString.Lazy as Lazy
 import Data.ByteString.Short (ShortByteString)
 import Data.SOP.BasicFunctors
+import Data.Void (absurd)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Void (VoidPerasCert (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Common
   ( BinaryBlockInfo (..)
@@ -117,6 +119,13 @@ class DecodeDisk blk a where
     Serialise a =>
     CodecConfig blk -> forall s. Decoder s a
   decodeDisk _ccfg = decode
+
+-- | 'VoidPerasCert' has no values, so it can never actually be written to disk.
+instance EncodeDisk blk (VoidPerasCert blk) where
+  encodeDisk _ = absurd . unVoidPerasCert
+
+instance DecodeDisk blk (VoidPerasCert blk) where
+  decodeDisk _ = fail "VoidPerasCert cannot be decoded from disk"
 
 {-------------------------------------------------------------------------------
   Dependent pairs

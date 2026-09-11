@@ -40,6 +40,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB as PerasImmutableCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
@@ -56,6 +57,7 @@ data ChainDbArgs f m blk = ChainDbArgs
   , cdbVolDbArgs :: VolatileDB.VolatileDbArgs f m blk
   , cdbLgrDbArgs :: LedgerDB.LedgerDbArgs f m blk
   , cdbPerasCertDbArgs :: PerasCertDB.PerasCertDbArgs f m blk
+  , cdbPerasImmutableCertDbArgs :: PerasImmutableCertDB.PerasImmutableCertDbArgs f m blk
   , cdbPerasVoteDbArgs :: Incomplete PerasVoteDB.PerasVoteDbArgs m blk
   , cdbsArgs :: ChainDbSpecificArgs f m blk
   }
@@ -148,6 +150,7 @@ defaultArgs =
     VolatileDB.defaultArgs
     (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
     PerasCertDB.defaultArgs
+    PerasImmutableCertDB.defaultArgs
     PerasVoteDB.defaultArgs
     defaultSpecificArgs
 
@@ -225,6 +228,12 @@ completeChainDbArgs
           PerasCertDB.PerasCertDbArgs
             { PerasCertDB.pcdbaTracer = PerasCertDB.pcdbaTracer (cdbPerasCertDbArgs defArgs)
             }
+      , cdbPerasImmutableCertDbArgs =
+          (cdbPerasImmutableCertDbArgs defArgs)
+            { PerasImmutableCertDB.picdbaCodecConfig = configCodec cdbsTopLevelConfig
+            , PerasImmutableCertDB.picdbaHasFS =
+                mkImmFS $ RelativeMountPoint "perasimmutablecert"
+            }
       , cdbPerasVoteDbArgs =
           PerasVoteDB.PerasVoteDbArgs
             { PerasVoteDB.pvdbaTracer = PerasVoteDB.pvdbaTracer (cdbPerasVoteDbArgs defArgs)
@@ -251,6 +260,10 @@ updateTracer trcr args =
     , cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrTracer = TraceLedgerDBEvent >$< trcr}
     , cdbPerasCertDbArgs =
         (cdbPerasCertDbArgs args){PerasCertDB.pcdbaTracer = TracePerasCertDbEvent >$< trcr}
+    , cdbPerasImmutableCertDbArgs =
+        (cdbPerasImmutableCertDbArgs args)
+          { PerasImmutableCertDB.picdbaTracer = TracePerasImmutableCertDbEvent >$< trcr
+          }
     , cdbPerasVoteDbArgs =
         (cdbPerasVoteDbArgs args){PerasVoteDB.pvdbaTracer = TracePerasVoteDbEvent >$< trcr}
     , cdbsArgs = (cdbsArgs args){cdbsTracer = trcr}

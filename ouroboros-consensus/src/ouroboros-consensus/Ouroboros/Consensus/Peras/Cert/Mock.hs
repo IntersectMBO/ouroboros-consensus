@@ -45,6 +45,7 @@ import Ouroboros.Consensus.Peras.Types
   , PerasRoundNo
   , PerasSeatIndex
   )
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Network.Util (ShowProxy (..))
 
@@ -114,6 +115,14 @@ instance
         <> toCBOR mockCertRound
         <> toCBOR mockCertBlock
         <> toCBOR (NonEmpty.toList (NESet.toList mockCertVoters))
+
+-- | On-disk serialisation for the 'PerasImmutableCertDB'. There is no
+-- versioning, so we reuse the (stable) 'ToCBOR'/'FromCBOR' instances.
+instance (Typeable blk, ToCBOR (Point blk)) => EncodeDisk anyblk (MockPerasCert blk) where
+  encodeDisk _ = toCBOR
+
+instance (Typeable blk, FromCBOR (Point blk)) => DecodeDisk anyblk (MockPerasCert blk) where
+  decodeDisk _ = fromCBOR
 
 instance
   ConvertRawHash blk =>

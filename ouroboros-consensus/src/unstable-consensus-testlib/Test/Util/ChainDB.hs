@@ -32,6 +32,9 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
+import Ouroboros.Consensus.Storage.PerasImmutableCertDB
+  ( PerasImmutableCertDbArgs (..)
+  )
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -54,6 +57,7 @@ data NodeDBs db = NodeDBs
   , nodeDBsVol :: db
   , nodeDBsLgr :: db
   , nodeDBsGsm :: db
+  , nodeDBsPerasImmCert :: db
   }
   deriving (Functor, Foldable, Traversable)
 
@@ -62,6 +66,7 @@ emptyNodeDBs =
   atomically $
     NodeDBs
       <$> newTMVar Mock.empty
+      <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
       <*> newTMVar Mock.empty
@@ -135,6 +140,12 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
     , cdbPerasCertDbArgs =
         PerasCertDbArgs
           { pcdbaTracer = nullTracer
+          }
+    , cdbPerasImmutableCertDbArgs =
+        PerasImmutableCertDbArgs
+          { picdbaCodecConfig = configCodec mcdbTopLevelConfig
+          , picdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasImmCert mcdbNodeDBs)
+          , picdbaTracer = nullTracer
           }
     , cdbPerasVoteDbArgs =
         PerasVoteDbArgs

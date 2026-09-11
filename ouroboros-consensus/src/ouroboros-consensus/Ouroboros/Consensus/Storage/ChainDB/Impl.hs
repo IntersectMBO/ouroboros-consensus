@@ -206,7 +206,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
-    perasImmutableCertDB <- PerasImmutableCertDB.createDB
+    perasImmutableCertDB <- PerasImmutableCertDB.createDB argsPerasImmutableCertDB
     perasCertDB <- PerasCertDB.createDB argsPerasCertDB
     perasVoteDB <-
       PerasVoteDB.createDB
@@ -396,6 +396,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     argsVolatileDb
     argsLgrDb
     argsPerasCertDB
+    argsPerasImmutableCertDB
     incompleteArgsPerasVoteDB
     cdbSpecificArgs = args
 

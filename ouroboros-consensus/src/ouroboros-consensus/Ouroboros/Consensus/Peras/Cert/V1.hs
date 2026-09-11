@@ -68,6 +68,7 @@ import Ouroboros.Consensus.Peras.Types
   , PerasSeatIndex (..)
   )
 import Ouroboros.Consensus.Peras.Vote.V1 (PerasVoteEligibilityProof (..))
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
 import Ouroboros.Consensus.Peras.Voting.Adapter
   ( PerasCertCompatibleWithVotingCommittee (..)
   , PerasConversionError (..)
@@ -150,6 +151,14 @@ instance
 
 instance ShowProxy blk => ShowProxy (PerasCert blk) where
   showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
+
+-- | On-disk serialisation for the 'PerasImmutableCertDB'. There is no
+-- versioning, so we reuse the (stable) 'ToCBOR'/'FromCBOR' instances.
+instance Typeable blk => EncodeDisk anyblk (PerasCert blk) where
+  encodeDisk _ = toCBOR
+
+instance Typeable blk => DecodeDisk anyblk (PerasCert blk) where
+  decodeDisk _ = fromCBOR
 
 -- | Voters contained in a certificate with their appropriate eligibility proof
 newtype PerasCertVoters
