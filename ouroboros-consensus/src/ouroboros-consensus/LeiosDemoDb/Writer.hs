@@ -6,11 +6,8 @@
 -- | The single writer in front of the LeiosDb.
 --
 -- Every write goes through one worker thread that owns one dedicated
--- connection. Producers (each peer's fetch client, and the forge) hand it an
--- action to run on that connection and get a 'Promise' back, so synchrony is
--- opt-in: the forge awaits (its EB must be on disk before the referencing RB
--- propagates), while the fetch path voids the promise and returns to its
--- mini-protocol immediately.
+-- connection. A caller submits one of the three writes below and gets a
+-- 'Promise' for its result.
 --
 -- What this buys, in the order it matters:
 --
@@ -19,11 +16,12 @@
 --   two threads corrupts SQLite and takes the node down with a SIGSEGV. Writes
 --   used to be forked onto the /calling/ peer's connection, so two EB bodies
 --   arriving close together on one peer raced each other. Here the only thread
---   that ever touches the writer connection is the worker.
+--   that ever touches the writer connection is the worker. This is the point of
+--   the exercise, and it holds whether or not the submitter waits.
 --
--- * __Ordering is free.__ A body write initialises the @missingTxCount@ that
---   the tx writes decrement, so the two must not be reordered. One FIFO
---   consumer gives that by construction rather than by convention.
+-- * __Ordering is free.__ 'writeEbBody' initialises the @missingTxCount@ that
+--   'writeTxs' decrements, so the two must not be reordered. One FIFO consumer
+--   gives that by construction rather than by convention.
 --
 -- * __No writer-vs-writer @SQLITE_BUSY@.__ SQLite admits one writer at a time
 --   anyway; serialising here costs no throughput and removes the retry-backoff
@@ -32,6 +30,10 @@
 -- * __Backpressure instead of unbounded work.__ The queue is bounded, so a
 --   producer that outruns the disk waits rather than piling up EB bodies
 --   (hundreds of kB each) in memory.
+--
+-- The 'Promise' is what would let a submitter /not/ wait. Today every caller
+-- does wait, because the closure-acquired trace needs the write's
+-- 'CompletedEbs'; see the TODO at the call sites in "LeiosDemoLogic".
 --
 -- This mirrors the ChainDB's own @varChainSelQueue@ + @varBlockProcessed@
 -- pattern: a bounded queue of work with a per-item result variable the
@@ -52,25 +54,39 @@ module LeiosDemoDb.Writer
 
 import Control.Monad (forever)
 import Control.ResourceRegistry (ResourceRegistry, allocate, forkLinkedThread)
+import Data.ByteString (ByteString)
 import Data.Void (Void)
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Common
-  ( LeiosDbConnection (..)
+  ( CompletedEbs
+  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
   )
+import LeiosDemoTypes (BytesSize, LeiosEb, LeiosPoint, TxHash)
 import Ouroboros.Consensus.Util.IOLike
 
--- | The result of an enqueued write, to be awaited or ignored.
+-- | The result of a submitted write.
 --
 -- 'await' rethrows whatever the write threw, in the awaiting thread. Awaiting
--- twice is fine; not awaiting at all is fine too.
+-- twice is fine; not awaiting at all is fine too -- a write that fails kills
+-- the worker, and with it the node, whether or not anyone was waiting.
 newtype Promise m a = Promise {await :: m a}
 
-newtype LeiosDbWriter m = LeiosDbWriter
-  { enqueueWrite :: forall b. HasCallStack => (LeiosDbConnection m -> m b) -> m (Promise m b)
-  -- ^ Run the action on the writer's connection, in submission order. Blocks
-  -- only while the queue is full; 'void' the promise to fire and forget. The
-  -- action runs on the worker thread, so keep it to the write and its tracing.
+-- | The whole write surface of the LeiosDb.
+--
+-- Deliberately three fixed operations rather than "run this action on a
+-- connection": these are all the writes there are, and naming them keeps the
+-- queue's contents inspectable. They stay separate because they have separate
+-- futures -- 'writeEbPoint' exists only until EB announcements are wired in,
+-- at which point the point is already present and the call goes away.
+data LeiosDbWriter m = LeiosDbWriter
+  { writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
+  -- ^ Record an announced EB's point and expected size. Idempotent.
+  , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m CompletedEbs)
+  -- ^ Persist an EB body. Its point must already be present, so submit
+  -- 'writeEbPoint' first; the queue preserves that order.
+  , writeTxs :: HasCallStack => [(TxHash, ByteString)] -> m (Promise m CompletedEbs)
+  -- ^ Persist tx bodies.
   }
 
 -- | How deep to make the queue, given the number of upstream peers.
@@ -126,17 +142,35 @@ newLeiosDbWriter registry db depth = do
   _ <- forkLinkedThread registry "LeiosDbWriter" (writerLoop conn queue)
   pure (mkWriter queue)
 
+-- * Internals
+
+-- | A queued write and the variable its result goes into. Existential because
+-- the three operations differ in what they return; the queue does not care.
+data Job m
+  = forall b.
+    Job
+      !(LeiosDbConnection m -> m b)
+      !(StrictTMVar m (Either SomeException b))
+
 newWriterQueue :: IOLike m => Int -> m (TBQueue m (Job m))
 newWriterQueue depth = atomically $ newTBQueue (fromIntegral depth)
 
-mkWriter :: IOLike m => TBQueue m (Job m) -> LeiosDbWriter m
+mkWriter :: forall m. IOLike m => TBQueue m (Job m) -> LeiosDbWriter m
 mkWriter queue =
   LeiosDbWriter
-    { enqueueWrite = \op -> do
-        resultVar <- newEmptyTMVarIO
-        atomically $ writeTBQueue queue (Job op resultVar)
-        pure $ Promise (either throwIO pure =<< atomically (readTMVar resultVar))
+    { writeEbPoint = \point ebBytesSize ->
+        submit $ \conn -> leiosDbInsertEbPoint conn point ebBytesSize
+    , writeEbBody = \point eb ->
+        submit $ \conn -> leiosDbInsertEbBody conn point eb
+    , writeTxs = \txs ->
+        submit $ \conn -> leiosDbInsertTxs conn txs
     }
+ where
+  submit :: forall b. (LeiosDbConnection m -> m b) -> m (Promise m b)
+  submit op = do
+    resultVar <- newEmptyTMVarIO
+    atomically $ writeTBQueue queue (Job op resultVar)
+    pure $ Promise (either throwIO pure =<< atomically (readTMVar resultVar))
 
 writerLoop :: IOLike m => LeiosDbConnection m -> TBQueue m (Job m) -> m Void
 writerLoop conn queue = forever $ do
@@ -147,12 +181,6 @@ writerLoop conn queue = forever $ do
   atomically $ putTMVar resultVar result
   either throwIO (\_ -> pure ()) result
 
-data Job m
-  = forall b.
-    Job
-      !(LeiosDbConnection m -> m b)
-      !(StrictTMVar m (Either SomeException b))
-
 -- | 'try' pinned to 'SomeException'; 'Ouroboros.Consensus.Util.IOLike.tryAll'
 -- is the same thing but is not exported.
 tryAnyException :: MonadCatch m => m b -> m (Either SomeException b)
@@ -161,13 +189,10 @@ tryAnyException = try
 -- | Present a writer-backed database behind the ordinary 'LeiosDbHandle'.
 --
 -- Every connection handed out reads on its own connection, as before, but
--- routes its writes through the one shared writer and awaits them. So the
--- interface, and read-your-writes, are exactly as an unwrapped handle -- which
--- is the point: the existing 'LeiosDbHandle' test suite runs against this
--- unchanged, and what it exercises is the writer.
---
--- Callers that want the latency win rather than just the safety take the
--- 'LeiosDbWriter' directly and skip the await.
+-- routes its writes through the one shared writer. So the interface, and
+-- read-your-writes, are exactly as an unwrapped handle -- which is the point:
+-- the existing 'LeiosDbHandle' test suite runs against this unchanged, and
+-- what it exercises is the writer.
 withWriterBackedDb ::
   forall m a.
   (IOLike m, HasCallStack) =>
@@ -183,13 +208,7 @@ withWriterBackedDb db depth action =
   wrap :: LeiosDbWriter m -> LeiosDbConnection m -> LeiosDbConnection m
   wrap writer readConn =
     readConn
-      { leiosDbInsertEbPoint = \point sz ->
-          through writer $ \c -> leiosDbInsertEbPoint c point sz
-      , leiosDbInsertEbBody = \point eb ->
-          through writer $ \c -> leiosDbInsertEbBody c point eb
-      , leiosDbInsertTxs = \txs ->
-          through writer $ \c -> leiosDbInsertTxs c txs
+      { leiosDbInsertEbPoint = \point sz -> await =<< writeEbPoint writer point sz
+      , leiosDbInsertEbBody = \point eb -> await =<< writeEbBody writer point eb
+      , leiosDbInsertTxs = \txs -> await =<< writeTxs writer txs
       }
-
-  through :: LeiosDbWriter m -> (LeiosDbConnection m -> m b) -> m b
-  through writer op = await =<< enqueueWrite writer op

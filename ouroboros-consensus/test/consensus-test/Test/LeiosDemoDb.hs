@@ -865,11 +865,11 @@ test_truncateDropsEbsAfterSlot dbPath db = do
       keptHash = mkTestEbHash 1
       droppedHash = mkTestEbHash 2
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con (MkLeiosPoint 5 keptHash) (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con (MkLeiosPoint 5 keptHash) (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con (MkLeiosPoint 5 keptHash) eb
     -- The kept EB is announced again at a slot the truncation drops.
-    leiosDbInsertEbPoint con (MkLeiosPoint 15 keptHash) (leiosEbBytesSize eb)
-    leiosDbInsertEbPoint con (MkLeiosPoint 15 droppedHash) (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con (MkLeiosPoint 15 keptHash) (encodeLeiosEbSize eb)
+    leiosDbInsertEbPoint con (MkLeiosPoint 15 droppedHash) (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con (MkLeiosPoint 15 droppedHash) eb
 
   truncateLeiosDbAfterSlot dbPath 10
@@ -891,7 +891,7 @@ test_deleteDanglingTxs dbPath db = do
       danglingTx = mkTestTxHash 9
       txBytes = BS.replicate 10 0
   withLeiosDb db $ \con -> do
-    leiosDbInsertEbPoint con (MkLeiosPoint 5 ebHash) (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con (MkLeiosPoint 5 ebHash) (encodeLeiosEbSize eb)
     void $ leiosDbInsertEbBody con (MkLeiosPoint 5 ebHash) eb
     void $
       leiosDbInsertTxs con $
@@ -906,7 +906,7 @@ test_deleteDanglingTxs dbPath db = do
     -- this probe resolves only if the delete missed the dangling tx.
     let probeEb = MkLeiosEb (V.fromList [(danglingTx, 10)])
         probePoint = MkLeiosPoint 6 (mkTestEbHash 2)
-    leiosDbInsertEbPoint con probePoint (leiosEbBytesSize probeEb)
+    leiosDbInsertEbPoint con probePoint (encodeLeiosEbSize probeEb)
     void $ leiosDbInsertEbBody con probePoint probeEb
     probeClosure <- leiosDbLookupEbClosure con probePoint.pointEbHash
     probeClosure @?= Nothing

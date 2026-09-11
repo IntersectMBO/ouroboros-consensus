@@ -34,7 +34,7 @@ module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (debugTracer, (>$<))
 import qualified Data.ByteString as BS
@@ -166,21 +166,31 @@ describeMode = \case
 queueDepth :: Int
 queueDepth = writerQueueDepth numFetchClients
 
--- | Submit a write, and hand back the action that waits for it to be durable.
-type Write = (LeiosDbConnection IO -> IO ()) -> IO (IO ())
+-- | Submit one EB (point, body, txs), and hand back the action that waits for
+-- it to be durable.
+type InsertEb = Int -> IO (IO ())
 
--- | Give a client body a 'Write', owning whatever connection that needs for
--- the body's lifetime (one per client, as a fetch client has).
-type ClientWrites = (Write -> IO ()) -> IO ()
+-- | Give a client body an 'InsertEb', owning whatever connection that needs
+-- for the body's lifetime (one per client, as a fetch client has).
+type ClientWrites = (InsertEb -> IO ()) -> IO ()
 
 directWrites :: LeiosDbHandle IO -> ClientWrites
 directWrites db body =
   withLeiosDb db $ \conn ->
-    body $ \op -> op conn >> pure (pure ())
+    body $ \ebIdx -> insertOneEb conn ebIdx >> pure (pure ())
 
+-- | Submit all three writes without waiting. Awaiting the last is enough: the
+-- writer is FIFO, so it is durable only after the other two are.
 asyncWrites :: LeiosDbWriter IO -> ClientWrites
 asyncWrites writer body =
-  body $ \op -> await <$> enqueueWrite writer op
+  body $ \ebIdx -> do
+    let point = genPoint ebIdx
+        eb = genEb ebIdx
+        txs = [(h, genTx h) | txIdx <- [0 .. txsPerEb - 1], let h = genTxHash ebIdx txIdx]
+    _ <- writeEbPoint writer point (encodeLeiosEbSize eb)
+    _ <- writeEbBody writer point eb
+    await' <- writeTxs writer txs
+    pure (void (await await'))
 
 -- * Configuration
 
@@ -241,8 +251,8 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
 -- not the work.
 fetchClient :: ClientWrites -> [Int] -> IO ()
 fetchClient clientWrites range =
-  clientWrites $ \write -> do
-    awaits <- forM range $ \i -> write (`insertOneEb` i)
+  clientWrites $ \insertEb -> do
+    awaits <- forM range insertEb
     sequence_ awaits
 
 -- | Mirrors chain-selection's block-apply path: repeated

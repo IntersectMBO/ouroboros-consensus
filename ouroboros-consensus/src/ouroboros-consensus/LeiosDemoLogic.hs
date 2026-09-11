@@ -55,9 +55,6 @@ import LeiosDemoDb
   , LeiosDbWriter (..)
   , Promise (..)
   , leiosDbBatchRetrieveTxs
-  , leiosDbInsertEbBody
-  , leiosDbInsertEbPoint
-  , leiosDbInsertTxs
   , leiosDbLookupEbBody
   )
 import LeiosDemoLogic.Announcements
@@ -146,7 +143,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike)
+import Ouroboros.Consensus.Util.IOLike (IOLike, forkIO)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
@@ -1037,34 +1034,30 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
     ReceivedBlockFrom{} -> traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   -- The DB-heavy tail: persist the body (~16k reference rows) and copy the
-  -- mempool-resident txs into the DB. Both were previously synchronous on this
-  -- per-peer mini-protocol thread, so successive bodies from one peer serialised
-  -- behind each other's writes -- inflating announcement->body latency and, via
-  -- the delayed onward offer, multi-hop propagation.
-  --
-  -- The write itself is handed to the single writer, so it neither runs on this
-  -- thread nor shares a connection with anything else. Awaiting is the forge's
-  -- business only: its EB must be on disk before the referencing RB propagates,
-  -- whereas a received body is served onward off the commit-time notification,
-  -- so nothing observes it before the writer has committed it.
-  bodyWritten <-
-    enqueueWrite writer $ \conn ->
-      if not shouldPersist
-        then pure ()
-        else traceException tracer TraceLeiosPeerDbException $ do
-          -- FIXME: once EB announcements are wired in the point MUST already
-          -- be present (announcement handling inserts it); until then insert
-          -- it idempotently as a stop-gap and trace a warning.
-          traceWith ktracer $ TraceLeiosBlockPointMissing point
-          leiosDbInsertEbPoint conn point ebBytesSize
-          completedByBody <- leiosDbInsertEbBody conn point eb
-          unless (null completedByBody) $ do
-            st <- Leios.ebState <$> MVar.readMVar outstandingVar
-            forM_ completedByBody $ \p ->
-              traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
-  -- The cache updates stay on this thread: the fetch logic reads them to decide
-  -- what is still missing, so they must land before we return, whatever the
-  -- writer is doing.
+  -- mempool-resident txs into the DB.
+  when shouldPersist $
+    traceException tracer TraceLeiosPeerDbException $ do
+      -- FIXME: once EB announcements are wired in the point MUST already
+      -- be present (announcement handling inserts it); until then insert
+      -- it idempotently as a stop-gap and trace a warning.
+      traceWith ktracer $ TraceLeiosBlockPointMissing point
+      _ <- writeEbPoint writer point ebBytesSize
+      bodyWritten <- writeEbBody writer point eb
+      -- Wait for the write to complete (and trace) synchronously when we are
+      -- forging: need to ensure the data is written before advertising it.
+      -- TODO: do we really? Can we just optimistically continue and risk a peer
+      -- disconnect if we can't serve what we offer "in time"?
+      let traceCompleted = do
+            completedByBody <- await bodyWritten
+            unless (null completedByBody) $ do
+              st <- Leios.ebState <$> MVar.readMVar outstandingVar
+              forM_ completedByBody $ \p ->
+                traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
+      case source of
+        ForgedBlock{} -> traceCompleted
+        ReceivedBlockFrom{} -> void $ forkIO traceCompleted
+  -- The cache updates: the fetch logic reads them to decide what is still
+  -- missing, so they must land before we return.
   --
   -- Overlap (in both the mempool and the cache): already persisted, so only
   -- upgrade them to Applied in the cache -- no (redundant) DB insert.
@@ -1081,9 +1074,6 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       writer
       systemTime
       (MempoolTxs point mempoolNotCache)
-  case source of
-    ForgedBlock{} -> await bodyWritten
-    ReceivedBlockFrom{} -> pure ()
 
 -- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
 -- mempool (the forge, which already holds the whole closure, and tests): keep
@@ -1419,15 +1409,22 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
   ingestAcquiredTxs now applied toIngest = do
     -- The DB write goes to the single writer; the closure-completion trace
     -- rides along with it, since only the write knows what it completed.
-    txsWritten <-
-      enqueueWrite writer $ \conn ->
-        traceException tracer TraceLeiosPeerDbException $ do
-          completed <- leiosDbInsertTxs conn toIngest
-          ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
-          forM_ completed $ \p ->
-            traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
-    -- The cache update stays here: the fetch logic consults it to decide what
-    -- is still missing, so it cannot lag behind the caller.
+    -- Submitted here, awaited elsewhere; see 'processLeiosBlock' for why the
+    -- submit stays on this thread and what would remove the wait altogether.
+    traceException tracer TraceLeiosPeerDbException $ do
+      txsWritten <- writeTxs writer toIngest
+      let traceCompleted = do
+            completed <- await txsWritten
+            ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
+            forM_ completed $ \p ->
+              traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
+      case source of
+        -- The forge's closure has to be on disk before the RB that references
+        -- it goes out.
+        ForgedTxs{} -> traceCompleted
+        _ -> void $ forkIO traceCompleted
+    -- The cache update: the fetch logic consults it to decide what is still
+    -- missing, so it cannot lag behind the caller.
     arrival <- case applied of
       Applied -> do
         withLockedInsertAppliedTx txCache $ \w0 step ->
@@ -1436,11 +1433,6 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
       Unapplied ->
         withLockedInsertUnappliedTx txCache $ \w0 step ->
           foldM (\w (txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
-    -- Only the forge waits: its closure has to be on disk before the RB that
-    -- references it goes out.
-    case source of
-      ForgedTxs{} -> await txsWritten
-      _ -> pure ()
     pure arrival
 
 -- | Whether ingested txs are tagged applied (from our forge's validated mempool)
