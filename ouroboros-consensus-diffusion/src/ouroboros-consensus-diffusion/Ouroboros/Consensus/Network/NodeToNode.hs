@@ -50,6 +50,7 @@ import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
+import qualified Control.Monad.Class.MonadTime.SI as Time
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -178,6 +179,12 @@ import System.Random (StdGen, splitGen)
 {-------------------------------------------------------------------------------
   Handlers
 -------------------------------------------------------------------------------}
+
+-- | Prototype interval for returning agency while an Object Diffusion server
+-- is idle. The production value is intentionally left as a later policy
+-- decision.
+objectDiffusionIdleTimeout :: Time.DiffTime
+objectDiffusionIdleTimeout = 5
 
 -- | Protocol handlers for node-to-node (remote) communication
 data Handlers m addr blk = Handlers
@@ -388,6 +395,7 @@ mkHandlers
           objectDiffusionOutbound
             (contramap (TraceLabelPeer peer) (Node.perasCertDiffusionOutboundTracer tracers))
             (perasCertDiffusionMaxObjectsUnacknowledged miniProtocolParameters)
+            objectDiffusionIdleTimeout
             (makePerasCertPoolReaderFromChainDB $ getChainDB)
             version
       , hPerasVoteDiffusionClient = \version controlMessageSTM peer ->
@@ -404,6 +412,7 @@ mkHandlers
           objectDiffusionOutbound
             (contramap (TraceLabelPeer peer) (Node.perasVoteDiffusionOutboundTracer tracers))
             (perasVoteDiffusionMaxObjectsUnacknowledged miniProtocolParameters)
+            objectDiffusionIdleTimeout
             (makePerasVotePoolReaderFromChainDB $ getChainDB)
             version
       , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
