@@ -152,7 +152,7 @@ fromShelleyLedgerExamples
           , SomeResult
               (GetLedgerPeerSnapshot SingBigLedgerPeers)
               ( LedgerBigPeerSnapshotV23
-                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH>"))
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH, padded to 32 bytes>"))
                   (NetworkMagic 42)
                   [
                     ( AccPoolStake 0.9
@@ -169,7 +169,7 @@ fromShelleyLedgerExamples
           , SomeResult
               (GetLedgerPeerSnapshot SingAllLedgerPeers)
               ( LedgerAllPeerSnapshotV23
-                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH>"))
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH, padded to 32 bytes>"))
                   (NetworkMagic 42)
                   [
                     ( PoolStake 0.9
@@ -177,6 +177,12 @@ fromShelleyLedgerExamples
                     )
                   ]
               )
+          )
+        ,
+          ( "GetBigLedgerPeerSnapshotAtOrigin"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingBigLedgerPeers)
+              (LedgerBigPeerSnapshotV23 GenesisPoint (NetworkMagic 42) [])
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
         ,
@@ -304,7 +310,7 @@ fromShelleyLedgerExamplesPraos
           , SomeResult
               (GetLedgerPeerSnapshot SingBigLedgerPeers)
               ( LedgerBigPeerSnapshotV23
-                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH>"))
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH, padded to 32 bytes>"))
                   (NetworkMagic 42)
                   [
                     ( AccPoolStake 0.9
@@ -321,7 +327,7 @@ fromShelleyLedgerExamplesPraos
           , SomeResult
               (GetLedgerPeerSnapshot SingAllLedgerPeers)
               ( LedgerAllPeerSnapshotV23
-                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH>"))
+                  (BlockPoint slotNo (RawBlockHash "<BLOCK HASH, padded to 32 bytes>"))
                   (NetworkMagic 42)
                   [
                     ( PoolStake 0.9
@@ -329,6 +335,12 @@ fromShelleyLedgerExamplesPraos
                     )
                   ]
               )
+          )
+        ,
+          ( "GetBigLedgerPeerSnapshotAtOrigin"
+          , SomeResult
+              (GetLedgerPeerSnapshot SingBigLedgerPeers)
+              (LedgerBigPeerSnapshotV23 GenesisPoint (NetworkMagic 42) [])
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
         ,
