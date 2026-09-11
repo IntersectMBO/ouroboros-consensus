@@ -34,7 +34,11 @@ data LeiosDbHandle m = LeiosDbHandle
   -- called.
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , open :: m (LeiosDbConnection m)
-  -- ^ Open a new connection to the LeiosDb.
+  -- ^ Open a new reading connection to the LeiosDb.
+  , openWriter :: m (LeiosDbConnection m)
+  -- ^ Open the connection for the single writer (see
+  -- "LeiosDemoDb.Writer"). Tuned differently from 'open', which is only
+  -- sound because each is used by exactly one role.
   , -- NOTE: 'subscribeEbNotifications' and 'open' should be the _only_
     -- methods of this handle. If you're thinking about adding another,
     -- strongly consider adding it to 'LeiosDbConnection' instead. (See

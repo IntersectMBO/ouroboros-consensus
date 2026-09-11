@@ -79,6 +79,7 @@ import Data.Void (Void)
 import LeiosDemoDb
   ( LeiosDbConnection
   , LeiosDbHandle (subscribeEbNotifications)
+  , LeiosDbWriter
   , LeiosEbNotification (..)
   , withLeiosDb
   )
@@ -342,7 +343,7 @@ data Handlers m addr blk = Handlers
         , m Void
         )
   , hLeiosFetchClient ::
-      LeiosDbConnection m ->
+      LeiosDbWriter m ->
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
@@ -680,7 +681,7 @@ mkHandlers
                           )
 
           pure (leiosNotifyServerPeerLookahead incr next, pump)
-      , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
+      , hLeiosFetchClient = \leiosDbWriter _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           -- Queue for responses received by the pipelined-peer collector
           -- thread. The collector enqueues here rather than touching the
@@ -696,7 +697,7 @@ mkHandlers
                   ((== Terminate) <$> controlMessageSTM)
                   (getLeiosOutstanding, getLeiosReady)
                   getLeiosTxCache
-                  leiosConn
+                  leiosDbWriter
                   systemTime
                   ( Leios.mkMempoolPull
                       (atomically (getLeiosTxIndex getMempool))
@@ -1104,7 +1105,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
   Apps{..}
  where
   (chainSyncRng, chainSyncRng') = splitGen rng
-  NodeKernel{getDiffusionPipeliningSupport, getLeiosDB = leiosDB} = kernel
+  NodeKernel{getDiffusionPipeliningSupport, getLeiosDB = leiosDB, getLeiosDbWriter = leiosDbWriter} = kernel
 
   aChainSyncClient ::
     NodeToNodeVersion ->
@@ -1497,17 +1498,16 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
       }
     channel = do
       labelThisThread "LeiosFetchClient"
-      bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
-        withLeiosDb leiosDB $ \leiosConn -> do
-          ((), trailing) <-
-            runPipelinedPeerWithLimits
-              (TraceLabelPeer them `contramap` tLeiosFetchTracer)
-              (cLeiosFetchCodec (mkCodecs version))
-              blLeiosFetch
-              timeLimitsLeiosFetch
-              channel
-              $ hLeiosFetchClient leiosConn version controlMessageSTM them peerVars
-          pure (NoInitiatorResult, trailing)
+      bracketLeiosPeer them isBigLedgerPeer $ \peerVars -> do
+        ((), trailing) <-
+          runPipelinedPeerWithLimits
+            (TraceLabelPeer them `contramap` tLeiosFetchTracer)
+            (cLeiosFetchCodec (mkCodecs version))
+            blLeiosFetch
+            timeLimitsLeiosFetch
+            channel
+            $ hLeiosFetchClient leiosDbWriter version controlMessageSTM them peerVars
+        pure (NoInitiatorResult, trailing)
 
   aLeiosFetchServer ::
     NodeToNodeVersion ->

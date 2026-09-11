@@ -7,6 +7,14 @@ module LeiosDemoDb
   , CompletedEbs
   , TraceLeiosDb (..)
 
+    -- * Single writer
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , newLeiosDbWriter
+  , withLeiosDbWriter
+  , withWriterBackedDb
+  , writerQueueDepth
+
     -- * In-memory implementation
   , emptyInMemoryLeiosDb
   , newLeiosDBInMemory
@@ -54,3 +62,11 @@ import LeiosDemoDb.SQLite
   , vacuumLeiosDb
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
+import LeiosDemoDb.Writer
+  ( LeiosDbWriter (..)
+  , Promise (..)
+  , newLeiosDbWriter
+  , withLeiosDbWriter
+  , withWriterBackedDb
+  , writerQueueDepth
+  )

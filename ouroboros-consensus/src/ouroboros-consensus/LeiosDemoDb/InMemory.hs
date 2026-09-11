@@ -108,21 +108,31 @@ newLeiosDBInMemoryWith stateVar = do
         leiosDbGarbageCollect = \_slotNo -> pure ()
       , -- No-op for now; see 'leiosDbPromoteToImmutable'.
         leiosDbPromoteToImmutable = \_point -> pure ()
-      , open =
-          pure $
-            LeiosDbConnection
-              { close = pure ()
-              , leiosDbScanEbPoints = imScanEbPoints stateVar
-              , -- ThreadNet persists 'stateVar' across simulated restarts, so on
-                -- restart this seeds the restored acquired-EB-closures set.
-                leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
-              , leiosDbInsertEbPoint = imInsertEbPoint stateVar
-              , leiosDbLookupEbBody = imLookupEbBody stateVar
-              , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan
-              , leiosDbInsertTxs = imInsertTxs stateVar notificationChan
-              , leiosDbBatchRetrieveTxs = imBatchRetrieveTxs stateVar
-              , leiosDbLookupEbClosure = imLookupEbClosure stateVar
-              }
+      , open = openConn stateVar notificationChan
+      , -- Nothing to tune: the state is a 'StrictTVar', so a writer's
+        -- connection is the same connection.
+        openWriter = openConn stateVar notificationChan
+      }
+
+openConn ::
+  IOLike m =>
+  StrictTVar m InMemoryLeiosDb ->
+  StrictTChan m LeiosEbNotification ->
+  m (LeiosDbConnection m)
+openConn stateVar notificationChan =
+  pure $
+    LeiosDbConnection
+      { close = pure ()
+      , leiosDbScanEbPoints = imScanEbPoints stateVar
+      , -- ThreadNet persists 'stateVar' across simulated restarts, so on
+        -- restart this seeds the restored acquired-EB-closures set.
+        leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
+      , leiosDbInsertEbPoint = imInsertEbPoint stateVar
+      , leiosDbLookupEbBody = imLookupEbBody stateVar
+      , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan
+      , leiosDbInsertTxs = imInsertTxs stateVar notificationChan
+      , leiosDbBatchRetrieveTxs = imBatchRetrieveTxs stateVar
+      , leiosDbLookupEbClosure = imLookupEbClosure stateVar
       }
 
 -- * Top-level implementations

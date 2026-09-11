@@ -42,6 +42,8 @@ import LeiosDemoDb
   , newLeiosDBSQLite
   , truncateLeiosDbAfterSlot
   , withLeiosDb
+  , withWriterBackedDb
+  , writerQueueDepth
   )
 import LeiosDemoTypes
   ( EbHash (..)
@@ -95,13 +97,26 @@ tests =
 data DbImpl
   = InMemory
   | SQLite
+  | -- | SQLite with every write routed through the single 'LeiosDbWriter'
+    -- ('withWriterBackedDb'). Behaviourally identical to 'SQLite' -- which is
+    -- what running the whole suite against it checks.
+    SQLiteSingleWriter
 
 -- | Create a fresh database and run an action with it.
 -- Ensures proper cleanup for SQLite databases.
 withFreshDb :: DbImpl -> (LeiosDbHandle IO -> IO a) -> IO a
 withFreshDb InMemory action =
   newLeiosDBInMemory >>= action
-withFreshDb SQLite action = do
+withFreshDb SQLite action = withFreshSQLiteDb action
+withFreshDb SQLiteSingleWriter action =
+  withFreshSQLiteDb $ \db ->
+    -- Depth as a node would size it: one slot per upstream peer, plus the
+    -- forge, plus slack. Shallow on purpose, so the suite also covers a
+    -- producer meeting a full queue.
+    withWriterBackedDb db (writerQueueDepth 3) action
+
+withFreshSQLiteDb :: (LeiosDbHandle IO -> IO a) -> IO a
+withFreshSQLiteDb action = do
   sysTmp <- getCanonicalTemporaryDirectory
   bracket
     ( do
@@ -126,11 +141,12 @@ withFreshSQLiteFile action = do
         action dbPath db
     )
 
--- | Run tests for each database implementation (InMemory and SQLite).
+-- | Run tests for each database implementation.
 forEachImplementation :: (DbImpl -> [TestTree]) -> [TestTree]
 forEachImplementation mkTests =
   [ testGroup "InMemory" (mkTests InMemory)
   , testGroup "SQLite" (mkTests SQLite)
+  , testGroup "SQLiteSingleWriter" (mkTests SQLiteSingleWriter)
   ]
 
 -- | Create the test groups for a given database implementation.

@@ -52,6 +52,8 @@ import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbConnection
+  , LeiosDbWriter (..)
+  , Promise (..)
   , leiosDbBatchRetrieveTxs
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
@@ -144,7 +146,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, forkIO, newMVar, withMVar)
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
@@ -697,7 +699,7 @@ nextLeiosFetchClientCommand ::
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  LeiosDbConnection m ->
+  LeiosDbWriter m ->
   -- | For reporting each arriving EB's age (see 'processLeiosBlock').
   SystemTime m ->
   -- | Pull EB-body misses out of the local mempool; see 'processLeiosBlock'.
@@ -716,7 +718,7 @@ nextLeiosFetchClientCommand ::
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemTime pullFromMempool peerId reqsVar responseQ = do
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer systemTime pullFromMempool peerId reqsVar responseQ = do
   drainResponses
   StrictSTM.atomically checkOrPeek >>= \case
     Right result -> pure $ Right result
@@ -733,7 +735,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemT
           tracer
           kernelVars
           txCache
-          db
+          writer
           systemTime
           pullFromMempool
           (ReceivedBlockFrom peerId req)
@@ -744,7 +746,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache db systemT
           tracer
           kernelVars
           txCache
-          db
+          writer
           systemTime
           (ReceivedTxsFrom peerId req txs)
 
@@ -853,7 +855,7 @@ processLeiosBlock ::
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  LeiosDbConnection m ->
+  LeiosDbWriter m ->
   -- | For reporting the EB's age on arrival (now minus its recorded onset).
   SystemTime m ->
   -- | Pull the txs we already hold in our local mempool out of the given misses
@@ -866,7 +868,7 @@ processLeiosBlock ::
   LeiosBlockSource pid ->
   LeiosEb ->
   m ()
-processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTime pullFromMempool source eb = do
+processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer systemTime pullFromMempool source eb = do
   now <- systemTimeCurrent systemTime
   -- validate it
   let (mbPeer, point, ebBytesSize) = case source of
@@ -1040,56 +1042,48 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db systemTim
   -- behind each other's writes -- inflating announcement->body latency and, via
   -- the delayed onward offer, multi-hop propagation.
   --
-  -- HACK: for received bodies we fire-and-forget this onto a fresh thread so the
-  -- mini-protocol thread returns immediately and the fetch loop (already woken
-  -- via 'readyVar' above) proceeds at memory speed. THIS IS A HACK. The real
-  -- shape is a single writer thread draining a BOUNDED QUEUE, which would:
-  --   (1) not spawn an unbounded number of background writers under load (they
-  --       still contend on the single SQLite writer, and nothing bounds them);
-  --   (2) not silently drop exceptions (a throw here dies with the forked
-  --       thread; only DB exceptions are even traced);
-  --   (3) preserve ordering -- the body write initialises the 'missingTxCount'
-  --       that fetched-tx ingestion decrements, and waking 'readyVar' before
-  --       this write lands leaves a small race (in practice the write completes
-  --       long before a fetch round-trips);
-  --   (4) close the persist-after-mark window where we briefly advertise a body
-  --       we cannot yet serve.
-  -- The forge path stays synchronous: its EB must be on disk before the
-  -- referencing RB propagates.
-  sharedConnection <- newMVar db
-  let persistAndIngest = withMVar sharedConnection $ \conn -> do
-        completedByBody <-
-          if not shouldPersist
-            then pure []
-            else traceException tracer TraceLeiosPeerDbException $ do
-              -- FIXME: once EB announcements are wired in the point MUST already
-              -- be present (announcement handling inserts it); until then insert
-              -- it idempotently as a stop-gap and trace a warning.
-              traceWith ktracer $ TraceLeiosBlockPointMissing point
-              leiosDbInsertEbPoint conn point ebBytesSize
-              leiosDbInsertEbBody conn point eb
-        unless (null completedByBody) $ do
-          st <- Leios.ebState <$> MVar.readMVar outstandingVar
-          forM_ completedByBody $ \p ->
-            traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
-        -- Overlap (in both the mempool and the cache): already persisted, so only
-        -- upgrade them to Applied in the cache -- no (redundant) DB insert.
-        unless (Map.null mempoolAndCache) $
-          withLockedInsertAppliedTx txCache $ \w0 step ->
-            foldM (\w txh -> step w txh ()) w0 (Map.keys mempoolAndCache)
-        -- Mempool-only (not in the cache): full ingest into the DB and cache.
-        unless (Map.null mempoolNotCache) $
-          processLeiosBlockTxs
-            ktracer
-            tracer
-            (outstandingVar, readyVar)
-            txCache
-            conn
-            systemTime
-            (MempoolTxs point mempoolNotCache)
+  -- The write itself is handed to the single writer, so it neither runs on this
+  -- thread nor shares a connection with anything else. Awaiting is the forge's
+  -- business only: its EB must be on disk before the referencing RB propagates,
+  -- whereas a received body is served onward off the commit-time notification,
+  -- so nothing observes it before the writer has committed it.
+  bodyWritten <-
+    enqueueWrite writer $ \conn ->
+      if not shouldPersist
+        then pure ()
+        else traceException tracer TraceLeiosPeerDbException $ do
+          -- FIXME: once EB announcements are wired in the point MUST already
+          -- be present (announcement handling inserts it); until then insert
+          -- it idempotently as a stop-gap and trace a warning.
+          traceWith ktracer $ TraceLeiosBlockPointMissing point
+          leiosDbInsertEbPoint conn point ebBytesSize
+          completedByBody <- leiosDbInsertEbBody conn point eb
+          unless (null completedByBody) $ do
+            st <- Leios.ebState <$> MVar.readMVar outstandingVar
+            forM_ completedByBody $ \p ->
+              traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
+  -- The cache updates stay on this thread: the fetch logic reads them to decide
+  -- what is still missing, so they must land before we return, whatever the
+  -- writer is doing.
+  --
+  -- Overlap (in both the mempool and the cache): already persisted, so only
+  -- upgrade them to Applied in the cache -- no (redundant) DB insert.
+  unless (Map.null mempoolAndCache) $
+    withLockedInsertAppliedTx txCache $ \w0 step ->
+      foldM (\w txh -> step w txh ()) w0 (Map.keys mempoolAndCache)
+  -- Mempool-only (not in the cache): full ingest into the DB and cache.
+  unless (Map.null mempoolNotCache) $
+    processLeiosBlockTxs
+      ktracer
+      tracer
+      (outstandingVar, readyVar)
+      txCache
+      writer
+      systemTime
+      (MempoolTxs point mempoolNotCache)
   case source of
-    ForgedBlock{} -> persistAndIngest
-    ReceivedBlockFrom{} -> void $ forkIO persistAndIngest
+    ForgedBlock{} -> await bodyWritten
+    ReceivedBlockFrom{} -> pure ()
 
 -- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
 -- mempool (the forge, which already holds the whole closure, and tests): keep
@@ -1313,12 +1307,12 @@ processLeiosBlockTxs ::
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  LeiosDbConnection m ->
+  LeiosDbWriter m ->
   -- | For reporting each completed closure's age on arrival.
   SystemTime m ->
   LeiosBlockTxsSource pid ->
   m ()
-processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db systemTime source = case source of
+processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer systemTime source = case source of
   ForgedTxs _point eb txs -> do
     now <- systemTimeCurrent systemTime
     -- Ingest the whole closure (TODO even though we might already have some of
@@ -1422,20 +1416,32 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db system
   -- tx by its prior state in one locked pass, tolerating duplicates.
   ingestAcquiredTxs ::
     RelativeTime -> WhetherApplied -> [(TxHash, BS.ByteString)] -> m Leios.FetchArrivalBytes
-  ingestAcquiredTxs now applied toIngest =
-    traceException tracer TraceLeiosPeerDbException $ do
-      completed <- leiosDbInsertTxs db toIngest
-      ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
-      forM_ completed $ \p ->
-        traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
-      case applied of
-        Applied -> do
-          withLockedInsertAppliedTx txCache $ \w0 step ->
-            foldM (\w (txh, _bs) -> step w txh ()) w0 toIngest
-          pure mempty
-        Unapplied ->
-          withLockedInsertUnappliedTx txCache $ \w0 step ->
-            foldM (\w (txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
+  ingestAcquiredTxs now applied toIngest = do
+    -- The DB write goes to the single writer; the closure-completion trace
+    -- rides along with it, since only the write knows what it completed.
+    txsWritten <-
+      enqueueWrite writer $ \conn ->
+        traceException tracer TraceLeiosPeerDbException $ do
+          completed <- leiosDbInsertTxs conn toIngest
+          ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
+          forM_ completed $ \p ->
+            traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
+    -- The cache update stays here: the fetch logic consults it to decide what
+    -- is still missing, so it cannot lag behind the caller.
+    arrival <- case applied of
+      Applied -> do
+        withLockedInsertAppliedTx txCache $ \w0 step ->
+          foldM (\w (txh, _bs) -> step w txh ()) w0 toIngest
+        pure mempty
+      Unapplied ->
+        withLockedInsertUnappliedTx txCache $ \w0 step ->
+          foldM (\w (txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
+    -- Only the forge waits: its closure has to be on disk before the RB that
+    -- references it goes out.
+    case source of
+      ForgedTxs{} -> await txsWritten
+      _ -> pure ()
+    pure arrival
 
 -- | Whether ingested txs are tagged applied (from our forge's validated mempool)
 -- or unapplied (fetched from a peer).
@@ -1891,7 +1897,7 @@ onForgedLeiosEb ::
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  LeiosDbConnection m ->
+  LeiosDbWriter m ->
   -- | Threaded through to the body/closure handlers for age reporting
   SystemTime m ->
   -- | Built by the caller (see 'mkForgedAnnouncingHeader'), at the call site
@@ -1899,7 +1905,7 @@ onForgedLeiosEb ::
   AnnouncingHeader blk ->
   Leios.ForgedLeiosEb ->
   m ()
-onForgedLeiosEb kernelTracer centralVar kv txCache db systemTime anc forgedEb = do
+onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedEb = do
   processAnnouncementCentrally
     kernelTracer
     centralVar
@@ -1916,7 +1922,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache db systemTime anc forgedEb = 
     nullTracer
     kv
     txCache
-    db
+    writer
     systemTime
     noMempoolPull -- the forge holds the whole closure
     (ForgedBlock forgedEb.point)
@@ -1926,7 +1932,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache db systemTime anc forgedEb = 
     nullTracer
     kv
     txCache
-    db
+    writer
     systemTime
     (ForgedTxs forgedEb.point forgedEb.body $ V.fromList $ map (MkLeiosTx . snd) $ forgedEb.txClosure)
   traceWith kernelTracer $

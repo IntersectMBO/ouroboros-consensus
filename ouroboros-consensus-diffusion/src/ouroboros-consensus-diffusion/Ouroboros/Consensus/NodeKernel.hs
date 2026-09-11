@@ -175,6 +175,12 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import System.Random (StdGen)
 
+-- | Upstream peers assumed to be fetching concurrently, for sizing the Leios
+-- DB writer's queue. Only their fetch clients and the forge submit writes, and
+-- the queue wants a slot each; see 'LeiosDb.writerQueueDepth'.
+leiosDbWriterUpstreamPeers :: Int
+leiosDbWriterUpstreamPeers = 20
+
 {-------------------------------------------------------------------------------
   Relay node
 -------------------------------------------------------------------------------}
@@ -229,6 +235,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     getLeiosDB :: LeiosDbHandle m
   -- ^ Factory for opening per-thread connections to the Leios demo DB
   -- and subscribing to EB-notification events.
+  , getLeiosDbWriter :: LeiosDb.LeiosDbWriter m
+  -- ^ The node's single Leios DB writer. Every write goes through it, so no
+  -- connection is ever driven by two threads; the forge awaits its writes,
+  -- the fetch path does not.
   , getLeiosVoteState :: LeiosVoteState m
   -- ^ Aggregated vote state across all peers. Empty in S4; populated
   -- by the voting thread in S5.
@@ -349,6 +359,7 @@ initNodeKernel
           , leiosTxCache = getLeiosTxCache
           , leiosPeersVars = getLeiosPeersVars
           , leiosVoteState
+          , leiosDbWriter
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
@@ -680,6 +691,7 @@ initNodeKernel
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
         , getLeiosDB = leiosDB
+        , getLeiosDbWriter = leiosDbWriter
         , getLeiosVoteState = leiosVoteState
         , getLeiosPeersVars = getLeiosPeersVars
         , getLeiosOutstanding = getLeiosOutstanding
@@ -734,6 +746,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
   , leiosDB :: LeiosDbHandle m
+  , leiosDbWriter :: LeiosDb.LeiosDbWriter m
   , -- Leios fetch-logic state; consumed in 'initNodeKernel'.
     leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , leiosReady :: MVar.MVar m ()
@@ -815,6 +828,13 @@ initInternalState
         Leios.initializeLeiosOutstanding leiosFetchRng acquiredClosures immTipSlot
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
+    -- One writer for the whole node: the forge and every peer's fetch client
+    -- submit to it, so no Leios DB connection is ever driven by two threads.
+    leiosDbWriter <-
+      LeiosDb.newLeiosDbWriter
+        registry
+        leiosDB
+        (LeiosDb.writerQueueDepth leiosDbWriterUpstreamPeers)
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
@@ -897,7 +917,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                           leiosCentralState
                           (leiosOutstanding, leiosReady)
                           leiosTxCache
-                          leiosConn
+                          leiosDbWriter
                           systemTime
                           -- Safe here: the forge hands us a corresponding header
                           -- and closure.

@@ -51,7 +51,7 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
-import LeiosDemoDb (withLeiosDb)
+import LeiosDemoDb (withLeiosDbWriter, writerQueueDepth)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
   ( LeiosBlockSource (..)
@@ -77,9 +77,9 @@ import LeiosDemoTypes
   , TxHash
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
+  , encodeLeiosEbSize
   , hashLeiosEb
   , hashLeiosTx
-  , encodeLeiosEbSize
   , newLeiosPeerVars
   )
 import qualified LeiosDemoTypes as Leios
@@ -395,7 +395,7 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
   go :: forall s. [Cmd] -> IOSim s (Either String [EbHash])
   go cs0 = do
     dbHandle <- LeiosDb.newLeiosDBInMemory
-    withLeiosDb dbHandle $ \conn -> do
+    withLeiosDbWriter dbHandle (writerQueueDepth 3) $ \conn -> do
       outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
       readyVar <- newEmptyMVar
       peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
@@ -421,7 +421,7 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
 -- but a misbehaving 'Decide'.
 applyCmd ::
   forall s.
-  LeiosDb.LeiosDbConnection (IOSim s) ->
+  LeiosDb.LeiosDbWriter (IOSim s) ->
   LeiosTxCache (IOSim s) () () Leios.SerializedEbBody ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
   LeiosPeerVars (IOSim s) ->
@@ -754,7 +754,7 @@ prop_neverRefetchesHeldBodyConcurrent =
 raceSameHashMultiSlot :: forall m. IOLike m => m Property
 raceSameHashMultiSlot = do
   dbHandle <- LeiosDb.newLeiosDBInMemory
-  withLeiosDb dbHandle $ \conn -> do
+  withLeiosDbWriter dbHandle (writerQueueDepth 3) $ \conn -> do
     outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
     readyVar <- newEmptyMVar
     peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
