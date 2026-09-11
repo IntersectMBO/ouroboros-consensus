@@ -24,6 +24,15 @@
 -- All data is deterministic (no QuickCheck generators), so runs are stable and
 -- comparable across refactors.
 --
+-- Every DB call is wrapped via 'LeiosDbWithCallTrace' and the resulting
+-- 'SomeJsonCallTrace' events (start + end with duration\/allocation) are
+-- written as JSON lines to @leios-db-bench-trace.jsonl@ in the working
+-- directory.
+--
+-- The call trace forms a tree rooted at a single \"LeiosDBBench\" context
+-- created in 'main'.  Each role (fetch-client-N, fetch-server-M, etc.) is a
+-- child span of that root, and individual DB calls are grandchildren.
+--
 -- Usage:
 --
 -- @
@@ -33,26 +42,25 @@ module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
+import Control.Concurrent.MVar (newMVar, withMVar)
 import Control.Monad (forM, forM_, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (debugTracer, (>$<))
+import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BSL
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
-  ( LeiosDbConnection
-  , LeiosDbHandle (..)
-  , leiosDbBatchRetrieveTxs
-  , leiosDbGarbageCollect
-  , leiosDbInsertEbBody
-  , leiosDbInsertEbPoint
-  , leiosDbInsertTxs
-  , leiosDbLookupEbBody
-  , leiosDbLookupEbClosure
+  ( LeiosDbHandle (..)
   , newLeiosDBSQLite
   , withLeiosDb
+  )
+import LeiosDemoDb.WithCallTrace
+  ( LeiosDbWithCallTrace (..)
+  , newLeiosDbWithCallTrace
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -62,7 +70,16 @@ import LeiosDemoTypes
   , TxHash (..)
   , leiosEbBytesSize
   )
-import System.IO (hFlush, stdout)
+import LeiosUtils.CallTrace
+  ( CallCtx
+  , CallTrace
+  , SomeJsonCallTrace (..)
+  , callTrace
+  , callTraceSameThreadVia
+  , callTraceToObject
+  , rootCallCtx
+  )
+import System.IO (Handle, IOMode (..), hFlush, stdout, withFile)
 import System.IO.Temp (withSystemTempDirectory)
 
 main :: IO ()
@@ -84,10 +101,15 @@ main = do
       , ""
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
       , ""
+      , "Trace output: leios-db-bench-trace.jsonl"
+      , ""
       ]
-  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
-    env <- setupBenchEnv tmpDir
-    runBench (benchConcurrentAll env)
+  withFile "leios-db-bench-trace.jsonl" WriteMode $ \traceFile -> do
+    tracer <- newTracer traceFile
+    rootCtx <- rootCallCtx "LeiosDBBench"
+    withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
+      env <- setupBenchEnv tmpDir tracer rootCtx
+      runBench (benchConcurrentAll env)
 
 -- * Configuration
 
@@ -123,15 +145,16 @@ numRuns = 5
 
 -- | All production roles running concurrently against one DB handle.
 benchConcurrentAll :: BenchEnv -> IO ()
-benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerIdxRef} = do
+benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerIdxRef, beTracer = tracer, beRootCtx = rootCtx} = do
   startIdx <-
     atomicModifyIORef'
       writerIdxRef
       (\n -> (n + numFetchClients * ebsPerClient, n))
-  cs <- async (chainSelReader db points)
-  gc <- async (gcTicker db)
-  clients <- forM (clientRanges startIdx) $ \range -> async (fetchClient db range)
-  mapConcurrently_ (fetchServer db points) [0 .. numFetchServers - 1]
+  cs <- async (chainSelReader db tracer rootCtx points)
+  gc <- async (gcTicker db tracer rootCtx)
+  clients <- forM (zip [0 ..] (clientRanges startIdx)) $ \(i, range) ->
+    async (fetchClient db tracer rootCtx i range)
+  mapConcurrently_ (fetchServer db tracer rootCtx points) [0 .. numFetchServers - 1]
   wait cs >> wait gc
   forM_ clients wait
  where
@@ -142,33 +165,40 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
     ]
 
 -- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
-fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
-fetchClient db range =
-  withLeiosDb db $ \c ->
-    forM_ range (insertOneEb c)
+fetchClient :: LeiosDbHandle IO -> Tracer -> CallCtx IO -> Int -> [Int] -> IO ()
+fetchClient db tracer rootCtx clientIdx range =
+  callTrace (jsonTracer tracer) rootCtx ("fetch-client-" <> show clientIdx) "fetch-client" () $ \roleCtx ->
+    withLeiosDb db $ \c -> do
+      let wct = newLeiosDbWithCallTrace tracer c
+      forM_ range (insertOneEb wct roleCtx)
 
 -- | Mirrors chain-selection's block-apply path: repeated
 -- 'leiosDbLookupEbClosure' for the tx closure of each certified EB.
-chainSelReader :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
-chainSelReader db points =
-  withLeiosDb db $ \c ->
-    forM_ (take numChainSelReads (cycle points)) $ \p ->
-      leiosDbLookupEbClosure c p.pointEbHash
+chainSelReader :: LeiosDbHandle IO -> Tracer -> CallCtx IO -> [LeiosPoint] -> IO ()
+chainSelReader db tracer rootCtx points =
+  callTrace (jsonTracer tracer) rootCtx "chain-sel-reader" "chain-sel-reader" () $ \roleCtx ->
+    withLeiosDb db $ \c -> do
+      let wct = newLeiosDbWithCallTrace tracer c
+      forM_ (take numChainSelReads (cycle points)) $ \p ->
+        wct.leiosDbLookupEbClosure roleCtx p.pointEbHash
 
 -- | Fires periodic garbage-collect calls. Handle-level operation; touches
 -- every table when implemented (currently a no-op backend-side, but the
 -- call path is realistic).
-gcTicker :: LeiosDbHandle IO -> IO ()
-gcTicker db =
-  forM_ [1 .. numGcTicks] $ \i ->
-    leiosDbGarbageCollect db (SlotNo (fromIntegral (i * 10)))
+gcTicker :: LeiosDbHandle IO -> Tracer -> CallCtx IO -> IO ()
+gcTicker db tracer rootCtx =
+  callTrace (jsonTracer tracer) rootCtx "gc-ticker" "gc-ticker" () $ \_ ->
+    forM_ [1 .. numGcTicks] $ \i ->
+      leiosDbGarbageCollect db (SlotNo (fromIntegral (i * 10)))
 
 -- | Mirrors a fetch server: looks up EB bodies and retrieves TX batches.
-fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()
-fetchServer db points i =
-  withLeiosDb db $ \c -> do
-    forM_ ebPoints $ \p -> leiosDbLookupEbBody c p.pointEbHash
-    forM_ txPoints $ \p -> leiosDbBatchRetrieveTxs c p.pointEbHash sampleOffsets
+fetchServer :: LeiosDbHandle IO -> Tracer -> CallCtx IO -> [LeiosPoint] -> Int -> IO ()
+fetchServer db tracer rootCtx points i =
+  callTrace (jsonTracer tracer) rootCtx ("fetch-server-" <> show i) "fetch-server" () $ \roleCtx ->
+    withLeiosDb db $ \c -> do
+      let wct = newLeiosDbWithCallTrace tracer c
+      forM_ ebPoints $ \p -> wct.leiosDbLookupEbBody roleCtx p.pointEbHash
+      forM_ txPoints $ \p -> wct.leiosDbBatchRetrieveTxs roleCtx p.pointEbHash sampleOffsets
  where
   sampleOffsets = [0, 10 .. txsPerEb - 1]
   ebPoints = take 30 $ drop (i * 30) (cycle points)
@@ -183,22 +213,45 @@ data BenchEnv = BenchEnv
   , beWriterIdx :: !(IORef Int)
   -- ^ Monotonically increasing counter so each benchmark iteration allocates
   -- a fresh range of EB indices for writers (avoids duplicate-key errors).
+  , beTracer :: !Tracer
+  -- ^ Serialised JSON-line sink for call trace events.
+  , beRootCtx :: !(CallCtx IO)
+  -- ^ Single root context for the entire benchmark run.
   }
 
 -- | Create a fresh SQLite DB and insert 'numPrePopulatedEbs' complete EBs.
 -- This setup cost is not included in the timed measurements.
-setupBenchEnv :: FilePath -> IO BenchEnv
-setupBenchEnv tmpDir = do
+setupBenchEnv :: FilePath -> Tracer -> CallCtx IO -> IO BenchEnv
+setupBenchEnv tmpDir tracer rootCtx = do
   db <- newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.db")
   putStr "Inserting EBs: " >> hFlush stdout
-  forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
-    withLeiosDb db (`insertOneEb` i)
-    when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
-      putStr (show (i + 1) <> " ") >> hFlush stdout
-  putStrLn "done"
-  let points = [genPoint i | i <- [0 .. numPrePopulatedEbs - 1]]
-  writerIdx <- newIORef numPrePopulatedEbs
-  pure $ BenchEnv db points writerIdx
+  callTraceSameThreadVia (const ()) (jsonTracer tracer) rootCtx "setup" () $ \setupCtx -> do
+    forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
+      withLeiosDb db $ \c -> do
+        let wct = newLeiosDbWithCallTrace tracer c
+        insertOneEb wct setupCtx i
+      when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
+        putStr (show (i + 1) <> " ") >> hFlush stdout
+    putStrLn "done"
+    let points = [genPoint i | i <- [0 .. numPrePopulatedEbs - 1]]
+    writerIdx <- newIORef numPrePopulatedEbs
+    pure $ BenchEnv db points writerIdx tracer rootCtx
+
+-- * Tracer
+
+-- | Thread-safe sink that serialises 'SomeJsonCallTrace' events as JSON lines.
+type Tracer = SomeJsonCallTrace -> IO ()
+
+newTracer :: Handle -> IO Tracer
+newTracer h = do
+  lock <- newMVar ()
+  pure $ \(SomeJsonCallTrace ct) ->
+    withMVar lock $ \() ->
+      BSL.hPut h (Aeson.encode (Aeson.Object (callTraceToObject ct)) <> BSL.singleton 0x0a)
+
+-- | Adapt a 'Tracer' into the form expected by 'callTrace' \/ 'callTraceSameThreadVia'.
+jsonTracer :: (Aeson.ToJSON a, Aeson.ToJSON r) => Tracer -> CallTrace a r -> IO ()
+jsonTracer tracer ct = tracer (SomeJsonCallTrace ct)
 
 -- * Timing
 
@@ -236,8 +289,8 @@ showTime t
 -- * DB helpers
 
 -- | Insert one complete EB (point + body + all TXs) by index.
-insertOneEb :: Monad m => LeiosDbConnection m -> Int -> m ()
-insertOneEb conn ebIdx = do
+insertOneEb :: LeiosDbWithCallTrace IO -> CallCtx IO -> Int -> IO ()
+insertOneEb wct ctx ebIdx = do
   let point = genPoint ebIdx
       eb = genEb ebIdx
       txs =
@@ -245,9 +298,9 @@ insertOneEb conn ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         , let h = genTxHash ebIdx txIdx
         ]
-  leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
-  _ <- leiosDbInsertEbBody conn point eb
-  _ <- leiosDbInsertTxs conn txs
+  wct.leiosDbInsertEbPoint ctx point (leiosEbBytesSize eb)
+  _ <- wct.leiosDbInsertEbBody ctx point eb
+  _ <- wct.leiosDbInsertTxs ctx txs
   pure ()
 
 -- * Deterministic data generation

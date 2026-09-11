@@ -38,7 +38,6 @@ import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
@@ -131,8 +130,6 @@ data Stmts = Stmts
   , stInitMissingCount :: !DB.Statement
   , stInsertTx :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
-  , stInsertMissingTxs :: !DB.Statement
-  , stDeleteMissingTxs :: !DB.Statement
   , stFindCompleteEbs :: !DB.Statement
   , stMarkNotifiedEbs :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
@@ -159,8 +156,6 @@ prepareStmts db = do
   stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
   stInsertTx <- dbPrepare db (fromString sql_insert_tx)
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
-  stInsertMissingTxs <- dbPrepare db (fromString sql_insert_missing_txs)
-  stDeleteMissingTxs <- dbPrepare db (fromString sql_delete_missing_txs)
   stFindCompleteEbs <- dbPrepare db (fromString sql_find_complete_ebs)
   stMarkNotifiedEbs <- dbPrepare db (fromString sql_mark_notified_ebs)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
@@ -181,8 +176,6 @@ finalizeStmts Stmts{..} = do
   dbFinalize stInitMissingCount
   dbFinalize stInsertTx
   dbFinalize stDecrMissingCount
-  dbFinalize stInsertMissingTxs
-  dbFinalize stDeleteMissingTxs
   dbFinalize stFindCompleteEbs
   dbFinalize stMarkNotifiedEbs
   dbFinalize stMarkPointNotified
@@ -333,15 +326,9 @@ sqlInsertEbBody tracer conn notify point eb = do
         "ebTxs"
         (show point.pointEbHash <> "@" <> show txOffset)
         stInsertEbTxsRow
-    -- Record which of this body's txs we still lack, then count them. Both in
-    -- this transaction, so an arrival can never see the rows without the count
-    -- or the other way round.
-    useStmt stInsertMissingTxs $ do
-      dbBindBlob stInsertMissingTxs 1 point.pointEbHash.ebHashBytes
-      dbStep1 stInsertMissingTxs
-    -- Initialize missingTxCount and read the resulting value via
-    -- @RETURNING missingTxCount@. Only /this/ point's row can have
-    -- transitioned to 0 as a consequence of the insert above.
+    -- Initialize missingTxCount from the NULL txBytes rows just inserted,
+    -- reading the result via @RETURNING missingTxCount@. Only /this/ point's
+    -- row can have transitioned to 0 as a consequence of the body insert above.
     missingCount <- useStmt stInitMissingCount $ do
       dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
       dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
@@ -350,8 +337,8 @@ sqlInsertEbBody tracer conn notify point eb = do
     if missingCount == 0
       then do
         useStmt stMarkPointNotified $ do
-          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-          dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+          dbBindBlob stMarkPointNotified 1 point.pointEbHash.ebHashBytes
+          dbBindInt64 stMarkPointNotified 2 (fromIntegral $ unSlotNo point.pointSlotNo)
           dbStep1 stMarkPointNotified
         pure [point]
       else pure []
@@ -364,7 +351,6 @@ sqlInsertEbBody tracer conn notify point eb = do
   Conn{connStmts} = conn
   Stmts
     { stInsertEbTxsRow
-    , stInsertMissingTxs
     , stInitMissingCount
     , stMarkPointNotified
     } = connStmts
@@ -390,31 +376,24 @@ sqlInsertTxs ::
   [(TxHash, ByteString)] ->
   IO CompletedEbs
 sqlInsertTxs _tracer conn notify txs = do
-  -- Skip txs already persisted in 'txs'. Under mempool backlog,
+  -- Skip txs whose ebTxs rows are already filled. Under mempool backlog,
   -- successive forges (or overlapping peer EBs) re-present the same tx
-  -- hashes; attempting the INSERT and catching a constraint violation
-  -- still pays the bind + PK-lookup + reset cost per row.
+  -- hashes; attempting the UPDATE and finding 0 changed rows still pays
+  -- the bind + scan + reset cost per row.
   missing <- Set.fromList <$> sqlFilterMissingTxs conn (map fst txs)
   completed <- dbWithWriteTransaction conn $ do
-    -- 'dbStepInsert' still handles the rare race where a concurrent
-    -- writer inserted the same hash between the filter above and the
-    -- INSERT below.
+    -- Decrement before filling: the decrement subquery selects ebTxs rows
+    -- WHERE txBytes IS NULL, so it must run before the fill overwrites them.
+    -- A concurrent writer that beat us leaves both steps as no-ops.
     forM_ (novel missing) $ \(txHash, txBytes) -> do
-      let txBytesSize = fromIntegral $ BS.length txBytes
-          txHashBytes = let MkTxHash bytes = txHash in bytes
-      inserted <- useStmt stInsertTx $ do
-        dbBindBlob stInsertTx 1 txHashBytes
-        dbBindBlob stInsertTx 2 txBytes
-        dbBindInt64 stInsertTx 3 txBytesSize
-        dbStepInsert stInsertTx
-      when inserted $ do
-        useStmt stDecrMissingCount $ do
-          dbBindBlob stDecrMissingCount 1 txHashBytes
-          dbStep1 stDecrMissingCount
-        -- Strictly after the decrement, which reads these rows.
-        useStmt stDeleteMissingTxs $ do
-          dbBindBlob stDeleteMissingTxs 1 txHashBytes
-          dbStep1 stDeleteMissingTxs
+      let txHashBytes = let MkTxHash bytes = txHash in bytes
+      useStmt stDecrMissingCount $ do
+        dbBindBlob stDecrMissingCount 1 txHashBytes
+        dbStep1 stDecrMissingCount
+      useStmt stInsertTx $ do
+        dbBindBlob stInsertTx 1 txBytes
+        dbBindBlob stInsertTx 2 txHashBytes
+        dbStep1 stInsertTx
     -- Find newly-complete EBs (missingTxCount reached 0)
     completed <- useStmt stFindCompleteEbs $ do
       let loop acc =
@@ -436,7 +415,6 @@ sqlInsertTxs _tracer conn notify txs = do
   Stmts
     { stInsertTx
     , stDecrMissingCount
-    , stDeleteMissingTxs
     , stFindCompleteEbs
     , stMarkNotifiedEbs
     } = connStmts
@@ -444,7 +422,7 @@ sqlInsertTxs _tracer conn notify txs = do
 
 -- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
 -- the offsets list as a JSON int array bound to a single parameter;
--- SQLite's 'json_each' virtual table joins it against 'ebTxs' + 'txs'.
+-- SQLite's 'json_each' virtual table joins it against 'ebTxs' via its PK.
 --
 -- No temp tables, no attached databases, no per-item INSERT round-trips.
 -- Works on strictly read-only connections.
@@ -466,15 +444,15 @@ sqlBatchRetrieveTxs conn ebHash offsets =
       DB.Row -> do
         offset <- fromIntegral <$> DB.columnInt64 stmt 0
         txHash <- MkTxHash <$> DB.columnBlob stmt 1
-        -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
+        -- Column 2 is txBytes, NULL if the tx has not yet arrived
         txBytes <- DB.columnBlob stmt 2
         let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
         loop ((offset, txHash, mbTxBytes) : acc)
 
--- | Batch-filter tx hashes against @txs@: passes txHashes as a JSON array
--- of hex strings; SQL decodes with @unhex()@ so index lookups on
--- @txs.txHashBytes@ still fire. Used internally by 'sqlInsertTxs' to skip
--- already-persisted txs.
+-- | Batch-filter tx hashes against @ebTxs@: passes txHashes as a JSON array
+-- of hex strings; SQL decodes with @unhex()@ so the partial index
+-- @idx_ebTxs_pending@ still fires. Used internally by 'sqlInsertTxs' to skip
+-- txs whose 'ebTxs' rows are already filled.
 sqlFilterMissingTxs :: Conn -> [TxHash] -> IO [TxHash]
 sqlFilterMissingTxs conn txHashes =
   dbWithTransaction db $ useStmt stmt $ do
@@ -503,18 +481,16 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
   deletes =
     unlines
       [ "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
-      , "DELETE FROM ebsMissingTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
       , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
       ]
 
   -- The EBs whose bodies the truncation drops.
   --
   -- 'ebs' holds one row per announcement, so the same EB hash can appear at
-  -- several slots. 'ebTxs' and 'ebsMissingTxs' hold one copy per hash and carry
-  -- no slot. So an EB announced at slot 5 and again at slot 15 keeps its body
-  -- when the cut is at slot 10. That is what the EXCEPT does: take the hashes
-  -- announced after the cut, then remove the ones also announced at or before
-  -- it.
+  -- several slots. 'ebTxs' holds one copy per hash and carries no slot. So an
+  -- EB announced at slot 5 and again at slot 15 keeps its body when the cut is
+  -- at slot 10. That is what the EXCEPT does: take the hashes announced after
+  -- the cut, then remove the ones also announced at or before it.
   droppedHashes =
     "SELECT ebHashBytes FROM ebs WHERE ebSlot > "
       <> show slot
@@ -523,12 +499,12 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
 
 -- | Delete the transactions that no EB references.
 --
+-- No-op after denormalisation: tx bytes live directly in 'ebTxs' rows, so
+-- there is no separate 'txs' table to prune.
+--
 -- For internal tooling.
-deleteDanglingTxs :: HasCallStack => FilePath -> IO ()
-deleteDanglingTxs dbPath =
-  withExistingLeiosDbFile dbPath $ \db ->
-    dbExec db . fromString $
-      "DELETE FROM txs WHERE txHashBytes NOT IN (SELECT txHashBytes FROM ebTxs)"
+deleteDanglingTxs :: FilePath -> IO ()
+deleteDanglingTxs _dbPath = pure ()
 
 -- | Shrink a LeiosDb file to the space its rows need.
 --
@@ -584,7 +560,6 @@ sqlLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
 sqlLookupEbClosure conn ebHash =
   dbWithTransaction db $ useStmt stmt $ do
     dbBindBlob stmt 1 (ebHashBytes ebHash)
-    -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key
     loop []
  where
   Conn{connDb = db, connStmts = Stmts{stLookupEbClosure = stmt}} = conn
@@ -612,27 +587,22 @@ sql_schema =
     , "  ebBytesSize INTEGER NOT NULL,"
     , -- NULL = body not downloaded, >0 = txs missing, 0 = just completed, <0 = notified
       "  missingTxCount INTEGER,"
-    , "  PRIMARY KEY (ebSlot, ebHashBytes)"
+    , "  PRIMARY KEY (ebHashBytes, ebSlot)"
     , ");"
-    , "CREATE INDEX idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
+    , "CREATE INDEX idx_ebs_complete ON ebs(ebHashBytes) WHERE missingTxCount = 0;"
     , "CREATE TABLE ebTxs ("
     , "  ebHashBytes BLOB NOT NULL,"
     , "  txOffset INTEGER NOT NULL,"
     , "  txHashBytes BLOB NOT NULL,"
     , "  txBytesSize INTEGER NOT NULL,"
+    , "  txBytes BLOB,"
     , "  PRIMARY KEY (ebHashBytes, txOffset)"
     , ");"
-    , "CREATE TABLE ebsMissingTxs ("
-    , "  txHashBytes BLOB NOT NULL,"
-    , "  ebHashBytes BLOB NOT NULL,"
-    , "  PRIMARY KEY (txHashBytes, ebHashBytes)"
-    , ");"
-    , "CREATE INDEX idx_ebsMissingTxs_ebHashBytes ON ebsMissingTxs(ebHashBytes);"
-    , "CREATE TABLE txs ("
-    , "  txHashBytes BLOB NOT NULL PRIMARY KEY,"
-    , "  txBytes BLOB NOT NULL,"
-    , "  txBytesSize INTEGER NOT NULL"
-    , ");"
+    , "CREATE INDEX idx_ebTxs_pending ON ebTxs(txHashBytes) WHERE txBytes IS NULL;"
+    , -- Covering index for lookupEbBody: SELECT txHashBytes, txBytesSize … WHERE ebHashBytes = ?
+      -- All needed columns are in the index so SQLite never touches the main table rows
+      -- (which carry txBytes blobs up to 16 KiB each).
+      "CREATE INDEX idx_ebTxs_body ON ebTxs(ebHashBytes, txOffset, txHashBytes, txBytesSize);"
     ]
 
 sql_scan_ebs :: String
@@ -677,18 +647,23 @@ sql_insert_ebBody =
   "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize) VALUES (?, ?, ?, ?)\n\
   \"
 
+-- | Fill in tx bytes for every ebTxs row that references this tx and does not
+-- yet have them. Parameter 1 = txBytes, parameter 2 = txHashBytes.
+-- Uses @sqlite3_changes()@ on return to detect whether any rows were actually
+-- filled (0 means a concurrent writer beat us or the tx is unreferenced).
 sql_insert_tx :: String
 sql_insert_tx =
-  "INSERT INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
+  "UPDATE ebTxs SET txBytes = ? WHERE txHashBytes = ? AND txBytes IS NULL\n\
   \"
 
 -- | Batch-filter txHashes via JSON1. Parameter is a JSON array of hex
 -- strings; 'unhex(je.value)' decodes back into a BLOB comparable against
--- the indexed @txs.txHashBytes@ column.
+-- the indexed @ebTxs.txHashBytes@ column. Returns only hashes for which at
+-- least one @ebTxs@ row still has @txBytes IS NULL@.
 sql_filter_missing_txs_json :: String
 sql_filter_missing_txs_json =
-  "SELECT unhex(je.value) FROM json_each(?) je\n\
-  \WHERE NOT EXISTS (SELECT 1 FROM txs t WHERE t.txHashBytes = unhex(je.value))\n\
+  "SELECT DISTINCT unhex(je.value) FROM json_each(?) je\n\
+  \WHERE EXISTS (SELECT 1 FROM ebTxs e WHERE e.txHashBytes = unhex(je.value) AND e.txBytes IS NULL)\n\
   \"
 
 -- | Find EBs that are now complete (missingTxCount reached 0).
@@ -704,53 +679,29 @@ sql_mark_notified_ebs =
 
 -- | Decrement missingTxCount for every EB still /waiting/ on the given txHash.
 --
--- Uses 'ebsMissingTxs' rather than 'ebTxs', which makes this more efficient
--- than a full scan of 'ebTxs' in the average case.
---
--- Must be paired with 'sql_delete_missing_txs' in the same transaction.
+-- Reads 'ebTxs' directly via 'idx_ebTxs_pending' (a partial index on
+-- @txHashBytes WHERE txBytes IS NULL@). Must run /before/ 'sql_insert_tx'
+-- fills those rows, or the subquery returns nothing.
 --
 -- Parameter 1: txHashBytes
 sql_decrement_missing_tx_count :: String
 sql_decrement_missing_tx_count =
   "UPDATE ebs SET missingTxCount = missingTxCount - 1\n\
-  \WHERE ebHashBytes IN (SELECT ebHashBytes FROM ebsMissingTxs WHERE txHashBytes = ?)\n\
-  \"
-
--- | Retire the waiting rows for a tx that has just landed.
--- Parameter 1: txHashBytes
-sql_delete_missing_txs :: String
-sql_delete_missing_txs =
-  "DELETE FROM ebsMissingTxs WHERE txHashBytes = ?"
-
--- | Record which of a freshly-inserted body's txs we do not yet hold.
---
--- One anti-join over the EB's own 'ebTxs' range -- the same work
--- 'sql_init_missing_tx_count' used to do to produce a count, now materialised so
--- that the arrival side reads the rows instead of recomputing them. Paying it
--- here rather than on every tx arrival is what earns the index removal: this
--- runs once per body, against ~4.7 times per tx for the old reverse lookup.
---
--- Parameter 1: ebHashBytes
-sql_insert_missing_txs :: String
-sql_insert_missing_txs =
-  "INSERT OR IGNORE INTO ebsMissingTxs (txHashBytes, ebHashBytes)\n\
-  \SELECT e.txHashBytes, e.ebHashBytes FROM ebTxs e\n\
-  \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
-  \WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
+  \WHERE ebHashBytes IN (SELECT DISTINCT ebHashBytes FROM ebTxs WHERE txHashBytes = ? AND txBytes IS NULL)\n\
   \"
 
 -- | Initialize missingTxCount after EB body is inserted, returning the
--- resulting count. Counts ebTxs entries that don't yet have a corresponding
--- tx in the txs table. The RETURNING clause lets the caller detect the
--- special case @missingTxCount = 0@ (all referenced txs already present) with
--- a PK lookup on the row that was just touched, instead of a full-table
--- scan via 'sql_find_complete_ebs'.
+-- resulting count. Counts 'ebTxs' rows for this EB whose @txBytes@ is still
+-- NULL (i.e. not yet filled by a tx arrival). The PK prefix @ebHashBytes@
+-- makes this efficient without an extra index. The RETURNING clause lets the
+-- caller detect @missingTxCount = 0@ (all txs already present) immediately,
+-- without a follow-up scan via 'sql_find_complete_ebs'.
 --
--- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
+-- Parameters: 1 = ebHashBytes (subquery), 2 = ebHashBytes (WHERE), 3 = ebSlot
 sql_init_missing_tx_count :: String
 sql_init_missing_tx_count =
   "UPDATE ebs SET missingTxCount = (\n\
-  \    SELECT COUNT(*) FROM ebsMissingTxs WHERE ebHashBytes = ?\n\
+  \    SELECT COUNT(*) FROM ebTxs WHERE ebHashBytes = ? AND txBytes IS NULL\n\
   \) WHERE ebHashBytes = ? AND ebSlot = ?\n\
   \RETURNING missingTxCount\n\
   \"
@@ -759,30 +710,29 @@ sql_init_missing_tx_count =
 -- variant of 'sql_mark_notified_ebs'; used by 'sqlInsertEbBody' when the
 -- body's arrival is what completed the closure.
 --
--- Parameters: 1 = ebSlot, 2 = ebHashBytes
+-- Parameters: 1 = ebHashBytes, 2 = ebSlot
 sql_mark_point_notified :: String
 sql_mark_point_notified =
-  "UPDATE ebs SET missingTxCount = -1 WHERE ebSlot = ? AND ebHashBytes = ?"
+  "UPDATE ebs SET missingTxCount = -1 WHERE ebHashBytes = ? AND ebSlot = ?"
 
 -- | Batch retrieve of tx bytes for a batch of @(ebHash, offset)@ points.
 -- @?1@ is the ebHash blob (all offsets belong to the same EB); @?2@ is a
 -- JSON int array of offsets. The join uses ebTxs' PK
--- @(ebHashBytes, txOffset)@, so index lookups still fire.
+-- @(ebHashBytes, txOffset)@, so index lookups still fire. @txBytes@ is NULL
+-- for any offset whose tx has not yet arrived.
 sql_retrieve_from_ebTxs_json :: String
 sql_retrieve_from_ebTxs_json =
-  "SELECT je.value, e.txHashBytes, t.txBytes\n\
+  "SELECT je.value, e.txHashBytes, e.txBytes\n\
   \FROM json_each(?2) je\n\
   \JOIN ebTxs e ON e.ebHashBytes = ?1 AND e.txOffset = je.value\n\
-  \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
   \ORDER BY je.value ASC\n\
   \"
 
 sql_lookup_eb_closure :: String
 sql_lookup_eb_closure =
   unlines
-    [ "SELECT ebTx.txHashBytes, tx.txBytes"
-    , "FROM ebTxs as ebTx"
-    , "LEFT JOIN txs as tx ON ebTx.txHashBytes = tx.txHashBytes"
+    [ "SELECT ebTx.txHashBytes, ebTx.txBytes"
+    , "FROM ebTxs AS ebTx"
     , "WHERE ebTx.ebHashBytes = ?"
     , "ORDER BY ebTx.txOffset ASC"
     ]

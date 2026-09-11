@@ -103,6 +103,7 @@ library
     LeiosDemoDb.InMemory
     LeiosDemoDb.SQLite
     LeiosDemoDb.Trace
+    LeiosDemoDb.WithCallTrace
     LeiosDemoException
     LeiosDemoLogic
     LeiosDemoLogic.Announcements
@@ -1070,6 +1071,7 @@ benchmark leios-db-bench
   main-is: Main.hs
   ghc-options: -with-rtsopts=-N4
   build-depends:
+    aeson,
     async,
     base >=4.14 && <4.23,
     bytestring,
