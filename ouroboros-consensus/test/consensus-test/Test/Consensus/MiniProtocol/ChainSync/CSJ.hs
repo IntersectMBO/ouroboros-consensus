@@ -5,6 +5,7 @@
 -- | Narrow tests for ChainSync Jumping
 module Test.Consensus.MiniProtocol.ChainSync.CSJ (tests) where
 
+import Cardano.Network.NodeToNode.Version (PerasSupport (PerasSupported, PerasUnsupported))
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar
 import Control.Monad (void)
 import Control.Monad.Class.MonadTimer (MonadTimer)
@@ -36,7 +37,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCh
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
-  ( NodeToNodeVersion
+  ( NodeToNodeVersion (NodeToNodeV_16)
   )
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Util.IOLike
@@ -207,6 +208,7 @@ runTest TestSetup = withRegistry $ \registry -> do
           (pure GSM.CaughtUp)
           peer
           version
+          (if version >= NodeToNodeV_16 then PerasSupported else PerasUnsupported)
           lopBucketConfig
           (CSJEnabled csjConfig)
           diffusionPipelining
