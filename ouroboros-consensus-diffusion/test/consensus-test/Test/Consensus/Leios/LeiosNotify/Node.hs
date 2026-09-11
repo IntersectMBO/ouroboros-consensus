@@ -11,7 +11,6 @@ module Test.Consensus.Leios.LeiosNotify.Node (tests) where
 import Cardano.Crypto.DSIGN.Class (signDSIGN)
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
 import Cardano.Crypto.Leios (LeiosCommittee, LeiosSeatId (..), LeiosSigningKey, leiosSignContext)
-import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad.Class.MonadAsync
@@ -52,6 +51,7 @@ import Ouroboros.Consensus.Network.LeiosNotify
   , runLookaheadFixedSenderPeerWithLimits
   )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
+import Ouroboros.Consensus.Node (defaultMiniProtocolParameters)
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
 import Ouroboros.Consensus.NodeKernel (getLeiosNotifyClientStates)
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike

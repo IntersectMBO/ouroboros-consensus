@@ -43,7 +43,6 @@ import Cardano.Network.NodeToNode
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)
   , ResponderContext (..)
-  , defaultMiniProtocolParameters
   )
 import Cardano.Network.PeerSelection
   ( PeerTrustable (..)
@@ -102,6 +101,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type (LeiosNotify)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert (PerasCertDiffusion)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote (PerasVoteDiffusion)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
+import Ouroboros.Consensus.Node (defaultMiniProtocolParameters)
 import Ouroboros.Consensus.Node.ExitPolicy
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.Genesis

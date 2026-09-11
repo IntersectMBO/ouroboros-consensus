@@ -193,8 +193,8 @@ withNodeVsEnvConnection node addr envPeer body = withOnlyConnection node addr $ 
   let protocols = getOuroborosApplication (fromOuroborosBundle bundle)
       infos = mkMiniProtocolInfos (\_ _ -> Nothing) Outbound Duplex bundle
       codecs = envCodecs node version
-  nodeMux <- Mx.new Mx.nullTracers infos
-  peerMux <- Mx.new Mx.nullTracers infos
+  nodeMux <- Mx.new Mx.nullTracers Nothing infos
+  peerMux <- Mx.new Mx.nullTracers Nothing infos
   withAsync (Mx.run nodeMux nodeBearer) $ \_ ->
     withAsync (Mx.run peerMux peerBearer) $ \_ -> do
       for_ protocols $ \MiniProtocol{miniProtocolNum} ->
