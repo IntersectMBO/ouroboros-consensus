@@ -20,12 +20,12 @@ index-state:
 
 packages: .
 
--- Points to `ouroboros-network` `main` after https://github.com/IntersectMBO/ouroboros-network/pull/5446
+-- Points to `ouroboros-network` `main` after https://github.com/IntersectMBO/ouroboros-network/pull/5431
 source-repository-package
   type: git
   location: https://github.com/intersectmbo/ouroboros-network.git
-  tag: 34831d62d6387c2d827351785adbac06fabb1502
-  --sha256: sha256-1oIaeZmReeEajl/fsqcbirQ5PL1UCHsLUReF8YoDpxU=
+  tag: bcfb5f8ec851a8b16c1d453d7df4ac0b8166065d
+  --sha256: sha256-2QJjSQKz4dGAYRrQLTTNSEQXNGOhCVNKKYZ0gcoWQDo=
   subdir:
     ouroboros-network
     cardano-diffusion
