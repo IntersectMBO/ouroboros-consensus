@@ -91,9 +91,10 @@ offer nothing newer than that release's maximum:
 Note that 11.x introduced no new version: 10.7.1 and 11.0.1 both use
 `ouroboros-consensus-3.0.1.0` and so offer the very same set.
 
-This table is mirrored by the comment on
-[`supportedNodeToClientVersions`](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus-cardano/Ouroboros-Consensus-Cardano-Node.html)
-for `CardanoBlock`; keep the two in sync when a new version is added.
+This table is mirrored by the comment on `supportedNodeToClientVersions` for
+`CardanoBlock`, in
+[`Ouroboros/Consensus/Cardano/Node.hs`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs);
+keep the two in sync when a new version is added.
 
 ## Codecs
 
