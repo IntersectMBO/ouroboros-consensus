@@ -40,7 +40,11 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+  ( ObjectDiffusionInboundStateView (odisvIdling)
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Consensus.MiniProtocol.Util.Idling qualified as Idling
 import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
 import Ouroboros.Network.ControlMessage
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
@@ -64,13 +68,11 @@ data TraceObjectDiffusionInbound objectId object
     TraceObjectDiffusionInboundRecvControlMessage ControlMessage
   | TraceObjectDiffusionInboundCanRequestMoreObjects Int
   | TraceObjectDiffusionInboundCannotRequestMoreObjects Int
-  | -- | The server has no object IDs immediately available after its current
-    -- cursor and will wait. All previously advertised objects have been
-    -- processed before this caught-up event can be emitted.
-    TraceObjectDiffusionInboundAwaitReply
   | -- | The server's bounded wait expired without new object IDs, returning
     -- agency to the client.
     TraceObjectDiffusionInboundServerIdle
+  | TraceObjectDiffusionInboundStartedIdling
+  | TraceObjectDiffusionInboundStoppedIdling
   deriving (Eq, Show)
 
 data ObjectDiffusionInboundError objectId object
@@ -155,13 +157,15 @@ objectDiffusionInbound ::
   ObjectPoolWriter objectId object m ->
   NodeToNodeVersion ->
   ControlMessageSTM m ->
+  ObjectDiffusionInboundStateView m ->
   ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound
   tracer
   (maxFifoLength, maxNumIdsToReq, maxNumObjectsToReq)
   ObjectPoolWriter{..}
   _version
-  controlMessageSTM =
+  controlMessageSTM
+  stateView =
     ObjectDiffusionInboundPipelined $!
       checkState initialInboundSt & go Zero
    where
@@ -448,9 +452,18 @@ objectDiffusionInbound
             $ SendMsgRequestObjectIdsBlocking
               (numToAckOnNextReq st)
               numIdsToRequest
-              (traceWith tracer TraceObjectDiffusionInboundAwaitReply)
+              ( do
+                  Idling.idlingStart (odisvIdling stateView)
+                  traceWith tracer TraceObjectDiffusionInboundStartedIdling
+              )
               ( \neCollectedIds ->
-                  checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
+                  WithEffect $ do
+                    -- The server supplied new object IDs, so the client is no
+                    -- longer known to be caught up with this server.
+                    Idling.idlingStop (odisvIdling stateView)
+                    traceWith tracer TraceObjectDiffusionInboundStoppedIdling
+                    pure $
+                      checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
               )
               ( WithEffect $ do
                   traceWith tracer TraceObjectDiffusionInboundServerIdle
