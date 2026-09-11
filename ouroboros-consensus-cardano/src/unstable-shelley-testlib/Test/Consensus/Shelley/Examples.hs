@@ -4,7 +4,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Test.Consensus.Shelley.Examples
   ( -- * Setup
@@ -53,7 +52,6 @@ import Ouroboros.Consensus.Protocol.TPraos
   )
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
-import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
@@ -128,7 +126,6 @@ fromShelleyLedgerExamples
         [ ("GetLedgerTip", SomeBlockQuery GetLedgerTip)
         , ("GetEpochNo", SomeBlockQuery GetEpochNo)
         , ("GetCurrentPParams", SomeBlockQuery GetCurrentPParams)
-        , ("GetStakeDistribution", SomeBlockQuery GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
         , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
@@ -140,7 +137,6 @@ fromShelleyLedgerExamples
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
         , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
         , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
-        , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr lePoolDistr)
         ,
           ( "NonMyopicMemberRewards"
           , SomeResult
@@ -268,7 +264,6 @@ fromShelleyLedgerExamplesPraos
         [ ("GetLedgerTip", SomeBlockQuery GetLedgerTip)
         , ("GetEpochNo", SomeBlockQuery GetEpochNo)
         , ("GetCurrentPParams", SomeBlockQuery GetCurrentPParams)
-        , ("GetStakeDistribution", SomeBlockQuery GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
         , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
@@ -280,7 +275,6 @@ fromShelleyLedgerExamplesPraos
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
         , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
         , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
-        , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr lePoolDistr)
         ,
           ( "NonMyopicMemberRewards"
           , SomeResult
