@@ -29,6 +29,9 @@ import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
   ( ConnectionId
   , MiniProtocolParameters (..)
+  , NodeToNodeVersion
+  , mkNodeTxDecisionPolicy
+  , txSubmissionConfigForVersion
   )
 import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
@@ -173,7 +176,7 @@ import Ouroboros.Network.TxSubmission.Inbound.V1
   , TxSubmissionMempoolWriter
   )
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
-import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy)
+import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy, TxSubmissionConfig)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
   ( PeerTxRegistry
   , SharedTxStateVar
@@ -246,6 +249,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Accumulator for tx-submission counters of disconnected peers.
   , getTxDecisionPolicy :: TxDecisionPolicy
   -- ^ Tx-submission decision policy.
+  , getTxSubmissionConfig :: NodeToNodeVersion -> TxSubmissionConfig
+  -- ^ Tx-submission configuration of a connection, for its negotiated version.
   , getLeiosNotifyClientStates ::
       StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (LeiosNotifyPeerState blk)))
   -- ^ The state of each LeiosNotify client, by upstream peer, which
@@ -340,6 +345,9 @@ initNodeKernel
     , miniProtocolParameters
     , systemTime
     } = do
+    -- The node halts on an invalid tx-submission configuration.
+    txDecisionPolicy <- either throwIO pure $ mkNodeTxDecisionPolicy miniProtocolParameters
+
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
@@ -556,7 +564,7 @@ initNodeKernel
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
-          (txDecisionPolicy miniProtocolParameters)
+          txDecisionPolicy
           (txCountersTracer tracers)
           (txLogicTracer tracers)
           txCountersVar
@@ -585,7 +593,8 @@ initNodeKernel
         , getPeerTxRegistry = peerTxRegistry
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
-        , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getTxDecisionPolicy = txDecisionPolicy
+        , getTxSubmissionConfig = (`txSubmissionConfigForVersion` miniProtocolParameters)
         , getLeiosNotifyClientStates = leiosNotifyClientStates
         , getLeiosAnnounceState = leiosAnnounceState
         , getLeiosVoteState = leiosVoteState
