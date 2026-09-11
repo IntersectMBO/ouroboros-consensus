@@ -50,6 +50,7 @@ import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
+import qualified Control.Monad.Class.MonadTime.SI as Time
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
 import Control.Tracer
@@ -178,6 +179,13 @@ import System.Random (StdGen, splitGen)
 {-------------------------------------------------------------------------------
   Handlers
 -------------------------------------------------------------------------------}
+
+-- | Interval for returning agency while an Object Diffusion server is idle.
+--
+-- TODO https://github.com/tweag/cardano-peras/issues/187
+-- Confirm the production value against the graceful peer-demotion timeout.
+objectDiffusionIdleTimeout :: Time.DiffTime
+objectDiffusionIdleTimeout = 20
 
 -- | Protocol handlers for node-to-node (remote) communication
 data Handlers m addr blk = Handlers
@@ -388,6 +396,7 @@ mkHandlers
           objectDiffusionOutbound
             (contramap (TraceLabelPeer peer) (Node.perasCertDiffusionOutboundTracer tracers))
             (perasCertDiffusionMaxObjectsUnacknowledged miniProtocolParameters)
+            objectDiffusionIdleTimeout
             (makePerasCertPoolReaderFromChainDB $ getChainDB)
             version
       , hPerasVoteDiffusionClient = \version controlMessageSTM peer ->
@@ -404,6 +413,7 @@ mkHandlers
           objectDiffusionOutbound
             (contramap (TraceLabelPeer peer) (Node.perasVoteDiffusionOutboundTracer tracers))
             (perasVoteDiffusionMaxObjectsUnacknowledged miniProtocolParameters)
+            objectDiffusionIdleTimeout
             (makePerasVotePoolReaderFromChainDB $ getChainDB)
             version
       , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
