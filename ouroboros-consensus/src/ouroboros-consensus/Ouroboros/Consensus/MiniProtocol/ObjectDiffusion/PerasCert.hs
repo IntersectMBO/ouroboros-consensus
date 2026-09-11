@@ -8,10 +8,16 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
   , PerasCertDiffusionInboundPipelined
   , PerasCertDiffusionOutbound
   , PerasCertDiffusion
+  , PerasCertDiffusionInboundState
+  , PerasCertDiffusionInboundHandleCollection
   ) where
 
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+  ( ObjectDiffusionInboundHandleCollection
+  , ObjectDiffusionInboundState
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound
 import Ouroboros.Consensus.Storage.PerasCertDB.API
@@ -37,5 +43,9 @@ type PerasCertDiffusionInboundPipelined blk m a =
 type PerasCertDiffusionOutbound blk m a =
   ObjectDiffusionOutbound PerasRoundNo (PerasCert blk) m a
 
-type PerasCertDiffusion blk =
-  ObjectDiffusion PerasRoundNo (PerasCert blk)
+type PerasCertDiffusion blk = ObjectDiffusion PerasRoundNo (PerasCert blk)
+
+type PerasCertDiffusionInboundState blk = ObjectDiffusionInboundState blk
+
+type PerasCertDiffusionInboundHandleCollection peer m blk =
+  ObjectDiffusionInboundHandleCollection peer m blk

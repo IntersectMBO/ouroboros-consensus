@@ -138,6 +138,7 @@ import Ouroboros.Network.PeerSelection.Governor
   ( makePublicPeerSelectionStateVar
   )
 import Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
+import Ouroboros.Network.PerasSupport (PerasSupport (PerasUnsupported))
 import Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 import Ouroboros.Network.Protocol.KeepAlive.Type
@@ -1434,7 +1435,11 @@ directedEdgeInner
                       "ChainSync"
                       (\_s _ -> RestartChainSyncTerminated)
                       (\_s () -> RestartChainSyncTerminated)
-                      NTN.aChainSyncClient
+                      -- TODO: ThreadNet currently doesn't start up certificate
+                      -- object diffusion, so we pass PerasUnsupported to avoid
+                      -- waiting indefinitely.
+                      -- See https://github.com/tweag/cardano-peras/issues/303.
+                      (\a v e c -> NTN.aChainSyncClient a PerasUnsupported v e c)
                       NTN.aChainSyncServer
                       chainSyncMiddle
                   , miniProtocol
