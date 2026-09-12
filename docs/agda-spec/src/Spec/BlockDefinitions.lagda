@@ -28,19 +28,29 @@ record BlockStructure : Type₁ where
     HashHeader : Type -- hash of a block header
     HashBBody  : Type -- hash of a block body
     VRFRes     : Type -- VRF result value
+    HashEB     : Type -- hash of endorser block
 \end{code}
 \begin{code}[hide]
     ⦃ DecEq-HashHeader ⦄ : DecEq HashHeader
     ⦃ DecEq-HashBBody  ⦄ : DecEq HashBBody
     ⦃ DecEq-VRFRes     ⦄ : DecEq VRFRes
+    ⦃ DecEq-HashEB     ⦄ : DecEq HashEB
     ⦃ Show-HashHeader  ⦄ : Show HashHeader
     ⦃ Show-HashBBody   ⦄ : Show HashBBody
     ⦃ Show-VRFRes      ⦄ : Show VRFRes
+    ⦃ Show-HashEB      ⦄ : Show HashEB
 \end{code}
 \emph{Concrete types}
 \begin{code}
   BlockNo = ℕ -- block number
   Certifiedℕ = ∃[ n ] n < 2 ^ 512 -- [0, 2^512) (64-byte VRF output)
+\end{code}
+\emph{Announced Endorser Block}
+\begin{code}
+  record AnnouncedEB : Type where
+    field
+      hash : HashEB
+      size : ℕ
 \end{code}
 \emph{Operational Certificate}
 \begin{AgdaSuppressSpace}
@@ -58,6 +68,13 @@ record BlockStructure : Type₁ where
       σ   : Sigˢ      -- cold key signature
 \end{code}
 \end{AgdaSuppressSpace}
+\end{AgdaAlign}
+\caption{Block definitions}
+\label{fig:defs:blocks}
+\end{figure*}
+
+\begin{figure*}[h]
+\begin{AgdaAlign}
 \emph{Block Header Body}
 \begin{AgdaSuppressSpace}
 \begin{code}
@@ -67,17 +84,19 @@ record BlockStructure : Type₁ where
     field
 \end{code}
 \begin{code}
-      prevHeader : Maybe HashHeader   -- hash of previous block header
-      issuerVk   : VKeyˢ              -- block issuer
-      vrfVk      : VKeyᵛ              -- VRF verification key
-      blockNo    : BlockNo            -- block number
-      slot       : Slot               -- block slot
-      vrfRes     : VRFRes             -- VRF result value
-      vrfPrf     : Proof              -- VRF proof
-      bodySize   : ℕ                  -- size of the block body
-      bodyHash   : HashBBody          -- block body hash
-      oc         : OCert              -- operational certificate
-      pv         : ProtVer            -- protocol version
+      prevHeader  : Maybe HashHeader  -- hash of previous block header
+      issuerVk    : VKeyˢ             -- block issuer
+      vrfVk       : VKeyᵛ             -- VRF verification key
+      blockNo     : BlockNo           -- block number
+      slot        : Slot              -- block slot
+      vrfRes      : VRFRes            -- VRF result value
+      vrfPrf      : Proof             -- VRF proof
+      bodySize    : ℕ                 -- size of the block body
+      bodyHash    : HashBBody         -- block body hash
+      oc          : OCert             -- operational certificate
+      pv          : ProtVer           -- protocol version
+      announcedEB : Maybe AnnouncedEB -- announced endorser block
+      certifiedEB : Bool              -- certifies the preceding endorser block
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Block Types}
@@ -101,6 +120,11 @@ record BlockStructure : Type₁ where
       serHashToℕ      : SerHash → Certifiedℕ
       serHashToNonce  : SerHash → Nonce
 \end{code}
+\end{AgdaAlign}
+\caption{Block header definitions}
+\label{fig:defs:block-header}
+\end{figure*}
+
 \begin{code}[hide]
 open BlockStructure
 open import Tactic.Derive.Show
@@ -111,6 +135,9 @@ instance
   Show-Certifiedℕ : ∀ {bs} → Show (Certifiedℕ bs)
   Show-Certifiedℕ .show = show ∘ proj₁
 
+  unquoteDecl Show-AnnouncedEB = derive-Show
+    [(quote AnnouncedEB , Show-AnnouncedEB)]
+
   unquoteDecl Show-OCert = derive-Show
     [(quote OCert , Show-OCert)]
 
@@ -120,7 +147,3 @@ instance
   unquoteDecl Show-BHeader = derive-Show
     [(quote BHeader , Show-BHeader)]
 \end{code}
-\end{AgdaAlign}
-\caption{Block definitions}
-\label{fig:defs:blocks}
-\end{figure*}
