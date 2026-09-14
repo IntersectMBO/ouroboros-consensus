@@ -74,6 +74,7 @@ forgeShelleyBlock
       SL.mkBasicBlockBody
         & SL.txSeqBlockBodyL
           .~ Seq.fromList (fmap extractTx fbTxs)
+        & maybe id injectPerasCertIntoShelleyBlockBody fbPerasCert
 
     actualBodySize = SL.blockBodySize protocolVersion body
 
