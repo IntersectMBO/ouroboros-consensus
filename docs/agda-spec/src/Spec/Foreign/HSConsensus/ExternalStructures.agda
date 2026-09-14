@@ -93,6 +93,7 @@ instance
     { HashHeader       = ℕ
     ; HashBBody        = ℕ
     ; VRFRes           = ℕ
+    ; HashEB           = ℕ
     ; DecEq-HashHeader = DecEq-ℕ
     }
 
