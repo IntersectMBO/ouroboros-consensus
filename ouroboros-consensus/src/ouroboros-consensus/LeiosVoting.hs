@@ -35,10 +35,10 @@ import Data.Proxy (Proxy (..))
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
 import LeiosDemoDb
-  ( LeiosDbConnection
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
+  , LeiosDbReader
   , LeiosEbNotification (..)
-  , withLeiosDb
+  , withReader
   )
 import LeiosDemoTypes
   ( HasLeiosVoting (..)
@@ -268,9 +268,9 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
       MkTraceLeiosKernel
         "runLeiosVoting: disabled because no topLevelConfigVotingKey"
   Just sk ->
-    -- A 'LeiosDbConnection' is not thread-safe, so this thread owns one for its
+    -- A 'LeiosDbReader' is not thread-safe, so this thread owns one for its
     -- lifetime, the way each forge-credentials thread does.
-    withLeiosDb leiosDB $ \leiosConn -> do
+    withReader leiosDB $ \leiosConn -> do
       chan <- subscribeEbNotifications leiosDB
       -- One message per transaction, even the ones we do not act on. Looping
       -- here instead would be a read that only sticks if the transaction
@@ -306,7 +306,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
   -- reads when we are ready to sign. The cheap checks come first either way, so
   -- an EB we would not vote for is never validated.
   goVote ::
-    LeiosDbConnection m ->
+    LeiosDbReader m ->
     -- \| Our voting key, to find our committee seat and sign votes.
     LeiosSigningKey ->
     -- \| The leios point of the EB to vote on.
@@ -420,7 +420,7 @@ validateEbClosure ::
   , LedgerSupportsMempool blk
   ) =>
   LedgerConfig blk ->
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   LeiosTxCache m () () SerializedEbBody ->
   -- | Read the ledger tables the closure's txs need, as
   -- 'resolveAndApplyLeiosClosure' does on the apply path.

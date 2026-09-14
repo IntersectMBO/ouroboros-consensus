@@ -1,19 +1,16 @@
 module LeiosDemoDb
   ( -- * API
-    withLeiosDb
-  , LeiosDbHandle (..)
+    LeiosDbHandle (..)
   , LeiosEbNotification (..)
-  , LeiosDbConnection (..)
-  , CompletedEbs
-  , TraceLeiosDb (..)
-
-    -- * Single writer
+  , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
-  , newLeiosDbWriter
-  , withLeiosDbWriter
-  , withWriterBackedDb
-  , writerQueueDepth
+  , withReader
+  , withWriter
+  , newReader
+  , newWriter
+  , CompletedEbs
+  , TraceLeiosDb (..)
 
     -- * In-memory implementation
   , emptyInMemoryLeiosDb
@@ -22,7 +19,8 @@ module LeiosDemoDb
   , InMemoryLeiosDb (..)
 
     -- * SQLite implementation
-  , newLeiosDBSQLiteFromEnv
+  , withLeiosDBSQLiteFromEnv
+  , withLeiosDBSQLite
   , newLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -39,10 +37,15 @@ module LeiosDemoDb
 
 import LeiosDemoDb.Common
   ( CompletedEbs
-  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
   , LeiosEbNotification (..)
-  , withLeiosDb
+  , Promise (..)
+  , newReader
+  , newWriter
+  , withReader
+  , withWriter
   )
 import LeiosDemoDb.InMemory
   ( InMemoryLeiosDb (..)
@@ -53,20 +56,13 @@ import LeiosDemoDb.InMemory
 import LeiosDemoDb.SQLite
   ( deleteDanglingTxs
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteFromEnv
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx
   , sql_schema
   , truncateLeiosDbAfterSlot
   , vacuumLeiosDb
+  , withLeiosDBSQLite
+  , withLeiosDBSQLiteFromEnv
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
-import LeiosDemoDb.Writer
-  ( LeiosDbWriter (..)
-  , Promise (..)
-  , newLeiosDbWriter
-  , withLeiosDbWriter
-  , withWriterBackedDb
-  , writerQueueDepth
-  )

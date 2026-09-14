@@ -35,7 +35,7 @@ module Cardano.Tools.DBAnalyser.Leios
 
 import Cardano.Tools.DBAnalyser.Types (LedgerApplicationMode (..))
 import Control.Monad (when)
-import LeiosDemoDb (LeiosDbConnection, leiosDbLookupEbBody)
+import LeiosDemoDb (LeiosDbReader, lookupEbBody)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -164,7 +164,7 @@ certifiedEbHash prevAnnouncement blk =
 -- and no tx is deserialised.
 certifiedEbTxSizes ::
   ResolveLeiosBlock blk =>
-  LeiosDbConnection IO ->
+  LeiosDbReader IO ->
   -- | The EB that the previous block announced
   Maybe (LeiosPoint, BytesSize) ->
   blk ->
@@ -173,8 +173,8 @@ certifiedEbTxSizes leiosConn prevAnnouncement blk =
   case certifiedEbHash prevAnnouncement blk of
     Nothing -> pure []
     Just ebHash ->
-      leiosDbLookupEbBody leiosConn ebHash >>= \case
-        -- 'leiosDbLookupEbBody' returns a bare list, so an absent EB and an EB
+      lookupEbBody leiosConn ebHash >>= \case
+        -- 'lookupEbBody' returns a bare list, so an absent EB and an EB
         -- with no txs both give []. Here the EB is a certified one, and a
         -- certified EB holds at least one tx: a committee member votes for an
         -- EB only when it is not empty (CIP-0164). So [] means absent.
@@ -193,7 +193,7 @@ certifiedEbTxSizes leiosConn prevAnnouncement blk =
 -- False.
 blockWithCertifiedEbTxs ::
   ResolveLeiosBlock blk =>
-  LeiosDbConnection IO ->
+  LeiosDbReader IO ->
   -- | The EB that the previous block announced
   Maybe (LeiosPoint, BytesSize) ->
   blk ->
@@ -210,14 +210,14 @@ blockWithCertifiedEbTxs leiosConn prevAnnouncement blk =
 -- anyway, so the total size costs no further read of the LeiosDb.
 readEbClosure ::
   ResolveLeiosBlock blk =>
-  LeiosDbConnection IO ->
+  LeiosDbReader IO ->
   EbHash ->
   IO ([LedgerSupportsMempool.GenTx blk], BytesSize)
 readEbClosure leiosConn ebHash = do
   -- Check that the EB is here before resolving it. On an absent EB
   -- 'resolveLeiosClosure' errors with "chain-sel selected a cert-RB without its
   -- EB closure". Report the absence here.
-  ebBody <- leiosDbLookupEbBody leiosConn ebHash
+  ebBody <- lookupEbBody leiosConn ebHash
   when (null ebBody) $ error (missingEbBodyError ebHash)
   txs <- map snd <$> resolveLeiosClosure leiosConn ebHash
   pure (txs, sum (snd <$> ebBody))
@@ -308,7 +308,7 @@ applyBlockAtTip ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
-  LeiosDbConnection IO ->
+  LeiosDbReader IO ->
   LedgerApplicationMode ->
   TopLevelConfig blk ->
   LedgerDB.LedgerDB' IO blk ->
@@ -330,7 +330,7 @@ applyBlockToTipForker ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
-  LeiosDbConnection IO ->
+  LeiosDbReader IO ->
   LedgerApplicationMode ->
   TopLevelConfig blk ->
   LedgerDB.Forker' IO blk ->

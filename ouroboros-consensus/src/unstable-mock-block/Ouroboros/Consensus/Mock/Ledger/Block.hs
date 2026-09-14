@@ -88,7 +88,7 @@ import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (leiosDbLookupEbClosure)
+import LeiosDemoDb (lookupEbClosure)
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -149,7 +149,7 @@ instance
   where
   resolveLeiosClosure leiosDb ebHash =
     maybe [] (fmap (fmap (deserialise . Lazy.fromStrict)))
-      <$> leiosDbLookupEbClosure leiosDb ebHash
+      <$> lookupEbClosure leiosDb ebHash
 
   assumeValidatedClosureTx = ValidatedSimpleGenTx
 

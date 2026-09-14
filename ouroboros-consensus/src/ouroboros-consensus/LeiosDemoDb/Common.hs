@@ -1,16 +1,29 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 
 module LeiosDemoDb.Common
-  ( withLeiosDb
-  , LeiosDbHandle (..)
+  ( -- * Handle
+    LeiosDbHandle (..)
   , LeiosEbNotification (..)
-  , LeiosDbConnection (..)
+
+    -- * Reading
+  , LeiosDbReader (..)
+  , withReader
+  , newReader
+
+    -- * Writing
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , withWriter
+  , newWriter
   , CompletedEbs
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
+import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
 import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
@@ -20,128 +33,105 @@ import LeiosDemoTypes
   , LeiosPoint
   , TxHash
   )
-import Ouroboros.Consensus.Util.IOLike (MonadThrow, NoThunks (..), bracket)
+import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
-withLeiosDb :: MonadThrow m => LeiosDbHandle m -> (LeiosDbConnection m -> m a) -> m a
-withLeiosDb db action =
-  bracket (open db) close $ \conn ->
-    action conn
-
+-- | The database. Hands out readers and writers; owns neither.
 data LeiosDbHandle m = LeiosDbHandle
-  { subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
-  -- ^ Subscribe to new EBs and EBTxs being stored by the LeiosDB. This will
-  -- only inform about new additions, starting from when this function was
-  -- called.
+  { openReader :: HasCallStack => m (LeiosDbReader m)
+  , openWriter :: HasCallStack => m (LeiosDbWriter m)
+  -- ^ Writers share whatever the backend needs to serialise them (for SQLite,
+  -- one connection and one worker thread), reference-counted: the first open
+  -- creates it, the last 'close' tears it down, and a later open starts
+  -- afresh.
+  , subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
+  -- ^ New EBs and EB closures as they are stored, from the moment of
+  -- subscription.
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
-  , open :: m (LeiosDbConnection m)
-  -- ^ Open a new reading connection to the LeiosDb.
-  , openWriter :: m (LeiosDbConnection m)
-  -- ^ Open the connection for the single writer (see
-  -- "LeiosDemoDb.Writer"). Tuned differently from 'open', which is only
-  -- sound because each is used by exactly one role.
-  , -- NOTE: 'subscribeEbNotifications' and 'open' should be the _only_
-    -- methods of this handle. If you're thinking about adding another,
-    -- strongly consider adding it to 'LeiosDbConnection' instead. (See
-    -- https://github.com/input-output-hk/ouroboros-leios/issues/983 for
-    -- example motivation.)
-
-    -- TODO The two methods below are intentionally merely stubs for
-    -- now, but as part of implementing them, we should relocate them to
-    -- 'LeiosDbConnection'.
-
-    leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
-  -- ^ Evict LeiosDb data that is no longer needed now that everything up to the
-  -- given slot is immutable. The ChainDB drives this from its GC scheduler,
-  -- passing the same slot it uses to GC the VolatileDB\/PerasCertDB (see
-  -- @garbageCollectBlocks@); like those stores, the LeiosDb stays dumb about
-  -- /why/ -- it is handed a slot, nothing more (it never tracks the immutable
-  -- tip itself).
-  --
-  -- Currently a no-op. When implemented it can stay purely slot-based: the EBs
-  -- the immutable chain still needs (for ledger replay of an immutable cert-RB,
-  -- or for serving peers) are preserved by 'leiosDbPromoteToImmutable' before
-  -- they would age out here, so eviction itself need not reason about which EB
-  -- data is still required.
+  , leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
+  -- ^ Evict data no longer needed now that everything up to the given slot is
+  -- immutable. Driven by the ChainDB's GC scheduler. Currently a no-op.
   , leiosDbPromoteToImmutable :: HasCallStack => LeiosPoint -> m ()
-  -- ^ Promote the given EB's body and tx closure into immutable LeiosDb
-  -- storage, so they survive the slot-based 'leiosDbGarbageCollect' that will
-  -- later evict the volatile data. The ChainDB's copier (@copyToImmutableDB@)
-  -- drives this as it copies blocks to the ImmutableDB: for each cert-RB it
-  -- copies, it promotes the EB that cert-RB /certifies/ (the one its predecessor
-  -- announced). This is precise -- only EBs the immutable chain actually
-  -- references -- and gap-free: by the parking invariant a cert-RB is only
-  -- selected once its certified EB's closure is acquired, so an immutalised
-  -- cert-RB's closure is necessarily present (and complete). Promotion rides the
-  -- copy while eviction rides the later scheduled GC slot, so the data is always
-  -- promoted before it becomes eligible for eviction.
-  --
-  -- Currently a no-op -- the companion of 'leiosDbGarbageCollect': the immutable
-  -- storage it would promote into is not yet implemented.
+  -- ^ Promote an EB's body and closure into immutable storage before the
+  -- slot-based GC can evict them. Driven by the ChainDB's copier. Currently a
+  -- no-op.
   }
+
+-- | Queries. Never writes, so any number may run concurrently -- each on its
+-- own backing connection.
+data LeiosDbReader m = LeiosDbReader
+  { close :: m ()
+  , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
+  -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
+  , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
+  -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
+  -- not complete.
+  , batchRetrieveTxs ::
+      HasCallStack =>
+      EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  -- ^ Tx bytes for a batch of offsets into one EB.
+  , scanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
+  -- ^ Every announced EB point. No node path wants this; it is how the tests
+  -- observe point writes and truncation.
+  , scanCompleteEbClosuresNotOlderThanSlot ::
+      HasCallStack =>
+      SlotNo -> m [LeiosPoint]
+  -- ^ EBs whose closure is complete and whose announcer is no older than the
+  -- given slot. Seeds the ChainDB's acquired-closures set at startup.
+  }
+
+-- | The whole write surface. Writes are serialised by the backend, so holding
+-- one of these is not permission to write concurrently -- it is a submission
+-- point.
+--
+-- Each operation returns as soon as the write is /queued/; the 'Promise' is
+-- how a caller waits for it to be durable. The forge waits (its EB must be on
+-- disk before the RB referencing it propagates); the fetch path need not.
+data LeiosDbWriter m = LeiosDbWriter
+  { close :: m ()
+  , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
+  -- ^ Record an announced EB's point and expected size. Idempotent.
+  , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m CompletedEbs)
+  -- ^ Persist an EB body; its point must already have been submitted.
+  -- Yields the EBs whose closure this completed.
+  , writeTxs ::
+      HasCallStack =>
+      [(TxHash, ByteString)] -> m (Promise m CompletedEbs)
+  -- ^ Persist tx bodies. Yields the EBs whose closure this completed.
+  }
+
+-- | The result of a submitted write.
+--
+-- 'await' rethrows whatever the write threw, in the awaiting thread. Awaiting
+-- twice is fine; not awaiting at all is fine too.
+newtype Promise m a = Promise {await :: m a}
+
+-- | EBs whose tx closure became complete as a result of a write.
+type CompletedEbs = [LeiosPoint]
 
 data LeiosEbNotification
   = AcquiredEb LeiosPoint BytesSize
   | AcquiredEbTxs LeiosPoint
 
--- | Single connection to the LeiosDb.
---
--- NOTE: Not thread-safe, so do not share this across threads.
-data LeiosDbConnection m = LeiosDbConnection
-  { close :: m ()
-  -- ^ Close the connection and free up resources. After calling this, the connection may not be used anymore.
-  , leiosDbScanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
-  , leiosDbScanCompleteEbClosuresNotOlderThanSlot :: HasCallStack => SlotNo -> m [LeiosPoint]
-  -- ^ Scan the EBs whose tx closure is complete and whose announcer is no older
-  -- than the given slot. The ChainDB opens a transient connection at startup --
-  -- passing the immutable tip slot -- to seed the acquired-EB-closures set it
-  -- owns (see @cdbAcquiredLeiosEbs@); thereafter it learns of newly-completed
-  -- closures from 'subscribeEbNotifications' ('AcquiredEbTxs'). The slot is a
-  -- plain query bound, not retained state.
-  , leiosDbInsertEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m ()
-  -- ^ Insert an announced EB point with its expected size. Called on
-  -- the announcement path (forge issuing an EB, peer receiving an
-  -- announcement). Idempotent — a second insert at the same point is
-  -- a no-op.
-  , leiosDbLookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
-  -- ^ Read the EB "body": the ordered list of tx-hash + tx-byte-size
-  -- pairs that constitute this EB. No tx bytes are fetched; contrast
-  -- with 'leiosDbLookupEbClosure' which joins with the 'txs' table.
-  , leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m CompletedEbs
-  -- ^ Persist an EB body. The point MUST already have been inserted via
-  -- 'leiosDbInsertEbPoint' (announcement path). Yields an 'AcquiredEb'
-  -- notification.
-  --
-  -- Returns any EBs whose closure just became complete because their body
-  -- landed after all their txs were already present in the DB. Those EBs also
-  -- get an 'AcquiredEbTxs' notification.
-  --
-  -- XXX: return type only used for tracing
-  , leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
-  -- ^ Insert transactions into the global 'txs' table (INSERT OR IGNORE).
-  -- After inserting, checks which EBs referencing these txs are now complete
-  -- and emits 'AcquiredEbTxs' notifications for each.
-  --
-  -- NOTE: Duplicate notifications may be emitted if the same EB becomes
-  -- complete via multiple insert batches (e.g., if txs are inserted twice).
-  -- Consumers should handle notifications idempotently.
-  --
-  -- XXX: return type only used for tracing
-  , leiosDbBatchRetrieveTxs :: HasCallStack => EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  , leiosDbLookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
-  -- ^ Read the EB "closure": the tx hashes AND their tx bytes. Contrast
-  -- with 'leiosDbLookupEbBody' which returns only hashes + sizes.
-  -- Used by chain-sel's 'resolveLeiosClosure' to splice the EB's txs
-  -- back into the CertRB before applying to the ledger.
-  }
+withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
+withReader db = bracket (openReader db) (\r -> r.close)
+
+withWriter :: MonadThrow m => LeiosDbHandle m -> (LeiosDbWriter m -> m a) -> m a
+withWriter db = bracket (openWriter db) (\w -> w.close)
+
+newReader :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbReader m)
+newReader registry db = snd <$> allocate registry (\_ -> openReader db) (\r -> r.close)
+
+newWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
+newWriter registry db = snd <$> allocate registry (\_ -> openWriter db) (\w -> w.close)
 
 instance NoThunks (LeiosDbHandle m) where
-  showTypeOf _ = "LeiosDbHandle m"
-  noThunks _ctx _a = return Nothing
+  showTypeOf _ = "LeiosDbHandle"
   wNoThunks _ctx _a = return Nothing
 
-instance NoThunks (LeiosDbConnection m) where
-  showTypeOf _ = "LeiosDbConnection m"
-  noThunks _ctx _a = return Nothing
+instance NoThunks (LeiosDbReader m) where
+  showTypeOf _ = "LeiosDbReader"
   wNoThunks _ctx _a = return Nothing
 
-type CompletedEbs = [LeiosPoint]
+instance NoThunks (LeiosDbWriter m) where
+  showTypeOf _ = "LeiosDbWriter"
+  wNoThunks _ctx _a = return Nothing

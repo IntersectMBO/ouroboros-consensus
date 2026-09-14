@@ -51,11 +51,11 @@ import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
-  ( LeiosDbConnection
+  ( LeiosDbReader
   , LeiosDbWriter (..)
   , Promise (..)
-  , leiosDbBatchRetrieveTxs
-  , leiosDbLookupEbBody
+  , batchRetrieveTxs
+  , lookupEbBody
   )
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
@@ -219,7 +219,7 @@ data SomeLeiosFetchContext m
   = MkSomeLeiosFetchContext !(LeiosFetchContext m)
 
 data LeiosFetchContext m = MkLeiosFetchContext
-  { leiosDbConn :: !(LeiosDbConnection m)
+  { leiosDbConn :: !(LeiosDbReader m)
   , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
   , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
   }
@@ -229,10 +229,10 @@ data LeiosFetchContext m = MkLeiosFetchContext
 -- The connection is owned by the caller: SQLite connections must not be
 -- shared across threads, and each LeiosFetch client/server instance runs on
 -- its own thread, so the caller is expected to bracket a fresh 'open' /
--- 'close' pair for the lifetime of that instance (see 'withLeiosDb').
+-- 'close' pair for the lifetime of that instance (see 'withReader').
 newLeiosFetchContext ::
   PrimMonad m =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   m (LeiosFetchContext m)
 newLeiosFetchContext leiosDbConn = do
   leiosEbBuffer <- MV.new maxTxsPerEb
@@ -269,7 +269,7 @@ msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
   let MkLeiosFetchContext{leiosDbConn, leiosEbBuffer = buf} = leiosContext
   n <- traceException tracer TraceLeiosPeerDbException $ do
     -- get the EB items using new db
-    items <- leiosDbLookupEbBody leiosDbConn pointEbHash
+    items <- lookupEbBody leiosDbConn pointEbHash
     let loop !i [] = pure i
         loop !i ((txHash, txBytesSize) : rest) = do
           MV.write buf i (txHash, txBytesSize)
@@ -299,7 +299,7 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
   let txOffsets = bitmapOffsets bitmaps
   n <- do
     -- Use new db to batch retrieve transactions
-    results <- leiosDbBatchRetrieveTxs leiosDbConn point.pointEbHash txOffsets
+    results <- batchRetrieveTxs leiosDbConn point.pointEbHash txOffsets
     -- Process results and write to buffer
     -- REVIEW: why a mutable vector?
     let loop !i [] = pure i
@@ -679,7 +679,7 @@ offsetsToBitmap offsets =
 
 -- | A response received by the pipelined-peer collector thread, deferred
 -- for processing on the main peer thread. The collector must not touch
--- the 'LeiosDbConnection' — it belongs to the main peer thread.
+-- the 'LeiosDbReader' — it belongs to the main peer thread.
 data PendingResponse
   = PendingBlockResponse !LeiosBlockRequest !LeiosEb
   | PendingBlockTxsResponse !LeiosBlockTxsRequest !(V.Vector LeiosTx)
@@ -707,7 +707,7 @@ nextLeiosFetchClientCommand ::
   StrictTVar m (Seq LeiosFetchRequest) ->
   -- | Queue of responses received by the pipelined collector thread.
   -- The collector enqueues; this function (on the main peer thread)
-  -- drains and processes, keeping all 'LeiosDbConnection' access on
+  -- drains and processes, keeping all 'LeiosDbReader' access on
   -- the main thread.
   LazySTM.TQueue m PendingResponse ->
   m

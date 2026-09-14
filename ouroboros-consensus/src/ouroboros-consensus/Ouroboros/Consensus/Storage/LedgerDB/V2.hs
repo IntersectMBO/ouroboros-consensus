@@ -30,7 +30,7 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbHandle, withLeiosDb)
+import LeiosDemoDb (LeiosDbHandle, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -84,11 +84,11 @@ mkInitDb ::
   m (InitDB (LedgerSeq' m blk) m blk)
 mkInitDb args getBlock snapManager getVolatileSuffix res = do
   -- 'lgrLeiosDb' is a 'LeiosDbHandle' — a factory for per-thread
-  -- 'LeiosDbConnection's. We do NOT open a shared connection here:
+  -- 'LeiosDbReader's. We do NOT open a shared connection here:
   -- a direct-sqlite handle must be used from the thread that opened
   -- it, and every consumer (initial replay, ChainSel validate,
   -- reapplyThenPushNOW, ...) runs on a different thread. Each opens
-  -- its own via 'withLeiosDb' at use time instead.
+  -- its own via 'withReader' at use time instead.
   let ldbLeiosDb = lgrLeiosDb
   pure $
     InitDB
@@ -107,7 +107,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                   ds
             )
       , initReapplyBlock = \cfg ap db ->
-          withLeiosDb ldbLeiosDb $ \leiosConn ->
+          withReader ldbLeiosDb $ \leiosConn ->
             reapplyThenPush leiosConn cfg ap db
       , currentTip = ledgerState . current
       , mkLedgerDb = \lseq -> do
@@ -219,7 +219,7 @@ mkInternals ldb h snapManager =
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
               let cds = headerStateChainDep (headerState st)
-              blk' <- withLeiosDb (ldbLeiosDb env) $ \leiosConn ->
+              blk' <- withReader (ldbLeiosDb env) $ \leiosConn ->
                 resolveLeiosBlock leiosConn cds blk -- TODO resolveLeiosBlock is the wrong function to call here
               tables <- forkerReadTables frk (getBlockKeySets blk')
               let st' =
@@ -320,7 +320,7 @@ implValidate ::
   m (ValidateResult l blk)
 implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
   -- See V1.implValidate for the rationale on opening per-call.
-  withLeiosDb (ldbLeiosDb ldbEnv) $ \leiosConn ->
+  withReader (ldbLeiosDb ldbEnv) $ \leiosConn ->
     validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
       ValidateArgs
         (ldbResolveBlock ldbEnv)
@@ -452,7 +452,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
   , ldbLeiosDb :: !(LeiosDbHandle m)
   -- ^ 'LeiosDbHandle', not a live connection: every consumer opens
-  -- its own per-thread connection via 'withLeiosDb' at use time (a
+  -- its own per-thread connection via 'withReader' at use time (a
   -- 'direct-sqlite' handle is single-thread).
   }
   deriving Generic

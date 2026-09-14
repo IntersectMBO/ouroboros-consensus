@@ -14,7 +14,7 @@ import LeiosDemoDb
   ( leiosDbInsertEbPoint
   , leiosDbScanEbPoints
   , newLeiosDBSQLite
-  , withLeiosDb
+  , withReader
   )
 import LeiosDemoTypes (EbHash (..), LeiosPoint (..))
 import Ouroboros.Consensus.Block
@@ -158,13 +158,13 @@ blockCountTest logStep = do
   leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.db")
   let keptEb = MkLeiosPoint 0 (mkEbHash '1')
       droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
-  withLeiosDb leiosDb $ \con ->
+  withReader leiosDb $ \con ->
     mapM_ (\point -> leiosDbInsertEbPoint con point 500) [keptEb, droppedEb]
 
   logStep "running truncation"
   DBTruncater.truncate testTruncaterConfig testBlockArgs
 
-  ebPoints <- withLeiosDb leiosDb leiosDbScanEbPoints
+  ebPoints <- withReader leiosDb leiosDbScanEbPoints
   ebPoints == [(0, pointEbHash keptEb)]
     @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
 

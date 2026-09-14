@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module LeiosDemoDb.InMemory
@@ -32,9 +33,11 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import LeiosDemoDb.Common
   ( CompletedEbs
-  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , Promise (..)
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -42,8 +45,8 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
-  , leiosEbBodyItems
   , encodeLeiosEbSize
+  , leiosEbBodyItems
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -108,32 +111,46 @@ newLeiosDBInMemoryWith stateVar = do
         leiosDbGarbageCollect = \_slotNo -> pure ()
       , -- No-op for now; see 'leiosDbPromoteToImmutable'.
         leiosDbPromoteToImmutable = \_point -> pure ()
-      , open = openConn stateVar notificationChan
-      , -- Nothing to tune: the state is a 'StrictTVar', so a writer's
-        -- connection is the same connection.
-        openWriter = openConn stateVar notificationChan
+      , openReader = openInMemoryReader stateVar
+      , openWriter = openInMemoryWriter stateVar notificationChan
       }
 
-openConn ::
+-- | Reads off the 'StrictTVar'. Nothing to open or close.
+openInMemoryReader :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbReader m)
+openInMemoryReader stateVar =
+  pure
+    LeiosDbReader
+      { close = pure ()
+      , lookupEbBody = imLookupEbBody stateVar
+      , lookupEbClosure = imLookupEbClosure stateVar
+      , batchRetrieveTxs = imBatchRetrieveTxs stateVar
+      , scanEbPoints = imScanEbPoints stateVar
+      , scanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
+      }
+
+-- | No worker and no queue: the state is a 'StrictTVar', so each write is
+-- already atomic and its 'Promise' is already resolved. Nothing to reference
+-- count, so 'close' is a no-op.
+openInMemoryWriter ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
-  m (LeiosDbConnection m)
-openConn stateVar notificationChan =
-  pure $
-    LeiosDbConnection
+  m (LeiosDbWriter m)
+openInMemoryWriter stateVar notificationChan =
+  pure
+    LeiosDbWriter
       { close = pure ()
-      , leiosDbScanEbPoints = imScanEbPoints stateVar
-      , -- ThreadNet persists 'stateVar' across simulated restarts, so on
-        -- restart this seeds the restored acquired-EB-closures set.
-        leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
-      , leiosDbInsertEbPoint = imInsertEbPoint stateVar
-      , leiosDbLookupEbBody = imLookupEbBody stateVar
-      , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan
-      , leiosDbInsertTxs = imInsertTxs stateVar notificationChan
-      , leiosDbBatchRetrieveTxs = imBatchRetrieveTxs stateVar
-      , leiosDbLookupEbClosure = imLookupEbClosure stateVar
+      , writeEbPoint = \point ebBytesSize ->
+          resolved (imInsertEbPoint stateVar point ebBytesSize)
+      , writeEbBody = \point eb ->
+          resolved (imInsertEbBody stateVar notificationChan point eb)
+      , writeTxs = \txs ->
+          resolved (imInsertTxs stateVar notificationChan txs)
       }
+ where
+  resolved action = do
+    x <- action
+    pure (Promise (pure x))
 
 -- * Top-level implementations
 

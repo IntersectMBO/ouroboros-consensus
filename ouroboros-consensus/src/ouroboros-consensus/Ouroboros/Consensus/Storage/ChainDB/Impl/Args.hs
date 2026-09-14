@@ -95,7 +95,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- current LoE fragment.
   , cdbsLeiosDb :: HKD f (LeiosDemoDb.Common.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
-  -- its own per-thread 'LeiosDbConnection' from this handle.
+  -- its own per-thread 'LeiosDbReader' from this handle.
   , cdbsLeiosEvictTxCache :: HKD f (SlotNo -> m ())
   -- ^ Prune the LeiosTxCache to the given slot. Invoked immediately BEFORE
   -- 'LeiosDemoDb.Common.leiosDbGarbageCollect' at the same slot (see

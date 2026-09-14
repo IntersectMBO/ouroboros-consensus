@@ -58,7 +58,7 @@ import Cardano.Ledger.BaseTypes
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoTypes (LeiosPoint (..))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -253,7 +253,7 @@ reapplyThenPush ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   LedgerDbCfg l ->
   blk ->
   LedgerSeq m l ->
@@ -275,7 +275,7 @@ reapplyBlock ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   blk ->

@@ -40,7 +40,7 @@ import Data.Function ((&))
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
-import LeiosDemoDb (leiosDbLookupEbClosure)
+import LeiosDemoDb (lookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
@@ -129,7 +129,7 @@ instance
 
   resolveLeiosClosure leiosDb ebHash = do
     mAnnouncedEb <-
-      leiosDbLookupEbClosure
+      lookupEbClosure
         leiosDb
         ebHash
     case mAnnouncedEb of

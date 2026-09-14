@@ -18,10 +18,13 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.Function ((&))
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
-  ( LeiosDbConnection (..)
-  , LeiosDbHandle
+  ( LeiosDbHandle
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
+  , Promise (..)
   , newLeiosDBInMemory
-  , withLeiosDb
+  , withReader
+  , withWriter
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -31,9 +34,9 @@ import LeiosDemoTypes
   , RbHash (..)
   , SerializedEbBody
   , TxHash
+  , encodeLeiosEbSize
   , hashLeiosEb
   , hashLeiosTx
-  , encodeLeiosEbSize
   , serializeEbBody
   )
 import LeiosTxCache
@@ -186,7 +189,7 @@ runValidateTwice acquired txs = withHarness acquired txs $ \h -> do
   pure (first', tagged, second')
 
 data Harness = Harness
-  { hConn :: LeiosDbConnection IO
+  { hConn :: LeiosDbReader IO
   , hCache :: LeiosTxCache IO () () SerializedEbBody
   , hPoint :: LeiosPoint
   }
@@ -222,10 +225,10 @@ validateOnce Harness{hConn, hCache, hPoint} txs = do
 withHarness :: [Bool] -> [TestTx] -> (Harness -> IO a) -> IO a
 withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
-  withLeiosDb db $ \conn -> do
-    leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
-    void $ leiosDbInsertEbBody conn point eb
-    void $ leiosDbInsertTxs conn [(txHashOf tx, txBytes tx) | tx <- txs]
+  withReader db $ \conn -> withWriter db $ \writer -> do
+    void $ await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
+    void $ await =<< writeEbBody writer point eb
+    void $ await =<< writeTxs writer [(txHashOf tx, txBytes tx) | tx <- txs]
 
     cache <- newPureLeiosTxCache
     void $ insertAnnouncement cache (pointSlotNo point) rbHash (pointEbHash point)

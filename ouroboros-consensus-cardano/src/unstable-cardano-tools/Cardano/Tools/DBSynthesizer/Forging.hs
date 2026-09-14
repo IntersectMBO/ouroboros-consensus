@@ -28,7 +28,7 @@ import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb
-  ( LeiosDbConnection (leiosDbInsertEbBody, leiosDbInsertEbPoint, leiosDbInsertTxs)
+  ( LeiosDbReader (leiosDbInsertEbBody, leiosDbInsertEbPoint, leiosDbInsertTxs)
   )
 import LeiosDemoTypes
   ( ForgedLeiosEb (..)
@@ -153,7 +153,7 @@ runForge ::
   -- | The BLS key that this forger votes with, if it has one.
   Maybe LeiosSigningKey ->
   GenTxs blk ->
-  LeiosDbConnection IO ->
+  LeiosDbReader IO ->
   Tracer IO TraceLeiosKernel ->
   IO ForgeResult
 runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDb leiosTracer = do

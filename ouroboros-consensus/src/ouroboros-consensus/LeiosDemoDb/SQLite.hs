@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -7,7 +8,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module LeiosDemoDb.SQLite
-  ( newLeiosDBSQLiteFromEnv
+  ( withLeiosDBSQLiteFromEnv
+  , withLeiosDBSQLite
   , newLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -31,7 +33,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , newBroadcastTChan
   , writeTChan
   )
-import Control.Exception (throwIO)
+import Control.Exception (bracket, throwIO)
 import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow (generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
@@ -55,11 +57,14 @@ import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoDb.Common
   ( CompletedEbs
-  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , Promise (..)
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
+import LeiosDemoDb.Writer (Submit (..), newWorker)
 import LeiosDemoException (LeiosDbException (..))
 import LeiosDemoTypes
   ( BytesSize
@@ -78,37 +83,65 @@ import System.Random (randomIO)
 
 -- * Public API
 
--- | Create a new Leios database connection from environment variable.
--- This looks up the LEIOS_DB_PATH environment variable and opens the database.
-newLeiosDBSQLiteFromEnv :: Tracer IO TraceLeiosDb -> IO (LeiosDbHandle IO)
-newLeiosDBSQLiteFromEnv tracer = do
+-- | 'withLeiosDBSQLite' on the path in @LEIOS_DB_PATH@.
+withLeiosDBSQLiteFromEnv ::
+  Tracer IO TraceLeiosDb ->
+  (LeiosDbHandle IO -> IO a) ->
+  IO a
+withLeiosDBSQLiteFromEnv tracer action = do
   dbPath <-
     lookupEnv "LEIOS_DB_PATH" >>= \case
       Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
       Just x -> pure x
-  newLeiosDBSQLite tracer dbPath
+  withLeiosDBSQLite tracer dbPath action
 
--- | Create a new Leios database using the SQLite implementation at given file
--- path.
+-- | Open a Leios database on the given file, for the duration of the action.
 --
--- Each call to 'open' on the returned handle creates a new SQLite connection.
--- Connections are not thread-safe and should not be shared across threads.
+-- The database owns the write connection and its worker: SQLite admits one
+-- writer, so there is exactly one, created here and torn down on exit.
+-- 'openWriter' hands that one out; 'openReader' opens a connection per reader.
+withLeiosDBSQLite ::
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  (LeiosDbHandle IO -> IO a) ->
+  IO a
+withLeiosDBSQLite tracer dbPath action = do
+  notificationChan <- atomically newBroadcastTChan
+  bracket (startWriter tracer dbPath) swStop $ \shared ->
+    action (sqliteHandle shared notificationChan tracer dbPath)
+
+-- | 'withLeiosDBSQLite' for an owner whose lifetime /is/ the process: the
+-- write connection and its worker are never torn down.
+--
+-- For the node, which holds one database until it exits, that is what scoping
+-- would achieve anyway. Anything that opens databases repeatedly -- tests, the
+-- benchmark -- wants 'withLeiosDBSQLite' instead, or it accumulates a
+-- connection and a thread per database.
 newLeiosDBSQLite :: Tracer IO TraceLeiosDb -> FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite tracer dbPath = do
   notificationChan <- atomically newBroadcastTChan
-  pure $
-    LeiosDbHandle
-      { subscribeEbNotifications =
-          atomically (dupTChan notificationChan)
-      , -- No-op for now; see 'leiosDbGarbageCollect'. A real implementation
-        -- would open a transient connection and evict the no-longer-needed rows.
-        leiosDbGarbageCollect = \_slotNo -> pure ()
-      , -- No-op for now; see 'leiosDbPromoteToImmutable'. A real implementation
-        -- would copy the EB's body and closure rows into immutable storage.
-        leiosDbPromoteToImmutable = \_point -> pure ()
-      , open = openSQLiteConnection ReaderRole tracer dbPath notificationChan
-      , openWriter = openSQLiteConnection WriterRole tracer dbPath notificationChan
-      }
+  shared <- startWriter tracer dbPath
+  pure (sqliteHandle shared notificationChan tracer dbPath)
+
+sqliteHandle ::
+  SharedWriter ->
+  StrictTChan IO LeiosEbNotification ->
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  LeiosDbHandle IO
+sqliteHandle shared notificationChan tracer dbPath =
+  LeiosDbHandle
+    { subscribeEbNotifications =
+        atomically (dupTChan notificationChan)
+    , -- No-op for now; see 'leiosDbGarbageCollect'. A real implementation
+      -- would open a transient connection and evict the no-longer-needed rows.
+      leiosDbGarbageCollect = \_slotNo -> pure ()
+    , -- No-op for now; see 'leiosDbPromoteToImmutable'. A real implementation
+      -- would copy the EB's body and closure rows into immutable storage.
+      leiosDbPromoteToImmutable = \_point -> pure ()
+    , openReader = openSQLiteReader tracer dbPath
+    , openWriter = pure (sqliteWriter shared notificationChan tracer)
+    }
 
 -- * Connection management
 
@@ -217,6 +250,77 @@ defaultWriterCacheKiB = 16384
 -- | What a connection is for. Since the single writer is the only thread that
 -- ever writes, and every other connection only reads, the two can be opened
 -- differently -- which was not expressible while any connection might do
+
+-- | The write connection and its worker. One per database, created with it.
+data SharedWriter = SharedWriter
+  { swConn :: !Conn
+  , swSubmit :: !(Submit IO)
+  , swStop :: !(IO ())
+  -- ^ Drain the queue, stop the worker, close the connection.
+  }
+
+-- | Depth of the write queue; see 'newWorker'.
+writerQueueDepth :: Int
+writerQueueDepth = numUpstreamPeers + forge + slack
+ where
+  numUpstreamPeers = 20
+  forge = 1
+  slack = 2
+
+startWriter :: Tracer IO TraceLeiosDb -> FilePath -> IO SharedWriter
+startWriter tracer dbPath = do
+  (conn, closeConn) <- openConn WriterRole tracer dbPath
+  (submit, stopWorker) <- newWorker writerQueueDepth
+  pure
+    SharedWriter
+      { swConn = conn
+      , swSubmit = submit
+      , swStop = stopWorker >> closeConn
+      }
+
+-- | The database's one writer. Nothing is allocated here, so nothing has to be
+-- reference counted: every caller submits to the same worker.
+sqliteWriter ::
+  SharedWriter ->
+  StrictTChan IO LeiosEbNotification ->
+  Tracer IO TraceLeiosDb ->
+  LeiosDbWriter IO
+sqliteWriter shared notificationChan tracer =
+  LeiosDbWriter
+    { -- Not a teardown -- the connection outlives every writer. Submitting a
+      -- no-op and waiting for it flushes: the queue is FIFO, so when this
+      -- lands, everything this caller submitted already has.
+      close = void . await =<< submit (pure ())
+    , writeEbPoint = \point ebBytesSize ->
+        submit (sqlInsertEbPoint conn point ebBytesSize)
+    , writeEbBody = \point eb ->
+        submit (sqlInsertEbBody tracer conn notify point eb)
+    , writeTxs = \txs ->
+        submit (sqlInsertTxs tracer conn notify txs)
+    }
+ where
+  Submit submit = swSubmit shared
+  conn = swConn shared
+  notify = atomically . writeTChan notificationChan
+
+-- | Open a reader. Each gets its own connection, so any number may run
+-- concurrently.
+openSQLiteReader :: Tracer IO TraceLeiosDb -> FilePath -> IO (LeiosDbReader IO)
+openSQLiteReader tracer dbPath = do
+  (conn, closeConn) <- openConn ReaderRole tracer dbPath
+  pure
+    LeiosDbReader
+      { close = closeConn
+      , lookupEbBody = sqlLookupEbBody conn
+      , lookupEbClosure = sqlLookupEbClosure conn
+      , batchRetrieveTxs = sqlBatchRetrieveTxs conn
+      , scanEbPoints = sqlScanEbPoints conn
+      , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
+      }
+
+-- | What a connection is for. Since the single writer is the only thread that
+-- ever writes, and every other connection only reads, the two can be opened
+-- differently -- which was not expressible while any connection might do
 -- anything.
 data ConnRole
   = -- | The one connection owned by 'LeiosDemoDb.Writer'.
@@ -225,13 +329,14 @@ data ConnRole
     ReaderRole
   deriving (Eq, Show)
 
-openSQLiteConnection ::
+-- | Open one connection, tuned for its role, and return it with its closer.
+-- The callers above turn it into a reader or hand it to the write worker.
+openConn ::
   ConnRole ->
   Tracer IO TraceLeiosDb ->
   FilePath ->
-  StrictTChan IO LeiosEbNotification ->
-  IO (LeiosDbConnection IO)
-openSQLiteConnection role tracer dbPath notificationChan = do
+  IO (Conn, IO ())
+openConn role tracer dbPath = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) openFlags SQLVFSDefault
   traverse_ (dbExec db) $
@@ -273,19 +378,7 @@ openSQLiteConnection role tracer dbPath notificationChan = do
   rolePragmas >>= traverse_ (dbExec db . fromString)
   stmts <- prepareStmts db
   let conn = Conn{connDb = db, connStmts = stmts, connTracer = tracer}
-      notify = atomically . writeTChan notificationChan
-  pure $
-    LeiosDbConnection
-      { close = finalizeStmts stmts >> void (DB.close db)
-      , leiosDbScanEbPoints = sqlScanEbPoints conn
-      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
-      , leiosDbInsertEbPoint = sqlInsertEbPoint conn
-      , leiosDbLookupEbBody = sqlLookupEbBody conn
-      , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
-      , leiosDbInsertTxs = sqlInsertTxs tracer conn notify
-      , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs conn
-      , leiosDbLookupEbClosure = sqlLookupEbClosure conn
-      }
+  pure (conn, finalizeStmts stmts >> void (DB.close db))
  where
   -- 'SQLOpenNoMutex' (multi-thread mode) drops SQLite's own per-connection
   -- mutex. Safe only because no connection is shared between threads: the

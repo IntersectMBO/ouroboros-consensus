@@ -22,7 +22,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
-import LeiosDemoDb (newLeiosDBInMemory, newLeiosDBSQLite, withLeiosDb)
+import LeiosDemoDb (newLeiosDBInMemory, newLeiosDBSQLite, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -231,7 +231,7 @@ analyse dbaConfig args =
       -- Open one LeiosDb connection for the whole analysis run: the analysis
       -- loop is single-threaded, so a single bracketed connection is the right
       -- lifetime.
-      withLeiosDb leiosDbHandle $ \leiosConn -> do
+      withReader leiosDbHandle $ \leiosConn -> do
         result <-
           ana
             AnalysisEnv

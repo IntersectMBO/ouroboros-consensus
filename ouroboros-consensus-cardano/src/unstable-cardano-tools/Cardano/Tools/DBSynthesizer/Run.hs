@@ -39,7 +39,7 @@ import Data.ByteString as BS (ByteString, readFile)
 import qualified Data.ByteString.Lazy.Char8 as BSL8 (unpack)
 import Data.Functor (($>))
 import qualified Data.Set as Set
-import LeiosDemoDb (newLeiosDBSQLite, withLeiosDb)
+import LeiosDemoDb (newLeiosDBSQLite, withReader)
 import LeiosDemoTypes
   ( TraceLeiosKernel (TraceLeiosDb)
   , traceLeiosKernelToObject
@@ -239,7 +239,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           -- Open after 'preOpenChainDB'. That call creates the db directory, and
           -- with -f it deletes and recreates it. An earlier open loses the file
           -- with no error.
-          withLeiosDb leiosDbHandle $ \leiosDb ->
+          withReader leiosDbHandle $ \leiosDb ->
             ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
               slotNo <- do
                 tip <- atomically (ChainDB.getTipPoint chainDB)

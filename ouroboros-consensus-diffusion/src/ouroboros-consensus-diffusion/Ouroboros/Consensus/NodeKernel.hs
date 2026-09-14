@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -175,12 +176,6 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import System.Random (StdGen)
 
--- | Upstream peers assumed to be fetching concurrently, for sizing the Leios
--- DB writer's queue. Only their fetch clients and the forge submit writes, and
--- the queue wants a slot each; see 'LeiosDb.writerQueueDepth'.
-leiosDbWriterUpstreamPeers :: Int
-leiosDbWriterUpstreamPeers = 20
-
 {-------------------------------------------------------------------------------
   Relay node
 -------------------------------------------------------------------------------}
@@ -299,7 +294,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosDB :: LeiosDbHandle m
   -- ^ Factory for opening per-thread Leios DB connections. Each consumer
   -- (forge loop, leios fetch logic, LeiosNotify / LeiosFetch handlers)
-  -- opens its own connection from this handle. 'LeiosDbConnection' is
+  -- opens its own connection from this handle. 'LeiosDbReader' is
   -- documented as not thread-safe, so connections must not be shared.
   , leiosTxCache :: LeiosTxCache m () () Leios.SerializedEbBody
   -- ^ The in-memory tx-presence index. Created in "Ouroboros.Consensus.Node"
@@ -822,8 +817,8 @@ initInternalState
           NotOrigin s -> s
     leiosOutstanding <- do
       acquiredClosures <-
-        LeiosDb.withLeiosDb leiosDB $ \leiosConn ->
-          LeiosDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot leiosConn immTipSlot
+        LeiosDb.withReader leiosDB $ \leiosConn ->
+          LeiosDb.scanCompleteEbClosuresNotOlderThanSlot leiosConn immTipSlot
       MVar.newMVar $
         Leios.initializeLeiosOutstanding leiosFetchRng acquiredClosures immTipSlot
     leiosReady <- MVar.newEmptyMVar
@@ -831,10 +826,7 @@ initInternalState
     -- One writer for the whole node: the forge and every peer's fetch client
     -- submit to it, so no Leios DB connection is ever driven by two threads.
     leiosDbWriter <-
-      LeiosDb.newLeiosDbWriter
-        registry
-        leiosDB
-        (LeiosDb.writerQueueDepth leiosDbWriterUpstreamPeers)
+      LeiosDb.newWriter registry leiosDB
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
@@ -930,17 +922,17 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   label :: String
   label = "NodeKernel.blockForging"
 
-  -- 'LeiosDbConnection' is not thread-safe, so we open one per
+  -- 'LeiosDbReader' is not thread-safe, so we open one per
   -- forge-credentials thread (and close it when the thread exits).
   allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    leiosConn <- LeiosDb.open leiosDB
+    leiosConn <- LeiosDb.openReader leiosDB
     rootCCtx <- rootCallCtx "Forge"
     pure (bf, leiosConn, rootCCtx)
 
   finalizeForging (bf, leiosConn, _) = do
-    LeiosDb.close leiosConn
+    leiosConn.close
     finalize bf
 
 {-------------------------------------------------------------------------------

@@ -51,7 +51,7 @@ import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb.Common (leiosDbScanCompleteEbClosuresNotOlderThanSlot, withLeiosDb)
+import LeiosDemoDb.Common (scanCompleteEbClosuresNotOlderThanSlot, withReader)
 import LeiosDemoTypes
   ( HasLeiosVoting
   , acquiredLeiosEbHashes
@@ -223,8 +223,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- tip. 'Background.leiosAcquiredEbsRunner' grows it thereafter from LeiosDb
     -- closure-completion notifications.
     initialAcquiredLeiosEbs <-
-      withLeiosDb (Args.cdbsLeiosDb cdbSpecificArgs) $ \leiosConn ->
-        leiosDbScanCompleteEbClosuresNotOlderThanSlot
+      withReader (Args.cdbsLeiosDb cdbSpecificArgs) $ \leiosConn ->
+        scanCompleteEbClosuresNotOlderThanSlot
           leiosConn
           (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
     varAcquiredLeiosEbs <-
