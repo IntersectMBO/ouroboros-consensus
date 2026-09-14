@@ -361,12 +361,11 @@ length cheaply, e.g. as input for benchmarks.
 
 :::warning
 
-db-synthesizer cannot forge at the moment. It reads its credentials through
-`cardano-keys`, which is still a package skeleton, so the decoders
-`Cardano.Tools.Credentials` needs from it are `undefined` stubs and pointing the
-tool at any credential file fails. Everything the rest of this section describes
-is otherwise in place; what is missing is only the decoding of the files
-themselves.
+db-synthesizer cannot forge at the moment. The decoders
+`Cardano.Tools.Credentials` needs are not written against `cardano-keys` yet:
+they are `undefined` stubs, so pointing the tool at any credential file fails.
+Everything the rest of this section describes is otherwise in place; what is
+missing is only the decoding of the files themselves.
 
 :::
 

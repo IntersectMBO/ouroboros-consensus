@@ -8,14 +8,13 @@
 -- for here is the step that produces consensus types: mapping the key material
 -- onto 'ByronLeaderCredentials' and 'ShelleyLeaderCredentials'.
 --
--- Note that @cardano-keys@ is currently a package skeleton: it exposes a
--- placeholder module and none of the key types or decoders this module needs
--- from it. Everything around the decoding is therefore real -- which
--- combinations of credential files are accepted, which file contributes what,
--- and how the result maps onto the consensus types -- but the decoders
--- themselves are the stubs under \"What cardano-keys still owes us\" below, so
--- that a tool actually asked to forge fails on 'undefined'. Filling those in is
--- all that the switch to a grown-up @cardano-keys@ should take.
+-- Note that this module is not written against @cardano-keys@ yet. Everything
+-- around the decoding is real -- which combinations of credential files are
+-- accepted, which file contributes what, and how the result maps onto the
+-- consensus types -- but the decoders themselves are the stubs under \"What is
+-- still to be read via cardano-keys\" below, so that a tool actually asked to
+-- forge fails on 'undefined'. Writing them against the key types and decoders
+-- the package holds is all that is left.
 module Cardano.Tools.Credentials
   ( LeaderCredentials (..)
   , readLeaderCredentials
@@ -27,9 +26,9 @@ import qualified Cardano.Configuration.CliArgs as CLI
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.Signing as Byron.Crypto
 import qualified Cardano.Crypto.VRF as VRF
--- The dependency is deliberate although the skeleton exports nothing we can
--- use yet: it is what the stubs at the bottom of this module are to be written
--- against, so keeping it wired up means growing them is an import change.
+-- The dependency is deliberate although nothing here uses it yet: it is what
+-- the stubs at the bottom of this module are to be written against, so keeping
+-- it wired up means filling them in is an import change.
 import Cardano.Keys ()
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Ledger.Keys (KeyRole (StakePool), VKey, coerceKeyRole)
@@ -163,21 +162,20 @@ mkShelleyCredentials coldVerKey vrfSignKey credentialsSource =
     }
 
 --
--- What cardano-keys still owes us
+-- What is still to be read via cardano-keys
 --
 
 -- Each of the following reads one credential file and decodes it. Together they
 -- are the entire surface this module needs from @cardano-keys@, and all of them
--- are stubbed out until that package grows the key types and the text-envelope
--- decoder they are written against.
+-- are still stubbed out.
 
--- TODO @js: implement via cardano-keys, which is to hold the Byron signing key
--- type and its decoder.
+-- TODO @js: implement via cardano-keys, which holds the Byron signing key type
+-- and its decoder.
 readByronSigningKey :: FilePath -> ExceptT String IO Byron.Crypto.SigningKey
 readByronSigningKey = undefined
 
--- TODO @js: implement via cardano-keys, which is to hold the canonical-JSON
--- decoder for a Byron delegation certificate.
+-- TODO @js: implement via cardano-keys, which holds the canonical-JSON decoder
+-- for a Byron delegation certificate.
 readByronDelegationCertificate ::
   FilePath -> ExceptT String IO Byron.Delegation.Certificate
 readByronDelegationCertificate = undefined
@@ -185,19 +183,19 @@ readByronDelegationCertificate = undefined
 -- | The operational certificate together with the stake pool cold verification
 -- key it names, which the file carries alongside it.
 --
--- TODO @js: implement via cardano-keys, which is to hold the operational
--- certificate type and its decoder.
+-- TODO @js: implement via cardano-keys, which holds the operational certificate
+-- type and its decoder.
 readOperationalCertificate ::
   FilePath -> ExceptT String IO (OCert.OCert StandardCrypto, VKey StakePool)
 readOperationalCertificate = undefined
 
--- TODO @js: implement via cardano-keys, which is to hold the VRF key types and
--- their decoders.
+-- TODO @js: implement via cardano-keys, which holds the VRF key types and their
+-- decoders.
 readVrfSigningKey :: FilePath -> ExceptT String IO (VRF.SignKeyVRF (VRF StandardCrypto))
 readVrfSigningKey = undefined
 
--- TODO @js: implement via cardano-keys, which is to hold the KES key types and
--- their decoders.
+-- TODO @js: implement via cardano-keys, which holds the KES key types and their
+-- decoders.
 readKesSigningKey ::
   FilePath -> ExceptT String IO (KES.UnsoundPureSignKeyKES (KES StandardCrypto))
 readKesSigningKey = undefined
@@ -206,8 +204,8 @@ readKesSigningKey = undefined
 -- certificate\/VRF\/KES triples, decoded here into the same pieces the
 -- individual options yield.
 --
--- TODO @js: implement via cardano-keys, which is to hold the bulk file's
--- format alongside the decoders for the three envelopes it nests.
+-- TODO @js: implement via cardano-keys, which holds the bulk file's reader
+-- alongside the decoders for the three envelopes it nests.
 readBulkCredentials ::
   FilePath ->
   ExceptT
