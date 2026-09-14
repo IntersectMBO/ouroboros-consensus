@@ -359,16 +359,6 @@ using the same code path that a real block producer uses. The forged blocks
 contain no transactions. Its primary use is creating chains of arbitrary
 length cheaply, e.g. as input for benchmarks.
 
-:::warning
-
-db-synthesizer cannot forge at the moment. The decoders
-`Cardano.Tools.Credentials` needs are not written against `cardano-keys` yet:
-they are `undefined` stubs, so pointing the tool at any credential file fails.
-Everything the rest of this section describes is otherwise in place; what is
-missing is only the decoding of the files themselves.
-
-:::
-
 ### When to use it
 
 - You need a syntactically and cryptographically valid chain of a given length
@@ -391,7 +381,9 @@ missing is only the decoding of the files themselves.
   of `--shelley-kes-key`) work too. These are `cardano-node`'s own flags —
   db-synthesizer takes them from `cardano-config`, so they are spelled and
   documented exactly as the node spells them, and the files they name are
-  decoded by `cardano-keys`. The genesis must give the corresponding pools
+  decoded by `cardano-keys`. Each operational certificate must name the KES key
+  it is paired with, or the tool refuses it rather than forging blocks the
+  certificate does not authorise. The genesis must give the corresponding pools
   enough stake to be elected.
 
 A minimal working setup — a staked genesis with bulk credentials for two

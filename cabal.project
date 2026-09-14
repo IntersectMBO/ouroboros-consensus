@@ -84,8 +84,7 @@ benchmarks: true
 multi-repl: True
 
 -- db-synthesizer reads its forging credentials with cardano-keys, which is not
--- on CHaP yet. Note that "Cardano.Tools.Credentials" is not written against it
--- yet: the readers it needs from the package are still stubbed out there.
+-- on CHaP yet; replace this with the released package once it is.
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-keys.git
