@@ -136,28 +136,14 @@ blockCountTest logStep = do
       expected
       (resultForged result)
 
--- | Whether "Cardano.Tools.Credentials" can decode credential files yet.
---
--- It cannot: @cardano-keys@, which owes it every one of those decoders, is
--- still a package skeleton, so they are all 'undefined' stubs. Without
--- credentials db-synthesizer has no forgers, and 'blockCountTest' -- which is
--- about the chain they forge -- has nothing to assert, so it is left out of the
--- test tree rather than dying on an 'undefined'.
---
--- TODO @js: delete this along with the guard below once cardano-keys has the
--- decoders.
-canReadCredentials :: Bool
-canReadCredentials = False
-
 tests :: TestTree
 tests =
-  testGroup "cardano-tools" $
+  testGroup
+    "cardano-tools"
     [ testCaseSteps "synthesize and analyse: blockCount\n" blockCountTest
-    | canReadCredentials
+    , Test.Cardano.Tools.DBAnalyser.NodeConfig.tests
+    , Test.Cardano.Tools.Headers.tests
     ]
-      <> [ Test.Cardano.Tools.DBAnalyser.NodeConfig.tests
-         , Test.Cardano.Tools.Headers.tests
-         ]
 
 main :: IO ()
 main = defaultMainWithTestEnv defaultTestEnvConfig tests

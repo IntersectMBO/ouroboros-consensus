@@ -7,14 +7,6 @@
 -- node command-line options, and decoding them is @cardano-keys@'s job. Left
 -- for here is the step that produces consensus types: mapping the key material
 -- onto 'ByronLeaderCredentials' and 'ShelleyLeaderCredentials'.
---
--- Note that this module is not written against @cardano-keys@ yet. Everything
--- around the decoding is real -- which combinations of credential files are
--- accepted, which file contributes what, and how the result maps onto the
--- consensus types -- but the decoders themselves are the stubs under \"What is
--- still to be read via cardano-keys\" below, so that a tool actually asked to
--- forge fails on 'undefined'. Writing them against the key types and decoders
--- the package holds is all that is left.
 module Cardano.Tools.Credentials
   ( LeaderCredentials (..)
   , readLeaderCredentials
@@ -23,18 +15,14 @@ module Cardano.Tools.Credentials
 import qualified Cardano.Chain.Delegation as Byron.Delegation
 import qualified Cardano.Chain.Genesis as Byron.Genesis
 import qualified Cardano.Configuration.CliArgs as CLI
-import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.Signing as Byron.Crypto
 import qualified Cardano.Crypto.VRF as VRF
--- The dependency is deliberate although nothing here uses it yet: it is what
--- the stubs at the bottom of this module are to be written against, so keeping
--- it wired up means filling them in is an import change.
-import Cardano.Keys ()
+import qualified Cardano.Keys as Keys
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Ledger.Keys (KeyRole (StakePool), VKey, coerceKeyRole)
-import Cardano.Protocol.Crypto (KES, StandardCrypto, VRF)
+import Cardano.Protocol.Crypto (StandardCrypto, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
-import Control.Monad.Trans.Except (ExceptT, except, runExceptT, throwE)
+import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
 import Data.Bifunctor (first)
 import Ouroboros.Consensus.Byron.Node
   ( ByronLeaderCredentials
@@ -45,6 +33,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
   , PraosCredentialsSource (..)
   )
 import Ouroboros.Consensus.Shelley.Node (ShelleyLeaderCredentials (..))
+import Prettyprinter (Doc, pretty)
 
 -- | The credentials a Cardano protocol forges with: at most one Byron-era set,
 -- and any number of Shelley-based ones.
@@ -118,16 +107,21 @@ readShelley creds =
     (_, SNothing, _) -> throwE $ missingOption "shelley-vrf-key"
     (_, _, SNothing) -> throwE $ missingOption "shelley-kes-key"
     (SJust certFile, SJust vrfFile, SJust kesSource) -> do
-      (opCert, coldVerKey) <- readOperationalCertificate certFile
-      vrfSignKey <- readVrfSigningKey vrfFile
+      opCert <- readTextEnvelope certFile
+      Keys.VrfSigningKey vrfSignKey <- readTextEnvelope vrfFile
       credentialsSource <- case kesSource of
-        -- The unsound variant: the KES signing key sits in a file on disk,
-        -- rather than never leaving a KES agent's memory.
-        CLI.KESKeyFilePath kesFile ->
-          PraosCredentialsUnsound opCert <$> readKesSigningKey kesFile
+        -- The unsound variant: the KES signing key sits in a file on disk
+        -- instead of never leaving a KES agent's memory.
+        CLI.KESKeyFilePath kesFile -> do
+          kesSignKey <- readTextEnvelope kesFile
+          checkOpCertKesKey (certFile <> " with " <> kesFile) opCert kesSignKey
+          pure $
+            PraosCredentialsUnsound
+              (opCertOf opCert)
+              (Keys.unsoundPureKesSigningKey kesSignKey)
         CLI.KESAgentSocketPath socketPath ->
           pure $ PraosCredentialsAgent socketPath
-      pure [mkShelleyCredentials coldVerKey vrfSignKey credentialsSource]
+      pure [mkShelleyCredentials (coldVerKeyOf opCert) vrfSignKey credentialsSource]
 
 -- | The Shelley-based credentials in the bulk credentials file, which holds any
 -- number of them. A bulk file only ever carries KES signing keys, never a KES
@@ -136,13 +130,25 @@ readShelleyBulk ::
   CLI.Credentials -> ExceptT String IO [ShelleyLeaderCredentials StandardCrypto]
 readShelleyBulk creds = case CLI.bulkCredentialsFile creds of
   SNothing -> pure []
-  SJust file -> map fromBulkEntry <$> readBulkCredentials file
+  SJust file -> do
+    entries <-
+      ExceptT $
+        first (renderKeyFileError Keys.renderTextEnvelopeError)
+          <$> Keys.readBulkCredentialsFile file
+    traverse (fromBulkEntry file) (zip [0 :: Int ..] entries)
  where
-  fromBulkEntry (opCert, coldVerKey, vrfSignKey, kesSignKey) =
-    mkShelleyCredentials
-      coldVerKey
-      vrfSignKey
-      (PraosCredentialsUnsound opCert kesSignKey)
+  fromBulkEntry file (index, (opCert, Keys.VrfSigningKey vrfSignKey, kesSignKey)) = do
+    -- Which entry of the file it was, because that is all that distinguishes
+    -- one pair in a bulk file from the next.
+    checkOpCertKesKey (file <> ", entry " <> show index) opCert kesSignKey
+    pure $
+      mkShelleyCredentials
+        (coldVerKeyOf opCert)
+        vrfSignKey
+        ( PraosCredentialsUnsound
+            (opCertOf opCert)
+            (Keys.unsoundPureKesSigningKey kesSignKey)
+        )
 
 mkShelleyCredentials ::
   VKey StakePool ->
@@ -162,62 +168,75 @@ mkShelleyCredentials coldVerKey vrfSignKey credentialsSource =
     }
 
 --
--- What is still to be read via cardano-keys
+-- Reading the credential files
 --
 
--- Each of the following reads one credential file and decodes it. Together they
--- are the entire surface this module needs from @cardano-keys@, and all of them
--- are still stubbed out.
+-- | Read a text envelope: the operational certificate and the VRF and KES
+-- signing keys are all stored as one. Which type the file has to hold follows
+-- from the type the caller wants back.
+readTextEnvelope :: Keys.HasTextEnvelope a => FilePath -> ExceptT String IO a
+readTextEnvelope path =
+  ExceptT $
+    first (renderKeyFileError Keys.renderTextEnvelopeError)
+      <$> Keys.readFileTextEnvelope path
 
--- TODO @js: implement via cardano-keys, which holds the Byron signing key type
--- and its decoder.
+-- | The Byron signing key, which is not a text envelope: the file is the raw
+-- CBOR of a legacy Byron @XPrv@.
 readByronSigningKey :: FilePath -> ExceptT String IO Byron.Crypto.SigningKey
-readByronSigningKey = undefined
+readByronSigningKey path = do
+  Keys.ByronSigningKey signingKey <-
+    ExceptT $
+      first (renderKeyFileError Keys.renderSerialiseAsRawBytesError)
+        <$> Keys.readByronSigningKeyFile path
+  pure signingKey
 
--- TODO @js: implement via cardano-keys, which holds the canonical-JSON decoder
--- for a Byron delegation certificate.
+-- | The Byron delegation certificate, which is neither a text envelope nor
+-- CBOR: the file is canonical JSON, like the Byron genesis itself.
 readByronDelegationCertificate ::
   FilePath -> ExceptT String IO Byron.Delegation.Certificate
-readByronDelegationCertificate = undefined
+readByronDelegationCertificate path =
+  ExceptT $
+    first (renderKeyFileError pretty)
+      <$> Keys.readByronDelegationCertificateFile path
 
--- | The operational certificate together with the stake pool cold verification
--- key it names, which the file carries alongside it.
+-- | Check that an operational certificate authorises the KES key it was handed
+-- alongside.
 --
--- TODO @js: implement via cardano-keys, which holds the operational certificate
--- type and its decoder.
-readOperationalCertificate ::
-  FilePath -> ExceptT String IO (OCert.OCert StandardCrypto, VKey StakePool)
-readOperationalCertificate = undefined
+-- @cardano-keys@ leaves this to the caller. It matters: a certificate paired
+-- with a KES key it does not name forges blocks the certificate does not
+-- authorise, which the network rejects while the tool reports nothing.
+checkOpCertKesKey ::
+  -- | Where the two came from, for the error message.
+  String ->
+  Keys.OperationalCertificate ->
+  Keys.SigningKey Keys.KesKey ->
+  ExceptT String IO ()
+checkOpCertKesKey source opCert kesSignKey =
+  except . first renderMismatch $ Keys.checkKesKeyMatchesOpCert opCert kesSignKey
+ where
+  renderMismatch mismatch =
+    source <> ": " <> Keys.docToString (Keys.renderKesKeyMismatch mismatch)
 
--- TODO @js: implement via cardano-keys, which holds the VRF key types and their
--- decoders.
-readVrfSigningKey :: FilePath -> ExceptT String IO (VRF.SignKeyVRF (VRF StandardCrypto))
-readVrfSigningKey = undefined
+-- | Report one of @cardano-keys@' file errors as a message. It renders errors
+-- as @prettyprinter@ documents and hands out the payload renderer separately,
+-- hence the argument.
+renderKeyFileError :: (e -> Doc ann) -> Keys.FileError e -> String
+renderKeyFileError renderPayload =
+  Keys.docToString . Keys.renderFileError renderPayload
 
--- TODO @js: implement via cardano-keys, which holds the KES key types and their
--- decoders.
-readKesSigningKey ::
-  FilePath -> ExceptT String IO (KES.UnsoundPureSignKeyKES (KES StandardCrypto))
-readKesSigningKey = undefined
-
--- | The bulk credentials file: a JSON array of operational
--- certificate\/VRF\/KES triples, decoded here into the same pieces the
--- individual options yield.
 --
--- TODO @js: implement via cardano-keys, which holds the bulk file's reader
--- alongside the decoders for the three envelopes it nests.
-readBulkCredentials ::
-  FilePath ->
-  ExceptT
-    String
-    IO
-    [ ( OCert.OCert StandardCrypto
-      , VKey StakePool
-      , VRF.SignKeyVRF (VRF StandardCrypto)
-      , KES.UnsoundPureSignKeyKES (KES StandardCrypto)
-      )
-    ]
-readBulkCredentials = undefined
+-- Mapping onto the consensus types
+--
+
+-- | The consensus operational certificate a @cardano-keys@ one wraps.
+opCertOf :: Keys.OperationalCertificate -> OCert.OCert StandardCrypto
+opCertOf (Keys.OperationalCertificate opCert _) = opCert
+
+-- | The stake pool cold verification key an operational certificate names,
+-- which the file carries alongside the certificate itself.
+coldVerKeyOf :: Keys.OperationalCertificate -> VKey StakePool
+coldVerKeyOf (Keys.OperationalCertificate _ (Keys.StakePoolVerificationKey coldVerKey)) =
+  coldVerKey
 
 --
 -- Errors
