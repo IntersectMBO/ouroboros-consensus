@@ -19,11 +19,9 @@ module Ouroboros.Consensus.Peras.Cert.Inclusion
   , LatestCertOnChainView (..)
   , PerasCertInclusionView (..)
   , mkPerasCertInclusionView
-  , PerasCertInclusionViewHandle (..)
   , PerasCertInclusionRule (..)
   , PerasCertInclusionRulesDecision (..)
   , needCert
-  , needCertWithHandle
   , noCertsFromTwoRoundsAgo
   , needCertRules
   ) where
@@ -37,12 +35,9 @@ import Ouroboros.Consensus.Block
   , PerasCertMaxRounds (..)
   , PerasParams (..)
   , PerasRoundNo (..)
-  , ValidatedPerasCert
   , WithOrigin (..)
   )
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
-import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 import Ouroboros.Consensus.Util.Pred
   ( Evidence (..)
   , Explainable (..)
@@ -131,22 +126,6 @@ mkPerasCertInclusionView
       LatestCertOnChainView
         { lcocRoundNo = roundNo
         }
-
--- | Handle for querying the Peras certificate inclusion rules via STM.
-newtype PerasCertInclusionViewHandle m blk
-  = PerasCertInclusionViewHandle
-      ( PerasRoundNo ->
-        STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
-      )
-
--- | Query the Peras certificate inclusion rules via STM.
-needCertWithHandle ::
-  MonadSTM m =>
-  PerasCertInclusionViewHandle m blk ->
-  PerasRoundNo ->
-  STM m (Maybe (PerasCertInclusionRulesDecision (WithArrivalTime (ValidatedPerasCert blk))))
-needCertWithHandle (PerasCertInclusionViewHandle getPerasCertInclusionView) =
-  fmap (fmap needCert) . getPerasCertInclusionView
 
 {-------------------------------------------------------------------------------
   Certificate inclusion rules

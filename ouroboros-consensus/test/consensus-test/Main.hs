@@ -26,6 +26,7 @@ import qualified Test.Consensus.Peras.Cert.Inclusion (tests)
 import qualified Test.Consensus.Peras.Serialisation (tests)
 import qualified Test.Consensus.Peras.Voting.Adapter (tests)
 import qualified Test.Consensus.Peras.Voting.Rules (tests)
+import qualified Test.Consensus.Peras.Voting.V1 (tests)
 import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.Bitmap (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
@@ -71,6 +72,7 @@ tests =
         [ Test.Consensus.Peras.Cert.Inclusion.tests
         , Test.Consensus.Peras.Voting.Adapter.tests
         , Test.Consensus.Peras.Voting.Rules.tests
+        , Test.Consensus.Peras.Voting.V1.tests
         , Test.Consensus.Peras.WeightSnapshot.tests
         , Test.Consensus.Peras.Serialisation.tests
         ]

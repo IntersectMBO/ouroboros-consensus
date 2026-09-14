@@ -23,11 +23,15 @@ module Ouroboros.Consensus.Committee.Crypto.BLS
   , coercePrivateKey
   , derivePublicKey
   , PublicKey (publicKeyScope)
+  , publicKeyFromLedgerBlsKey
+  , rawPublicKey
   , rawDeserialisePublicKey
   , rawSerialisePublicKey
   , coercePublicKey
   , Signature
   , ProofOfPossession
+  , mkProofOfPossession
+  , rawProofOfPossession
   , HasBLSContext (..)
   , signWithRole
   , verifyWithRole
@@ -63,6 +67,7 @@ import Cardano.Crypto.EllipticCurve.BLS12_381 (blsIsInf, blsMSM)
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Util (SignableRepresentation, bytesToNatural)
 import Cardano.Ledger.Hashes (HASH, KeyHash (..), StakePool)
+import Cardano.Ledger.State (BlsKey (..))
 import Control.Monad (when)
 import Data.ByteString (ByteString)
 import Data.Coerce (coerce)
@@ -141,6 +146,21 @@ data PublicKey r = PublicKey
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
+publicKeyFromLedgerBlsKey ::
+  KeyScope ->
+  BlsKey ->
+  PublicKey r
+publicKeyFromLedgerBlsKey scope key =
+  PublicKey
+    { unPublicKey = blsPubKey key
+    , publicKeyScope = scope
+    }
+
+rawPublicKey ::
+  PublicKey r ->
+  VerKeyDSIGN BLS12381MinSigDSIGN
+rawPublicKey = unPublicKey
+
 rawDeserialisePublicKey ::
   KeyScope ->
   ByteString ->
@@ -180,6 +200,16 @@ newtype ProofOfPossession = ProofOfPossession
   }
   deriving stock (Eq, Show)
   deriving newtype (FromCBOR, ToCBOR)
+
+mkProofOfPossession ::
+  PossessionProofDSIGN BLS12381MinSigDSIGN ->
+  ProofOfPossession
+mkProofOfPossession = ProofOfPossession
+
+rawProofOfPossession ::
+  ProofOfPossession ->
+  PossessionProofDSIGN BLS12381MinSigDSIGN
+rawProofOfPossession = unProofOfPossession
 
 -- | Role-separated BLS contexts for  signatures
 class HasBLSContext (r :: KeyRole) where
