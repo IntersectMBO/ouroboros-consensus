@@ -23,8 +23,13 @@
 -- performed on the certificate later on.
 module Ouroboros.Consensus.Peras.Cert.V1
   ( PerasCert (..)
-  , castPerasCert
   , PerasCertVoters (..)
+  , castPerasCert
+  , perasCertSizeUpperBound
+
+    -- * Exported for testing purposes only
+  , perasCertNumberOfNonPersistentVoters
+  , perasCertNumberOfVoters
   ) where
 
 import Cardano.Binary
@@ -64,6 +69,7 @@ import Ouroboros.Consensus.Peras.Crypto.BLS
 import Ouroboros.Consensus.Peras.Types
   ( BoostedBlock
   , PerasBoostedBlock (..)
+  , PerasCertSize
   , PerasRoundNo
   , PerasSeatIndex (..)
   )
@@ -405,3 +411,41 @@ instance
           Nothing
         nonPersistentSeats ->
           Just (NonEmpty.fromList nonPersistentSeats)
+
+-- | A reasonably tight upper bound on the size of a Peras certificate.
+-- This upper bound is used to check, at aggregation time, that the certificate does not exceed
+-- the size limit we've set for Peras certificates. We use an upper bound instead of the actual size,
+-- because the latter would require serializing the certificate, which is expensive and only actually
+-- needs to be done when the certificate is to be included in a block.
+perasCertSizeUpperBound :: PerasCert blk -> PerasCertSize
+perasCertSizeUpperBound cert =
+  (`divCeiling` 8) $
+    constSize
+      + numVoters * sizePerVoter
+      + numNonPersistentVoters * extraSizePerNonPersistentVoter
+ where
+  numNonPersistentVoters = fromIntegral $ perasCertNumberOfNonPersistentVoters cert
+  numVoters = fromIntegral $ perasCertNumberOfVoters cert
+  -- Each of the following three sizes is an upper bound (in bits, not bytes).
+  -- For a rationale of their value, see
+  -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2187#discussion_r3955585768
+  constSize = 140 * 8
+  sizePerVoter = 1
+  extraSizePerNonPersistentVoter = 50 * 8
+  divCeiling n d = q + min 1 r
+   where
+    (q, r) = n `quotRem` d
+
+perasCertNumberOfNonPersistentVoters :: PerasCert blk -> Int
+perasCertNumberOfNonPersistentVoters =
+  foldr
+    ( \case
+        PersistentPerasVoteEligibilityProof -> id
+        NonPersistentPerasVoteEligibilityProof _ -> (+ 1)
+    )
+    0
+    . unPerasCertVoters
+    . pcVoters
+
+perasCertNumberOfVoters :: PerasCert blk -> Int
+perasCertNumberOfVoters = length . unPerasCertVoters . pcVoters
