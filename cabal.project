@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2026-09-02T14:05:07Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-09-02T08:49:12Z
+  , cardano-haskell-packages 2026-09-11T14:47:01Z
 
 source-repository-package
   type: git
@@ -83,26 +83,27 @@ benchmarks: true
 
 multi-repl: True
 
--- The tools read the node configuration with cardano-config. We track its
--- master rather than CHaP because the tools follow the configuration format as
--- it is being developed; replace this with the released package from CHaP once
--- the two have converged.
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/cardano-config.git
-  tag: 8517c8efa3f7679231d957028afa751059431d6b
-  --sha256: sha256-0GBmPeL0yeFMkZgnklYzo0r2pdrrEjc4yz2PbQJsDUk=
-
 -- db-synthesizer reads its forging credentials with cardano-keys, which is not
--- on CHaP yet. Note that the package is still a skeleton: the key types and
--- their decoders it is to hold are stubbed out at the use sites in
--- "Cardano.Tools.Credentials" until it grows them.
+-- on CHaP yet. Note that "Cardano.Tools.Credentials" is not written against it
+-- yet: the readers it needs from the package are still stubbed out there.
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-keys.git
-  tag: 0b762c7e6692ae392fc4d374c51ce40ba151df7c
+  tag: df20ae67e89920fdc65cd3c30a720dbcbf9e5344
   subdir: cardano-keys
-  --sha256: sha256-AwSPSztuIv2Orb/EZ/B7fh51oBYkhnSvHWxs2LzEcc8=
+  --sha256: sha256-TILlrhcfUOgVkrG5vi6QL8sjTaFvBKJIrnPvURG94A4=
+
+-- cardano-config bounds cardano-ledger-core to <1.22 and cardano-ledger-dijkstra
+-- to <0.4, and cardano-keys bounds cardano-ledger-core to <1.22, while the pin
+-- above supplies exactly those two versions. Only the bounds that actually
+-- exclude a pinned version are relaxed, so that a future incompatibility still
+-- shows up as a conflict rather than silently. Both packages have to be released
+-- against the ledger this project builds with before this can go, which needs
+-- that ledger on CHaP first.
+allow-newer:
+  , cardano-config:cardano-ledger-core
+  , cardano-config:cardano-ledger-dijkstra
+  , cardano-keys:cardano-ledger-core
 
 import: cabal/asserts.cabal
 import: cabal/newer-ghcs.cabal
