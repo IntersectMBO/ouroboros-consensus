@@ -1868,6 +1868,7 @@ library unstable-cardano-tools
     nothunks,
     ouroboros-consensus:{cardano, diffusion, lsm, ouroboros-consensus, protocol, unstable-protocol-testlib},
     ouroboros-network:{api, framework, ouroboros-network, protocols},
+    prettyprinter,
     random,
     resource-registry,
     singletons,
