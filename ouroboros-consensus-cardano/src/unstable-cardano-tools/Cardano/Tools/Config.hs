@@ -162,11 +162,35 @@ mkTransitionConfig nc =
     (Cfg.shelleyGenesisConfig nc)
     (Cfg.alonzoGenesisConfig nc)
     (Cfg.conwayGenesisConfig nc)
-    (strictMaybe emptyDijkstraGenesis id (Cfg.experimentalGenesisConfig nc))
+    (strictMaybe defaultDijkstraGenesis id (Cfg.experimentalGenesisConfig nc))
 
--- | An empty Dijkstra genesis to be provided when none is specified in the config.
-emptyDijkstraGenesis :: SL.DijkstraGenesis
-emptyDijkstraGenesis =
+-- | The Dijkstra genesis to build the transition configuration from when the
+-- node configuration names no @DijkstraGenesisFile@.
+--
+-- Some value is needed either way: the transition configuration covers every
+-- Shelley-based era, so it has to be given a Dijkstra genesis even for a chain
+-- that never reaches Dijkstra. These values descend from cardano-node's own
+-- @Cardano.Node.Protocol.Dijkstra.emptyDijkstraGenesis@, by way of the copy of
+-- that module these tools used to vendor, plus the two fields a later
+-- @cardano-ledger@ added.
+--
+-- Note that the tools and the node do not decide this the same way, and it is
+-- the /rule/ rather than the value that differs. The node gates the whole
+-- Dijkstra genesis on @ExperimentalHardForksEnabled@: with the flag off (the
+-- default) it uses its fallback and ignores a named @DijkstraGenesisFile@
+-- entirely, and with the flag on the file is mandatory. Here, the file is used
+-- whenever the configuration names one and this value fills in when it does
+-- not, whatever the flag says. So a configuration with the flag off but a
+-- genesis file named -- which is what the tools' own test fixture is -- feeds
+-- the node and these tools different genesis values, and one with the flag on
+-- but no file named is rejected by the node while the tools carry on.
+--
+-- @cardano-config@ reports the file and the flag but resolves neither into a
+-- genesis, leaving both the fallback and the gating to each consumer, so there
+-- is nothing to defer to yet. A resolved Dijkstra genesis owned by
+-- @cardano-config@ would retire this function and the divergence with it.
+defaultDijkstraGenesis :: SL.DijkstraGenesis
+defaultDijkstraGenesis =
   let upgradePParamsDef =
         UpgradeDijkstraPParams
           { udppMaxRefScriptSizePerBlock = 1048576
