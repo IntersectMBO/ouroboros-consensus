@@ -90,11 +90,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   ( ShelleyBlock
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import System.Directory (makeAbsolute)
-import System.FS.API (SomeHasFS (..))
-import System.FS.API.Types (MountPoint (MountPoint))
-import System.FS.IO (ioHasFS)
-import System.FilePath (isAbsolute, takeDirectory)
+import System.FS.API (SomeHasFS)
+import System.FilePath (isAbsolute)
 import TextBuilder (TextBuilder)
 import qualified TextBuilder as Builder
 
@@ -151,9 +148,6 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     }
 
   mkProtocolInfoAndBackend CardanoBlockArgs{configFile, threshold} = do
-    absoluteConfig <- makeAbsolute configFile
-    let configDir = takeDirectory absoluteConfig
-
     -- cardano-config resolves the configuration and loads every era's genesis,
     -- resolving genesis paths relative to the configuration file's directory.
     (nc, warns) <- resolveNodeConfiguration configFile
@@ -161,11 +155,12 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     triggers <- either throwConfigError pure $ mkHardForkTriggers (Cfg.testingConfiguration nc)
     backend <- either throwConfigError pure $ mkLedgerDBBackend (Cfg.storageConfiguration nc)
 
-    let fs = SomeHasFS (ioHasFS (MountPoint configDir))
-
     pInfo <-
       mkCardanoProtocolInfo
-        fs
+        -- The filesystem the ledger resolves genesis initial-data injection
+        -- files against. cardano-config decides the directory: the Shelley
+        -- genesis', not necessarily the configuration file's.
+        (Cfg.nodeConfigurationInjectionFS nc)
         (Cfg.byronGenesisConfig nc)
         threshold
         (mkTransitionConfig nc)

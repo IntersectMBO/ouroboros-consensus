@@ -69,10 +69,7 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block hiding (GenesisHash)
 import Ouroboros.Network.Point (WithOrigin (..))
 import System.Directory
-import System.FS.API (SomeHasFS (..))
-import System.FS.API.Types (MountPoint (MountPoint))
-import System.FS.IO (ioHasFS)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath ((</>))
 import System.Random (newStdGen)
 
 -- | A Cardano protocol ready to forge with: the 'ProtocolInfo' and the block
@@ -112,12 +109,13 @@ initialize configFile creds = do
     either throwConfigError pure
       =<< Creds.readLeaderCredentials (Cfg.byronGenesisConfig nc) (Cfg.credentials nc)
 
-  -- The same filesystem db-analyser mounts: rooted at the configuration file's
-  -- directory, which is what the paths in a node configuration are relative to.
-  configDir <- takeDirectory <$> makeAbsolute configFile
-  let fs = SomeHasFS (ioHasFS (MountPoint configDir))
-
-  protocol <- protocolInfoCardano fs (protocolParams nc triggers leaderCredentials)
+  -- The filesystem cardano-config names for the genesis initial-data injection
+  -- files, rooted at the Shelley genesis' directory rather than the
+  -- configuration file's. db-analyser mounts the same one.
+  protocol <-
+    protocolInfoCardano
+      (Cfg.nodeConfigurationInjectionFS nc)
+      (protocolParams nc triggers leaderCredentials)
   pure (shelleyGenesis, protocol)
  where
   -- db-synthesizer has no node command line of its own beyond the credentials,
