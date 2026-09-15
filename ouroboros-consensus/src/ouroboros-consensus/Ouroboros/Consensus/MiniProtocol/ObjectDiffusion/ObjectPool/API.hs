@@ -15,10 +15,11 @@
 -- number for the first request.
 --
 -- 'ObjectPoolWriter' is used on the inbound side of the protocol. It allows
--- checking whether an object is already present (to avoid re-requesting it) and
--- appending new objects. Ticket numbers are not part of the inbound interface,
--- but are used internally: newly added objects always receive a ticket number
--- strictly greater than those of older ones.
+-- checking whether an object is already present (to avoid re-requesting it),
+-- choosing which advertised objects can currently be requested, and appending
+-- new objects. Ticket numbers are not part of the inbound interface, but are
+-- used internally: newly added objects always receive a ticket number strictly
+-- greater than those of older ones.
 --
 -- This API design is inspired by 'MempoolSnapshot' from the TX-submission
 -- miniprotocol, see:
@@ -69,6 +70,10 @@ data ObjectPoolWriter objectId object m
   -- ^ Add a batch of objects to the objectPool.
   , opwHasObject :: STM m (objectId -> Bool)
   -- ^ Check if the object pool contains an object with the given id
+  , opwIsRequestable :: STM m (objectId -> Bool)
+  -- ^ Check whether an advertised object can currently be requested. The
+  -- inbound client requests objects in FIFO order and waits at the first ID
+  -- for which this predicate returns 'False'.
   }
 
 -- * Invariants
