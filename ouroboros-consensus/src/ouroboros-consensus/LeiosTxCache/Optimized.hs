@@ -56,9 +56,10 @@ data HtState b = HtState
 emptyHtState :: HtState b
 emptyHtState = HtState Map.empty 0 Map.empty (SlotNo 0)
 
--- | A hash-table-backed handle. @nshift@ sizes the table (@2 ^ nshift@ slots; use
--- 22 for the ~1.9M worst case) and @k0@\/@k1@ are the SipHash salt (feed a
--- securely-random pair).
+-- | A hash-table-backed handle. @nshift@ sizes the table (@2 ^ nshift@ slots;
+-- the node uses 22, which no longer covers 'worstCaseCacheTxCount', see
+-- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290) and
+-- @k0@\/@k1@ are the SipHash salt (feed a securely-random pair).
 newHashTableLeiosTxCache ::
   (IOLike m, ReferencesTxsByHash b) =>
   Int ->
@@ -109,7 +110,10 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                     b
                 cacheTxCount <- HT.size ht
                 let st' = st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)}
-                pure (st', Just (mkLeiosTxCacheInsertBodySummary n tracked acquired validated cacheTxCount, w))
+                pure
+                  ( st'
+                  , Just (mkLeiosTxCacheInsertBodySummary (HT.capacity ht) n tracked acquired validated cacheTxCount, w)
+                  )
       , lookupBody = \ebh ->
           MVar.withMVar stateVar $ \st ->
             pure $ case Map.lookup ebh (hsBodies st) of

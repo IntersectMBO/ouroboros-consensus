@@ -542,7 +542,13 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           -- "LeiosTxCache"). The table is fixed at 2^22 slots (~160 MiB): a
           -- lock-free structure allocated before any ledger state is in reach,
           -- so it cannot follow the leios protocol parameters.
-          -- TODO: Emit a big warning if tx cache size turns out to be insufficient given protocol parameters
+          --
+          -- Each EB is bounded by construction ('maxTxsPerEb', the fetch
+          -- buffers hold any legal body), but the aggregate is not: the
+          -- worst case is 'worstCaseCacheTxCount' = 128 * 71428 = 9142784
+          -- distinct txs, which no longer fits the 2^22 = 4194304 slots, and
+          -- the table errors when full rather than degrading. Tracked in
+          -- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
           leiosTxCache <- newHashTableLeiosTxCache 22 leiosTxCacheSalt0 leiosTxCacheSalt1
 
           (chainDB, finalArgs) <-

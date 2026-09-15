@@ -73,6 +73,7 @@ import LeiosTxCache.API
   , TxArrivalPrior (..)
   , maxAnnouncementCount
   , mkLeiosTxCacheInsertBodySummary
+  , worstCaseCacheTxCount
   )
 import qualified Lens.Micro as L
 import qualified Lens.Micro.Extras as L
@@ -333,7 +334,19 @@ insertBody ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
             , txState = txState'
             , prunedSlot = prunedSlot idx
             }
-     in (idx', Just (mkLeiosTxCacheInsertBodySummary n tracked acquired validated (Map.size txState'), w))
+     in -- A 'Map' has no allocated capacity, so the worst case is the scale.
+        ( idx'
+        , Just
+            ( mkLeiosTxCacheInsertBodySummary
+                worstCaseCacheTxCount
+                n
+                tracked
+                acquired
+                validated
+                (Map.size txState')
+            , w
+            )
+        )
  where
   -- Bump each tx's refcount and, in the same pass, classify its /prior/ state:
   -- the counts feed the summary, and every not-yet-acquired tx (a "miss") is
