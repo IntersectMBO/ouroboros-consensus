@@ -767,6 +767,16 @@ instance Bridge m a => TxLimits (DualBlock m a) where
   blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
     blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
 
+  type TxEbMeasure (DualBlock m a) = TxEbMeasure m
+
+  txEbMeasure _ = txEbMeasure (Proxy @m)
+
+  ebCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
+    ebCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+
+  ebClosureCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
+    ebClosureCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId
   { dualGenTxIdMain :: GenTxId m

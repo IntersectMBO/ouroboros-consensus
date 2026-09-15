@@ -1020,29 +1020,6 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
 
 data ReproMempoolForgeHowManyBlks = ReproMempoolForgeOneBlk | ReproMempoolForgeTwoBlks
 
--- | Mempool capacity override for 'reproMempoolForge' on a Leios chain.
---
--- 'Mempool.computeMempoolCapacity' reads this as a number of blocks, not as a
--- byte budget: it divides by the ranking-block capacity and rounds up, and it
--- only knows about ranking blocks. So the value has to exceed one EB closure,
--- which is what two of them give.
---
--- Taken from the chain's own protocol parameters rather than a constant, so a
--- chain whose EBs are larger than the tool assumed still gets a mempool that
--- holds one. 'Nothing' for eras without Leios, where the default applies.
-leiosMempoolSize ::
-  LedgerSupportsMempool blk =>
-  LedgerConfig blk ->
-  TickedLedgerState blk mk ->
-  Mempool.MempoolCapacityBytesOverride
-leiosMempoolSize cfg st =
-  case LedgerSupportsMempool.ebCapacityTxMeasure cfg st of
-    Nothing -> Mempool.NoMempoolCapacityBytesOverride
-    Just ebCap ->
-      Mempool.MempoolCapacityBytesOverride $
-        LedgerSupportsMempool.txMeasureByteSize ebCap
-          <> LedgerSupportsMempool.txMeasureByteSize ebCap
-
 reproMempoolForge ::
   forall blk.
   ( HasAnalysis blk
@@ -1065,13 +1042,6 @@ reproMempoolForge numBlks env = do
           <> "1 or 2 blocks at a time, not "
           <> show numBlks
 
-  -- The EB capacity is a protocol parameter, so ask the chain we are about to
-  -- replay rather than assuming a size.
-  capacityOverride <- IOLike.atomically $ do
-    st <- LedgerDB.getVolatileTip ledgerDB
-    let slot = withOrigin (SlotNo 0) succ $ getTipSlot (ledgerState st)
-    pure $ leiosMempoolSize lCfg (applyChainTick OmitLedgerEvents lCfg slot (ledgerState st))
-
   mempool <-
     Mempool.openMempoolWithoutSyncThread
       Mempool.LedgerInterface
@@ -1086,13 +1056,14 @@ reproMempoolForge numBlks env = do
         }
       lCfg
       -- This pass models the mempool of a forging node, so the capacity must
-      -- match. A Leios node holds a whole EB closure, and a closure reaches
-      -- 12 MB ('maxEBClosureSize'). One mebibyte is not enough.
+      -- match. The default derives from the chain's own protocol parameters
+      -- and, on a Leios chain, holds a whole EB closure
+      -- ('Mempool.computeMempoolCapacity').
       --
       -- The capacity is a ceiling, not a target. This pass adds the
       -- transactions of one or two blocks, then it flushes them after each
       -- block. So a larger capacity does not change the measured cost.
-      capacityOverride
+      Mempool.NoMempoolCapacityBytesOverride
       (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
       nullTracer
 

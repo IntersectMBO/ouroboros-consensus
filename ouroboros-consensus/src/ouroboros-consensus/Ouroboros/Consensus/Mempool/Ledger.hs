@@ -51,11 +51,11 @@ import Ouroboros.Consensus.Util.IOLike
 data ReapplyStepState blk = ReapplyStepState
   { currentLedgerSt :: !(TickedLedgerState blk ValuesMK)
   -- ^ Ticked ledger state reflecting the cumulative effect of all applied transactions so far ('appliedTxs').
-  , remainingTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
+  , remainingTxs :: !(TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk))
   -- ^ Remaining transactions to be applied (__applicability condition holds__)
   , unapplicableTxs :: !(StrictSeq (Invalidated blk))
   -- ^ Transactions that failed reapplication, accumulated in original order of 'remainingTxs'.
-  , appliedTxs :: !(TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
+  , appliedTxs :: !(TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk))
   -- ^ Transactions successfully applied to produce 'currentLedgerSt'.
   , appliedTxIds :: !(Set.Set (GenTxId blk))
   -- ^ Set of all accepted transactions (view on 'appliedTxs').
@@ -66,7 +66,7 @@ data ReapplyStepState blk = ReapplyStepState
 initReapplyStepState ::
   LedgerSupportsMempool blk =>
   TickedLedgerState blk DiffMK ->
-  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   ReapplyStepState blk
 initReapplyStepState startingLedgerStDiff txs =
   let (tickingCreated, tickingDeleted) = cdFromLedgerState startingLedgerStDiff
@@ -88,7 +88,7 @@ reapply ::
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
-  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   m (ReapplyStepState blk)
 reapply resolveValues cfg slot baseLedgerStDiff txs =
   iterateUntilM
@@ -106,7 +106,7 @@ reapplyUntilTimeout ::
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
-  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   m (ReapplyStepState blk)
 reapplyUntilTimeout reapplyTimeout reapplyPerStep resolveValues cfg slot baseLedgerStDiff txs =
   iterateUntilOrTimeout_
@@ -157,7 +157,7 @@ reapplyTxs ::
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   LedgerConfig blk ->
   SlotNo ->
-  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   ReapplyStepState blk ->
   ReapplyStepState blk
 reapplyTxs cfg slot txs stBefore =
@@ -222,7 +222,7 @@ cdFromLedgerState st =
 boundaryInputsForTxs ::
   forall blk.
   LedgerSupportsMempool blk =>
-  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   Set (TxIn (LedgerState blk))
 boundaryInputsForTxs txs =
   let (!boundaryInputs, _) =

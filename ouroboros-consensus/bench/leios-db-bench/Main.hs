@@ -60,7 +60,7 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , LeiosPoint (..)
   , TxHash (..)
-  , leiosEbBytesSize
+  , encodeLeiosEbSize
   )
 import System.IO (hFlush, stdout)
 import System.IO.Temp (withSystemTempDirectory)
@@ -245,7 +245,7 @@ insertOneEb conn ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         , let h = genTxHash ebIdx txIdx
         ]
-  leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
+  leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
   _ <- leiosDbInsertEbBody conn point eb
   _ <- leiosDbInsertTxs conn txs
   pure ()

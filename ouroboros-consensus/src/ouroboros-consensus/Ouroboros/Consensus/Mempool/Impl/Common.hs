@@ -114,7 +114,7 @@ deriving instance
 
 -- | Internal state in the mempool
 data InternalState blk = IS
-  { isTxs :: !(TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
+  { isTxs :: !(TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk))
   -- ^ Transactions currently in the mempool
   --
   -- NOTE: the total size of the transactions in 'isTxs' may exceed the
@@ -203,6 +203,7 @@ deriving instance
   , NoThunks (TxIn (LedgerState blk))
   , NoThunks (TxOut (LedgerState blk))
   , NoThunks (TxMeasure blk)
+  , NoThunks (TxEbMeasure blk)
   , StandardHash blk
   , Typeable blk
   ) =>
@@ -215,11 +216,11 @@ isMempoolSize = mempoolSize . isTxs
 
 -- | \( O(1) \). Return the number of transactions paired with their total size in bytes.
 mempoolSize ::
-  TxLimits blk => TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) -> MempoolSize
+  TxLimits blk => TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) -> MempoolSize
 mempoolSize txs =
   MempoolSize
     { msNumTxs = fromIntegral . length $ txs
-    , msNumBytes = txMeasureByteSize . forgetTxMeasureWithDiffTime . TxSeq.toSize $ txs
+    , msNumBytes = txMeasureByteSize . mmTxMeasure . TxSeq.toSize $ txs
     }
 
 initInternalState ::
@@ -385,6 +386,7 @@ tickLedgerState cfg (ForgeInUnknownSlot st) =
 -- | Extend 'InternalState' with a new transaction (one which we have not
 -- previously validated) that may or may not be valid in this ledger state.
 validateNewTransaction ::
+  forall blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk), ResolveLeiosBlock blk) =>
   LedgerConfig blk ->
   WhetherToIntervene ->
@@ -413,7 +415,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
                   :> TxTicket
                     (ValidatedTxWithDiffs vtx (projectLedgerTables st') leiosHash)
                     nextTicketNo
-                    (MkTxMeasureWithDiffTime txsz dur)
+                    (MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) dur)
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
@@ -459,7 +461,7 @@ revalidateTxsFor ::
   TicketNo ->
   -- | The removal generation to stamp on the result (see 'isRemovalGen').
   Word64 ->
-  [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
+  [TxTicket (MempoolMeasure blk) (ValidatedTxWithDiffs blk)] ->
   m (RevalidateTxsResult blk)
 revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTickets =
   -- A from-scratch revalidation is just 'revalidateTxsFor'' onto an empty candidate
@@ -505,7 +507,7 @@ revalidateTxsFor' ::
   -- | The new 'isLastTicketNo' (the mempool's current ticket counter).
   TicketNo ->
   -- | The delta txs, in ascending 'TicketNo' order.
-  [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
+  [TxTicket (MempoolMeasure blk) (ValidatedTxWithDiffs blk)] ->
   m (RevalidateTxsResult blk)
 revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand removedSoFar) lastTicketNo deltaTxTickets = do
   let deltaTxs = map wrap deltaTxTickets
@@ -581,28 +583,33 @@ snapshot ::
   SlotNo ->
   Point blk ->
   Set (GenTxId blk) ->
-  TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   MempoolSnapshot blk
 snapshot slotNo tipPoint txIds txs =
-  let
-    txsAfter n =
-      [ (validatedTx a, b, forgetTxMeasureWithDiffTime c)
-      | (a, b, c) <- TxSeq.toTuples (snd (TxSeq.splitAfterTicketNo txs n))
-      ]
-   in
-    MempoolSnapshot
-      { snapshotTxs = txsAfter TxSeq.zeroTicketNo
-      , snapshotTxsAfter = txsAfter
-      , snapshotLookupTx = \n -> fmap validatedTx (TxSeq.lookupByTicketNo txs n)
-      , snapshotHasTx = \tid -> Set.member tid txIds
-      , snapshotMempoolSize = mempoolSize txs
-      , snapshotSlotNo = slotNo
-      , snapshotStateHash = pointHash tipPoint
-      , snapshotTake = \limit ->
-          let (x, _) = TxSeq.splitAfterTxSize txs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
-           in (map (validatedTx . TxSeq.txTicketTx) (TxSeq.toList x), TxSeq.toSize x)
-      , snapshotPoint = tipPoint
-      }
+  MempoolSnapshot
+    { snapshotTxs = txsAfter TxSeq.zeroTicketNo
+    , snapshotTxsAfter = txsAfter
+    , snapshotLookupTx = \n -> fmap validatedTx (TxSeq.lookupByTicketNo txs n)
+    , snapshotHasTx = \tid -> Set.member tid txIds
+    , snapshotMempoolSize = mempoolSize txs
+    , snapshotSlotNo = slotNo
+    , snapshotStateHash = pointHash tipPoint
+    , snapshotTake = \limit ->
+        let (x, _) = TxSeq.splitAfterTxSizeOn mmTxMeasure txs limit
+         in (txSeqToList x, TxSeq.toSize x)
+    , snapshotPartition = \blockLimit ebLimit ->
+        let (x, rest) = TxSeq.splitAfterTxSizeOn mmTxMeasure txs blockLimit
+            (y, _) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure rest ebLimit
+         in (txSeqToList x, TxSeq.toSize x, txSeqToList y, TxSeq.toSize y)
+    , snapshotPoint = tipPoint
+    }
+ where
+  txsAfter n =
+    [ (validatedTx a, b, mmTxMeasure c)
+    | (a, b, c) <- TxSeq.toTuples (snd (TxSeq.splitAfterTicketNo txs n))
+    ]
+
+  txSeqToList = map (validatedTx . TxSeq.txTicketTx) . TxSeq.toList
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
 snapshotFromIS ::
@@ -658,6 +665,13 @@ data TraceEventMempool blk
     TraceMempoolSynced
       -- | How long the sync operation took.
       EnclosingTimed
+  | -- | The mempool capacity changed while syncing with the ledger, e.g.
+    -- because a protocol parameter update was adopted.
+    TraceMempoolCapacityChanged
+      -- | The capacity before the sync.
+      (TxMeasure blk)
+      -- | The capacity after the sync.
+      (TxMeasure blk)
   | -- | A sync is not needed, as the point at the tip of the LedgerDB and the
     -- point at the mempool are the same.
     TraceMempoolSyncNotNeeded (Point blk)
@@ -675,6 +689,7 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (GenTxId blk)
   , Eq (ApplyTxErr blk)
+  , Eq (TxMeasure blk)
   , StandardHash blk
   ) =>
   Eq (TraceEventMempool blk)
@@ -684,6 +699,7 @@ deriving instance
   , Show (Validated (GenTx blk))
   , Show (GenTxId blk)
   , Show (ApplyTxErr blk)
+  , Show (TxMeasure blk)
   , StandardHash blk
   ) =>
   Show (TraceEventMempool blk)
