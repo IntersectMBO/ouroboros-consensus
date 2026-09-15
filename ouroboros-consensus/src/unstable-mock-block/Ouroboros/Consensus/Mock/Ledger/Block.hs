@@ -9,6 +9,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -83,12 +84,14 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), deserialise, serialise)
 import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
+import Data.Functor ((<&>))
 import Data.Kind (Type)
 import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (leiosDbLookupEbClosure)
+import LeiosDemoTypes (LeiosClosureError (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -148,8 +151,9 @@ instance
   ResolveLeiosBlock (SimpleBlock' c ext ext)
   where
   resolveLeiosClosure leiosDb ebHash =
-    maybe [] (fmap (fmap (deserialise . Lazy.fromStrict)))
-      <$> leiosDbLookupEbClosure leiosDb ebHash
+    leiosDbLookupEbClosure leiosDb ebHash <&> \case
+      Nothing -> Left $ LeiosClosureMissing ebHash
+      Just txs -> Right $ fmap (fmap (deserialise . Lazy.fromStrict)) txs
 
   assumeValidatedClosureTx = ValidatedSimpleGenTx
 

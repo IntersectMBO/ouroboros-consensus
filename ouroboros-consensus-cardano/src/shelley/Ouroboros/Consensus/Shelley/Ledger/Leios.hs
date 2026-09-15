@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -19,10 +20,9 @@ module Ouroboros.Consensus.Shelley.Ledger.Leios () where
 
 import Cardano.Binary (serialize')
 import qualified Cardano.Crypto.Hash as Crypto (hashToBytesShort)
-import Cardano.Ledger.Api (Tx)
 import Cardano.Ledger.Binary (decCBOR, decodeFullAnnotator)
 import qualified Cardano.Ledger.Block as Core
-import Cardano.Ledger.Core (TopTx, injectFailure)
+import Cardano.Ledger.Core (injectFailure)
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Ledger.Hashes (KeyHash (..))
@@ -30,20 +30,21 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.Rules (ledgerPpL)
 import qualified Cardano.Ledger.Shelley.UTxO as SL
 import Cardano.Slotting.Slot (SlotNo (..), fromWithOrigin)
-import Control.Monad (foldM)
+import Control.Monad (foldM, forM)
 import Control.Monad.Except (catchError, throwError)
 import qualified Control.State.Transition as STS
 import Data.Bifunctor (first)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Function ((&))
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
+import qualified Data.Text as Text
 import LeiosDemoDb (leiosDbLookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
+  , LeiosClosureError (..)
   , LeiosPoint (..)
   , LeiosTx (..)
   , RbHash (..)
@@ -88,7 +89,6 @@ import Ouroboros.Consensus.Shelley.Ledger
   )
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
-  , ShelleyBasedEra
   , shelleyLedgerGlobals
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
@@ -128,32 +128,16 @@ instance
   leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serialize' tx)))
 
   resolveLeiosClosure leiosDb ebHash = do
-    mAnnouncedEb <-
-      leiosDbLookupEbClosure
-        leiosDb
-        ebHash
-    case mAnnouncedEb of
+    leiosDbLookupEbClosure leiosDb ebHash >>= \case
       Nothing ->
-        -- FIXME(TEMP diagnostic): a missing closure here means we're
-        -- about to apply a cert-RB whose EB payload is not in this
-        -- node's LeiosDb. Under the intended parking design, chain-sel
-        -- would not have selected this block yet — it's supposed to
-        -- park pending closure acquisition. The previous behaviour
-        -- ('pure []') silently produced an empty tx list, letting the
-        -- cert-RB apply as if the EB carried no txs, which then
-        -- diverged the UTxO and caused downstream blocks to fail
-        -- validation ('ValueNotConservedUTxO' / 'BadInputsUTxO' on
-        -- txs consuming outputs the missing EB should have produced).
-        -- Erroring loudly here surfaces the exact block/EB pair that
-        -- exposed the parking gap, instead of silently corrupting the
-        -- ledger state.
-        error $
-          "resolveLeiosClosure: EB closure missing from LeiosDb for point "
-            <> show ebHash
-            <> "; chain-sel selected a cert-RB without its EB closure. "
-            <> "Refusing to apply as empty (would diverge UTxO)."
+        pure $ Left $ LeiosClosureMissing ebHash
       Just closureEntries ->
-        pure $ fmap (mkShelleyTx . deserialiseLeiosTx) <$> closureEntries
+        -- Stops at the first undecodable tx: a closure is only useful whole, so
+        -- decoding the rest would be work thrown away.
+        pure $ forM closureEntries $ \(txh, bs) ->
+          case decodeFullAnnotator (Core.eraProtVerLow @DijkstraEra) "Leios Tx" decCBOR (BL.fromStrict bs) of
+            Left err -> Left $ LeiosClosureTxUndecodable ebHash txh $ Text.pack (show err)
+            Right !tx -> Right (txh, mkShelleyTx tx)
 
   -- The ledger's 'Validated' is a bare newtype over the tx, so rebuilding the
   -- token costs only the tx-id hash; 'SL.reapplyTx' derives the state-dependent
@@ -304,10 +288,3 @@ instance
       GenesisHash -> Nothing
       BlockHash h ->
         Just $ MkRbHash $ toRawHash (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) h
-
--- | Deserialise a transaction supplied as Leios-stored bytes.
-deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era
-deserialiseLeiosTx bs =
-  case decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" decCBOR (BL.fromStrict bs) of
-    Left err -> error $ "Failed to deserialise Leios tx: " <> show err
-    Right !tx -> tx
