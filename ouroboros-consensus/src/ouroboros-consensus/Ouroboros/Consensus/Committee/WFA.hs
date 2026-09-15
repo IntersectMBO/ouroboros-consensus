@@ -402,20 +402,21 @@ wFATiebreakerWithEpochNonce epochNonce =
 data ExtWFAStakeDistr a
   = ExtWFAStakeDistr
   { unExtWFAStakeDistr ::
-      Array
-        SeatIndex
-        ( PoolId -- Voter ID of this voter
-        , a -- Extra payload associated to this voter
-        , LedgerStake -- Ledger stake of this voter
-        , Cumulative LedgerStake -- Right-cumulative ledger stake of this voter
-        )
-  , numPoolsWithPositiveStake :: NumPoolsWithPositiveStake
+      !( Array
+           SeatIndex
+           ( PoolId -- Voter ID of this voter
+           , a -- Extra payload associated to this voter
+           , LedgerStake -- Ledger stake of this voter
+           , Cumulative LedgerStake -- Right-cumulative ledger stake of this voter
+           )
+       )
+  , numPoolsWithPositiveStake :: !NumPoolsWithPositiveStake
   -- ^ Number of pools with positive stake in the underlying stake distribution.
   -- This is also precomputed at the beginning of the epoch to prevent invalid
   -- weighted Fait-Accompli instantiations with a target committee size larger
   -- than the number of pools with positive stake, which would lead to incorrect
   -- results (e.g. granting persistent seats to voters with zero stake).
-  , totalStake :: TotalStake
+  , totalStake :: !TotalStake
   -- ^ Total stake in the underlying stake distribution. This is also
   -- precomputed at the beginning of each epoch to allow for quick
   -- transformations between absolute and relative stakes.
