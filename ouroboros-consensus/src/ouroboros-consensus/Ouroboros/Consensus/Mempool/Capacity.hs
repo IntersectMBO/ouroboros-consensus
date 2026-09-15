@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Mempool.Capacity
 
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Measure (Measure)
+import qualified Data.Measure as Measure
 import Data.Semigroup (stimes)
 import Data.Word (Word32)
 import GHC.Generics
@@ -38,11 +39,12 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 -- | An override for the default 'MempoolCapacityBytes' which is 2x the
 -- maximum transaction capacity
 data MempoolCapacityBytesOverride
-  = -- | Use 2x the maximum transaction capacity of a block. This will change
-    -- dynamically with the protocol parameters adopted in the current ledger.
+  = -- | Use 2x the maximum transaction capacity of a block plus, under Leios,
+    -- an endorser block's closure. This will change dynamically with the
+    -- protocol parameters adopted in the current ledger.
     NoMempoolCapacityBytesOverride
-  | -- | Use the least multiple of the block capacity that is no less than this
-    -- size.
+  | -- | Use the least multiple of the block (plus endorser-block closure)
+    -- capacity that is no less than this size.
     MempoolCapacityBytesOverride !ByteSize32
   deriving (Eq, Show)
 
@@ -52,10 +54,17 @@ mkCapacityBytesOverride :: ByteSize32 -> MempoolCapacityBytesOverride
 mkCapacityBytesOverride = MempoolCapacityBytesOverride
 
 -- | If no override is provided, calculate the default mempool capacity as 2x
--- the current ledger's maximum transaction capacity of a block.
+-- what one forging opportunity can drain from the mempool: the current
+-- ledger's maximum transaction capacity of a block plus, under Leios, of an
+-- endorser block's closure ('ebClosureCapacityTxMeasure', zero elsewhere).
 --
--- If an override is present, reinterpret it as a number of blocks (rounded
--- up), and then simply multiply the ledger's capacity by that number.
+-- If an override is present, reinterpret it as a number of such forging units
+-- (rounded up), and then simply multiply the unit capacity by that number.
+--
+-- Note that admission is bounded on the 'TxMeasure' components only: an
+-- endorser block's references are bounded per fill (by 'ebCapacityTxMeasure'
+-- at forge time), never here, so no endorser-block parameter can gate what
+-- enters the mempool.
 computeMempoolCapacity ::
   LedgerSupportsMempool blk =>
   LedgerConfig blk ->
@@ -65,36 +74,23 @@ computeMempoolCapacity ::
 computeMempoolCapacity cfg st override =
   capacity
  where
-  -- FIXME: this sizes the mempool from the ranking (Praos) block capacity only,
-  -- and only from protocol parameters via 'blockCapacityTxMeasure'. Under Leios
-  -- the mempool also feeds Endorser Blocks, whose capacity is
-  -- 'ebCapacityTxMeasure', and a single EB can be many Praos blocks' worth, so
-  -- the default (blockCount = 2) does not hold even one EB.
-  --
-  -- Today the only fix is 'MempoolCapacityBytesOverride', which is per-operator
-  -- node config, not a protocol parameter. That is acceptable for the forge time
-  -- cap (a genuine local latency/resource tradeoff), but mempool size is not
-  -- local: an operator whose mempool is too small forges undersized EBs no
-  -- matter what the ledger parameters allow, so it caps network throughput from
-  -- one node's config. The default should instead be derived from the
-  -- parameters, e.g. a small multiple of @blockCapacity + ebCapacity@ (both
-  -- already parameter-derived here), so no override is needed for correctness
-  -- and the effective size is network-consistent.
-  oneBlock = blockCapacityTxMeasure cfg st
-  ByteSize32 oneBlockBytes = txMeasureByteSize oneBlock
+  oneUnit =
+    blockCapacityTxMeasure cfg st
+      `Measure.plus` ebClosureCapacityTxMeasure cfg st
+  ByteSize32 oneUnitBytes = txMeasureByteSize oneUnit
 
-  blockCount = case override of
+  unitCount = case override of
     NoMempoolCapacityBytesOverride -> 2
     MempoolCapacityBytesOverride (ByteSize32 x) ->
       -- This calculation is happening at Word32. If it was to overflow, it
       -- will round down instead.
       max 1 $
-        if x + oneBlockBytes < x
-          then x `div` oneBlockBytes
-          else (x + oneBlockBytes - 1) `div` oneBlockBytes
+        if x + oneUnitBytes < x
+          then x `div` oneUnitBytes
+          else (x + oneUnitBytes - 1) `div` oneUnitBytes
 
   SemigroupViaMeasure capacity =
-    stimes blockCount (SemigroupViaMeasure oneBlock)
+    stimes unitCount (SemigroupViaMeasure oneUnit)
 
 newtype SemigroupViaMeasure a = SemigroupViaMeasure a
   deriving newtype (Eq, Measure)

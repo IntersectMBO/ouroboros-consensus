@@ -1869,6 +1869,7 @@ type TracingConstraints blk =
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
   , Show (TxMeasure blk)
+  , Show (TxEbMeasure blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , HasNestedContent Header blk
   , HasRawTxId (GenTxId blk)

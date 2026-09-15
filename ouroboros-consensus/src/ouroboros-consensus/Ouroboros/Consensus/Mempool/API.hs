@@ -39,8 +39,7 @@ module Ouroboros.Consensus.Mempool.API
     -- * Mempool Snapshot
   , DiffTimeMeasure (..)
   , MempoolSnapshot (..)
-  , TxMeasureWithDiffTime (..)
-  , forgetTxMeasureWithDiffTime
+  , MempoolMeasure (..)
 
     -- * Re-exports
   , SizeInBytes
@@ -459,9 +458,22 @@ data MempoolSnapshot blk = MempoolSnapshot
   -- ^ Get all transactions (oldest to newest) in the mempool snapshot,
   -- along with their ticket number, which are associated with a ticket
   -- number greater than the one provided.
-  , snapshotTake :: TxMeasure blk -> ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
+  , snapshotTake :: TxMeasure blk -> ([Validated (GenTx blk)], MempoolMeasure blk)
   -- ^ Get the greatest prefix (oldest to newest) that respects the given
   -- block capacity, and the prefix's total size.
+  , snapshotPartition ::
+      TxMeasure blk ->
+      TxEbMeasure blk ->
+      ( [Validated (GenTx blk)]
+      , MempoolMeasure blk
+      , [Validated (GenTx blk)]
+      , MempoolMeasure blk
+      )
+  -- ^ Partition the mempool for one forging opportunity: the greatest prefix
+  -- respecting the given block capacity on the 'TxMeasure' component (as
+  -- 'snapshotTake'), and then the greatest run of /following/ transactions
+  -- respecting the given endorser-block capacity on their 'TxEbMeasure'
+  -- component alone. Each with its total size.
   , snapshotLookupTx :: TicketNo -> Maybe (Validated (GenTx blk))
   -- ^ Get a specific transaction from the mempool snapshot by its ticket
   -- number, if it exists.
@@ -478,51 +490,65 @@ data MempoolSnapshot blk = MempoolSnapshot
   , snapshotPoint :: Point blk
   }
 
-data TxMeasureWithDiffTime blk = MkTxMeasureWithDiffTime !(TxMeasure blk) !DiffTimeMeasure
+-- | Everything the mempool measures per transaction: its block measure
+-- ('TxMeasure', which also bounds admission), its endorser-block measure
+-- ('TxEbMeasure') and how long it took to validate.
+data MempoolMeasure blk = MempoolMeasure
+  { mmTxMeasure :: !(TxMeasure blk)
+  , mmTxEbMeasure :: !(TxEbMeasure blk)
+  , mmDiffTime :: !DiffTimeMeasure
+  }
   deriving stock Generic
 
-deriving instance Eq (TxMeasure blk) => Eq (TxMeasureWithDiffTime blk)
-deriving instance Ord (TxMeasure blk) => Ord (TxMeasureWithDiffTime blk)
-deriving instance Show (TxMeasure blk) => Show (TxMeasureWithDiffTime blk)
+deriving instance
+  (Eq (TxMeasure blk), Eq (TxEbMeasure blk)) => Eq (MempoolMeasure blk)
+deriving instance
+  (Ord (TxMeasure blk), Ord (TxEbMeasure blk)) => Ord (MempoolMeasure blk)
+deriving instance
+  (Show (TxMeasure blk), Show (TxEbMeasure blk)) => Show (MempoolMeasure blk)
 
 deriving via
-  (InstantiatedAt Measure (TxMeasureWithDiffTime blk))
+  (InstantiatedAt Measure (MempoolMeasure blk))
   instance
-    Measure (TxMeasure blk) => Semigroup (TxMeasureWithDiffTime blk)
+    (Measure (TxMeasure blk), Measure (TxEbMeasure blk)) =>
+    Semigroup (MempoolMeasure blk)
 
 deriving via
-  (InstantiatedAt Measure (TxMeasureWithDiffTime blk))
+  (InstantiatedAt Measure (MempoolMeasure blk))
   instance
-    Measure (TxMeasure blk) => Monoid (TxMeasureWithDiffTime blk)
+    (Measure (TxMeasure blk), Measure (TxEbMeasure blk)) =>
+    Monoid (MempoolMeasure blk)
 
-forgetTxMeasureWithDiffTime :: TxMeasureWithDiffTime blk -> TxMeasure blk
-forgetTxMeasureWithDiffTime (MkTxMeasureWithDiffTime x _) = x
+deriving instance
+  (NoThunks (TxMeasure blk), NoThunks (TxEbMeasure blk)) =>
+  NoThunks (MempoolMeasure blk)
 
-deriving instance NoThunks (TxMeasure blk) => NoThunks (TxMeasureWithDiffTime blk)
+instance
+  (Measure (TxMeasure blk), Measure (TxEbMeasure blk)) =>
+  Measure (MempoolMeasure blk)
+  where
+  zero = MempoolMeasure Data.Measure.zero Data.Measure.zero Data.Measure.zero
+  plus = binopComponentwise Data.Measure.plus
+  min = binopComponentwise Data.Measure.min
+  max = binopComponentwise Data.Measure.max
 
-binopViaTuple ::
-  ((TxMeasure x, DiffTimeMeasure) -> (TxMeasure y, DiffTimeMeasure) -> (TxMeasure z, DiffTimeMeasure)) ->
-  TxMeasureWithDiffTime x ->
-  TxMeasureWithDiffTime y ->
-  TxMeasureWithDiffTime z
-binopViaTuple f (MkTxMeasureWithDiffTime a b) (MkTxMeasureWithDiffTime p q) =
-  let (x, y) = f (a, b) (p, q)
-   in MkTxMeasureWithDiffTime x y
+binopComponentwise ::
+  (Measure (TxMeasure blk), Measure (TxEbMeasure blk)) =>
+  (forall a. Measure a => a -> a -> a) ->
+  MempoolMeasure blk ->
+  MempoolMeasure blk ->
+  MempoolMeasure blk
+binopComponentwise f (MempoolMeasure a b c) (MempoolMeasure p q r) =
+  MempoolMeasure (f a p) (f b q) (f c r)
 
-instance Measure (TxMeasure blk) => Measure (TxMeasureWithDiffTime blk) where
-  zero = MkTxMeasureWithDiffTime Data.Measure.zero Data.Measure.zero
-  plus = binopViaTuple Data.Measure.plus
-  min = binopViaTuple Data.Measure.min
-  max = binopViaTuple Data.Measure.max
+instance HasByteSize (TxMeasure blk) => HasByteSize (MempoolMeasure blk) where
+  txMeasureByteSize = txMeasureByteSize . mmTxMeasure
 
-instance HasByteSize (TxMeasure blk) => HasByteSize (TxMeasureWithDiffTime blk) where
-  txMeasureByteSize = txMeasureByteSize . forgetTxMeasureWithDiffTime
-
-instance TxMeasureMetrics (TxMeasure blk) => TxMeasureMetrics (TxMeasureWithDiffTime blk) where
-  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . forgetTxMeasureWithDiffTime
-  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . forgetTxMeasureWithDiffTime
-  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . forgetTxMeasureWithDiffTime
-  txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . forgetTxMeasureWithDiffTime
+instance TxMeasureMetrics (TxMeasure blk) => TxMeasureMetrics (MempoolMeasure blk) where
+  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . mmTxMeasure
+  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . mmTxMeasure
+  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . mmTxMeasure
+  txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . mmTxMeasure
 
 -- | How long it took to validate a valid tx
 data DiffTimeMeasure = FiniteDiffTimeMeasure !DiffTime | InfiniteDiffTimeMeasure

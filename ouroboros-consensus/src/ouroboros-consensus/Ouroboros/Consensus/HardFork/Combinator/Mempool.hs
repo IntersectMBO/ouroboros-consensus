@@ -325,6 +325,9 @@ instance
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
+  type TxEbMeasure (HardForkBlock xs) = HardForkTxEbMeasure xs
+
+  txEbMeasure _ = hardForkTxEbMeasure (Proxy @xs)
 
   txWireSize =
     \tx ->
@@ -429,11 +432,37 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
         Index xs blk ->
         WrapPartialLedgerConfig blk ->
         FlipTickedLedgerState mk blk ->
-        K (Maybe (HardForkTxMeasure xs)) blk
+        K (HardForkTxEbMeasure xs) blk
       aux idx pcfg st' =
         K $
-          hardForkInjTxMeasure . injectNS idx . WrapTxMeasure
-            <$> ebCapacityTxMeasure
+          hardForkInjTxEbMeasure . injectNS idx . WrapTxEbMeasure $
+            ebCapacityTxMeasure
+              (completeLedgerConfig' ei pcfg)
+              (getFlipTickedLedgerState st')
+
+  ebClosureCapacityTxMeasure
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState) =
+      hcollapse $
+        hcizipWith proxySingle aux pcfgs hardForkState
+     where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkLedgerConfigShape
+          transition
+          hardForkState
+
+      aux ::
+        SingleEraBlock blk =>
+        Index xs blk ->
+        WrapPartialLedgerConfig blk ->
+        FlipTickedLedgerState mk blk ->
+        K (HardForkTxMeasure xs) blk
+      aux idx pcfg st' =
+        K $
+          hardForkInjTxMeasure . injectNS idx . WrapTxMeasure $
+            ebClosureCapacityTxMeasure
               (completeLedgerConfig' ei pcfg)
               (getFlipTickedLedgerState st')
 
