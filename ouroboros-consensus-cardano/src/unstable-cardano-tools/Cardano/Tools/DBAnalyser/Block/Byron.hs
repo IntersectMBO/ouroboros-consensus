@@ -12,7 +12,6 @@ module Cardano.Tools.DBAnalyser.Block.Byron
 import qualified Cardano.Chain.Block as Chain
 import qualified Cardano.Chain.Genesis as Genesis
 import qualified Cardano.Chain.UTxO as Chain
-import qualified Cardano.Chain.Update as Update
 import Cardano.Crypto (RequiresNetworkMagic (..))
 import qualified Cardano.Crypto as Crypto
 import Cardano.Crypto.Raw (Raw)
@@ -26,6 +25,8 @@ import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import Ouroboros.Consensus.Byron.Node
   ( PBftSignatureThreshold (..)
   , ProtocolParamsByron (..)
+  , defaultByronProtocolVersion
+  , defaultByronSoftwareVersion
   , protocolInfoByron
   )
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -124,7 +125,9 @@ mkByronProtocolInfo genesisConfig signatureThreshold =
     ProtocolParamsByron
       { byronGenesis = genesisConfig
       , byronPbftSignatureThreshold = signatureThreshold
-      , byronProtocolVersion = Update.ProtocolVersion 1 0 0
-      , byronSoftwareVersion = Update.SoftwareVersion (Update.ApplicationName "db-analyser") 2
+      , -- Never used: db-analyser does not forge, and these two only reach the
+        -- blocks a producer makes.
+        byronProtocolVersion = defaultByronProtocolVersion
+      , byronSoftwareVersion = defaultByronSoftwareVersion
       , byronLeaderCredentials = Nothing
       }

@@ -25,7 +25,6 @@ module Cardano.Tools.DBAnalyser.Block.Cardano
 import qualified Cardano.Chain.Block as Byron.Block
 import qualified Cardano.Chain.Genesis as Byron.Genesis
 import qualified Cardano.Chain.UTxO as Byron.UTxO
-import qualified Cardano.Chain.Update as Byron.Update
 import qualified Cardano.Configuration as Cfg
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
@@ -334,9 +333,10 @@ mkCardanoProtocolInfo fs genesisByron signatureThreshold transitionConfig initia
           ProtocolParamsByron
             { byronGenesis = genesisByron
             , byronPbftSignatureThreshold = signatureThreshold
-            , byronProtocolVersion = Byron.Update.ProtocolVersion 1 2 0
-            , byronSoftwareVersion =
-                Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
+            , -- Never used: db-analyser does not forge, and these two only
+              -- reach the blocks a producer makes.
+              byronProtocolVersion = defaultByronProtocolVersion
+            , byronSoftwareVersion = defaultByronSoftwareVersion
             , byronLeaderCredentials = Nothing
             }
           ProtocolParamsShelleyBased
