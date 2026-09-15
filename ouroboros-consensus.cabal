@@ -1139,6 +1139,7 @@ library diffusion
     fs-api,
     hashable,
     io-classes:{io-classes, si-timers, strict-stm},
+    measures,
     mtl,
     network-mux ^>=0.11,
     ouroboros-consensus:{ouroboros-consensus, protocol},
