@@ -58,6 +58,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
 import System.FS.API
+import qualified System.FilePath as FilePath
 import System.IO
 import System.Random
 import Text.Printf (printf)
@@ -154,8 +155,12 @@ analyse dbaConfig args =
       mkProtocolInfo args
     leiosDbHandle <- case leiosDbSource of
       NoLeiosDb -> newLeiosDBInMemory
-      LeiosDbFile mPath ->
-        newLeiosDBSQLite nullTracer =<< requireLeiosDbFile dbDir mPath
+      LeiosDbFiles -> do
+        let volLeiosDBFile = dbDir FilePath.</> "leios.db.vol"
+            immLeiosDBFile = dbDir FilePath.</> "leios.db.imm"
+        requireLeiosDbFile volLeiosDBFile
+        requireLeiosDbFile immLeiosDBFile
+        newLeiosDBSQLite nullTracer volLeiosDBFile immLeiosDBFile
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of

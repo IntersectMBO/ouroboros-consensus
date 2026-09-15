@@ -106,7 +106,7 @@ withFreshDb SQLite action = do
   bracket
     ( do
         tmpDir <- createTempDirectory sysTmp "leios-test"
-        db <- newLeiosDBSQLite nullTracer (tmpDir <> "/test.db")
+        db <- newLeiosDBSQLite nullTracer (tmpDir <> "/test.db.vol") (tmpDir <> "/test.db.imm")
         pure (db, removeDirectoryRecursive tmpDir)
     )
     snd
@@ -114,16 +114,17 @@ withFreshDb SQLite action = do
 
 -- | Create a fresh SQLite database and hand its path to the action, which
 -- 'truncateLeiosDbAfterSlot' needs.
-withFreshSQLiteFile :: (FilePath -> LeiosDbHandle IO -> IO a) -> IO a
+withFreshSQLiteFile :: (FilePath -> FilePath -> LeiosDbHandle IO -> IO a) -> IO a
 withFreshSQLiteFile action = do
   sysTmp <- getCanonicalTemporaryDirectory
   bracket
     (createTempDirectory sysTmp "leios-test")
     removeDirectoryRecursive
     ( \tmpDir -> do
-        let dbPath = tmpDir <> "/test.db"
-        db <- newLeiosDBSQLite nullTracer dbPath
-        action dbPath db
+        let volDbPath = tmpDir <> "/test.db.vol"
+            immDbPath = tmpDir <> "/test.db.imm"
+        db <- newLeiosDBSQLite nullTracer volDbPath immDbPath
+        action volDbPath immDbPath db
     )
 
 -- | Run tests for each database implementation (InMemory and SQLite).
@@ -843,8 +844,8 @@ prop_completedEbNoBody impl =
 
 -- * truncateLeiosDbAfterSlot
 
-test_truncateDropsEbsAfterSlot :: FilePath -> LeiosDbHandle IO -> IO ()
-test_truncateDropsEbsAfterSlot dbPath db = do
+test_truncateDropsEbsAfterSlot :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
   let eb = mkTestEb 2
       keptHash = mkTestEbHash 1
       droppedHash = mkTestEbHash 2
@@ -856,7 +857,7 @@ test_truncateDropsEbsAfterSlot dbPath db = do
     leiosDbInsertEbPoint con (MkLeiosPoint 15 droppedHash) (leiosEbBytesSize eb)
     void $ leiosDbInsertEbBody con (MkLeiosPoint 15 droppedHash) eb
 
-  truncateLeiosDbAfterSlot dbPath 10
+  truncateLeiosDbAfterSlot volDbPath 10
 
   withLeiosDb db $ \con -> do
     points <- leiosDbScanEbPoints con
@@ -868,8 +869,8 @@ test_truncateDropsEbsAfterSlot dbPath db = do
 
 -- * deleteDanglingTxs
 
-test_deleteDanglingTxs :: FilePath -> LeiosDbHandle IO -> IO ()
-test_deleteDanglingTxs dbPath db = do
+test_deleteDanglingTxs :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
+test_deleteDanglingTxs volDbPath _immDbPath db = do
   let eb = mkTestEb 2
       ebHash = mkTestEbHash 1
       danglingTx = mkTestTxHash 9
@@ -881,7 +882,7 @@ test_deleteDanglingTxs dbPath db = do
       leiosDbInsertTxs con $
         (danglingTx, txBytes) : [(txHash, txBytes) | (txHash, _) <- V.toList (leiosEbTxs eb)]
 
-  deleteDanglingTxs dbPath
+  deleteDanglingTxs volDbPath
 
   withLeiosDb db $ \con -> do
     closure <- leiosDbLookupEbClosure con ebHash

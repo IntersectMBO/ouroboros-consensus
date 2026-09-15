@@ -103,7 +103,7 @@ testTruncaterConfig =
     { DBTruncater.dbDir = chainDB
     , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
     , DBTruncater.verbose = False
-    , DBTruncater.leiosDbSource = LeiosDbFile Nothing
+    , DBTruncater.leiosDbSource = LeiosDbFiles
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
@@ -152,10 +152,10 @@ blockCountTest logStep = do
       ++ ")"
 
   logStep "writing a LeiosDb next to the chain"
-  -- DBSynthesizer writes no leios.db, so the test writes one. The kept EB is
-  -- announced below the truncation slot, and the dropped one above every block
+  -- DBSynthesizer writes no leios.db.vol and leios.db.imm, so the test writes them too.
+  -- The kept EB is announced below the truncation slot, and the dropped one above every block
   -- the synthesis forged.
-  leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.db")
+  leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.db.vol") (chainDB <> "/leios.db.imm")
   let keptEb = MkLeiosPoint 0 (mkEbHash '1')
       droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
   withLeiosDb leiosDb $ \con ->
