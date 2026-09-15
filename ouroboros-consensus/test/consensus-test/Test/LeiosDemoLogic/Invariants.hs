@@ -452,7 +452,7 @@ applyCmd conn txCache kv peerVars peerId = \case
       conn
       dummySystemTime
       noMempoolPull
-      (ReceivedBlockFrom peerId req)
+      (ReceivedBlockFrom peerId req (RelativeTime 0))
       eb
     pure []
   ArriveTx v -> absurd v
@@ -780,7 +780,7 @@ raceSameHashMultiSlot = do
               conn
               dummySystemTime
               noMempoolPull
-              (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize))
+              (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize) (RelativeTime 0))
               eb
           )
       )
