@@ -11,11 +11,10 @@ module Cardano.Tools.DBSynthesizer.Run
 
 import qualified Cardano.Configuration as Cfg
 import qualified Cardano.Configuration.CliArgs as CLI
-import qualified Cardano.Ledger.Api.Era as L
-import Cardano.Ledger.BaseTypes (ProtVer (..))
 import Cardano.Tools.Config
   ( mkHardForkTriggers
   , mkInitialNonce
+  , mkProtocolVersion
   , mkTransitionConfig
   , reportConfigWarnings
   , resolveNodeConfigurationWith
@@ -147,9 +146,9 @@ protocolParams nc triggers leaderCredentials =
     triggers
     (mkTransitionConfig nc)
     emptyCheckpointsMap
-    -- The greatest protocol version we can forge in, ie the latest era we know
-    -- about. db-analyser uses the same, so that it can validate what we forge.
-    (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
+    -- db-analyser derives this from the configuration the same way, so that it
+    -- can validate what we forge.
+    (mkProtocolVersion nc)
 
 -- | Forge a ChainDB from a ready-made Cardano 'ProtocolInfo' and its block
 -- forgers (as produced by 'initialize'). Constructing the protocol from a node
