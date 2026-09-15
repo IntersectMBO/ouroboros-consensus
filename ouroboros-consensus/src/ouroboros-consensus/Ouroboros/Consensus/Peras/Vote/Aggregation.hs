@@ -14,6 +14,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Peras vote aggregation and certificate forging
 --
@@ -100,6 +101,7 @@ import Data.Bifunctor (Bifunctor (..))
 import Data.Functor.Compose (Compose (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Strict.Either as Strict
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
@@ -119,7 +121,7 @@ import Ouroboros.Consensus.Peras.Context
 data PerasRoundVoteState blk = PerasRoundVoteState
   { prvsRoundNo :: !PerasRoundNo
   , prvsEpochContext :: !(PerasEpochContext blk)
-  , prvsState :: !(Either (NoQuorum blk) (Quorum blk))
+  , prvsState :: !(Strict.Either (NoQuorum blk) (Quorum blk))
   }
 
 deriving instance
@@ -211,7 +213,7 @@ getPerasRoundVoteStateCertMaybe ::
 getPerasRoundVoteStateCertMaybe = \case
   PerasRoundVoteState
     { prvsState =
-      Right
+      Strict.Right
         Quorum
           { winnerState =
             PerasTargetVoteWinner _ cert
@@ -231,9 +233,9 @@ getPerasRoundVoteStateMaxTargetedSlot ::
   WithOrigin SlotNo
 getPerasRoundVoteStateMaxTargetedSlot PerasRoundVoteState{prvsState} =
   case prvsState of
-    Left NoQuorum{candidateStates} ->
+    Strict.Left NoQuorum{candidateStates} ->
       maximumOrOrigin $ map pointSlot $ Map.keys candidateStates
-    Right Quorum{winnerState, loserStates} ->
+    Strict.Right Quorum{winnerState, loserStates} ->
       maximumOrOrigin $
         pointSlot (getPerasTargetVoteStateBlock winnerState)
           : (pointSlot <$> Map.keys loserStates)
@@ -258,7 +260,7 @@ freshRoundVoteState roundNo resolverHandle = do
       { prvsRoundNo = roundNo
       , prvsEpochContext = context
       , prvsState =
-          Left
+          Strict.Left
             NoQuorum
               { candidateStates =
                   Map.empty
@@ -268,12 +270,12 @@ freshRoundVoteState roundNo resolverHandle = do
 -- | Errors that may occur when updating the round vote state with a new vote
 data UpdateRoundVoteStateError blk
   = RoundVoteStateLoserAboveQuorum
-      (PerasTargetVoteState blk 'Winner)
-      (PerasTargetVoteState blk 'Loser)
+      !(PerasTargetVoteState blk 'Winner)
+      !(PerasTargetVoteState blk 'Loser)
   | RoundVoteStateForgingCertError
-      (PerasError blk)
+      !(PerasError blk)
   | RoundVoteStateEpochContextNotFound
-      PerasEpochContextNotFoundForRound
+      !PerasEpochContextNotFoundForRound
 
 -- | Add a vote to an existing round vote aggregate.
 --
@@ -293,7 +295,7 @@ updatePerasRoundVoteState vote roundState =
       -- Quorum not yet reached
       state@PerasRoundVoteState
         { prvsState =
-          Left
+          Strict.Left
             NoQuorum
               { candidateStates
               }
@@ -316,7 +318,7 @@ updatePerasRoundVoteState vote roundState =
               pure $
                 state
                   { prvsState =
-                      Left
+                      Strict.Left
                         NoQuorum
                           { candidateStates = prvsCandidateStates'
                           }
@@ -333,7 +335,7 @@ updatePerasRoundVoteState vote roundState =
                       prvsRoundNo roundState
                   , prvsEpochContext = prvsEpochContext roundState
                   , prvsState =
-                      Right
+                      Strict.Right
                         Quorum
                           { excessVotes = 0
                           , loserStates = loserStates
@@ -344,7 +346,7 @@ updatePerasRoundVoteState vote roundState =
       -- Quorum already reached
       state@PerasRoundVoteState
         { prvsState =
-          Right
+          Strict.Right
             Quorum
               { excessVotes
               , winnerState
@@ -363,7 +365,7 @@ updatePerasRoundVoteState vote roundState =
               pure $
                 state
                   { prvsState =
-                      Right
+                      Strict.Right
                         Quorum
                           { excessVotes = excessVotes + 1
                           , winnerState = winnerState'
@@ -384,7 +386,7 @@ updatePerasRoundVoteState vote roundState =
               pure $
                 state
                   { prvsState =
-                      Right
+                      Strict.Right
                         Quorum
                           { excessVotes = excessVotes + 1
                           , winnerState = winnerState
@@ -482,7 +484,7 @@ voteGeneratedCert :: PerasRoundVoteState blk -> Maybe (ValidatedPerasCert blk)
 voteGeneratedCert = \case
   PerasRoundVoteState
     { prvsState =
-      Right
+      Strict.Right
         Quorum
           { excessVotes = 0 -- just reached quorum
           , winnerState = PerasTargetVoteWinner _ cert
@@ -614,8 +616,8 @@ candidateToLoser (PerasTargetVoteCandidate voteCollection) =
 -- | Subtype of 'PerasTargetVoteState' to indicate whether the target remains a
 -- candidate or has been elected winner
 data PerasVoteStateCandidateOrWinner blk
-  = RemainedCandidate (PerasTargetVoteState blk 'Candidate)
-  | BecameWinner (PerasTargetVoteState blk 'Winner)
+  = RemainedCandidate !(PerasTargetVoteState blk 'Candidate)
+  | BecameWinner !(PerasTargetVoteState blk 'Winner)
 
 -- | Add a vote to an existing target vote state if it isn't already present.
 --

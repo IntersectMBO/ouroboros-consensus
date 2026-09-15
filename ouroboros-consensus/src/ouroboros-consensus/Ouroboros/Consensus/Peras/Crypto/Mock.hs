@@ -50,7 +50,6 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
-import Data.Map.Strict.Internal (Map (..))
 import qualified Data.Set.NonEmpty as NESet
 import Data.Typeable (Typeable)
 import Data.Word (Word16)
@@ -245,9 +244,6 @@ instance
       compare
         (mockVoteRound1, mockVoteSeatIndex1)
         (mockVoteRound2, mockVoteSeatIndex2)
-
--- TODO: orphan needed by 'Generic' for 'VotingCommittee'
-deriving instance Generic (Map k v)
 
 deriving newtype instance
   Show (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
