@@ -21,13 +21,14 @@ module Ouroboros.Consensus.Mempool.TxSeq
   , lookupByTicketNo
   , splitAfterTicketNo
   , splitAfterTxSize
+  , splitAfterTxSizeWithInitSize
   , toList
   , toSize
   , toTuples
   , zeroTicketNo
 
     -- * Reference implementations for testing
-  , splitAfterTxSizeSpec
+  , splitAfterTxSizeWithInitSizeSpec
   ) where
 
 import Control.Arrow ((***))
@@ -210,25 +211,38 @@ splitAfterTxSize ::
   TxSeq sz tx ->
   sz ->
   (TxSeq sz tx, TxSeq sz tx)
-splitAfterTxSize (TxSeq txs) n =
-  case FingerTree.split (\m -> not $ mSize m Measure.<= n) txs of
-    (l, r) -> (TxSeq l, TxSeq r)
+splitAfterTxSize = splitAfterTxSizeWithInitSize Measure.zero
 
--- | \( O(n) \). Specification of 'splitAfterTxSize'.
---
--- Use 'splitAfterTxSize' as it should be faster.
---
--- This function is used to verify whether 'splitAfterTxSize' behaves as
--- expected.
-splitAfterTxSizeSpec ::
-  forall sz tx.
+-- | \( O(\log(n)) \). Split the sequence of transactions into two parts based
+-- on the given @sz@. The first part has transactions whose summed @sz@ plus
+-- the initial size is less than or equal to the given @sz@, and the second part
+-- has the remaining transactions in the sequence.
+splitAfterTxSizeWithInitSize ::
   Measure sz =>
+  sz ->
   TxSeq sz tx ->
   sz ->
   (TxSeq sz tx, TxSeq sz tx)
-splitAfterTxSizeSpec txseq n =
+splitAfterTxSizeWithInitSize initSize (TxSeq txs) n =
+  case FingerTree.split (\m -> not $ (initSize `Measure.plus` mSize m) Measure.<= n) txs of
+    (l, r) -> (TxSeq l, TxSeq r)
+
+-- | \( O(n) \). Specification of 'splitAfterTxSizeWithInitSize'.
+--
+-- Use 'splitAfterTxSizeWithInitSize' as it should be faster.
+--
+-- This function is used to verify whether 'splitAfterTxSizeWithInitSize' behaves as
+-- expected.
+splitAfterTxSizeWithInitSizeSpec ::
+  forall sz tx.
+  Measure sz =>
+  sz ->
+  TxSeq sz tx ->
+  sz ->
+  (TxSeq sz tx, TxSeq sz tx)
+splitAfterTxSizeWithInitSizeSpec initSize txseq n =
   (fromList *** fromList) $
-    go Measure.zero [] $
+    go initSize [] $
       toList txseq
  where
   go ::
