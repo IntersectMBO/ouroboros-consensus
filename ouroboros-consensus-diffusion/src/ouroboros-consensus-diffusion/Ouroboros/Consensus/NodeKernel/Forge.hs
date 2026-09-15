@@ -473,9 +473,10 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $
       tickedLedgerState
       (roforkerReadTables forker)
 
-  let (txs, txssz) =
-        snapshotTake mempoolSnapshot $
-          blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+  let
+    (txs, txssz) =
+      snapshotTakeWithInitialPayload mempoolSnapshot undefined $
+        blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
   -- NB respect the capacity of the ledger state we're extending,
   -- which is /not/ 'snapshotLedgerState'
 

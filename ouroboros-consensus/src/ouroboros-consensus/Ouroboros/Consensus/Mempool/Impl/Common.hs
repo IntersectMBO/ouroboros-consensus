@@ -53,6 +53,8 @@ import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe (fromMaybe)
+import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -627,7 +629,7 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
     , snapshotMempoolSize = implSnapshotGetMempoolSize
     , snapshotSlotNo = slot
     , snapshotStateHash = pointHash tipPoint
-    , snapshotTake = implSnapshotTake
+    , snapshotTakeWithInitialPayload = implSnapshotTakeWithInitialPayload
     , snapshotPoint = castPoint tipPoint
     }
  where
@@ -644,13 +646,17 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
       . snd
       . TxSeq.splitAfterTicketNo txs
 
-  implSnapshotTake ::
+  implSnapshotTakeWithInitialPayload ::
+    Maybe (TxMeasureWithDiffTime blk) ->
     TxMeasure blk ->
     ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
-  implSnapshotTake limit =
+  implSnapshotTakeWithInitialPayload mInitialPayloadMeasure limit =
     (map (prj . TxSeq.txTicketTx) (TxSeq.toList x), TxSeq.toSize x)
    where
-    (x, _y) = TxSeq.splitAfterTxSize txs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
+    initialPayloadMeasure = fromMaybe Measure.zero mInitialPayloadMeasure
+    (x, _y) =
+      TxSeq.splitAfterTxSizeWithInitSizeSpec initialPayloadMeasure txs $
+        MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
 
   implSnapshotGetTx ::
     TicketNo ->
