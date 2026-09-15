@@ -16,8 +16,11 @@ import qualified Cardano.Configuration as Cfg
 import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import qualified Cardano.Ledger.Api.Era as L
 import Cardano.Ledger.BaseTypes (Nonce (..), ProtVer (..))
+import Cardano.Ledger.Dijkstra.Genesis (DijkstraGenesis (..))
+import Cardano.Ledger.Dijkstra.PParams (UpgradeDijkstraPParams (..))
 import Cardano.Tools.Config
   ( ConfigError (..)
+  , mkDijkstraGenesis
   , mkHardForkTriggers
   , mkInitialNonce
   , mkProtocolVersion
@@ -41,6 +44,7 @@ import Data.List (isInfixOf)
 import Data.Maybe (fromMaybe)
 import Data.SOP.BasicFunctors (K (..))
 import Data.SOP.Strict (hcollapse, hmap)
+import Data.Word (Word32)
 import Ouroboros.Consensus.Block (EpochNo (..))
 import Ouroboros.Consensus.Cardano.Node
   ( CardanoHardForkTrigger (..)
@@ -73,6 +77,8 @@ tests =
     , testCase "initial nonce hashes the Shelley genesis" test_initialNonce
     , testCase "protocol version stops before the experimental era" test_protocolVersion
     , testCase "protocol version covers the experimental era" test_protocolVersionExperimental
+    , testCase "Dijkstra genesis ignores the file when experimental is off" test_dijkstraGenesisDefault
+    , testCase "Dijkstra genesis comes from the file when experimental is on" test_dijkstraGenesisFromFile
     , testCase "LedgerDB backend defaults to in-memory" test_ledgerDBBackendDefault
     , testCase "LedgerDB LSM backend" test_ledgerDBBackendLSM
     , testCase "LedgerDB LSM rejects an absolute path" test_ledgerDBBackendLSMAbsolute
@@ -233,8 +239,29 @@ test_protocolVersion = do
   nc <- resolveNewFormat configFile
   mkProtocolVersion nc @?= ProtVer (L.eraProtVerHigh @(L.PreviousEra L.LatestKnownEra)) 0
 
--- | With @ExperimentalHardForksEnabled@ on, the experimental era is admitted and
--- the protocol version reaches it.
+-- | The fixture names a @DijkstraGenesisFile@ but does not enable the
+-- experimental era, and the node ignores the file in that case, so the genesis
+-- that reaches the transition configuration is the fallback rather than the
+-- file's. The fixture's file sets @maxRefScriptSizePerTx@ to a value the
+-- fallback does not have, which is the only way to tell the two apart.
+test_dijkstraGenesisDefault :: Assertion
+test_dijkstraGenesisDefault = do
+  nc <- resolveNewFormat configFile
+  maxRefScriptSizePerTxOf (mkDijkstraGenesis nc) @?= 204800
+
+-- | With the experimental era enabled, the file is what is used.
+test_dijkstraGenesisFromFile :: Assertion
+test_dijkstraGenesisFromFile =
+  withPatchedConfig testingSection [("ExperimentalHardForksEnabled", Just (Aeson.Bool True))] $
+    \file -> do
+      nc <- resolveNewFormat file
+      maxRefScriptSizePerTxOf (mkDijkstraGenesis nc) @?= 123456
+
+-- | The field that tells the fixture's file apart from the fallback.
+maxRefScriptSizePerTxOf :: DijkstraGenesis -> Word32
+maxRefScriptSizePerTxOf = udppMaxRefScriptSizePerTx . dgUpgradePParams
+
+-- | With the experimental era enabled, the protocol version reaches it.
 test_protocolVersionExperimental :: Assertion
 test_protocolVersionExperimental =
   withPatchedConfig testingSection [("ExperimentalHardForksEnabled", Just (Aeson.Bool True))] $

@@ -20,6 +20,7 @@ module Cardano.Tools.Config
 
     -- * Interpreting the node configuration
   , mkHardForkTriggers
+  , mkDijkstraGenesis
   , mkInitialNonce
   , mkProtocolVersion
   , mkTransitionConfig
@@ -164,7 +165,7 @@ mkTransitionConfig nc =
     (Cfg.shelleyGenesisConfig nc)
     (Cfg.alonzoGenesisConfig nc)
     (Cfg.conwayGenesisConfig nc)
-    (strictMaybe defaultDijkstraGenesis id (Cfg.experimentalGenesisConfig nc))
+    (mkDijkstraGenesis nc)
 
 -- | The greatest protocol version the tools forge in and validate.
 --
@@ -175,38 +176,39 @@ mkTransitionConfig nc =
 -- that adding an era moves both.
 mkProtocolVersion :: Cfg.NodeConfiguration -> ProtVer
 mkProtocolVersion nc
-  | experimentalErasEnabled = ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0
+  | experimentalErasEnabled nc = ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0
   | otherwise = ProtVer (L.eraProtVerHigh @(L.PreviousEra L.LatestKnownEra)) 0
- where
-  experimentalErasEnabled =
-    runIdentity $
-      Cfg.experimentalHardForksEnabled (Cfg.testingConfiguration nc)
 
--- | The Dijkstra genesis to build the transition configuration from when the
--- node configuration names no @DijkstraGenesisFile@.
+-- | The Dijkstra genesis to build the transition configuration from.
 --
--- Some value is needed either way: the transition configuration covers every
--- Shelley-based era, so it has to be given a Dijkstra genesis even for a chain
--- that never reaches Dijkstra. These values descend from cardano-node's own
--- @Cardano.Node.Protocol.Dijkstra.emptyDijkstraGenesis@, by way of the copy of
--- that module these tools used to vendor, plus the two fields a later
--- @cardano-ledger@ added.
+-- A transition configuration needs one for every Shelley-based era, including
+-- eras a chain never reaches, but a configuration need not name a
+-- @DijkstraGenesisFile@. @cardano-config@ reports what the file says without
+-- inventing values, so both the fallback and when to use it are ours.
 --
--- Note that the tools and the node do not decide this the same way, and it is
--- the /rule/ rather than the value that differs. The node gates the whole
--- Dijkstra genesis on @ExperimentalHardForksEnabled@: with the flag off (the
--- default) it uses its fallback and ignores a named @DijkstraGenesisFile@
--- entirely, and with the flag on the file is mandatory. Here, the file is used
--- whenever the configuration names one and this value fills in when it does
--- not, whatever the flag says. So a configuration with the flag off but a
--- genesis file named -- which is what the tools' own test fixture is -- feeds
--- the node and these tools different genesis values, and one with the flag on
--- but no file named is rejected by the node while the tools carry on.
+-- Both follow cardano-node, which gates this on @ExperimentalHardForksEnabled@:
+-- with the flag off it uses its own fallback and does not read a named file at
+-- all. The flag is what admits the experimental era, so with it off the era's
+-- genesis cannot be in play whatever the file says, and a tool that read it
+-- anyway would hand the ledger a genesis the node never had.
 --
--- @cardano-config@ reports the file and the flag but resolves neither into a
--- genesis, leaving both the fallback and the gating to each consumer, so there
--- is nothing to defer to yet. A resolved Dijkstra genesis owned by
--- @cardano-config@ would retire this function and the divergence with it.
+-- Note that @cardano-config@ still reads and hash-checks a named file whatever
+-- the flag says, so a wrong @DijkstraGenesisHash@ is an error even when the
+-- genesis it names goes unused.
+mkDijkstraGenesis :: Cfg.NodeConfiguration -> SL.DijkstraGenesis
+mkDijkstraGenesis nc
+  | experimentalErasEnabled nc =
+      strictMaybe defaultDijkstraGenesis id (Cfg.experimentalGenesisConfig nc)
+  | otherwise = defaultDijkstraGenesis
+
+-- | Whether the configuration admits the experimental era.
+experimentalErasEnabled :: Cfg.NodeConfiguration -> Bool
+experimentalErasEnabled =
+  runIdentity . Cfg.experimentalHardForksEnabled . Cfg.testingConfiguration
+
+-- | Inherited from cardano-node's @Cardano.Node.Protocol.Dijkstra@, by way of
+-- the copy of that module these tools used to vendor, plus the two fields a
+-- later @cardano-ledger@ added.
 defaultDijkstraGenesis :: SL.DijkstraGenesis
 defaultDijkstraGenesis =
   let upgradePParamsDef =
