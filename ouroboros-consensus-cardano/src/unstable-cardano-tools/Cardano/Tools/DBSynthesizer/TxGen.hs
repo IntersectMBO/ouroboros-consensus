@@ -81,6 +81,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , applyTx
   , blockCapacityTxMeasure
   , ebCapacityTxMeasure
+  , txEbMeasure
   , txMeasure
   )
 import Ouroboros.Consensus.Ledger.Tables
@@ -169,10 +170,6 @@ data Cursor era = Cursor
 data Batch era = Batch
   { batchTxs :: [Validated (GenTx Cardano)]
   -- ^ The transactions it accepted, in the order the ledger applies them.
-  , batchUsedTotal :: TxMeasure Cardano
-  -- ^ The total measure of the transactions made for this forging opportunity,
-  -- including this batch. It spans the ranking block and the endorser block,
-  -- because 'fillEb' bounds their sum.
   , batchCursor :: Cursor era
   -- ^ The position where it stopped. That position's output is unspent.
   }
@@ -296,7 +293,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
         "db-synthesizer: not one generated transaction fits in the ranking block at slot "
           ++ show slot
           ++ "."
-    (ebTxs, cursorAfterEb) <- fillEb (batchUsedTotal rb) (batchCursor rb)
+    (ebTxs, cursorAfterEb) <- fillEb (batchCursor rb)
     pure
       ( batchTxs rb
       , ebTxs
@@ -310,41 +307,39 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
           )
       )
    where
-    rbCapacity :: TxMeasure Cardano
-    rbCapacity = blockCapacityTxMeasure lcfg stateAtSlot
-
-    -- Fill the ranking block, from the start of the block.
+    -- Fill the ranking block, from the start of the block, bounded by its
+    -- block measure.
     fillRb :: Cursor era -> IO (Batch era)
-    fillRb = fillBatch rbCapacity Measure.zero
+    fillRb = fillBatch id (blockCapacityTxMeasure lcfg stateAtSlot)
 
-    -- Resume where the ranking block stopped, and fill the endorser block. The
-    -- endorser block takes what the ranking block could not, up to the two
-    -- capacities added and counted from the start of the block. This is what
-    -- 'partitionMempool' does in the production forge loop.
+    -- Resume where the ranking block stopped, and fill the endorser block:
+    -- bounded by the endorser-block measure of its own transactions alone,
+    -- like 'snapshotPartition' in the production forge loop. Eras without
+    -- Leios have a zero capacity, so the endorser block stays empty.
     fillEb ::
-      TxMeasure Cardano ->
       Cursor era ->
       IO ([Validated (GenTx Cardano)], Cursor era)
-    fillEb usedByRb cursor = case ebCapacityTxMeasure lcfg stateAtSlot of
-      -- The era has no Leios, so this block announces no endorser block.
-      Nothing -> pure ([], cursor)
-      Just ebCap -> do
-        batch <- fillBatch (rbCapacity `Measure.plus` ebCap) usedByRb cursor
-        -- No batch follows the endorser block, so its measure has no consumer.
-        pure (batchTxs batch, batchCursor batch)
+    fillEb cursor = do
+      batch <-
+        fillBatch
+          (txEbMeasure (Proxy @Cardano))
+          (ebCapacityTxMeasure lcfg stateAtSlot)
+          cursor
+      pure (batchTxs batch, batchCursor batch)
 
     -- Build one transaction at a time, each spending the output that the one
     -- before it made. Stop at the first transaction that takes the total over
-    -- the bound, and leave that transaction out.
+    -- the bound, and leave that transaction out. Each transaction is charged
+    -- via the given projection of its block measure.
     fillBatch ::
+      forall m'.
+      Measure.Measure m' =>
+      (TxMeasure Cardano -> m') ->
       -- The bound on the total measure.
-      TxMeasure Cardano ->
-      -- The total measure of the transactions made for this forging opportunity
-      -- before this batch.
-      TxMeasure Cardano ->
+      m' ->
       Cursor era ->
       IO (Batch era)
-    fillBatch bound = go []
+    fillBatch charge bound = go [] Measure.zero
      where
       go accepted used cursor = do
         let Cursor{cursorState = state, cursorEntry = (txIn, txOut)} = cursor
@@ -358,13 +353,12 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
                 ++ ": "
                 ++ show err
           Right measured -> pure measured
-        let used' = used `Measure.plus` measured
+        let used' = used `Measure.plus` charge measured
         if not (used' Measure.<= bound)
           then
             pure
               Batch
                 { batchTxs = reverse accepted
-                , batchUsedTotal = used
                 , batchCursor = cursor
                 }
           else case runExcept (applyTx lcfg DoNotIntervene slot genTx state) of

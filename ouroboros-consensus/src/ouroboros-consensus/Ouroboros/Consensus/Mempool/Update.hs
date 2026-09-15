@@ -1,8 +1,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Operations that update the mempool. They are internally divided in the pure
 -- and impure sides of the operation.
@@ -22,6 +24,7 @@ import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
+import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Ouroboros.Consensus.HeaderValidation
@@ -303,6 +306,7 @@ doAddTx mpEnv caller wti tx = do
       (TestingAddTx _, Right x) -> pure $ Just x
 
 pureTryAddTx ::
+  forall m blk.
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ResolveLeiosBlock blk
@@ -362,7 +366,8 @@ pureTryAddTx mpEnv cfg wti tx is values =
           -- 'isCapacity' are much smaller than the modulus, and so this should
           -- never happen. Despite that, blocking until adding the transaction
           -- doesn't overflow seems like a reasonable way to handle this case.
-          | not $ currentSize Measure.<= currentSize `Measure.plus` MkTxMeasureWithDiffTime txsz Measure.zero ->
+          | let txWithZeroTime = MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) Measure.zero
+          , not $ currentSize Measure.<= currentSize `Measure.plus` txWithZeroTime ->
               NotEnoughSpaceLeft
           -- We add the transaction if and only if it wouldn't overrun any component
           -- of the mempool capacity.
@@ -398,12 +403,12 @@ pureTryAddTx mpEnv cfg wti tx is values =
           -- never release the 'MVar'. In particular, we tacitly assume here that a
           -- tx that wouldn't even fit in an empty mempool would be rejected by
           -- 'txMeasure'.
-          | let MkTxMeasureWithDiffTime txssz _txsdifftime = currentSize
-          , not $ txssz `Measure.plus` txsz Measure.<= isCapacity is ->
+          | let MempoolMeasure{mmTxMeasure} = currentSize
+          , not $ mmTxMeasure `Measure.plus` txsz Measure.<= isCapacity is ->
               NotEnoughSpaceLeft
           | Just toCfg <- mbToCfg
-          , let MkTxMeasureWithDiffTime _txssz txsdifftime = currentSize
-          , not $ txsdifftime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
+          , let MempoolMeasure{mmDiffTime} = currentSize
+          , not $ mmDiffTime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
               NotEnoughSpaceLeft
           | otherwise ->
               case validateNewTransaction cfg wti tx txsz values st is of

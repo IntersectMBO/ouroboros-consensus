@@ -24,6 +24,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTipInfo (..)
   , WrapTxIn (..)
   , WrapTxMeasure (..)
+  , WrapTxEbMeasure (..)
   , WrapTxOut (..)
   , WrapValidatedGenTx (..)
 
@@ -89,6 +90,7 @@ newtype WrapTipInfo blk = WrapTipInfo {unwrapTipInfo :: TipInfo blk}
 newtype WrapValidatedGenTx blk = WrapValidatedGenTx {unwrapValidatedGenTx :: Validated (GenTx blk)}
 
 newtype WrapTxMeasure blk = WrapTxMeasure {unwrapTxMeasure :: TxMeasure blk}
+newtype WrapTxEbMeasure blk = WrapTxEbMeasure {unwrapTxEbMeasure :: TxEbMeasure blk}
 
 newtype WrapTxIn blk = WrapTxIn {unwrapTxIn :: TxIn (LedgerState blk)}
 newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut (LedgerState blk)}

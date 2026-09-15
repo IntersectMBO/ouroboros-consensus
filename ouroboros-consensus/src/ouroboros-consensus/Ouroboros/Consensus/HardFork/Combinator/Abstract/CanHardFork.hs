@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
@@ -40,6 +42,10 @@ class
   , NoThunks (HardForkTxMeasure xs)
   , Show (HardForkTxMeasure xs)
   , TxMeasureMetrics (HardForkTxMeasure xs)
+  , Measure (HardForkTxEbMeasure xs)
+  , NoThunks (HardForkTxEbMeasure xs)
+  , Eq (HardForkTxEbMeasure xs)
+  , Show (HardForkTxEbMeasure xs)
   ) =>
   CanHardFork xs
   where
@@ -49,6 +55,11 @@ class
   -- individual era's 'TxMeasure'. (Which is too awkward of a type to express
   -- in Haskell.)
   type HardForkTxMeasure xs
+
+  -- | A measure that can accurately represent the 'TxEbMeasure' of any era.
+  --
+  -- Trivial for eras without Leios endorser blocks; see 'TxEbMeasure'.
+  type HardForkTxEbMeasure xs
 
   hardForkEraTranslation :: EraTranslation xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
@@ -67,11 +78,22 @@ class
   -- valid block.
   hardForkInjTxMeasure :: SOP.NS WrapTxMeasure xs -> HardForkTxMeasure xs
 
+  -- | Same as 'hardForkInjTxMeasure', for the endorser-block measure.
+  hardForkInjTxEbMeasure :: SOP.NS WrapTxEbMeasure xs -> HardForkTxEbMeasure xs
+
+  -- | 'Ouroboros.Consensus.Ledger.SupportsMempool.txEbMeasure' at the level of
+  -- the joint measure types.
+  hardForkTxEbMeasure ::
+    proxy xs -> HardForkTxMeasure xs -> HardForkTxEbMeasure xs
+
 instance SingleEraBlock blk => CanHardFork '[blk] where
   type HardForkTxMeasure '[blk] = TxMeasure blk
+  type HardForkTxEbMeasure '[blk] = TxEbMeasure blk
 
   hardForkEraTranslation = trivialEraTranslation
   hardForkChainSel = Tails.mk1
   hardForkInjectTxs = InPairs.mk1
 
   hardForkInjTxMeasure (SOP.Z (WrapTxMeasure x)) = x
+  hardForkInjTxEbMeasure (SOP.Z (WrapTxEbMeasure x)) = x
+  hardForkTxEbMeasure _ = txEbMeasure (Proxy @blk)

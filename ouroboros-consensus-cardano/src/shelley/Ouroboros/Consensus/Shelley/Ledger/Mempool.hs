@@ -40,9 +40,11 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
     -- * Exported for tests
   , AlonzoMeasure (..)
   , ConwayMeasure (..)
-  , DijkstraMeasure (..)
+  , DijkstraEbMeasure (..)
   , fromExUnits
+  , leiosEndorserBlockClosureMeasure
   , leiosEndorserBlockMeasure
+  , txEbMeasureDijkstra
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
@@ -684,146 +686,6 @@ instance
 
 -----
 
--- | Dijkstra-era block measure.
---
--- Extends 'ConwayMeasure' size of references. This is used to measure endorser
--- blocks. See 'ebCapacityTxMeasure'.
-data DijkstraMeasure = DijkstraMeasure
-  { conwayMeasure :: !ConwayMeasure
-  , referencesSize :: !(IgnoringOverflow ByteSize32)
-  -- ^ Maximum size of references _excluding_ any framing overhead. For example,
-  -- the list length of all references in an endorser block is not measured.
-  -- This is is the single additional measure about endorser blocks, while size,
-  -- execution units, and reference scripts from 'ConwayMeasure' are measured
-  -- over the whole closure of referenced transactions.
-  }
-  deriving stock (Eq, Generic, Show)
-  deriving anyclass NoThunks
-  deriving
-    Measure
-    via (InstantiatedAt Generic DijkstraMeasure)
-
-instance Semigroup DijkstraMeasure where
-  DijkstraMeasure c1 l1 <> DijkstraMeasure c2 l2 =
-    DijkstraMeasure (c1 <> c2) (l1 <> l2)
-
-instance Monoid DijkstraMeasure where
-  mappend = (<>)
-  mempty = DijkstraMeasure mempty mempty
-
-instance HasByteSize DijkstraMeasure where
-  txMeasureByteSize = txMeasureByteSize . conwayMeasure
-
-instance TxMeasureMetrics DijkstraMeasure where
-  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . conwayMeasure
-  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . conwayMeasure
-  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . conwayMeasure
-  txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . conwayMeasure
-
-blockCapacityDijkstraMeasure ::
-  forall proto era mk.
-  ( ShelleyCompatible proto era
-  , SL.ConwayEraPParams era
-  ) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  DijkstraMeasure
-blockCapacityDijkstraMeasure st =
-  DijkstraMeasure
-    { conwayMeasure = conway
-    , -- Ranking blocks carry transactions, not references, so this must never
-      -- bound a fill. It has to be 'maxBound' specifically, not merely large:
-      -- 'partitionMempool' takes the EB with @snapshotTake snap (rbCap + ebCap)@,
-      -- and only @maxBound + ebCap@ wraps (under 'IgnoringOverflow') back to
-      -- ~ebCap, so the ranking block contributes nothing to the EB's reference
-      -- budget. A finite value here inflates it and the EB overshoots
-      -- @maxEndorserBlockReferencesSize@. 'computeMempoolCapacity' 'stimes' also
-      -- wraps @maxBound + maxBound@ to ~maxBound, so the mempool stays unbounded
-      -- on this axis too.
-      referencesSize = maxBound
-    }
- where
-  conway = blockCapacityConwayMeasure st
-
-txMeasureDijkstra ::
-  forall proto era.
-  ( ShelleyCompatible proto era
-  , L.AlonzoEraTxWits era
-  , L.BabbageEraTxBody era
-  , SL.ConwayEraPParams era
-  , ExUnitsTooBigUTxO era
-  , MaxTxSizeUTxO era
-  , TxRefScriptsSizeTooBig era
-  ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
-  GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) DijkstraMeasure
-txMeasureDijkstra st tx =
-  alsoMeasureDijkstra <$> txMeasureConway st tx
- where
-  -- A reference records the length of the bytes 'forgeLeiosEb' serialises. We
-  -- do not restate which encoding that is; the Conway byte size is that length
-  -- plus 'perTxOverhead', and only the width of the size's varint depends on
-  -- the number, so charging on it rounds a reference up but never short.
-  --
-  -- INVARIANT: the size the forge records stays within 'perTxOverhead' of
-  -- 'sizeTxF'. Holds with slack today ('encCBOR' and the size computation agree
-  -- in Dijkstra).
-  alsoMeasureDijkstra conway =
-    DijkstraMeasure
-      { conwayMeasure = conway
-      , referencesSize =
-          IgnoringOverflow . Leios.encodeLeiosEbItemSize $ txMeasureByteSize conway
-      }
-
--- | Measure for Leios endorser blocks (introduced in Dijkstra era).
-leiosEndorserBlockMeasure ::
-  forall proto era mk.
-  ( ShelleyCompatible proto era
-  , SL.ConwayEraPParams era
-  , DijkstraEraPParams era
-  ) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  DijkstraMeasure
-leiosEndorserBlockMeasure st =
-  DijkstraMeasure
-    { conwayMeasure =
-        conway
-          { alonzoMeasure =
-              alonzo
-                { byteSize =
-                    IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
-                , exUnits =
-                    fromExUnits . unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
-                }
-          , refScriptsSize =
-              IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxRefScriptSizePerEndorserBlockL
-          }
-    , -- Summing 'leiosEbItemBytesSize' over transactions accounts for the
-      -- references and nothing else, so the framing 'encodeLeiosEb' writes
-      -- ahead of them comes off the capacity here. Guarded: an absurdly small
-      -- parameter must exhaust the capacity, not wrap it around.
-      referencesSize =
-        IgnoringOverflow . ByteSize32 $
-          referencesLimit - min referencesLimit framing
-    }
- where
-  ByteSize32 framing = Leios.encodeLeiosEbMaxFramingSize
-
-  -- Capped by the codec's message limit: an EB no peer will accept is worse
-  -- than a smaller EB.
-  -- XXX: Silent cap, improve detectability
-  referencesLimit =
-    min Leios.maxMsgLeiosBlockBytesSize $
-      pparams ^. ppMaxEndorserBlockReferencesSizeL
-
-  conway = blockCapacityConwayMeasure st
-
-  alonzo = alonzoMeasure conway
-
-  pparams = getPParams $ tickedShelleyLedgerState st
-
------
-
 data ConwayMeasure = ConwayMeasure
   { alonzoMeasure :: !AlonzoMeasure
   , refScriptsSize :: !(IgnoringOverflow ByteSize32)
@@ -897,6 +759,106 @@ txMeasureConway st tx@(ShelleyTx _txid tx') =
       guard $ txsz <= limit
       Just $ IgnoringOverflow $ ByteSize32 $ fromIntegral txsz
 
+-----
+
+-- | Measure of transactions in a Dijkstra-era Leios endorser block.
+--
+-- An endorser block carries references to transactions, while the referenced
+-- transactions -- its closure -- must satisfy block-like limits. So this
+-- pairs the closure's 'ConwayMeasure' with the one dimension specific to
+-- endorser blocks: the size of the references themselves.
+--
+-- This is the Dijkstra-era 'TxEbMeasure'; the era's 'TxMeasure' is plain
+-- 'ConwayMeasure'.
+data DijkstraEbMeasure = DijkstraEbMeasure
+  { ebClosureMeasure :: !ConwayMeasure
+  , txReferencesSize :: !(IgnoringOverflow ByteSize32)
+  -- ^ Size of transaction references _excluding_ any framing overhead: of one
+  -- transaction's reference, or summed over whatever is measured (an endorser
+  -- block, a run of mempool transactions).
+  }
+  deriving stock (Eq, Generic, Show)
+  deriving anyclass NoThunks
+  deriving
+    Measure
+    via (InstantiatedAt Generic DijkstraEbMeasure)
+
+instance Semigroup DijkstraEbMeasure where
+  DijkstraEbMeasure c1 l1 <> DijkstraEbMeasure c2 l2 =
+    DijkstraEbMeasure (c1 <> c2) (l1 <> l2)
+
+instance Monoid DijkstraEbMeasure where
+  mappend = (<>)
+  mempty = DijkstraEbMeasure mempty mempty
+
+-- | The cost of one transaction in an endorser block: its closure cost is the
+-- transaction's block measure, and its reference costs the bytes
+-- 'forgeLeiosEb' serialises for it.
+--
+-- The reference records the length of the serialised transaction. The Conway
+-- byte size overstates that length by at most 'perTxOverhead', and a larger
+-- number only ever widens the size's varint, so the reference is rounded up
+-- but never short.
+txEbMeasureDijkstra :: ConwayMeasure -> DijkstraEbMeasure
+txEbMeasureDijkstra conway =
+  DijkstraEbMeasure
+    { ebClosureMeasure = conway
+    , txReferencesSize =
+        IgnoringOverflow . Leios.encodeLeiosEbItemSize $ txMeasureByteSize conway
+    }
+
+-- | Measure for Leios endorser blocks (introduced in Dijkstra era).
+leiosEndorserBlockMeasure ::
+  (ShelleyCompatible proto era, DijkstraEraPParams era) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
+  DijkstraEbMeasure
+leiosEndorserBlockMeasure st =
+  DijkstraEbMeasure
+    { ebClosureMeasure = leiosEndorserBlockClosureMeasure st
+    , -- Transactions are charged 'encodeLeiosEbItemSize' for their reference
+      -- and nothing else, so the framing 'encodeLeiosEb' writes ahead of them
+      -- comes off the capacity here. Guarded: a parameter smaller than the
+      -- framing must exhaust the capacity (no reference fits, so no endorser
+      -- blocks are forged), not wrap it around.
+      txReferencesSize =
+        IgnoringOverflow . ByteSize32 $
+          referencesLimit - min referencesLimit framing
+    }
+ where
+  ByteSize32 framing = Leios.encodeLeiosEbMaxFramingSize
+
+  -- Capped by what fits the codec's message limit next to the message's own
+  -- framing: an EB no peer will accept is worse than a smaller EB.
+  -- XXX: Silent cap, improve detectability
+  referencesLimit =
+    min (Leios.maxMsgLeiosBlockBytesSize - Leios.msgLeiosBlockFramingSize) $
+      pparams ^. ppMaxEndorserBlockReferencesSizeL
+
+  pparams = getPParams $ tickedShelleyLedgerState st
+
+-- | What an endorser block's closure may amount to, in block-measure terms:
+-- the 'ebClosureMeasure' component of 'leiosEndorserBlockMeasure'.
+leiosEndorserBlockClosureMeasure ::
+  (ShelleyCompatible proto era, DijkstraEraPParams era) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
+  ConwayMeasure
+leiosEndorserBlockClosureMeasure st =
+  ConwayMeasure
+    { alonzoMeasure =
+        AlonzoMeasure
+          { byteSize =
+              IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
+          , exUnits =
+              fromExUnits . unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
+          }
+    , refScriptsSize =
+        IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxRefScriptSizePerEndorserBlockL
+    }
+ where
+  pparams = getPParams $ tickedShelleyLedgerState st
+
+-----
+
 class TxRefScriptsSizeTooBig era where
   txRefScriptsSizeTooBig :: Int -> Int -> SL.ApplyTxError era
 
@@ -918,6 +880,8 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
             { mismatchSupplied = txsz
             , mismatchExpected = limit
             }
+
+-----
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance
@@ -942,8 +906,12 @@ instance
   ShelleyCompatible p DijkstraEra =>
   TxLimits (ShelleyBlock p DijkstraEra)
   where
-  type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
-  txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
-  blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
-  ebCapacityTxMeasure _cfg = Just . leiosEndorserBlockMeasure
+  type TxMeasure (ShelleyBlock p DijkstraEra) = ConwayMeasure
+  txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
+  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
+
+  type TxEbMeasure (ShelleyBlock p DijkstraEra) = DijkstraEbMeasure
+  txEbMeasure _ = txEbMeasureDijkstra
+  ebCapacityTxMeasure _cfg = leiosEndorserBlockMeasure
+  ebClosureCapacityTxMeasure _cfg = leiosEndorserBlockClosureMeasure

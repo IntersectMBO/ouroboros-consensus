@@ -196,6 +196,7 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
   , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
+  , TranslateTxMeasure (TxEbMeasure (ShelleyBlock proto1 era1)) (TxEbMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
   , SL.TranslateEra era2 (SL.Tx SL.TopTx)
@@ -231,6 +232,16 @@ instance TranslateTxMeasure AlonzoMeasure ConwayMeasure where
 instance TranslateTxMeasure ConwayMeasure ConwayMeasure where
   translateTxMeasure = id
 
+instance TranslateTxMeasure NoEbMeasure NoEbMeasure where
+  translateTxMeasure = id
+
+-- | Transactions of eras without endorser blocks cannot appear in one.
+instance TranslateTxMeasure NoEbMeasure DijkstraEbMeasure where
+  translateTxMeasure NoEbMeasure = mempty
+
+instance TranslateTxMeasure DijkstraEbMeasure DijkstraEbMeasure where
+  translateTxMeasure = id
+
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   SerialiseHFC (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
@@ -244,6 +255,10 @@ instance
   type
     HardForkTxMeasure (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
       TxMeasure (ShelleyBlock proto2 era2)
+
+  type
+    HardForkTxEbMeasure (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+      TxEbMeasure (ShelleyBlock proto2 era2)
 
   hardForkEraTranslation =
     EraTranslation
@@ -318,6 +333,12 @@ instance
   hardForkInjTxMeasure = \case
     (Z (WrapTxMeasure x)) -> translateTxMeasure x
     S (Z (WrapTxMeasure x)) -> x
+
+  hardForkInjTxEbMeasure = \case
+    (Z (WrapTxEbMeasure x)) -> translateTxMeasure x
+    S (Z (WrapTxEbMeasure x)) -> x
+
+  hardForkTxEbMeasure _ = txEbMeasure (Proxy @(ShelleyBlock proto2 era2))
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>

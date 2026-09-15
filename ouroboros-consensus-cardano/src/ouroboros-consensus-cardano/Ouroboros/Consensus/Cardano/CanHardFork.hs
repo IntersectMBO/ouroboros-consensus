@@ -77,6 +77,8 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
   , IgnoringOverflow
+  , NoEbMeasure (..)
+  , TxEbMeasure
   , TxMeasure
   )
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
@@ -145,7 +147,8 @@ type CardanoHardForkConstraints c =
 --     the calculation of later rewards. In this transition, we consume the
 --     'shelleyToAllegraAVVMsToDelete' as deletions in the ledger tables.
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
-  type HardForkTxMeasure (CardanoEras c) = DijkstraMeasure
+  type HardForkTxMeasure (CardanoEras c) = ConwayMeasure
+  type HardForkTxEbMeasure (CardanoEras c) = DijkstraEbMeasure
 
   hardForkEraTranslation =
     EraTranslation
@@ -244,7 +247,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       `o` fromAlonzo
       `o` fromAlonzo
       `o` fromConway
-      `o` fromDijkstra
+      `o` fromConway
       `o` nil
    where
     nil :: SOP.NS f '[] -> a
@@ -260,11 +263,44 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxMeasure x) -> f x
       SOP.S y -> g y
 
-    fromByteSize :: IgnoringOverflow ByteSize32 -> DijkstraMeasure
+    fromByteSize :: IgnoringOverflow ByteSize32 -> ConwayMeasure
     fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
     fromAlonzo x = fromConway $ ConwayMeasure x mempty
-    fromConway x = fromDijkstra $ DijkstraMeasure x mempty
+    fromConway x = x
+
+  hardForkInjTxEbMeasure =
+    fromNoEb
+      `o` fromNoEb
+      `o` fromNoEb
+      `o` fromNoEb
+      `o` fromNoEb
+      `o` fromNoEb
+      `o` fromNoEb
+      `o` fromDijkstra
+      `o` nil
+   where
+    nil :: SOP.NS f '[] -> a
+    nil = \case {}
+
+    infixr 9 `o`
+    o ::
+      (TxEbMeasure x -> a) ->
+      (SOP.NS WrapTxEbMeasure xs -> a) ->
+      SOP.NS WrapTxEbMeasure (x : xs) ->
+      a
+    o f g = \case
+      SOP.Z (WrapTxEbMeasure x) -> f x
+      SOP.S y -> g y
+
+    -- Pre-Dijkstra transactions cannot appear in an endorser block; those
+    -- eras' endorser-block capacity is zero anyway.
+    fromNoEb :: NoEbMeasure -> DijkstraEbMeasure
+    fromNoEb NoEbMeasure = mempty
+
+    fromDijkstra :: DijkstraEbMeasure -> DijkstraEbMeasure
     fromDijkstra x = x
+
+  hardForkTxEbMeasure _ = txEbMeasureDijkstra
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
