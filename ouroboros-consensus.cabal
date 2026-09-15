@@ -2116,6 +2116,7 @@ test-suite tools-test
     bytestring,
     cardano-config ^>=1.1,
     cardano-crypto-class,
+    cardano-ledger-api,
     cardano-ledger-core,
     directory,
     filepath,

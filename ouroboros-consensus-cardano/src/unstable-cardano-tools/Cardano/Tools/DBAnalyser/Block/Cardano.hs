@@ -36,6 +36,7 @@ import Cardano.Protocol.Crypto
 import Cardano.Tools.Config
   ( mkHardForkTriggers
   , mkInitialNonce
+  , mkProtocolVersion
   , mkTransitionConfig
   , reportConfigWarnings
   , resolveNodeConfiguration
@@ -165,6 +166,7 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
         (mkTransitionConfig nc)
         (mkInitialNonce nc)
         triggers
+        (mkProtocolVersion nc)
     pure (pInfo, backend)
 
 -- | The LedgerDB backend the node configuration selects, if it selects one.
@@ -324,30 +326,39 @@ mkCardanoProtocolInfo ::
   SL.TransitionConfig L.LatestKnownEra ->
   Nonce ->
   CardanoHardForkTriggers ->
+  -- | The greatest protocol version to validate in; see 'mkProtocolVersion'.
+  ProtVer ->
   IO (ProtocolInfo (CardanoBlock StandardCrypto))
-mkCardanoProtocolInfo fs genesisByron signatureThreshold transitionConfig initialNonce triggers =
-  fst
-    <$> protocolInfoCardano @_ @IO
-      fs
-      ( CardanoProtocolParams
-          ProtocolParamsByron
-            { byronGenesis = genesisByron
-            , byronPbftSignatureThreshold = signatureThreshold
-            , -- Never used: db-analyser does not forge, and these two only
-              -- reach the blocks a producer makes.
-              byronProtocolVersion = defaultByronProtocolVersion
-            , byronSoftwareVersion = defaultByronSoftwareVersion
-            , byronLeaderCredentials = Nothing
-            }
-          ProtocolParamsShelleyBased
-            { shelleyBasedInitialNonce = initialNonce
-            , shelleyBasedLeaderCredentials = []
-            }
-          triggers
-          transitionConfig
-          emptyCheckpointsMap
-          (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
-      )
+mkCardanoProtocolInfo
+  fs
+  genesisByron
+  signatureThreshold
+  transitionConfig
+  initialNonce
+  triggers
+  protocolVersion =
+    fst
+      <$> protocolInfoCardano @_ @IO
+        fs
+        ( CardanoProtocolParams
+            ProtocolParamsByron
+              { byronGenesis = genesisByron
+              , byronPbftSignatureThreshold = signatureThreshold
+              , -- Unused: db-analyser does not forge, and these only reach the
+                -- blocks a producer makes.
+                byronProtocolVersion = defaultByronProtocolVersion
+              , byronSoftwareVersion = defaultByronSoftwareVersion
+              , byronLeaderCredentials = Nothing
+              }
+            ProtocolParamsShelleyBased
+              { shelleyBasedInitialNonce = initialNonce
+              , shelleyBasedLeaderCredentials = []
+              }
+            triggers
+            transitionConfig
+            emptyCheckpointsMap
+            protocolVersion
+        )
 
 castHeaderHash ::
   HeaderHash ByronBlock ->

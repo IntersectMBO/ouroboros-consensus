@@ -21,6 +21,7 @@ module Cardano.Tools.Config
     -- * Interpreting the node configuration
   , mkHardForkTriggers
   , mkInitialNonce
+  , mkProtocolVersion
   , mkTransitionConfig
 
     -- * Configuration errors
@@ -37,6 +38,7 @@ import qualified Cardano.Ledger.Api.Transition as SL
 import Cardano.Ledger.BaseTypes
   ( Milliseconds32 (..)
   , Nonce (..)
+  , ProtVer (..)
   , boundRational
   , unsafeNonZero
   )
@@ -52,7 +54,7 @@ import Cardano.Ledger.Plutus
 import Cardano.Slotting.Slot (EpochNo (..))
 import Control.Exception (Exception (..), handle, throwIO, try)
 import Data.Either (fromRight)
-import Data.Functor.Identity (Identity)
+import Data.Functor.Identity (Identity, runIdentity)
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybe, strictMaybeToMaybe)
 import Data.Word (Word16, Word64)
@@ -163,6 +165,22 @@ mkTransitionConfig nc =
     (Cfg.alonzoGenesisConfig nc)
     (Cfg.conwayGenesisConfig nc)
     (strictMaybe defaultDijkstraGenesis id (Cfg.experimentalGenesisConfig nc))
+
+-- | The greatest protocol version the tools forge in and validate.
+--
+-- As in cardano-node, @ExperimentalHardForksEnabled@ decides it: the flag admits
+-- the experimental era, so with it off the version stops at the era before.
+--
+-- The eras are named rather than written as the 12 and 11 they currently are, so
+-- that adding an era moves both.
+mkProtocolVersion :: Cfg.NodeConfiguration -> ProtVer
+mkProtocolVersion nc
+  | experimentalErasEnabled = ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0
+  | otherwise = ProtVer (L.eraProtVerHigh @(L.PreviousEra L.LatestKnownEra)) 0
+ where
+  experimentalErasEnabled =
+    runIdentity $
+      Cfg.experimentalHardForksEnabled (Cfg.testingConfiguration nc)
 
 -- | The Dijkstra genesis to build the transition configuration from when the
 -- node configuration names no @DijkstraGenesisFile@.

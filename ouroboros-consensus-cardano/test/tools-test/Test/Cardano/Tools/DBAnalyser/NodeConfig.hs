@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests for the way db-analyser interprets a node configuration file.
 --
@@ -13,11 +14,13 @@ module Test.Cardano.Tools.DBAnalyser.NodeConfig (tests) where
 
 import qualified Cardano.Configuration as Cfg
 import qualified Cardano.Crypto.Hash.Class as CryptoClass
-import Cardano.Ledger.BaseTypes (Nonce (..))
+import qualified Cardano.Ledger.Api.Era as L
+import Cardano.Ledger.BaseTypes (Nonce (..), ProtVer (..))
 import Cardano.Tools.Config
   ( ConfigError (..)
   , mkHardForkTriggers
   , mkInitialNonce
+  , mkProtocolVersion
   , resolveNodeConfiguration
   )
 import Cardano.Tools.DBAnalyser.Block.Cardano
@@ -68,6 +71,8 @@ tests =
     , testCase "hard-fork triggers" test_hardForkTriggers
     , testCase "hard-fork triggers reject a gap" test_hardForkTriggersGap
     , testCase "initial nonce hashes the Shelley genesis" test_initialNonce
+    , testCase "protocol version stops before the experimental era" test_protocolVersion
+    , testCase "protocol version covers the experimental era" test_protocolVersionExperimental
     , testCase "LedgerDB backend defaults to in-memory" test_ledgerDBBackendDefault
     , testCase "LedgerDB LSM backend" test_ledgerDBBackendLSM
     , testCase "LedgerDB LSM rejects an absolute path" test_ledgerDBBackendLSMAbsolute
@@ -219,6 +224,23 @@ test_initialNonce = do
     Nonce . CryptoClass.castHash . CryptoClass.hashWith id
       <$> BS.readFile (configDir </> "shelley-genesis.json")
   mkInitialNonce nc @?= expected
+
+-- | The configuration does not set @ExperimentalHardForksEnabled@, so it takes
+-- @cardano-config@'s default of @false@ and the version stops at the era before
+-- the experimental one.
+test_protocolVersion :: Assertion
+test_protocolVersion = do
+  nc <- resolveNewFormat configFile
+  mkProtocolVersion nc @?= ProtVer (L.eraProtVerHigh @(L.PreviousEra L.LatestKnownEra)) 0
+
+-- | With @ExperimentalHardForksEnabled@ on, the experimental era is admitted and
+-- the protocol version reaches it.
+test_protocolVersionExperimental :: Assertion
+test_protocolVersionExperimental =
+  withPatchedConfig testingSection [("ExperimentalHardForksEnabled", Just (Aeson.Bool True))] $
+    \file -> do
+      nc <- resolveNewFormat file
+      mkProtocolVersion nc @?= ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0
 
 -- | This configuration has no @LedgerDB@ section, and @cardano-config@ defaults
 -- the backend to the in-memory one, so that is what db-analyser uses when the
