@@ -15,7 +15,7 @@ module Ouroboros.Consensus.Mempool.Update
   , implSyncWithLedger
   ) where
 
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
 import Control.Tracer
@@ -658,6 +658,9 @@ implSyncWithLedger projectResult mpEnv =
                           TraceMempoolRemoveTxs
                             (map (\x -> (getInvalidated x, getReason x)) removed)
                             (isMempoolSize isFinal)
+                      when (isCapacity isLocked /= isCapacity isFinal) $
+                        traceWith trcr $
+                          TraceMempoolCapacityChanged (isCapacity isLocked) (isCapacity isFinal)
                       -- Store the forker to be used with the new state
                       modifyMVar_ forkerMVar (\frkOld -> roforkerClose frkOld >> pure frk)
                       pure (Just (projectResult isFinal), isFinal)
