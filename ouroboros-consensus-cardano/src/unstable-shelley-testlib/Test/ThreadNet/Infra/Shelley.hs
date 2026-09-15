@@ -442,7 +442,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       }
    where
     coreNodeToPoolMapping ::
-      Map (SL.KeyHash SL.StakePool) SL.StakePoolParams
+      Map (SL.KeyHash SL.StakePool) (SL.StakePoolParams era)
     coreNodeToPoolMapping =
       Map.fromList
         [ ( SL.hashKey . SL.VKey . deriveVerKeyDSIGN $ cnStakingKey
