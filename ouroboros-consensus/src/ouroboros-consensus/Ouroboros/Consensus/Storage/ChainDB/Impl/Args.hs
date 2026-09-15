@@ -230,7 +230,8 @@ completeChainDbArgs
             }
       , cdbPerasImmutableCertDbArgs =
           (cdbPerasImmutableCertDbArgs defArgs)
-            { PerasImmutableCertDB.picdbaHasFS =
+            { PerasImmutableCertDB.picdbaCodecConfig = configCodec cdbsTopLevelConfig
+            , PerasImmutableCertDB.picdbaHasFS =
                 mkImmFS $ RelativeMountPoint "perasimmutablecert"
             }
       , cdbPerasVoteDbArgs =
