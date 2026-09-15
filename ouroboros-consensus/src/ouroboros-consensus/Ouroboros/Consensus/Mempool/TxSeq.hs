@@ -22,13 +22,15 @@ module Ouroboros.Consensus.Mempool.TxSeq
   , splitAfterTicketNo
   , splitAfterTxSize
   , splitAfterTxSizeOn
+  , splitAfterTxSizeWithInitSize
+  , splitAfterTxSizeWithInitSizeOn
   , toList
   , toSize
   , toTuples
   , zeroTicketNo
 
     -- * Reference implementations for testing
-  , splitAfterTxSizeSpec
+  , splitAfterTxSizeWithInitSizeSpec
   ) where
 
 import Control.Arrow ((***))
@@ -211,10 +213,22 @@ splitAfterTxSize ::
   TxSeq sz tx ->
   sz ->
   (TxSeq sz tx, TxSeq sz tx)
-splitAfterTxSize = splitAfterTxSizeOn id
+splitAfterTxSize = splitAfterTxSizeWithInitSize Measure.zero
 
--- | \( O(\log(n)) \). Like 'splitAfterTxSize', but bounds only a projection
--- of the summed @sz@. The other components are not bounded.
+-- | \( O(\log(n)) \). Split the sequence of transactions into two parts based
+-- on the given @sz@. The first part has transactions whose summed @sz@ plus
+-- the initial size is less than or equal to the given @sz@, and the second part
+-- has the remaining transactions in the sequence.
+splitAfterTxSizeWithInitSize ::
+  Measure sz =>
+  sz ->
+  TxSeq sz tx ->
+  sz ->
+  (TxSeq sz tx, TxSeq sz tx)
+splitAfterTxSizeWithInitSize = splitAfterTxSizeWithInitSizeOn id
+
+-- | \( O(\log(n)) \). Like 'splitAfterTxSize', but bounds only
+-- a projection of the summed @sz@. The other components are not bounded.
 --
 -- The projection must distribute over 'Measure.plus', or the split predicate
 -- is not monotone. The projection to one record field satisfies this.
@@ -224,25 +238,40 @@ splitAfterTxSizeOn ::
   TxSeq sz tx ->
   sz' ->
   (TxSeq sz tx, TxSeq sz tx)
-splitAfterTxSizeOn proj (TxSeq txs) n =
-  case FingerTree.split (\m -> not $ proj (mSize m) Measure.<= n) txs of
+splitAfterTxSizeOn proj = splitAfterTxSizeWithInitSizeOn proj Measure.zero
+
+-- | \( O(\log(n)) \). Like 'splitAfterTxSizeWithInitSize', but bounds only
+-- a projection of the summed @sz@. The other components are not bounded.
+--
+-- The projection must distribute over 'Measure.plus', or the split predicate
+-- is not monotone. The projection to one record field satisfies this.
+splitAfterTxSizeWithInitSizeOn ::
+  (Measure sz, Measure sz') =>
+  (sz -> sz') ->
+  sz ->
+  TxSeq sz tx ->
+  sz' ->
+  (TxSeq sz tx, TxSeq sz tx)
+splitAfterTxSizeWithInitSizeOn proj initSize (TxSeq txs) n =
+  case FingerTree.split (\m -> not $ proj (initSize `Measure.plus` mSize m) Measure.<= n) txs of
     (l, r) -> (TxSeq l, TxSeq r)
 
--- | \( O(n) \). Specification of 'splitAfterTxSize'.
+-- | \( O(n) \). Specification of 'splitAfterTxSizeWithInitSize'.
 --
--- Use 'splitAfterTxSize' as it should be faster.
+-- Use 'splitAfterTxSizeWithInitSize' as it should be faster.
 --
--- This function is used to verify whether 'splitAfterTxSize' behaves as
+-- This function is used to verify whether 'splitAfterTxSizeWithInitSize' behaves as
 -- expected.
-splitAfterTxSizeSpec ::
+splitAfterTxSizeWithInitSizeSpec ::
   forall sz tx.
   Measure sz =>
+  sz ->
   TxSeq sz tx ->
   sz ->
   (TxSeq sz tx, TxSeq sz tx)
-splitAfterTxSizeSpec txseq n =
+splitAfterTxSizeWithInitSizeSpec initSize txseq n =
   (fromList *** fromList) $
-    go Measure.zero [] $
+    go initSize [] $
       toList txseq
  where
   go ::
