@@ -137,6 +137,8 @@ class
   , -- Peras constraints
     StateSupportsPerasEpochContext (ShelleyBlock proto era)
   , BlockSupportsPeras (ShelleyBlock proto era)
+  , EncodeDisk (ShelleyBlock proto era) (PerasCert (ShelleyBlock proto era))
+  , DecodeDisk (ShelleyBlock proto era) (PerasCert (ShelleyBlock proto era))
   , MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock proto era) ~ EpochToPerasRoundInfo
   ) =>
   ShelleyCompatible proto era

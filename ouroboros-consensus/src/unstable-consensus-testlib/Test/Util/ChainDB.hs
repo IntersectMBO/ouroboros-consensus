@@ -141,7 +141,8 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           }
     , cdbPerasImmutableCertDbArgs =
         PerasImmutableCertDbArgs
-          { picdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasImmutableCert mcdbNodeDBs)
+          { picdbaCodecConfig = configCodec mcdbTopLevelConfig
+          , picdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasImmutableCert mcdbNodeDBs)
           , picdbaTracer = nullTracer
           }
     , cdbPerasVoteDbArgs =

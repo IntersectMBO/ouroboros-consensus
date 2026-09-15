@@ -189,8 +189,6 @@ class
   , Eq (PerasCert blk)
   , NoThunks (PerasCert blk)
   , IsPerasCert (PerasCert blk) blk
-  , ToCBOR (PerasCert blk)
-  , FromCBOR (PerasCert blk)
   , Typeable (BoostedBlock (PerasCert blk))
   , Show (BoostedBlock (PerasCert blk))
   , Eq (BoostedBlock (PerasCert blk))
@@ -435,25 +433,6 @@ data ValidatedPerasCert blk
   { vpcCert :: !(PerasCert blk)
   , vpcCertBoost :: !PerasWeight
   }
-
-instance
-  (Typeable blk, ToCBOR (PerasCert blk)) =>
-  ToCBOR (ValidatedPerasCert blk)
-  where
-  toCBOR (ValidatedPerasCert cert boost) =
-    encodeListLen 2
-      <> toCBOR cert
-      <> toCBOR boost
-
-instance
-  (Typeable blk, FromCBOR (PerasCert blk)) =>
-  FromCBOR (ValidatedPerasCert blk)
-  where
-  fromCBOR = do
-    decodeListLenOf 2
-    cert <- fromCBOR
-    boost <- fromCBOR
-    pure (ValidatedPerasCert cert boost)
 
 type instance BoostedBlock (ValidatedPerasVote blk) = BoostedBlock (PerasVote blk)
 
