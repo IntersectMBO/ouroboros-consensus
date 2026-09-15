@@ -26,7 +26,7 @@ module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
   , TraceEvent (..)
   ) where
 
-import Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Binary (fromCBOR, toCBOR)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
@@ -40,6 +40,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.PerasImmutableCertDB.API
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API.Lazy
@@ -50,6 +51,7 @@ import System.FS.API.Lazy
 
 data PerasImmutableCertDbEnv m blk = PerasImmutableCertDbEnv
   { picdbHasFS :: !(SomeHasFS m)
+  , picdbCodecConfig :: !(CodecConfig blk)
   , picdbTracer :: !(Tracer m (TraceEvent blk))
   , picdbState :: !(StrictTVar m (Map PerasRoundNo (ValidatedPerasCert blk)))
   -- ^ In-memory index of all certificates on disk, keyed by round number.
@@ -86,14 +88,16 @@ data TraceEvent blk
 -------------------------------------------------------------------------------}
 
 data PerasImmutableCertDbArgs f m blk = PerasImmutableCertDbArgs
-  { picdbaHasFS :: HKD f (SomeHasFS m)
+  { picdbaCodecConfig :: HKD f (CodecConfig blk)
+  , picdbaHasFS :: HKD f (SomeHasFS m)
   , picdbaTracer :: Tracer m (TraceEvent blk)
   }
 
 defaultArgs :: Monad m => Incomplete PerasImmutableCertDbArgs m blk
 defaultArgs =
   PerasImmutableCertDbArgs
-    { picdbaHasFS = noDefault
+    { picdbaCodecConfig = noDefault
+    , picdbaHasFS = noDefault
     , picdbaTracer = nullTracer
     }
 
@@ -102,8 +106,8 @@ type PerasImmutableCertDbConstraints blk =
   ( StandardHash blk
   , IsPerasCert (PerasCert blk) blk
   , NoThunks (PerasCert blk)
-  , FromCBOR (PerasCert blk)
-  , ToCBOR (PerasCert blk)
+  , EncodeDisk blk (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
   )
 
 createDB ::
@@ -115,17 +119,19 @@ createDB ::
   m (PerasImmutableCertDB m blk)
 createDB
   PerasImmutableCertDbArgs
-    { picdbaHasFS = someHasFS@(SomeHasFS hasFS)
+    { picdbaCodecConfig
+    , picdbaHasFS = someHasFS@(SomeHasFS hasFS)
     , picdbaTracer
     } = do
     createDirectoryIfMissing hasFS True (mkFsPath [])
-    certs <- readAllCerts hasFS
+    certs <- readAllCerts hasFS picdbaCodecConfig
     picdbState <-
       newTVarIO $
         Map.fromList [(getPerasCertRound cert, cert) | cert <- certs]
     let env =
           PerasImmutableCertDbEnv
             { picdbHasFS = someHasFS
+            , picdbCodecConfig = picdbaCodecConfig
             , picdbTracer = picdbaTracer
             , picdbState
             }
@@ -186,27 +192,29 @@ fsPathCertFile :: PerasRoundNo -> FsPath
 fsPathCertFile roundNo = mkFsPath [show (unPerasRoundNo roundNo) <> ".cert"]
 
 encodeCert ::
-  ToCBOR (PerasCert blk) =>
+  EncodeDisk blk (PerasCert blk) =>
+  CodecConfig blk ->
   ValidatedPerasCert blk ->
   CBOR.Encoding
-encodeCert (ValidatedPerasCert cert boost) =
+encodeCert ccfg (ValidatedPerasCert cert boost) =
   CBOR.encodeListLen 2
-    <> toCBOR cert
+    <> encodeDisk ccfg cert
     <> toCBOR boost
 
 decodeCert ::
-  FromCBOR (PerasCert blk) =>
+  DecodeDisk blk (PerasCert blk) =>
+  CodecConfig blk ->
   forall s.
   CBOR.Decoder s (ValidatedPerasCert blk)
-decodeCert = do
+decodeCert ccfg = do
   CBOR.decodeListLenOf 2
-  cert <- fromCBOR
+  cert <- decodeDisk ccfg
   boost <- fromCBOR
   pure (ValidatedPerasCert cert boost)
 
 writeCertFile ::
   ( IOLike m
-  , ToCBOR (PerasCert blk)
+  , EncodeDisk blk (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
@@ -219,20 +227,21 @@ writeCertFile env roundNo cert =
         void $ hPutAll hasFS h bytes
  where
   path = fsPathCertFile roundNo
-  bytes = CBOR.toLazyByteString $ encodeCert cert
+  bytes = CBOR.toLazyByteString $ encodeCert (picdbCodecConfig env) cert
 
 readAllCerts ::
   forall m h blk.
   ( IOLike m
-  , FromCBOR (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
   ) =>
   HasFS m h ->
+  CodecConfig blk ->
   m [ValidatedPerasCert blk]
-readAllCerts hasFS = do
+readAllCerts hasFS ccfg = do
   names <- Set.toList <$> listDirectory hasFS (mkFsPath [])
   forM names $ \name -> do
     let path = mkFsPath [name]
     bytes <- withFile hasFS path ReadMode (hGetAll hasFS)
-    case CBOR.deserialiseFromBytes decodeCert bytes of
+    case CBOR.deserialiseFromBytes (decodeCert ccfg) bytes of
       Right (_leftover, cert) -> pure cert
       Left err -> throwIO $ CorruptPerasImmutableCertFile path (show err)
