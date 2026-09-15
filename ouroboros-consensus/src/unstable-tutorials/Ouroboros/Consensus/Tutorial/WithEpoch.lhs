@@ -57,6 +57,7 @@ And imports, of course:
 > import Control.DeepSeq (NFData)
 > import Control.Monad ()
 > import Control.Monad.Except (MonadError (throwError))
+> import qualified Data.Measure as Measure
 > import Data.Void (Void, absurd)
 > import Data.Word (Word64)
 > import GHC.Generics (Generic)
@@ -94,7 +95,12 @@ And imports, of course:
 >    UpdateLedger, IsLedger (..), AuxLedgerEvent, defaultApplyBlockLedgerResult,
 >    defaultReapplyBlockLedgerResult)
 
-> import Ouroboros.Consensus.Ledger.SupportsMempool ()
+> import Ouroboros.Consensus.Ledger.SupportsMempool
+>   ( ByteSize32 (..)
+>   , IgnoringOverflow (..)
+>   , TrivialTxMeasurePhase2 (..)
+>   , TxLimits (..)
+>   )
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol (..))
 
@@ -107,6 +113,7 @@ And imports, of course:
 > import Ouroboros.Consensus.Ledger.Tables.Utils
 
 > import Ouroboros.Consensus.Util.IndexedMemPack
+> import Ouroboros.Consensus.Peras.Void ()
 > import Ouroboros.Consensus.Protocol.Abstract (ChainDepStateSupportsPeras)
 
 Epochs
@@ -222,6 +229,18 @@ defined earlier:
 
 We also need to instantiate `BlockSupportsPeras` for `BlockD`. Since `BlockD`
 does not support Peras, we use the void Peras types and default implementations.
+
+> instance TxLimits BlockD where
+>   type TxMeasurePhase1 BlockD = IgnoringOverflow ByteSize32
+>   type TxMeasurePhase2 BlockD = TrivialTxMeasurePhase2
+>   type TxEbMeasure BlockD     = IgnoringOverflow ByteSize32
+>   txWireSize _ = 0
+>   txMeasurePhase1 _ _ _ = pure Measure.zero
+>   txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
+>   blockCapacityTxMeasure _ _ = Measure.zero
+>   txEbMeasure _ _ = Measure.zero
+>   ebCapacityTxMeasure _ _ = Measure.zero
+>   mempoolEbReservation _ _ = Measure.zero
 
 > instance BlockSupportsPeras BlockD where
 >   type PerasVote BlockD = VoidPerasVote BlockD
