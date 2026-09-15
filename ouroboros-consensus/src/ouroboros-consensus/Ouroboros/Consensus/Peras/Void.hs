@@ -43,6 +43,10 @@ import Ouroboros.Consensus.Committee.Crypto
   , PublicKey
   , VoteCandidate
   )
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( IsTxSizeable (..)
+  , TxMeasurePhase1Metrics
+  )
 import Ouroboros.Consensus.Peras.Cert.Class
 import Ouroboros.Consensus.Peras.Types (BoostedBlock, PerasRoundNo)
 import Ouroboros.Consensus.Peras.Vote.Class
@@ -69,6 +73,9 @@ newtype VoidPerasCert blk
   { unVoidPerasCert :: Void
   }
   deriving newtype (Show, Eq, NoThunks, ShowProxy)
+
+instance TxMeasurePhase1Metrics m => IsTxSizeable (VoidPerasCert blk) m where
+  getTxLikeSize = absurd . unVoidPerasCert
 
 type instance BoostedBlock (VoidPerasVote blk) = Point blk
 type instance BoostedBlock (VoidPerasCert blk) = Point blk

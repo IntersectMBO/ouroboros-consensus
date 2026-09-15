@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -15,7 +16,7 @@ import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
-  , VoidPerasCert
+  , VoidPerasCert (..)
   , VoidPerasCrypto
   , VoidPerasError
   , VoidPerasVote

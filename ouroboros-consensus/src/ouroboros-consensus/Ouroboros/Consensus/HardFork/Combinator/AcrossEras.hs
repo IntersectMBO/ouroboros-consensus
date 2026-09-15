@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -75,6 +76,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
     -- * Utility
   , getSameValue
   , oneEraBlockHeader
+  , perasOneEraCertSizeUpperBound
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
@@ -269,6 +271,15 @@ deriving instance
 instance
   Typeable xs =>
   ShowProxy (OneEraPerasCert xs)
+
+instance
+  CanHardFork xs =>
+  IsTxSizeable (OneEraPerasCert xs) (IgnoringOverflow ByteSize32)
+  where
+  getTxLikeSize = IgnoringOverflow . perasOneEraCertSizeUpperBound
+
+perasOneEraCertSizeUpperBound :: CanHardFork xs => (OneEraPerasCert xs) -> ByteSize32
+perasOneEraCertSizeUpperBound _cert = undefined -- TODO
 
 newtype OneEraPerasError xs
   = OneEraPerasError
