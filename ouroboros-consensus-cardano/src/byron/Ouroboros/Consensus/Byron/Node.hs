@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -19,6 +20,8 @@ module Ouroboros.Consensus.Byron.Node
 
     -- * ProtocolInfo
   , ProtocolParamsByron (..)
+  , defaultByronProtocolVersion
+  , defaultByronSoftwareVersion
   , defaultPBftSignatureThreshold
   , mkByronConfig
   , protocolClientInfoByron
@@ -174,6 +177,32 @@ blockForgingByron
 --   https://hydra.iohk.io/job/Cardano/cardano-ledger-specs/byronChainSpec/latest/download-by-type/doc-pdf/blockchain-spec
 defaultPBftSignatureThreshold :: PBftSignatureThreshold
 defaultPBftSignatureThreshold = PBftSignatureThreshold 0.22
+
+-- | The protocol version to announce in forged Byron blocks by default.
+--
+-- This is /not/ the protocol version of the chain. It is what a producer writes
+-- into the blocks it forges ('byronProtocolVersion'), which the Byron update
+-- mechanism reads as a statement that the producer is ready to move to that
+-- version: with the chain on version 0, announcing 1 endorses the move to 1.
+--
+-- A constant because it is no longer configurable: @cardano-config@ retired the
+-- @LastKnownBlockVersion-@/major/, /minor/ and /alt/ keys that used to carry
+-- it, on the grounds that the value is a consensus default.
+defaultByronProtocolVersion :: Update.ProtocolVersion
+defaultByronProtocolVersion = Update.ProtocolVersion 3 0 0
+
+-- | The software version to announce in forged Byron blocks by default.
+--
+-- As with 'defaultByronProtocolVersion', a producer writes this into the blocks
+-- it forges ('byronSoftwareVersion'), and @cardano-config@ retired the
+-- @ApplicationVersion@ key it used to come from.
+--
+-- The application name is @cardano-sl@ rather than that of whatever is forging,
+-- because it names software the Byron update system knows about; an invented
+-- name announces an application no update proposal can refer to.
+defaultByronSoftwareVersion :: Update.SoftwareVersion
+defaultByronSoftwareVersion =
+  Update.SoftwareVersion (Update.ApplicationName "cardano-sl") 1
 
 -- | Parameters needed to run Byron
 data ProtocolParamsByron = ProtocolParamsByron

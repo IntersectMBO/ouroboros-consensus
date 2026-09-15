@@ -9,7 +9,6 @@ module Cardano.Tools.DBSynthesizer.Run
   , synthesize
   ) where
 
-import qualified Cardano.Chain.Update as Byron.Update
 import qualified Cardano.Configuration as Cfg
 import qualified Cardano.Configuration.CliArgs as CLI
 import qualified Cardano.Ledger.Api.Era as L
@@ -36,6 +35,8 @@ import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano
   ( ProtocolParamsByron (..)
   , ProtocolParamsShelleyBased (..)
+  , defaultByronProtocolVersion
+  , defaultByronSoftwareVersion
   )
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
@@ -134,11 +135,9 @@ protocolParams nc triggers leaderCredentials =
       , -- Not modelled by cardano-config; the node's own default is to leave the
         -- genesis-imposed threshold alone.
         byronPbftSignatureThreshold = Nothing
-      , -- What a forged Byron block announces about itself. cardano-config does
-        -- not model either, so announce what a stock cardano-node does.
-        byronProtocolVersion = Byron.Update.ProtocolVersion 3 0 0
-      , byronSoftwareVersion =
-          Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "cardano-sl") 1
+      , -- What a forged Byron block announces about itself; see their haddocks.
+        byronProtocolVersion = defaultByronProtocolVersion
+      , byronSoftwareVersion = defaultByronSoftwareVersion
       , byronLeaderCredentials = Creds.byronLeaderCredentials leaderCredentials
       }
     ProtocolParamsShelleyBased
