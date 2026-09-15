@@ -36,9 +36,11 @@ import LeiosDemoTypes
   , ForgedLeiosEb (..)
   , RbHash (..)
   , TraceLeiosKernel (..)
+  , encodeLeiosEbSize
   , forgeLeiosEb
   , hashLeiosEb
-  , encodeLeiosEbSize
+  , maxMsgLeiosBlockBytesSize
+  , msgLeiosBlockFramingSize
   )
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
@@ -163,7 +165,15 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
     Just ebTxs -> do
       let forgedEb = forgeLeiosEb fbCurrentSlotNo ebTxs
           ebHash = hashLeiosEb forgedEb.body
-          ebSize = encodeLeiosEbSize forgedEb.body
+          -- An EB over the codec's message limit never diffuses: peers drop
+          -- the connection and we would not learn why, since we skip
+          -- validating our own EB. The mempool measure plans within the limit
+          -- ('leiosEndorserBlockMeasure'), so a breach here means the measure
+          -- and the encoder have drifted apart.
+          ebSize =
+            assert
+              (encodeLeiosEbSize forgedEb.body <= maxMsgLeiosBlockBytesSize - msgLeiosBlockFramingSize)
+              (encodeLeiosEbSize forgedEb.body)
           ebAnn =
             EbAnnouncement
               { ebAnnouncementHash = ebHash
