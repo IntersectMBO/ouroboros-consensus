@@ -184,22 +184,15 @@ mkProtocolVersion nc
 -- A transition configuration needs one for every Shelley-based era, including
 -- eras a chain never reaches, but a configuration need not name a
 -- @DijkstraGenesisFile@. @cardano-config@ reports what the file says without
--- inventing values, so both the fallback and when to use it are ours.
+-- inventing values, so the fallback is ours.
 --
--- Both follow cardano-node, which gates this on @ExperimentalHardForksEnabled@:
--- with the flag off it uses its own fallback and does not read a named file at
--- all. The flag is what admits the experimental era, so with it off the era's
--- genesis cannot be in play whatever the file says, and a tool that read it
--- anyway would hand the ledger a genesis the node never had.
---
--- Note that @cardano-config@ still reads and hash-checks a named file whatever
--- the flag says, so a wrong @DijkstraGenesisHash@ is an error even when the
--- genesis it names goes unused.
+-- Whether the file applies at all is decided upstream: @cardano-config@ gates it
+-- on @ExperimentalHardForksEnabled@ as cardano-node does, reporting 'SNothing'
+-- with the flag off without opening the file. Gating again here would put the
+-- rule in two places.
 mkDijkstraGenesis :: Cfg.NodeConfiguration -> SL.DijkstraGenesis
-mkDijkstraGenesis nc
-  | experimentalErasEnabled nc =
-      strictMaybe defaultDijkstraGenesis id (Cfg.experimentalGenesisConfig nc)
-  | otherwise = defaultDijkstraGenesis
+mkDijkstraGenesis =
+  strictMaybe defaultDijkstraGenesis id . Cfg.experimentalGenesisConfig
 
 -- | Whether the configuration admits the experimental era.
 experimentalErasEnabled :: Cfg.NodeConfiguration -> Bool

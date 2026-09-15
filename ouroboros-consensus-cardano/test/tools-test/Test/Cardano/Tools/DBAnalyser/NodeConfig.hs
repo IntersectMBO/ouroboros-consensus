@@ -71,7 +71,7 @@ tests :: TestTree
 tests =
   testGroup
     "NodeConfig"
-    [ testCase "resolves without warnings" test_resolvesWithoutWarnings
+    [ testCase "resolves with the expected warnings" test_resolvesWithExpectedWarnings
     , testCase "hard-fork triggers" test_hardForkTriggers
     , testCase "hard-fork triggers reject a gap" test_hardForkTriggersGap
     , testCase "initial nonce hashes the Shelley genesis" test_initialNonce
@@ -165,19 +165,22 @@ lsmBackend options =
   Tests
 -------------------------------------------------------------------------------}
 
--- | The configuration must resolve completely silently.
+-- | The whole warning list is pinned, not spot-checked.
 --
--- An @UnrecognisedKeys@ warning is the failure mode that matters here: a key
--- @cardano-config@ does not know is a key it silently defaults instead of
--- honouring, which for something like @Test\<era\>HardForkAtEpoch@ would mean
--- db-analyser replaying a different era than the file asks for. Since the
--- configuration carries nothing db-analyser does not read, no key should be
--- ignored -- and since it is already in the current format, it should not need
--- migrating on the fly either.
-test_resolvesWithoutWarnings :: Assertion
-test_resolvesWithoutWarnings = do
+-- @UnrecognisedKeys@ is the failure mode that matters: a key @cardano-config@
+-- does not know is one it silently defaults instead of honouring, which for
+-- @Test\<era\>HardForkAtEpoch@ would mean replaying a different era than the
+-- file asks for. The configuration carries nothing db-analyser does not read,
+-- and is already in the current format, so neither that nor a migration warning
+-- should appear.
+--
+-- 'Cfg.ExperimentalGenesisIgnored' does appear: the configuration names a
+-- @DijkstraGenesisFile@ without enabling the experimental era, which is what
+-- lets the two Dijkstra cases below tell the fallback from the file.
+test_resolvesWithExpectedWarnings :: Assertion
+test_resolvesWithExpectedWarnings = do
   (_nc, warns) <- resolveNodeConfiguration configFile
-  warns @?= []
+  warns @?= [Cfg.ExperimentalGenesisIgnored "dijkstra-genesis.json"]
 
 -- | The epochs the configuration sets must survive into the triggers. A silent
 -- fallback to 'CardanoTriggerHardForkAtDefaultVersion' would make db-analyser
@@ -239,11 +242,10 @@ test_protocolVersion = do
   nc <- resolveNewFormat configFile
   mkProtocolVersion nc @?= ProtVer (L.eraProtVerHigh @(L.PreviousEra L.LatestKnownEra)) 0
 
--- | The fixture names a @DijkstraGenesisFile@ but does not enable the
--- experimental era, and the node ignores the file in that case, so the genesis
--- that reaches the transition configuration is the fallback rather than the
--- file's. The fixture's file sets @maxRefScriptSizePerTx@ to a value the
--- fallback does not have, which is the only way to tell the two apart.
+-- | The fixture names a @DijkstraGenesisFile@ without enabling the experimental
+-- era, so the fallback is used and not the file. Its file sets
+-- @maxRefScriptSizePerTx@ to a value the fallback does not have, which is what
+-- tells the two apart.
 test_dijkstraGenesisDefault :: Assertion
 test_dijkstraGenesisDefault = do
   nc <- resolveNewFormat configFile
