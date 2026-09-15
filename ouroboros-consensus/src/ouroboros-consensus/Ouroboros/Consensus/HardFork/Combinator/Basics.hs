@@ -109,6 +109,10 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Instances ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( IsTxSizeable (..)
+  , TxLimits (..)
+  )
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Context
   ( BoundedPerasEpochContext (..)
@@ -641,6 +645,8 @@ instance
   ( StandardHash (HardForkBlock xs)
   , HashSize (HardForkBlock xs) ~ HashSizeOfHead xs
   , CanHardFork xs
+  , IsTxSizeable (TxMeasurePhase1 (HardForkBlock xs)) (OneEraPerasCert xs)
+  , TxLimits (HardForkBlock xs)
   ) =>
   BlockSupportsPeras (HardForkBlock xs)
   where

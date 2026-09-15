@@ -169,6 +169,11 @@ deriving instance
   NoThunks (PerasCert blk) =>
   NoThunks (WrapPerasCert blk)
 deriving instance
+  ( TxMeasurePhase1Metrics m
+  , IsTxSizeable m (PerasCert blk)
+  ) =>
+  IsTxSizeable m (WrapPerasCert blk)
+deriving instance
   Generic (WrapPerasCert blk)
 
 newtype WrapPerasError blk

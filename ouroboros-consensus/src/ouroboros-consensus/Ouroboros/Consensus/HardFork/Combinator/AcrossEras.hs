@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -269,6 +270,20 @@ deriving instance
 instance
   Typeable xs =>
   ShowProxy (OneEraPerasCert xs)
+
+instance
+  ( IsNonEmpty xs
+  , All (Compose (IsTxSizeable (IgnoringOverflow ByteSize32)) WrapPerasCert) xs
+  ) =>
+  IsTxSizeable (IgnoringOverflow ByteSize32) (OneEraPerasCert xs)
+  where
+  getTxLikeSize (OneEraPerasCert nsCert) = case isNonEmpty (Proxy @xs) of
+    ProofNonEmpty{} ->
+      hcollapse $
+        hcmap
+          (Proxy @(Compose (IsTxSizeable (IgnoringOverflow ByteSize32)) WrapPerasCert))
+          (K . getTxLikeSize)
+          nsCert
 
 newtype OneEraPerasError xs
   = OneEraPerasError
