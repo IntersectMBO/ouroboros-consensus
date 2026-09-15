@@ -32,7 +32,7 @@ module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
   , TraceEvent (..)
   ) where
 
-import Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Binary (fromCBOR, toCBOR)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
@@ -48,6 +48,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.PerasImmutableCertDB.API
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API.Lazy
@@ -58,6 +59,7 @@ import System.FS.API.Lazy
 
 data PerasImmutableCertDbEnv m blk = PerasImmutableCertDbEnv
   { picdbHasFS :: !(SomeHasFS m)
+  , picdbCodecConfig :: !(CodecConfig blk)
   , picdbTracer :: !(Tracer m (TraceEvent blk))
   , picdbKnownRounds :: !(StrictSVar m (Set PerasRoundNo))
   -- ^ The round numbers of all certificates currently stored on
@@ -101,14 +103,16 @@ data TraceEvent blk
 -------------------------------------------------------------------------------}
 
 data PerasImmutableCertDbArgs f m blk = PerasImmutableCertDbArgs
-  { picdbaHasFS :: HKD f (SomeHasFS m)
+  { picdbaCodecConfig :: HKD f (CodecConfig blk)
+  , picdbaHasFS :: HKD f (SomeHasFS m)
   , picdbaTracer :: Tracer m (TraceEvent blk)
   }
 
 defaultArgs :: Monad m => Incomplete PerasImmutableCertDbArgs m blk
 defaultArgs =
   PerasImmutableCertDbArgs
-    { picdbaHasFS = noDefault
+    { picdbaCodecConfig = noDefault
+    , picdbaHasFS = noDefault
     , picdbaTracer = nullTracer
     }
 
@@ -117,8 +121,8 @@ type PerasImmutableCertDbConstraints blk =
   ( StandardHash blk
   , IsPerasCert (PerasCert blk) blk
   , NoThunks (PerasCert blk)
-  , FromCBOR (PerasCert blk)
-  , ToCBOR (PerasCert blk)
+  , EncodeDisk blk (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
   )
 
 createDB ::
@@ -130,18 +134,20 @@ createDB ::
   m (PerasImmutableCertDB m blk)
 createDB
   PerasImmutableCertDbArgs
-    { picdbaHasFS = someHasFS@(SomeHasFS hasFS)
+    { picdbaCodecConfig
+    , picdbaHasFS = someHasFS@(SomeHasFS hasFS)
     , picdbaTracer
     } = do
     createDirectoryIfMissing hasFS True (mkFsPath [])
     -- Validate every certificate file present on disk once, up front, and
     -- keep only the (much cheaper) round numbers around: certificates
     -- themselves are read back from disk on demand, see 'implGetCertsAfter'.
-    rounds <- indexCertRounds (Proxy @blk) hasFS
+    rounds <- indexCertRounds (Proxy @blk) picdbaCodecConfig hasFS
     picdbKnownRounds <- newSVar rounds
     let env =
           PerasImmutableCertDbEnv
             { picdbHasFS = someHasFS
+            , picdbCodecConfig = picdbaCodecConfig
             , picdbTracer = picdbaTracer
             , picdbKnownRounds
             }
@@ -204,7 +210,7 @@ implAddCert env cert = do
 implGetCertsAfter ::
   forall m blk.
   ( IOLike m
-  , FromCBOR (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
@@ -226,27 +232,29 @@ fsPathCertFile :: PerasRoundNo -> FsPath
 fsPathCertFile roundNo = mkFsPath [show (unPerasRoundNo roundNo) <> ".cert"]
 
 encodeCert ::
-  ToCBOR (PerasCert blk) =>
+  EncodeDisk blk (PerasCert blk) =>
+  CodecConfig blk ->
   ValidatedPerasCert blk ->
   CBOR.Encoding
-encodeCert (ValidatedPerasCert cert boost) =
+encodeCert ccfg (ValidatedPerasCert cert boost) =
   CBOR.encodeListLen 2
-    <> toCBOR cert
+    <> encodeDisk ccfg cert
     <> toCBOR boost
 
 decodeCert ::
-  FromCBOR (PerasCert blk) =>
+  DecodeDisk blk (PerasCert blk) =>
+  CodecConfig blk ->
   forall s.
   CBOR.Decoder s (ValidatedPerasCert blk)
-decodeCert = do
+decodeCert ccfg = do
   CBOR.decodeListLenOf 2
-  cert <- fromCBOR
+  cert <- decodeDisk ccfg
   boost <- fromCBOR
   pure (ValidatedPerasCert cert boost)
 
 writeCertFile ::
   ( IOLike m
-  , ToCBOR (PerasCert blk)
+  , EncodeDisk blk (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
@@ -259,7 +267,7 @@ writeCertFile env roundNo cert =
         void $ hPutAll hasFS h bytes
  where
   path = fsPathCertFile roundNo
-  bytes = CBOR.toLazyByteString $ encodeCert cert
+  bytes = CBOR.toLazyByteString $ encodeCert (picdbCodecConfig env) cert
 
 -- | Remove the file of a certificate.
 --
@@ -279,26 +287,27 @@ removeCertFile env roundNo =
 readCertFile ::
   forall m blk.
   ( IOLike m
-  , FromCBOR (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
   m (ValidatedPerasCert blk)
 readCertFile env roundNo =
   case picdbHasFS env of
-    SomeHasFS hasFS -> readCertFileAt (Proxy @blk) hasFS (fsPathCertFile roundNo)
+    SomeHasFS hasFS -> readCertFileAt (Proxy @blk) (picdbCodecConfig env) hasFS (fsPathCertFile roundNo)
 
 readCertFileAt ::
   ( IOLike m
-  , FromCBOR (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
   ) =>
   Proxy blk ->
+  CodecConfig blk ->
   HasFS m h ->
   FsPath ->
   m (ValidatedPerasCert blk)
-readCertFileAt _ hasFS path = do
+readCertFileAt _ ccfg hasFS path = do
   bytes <- withFile hasFS path ReadMode (hGetAll hasFS)
-  case CBOR.deserialiseFromBytes decodeCert bytes of
+  case CBOR.deserialiseFromBytes (decodeCert ccfg) bytes of
     Right (_leftover, cert) -> pure cert
     -- Corrupt data on disk is treated as unrecoverable,
     -- so error handling is bubbled up.
@@ -312,13 +321,14 @@ indexCertRounds ::
   forall m h blk.
   ( IOLike m
   , IsPerasCert (PerasCert blk) blk
-  , FromCBOR (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
   ) =>
   Proxy blk ->
+  CodecConfig blk ->
   HasFS m h ->
   m (Set PerasRoundNo)
-indexCertRounds proxy hasFS = do
+indexCertRounds proxy ccfg hasFS = do
   names <- Set.toAscList <$> listDirectory hasFS (mkFsPath [])
   fmap Set.fromDistinctAscList $ forM names $ \name -> do
-    cert <- readCertFileAt proxy hasFS (mkFsPath [name])
+    cert <- readCertFileAt proxy ccfg hasFS (mkFsPath [name])
     pure (getPerasCertRound cert)
