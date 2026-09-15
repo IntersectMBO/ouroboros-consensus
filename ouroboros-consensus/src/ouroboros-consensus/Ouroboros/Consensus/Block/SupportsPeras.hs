@@ -120,8 +120,8 @@ type PerasVotingCommitteeInput blk =
 -- | Epoch-dependent context used for forging and validation of objects.
 data PerasEpochContext blk
   = PerasEpochContext
-  { pecCommittee :: PerasVotingCommittee blk
-  , pecParams :: PerasParams blk
+  { pecCommittee :: !(PerasVotingCommittee blk)
+  , pecParams :: !(PerasParams blk)
   }
 
 instance
