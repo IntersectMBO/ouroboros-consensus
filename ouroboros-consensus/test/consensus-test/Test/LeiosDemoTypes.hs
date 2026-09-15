@@ -1,6 +1,7 @@
 module Test.LeiosDemoTypes (tests) where
 
 import Cardano.Binary (serialize')
+import qualified Codec.CBOR.Encoding as CBOR
 import qualified Data.ByteString as BS
 import Data.Function ((&))
 import Data.Functor ((<&>))
@@ -12,10 +13,13 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , TxHash (..)
   , encodeLeiosEb
+  , encodeLeiosEbItemSize
+  , encodeLeiosEbMaxFramingSize
   , encodeLeiosEbSize
   , maxTxsPerEb
   , selectCommitteeByStake
   )
+import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Test.QuickCheck
   ( Gen
   , Property
@@ -43,6 +47,8 @@ tests =
   testGroup
     "LeiosDemoTypes"
     [ testProperty "encodeLeiosEbSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
+    , testProperty "encodeLeiosEbItemSize consistent with encodeLeiosEb" prop_ebItemSizeConsistent
+    , testProperty "encodeLeiosEb framing bounded by encodeLeiosEbMaxFramingSize" prop_ebFramingBounded
     , testProperty
         "selectCommitteeByStake orders by stake and bounds by committee size"
         prop_selectCommitteeByStake
@@ -107,6 +113,34 @@ prop_ebBytesSizeConsistent =
      in counterexample
           ("items: " <> show (V.length (leiosEbTxs eb)))
           (estimatedSize === actualSize)
+
+-- | The per-item charge 'encodeLeiosEbItemSize' (what the mempool measures a
+-- transaction's reference at) must agree with the bytes 'encodeLeiosEb'
+-- actually writes for that item.
+prop_ebItemSizeConsistent :: Property
+prop_ebItemSizeConsistent =
+  forAll ((,) <$> genTxHash <*> genTxBytesSize) $ \(txHash@(MkTxHash bytes), txSize) ->
+    let encoded = serialize' $ CBOR.encodeBytes bytes <> CBOR.encodeWord32 txSize
+        ByteSize32 estimatedSize = encodeLeiosEbItemSize (ByteSize32 txSize)
+     in counterexample
+          ("item: " <> show (txHash, txSize))
+          (estimatedSize === fromIntegral (BS.length encoded))
+
+-- | Whatever 'encodeLeiosEb' writes around the items stays within
+-- 'encodeLeiosEbMaxFramingSize', the one-off amount capacities subtract.
+prop_ebFramingBounded :: Property
+prop_ebFramingBounded =
+  forAll (genNumItems >>= genEb) $ \eb ->
+    let actualSize = fromIntegral $ BS.length (serialize' (encodeLeiosEb eb))
+        itemsSize =
+          sum
+            [ unByteSize32 (encodeLeiosEbItemSize (ByteSize32 txSize))
+            | (_txHash, txSize) <- V.toList (leiosEbTxs eb)
+            ]
+        framing = actualSize - itemsSize
+     in counterexample
+          ("items: " <> show (V.length (leiosEbTxs eb)) <> ", framing: " <> show framing)
+          (property $ framing <= unByteSize32 encodeLeiosEbMaxFramingSize)
 
 -- | 'selectCommitteeByStake' seats the highest-stake pools, bounded by the
 -- committee-size parameter rather than by cumulative stake.

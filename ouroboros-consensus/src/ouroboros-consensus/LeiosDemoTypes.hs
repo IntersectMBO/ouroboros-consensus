@@ -2126,6 +2126,12 @@ traceLeiosPeerForHuman = \case
 maxMsgLeiosBlockBytesSize :: BytesSize
 maxMsgLeiosBlockBytesSize = fromIntegral largeByteLimit
 
+-- | The bytes @MsgLeiosBlock@ writes around the EB it carries (its list length
+-- and word tag), which the codec's message limit measures alongside the body.
+-- An EB body must stay this far under 'maxMsgLeiosBlockBytesSize' to diffuse.
+msgLeiosBlockFramingSize :: BytesSize
+msgLeiosBlockFramingSize = 2
+
 -- | The most transactions any EB the codec will accept can name. Sizes the
 -- fetch buffers and bounds the wire bitmaps.
 --
@@ -2137,7 +2143,7 @@ maxTxsPerEb :: Int
 maxTxsPerEb =
   (msgLimit - framing) `div` minItemSize
  where
-  msgLimit = fromIntegral maxMsgLeiosBlockBytesSize
+  msgLimit = fromIntegral $ maxMsgLeiosBlockBytesSize - msgLeiosBlockFramingSize
 
   -- The whole reference list less its framing, over the smallest a reference
   -- can be: both come from the encoder, so the buffers track it exactly.
