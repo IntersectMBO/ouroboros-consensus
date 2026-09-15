@@ -1836,7 +1836,7 @@ library unstable-cardano-tools
     cardano-crypto-wrapper,
     cardano-diffusion:cardano-diffusion,
     cardano-git-rev ^>=0.2.1,
-    cardano-keys,
+    cardano-keys ^>=11,
     cardano-ledger-allegra,
     cardano-ledger-alonzo,
     cardano-ledger-api,
