@@ -2029,6 +2029,7 @@ test-suite tools-test
     cardano-crypto-class,
     cardano-ledger-api,
     cardano-ledger-core,
+    cardano-ledger-dijkstra,
     directory,
     filepath,
     ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
