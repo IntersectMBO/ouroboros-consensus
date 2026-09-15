@@ -55,7 +55,7 @@ import Test.Tasty.HUnit
 
 -- | The directory holding the node configuration these tests run against: a
 -- Cardano configuration in the current @{ $schema, Version, Configuration }@
--- format, which sets @Test\<era\>HardForkAtEpoch@ for Shelley through Babbage and
+-- format, which sets @Test\<era\>HardForkAtEpoch@ for Shelley through Conway and
 -- has no @LedgerDB@ section.
 configDir :: FilePath
 configDir = "ouroboros-consensus-cardano/test/tools-test/disk/config"
@@ -183,15 +183,15 @@ test_hardForkTriggers = do
   case mkHardForkTriggers (Cfg.testingConfiguration nc) of
     Left err -> assertFailure $ "expected triggers, but got: " <> err
     Right triggers ->
-      -- Shelley, Allegra, Mary, Alonzo and Babbage at epoch 0; Conway and
-      -- Dijkstra are not configured, so they trigger at their default version.
+      -- Shelley through Conway at epoch 0; Dijkstra is not configured, so it
+      -- triggers at its default version.
       triggerEpochs triggers
         @?= [ Just (EpochNo 0)
             , Just (EpochNo 0)
             , Just (EpochNo 0)
             , Just (EpochNo 0)
             , Just (EpochNo 0)
-            , Nothing
+            , Just (EpochNo 0)
             , Nothing
             ]
 
@@ -199,8 +199,8 @@ test_hardForkTriggers = do
 -- rejected, and reported as a 'ConfigError' rather than as a crash.
 test_hardForkTriggersGap :: Assertion
 test_hardForkTriggersGap =
-  -- Leaves Shelley and Allegra set, and Alonzo and Babbage set, with the gap at
-  -- Mary.
+  -- Leaves Shelley and Allegra set, and Alonzo through Conway set, with the gap
+  -- at Mary.
   withPatchedConfig testingSection [("TestMaryHardForkAtEpoch", Nothing)] $ \file -> do
     nc <- resolveNewFormat file
     case mkHardForkTriggers (Cfg.testingConfiguration nc) of
