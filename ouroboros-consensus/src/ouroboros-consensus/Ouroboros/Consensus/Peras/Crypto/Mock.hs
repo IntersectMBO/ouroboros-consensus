@@ -5,7 +5,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -14,6 +13,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Mocked crypto for Peras.
 --
@@ -46,10 +46,11 @@ import Cardano.Binary
 import Cardano.Prelude (Bifunctor (second))
 import Control.Exception.Base (Exception)
 import Data.Either.Extra (maybeToEither)
-import qualified Data.List as List
-import Data.List.Extra ((!?))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map.Strict (Map, (!))
+import qualified Data.Map.Strict as Map
+import Data.Map.Strict.Internal (Map (..))
 import qualified Data.Set.NonEmpty as NESet
 import Data.Typeable (Typeable)
 import Data.Word (Word16)
@@ -119,7 +120,7 @@ data MockPerasVotingCommitteeScheme blk
 newtype instance VotingCommittee crypto (MockPerasVotingCommitteeScheme blk)
   = MockPerasVotingCommittee
   { -- Stake distribution
-    weightDistr :: NonEmpty (PoolId, VoteWeight)
+    weightDistr :: Map PoolId VoteWeight
   }
 
 instance
@@ -151,26 +152,28 @@ instance
   mkVotingCommittee (MockPerasVotingCommitteeInput stakeDistr) =
     Right
       MockPerasVotingCommittee
-        { weightDistr = second normalize <$> stakeDistr
+        { weightDistr =
+            Map.fromList
+              . fmap (second normalize)
+              . NonEmpty.toList
+              $ stakeDistr
         }
    where
-    LedgerStake totalStake = sum (snd <$> stakeDistr)
+    LedgerStake totalStake =
+      sum (snd <$> stakeDistr)
     normalize (LedgerStake stake)
       | totalStake == 0 = 0
       | otherwise = VoteWeight (stake / totalStake)
 
   checkShouldVote MockPerasVotingCommittee{weightDistr} poolId _ _ =
-    case findWithIndex (\(pid, _) -> pid == poolId) weightDistr of
-      Just (rawIndex, (_pid, voteWeight)) ->
+    case findWithIndex poolId weightDistr of
+      Just (poolIdx, voteWeight) ->
         Right . Just $
           MockPerasVotingCommitteeSchemeMember
-            (unsafeIntToSeatIndex rawIndex)
+            (unsafeIntToSeatIndex poolIdx)
             voteWeight
       _ ->
         Right Nothing
-   where
-    findWithIndex :: (a -> Bool) -> NonEmpty a -> Maybe (Int, a)
-    findWithIndex p xs = List.find (p . snd) (zip [0 ..] (NonEmpty.toList xs))
 
   forgeVote (MockPerasVotingCommitteeSchemeMember seatIndex _) _ roundNo block =
     MockPerasVotingCommitteeSchemeVote $
@@ -182,14 +185,14 @@ instance
 
   verifyVote
     MockPerasVotingCommittee{weightDistr}
-    (MockPerasVotingCommitteeSchemeVote mockVote) =
-      case NonEmpty.toList weightDistr !? seatIndexToInt seatIndex of
-        Just (_pid, voteWeight) ->
+    (MockPerasVotingCommitteeSchemeVote mockVote)
+      | Just voteWeight <- findFromIndex seatIndex weightDistr =
           Right (MockPerasVotingCommitteeSchemeMember seatIndex voteWeight)
-        _ ->
+      | otherwise =
           Left (MissingSeatIndex seatIndex)
      where
-      seatIndex = mockVoteSeatIndex mockVote
+      seatIndex =
+        mockVoteSeatIndex mockVote
 
   eligiblePartyVoteWeight
     _
@@ -242,6 +245,9 @@ instance
       compare
         (mockVoteRound1, mockVoteSeatIndex1)
         (mockVoteRound2, mockVoteSeatIndex2)
+
+-- TODO: orphan needed by 'Generic' for 'VotingCommittee'
+deriving instance Generic (Map k v)
 
 deriving newtype instance
   Show (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
@@ -425,6 +431,19 @@ seatIndexToInt :: PerasSeatIndex -> Int
 seatIndexToInt (PerasSeatIndex seatIndex) =
   fromIntegral @Word16 @Int seatIndex
 
+findFromIndex :: PerasSeatIndex -> Map PoolId VoteWeight -> Maybe VoteWeight
+findFromIndex idx m
+  | seatIndexToInt idx < Map.size m =
+      Just (snd (Map.elemAt (seatIndexToInt idx) m))
+  | otherwise =
+      Nothing
+
+findWithIndex :: PoolId -> Map PoolId VoteWeight -> Maybe (Int, VoteWeight)
+findWithIndex poolId m =
+  case Map.lookupIndex poolId m of
+    Just idx -> Just (idx, m ! poolId)
+    Nothing -> Nothing
+
 unsafeIntToSeatIndex :: Int -> PerasSeatIndex
 unsafeIntToSeatIndex int
   | int >= 0 && int <= fromIntegral @Word16 @Int maxBound =
@@ -437,5 +456,5 @@ getEligibilityWitness ::
   PerasSeatIndex ->
   Maybe (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
 getEligibilityWitness MockPerasVotingCommittee{weightDistr} seatIndex = do
-  (_poolId, voteWeight) <- NonEmpty.toList weightDistr !? seatIndexToInt seatIndex
+  voteWeight <- findFromIndex seatIndex weightDistr
   pure $ MockPerasVotingCommitteeSchemeMember seatIndex voteWeight
