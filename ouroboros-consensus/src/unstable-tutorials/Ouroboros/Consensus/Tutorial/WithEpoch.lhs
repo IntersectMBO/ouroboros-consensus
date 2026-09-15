@@ -45,10 +45,12 @@ As before, we require a few language extensions:
 > {-# LANGUAGE DataKinds                  #-}
 > {-# LANGUAGE DeriveAnyClass             #-}
 > {-# LANGUAGE DeriveGeneric              #-}
+> {-# LANGUAGE FlexibleContexts           #-}
 > {-# LANGUAGE FlexibleInstances          #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
+> {-# LANGUAGE UndecidableInstances       #-}
 
 > module Ouroboros.Consensus.Tutorial.WithEpoch () where
 
@@ -94,7 +96,7 @@ And imports, of course:
 >    UpdateLedger, IsLedger (..), AuxLedgerEvent, defaultApplyBlockLedgerResult,
 >    defaultReapplyBlockLedgerResult)
 
-> import Ouroboros.Consensus.Ledger.SupportsMempool ()
+> import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol (..))
 
@@ -223,7 +225,7 @@ defined earlier:
 We also need to instantiate `BlockSupportsPeras` for `BlockD`. Since `BlockD`
 does not support Peras, we use the void Peras types and default implementations.
 
-> instance BlockSupportsPeras BlockD where
+> instance (TxLimits BlockD) => BlockSupportsPeras BlockD where
 >   type PerasVote BlockD = VoidPerasVote BlockD
 >   type PerasCert BlockD = VoidPerasCert BlockD
 >   type PerasError BlockD = VoidPerasError BlockD

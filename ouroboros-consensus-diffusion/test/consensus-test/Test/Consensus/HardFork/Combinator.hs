@@ -484,6 +484,9 @@ instance CanHardFork '[BlockA, BlockB] where
   hardForkEqGenTxId = (==) `on` rawHashNS
   hardForkCompareGenTxId = compare `on` rawHashNS
 
+instance IsTxSizeable cert TestBlock where
+  getTxLikeSize = defaultGetTxLikeSize
+
 versionN2N :: BlockNodeToNodeVersion TestBlock
 versionN2N =
   HardForkNodeToNodeEnabled

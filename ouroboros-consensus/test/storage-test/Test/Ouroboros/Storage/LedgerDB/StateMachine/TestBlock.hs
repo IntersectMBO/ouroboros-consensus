@@ -36,6 +36,7 @@ import qualified Codec.Serialise as S
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import Data.MemPack
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -46,6 +47,12 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32
+  , IgnoringOverflow
+  , TrivialTxMeasurePhase2 (..)
+  , TxLimits (..)
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Util.IOLike
@@ -196,6 +203,15 @@ queryKeys ::
   LedgerTables TestBlock ValuesMK ->
   a
 queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
+
+-- Dummy instance, only needed for Peras Support
+instance TxLimits TestBlock where
+  type TxMeasurePhase1 TestBlock = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 TestBlock = TrivialTxMeasurePhase2
+  txWireSize = const 0
+  txMeasurePhase1 _ _ _ = pure Measure.zero
+  txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _ _ = Measure.zero
 
 {-------------------------------------------------------------------------------
   Instances required for on-disk storage of ledger state tables

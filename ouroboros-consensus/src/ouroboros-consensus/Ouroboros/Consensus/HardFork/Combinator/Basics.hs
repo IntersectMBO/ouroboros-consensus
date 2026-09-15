@@ -78,6 +78,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , IsPerasCert (..)
   , IsPerasError (..)
   , IsPerasVote (..)
+  , IsTxSizeable
   , PerasEpochContext (..)
   , PerasRoundNo
   , PerasVoteCollection (..)
@@ -642,6 +643,7 @@ instance
   ( StandardHash (HardForkBlock xs)
   , HashSize (HardForkBlock xs) ~ HashSizeOfHead xs
   , CanHardFork xs
+  , IsTxSizeable (OneEraPerasCert xs) (HardForkBlock xs)
   ) =>
   BlockSupportsPeras (HardForkBlock xs)
   where

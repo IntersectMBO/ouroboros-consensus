@@ -28,10 +28,12 @@ This example uses several extensions:
 > {-# LANGUAGE DerivingVia                #-}
 > {-# LANGUAGE DataKinds                  #-}
 > {-# LANGUAGE DeriveGeneric              #-}
+> {-# LANGUAGE FlexibleContexts           #-}
 > {-# LANGUAGE FlexibleInstances          #-}
 > {-# LANGUAGE DeriveAnyClass             #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
+> {-# LANGUAGE UndecidableInstances       #-}
 
 > module Ouroboros.Consensus.Tutorial.Simple () where
 
@@ -71,6 +73,7 @@ First, some imports we'll need:
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
 >    LedgerState, ApplyBlock(..), UpdateLedger, GetBlockKeySets (..),
 >    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
+> import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
 > import Ouroboros.Consensus.Forecast (trivialForecast)
@@ -410,7 +413,7 @@ this value.  We'll implement those typeclasses next.
 We also need to instantiate `BlockSupportsPeras` for `BlockC`. Since `BlockC`
 does not support Peras, we use the void Peras types and default implementations.
 
-> instance BlockSupportsPeras BlockC where
+> instance (TxLimits BlockC) => BlockSupportsPeras BlockC where
 >   type PerasVote BlockC = VoidPerasVote BlockC
 >   type PerasCert BlockC = VoidPerasCert BlockC
 >   type PerasError BlockC = VoidPerasError BlockC

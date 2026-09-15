@@ -38,6 +38,8 @@ import Ouroboros.Consensus.Block.Abstract
   , Point
   , StandardHash
   )
+import Ouroboros.Consensus.Block.SupportsPeras (IsTxSizeable (..), defaultGetTxLikeSize)
+import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Cert.Class (IsPerasCert (..))
 import Ouroboros.Consensus.Peras.Types
@@ -70,6 +72,9 @@ type instance BoostedBlock (MockPerasCert blk) = Point blk
 instance IsPerasCert (MockPerasCert blk) blk where
   getPerasCertRound = mockCertRound
   getPerasCertBlock = mockCertBlock
+
+instance (TxLimits blk) => IsTxSizeable (MockPerasCert blk) blk where
+  getTxLikeSize = defaultGetTxLikeSize
 
 instance ShowProxy blk => ShowProxy (MockPerasCert blk) where
   showProxy _ = "MockPerasCert(" <> showProxy (Proxy @blk) <> ")"

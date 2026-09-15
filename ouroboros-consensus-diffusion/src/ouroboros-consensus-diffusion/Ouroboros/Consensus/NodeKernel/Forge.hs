@@ -17,6 +17,7 @@ import Control.Monad.Except
 import Control.Tracer
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
+import qualified Data.Measure as Measure
 import Data.Proxy
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
@@ -33,7 +34,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
-import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime)
+import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime (..))
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.Protocol.Abstract
@@ -87,7 +88,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, txssz, snapSize, forgingOnTopOf) <-
+  (fbArgs, payloadSz, snapSize, forgingOnTopOf) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -114,7 +115,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
-        (txs, txssz, snapSize) <- getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker
+        (txs, payloadSz, snapSize) <-
+          getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasCert
 
         let fbArgs =
               Block.ForgeBlockArgs
@@ -128,7 +130,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
                 }
         pure
           ( fbArgs
-          , txssz
+          , payloadSz
           , snapSize
           , ledgerTipPoint (ledgerState unticked)
           )
@@ -142,7 +144,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
       forgingOnTopOf
       newBlock
       snapSize
-      txssz
+      payloadSz
 
   addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
 
@@ -464,8 +466,9 @@ getTransactionsToForge ::
   SlotNo ->
   Ticked LedgerState blk DiffMK ->
   ReadOnlyForker m l blk ->
+  Maybe (PerasCert blk) ->
   WithEarlyExit m ([Validated (GenTx blk)], TxMeasureWithDiffTime blk, MempoolSize)
-getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $ do
+getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasCert = lift $ do
   mempoolSnapshot <-
     getSnapshotFor
       mempool
@@ -474,12 +477,19 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $
       (roforkerReadTables forker)
 
   let
-    (txs, txssz) =
-      snapshotTakeWithInitialPayload mempoolSnapshot undefined $
+    certSize = maybe Measure.zero toTxMeasure mbPerasCert
+    (txs, payloadSz) =
+      snapshotTakeWithInitialPayload mempoolSnapshot certSize $
         blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-  -- NB respect the capacity of the ledger state we're extending,
-  -- which is /not/ 'snapshotLedgerState'
+    -- NB respect the capacity of the ledger state we're extending,
+    -- which is /not/ 'snapshotLedgerState'
+
+    toTxMeasure :: BlockSupportsPeras blk => PerasCert blk -> TxMeasureWithDiffTime blk
+    toTxMeasure cert =
+      MkTxMeasureWithDiffTime
+        (getTxLikeSize cert)
+        Measure.zero -- REVIEW: is it correct to ignore the time component of cert validation?
 
   _ <- evaluate (length txs)
 
-  pure (txs, txssz, snapshotMempoolSize mempoolSnapshot)
+  pure (txs, payloadSz, snapshotMempoolSize mempoolSnapshot)
