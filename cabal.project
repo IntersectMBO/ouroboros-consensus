@@ -83,6 +83,18 @@ benchmarks: true
 
 multi-repl: True
 
+-- The tools read the node configuration with cardano-config. Back to tracking a
+-- branch of it rather than the CHaP release, because 1.1.0.0 does not gate the
+-- experimental (Dijkstra) genesis on ExperimentalHardForksEnabled: it reports a
+-- named genesis file whatever the flag says, where the node ignores the file
+-- with the flag off and requires one with it on. "Cardano.Tools.Config" relies
+-- on the gated behaviour, so replace this with the CHaP release that carries it.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-config.git
+  tag: 51faacf77fe3c33f2635c090967fd3116251ce12
+  --sha256: sha256-xrugSEkeptEp0y6sazCvSIugs3zi34PKlkWEn3rlN24=
+
 -- cardano-config bounds cardano-ledger-core to <1.22 and cardano-ledger-dijkstra
 -- to <0.4, and cardano-keys bounds cardano-ledger-core to <1.22, while the
 -- cardano-ledger pin above supplies exactly those two versions. Only the bounds
