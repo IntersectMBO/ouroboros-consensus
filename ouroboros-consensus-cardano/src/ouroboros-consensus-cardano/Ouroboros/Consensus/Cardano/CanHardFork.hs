@@ -90,7 +90,7 @@ import Ouroboros.Consensus.Protocol.Abstract hiding
   )
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
 import Ouroboros.Consensus.Protocol.TPraos
@@ -129,9 +129,9 @@ type CardanoHardForkConstraints c =
   , ShelleyCompatible (Praos c) ConwayEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
   , LedgerSupportsPeras (ShelleyBlock (Praos c) ConwayEra)
-  , ShelleyCompatible (Praos c) DijkstraEra
-  , LedgerSupportsProtocol (ShelleyBlock (Praos c) DijkstraEra)
-  , LedgerSupportsPeras (ShelleyBlock (Praos c) DijkstraEra)
+  , ShelleyCompatible (PraosWithLeios c) DijkstraEra
+  , LedgerSupportsProtocol (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+  , LedgerSupportsPeras (ShelleyBlock (PraosWithLeios c) DijkstraEra)
   )
 
 -- | When performing era translations, two eras have special behaviours on the
@@ -791,7 +791,7 @@ translateLedgerStateConwayToDijkstraWrapper ::
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
 translateLedgerStateConwayToDijkstraWrapper =
   RequireBoth $ \_cfgConway cfgDijkstra ->
     TranslateLedgerState
@@ -802,12 +802,29 @@ translateLedgerStateConwayToDijkstraWrapper =
             . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra)
             . Comp
             . Flip
+            . transLeiosLS
+      }
+ where
+  -- Only the protocol index changes, so nothing in here is converted; the
+  -- rebuild is what retypes it. Contrast 'transPraosLS', which crosses between
+  -- two genuinely different protocols.
+  transLeiosLS ::
+    LedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
+    LedgerState (ShelleyBlock (PraosWithLeios c) ConwayEra) mk
+  transLeiosLS (ShelleyLedgerState wo nes st tb lcr ctb) =
+    ShelleyLedgerState
+      { shelleyLedgerTip = fmap castShelleyTip wo
+      , shelleyLedgerState = nes
+      , shelleyLedgerTransition = st
+      , shelleyLedgerTables = coerce tb
+      , shelleyLedgerLatestPerasCertRound = lcr
+      , shelleyCumulativeTxBytes = ctb
       }
 
 translateLedgerTablesConwayToDijkstraWrapper ::
   TranslateLedgerTables
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
 translateLedgerTablesConwayToDijkstraWrapper =
   TranslateLedgerTables
     { translateTxInWith = coerce
@@ -815,7 +832,7 @@ translateLedgerTablesConwayToDijkstraWrapper =
     }
 
 getDijkstraTranslationContext ::
-  WrapLedgerConfig (ShelleyBlock (Praos c) DijkstraEra) ->
+  WrapLedgerConfig (ShelleyBlock (PraosWithLeios c) DijkstraEra) ->
   SL.TranslationContext DijkstraEra
 getDijkstraTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
@@ -824,17 +841,33 @@ translateTxConwayToDijkstraWrapper ::
   SL.TranslationContext DijkstraEra ->
   InjectTx
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
 translateTxConwayToDijkstraWrapper ctxt =
   InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
+    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . transLeiosTx
+ where
+  transLeiosTx ::
+    GenTx (ShelleyBlock (Praos c) ConwayEra) ->
+    GenTx (ShelleyBlock (PraosWithLeios c) ConwayEra)
+  transLeiosTx (ShelleyTx ti tx) = ShelleyTx ti tx
 
 translateValidatedTxConwayToDijkstraWrapper ::
   forall c.
   SL.TranslationContext DijkstraEra ->
   InjectValidatedTx
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
 translateValidatedTxConwayToDijkstraWrapper ctxt =
   InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
+    fmap unComp
+      . eitherToMaybe
+      . runExcept
+      . SL.translateEra ctxt
+      . Comp
+      . transLeiosValidatedTx
+ where
+  transLeiosValidatedTx ::
+    WrapValidatedGenTx (ShelleyBlock (Praos c) ConwayEra) ->
+    WrapValidatedGenTx (ShelleyBlock (PraosWithLeios c) ConwayEra)
+  transLeiosValidatedTx (WrapValidatedGenTx x) = case x of
+    ShelleyValidatedTx txid vtx -> WrapValidatedGenTx $ ShelleyValidatedTx txid vtx

@@ -143,7 +143,11 @@ import System.FS.API.Types (FsError)
 -- The ChainDB instantiates all the various type parameters of these databases
 -- to conform to the unified interface we provide here.
 data ChainDB m blk = ChainDB
-  { addBlockAsync :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
+  { addBlockAsync ::
+      InvalidBlockPunishment m ->
+      WithOrigin SlotNo ->
+      blk ->
+      m (AddBlockPromise m blk)
   -- ^ Add a block to the heap of blocks
   --
   -- We do /not/ assume that the block is valid (under the legder rules);
@@ -519,9 +523,10 @@ data AddBlockResult blk
 
 -- | Add a block synchronously: wait until the block has been written to disk
 -- (see 'blockWrittenToDisk').
-addBlockWaitWrittenToDisk :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m Bool
-addBlockWaitWrittenToDisk chainDB punish blk = do
-  promise <- addBlockAsync chainDB punish blk
+addBlockWaitWrittenToDisk ::
+  IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> WithOrigin SlotNo -> blk -> m Bool
+addBlockWaitWrittenToDisk chainDB punish predSlot blk = do
+  promise <- addBlockAsync chainDB punish predSlot blk
   atomically $ blockWrittenToDisk promise
 
 -- | Add a block synchronously: wait until the block has been processed (see
@@ -531,17 +536,24 @@ addBlockWaitWrittenToDisk chainDB punish blk = do
 -- Note: this is a partial function, only to support tests.
 --
 -- PRECONDITION: the block to be added must not be from the future. See 'addBlockAsync'.
-addBlock :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m (AddBlockResult blk)
-addBlock chainDB punish blk = do
-  promise <- addBlockAsync chainDB punish blk
+addBlock ::
+  IOLike m =>
+  ChainDB m blk ->
+  InvalidBlockPunishment m ->
+  WithOrigin SlotNo ->
+  blk ->
+  m (AddBlockResult blk)
+addBlock chainDB punish predSlot blk = do
+  promise <- addBlockAsync chainDB punish predSlot blk
   atomically $ blockProcessed promise
 
 -- | Add a block synchronously. Variant of 'addBlock' that doesn't return the
 -- new tip of the ChainDB.
 --
 -- Note: this is a partial function, only to support tests.
-addBlock_ :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m ()
-addBlock_ = void ..: addBlock
+addBlock_ ::
+  IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> WithOrigin SlotNo -> blk -> m ()
+addBlock_ cdb punish predSlot = void . addBlock cdb punish predSlot
 
 -- | Alias for naming consistency.
 -- The short name was chosen to avoid a larger diff from alignment changes.
@@ -639,14 +651,19 @@ toChain chainDB = withRegistry $ \registry ->
 
 fromChain ::
   forall m blk.
-  IOLike m =>
+  (IOLike m, HasHeader blk) =>
   m (ChainDB m blk) ->
   Chain blk ->
   m (ChainDB m blk)
 fromChain openDB chain = do
   chainDB <- openDB
-  mapM_ (addBlock_ chainDB noPunishment) $ Chain.toOldestFirst chain
+  -- Adding a whole chain oldest-first, so each block's predecessor is the one
+  -- added just before it.
+  mapM_ (uncurry (addBlock_ chainDB noPunishment)) $
+    zip (Origin : map (NotOrigin . blockSlot) blks) blks
   return chainDB
+ where
+  blks = Chain.toOldestFirst chain
 
 {-------------------------------------------------------------------------------
   Iterator API

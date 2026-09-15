@@ -73,6 +73,7 @@ import LeiosUtils.CallTrace
   , rootCallCtx
   )
 import qualified LeiosUtils.CallTrace as CallTrace
+import qualified LeiosValidClaims
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -109,6 +110,8 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , LedgerDB.ResolveLeiosBlock blk
+  , LeiosDemoTypes.HasLeiosVoting blk
   ) =>
   ChainDbEnv m blk ->
   -- | Number of immutable blocks replayed on ledger DB startup
@@ -360,6 +363,7 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
     -- so the set stops advertising a closure well before that closure can be
     -- evicted.
     pruneAcquiredLeiosEbs cdb gcSlotNo
+    pruneLeiosValidClaims cdb gcSlotNo
     scheduleGC' gcSlotNo
 
   scheduleGC' :: WithOrigin SlotNo -> m ()
@@ -508,6 +512,22 @@ pruneAcquiredLeiosEbs CDB{..} immTip = atomically $ do
   mapM_
     (writeTVar cdbAcquiredLeiosEbs)
     (LeiosDemoTypes.pruneAcquiredLeiosEbs immTip acquired)
+
+-- | Prune the verified-claim set by age as a VolatileDB GC is scheduled,
+-- dropping every claim announced strictly before the immutable tip.
+--
+-- New CertRBs younger than than the immutable tip /could/ arrive that make a
+-- claim equal to one we've already pruned. But the ChainSel logic already skips
+-- those, since the CertRB is not actionable: switching to it would require
+-- rolling back (at least) our immutable tip.
+pruneLeiosValidClaims ::
+  IOLike m => ChainDbEnv m blk -> WithOrigin SlotNo -> m ()
+pruneLeiosValidClaims CDB{..} immTip = case immTip of
+  Origin -> pure ()
+  NotOrigin immTipSlot ->
+    atomically $
+      modifyTVar cdbLeiosValidClaims $
+        LeiosValidClaims.pruneValidClaims immTipSlot
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections
@@ -714,6 +734,8 @@ addBlockRunner ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , LedgerDB.ResolveLeiosBlock blk
+  , LeiosDemoTypes.HasLeiosVoting blk
   , HasCallStack
   ) =>
   Fuse m ->

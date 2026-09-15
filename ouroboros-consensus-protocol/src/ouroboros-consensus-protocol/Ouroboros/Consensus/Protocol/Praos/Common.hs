@@ -3,10 +3,15 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -25,28 +30,55 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
   , instantiatePraosCredentials
+
+    -- * Leios
+  , PraosExtension (..)
+  , HasLeiosProof
+  , WhetherHasLeios (..)
+  , WhetherHasLeiosDecided (..)
+  , KnownPraosExtension (..)
+  , SingPraosExtension (..)
+  , StrictMaybeLeios (..)
+  , mkHasLeiosProof
+  , fromCodecEbAnnouncement
+  , toCodecEbAnnouncement
   ) where
 
 import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN)
 import Cardano.Crypto.DSIGN.Class (SignKeyDSIGN)
+import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES.Class as KES
 import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.KESAgent.KES.Crypto as Agent
 import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Binary (FromCBOR, ToCBOR)
+import Cardano.Ledger.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Ledger.Hashes
+  ( HASH
+  , extractHash
+  , unsafeMakeSafeHash
+  )
 import Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
+import Control.DeepSeq (NFData (..))
 import qualified Control.Tracer as Tracer
+import qualified Data.ByteString as BS
 import Data.Function (on)
+import Data.Kind (Constraint, Type)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
+import Data.Proxy (Proxy (Proxy))
+import Data.Type.Equality ((:~:) (Refl))
+import Data.Typeable (Typeable, typeRep)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import GHC.Show (showSpace)
+import LeiosDemoTypes (EbAnnouncement (..), EbHash (MkEbHash))
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -359,3 +391,169 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
   getPraosNonces :: proxy p -> ChainDepState p -> PraosNonces
 
   getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash BlockIssuer) Word64
+
+-----
+
+-- | Which optional extensions to the base Praos protocol are enabled.
+--
+-- We define them here, as part of Praos, because we want exactly one single
+-- source of truth (this subtree of the module hierarchy) to explicitly
+-- determine how the base protocol and whichever of its extensions are enabled
+-- simultaneously to interact /as a @ConsensusProtocol@/.
+--
+-- We define one constructor per each subset extensions that are known to be
+-- simultaneously compatible and worthwhile. (For now it's just Leios, but more
+-- extensions are planned, such as Phalanx.)
+data PraosExtension = PextNone | PextLeios
+
+-- | When possible, use 'WhetherHasLeiosDecided' instead
+type SingPraosExtension :: PraosExtension -> Type
+data SingPraosExtension pext where
+  SingPextNone :: SingPraosExtension PextNone
+  SingPextLeios :: SingPraosExtension PextLeios
+
+-- | A 'Bool' isomorph for better type errors
+data WhetherHasLeios = PextHasLeios | PextDoesNotHaveLeios
+
+data WhetherHasLeiosDecided pext
+  = PraosExtensionHasLeios pext ~ PextHasLeios => PextHasLeiosDecided
+  | PraosExtensionHasLeios pext ~ PextDoesNotHaveLeios => PextDoesNotHaveLeiosDecided
+
+type KnownPraosExtension :: PraosExtension -> Constraint
+class (Typeable pext, Typeable (PraosExtensionHasLeios pext)) => KnownPraosExtension pext where
+  type PraosExtensionHasLeios pext :: WhetherHasLeios
+  praosExtensionHasLeios :: proxy pext -> WhetherHasLeiosDecided pext
+
+  -- | When possible, use 'praosExtensionHasLeios' instead, since it's less
+  -- informative
+  singPraosExtension :: proxy pext -> SingPraosExtension pext
+
+instance KnownPraosExtension PextNone where
+  type PraosExtensionHasLeios _ = PextDoesNotHaveLeios
+  praosExtensionHasLeios = const PextDoesNotHaveLeiosDecided
+  singPraosExtension = const SingPextNone
+
+instance KnownPraosExtension PextLeios where
+  type PraosExtensionHasLeios _ = PextHasLeios
+  praosExtensionHasLeios = const PextHasLeiosDecided
+  singPraosExtension = const SingPextLeios
+
+-----
+
+-- | Newtype wrapper to avoid 'NoThunks' orphan
+--
+-- We're using ':~:' at all merely so we can still use @deriving@ for exception
+-- sum types.
+type HasLeiosProof :: WhetherHasLeios -> Type
+newtype HasLeiosProof whether
+  = MkHasLeiosProof (whether :~: PextHasLeios)
+  deriving (Eq, Show)
+
+deriving via
+  OnlyCheckWhnf (HasLeiosProof whether)
+  instance
+    Typeable whether => NoThunks (HasLeiosProof whether)
+
+mkHasLeiosProof :: HasLeiosProof PextHasLeios
+mkHasLeiosProof = MkHasLeiosProof Refl
+
+-----
+
+type StrictMaybeLeios :: WhetherHasLeios -> Type -> Type
+
+-- | Like 'StrictMaybe', but it's @SJust@ if and only if 'PraosExtensionHasLeios'
+data StrictMaybeLeios whether a where
+  -- | Encoding and decoding this is a complete noop.
+  SNothingLeios :: StrictMaybeLeios PextDoesNotHaveLeios a
+  -- | Encoding and decoding this has no extra wrapper.
+  SJustLeios :: !a -> StrictMaybeLeios PextHasLeios a
+
+instance Functor (StrictMaybeLeios whether) where
+  fmap f = \case
+    SNothingLeios -> SNothingLeios
+    SJustLeios x -> SJustLeios $ f x
+
+instance Applicative (StrictMaybeLeios PextDoesNotHaveLeios) where
+  pure = const SNothingLeios
+  SNothingLeios <*> SNothingLeios = SNothingLeios
+
+instance Applicative (StrictMaybeLeios PextHasLeios) where
+  pure = SJustLeios
+  SJustLeios f <*> SJustLeios x = SJustLeios $ f x
+
+instance Foldable (StrictMaybeLeios whether) where
+  foldMap f = \case
+    SNothingLeios -> mempty
+    SJustLeios x -> f x
+
+instance Traversable (StrictMaybeLeios whether) where
+  traverse f = \case
+    SNothingLeios -> pure SNothingLeios
+    SJustLeios x -> SJustLeios <$> f x
+
+instance Eq a => Eq (StrictMaybeLeios whether a) where
+  SNothingLeios == SNothingLeios = True
+  SJustLeios x == SJustLeios y = x == y
+
+instance Ord a => Ord (StrictMaybeLeios whether a) where
+  compare SNothingLeios SNothingLeios = EQ
+  compare (SJustLeios x) (SJustLeios y) = compare x y
+
+instance Show a => Show (StrictMaybeLeios whether a) where
+  showsPrec p = \case
+    SNothingLeios -> showString "SNothingLeios"
+    SJustLeios x -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows x
+
+instance NFData a => NFData (StrictMaybeLeios whether a) where
+  rnf = \case
+    SNothingLeios -> ()
+    SJustLeios x -> rnf x
+
+instance (Typeable whether, NoThunks a) => NoThunks (StrictMaybeLeios whether a) where
+  showTypeOf _ =
+    unwords
+      [ "StrictMaybeLeios"
+      , "(" ++ show (typeRep (Proxy @whether)) ++ ")"
+      , "(" ++ showTypeOf (Proxy @a) ++ ")"
+      ]
+  wNoThunks ctxt = \case
+    SNothingLeios -> wNoThunks ctxt ()
+    SJustLeios x -> wNoThunks ctxt x
+
+-----
+
+-- | The announcement as 'LeiosDemoTypes' spells it.
+--
+-- The two records differ only in how they identify the endorser block: upstream
+-- carries a 'SafeHash', 'LeiosDemoTypes' the raw bytes.
+fromCodecEbAnnouncement :: LeiosCodec.EbAnnouncement -> EbAnnouncement
+fromCodecEbAnnouncement ann =
+  EbAnnouncement
+    { ebAnnouncementHash =
+        MkEbHash $ Hash.hashToBytes $ extractHash $ LeiosCodec.ebAnnouncementHash ann
+    , ebAnnouncementSize = LeiosCodec.ebAnnouncementSize ann
+    }
+
+-- | The inverse of 'fromCodecEbAnnouncement'.
+--
+-- Partial, where 'fromCodecEbAnnouncement' is total: an 'EbHash' is raw bytes of
+-- any length, whereas upstream's 'SafeHash' is exactly 'Hash.hashSize' of them.
+-- Every 'EbHash' reaching here was built by hashing an endorser block, so a
+-- wrong length means whatever produced it is at fault, not the input.
+toCodecEbAnnouncement :: EbAnnouncement -> LeiosCodec.EbAnnouncement
+toCodecEbAnnouncement ann =
+  LeiosCodec.EbAnnouncement
+    { LeiosCodec.ebAnnouncementHash = unsafeMakeSafeHash hash
+    , LeiosCodec.ebAnnouncementSize = ebAnnouncementSize ann
+    }
+ where
+  MkEbHash bytes = ebAnnouncementHash ann
+
+  hash = case Hash.hashFromBytes bytes of
+    Just h -> h
+    Nothing ->
+      error $
+        "toCodecEbAnnouncement: EbHash of "
+          <> show (BS.length bytes)
+          <> " bytes, but a SafeHash needs "
+          <> show (Hash.hashSize (Proxy @HASH))

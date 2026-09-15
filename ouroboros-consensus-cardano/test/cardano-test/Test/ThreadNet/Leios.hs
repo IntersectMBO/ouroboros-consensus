@@ -367,13 +367,20 @@ prop_leios seed =
   -- an RB can finalise the previous EB (via a cert) while announcing the
   -- next one. With continuous tx flow, a certifying block rebases the
   -- mempool onto the post-certified-EB ledger state and announces a fresh EB
-  -- from the survivors. Unless the run produced no certifying blocks at all,
-  -- at least one should exercise the combined path.
-  propCertifyAndAnnounce =
-    (not (null announcedAndCertifiedSlots))
-      & counterexample "no block both certified and announced"
-      & counterexample ("certifying block slots: " <> show certificateBlocks)
-      & counterexample ("announced-and-certified slots: " <> show announcedAndCertifiedSlots)
+  -- from the survivors. A run that certified nothing at all cannot exercise the
+  -- combined path, so it is discarded rather than passed vacuously. That needs
+  -- every gap between consecutive blocks to fall short of 'minCertGap', which
+  -- at @f = 1/20@ over 200 slots is around one run in several hundred: ~10
+  -- blocks, so ~9 gaps, each reaching 14 slots with probability
+  -- @0.95^14 ~ 0.49@.
+  propCertifyAndAnnounce
+    | null certificateBlocks = discard
+    | otherwise =
+        (not (null announcedAndCertifiedSlots))
+          & counterexample "no block both certified and announced"
+          & counterexample ("certifying block slots: " <> show certificateBlocks)
+          & counterexample
+            ("announced-and-certified slots: " <> show announcedAndCertifiedSlots)
 
   -- In an honest net every acquired closure must apply against the announcing
   -- RB's ledger state, because 'partitionMempool' cuts both the RB's and the

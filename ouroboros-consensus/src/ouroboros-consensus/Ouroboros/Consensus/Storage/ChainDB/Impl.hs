@@ -57,11 +57,12 @@ import LeiosDemoTypes
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsFromList
   )
+import LeiosValidClaims (emptyValidClaims)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
+import Ouroboros.Consensus.HeaderValidation (mkHeadersWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
@@ -229,6 +230,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
     varAcquiredLeiosEbs <-
       newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
+    varLeiosValidClaims <- newTVarIO emptyValidClaims
     chain <-
       ChainSel.initialChainSelection
         immutableDB
@@ -249,11 +251,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         -- the volatile tip ledger state can translate the slots of the volatile
         -- headers
         chainWithTime =
-          AF.mapAnchoredFragment
-            ( mkHeaderWithTime
-                lcfg
-                (ledgerState curLedger)
-            )
+          mkHeadersWithTime
+            lcfg
+            (ledgerState curLedger)
             chain
 
     varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
@@ -293,6 +293,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
+            , cdbLeiosValidClaims = varLeiosValidClaims
             , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
             , cdbLeiosEvictTxCache = Args.cdbsLeiosEvictTxCache cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
@@ -304,7 +305,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
-            { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
+            { addBlockAsync = getEnv3 h ChainSel.addBlockAsync
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime

@@ -148,6 +148,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mempool.API (getLeiosTxIndex)
+import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncStateView (..)
@@ -285,7 +286,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       FetchedMetricsTracer m ->
-      BlockFetchClient (HeaderWithTime blk) blk m ()
+      BlockFetchClient (HeaderWithTime blk) blk (BlockFetchClientInterface.MatchedBlock blk) m ()
   , hBlockFetchServer ::
       ConnectionId addr ->
       NodeToNodeVersion ->
