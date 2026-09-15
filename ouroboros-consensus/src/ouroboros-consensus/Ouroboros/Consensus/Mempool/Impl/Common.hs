@@ -53,6 +53,8 @@ import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe (fromMaybe)
+import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -629,7 +631,7 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
     , snapshotMempoolSize = implSnapshotGetMempoolSize
     , snapshotSlotNo = slot
     , snapshotStateHash = pointHash tipPoint
-    , snapshotPartition = implSnapshotPartition
+    , snapshotPartitionWithInitialPayload = implSnapshotPartitionWithInitialPayload
     , snapshotPoint = castPoint tipPoint
     }
  where
@@ -646,7 +648,8 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
       . snd
       . TxSeq.splitAfterTicketNo txs
 
-  implSnapshotPartition ::
+  implSnapshotPartitionWithInitialPayload ::
+    Maybe (MempoolMeasure blk) ->
     TxMeasure blk ->
     TxEbMeasure blk ->
     ( [Validated (GenTx blk)]
@@ -654,10 +657,16 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
     , [Validated (GenTx blk)]
     , MempoolMeasure blk
     )
-  implSnapshotPartition blockLimit ebLimit =
+  implSnapshotPartitionWithInitialPayload mInitialPayloadMeasure blockLimit ebLimit =
     (txSeqToList inBlock, TxSeq.toSize inBlock, txSeqToList inEb, TxSeq.toSize inEb)
    where
-    (inBlock, afterBlock) = TxSeq.splitAfterTxSizeOn mmTxMeasure txs blockLimit
+    initialPayloadMeasure = fromMaybe Measure.zero mInitialPayloadMeasure
+    (inBlock, afterBlock) =
+      TxSeq.splitAfterTxSizeWithInitSizeOn
+        mmTxMeasure
+        initialPayloadMeasure
+        txs
+        blockLimit
     (inEb, _) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure afterBlock ebLimit
     txSeqToList = map (prj . TxSeq.txTicketTx) . TxSeq.toList
 

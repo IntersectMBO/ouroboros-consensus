@@ -476,11 +476,13 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $
 
   -- The endorser-block capacity is zero, so the endorser-block part of the
   -- partition is empty and the block part is the whole selection.
-  let (txs, txssz, ebTxs, _) =
-        snapshotPartition
-          mempoolSnapshot
-          (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
-          Data.Measure.zero
+  let
+    (txs, txssz, ebTxs, _) =
+      snapshotPartitionWithInitialPayload
+        mempoolSnapshot
+        undefined
+        (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
+        Data.Measure.zero
   -- Only a transaction with a zero 'txEbMeasure' fits a zero capacity, and
   -- the 'txEbMeasure' INVARIANT forbids a zero result.
   unless (null ebTxs) $
