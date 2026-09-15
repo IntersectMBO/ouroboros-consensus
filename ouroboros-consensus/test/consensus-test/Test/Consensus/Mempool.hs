@@ -125,8 +125,8 @@ prop_Mempool_snapshotPartition_zeroEbCapacity :: TestSetupWithTxs -> Property
 prop_Mempool_snapshotPartition_zeroEbCapacity setup =
   withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
     _ <- addTxs mempool (allTxs setup)
-    MempoolSnapshot{snapshotPartition} <- atomically $ getSnapshot mempool
-    let (_blockTxs, _blockSize, ebTxs, _ebSize) = snapshotPartition Measure.zero Measure.zero
+    MempoolSnapshot{snapshotPartitionWithInitialPayload} <- atomically $ getSnapshot mempool
+    let (_blockTxs, _blockSize, ebTxs, _ebSize) = snapshotPartitionWithInitialPayload Nothing Measure.zero Measure.zero
     return $
       counterexample ("endorser-block part not empty: " <> condense (map txForgetValidated ebTxs)) $
         null ebTxs
@@ -139,7 +139,8 @@ prop_Mempool_snapshotPartition_blockPrefix setup =
   forAll (choose (0, 120 :: Word32)) $ \percent ->
     withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
       _ <- addTxs mempool (allTxs setup)
-      MempoolSnapshot{snapshotTxs, snapshotPartition} <- atomically $ getSnapshot mempool
+      MempoolSnapshot{snapshotTxs, snapshotPartitionWithInitialPayload} <-
+        atomically $ getSnapshot mempool
       let measures = [m | (_, _, m) <- snapshotTxs]
           TxMeasure (IgnoringOverflow (ByteSize32 totalBytes)) _ = List.foldl' Measure.plus Measure.zero measures
           capacity =
@@ -152,7 +153,7 @@ prop_Mempool_snapshotPartition_blockPrefix setup =
             length $ takeWhile (Measure.<= capacity) $ drop 1 $ scanl Measure.plus Measure.zero measures
           expectedTxs = map (txForgetValidated . prjTx) (take prefixLength snapshotTxs)
           expectedSize = List.foldl' Measure.plus Measure.zero (take prefixLength measures)
-          (blockTxs, blockSize, ebTxs, _ebSize) = snapshotPartition capacity Measure.zero
+          (blockTxs, blockSize, ebTxs, _ebSize) = snapshotPartitionWithInitialPayload Nothing capacity Measure.zero
       return $
         counterexample ("capacity: " <> show capacity) $
           map txForgetValidated blockTxs === expectedTxs

@@ -27,6 +27,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
 import Ouroboros.Consensus.HardFork.Combinator.Protocol (SingleEraBlockAndLeiosProtocol)
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
+import Ouroboros.Consensus.Ledger.SupportsMempool (HasSizeForBlockBodyInclusion, TxLimits (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 
@@ -62,10 +63,11 @@ getSameConfigValue getValue blockConfig = getSameValue values
 -------------------------------------------------------------------------------}
 
 instance
-  ( CanHardFork xs
+  ( BlockSupportsHFLedgerQuery xs
+  , CanHardFork xs
   , HasCanonicalTxIn xs
   , HasHardForkTxOut xs
-  , BlockSupportsHFLedgerQuery xs
+  , HasSizeForBlockBodyInclusion (TxMeasurePhase1 (HardForkBlock xs)) (OneEraPerasCert xs)
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
   , All SingleEraBlockAndLeiosProtocol xs
