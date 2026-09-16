@@ -507,8 +507,6 @@ data PhaseResult = PhaseResult
   , prCopyWaitWall :: !DiffTime
   , prCopyEbWall :: !DiffTime
   -- ^ median duration of the copier's per-EB @copyToImmutable@ spans
-  , prProbeWall :: !DiffTime
-  -- ^ median duration of the copier's @completenessProbe@ sub-spans
   , prMarkWall :: !DiffTime
   , prSweepWall :: !DiffTime
   , prReinitWall :: !DiffTime
@@ -606,7 +604,6 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
                 , prPromoteWall = promoteWall
                 , prCopyWaitWall = copyWaitWall
                 , prCopyEbWall = medianTime (spanDurations "copyToImmutable" evs)
-                , prProbeWall = medianTime (spanDurations "completenessProbe" evs)
                 , prMarkWall = markWall
                 , prSweepWall = sweepWall
                 , prReinitWall = sum (spanDurations "reinitialiseGcTxCandidates" evs)
@@ -881,7 +878,6 @@ renderSummary opts results =
     , stat "promote           " (map prPromoteWall rs)
     , stat "copy wait         " (map prCopyWaitWall rs)
     , stat "copy eb (median)  " (map prCopyEbWall rs)
-    , stat "probe (median)    " (map prProbeWall rs)
     , stat "mark              " (map prMarkWall rs)
     , stat "sweep             " (map prSweepWall rs)
     , stat "gc-candidates init" (map prReinitWall rs)

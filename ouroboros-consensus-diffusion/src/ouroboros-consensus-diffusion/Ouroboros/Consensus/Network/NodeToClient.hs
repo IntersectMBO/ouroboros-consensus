@@ -62,8 +62,7 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Typeable
 import Data.Void (Void)
-import LeiosDemoDb (LeiosDbHandle, LeiosDbReader, withReader)
-import qualified LeiosDemoDb as LeiosDb
+import LeiosDemoDb (LeiosDbReader, withReader)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful

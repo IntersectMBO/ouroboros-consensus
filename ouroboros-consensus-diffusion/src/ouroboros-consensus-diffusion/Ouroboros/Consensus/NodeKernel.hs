@@ -877,10 +877,10 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     rootCCtx <- rootCallCtx "Forge"
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 
-  finalizeForging (bf, leiosDbReader, leiosDbWriter, _) = do
+  finalizeForging (bf, leiosDbReader, leiosDbWriter, _) =
     leiosDbWriter.close
-    leiosDbReader.close
-    finalize bf
+      >> leiosDbReader.close
+      >> finalize bf
 
 {-------------------------------------------------------------------------------
   TxSubmission integration

@@ -16,7 +16,6 @@ module LeiosDemoLogic (module LeiosDemoLogic) where
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
-import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (foldM, forM_, unless, when)
