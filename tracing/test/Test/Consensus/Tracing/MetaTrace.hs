@@ -74,9 +74,8 @@ type Blk = CardanoBlock StandardCrypto
 
 -- | Stand-in for the peer type of the per-peer tracers.
 --
--- No 'MetaTrace' method looks at it -- namespaces, severities and documentation
--- are the same whatever a peer is -- so this picks the simplest inhabitant
--- rather than dragging in the node's address types.
+-- No 'MetaTrace' method looks at it, so this avoids pulling in the node's
+-- address types.
 type Peer = ()
 
 tests :: TestTree
@@ -110,9 +109,7 @@ tests =
     , -- Only ChainDB. The LedgerDB, ImmutableDB, VolatileDB, PerasCertDB and
       -- PerasVoteDB tracers are not separate: ChainDbArgs derives each of them
       -- from the ChainDB tracer, and ChainDB.TraceEvent's allNamespaces maps all
-      -- of their namespaces in under LedgerEvent, ImmDbEvent and so on. Listing
-      -- them here as well checked every one of those namespaces twice, under two
-      -- different names.
+      -- of their namespaces in under LedgerEvent, ImmDbEvent and so on.
       testGroup
         "storage"
         [ metaTrace @(ChainDB.TraceEvent Blk) "ChainDB.TraceEvent"
@@ -147,10 +144,8 @@ metaTrace name =
         assertNoOffenders "no privacyFor" [ns | ns <- nss, Nothing <- [privacyFor ns Nothing]]
     , testCase "every namespace has a detail level" $
         assertNoOffenders "no detailsFor" [ns | ns <- nss, Nothing <- [detailsFor ns Nothing]]
-    , -- A ratchet rather than a clean sheet: the namespaces in
-      -- 'knownUndocumented' arrived undocumented and are recorded so that new
-      -- ones cannot creep in. Write the documentation and delete the entry; the
-      -- test below makes sure the list does not go stale.
+    , -- Namespaces that are already undocumented are ratcheted in
+      -- 'knownUndocumented'.
       testCase "every namespace is documented" $
         assertNoOffenders
           "no documentFor, or blank"
@@ -195,10 +190,9 @@ metaTrace name =
 
 -- | Namespaces that have no documentation yet, keyed by the traced type.
 --
--- All of these predate the move of the tracing instances into Consensus, and
--- live in ChainDB, ImmutableDB, LedgerDB and the forge tracer. They are listed
--- so that the check above can still reject a newly added namespace with no
--- documentation. Shrink this list, never grow it.
+-- Listed so that the check above can still reject a newly added namespace with
+-- no documentation. Write the documentation and delete the entry; the check
+-- after it rejects a stale one. Shrink this list, never grow it.
 knownUndocumented :: Set.Set (String, Text.Text)
 knownUndocumented =
   Set.fromList

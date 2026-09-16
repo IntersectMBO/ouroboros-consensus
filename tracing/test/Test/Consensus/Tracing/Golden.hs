@@ -4,15 +4,11 @@
 
 -- | Golden output for the tracing rendering helpers.
 --
--- These functions are what the era tracing instances put into the log, and
--- they were reimplemented off @cardano-api@ when the instances moved here.
--- Two of them silently changed shape in the process, which nothing caught --
--- hence these files. They pin the output as bytes so that a change to it has
--- to be an explicit, reviewed change to a golden file.
---
--- A golden file is only ever as good as the review of the diff that created it:
--- these were checked by hand against @cardano-api-11.5.0.0@, the version
--- @cardano-node@ used before the move.
+-- These functions are what the era tracing instances put into the log, so the
+-- golden file pins their output as bytes: a change to what an operator parses
+-- has to be an explicit change to the file. The expected output was checked by
+-- hand against @cardano-api-11.5.0.0@, the version @cardano-node@ rendered
+-- these with before the instances moved here.
 module Test.Consensus.Tracing.Golden (tests) where
 
 import qualified Cardano.Crypto.Hash.Class as Crypto
@@ -113,9 +109,8 @@ shelleyRender =
       [ ("renderScriptIndex " <> label, json (renderScriptIndex purpose))
       | (label, purpose) <- purposesByIndex
       ]
-    , -- Note the asymmetry: spending, rewarding and guarding render their item
-      -- directly, the other four wrap it in {"item": ...} via
-      -- ToJSON (AsItem ix it). That is what cardano-api did.
+    , -- Every purpose, by item. See 'renderScriptPurpose' on the {"item": ...}
+      -- asymmetry.
       [ ("renderScriptPurpose " <> label, json (renderScriptPurpose purpose))
       | (label, purpose) <- purposesByItem
       ]

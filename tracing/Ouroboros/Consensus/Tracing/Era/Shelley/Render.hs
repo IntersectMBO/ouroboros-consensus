@@ -127,12 +127,8 @@ renderScriptPurpose ::
   Value
 -- Note the asymmetry in whether the 'AsItem' wrapper is unwrapped: spending,
 -- rewarding and guarding render their item directly, the other four go through
--- @ToJSON (AsItem ix it)@ and so come out wrapped in an @{"item": ...}@ object.
--- That is what @cardano-api@'s renderer did for the six purposes it knew about,
--- so it is what consumers parse; changing it is a deliberate format change, not
--- a cleanup to make here. Guarding is new in Dijkstra and has no @cardano-api@
--- rendering to preserve, so it renders directly, like the other two purposes
--- for which we have a dedicated renderer.
+-- @ToJSON (AsItem ix it)@ and so come out wrapped in an @{"item": ...}@ object,
+-- as @cardano-api@'s renderer did.
 renderScriptPurpose = \case
   AnyEraSpendingPurpose (AsItem txin) ->
     Aeson.object ["spending" .= Aeson.String (renderTxIn txin)]
