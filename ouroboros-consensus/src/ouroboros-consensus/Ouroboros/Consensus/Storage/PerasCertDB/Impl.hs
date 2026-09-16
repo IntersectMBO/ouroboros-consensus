@@ -26,6 +26,7 @@ import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
@@ -60,7 +61,8 @@ data PerasCertDbState blk = PerasCertDbState
   , pcdsLastTicketNo :: !PerasCertTicketNo
   -- ^ The most recent 'PerasCertTicketNo' (or 'zeroPerasCertTicketNo'
   -- otherwise).
-  , pcdsLatestCertSeen :: !(Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
+  , pcdsLatestCertSeen ::
+      !(StrictMaybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
   -- ^ The certificate with the highest round number that has been added to the
   -- db since it has been opened.
   }
@@ -81,7 +83,7 @@ initialPerasCertDbState =
       { pcdsCertIds = Set.empty
       , pcdsCertsByTicket = Map.empty
       , pcdsLastTicketNo = zeroPerasCertTicketNo
-      , pcdsLatestCertSeen = Nothing
+      , pcdsLatestCertSeen = SNothing
       }
     (Fingerprint 0)
 
@@ -205,14 +207,14 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
             pcdsCertsByTicket' = Map.insert pcdsLastTicketNo' cert (pcdsCertsByTicket pcds)
             pcdsLatestCertSeen' =
               case pcdsLatestCertSeen pcds of
-                Nothing ->
-                  Just (CertBoostingBlockInVolatileDB cert)
-                Just prev
+                SNothing ->
+                  SJust (CertBoostingBlockInVolatileDB cert)
+                SJust prev
                   | getPerasCertRound cert
                       > getPerasCertRound (forgetBoostedBlockStatus prev) ->
-                      Just (CertBoostingBlockInVolatileDB cert)
+                      SJust (CertBoostingBlockInVolatileDB cert)
                   | otherwise ->
-                      Just prev
+                      SJust prev
         writeTVar pcdbState $
           WithFingerprint
             PerasCertDbState
@@ -270,7 +272,7 @@ implGetLatestCertSeen ::
 implGetLatestCertSeen PerasCertDbEnv{pcdbState} = do
   PerasCertDbState{pcdsLatestCertSeen} <-
     forgetFingerprint <$> readTVar pcdbState
-  pure pcdsLatestCertSeen
+  pure $ strictMaybeToMaybe pcdsLatestCertSeen
 
 implGarbageCollect ::
   forall m blk.
