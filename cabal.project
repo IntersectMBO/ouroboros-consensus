@@ -83,29 +83,38 @@ benchmarks: true
 
 multi-repl: True
 
--- The tools read the node configuration with cardano-config. Back to tracking a
--- branch of it rather than the CHaP release, because 1.1.0.0 does not gate the
--- experimental (Dijkstra) genesis on ExperimentalHardForksEnabled: it reports a
--- named genesis file whatever the flag says, where the node ignores the file
--- with the flag off and requires one with it on. "Cardano.Tools.Config" relies
--- on the gated behaviour, so replace this with the CHaP release that carries it.
+-- The tools read the node configuration with cardano-config. A branch of it
+-- rather than the CHaP release, because 1.1.0.0 reports a named Dijkstra
+-- genesis file whatever ExperimentalHardForksEnabled says, where the node
+-- ignores the file with the flag off and requires one with it on.
+-- Cardano.Tools.Config relies on the gated behaviour. Replace this with the
+-- CHaP release that carries it.
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-config.git
   tag: 51faacf77fe3c33f2635c090967fd3116251ce12
   --sha256: sha256-xrugSEkeptEp0y6sazCvSIugs3zi34PKlkWEn3rlN24=
 
--- cardano-config bounds cardano-ledger-core to <1.22 and cardano-ledger-dijkstra
--- to <0.4, and cardano-keys bounds cardano-ledger-core to <1.22, while the
--- cardano-ledger pin above supplies exactly those two versions. Only the bounds
--- that actually exclude a pinned version are relaxed, so that a future
--- incompatibility still shows up as a conflict rather than silently. Both
--- packages have to be re-released against the ledger this project builds with
--- before this can go, which needs that ledger on CHaP first.
+-- cardano-config and cardano-keys are released against the cardano-ledger on
+-- CHaP, while the pin above supplies an unreleased one, so their upper bounds
+-- exclude it. One entry per bound that actually excludes a pinned version, so
+-- that a genuine incompatibility still shows up as a conflict rather than being
+-- waved through. Expect to add entries when the ledger pin moves a major.
+--
+-- All of this goes when both are re-released against the ledger this project
+-- builds with, which needs that ledger on CHaP first.
 allow-newer:
+  , cardano-config:cardano-crypto-class
+  , cardano-config:cardano-crypto-wrapper
+  , cardano-config:cardano-ledger-alonzo
+  , cardano-config:cardano-ledger-conway
   , cardano-config:cardano-ledger-core
   , cardano-config:cardano-ledger-dijkstra
+  , cardano-config:cardano-ledger-shelley
+  , cardano-keys:cardano-crypto-class
+  , cardano-keys:cardano-crypto-wrapper
   , cardano-keys:cardano-ledger-core
+  , cardano-keys:cardano-ledger-shelley
 
 import: cabal/asserts.cabal
 import: cabal/newer-ghcs.cabal
@@ -122,4 +131,10 @@ if os (windows)
     bitvec -simd
 
 constraints:
+  -- The CHaP index-state above has to be late enough to see cardano-keys, which
+  -- also brings plutus 1.69 into view. The cardano-ledger pinned above does not
+  -- build against it: its alonzo testlib has no Serialise instance for
+  -- PlutusV4's TxOutRef, which 1.69 made a distinct type. Hold plutus at what
+  -- the ledger expects until a pin that handles 1.69.
+  plutus-ledger-api <1.69,
   tasty <1.5.4,
