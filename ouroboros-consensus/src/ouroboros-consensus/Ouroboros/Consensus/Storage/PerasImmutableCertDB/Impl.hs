@@ -13,9 +13,14 @@
 --
 -- Unlike the ImmutableDB, this database does not use chunking: each certificate
 -- is stored in its own file, named after the Peras round number of the
--- certificate (which uniquely identifies it). An in-memory index (keyed by
--- round number) is rebuilt by scanning the directory when the database is
--- opened.
+-- certificate (which uniquely identifies it). Certificates themselves are
+-- therefore never cached in memory; only the (much smaller) set of certificate
+-- round numbers known to be on disk is kept in memory, guarded by a
+-- 'StrictSVar', similarly to how the ImmutableDB guards its
+-- 'Ouroboros.Consensus.Storage.ImmutableDB.Impl.State.OpenState'.
+-- Every database operation goes through this guarded set,
+-- which acts as this database's (much simpler, since there is no chunking)
+-- equivalent of the ImmutableDB's on-disk indices.
 module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
   ( -- * Opening
     PerasImmutableCertDbArgs (..)
@@ -32,10 +37,12 @@ import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad (forM, void)
+import Control.Monad.State.Strict (StateT, get, lift, put)
+import Control.ResourceRegistry (WithTempRegistry, allocateTemp, modifyWithTempRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
@@ -51,12 +58,20 @@ import System.FS.API.Lazy
 data PerasImmutableCertDbEnv m blk = PerasImmutableCertDbEnv
   { picdbHasFS :: !(SomeHasFS m)
   , picdbTracer :: !(Tracer m (TraceEvent blk))
-  , picdbState :: !(StrictTVar m (Map PerasRoundNo (ValidatedPerasCert blk)))
-  -- ^ In-memory index of all certificates on disk, keyed by round number.
+  , picdbKnownRounds :: !(StrictSVar m (Set PerasRoundNo))
+  -- ^ The round numbers of all certificates currently stored on
+  -- disk. This is the only bit of information about the certificates kept
+  -- in memory; the certificates themselves are read back from disk
+  -- on demand.
   }
   deriving
     NoThunks
     via OnlyCheckWhnfNamed "PerasImmutableCertDbEnv" (PerasImmutableCertDbEnv m blk)
+
+-- | Shorthand for the monad in which 'implAddCert' safely modifies
+-- 'picdbKnownRounds': allocated resources (here, a single certificate file)
+-- are automatically cleaned up if they don't end up part of the on-disk state.
+type ModifyKnownRounds m = StateT (Set PerasRoundNo) (WithTempRegistry (Set PerasRoundNo) m)
 
 {-------------------------------------------------------------------------------
   Errors
@@ -76,9 +91,8 @@ data TraceEvent blk
   = -- | Number of certificates found on disk when opening.
     OpenedDB
       Int
-  | AddedCert PerasRoundNo AddPerasImmutableCertResult
-  | ClosedDB
-  | CertNotFound
+  | -- | The result of attempting to add a certificate for the given round.
+    AddedCert PerasRoundNo AddPerasImmutableCertResult
   deriving stock (Eq, Show, Generic)
 
 {-------------------------------------------------------------------------------
@@ -119,21 +133,22 @@ createDB
     , picdbaTracer
     } = do
     createDirectoryIfMissing hasFS True (mkFsPath [])
-    certs <- readAllCerts hasFS
-    picdbState <-
-      newTVarIO $
-        Map.fromList [(getPerasCertRound cert, cert) | cert <- certs]
+    -- Validate every certificate file present on disk once, up front, and
+    -- keep only the (much cheaper) round numbers around: certificates
+    -- themselves are read back from disk on demand, see 'implGetCertsAfter'.
+    certs :: [ValidatedPerasCert blk] <- readAllCerts hasFS
+    picdbKnownRounds <- newSVar $ Set.fromList (map getPerasCertRound certs)
     let env =
           PerasImmutableCertDbEnv
             { picdbHasFS = someHasFS
             , picdbTracer = picdbaTracer
-            , picdbState
+            , picdbKnownRounds
             }
     traceWith picdbaTracer (OpenedDB (length certs))
     pure
       PerasImmutableCertDB
         { addCert = implAddCert env
-        , getPointCerts = implGetPointCerts env
+        , getCertsAfter = implGetCertsAfter env
         }
 
 {-------------------------------------------------------------------------------
@@ -149,34 +164,58 @@ implAddCert ::
   ValidatedPerasCert blk ->
   m AddPerasImmutableCertResult
 implAddCert env cert = do
-  present <- atomically $ Map.member roundNo <$> readTVar (picdbState env)
-  result <-
-    if present
-      then pure CertAlreadyInImmutableDB
-      else do
-        -- no lock, assumes a single writer (the ChainDB adds
-        -- certificates from one background thread). Add a per-db lock if
-        -- concurrent 'addCert' for the same round ever becomes possible.
-        writeCertFile env roundNo cert
-        atomically $ modifyTVar (picdbState env) (Map.insert roundNo cert)
-        pure AddedCertToImmutableDB
+  result <- modifyWithTempRegistry getSt putSt modifyRounds
   traceWith (picdbTracer env) (AddedCert roundNo result)
   pure result
  where
   roundNo = getPerasCertRound cert
 
-implGetPointCerts ::
+  getSt :: m (Set PerasRoundNo)
+  getSt = takeSVar (picdbKnownRounds env)
+
+  -- Taking and putting back the 'StrictSVar' makes the whole
+  -- check-then-write below atomic wrt concurrent 'addCert' calls, closing
+  -- the race that a plain 'StrictTVar' check-then-update can't avoid. On
+  -- abort or exception, restore the state as it was before this call; any
+  -- certificate file written in the meantime is cleaned up by
+  -- 'allocateTemp' (see 'modifyRounds') since it never becomes part of the
+  -- committed state.
+  putSt :: Set PerasRoundNo -> ExitCase (Set PerasRoundNo) -> m ()
+  putSt before ec =
+    putSVar (picdbKnownRounds env) $ case ec of
+      ExitCaseSuccess after -> after
+      _ -> before
+
+  modifyRounds :: ModifyKnownRounds m AddPerasImmutableCertResult
+  modifyRounds = do
+    rounds <- get
+    if Set.member roundNo rounds
+      then pure CertAlreadyInImmutableDB
+      else do
+        lift $
+          allocateTemp
+            (writeCertFile env roundNo cert)
+            (\() -> removeCertFile env roundNo >> pure True)
+            (\rounds' () -> Set.member roundNo rounds')
+        put (Set.insert roundNo rounds)
+        pure AddedCertToImmutableDB
+
+implGetCertsAfter ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
-  , IsPerasCert (PerasCert blk) blk
+  , FromCBOR (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
-  Point blk ->
+  PerasRoundNo ->
+  Word64 ->
   m [ValidatedPerasCert blk]
-implGetPointCerts env pt = atomically $ do
-  certs <- readTVar (picdbState env)
-  pure [cert | cert <- Map.elems certs, getPerasCertPoint cert == pt]
+implGetCertsAfter env roundNo maxCerts = do
+  -- A possibly slightly stale read is fine: concurrently added certificates
+  -- may or may not show up, just as for the ImmutableDB (see
+  -- 'getOpenState').
+  rounds <- atomically $ readSVarSTM (picdbKnownRounds env)
+  let roundsAfter = snd $ Set.split roundNo rounds
+  mapM (readCertFile env) (take (fromIntegral maxCerts) (Set.toAscList roundsAfter))
 
 {-------------------------------------------------------------------------------
   On-disk serialisation
@@ -221,6 +260,51 @@ writeCertFile env roundNo cert =
   path = fsPathCertFile roundNo
   bytes = CBOR.toLazyByteString $ encodeCert cert
 
+-- | Remove the file of a certificate.
+--
+-- Only used to clean up a certificate file that was written by 'addCert' but
+-- never made it into 'picdbKnownRounds' because of an exception.
+removeCertFile ::
+  PerasImmutableCertDbEnv m blk ->
+  PerasRoundNo ->
+  m ()
+removeCertFile env roundNo =
+  case picdbHasFS env of
+    SomeHasFS hasFS -> removeFile hasFS (fsPathCertFile roundNo)
+
+-- | Read and decode the certificate of the given round number.
+--
+-- PRECONDITION: the round number's certificate file exists.
+readCertFile ::
+  ( IOLike m
+  , FromCBOR (PerasCert blk)
+  ) =>
+  PerasImmutableCertDbEnv m blk ->
+  PerasRoundNo ->
+  m (ValidatedPerasCert blk)
+readCertFile env roundNo =
+  case picdbHasFS env of
+    SomeHasFS hasFS -> readCertFileAt hasFS (fsPathCertFile roundNo)
+
+readCertFileAt ::
+  ( IOLike m
+  , FromCBOR (PerasCert blk)
+  ) =>
+  HasFS m h ->
+  FsPath ->
+  m (ValidatedPerasCert blk)
+readCertFileAt hasFS path = do
+  bytes <- withFile hasFS path ReadMode (hGetAll hasFS)
+  case CBOR.deserialiseFromBytes decodeCert bytes of
+    Right (_leftover, cert) -> pure cert
+    -- Corrupt data on disk is treated as unrecoverable,
+    -- so error handling is bubbled up.
+    Left err -> throwIO $ CorruptPerasImmutableCertFile path (show err)
+
+-- | Read and decode all certificate files in the database directory.
+--
+-- PRECONDITION: all certificate files are valid.
+-- POSTCONDITION: the returned list is finite.
 readAllCerts ::
   forall m h blk.
   ( IOLike m
@@ -230,9 +314,4 @@ readAllCerts ::
   m [ValidatedPerasCert blk]
 readAllCerts hasFS = do
   names <- Set.toList <$> listDirectory hasFS (mkFsPath [])
-  forM names $ \name -> do
-    let path = mkFsPath [name]
-    bytes <- withFile hasFS path ReadMode (hGetAll hasFS)
-    case CBOR.deserialiseFromBytes decodeCert bytes of
-      Right (_leftover, cert) -> pure cert
-      Left err -> throwIO $ CorruptPerasImmutableCertFile path (show err)
+  forM names $ \name -> readCertFileAt hasFS (mkFsPath [name])

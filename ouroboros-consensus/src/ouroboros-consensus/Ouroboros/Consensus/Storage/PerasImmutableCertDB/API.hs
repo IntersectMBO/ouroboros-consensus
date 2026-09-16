@@ -5,6 +5,7 @@
 
 module Ouroboros.Consensus.Storage.PerasImmutableCertDB.API (PerasImmutableCertDB (..), AddPerasImmutableCertResult (..)) where
 
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -13,9 +14,11 @@ import Ouroboros.Consensus.Block
 -- Peras certificates, ie those relevant for syncing nodes only.
 data PerasImmutableCertDB m blk = PerasImmutableCertDB
   { addCert :: ValidatedPerasCert blk -> m AddPerasImmutableCertResult
-  -- ^ Add a certificate
-  , getPointCerts :: Point blk -> m [ValidatedPerasCert blk]
-  -- ^ Get all the immutable certificates pointing to a block.
+  -- ^ Add a certificate to the Peras immutable certificate database.
+  , getCertsAfter :: PerasRoundNo -> Word64 -> m [ValidatedPerasCert blk]
+  -- ^ @'getCertsAfter' roundNo maxCerts@ gets at most @maxCerts@ immutable
+  -- certificates with a round number strictly greater than @roundNo@, in
+  -- ascending round number order.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasImmutableCertDB" (PerasImmutableCertDB m blk)
 
