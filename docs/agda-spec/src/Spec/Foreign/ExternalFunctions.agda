@@ -2,18 +2,27 @@ module Spec.Foreign.ExternalFunctions where -- TODO: Complete
 
 open import Ledger.Prelude
 import Spec.Foreign.HSTypes as F using (Rational)
+import Foreign.Haskell as F using (Pair; _,_)
 open import Spec.Foreign.HSConsensus.Core
 
 record ExternalFunctions : Type where
   field
+    extSignˢ     : ℕ → ℕ → ℕ
     extIsSignedˢ : ℕ → ℕ → ℕ → Bool
+    extSignᵏ     : (ℕ → ℕ) → ℕ → ℕ → ℕ
     extIsSignedᵏ : ℕ → ℕ → ℕ → ℕ → Bool
+    extEvaluate  : ℕ → ℕ → F.Pair ℕ ℕ
+    extVerify    : ℕ → ℕ → F.Pair ℕ ℕ → Bool
     extExp       : F.Rational → F.Rational
     extLn        : F.Rational → F.Rational
 {-# FOREIGN GHC
   data ExternalFunctions = MkExternalFunctions
-    { extIsSignedDSIG :: Integer -> Integer -> Integer -> Bool
+    { extSignDSIG     :: Integer -> Integer -> Integer
+    , extIsSignedDSIG :: Integer -> Integer -> Integer -> Bool
+    , extSignKES      :: (Integer -> Integer) -> Integer -> Integer -> Integer
     , extIsSignedKES  :: Integer -> Integer -> Integer -> Integer -> Bool
+    , extEvaluate     :: Integer -> Integer -> (Integer , Integer)
+    , extVerify       :: Integer -> Integer -> (Integer , Integer) -> Bool
     , extExp          :: Rational -> Rational
     , extLn           :: Rational -> Rational
     }
@@ -22,8 +31,12 @@ record ExternalFunctions : Type where
 
 dummyExternalFunctions : ExternalFunctions
 dummyExternalFunctions = record
-  { extIsSignedˢ = λ _ _ _ → true
+  { extSignˢ     = λ _ _ → 0
+  ; extIsSignedˢ = λ _ _ _ → true
+  ; extSignᵏ     = λ _ _ _ → 0
   ; extIsSignedᵏ = λ _ _ _ _ → true
+  ; extEvaluate  = λ _ _ → 0 F., 0
+  ; extVerify    = λ _ _ _ → true
   ; extExp       = λ p → to (rationalExtStructure≈ .exp (from p))
   ; extLn        = λ p → to (rationalExtStructure≈ .ln (from p) ⦃ if (from p) ℚ.> 0ℚ then (λ{p>0} → positive p>0) else error "Not a positive rational number" ⦄)
   }
