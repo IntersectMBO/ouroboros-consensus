@@ -30,6 +30,11 @@ record EpochStructure : Type₁ where
         firstSlot                     : Epoch → Slot
         StabilityWindow               : Slot
         RandomnessStabilisationWindow : Slot
+        -- Leios timing parameters (CIP-164): header diffusion, voting and
+        -- endorser block diffusion periods, all expressed in slots.
+        Lhdr                          : Slot
+        Lvote                         : Slot
+        Ldiff                         : Slot
         sucᵉ                          : Epoch → Epoch
         kesPeriod                     : Slot → KESPeriod
         _+ᵏ_                          : KESPeriod → ℕ → KESPeriod
@@ -86,6 +91,9 @@ record GlobalConstants : Type₁ where
          SlotsPerEpochᶜ : ℕ; ⦃ NonZero-SlotsPerEpochᶜ ⦄ : NonZero SlotsPerEpochᶜ
          StabilityWindowᶜ : ℕ
          RandomnessStabilisationWindowᶜ : ℕ
+         Lhdrᶜ : ℕ
+         Lvoteᶜ : ℕ
+         Ldiffᶜ : ℕ
          Quorum : ℕ
          NetworkId : Network
          SlotsPerKESPeriodᶜ : ℕ; ⦃ NonZero-SlotsPerKESPeriodᶜ ⦄ : NonZero SlotsPerKESPeriodᶜ
@@ -106,6 +114,9 @@ record GlobalConstants : Type₁ where
     .firstSlot e                   → e * SlotsPerEpochᶜ
     .StabilityWindow               → StabilityWindowᶜ
     .RandomnessStabilisationWindow → RandomnessStabilisationWindowᶜ
+    .Lhdr                          → Lhdrᶜ
+    .Lvote                         → Lvoteᶜ
+    .Ldiff                         → Ldiffᶜ
     .sucᵉ                          → suc
     ._+ᵉ'_                         → _+_
     .kesPeriod slot                → slot / SlotsPerKESPeriodᶜ

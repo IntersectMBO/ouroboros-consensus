@@ -10,6 +10,11 @@ instance
   Conv-Certifiedℕ = λ where .to → proj₁; .from → (λ n → if n <ℕ 2 ^ 512 then (λ{n<2^512} → from n , n<2^512) else 0 , s≤s z≤n)
     where open import Data.Nat renaming (_<_ to _<ℕ_)
 
+  HsTy-AnnouncedEB = autoHsType AnnouncedEB ⊣ withConstructor "MkAnnouncedEB"
+                                              • fieldPrefix "aeb"
+
+  Conv-AnnouncedEB = autoConvert AnnouncedEB
+
   HsTy-OCert = autoHsType OCert ⊣ withConstructor "MkOCert"
                                 • fieldPrefix "oc"
 
