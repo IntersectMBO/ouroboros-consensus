@@ -429,7 +429,7 @@ perasCertSizeUpperBound cert =
   -- Each of the following three sizes is an upper bound (in bits, not bytes).
   -- For a rationale of their value, see
   -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2187#discussion_r3955585768
-  constSize = 140 * 8
+  constSize = 135 * 8
   sizePerVoter = 1
   extraSizePerNonPersistentVoter = 50 * 8
   divCeiling n d = q + min 1 r
