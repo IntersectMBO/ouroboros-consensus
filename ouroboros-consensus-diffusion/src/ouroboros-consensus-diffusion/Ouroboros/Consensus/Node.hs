@@ -111,7 +111,12 @@ import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import LeiosDemoDb (LeiosDbHandle)
 import LeiosDemoTypes (SerializedEbBody)
-import LeiosTxCache (LeiosTxCache, evictOlderThan, newHashTableLeiosTxCache)
+import LeiosTxCache
+  ( LeiosTxCache
+  , defaultLeiosTxCacheShift
+  , evictOlderThan
+  , newHashTableLeiosTxCache
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -549,7 +554,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           -- distinct txs, which no longer fits the 2^22 = 4194304 slots, and
           -- the table errors when full rather than degrading. Tracked in
           -- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
-          leiosTxCache <- newHashTableLeiosTxCache 22 leiosTxCacheSalt0 leiosTxCacheSalt1
+          leiosTxCache <-
+            newHashTableLeiosTxCache defaultLeiosTxCacheShift leiosTxCacheSalt0 leiosTxCacheSalt1
 
           (chainDB, finalArgs) <-
             openChainDB

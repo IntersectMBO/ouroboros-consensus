@@ -137,7 +137,7 @@ prop_equiv :: Property
 prop_equiv =
   forAll (genConfig (6, 8)) $ \cfg ->
     forAllShrink (genOps (cfgDomain cfg)) (shrinkList (const [])) $ \ops -> ioProperty $ do
-      hp <- newPureLeiosTxCache
+      hp <- newPureLeiosTxCache (cfgShift cfg)
       hm <- newHashTableLeiosTxCache (cfgShift cfg) salt0 salt1
       resP <- mapM (applyOp hp) ops
       resM <- mapM (applyOp hm) ops
@@ -156,7 +156,7 @@ prop_equiv =
 prop_equivEvict :: Property
 prop_equivEvict =
   forAllShrink genEvictOps (shrinkList (const [])) $ \ops -> ioProperty $ do
-    hp <- newPureLeiosTxCache
+    hp <- newPureLeiosTxCache tableShift
     hm <- newHashTableLeiosTxCache tableShift salt0 salt1
     resP <- mapM (applyOp hp) ops
     resM <- mapM (applyOp hm) ops

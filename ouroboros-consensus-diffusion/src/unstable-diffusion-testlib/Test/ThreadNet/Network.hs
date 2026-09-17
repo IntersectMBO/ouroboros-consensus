@@ -91,7 +91,7 @@ import qualified LeiosDemoDb
 import LeiosDemoOnlyTestFetch (LeiosFetch)
 import LeiosDemoOnlyTestNotify (LeiosNotify)
 import qualified LeiosDemoTypes
-import LeiosTxCache (LeiosTxCache, evictOlderThan, newPureLeiosTxCache)
+import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, evictOlderThan, newPureLeiosTxCache)
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure
@@ -787,7 +787,7 @@ runThreadNetwork
       leiosState
       _coreNodeId = do
         leiosDbHandle <- LeiosDemoDb.newLeiosDBInMemoryWith (lsLeiosDb leiosState)
-        leiosTxCache <- newPureLeiosTxCache
+        leiosTxCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
         let args =
               fromMinimalChainDbArgs
                 MinimalChainDbArgs

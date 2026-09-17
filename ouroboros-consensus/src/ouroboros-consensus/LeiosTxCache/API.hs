@@ -18,6 +18,7 @@ module LeiosTxCache.API
 
     -- * Insert-body observability summary
   , LeiosTxCacheInsertBodySummary (..)
+  , defaultLeiosTxCacheShift
   , mkLeiosTxCacheInsertBodySummary
   , worstCaseCacheTxCount
 
@@ -163,6 +164,14 @@ bucketTxArrival = \case
 -- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
 worstCaseCacheTxCount :: Int
 worstCaseCacheTxCount = maxAnnouncementCount * maxTxsPerEb
+
+-- | The table shift the node allocates its Leios tx cache with: @2 ^@ this
+-- many slots. The pure reference handle reports 'ibsCacheLoad' against the
+-- same allocation, so the load factor means one thing across both handles.
+-- NOTE: this allocation does not cover 'worstCaseCacheTxCount'; see
+-- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
+defaultLeiosTxCacheShift :: Int
+defaultLeiosTxCacheShift = 22
 
 -- | Build an 'LeiosTxCacheInsertBodySummary' from the raw counts, computing the
 -- load factor ('ibsCacheLoad') against the given capacity — how full this

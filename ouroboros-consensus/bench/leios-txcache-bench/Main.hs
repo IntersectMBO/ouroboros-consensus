@@ -171,7 +171,7 @@ main = do
             queryCache
             (syncFile sqliteDbPath)
             coolBatch
-      mkPure = mkInMem "pure-wrapped index" newPureLeiosTxCache
+      mkPure = mkInMem "pure-wrapped index" (newPureLeiosTxCache 22)
       mkHt = mkInMem "hash-table (shift 22)" (newHashTableLeiosTxCache 22 salt0 salt1)
       targets :: [IO BenchTarget]
       targets = case variant of

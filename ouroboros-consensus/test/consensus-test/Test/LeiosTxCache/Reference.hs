@@ -16,6 +16,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Word (Word64, Word8)
 import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
+import LeiosTxCache.API (defaultLeiosTxCacheShift)
 import LeiosTxCache.Reference
 import Test.Tasty (TestTree, adjustOption, testGroup)
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
@@ -116,7 +117,16 @@ ann :: Word64 -> Word8 -> Word8 -> Idx -> Idx
 ann s r e idx = let (idx', _, _) = insertAnnouncement (SlotNo s) (mkRbHash r) (mkEbHash e) idx in idx'
 
 body :: Word8 -> [Word8] -> Idx -> Idx
-body e ts idx = fst (insertBody (mkEbHash e) (TestBody (map mkTxHash ts)) () (\() _ _ _ -> ()) idx)
+body e ts idx =
+  fst
+    ( insertBody
+        (2 ^ defaultLeiosTxCacheShift)
+        (mkEbHash e)
+        (TestBody (map mkTxHash ts))
+        ()
+        (\() _ _ _ -> ())
+        idx
+    )
 
 -- | Announce EBs 1..n, each at its own slot and with its own RB hash.
 annN :: Int -> Idx -> Idx

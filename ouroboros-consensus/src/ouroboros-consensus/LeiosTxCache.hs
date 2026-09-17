@@ -78,10 +78,16 @@ import qualified LeiosTxCache.Reference as Pure
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
 -- | A handle backed by the pure reference index behind an MVar.
+--
+-- The table shift only sizes 'ibsCacheLoad' reporting -- the pure index has no
+-- allocation of its own: pass what the production table is allocated with,
+-- 'defaultLeiosTxCacheShift', unless comparing against a differently sized
+-- 'newHashTableLeiosTxCache'.
 newPureLeiosTxCache ::
   (IOLike m, ReferencesTxsByHash b) =>
+  Int ->
   m (LeiosTxCache m a v b)
-newPureLeiosTxCache = do
+newPureLeiosTxCache nshift = do
   var <- MVar.newMVar Pure.emptyLeiosTxCacheIndex
   pure
     LeiosTxCache
@@ -94,7 +100,7 @@ newPureLeiosTxCache = do
             let (idx', evEbs, evTxs) = Pure.evictOlderThan boundary idx
              in pure (idx', (evEbs, evTxs))
       , insertBody = \ebh b nil snoc ->
-          MVar.modifyMVar var $ \idx -> pure (Pure.insertBody ebh b nil snoc idx)
+          MVar.modifyMVar var $ \idx -> pure (Pure.insertBody (2 ^ nshift) ebh b nil snoc idx)
       , lookupBody = \ebh -> do
           idx <- MVar.readMVar var
           pure $! Pure.lookupBody ebh idx

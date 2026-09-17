@@ -31,13 +31,14 @@ import LeiosDemoTypes
   , RbHash (..)
   , SerializedEbBody
   , TxHash
+  , encodeLeiosEbSize
   , hashLeiosEb
   , hashLeiosTx
-  , encodeLeiosEbSize
   , serializeEbBody
   )
 import LeiosTxCache
   ( LeiosTxCache (..)
+  , defaultLeiosTxCacheShift
   , newPureLeiosTxCache
   )
 import LeiosVoting (EbClosureVerdict (..), validateEbClosure)
@@ -223,7 +224,7 @@ withHarness acquired txs k = do
     void $ leiosDbInsertEbBody conn point eb
     void $ leiosDbInsertTxs conn [(txHashOf tx, txBytes tx) | tx <- txs]
 
-    cache <- newPureLeiosTxCache
+    cache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     void $ insertAnnouncement cache (pointSlotNo point) rbHash (pointEbHash point)
     -- The fold over the not-yet-acquired txs is what a fetch would use to build
     -- its request; here only the refcount bump matters, so it folds into ().
