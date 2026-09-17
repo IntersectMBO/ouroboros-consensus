@@ -5,12 +5,14 @@
 
 module Test.Consensus.Shelley.Dijkstra (tests) where
 
+import Cardano.Binary (serialize')
 import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.Block as SL (pattern Block)
-import qualified Cardano.Ledger.Core as Core (hashBlockBody, txSeqBlockBodyL)
+import qualified Cardano.Ledger.Core as Core (hashBlockBody, sizeTxF, txSeqBlockBodyL)
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Protocol.Crypto (StandardCrypto)
+import qualified Data.ByteString as BS
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Header
@@ -45,8 +47,27 @@ tests =
         , testProperty
             "'blockMatchesHeader' must reject blocks where the header's 'containsCert' flag disagrees with the body's actual content"
             prop_leiosCertFlagMismatchRejected
+        , testProperty
+            "the mempool never charges a transaction less than 'forgeLeiosEb' writes for it"
+            prop_leiosEbItemChargeCoversEncoder
         ]
     ]
+
+-- | An endorser-block reference records the length of the serialised
+-- transaction ('serialize'', the mempool-submission encoding), while the
+-- mempool charges the ledger's size computation ('sizeTxF'). At the current
+-- ledger pin the two encodings agree exactly; this fails on a ledger bump
+-- that lets the wire size drift above the charge, before that drift can
+-- produce an endorser block no peer accepts.
+prop_leiosEbItemChargeCoversEncoder :: Property
+prop_leiosEbItemChargeCoversEncoder =
+  forAll (arbitrary :: Gen (GenTx (ShelleyBlock (Praos StandardCrypto) DijkstraEra))) $
+    \(ShelleyTx _txid tx) ->
+      let wireSize = toInteger $ BS.length (serialize' tx)
+          chargedSize = toInteger $ tx ^. Core.sizeTxF
+       in counterexample
+            ("serialize': " <> show wireSize <> " bytes, sizeTxF: " <> show chargedSize)
+            $ wireSize <= chargedSize
 
 prop_leiosBodyWithCertAndTxsRejected :: Property
 prop_leiosBodyWithCertAndTxsRejected =

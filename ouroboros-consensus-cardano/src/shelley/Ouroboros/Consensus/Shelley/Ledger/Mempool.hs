@@ -795,10 +795,11 @@ instance Monoid DijkstraEbMeasure where
 -- transaction's block measure, and its reference costs the bytes
 -- 'forgeLeiosEb' serialises for it.
 --
--- The reference records the length of the serialised transaction. The Conway
--- byte size overstates that length by at most 'perTxOverhead', and a larger
+-- The reference records the length of the serialised transaction. At the
+-- current ledger pin that length is exactly the Conway byte size, and a larger
 -- number only ever widens the size's varint, so the reference is rounded up
--- but never short.
+-- but never short. @prop_leiosEbItemChargeCoversEncoder@ keeps a ledger bump
+-- from silently breaking this.
 txEbMeasureDijkstra :: ConwayMeasure -> DijkstraEbMeasure
 txEbMeasureDijkstra conway =
   DijkstraEbMeasure
