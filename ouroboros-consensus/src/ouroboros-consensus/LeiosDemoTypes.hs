@@ -1067,6 +1067,16 @@ encodeLeiosEb (MkLeiosEb v) =
 encodeLeiosEbMaxFramingSize :: ByteSize32
 encodeLeiosEbMaxFramingSize = ByteSize32 $ cborIntBytesSize (maxBound :: BytesSize)
 
+-- | The references capacity a @maxEndorserBlockReferencesSize@ parameter
+-- yields: the parameter less the framing 'encodeLeiosEb' writes ahead of the
+-- references. A parameter smaller than the framing exhausts the capacity --
+-- no reference fits, so no endorser blocks are forged -- rather than wrapping
+-- around to \"no limit\" (issue #2291).
+leiosReferencesCapacity :: BytesSize -> BytesSize
+leiosReferencesCapacity paramLimit = paramLimit - min paramLimit framing
+ where
+  ByteSize32 framing = encodeLeiosEbMaxFramingSize
+
 -- | The bytes one reference occupies for a transaction of the given size: the
 -- hash and the size itself, exactly as 'encodeLeiosEb' writes them.
 --

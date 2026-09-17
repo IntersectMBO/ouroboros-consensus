@@ -16,6 +16,7 @@ import LeiosDemoTypes
   , encodeLeiosEbItemSize
   , encodeLeiosEbMaxFramingSize
   , encodeLeiosEbSize
+  , leiosReferencesCapacity
   , maxTxsPerEb
   , selectCommitteeByStake
   )
@@ -24,6 +25,7 @@ import Test.QuickCheck
   ( Gen
   , Property
   , checkCoverage
+  , chooseEnum
   , chooseInt
   , chooseInteger
   , conjoin
@@ -37,6 +39,7 @@ import Test.QuickCheck
   , property
   , shrinkIntegral
   , vectorOf
+  , (.||.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
@@ -49,6 +52,9 @@ tests =
     [ testProperty "encodeLeiosEbSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
     , testProperty "encodeLeiosEbItemSize consistent with encodeLeiosEb" prop_ebItemSizeConsistent
     , testProperty "encodeLeiosEb framing bounded by encodeLeiosEbMaxFramingSize" prop_ebFramingBounded
+    , testProperty
+        "leiosReferencesCapacity floors at zero instead of wrapping"
+        prop_referencesCapacityFloorsAtZero
     , testProperty
         "selectCommitteeByStake orders by stake and bounds by committee size"
         prop_selectCommitteeByStake
@@ -141,6 +147,33 @@ prop_ebFramingBounded =
      in counterexample
           ("items: " <> show (V.length (leiosEbTxs eb)) <> ", framing: " <> show framing)
           (property $ framing <= unByteSize32 encodeLeiosEbMaxFramingSize)
+
+-- | The boundary #2291 fixed: a @maxEndorserBlockReferencesSize@ at or below
+-- the framing must yield a zero references capacity -- nothing fits, so no
+-- endorser blocks are forged -- and never wrap around to \"no limit\", which
+-- is what reading the parameter back through 'Data.Word.Word32' subtraction
+-- used to do for a parameter of 0.
+prop_referencesCapacityFloorsAtZero :: Property
+prop_referencesCapacityFloorsAtZero =
+  forAll genParamLimit $ \paramLimit ->
+    let capacity = leiosReferencesCapacity paramLimit
+     in counterexample ("capacity: " <> show capacity) $
+          conjoin
+            [ counterexample "capacity must never exceed the parameter (wrap-around)" $
+                property $
+                  capacity <= paramLimit
+            , counterexample "a parameter within the framing must yield zero capacity" $
+                paramLimit > framing .||. capacity === 0
+            ]
+ where
+  framing = unByteSize32 encodeLeiosEbMaxFramingSize
+
+  -- Weighted towards the boundary the old code wrapped on.
+  genParamLimit =
+    frequency
+      [ (4, chooseEnum (0, framing))
+      , (1, chooseEnum (framing + 1, maxBound))
+      ]
 
 -- | 'selectCommitteeByStake' seats the highest-stake pools, bounded by the
 -- committee-size parameter rather than by cumulative stake.

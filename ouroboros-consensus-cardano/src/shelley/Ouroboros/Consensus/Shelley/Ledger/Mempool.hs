@@ -817,24 +817,38 @@ leiosEndorserBlockMeasure st =
     { ebClosureMeasure = leiosEndorserBlockClosureMeasure st
     , -- Transactions are charged 'encodeLeiosEbItemSize' for their reference
       -- and nothing else, so the framing 'encodeLeiosEb' writes ahead of them
-      -- comes off the capacity here. Guarded: a parameter smaller than the
-      -- framing must exhaust the capacity (no reference fits, so no endorser
-      -- blocks are forged), not wrap it around.
+      -- comes off the capacity here ('leiosReferencesCapacity').
       txReferencesSize =
-        IgnoringOverflow . ByteSize32 $
-          referencesLimit - min referencesLimit framing
+        IgnoringOverflow . ByteSize32 . Leios.leiosReferencesCapacity $
+          -- In bounds of the codec's message limit by 'guardLeiosWireLimit'.
+          pparams ^. ppMaxEndorserBlockReferencesSizeL
     }
  where
-  ByteSize32 framing = Leios.encodeLeiosEbMaxFramingSize
-
-  -- Capped by what fits the codec's message limit next to the message's own
-  -- framing: an EB no peer will accept is worse than a smaller EB.
-  -- XXX: Silent cap, improve detectability
-  referencesLimit =
-    min (Leios.maxMsgLeiosBlockBytesSize - Leios.msgLeiosBlockFramingSize) $
-      pparams ^. ppMaxEndorserBlockReferencesSizeL
-
   pparams = getPParams $ tickedShelleyLedgerState st
+
+-- | Fail hard on protocol parameters the wire cannot carry: an endorser block
+-- filled to @maxEndorserBlockReferencesSize@ must fit the LeiosFetch codec's
+-- message limit next to the message's own framing. Applied where the mempool
+-- derives its capacity from the ledger state, so it fires when such
+-- parameters are first learned -- at node startup or on adopting the update
+-- -- and not in the forge path.
+guardLeiosWireLimit ::
+  (ShelleyCompatible proto era, DijkstraEraPParams era) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
+  a ->
+  a
+guardLeiosWireLimit st a
+  | paramLimit <= wireLimit = a
+  | otherwise =
+      error $
+        "maxEndorserBlockReferencesSize ("
+          <> show paramLimit
+          <> ") exceeds the LeiosFetch message limit ("
+          <> show wireLimit
+          <> ")"
+ where
+  wireLimit = Leios.maxMsgLeiosBlockBytesSize - Leios.msgLeiosBlockFramingSize
+  paramLimit = getPParams (tickedShelleyLedgerState st) ^. ppMaxEndorserBlockReferencesSizeL
 
 -- | What an endorser block's closure may amount to, in block-measure terms:
 -- the 'ebClosureMeasure' component of 'leiosEndorserBlockMeasure'.
@@ -843,17 +857,18 @@ leiosEndorserBlockClosureMeasure ::
   TickedLedgerState (ShelleyBlock proto era) mk ->
   ConwayMeasure
 leiosEndorserBlockClosureMeasure st =
-  ConwayMeasure
-    { alonzoMeasure =
-        AlonzoMeasure
-          { byteSize =
-              IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
-          , exUnits =
-              fromExUnits . unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
-          }
-    , refScriptsSize =
-        IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxRefScriptSizePerEndorserBlockL
-    }
+  guardLeiosWireLimit st $
+    ConwayMeasure
+      { alonzoMeasure =
+          AlonzoMeasure
+            { byteSize =
+                IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
+            , exUnits =
+                fromExUnits . unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
+            }
+      , refScriptsSize =
+          IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxRefScriptSizePerEndorserBlockL
+      }
  where
   pparams = getPParams $ tickedShelleyLedgerState st
 
