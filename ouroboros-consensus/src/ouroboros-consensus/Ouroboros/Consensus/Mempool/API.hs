@@ -458,9 +458,6 @@ data MempoolSnapshot blk = MempoolSnapshot
   -- ^ Get all transactions (oldest to newest) in the mempool snapshot,
   -- along with their ticket number, which are associated with a ticket
   -- number greater than the one provided.
-  , snapshotTake :: TxMeasure blk -> ([Validated (GenTx blk)], MempoolMeasure blk)
-  -- ^ Get the greatest prefix (oldest to newest) that respects the given
-  -- block capacity, and the prefix's total size.
   , snapshotPartition ::
       TxMeasure blk ->
       TxEbMeasure blk ->
@@ -470,8 +467,8 @@ data MempoolSnapshot blk = MempoolSnapshot
       , MempoolMeasure blk
       )
   -- ^ Partition the mempool for one forging opportunity: the greatest prefix
-  -- respecting the given block capacity on the 'TxMeasure' component (as
-  -- 'snapshotTake'), and then the greatest run of /following/ transactions
+  -- (oldest to newest) respecting the given block capacity on the 'TxMeasure'
+  -- component, and then the greatest run of /following/ transactions
   -- respecting the given endorser-block capacity on their 'TxEbMeasure'
   -- component alone. Each with its total size.
   , snapshotLookupTx :: TicketNo -> Maybe (Validated (GenTx blk))

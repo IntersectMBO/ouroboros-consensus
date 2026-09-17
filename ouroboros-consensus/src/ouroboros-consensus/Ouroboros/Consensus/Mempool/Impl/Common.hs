@@ -594,9 +594,6 @@ snapshot slotNo tipPoint txIds txs =
     , snapshotMempoolSize = mempoolSize txs
     , snapshotSlotNo = slotNo
     , snapshotStateHash = pointHash tipPoint
-    , snapshotTake = \limit ->
-        let (x, _) = TxSeq.splitAfterTxSizeOn mmTxMeasure txs limit
-         in (txSeqToList x, TxSeq.toSize x)
     , snapshotPartition = \blockLimit ebLimit ->
         let (x, rest) = TxSeq.splitAfterTxSizeOn mmTxMeasure txs blockLimit
             (y, _) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure rest ebLimit
