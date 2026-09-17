@@ -77,7 +77,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
   , IgnoringOverflow
-  , NoEbMeasure (..)
   , TxEbMeasure
   , TxMeasure
   )
@@ -269,13 +268,13 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     fromConway x = x
 
   hardForkInjTxEbMeasure =
-    fromNoEb
-      `o` fromNoEb
-      `o` fromNoEb
-      `o` fromNoEb
-      `o` fromNoEb
-      `o` fromNoEb
-      `o` fromNoEb
+    fromByteSize
+      `o` fromByteSize
+      `o` fromByteSize
+      `o` fromByteSize
+      `o` fromAlonzo
+      `o` fromAlonzo
+      `o` fromConway
       `o` fromDijkstra
       `o` nil
    where
@@ -292,10 +291,13 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxEbMeasure x) -> f x
       SOP.S y -> g y
 
-    -- Pre-Dijkstra transactions cannot appear in an endorser block; those
-    -- eras' endorser-block capacity is zero anyway.
-    fromNoEb :: NoEbMeasure -> DijkstraEbMeasure
-    fromNoEb NoEbMeasure = mempty
+    -- Pre-Dijkstra transactions cannot appear in an endorser block, but they
+    -- must not measure zero: a zero measure fits those eras' zero
+    -- endorser-block capacity, and a fill would take the whole mempool.
+    fromByteSize :: IgnoringOverflow ByteSize32 -> DijkstraEbMeasure
+    fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
+    fromAlonzo x = fromConway $ ConwayMeasure x mempty
+    fromConway x = DijkstraEbMeasure x mempty
 
     fromDijkstra :: DijkstraEbMeasure -> DijkstraEbMeasure
     fromDijkstra x = x

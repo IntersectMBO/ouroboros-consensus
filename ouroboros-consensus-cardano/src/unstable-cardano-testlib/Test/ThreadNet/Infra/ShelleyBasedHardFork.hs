@@ -232,12 +232,10 @@ instance TranslateTxMeasure AlonzoMeasure ConwayMeasure where
 instance TranslateTxMeasure ConwayMeasure ConwayMeasure where
   translateTxMeasure = id
 
-instance TranslateTxMeasure NoEbMeasure NoEbMeasure where
-  translateTxMeasure = id
-
--- | Transactions of eras without endorser blocks cannot appear in one.
-instance TranslateTxMeasure NoEbMeasure DijkstraEbMeasure where
-  translateTxMeasure NoEbMeasure = mempty
+-- | Pre-Dijkstra transactions cannot appear in an endorser block, but they
+-- must not measure zero (see 'txEbMeasure').
+instance TranslateTxMeasure ConwayMeasure DijkstraEbMeasure where
+  translateTxMeasure x = DijkstraEbMeasure x mempty
 
 instance TranslateTxMeasure DijkstraEbMeasure DijkstraEbMeasure where
   translateTxMeasure = id

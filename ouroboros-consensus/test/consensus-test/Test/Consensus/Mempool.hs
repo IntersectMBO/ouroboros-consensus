@@ -47,6 +47,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
+import qualified Data.Measure as Measure
 import Data.Semigroup (stimes)
 import qualified Data.Set as Set
 import Data.Word
@@ -85,6 +86,9 @@ tests =
         [ testProperty
             "snapshotTxs == snapshotTxsAfter zeroTicketNo"
             prop_Mempool_snapshotTxs_snapshotTxsAfter
+        , testProperty
+            "snapshotPartition: zero eb capacity takes nothing"
+            prop_Mempool_snapshotPartition_zeroEbCapacity
         , testProperty "valid added txs == getTxs" prop_Mempool_addTxs_getTxs
         , testProperty "addTxs [..] == forM [..] addTxs" prop_Mempool_semigroup_addTxs
         , testProperty "result of addTxs" prop_Mempool_addTxs_result
@@ -113,6 +117,22 @@ prop_Mempool_snapshotTxs_snapshotTxsAfter setup =
     let Mempool{getSnapshot} = mempool
     MempoolSnapshot{snapshotTxs, snapshotTxsAfter} <- atomically getSnapshot
     return $ snapshotTxs === snapshotTxsAfter zeroTicketNo
+
+-- | A zero endorser-block capacity must take no transactions
+-- ('ebCapacityTxMeasure'), and blocks without endorser blocks (like
+-- 'SimpleBlock') have a zero capacity. A zero block limit puts the whole
+-- mempool in front of the endorser-block split, so this fails if that split
+-- takes everything instead of nothing — which would make the forge, on an
+-- invalid forged block, drop the entire mempool.
+prop_Mempool_snapshotPartition_zeroEbCapacity :: TestSetupWithTxs -> Property
+prop_Mempool_snapshotPartition_zeroEbCapacity setup =
+  withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
+    _ <- addTxs mempool (allTxs setup)
+    MempoolSnapshot{snapshotPartition} <- atomically $ getSnapshot mempool
+    let (_rbTxs, _rbSize, ebTxs, _ebSize) = snapshotPartition Measure.zero Measure.zero
+    return $
+      counterexample ("endorser-block slice not empty: " <> condense (map txForgetValidated ebTxs)) $
+        null ebTxs
 
 -- | Test that all valid transactions added to a 'Mempool' can be retrieved
 -- afterward.

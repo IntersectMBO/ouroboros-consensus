@@ -442,7 +442,7 @@ instance ResolveLeiosBlock TestBlock
 
 instance CanHardFork '[BlockA, BlockB] where
   type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
-  type HardForkTxEbMeasure '[BlockA, BlockB] = NoEbMeasure
+  type HardForkTxEbMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
 
   hardForkEraTranslation =
     EraTranslation
@@ -462,7 +462,7 @@ instance CanHardFork '[BlockA, BlockB] where
     (Z (WrapTxEbMeasure x)) -> x
     S (Z (WrapTxEbMeasure x)) -> x
 
-  hardForkTxEbMeasure _ _ = NoEbMeasure
+  hardForkTxEbMeasure _ = id
 
 versionN2N :: BlockNodeToNodeVersion TestBlock
 versionN2N =

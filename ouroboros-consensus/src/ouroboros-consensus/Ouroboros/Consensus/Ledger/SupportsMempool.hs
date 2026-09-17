@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -11,6 +10,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
@@ -26,7 +27,6 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , IgnoringOverflow (..)
   , Invalidated (..)
   , LedgerSupportsMempool (..)
-  , NoEbMeasure (..)
   , ReapplyTxsResult (..)
   , TxId
   , TxLimits (..)
@@ -48,7 +48,6 @@ import Data.Measure (Measure, zero)
 import qualified Data.Measure
 import Data.Text (Text)
 import Data.Word (Word32)
-import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Numeric.Natural
@@ -388,21 +387,28 @@ class
     TxMeasure blk
 
   -- | The (possibly multi-dimensional) size of a transaction in a Leios
-  -- endorser block: what it costs of 'ebCapacityTxMeasure'. 'NoEbMeasure' for
-  -- protocols without endorser blocks.
+  -- endorser block: what it costs of 'ebCapacityTxMeasure'. The block measure
+  -- itself for protocols without endorser blocks.
   type TxEbMeasure blk
 
-  type TxEbMeasure blk = NoEbMeasure
+  type TxEbMeasure blk = TxMeasure blk
 
   -- | The size of a transaction in a Leios endorser block, derived from its
   -- block measure ('txMeasure').
   --
-  -- Zero for blocks without endorser blocks.
+  -- The block measure itself by default. A transaction must never measure
+  -- zero: a zero measure fits a zero 'ebCapacityTxMeasure', so an
+  -- endorser-block fill would take the whole mempool instead of nothing.
   txEbMeasure ::
     proxy blk ->
     TxMeasure blk ->
     TxEbMeasure blk
-  txEbMeasure _ _ = zero
+  default txEbMeasure ::
+    TxEbMeasure blk ~ TxMeasure blk =>
+    proxy blk ->
+    TxMeasure blk ->
+    TxEbMeasure blk
+  txEbMeasure _ = id
 
   -- | What is the allowed capacity for the txs in a Leios endorser block?
   --
@@ -424,17 +430,6 @@ class
     TickedLedgerState blk mk ->
     TxMeasure blk
   ebClosureCapacityTxMeasure _ _ = zero
-
--- | The trivial 'TxEbMeasure' of blocks without Leios endorser blocks.
-data NoEbMeasure = NoEbMeasure
-  deriving stock (Eq, Ord, Generic, Show)
-  deriving anyclass NoThunks
-
-instance Measure NoEbMeasure where
-  zero = NoEbMeasure
-  plus _ _ = NoEbMeasure
-  min _ _ = NoEbMeasure
-  max _ _ = NoEbMeasure
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for
