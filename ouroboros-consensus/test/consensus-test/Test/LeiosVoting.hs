@@ -109,8 +109,7 @@ prop_recordsValidatedBeforeFailure =
     (verdict, tagged) <- runValidate acquired (good <> [bad] <> after)
     pure $
       conjoin
-        [ isInvalid verdict
-            & counterexample ("expected an invalid verdict, got " <> show verdict)
+        [ verdict === Invalid
         , take (length good) tagged === map (const True) good
             & counterexample "txs validated before the failure should be tagged"
         ]
@@ -159,17 +158,14 @@ data Verdict
   = -- | Reapplied and applied counts, in that order.
     Valid Int Int
   | Invalid
+  | Unreadable
   deriving (Eq, Show)
 
 summarise :: EbClosureVerdict blk -> Verdict
 summarise = \case
   EbClosureValid r a -> Valid r a
   EbClosureInvalid _ -> Invalid
-
-isInvalid :: Verdict -> Bool
-isInvalid = \case
-  Invalid -> True
-  Valid{} -> False
+  EbClosureUnreadable _ -> Unreadable
 
 -- | Run 'validateEbClosure' over a closure, returning its verdict and, per tx
 -- in closure order, whether the cache now reports it validated.

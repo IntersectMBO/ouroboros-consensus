@@ -93,6 +93,7 @@ import LeiosDemoTypes
   , EbHash
   , HasLeiosVoting (..)
   , LeiosCert
+  , LeiosClosureError (..)
   , LeiosExtValidationError (..)
   , LeiosPoint (..)
   , RbHash
@@ -785,8 +786,8 @@ class ResolveLeiosBlock blk where
     Monad m =>
     LeiosDbConnection m ->
     EbHash ->
-    m [(TxHash, GenTx blk)]
-  resolveLeiosClosure _ _ = pure []
+    m (Either LeiosClosureError [(TxHash, GenTx blk)])
+  resolveLeiosClosure _ _ = pure (Right [])
 
   -- | Rebuild the 'Validated' token for a closure tx that the LeiosTxCache
   -- reports as already validated, so the voting thread can pick
@@ -934,7 +935,9 @@ resolveLeiosBlock leiosDb cds b =
     Just (announcedPoint, _) ->
       -- NOTE: This produces a block that would fail full validation.
       resolveLeiosClosure leiosDb (pointEbHash announcedPoint)
-        <&> inlineLeiosClosure b . map snd
+        <&> \case
+          Left err -> error $ "resolveLeiosBlock: failed to resolve closure " <> show err
+          Right txs -> inlineLeiosClosure b (map snd txs)
 
 -- | The result of resolving an announced EB's closure and applying it a ledger state.
 data LeiosClosureApplied blk = LeiosClosureApplied
@@ -966,7 +969,10 @@ resolveAndApplyLeiosClosure ::
   m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
 resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
-  closureTxs <- map snd <$> resolveLeiosClosure leiosDb ebHash
+  closureTxs <-
+    resolveLeiosClosure leiosDb ebHash <&> \case
+      Left err -> error $ "resolveAndApplyLeiosClosure: failed to resolve closure " <> show err
+      Right txs -> map snd txs
   -- UTXO-HD of the whole closure
   let !closureKeys = foldMap' leiosClosureTxKeySets closureTxs <> extraKeys
   closureVals <- readValues closureKeys
