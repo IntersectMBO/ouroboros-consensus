@@ -627,7 +627,7 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
     , snapshotMempoolSize = implSnapshotGetMempoolSize
     , snapshotSlotNo = slot
     , snapshotStateHash = pointHash tipPoint
-    , snapshotTake = implSnapshotTake
+    , snapshotTakeWithInitialPayload = implSnapshotTakeWithInitialPayload
     , snapshotPoint = castPoint tipPoint
     }
  where
@@ -644,13 +644,16 @@ snapshotFromTxSeq prj txs txIds tipPoint slot =
       . snd
       . TxSeq.splitAfterTicketNo txs
 
-  implSnapshotTake ::
+  implSnapshotTakeWithInitialPayload ::
+    TxMeasureWithDiffTime blk ->
     TxMeasure blk ->
     ([Validated (GenTx blk)], TxMeasureWithDiffTime blk)
-  implSnapshotTake limit =
+  implSnapshotTakeWithInitialPayload initialPayloadMeasure limit =
     (map (prj . TxSeq.txTicketTx) (TxSeq.toList x), TxSeq.toSize x)
    where
-    (x, _y) = TxSeq.splitAfterTxSize txs $ MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
+    (x, _y) =
+      TxSeq.splitAfterTxSizeWithInitSizeSpec initialPayloadMeasure txs $
+        MkTxMeasureWithDiffTime limit InfiniteDiffTimeMeasure
 
   implSnapshotGetTx ::
     TicketNo ->

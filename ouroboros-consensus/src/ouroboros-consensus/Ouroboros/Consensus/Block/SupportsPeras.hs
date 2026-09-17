@@ -34,6 +34,10 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , defaultForgePerasCert
   , defaultVerifyPerasCert
 
+  -- * IsTxSizeable class
+  , IsTxSizeable (..)
+  , defaultGetTxLikeSize
+
     -- * Validated types
   , ValidatedPerasVote (..)
   , ValidatedPerasCert (..)
@@ -80,8 +84,10 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
+import qualified Data.Measure as Measure
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
+import Data.Void (absurd)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (Point, StandardHash)
@@ -95,6 +101,10 @@ import Ouroboros.Consensus.Committee.Class
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (ElectionId, PrivateKey, VoteCandidate)
 import Ouroboros.Consensus.Committee.Types (PoolId (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( TxLimits
+  , TxMeasure
+  )
 import Ouroboros.Consensus.Peras.Cert.Class
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
@@ -177,6 +187,26 @@ deriving instance
 deriving instance
   Generic (PerasEpochContext blk)
 
+-- | Get the "size" of an object (in practice, a Peras certificate) as if it were a transaction.
+--
+-- This is used to select fewer transactions when forging a block that should contain
+-- a Peras certificate, to avoid exceeding the maximum block size.
+-- In practice, only the byte size part of the 'TxMeasure' should be non-zero.
+class (TxLimits blk) => IsTxSizeable cert blk where
+  getTxLikeSize :: cert -> TxMeasure blk
+
+-- | Dummy implementation, when we don't care about cert sizes.
+defaultGetTxLikeSize ::
+  forall cert blk.
+  TxLimits blk =>
+  cert ->
+  TxMeasure blk
+defaultGetTxLikeSize = const Measure.zero
+
+-- | Trivial instance for Peras-disabled eras
+instance {-# OVERLAPS #-} (TxLimits blk) => IsTxSizeable (VoidPerasCert blk) blk where
+  getTxLikeSize = absurd . unVoidPerasCert
+
 -- * BlockSupportsPeras class
 
 class
@@ -199,6 +229,7 @@ class
   , Eq (PerasCert blk)
   , NoThunks (PerasCert blk)
   , IsPerasCert (PerasCert blk) blk
+  , IsTxSizeable (PerasCert blk) blk
   , Typeable (BoostedBlock (PerasCert blk))
   , Show (BoostedBlock (PerasCert blk))
   , Eq (BoostedBlock (PerasCert blk))

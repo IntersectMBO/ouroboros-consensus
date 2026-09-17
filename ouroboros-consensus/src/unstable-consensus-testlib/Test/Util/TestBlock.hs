@@ -111,6 +111,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
+import qualified Data.Measure as Measure
 import Data.Proxy
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
@@ -138,6 +139,12 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32
+  , IgnoringOverflow
+  , TrivialTxMeasurePhase2 (..)
+  , TxLimits (..)
+  )
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -719,7 +726,9 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
 
 -- NOTE: this is a mocked up implementation without crypto!
 instance
-  Typeable ptype =>
+  ( TxLimits (TestBlockWith ptype)
+  , Typeable ptype
+  ) =>
   BlockSupportsPeras (TestBlockWith ptype)
   where
   type PerasCrypto (TestBlockWith ptype) = MockPerasCrypto (TestBlockWith ptype)
@@ -837,6 +846,15 @@ deriving instance Show (BlockQuery TestBlock fp result)
 
 instance ShowQuery (BlockQuery TestBlock fp) where
   showResult QueryLedgerTip = show
+
+-- Dummy instance, only needed for Peras Support
+instance TxLimits TestBlock where
+  type TxMeasurePhase1 TestBlock = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 TestBlock = TrivialTxMeasurePhase2
+  txWireSize = const 0
+  txMeasurePhase1 _ _ _ = pure Measure.zero
+  txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _ _ = Measure.zero
 
 testInitLedger :: LedgerState TestBlock ValuesMK
 testInitLedger = testInitLedgerWithState EmptyPLDS

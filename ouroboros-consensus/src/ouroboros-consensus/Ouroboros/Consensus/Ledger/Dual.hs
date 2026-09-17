@@ -1235,6 +1235,7 @@ instance
   ( StandardHash m
   , Typeable m
   , Typeable a
+  , TxLimits (DualBlock m a)
   ) =>
   BlockSupportsPeras (DualBlock m a)
   where
