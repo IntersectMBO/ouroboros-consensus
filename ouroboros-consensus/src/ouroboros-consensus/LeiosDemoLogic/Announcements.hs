@@ -42,11 +42,14 @@ import Control.Monad.Except (ExceptT, throwError)
 import Control.Monad.Trans (lift)
 import Control.Tracer (Tracer, traceWith)
 import Data.Functor.Compose (Compose (..))
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import qualified Data.Map.Strict as Strict (Map)
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (NominalDiffTime)
+import qualified LeiosDemoTypes as Leios
 import LeiosDemoLogic.Announcements.ElBimap
 
 -----
@@ -57,10 +60,11 @@ import LeiosDemoLogic.Announcements.ElBimap
 data PeerState anc
   = MkPeerState
   { live :: !(Strict.Map ElId (ElState anc))
+  , liveByRbHash :: !(Strict.Map Leios.RbHash (ElState anc))
   }
 
 emptyPeerState :: PeerState anc
-emptyPeerState = MkPeerState Map.empty
+emptyPeerState = MkPeerState Map.empty Map.empty
 
 -- | State maintained within 'PeerState' for each election
 data ElState anc
@@ -87,17 +91,30 @@ secondAnnouncement = \case
   OneAnnouncement _x -> Nothing
   TwoAnnouncements _x1 x2 -> Just x2
 
+lastAnnouncement :: ElState anc -> anc
+lastAnnouncement anc = firstAnnouncement anc `fromMaybe` secondAnnouncement anc
+
 -- | Called whenever the ChainDB's immutable tip advances to a new slot
 --
 -- NOTE this pruning should happen ~60 s after the immutable tip
 -- advances.  That accommodates clock skew, transmission time, etc
 -- with only an insignificant increase in the stochastic bound on
 -- election count
-prunePeerState :: SlotNo -> PeerState anc -> PeerState anc
-prunePeerState immTipSlot st =
-  MkPeerState{live = live'}
+prunePeerState :: SlotNo -> (anc -> ElId) -> PeerState anc -> PeerState anc
+prunePeerState immTipSlot getElId st =
+    MkPeerState{live = live', liveByRbHash = liveByRbHash'}
  where
-  (_pruned, live') = Map.spanAntitone tooOld (live st)
+  (pruned, live') = Map.spanAntitone tooOld (live st)
+  prunedSet = Map.keysSet pruned
+  liveByRbHash' = Map.filter
+    (\anc ->
+      -- TODO: can both announcement have a different `ElId`?
+      let firstElId  = getElId (firstAnnouncement anc)
+          secondElId = maybe firstElId getElId (secondAnnouncement anc)
+      in 
+      all (`Set.notMember` prunedSet) (List.nub [firstElId, secondElId])
+    )
+    (liveByRbHash st)
 
   -- NB strict comparison, so that the immtip's own announcement is
   -- not pruned
@@ -126,15 +143,23 @@ extendLive ::
   forall anc invalidity.
   Eq anc =>
   ElId ->
+  (anc -> Leios.RbHash) ->
   anc ->
   PeerState anc ->
   Either (ErrAnnouncement invalidity) (ElState anc, PeerState anc)
-extendLive elId anc st =
-  getCompose $
-    fmap
-      (\live' -> MkPeerState{live = live'})
-      (Map.alterF (inj . upd) elId (live st))
+extendLive elId getRbHash anc st =
+  case getCompose $ Map.alterF (inj . upd) elId (live st) of
+    Left e -> Left e
+    Right (elState, live') ->
+      let firstRbHash    = getRbHash $ firstAnnouncement elState
+          lastRbHash     = getRbHash $ lastAnnouncement elState
+          liveByRbHash'  = if firstRbHash /= lastRbHash
+                           then Map.delete firstRbHash (liveByRbHash st)
+                           else liveByRbHash st
+          liveByRbHash'' = Map.insert lastRbHash elState liveByRbHash' in
+      Right (elState, MkPeerState { live = live', liveByRbHash = liveByRbHash'' })
  where
+
   -- 0 -> 1 ok
   -- 1 -> 2 ok when unequal
   -- 2 -> 3 not ok
@@ -179,6 +204,7 @@ onAnnouncement ::
   (Eq anc, Monad m) =>
   Tracer m (TraceLeiosNotifyPeerEvent anc) ->
   (anc -> ElId) ->
+  (anc -> Leios.RbHash) ->
   -- | How to validate the announcement
   --
   -- The peer is disconnected only for a rejecting verdict; both accepting
@@ -193,8 +219,8 @@ onAnnouncement ::
   PeerState anc ->
   anc ->
   ExceptT (ErrAnnouncement invalidity) m (PeerState anc)
-onAnnouncement tracer getEl validate process st anc = do
-  (elSt, st') <- case extendLive (getEl anc) anc st of
+onAnnouncement tracer getEl getRbHash validate process st anc = do
+  (elSt, st') <- case extendLive (getEl anc) getRbHash  anc st of
     Left err -> throwError err
     Right x -> pure x
   lift $ traceWith tracer $ TracePeerAnnouncement elSt
@@ -254,10 +280,10 @@ data TraceLeiosNotifyEvent peer anc
 --
 -- Unlike 'prunePeerState', a delay is undesirable here.
 pruneCentralState ::
-  Ord peer => SlotNo -> CentralState m peer anc -> CentralState m peer anc
-pruneCentralState immTipSlot st =
+  Ord peer => SlotNo -> (anc -> ElId) -> CentralState m peer anc -> CentralState m peer anc
+pruneCentralState immTipSlot getElId st =
   MkCentralState
-    { selfPeer = prunePeerState immTipSlot (selfPeer st) -- NB no delay
+    { selfPeer = prunePeerState immTipSlot getElId (selfPeer st) -- NB no delay
     , queues = queues st
     , gate = pruneElBimap immTipSlot (gate st)
     }
@@ -310,6 +336,7 @@ onAnnouncementCentral ::
   (MonadSTM m, Ord peer, Eq anc) =>
   Tracer m (TraceLeiosNotifyEvent peer anc) ->
   (anc -> ElId) ->
+  (anc -> Leios.RbHash) ->
   -- | Notify other components about a /new/ announcement
   --
   -- For example, notify the voting thread; it cares about both new
@@ -327,8 +354,8 @@ onAnnouncementCentral ::
   Maybe NominalDiffTime ->
   anc ->
   m (CentralState m peer anc)
-onAnnouncementCentral tracer getEl publishLocally st peer shouldRelay age anc =
-  case extendLive el anc (selfPeer st) of
+onAnnouncementCentral tracer getEl getRbHash publishLocally st peer shouldRelay age anc =
+  case extendLive el getRbHash anc (selfPeer st) of
     Left{} -> pure st -- complete noop for duplicates
     Right (elSt, selfPeer') -> do
       traceWith tracer $ TraceNewAnnouncement peer el elSt age

@@ -582,6 +582,7 @@ initNodeKernel
         runLeiosVoting
           (leiosKernelTracer tracers)
           (configLedger cfg)
+          (\now point -> flip (Leios.ebPointAge now) point . Leios.ebState <$> MVar.readMVar getLeiosOutstanding)
           chainDB
           systemTime
           leiosDB
@@ -599,7 +600,7 @@ initNodeKernel
               Origin -> pure ()
               NotOrigin immTipSlot -> do
                 MVar.modifyMVar_ getLeiosCentralState $
-                  pure . Announcements.pruneCentralState immTipSlot
+                  pure . Announcements.pruneCentralState immTipSlot Leios.ancElId
                 MVar.modifyMVar_ getLeiosOutstanding $
                   pure . snd . Leios.pruneOutstandingToImmTip immTipSlot
                 -- Backstop offer-prune: offers are keyed by point (slot-ordered),

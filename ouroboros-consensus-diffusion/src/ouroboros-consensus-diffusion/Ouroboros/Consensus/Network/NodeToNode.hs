@@ -525,6 +525,7 @@ mkHandlers
                         Announcements.onAnnouncement
                           (contramap Leios.tracePeerAnnouncement tracer)
                           Leios.ancElId
+                          Leios.ancRbHash
                           ( \ancH ->
                               Leios.announcementValidity
                                 systemTime
@@ -556,7 +557,7 @@ mkHandlers
                       Left err -> throwIO $ Leios.ReactToAnnouncementError err
                       Right x -> pure x
                     let (!latestPruneSlot', !peerSt2) =
-                          Leios.prunePeerStateToImmTip immLedger latestPruneSlot peerSt1
+                          Leios.prunePeerStateToImmTip Leios.ancElId immLedger latestPruneSlot peerSt1
                     Prim.writeMutVar peerStateVar (latestPruneSlot', peerSt2)
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
@@ -597,8 +598,17 @@ mkHandlers
                               , threshold = vtThreshold
                               }
                           case mCert of
-                            Just _ ->
-                              traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
+                            Just _ -> do
+                              (_, Announcements.MkPeerState { Announcements.liveByRbHash }) <- Prim.readMutVar peerStateVar
+                              now <- systemTimeCurrent systemTime
+                              let rbHash = Leios.announcingRbHash vote
+                              ebAge <- case Map.lookup rbHash liveByRbHash of
+                                    Nothing -> pure Nothing
+                                    Just anc -> do
+                                      state <-Leios.ebState <$> MVar.readMVar getLeiosOutstanding
+                                      let ebPoint = Leios.ancLeiosPoint (Announcements.lastAnnouncement anc)
+                                      return $ Leios.ebPointAge now state ebPoint
+                              traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote, ebAge}
                             Nothing -> pure ()
                         _ -> pure ()
               )
