@@ -7,8 +7,7 @@ module Test.Consensus.Peras.Voting.V1 (tests) where
 
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Coin (Coin (..), compactCoinOrError, knownNonZeroCoin)
-import Cardano.Ledger.Hashes (StakePool)
-import Cardano.Ledger.Keys (KeyHash, toVRFVerKeyHash)
+import Cardano.Ledger.Keys (toVRFVerKeyHash)
 import Cardano.Ledger.State (BlsKey (..), IndividualPoolStake (..), PoolDistr (..))
 import qualified Data.ByteString as BS
 import qualified Data.List.NonEmpty as NonEmpty
@@ -41,11 +40,11 @@ import Test.Util.Peras.V1 (genPrivateKey)
 data KeyCase = NoKey | HasKey
   deriving (Show, Eq, Bounded, Enum)
 
-genBlsKeyFor :: KeyHash StakePool -> Gen BlsKey
-genBlsKeyFor stakePoolHash = do
+genBlsKey :: Gen BlsKey
+genBlsKey = do
   sk <- genPrivateKey (Proxy @POP)
   let pk = BLS.derivePublicKey sk
-      pop = BLS.createProofOfPossession sk stakePoolHash
+      pop = BLS.createProofOfPossession sk
   pure
     BlsKey
       { blsPubKey = BLS.rawPublicKey pk
@@ -73,7 +72,7 @@ genPoolEntry = do
   keyCase <- elements [minBound .. maxBound]
   stake <- case keyCase of
     NoKey -> pure (mkStake SNothing)
-    HasKey -> mkStake . SJust <$> genBlsKeyFor (unPoolId poolId)
+    HasKey -> mkStake . SJust <$> genBlsKey
   pure (poolId, keyCase, stake)
 
 prop_extractPerasStakeDistrAndPublicKeys :: Property

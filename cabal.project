@@ -20,6 +20,14 @@ index-state:
 
 packages: .
 
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base.git
+  tag: b6559d4a1eb6aca039612a5b3d908590727d31ff
+  --sha256: sha256-6TMicv191K0EUGHwdbgnae2eB1JjO94y1JzTUH8AcOM=
+  subdir:
+    cardano-crypto-class
+
 -- Temp: pin cardano-ledger to PR IntersectMBO/cardano-ledger#5992
 source-repository-package
   type: git
@@ -79,3 +87,11 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+allow-newer:
+  cardano-ledger-binary:cardano-crypto-class,
+  cardano-ledger-core:cardano-crypto-class,
+  cardano-ledger-shelley:cardano-crypto-class,
+  cardano-ledger-mary:cardano-crypto-class,
+  cardano-protocol:cardano-crypto-class,
+  cardano-protocol-tpraos:cardano-crypto-class

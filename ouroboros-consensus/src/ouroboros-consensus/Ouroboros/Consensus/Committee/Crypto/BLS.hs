@@ -55,18 +55,15 @@ import Cardano.Binary (FromCBOR, ToCBOR)
 import Cardano.Binary.FixedSizeCodec (rawDecodeFixedSized, rawEncodeFixedSized)
 import Cardano.Crypto.DSIGN
   ( BLS12381MinSigDSIGN
-  , BLS12381SignContext
   , DSIGNAggregatable (..)
   , DSIGNAlgorithm (..)
   , SigDSIGN (..)
   , VerKeyDSIGN (..)
-  , blsSignContextAug
-  , minSigPoPDST
   )
 import Cardano.Crypto.EllipticCurve.BLS12_381 (blsIsInf, blsMSM)
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Crypto.Util (SignableRepresentation, bytesToNatural)
-import Cardano.Ledger.Hashes (HASH, KeyHash (..), StakePool)
+import Cardano.Crypto.Util (SignableRepresentation (..), bytesToNatural)
+import Cardano.Ledger.Hashes (HASH)
 import Cardano.Ledger.State (BlsKey (..))
 import Control.Monad (when)
 import Data.ByteString (ByteString)
@@ -213,28 +210,16 @@ rawProofOfPossession = unProofOfPossession
 
 -- | Role-separated BLS contexts for  signatures
 class HasBLSContext (r :: KeyRole) where
-  blsCtx :: Proxy r -> KeyScope -> BLS12381SignContext
+  blsCtx :: Proxy r -> KeyScope -> ByteString
 
 instance HasBLSContext SIGN where
-  blsCtx _ keyScope =
-    minSigPoPDST
-      { blsSignContextAug =
-          Just ("VOTE:" <> keyScope <> ":V0")
-      }
+  blsCtx _ keyScope = "VOTE:" <> keyScope <> ":V0"
 
 instance HasBLSContext VRF where
-  blsCtx _ keyScope =
-    minSigPoPDST
-      { blsSignContextAug =
-          Just ("VRF:" <> keyScope <> ":V0")
-      }
+  blsCtx _ keyScope = "VRF:" <> keyScope <> ":V0"
 
 instance HasBLSContext POP where
-  blsCtx _ keyScope =
-    minSigPoPDST
-      { blsSignContextAug =
-          Just ("POP:" <> keyScope <> ":V0")
-      }
+  blsCtx _ keyScope = "POP:" <> keyScope <> ":V0"
 
 -- | Sign a message with a  private key, producing a  signature
 signWithRole ::
@@ -249,8 +234,8 @@ signWithRole sk msg =
   Signature
     { unSignature =
         signDSIGN
-          (blsCtx (Proxy @r) (privateKeyScope sk))
-          msg
+          ()
+          (blsCtx (Proxy @r) (privateKeyScope sk) <> getSignableRepresentation msg)
           (unPrivateKey sk)
     }
 
@@ -266,43 +251,30 @@ verifyWithRole ::
   Either String ()
 verifyWithRole pk msg (Signature sig) =
   verifyDSIGN
-    (blsCtx (Proxy @r) (publicKeyScope pk))
+    ()
     (unPublicKey pk)
-    msg
+    (blsCtx (Proxy @r) (publicKeyScope pk) <> getSignableRepresentation msg)
     sig
 
 -- | Create a proof of possession signature for a  private key
 createProofOfPossession ::
   PrivateKey POP ->
-  KeyHash StakePool ->
   ProofOfPossession
-createProofOfPossession sk stakePoolHash =
+createProofOfPossession sk =
   ProofOfPossession
     { unProofOfPossession =
-        createPossessionProofDSIGN
-          extCtx
-          (unPrivateKey sk)
+        createPossessionProofDSIGN (unPrivateKey sk)
     }
- where
-  poolBytes = Hash.hashToBytes (unKeyHash stakePoolHash)
-  baseCtx = blsCtx (Proxy @POP) (privateKeyScope sk)
-  extCtx = baseCtx{blsSignContextAug = blsSignContextAug baseCtx <> Just poolBytes}
 
 -- | Verify a proof of possession signature for a public key
 verifyProofOfPossession ::
   PublicKey POP ->
-  KeyHash StakePool ->
   ProofOfPossession ->
   Either String ()
-verifyProofOfPossession pk stakePoolHash pop =
+verifyProofOfPossession pk pop =
   verifyPossessionProofDSIGN
-    extCtx
     (unPublicKey pk)
     (unProofOfPossession pop)
- where
-  poolBytes = Hash.hashToBytes (unKeyHash stakePoolHash)
-  baseCtx = blsCtx (Proxy @POP) (publicKeyScope pk)
-  extCtx = baseCtx{blsSignContextAug = blsSignContextAug baseCtx <> Just poolBytes}
 
 -- * Aggregate keys and signatures
 
