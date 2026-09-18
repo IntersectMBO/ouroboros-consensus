@@ -103,12 +103,22 @@ import LeiosDemoTypes
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configLedger)
-import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (hardForkSummary))
+import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
+import Ouroboros.Consensus.HeaderValidation
+  ( AnnTip (..)
+  , HeaderState (..)
+  , HeaderWithTime (..)
+  , annTipHash
+  , headerStateChainDep
+  )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewOfTip)
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( calculateDifference
+  , forgetLedgerTables
   , prependDiffs
   , trackingToDiffs
   )
@@ -125,6 +135,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCac
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 
 {-------------------------------------------------------------------------------
   Forker
@@ -339,7 +351,7 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ Get the current set of previously applied blocks
   , withForkerAtFromTip :: !(forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r))
   -- ^ Create a forker from the tip
-  , onSuccess :: !(SuccessForkerAction m l)
+  , onSuccess :: !(SuccessForkerAction m l blk)
   -- ^ Continuation to run when the validation was successful
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
@@ -359,11 +371,12 @@ data ValidateArgs m l blk = ValidateArgs
 validate ::
   forall m l blk.
   ( IOLike m
+  , HasHardForkHistory blk
   , HasCallStack
   , ApplyBlock l blk
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   ComputeLedgerEvents ->
@@ -401,12 +414,14 @@ validate evs args = do
     } = args
 
   rewrap ::
-    Either GetForkerError (Either (AnnLedgerError l blk) ()) ->
+    Either
+      GetForkerError
+      (Either (AnnLedgerError l blk) (), AnchoredFragment (HeaderWithTime blk)) ->
     ValidateResult l blk
-  rewrap (Right (Left e)) = ValidateLedgerError e
+  rewrap (Right (Left e, lvs)) = ValidateLedgerError lvs e
   rewrap (Left (PointTooOld (Just e))) = ValidateExceededRollBack e
   rewrap (Left _) = error "Unreachable, validating will always rollback from the tip"
-  rewrap (Right (Right ())) = ValidateSuccessful
+  rewrap (Right (Right (), lvs)) = ValidateSuccessful lvs
 
   mkAps ::
     Set (RealPoint blk) ->
@@ -428,17 +443,18 @@ validate evs args = do
   validBlockPoints :: ValidateResult l blk -> [RealPoint blk] -> [RealPoint blk]
   validBlockPoints = \case
     ValidateExceededRollBack _ -> const []
-    ValidateSuccessful -> id
-    ValidateLedgerError e -> takeWhile (/= annLedgerErrRef e)
+    ValidateSuccessful _ -> id
+    ValidateLedgerError _ e -> takeWhile (/= annLedgerErrRef e)
 
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
   ( ApplyBlock l blk
+  , HasHardForkHistory blk
   , MonadSTM m
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -451,13 +467,17 @@ switch ::
   -- | New blocks to apply
   NonEmpty (Ap m l blk) ->
   ResolveBlock m blk ->
-  SuccessForkerAction m l ->
-  m (Either GetForkerError (Either (AnnLedgerError l blk) ()))
+  SuccessForkerAction m l blk ->
+  m
+    ( Either
+        GetForkerError
+        (Either (AnnLedgerError l blk) (), AnchoredFragment (HeaderWithTime blk))
+    )
 switch leiosDb withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
     let start = PushStart . toRealPoint . NE.head $ newBlocks
         goal = PushGoal . toRealPoint . NE.last $ newBlocks
-    ePush <-
+    (ePush, lvs) <-
       applyThenPushMany
         leiosDb
         (trace . StartedPushingBlockToTheLedgerDb start goal)
@@ -467,8 +487,10 @@ switch leiosDb withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolv
         fo
         doResolve
     case ePush of
-      Left err -> pure (Left err)
-      Right () -> fmap Right $ applySuccessForkerAction onSuccess fo
+      Left err -> pure (Left err, lvs)
+      Right () -> do
+        applySuccessForkerAction onSuccess lvs fo
+        pure (Right (), lvs)
 
 {-------------------------------------------------------------------------------
   Apply blocks
@@ -522,7 +544,7 @@ applyBlockToForker ::
   blk ->
   m (Either (AnnLedgerError l blk) (l DiffMK))
 applyBlockToForker leiosDb mode evs cfg fo blk =
-  applyBlock leiosDb evs cfg ap fo noResolution
+  fmap (fmap snd) $ applyBlock leiosDb evs cfg ap fo noResolution
  where
   ap = case mode of
     ValidateBlock -> ApplyVal blk
@@ -549,9 +571,10 @@ applyBlock ::
   Ap m l blk ->
   Forker m l ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (l DiffMK))
+  -- | The block that was resolved, alongside the result of applying it.
+  m (Either (AnnLedgerError l blk) (blk, l DiffMK))
 applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
-  ReapplyVal b -> do
+  ReapplyVal b -> fmap (fmap (\st -> (b, st))) $ do
     case blockLeiosCert b of
       Nothing ->
         -- Not a CertRB: ordinary Praos block
@@ -593,7 +616,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 let lsAfterEB = extSt{ledgerState = lcaStateAfterEB}
                     blockDiff = tickThenReapply evs cfg b lsAfterEB
                  in pure (Right (prependDiffs lcaClosureDiff blockDiff))
-  ApplyVal b -> do
+  ApplyVal b -> fmap (fmap (\st -> (b, st))) $ do
     case blockLeiosCert b of
       Nothing -> do
         -- Not a CertRB: ordinary Praos block
@@ -682,6 +705,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
 -- push the resulting ledger state to the forker.
 applyThenPush ::
   ( ApplyBlock l blk
+  , GetHeader blk
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
@@ -694,20 +718,24 @@ applyThenPush ::
   Ap m l blk ->
   Forker m l ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) ())
+  -- | The header of the block that was applied and the resulting state
+  m (Either (AnnLedgerError l blk) (Header blk, l DiffMK))
 applyThenPush leiosDb evs cfg ap fo doResolve = do
   eLerr <- applyBlock leiosDb evs cfg ap fo doResolve
   case eLerr of
     Left err -> pure (Left err)
-    Right st -> Right <$> forkerPush fo st
+    Right (b, st) -> do
+      forkerPush fo st
+      pure $ Right (getHeader b, st)
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
   ( ApplyBlock l blk
+  , HasHardForkHistory blk
   , MonadSTM m
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -717,16 +745,46 @@ applyThenPushMany ::
   [Ap m l blk] ->
   Forker m l ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) ())
-applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = pushAndTrace aps
+  m (Either (AnnLedgerError l blk) (), AnchoredFragment (HeaderWithTime blk))
+applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = do
+  -- The forker's state before any push, ie at the fork point. Thereafter each
+  -- push reports the state it produced, so the forker is read only this once.
+  initialState <- atomically (forkerGetLedgerState fo)
+  pushAndTrace (AF.Empty (anchorOf initialState)) initialState aps
  where
-  pushAndTrace [] = pure $ Right ()
-  pushAndTrace (ap : aps') = do
+  lcfg = configLedger (getExtLedgerCfg cfg)
+
+  anchorOf st = case headerStateTip (headerState st) of
+    Origin -> AF.AnchorGenesis
+    NotOrigin annTip ->
+      AF.Anchor (annTipSlotNo annTip) (annTipHash annTip) (annTipBlockNo annTip)
+
+  pushAndTrace acc _predecessorState [] = pure (Right (), acc)
+  pushAndTrace acc predecessorState (ap : aps') = do
     trace $ Pushing . toRealPoint $ ap
     res <- applyThenPush leiosDb evs cfg ap fo doResolveBlock
     case res of
-      Left err -> pure (Left err)
-      Right () -> pushAndTrace aps'
+      Left err -> pure (Left err, acc)
+      Right (hdr, st) -> do
+        -- Every annotation comes from the state the block's predecessor left
+        -- behind. Only validation sees it: it exists inside the forker until
+        -- the caller commits, which is why these originate here.
+        let predecessorLedger = ledgerState predecessorState
+            !hwt =
+              HeaderWithTime
+                { hwtHeader = hdr
+                , hwtSlotRelativeTime =
+                    -- The summary is the one from the state this block just
+                    -- produced, and this block's slot is that state's tip
+                    -- slot, which a summary can always translate.
+                    fst $
+                      Qry.runQueryPure
+                        (Qry.slotToWallclock (blockSlot hdr))
+                        (hardForkSummary lcfg (ledgerState st))
+                , hwtPredecessorSlot = getTipSlot predecessorLedger
+                , hwtLedgerViewOfPredecessor = ledgerViewOfTip lcfg predecessorLedger
+                }
+        pushAndTrace (acc AF.:> hwt) (forgetLedgerTables st) aps'
 
 {-------------------------------------------------------------------------------
   Finding blocks
@@ -1006,14 +1064,30 @@ resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
 -- commonly used as "how to close a @res@", which is *NOT* the case
 -- here. So it's preferable to use this more perspicious type in
 -- signatures.
-newtype SuccessForkerAction m l = MkSuccessForkerAction
-  { applySuccessForkerAction :: Forker m l -> m ()
+newtype SuccessForkerAction m l blk = MkSuccessForkerAction
+  { applySuccessForkerAction ::
+      AnchoredFragment (HeaderWithTime blk) ->
+      Forker m l ->
+      m ()
+  -- ^ Run with the blocks that were applied, as validated headers anchored at
+  -- the fork point. This is the only point at which they and the forker are
+  -- both in hand.
   }
 
 -- | When validating a sequence of blocks, these are the possible outcomes.
+--
+-- 'ValidateSuccessful' and 'ValidateLedgerError' carry the blocks that were
+-- applied, as validated headers anchored at the fork point -- so the fragment
+-- is the accepted prefix, and is empty when nothing was applied.
+--
+-- Validation reports these because it is the only place that sees them: each
+-- is a projection of the state the previous block left behind, which exists
+-- only inside the forker until the caller commits. See
+-- 'Ouroboros.Consensus.HeaderValidation.hwtLedgerViewOfPredecessor' for what
+-- the caller does with them.
 data ValidateResult l blk
-  = ValidateSuccessful
-  | ValidateLedgerError (AnnLedgerError l blk)
+  = ValidateSuccessful (AnchoredFragment (HeaderWithTime blk))
+  | ValidateLedgerError (AnchoredFragment (HeaderWithTime blk)) (AnnLedgerError l blk)
   | ValidateExceededRollBack ExceededRollback
 
 {-------------------------------------------------------------------------------

@@ -66,6 +66,16 @@ import Cardano.Ledger.Keys
   , hashKey
   , signedDSIGN
   )
+import Cardano.Protocol.Praos.BlockHeader
+  ( Header
+  , HeaderBody (..)
+  , pattern Header
+  )
+import Cardano.Protocol.Praos.VRF
+  ( InputVRF
+  , mkInputVRF
+  , vrfLeaderValue
+  )
 import Cardano.Protocol.TPraos.BlockHeader
   ( HashHeader (..)
   , PrevHash (..)
@@ -89,22 +99,14 @@ import Data.Coerce (coerce)
 import Data.Foldable (toList)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust, fromMaybe)
-import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy (Proxy (..))
 import Data.Ratio ((%))
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Protocol.Praos (PraosValidationErr (..))
-import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header
-  , HeaderBody (..)
-  , pattern Header
-  )
-import Ouroboros.Consensus.Protocol.Praos.VRF
-  ( InputVRF
-  , mkInputVRF
-  , vrfLeaderValue
+import Ouroboros.Consensus.Protocol.Praos
+  ( BasePraosValidationErr (..)
+  , PraosValidationErr
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 import Test.QuickCheck
@@ -445,7 +447,6 @@ genHeaderBody context = do
   hbBodyHash <- genHash
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
   let hbProtVer = protocolVersionZero
-      hbLeiosExt = SNothing -- XXX: Never contains leios fields
       headerBody = HeaderBody{..}
   pure $ (headerBody, kesPeriod)
  where

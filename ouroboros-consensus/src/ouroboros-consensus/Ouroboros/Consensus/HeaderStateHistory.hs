@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -40,7 +39,7 @@ import Control.Monad.Except (Except)
 import Data.Coerce (Coercible)
 import qualified Data.List.NonEmpty as NE
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
+import NoThunks.Class (NoThunks (..), allNoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
@@ -51,6 +50,7 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import qualified Ouroboros.Consensus.HeaderValidation as HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.CallStack (HasCallStack)
@@ -101,6 +101,7 @@ cast ::
       (ChainDepState (BlockProtocol blk))
       (ChainDepState (BlockProtocol blk'))
   , TipInfo blk ~ TipInfo blk'
+  , LedgerView (BlockProtocol blk) ~ LedgerView (BlockProtocol blk')
   ) =>
   HeaderStateHistory blk -> HeaderStateHistory blk'
 cast (HeaderStateHistory history) =
@@ -150,24 +151,78 @@ rewind p (HeaderStateHistory history) = do
   HeaderStateWithTime
 -------------------------------------------------------------------------------}
 
--- | A 'HeaderState' together with the 'RelativeTime' corresponding to the tip
--- slot of the state. For a state at 'Origin', we use the same time as for slot
--- 0.
+-- | A 'HeaderState' together with what the ChainSync client needs about the
+-- corresponding ledger state, which that client has no other way to reach. For
+-- a state at 'Origin', both are as for slot 0.
+--
+-- TODO rename this type, eg to @ValidatedHeaderState@, and its fields to
+-- match: it no longer merely adds a time. Compare the same TODO on
+-- 'HeaderWithTime'.
 data HeaderStateWithTime blk = HeaderStateWithTime
   { hswtHeaderState :: !(HeaderState blk)
   , hswtSlotTime :: !RelativeTime
+  -- ^ The 'RelativeTime' corresponding to the tip slot of the state.
+  , hswtLedgerView :: !(LedgerView (BlockProtocol blk))
+  -- ^ The ledger view at the tip slot of the state.
+  --
+  -- The ChainSync client copies this onto the /next/ header it validates, as
+  -- that header's 'hwtLedgerViewOfPredecessor', for Leios.
   }
   deriving stock Generic
 
-deriving stock instance
+-- | 'hswtLedgerView' is excluded from these three: it is a projection of the
+-- ledger state the rest was built from, so it is no part of this value's
+-- identity, and 'LedgerView' has no 'Eq' or 'NoThunks' instance to require.
+instance
   (BlockSupportsProtocol blk, HasAnnTip blk) =>
   Eq (HeaderStateWithTime blk)
-deriving stock instance
+  where
+  hswt1 == hswt2 =
+    hswtHeaderState hswt1 == hswtHeaderState hswt2
+      && hswtSlotTime hswt1 == hswtSlotTime hswt2
+   where
+    -- Positional on purpose: adding a field to 'HeaderStateWithTime' breaks
+    -- this binding, which is the prompt to decide whether the new field
+    -- belongs in this method. 'hswtLedgerView' deliberately does not; see its
+    -- Haddock.
+    HeaderStateWithTime _dummy _ _ = hswt1
+
+instance
   (BlockSupportsProtocol blk, HasAnnTip blk) =>
   Show (HeaderStateWithTime blk)
-deriving anyclass instance
+  where
+  showsPrec p hswt =
+    showParen (p > 10) $
+      showString "HeaderStateWithTime "
+        . showsPrec 11 (hswtHeaderState hswt)
+        . showString " "
+        . showsPrec 11 (hswtSlotTime hswt)
+        . showString " <ledger view>"
+   where
+    -- Positional on purpose: adding a field to 'HeaderStateWithTime' breaks
+    -- this binding, which is the prompt to decide whether the new field
+    -- belongs in this method. 'hswtLedgerView' deliberately does not; see its
+    -- Haddock.
+    HeaderStateWithTime _dummy _ _ = hswt
+
+instance
   (BlockSupportsProtocol blk, HasAnnTip blk) =>
   NoThunks (HeaderStateWithTime blk)
+  where
+  showTypeOf _ = "HeaderStateWithTime"
+  wNoThunks ctxt hswt =
+    allNoThunks
+      [ noThunks ctxt' (hswtHeaderState hswt)
+      , noThunks ctxt' (hswtSlotTime hswt)
+      ]
+   where
+    ctxt' = "HeaderStateWithTime" : ctxt
+
+    -- Positional on purpose: adding a field to 'HeaderStateWithTime' breaks
+    -- this binding, which is the prompt to decide whether the new field
+    -- belongs in this method. 'hswtLedgerView' deliberately does not; see its
+    -- Haddock.
+    HeaderStateWithTime _dummy _ _ = hswt
 
 instance Anchorable (WithOrigin SlotNo) (HeaderStateWithTime blk) (HeaderStateWithTime blk) where
   asAnchor = id
@@ -178,24 +233,31 @@ castHeaderStateWithTime ::
       (ChainDepState (BlockProtocol blk))
       (ChainDepState (BlockProtocol blk'))
   , TipInfo blk ~ TipInfo blk'
+  , LedgerView (BlockProtocol blk) ~ LedgerView (BlockProtocol blk')
   ) =>
   HeaderStateWithTime blk -> HeaderStateWithTime blk'
 castHeaderStateWithTime hswt =
   HeaderStateWithTime
     { hswtHeaderState = castHeaderState $ hswtHeaderState hswt
     , hswtSlotTime = hswtSlotTime hswt
+    , hswtLedgerView = hswtLedgerView hswt
     }
 
 mkHeaderStateWithTimeFromSummary ::
-  (HasCallStack, HasAnnTip blk) =>
+  (HasCallStack, LedgerSupportsProtocol blk) =>
   -- | Must be able to convert the tip slot of the 'HeaderState' to a time.
   Summary (HardForkIndices blk) ->
+  LedgerConfig blk ->
+  -- | Must be the ledger state paired with the given 'HeaderState'; its view is
+  -- what 'hswtLedgerView' records.
+  LedgerState blk mk ->
   HeaderState blk ->
   HeaderStateWithTime blk
-mkHeaderStateWithTimeFromSummary summary hst =
+mkHeaderStateWithTimeFromSummary summary lcfg lst hst =
   HeaderStateWithTime
     { hswtHeaderState = hst
     , hswtSlotTime = slotTime
+    , hswtLedgerView = ledgerViewOfTip lcfg lst
     }
  where
   (slotTime, _) = Qry.runQueryPure qry summary
@@ -203,12 +265,12 @@ mkHeaderStateWithTimeFromSummary summary hst =
   slot = fromWithOrigin 0 $ pointSlot $ headerStatePoint hst
 
 mkHeaderStateWithTime ::
-  (HasCallStack, HasHardForkHistory blk, HasAnnTip blk) =>
+  (HasCallStack, HasHardForkHistory blk, LedgerSupportsProtocol blk) =>
   LedgerConfig blk ->
   ExtLedgerState blk mk ->
   HeaderStateWithTime blk
 mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
-  mkHeaderStateWithTimeFromSummary summary hst
+  mkHeaderStateWithTimeFromSummary summary lcfg lst hst
  where
   -- A summary can always translate the tip slot of the ledger state it was
   -- created from.
@@ -236,7 +298,9 @@ validateHeader ::
   Except (HeaderError blk) (HeaderStateHistory blk)
 validateHeader cfg lv hdr slotTime history = do
   st' <- HeaderValidation.validateHeader cfg lv hdr st
-  return $ append (HeaderStateWithTime st' slotTime) history
+  -- 'lv' is the view at this header's slot, which is what the new entry
+  -- records; see 'hswtLedgerView'.
+  return $ append (HeaderStateWithTime st' slotTime lv) history
  where
   st :: Ticked (HeaderState blk)
   st =
@@ -258,7 +322,7 @@ fromChain ::
   forall blk.
   ( ApplyBlock (ExtLedgerState blk) blk
   , HasHardForkHistory blk
-  , HasAnnTip blk
+  , LedgerSupportsProtocol blk
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
