@@ -8,13 +8,21 @@ module Ouroboros.Consensus.MiniProtocol.Util.Idling (Idling (..), noIdling) wher
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 
--- | Interface for the ChainSync client to manipulate the idling flag in
--- 'ChainSyncState', and the PerasCertDiffusion client in 'PerasCertDiffusionInboundState'.
+-- | Interface for a mini-protocol client to record whether it is caught up with
+-- a peer.
+--
+-- "Idling" follows the existing ChainSync terminology: it starts when the peer
+-- sends @MsgAwaitReply@ and stops when the peer supplies new data. Object
+-- Diffusion uses the same terminology and semantics for its object-ID stream.
+-- It does not mean that the typed protocol is in a state named @StIdle@.
+--
+-- The actions update the idling flag in @ChainSyncState@ or in the
+-- corresponding Object Diffusion inbound state, respectively.
 data Idling m = Idling
   { idlingStart :: !(m ())
-  -- ^ Mark the peer as being idle.
+  -- ^ Record that the client has reached the peer's current front.
   , idlingStop :: !(m ())
-  -- ^ Mark the peer as not being idle.
+  -- ^ Record that the peer has supplied new data.
   }
   deriving stock Generic
 
