@@ -196,8 +196,10 @@ There is one low-hanging fruit that would easily increase the network's effectiv
 The LeiosFetch decision logic and the LeiosNotify events change just as slightly.
 LeiosFetch merely partitions an EB's jobs by segment, and LeiosNotify needs to send one offer per segment instead of one per EB.
 
-EB bodies could be pipelined similarly, however the power-to-weight ratio of doing so is much harder.
-First: ultimtaely, bodies should be much smaller than closures, so there's less to gain here.
+EB bodies could be pipelined similarly; however, the power-to-weight ratio of doing so is much worse.
+First: ultimately, bodies should be much smaller than closures, so there's less latency to hide here.
 Second: the structure would require the announcement carry a Merkle hash root over the segments' hashes instead of simply the body's hash.
 And so MsgLeiosBlock would carry a segment of the body and the hash of all the other segments.
 The segments' sizes could likely be fixed and objective, just as for closures.
+As long as there aren't soo many segments of a body (and there shouldn't be), the extra hashing CPU cost is negligible.
+It's merely a matter of code/design complexity.
