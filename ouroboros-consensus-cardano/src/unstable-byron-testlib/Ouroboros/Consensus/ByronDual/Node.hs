@@ -125,7 +125,7 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                   , dualStorageConfigAux = ByronSpecStorageConfig
                   }
             , topLevelConfigCheckpoints = emptyCheckpointsMap
-            , topLevelConfigVotingKey = Nothing
+            , topLevelConfigVotingKeys = []
             }
       , pInfoInitLedger =
           ExtLedgerState

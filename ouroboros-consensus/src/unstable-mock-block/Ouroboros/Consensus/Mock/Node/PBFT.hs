@@ -45,7 +45,7 @@ protocolInfoMockPBFT params eraParams =
           , topLevelConfigCodec = SimpleCodecConfig
           , topLevelConfigStorage = SimpleStorageConfig (pbftSecurityParam params)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
-          , topLevelConfigVotingKey = Nothing
+          , topLevelConfigVotingKeys = []
           }
     , pInfoInitLedger =
         ExtLedgerState

@@ -571,10 +571,10 @@ initNodeKernel
               (Leios.summarizeDecisions newRequests)
           threadDelay $ loopInterval - duration
 
-    -- The Leios voting thread: when this node has a voting key, subscribe
+    -- The Leios voting thread: when this node has voting keys, subscribe
     -- to local "EB closure acquired" notifications and emit a vote for
-    -- each acquired EB (which the LeiosNotify server then publishes to
-    -- peers). 'Nothing' disables voting on this node.
+    -- each acquired EB and held committee seat (which the LeiosNotify
+    -- server then publishes to peers). No keys disables voting on this node.
     -- TODO: Also re-spawn voting thread upon SIGHUP similar to how the
     -- blockForgingController does it for block forging
     void $
@@ -587,7 +587,7 @@ initNodeKernel
           leiosDB
           getLeiosTxCache
           leiosVoteState
-          (topLevelConfigVotingKey cfg)
+          (topLevelConfigVotingKeys cfg)
 
     void $
       forkLinkedWatcher registry "NodeKernel.leiosImmTipPrune" $

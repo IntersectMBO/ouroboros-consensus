@@ -70,7 +70,7 @@ defaultCfg secParam (ForecastRange sfor) sgen =
     , topLevelConfigCodec = TestBlockCodecConfig
     , topLevelConfigStorage = TestBlockStorageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
-    , topLevelConfigVotingKey = Nothing
+    , topLevelConfigVotingKeys = []
     }
  where
   -- REVIEW: Make it 1s or a parameter?

@@ -48,7 +48,7 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
           , topLevelConfigCodec = SimpleCodecConfig
           , topLevelConfigStorage = SimpleStorageConfig securityParam
           , topLevelConfigCheckpoints = emptyCheckpointsMap
-          , topLevelConfigVotingKey = Nothing
+          , topLevelConfigVotingKeys = []
           }
     , pInfoInitLedger =
         ExtLedgerState

@@ -326,7 +326,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
                     :* Nil
             }
       , topLevelConfigCheckpoints = emptyCheckpointsMap
-      , topLevelConfigVotingKey = Nothing
+      , topLevelConfigVotingKeys = []
       }
 
   consensusConfigA :: CoreNodeId -> ConsensusConfig ProtocolA

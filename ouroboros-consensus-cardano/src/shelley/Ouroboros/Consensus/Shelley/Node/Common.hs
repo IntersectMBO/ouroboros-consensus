@@ -17,7 +17,7 @@ module Ouroboros.Consensus.Shelley.Node.Common
   , ShelleyEraWithCrypto
   , ShelleyLeaderCredentials (..)
   , shelleyBlockIssuerVKey
-  , shelleyLeaderVotingKey
+  , shelleyLeaderVotingKeys
   ) where
 
 import Cardano.Crypto.Leios (LeiosSigningKey)
@@ -71,12 +71,12 @@ shelleyBlockIssuerVKey ::
 shelleyBlockIssuerVKey =
   praosCanBeLeaderColdVerKey . shelleyLeaderCredentialsCanBeLeader
 
--- | The BLS voting signing key for this set of credentials, if one was provided
--- (via @--shelley-bls-key@). Used as the Leios/Peras voting key; 'Nothing'
--- disables voting for this node.
-shelleyLeaderVotingKey ::
-  ShelleyLeaderCredentials c -> Maybe LeiosSigningKey
-shelleyLeaderVotingKey =
+-- | The BLS voting signing keys for this set of credentials, as provided via
+-- @--shelley-bls-key@. Used as the Leios/Peras voting keys; an empty list
+-- disables voting for this set of credentials.
+shelleyLeaderVotingKeys ::
+  ShelleyLeaderCredentials c -> [LeiosSigningKey]
+shelleyLeaderVotingKeys =
   praosCanBeLeaderSignKeyBLS . shelleyLeaderCredentialsCanBeLeader
 
 {-------------------------------------------------------------------------------

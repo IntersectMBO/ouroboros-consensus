@@ -209,7 +209,7 @@ dualTopLevelConfigMain TopLevelConfig{..} =
     , topLevelConfigCodec = dualCodecConfigMain topLevelConfigCodec
     , topLevelConfigStorage = dualStorageConfigMain topLevelConfigStorage
     , topLevelConfigCheckpoints = castCheckpointsMap topLevelConfigCheckpoints
-    , topLevelConfigVotingKey = Nothing
+    , topLevelConfigVotingKeys = []
     }
 
 {-------------------------------------------------------------------------------

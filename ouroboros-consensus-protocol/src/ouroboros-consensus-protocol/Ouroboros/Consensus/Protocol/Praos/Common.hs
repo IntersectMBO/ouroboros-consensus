@@ -276,9 +276,11 @@ data PraosCanBeLeader c = PraosCanBeLeader
   { praosCanBeLeaderColdVerKey :: !(SL.VKey BlockIssuer)
   -- ^ Stake pool cold key or genesis stakeholder delegate cold key.
   , praosCanBeLeaderSignKeyVRF :: !(SignKeyVRF (VRF c))
-  , praosCanBeLeaderSignKeyBLS :: !(Maybe (SignKeyDSIGN BLS12381MinSigDSIGN))
-  -- ^ Optional BLS12-381 signing key for the Leios voting scheme. Set only for
-  -- block producers participating in Leios (Dijkstra era); 'Nothing' otherwise.
+  , praosCanBeLeaderSignKeyBLS :: ![SignKeyDSIGN BLS12381MinSigDSIGN]
+  -- ^ BLS12-381 signing keys for the Leios voting scheme. Only block producers
+  -- participating in Leios (Dijkstra era) supply any. A vote is cast for every
+  -- committee seat one of these keys holds: a rotation pair keeps voting
+  -- across the epoch boundary, a bundle of keys votes once per seat covered.
   , praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
   -- ^ How to obtain KES credentials (ocert + sign key)
   }
