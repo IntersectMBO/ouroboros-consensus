@@ -72,11 +72,18 @@ There might be more than one job per MsgLeiosBlockTxsRequest, but each job will 
 
 Prioritization of which requests to send is discussed below, see LeiosFetchPrioritization.
 
-TODO if a job is sent much later than its originating body arrived, it's possible the LeiosTxCache has meaningfully evolved in the meantime.
+TODO if a job request is sent much later than its originating body arrived, it's possible the LeiosTxCache has meaningfully evolved in the meantime.
 So, when a job is sent, perhaps a second filter against the _current_ LeiosTxCacheIndex would be worthwhile.
 Note that, for the sake of eviction, the LeiosTxCacheIndex retains its EB bodies in memory.
 That happens to be the data necessary for resolving a job's bitfield/set of offsets into the set of transaction hashes that need to be checked for in the LeiosTxCache.
 Which is to say: the existing LeiosTxCacheIndex could already allow for offset-based checks.
+
+TODO the above rules do not increase the probability that the jobs that arrive first deliver the "next" tx that is missing from the EB.
+Increasing that probability would make it more likely that the node's LeiosVoting thread could start/progress its validation work (which must process the txs in the same order as the EB body specifies) even before the whole EB closure has arrived.
+However, that job ordering bias is in tension with the goal of having different jobs in flight with different peers: RarestFirst ensures we utilize our (honest) peers' cumulative bandwidth as efficiently as possible (so that we have the whole EB _before_ the last reply arrives).
+On the other hand, with RarestFirst, an adversarial peer can notice the request it received was one of the early jobs, and delay its response, which means the LeiosVoting thread will be starved of work even as other (non-"next") jobs arrives.
+One possibility, for example, might be to give jobs a "rarity boost" if those jobs are closer to the front of the EB, so that _RarestFirst doesn't prevent (some) hedging of the leftmost jobs of an EB_.
+Another possibility would be to piggy back on __LeiosFetchClosureStreaming__: always pick earlier segment's jobs, only applying RarestFirst _within_ segments.
 
 ## How to process MsgLeiosBlockTxs
 
@@ -157,7 +164,7 @@ However, we don't see any cheaper alternative that is able to resist the adversa
 It's the challenge of _tail latency_ despite the possibility of having a large number of adversarial upstream peers---if we (unknowingly) allocate our requests to them _instead_ of to our honest peers, then it's as if we're temporarily eclipsed.
 We are technically connected to some honest peers, but if we're not utilizing _those_ connections, then they can't contribute to a bound of our tail latency.
 
-It may be sound to hedge less aggressively at first and then more later, but we haven't yet had any simulations in place that would assist us in tuning that time-varying hedging can without weakening the degree to which the T22 attack vector is mitigated (that'd be tuning and mitigating at `mainnet` scale, which dwarfs devnet/testnet).
+It may be sound to hedge less aggressively at the start of an EB's diffusion and then more as that EB's age increases, but we haven't yet had any simulations in place that would assist us in tuning that time-varying hedging can without weakening the degree to which the T22 attack vector is mitigated (that'd be tuning and mitigating at `mainnet` scale, which dwarfs devnet/testnet).
 On the other hand, the tremendous capacity for wasted egress that full hedging introduces almost surely _itself_ weakens the T22 argument by overloading honest servers' (burst) egress capacity.
 
 There are a few mechanisms we've considered that might help; it's work in progress to use these or something we haven't yet considered/found to balance wasted egress versus tail latency.
@@ -176,15 +183,15 @@ There are a few mechanisms we've considered that might help; it's work in progre
 - And MsgTryCancel would be a client-side analog of MsgDropped: the downstream peer can notify the server that it already received a reply for that request from a different peer.
   If the server receives MsgTryCancel before it has written the identified request's reply to the socket already, then it can eliminate that egress by sending (the tiny) MsgDropped instead (sooner than it would have without this client-supplied information).
 
-The only other relief would be to reduce the maximum closure size---ie, just accept the _relative_ waste, but decrease that _absolute_ waste enough to recovery a non-naive T22 mitigation.
-We'd still need something like the above ideas in order to justify re-increasing the maximum closure size to the intended magnitude.
+The only other relief would be to reduce the maximum closure size---ie, just accept the _relative_ waste, but decrease its corresponding _absolute_ waste enough to recovery a non-naive T22 mitigation.
+We'd still need something like the above ideas in order to justify subsequently re-increasing the maximum closure size to its originally intended magnitudes.
 
 ## TODO Streaming closures
 
 There is one low-hanging fruit that would easily increase the network's effective egress capacity: pipelining the diffusion of closures.
 
-The necessary changes are slight: each job is associated with one segment its EB's closure, according to fixed and objective segmentation, and the MsgLeiosBlockTxsOffer message is enriched to identify that segment.
-Thus, as soon as a node finishing fetching some segment, it can begin serving it, even while it's still fetching the other segments.
+- Definition of __LeiosFetchClosureStreaming__: The necessary changes are slight: each job is associated with one segment its EB's closure, according to fixed and objective segmentation, and the MsgLeiosBlockTxsOffer message is enriched to identify that segment.
+  Thus, as soon as a node finishing fetching some segment, it can begin serving it, even while it's still fetching the other segments.
 
 The LeiosFetch decision logic and the LeiosNotify events change just as slightly.
 LeiosFetch merely partitions an EB's jobs by segment, and LeiosNotify needs to send one offer per segment instead of one per EB.
