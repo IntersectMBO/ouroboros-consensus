@@ -716,6 +716,13 @@ data TraceEventMempool blk
     TraceMempoolSynced
       -- | How long the sync operation took.
       EnclosingTimed
+  | -- | The mempool capacity changed during a sync with the ledger.
+    -- An adopted protocol parameter update changes it.
+    TraceMempoolCapacityChanged
+      -- | The capacity before the sync.
+      (TxMeasure blk)
+      -- | The capacity after the sync.
+      (TxMeasure blk)
   | -- | A sync is not needed, as the point at the tip of the LedgerDB and the
     -- point at the mempool are the same.
     TraceMempoolSyncNotNeeded (Point blk)
@@ -733,6 +740,7 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (GenTxId blk)
   , Eq (ApplyTxErr blk)
+  , Eq (TxMeasure blk)
   , StandardHash blk
   ) =>
   Eq (TraceEventMempool blk)
@@ -742,6 +750,7 @@ deriving instance
   , Show (Validated (GenTx blk))
   , Show (GenTxId blk)
   , Show (ApplyTxErr blk)
+  , Show (TxMeasure blk)
   , StandardHash blk
   ) =>
   Show (TraceEventMempool blk)
