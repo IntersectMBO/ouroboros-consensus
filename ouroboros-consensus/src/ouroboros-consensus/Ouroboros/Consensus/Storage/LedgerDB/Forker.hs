@@ -103,11 +103,13 @@ import LeiosDemoTypes
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configLedger)
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (hardForkSummary))
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewOfTip)
 import Ouroboros.Consensus.HeaderValidation
   ( AnnTip (..)
-  , HasAnnTip
   , HeaderState (..)
   , HeaderWithTime (..)
   , annTipHash
@@ -133,8 +135,6 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
-import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 
@@ -372,14 +372,11 @@ validate ::
   forall m l blk.
   ( IOLike m
   , HasHardForkHistory blk
-  , GetHeader blk
-  , HasAnnTip blk
-  , GetTip (LedgerState blk)
   , HasCallStack
   , ApplyBlock l blk
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   ComputeLedgerEvents ->
@@ -421,10 +418,10 @@ validate evs args = do
       GetForkerError
       (Either (AnnLedgerError l blk) (), AnchoredFragment (HeaderWithTime blk)) ->
     ValidateResult l blk
-  rewrap (Right (Left e, validated)) = ValidateLedgerError validated e
+  rewrap (Right (Left e, lvs)) = ValidateLedgerError lvs e
   rewrap (Left (PointTooOld (Just e))) = ValidateExceededRollBack e
   rewrap (Left _) = error "Unreachable, validating will always rollback from the tip"
-  rewrap (Right (Right (), validated)) = ValidateSuccessful validated
+  rewrap (Right (Right (), lvs)) = ValidateSuccessful lvs
 
   mkAps ::
     Set (RealPoint blk) ->
@@ -454,13 +451,10 @@ validate evs args = do
 switch ::
   ( ApplyBlock l blk
   , HasHardForkHistory blk
-  , GetHeader blk
-  , HasAnnTip blk
-  , GetTip (LedgerState blk)
   , MonadSTM m
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -483,7 +477,7 @@ switch leiosDb withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolv
   withForkerAtFromTip numRollbacks $ \fo -> do
     let start = PushStart . toRealPoint . NE.head $ newBlocks
         goal = PushGoal . toRealPoint . NE.last $ newBlocks
-    (ePush, validated) <-
+    (ePush, lvs) <-
       applyThenPushMany
         leiosDb
         (trace . StartedPushingBlockToTheLedgerDb start goal)
@@ -493,10 +487,10 @@ switch leiosDb withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolv
         fo
         doResolve
     case ePush of
-      Left err -> pure (Left err, validated)
+      Left err -> pure (Left err, lvs)
       Right () -> do
-        applySuccessForkerAction onSuccess validated fo
-        pure (Right (), validated)
+        applySuccessForkerAction onSuccess lvs fo
+        pure (Right (), lvs)
 
 {-------------------------------------------------------------------------------
   Apply blocks
@@ -738,13 +732,10 @@ applyThenPush leiosDb evs cfg ap fo doResolve = do
 applyThenPushMany ::
   ( ApplyBlock l blk
   , HasHardForkHistory blk
-  , GetHeader blk
-  , HasAnnTip blk
-  , GetTip (LedgerState blk)
   , MonadSTM m
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -791,6 +782,7 @@ applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = do
                         (Qry.slotToWallclock (blockSlot hdr))
                         (hardForkSummary lcfg (ledgerState st))
                 , hwtPredecessorSlot = getTipSlot predecessorLedger
+                , hwtLedgerViewOfPredecessor = ledgerViewOfTip lcfg predecessorLedger
                 }
         pushAndTrace (acc AF.:> hwt) (forgetLedgerTables st) aps'
 
@@ -1086,9 +1078,11 @@ newtype SuccessForkerAction m l blk = MkSuccessForkerAction
 -- applied, as validated headers anchored at the fork point -- so the fragment
 -- is the accepted prefix, and is empty when nothing was applied.
 --
--- Validation builds these because it is the only place that sees what they
--- record: each annotation is a projection of the state the previous block
--- left behind, which exists only inside the forker until the caller commits.
+-- Validation reports these because it is the only place that sees them: each
+-- is a projection of the state the previous block left behind, which exists
+-- only inside the forker until the caller commits. See
+-- 'Ouroboros.Consensus.HeaderValidation.hwtLedgerViewOfPredecessor' for what
+-- the caller does with them.
 data ValidateResult l blk
   = ValidateSuccessful (AnchoredFragment (HeaderWithTime blk))
   | ValidateLedgerError (AnchoredFragment (HeaderWithTime blk)) (AnnLedgerError l blk)

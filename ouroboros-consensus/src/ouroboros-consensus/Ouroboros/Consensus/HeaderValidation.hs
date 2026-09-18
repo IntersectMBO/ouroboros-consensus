@@ -90,7 +90,7 @@ import Data.Typeable (Typeable)
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import NoThunks.Class (NoThunks)
+import NoThunks.Class (NoThunks (..), allNoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
@@ -614,18 +614,70 @@ data HeaderWithTime blk = HeaderWithTime
   -- The header commits only to its predecessor's hash, so this is knowledge
   -- of that chain rather than of the header. It is nonetheless unambiguous,
   -- since every chain carrying this header carries the same predecessor.
+  , hwtLedgerViewOfPredecessor :: !(LedgerView (BlockProtocol blk))
+  -- ^ The ledger view at 'hwtPredecessorSlot'.
+  --
+  -- Only a CertRB needs it, and only to identify the Leios committee that was
+  -- relevant to its /predecessor/'s slot, since that's the announcement the
+  -- cert is carries certify.
+  --
+  -- Always present, because the only way to build a 'HeaderWithTime' is to
+  -- validate the header: the ChainSync client does so against a forecast and
+  -- keeps the view in its 'HeaderStateHistory', and ChainSel does so by
+  -- applying the block.
   }
   deriving Generic
 
-deriving stock instance
-  Eq (Header blk) =>
-  Eq (HeaderWithTime blk)
-deriving stock instance
-  Show (Header blk) =>
-  Show (HeaderWithTime blk)
-deriving anyclass instance
-  NoThunks (Header blk) =>
-  NoThunks (HeaderWithTime blk)
+-- The 'LedgerView' is excluded from all three of these instances. It is a
+-- cache of something derivable, so it says nothing about header identity, and
+-- it has no 'Eq' or 'NoThunks' instance of its own; 'Eq' in particular would
+-- drag a stake-distribution comparison into every header comparison.
+
+instance Eq (Header blk) => Eq (HeaderWithTime blk) where
+  hwt1 == hwt2 =
+    hwtHeader hwt1 == hwtHeader hwt2
+      && hwtSlotRelativeTime hwt1 == hwtSlotRelativeTime hwt2
+      && hwtPredecessorSlot hwt1 == hwtPredecessorSlot hwt2
+   where
+    -- Positional on purpose: adding a field to 'HeaderWithTime' breaks this
+    -- binding, which is the prompt to decide whether the new field belongs in
+    -- this method. 'hwtLedgerViewOfPredecessor' deliberately does not; see the
+    -- note above these instances.
+    HeaderWithTime _dummy _ _ _ = hwt1
+
+instance Show (Header blk) => Show (HeaderWithTime blk) where
+  showsPrec p hwt =
+    showParen (p > 10) $
+      showString "HeaderWithTime "
+        . showsPrec 11 (hwtHeader hwt)
+        . showString " "
+        . showsPrec 11 (hwtSlotRelativeTime hwt)
+        . showString " "
+        . showsPrec 11 (hwtPredecessorSlot hwt)
+        . showString " <ledger view>"
+   where
+    -- Positional on purpose: adding a field to 'HeaderWithTime' breaks this
+    -- binding, which is the prompt to decide whether the new field belongs in
+    -- this method. 'hwtLedgerViewOfPredecessor' deliberately does not; see the
+    -- note above these instances.
+    HeaderWithTime _dummy _ _ _ = hwt
+
+instance NoThunks (Header blk) => NoThunks (HeaderWithTime blk) where
+  showTypeOf _ = "HeaderWithTime"
+  wNoThunks ctxt hwt =
+    allNoThunks
+      [ noThunks ctxt' (hwtHeader hwt)
+      , noThunks ctxt' (hwtSlotRelativeTime hwt)
+      , noThunks ctxt' (hwtPredecessorSlot hwt)
+      ]
+   where
+    ctxt' = "HeaderWithTime" : ctxt
+
+    -- Positional on purpose: adding a field to 'HeaderWithTime' breaks this
+    -- binding, which is the prompt to decide whether the new field belongs in
+    -- this method. 'hwtLedgerViewOfPredecessor' deliberately does not; see the
+    -- note above these instances.
+    HeaderWithTime _dummy _ _ _ = hwt
 
 type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
 

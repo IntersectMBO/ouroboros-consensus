@@ -114,6 +114,7 @@ import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
+  , Predecessor (..)
   , AddBlockResult (..)
   , AddPerasCertPromise (..)
   , ChainDbError (..)
@@ -624,8 +625,8 @@ data BlockToAdd m blk = BlockToAdd
   { blockPunish :: !(InvalidBlockPunishment m)
   -- ^ Executed immediately upon determining this block or one from its prefix
   -- is invalid.
-  , blockPredecessorSlot :: !(WithOrigin SlotNo)
-  -- ^ The slot of this block's predecessor.
+  , blockPredecessor :: !(Predecessor blk)
+  -- ^ What the adder knows about this block's predecessor.
   --
   -- Leios uses this to validate the certificate in a CertRB /before/ chain
   -- selection, which is necessary for The Recovery Path.
@@ -673,16 +674,16 @@ addBlockToAdd ::
   Tracer m (TraceAddBlockEvent blk) ->
   ChainSelQueue m blk ->
   InvalidBlockPunishment m ->
-  WithOrigin SlotNo ->
+  Predecessor blk ->
   blk ->
   m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish predSlot blk = do
+addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish predecessor blk = do
   varBlockWrittenToDisk <- newEmptyTMVarIO
   varBlockProcessed <- newEmptyTMVarIO
   let !toAdd =
         BlockToAdd
           { blockPunish = punish
-          , blockPredecessorSlot = predSlot
+          , blockPredecessor = predecessor
           , blockToAdd = blk
           , varBlockWrittenToDisk
           , varBlockProcessed

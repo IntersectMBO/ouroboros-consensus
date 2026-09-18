@@ -79,6 +79,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   ( AddBlockResult (..)
   , ChainDB
+  , Predecessor (..)
   , addBlockAsync
   , blockProcessed
   , getCurrentChain
@@ -411,7 +412,15 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish (pointSlot bcPrevPoint) newBlock
+    -- 'unticked' is the state at 'bcPrevPoint', ie at this block's
+    -- predecessor, so its view is the one at the predecessor's slot.
+    let predecessor = case pointSlot bcPrevPoint of
+          Origin -> ChainDB.NoPredecessor
+          NotOrigin slot ->
+            ChainDB.Predecessor
+              slot
+              (ledgerViewOfTip (configLedger cfg) (ledgerState unticked))
+    result <- lift $ ChainDB.addBlockAsync chainDB noPunish predecessor newBlock
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 
     when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $

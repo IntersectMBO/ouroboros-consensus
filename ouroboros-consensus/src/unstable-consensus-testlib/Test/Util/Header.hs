@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Test.Util.Header
   ( -- * Enriching headers with a relative slot time
@@ -11,7 +12,8 @@ import Cardano.Slotting.EpochInfo.API (epochInfoSlotToRelativeTime)
 import Data.Functor.Identity (runIdentity)
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
-  ( Header
+  ( BlockProtocol
+  , Header
   , SlotNo
   , WithOrigin (NotOrigin)
   , blockSlot
@@ -22,6 +24,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract
   , immutableEpochInfo
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -39,6 +42,7 @@ attachSlotTimeToFragment ::
   ( AF.HasHeader (Header blk)
   , Typeable blk
   , ImmutableEraParams blk
+  , LedgerView (BlockProtocol blk) ~ ()
   ) =>
   TopLevelConfig blk ->
   AnchoredFragment (Header blk) ->
@@ -52,8 +56,18 @@ attachSlotTimeToFragment cfg frag =
  where
   hdrs = AF.toOldestFirst frag
 
+-- | Build a 'HeaderWithTime' without validating the header
+--
+-- Restricted to blocks whose 'LedgerView' is trivial, which is what makes this
+-- sound: 'hwtLedgerViewOfPredecessor' is meant to be a by-product of
+-- validating the header, and here there is no information for it to carry. A
+-- block with a real ledger view has to go through the ChainSync client or
+-- ChainSel.
 attachSlotTime ::
-  (AF.HasHeader (Header blk), ImmutableEraParams blk) =>
+  ( AF.HasHeader (Header blk)
+  , ImmutableEraParams blk
+  , LedgerView (BlockProtocol blk) ~ ()
+  ) =>
   TopLevelConfig blk ->
   -- | The slot of the header's predecessor
   WithOrigin SlotNo ->
@@ -65,6 +79,7 @@ attachSlotTime cfg predSlot hdr =
     , hwtSlotRelativeTime =
         runIdentity $ epochInfoSlotToRelativeTime ei (blockSlot hdr)
     , hwtPredecessorSlot = predSlot
+    , hwtLedgerViewOfPredecessor = ()
     }
  where
   ei = immutableEpochInfo cfg

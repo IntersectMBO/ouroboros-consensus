@@ -282,7 +282,7 @@ initLedgerDB s c = do
       case result of
         LedgerDB.ValidateSuccessful{} -> do
           pure ()
-        LedgerDB.ValidateExceededRollBack _ ->
+        LedgerDB.ValidateExceededRollBack{} ->
           error "impossible: rollback was 0"
         LedgerDB.ValidateLedgerError{} ->
           error "impossible: there were no invalid blocks"

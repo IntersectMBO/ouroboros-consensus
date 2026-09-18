@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.ChainDB.API
@@ -19,6 +20,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , getTipBlockNo
 
     -- * Adding a block
+  , Predecessor (..)
+  , mapPredecessor
+  , predecessorSlot
+  , trivialPredecessor
   , AddBlockPromise (..)
   , AddBlockResult (..)
   , addBlock
@@ -91,6 +96,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
@@ -142,10 +148,57 @@ import System.FS.API.Types (FsError)
 --
 -- The ChainDB instantiates all the various type parameters of these databases
 -- to conform to the unified interface we provide here.
+-- | What the caller knows about the block's predecessor
+--
+-- ChainSel needs the ledger view at the predecessor's slot, because that is the
+-- committee a CertRB's certificate must satisfy: the announcing block is the
+-- block's predecessor.
+--
+-- The view is not something the header yields; it is a function of that slot
+-- and of a ledger state that can forecast to it. What validating the
+-- predecessor's header establishes is that such a forecast succeeded, so a
+-- view for that slot was necessarily in hand. Pairing the two here records
+-- that: a caller that validated the predecessor can supply both, and there is
+-- no state in which it has the slot but must go looking for the view.
+data Predecessor blk
+  = -- | The block is the first on its chain, so there is no predecessor and
+    -- nothing could have been announced for it to certify.
+    NoPredecessor
+  | Predecessor !SlotNo !(LedgerView (BlockProtocol blk))
+
+-- | Reinterpret a 'Predecessor' at another block type
+mapPredecessor ::
+  (LedgerView (BlockProtocol blk) -> LedgerView (BlockProtocol blk')) ->
+  Predecessor blk ->
+  Predecessor blk'
+mapPredecessor f = \case
+  NoPredecessor -> NoPredecessor
+  Predecessor slot lv -> Predecessor slot (f lv)
+
+-- | The slot of the predecessor, if there is one
+predecessorSlot :: Predecessor blk -> WithOrigin SlotNo
+predecessorSlot = \case
+  NoPredecessor -> Origin
+  Predecessor slot _ -> NotOrigin slot
+
+-- | The predecessor of a block whose protocol has no ledger view
+--
+-- Restricted to those blocks, which is what makes it sound: the view carries
+-- no information, so supplying it asserts nothing. For a block with a real
+-- ledger view the caller has to have one, which in practice means it forecast
+-- to the predecessor's slot while validating that header.
+trivialPredecessor ::
+  LedgerView (BlockProtocol blk) ~ () =>
+  WithOrigin SlotNo ->
+  Predecessor blk
+trivialPredecessor = \case
+  Origin -> NoPredecessor
+  NotOrigin slot -> Predecessor slot ()
+
 data ChainDB m blk = ChainDB
   { addBlockAsync ::
       InvalidBlockPunishment m ->
-      WithOrigin SlotNo ->
+      Predecessor blk ->
       blk ->
       m (AddBlockPromise m blk)
   -- ^ Add a block to the heap of blocks
@@ -524,7 +577,7 @@ data AddBlockResult blk
 -- | Add a block synchronously: wait until the block has been written to disk
 -- (see 'blockWrittenToDisk').
 addBlockWaitWrittenToDisk ::
-  IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> WithOrigin SlotNo -> blk -> m Bool
+  IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> Predecessor blk -> blk -> m Bool
 addBlockWaitWrittenToDisk chainDB punish predSlot blk = do
   promise <- addBlockAsync chainDB punish predSlot blk
   atomically $ blockWrittenToDisk promise
@@ -540,7 +593,7 @@ addBlock ::
   IOLike m =>
   ChainDB m blk ->
   InvalidBlockPunishment m ->
-  WithOrigin SlotNo ->
+  Predecessor blk ->
   blk ->
   m (AddBlockResult blk)
 addBlock chainDB punish predSlot blk = do
@@ -552,7 +605,7 @@ addBlock chainDB punish predSlot blk = do
 --
 -- Note: this is a partial function, only to support tests.
 addBlock_ ::
-  IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> WithOrigin SlotNo -> blk -> m ()
+  IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> Predecessor blk -> blk -> m ()
 addBlock_ cdb punish predSlot = void . addBlock cdb punish predSlot
 
 -- | Alias for naming consistency.
@@ -651,7 +704,7 @@ toChain chainDB = withRegistry $ \registry ->
 
 fromChain ::
   forall m blk.
-  (IOLike m, HasHeader blk) =>
+  (IOLike m, HasHeader blk, LedgerView (BlockProtocol blk) ~ ()) =>
   m (ChainDB m blk) ->
   Chain blk ->
   m (ChainDB m blk)
@@ -660,7 +713,9 @@ fromChain openDB chain = do
   -- Adding a whole chain oldest-first, so each block's predecessor is the one
   -- added just before it.
   mapM_ (uncurry (addBlock_ chainDB noPunishment)) $
-    zip (Origin : map (NotOrigin . blockSlot) blks) blks
+    zip
+      (map trivialPredecessor (Origin : map (NotOrigin . blockSlot) blks))
+      blks
   return chainDB
  where
   blks = Chain.toOldestFirst chain

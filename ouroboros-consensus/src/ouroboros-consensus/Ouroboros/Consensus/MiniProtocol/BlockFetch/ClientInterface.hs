@@ -40,6 +40,7 @@ import Ouroboros.Consensus.Protocol.Abstract (shouldSwitch)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise
   , ChainDB
+  , Predecessor (..)
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
@@ -70,7 +71,7 @@ data ChainDbView m blk = ChainDbView
   , getMaxSlotNo :: STM m MaxSlotNo
   , addBlockAsync ::
       InvalidBlockPunishment m ->
-      WithOrigin SlotNo ->
+      Predecessor blk ->
       blk ->
       m (AddBlockPromise m blk)
   , getChainSelStarvation :: STM m ChainSelStarvation
@@ -142,8 +143,8 @@ readFetchModeDefault
 -- against.
 data MatchedBlock blk = MatchedBlock
   { matchedBlock :: !blk
-  , matchedBlockPredecessorSlot :: !(WithOrigin SlotNo)
-  -- ^ 'hwtPredecessorSlot' of that header
+  , matchedBlockPredecessor :: !(Predecessor blk)
+  -- ^ What the matched header records about the block's predecessor
   }
 
 mkBlockFetchConsensusInterface ::
@@ -182,7 +183,11 @@ mkBlockFetchConsensusInterface
           Just
             MatchedBlock
               { matchedBlock = b
-              , matchedBlockPredecessorSlot = hwtPredecessorSlot hwt
+              , matchedBlockPredecessor =
+                  case hwtPredecessorSlot hwt of
+                    Origin -> NoPredecessor
+                    NotOrigin slot ->
+                      Predecessor slot (hwtLedgerViewOfPredecessor hwt)
               }
       | otherwise = Nothing
 
@@ -215,7 +220,7 @@ mkBlockFetchConsensusInterface
       MatchedBlock blk ->
       m ()
     mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt matched = void $ do
-      let MatchedBlock blk predSlot = matched
+      let MatchedBlock blk predecessor = matched
       disconnect <- InvalidBlockPunishment.mkPunishThisThread
       -- A BlockFetch peer can either send an entire range or none of the
       -- range; anything else will incur a disconnect. And in 'FetchDeadline'
@@ -251,7 +256,7 @@ mkBlockFetchConsensusInterface
       addBlockAsync
         chainDB
         punishment
-        predSlot
+        predecessor
         blk
 
     readFetchedMaxSlotNo :: STM m MaxSlotNo

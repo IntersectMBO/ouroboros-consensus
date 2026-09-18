@@ -277,9 +277,8 @@ implGetPastLedgerState env point =
 implGetHeaderStateHistory ::
   ( MonadSTM m
   , l ~ ExtLedgerState blk
-  , IsLedger (LedgerState blk)
   , HasHardForkHistory blk
-  , HasAnnTip blk
+  , LedgerSupportsProtocol blk
   ) =>
   LedgerDBEnv m l blk -> STM m (HeaderStateHistory blk)
 implGetHeaderStateHistory env = do
@@ -288,11 +287,16 @@ implGetHeaderStateHistory env = do
       -- This summary can convert all tip slots of the ledger states in the
       -- @ledgerDb@ as these are not newer than the tip slot of the current
       -- ledger state (Property 17.1 in the Consensus report).
-      summary = hardForkSummary (configLedger $ getExtLedgerCfg $ ledgerDbCfg $ ldbCfg env) currentLedgerState
-      mkHeaderStateWithTime' =
-        mkHeaderStateWithTimeFromSummary summary
-          . headerState
-          . state
+      lcfg = configLedger $ getExtLedgerCfg $ ledgerDbCfg $ ldbCfg env
+      summary = hardForkSummary lcfg currentLedgerState
+      mkHeaderStateWithTime' stateRef =
+        mkHeaderStateWithTimeFromSummary
+          summary
+          lcfg
+          (ledgerState extLedgerState)
+          (headerState extLedgerState)
+       where
+        extLedgerState = state stateRef
   pure
     . HeaderStateHistory
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'

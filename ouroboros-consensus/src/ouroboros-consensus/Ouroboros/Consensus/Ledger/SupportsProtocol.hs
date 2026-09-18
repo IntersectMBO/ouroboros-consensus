@@ -5,6 +5,7 @@
 module Ouroboros.Consensus.Ledger.SupportsProtocol
   ( GenesisWindow (..)
   , LedgerSupportsProtocol (..)
+  , ledgerViewOfTip
   ) where
 
 import Control.Monad.Except
@@ -17,6 +18,36 @@ import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Protocol.Abstract
 
 -- | Link protocol to ledger
+
+-- | The ledger view at the given ledger state's own tip slot
+--
+-- This is 'protocolLedgerView' without the ticking. It asks the state's own
+-- forecast for the slot that forecast is anchored at, which satisfies
+-- 'forecastFor''s precondition and which every implementation answers by
+-- projecting the state it already holds -- no TICKF, no ticked state, no
+-- ledger tables. So it is cheap enough to call once per entry of a @k@-deep
+-- history.
+--
+-- Total: the only way 'forecastFor' can fail is by being asked for a slot
+-- outside the forecast's range, and the forecast's own anchor is always in range.
+ledgerViewOfTip ::
+  forall blk mk.
+  LedgerSupportsProtocol blk =>
+  LedgerConfig blk ->
+  LedgerState blk mk ->
+  LedgerView (BlockProtocol blk)
+ledgerViewOfTip cfg st =
+  case runExcept $ forecastFor forecast slot of
+    Right lv -> lv
+    Left err ->
+      error $
+        "ledgerViewOfTip: forecast refused its own anchor: " <> show err
+ where
+  forecast = ledgerViewForecastAt cfg st
+  -- At genesis there is no tip slot; slot 0 is the first slot any header could
+  -- occupy, and the forecast's anchor is 'Origin', so it is in range.
+  slot = fromWithOrigin (SlotNo 0) $ getTipSlot st
+
 class
   ( BlockSupportsProtocol blk
   , UpdateLedger blk

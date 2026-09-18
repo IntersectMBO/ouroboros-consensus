@@ -165,7 +165,7 @@ mkCheck systemTime getCurrentGsmState cshc =
     HistoricalChainSyncMessage ->
     HeaderStateWithTime blk ->
     m (Either HistoricityException ())
-  judgeRollback msg (HeaderStateWithTime headerState slotTime) = do
+  judgeRollback msg (HeaderStateWithTime headerState slotTime _ledgerView) = do
     arrivalTime <- systemTimeCurrent systemTime
     let actualRollbackAge = arrivalTime `diffRelTime` slotTime
     pure $

@@ -163,7 +163,11 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
   let addBlocks tipSlot = \case
         [] -> pure tipSlot
         blk : blks -> do
-          ChainDB.addBlock_ chainDB Punishment.noPunishment tipSlot blk
+          ChainDB.addBlock_
+            chainDB
+            Punishment.noPunishment
+            (ChainDB.trivialPredecessor tipSlot)
+            blk
           addBlocks (NotOrigin (blockSlot blk)) blks
       addUpdates tipSlot = \case
         [] -> pure ()
