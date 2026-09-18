@@ -291,10 +291,3 @@ instance
       GenesisHash -> Nothing
       BlockHash h ->
         Just $ MkRbHash $ toRawHash (Proxy @(ShelleyBlock (PraosWithLeios c) DijkstraEra)) h
-
--- | Deserialise a transaction supplied as Leios-stored bytes.
-deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era
-deserialiseLeiosTx bs =
-  case decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" decCBOR (BL.fromStrict bs) of
-    Left err -> error $ "Failed to deserialise Leios tx: " <> show err
-    Right !tx -> tx
