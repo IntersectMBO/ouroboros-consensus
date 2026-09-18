@@ -463,7 +463,8 @@ objectDiffusionInbound
               )
               ( \neCollectedIds ->
                   WithEffect $ do
-                    -- We just got some new object id's, so we are no longer idling
+                    -- The server supplied new object IDs, so the client is no
+                    -- longer known to be caught up with this server.
                     Idling.idlingStop (odisvIdling state)
                     traceWith tracer TraceObjectDiffusionInboundStoppedIdling
                     pure $

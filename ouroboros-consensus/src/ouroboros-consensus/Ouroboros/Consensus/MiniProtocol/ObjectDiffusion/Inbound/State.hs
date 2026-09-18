@@ -38,7 +38,18 @@ import Ouroboros.Consensus.Util.IOLike
 -- NOTE: 'blk' is not needed for now, but we keep it for future use.
 data ObjectDiffusionInboundState blk = ObjectDiffusionInboundState
   { odIdling :: !Bool
-  -- ^ Whether the client is currently idling
+  -- ^ Whether the client has reached the server's current object-ID front.
+  --
+  -- We use "idling" consistently with ChainSync: it starts when the server
+  -- sends @MsgAwaitReply@ and ends when the server supplies new object IDs. In
+  -- this sense, idling means that the client is caught up with this particular
+  -- server, and contributes to the GSM caught-up decision.
+  --
+  -- This is distinct from the Object Diffusion protocol state @StIdle@. After
+  -- @MsgAwaitReply@ the protocol is in @StObjectIds (StObjectIdsBlocking
+  -- StMustReply)@, where the server has agency. Moreover, after
+  -- @MsgServerIdle@ returns the protocol to @StIdle@, this flag deliberately
+  -- remains 'True' until the server supplies new object IDs.
   }
   deriving stock Generic
 
@@ -97,6 +108,8 @@ newObjectDiffusionInboundHandleCollection = do
 -- 'bracketObjectDiffusionInbound'.
 data ObjectDiffusionInboundStateView m = ObjectDiffusionInboundStateView
   { odisvIdling :: !(Idling m)
+  -- ^ Actions that record whether the client has reached the server's current
+  -- object-ID front. See 'odIdling'.
   }
   deriving stock Generic
 
