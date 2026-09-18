@@ -467,12 +467,14 @@ objectDiffusionInbound
               )
               ( WithEffect $ do
                   traceWith tracer TraceObjectDiffusionInboundServerIdle
+                  -- The resulting state has no acknowledgements left to send
+                  -- and no object-ID replies in flight: the server consumed
+                  -- the acknowledgements carried by the blocking request, and
+                  -- 'MsgServerIdle' completed that request without returning
+                  -- any IDs.
                   pure $!
                     checkState
-                      st
-                        { numToAckOnNextReq = 0
-                        , numIdsInFlight = 0
-                        }
+                      st'{numIdsInFlight = 0}
                       & go Zero
               )
 
