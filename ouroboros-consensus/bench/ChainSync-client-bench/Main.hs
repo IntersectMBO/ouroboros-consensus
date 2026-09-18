@@ -38,6 +38,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( chainSyncServerForFollower
   )
+import qualified Ouroboros.Consensus.MiniProtocol.Util.Idling as Idling
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( NodeToNodeVersion
   )
@@ -159,7 +160,7 @@ oneBenchRun
           , CSClient.headerMetricsTracer = nullTracer
           , CSClient.setCandidate = writeTVar varCandidate
           , CSClient.setLatestSlot = \_ -> pure ()
-          , CSClient.idling = CSClient.noIdling
+          , CSClient.idling = Idling.noIdling
           , CSClient.loPBucket = CSClient.noLoPBucket
           , CSClient.jumping = CSClient.noJumping
           }
