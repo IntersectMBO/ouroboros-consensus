@@ -29,8 +29,8 @@ import Cardano.Ledger.BaseTypes
   , UnitInterval
   )
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
-import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
+import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (LeiosCommittee, emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (KES, VRF)
