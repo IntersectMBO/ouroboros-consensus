@@ -68,10 +68,6 @@ data TraceObjectDiffusionInbound objectId object
     TraceObjectDiffusionInboundRecvControlMessage ControlMessage
   | TraceObjectDiffusionInboundCanRequestMoreObjects Int
   | TraceObjectDiffusionInboundCannotRequestMoreObjects Int
-  | -- | The server has no object IDs immediately available after its current
-    -- cursor and will wait. All previously advertised objects have been
-    -- processed before this caught-up event can be emitted.
-    TraceObjectDiffusionInboundAwaitReply
   | -- | The server's bounded wait expired without new object IDs, returning
     -- agency to the client.
     TraceObjectDiffusionInboundServerIdle
@@ -169,7 +165,7 @@ objectDiffusionInbound
   ObjectPoolWriter{..}
   _version
   controlMessageSTM
-  state =
+  stateView =
     ObjectDiffusionInboundPipelined $!
       checkState initialInboundSt & go Zero
    where
@@ -457,15 +453,14 @@ objectDiffusionInbound
               (numToAckOnNextReq st)
               numIdsToRequest
               ( do
-                  traceWith tracer TraceObjectDiffusionInboundAwaitReply
-                  Idling.idlingStart (odisvIdling state)
+                  Idling.idlingStart (odisvIdling stateView)
                   traceWith tracer TraceObjectDiffusionInboundStartedIdling
               )
               ( \neCollectedIds ->
                   WithEffect $ do
                     -- The server supplied new object IDs, so the client is no
                     -- longer known to be caught up with this server.
-                    Idling.idlingStop (odisvIdling state)
+                    Idling.idlingStop (odisvIdling stateView)
                     traceWith tracer TraceObjectDiffusionInboundStoppedIdling
                     pure $
                       checkState st' & goCollect Zero (CollectObjectIds numIdsToRequest (NonEmpty.toList neCollectedIds))
