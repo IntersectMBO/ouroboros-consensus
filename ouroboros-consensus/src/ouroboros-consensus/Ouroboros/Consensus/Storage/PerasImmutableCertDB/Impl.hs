@@ -7,6 +7,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | A simplified variant of the ImmutableDB specialised to storing immutable
 -- Peras certificates.
@@ -136,15 +137,15 @@ createDB
     -- Validate every certificate file present on disk once, up front, and
     -- keep only the (much cheaper) round numbers around: certificates
     -- themselves are read back from disk on demand, see 'implGetCertsAfter'.
-    certs :: [ValidatedPerasCert blk] <- readAllCerts hasFS
-    picdbKnownRounds <- newSVar $ Set.fromList (map getPerasCertRound certs)
+    rounds <- indexCertRounds (Proxy @blk) hasFS
+    picdbKnownRounds <- newSVar rounds
     let env =
           PerasImmutableCertDbEnv
             { picdbHasFS = someHasFS
             , picdbTracer = picdbaTracer
             , picdbKnownRounds
             }
-    traceWith picdbaTracer (OpenedDB (length certs))
+    traceWith picdbaTracer (OpenedDB (Set.size rounds))
     pure
       PerasImmutableCertDB
         { addCert = implAddCert env
@@ -276,6 +277,7 @@ removeCertFile env roundNo =
 --
 -- PRECONDITION: the round number's certificate file exists.
 readCertFile ::
+  forall m blk.
   ( IOLike m
   , FromCBOR (PerasCert blk)
   ) =>
@@ -284,16 +286,17 @@ readCertFile ::
   m (ValidatedPerasCert blk)
 readCertFile env roundNo =
   case picdbHasFS env of
-    SomeHasFS hasFS -> readCertFileAt hasFS (fsPathCertFile roundNo)
+    SomeHasFS hasFS -> readCertFileAt (Proxy @blk) hasFS (fsPathCertFile roundNo)
 
 readCertFileAt ::
   ( IOLike m
   , FromCBOR (PerasCert blk)
   ) =>
+  Proxy blk ->
   HasFS m h ->
   FsPath ->
   m (ValidatedPerasCert blk)
-readCertFileAt hasFS path = do
+readCertFileAt _ hasFS path = do
   bytes <- withFile hasFS path ReadMode (hGetAll hasFS)
   case CBOR.deserialiseFromBytes decodeCert bytes of
     Right (_leftover, cert) -> pure cert
@@ -305,13 +308,17 @@ readCertFileAt hasFS path = do
 --
 -- PRECONDITION: all certificate files are valid.
 -- POSTCONDITION: the returned list is finite.
-readAllCerts ::
+indexCertRounds ::
   forall m h blk.
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , FromCBOR (PerasCert blk)
   ) =>
+  Proxy blk ->
   HasFS m h ->
-  m [ValidatedPerasCert blk]
-readAllCerts hasFS = do
-  names <- Set.toList <$> listDirectory hasFS (mkFsPath [])
-  forM names $ \name -> readCertFileAt hasFS (mkFsPath [name])
+  m (Set PerasRoundNo)
+indexCertRounds proxy hasFS = do
+  names <- Set.toAscList <$> listDirectory hasFS (mkFsPath [])
+  fmap Set.fromDistinctAscList $ forM names $ \name -> do
+    cert <- readCertFileAt proxy hasFS (mkFsPath [name])
+    pure (getPerasCertRound cert)
