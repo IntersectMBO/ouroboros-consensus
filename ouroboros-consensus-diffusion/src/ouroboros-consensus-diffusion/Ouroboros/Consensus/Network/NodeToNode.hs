@@ -180,11 +180,12 @@ import System.Random (StdGen, splitGen)
   Handlers
 -------------------------------------------------------------------------------}
 
--- | Prototype interval for returning agency while an Object Diffusion server
--- is idle. The production value is intentionally left as a later policy
--- decision.
+-- | Interval for returning agency while an Object Diffusion server is idle.
+--
+-- TODO https://github.com/tweag/cardano-peras/issues/187
+-- Confirm the production value against the graceful peer-demotion timeout.
 objectDiffusionIdleTimeout :: Time.DiffTime
-objectDiffusionIdleTimeout = 5
+objectDiffusionIdleTimeout = 20
 
 -- | Protocol handlers for node-to-node (remote) communication
 data Handlers m addr blk = Handlers
