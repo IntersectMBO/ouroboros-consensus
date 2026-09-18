@@ -114,13 +114,13 @@ import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
-  , Predecessor (..)
   , AddBlockResult (..)
   , AddPerasCertPromise (..)
   , ChainDbError (..)
   , ChainSelectionPromise (..)
   , ChainType
   , LoE
+  , Predecessor (..)
   , StreamFrom
   , StreamTo
   , UnknownRange
