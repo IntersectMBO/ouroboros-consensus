@@ -383,9 +383,12 @@ class
   ) =>
   TxLimits blk
   where
-  -- | The (possibly multi-dimensional) size of a transaction in a block.
+  -- | The (possibly multi-dimensional) size of a transaction in a block, for
+  -- the components that do not need the UTxO.
   type TxMeasurePhase1 blk
 
+  -- | The components of the size that need the UTxO. In Cardano this is the
+  -- reference scripts.
   type TxMeasurePhase2 blk
 
   -- | The size of the transaction from the perspective of diffusion layer
@@ -418,13 +421,16 @@ class
   -- 'blockCapacityTxMeasure cfg st'. Otherwise, the mempool could block
   -- forever.
   --
+  -- TODO: the bound against 'blockCapacityTxMeasure' names 'txMeasure', which
+  -- no longer exists. Restate it over 'txMeasurePhase1' and 'txMeasurePhase2'.
+  --
   -- Returns an exception if and only if the transaction violates the per-tx
   -- limits.
   txMeasurePhase1 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
-    -- | This state needs values as a transaction measure might depend on
-    -- those. For example in Cardano they look at the reference scripts.
+    -- | This state has no values. The mempool measures phase 1 before it reads
+    -- the ledger tables, so it can reject a transaction without that read.
     TickedLedgerState blk EmptyMK ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasurePhase1 blk)
