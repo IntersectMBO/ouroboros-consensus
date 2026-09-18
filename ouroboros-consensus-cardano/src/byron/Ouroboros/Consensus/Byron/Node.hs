@@ -298,11 +298,11 @@ instance NodeInitStorage ByronBlock where
 
   -- If the current chain is empty, produce a genesis EBB and add it to the
   -- ChainDB. Only an EBB can have Genesis (= empty chain) as its predecessor.
-  nodeInitChainDB cfg InitChainDB{getCurrentLedger, addBlock} = do
+  nodeInitChainDB cfg InitChainDB{getCurrentLedger, addTheFirstEbb} = do
     tip <- ledgerTipPoint <$> getCurrentLedger
     case tip of
       BlockPoint{} -> return ()
-      GenesisPoint -> addBlock Origin genesisEBB
+      GenesisPoint -> addTheFirstEbb genesisEBB
    where
     genesisEBB =
       forgeEBB (getByronBlockConfig cfg) (SlotNo 0) (BlockNo 0) GenesisHash

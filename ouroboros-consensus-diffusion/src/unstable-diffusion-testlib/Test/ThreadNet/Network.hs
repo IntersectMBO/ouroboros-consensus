@@ -990,7 +990,24 @@ runThreadNetwork
                 -- ChainDB will reject it as invalid, and
                 -- 'Test.ThreadNet.General.prop_general' will eventually fail
                 -- because of a block rejection.
-                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment (pointSlot p) ebb
+                -- The EBB extends 'p', so its predecessor's view comes from
+                -- the ledger state there. Asking the ChainDB rather than
+                -- reusing 'tickedLdgSt', whose view is the one at the current
+                -- slot and so differs across an epoch boundary.
+                predecessor <- case pointSlot p of
+                  Origin -> pure ChainDB.NoPredecessor
+                  NotOrigin slot ->
+                    atomically (ChainDB.getPastLedger chainDB p) >>= \case
+                      -- The EBB extends this very point, so its ledger
+                      -- is certainly still within the last k.
+                      Nothing ->
+                        error "JIT EBB: no ledger at the tip it extends"
+                      Just st ->
+                        pure $
+                          ChainDB.Predecessor
+                            slot
+                            (ledgerViewOfTip (configLedger pInfoConfig) (ledgerState st))
+                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment predecessor ebb
                 pure blk
 
       -- This variable holds the number of the earliest slot in which the

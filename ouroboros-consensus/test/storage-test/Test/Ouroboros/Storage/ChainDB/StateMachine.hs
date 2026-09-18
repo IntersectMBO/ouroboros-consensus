@@ -17,6 +17,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -356,6 +357,9 @@ type AllComponents blk =
 
 type TestConstraints blk =
   ( ConsensusProtocol (BlockProtocol blk)
+  , -- The test blocks have no ledger view, which is what lets this test build
+    -- 'HeaderWithTime's without validating; see 'Test.Util.Header.attachSlotTime'.
+    LedgerView (BlockProtocol blk) ~ ()
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
@@ -488,7 +492,7 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     ChainDBState m blk -> WithOrigin SlotNo -> blk -> m (Point blk)
   advanceAndAdd ChainDBState{chainDB} predSlot blk = do
     -- `blockProcessed` always returns 'Just'
-    res <- addBlock chainDB InvalidBlockPunishment.noPunishment predSlot blk
+    res <- addBlock chainDB InvalidBlockPunishment.noPunishment (trivialPredecessor predSlot) blk
     return $ case res of
       FailedToAddBlock f -> error $ "advanceAndAdd: block not added - " ++ f
       SuccesfullyAddedBlock pt -> pt
@@ -1248,14 +1252,14 @@ generator loe genBlock m@Model{..} =
   genAddBlock :: Gen (Cmd blk it flr)
   genAddBlock = do
     (blk, gapBlks) <- genBlock m
-    pure $ AddBlock blk (predecessorSlot gapBlks blk) gapBlks
+    pure $ AddBlock blk (genPredecessorSlot gapBlks blk) gapBlks
 
   -- Every block the generators build sits on top of a block they have already
   -- built, so its predecessor is either genesis or one of the blocks below,
   -- even when it is a gap block that will never be added to the ChainDB or one
   -- whose predecessor the model has since garbage-collected.
-  predecessorSlot :: Persistent [blk] -> blk -> WithOrigin SlotNo
-  predecessorSlot (Persistent gapBlks) blk = case blockPrevHash blk of
+  genPredecessorSlot :: Persistent [blk] -> blk -> WithOrigin SlotNo
+  genPredecessorSlot (Persistent gapBlks) blk = case blockPrevHash blk of
     GenesisHash -> Origin
     BlockHash h -> case Map.lookup h generated of
       Nothing -> error "genAddBlock: predecessor was never generated"
