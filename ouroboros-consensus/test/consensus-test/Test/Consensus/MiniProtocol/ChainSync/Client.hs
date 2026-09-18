@@ -795,7 +795,7 @@ runChainSync
         , topLevelConfigCodec = TestBlockCodecConfig
         , topLevelConfigStorage = TestBlockStorageConfig
         , topLevelConfigCheckpoints = emptyCheckpointsMap
-        , topLevelConfigVotingKey = Nothing
+        , topLevelConfigVotingKeys = []
         }
 
     eraParams :: HardFork.EraParams

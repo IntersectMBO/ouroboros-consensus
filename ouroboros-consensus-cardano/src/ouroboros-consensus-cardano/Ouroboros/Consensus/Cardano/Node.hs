@@ -111,7 +111,7 @@ import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Node.Common
   ( shelleyBlockIssuerVKey
-  , shelleyLeaderVotingKey
+  , shelleyLeaderVotingKeys
   )
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
@@ -958,13 +958,10 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
-      , -- The Leios/Peras voting key comes from the block-producer credentials
-        -- (loaded from @--shelley-bls-key@). We vote with the first set of
-        -- credentials that carries a BLS key; 'Nothing' disables voting.
-        topLevelConfigVotingKey =
-          case credssShelleyBased of
-            [] -> Nothing
-            (c : _) -> shelleyLeaderVotingKey c
+      , -- The Leios/Peras voting keys come from the block-producer credentials
+        -- (loaded from @--shelley-bls-key@); an empty list disables voting.
+        topLevelConfigVotingKeys =
+          concatMap shelleyLeaderVotingKeys credssShelleyBased
       }
 
   -- When the initial ledger state is not in the Byron era, register various

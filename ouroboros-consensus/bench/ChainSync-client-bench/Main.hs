@@ -276,7 +276,7 @@ topConfig =
     , topLevelConfigCodec = TB.TestBlockCodecConfig
     , topLevelConfigStorage = TB.TestBlockStorageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
-    , topLevelConfigVotingKey = Nothing
+    , topLevelConfigVotingKeys = []
     }
  where
   eraParams :: HardFork.EraParams

@@ -89,6 +89,7 @@ import Data.ListMap (ListMap (ListMap))
 import qualified Data.ListMap as ListMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (maybeToList)
 import Data.Maybe.Strict (maybeToStrictMaybe)
 import Data.Ratio (denominator, numerator)
 import qualified Data.Sequence.Strict as Seq
@@ -265,7 +266,7 @@ mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert, cnBLS} =
           , praosCanBeLeaderSignKeyVRF = cnVRF
           , -- Vote with the node's Leios (BLS) key; must be the key whose verification
             -- key is registered as the pool's 'sppBlsKey' (see mkGenesisConfig).
-            praosCanBeLeaderSignKeyBLS = cnBLS
+            praosCanBeLeaderSignKeyBLS = maybeToList cnBLS
           }
     , shelleyLeaderCredentialsLabel = "ThreadNet"
     }
