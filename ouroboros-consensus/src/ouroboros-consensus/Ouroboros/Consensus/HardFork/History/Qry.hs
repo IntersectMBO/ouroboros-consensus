@@ -380,17 +380,39 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     PerasRoundNoInEra relPerasRoundNo <- PerasEnabledT $ go expr
     PerasRoundLength perasRoundLength <- PerasEnabledT . Just $ eraPerasRoundLength
     pure $ SlotInEra (relPerasRoundNo * perasRoundLength)
-  -- This one doesn't use 'ensurePerasEnabled' because it should return
-  -- 'Just NoPerasEnabled' if the slot matches the current era bounds, but this
-  -- era has not peras enabled.
+  -- This one doesn't use 'ensurePerasEnabled':
+  --   * For a bounded era without Peras:
+  --     + a slot before the exclusive end bound is answered with
+  --       'Just NoPerasEnabled'
+  --     + a slot at or after that bound is answered with 'Nothing' so the
+  --       query can be tried in a later era
+  --   * For an unbounded era without Peras:
+  --     + every slot is answered with 'Just NoPerasEnabled'
+  --   * For a bounded era with Peras:
+  --     + every slot is answered with 'Just (PerasEnabled ...)', and we rely on
+  --       the outer AbsToRel___ conversion to perform the bound check (and
+  --       possibly coax this into a 'Nothing')
+  --   * For an unbounded era with Peras:
+  --     + every slot is answered with 'Just (PerasEnabled ...)', and the outer
+  --       AbsToRel___ conversion is guaranteed to preserve the 'Just'
   go (ERelSlotToPerasRoundNo expr) = runPerasEnabledT $ do
     SlotInEra relSlot <- lift $ go expr
     PerasEnabledT $
-      Just $
-        case eraPerasRoundLength of
-          NoPerasEnabled ->
+      case eraPerasRoundLength of
+        NoPerasEnabled -> do
+          -- NOTE: since there's no relative value being returned here, we
+          -- cannot rely on the AbsToRel___ conversion mentioned above to
+          -- enforce the bounds.
+          --
+          -- This is currently the only place where this happens, because it's
+          -- also the only place where we need to return 'NoPerasEnabled'
+          -- directly.
+          guardEnd $ \end ->
+            relSlot < countSlots (boundSlot end) (boundSlot eraStart)
+          Just $
             NoPerasEnabled
-          PerasEnabled (PerasRoundLength roundLength) ->
+        PerasEnabled (PerasRoundLength roundLength) ->
+          Just $
             PerasEnabled $
               bimap PerasRoundNoInEra SlotInPerasRound $
                 relSlot `divMod` roundLength
