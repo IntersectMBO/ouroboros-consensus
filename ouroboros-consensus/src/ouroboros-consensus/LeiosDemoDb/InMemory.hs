@@ -43,8 +43,8 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
-  , leiosEbBodyItems
   , encodeLeiosEbSize
+  , leiosEbBodyItems
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
