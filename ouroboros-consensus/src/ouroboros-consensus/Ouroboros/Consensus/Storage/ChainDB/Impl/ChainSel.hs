@@ -83,7 +83,7 @@ import Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
   ( HeaderWithTime (..)
-  , mkHeadersWithTime
+  , forgetValidation
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -156,7 +156,9 @@ initialChainSelection ::
   STM m AcquiredLeiosEbsSet ->
   LoE () ->
   PerasWeightSnapshot blk ->
-  m (AnchoredFragment (Header blk))
+  -- | The selected chain, whose headers carry what validating them revealed;
+  -- see 'Ouroboros.Consensus.HeaderValidation.HeaderWithTime'.
+  m (AnchoredFragment (HeaderWithTime blk))
 initialChainSelection
   immutableDB
   volatileDB
@@ -204,15 +206,18 @@ initialChainSelection
     let curChain :: AnchoredFragment (Header blk)
         curChain = Empty (AF.castAnchor i)
 
+        curChainWithTime :: AnchoredFragment (HeaderWithTime blk)
+        curChainWithTime = Empty (AF.castAnchor i)
+
     case NE.nonEmpty
       [ (chain, reason)
       | chain <- chains
       , ShouldSwitch reason <- [preferAnchoredCandidate bcfg weights curChain chain]
       ] of
       -- If there are no candidates, no chain selection is needed
-      Nothing -> pure curChain
+      Nothing -> pure curChainWithTime
       Just chains' ->
-        fromMaybe curChain <$> chainSelection' curChain chains'
+        fromMaybe curChainWithTime <$> chainSelection' curChain chains'
    where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
@@ -266,7 +271,7 @@ initialChainSelection
       -- @i@.
       NonEmpty (AnchoredFragment (Header blk), ReasonForSwitch' blk) ->
       -- \^ Candidates anchored at @i@
-      m (Maybe (AnchoredFragment (Header blk)))
+      m (Maybe (AnchoredFragment (HeaderWithTime blk)))
     chainSelection' curChain candidates =
       assert (all ((curpt ==) . castPoint . AF.anchorPoint . fst) candidates) $
         assert (all (shouldSwitch . preferAnchoredCandidate bcfg weights curChain . fst) candidates) $ do
@@ -275,7 +280,7 @@ initialChainSelection
             <$> chainSelection
               cse
               (first Diff.extend <$> candidates)
-              (\_ _ -> MkSuccessForkerAction $ join . atomically . forkerCommit)
+              (\_ _ -> MkSuccessForkerAction $ \_infos -> join . atomically . forkerCommit)
      where
       curpt = AF.anchorPoint curChain
       chainSelEnv = do
@@ -1225,8 +1230,8 @@ switchTo ::
   ChainDiff (Header blk) ->
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
-  SuccessForkerAction m (ExtLedgerState blk)
-switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \forker -> do
+  SuccessForkerAction m (ExtLedgerState blk) blk
+switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \validated forker -> do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
@@ -1240,15 +1245,11 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
       Nothing ->
         error "chainDiff doesn't fit onto current chain"
       Just newChain -> do
-        let lcfg = configLedger cdbTopLevelConfig
-            diffWithTime =
-              -- the new ledger state can translate the slots of the new
-              -- headers
-              ChainDiff (Diff.getRollback chainDiff) $
-                mkHeadersWithTime
-                  lcfg
-                  (ledgerState newLedger)
-                  (Diff.getSuffix chainDiff)
+        let diffWithTime =
+              -- Validating these blocks is what produced the annotations, so
+              -- this is the fragment validation handed us; see
+              -- 'HeaderWithTime'.
+              ChainDiff (Diff.getRollback chainDiff) validated
             newChainWithTime =
               case Diff.apply curChainWithTime diffWithTime of
                 Nothing -> error "chainDiff failed for HeaderWithTime"
@@ -1466,11 +1467,12 @@ chainSelection ::
   -- | The candidates
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The continuation to run on succesfully validating a candidate.
-  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m (ExtLedgerState blk)) ->
+  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m (ExtLedgerState blk) blk) ->
   -- | The (valid) chain diff and corresponding LedgerDB that was selected,
   -- or 'Nothing' if there is no valid chain diff preferred over the current
-  -- chain.
-  m (Maybe (ChainDiff (Header blk), ReasonForSwitch' blk))
+  -- chain. Its headers carry what validating them revealed; see
+  -- 'ValidationResult'.
+  m (Maybe (ChainDiff (HeaderWithTime blk), ReasonForSwitch' blk))
 chainSelection chainSelEnv chainDiffs onSuccess =
   assert
     ( all
@@ -1490,6 +1492,10 @@ chainSelection chainSelEnv chainDiffs onSuccess =
     [(ChainDiff (Header blk), ReasonForSwitch' blk)] -> [(ChainDiff (Header blk), ReasonForSwitch' blk)]
   sortCandidates = sortBy ((flip $ compareChainDiffs bcfg weights curChain) `on` fst)
 
+  forgetDiffValidation :: ChainDiff (HeaderWithTime blk) -> ChainDiff (Header blk)
+  forgetDiffValidation (ChainDiff rollback' suffix') =
+    ChainDiff rollback' (forgetValidation suffix')
+
   -- 1. Take the first candidate from the list of sorted candidates
   -- 2. Validate it
   --    - If it is fully valid -> return it
@@ -1498,7 +1504,7 @@ chainSelection chainSelEnv chainDiffs onSuccess =
   --        [Ouroboros] below.
   go ::
     [(ChainDiff (Header blk), ReasonForSwitch' blk)] ->
-    m (Maybe (ChainDiff (Header blk), ReasonForSwitch' blk))
+    m (Maybe (ChainDiff (HeaderWithTime blk), ReasonForSwitch' blk))
   go [] = pure Nothing
   go ((candidate, reason) : candidates0) = do
     case NE.nonEmpty (AF.toOldestFirst $ getSuffix candidate) of
@@ -1508,7 +1514,8 @@ chainSelection chainSelEnv chainDiffs onSuccess =
         validateCandidate chainSelEnv candidate neHeaders (onSuccess candidate reason) >>= \case
           FullyValid candidate' ->
             -- The entire candidate is valid
-            assert (Diff.getTip candidate == Diff.getTip candidate') $ pure (Just (candidate, reason))
+            assert (Diff.getTip candidate == castPoint (Diff.getTip candidate')) $
+              pure (Just (candidate', reason))
           ValidPrefix candidate' -> do
             whenJust mTentativeHeader clearTentativeHeader
             -- Prefix of the candidate because it contained rejected blocks
@@ -1526,7 +1533,7 @@ chainSelection chainSelEnv chainDiffs onSuccess =
             -- current chain.
             let newReason = preferAnchoredCandidate bcfg weights curChain (Diff.getSuffix candidate')
             let candidates2 = case newReason of
-                  ShouldSwitch reason' -> (candidate', reason') : candidates1
+                  ShouldSwitch reason' -> (forgetDiffValidation candidate', reason') : candidates1
                   ShouldNotSwitch{} -> candidates1
             go (sortCandidates candidates2)
    where
@@ -1607,13 +1614,16 @@ chainSelection chainSelEnv chainDiffs onSuccess =
 -- peer's valid chain.
 
 -- | Result of 'validateCandidate'.
+--
+-- The headers are the validated ones, since validating them is what
+-- produced the extra information they carry; see 'HeaderWithTime'.
 data ValidationResult blk
   = -- | The entire candidate fragment was valid.
-    FullyValid (ChainDiff (Header blk))
+    FullyValid (ChainDiff (HeaderWithTime blk))
   | -- | The candidate fragment contained invalid blocks that had to be
     -- truncated from the fragment. We only return the (potentially empty) valid
     -- prefix.
-    ValidPrefix (ChainDiff (Header blk))
+    ValidPrefix (ChainDiff (HeaderWithTime blk))
 
 -- | Validate a candidate by applying its blocks to the ledger, and return a
 -- 'ValidatedChainDiff' for it, i.e., a chain diff along with a ledger
@@ -1642,7 +1652,7 @@ validateCandidate ::
   ChainDiff (Header blk) ->
   -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
   NonEmpty (Header blk) ->
-  SuccessForkerAction m (ExtLedgerState blk) ->
+  SuccessForkerAction m (ExtLedgerState blk) blk ->
   m (ValidationResult blk)
 validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders onSuccess =
   LedgerDB.validateFork
@@ -1658,11 +1668,12 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
         -- tip, which is impossible, since the candidates we construct must
         -- connect to the immutable tip.
         error "found candidate requiring rolling back past the immutable tip"
-      ValidateLedgerError (AnnLedgerError lastValid pt e) -> do
-        let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
+      ValidateLedgerError validated (AnnLedgerError lastValid pt e) -> do
         traceWith validationTracer (InvalidBlock e pt)
         addInvalidBlock varInvalid e pt
-        traceWith validationTracer (ValidCandidate (Diff.getSuffix chainDiff'))
+        -- 'validated' is already truncated to the blocks that were applied,
+        -- so there is no second truncation to keep in step with it.
+        traceWith validationTracer (ValidCandidate (forgetValidation validated))
 
         -- punish the peer who sent a block if it is invalid or a block from its
         -- prefix is invalid
@@ -1689,10 +1700,10 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
         -- we should punish. (Tacit assumption made here: it's impossible
         -- three blocks in a row have the same slot.)
 
-        pure $ ValidPrefix chainDiff'
-      ValidateSuccessful -> do
+        pure $ ValidPrefix (ChainDiff (Diff.getRollback chainDiff) validated)
+      ValidateSuccessful validated -> do
         traceWith validationTracer (ValidCandidate suffix)
-        pure $ FullyValid chainDiff
+        pure $ FullyValid (ChainDiff (Diff.getRollback chainDiff) validated)
  where
   ChainSelEnv
     { lgrDB

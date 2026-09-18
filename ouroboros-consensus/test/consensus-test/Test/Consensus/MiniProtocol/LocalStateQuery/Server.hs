@@ -278,13 +278,13 @@ initLedgerDB s c = do
           BlockCache.empty
           0
           (NE.map getHeader chain)
-          (MkSuccessForkerAction $ join . atomically . LedgerDB.forkerCommit)
+          (MkSuccessForkerAction $ \_vhdrs -> join . atomically . LedgerDB.forkerCommit)
       case result of
-        LedgerDB.ValidateSuccessful -> do
+        LedgerDB.ValidateSuccessful{} -> do
           pure ()
         LedgerDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"
-        LedgerDB.ValidateLedgerError _ ->
+        LedgerDB.ValidateLedgerError{} ->
           error "impossible: there were no invalid blocks"
 
   pure ldb

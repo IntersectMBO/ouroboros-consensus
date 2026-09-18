@@ -275,6 +275,7 @@ implGetHeaderStateHistory env = do
 implValidate ::
   forall m l blk.
   ( IOLike m
+  , HasHardForkHistory blk
   , LedgerSupportsProtocol blk
   , HasCallStack
   , StandardHash l
@@ -289,7 +290,7 @@ implValidate ::
   BlockCache blk ->
   Word64 ->
   NonEmpty (Header blk) ->
-  SuccessForkerAction m l ->
+  SuccessForkerAction m l blk ->
   m (ValidateResult l blk)
 implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
   -- Open a connection scoped to this call: the 'LeiosDbConnection'

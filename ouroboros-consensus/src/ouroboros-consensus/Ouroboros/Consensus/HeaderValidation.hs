@@ -67,8 +67,7 @@ module Ouroboros.Consensus.HeaderValidation
 
     -- * Header with time
   , HeaderWithTime (..)
-  , mkHeaderWithTime
-  , mkHeadersWithTime
+  , forgetValidation
   ) where
 
 import Cardano.Binary (enforceSize)
@@ -95,11 +94,6 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
-  ( HasHardForkHistory (hardForkSummary)
-  )
-import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
-import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util (whenJust)
@@ -606,8 +600,11 @@ deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
 -- helpful, since it's possible that some other chain would translate that same
 -- slot to a different time.
 --
--- TODO rename this type, eg to @EnrichedHeader@: it no longer merely adds a
--- time, and the @hwt@ prefix on its fields is similarly outdated.
+-- TODO rename this type, eg to @ValidatedHeader@, and the @hwt@ prefix on its
+-- fields to match: it no longer merely adds a time. \"Validated\" rather than
+-- \"enriched\" because that names where these can come from -- every field
+-- beyond the header itself is a by-product of validating it, so the only
+-- places able to build one are the two that validate.
 data HeaderWithTime blk = HeaderWithTime
   { hwtHeader :: !(Header blk)
   , hwtSlotRelativeTime :: !RelativeTime
@@ -657,57 +654,14 @@ instance
 instance GetHeader1 HeaderWithTime where
   getHeader1 = hwtHeader
 
--- | Convert 'Header' to 'HeaderWithTime'
---
--- PREREQ: The given ledger must be able to translate the slot of the given
--- header.
---
--- This is INLINEed since the summary can usually be reused.
-mkHeaderWithTime ::
-  ( HasHardForkHistory blk
-  , HasHeader (Header blk)
-  ) =>
-  LedgerConfig blk ->
-  LedgerState blk mk ->
-  -- | The slot of the header's predecessor
-  WithOrigin SlotNo ->
-  Header blk ->
-  HeaderWithTime blk
-{-# INLINE mkHeaderWithTime #-}
-mkHeaderWithTime cfg lst = \predSlot hdr ->
-  let summary = hardForkSummary cfg lst
-      slot = realPointSlot $ headerRealPoint hdr
-      qry = Qry.slotToWallclock slot
-      (slotTime, _) = Qry.runQueryPure qry summary
-   in HeaderWithTime
-        { hwtHeader = hdr
-        , hwtSlotRelativeTime = slotTime
-        , hwtPredecessorSlot = predSlot
-        }
-
--- | Convert a fragment of 'Header's to 'HeaderWithTime's
---
--- Each header's predecessor is the header before it on the fragment, except
--- for the oldest, whose predecessor is the fragment's anchor.
---
--- PREREQ: as 'mkHeaderWithTime', for every header on the fragment.
-mkHeadersWithTime ::
-  ( HasHardForkHistory blk
-  , HasHeader (Header blk)
-  , Typeable blk
-  ) =>
-  LedgerConfig blk ->
-  LedgerState blk mk ->
-  AF.AnchoredFragment (Header blk) ->
-  AF.AnchoredFragment (HeaderWithTime blk)
-mkHeadersWithTime cfg lst frag =
+-- | Discard what validating the headers revealed
+forgetValidation ::
+  HasHeader (Header blk) =>
+  AF.AnchoredFragment (HeaderWithTime blk) ->
+  AF.AnchoredFragment (Header blk)
+forgetValidation frag =
   AF.fromOldestFirst (AF.castAnchor (AF.anchor frag)) $
-    zipWith
-      (mkHeaderWithTime cfg lst)
-      (AF.anchorToSlotNo (AF.anchor frag) : map (NotOrigin . blockSlot) hdrs)
-      hdrs
- where
-  hdrs = AF.toOldestFirst frag
+    map hwtHeader (AF.toOldestFirst frag)
 
 {-------------------------------------------------------------------------------
   Serialisation
