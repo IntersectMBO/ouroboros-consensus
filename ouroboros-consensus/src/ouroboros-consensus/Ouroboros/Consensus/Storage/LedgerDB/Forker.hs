@@ -103,11 +103,8 @@ import LeiosDemoTypes
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configLedger)
-import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (hardForkSummary))
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
-import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewOfTip)
 import Ouroboros.Consensus.HeaderValidation
   ( AnnTip (..)
   , HeaderState (..)
@@ -118,6 +115,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewOfTip)
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( calculateDifference
   , forgetLedgerTables
@@ -137,6 +135,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCac
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 
 {-------------------------------------------------------------------------------
   Forker
@@ -1066,7 +1066,9 @@ resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
 -- signatures.
 newtype SuccessForkerAction m l blk = MkSuccessForkerAction
   { applySuccessForkerAction ::
-      AnchoredFragment (HeaderWithTime blk) -> Forker m l -> m ()
+      AnchoredFragment (HeaderWithTime blk) ->
+      Forker m l ->
+      m ()
   -- ^ Run with the blocks that were applied, as validated headers anchored at
   -- the fork point. This is the only point at which they and the forker are
   -- both in hand.
