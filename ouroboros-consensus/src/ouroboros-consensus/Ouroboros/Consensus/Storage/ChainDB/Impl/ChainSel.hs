@@ -32,7 +32,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
 import Control.Monad (forM_, join, void, when)
-import Control.Monad.Except (runExcept)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
 import Control.Tracer (Tracer, nullTracer, traceWith, (>$<))
@@ -76,7 +75,6 @@ import qualified LeiosValidClaims
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Forecast (Forecast (forecastAt, forecastFor))
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
 import qualified Ouroboros.Consensus.Fragment.Diff as Diff
 import Ouroboros.Consensus.HardFork.Abstract
@@ -99,6 +97,8 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   , BlockComponent (..)
   , ChainType (..)
   , LoE (..)
+  , Predecessor (..)
+  , predecessorSlot
   )
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
   ( InvalidBlockPunishment
@@ -334,7 +334,7 @@ addBlockAsync ::
   (IOLike m, HasHeader blk) =>
   ChainDbEnv m blk ->
   InvalidBlockPunishment m ->
-  WithOrigin SlotNo ->
+  Predecessor blk ->
   blk ->
   m (AddBlockPromise m blk)
 addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
@@ -469,14 +469,14 @@ chainSelAddBlock cdb@CDB{..} _cctx BlockToAdd{blockToAdd = b, ..} = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        lift (precheckLeiosCert cdb blockPredecessorSlot b) >>= \case
-          Right tentativeHeaderPermission ->
+        lift (precheckLeiosCert cdb blockPredecessor b) >>= \case
+          Right () ->
             chainSelectionForBlock
               cdb
               (BlockCache.singleton b)
               hdr
-              (Just blockPredecessorSlot)
-              tentativeHeaderPermission
+              (Just (predecessorSlot blockPredecessor))
+              MaySetTentativeHeader
               blockPunish
           Left leiosErr -> lift $ do
             let e = ExtValidationErrorLeios leiosErr
@@ -727,7 +727,7 @@ chainSelReprocessLoEBlocks cdb@CDB{..} varProcessed = lift $ do
 
   atomically $ putTMVar varProcessed ()
 
--- | Verify the certificate in a CertRB before chain selection considers it
+-- | Verify the certificate in a CertRB before chain selection
 --
 -- ChainSel would otherwise only discover an invalid certificate once it applied
 -- the block. That only reason that's too late is because downstream peers'
@@ -737,13 +737,12 @@ chainSelReprocessLoEBlocks cdb@CDB{..} varProcessed = lift $ do
 -- lengths to ensure is only possible if the adversary has already defeated the
 -- network).
 --
--- Only positive verdicts are cached; see 'LeiosValidClaims'.
+-- The committee is the one at the announcing block's slot, and the announcing
+-- block is this block's predecessor, so the caller's 'Predecessor' already
+-- carries the view this needs. That avoids a dead "failed forecast" branch
+-- here.
 --
--- 'Left' means the CertRB is invalid. 'Right' says whether its header may be
--- pipelined, which it may only if this function verified the certificate (or
--- had already verified one making the same claim): every way of declining to
--- reach a verdict yields 'MayNotSetTentativeHeader' rather than a crash or an
--- unchecked pipelining.
+-- Only positive verdicts are cached; see 'LeiosValidClaims'.
 precheckLeiosCert ::
   forall m blk.
   ( IOLike m
@@ -752,80 +751,46 @@ precheckLeiosCert ::
   , HasLeiosVoting blk
   ) =>
   ChainDbEnv m blk ->
-  -- | The slot of the block's predecessor, ie of the announcing block
-  WithOrigin SlotNo ->
+  Predecessor blk ->
   blk ->
-  m (Either LeiosExtValidationError TentativeHeaderPermission)
-precheckLeiosCert CDB{..} predSlot b = case blockLeiosCert b of
-  Nothing -> pure $ Right MaySetTentativeHeader
-  Just cert -> case (announcingRbHash b, blockPrevHash b, predSlot) of
-    (Just rbHash, BlockHash announcingHash, NotOrigin announcingSlot) -> do
+  m (Either LeiosExtValidationError ())
+precheckLeiosCert CDB{..} predecessor b = case blockLeiosCert b of
+  Nothing -> pure $ Right ()
+  Just cert -> case (announcingRbHash b, blockPrevHash b, predecessor) of
+    (Just rbHash, BlockHash announcingHash, Predecessor announcingSlot announcingView) -> do
       let announcingPoint = RealPoint announcingSlot announcingHash
-      (known, immTip) <-
+      known <-
         atomically $
-          (,)
-            <$> (LeiosValidClaims.memberValidClaim rbHash <$> readTVar cdbLeiosValidClaims)
-            <*> (ledgerState <$> LedgerDB.getImmutableTip cdbLedgerDB)
-      let immForecast = ledgerViewForecastAt (configLedger cdbTopLevelConfig) immTip
+          LeiosValidClaims.memberValidClaim rbHash <$> readTVar cdbLeiosValidClaims
       if
-        -- We've already validated cert that makes the same claim as this one,
-        -- so we already know it's safe to pipeline this header, even if /this/
-        -- cert is invalid.
-        | known -> pure $ Right MaySetTentativeHeader
-        -- The announcing block precedes the immutable tip, so it is on a fork
-        -- below it and no candidate through this CertRB can ever be selected.
-        -- There is nothing to protect, and the forecast's precondition forbids
-        -- looking that far back anyway.
-        --
-        -- There's only a small window in which BlockFetch would have requested
-        -- this block and that it would arrive too late to be effective; the
-        -- imminent 'chainSelectionForBlock' will similarly ignore it, because
-        -- it's unreachable from our current selection.
-        | NotOrigin announcingSlot < forecastAt immForecast ->
-            pure $ Right MayNotSetTentativeHeader
-        | otherwise -> case runExcept $ forecastFor immForecast announcingSlot of
-            -- We cannot reach the announcing block's slot from the immutable
-            -- tip, so we cannot verify this certificate; decline to pipeline
-            -- instead. Blocking until the window advances is not an option,
-            -- since ChainSel is single-threaded and is the only thing that
-            -- could advance it.
-            --
-            -- Rare, because it needs the volatile window --- at most @k@ blocks
-            -- --- to span more slots than the stability window the forecast
-            -- ranges over.
-            --
-            -- TODO forecasting from the immutable tip is the reason this case
-            -- exists at all, and it is avoidable: ChainSync and the leadership
-            -- check already forecast to this very slot, from an anchor at or
-            -- after the immutable tip. Caching that 'LedgerView' on the header
-            -- alongside the already-cached predecessor slot would make this
-            -- branch unreachable by construction.
-            Left _outsideForecastRange -> pure $ Right MayNotSetTentativeHeader
-            Right leiosLedgerView -> case getLeiosCommitteeFromView (Proxy @blk) leiosLedgerView of
-              Nothing -> reject cert $ LeiosForecastMissingCommittee rbHash
-              Just (committee, threshold) ->
-                case verifyLeiosCert committee threshold rbHash cert of
-                  Left invalid ->
-                    reject cert $ LeiosForecastInvalidCertificate rbHash invalid
-                  Right _weight -> do
-                    size <- atomically $ do
-                      modifyTVar cdbLeiosValidClaims $
-                        LeiosValidClaims.insertValidClaim announcingSlot rbHash
-                      LeiosValidClaims.sizeValidClaims
-                        <$> readTVar cdbLeiosValidClaims
-                    traceWith (TraceAddBlockEvent >$< cdbTracer) $
-                      AddBlockLeiosEvent $
-                        TraceLeiosValidClaim
-                          (blockRealPoint b)
-                          announcingPoint
-                          size
-                    pure $ Right MaySetTentativeHeader
+        -- We've already validated a cert that makes the same claim as this one,
+        -- so there is nothing left to check, even if /this/ cert is invalid.
+        | known -> pure $ Right ()
+        | otherwise -> case getLeiosCommitteeFromView (Proxy @blk) announcingView of
+            Nothing -> reject cert $ LeiosForecastMissingCommittee rbHash
+            Just (committee, threshold) ->
+              case verifyLeiosCert committee threshold rbHash cert of
+                Left invalid ->
+                  reject cert $ LeiosForecastInvalidCertificate rbHash invalid
+                Right _weight -> do
+                  size <- atomically $ do
+                    modifyTVar cdbLeiosValidClaims $
+                      LeiosValidClaims.insertValidClaim announcingSlot rbHash
+                    LeiosValidClaims.sizeValidClaims
+                      <$> readTVar cdbLeiosValidClaims
+                  traceWith (TraceAddBlockEvent >$< cdbTracer) $
+                    AddBlockLeiosEvent $
+                      TraceLeiosValidClaim
+                        (blockRealPoint b)
+                        announcingPoint
+                        size
+                  pure $ Right ()
     -- Certifying at genesis: all three of these say there is no announcing
     -- block, so they cannot disagree.
     _ -> reject cert LeiosForecastAfterGenesis
  where
   reject cert why =
-    pure $ Left $ LeiosCertificateForecastRejected cert predSlot why
+    pure $ Left $ LeiosCertificateForecastRejected cert (predecessorSlot predecessor) why
 
 -- | Record the invalid block in the given map and change its fingerprint
 addInvalidBlock ::
@@ -995,15 +960,15 @@ chainSelectionForBlock
             Nothing -> do
               traceNoChange
               -- See 'TraceLeiosCertRbWithoutCandidate'.
-              whenJust mbPredecessorSlot $ \predecessorSlot ->
+              whenJust mbPredecessorSlot $ \predSlot ->
                 let immTipSlot = AF.anchorToSlotNo (AF.anchor curChain)
                  in when
                       ( headerContainsLeiosCert hdr
-                          && predecessorSlot >= immTipSlot
+                          && predSlot >= immTipSlot
                       )
                       $ traceWith addBlockTracer
                       $ AddBlockLeiosEvent
-                      $ TraceLeiosCertRbWithoutCandidate p predecessorSlot immTipSlot
+                      $ TraceLeiosCertRbWithoutCandidate p predSlot immTipSlot
    where
     -- Note that we may have extended the chain, but have not trimmed it to
     -- @k@ blocks/headers. That is the job of the background thread, which
@@ -1669,11 +1634,10 @@ validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders on
         -- connect to the immutable tip.
         error "found candidate requiring rolling back past the immutable tip"
       ValidateLedgerError validated (AnnLedgerError lastValid pt e) -> do
+        let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
         traceWith validationTracer (InvalidBlock e pt)
         addInvalidBlock varInvalid e pt
-        -- 'validated' is already truncated to the blocks that were applied,
-        -- so there is no second truncation to keep in step with it.
-        traceWith validationTracer (ValidCandidate (forgetValidation validated))
+        traceWith validationTracer (ValidCandidate (Diff.getSuffix chainDiff'))
 
         -- punish the peer who sent a block if it is invalid or a block from its
         -- prefix is invalid

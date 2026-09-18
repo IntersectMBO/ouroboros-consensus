@@ -108,7 +108,9 @@ run = withRegistry \registry -> do
     varGetLoEFragment
 
   chainDB <- openChainDB registry (join $ readTVarIO varGetLoEFragment)
-  let addBlk = ChainDB.addBlock_ chainDB Punishment.noPunishment
+  let addBlk =
+        ChainDB.addBlock_ chainDB Punishment.noPunishment
+          . ChainDB.trivialPredecessor
 
   chainSyncHandles <- atomically newChainSyncClientHandleCollection
 
