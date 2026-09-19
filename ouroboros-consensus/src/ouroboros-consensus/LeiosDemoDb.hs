@@ -11,7 +11,6 @@ module LeiosDemoDb
   , allocateReader
   , allocateWriter
   , awaitAll
-  , LeiosDbWriteException (..)
   , CompletedEbs
   , TraceLeiosDb (..)
 
@@ -47,7 +46,6 @@ import LeiosDemoDb.Common
   , LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
-  , LeiosDbWriteException (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)

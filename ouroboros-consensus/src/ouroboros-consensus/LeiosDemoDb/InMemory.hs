@@ -32,16 +32,20 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import GHC.Stack (HasCallStack, callStack, prettyCallStack)
+import GHC.Stack (HasCallStack)
+import qualified GHC.Stack as GHC
 import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
-  , LeiosDbWriteException (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  )
+import LeiosDemoException
+  ( LeiosDbException (LeiosDbWriteException, submittedFrom, writeFailure, writeJob)
+  , throwLeiosDbException
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -57,6 +61,7 @@ import Ouroboros.Consensus.Util.IOLike
   , NoThunks (..)
   , atomically
   , throwIO
+  , toException
   , try
   )
 
@@ -169,8 +174,8 @@ openInMemoryWriter stateVar notificationChan =
         throwIO
           LeiosDbWriteException
             { writeJob = job
-            , submittedFrom = prettyCallStack callStack
-            , writeFailure = cause
+            , submittedFrom = GHC.prettyCallStack GHC.callStack
+            , writeFailure = toException (cause :: LeiosDbException)
             }
 
 -- * Top-level implementations
@@ -212,7 +217,7 @@ imInsertEbBody stateVar notificationChan point eb = do
   let items = leiosEbBodyItems eb
       ebBytesSize = encodeLeiosEbSize eb
   when (null items) $
-    error "writeEbBody: empty EB body (programmer error)"
+    throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   atomically $ do
     let entries =
           IntMap.fromList

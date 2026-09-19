@@ -19,7 +19,7 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (foldM, forM_, unless, when)
-import Control.Monad.Class.MonadThrow (Exception, catch, throwIO, toException)
+import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
@@ -51,12 +51,12 @@ import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbReader
-  , LeiosDbWriteException
   , LeiosDbWriter (..)
   , Promise (..)
   , batchRetrieveTxs
   , lookupEbBody
   )
+import LeiosDemoException (LeiosDbException)
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -143,27 +143,28 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, forkIO)
+import Ouroboros.Consensus.Util.IOLike (IOLike, async, link)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
 import System.Random (StdGen)
 
--- | Wrap an action with exception tracing. Catches the exception,
--- traces it using the provided handler, and re-throws.
-traceException :: (IOLike m, Exception e) => Tracer m a -> (e -> a) -> m b -> m b
-traceException tracer toTrace action =
-  action `catch` \e -> traceWith tracer (toTrace e) >> throwIO e
+-- | Trace a Leios DB failure on this peer's tracer, then rethrow it. Catches
+-- 'LeiosDbException' only, so that everything else -- an async cancellation
+-- above all -- passes through unmislabelled.
+traceDbException :: IOLike m => Tracer m TraceLeiosPeer -> m b -> m b
+traceDbException tracer action =
+  action `catch` \(e :: LeiosDbException) -> do
+    traceWith tracer $ TraceLeiosPeerDbException e
+    throwIO e
 
--- | Run an 'await' tail on its own thread: a write failure surfaces there, so
--- trace it there too, or it only reaches stderr. Swallowed after tracing --
--- the thread has no caller to rethrow to.
-forkTracedAwait :: IOLike m => Tracer m TraceLeiosPeer -> m () -> m ()
-forkTracedAwait tracer action =
-  void $
-    forkIO $
-      action `catch` \(e :: LeiosDbWriteException) ->
-        traceWith tracer (TraceLeiosPeerDbException (toException e))
+-- | Run an 'await' tail on its own thread, linked to this one: a write
+-- failure surfaces on that thread, where it is traced, and the link carries
+-- it back here -- the peer path treats it exactly like a failure of the
+-- inline (forging) await.
+forkLinkedAwait :: IOLike m => Tracer m TraceLeiosPeer -> m () -> m ()
+forkLinkedAwait tracer action =
+  link =<< async (traceDbException tracer action)
 
 {-------------------------------------------------------------------------------
   Shadow LeiosTxCache wiring
@@ -263,7 +264,7 @@ leiosFetchHandler tracer leiosContext = LF.MkLeiosFetchRequestHandler $ \case
     x <- msgLeiosBlockRequest tracer leiosContext p
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
     pure $ LF.MsgLeiosBlock x
-  LF.MsgLeiosBlockTxsRequest p bitmaps -> traceException tracer TraceLeiosPeerDbException $ do
+  LF.MsgLeiosBlockTxsRequest p bitmaps -> traceDbException tracer $ do
     traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
     x <- msgLeiosBlockTxsRequest tracer leiosContext p bitmaps
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
@@ -277,7 +278,7 @@ msgLeiosBlockRequest ::
   m LeiosEb
 msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
   let MkLeiosFetchContext{leiosDbReader, leiosEbBuffer = buf} = leiosContext
-  n <- traceException tracer TraceLeiosPeerDbException $ do
+  n <- traceDbException tracer $ do
     -- get the EB items using new db
     items <- lookupEbBody leiosDbReader pointEbHash
     let loop !i [] = pure i
@@ -939,11 +940,11 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
               (Leios.serializeEbBody eb)
               IntMap.empty
               (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
-          traceWith ktracer $
-            TraceLeiosBlockAcquired point (ebPointAge now (Leios.ebState outstanding) point)
-          -- The 'TraceLeiosBodyHits' trace is deferred to after the mempool pull
-          -- below, so it can report the mempool-hit count alongside this cache
-          -- summary.
+          -- 'TraceLeiosBlockAcquired' is deferred to when the body write
+          -- lands (see below), so it means the same as its txs counterpart:
+          -- acquired /and/ on disk. The 'TraceLeiosBodyHits' trace is
+          -- deferred to after the mempool pull below, so it can report the
+          -- mempool-hit count alongside this cache summary.
           pure mbSummaryTxCacheMisses
         (bodyClass, misses, mbBodyTxCacheSummary) <- case source of
           -- A forge holds its whole closure, so nothing is missing. Its txs are
@@ -1011,7 +1012,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- The DB-heavy tail: persist the body (~16k reference rows) and copy the
   -- mempool-resident txs into the DB.
   when shouldPersist $
-    traceException tracer TraceLeiosPeerDbException $ do
+    traceDbException tracer $ do
       -- FIXME: once EB announcements are wired in the point MUST already
       -- be present (announcement handling inserts it); until then insert
       -- it idempotently as a stop-gap and trace a warning.
@@ -1022,16 +1023,16 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       -- forging: need to ensure the data is written before advertising it.
       -- TODO: do we really? Can we just optimistically continue and risk a peer
       -- disconnect if we can't serve what we offer "in time"?
-      let traceCompleted = do
+      let traceAcquired = do
             await pointWritten
             completedByBody <- await bodyWritten
-            unless (null completedByBody) $ do
-              st <- Leios.ebState <$> MVar.readMVar outstandingVar
-              forM_ completedByBody $ \p ->
-                traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
+            st <- Leios.ebState <$> MVar.readMVar outstandingVar
+            traceWith ktracer $ TraceLeiosBlockAcquired point (ebPointAge now st point)
+            forM_ completedByBody $ \p ->
+              traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
       case source of
-        ForgedBlock{} -> traceCompleted
-        ReceivedBlockFrom{} -> forkTracedAwait tracer traceCompleted
+        ForgedBlock{} -> traceAcquired
+        ReceivedBlockFrom{} -> forkLinkedAwait tracer traceAcquired
   -- The cache updates: the fetch logic reads them to decide what is still
   -- missing, so they must land before we return.
   --
@@ -1387,7 +1388,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     -- rides along with it, since only the write knows what it completed.
     -- Submitted here, awaited elsewhere; see 'processLeiosBlock' for why the
     -- submit stays on this thread and what would remove the wait altogether.
-    traceException tracer TraceLeiosPeerDbException $ do
+    traceDbException tracer $ do
       txsWritten <- writeTxs writer toIngest
       let traceCompleted = do
             completed <- await txsWritten
@@ -1398,7 +1399,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
         -- The forge's closure has to be on disk before the RB that references
         -- it goes out.
         ForgedTxs{} -> traceCompleted
-        _ -> forkTracedAwait tracer traceCompleted
+        _ -> forkLinkedAwait tracer traceCompleted
     -- The cache update: the fetch logic consults it to decide what is still
     -- missing, so it cannot lag behind the caller.
     arrival <- case applied of

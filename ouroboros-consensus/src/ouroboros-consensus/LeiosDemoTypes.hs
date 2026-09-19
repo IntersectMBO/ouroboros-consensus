@@ -74,7 +74,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Exception (SomeException, displayException)
+import Control.Exception (displayException)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
@@ -1865,7 +1865,7 @@ notVotedReasonText = \case
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String
-  | TraceLeiosPeerDbException SomeException
+  | TraceLeiosPeerDbException LeiosDbException
   | -- | This upstream peer relayed a valid, newly-counted EB announcement.
     TraceLeiosPeerAnnouncement !AnnouncementEquivocation !AnnouncementFields
   deriving Show
@@ -1883,11 +1883,7 @@ data TraceLeiosPeer
 traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
 traceLeiosPeerToObject = \case
   MkTraceLeiosPeer s -> fromString "msg" .= Aeson.String (fromString s)
-  TraceLeiosPeerDbException e ->
-    mconcat
-      [ fromString "kind" .= Aeson.String "LeiosDbException"
-      , fromString "error" .= Aeson.String (fromString (displayException e))
-      ]
+  TraceLeiosPeerDbException e -> jsonLeiosDbException e
   TraceLeiosPeerAnnouncement equivocation acc ->
     mconcat
       [ fromString "kind" .= Aeson.String "LeiosPeerAnnouncement"

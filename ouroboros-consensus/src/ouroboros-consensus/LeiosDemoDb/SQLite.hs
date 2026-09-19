@@ -90,13 +90,12 @@ import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbHandle (..)
   , LeiosDbReader (..)
-  , LeiosDbWriteException (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
   )
 import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
-import LeiosDemoException (LeiosDbException (..))
+import LeiosDemoException (LeiosDbException (..), throwLeiosDbException)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
@@ -218,7 +217,7 @@ openLeiosDBSQLiteWithGcPacing tracer volLeiosDbPath immLeiosDbPath gcBatchSize g
         -- Flushes every pending write, then closes the connections. A dead
         -- worker refuses the job -- its death path has closed them already --
         -- but a failed close propagates: a leaked connection must be loud.
-        (MonadThrow.try (submitJob writeQueue Shutdown) :: IO (Either SomeException (Promise IO ()))) >>= \case
+        (MonadThrow.try (submitJob writeQueue Shutdown) :: IO (Either LeiosDbException (Promise IO ()))) >>= \case
           Left _alreadyClosed -> pure ()
           Right promise -> await promise
   pure
@@ -563,7 +562,7 @@ appendToImmutable CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, cc
           DB.Done ->
             -- no row: critical error, fail fast and loud.
             -- this should not happen.
-            error "sql_copy_completeness: expected a row"
+            throwLeiosDbException "sql_copy_completeness: expected a row"
           DB.Row -> do
             n <- DB.columnInt64 ccCompleteness 0
             m <- DB.columnInt64 ccCompleteness 1
@@ -575,7 +574,7 @@ appendToImmutable CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, cc
               DB.Row ->
                 -- another row: critical error, fail fast and loud.
                 -- this should not happen.
-                error "sql_copy_completeness: expected exactly one row"
+                throwLeiosDbException "sql_copy_completeness: expected exactly one row"
     if bodyCount == 0 || bodyCount /= closureCount
       then
         -- the EB is incomplete, don't copy
@@ -1396,25 +1395,27 @@ startWriter tracer statsVar notificationChan copyQueue sweepDoorbell volPath imm
         { errorMessage = "the LeiosDB writer is closed"
         , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
         }
+  -- Only a 'LeiosDbException' is a failed write; anything else -- a
+  -- cancellation above all -- belongs to this thread, not to the job.
   publish :: WriteResult a -> IO a -> IO ()
-  publish resultVar action = do
-    result <- MonadThrow.try action
-    atomically $ putTMVar resultVar result
-    either throwIO (\_ -> pure ()) result
+  publish resultVar action =
+    MonadThrow.try action >>= \case
+      Right x -> atomically $ putTMVar resultVar (Right x)
+      Left (e :: LeiosDbException) -> do
+        atomically $ putTMVar resultVar (Left (toException e))
+        throwIO e
 
   -- The transaction brackets have already rolled back on failure; the extra
   -- best-effort ROLLBACKs cover only the case where that rollback itself
   -- failed and would otherwise leave a transaction open under every later job.
   publishMaintenance :: DB.Database -> DB.Database -> WriteResult a -> IO a -> IO ()
-  publishMaintenance volDb immDb resultVar action = do
-    result <- MonadThrow.try action
-    case result of
-      Left (_ :: SomeException) -> do
+  publishMaintenance volDb immDb resultVar action =
+    MonadThrow.try action >>= \case
+      Right x -> atomically $ putTMVar resultVar (Right x)
+      Left (e :: LeiosDbException) -> do
         _ <- DB.exec volDb "ROLLBACK"
         _ <- DB.exec immDb "ROLLBACK"
-        pure ()
-      Right _ -> pure ()
-    atomically $ putTMVar resultVar result
+        atomically $ putTMVar resultVar (Left (toException e))
 
 -- | The write half of the API: every operation is queued for the worker of
 -- 'startWriter', and the 'Promise' waits for that job's result.
@@ -1552,7 +1553,7 @@ sqlInsertEbBody ::
   IO CompletedEbs
 sqlInsertEbBody tracer conn notify point eb = do
   when (null items) $
-    error "writeEbBody: empty EB body (programmer error)"
+    throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   completedNow <- dbWithWriteTransaction conn $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
@@ -1607,12 +1608,12 @@ readReturningInt64 :: DB.Statement -> IO Int64
 readReturningInt64 stmt =
   dbStep stmt >>= \case
     DB.Done ->
-      error "readReturningInt64: expected one row from RETURNING, got Done"
+      throwLeiosDbException "readReturningInt64: expected one row from RETURNING, got Done"
     DB.Row -> do
       n <- DB.columnInt64 stmt 0
       dbStep stmt >>= \case
         DB.Done -> pure n
-        DB.Row -> error "readReturningInt64: expected exactly one row from RETURNING"
+        DB.Row -> throwLeiosDbException "readReturningInt64: expected exactly one row from RETURNING"
 
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
@@ -2454,12 +2455,12 @@ dbStep1Safe stmt = withDieDoneStmt stmt $ DB.step stmt
 readSingleInt64 :: HasCallStack => DB.Statement -> IO Int64
 readSingleInt64 stmt =
   dbStepSafe stmt >>= \case
-    DB.Done -> error "readSingleInt64: expected a row"
+    DB.Done -> throwLeiosDbException "readSingleInt64: expected a row"
     DB.Row -> do
       n <- DB.columnInt64 stmt 0
       dbStepSafe stmt >>= \case
         DB.Done -> pure n
-        DB.Row -> error "readSingleInt64: expected exactly one row"
+        DB.Row -> throwLeiosDbException "readSingleInt64: expected exactly one row"
 
 -- | Like 'dbStep1' but returns 'True' on success and 'False' on constraint
 -- violation (duplicate key). Other errors are thrown as usual.
@@ -2471,7 +2472,7 @@ dbStepInsert stmt =
     io >>= \case
       Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
       Right DB.Done -> pure True
-      Right DB.Row -> error "dbStepInsert: unexpected Row result"
+      Right DB.Row -> throwLeiosDbException "dbStepInsert: unexpected Row result"
   go n io =
     io >>= \case
       Left DB.ErrorBusy -> do
@@ -2480,7 +2481,7 @@ dbStepInsert stmt =
       Left DB.ErrorConstraint -> pure False
       Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
       Right DB.Done -> pure True
-      Right DB.Row -> error "dbStepInsert: unexpected Row result"
+      Right DB.Row -> throwLeiosDbException "dbStepInsert: unexpected Row result"
 
 -- | Step an INSERT statement, absorbing UNIQUE/PRIMARY KEY violations and
 -- emitting a 'TraceLeiosDbInsertCollision' for each one. The caller supplies a
