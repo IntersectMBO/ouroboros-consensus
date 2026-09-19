@@ -36,9 +36,9 @@ import LeiosDemoTypes
   , LeiosSigningKey
   , RbHash (MkRbHash)
   , TraceLeiosKernel (..)
+  , encodeLeiosEbSize
   , getLeiosSeatId
   , leiosCommitteeSize
-  , leiosEbBytesSize
   , signLeiosVote
   )
 import LeiosVoteState
@@ -210,7 +210,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   -- both LeiosNotify and the LeiosTxCache require the announcement first.
   storeEb :: ForgedLeiosEb -> IO ()
   storeEb forgedEb = do
-    leiosDbInsertEbPoint leiosDb forgedEb.point (leiosEbBytesSize forgedEb.body)
+    leiosDbInsertEbPoint leiosDb forgedEb.point (encodeLeiosEbSize forgedEb.body)
     void $ leiosDbInsertEbBody leiosDb forgedEb.point forgedEb.body
     void $ leiosDbInsertTxs leiosDb forgedEb.txClosure
     traceWith leiosTracer $

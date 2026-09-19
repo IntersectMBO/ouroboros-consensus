@@ -43,8 +43,8 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
+  , encodeLeiosEbSize
   , leiosEbBodyItems
-  , leiosEbBytesSize
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -165,7 +165,7 @@ imInsertEbBody ::
   m CompletedEbs
 imInsertEbBody stateVar notificationChan point eb = do
   let items = leiosEbBodyItems eb
-      ebBytesSize = leiosEbBytesSize eb
+      ebBytesSize = encodeLeiosEbSize eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
   atomically $ do

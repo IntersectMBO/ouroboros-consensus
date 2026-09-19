@@ -77,14 +77,14 @@ import LeiosDemoTypes
   , TxHash
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
+  , encodeLeiosEbSize
   , hashLeiosEb
   , hashLeiosTx
-  , leiosEbBytesSize
   , newLeiosPeerVars
   )
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
-import LeiosTxCache (LeiosTxCache, newPureLeiosTxCache, nullLeiosTxCache)
+import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, newPureLeiosTxCache, nullLeiosTxCache)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
@@ -432,18 +432,18 @@ applyCmd conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
-    recordAnnouncedEb kv SNothing (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+    recordAnnouncedEb kv SNothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure []
   Offer ids slot -> do
     recordEbBodyOffer
       kv
       peerVars
       TxsClosureNotAlsoOffered
-      (pointOf ids slot, leiosEbBytesSize (ebOf ids))
+      (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure []
   ArriveBody ids slot -> do
     let eb = ebOf ids
-        req = MkLeiosBlockRequest (pointOf ids slot) (leiosEbBytesSize eb)
+        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
     processLeiosBlock
       nullTracer
       nullTracer
@@ -758,12 +758,12 @@ raceSameHashMultiSlot = do
     outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
     readyVar <- newEmptyMVar
     peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
-    txCache <- newPureLeiosTxCache
+    txCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     let kv = (outstandingVar, readyVar)
         peerId = MkPeerId (0 :: Int)
         ids = [0, 1] :: TestEb
         eb = ebOf ids
-        ebBytesSize = leiosEbBytesSize eb
+        ebBytesSize = encodeLeiosEbSize eb
         -- One hash (same ids), three different slots.
         offerPoint = pointOf ids 10
         announcePoint = pointOf ids 11

@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -9,6 +10,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
@@ -25,14 +28,12 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , Invalidated (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
-  , TxCount (..)
   , TxId
   , TxLimits (..)
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
   , nothingMkMempoolApplyTxError
-  , oneTxCount
   ) where
 
 import Codec.Serialise (Serialise)
@@ -43,7 +44,7 @@ import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
-import Data.Measure (Measure)
+import Data.Measure (Measure, zero)
 import qualified Data.Measure
 import Data.Text (Text)
 import Data.Word (Word32)
@@ -327,6 +328,10 @@ class
   , NoThunks (TxMeasure blk)
   , TxMeasureMetrics (TxMeasure blk)
   , Show (TxMeasure blk)
+  , Measure (TxEbMeasure blk)
+  , NoThunks (TxEbMeasure blk)
+  , Eq (TxEbMeasure blk)
+  , Show (TxEbMeasure blk)
   ) =>
   TxLimits blk
   where
@@ -381,14 +386,50 @@ class
     TickedLedgerState blk mk ->
     TxMeasure blk
 
-  -- | What is the allowed capacity for the txs in a Leios Endorser Block?
+  -- | The (possibly multi-dimensional) size of a transaction in a Leios
+  -- endorser block: what it costs of 'ebCapacityTxMeasure'. The block measure
+  -- itself for protocols without endorser blocks.
+  type TxEbMeasure blk
+
+  type TxEbMeasure blk = TxMeasure blk
+
+  -- | The size of a transaction in a Leios endorser block, derived from its
+  -- block measure ('txMeasure').
   --
-  -- 'Nothing' for eras that don't support Leios.
+  -- The block measure itself by default. A transaction must never measure
+  -- zero: a zero measure fits a zero 'ebCapacityTxMeasure', so an
+  -- endorser-block fill would take the whole mempool instead of nothing.
+  txEbMeasure ::
+    proxy blk ->
+    TxMeasure blk ->
+    TxEbMeasure blk
+  default txEbMeasure ::
+    TxEbMeasure blk ~ TxMeasure blk =>
+    proxy blk ->
+    TxMeasure blk ->
+    TxEbMeasure blk
+  txEbMeasure _ = id
+
+  -- | What is the allowed capacity for the txs in a Leios endorser block?
+  --
+  -- Zero for blocks without endorser blocks: an endorser-block fill against a
+  -- zero capacity takes no transactions, so none are forged.
   ebCapacityTxMeasure ::
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
-    Maybe (TxMeasure blk)
-  ebCapacityTxMeasure _ _ = Nothing
+    TxEbMeasure blk
+  ebCapacityTxMeasure _ _ = zero
+
+  -- | What one full endorser-block fill drains from the mempool, in
+  -- 'TxMeasure' terms: an endorser block's closure is transactions. Only used
+  -- to size the mempool ('Ouroboros.Consensus.Mempool.computeMempoolCapacity').
+  --
+  -- Zero for blocks without endorser blocks.
+  ebClosureCapacityTxMeasure ::
+    LedgerConfig blk ->
+    TickedLedgerState blk mk ->
+    TxMeasure blk
+  ebClosureCapacityTxMeasure _ _ = zero
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for
@@ -422,22 +463,6 @@ newtype ByteSize32 = ByteSize32 {unByteSize32 :: Word32}
     NoThunks
     via OnlyCheckWhnfNamed "ByteSize" ByteSize32
 
--- | A count of transactions, e.g. in an Endorser Block.
-newtype TxCount = TxCount {unTxCount :: Word32}
-  deriving stock Show
-  deriving newtype (Eq, Ord, Bounded)
-  deriving newtype NFData
-  deriving newtype Serialise
-  deriving
-    (Monoid, Semigroup)
-    via (InstantiatedAt Measure (IgnoringOverflow TxCount))
-  deriving
-    NoThunks
-    via OnlyCheckWhnfNamed "TxCount" TxCount
-
-oneTxCount :: IgnoringOverflow TxCount
-oneTxCount = IgnoringOverflow . TxCount $ 1
-
 -- | @'IgnoringOverflow' a@ has the same semantics as @a@, except it ignores
 -- the fact that @a@ can overflow.
 --
@@ -459,12 +484,6 @@ newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
   deriving newtype TxMeasureMetrics
 
 instance Measure (IgnoringOverflow ByteSize32) where
-  zero = coerce (0 :: Word32)
-  plus = coerce $ (+) @Word32
-  min = coerce $ min @Word32
-  max = coerce $ max @Word32
-
-instance Measure (IgnoringOverflow TxCount) where
   zero = coerce (0 :: Word32)
   plus = coerce $ (+) @Word32
   min = coerce $ min @Word32

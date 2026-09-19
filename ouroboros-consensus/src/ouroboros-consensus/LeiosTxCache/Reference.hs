@@ -313,13 +313,16 @@ decTx (ts, evTxs) txh =
 -- (its refcount would be zero).
 insertBody ::
   ReferencesTxsByHash b =>
+  -- | Capacity 'ibsCacheLoad' is reported against; the pure index has no
+  -- allocation of its own, so callers pass the production table's.
+  Int ->
   EbHash ->
   b ->
   w ->
   (w -> Int -> TxHash -> BytesSize -> w) ->
   LeiosTxCacheIndex a v b ->
   (LeiosTxCacheIndex a v b, Maybe (LeiosTxCacheInsertBodySummary, w))
-insertBody ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
+insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
   Nothing -> (idx, Nothing)
   Just BodyAlreadyInserted{} -> (idx, Nothing)
   Just (BodyNotYetInserted rc) ->
@@ -333,7 +336,18 @@ insertBody ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
             , txState = txState'
             , prunedSlot = prunedSlot idx
             }
-     in (idx', Just (mkLeiosTxCacheInsertBodySummary n tracked acquired validated (Map.size txState'), w))
+     in ( idx'
+        , Just
+            ( mkLeiosTxCacheInsertBodySummary
+                loadCapacity
+                n
+                tracked
+                acquired
+                validated
+                (Map.size txState')
+            , w
+            )
+        )
  where
   -- Bump each tx's refcount and, in the same pass, classify its /prior/ state:
   -- the counts feed the summary, and every not-yet-acquired tx (a "miss") is

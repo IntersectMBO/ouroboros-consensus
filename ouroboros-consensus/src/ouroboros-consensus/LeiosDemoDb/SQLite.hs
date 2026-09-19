@@ -85,8 +85,8 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
+  , encodeLeiosEbSize
   , leiosEbBodyItems
-  , leiosEbBytesSize
   )
 import LeiosUtils.CallTrace
   ( CallCtx
@@ -1252,7 +1252,7 @@ sqlInsertEbBody tracer conn notify point eb = do
   pure completedNow
  where
   items = leiosEbBodyItems eb
-  ebBytesSize = leiosEbBytesSize eb
+  ebBytesSize = encodeLeiosEbSize eb
   Conn{connVolStmts} = conn
   VolStmts
     { stInsertEbTxsRow

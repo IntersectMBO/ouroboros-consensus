@@ -136,7 +136,7 @@ computeSnapshot ::
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
-  TxSeq.TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   m (MempoolSnapshot blk)
 computeSnapshot resolveValues mTimeoutConfig cfg slot baseLedgerStDiff txsToApply = do
   ReapplyStepState{..} <-

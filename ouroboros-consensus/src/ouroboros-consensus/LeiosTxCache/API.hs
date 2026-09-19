@@ -18,6 +18,7 @@ module LeiosTxCache.API
 
     -- * Insert-body observability summary
   , LeiosTxCacheInsertBodySummary (..)
+  , defaultLeiosTxCacheShift
   , mkLeiosTxCacheInsertBodySummary
   , worstCaseCacheTxCount
 
@@ -156,21 +157,33 @@ bucketTxArrival = \case
   TxWasNotYetInserted -> fetchArrivalGood
   TxWasAlreadyHeld -> fetchArrivalExtra
 
--- | The worst-case number of txs the cache can hold: a full 'maxAnnouncementCount'
--- window of EBs, each referencing the maximum 'maxTxsPerEb' distinct txs. The fixed
--- denominator for the cache's load factor.
+-- | The worst-case number of txs the cache can be asked to hold: a full
+-- 'maxAnnouncementCount' window of EBs, each referencing the maximum
+-- 'maxTxsPerEb' distinct txs. NOTE: this exceeds what the production table is
+-- allocated to hold; see
+-- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
 worstCaseCacheTxCount :: Int
 worstCaseCacheTxCount = maxAnnouncementCount * maxTxsPerEb
 
+-- | The table shift the node allocates its Leios tx cache with: @2 ^@ this
+-- many slots. The pure reference handle reports 'ibsCacheLoad' against the
+-- same allocation, so the load factor means one thing across both handles.
+-- NOTE: this allocation does not cover 'worstCaseCacheTxCount'; see
+-- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
+defaultLeiosTxCacheShift :: Int
+defaultLeiosTxCacheShift = 22
+
 -- | Build an 'LeiosTxCacheInsertBodySummary' from the raw counts, computing the
--- load factor ('ibsCacheLoad') against 'worstCaseCacheTxCount'.
-mkLeiosTxCacheInsertBodySummary :: Int -> Int -> Int -> Int -> Int -> LeiosTxCacheInsertBodySummary
-mkLeiosTxCacheInsertBodySummary txsInEb tracked acquired validated cacheTxCount =
+-- load factor ('ibsCacheLoad') against the given capacity — how full this
+-- cache is, so 1.0 coincides with it actually filling up.
+mkLeiosTxCacheInsertBodySummary ::
+  Int -> Int -> Int -> Int -> Int -> Int -> LeiosTxCacheInsertBodySummary
+mkLeiosTxCacheInsertBodySummary capacity txsInEb tracked acquired validated cacheTxCount =
   MkLeiosTxCacheInsertBodySummary
     { ibsTxsInEb = txsInEb
     , ibsTracked = tracked
     , ibsAcquired = acquired
     , ibsValidated = validated
     , ibsCacheTxCount = cacheTxCount
-    , ibsCacheLoad = fromIntegral cacheTxCount / fromIntegral worstCaseCacheTxCount
+    , ibsCacheLoad = fromIntegral cacheTxCount / fromIntegral capacity
     }

@@ -10,9 +10,13 @@
 -- both the pure-wrapped index ('newPureLeiosTxCache') and a future mutable
 -- implementation (add another 'runBench' call).
 --
--- Worst-case hard bounds: an EB references up to ~512 kB \/ 34 B == 'maxTxsPerEb'
--- txs, and up to 'maxAnnouncementCount' EBs sit in the index at once with fully
--- disjoint tx closures — ~1.9M distinct txs resident.
+-- The workload populates 'maxAnnouncementCount' EBs with fully disjoint tx
+-- closures of 'txsPerEb' txs each — ~1.9M distinct txs resident. NOTE: since
+-- 'LeiosDemoTypes.maxTxsPerEb' grew to the codec's message limit (~71k), this
+-- no longer reaches the true worst case, which the node's 2^22-slot table
+-- cannot hold either; both are tracked in
+-- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290, and the
+-- bench should follow whatever sizing that settles on.
 --
 -- Run (the stanza bakes in @-T@; add @-s@ for the RTS summary):
 --
@@ -54,9 +58,11 @@ import System.Posix.Types (COff (..))
 numEbs :: Int
 numEbs = maxAnnouncementCount
 
--- | Worst-case tx references in one EB: a ~512 kB body at 34 B/item (32-byte
--- hash + 2-byte size) in a compact, non-CBOR layout — the encoding-independent
--- ceiling. (The current CBOR-precise 'LeiosDemoTypes.maxTxsPerEb' is 13888.)
+-- | Tx references per EB: a ~512 kB body at 34 B/item (32-byte hash + 2-byte
+-- size) in a compact, non-CBOR layout. NOT the current worst case: the
+-- CBOR-precise 'LeiosDemoTypes.maxTxsPerEb' is ~71k, which at
+-- 'maxAnnouncementCount' EBs overflows the 2^22-slot table this bench (and the
+-- node) allocates — see the module header.
 txsPerEb :: Int
 txsPerEb = 15_058
 
@@ -165,7 +171,7 @@ main = do
             queryCache
             (syncFile sqliteDbPath)
             coolBatch
-      mkPure = mkInMem "pure-wrapped index" newPureLeiosTxCache
+      mkPure = mkInMem "pure-wrapped index" (newPureLeiosTxCache 22)
       mkHt = mkInMem "hash-table (shift 22)" (newHashTableLeiosTxCache 22 salt0 salt1)
       targets :: [IO BenchTarget]
       targets = case variant of

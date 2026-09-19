@@ -22,7 +22,7 @@ import Control.Tracer
 import Data.Aeson (KeyValue ((.=)))
 import qualified Data.Aeson as Aeson
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (isJust)
 import qualified Data.Measure
 import Data.Proxy
 import LeiosDemoDb
@@ -56,7 +56,7 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
   , prependDiffs
   )
 import Ouroboros.Consensus.Mempool
-import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime)
+import Ouroboros.Consensus.Mempool.API (MempoolMeasure)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.Protocol.Abstract
@@ -708,7 +708,7 @@ partitionMempool ::
   m
     ( [Validated (GenTx blk)]
     , [Validated (GenTx blk)]
-    , TxMeasureWithDiffTime blk
+    , MempoolMeasure blk
     , MempoolSnapshot blk
     , Maybe (LeiosCert, Leios.EbHash)
     )
@@ -737,7 +737,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
         unticked
 
   let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-      ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+      ebCap = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
   (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot) <-
     case mayLeiosCertAndAnnouncement of
       Nothing -> do
@@ -748,10 +748,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
             getSnapshotFor mempool currentSlot tickedLedgerState readTables
 
         pmTrace'Via (const ()) "take-rb-eb-txs" currentSlot $ do
-          let (rbTxs', rbTxsSize') = snapshotTake snap rbCap
-              ebTxs' =
-                let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
-                 in drop (length rbTxs') allTxs
+          let (rbTxs', rbTxsSize', ebTxs', _ebTxsSize) = snapshotPartition snap rbCap ebCap
           pure (rbTxs', ebTxs', rbTxsSize', snap)
       Just (_cert, announcedPoint) -> do
         -- We have a Leios certificate: only take transactions for a new EB, as the RB will
@@ -794,7 +791,8 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
                 getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
 
             pmTrace'Via (const ()) "take-eb-txs" currentSlot $ do
-              let ebTxs' = fst (snapshotTake snap ebCap)
+              let (_noRbTxs, _, ebTxs', _ebTxsSize) =
+                    snapshotPartition snap Data.Measure.zero ebCap
               pure ([], ebTxs', Data.Measure.zero, snap)
 
   pure (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement)
