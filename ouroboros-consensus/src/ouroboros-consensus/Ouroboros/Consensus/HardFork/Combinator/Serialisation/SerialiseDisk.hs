@@ -157,3 +157,32 @@ instance
       decodeTelescope (hcmap pSHFC (Comp . fmap Flip . decodeDisk) cfgs)
    where
     cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+
+{-------------------------------------------------------------------------------
+  Peras certificates (for the PerasImmutableCertDB)
+-------------------------------------------------------------------------------}
+
+instance
+  SerialiseHFC xs =>
+  EncodeDisk (HardForkBlock xs) (OneEraPerasCert xs)
+  where
+  encodeDisk cfg =
+    encodeNS (hcmap pSHFC (fn . aux) cfgs)
+      . getOneEraPerasCert
+   where
+    cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+
+    aux ::
+      SerialiseDiskConstraints blk =>
+      CodecConfig blk -> WrapPerasCert blk -> K Encoding blk
+    aux cfg' (WrapPerasCert c) = K $ encodeDisk cfg' c
+
+instance
+  SerialiseHFC xs =>
+  DecodeDisk (HardForkBlock xs) (OneEraPerasCert xs)
+  where
+  decodeDisk cfg =
+    fmap OneEraPerasCert $
+      decodeNS (hcmap pSHFC (Comp . fmap WrapPerasCert . decodeDisk) cfgs)
+   where
+    cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
