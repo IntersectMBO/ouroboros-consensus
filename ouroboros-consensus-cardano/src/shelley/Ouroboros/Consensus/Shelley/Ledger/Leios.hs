@@ -40,7 +40,7 @@ import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as Text
-import LeiosDemoDb (leiosDbLookupEbClosure)
+import LeiosDemoDb (lookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
@@ -128,7 +128,7 @@ instance
   leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serialize' tx)))
 
   resolveLeiosClosure leiosDb ebHash = do
-    leiosDbLookupEbClosure leiosDb ebHash >>= \case
+    lookupEbClosure leiosDb ebHash >>= \case
       Nothing ->
         pure $ Left $ LeiosClosureMissing ebHash
       Just closureEntries ->

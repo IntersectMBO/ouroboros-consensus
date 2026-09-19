@@ -26,7 +26,7 @@ import Data.Maybe (isJust)
 import qualified Data.Measure
 import Data.Proxy
 import LeiosDemoDb
-  ( LeiosDbConnection (..)
+  ( LeiosDbReader (..)
   )
 import LeiosDemoTypes
   ( LeiosCert
@@ -97,14 +97,14 @@ forge ::
   Mempool m blk ->
   LeiosVoteState m ->
   BlockForging m blk ->
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   -- | Invoked with the header and closure of each EB we forge, to ingest it
   -- through the same handlers an upstream peer's messages (see
   -- 'Leios.onForgedLeiosEb').
   (Header blk -> Leios.ForgedLeiosEb -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn onForgedLeiosEb currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosDbReader onForgedLeiosEb currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -213,7 +213,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
             $ \pmCCtx ->
               lift $
                 partitionMempool
-                  leiosConn
+                  leiosDbReader
                   leiosVoteState
                   leiosTracer
                   ctrace
@@ -305,7 +305,7 @@ decideLeiosCertify ::
   , ConvertRawHash blk
   , HasAnnTip blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
   -- | The era's ledger config, which is where the certification gap comes from.
@@ -315,7 +315,7 @@ decideLeiosCertify ::
   -- | Unticked ledger state that we can extend.
   ExtLedgerState blk EmptyMK ->
   m (Maybe (LeiosCert, Leios.EbHash))
-decideLeiosCertify leiosDb voteState tracer ledgerCfg currentSlot extState =
+decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState =
   case (,) <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs) <*> mMinGap of
     Nothing -> pure Nothing
     Just ((ebPoint, _ebSize), minGap)
@@ -325,7 +325,7 @@ decideLeiosCertify leiosDb voteState tracer ledgerCfg currentSlot extState =
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
           -- detect it the other way around: if we have a cert, but not
           -- downloaded it ourselves -> warning!
-          mClosure <- leiosDbLookupEbClosure leiosDb (Leios.pointEbHash ebPoint)
+          mClosure <- lookupEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
           case mClosure of
             Nothing -> do
               traceWith tracer $
@@ -692,7 +692,7 @@ traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
 partitionMempool ::
   forall m blk.
   (IOLike m, RunNode blk) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
   -- | Same call-tracing machinery as 'forge's own @ctrace@: traces onto the
@@ -712,7 +712,7 @@ partitionMempool ::
     , MempoolSnapshot blk
     , Maybe (LeiosCert, Leios.EbHash)
     )
-partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedLedgerState unticked forker = do
+partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedLedgerState unticked forker = do
   let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
 
       pmTraceVia ::
@@ -729,7 +729,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
   mayLeiosCertAndAnnouncement <-
     pmTrace'Via (fmap (Leios.prettyEbHash . snd)) "decide-leios-certifiy" currentSlot $
       decideLeiosCertify @blk
-        leiosConn
+        leiosDbReader
         leiosVoteState
         leiosTracer
         (configLedger cfg)
@@ -758,7 +758,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
         res <-
           pmTrace'Via (const ()) "resolve-and-apply-leios-closure" (Leios.prettyEbHash announcedPoint) $
             resolveAndApplyLeiosClosure
-              leiosConn
+              leiosDbReader
               (configLedger cfg)
               announcedPoint
               readTables

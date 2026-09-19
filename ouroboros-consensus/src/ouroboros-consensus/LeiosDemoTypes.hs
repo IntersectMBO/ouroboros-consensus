@@ -74,6 +74,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
+import Control.Exception (SomeException, displayException)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
@@ -762,7 +763,7 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 --
 -- The 'cdbAcquiredLeiosEbs' field of the ChainDB (which gates ChainSel for
 -- CertRBs) is initialized in the exact same way: from
--- 'LeiosDemoDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot', already
+-- 'LeiosDemoDb.scanCompleteEbClosuresNotOlderThanSlot', already
 -- restricted to announcers no older than the immutable tip. And, it's
 -- necessarily initialized earlier, as part of the ChainDB. But for the sake of
 -- modularity/independence (see the TODO below), we're not reusing it to
@@ -1864,7 +1865,7 @@ notVotedReasonText = \case
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String
-  | TraceLeiosPeerDbException LeiosDbException
+  | TraceLeiosPeerDbException SomeException
   | -- | This upstream peer relayed a valid, newly-counted EB announcement.
     TraceLeiosPeerAnnouncement !AnnouncementEquivocation !AnnouncementFields
   deriving Show
@@ -1882,7 +1883,11 @@ data TraceLeiosPeer
 traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
 traceLeiosPeerToObject = \case
   MkTraceLeiosPeer s -> fromString "msg" .= Aeson.String (fromString s)
-  TraceLeiosPeerDbException e -> jsonLeiosDbException e
+  TraceLeiosPeerDbException e ->
+    mconcat
+      [ fromString "kind" .= Aeson.String "LeiosDbException"
+      , fromString "error" .= Aeson.String (fromString (displayException e))
+      ]
   TraceLeiosPeerAnnouncement equivocation acc ->
     mconcat
       [ fromString "kind" .= Aeson.String "LeiosPeerAnnouncement"
@@ -2243,7 +2248,7 @@ leiosPeerNSByPath p =
 traceLeiosPeerForHuman :: TraceLeiosPeer -> Text
 traceLeiosPeerForHuman = \case
   MkTraceLeiosPeer msg -> "LeiosPeer: " <> T.pack msg
-  TraceLeiosPeerDbException e -> "Leios peer DB exception: " <> T.pack (show e)
+  TraceLeiosPeerDbException e -> "Leios peer DB exception: " <> T.pack (displayException e)
   TraceLeiosPeerAnnouncement equiv fields ->
     "EB announcement from peer (" <> T.pack (show equiv) <> "): " <> T.pack (show fields)
 

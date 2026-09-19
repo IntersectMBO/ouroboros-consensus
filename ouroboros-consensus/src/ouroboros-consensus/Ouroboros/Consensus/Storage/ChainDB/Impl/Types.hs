@@ -403,7 +403,7 @@ data ChainDbEnv m blk = CDB
   -- it uses the handle to:
   --
   --     * seed 'cdbAcquiredLeiosEbs' at open, via
-  --       'leiosDbScanCompleteEbClosuresNotOlderThanSlot';
+  --       'scanCompleteEbClosuresNotOlderThanSlot';
   --     * grow 'cdbAcquiredLeiosEbs' from closure-completion notifications
   --       ('subscribeEbNotifications'), in @leiosAcquiredEbsRunner@;
   --     * promote a copied cert-RB's certified EB into immutable storage

@@ -11,10 +11,12 @@ import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
 import Cardano.Tools.LeiosDb (LeiosDbSource (..))
 import Data.String (fromString)
 import LeiosDemoDb
-  ( leiosDbInsertEbPoint
-  , leiosDbScanEbPoints
+  ( LeiosDbReader (scanEbPoints)
+  , LeiosDbWriter (writeEbPoint)
+  , Promise (await)
   , newLeiosDBSQLite
-  , withLeiosDb
+  , withReader
+  , withWriter
   )
 import LeiosDemoTypes (EbHash (..), LeiosPoint (..))
 import Ouroboros.Consensus.Block
@@ -158,13 +160,13 @@ blockCountTest logStep = do
   leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.db.vol") (chainDB <> "/leios.db.imm")
   let keptEb = MkLeiosPoint 0 (mkEbHash '1')
       droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
-  withLeiosDb leiosDb $ \con ->
-    mapM_ (\point -> leiosDbInsertEbPoint con point 500) [keptEb, droppedEb]
+  withWriter leiosDb $ \con ->
+    mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
 
   logStep "running truncation"
   DBTruncater.truncate testTruncaterConfig testBlockArgs
 
-  ebPoints <- withLeiosDb leiosDb leiosDbScanEbPoints
+  ebPoints <- withReader leiosDb scanEbPoints
   ebPoints == [(0, pointEbHash keptEb)]
     @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
 

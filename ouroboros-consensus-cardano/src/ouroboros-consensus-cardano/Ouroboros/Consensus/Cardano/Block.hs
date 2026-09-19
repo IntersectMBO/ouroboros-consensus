@@ -1526,7 +1526,7 @@ pattern ChainDepStateDijkstra st <-
 --
 -- A certifying Dijkstra block carries a 'Maybe LeiosCert' on its body
 -- and an empty tx list: the actual transactions to apply live in the
--- EB's stored closure, addressable via the 'LeiosDbConnection' by the
+-- EB's stored closure, addressable via the 'LeiosDbReader' by the
 -- previously-announced EB on the Praos header chain (reachable through
 -- 'praosStateLeiosAnnouncement' on the chain-dep state).
 --

@@ -66,7 +66,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   -- db-analyser.
   , lgrLeiosDb :: HKD f (LeiosDemoDb.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
-  -- its own per-thread 'LeiosDbConnection' from this handle.
+  -- its own per-thread 'LeiosDbReader' from this handle.
   }
 
 -- | Default arguments

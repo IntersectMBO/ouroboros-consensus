@@ -62,7 +62,7 @@ import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoTypes
   ( BytesSize
   , HasLeiosVoting (..)
@@ -168,7 +168,7 @@ data AnalysisEnv m blk startFrom = AnalysisEnv
   , registry :: ResourceRegistry IO
   , limit :: Limit
   , tracer :: Tracer m (TraceEvent blk)
-  , leiosDb :: LeiosDbConnection IO
+  , leiosDbReader :: LeiosDbReader IO
   -- ^ Connection to the node's LeiosDb. For pre-Leios chains this is
   -- a connection to the empty in-memory stub and is never consulted.
   }
@@ -437,7 +437,7 @@ countTxOutputs ::
   forall blk.
   (HasAnalysis blk, ResolveLeiosBlock blk) =>
   Analysis blk StartFromPoint
-countTxOutputs AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDb} = do
+countTxOutputs AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDbReader} = do
   seed <- announcementAtPoint db =<< startFromPoint startFrom
   void $ processAll db registry GetBlock startFrom limit (0, seed) process
   pure Nothing
@@ -448,7 +448,7 @@ countTxOutputs AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDb} = do
     blk ->
     IO (Int, Maybe (LeiosPoint, BytesSize))
   process (cumulative, prevAnnouncement) blk = do
-    ebBlk <- blockWithCertifiedEbTxs leiosDb prevAnnouncement blk
+    ebBlk <- blockWithCertifiedEbTxs leiosDbReader prevAnnouncement blk
     let numBlockTxOutputs = HasAnalysis.countTxOutputs blk
         numEbTxOutputs = maybe 0 HasAnalysis.countTxOutputs ebBlk
         cumulativeTxOutputs = cumulative + numBlockTxOutputs + numEbTxOutputs
@@ -499,7 +499,7 @@ showBlockTxsSize ::
   forall blk.
   (HasAnalysis blk, ResolveLeiosBlock blk) =>
   Analysis blk StartFromPoint
-showBlockTxsSize AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDb} = do
+showBlockTxsSize AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDbReader} = do
   seed <- announcementAtPoint db =<< startFromPoint startFrom
   void $ processAll db registry GetBlock startFrom limit seed process
   pure Nothing
@@ -510,7 +510,7 @@ showBlockTxsSize AnalysisEnv{db, registry, startFrom, limit, tracer, leiosDb} = 
     blk ->
     IO (Maybe (LeiosPoint, BytesSize))
   process prevAnnouncement blk = do
-    ebTxSizes <- certifiedEbTxSizes leiosDb prevAnnouncement blk
+    ebTxSizes <- certifiedEbTxSizes leiosDbReader prevAnnouncement blk
     traceWith tracer $
       BlockTxSizeEvent
         (blockSlot blk)
@@ -565,7 +565,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
   void $ processAllUntil db registry GetBlock startFrom limit () process
   pure Nothing
  where
-  AnalysisEnv{db, registry, startFrom, cfg, limit, tracer, leiosDb} = env
+  AnalysisEnv{db, registry, startFrom, cfg, limit, tracer, leiosDbReader} = env
   FromLedgerState ldb internal = startFrom
 
   process :: () -> blk -> IO (NextStep, ())
@@ -573,7 +573,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
     LedgerDB.withTipForker
       ldb
       ( \frk -> do
-          result <- applyBlockToTipForker leiosDb ledgerAppMode cfg frk blk
+          result <- applyBlockToTipForker leiosDbReader ledgerAppMode cfg frk blk
           case result of
             Right newLedger -> do
               LedgerDB.forkerPush frk newLedger
@@ -643,7 +643,7 @@ checkNoThunksEvery ::
   Analysis blk StartFromLedgerState
 checkNoThunksEvery
   nBlocks
-  (AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb}) = do
+  (AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDbReader}) = do
     putStrLn $
       "Checking for thunks in each block where blockNo === 0 (mod " <> show nBlocks <> ")."
     void $ processAll db registry GetBlock startFrom limit () process
@@ -653,7 +653,7 @@ checkNoThunksEvery
 
     process :: () -> blk -> IO ()
     process _ blk = do
-      (oldLedger', newLedger) <- applyBlockAtTip leiosDb LedgerApply cfg ldb blk
+      (oldLedger', newLedger) <- applyBlockAtTip leiosDbReader LedgerApply cfg ldb blk
       let newLedger' = applyDiffs oldLedger' newLedger
           bn = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0) $ do
@@ -692,7 +692,7 @@ traceLedgerProcessing ::
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
-  (AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb}) = do
+  (AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDbReader}) = do
     void $ processAll db registry GetBlock startFrom limit () process
     pure Nothing
    where
@@ -703,7 +703,7 @@ traceLedgerProcessing
       blk ->
       IO ()
     process _ blk = do
-      (oldLedger, newLedger) <- applyBlockAtTip leiosDb LedgerApply cfg ldb blk
+      (oldLedger, newLedger) <- applyBlockAtTip leiosDbReader LedgerApply cfg ldb blk
       let newLedger' = applyDiffs oldLedger newLedger
           traces =
             ( HasAnalysis.emitTraces $
@@ -742,7 +742,7 @@ benchmarkLedgerOps ::
   Maybe FilePath ->
   LedgerApplicationMode ->
   Analysis blk StartFromLedgerState
-benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb} = do
+benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDbReader} = do
   -- We default to CSV when the no output file is provided (and thus the results are output to stdout).
   outFormat <- F.getOutputFormat mOutfile
 
@@ -811,7 +811,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
         ((txs, txsBytes), ebReadMut, ebReadElapsed) <-
           case certifiedEbHash (parentAnnouncement st) blk of
             Nothing -> pure (([], 0), 0, 0)
-            Just ebHash -> clock $ readEbClosure leiosDb ebHash
+            Just ebHash -> clock $ readEbClosure leiosDbReader ebHash
         -- Read the values that the block and those txs consume.
         (tbs, tableReadMut, tableReadElapsed) <-
           clock $ LedgerDB.forkerReadTables frk (closureKeySets txs <> getBlockKeySets blk)
@@ -984,7 +984,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
  where
   separator = ", "
 
-  AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDb} = env
+  AnalysisEnv{db, registry, startFrom, cfg, limit, leiosDbReader} = env
   FromLedgerState ldb intLedgerDB = startFrom
 
   process ::
@@ -993,7 +993,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
     blk ->
     IO ()
   process outFileHandle _ blk = do
-    (oldLedger, nextLedgerSt) <- applyBlockAtTip leiosDb LedgerReapply cfg ldb blk
+    (oldLedger, nextLedgerSt) <- applyBlockAtTip leiosDbReader LedgerReapply cfg ldb blk
     when (unBlockNo (blockNo blk) `mod` nrBlocks == 0) $ do
       let blockApplication =
             HasAnalysis.WithLedgerState
@@ -1084,7 +1084,7 @@ reproMempoolForge numBlks env = do
     , registry
     , limit
     , tracer
-    , leiosDb
+    , leiosDbReader
     } = env
 
   lCfg :: LedgerConfig blk
@@ -1132,7 +1132,7 @@ reproMempoolForge numBlks env = do
               Just prevBlk -> headerLeiosAnnouncement (getHeader prevBlk)
         ebTxs <- case certifiedEbHash prevAnnouncement blk' of
           Nothing -> pure []
-          Just ebHash -> fst <$> readEbClosure leiosDb ebHash
+          Just ebHash -> fst <$> readEbClosure leiosDbReader ebHash
         results <-
           Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk' <> ebTxs
         let rejs =
@@ -1173,7 +1173,7 @@ reproMempoolForge numBlks env = do
             ((closureTxs, ebTxsBytes), durEbRead, mutEbRead, gcEbRead) <-
               case mCertifiedEb of
                 Nothing -> pure (([], 0), 0, 0, 0)
-                Just ebHash -> timed $ readEbClosure leiosDb ebHash
+                Just ebHash -> timed $ readEbClosure leiosDbReader ebHash
 
             -- The forge thread of a certifying block reads the ledger
             -- values that the txs of the certified EB consume. Then
@@ -1266,7 +1266,7 @@ reproMempoolForge numBlks env = do
           -- since it currently matches the call in the forging thread, which is
           -- the primary intention of this Analysis. Maybe GHC's CSE is already
           -- doing this sharing optimization?
-          (_, nextLedgerSt) <- applyBlockAtTip leiosDb LedgerReapply cfg ledgerDB blk
+          (_, nextLedgerSt) <- applyBlockAtTip leiosDbReader LedgerReapply cfg ledgerDB blk
           LedgerDB.push intLedgerDB nextLedgerSt
           LedgerDB.tryFlush ledgerDB
 

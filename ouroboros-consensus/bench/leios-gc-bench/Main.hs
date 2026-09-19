@@ -108,12 +108,15 @@ import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
 import qualified Database.SQLite3 as SQL
 import LeiosDemoDb
-  ( LeiosDbConnection (..)
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
   , LeiosDbStats (..)
+  , LeiosDbWriter (..)
+  , Promise (await)
   , TraceLeiosDb (..)
+  , awaitAll
   , newLeiosDBSQLite
   , newLeiosDBSQLiteWithGcPacing
+  , withReader
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -168,7 +171,6 @@ main = do
           hPutStrLn stderr $ "Copying the database " <> immFixture <> " -> " <> benchImm
           copyFile immFixture benchImm
         db <- mkDb
-        close =<< open db
         schedule <- readEbSchedule benchVol
         pure (db, schedule)
       Nothing -> do
@@ -418,20 +420,19 @@ validateOpts opts = do
 -- | Insert deterministic volatile EBs (untimed), one every 'slotsPerEb'
 -- slots, and return the (slot, hash) schedule ascending in slot.
 populateDb :: Opts -> LeiosDbHandle IO -> IO [(Word64, BS.ByteString)]
-populateDb opts db = do
-  conn <- open db
-  schedule <- forM [0 .. populationEbs - 1] $ \ebIdx -> do
-    let slot = fromIntegral (ebIdx * slotsPerEb) :: Word64
-        MkEbHash hashBytes = genEbHash ebIdx
-        point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
-        eb = genEb opts ebIdx
-        txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
-    leiosDbInsertEbPoint conn point (encodeLeiosEbSize eb)
-    _ <- leiosDbInsertEbBody conn point eb
-    _ <- leiosDbInsertTxs conn txs
-    pure (slot, hashBytes)
-  close conn
-  pure schedule
+populateDb opts db =
+  withWriter db $ \writer ->
+    forM [0 .. populationEbs - 1] $ \ebIdx -> do
+      let slot = fromIntegral (ebIdx * slotsPerEb) :: Word64
+          MkEbHash hashBytes = genEbHash ebIdx
+          point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
+          eb = genEb opts ebIdx
+          txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
+      pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
+      bodyWritten <- writeEbBody writer point eb
+      txsWritten <- writeTxs writer txs
+      awaitAll [pointWritten, void bodyWritten, void txsWritten]
+      pure (slot, hashBytes)
 
 -- | Drop the tx -> referencing-EB index from the volatile partition
 -- ('sql_schema' only runs at file creation, so the drop persists).
@@ -504,8 +505,6 @@ data PhaseResult = PhaseResult
   , prCopyWaitWall :: !DiffTime
   , prCopyEbWall :: !DiffTime
   -- ^ median duration of the copier's per-EB @copyToImmutable@ spans
-  , prProbeWall :: !DiffTime
-  -- ^ median duration of the copier's @completenessProbe@ sub-spans
   , prMarkWall :: !DiffTime
   , prSweepWall :: !DiffTime
   , prReinitWall :: !DiffTime
@@ -530,14 +529,15 @@ runPhases ::
   [(Word64, BS.ByteString)] ->
   Int ->
   IO [PhaseResult]
+<<<<<<< HEAD
 runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
-  conn <- open db
+  writer <- openWriter db
   remainingRef <- newIORef schedule
   promotedRef <- newIORef (0 :: Int)
   freshRef <- newIORef (0 :: Int)
   -- Time one fresh full-EB insertion (announcement + body + txs) through the
   -- given connection; the fresh EBs live at slots no frontier ever reaches.
-  let timedInsertEbWith c = do
+  let timedInsertEbWith w = do
         k <- atomicModifyIORef' freshRef (\cnt -> (cnt + 1, cnt))
         let ebIdx = 10_000_000 + k
             point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
@@ -546,9 +546,11 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
         snd
           <$> timed
             ( do
-                leiosDbInsertEbPoint c point (encodeLeiosEbSize eb)
-                _ <- leiosDbInsertEbBody c point eb
-                _ <- leiosDbInsertTxs c txs
+                pointWritten <- writeEbPoint w point (encodeLeiosEbSize eb)
+                bodyWritten <- writeEbBody w point eb
+                txsWritten <- writeTxs w txs
+                -- Awaiting all three times them to durability.
+                awaitAll [pointWritten, void bodyWritten, void txsWritten]
                 pure ()
             )
   _ <- flushEvents -- discard events from handle setup
@@ -573,7 +575,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
             due = due0 ++ dueExtra
         writeIORef remainingRef rest
         -- 1. quiescent full-EB insertion latency at the current load
-        insertWalls <- replicateM insertSamples (timedInsertEbWith conn)
+        insertWalls <- replicateM insertSamples (timedInsertEbWith writer)
         resident <- volatileEbs <$> leiosDbSampleStats db
         -- 2. promote a fraction, wait for the copier to land them
         let nPromote =
@@ -602,7 +604,6 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
                 , prPromoteWall = promoteWall
                 , prCopyWaitWall = copyWaitWall
                 , prCopyEbWall = medianTime (spanDurations "copyToImmutable" evs)
-                , prProbeWall = medianTime (spanDurations "completenessProbe" evs)
                 , prMarkWall = markWall
                 , prSweepWall = sweepWall
                 , prReinitWall = sum (spanDurations "reinitialiseGcTxCandidates" evs)
@@ -614,8 +615,96 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
                 }
         putStrLn (renderPhase i result)
         pure (Just result)
-  close conn
+  close writer
   pure (catMaybes results)
+=======
+runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
+  withWriter db $ \writer -> do
+    remainingRef <- newIORef schedule
+    promotedRef <- newIORef (0 :: Int)
+    freshRef <- newIORef (0 :: Int)
+    -- Time one fresh full-EB insertion (announcement + body + txs) through the
+    -- given connection; the fresh EBs live at slots no frontier ever reaches.
+    let timedInsertEbWith w = do
+          k <- atomicModifyIORef' freshRef (\cnt -> (cnt + 1, cnt))
+          let ebIdx = 10_000_000 + k
+              point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
+              eb = genEb opts ebIdx
+              txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
+          snd
+            <$> timed
+              ( do
+                  pointWritten <- writeEbPoint w point (encodeLeiosEbSize eb)
+                  bodyWritten <- writeEbBody w point eb
+                  txsWritten <- writeTxs w txs
+                  -- Awaiting all three times them to durability.
+                  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+                  pure ()
+              )
+    _ <- flushEvents -- discard events from handle setup
+    _ <- atomicModifyIORef' latRef (\m -> (0, m))
+    results <- forM (zip [1 :: Int ..] (phaseSeries (optScenario opts))) $ \(i, (scenario, n)) -> do
+      remaining <- readIORef remainingRef
+      let (due0, rest0) = splitAt n remaining
+      if length due0 < n
+        then do
+          hPutStrLn stderr $
+            "phase " <> show i <> ": skipped (wants " <> show n <> " EBs, schedule exhausted)"
+          pure Nothing
+        else do
+          -- The frontier that makes exactly the next N EBs collectable; EBs
+          -- sharing the last covered slot (fixture mode) are pulled in too.
+          let frontier = case due0 of
+                [] -> case rest0 of
+                  (s, _) : _ -> s
+                  [] -> 0
+                _ -> fst (last due0) + 1
+              (dueExtra, rest) = span ((< frontier) . fst) rest0
+              due = due0 ++ dueExtra
+          writeIORef remainingRef rest
+          -- 1. quiescent full-EB insertion latency at the current load
+          insertWalls <- replicateM insertSamples (timedInsertEbWith writer)
+          resident <- volatileEbs <$> leiosDbSampleStats db
+          -- 2. promote a fraction, wait for the copier to land them
+          let nPromote =
+                -- ceiling, so the 1-EB steady phases promote their EB and
+                -- exercise the copier (floor would promote none)
+                ceiling (promoteFraction * fromIntegral (length due) :: Double)
+          (_, promoteWall) <- timed $
+            forM_ (take nPromote due) $ \(s, h) ->
+              leiosDbPromoteToImmutable db (MkLeiosPoint (SlotNo s) (MkEbHash h))
+          promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
+          (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
+          -- 3. GC: mark, then wait for the sweeper to drain
+          (_, markWall) <- timed $ leiosDbGarbageCollect db (SlotNo frontier)
+          (_, sweepWall) <- timed $ awaitZero "sweep" sweepBacklog
+          tickLat <- atomicModifyIORef' latRef (\m -> (0, m))
+          evs <- flushEvents
+          let stats = List.foldl' addEvent emptyCycleStats evs
+              result =
+                PhaseResult
+                  { prScenario = scenario
+                  , prPacing = gcPacingName (optGcPacing opts)
+                  , prGcable = length due
+                  , prResident = resident
+                  , prPromoted = nPromote
+                  , prInsertEbWall = medianTime insertWalls
+                  , prPromoteWall = promoteWall
+                  , prCopyWaitWall = copyWaitWall
+                  , prCopyEbWall = medianTime (spanDurations "copyToImmutable" evs)
+                  , prMarkWall = markWall
+                  , prSweepWall = sweepWall
+                  , prReinitWall = sum (spanDurations "reinitialiseGcTxCandidates" evs)
+                  , prEbLoopWall = sum (spanDurations "sweepEbBatch" evs)
+                  , prOrphanLoopWall = sum (spanDurations "sweepOrphanBatch" evs)
+                  , prCheckpointWall = sum (spanDurations "walCheckpoint" evs)
+                  , prStats = stats
+                  , prTickLat = tickLat
+                  }
+          putStrLn (renderPhase i result)
+          pure (Just result)
+    pure (catMaybes results)
+>>>>>>> dc66df1fc (fixup! LeiosDB: bracket every reader and writer)
  where
   awaitCopier target = go (0 :: Int)
    where
@@ -877,7 +966,6 @@ renderSummary opts results =
     , stat "promote           " (map prPromoteWall rs)
     , stat "copy wait         " (map prCopyWaitWall rs)
     , stat "copy eb (median)  " (map prCopyEbWall rs)
-    , stat "probe (median)    " (map prProbeWall rs)
     , stat "mark              " (map prMarkWall rs)
     , stat "sweep             " (map prSweepWall rs)
     , stat "gc-candidates init" (map prReinitWall rs)

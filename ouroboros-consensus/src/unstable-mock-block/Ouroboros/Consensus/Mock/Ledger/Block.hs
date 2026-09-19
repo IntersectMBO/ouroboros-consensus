@@ -90,7 +90,7 @@ import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (leiosDbLookupEbClosure)
+import LeiosDemoDb (lookupEbClosure)
 import LeiosDemoTypes (LeiosClosureError (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
@@ -151,7 +151,7 @@ instance
   ResolveLeiosBlock (SimpleBlock' c ext ext)
   where
   resolveLeiosClosure leiosDb ebHash =
-    leiosDbLookupEbClosure leiosDb ebHash <&> \case
+    lookupEbClosure leiosDb ebHash <&> \case
       Nothing -> Left $ LeiosClosureMissing ebHash
       Just txs -> Right $ fmap (fmap (deserialise . Lazy.fromStrict)) txs
 
