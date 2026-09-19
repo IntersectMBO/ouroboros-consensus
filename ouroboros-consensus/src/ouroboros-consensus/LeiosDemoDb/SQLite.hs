@@ -39,6 +39,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , check
   , dupTChan
   , isEmptyTBQueue
+  , modifyTVar
   , newBroadcastTChan
   , newEmptyTMVarIO
   , newTBQueueIO
@@ -46,6 +47,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , putTMVar
   , readTMVar
   , readTVar
+  , readTVarIO
   , tryReadTBQueue
   , writeTBQueue
   , writeTChan
@@ -68,7 +70,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
 import qualified Data.Set as Set
 import Data.String (fromString)
@@ -176,7 +178,7 @@ openLeiosDBSQLiteWithGcBatchSize ::
 openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
-  statsVar <- newIORef =<< initialStats volLeiosDbPath immLeiosDbPath
+  statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
   samplerId <- startVolatileStatsSampler tracer statsVar volLeiosDbPath
   -- Both start set, so a restart picks up whatever the last run left
@@ -217,7 +219,7 @@ openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSiz
         , leiosDbGarbageCollect =
             sqlGarbageCollect tracer gcRootCtx writeQueue
         , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copyPending
-        , leiosDbSampleStats = readIORef statsVar
+        , leiosDbSampleStats = readTVarIO statsVar
         , openReader = openSQLiteReader tracer volLeiosDbPath immLeiosDbPath statsVar
         , openWriter = pure (sqliteWriter writeQueue)
         }
@@ -232,13 +234,13 @@ openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSiz
 newLeiosDBSQLiteReadOnly :: Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLiteReadOnly tracer volLeiosDbPath immLeiosDbPath = do
   notificationChan <- atomically newBroadcastTChan
-  statsVar <- newIORef =<< initialStats volLeiosDbPath immLeiosDbPath
+  statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
   pure $
     LeiosDbHandle
       { subscribeEbNotifications = atomically (dupTChan notificationChan)
       , leiosDbGarbageCollect = \_ -> pure ()
       , leiosDbPromoteToImmutable = \_ -> pure ()
-      , leiosDbSampleStats = readIORef statsVar
+      , leiosDbSampleStats = readTVarIO statsVar
       , openReader = do
           volDb <- openReadOnlyRawConnection volLeiosDbPath
           immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
@@ -275,12 +277,12 @@ initialStats volPath immPath = do
 -- | Fork a thread that traces 'TraceLeiosDbStats' every 10 seconds. Samples
 -- the volatile partition's file only.
 startVolatileStatsSampler ::
-  Tracer IO TraceLeiosDb -> IORef LeiosDbStats -> FilePath -> IO ThreadId
+  Tracer IO TraceLeiosDb -> StrictTVar IO LeiosDbStats -> FilePath -> IO ThreadId
 startVolatileStatsSampler tracer statsVar volPath =
   forkIO $ forever $ do
     -- wait one sample window to side-step contention with starting the LeiosDB
     threadDelay tenSeconds
-    stats <- readIORef statsVar
+    stats <- readTVarIO statsVar
     -- read the WAL size
     walBytes <- fileSizeOr0 (volPath <> "-wal")
     traceWith tracer $
@@ -301,18 +303,20 @@ bumpVolatileStats :: Conn -> Int -> IO ()
 bumpVolatileStats Conn{connStats} = bumpVolatileStatsRef connStats
 
 -- | 'bumpVolatileStats' for the maintenance paths, which have no 'Conn'.
-bumpVolatileStatsRef :: IORef LeiosDbStats -> Int -> IO ()
+bumpVolatileStatsRef :: StrictTVar IO LeiosDbStats -> Int -> IO ()
 bumpVolatileStatsRef statsVar dEbs =
   unless (dEbs == 0) $
-    atomicModifyIORef' statsVar $ \s ->
-      (s{volatileEbs = s.volatileEbs + dEbs}, ())
+    atomically $
+      modifyTVar statsVar $
+        \s -> s{volatileEbs = s.volatileEbs + dEbs}
 
 -- | Fold a delta into the immutable EB count of the in-memory 'LeiosDbStats'.
-bumpImmutableStats :: IORef LeiosDbStats -> Int -> IO ()
+bumpImmutableStats :: StrictTVar IO LeiosDbStats -> Int -> IO ()
 bumpImmutableStats statsVar dEbs =
   unless (dEbs == 0) $
-    atomicModifyIORef' statsVar $ \s ->
-      (s{immutableEbs = s.immutableEbs + dEbs}, ())
+    atomically $
+      modifyTVar statsVar $
+        \s -> s{immutableEbs = s.immutableEbs + dEbs}
 
 -- | Open a strictly read-only connection, for sampling DB statistics.
 --
@@ -449,7 +453,7 @@ finalizeCopierConn CopierConn{..} = do
 -- volatile rows as copied (@status = 2@, evictable). Runs on the writer.
 copyEbToImmutable ::
   Tracer IO TraceLeiosDb ->
-  IORef LeiosDbStats ->
+  StrictTVar IO LeiosDbStats ->
   CopierConn ->
   EbHash ->
   IO ()
@@ -824,7 +828,7 @@ data Conn = Conn
   -- ^ Precompiled statements used with the volatile partition.
   , connTracer :: !(Tracer IO TraceLeiosDb)
   -- ^ So the write path can report exhausting SQLite's own busy timeout.
-  , connStats :: !(IORef LeiosDbStats)
+  , connStats :: !(StrictTVar IO LeiosDbStats)
   -- ^ Usage stats for this connection.
   , conImmDb :: !DB.Database
   -- ^ The connection to the immutable partition.
@@ -916,7 +920,7 @@ openSQLiteReader ::
   Tracer IO TraceLeiosDb ->
   FilePath ->
   FilePath ->
-  IORef LeiosDbStats ->
+  StrictTVar IO LeiosDbStats ->
   IO (LeiosDbReader IO)
 openSQLiteReader tracer volPath immPath statsVar = do
   volDb <- openVolRawConnection volPath
@@ -927,7 +931,7 @@ openSQLiteReader tracer volPath immPath statsVar = do
 -- statement; 'closeConn' undoes it.
 mkConn ::
   Tracer IO TraceLeiosDb ->
-  IORef LeiosDbStats ->
+  StrictTVar IO LeiosDbStats ->
   DB.Database ->
   DB.Database ->
   IO Conn
@@ -1112,7 +1116,7 @@ writerQueueDepth = numUpstreamPeers + forge + maintenance + slack
 -- worker survives it.
 startWriter ::
   Tracer IO TraceLeiosDb ->
-  IORef LeiosDbStats ->
+  StrictTVar IO LeiosDbStats ->
   StrictTChan IO LeiosEbNotification ->
   StrictTVar IO Bool ->
   StrictTVar IO Bool ->
