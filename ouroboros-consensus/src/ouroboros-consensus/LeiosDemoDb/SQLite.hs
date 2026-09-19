@@ -12,6 +12,7 @@ module LeiosDemoDb.SQLite
   , newLeiosDBSQLite
   , newLeiosDBSQLiteWithGcPacing
   , newLeiosDBSQLiteReadOnly
+  , openLeiosDBSQLite
   , openLeiosDBSQLiteWithGcPacing
   , withLeiosDBSQLite
 
@@ -170,16 +171,19 @@ newLeiosDBSQLiteWithGcPacing tracer volLeiosDbPath immLeiosDbPath gcBatchSize gc
 withLeiosDBSQLite ::
   Tracer IO TraceLeiosDb -> FilePath -> FilePath -> (LeiosDbHandle IO -> IO a) -> IO a
 withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath action =
-  MonadThrow.bracket
-    ( openLeiosDBSQLiteWithGcPacing
-        tracer
-        volLeiosDbPath
-        immLeiosDbPath
-        defaultGcBatchSize
-        defaultGcBatchPauseMicros
-    )
-    snd
-    (action . fst)
+  MonadThrow.bracket (openLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath) snd (action . fst)
+
+-- | 'newLeiosDBSQLite' together with its teardown, for callers whose lifetime
+-- does not fit a bracket -- e.g. the node, which tears down on shutdown.
+openLeiosDBSQLite ::
+  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO, IO ())
+openLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
+  openLeiosDBSQLiteWithGcPacing
+    tracer
+    volLeiosDbPath
+    immLeiosDbPath
+    defaultGcBatchSize
+    defaultGcBatchPauseMicros
 
 -- | 'newLeiosDBSQLiteWithGcPacing' together with its teardown, for callers
 -- that outlive the database (see 'withLeiosDBSQLite' for the bracket).
