@@ -77,10 +77,12 @@ import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
-  ( LeiosDbHandle (openWriter, subscribeEbNotifications)
+  ( LeiosDbHandle (subscribeEbNotifications)
   , LeiosDbReader
+  , LeiosDbWriter
   , LeiosEbNotification (..)
   , withReader
+  , withWriter
   )
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
@@ -342,6 +344,7 @@ data Handlers m addr blk = Handlers
         , m Void
         )
   , hLeiosFetchClient ::
+      LeiosDbWriter m ->
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
@@ -679,9 +682,7 @@ mkHandlers
                           )
 
           pure (leiosNotifyServerPeerLookahead incr next, pump)
-      , hLeiosFetchClient = \_version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
-          -- This client's submission point into the node's one write path.
-          writer <- openWriter leiosDB
+      , hLeiosFetchClient = \writer _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           pure $
             ( leiosFetchClientPeerPipelined $
@@ -1491,16 +1492,17 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
       }
     channel = do
       labelThisThread "LeiosFetchClient"
-      bracketLeiosPeer them isBigLedgerPeer $ \peerVars -> do
-        ((), trailing) <-
-          runPipelinedPeerWithLimits
-            (TraceLabelPeer them `contramap` tLeiosFetchTracer)
-            (cLeiosFetchCodec (mkCodecs version))
-            blLeiosFetch
-            timeLimitsLeiosFetch
-            channel
-            $ hLeiosFetchClient version controlMessageSTM them peerVars
-        pure (NoInitiatorResult, trailing)
+      bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
+        withWriter leiosDB $ \writer -> do
+          ((), trailing) <-
+            runPipelinedPeerWithLimits
+              (TraceLabelPeer them `contramap` tLeiosFetchTracer)
+              (cLeiosFetchCodec (mkCodecs version))
+              blLeiosFetch
+              timeLimitsLeiosFetch
+              channel
+              $ hLeiosFetchClient writer version controlMessageSTM them peerVars
+          pure (NoInitiatorResult, trailing)
 
   aLeiosFetchServer ::
     NodeToNodeVersion ->

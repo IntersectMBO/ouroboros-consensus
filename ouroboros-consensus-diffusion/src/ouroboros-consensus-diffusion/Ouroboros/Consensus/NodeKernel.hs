@@ -865,10 +865,6 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   label :: String
   label = "NodeKernel.blockForging"
 
-  -- 'LeiosDbReader' is not thread-safe, so we open one per
-  -- forge-credentials thread (and close it when the thread exits).
-  -- The writer is this thread's submission point into the node's one
-  -- write path; closing it merely flushes.
   allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf

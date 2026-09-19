@@ -56,6 +56,7 @@ import LeiosDemoDb
   , batchRetrieveTxs
   , lookupEbBody
   )
+import LeiosDemoException (LeiosDbException)
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -1019,7 +1020,14 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                 traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
       case source of
         ForgedBlock{} -> traceCompleted
-        ReceivedBlockFrom{} -> void $ forkIO traceCompleted
+        ReceivedBlockFrom{} ->
+          -- The 'await' runs on its own thread, so a write failure surfaces
+          -- there -- trace it there too, or it only reaches stderr. Swallowed
+          -- after tracing: this thread has no caller to rethrow to.
+          void $
+            forkIO $
+              traceCompleted `catch` \(e :: LeiosDbException) ->
+                traceWith tracer (TraceLeiosPeerDbException e)
   -- The cache updates: the fetch logic reads them to decide what is still
   -- missing, so they must land before we return.
   --
