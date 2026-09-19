@@ -69,6 +69,7 @@ const sidebars = {
               'references/block_diagrams_of_data',
               'references/additional_material',
               'references/technical_reports',
+	      'references/leiosfetch_spec',
               { type: 'category',
                 label: 'Miscellaneous',
 		items: ['references/miscellaneous/about_ouroboros',
