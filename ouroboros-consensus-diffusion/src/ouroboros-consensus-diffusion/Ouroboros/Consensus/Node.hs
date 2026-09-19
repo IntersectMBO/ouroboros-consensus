@@ -264,7 +264,9 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   -- https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf.
   , rnTxSubmissionInitDelay :: TxSubmissionInitDelay
   , rnLeiosDb :: LeiosDbHandle m
-  -- ^ Caller-supplied Leios demo DB factory.
+  -- ^ Caller-supplied Leios demo DB factory. The caller owns its lifecycle:
+  -- it must outlive the node and be torn down after 'run' returns (see
+  -- 'LeiosDemoDb.openLeiosDBSQLite').
   }
 
 -- | Arguments that usually only tests /directly/ specify.

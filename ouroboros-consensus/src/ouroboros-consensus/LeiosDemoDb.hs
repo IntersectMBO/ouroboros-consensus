@@ -24,6 +24,7 @@ module LeiosDemoDb
   , newLeiosDBSQLiteWithGcPacing
   , newLeiosDBSQLite
   , newLeiosDBSQLiteReadOnly
+  , openLeiosDBSQLite
   , openLeiosDBSQLiteWithGcPacing
   , withLeiosDBSQLite
 
@@ -64,6 +65,7 @@ import LeiosDemoDb.SQLite
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLiteReadOnly
   , newLeiosDBSQLiteWithGcPacing
+  , openLeiosDBSQLite
   , openLeiosDBSQLiteWithGcPacing
   , sql_insert_eb
   , sql_insert_ebBody
