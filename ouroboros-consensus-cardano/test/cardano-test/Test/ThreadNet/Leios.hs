@@ -678,9 +678,9 @@ prop_leios_late_join seed =
 -- more than a statement about a stalled network.
 prop_leios_invalid_eb :: Seed -> Property
 prop_leios_invalid_eb seed
-  -- An unlucky seed where the adversary never led early enough to announce an
-  -- EB with time to diffuse. There is nothing to conclude either way, so don't
-  -- count the run rather than passing it vacuously.
+  -- In this run the adversary led in no slot from which an EB can reach an
+  -- honest node. The run is no evidence for the property or against it. The
+  -- property discards the run instead of a vacuous pass.
   | Set.null poisonedPointsToDiffuse = discard
   -- Whether any honest EB reaches quorum is seed-dependent: votes scatter
   -- across forks, so a 4-node run can finish with nothing certified at all.
@@ -719,22 +719,43 @@ prop_leios_invalid_eb seed
 
   traces = testOutput.allTraces
 
-  -- 'TraceLeiosBlockForged' is emitted by the forger only, so the emitting
-  -- node id attributes each EB to whoever made it.
-  forgedBy nid = Set.fromList $ flip mapMaybe traces $ \case
-    FromNode nid' (FromLeios TraceLeiosBlockForged{slot, eb})
-      | nid' == nid ->
-          Just (MkLeiosPoint slot (hashLeiosEb eb))
+  -- Which node forged each EB. Only the forger emits
+  -- 'TraceLeiosBlockForged', so the node id on the event names the forger.
+  forgerOf = Map.fromList $ flip mapMaybe traces $ \case
+    FromNode nid (FromLeios TraceLeiosBlockForged{slot, eb}) ->
+      Just (MkLeiosPoint slot (hashLeiosEb eb), nid)
     _ -> Nothing
 
-  poisonedPoints = forgedBy adversary
+  poisonedPoints = Map.keysSet $ Map.filter (== adversary) forgerOf
 
-  -- Only EBs forged early enough to have 'minCertificationGap' slots left can
-  -- be expected to reach an honest node at all — the same bound 'prop_leios'
-  -- uses for diffusion.
+  -- The first slot in this run from which an EB can reach another node. It is
+  -- the slot of the earliest EB that a node acquired but did not forge.
+  --
+  -- A node offers an EB only to the peers that are connected when it stores
+  -- the EB. It never offers an EB that it already holds. An EB from a slot
+  -- before the ThreadNet edges come up therefore reaches no peer. Other nodes
+  -- still see the announcement of that EB over ChainSync. A node fetches an EB
+  -- only from a peer that offers it, and the announcement names no such peer.
+  --
+  -- 'TraceLeiosBlockTxsAcquired' marks a completed fetch. An event from a node
+  -- that did not forge the EB is therefore a witness. A peer offered that EB,
+  -- so the edges were up.
+  firstDiffusedSlot =
+    Set.lookupMin $ Set.fromList $ flip mapMaybe traces $ \case
+      FromNode nid (FromLeios (TraceLeiosBlockTxsAcquired point _age))
+        | Map.lookup point forgerOf /= Just nid -> Just point.pointSlotNo
+      _ -> Nothing
+
+  -- The poisoned EBs that can reach an honest node. An EB from a slot after
+  -- @numSlots - minCertificationGap@ has too little time left. 'prop_leios'
+  -- uses the same bound for diffusion. An EB from a slot before
+  -- 'firstDiffusedSlot' has no peer that can receive it.
   poisonedPointsToDiffuse =
     Set.filter
-      (\p -> unSlotNo p.pointSlotNo + minCertGap <= numSlots)
+      ( \p ->
+          any (<= p.pointSlotNo) firstDiffusedSlot
+            && unSlotNo p.pointSlotNo + minCertGap <= numSlots
+      )
       poisonedPoints
 
   acquiredByHonest = Set.fromList $ flip mapMaybe traces $ \case
