@@ -22,11 +22,11 @@ module LeiosDemoDb
 
     -- * SQLite implementation
   , newLeiosDBSQLiteFromEnv
-  , newLeiosDBSQLiteWithGcPacing
+  , newLeiosDBSQLiteWithGcBatchSize
   , newLeiosDBSQLite
   , newLeiosDBSQLiteReadOnly
   , openLeiosDBSQLite
-  , openLeiosDBSQLiteWithGcPacing
+  , openLeiosDBSQLiteWithGcBatchSize
   , withLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -66,9 +66,9 @@ import LeiosDemoDb.SQLite
   , newLeiosDBSQLite
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLiteReadOnly
-  , newLeiosDBSQLiteWithGcPacing
+  , newLeiosDBSQLiteWithGcBatchSize
   , openLeiosDBSQLite
-  , openLeiosDBSQLiteWithGcPacing
+  , openLeiosDBSQLiteWithGcBatchSize
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx

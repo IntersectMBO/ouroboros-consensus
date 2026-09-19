@@ -114,7 +114,7 @@ import LeiosDemoDb
   , TraceLeiosDb (..)
   , awaitAll
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteWithGcPacing
+  , newLeiosDBSQLiteWithGcBatchSize
   , withWriter
   )
 import LeiosDemoTypes
@@ -124,13 +124,6 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , TxHash (..)
   , encodeLeiosEbSize
-  )
-import LeiosUtils.CallTrace
-  ( CallEvent (..)
-  , CallInfo (..)
-  , CallMeasure (..)
-  , CallTrace (..)
-  , SomeJsonCallTrace (..)
   )
 import Options.Applicative hiding (action)
 import System.Directory (copyFile, doesFileExist)
@@ -158,7 +151,7 @@ main = do
     (tracer, flushEvents) <- mkCollectingTracer
     let mkDb = case optGcPacing opts of
           GcPacingDefault -> newLeiosDBSQLite tracer benchVol benchImm
-          GcPacingZero -> newLeiosDBSQLiteWithGcPacing tracer benchVol benchImm 0 0
+          GcPacingZero -> newLeiosDBSQLiteWithGcBatchSize tracer benchVol benchImm 0
     -- get the series of (slot, ebHash)
     (db, schedule) <- case optDbPath opts of
       Just path -> do
@@ -371,10 +364,10 @@ optsParser =
           <> value GcPacingDefault
           <> showDefaultWith gcPacingName
           <> help
-            "Sweeper pacing: default (4-EB eviction batches, 100ms pauses \
-            \in between) or zero (one unbounded eviction transaction, no \
-            \pauses) --- zero measures raw sweep work and the unprotected \
-            \worst-case write-lock hold"
+            "Sweep batching: default (4-EB eviction batches, with the \
+            \writer's other work interleaved between them) or zero (one \
+            \unbounded eviction transaction) --- zero measures raw sweep \
+            \work and the unprotected worst-case write-lock hold"
       )
     <*> option
       auto
@@ -502,19 +495,8 @@ data PhaseResult = PhaseResult
   -- ^ median over the phase's timed full-EB insertions
   , prPromoteWall :: !DiffTime
   , prCopyWaitWall :: !DiffTime
-  , prCopyEbWall :: !DiffTime
-  -- ^ median duration of the copier's per-EB @copyToImmutable@ spans
   , prMarkWall :: !DiffTime
   , prSweepWall :: !DiffTime
-  , prReinitWall :: !DiffTime
-  -- ^ the sweeper's one-off GC-candidates initialisation, when it ran in
-  -- this phase (0 otherwise)
-  , prEbLoopWall :: !DiffTime
-  -- ^ total EB-eviction loop time (batches + pacing sleeps)
-  , prOrphanLoopWall :: !DiffTime
-  -- ^ total orphan-tx loop time (batches + pacing sleeps)
-  , prCheckpointWall :: !DiffTime
-  -- ^ total WAL checkpoint time across the phase's sweep passes
   , prStats :: !CycleStats
   , prTickLat :: !DiffTime
   }
@@ -601,13 +583,8 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
                   , prInsertEbWall = medianTime insertWalls
                   , prPromoteWall = promoteWall
                   , prCopyWaitWall = copyWaitWall
-                  , prCopyEbWall = medianTime (spanDurations "copyToImmutable" evs)
                   , prMarkWall = markWall
                   , prSweepWall = sweepWall
-                  , prReinitWall = sum (spanDurations "reinitialiseGcTxCandidates" evs)
-                  , prEbLoopWall = sum (spanDurations "sweepEbBatch" evs)
-                  , prOrphanLoopWall = sum (spanDurations "sweepOrphanBatch" evs)
-                  , prCheckpointWall = sum (spanDurations "walCheckpoint" evs)
                   , prStats = stats
                   , prTickLat = tickLat
                   }
@@ -636,15 +613,6 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
 medianTime :: [DiffTime] -> DiffTime
 medianTime [] = 0
 medianTime ts = List.sort ts !! (length ts `div` 2)
-
--- | Durations of the named call-trace spans among the collected events.
-spanDurations :: String -> [TraceLeiosDb] -> [DiffTime]
-spanDurations name evs =
-  [ cmDuration m
-  | TraceLeiosDbCall (SomeJsonCallTrace ct) <- evs
-  , ciCallName (ctCallInfo ct) == name
-  , CallEnd _ m <- [ctEvent ct]
-  ]
 
 -- * Sweep backlog probes
 
@@ -788,14 +756,9 @@ csvHeader =
     , "insertEbSeconds"
     , "promoteSeconds"
     , "copyWaitSeconds"
-    , "copyEbSeconds"
     , "evictedEbRows"
     , "markSeconds"
     , "sweepSeconds"
-    , "reinitGcCandidatesSeconds"
-    , "ebLoopSeconds"
-    , "orphanLoopSeconds"
-    , "walCheckpointSeconds"
     ]
 
 renderPhase :: Int -> PhaseResult -> String
@@ -810,13 +773,8 @@ renderPhase
     , prInsertEbWall
     , prPromoteWall
     , prCopyWaitWall
-    , prCopyEbWall
     , prMarkWall
     , prSweepWall
-    , prReinitWall
-    , prEbLoopWall
-    , prOrphanLoopWall
-    , prCheckpointWall
     , prStats = cs
     } =
     List.intercalate
@@ -831,14 +789,9 @@ renderPhase
       , showSeconds prInsertEbWall
       , showSeconds prPromoteWall
       , showSeconds prCopyWaitWall
-      , showSeconds prCopyEbWall
       , show (csEvicted cs)
       , showSeconds prMarkWall
       , showSeconds prSweepWall
-      , showSeconds prReinitWall
-      , showSeconds prEbLoopWall
-      , showSeconds prOrphanLoopWall
-      , showSeconds prCheckpointWall
       ]
 
 renderStats :: String -> LeiosDbStats -> String
@@ -874,13 +827,8 @@ renderSummary opts results =
     , stat "insert eb (median)" (map prInsertEbWall rs)
     , stat "promote           " (map prPromoteWall rs)
     , stat "copy wait         " (map prCopyWaitWall rs)
-    , stat "copy eb (median)  " (map prCopyEbWall rs)
     , stat "mark              " (map prMarkWall rs)
     , stat "sweep             " (map prSweepWall rs)
-    , stat "gc-candidates init" (map prReinitWall rs)
-    , stat "eb loop           " (map prEbLoopWall rs)
-    , stat "orphan loop       " (map prOrphanLoopWall rs)
-    , stat "wal checkpoint    " (map prCheckpointWall rs)
     , stat "tick latency      " (map prTickLat rs)
     ]
    where

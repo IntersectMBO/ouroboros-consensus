@@ -10,10 +10,10 @@
 module LeiosDemoDb.SQLite
   ( newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteWithGcPacing
+  , newLeiosDBSQLiteWithGcBatchSize
   , newLeiosDBSQLiteReadOnly
   , openLeiosDBSQLite
-  , openLeiosDBSQLiteWithGcPacing
+  , openLeiosDBSQLiteWithGcBatchSize
   , withLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -36,14 +36,15 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , StrictTChan
   , StrictTMVar
   , StrictTVar
+  , check
   , dupTChan
+  , isEmptyTBQueue
   , isFullTBQueue
   , newBroadcastTChan
   , newEmptyTMVarIO
   , newTBQueueIO
   , newTVarIO
   , putTMVar
-  , readTBQueue
   , readTMVar
   , readTVar
   , tryReadTBQueue
@@ -51,13 +52,9 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTChan
   , writeTVar
   )
-import Control.Concurrent.MVar (MVar, newMVar, takeMVar, tryPutMVar)
 import Control.Exception
-  ( BlockedIndefinitelyOnMVar
-  , BlockedIndefinitelyOnSTM (..)
-  , Handler (..)
+  ( BlockedIndefinitelyOnSTM (..)
   , SomeException
-  , catches
   , fromException
   , throwIO
   , toException
@@ -144,26 +141,19 @@ newLeiosDBSQLiteFromEnv tracer = do
 -- threads. All writers submit to the one write connection created here, on
 -- its own worker thread.
 --
--- Note: this will also start two background treads that implement garbage collection.
+-- Note: this also starts a thread that samples the database's size.
 newLeiosDBSQLite :: Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
-  newLeiosDBSQLiteWithGcPacing
-    tracer
-    volLeiosDbPath
-    immLeiosDbPath
-    defaultGcBatchSize
-    defaultGcBatchPauseMicros
+  newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath defaultGcBatchSize
 
--- | 'newLeiosDBSQLite' with explicit parameters for the GC sweep phase:
--- 'gcBatchSize' sets how many EBs are evicted in one batch,
--- 'gcBatchPauseMicros' sets the delay between batches of EBs and transactions.
+-- | 'newLeiosDBSQLite' with an explicit GC sweep batch size: how many EBs
+-- the writer evicts per turn, between the jobs it serves.
 --
 -- Note that orphan transaction batch size is set by the 'gcOrphanTxBatchSize' constant.
-newLeiosDBSQLiteWithGcPacing ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> Int -> IO (LeiosDbHandle IO)
-newLeiosDBSQLiteWithGcPacing tracer volLeiosDbPath immLeiosDbPath gcBatchSize gcBatchPauseMicros =
-  fst
-    <$> openLeiosDBSQLiteWithGcPacing tracer volLeiosDbPath immLeiosDbPath gcBatchSize gcBatchPauseMicros
+newLeiosDBSQLiteWithGcBatchSize ::
+  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
+newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize =
+  fst <$> openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
 
 -- | 'newLeiosDBSQLite' bracketed with its teardown: on release every pending
 -- write has landed, the background threads are gone and the connections are
@@ -178,42 +168,43 @@ withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath action =
 openLeiosDBSQLite ::
   Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO, IO ())
 openLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
-  openLeiosDBSQLiteWithGcPacing
-    tracer
-    volLeiosDbPath
-    immLeiosDbPath
-    defaultGcBatchSize
-    defaultGcBatchPauseMicros
+  openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath defaultGcBatchSize
 
--- | 'newLeiosDBSQLiteWithGcPacing' together with its teardown, for callers
+-- | 'newLeiosDBSQLiteWithGcBatchSize' together with its teardown, for callers
 -- that outlive the database (see 'withLeiosDBSQLite' for the bracket).
-openLeiosDBSQLiteWithGcPacing ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> Int -> IO (LeiosDbHandle IO, IO ())
-openLeiosDBSQLiteWithGcPacing tracer volLeiosDbPath immLeiosDbPath gcBatchSize gcBatchPauseMicros = do
+openLeiosDBSQLiteWithGcBatchSize ::
+  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO, IO ())
+openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newIORef =<< initialStats volLeiosDbPath immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
   samplerId <- startVolatileStatsSampler tracer statsVar volLeiosDbPath
   copyQueue <- newTBQueueIO copyQueueCapacity
-  sweepDoorbell <- newMVar ()
+  -- Rung by the GC mark phase, read by the writer between jobs. Starts rung
+  -- so a restart sweeps whatever the last run left marked.
+  sweepDoorbell <- newTVarIO True
   gcRootCtx <- rootCallCtx "leiosdb-gc"
 
-  -- The database's one writer: every write to either partition -- ingest and
-  -- maintenance alike -- is a job on this queue, run by one worker on the
-  -- only open write connections, created with the database and torn down by
-  -- the returned action (or by orphanhood, for callers that never tear down).
+  -- The database's one writer: every write to either partition -- ingest,
+  -- promotion, GC -- happens on this one worker, on the only open write
+  -- connections, created with the database and torn down by the returned
+  -- action (or by orphanhood, for callers that never tear down).
   writeQueue <-
-    startWriter tracer statsVar notificationChan copyQueue sweepDoorbell volLeiosDbPath immLeiosDbPath
+    startWriter
+      tracer
+      statsVar
+      notificationChan
+      copyQueue
+      sweepDoorbell
+      gcBatchSize
+      volLeiosDbPath
+      immLeiosDbPath
 
-  -- The maintenance schedulers: they decide when copy and sweep work happens
-  -- and submit it to the writer, batch by batch.
-  copierId <- startCopier tracer writeQueue copyQueue
-  sweeperId <- startSweeper tracer statsVar writeQueue sweepDoorbell gcBatchSize gcBatchPauseMicros
   let teardown = do
-        -- The sampler and schedulers hold no connections -- they only pace
-        -- and submit -- so killing them is safe at any point.
-        mapM_ killThread [samplerId, copierId, sweeperId]
+        -- The sampler holds no connection -- it only reads counters -- so
+        -- killing it is safe at any point.
+        killThread samplerId
         -- Flushes every pending write, then closes the connections. A dead
         -- worker refuses the job -- its death path has closed them already --
         -- but a failed close propagates: a leaked connection must be loud.
@@ -451,18 +442,6 @@ data CopierConn = CopierConn
   -- ^ 'sql_mark_as_copied', against the attached volatile partition
   }
 
--- | Stop the computation upon receiving a blocked notification from the RTS.
---
--- Useful for gracefully stopping the background GC threads of LeiosDB, as otherwise
--- they'll continue running indefinitely after the LeiosDB handle is de-allocated
--- and the default exception handler will be spamming messages to stderr.
-untilOrphaned :: IO () -> IO ()
-untilOrphaned loop =
-  loop
-    `catches` [ Handler $ \(_ :: BlockedIndefinitelyOnSTM) -> pure ()
-              , Handler $ \(_ :: BlockedIndefinitelyOnMVar) -> pure ()
-              ]
-
 -- | Prepare the copy statements on the writer's immutable connection, which
 -- must already have the volatile partition ATTACHed as @vol@.
 prepareCopierConn :: HasCallStack => DB.Database -> IO CopierConn
@@ -484,36 +463,6 @@ finalizeCopierConn CopierConn{..} = do
   dbFinalize ccInsertEbTxs
   dbFinalize ccInsertTxs
   dbFinalize ccMarkAsCopied
-
--- | The copier consumes the queue, submitting one 'CopyEb' job per pinned EB
--- to the writer. On a failed copy the EB stays pinned; the GC tick's
--- self-heal re-enqueues it.
-startCopier ::
-  Tracer IO TraceLeiosDb ->
-  WriteQueue ->
-  -- TODO(geo2a): should this be bounded? We don't want the copy thread to be stuck
-  StrictTBQueue IO EbHash ->
-  IO ThreadId
-startCopier tracer writeQueue copyQueue = do
-  let taskName = "leiosdb-copier"
-  rootCtx <- rootCallCtx taskName
-  threadId <- forkIO $ untilOrphaned $ forever $ do
-    ebHash <- IO.atomically $ readTBQueue copyQueue
-    copySpan
-      rootCtx
-      "copyToImmutable"
-      (show ebHash)
-      (\_ctx -> await =<< submitJob writeQueue (CopyEb ebHash))
-      `MonadThrow.catch` \(e :: SomeException) -> do
-        traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (show e)
-        threadDelay 1000000
-  labelThread threadId taskName
-  pure threadId
- where
-  copySpan ::
-    (Aeson.ToJSON arg, Aeson.ToJSON res) =>
-    CallCtx IO -> CallName -> arg -> (CallCtx IO -> IO res) -> IO res
-  copySpan = callTraceSameThread (traceWith tracer . TraceLeiosDbCall . SomeJsonCallTrace)
 
 -- | Copy one pinned EB's closure into the immutable partition and mark its
 -- volatile rows as copied (@status = 2@, evictable). Runs on the writer.
@@ -612,10 +561,6 @@ orCloseOnError db act =
 defaultGcBatchSize :: Int64
 defaultGcBatchSize = 4
 
--- | Pause between GC sweep batches, by default.
-defaultGcBatchPauseMicros :: Int
-defaultGcBatchPauseMicros = 100000
-
 -- | How many orphaned txs to GC in one sweep.
 gcOrphanTxBatchSize :: Int64
 gcOrphanTxBatchSize = 1024
@@ -645,22 +590,22 @@ sqlGarbageCollect tracer rootCtx writeQueue gcSlot =
 --   - mark for GC (@status = 3@) every EB hash all of whose announcements are older
 --     than the given slot and not pinned (@status = 1@);
 --   - stage its txs as GC candidates;
---   - wake up the sweeper thread.
+--   - ask for a sweep.
 --
 -- Runs on the writer. It does not do much work, but rather primes the state
--- for the sweeper thread to schedule the actual GC (see 'startSweeper').
+-- for the writer's own sweep steps (see 'startWriter').
 gcMark ::
   HasCallStack =>
   Tracer IO TraceLeiosDb ->
   StrictTBQueue IO EbHash ->
-  MVar () ->
+  StrictTVar IO Bool ->
   DB.Database ->
   GcStmts ->
   SlotNo ->
   IO ()
 gcMark tracer copyQueue sweepDoorbell db gcStmts gcSlot = do
   let GcStmts{gsStalePins, gsHasWork, gsAddGcCandidatesTxs, gsMarkEbForGC} = gcStmts
-  -- Self-heal: re-enqueue pinned-but-not-yet-copied EBs to the copier.
+  -- Self-heal: re-enqueue pinned-but-not-yet-copied EBs for copying.
   -- Recovers a crashed copy.
   stalePins <- useStmt gsStalePins $ do
     dbBindInt64 gsStalePins 1 slot
@@ -688,8 +633,8 @@ gcMark tracer copyQueue sweepDoorbell db gcStmts gcSlot = do
         nEbsMarked <- DB.changes db
         pure (nTxsStagedAsGCCandidates, nEbsMarked)
     when (nTxsStagedAsGCCandidates > 0 || nEbsMarked > 0) $
-      void $
-        tryPutMVar sweepDoorbell ()
+      atomically $
+        writeTVar sweepDoorbell True
  where
   slot = fromIntegral (unSlotNo gcSlot)
 
@@ -800,93 +745,6 @@ finalizeSweeperConn SweeperConn{..} = do
   dbFinalize swHasUnstagedGcCandidates
   dbFinalize swUnstagedGcCandidatesPage
   dbFinalize swInsertGcCandidates
-
--- | The SWEEP phase of GC mark-and-sweep: evict what the mark phase marked.
---
--- This thread only schedules: each batch is a job on the writer
--- ('SweepEbBatch', 'SweepOrphanBatch') of @gcBatchSize@ EBs (non-positive =
--- unbounded) with @gcBatchPauseMicros@ pauses in between, so eviction never
--- occupies the writer for long and ingest writes interleave between batches.
-startSweeper ::
-  Tracer IO TraceLeiosDb ->
-  IORef LeiosDbStats ->
-  WriteQueue ->
-  MVar () ->
-  Int64 ->
-  Int ->
-  IO ThreadId
-startSweeper tracer statsVar writeQueue doorbell gcBatchSize gcBatchPauseMicros = do
-  let taskName = "leiosdb-sweeper"
-  rootCtx <- rootCallCtx taskName
-  gcInitialisationDoneRef <- newIORef False
-  threadId <- forkIO $ untilOrphaned $ forever $ do
-    takeMVar doorbell
-    sweepPass rootCtx gcInitialisationDoneRef
-      `MonadThrow.catch` \(e :: SomeException) -> do
-        traceWith tracer $ TraceLeiosDbGCError (show e)
-        -- Pause and re-ring the doorbell to retry the pass.
-        threadDelay 1000000
-        void $ tryPutMVar doorbell ()
-  labelThread threadId taskName
-  pure threadId
- where
-  sweepSpan ::
-    (Aeson.ToJSON arg, Aeson.ToJSON res) =>
-    CallCtx IO -> CallName -> arg -> (CallCtx IO -> IO res) -> IO res
-  sweepSpan = callTraceSameThread (traceWith tracer . TraceLeiosDbCall . SomeJsonCallTrace)
-
-  -- this launches one sweep pass: ebLoop + orphanTxsLoop
-  sweepPass rootCtx gcInitialisationDoneRef =
-    sweepSpan rootCtx "sweepPass" () $ \passCtx -> do
-      reinitialiseGcTxCandidates passCtx gcInitialisationDoneRef
-      -- Note: `ebLoop` and `orphanTxsLoop` delete objects form the volatile LeiosDB in batches,
-      -- making pauses in-between the batches; hence, their callTrace spans will include
-      -- the pauses (and the batches' time in the write queue).
-      nEbs <- sweepSpan passCtx "sweepEbBatch" () $ \_ -> ebLoop 0
-      -- GC their transactions
-      nTxs <- sweepSpan passCtx "sweepOrphanBatch" () $ \_ -> orphanTxsLoop 0
-      when (nEbs > 0 || nTxs > 0) $ do
-        -- Flush the WAL only after real work.
-        sweepSpan passCtx "walCheckpoint" () $ \_ ->
-          await =<< submitJob writeQueue WalCheckpoint
-        traceWith tracer (TraceLeiosDbEvicted nEbs)
-
-  -- Evict EBs in batches of 'gcBatchSize' per transaction.
-  --
-  -- This function delays for 'gcBatchPauseMicros' per transaction so that
-  -- other writer jobs (ingest above all) interleave between the batches.
-  ebLoop !totalEbsEvicted = do
-    nEbs <- await =<< submitJob writeQueue (SweepEbBatch gcBatchSize)
-    if nEbs == 0
-      then
-        -- this GC batch did not do any work, we're done
-        pure totalEbsEvicted
-      else do
-        -- this GC batch did work, update stats and continue to the next batch after a delay
-        bumpVolatileStatsRef statsVar (negate nEbs)
-        threadDelay gcBatchPauseMicros
-        ebLoop (totalEbsEvicted + nEbs)
-
-  -- Evict orphaned transactions in batches, 'gcOrphanTxBatchSize' per transaction.
-  orphanTxsLoop !totalTxsEvicted = do
-    mEvictedTxs <- await =<< submitJob writeQueue (SweepOrphanBatch gcOrphanTxBatchSize)
-    case mEvictedTxs of
-      Nothing ->
-        -- this GC batch did not do any work, we're done
-        pure totalTxsEvicted
-      Just nTxs -> do
-        -- this GC batch did work, continue to the next batch after a delay
-        threadDelay gcBatchPauseMicros
-        orphanTxsLoop (totalTxsEvicted + nTxs)
-
-  -- Initialise the 'gcTxCandidates' table.
-  -- Runs once per process and does useful work after node restart.
-  reinitialiseGcTxCandidates passCtx gcInitialisationDoneRef = do
-    done <- readIORef gcInitialisationDoneRef
-    unless done $ do
-      sweepSpan passCtx "reinitialiseGcTxCandidates" () $ \_ ->
-        await =<< submitJob writeQueue GcReinit
-      writeIORef gcInitialisationDoneRef True
 
 -- | One 'SweepEbBatch' transaction: evict up to the given number of GC-marked
 -- EBs. Runs on the writer.
@@ -1152,13 +1010,11 @@ sqliteReader conn =
 
 -- | One queued write, carrying the variable its result lands in.
 --
--- The ingest jobs come from 'LeiosDbWriter'; the maintenance jobs from the
--- handle's promote\/GC entry points and the copier\/sweeper schedulers. One
--- worker running them all is what makes the single-writer property total: no
--- two in-process connections ever contend for a write lock.
---
--- TODO: the worker runs jobs strictly FIFO; it could become queue-aware and
--- have maintenance jobs yield to pending ingest writes.
+-- The ingest jobs come from 'LeiosDbWriter', the rest from the handle's
+-- promote\/GC entry points. One worker running them all is what makes the
+-- single-writer property total: no two in-process connections ever contend
+-- for a write lock. Copying and sweeping are not jobs at all -- the worker
+-- does them between jobs; see 'startWriter'.
 data WriteJob
   = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
   | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
@@ -1170,21 +1026,22 @@ data WriteJob
     PinEb !EbHash !(WriteResult ())
   | -- | The GC MARK phase; see 'gcMark'.
     GcMark !SlotNo !(WriteResult ())
-  | -- | Copy one pinned EB into the immutable partition; see 'copyEbToImmutable'.
-    CopyEb !EbHash !(WriteResult ())
-  | -- | Stage the unstaged GC tx candidates; see 'gcReinit'.
-    GcReinit !(WriteResult ())
-  | -- | Evict one batch of GC-marked EBs; see 'sweepEbBatch'.
-    SweepEbBatch !Int64 !(WriteResult Int)
-  | -- | Evict one batch of orphaned txs; see 'sweepOrphanBatch'.
-    SweepOrphanBatch !Int64 !(WriteResult (Maybe Int))
-  | -- | @wal_checkpoint(PASSIVE)@ on the volatile partition, after a sweep.
-    WalCheckpoint !(WriteResult ())
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
     Shutdown !(WriteResult ())
 
 type WriteResult a = StrictTMVar IO (Either SomeException a)
+
+-- | How far a sweep pass has got. The writer advances it one batch per turn
+-- rather than running a pass to completion, so ingest waits for a batch at
+-- most.
+data SweepState
+  = SweepIdle
+  | -- | Evicting GC-marked EBs; carries how many so far.
+    SweepEbs !Int
+  | -- | Evicting the txs they orphaned; carries the EB and tx counts.
+    SweepOrphans !Int !Int
+  deriving Eq
 
 -- | The writer's submission side: the job queue, and -- once the worker has
 -- stopped -- the exception every submission throws instead of queueing.
@@ -1229,11 +1086,6 @@ describeJob = \case
   Flush _ -> "Flush"
   PinEb ebHash _ -> "PinEb " <> show ebHash
   GcMark slot _ -> "GcMark " <> show slot
-  CopyEb ebHash _ -> "CopyEb " <> show ebHash
-  GcReinit _ -> "GcReinit"
-  SweepEbBatch n _ -> "SweepEbBatch " <> show n
-  SweepOrphanBatch n _ -> "SweepOrphanBatch " <> show n
-  WalCheckpoint _ -> "WalCheckpoint"
   Shutdown _ -> "Shutdown"
 
 -- | Publish the worker's parting exception as a queued job's result.
@@ -1245,11 +1097,6 @@ failJob cause = \case
   Flush rv -> put rv
   PinEb _ rv -> put rv
   GcMark _ rv -> put rv
-  CopyEb _ rv -> put rv
-  GcReinit rv -> put rv
-  SweepEbBatch _ rv -> put rv
-  SweepOrphanBatch _ rv -> put rv
-  WalCheckpoint rv -> put rv
   Shutdown rv -> put rv
  where
   put :: WriteResult a -> IO ()
@@ -1285,11 +1132,12 @@ startWriter ::
   IORef LeiosDbStats ->
   StrictTChan IO LeiosEbNotification ->
   StrictTBQueue IO EbHash ->
-  MVar () ->
+  StrictTVar IO Bool ->
+  Int64 ->
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter tracer statsVar notificationChan copyQueue sweepDoorbell volPath immPath = do
+startWriter tracer statsVar notificationChan copyQueue sweepDoorbell gcBatchSize volPath immPath = do
   volDb <- openVolRawConnection volPath
   immDb <- orCloseOnError volDb $ openRawConnection immPath
   -- A throw anywhere below closes both connections (best effort -- an
@@ -1311,6 +1159,8 @@ startWriter tracer statsVar notificationChan copyQueue sweepDoorbell volPath imm
       `MonadThrow.onException` (void (DB.close immDb) >> void (DB.close volDb))
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
+  sweepStateRef <- newIORef SweepIdle
+  gcReinitDoneRef <- newIORef False
   let notify = atomically . writeTChan notificationChan
 
       -- Statements before connections; an open statement holds the close off.
@@ -1321,49 +1171,99 @@ startWriter tracer statsVar notificationChan copyQueue sweepDoorbell volPath imm
         dbFinalize pinStmt
         closeConn conn
 
+      runJob :: WriteJob -> IO Bool
+      runJob = \case
+        Shutdown resultVar -> do
+          -- No rethrow: a failed close must not close a second time.
+          result <- MonadThrow.try closeConnections
+          atomically $ putTMVar resultVar result
+          pure True
+        WriteEbPoint point size resultVar ->
+          publish resultVar (sqlInsertEbPoint conn point size) >> pure False
+        WriteEbBody point eb resultVar ->
+          publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure False
+        WriteTxs txs resultVar ->
+          publish resultVar (sqlInsertTxs tracer conn notify txs) >> pure False
+        Flush resultVar ->
+          publish resultVar (pure ()) >> pure False
+        PinEb ebHash resultVar -> do
+          publishMaintenance volDb immDb resultVar $
+            dbWithWriteTransactionRaw tracer volDb $
+              useStmt pinStmt $ do
+                dbBindBlob pinStmt 1 ebHash.ebHashBytes
+                dbStep1Safe pinStmt
+          pure False
+        GcMark slot resultVar -> do
+          publishMaintenance volDb immDb resultVar $
+            gcMark tracer copyQueue sweepDoorbell volDb gcStmts slot
+          pure False
+
+      -- One turn: at most one queued job, then at most one unit of
+      -- maintenance. Neither starves the other -- which is what maintenance
+      -- got for free while it shared this queue -- and a sweep no longer
+      -- needs to pace itself with sleeps to let ingest in.
       serve = do
-        job <- IO.atomically $ readTBQueue queue
-        case job of
-          Shutdown resultVar -> do
-            -- No rethrow: a failed close must not close a second time.
-            result <- MonadThrow.try closeConnections
-            atomically $ putTMVar resultVar result
-          WriteEbPoint point size resultVar ->
-            publish resultVar (sqlInsertEbPoint conn point size) >> serve
-          WriteEbBody point eb resultVar ->
-            publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> serve
-          WriteTxs txs resultVar ->
-            publish resultVar (sqlInsertTxs tracer conn notify txs) >> serve
-          Flush resultVar ->
-            publish resultVar (pure ()) >> serve
-          PinEb ebHash resultVar -> do
-            publishMaintenance volDb immDb resultVar $
-              dbWithWriteTransactionRaw tracer volDb $
-                useStmt pinStmt $ do
-                  dbBindBlob pinStmt 1 ebHash.ebHashBytes
-                  dbStep1Safe pinStmt
-            serve
-          GcMark slot resultVar -> do
-            publishMaintenance volDb immDb resultVar $
-              gcMark tracer copyQueue sweepDoorbell volDb gcStmts slot
-            serve
-          CopyEb ebHash resultVar -> do
-            publishMaintenance volDb immDb resultVar $
+        sweeping <- (/= SweepIdle) <$> readIORef sweepStateRef
+        -- Block until there is anything at all to do.
+        IO.atomically $ do
+          noJobs <- isEmptyTBQueue queue
+          noCopies <- isEmptyTBQueue copyQueue
+          rung <- readTVar sweepDoorbell
+          check (not noJobs || not noCopies || rung || sweeping)
+        stop <-
+          atomically (tryReadTBQueue queue) >>= \case
+            Nothing -> pure False
+            Just job -> runJob job
+        unless stop $ stepMaintenance >> serve
+
+      -- Copy one pinned EB, or advance a sweep by one batch. A failure here
+      -- is the maintenance's problem, not the writer's: trace it, roll back
+      -- anything left open, and let the next GC tick re-enqueue the work.
+      stepMaintenance =
+        step `MonadThrow.catch` \(e :: LeiosDbException) -> do
+          _ <- DB.exec volDb "ROLLBACK"
+          _ <- DB.exec immDb "ROLLBACK"
+          traceWith tracer $ TraceLeiosDbGCError (MonadThrow.displayException e)
+          writeIORef sweepStateRef SweepIdle
+       where
+        step =
+          atomically (tryReadTBQueue copyQueue) >>= \case
+            Just ebHash ->
               copyEbToImmutable tracer statsVar copierConn ebHash
-            serve
-          GcReinit resultVar -> do
-            publishMaintenance volDb immDb resultVar (gcReinit tracer sweeperConn)
-            serve
-          SweepEbBatch batchSize resultVar -> do
-            publishMaintenance volDb immDb resultVar (sweepEbBatch tracer sweeperConn batchSize)
-            serve
-          SweepOrphanBatch batchSize resultVar -> do
-            publishMaintenance volDb immDb resultVar (sweepOrphanBatch tracer sweeperConn batchSize)
-            serve
-          WalCheckpoint resultVar -> do
-            publishMaintenance volDb immDb resultVar $
-              dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
-            serve
+                `MonadThrow.catch` \(e :: LeiosDbException) ->
+                  -- The EB stays pinned, so the next tick's self-heal
+                  -- re-enqueues it; nothing here to retry.
+                  traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (MonadThrow.displayException e)
+            Nothing ->
+              readIORef sweepStateRef >>= \case
+                SweepIdle -> do
+                  asked <- atomically $ do
+                    rung <- readTVar sweepDoorbell
+                    when rung $ writeTVar sweepDoorbell False
+                    pure rung
+                  when asked $ do
+                    -- Stages the GC tx candidates a restart left behind.
+                    done <- readIORef gcReinitDoneRef
+                    unless done $ do
+                      gcReinit tracer sweeperConn
+                      writeIORef gcReinitDoneRef True
+                    writeIORef sweepStateRef (SweepEbs 0)
+                SweepEbs nEbs -> do
+                  evicted <- sweepEbBatch tracer sweeperConn gcBatchSize
+                  if evicted == 0
+                    then writeIORef sweepStateRef (SweepOrphans nEbs 0)
+                    else do
+                      bumpVolatileStatsRef statsVar (negate evicted)
+                      writeIORef sweepStateRef (SweepEbs (nEbs + evicted))
+                SweepOrphans nEbs nTxs ->
+                  sweepOrphanBatch tracer sweeperConn gcOrphanTxBatchSize >>= \case
+                    Just evicted -> writeIORef sweepStateRef (SweepOrphans nEbs (nTxs + evicted))
+                    Nothing -> do
+                      when (nEbs > 0 || nTxs > 0) $ do
+                        -- Flush the WAL only after real work.
+                        dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
+                        traceWith tracer $ TraceLeiosDbEvicted nEbs
+                      writeIORef sweepStateRef SweepIdle
 
   threadId <- forkIO $ do
     outcome <- MonadThrow.try serve
