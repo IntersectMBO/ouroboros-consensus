@@ -19,7 +19,7 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (foldM, forM_, unless, when)
-import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
+import Control.Monad.Class.MonadThrow (Exception, catch, throwIO, toException)
 import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, contramap, nullTracer, traceWith)
@@ -51,12 +51,12 @@ import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbReader
+  , LeiosDbWriteException
   , LeiosDbWriter (..)
   , Promise (..)
   , batchRetrieveTxs
   , lookupEbBody
   )
-import LeiosDemoException (LeiosDbException)
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -154,6 +154,16 @@ import System.Random (StdGen)
 traceException :: (IOLike m, Exception e) => Tracer m a -> (e -> a) -> m b -> m b
 traceException tracer toTrace action =
   action `catch` \e -> traceWith tracer (toTrace e) >> throwIO e
+
+-- | Run an 'await' tail on its own thread: a write failure surfaces there, so
+-- trace it there too, or it only reaches stderr. Swallowed after tracing --
+-- the thread has no caller to rethrow to.
+forkTracedAwait :: IOLike m => Tracer m TraceLeiosPeer -> m () -> m ()
+forkTracedAwait tracer action =
+  void $
+    forkIO $
+      action `catch` \(e :: LeiosDbWriteException) ->
+        traceWith tracer (TraceLeiosPeerDbException (toException e))
 
 {-------------------------------------------------------------------------------
   Shadow LeiosTxCache wiring
@@ -1006,13 +1016,14 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       -- be present (announcement handling inserts it); until then insert
       -- it idempotently as a stop-gap and trace a warning.
       traceWith ktracer $ TraceLeiosBlockPointMissing point
-      _ <- writeEbPoint writer point ebBytesSize
+      pointWritten <- writeEbPoint writer point ebBytesSize
       bodyWritten <- writeEbBody writer point eb
-      -- Wait for the write to complete (and trace) synchronously when we are
+      -- Wait for the writes to complete (and trace) synchronously when we are
       -- forging: need to ensure the data is written before advertising it.
       -- TODO: do we really? Can we just optimistically continue and risk a peer
       -- disconnect if we can't serve what we offer "in time"?
       let traceCompleted = do
+            await pointWritten
             completedByBody <- await bodyWritten
             unless (null completedByBody) $ do
               st <- Leios.ebState <$> MVar.readMVar outstandingVar
@@ -1020,14 +1031,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                 traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
       case source of
         ForgedBlock{} -> traceCompleted
-        ReceivedBlockFrom{} ->
-          -- The 'await' runs on its own thread, so a write failure surfaces
-          -- there -- trace it there too, or it only reaches stderr. Swallowed
-          -- after tracing: this thread has no caller to rethrow to.
-          void $
-            forkIO $
-              traceCompleted `catch` \(e :: LeiosDbException) ->
-                traceWith tracer (TraceLeiosPeerDbException e)
+        ReceivedBlockFrom{} -> forkTracedAwait tracer traceCompleted
   -- The cache updates: the fetch logic reads them to decide what is still
   -- missing, so they must land before we return.
   --
@@ -1394,7 +1398,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
         -- The forge's closure has to be on disk before the RB that references
         -- it goes out.
         ForgedTxs{} -> traceCompleted
-        _ -> void $ forkIO traceCompleted
+        _ -> forkTracedAwait tracer traceCompleted
     -- The cache update: the fetch logic consults it to decide what is still
     -- missing, so it cannot lag behind the caller.
     arrival <- case applied of

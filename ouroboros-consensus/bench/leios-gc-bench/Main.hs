@@ -113,6 +113,7 @@ import LeiosDemoDb
   , LeiosDbWriter (..)
   , Promise (await)
   , TraceLeiosDb (..)
+  , awaitAll
   , newLeiosDBSQLite
   , newLeiosDBSQLiteWithGcPacing
   , withReader
@@ -427,10 +428,10 @@ populateDb opts db =
           point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
           eb = genEb opts ebIdx
           txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
-      _ <- writeEbPoint writer point (encodeLeiosEbSize eb)
-      _ <- writeEbBody writer point eb
-      -- The queue is FIFO, so awaiting the last write covers all three.
-      _ <- await =<< writeTxs writer txs
+      pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
+      bodyWritten <- writeEbBody writer point eb
+      txsWritten <- writeTxs writer txs
+      awaitAll [pointWritten, void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
 
 -- | Drop the tx -> referencing-EB index from the volatile partition
@@ -545,10 +546,11 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore = do
         snd
           <$> timed
             ( do
-                _ <- writeEbPoint w point (encodeLeiosEbSize eb)
-                _ <- writeEbBody w point eb
-                -- Awaiting the last write times all three to durability.
-                _ <- await =<< writeTxs w txs
+                pointWritten <- writeEbPoint w point (encodeLeiosEbSize eb)
+                bodyWritten <- writeEbBody w point eb
+                txsWritten <- writeTxs w txs
+                -- Awaiting all three times them to durability.
+                awaitAll [pointWritten, void bodyWritten, void txsWritten]
                 pure ()
             )
   _ <- flushEvents -- discard events from handle setup

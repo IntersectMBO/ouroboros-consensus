@@ -31,6 +31,7 @@ import LeiosDemoDb
   ( LeiosDbReader
   , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
   , Promise (await)
+  , awaitAll
   )
 import LeiosDemoTypes
   ( ForgedLeiosEb (..)
@@ -213,11 +214,10 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   -- both LeiosNotify and the LeiosTxCache require the announcement first.
   storeEb :: ForgedLeiosEb -> IO ()
   storeEb forgedEb = do
-    _ <- writeEbPoint leiosDbWriter forgedEb.point (encodeLeiosEbSize forgedEb.body)
-    _ <- writeEbBody leiosDbWriter forgedEb.point forgedEb.body
-    writeTxs leiosDbWriter forgedEb.txClosure
-      -- Awaiting the last write flushes all three
-      >>= void . await
+    pointWritten <- writeEbPoint leiosDbWriter forgedEb.point (encodeLeiosEbSize forgedEb.body)
+    bodyWritten <- writeEbBody leiosDbWriter forgedEb.point forgedEb.body
+    txsWritten <- writeTxs leiosDbWriter forgedEb.txClosure
+    awaitAll [pointWritten, void bodyWritten, void txsWritten]
     traceWith leiosTracer $
       TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
 

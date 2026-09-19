@@ -45,6 +45,7 @@ import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosDbWriter (..)
   , Promise (await)
+  , awaitAll
   , batchRetrieveTxs
   , leiosDbGarbageCollect
   , lookupEbBody
@@ -245,10 +246,10 @@ insertOneEb writer ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         , let h = genTxHash ebIdx txIdx
         ]
-  _ <- writeEbPoint writer point (encodeLeiosEbSize eb)
-  _ <- writeEbBody writer point eb
-  -- The queue is FIFO, so awaiting the last write covers all three.
-  void . await =<< writeTxs writer txs
+  pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
+  bodyWritten <- writeEbBody writer point eb
+  txsWritten <- writeTxs writer txs
+  awaitAll [pointWritten, void bodyWritten, void txsWritten]
 
 -- * Deterministic data generation
 

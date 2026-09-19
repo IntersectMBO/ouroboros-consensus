@@ -46,7 +46,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTBQueue
   , readTMVar
   , readTVar
-  , throwSTM
   , tryReadTBQueue
   , writeTBQueue
   , writeTChan
@@ -63,7 +62,7 @@ import Control.Exception
   , throwIO
   , toException
   )
-import Control.Monad (forever, unless, void)
+import Control.Monad (forever, join, unless, void)
 import Control.Monad.Class.MonadThrow (generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import Control.Tracer (Tracer, traceWith)
@@ -91,6 +90,7 @@ import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbHandle (..)
   , LeiosDbReader (..)
+  , LeiosDbWriteException (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
@@ -105,6 +105,7 @@ import LeiosDemoTypes
   , TxHash (..)
   , encodeLeiosEbSize
   , leiosEbBodyItems
+  , leiosEbTxs
   )
 import LeiosUtils.CallTrace
   ( CallCtx
@@ -1200,14 +1201,41 @@ data WriteQueue = WriteQueue
 -- seals the queue no job can slip in unserved: submission throws the
 -- worker's parting exception instead -- also waking any submitter that was
 -- blocked on a full queue.
-submitJob :: WriteQueue -> (WriteResult a -> WriteJob) -> IO (Promise IO a)
+submitJob :: HasCallStack => WriteQueue -> (WriteResult a -> WriteJob) -> IO (Promise IO a)
 submitJob WriteQueue{wqJobs, wqSealed} mkJob = do
   resultVar <- newEmptyTMVarIO
-  atomically $
-    readTVar wqSealed >>= \case
-      Just cause -> throwSTM cause
-      Nothing -> writeTBQueue wqJobs (mkJob resultVar)
-  pure $ Promise (either throwIO pure =<< atomically (readTMVar resultVar))
+  let job = mkJob resultVar
+      -- Failures surface far from their submitter -- on the worker, or on
+      -- whichever thread awaits -- so name the write and its submission site.
+      wrap cause =
+        LeiosDbWriteException
+          { writeJob = describeJob job
+          , submittedFrom = GHC.Stack.prettyCallStack GHC.Stack.callStack
+          , writeFailure = cause
+          }
+  join $
+    atomically $
+      readTVar wqSealed >>= \case
+        Just cause -> pure (throwIO (wrap cause))
+        Nothing -> writeTBQueue wqJobs job >> pure (pure ())
+  pure $ Promise (either (throwIO . wrap) pure =<< atomically (readTMVar resultVar))
+
+-- | Name a job for 'LeiosDbWriteException': what it is and what it is about,
+-- never its payload.
+describeJob :: WriteJob -> String
+describeJob = \case
+  WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
+  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
+  WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
+  Flush _ -> "Flush"
+  PinEb ebHash _ -> "PinEb " <> show ebHash
+  GcMark slot _ -> "GcMark " <> show slot
+  CopyEb ebHash _ -> "CopyEb " <> show ebHash
+  GcReinit _ -> "GcReinit"
+  SweepEbBatch n _ -> "SweepEbBatch " <> show n
+  SweepOrphanBatch n _ -> "SweepOrphanBatch " <> show n
+  WalCheckpoint _ -> "WalCheckpoint"
+  Shutdown _ -> "Shutdown"
 
 -- | Publish the worker's parting exception as a queued job's result.
 failJob :: SomeException -> WriteJob -> IO ()

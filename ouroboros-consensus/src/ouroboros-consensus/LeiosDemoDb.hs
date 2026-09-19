@@ -10,6 +10,8 @@ module LeiosDemoDb
   , withWriter
   , allocateReader
   , allocateWriter
+  , awaitAll
+  , LeiosDbWriteException (..)
   , CompletedEbs
   , TraceLeiosDb (..)
 
@@ -45,11 +47,13 @@ import LeiosDemoDb.Common
   , LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
+  , LeiosDbWriteException (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
   , allocateReader
   , allocateWriter
+  , awaitAll
   , withReader
   , withWriter
   )
