@@ -518,7 +518,7 @@ instance
       QueryStakePoolDefaultVote stakePool ->
         SL.queryStakePoolDefaultVote st stakePool
       GetPoolDistr2 mPoolIds ->
-        let stakeSet = SL.ssStakeSet . SL.esSnapshots $ getEpochState st
+        let stakeSet = SL.ssSnapShot . SL.ssStakeSet . SL.esSnapshots $ getEpochState st
          in SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
       GetStakeDistribution2 ->
         SL.poolsByTotalStakeFraction globals st
