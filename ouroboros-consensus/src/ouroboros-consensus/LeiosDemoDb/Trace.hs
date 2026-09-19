@@ -46,12 +46,8 @@ data TraceLeiosDb
   | -- | The background sweeper failed a sweep pass; the connection is
     -- dropped and the pass retried.
     TraceLeiosDbGCError String
-  | -- | The copy queue was full and the hash was dropped. Not a data-loss
-    -- signal (GC self-heal re-delivers), but a steady stream of these means
-    -- the copier cannot keep up with certification.
-    TraceLeiosDbCopyQueueFull String
-  | -- | The background copier failed on an EB (which stays pinned and will be
-    -- retried). Fields: the EB hash, then the reason.
+  | -- | Copying an EB failed. It stays pinned, so it is still the next one
+    -- to copy. Fields: the EB hash, then the reason.
     TraceLeiosDbCopyError String String
   | -- | A trace event for LeiosUtils.CallTrace spans
     TraceLeiosDbCall !SomeJsonCallTrace

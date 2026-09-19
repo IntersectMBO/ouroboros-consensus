@@ -1626,11 +1626,6 @@ jsonLeiosDb = \case
       [ "kind" .= Aeson.String "LeiosDbSweepError"
       , "reason" .= reason
       ]
-  TraceLeiosDbCopyQueueFull ebHash ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbCopyQueueFull"
-      , "ebHash" .= ebHash
-      ]
   TraceLeiosDbCopyError ebHash reason ->
     mconcat
       [ "kind" .= Aeson.String "LeiosDbCopyError"
@@ -1935,7 +1930,6 @@ data LeiosKernelNS
   | LKNSDbCopied
   | LKNSDbEvicted
   | LKNSDbSweepError
-  | LKNSDbCopyQueueFull
   | LKNSDbCopyError
   | LKNSCertifiedAndAnnounced
   | LKNSAnnouncementAccepted
@@ -1969,7 +1963,6 @@ leiosKernelNSOf = \case
   TraceLeiosDb TraceLeiosDbCopiedToImmutable{} -> LKNSDbCopied
   TraceLeiosDb TraceLeiosDbEvicted{} -> LKNSDbEvicted
   TraceLeiosDb TraceLeiosDbGCError{} -> LKNSDbSweepError
-  TraceLeiosDb TraceLeiosDbCopyQueueFull{} -> LKNSDbCopyQueueFull
   TraceLeiosDb TraceLeiosDbCopyError{} -> LKNSDbCopyError
   TraceLeiosDb{} -> LKNSDb
   TraceLeiosCertifiedAndAnnounced{} -> LKNSCertifiedAndAnnounced
@@ -2055,17 +2048,8 @@ leiosKernelNSInfo = \case
       ["Db", "SweepError"]
       LSWarning
       [("leiosDbSweepErrors", "LeiosDb: failed sweep passes (retried)")]
-  -- Both mean the copier fell behind or failed; harmless for data (the EB
-  -- stays pinned and GC self-heal retries) but worth an operator's eye.
-  LKNSDbCopyQueueFull ->
-    LeiosNSInfo
-      ["Db", "CopyQueueFull"]
-      LSWarning
-      [
-        ( "leiosDbCopyQueueFull"
-        , "LeiosDb: promotions dropped on a full copy queue (re-delivered by GC self-heal)"
-        )
-      ]
+  -- The EB stays pinned, so it is still the next one to copy; harmless for
+  -- data but worth an operator's eye.
   LKNSDbCopyError ->
     LeiosNSInfo
       ["Db", "CopyError"]
@@ -2169,8 +2153,6 @@ traceLeiosKernelForHuman = \case
     "Leios DB evicted from the volatile partition: ebs=" <> showT evictedEbs
   TraceLeiosDb (TraceLeiosDbGCError reason) ->
     "Leios DB sweep pass failed (will be retried): " <> T.pack reason
-  TraceLeiosDb (TraceLeiosDbCopyQueueFull ebHash) ->
-    "Leios DB copy queue full, dropped " <> T.pack ebHash <> " (harmless: GC self-heal re-delivers)"
   TraceLeiosDb (TraceLeiosDbCopyError ebHash reason) ->
     "Leios DB copy failed for "
       <> T.pack ebHash
