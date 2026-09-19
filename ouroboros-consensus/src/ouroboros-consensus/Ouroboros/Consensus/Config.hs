@@ -55,8 +55,10 @@ data TopLevelConfig blk = TopLevelConfig
   , topLevelConfigStorage :: !(StorageConfig blk)
   , topLevelConfigCheckpoints :: !(CheckpointsMap blk)
   , -- REVIEW: Is this the best way to route additional keys into consensus for Leios/Peras?
-    -- NOTE: This is just a BLS signing key and can also used by Peras
-    topLevelConfigVotingKey :: Maybe LeiosSigningKey
+    -- NOTE: These are just BLS signing keys and can also be used by Peras.
+    -- Votes are cast for every committee seat one of these keys holds; an
+    -- empty list disables voting.
+    topLevelConfigVotingKeys :: [LeiosSigningKey]
   }
   deriving Generic
 
@@ -102,7 +104,7 @@ mkTopLevelConfig ::
   CheckpointsMap blk ->
   TopLevelConfig blk
 mkTopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap =
-  TopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap Nothing
+  TopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap []
 
 configConsensus :: TopLevelConfig blk -> ConsensusConfig (BlockProtocol blk)
 configConsensus = topLevelConfigProtocol
@@ -143,7 +145,7 @@ castTopLevelConfig TopLevelConfig{..} =
     , topLevelConfigCodec = coerce topLevelConfigCodec
     , topLevelConfigStorage = coerce topLevelConfigStorage
     , topLevelConfigCheckpoints = coerce topLevelConfigCheckpoints
-    , topLevelConfigVotingKey = topLevelConfigVotingKey
+    , topLevelConfigVotingKeys = topLevelConfigVotingKeys
     }
 
 castCheckpointsMap ::

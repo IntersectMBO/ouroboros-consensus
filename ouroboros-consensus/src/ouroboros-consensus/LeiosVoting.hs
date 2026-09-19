@@ -46,6 +46,7 @@ import LeiosDemoTypes
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
   , LeiosSigningKey
+  , LeiosVerificationKey
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
@@ -241,8 +242,11 @@ slotOnset lcfg lst slot =
 
 -- * Voting loop
 
--- | Long-running thread, that issues votes if we have a voting key and are part
--- of the committee.
+-- | Long-running thread, that issues votes if we have voting keys and are part
+-- of the committee. Every committee seat held by one of the keys gets its own
+-- vote: a rotation pair keeps voting across the epoch boundary because only
+-- the currently registered key matches a seat, and a bundle of keys votes once
+-- per seat it covers.
 runLeiosVoting ::
   forall m blk.
   ( IOLike m
@@ -261,14 +265,14 @@ runLeiosVoting ::
   LeiosDbHandle m ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosVoteState m ->
-  Maybe LeiosSigningKey ->
+  [LeiosSigningKey] ->
   m ()
 runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
-  Nothing ->
+  [] ->
     traceWith tracer $
       MkTraceLeiosKernel
-        "runLeiosVoting: disabled because no topLevelConfigVotingKey"
-  Just sk ->
+        "runLeiosVoting: disabled because no topLevelConfigVotingKeys"
+  sks ->
     -- A 'LeiosDbConnection' is not thread-safe, so this thread owns one for its
     -- lifetime, the way each forge-credentials thread does.
     withLeiosDb leiosDB $ \leiosConn -> do
@@ -290,13 +294,14 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           >>= \case
             Left mPoint -> mapM_ scheduleVoteTime mPoint
             Right (point, deadline) ->
-              goVote leiosConn sk point deadline >>= \case
+              goVote leiosConn sks point deadline >>= \case
                 Left reason -> traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason}
                 Right () -> pure ()
  where
-  -- Decide whether to vote for an acquired EB and, if we may, cast the
-  -- vote. Every way of not voting leaves via 'throwE', and the reason is
-  -- traced once, here.
+  -- Decide whether to vote for an acquired EB and, if we may, cast one vote
+  -- per committee seat our keys hold. Every way of not voting at all leaves
+  -- via 'throwE', and the reason is traced once, at the call site; a single
+  -- rejected vote among cast ones is traced individually, here.
   --
   -- The deadline is checked twice, for two different reasons. Once up front,
   -- because a timer can fire already expired: 'scheduleVoteTime' arms on
@@ -308,15 +313,14 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
   -- an EB we would not vote for is never validated.
   goVote ::
     LeiosDbConnection m ->
-    -- \| Our voting key, to find our committee seat and sign votes.
-    LeiosSigningKey ->
+    -- \| Our voting keys
+    [LeiosSigningKey] ->
     -- \| The leios point of the EB to vote on.
     LeiosPoint ->
     -- \| The moment after which a vote is too late.
     RelativeTime ->
     m (Either LeiosNotVotedReason ())
-  goVote leiosConn sk point deadline = do
-    let vk = deriveVerKeyDSIGN sk
+  goVote leiosConn sks point deadline = do
     -- Before opening a forker, let alone validating: the window may already
     -- have shut before this timer was ever armed.
     expired <- (> deadline) <$> systemTimeCurrent systemTime
@@ -338,8 +342,16 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
               readTables = roforkerReadTables (ledgerStateReadOnlyForker forker)
           rbHash <-
             tipAnnouncerFor @blk hs point ?>= ChainTipDoesNotAnnounce
-          seatId <-
-            (getLeiosCommittee ls >>= getLeiosSeatId vk) ?>= NotOnCommittee
+          committee <-
+            getLeiosCommittee ls ?>= NotOnCommittee
+          let seats =
+                [ (sk, seatId)
+                | sk <- sks
+                , let vk = deriveVerKeyDSIGN sk
+                , Just seatId <- [getLeiosSeatId vk committee]
+                ]
+          when (null seats) $
+            throwE NotOnCommittee
 
           -- FIXME: Check the EB references size, txs size, ex units and ref scripts capacities
 
@@ -356,38 +368,46 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           when (now > deadline) $
             throwE TooLate
 
-          let vote = signLeiosVote sk seatId rbHash
-          ExceptT $
-            addVote vote
-              >>= \case
-                Added VoteTally{vtWeight, vtTally, vtThreshold} mCert -> fmap Right $ do
-                  traceWith tracer TraceLeiosVoted{vote, weight = vtWeight}
-                  traceWith tracer $
-                    TraceLeiosVoteAcquired
-                      { vote
-                      , weight = vtWeight
-                      , tally = vtTally
-                      , threshold = vtThreshold
-                      }
-                  -- Trace certification whenever the tally crosses
-                  -- 'minCertificationThreshold'. May fire more than once per
-                  -- point if subsequent votes also come in; consumers (e.g.
-                  -- ThreadNet's 'propCertifying') dedupe.
-                  case mCert of
-                    Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
-                    Nothing -> pure ()
-                -- A trace rather than an 'error', which under
-                -- 'forkLinkedThread' would take the node down.
-                --
-                -- TODO: do not vote across an epoch boundary at all. 'seatId'
-                -- comes from the forker above and 'addVote' re-reads the
-                -- committee from the current selection, with closure validation
-                -- in between, so a boundary crossed in that gap silently makes
-                -- the positional 'LeiosSeatId' someone else's seat. Signing
-                -- first and finding out afterwards is not the answer: we should
-                -- establish that we are still on the same committee, and still
-                -- hold that seat, before the vote is cast.
-                err -> pure . Left . VoteRejected . Text.pack $ show err
+          -- One vote per held seat. A rejected vote is traced here, per seat,
+          -- rather than 'error', which under 'forkLinkedThread' would take
+          -- the node down; the EB as a whole counts as voted on if any vote
+          -- was accepted.
+          --
+          -- TODO: do not vote across an epoch boundary at all. The seats
+          -- come from the forker above and 'addVote' re-reads the
+          -- committee from the current selection, with closure validation
+          -- in between, so a boundary crossed in that gap silently makes
+          -- the positional 'LeiosSeatId' someone else's seat. Signing
+          -- first and finding out afterwards is not the answer: we should
+          -- establish that we are still on the same committee, and still
+          -- hold those seats, before the votes are cast.
+          rejections <- lift $ flip filterM seats $ \(sk, seatId) -> do
+            let vote = signLeiosVote sk seatId rbHash
+            addVote vote >>= \case
+              Added VoteTally{vtWeight, vtTally, vtThreshold} mCert -> do
+                traceWith tracer TraceLeiosVoted{vote, weight = vtWeight}
+                traceWith tracer $
+                  TraceLeiosVoteAcquired
+                    { vote
+                    , weight = vtWeight
+                    , tally = vtTally
+                    , threshold = vtThreshold
+                    }
+                -- Trace certification whenever the tally crosses
+                -- 'minCertificationThreshold'. May fire more than once per
+                -- point if subsequent votes also come in; consumers (e.g.
+                -- ThreadNet's 'propCertifying') dedupe.
+                case mCert of
+                  Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
+                  Nothing -> pure ()
+                pure False
+              err -> do
+                let reason = VoteRejected . Text.pack $ show err
+                traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason}
+                pure True
+          when (length rejections == length seats) $
+            throwE . VoteRejected $
+              "all " <> Text.pack (show (length seats)) <> " votes rejected"
 
   LeiosVoteState{addVote} = voteState
 

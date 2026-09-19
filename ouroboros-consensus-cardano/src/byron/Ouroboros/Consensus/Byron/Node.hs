@@ -217,7 +217,7 @@ protocolInfoByron
             , topLevelConfigCodec = mkByronCodecConfig compactedGenesisConfig
             , topLevelConfigStorage = ByronStorageConfig blockConfig
             , topLevelConfigCheckpoints = emptyCheckpointsMap
-            , topLevelConfigVotingKey = Nothing
+            , topLevelConfigVotingKeys = []
             }
       , pInfoInitLedger =
           ExtLedgerState
