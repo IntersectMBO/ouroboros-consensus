@@ -36,8 +36,8 @@ import LeiosDemoDb
   , Promise (..)
   , deleteDanglingTxs
   , newLeiosDBInMemory
-  , newLeiosDBSQLite
   , truncateLeiosDbAfterSlot
+  , withLeiosDBSQLite
   , withReader
   , withWriter
   )
@@ -135,19 +135,13 @@ withFreshDb InMemory action =
 withFreshDb SQLite action = withFreshSQLiteDb action
 
 withFreshSQLiteDb :: (LeiosDbHandle IO -> IO a) -> IO a
-withFreshSQLiteDb action = do
-  sysTmp <- getCanonicalTemporaryDirectory
-  bracket
-    ( do
-        tmpDir <- createTempDirectory sysTmp "leios-test"
-        db <- newLeiosDBSQLite nullTracer (tmpDir <> "/test.db.vol") (tmpDir <> "/test.db.imm")
-        pure (db, removeDirectoryRecursive tmpDir)
-    )
-    snd
-    (action . fst)
+withFreshSQLiteDb action = withFreshSQLiteFile (\_vol _imm -> action)
 
--- | Create a fresh SQLite database and hand its path to the action, which
--- 'truncateLeiosDbAfterSlot' needs.
+-- | Create a fresh SQLite database and hand its paths to the action, which
+-- 'truncateLeiosDbAfterSlot' needs. The database is torn down -- writes
+-- flushed, threads stopped, connections closed -- before the directory is
+-- removed; a still-open connection makes the removal flaky (a hard failure
+-- on Windows, where deleting an open WAL is a sharing violation).
 withFreshSQLiteFile :: (FilePath -> FilePath -> LeiosDbHandle IO -> IO a) -> IO a
 withFreshSQLiteFile action = do
   sysTmp <- getCanonicalTemporaryDirectory
@@ -157,8 +151,8 @@ withFreshSQLiteFile action = do
     ( \tmpDir -> do
         let volDbPath = tmpDir <> "/test.db.vol"
             immDbPath = tmpDir <> "/test.db.imm"
-        db <- newLeiosDBSQLite nullTracer volDbPath immDbPath
-        action volDbPath immDbPath db
+        withLeiosDBSQLite nullTracer volDbPath immDbPath $
+          action volDbPath immDbPath
     )
 
 -- | Run tests for each database implementation.

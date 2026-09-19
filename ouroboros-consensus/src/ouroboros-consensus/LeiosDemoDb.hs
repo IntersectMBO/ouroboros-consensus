@@ -24,6 +24,8 @@ module LeiosDemoDb
   , newLeiosDBSQLiteWithGcPacing
   , newLeiosDBSQLite
   , newLeiosDBSQLiteReadOnly
+  , openLeiosDBSQLiteWithGcPacing
+  , withLeiosDBSQLite
 
     -- * Re-exported for internal tooling
   , truncateLeiosDbAfterSlot
@@ -62,11 +64,13 @@ import LeiosDemoDb.SQLite
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLiteReadOnly
   , newLeiosDBSQLiteWithGcPacing
+  , openLeiosDBSQLiteWithGcPacing
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx
   , sql_schema
   , truncateLeiosDbAfterSlot
   , vacuumLeiosDb
+  , withLeiosDBSQLite
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
