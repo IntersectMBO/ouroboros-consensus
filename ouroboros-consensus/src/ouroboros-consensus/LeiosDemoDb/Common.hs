@@ -1,5 +1,7 @@
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 
@@ -17,6 +19,8 @@ module LeiosDemoDb.Common
     -- * Writing
   , LeiosDbWriter (..)
   , Promise (..)
+  , awaitAll
+  , LeiosDbWriteException (..)
   , withWriter
   , allocateWriter
   , CompletedEbs
@@ -24,8 +28,10 @@ module LeiosDemoDb.Common
 
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
+import Control.Exception (Exception (..), SomeException)
 import Control.ResourceRegistry (ResourceRegistry, allocate)
 import Data.ByteString (ByteString)
+import Data.Foldable (traverse_)
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Trace (LeiosDbStats (..))
 import LeiosDemoTypes
@@ -111,9 +117,36 @@ data LeiosDbWriter m = LeiosDbWriter
 
 -- | The result of a submitted write.
 --
--- 'await' rethrows whatever the write threw, in the awaiting thread. Awaiting
--- twice is fine; not awaiting at all is fine too.
+-- 'await' rethrows whatever the write threw -- wrapped in
+-- 'LeiosDbWriteException', so it names the write and its submission site --
+-- in the awaiting thread. Awaiting twice is fine. Not awaiting discards the
+-- failure along with the result: collect promises and 'awaitAll' them
+-- instead, unless the write's fate genuinely does not matter.
 newtype Promise m a = Promise {await :: m a}
+  deriving stock Functor
+
+-- | Await every promise, in order.
+awaitAll :: (Foldable t, Applicative m) => t (Promise m ()) -> m ()
+awaitAll = traverse_ await
+
+-- | What 'await' rethrows when a submitted write failed: which write, where
+-- it was submitted from, and the failure itself.
+data LeiosDbWriteException = LeiosDbWriteException
+  { writeJob :: String
+  , submittedFrom :: String
+  -- ^ Pretty call stack of the submission site, when one was available.
+  , writeFailure :: SomeException
+  }
+  deriving stock Show
+
+instance Exception LeiosDbWriteException where
+  displayException LeiosDbWriteException{writeJob, submittedFrom, writeFailure} =
+    "LeiosDB write failed: "
+      <> writeJob
+      <> "\ncause: "
+      <> displayException writeFailure
+      <> "\nsubmitted from: "
+      <> submittedFrom
 
 -- | EBs whose tx closure became complete as a result of a write.
 type CompletedEbs = [LeiosPoint]

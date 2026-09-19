@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module LeiosDemoDb.InMemory
   ( InMemoryLeiosDb (..)
@@ -31,11 +32,13 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import GHC.Stack (HasCallStack, callStack, prettyCallStack)
 import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbHandle (..)
   , LeiosDbReader (..)
   , LeiosDbStats (..)
+  , LeiosDbWriteException (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
@@ -53,6 +56,8 @@ import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , NoThunks (..)
   , atomically
+  , throwIO
+  , try
   )
 
 -- | In-memory database state.
@@ -133,9 +138,12 @@ openInMemoryReader stateVar =
         scanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
       }
 
--- | No worker and no queue: the state is a 'StrictTVar', so each write is
--- already atomic and its 'Promise' comes back already resolved.
+-- | No worker and no queue: the state is a 'StrictTVar', so each write runs
+-- at submission and its 'Promise' comes back already resolved. A failure is
+-- captured rather than thrown here, so it surfaces at 'await' exactly like
+-- the SQLite backend's.
 openInMemoryWriter ::
+  forall m.
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
@@ -145,16 +153,25 @@ openInMemoryWriter stateVar notificationChan =
     LeiosDbWriter
       { close = pure ()
       , writeEbPoint = \point ebBytesSize ->
-          resolved (imInsertEbPoint stateVar point ebBytesSize)
+          resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
       , writeEbBody = \point eb ->
-          resolved (imInsertEbBody stateVar notificationChan point eb)
+          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb)
       , writeTxs = \txs ->
-          resolved (imInsertTxs stateVar notificationChan txs)
+          resolved ("WriteTxs (" <> show (length txs) <> " txs)") (imInsertTxs stateVar notificationChan txs)
       }
  where
-  resolved action = do
-    x <- action
-    pure (Promise (pure x))
+  resolved :: HasCallStack => String -> m a -> m (Promise m a)
+  resolved job action = do
+    result <- try action
+    pure $ Promise $ case result of
+      Right x -> pure x
+      Left cause ->
+        throwIO
+          LeiosDbWriteException
+            { writeJob = job
+            , submittedFrom = prettyCallStack callStack
+            , writeFailure = cause
+            }
 
 -- * Top-level implementations
 
