@@ -1072,6 +1072,19 @@ failJob cause = \case
   put :: WriteResult a -> IO ()
   put rv = atomically $ putTMVar rv (Left cause)
 
+-- | How many queued jobs the writer serves back-to-back before it takes a
+-- turn of maintenance anyway.
+--
+-- Maintenance runs when the queue drains, which is the common case; this is
+-- the floor under a queue that never does. One queue-full: under saturation
+-- maintenance still gets a turn as often as the producers can refill, and
+-- the resulting share (one turn in @'writerQueueDepth' + 1@) is far above
+-- what copying and eviction ask for -- they are per promoted or expired EB,
+-- not per write. 'TraceLeiosDbStats' is where a volatile partition that
+-- still grows would show up.
+maxJobsBetweenMaintenance :: Int
+maxJobsBetweenMaintenance = fromIntegral writerQueueDepth
+
 -- | Depth of the write queue. One slot per producer that can be mid-write --
 -- each upstream peer's fetch client, the forge, and the maintenance
 -- schedulers (copier, sweeper, the ChainDB's GC and promote calls) -- and a
@@ -1132,6 +1145,7 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
   sealedVar <- newTVarIO Nothing
   sweepStateRef <- newIORef SweepIdle
   gcReinitDoneRef <- newIORef False
+  jobsServedRef <- newIORef (0 :: Int)
   let notify = atomically . writeTChan notificationChan
 
       -- Statements before connections; an open statement holds the close off.
@@ -1170,17 +1184,24 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
             gcMark tracer sweepDoorbell volDb gcStmts slot
           pure False
 
-      -- Queued jobs first, always: writes arrive in bursts, and the quiet
-      -- in between is what maintenance is for. One unit of it per turn once
-      -- the queue has drained, so a burst arriving mid-sweep waits for the
-      -- batch in flight and no longer.
-      serve =
-        atomically (tryReadTBQueue queue) >>= \case
+      -- Queued jobs first: writes arrive in bursts, and the quiet in
+      -- between is what maintenance is for. But a burst can go on for as
+      -- long as it likes, so 'maxJobsBetweenMaintenance' of them is the
+      -- most that may pass before maintenance gets its turn regardless.
+      serve = do
+        served <- readIORef jobsServedRef
+        mJob <-
+          if served >= maxJobsBetweenMaintenance
+            then pure Nothing
+            else atomically (tryReadTBQueue queue)
+        case mJob of
           Just job -> do
+            writeIORef jobsServedRef (served + 1)
             stop <- runJob job
             unless stop serve
           Nothing -> do
             quiet <- stepMaintenance
+            writeIORef jobsServedRef 0
             when quiet blockUntilWork
             serve
 
