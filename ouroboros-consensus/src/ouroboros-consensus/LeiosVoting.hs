@@ -46,7 +46,6 @@ import LeiosDemoTypes
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
   , LeiosSigningKey
-  , LeiosVerificationKey
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
