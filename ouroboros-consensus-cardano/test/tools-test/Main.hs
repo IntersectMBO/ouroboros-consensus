@@ -154,10 +154,10 @@ blockCountTest logStep = do
       ++ ")"
 
   logStep "writing a LeiosDb next to the chain"
-  -- DBSynthesizer writes no leios.db.vol and leios.db.imm, so the test writes them too.
+  -- DBSynthesizer writes no leios.vol.db and leios.imm.db, so the test writes them too.
   -- The kept EB is announced below the truncation slot, and the dropped one above every block
   -- the synthesis forged.
-  leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.db.vol") (chainDB <> "/leios.db.imm")
+  leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.vol.db") (chainDB <> "/leios.imm.db")
   let keptEb = MkLeiosPoint 0 (mkEbHash '1')
       droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
   withWriter leiosDb $ \con ->

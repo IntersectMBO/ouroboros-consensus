@@ -149,8 +149,8 @@ withFreshSQLiteFile action = do
     (createTempDirectory sysTmp "leios-test")
     removeDirectoryRecursive
     ( \tmpDir -> do
-        let volDbPath = tmpDir <> "/test.db.vol"
-            immDbPath = tmpDir <> "/test.db.imm"
+        let volDbPath = tmpDir <> "/test.vol.db"
+            immDbPath = tmpDir <> "/test.imm.db"
         withLeiosDBSQLite nullTracer volDbPath immDbPath $
           action volDbPath immDbPath
     )

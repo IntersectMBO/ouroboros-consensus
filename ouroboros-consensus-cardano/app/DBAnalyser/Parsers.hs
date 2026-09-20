@@ -70,7 +70,7 @@ parseLeiosDbSource =
     mconcat
       [ long "no-leios-db"
       , help $
-          "Do not use the leios.db.vol and leios.db.imm files under the --db "
+          "Do not use the leios.vol.db and leios.imm.db files under the --db "
             <> "path. Pass this for a chain that holds no block with a Leios "
             <> "certificate. Without this flag, the tool refuses to start when "
             <> "it does not file LeiosDB files, making pre-Leios db directories unusable."

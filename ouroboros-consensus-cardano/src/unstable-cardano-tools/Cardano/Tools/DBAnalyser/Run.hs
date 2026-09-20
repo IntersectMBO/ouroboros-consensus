@@ -156,8 +156,8 @@ analyse dbaConfig args =
     leiosDbHandle <- case leiosDbSource of
       NoLeiosDb -> newLeiosDBInMemory
       LeiosDbFiles -> do
-        let volLeiosDBFile = dbDir FilePath.</> "leios.db.vol"
-            immLeiosDBFile = dbDir FilePath.</> "leios.db.imm"
+        let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
+            immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
         requireLeiosDbFile volLeiosDBFile
         requireLeiosDbFile immLeiosDBFile
         newLeiosDBSQLite nullTracer volLeiosDBFile immLeiosDBFile

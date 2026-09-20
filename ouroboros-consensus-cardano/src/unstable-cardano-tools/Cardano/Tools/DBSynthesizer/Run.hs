@@ -203,8 +203,8 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
     leiosDbHandle <-
       newLeiosDBSQLite
         (TraceLeiosDb >$< leiosTracer)
-        (confDbDir </> "leios.db.vol")
-        (confDbDir </> "leios.db.imm")
+        (confDbDir </> "leios.vol.db")
+        (confDbDir </> "leios.imm.db")
     (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) <-
       protocolInfoCardano (SomeHasFS (ioHasFS (MountPoint confDbDir))) runP
     let

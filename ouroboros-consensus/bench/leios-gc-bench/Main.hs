@@ -146,8 +146,8 @@ main = do
   validateOpts opts
   withSystemTempDirectory "leios-gc-bench" $ \tmpDir -> do
     -- Same naming convention as 'newLeiosDBSQLiteFromEnv'.
-    let benchVol = tmpDir <> "/bench.db.vol"
-        benchImm = tmpDir <> "/bench.db.imm"
+    let benchVol = tmpDir <> "/bench.vol.db"
+        benchImm = tmpDir <> "/bench.imm.db"
     (tracer, flushEvents) <- mkCollectingTracer
     let mkDb = case optGcPacing opts of
           GcPacingDefault -> newLeiosDBSQLite tracer benchVol benchImm
@@ -227,8 +227,8 @@ main = do
     hPutStr stderr (renderSummary opts phaseStats)
 
 -- | The imm-file sibling of a volatile fixture path, for either naming
--- convention (@FOO.vol@ as the node derives it, or the fixture converter's
--- @FOO.vol.db@).
+-- convention (@FOO.vol.db@), still accepting the @FOO.vol@ a pre-rename
+-- fixture may carry.
 immSiblingOf :: FilePath -> FilePath
 immSiblingOf path
   | ".vol.db" `List.isSuffixOf` path =

@@ -190,7 +190,7 @@ data BenchEnv = BenchEnv
 setupBenchEnv :: FilePath -> IO BenchEnv
 setupBenchEnv tmpDir = do
   db <-
-    newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.db.vol") (tmpDir <> "/bench.db.imm")
+    newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.vol.db") (tmpDir <> "/bench.imm.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
     withWriter db (`insertOneEb` i)

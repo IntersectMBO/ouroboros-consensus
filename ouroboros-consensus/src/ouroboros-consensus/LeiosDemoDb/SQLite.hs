@@ -1805,7 +1805,7 @@ closureLoop stmt acc =
 
 -- * SQL strings
 
--- | Schema of both partitions (@leios.db.vol@ and @leios.db.imm@): identical
+-- | Schema of both partitions (@leios.vol.db@ and @leios.imm.db@): identical
 -- on purpose, so the fallback reads reuse the volatile SQL verbatim and the
 -- copy is a server-side @INSERT ... SELECT@ over ATTACH. In the immutable
 -- file 'missingTxCount', @status@ and @ebsMissingTxs@ are unused (rows land
