@@ -36,6 +36,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , check
   , dupTChan
   , isEmptyTBQueue
+  , isFullTBQueue
   , modifyTVar
   , newBroadcastTChan
   , newEmptyTMVarIO
@@ -75,6 +76,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
+import Data.Maybe (isJust)
 import qualified Data.Set as Set
 import Data.String (fromString)
 import Database.SQLite3
@@ -83,7 +85,6 @@ import Database.SQLite3
   , open2
   )
 import qualified Database.SQLite3.Direct as DB
-import GHC.Clock (getMonotonicTime)
 import qualified GHC.Conc as IO (atomically)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
@@ -115,12 +116,17 @@ import LeiosUtils.CallTrace
   , rootCallCtx
   )
 import Numeric.Natural (Natural)
-import Ouroboros.Consensus.Util.IOLike (ExitCase (..), atomically, labelThread)
+import Ouroboros.Consensus.Util.IOLike
+  ( ExitCase (..)
+  , MonadAsync (async, asyncThreadId)
+  , atomically
+  , labelThread
+  , link
+  )
 import System.Directory (createDirectoryIfMissing, doesFileExist, getFileSize)
 import System.Environment (lookupEnv)
 import System.Exit (die)
 import System.FilePath (takeDirectory)
-import System.Random (randomIO)
 
 -- * Public API
 
@@ -166,28 +172,38 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
   -- start a thread to sample the sizes of the LeiosDB
   samplerId <- startVolatileStatsSampler tracer statsVar volLeiosDbPath
   -- Both start set, so a restart picks up whatever the last run left
-  -- pinned or marked; the writer clears them once it finds nothing.
+  -- pinned or marked; the copier and the writer clear them once they find
+  -- nothing.
   copyPending <- newTVarIO True
   sweepDoorbell <- newTVarIO True
   gcRootCtx <- rootCallCtx "leiosdb-gc"
 
-  -- The database's one writer: every write to either partition -- ingest,
+  -- The volatile partition's one writer: every write to it -- ingest,
   -- promotion, GC -- happens on this one worker, on the only open write
-  -- connections, created with the database and torn down by the returned
+  -- connection, created with the database and torn down by the returned
   -- action (or by orphanhood, for callers that never tear down).
   writeQueue <-
     startWriter
       tracer
       statsVar
       notificationChan
-      copyPending
       sweepDoorbell
       gcBatchSize
       volLeiosDbPath
       immLeiosDbPath
+  -- And the immutable partition's one writer, off the queue so that a copy
+  -- -- which is O(closure) -- never holds up ingest.
+  stopCopier <-
+    startCopier
+      tracer
+      statsVar
+      copyPending
+      writeQueue
+      volLeiosDbPath
+      immLeiosDbPath
   pure
     LeiosDbHandle
-      { close = close samplerId writeQueue
+      { close = close samplerId stopCopier writeQueue
       , openReader = openReader statsVar
       , openWriter = openWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
@@ -196,10 +212,14 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
       , leiosDbSampleStats = readTVarIO statsVar
       }
  where
-  close samplerId writeQueue = do
+  close :: ThreadId -> IO () -> WriteQueue -> IO ()
+  close samplerId stopCopier writeQueue = do
     -- The sampler holds no connection -- it only reads counters -- so
     -- killing it is safe at any point.
     killThread samplerId
+    -- The copier first: it submits to the writer, so it must be gone
+    -- before the writer stops serving.
+    stopCopier
     -- The queue is FIFO, so serving this job flushes everything
     -- submitted before it; awaiting it waits for the connections to
     -- close, and a failed close propagates -- a leaked connection must
@@ -407,8 +427,6 @@ sqlPromoteToImmutable writeQueue copyPending point = do
 data CopierConn = CopierConn
   { ccDb :: !DB.Database
   -- ^ main = immutable partition, @vol@ = attached volatile partition
-  , ccHasEb :: !DB.Statement
-  -- ^ 'sql_imm_has_eb'
   , ccCompleteness :: !DB.Statement
   -- ^ 'sql_copy_completeness'
   , ccInsertEb :: !DB.Statement
@@ -417,62 +435,50 @@ data CopierConn = CopierConn
   -- ^ 'sql_copy_insert_ebTxs'
   , ccInsertTxs :: !DB.Statement
   -- ^ 'sql_copy_insert_txs'
-  , ccMarkAsCopied :: !DB.Statement
-  -- ^ 'sql_mark_as_copied', against the attached volatile partition
   }
 
 -- | Prepare the copy statements on the writer's immutable connection, which
 -- must already have the volatile partition ATTACHed as @vol@.
 prepareCopierConn :: HasCallStack => DB.Database -> IO CopierConn
 prepareCopierConn ccDb = do
-  ccHasEb <- dbPrepare ccDb (fromString sql_imm_has_eb)
   ccCompleteness <- dbPrepare ccDb (fromString sql_copy_completeness)
   ccInsertEb <- dbPrepare ccDb (fromString sql_copy_insert_eb)
   ccInsertEbTxs <- dbPrepare ccDb (fromString sql_copy_insert_ebTxs)
   ccInsertTxs <- dbPrepare ccDb (fromString sql_copy_insert_txs)
-  ccMarkAsCopied <- dbPrepare ccDb (fromString sql_mark_as_copied)
   pure CopierConn{..}
 
 -- | Statements only; 'ccDb' is the writer's immutable connection.
 finalizeCopierConn :: CopierConn -> IO ()
 finalizeCopierConn CopierConn{..} = do
-  dbFinalize ccHasEb
   dbFinalize ccCompleteness
   dbFinalize ccInsertEb
   dbFinalize ccInsertEbTxs
   dbFinalize ccInsertTxs
-  dbFinalize ccMarkAsCopied
 
--- | Copy one pinned EB's closure into the immutable partition and mark its
--- volatile rows as copied (@status = 2@, evictable). Runs on the writer.
+-- | Copy one pinned EB's closure into the immutable partition. 'True' when
+-- it landed, so the caller may have its volatile rows marked as copied.
 copyEbToImmutable ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   CopierConn ->
   EbHash ->
-  IO ()
-copyEbToImmutable tracer statsVar conn ebHash = do
-  copied <-
-    appendToImmutable >>= \case
-      Nothing -> do
-        -- EB is not ready to be copied
-        traceWith tracer $
-          TraceLeiosDbCopyError
-            (show ebHash)
-            "pinned EB has no complete closure in the volatile partition"
-        pure False
-      Just _copiedTxs -> do
-        -- successfully copied, bump the stats
-        bumpImmutableStats statsVar 1
-        traceWith tracer $ TraceLeiosDbCopiedToImmutable 1
-        pure True
-  -- make the EB as copied
-  when copied $
-    useStmt ccMarkAsCopied $ do
-      dbBindBlob ccMarkAsCopied 1 ebHash.ebHashBytes
-      dbStep1Safe ccMarkAsCopied
+  IO Bool
+copyEbToImmutable tracer statsVar conn ebHash =
+  appendToImmutable >>= \case
+    Nothing -> do
+      -- EB is not ready to be copied
+      traceWith tracer $
+        TraceLeiosDbCopyError
+          (show ebHash)
+          "pinned EB has no complete closure in the volatile partition"
+      pure False
+    Just _copiedTxs -> do
+      -- successfully copied, bump the stats
+      bumpImmutableStats statsVar 1
+      traceWith tracer $ TraceLeiosDbCopiedToImmutable 1
+      pure True
  where
-  CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertTxs, ccMarkAsCopied} = conn
+  CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertTxs} = conn
 
   -- Attempt to do the actual copying.
   --
@@ -526,9 +532,94 @@ copyEbToImmutable tracer statsVar conn ebHash = do
             dbStep1Safe ccInsertTxs
           pure (Just nTxs)
 
--- | Close the connection if the action throws, then rethrow. For partial
--- acquisition of 'CopierConn': without it, a persistently failing attach or
--- prepare would leak one connection per retry.
+-- | The copier: the only writer into the immutable partition.
+--
+-- A copy is O(closure) -- every tx body of the EB -- and writes nothing but
+-- the immutable partition, so it runs off the writer, on its own connection
+-- (main = immutable, the volatile partition ATTACHed as @vol@). Ingest keeps
+-- the volatile write lock throughout; WAL lets the copy read the volatile
+-- partition while it does. The mark that follows a copy /is/ a volatile
+-- write, and goes through the writer like every other one.
+--
+-- Returns the action that stops the copier and closes its connection.
+startCopier ::
+  Tracer IO TraceLeiosDb ->
+  StrictTVar IO LeiosDbStats ->
+  StrictTVar IO Bool ->
+  WriteQueue ->
+  FilePath ->
+  FilePath ->
+  IO (IO ())
+startCopier tracer statsVar copyPending writeQueue volPath immPath = do
+  ccDb <- openRawConnection immPath
+  (copierConn, nextPinnedStmt) <-
+    ( do
+        withStmt ccDb "ATTACH ? AS vol" $ \stmt -> do
+          dbBindUtf8 stmt 1 (fromString volPath)
+          dbStep1Safe stmt
+        copierConn <- prepareCopierConn ccDb
+        nextPinnedStmt <- dbPrepare ccDb (fromString sql_next_pinned_eb)
+        pure (copierConn, nextPinnedStmt)
+    )
+      `onException` void (DB.close ccDb)
+  stopVar <- newTVarIO False
+  stoppedVar <- newEmptyTMVarIO
+  let nextPinned =
+        useStmt nextPinnedStmt $
+          dbStepSafe nextPinnedStmt >>= \case
+            DB.Done -> pure Nothing
+            DB.Row -> Just . MkEbHash <$> DB.columnBlob nextPinnedStmt 0
+
+      -- The EB stays pinned either way, so it is still the next to copy.
+      -- Backing off is what keeps a closure that never completes -- or a
+      -- partition that keeps refusing the write -- from spinning here.
+      copyOne ebHash =
+        ( copyEbToImmutable tracer statsVar copierConn ebHash >>= \case
+            True -> await =<< submitJob writeQueue (MarkCopied ebHash)
+            False -> threadDelay copyRetryMicros
+        )
+          `catch` \(e :: LeiosDbException) -> do
+            _ <- DB.exec ccDb "ROLLBACK"
+            traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
+            threadDelay copyRetryMicros
+
+      closeConnection = do
+        finalizeCopierConn copierConn
+        dbFinalize nextPinnedStmt
+        closeChecked ccDb
+
+      loop = do
+        -- Clear before looking, so a pin that lands while we look rings
+        -- again instead of being lost.
+        atomically $ writeTVar copyPending False
+        nextPinned >>= \case
+          Just ebHash -> copyOne ebHash >> loop
+          Nothing -> do
+            stop <- IO.atomically $ do
+              stop <- readTVar stopVar
+              pending <- readTVar copyPending
+              check (stop || pending)
+              pure stop
+            unless stop loop
+  worker <- async $ do
+    outcome <- try (loop `finally` closeConnection)
+    atomically $ putTMVar stoppedVar (outcome :: Either SomeException ())
+    -- A copier that stopped is a volatile partition that stops being
+    -- evictable, so the link takes the node down rather than let it grow.
+    either throwIO pure outcome
+  labelThread (asyncThreadId worker) "leiosdb-copier"
+  link worker
+  pure $ do
+    atomically $ writeTVar stopVar True
+    either throwIO pure =<< atomically (readTMVar stoppedVar)
+
+-- | How long the copier waits before trying a pinned EB again.
+copyRetryMicros :: Int
+copyRetryMicros = 1000000
+
+-- | Close the connection if the action throws, then rethrow. For whatever
+-- is acquired on a fresh connection -- an attach, a schema, a statement --
+-- after the open succeeded and before anything owns the close.
 orCloseOnError :: DB.Database -> IO a -> IO a
 orCloseOnError db act =
   act `catch` \(e :: SomeException) -> do
@@ -576,13 +667,12 @@ sqlGarbageCollect tracer rootCtx writeQueue gcSlot =
 -- for the writer's own sweep steps (see 'startWriter').
 gcMark ::
   HasCallStack =>
-  Tracer IO TraceLeiosDb ->
   StrictTVar IO Bool ->
   DB.Database ->
   GcStmts ->
   SlotNo ->
   IO ()
-gcMark tracer sweepDoorbell db gcStmts gcSlot = do
+gcMark sweepDoorbell db gcStmts gcSlot = do
   let GcStmts{gsHasWork, gsAddGcCandidatesTxs, gsMarkEbForGC} = gcStmts
   -- check if GC has any work to do
   hasWork <-
@@ -591,7 +681,7 @@ gcMark tracer sweepDoorbell db gcStmts gcSlot = do
       (/= 0) <$> readSingleInt64 gsHasWork
   when hasWork $ do
     (nTxsStagedAsGCCandidates, nEbsMarked) <-
-      dbWithWriteTransactionRaw tracer db $ do
+      dbWithWriteTransactionRaw db $ do
         -- transactions must be marked for GC before their EBs,
         -- due to the way the sql statements are written.
         -- mark transactions b for GC
@@ -717,10 +807,10 @@ finalizeSweeperConn SweeperConn{..} = do
 
 -- | One 'SweepEbBatch' transaction: evict up to the given number of GC-marked
 -- EBs. Runs on the writer.
-sweepEbBatch :: Tracer IO TraceLeiosDb -> SweeperConn -> Int64 -> IO Int
-sweepEbBatch tracer conn batchSize = do
+sweepEbBatch :: SweeperConn -> Int64 -> IO Int
+sweepEbBatch conn batchSize = do
   let SweeperConn{swDb, swPickMarked, swEvictEbTxs, swEvictMissingTxs, swEvictEbs} = conn
-  dbWithWriteTransactionRaw tracer swDb $ do
+  dbWithWriteTransactionRaw swDb $ do
     -- check if any EBs are ready to be evicted
     evictableEbs <- useStmt swPickMarked $ do
       -- a negative LIMIT means no limit in SQLite
@@ -738,10 +828,10 @@ sweepEbBatch tracer conn batchSize = do
 
 -- | One 'SweepOrphanBatch' transaction: evict up to the given number of
 -- orphaned txs, or 'Nothing' if there was nothing to do. Runs on the writer.
-sweepOrphanBatch :: Tracer IO TraceLeiosDb -> SweeperConn -> Int64 -> IO (Maybe Int)
-sweepOrphanBatch tracer conn batchSize = do
+sweepOrphanBatch :: SweeperConn -> Int64 -> IO (Maybe Int)
+sweepOrphanBatch conn batchSize = do
   let SweeperConn{swDb, swAnyMarked, swPickOrphans, swOrphanTxs, swPopOrphans} = conn
-  dbWithWriteTransactionRaw tracer swDb $ do
+  dbWithWriteTransactionRaw swDb $ do
     -- don't run the sweep if any GC-marked EBs remain
     blocked <- useStmt swAnyMarked $ (/= 0) <$> readSingleInt64 swAnyMarked
     if blocked
@@ -772,8 +862,8 @@ sweepOrphanBatch tracer conn batchSize = do
 --
 -- Only such out-of-band edits can leave that behind, and only before the
 -- writer started, so this runs once per process, on the writer.
-gcReinit :: Tracer IO TraceLeiosDb -> SweeperConn -> IO ()
-gcReinit tracer conn = do
+gcReinit :: SweeperConn -> IO ()
+gcReinit conn = do
   let SweeperConn{swDb, swHasUnstagedGcCandidates, swUnstagedGcCandidatesPage, swInsertGcCandidates} = conn
   anyUnstaged <-
     useStmt swHasUnstagedGcCandidates $
@@ -784,7 +874,7 @@ gcReinit tracer conn = do
           dbBindInt64 swUnstagedGcCandidatesPage 2 gcCandidatesPageSize
           collectBlobs swUnstagedGcCandidatesPage
         unless (null page) $ do
-          dbWithWriteTransactionRaw tracer swDb $
+          dbWithWriteTransactionRaw swDb $
             execJson swInsertGcCandidates (jsonHexArray page)
           when (length page == fromIntegral gcCandidatesPageSize) $
             pageLoop (last page)
@@ -964,8 +1054,8 @@ closeChecked db =
 -- The ingest jobs come from 'LeiosDbWriter', the rest from the handle's
 -- promote\/GC entry points. One worker running them all is what makes the
 -- single-writer property total: no two in-process connections ever contend
--- for a write lock. Copying and sweeping are not jobs at all -- the worker
--- does them between jobs; see 'startWriter'.
+-- for a write lock on the volatile partition. Sweeping is not a job at all
+-- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
   = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
   | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
@@ -975,6 +1065,9 @@ data WriteJob
     Flush !(WriteResult ())
   | -- | Pin an EB for promotion; see 'sqlPromoteToImmutable'.
     PinEb !EbHash !(WriteResult ())
+  | -- | The volatile half of a copy: the EB is in the immutable partition
+    -- now, so its volatile rows are evictable. Submitted by 'startCopier'.
+    MarkCopied !EbHash !(WriteResult ())
   | -- | The GC MARK phase; see 'gcMark'.
     GcMark !SlotNo !(WriteResult ())
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
@@ -999,17 +1092,20 @@ data SweepState
 data WriteQueue = WriteQueue
   { wqJobs :: !(StrictTBQueue IO WriteJob)
   , wqSealed :: !(StrictTVar IO (Maybe SomeException))
+  , wqTracer :: !(Tracer IO TraceLeiosDb)
   }
 
 -- | Hand a job to the writer; the 'Promise' waits for its result. Blocks
--- only while the queue is full, which is the backpressure.
+-- only while the queue is full, which is the backpressure -- and which is
+-- traced, since it is the one thing about the writer that no other trace
+-- reports: every producer is now waiting on it.
 --
 -- Checking the seal and queueing are one transaction, so after the worker
 -- seals the queue no job can slip in unserved: submission throws the
 -- worker's parting exception instead -- also waking any submitter that was
 -- blocked on a full queue.
 submitJob :: HasCallStack => WriteQueue -> (WriteResult a -> WriteJob) -> IO (Promise IO a)
-submitJob WriteQueue{wqJobs, wqSealed} mkJob = do
+submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
   resultVar <- newEmptyTMVarIO
   let job = mkJob resultVar
       -- Failures surface far from their submitter -- on the worker, or on
@@ -1020,11 +1116,25 @@ submitJob WriteQueue{wqJobs, wqSealed} mkJob = do
           , submittedFrom = GHC.Stack.prettyCallStack GHC.Stack.callStack
           , writeFailure = cause
           }
-  join $
-    atomically $
-      readTVar wqSealed >>= \case
-        Just cause -> pure (throwIO (wrap cause))
-        Nothing -> writeTBQueue wqJobs job >> pure (pure ())
+      -- Take a slot if there is one; 'Left' once the queue is sealed.
+      offer =
+        readTVar wqSealed >>= \case
+          Just cause -> pure (Left cause)
+          Nothing ->
+            isFullTBQueue wqJobs >>= \case
+              True -> pure (Right False)
+              False -> Right True <$ writeTBQueue wqJobs job
+      -- And wait for one otherwise.
+      park =
+        readTVar wqSealed >>= \case
+          Just cause -> pure (throwIO (wrap cause))
+          Nothing -> writeTBQueue wqJobs job >> pure (pure ())
+  atomically offer >>= \case
+    Left cause -> throwIO (wrap cause)
+    Right True -> pure ()
+    Right False -> do
+      traceWith wqTracer $ TraceLeiosDbWriterQueueFull (describeJob job)
+      join (atomically park)
   pure $ Promise (either (throwIO . wrap) pure =<< atomically (readTMVar resultVar))
 
 -- | Name a job for 'LeiosDbWriteException': what it is and what it is about,
@@ -1036,6 +1146,7 @@ describeJob = \case
   WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHash _ -> "PinEb " <> show ebHash
+  MarkCopied ebHash _ -> "MarkCopied " <> show ebHash
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
 
@@ -1047,6 +1158,7 @@ failJob cause = \case
   WriteTxs _ rv -> put rv
   Flush rv -> put rv
   PinEb _ rv -> put rv
+  MarkCopied _ rv -> put rv
   GcMark _ rv -> put rv
   Shutdown rv -> put rv
  where
@@ -1096,30 +1208,23 @@ startWriter ::
   StrictTVar IO LeiosDbStats ->
   StrictTChan IO LeiosEbNotification ->
   StrictTVar IO Bool ->
-  StrictTVar IO Bool ->
   Int64 ->
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSize volPath immPath = do
+startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath immPath = do
   volDb <- openVolRawConnection volPath
   immDb <- orCloseOnError volDb $ openRawConnection immPath
   -- A throw anywhere below closes both connections (best effort -- an
   -- already-prepared statement can hold a close off) instead of leaking them.
-  (conn, copierConn, sweeperConn, gcStmts, pinStmt, nextPinnedStmt) <-
+  (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt) <-
     ( do
         conn <- mkConn tracer statsVar volDb immDb
-        -- The volatile partition attached to the immutable connection, for the
-        -- cross-partition copy statements.
-        withStmt immDb "ATTACH ? AS vol" $ \stmt -> do
-          dbBindUtf8 stmt 1 (fromString volPath)
-          dbStep1Safe stmt
-        copierConn <- prepareCopierConn immDb
         sweeperConn <- prepareSweeperConn volDb
         gcStmts <- prepareGcStmts volDb
         pinStmt <- dbPrepare volDb (fromString sql_pin_eb)
-        nextPinnedStmt <- dbPrepare volDb (fromString sql_next_pinned_eb)
-        pure (conn, copierConn, sweeperConn, gcStmts, pinStmt, nextPinnedStmt)
+        markCopiedStmt <- dbPrepare volDb (fromString sql_mark_as_copied)
+        pure (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt)
     )
       `onException` (void (DB.close immDb) >> void (DB.close volDb))
   queue <- newTBQueueIO writerQueueDepth
@@ -1131,11 +1236,10 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
 
       -- Statements before connections; an open statement holds the close off.
       closeConnections = do
-        finalizeCopierConn copierConn
         finalizeSweeperConn sweeperConn
         finalizeGcStmts gcStmts
         dbFinalize pinStmt
-        dbFinalize nextPinnedStmt
+        dbFinalize markCopiedStmt
         closeConn conn
 
       runJob :: WriteJob -> IO Bool
@@ -1155,14 +1259,21 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
           publish resultVar (pure ()) >> pure False
         PinEb ebHash resultVar -> do
           publishMaintenance volDb immDb resultVar $
-            dbWithWriteTransactionRaw tracer volDb $
+            dbWithWriteTransactionRaw volDb $
               useStmt pinStmt $ do
                 dbBindBlob pinStmt 1 ebHash.ebHashBytes
                 dbStep1Safe pinStmt
           pure False
+        MarkCopied ebHash resultVar -> do
+          publishMaintenance volDb immDb resultVar $
+            dbWithWriteTransactionRaw volDb $
+              useStmt markCopiedStmt $ do
+                dbBindBlob markCopiedStmt 1 ebHash.ebHashBytes
+                dbStep1Safe markCopiedStmt
+          pure False
         GcMark slot resultVar -> do
           publishMaintenance volDb immDb resultVar $
-            gcMark tracer sweepDoorbell volDb gcStmts slot
+            gcMark sweepDoorbell volDb gcStmts slot
           pure False
 
       -- Queued jobs first: writes arrive in bursts, and the quiet in
@@ -1188,17 +1299,16 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
             when quiet blockUntilWork
             serve
 
-      -- Nothing queued and no maintenance outstanding: wait for either.
+      -- Nothing queued and no sweep outstanding: wait for either.
       blockUntilWork = IO.atomically $ do
         noJobs <- isEmptyTBQueue queue
-        copies <- readTVar copyPending
         rung <- readTVar sweepDoorbell
-        check (not noJobs || copies || rung)
+        check (not noJobs || rung)
 
-      -- Copy one pinned EB, or advance a sweep by one batch; 'True' when
-      -- there was nothing to do. A failure here is the maintenance's
-      -- problem, not the writer's: trace it, roll back anything left open,
-      -- and let the pin or the next GC tick bring the work back.
+      -- Advance a sweep by one batch; 'True' when there was nothing to do.
+      -- A failure here is the maintenance's problem, not the writer's:
+      -- trace it, roll back anything left open, and let the next GC tick
+      -- bring the work back.
       stepMaintenance =
         step `catch` \(e :: LeiosDbException) -> do
           _ <- DB.exec volDb "ROLLBACK"
@@ -1207,70 +1317,48 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
           atomically $ writeTVar sweepStateVar SweepIdle
           pure True
        where
-        -- The pinned EBs are the copy work list, so an interrupted copy is
-        -- simply still pending -- including across a restart.
-        nextPinned = do
-          pending <- atomically $ readTVar copyPending
-          if not pending
-            then pure Nothing
-            else
-              useStmt nextPinnedStmt $
-                dbStepSafe nextPinnedStmt >>= \case
-                  DB.Done -> do
-                    atomically $ writeTVar copyPending False
-                    pure Nothing
-                  DB.Row -> Just . MkEbHash <$> DB.columnBlob nextPinnedStmt 0
-
         step =
-          nextPinned >>= \case
-            Just ebHash -> do
-              copyEbToImmutable tracer statsVar copierConn ebHash
-                `catch` \(e :: LeiosDbException) ->
-                  -- The EB stays pinned, so it is still the next to copy;
-                  -- nothing to re-enqueue and nothing to retry here.
-                  traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
-              pure False
-            Nothing ->
-              readTVarIO sweepStateVar >>= \case
-                SweepIdle -> do
-                  asked <- atomically $ do
-                    rung <- readTVar sweepDoorbell
-                    when rung $ do
-                      writeTVar sweepDoorbell False
-                      writeTVar sweepStateVar (SweepEbs 0)
-                    pure rung
-                  if not asked
-                    then pure True
-                    else do
-                      -- Stages the GC tx candidates a restart left behind.
-                      done <- readTVarIO gcReinitDoneVar
-                      unless done $ do
-                        gcReinit tracer sweeperConn
-                        atomically $ writeTVar gcReinitDoneVar True
-                      pure False
-                SweepEbs nEbs -> do
-                  evicted <- sweepEbBatch tracer sweeperConn gcBatchSize
-                  if evicted == 0
-                    then atomically $ writeTVar sweepStateVar (SweepOrphans nEbs 0)
-                    else do
-                      bumpVolatileStatsVar statsVar (negate evicted)
-                      atomically $ writeTVar sweepStateVar (SweepEbs (nEbs + evicted))
+          readTVarIO sweepStateVar >>= \case
+            SweepIdle -> do
+              asked <- atomically $ do
+                rung <- readTVar sweepDoorbell
+                when rung $ do
+                  writeTVar sweepDoorbell False
+                  writeTVar sweepStateVar (SweepEbs 0)
+                pure rung
+              if not asked
+                then pure True
+                else do
+                  -- Stages the GC tx candidates a restart left behind.
+                  done <- readTVarIO gcReinitDoneVar
+                  unless done $ do
+                    gcReinit sweeperConn
+                    atomically $ writeTVar gcReinitDoneVar True
                   pure False
-                SweepOrphans nEbs nTxs ->
-                  sweepOrphanBatch tracer sweeperConn gcOrphanTxBatchSize >>= \case
-                    Just evicted -> do
-                      atomically $ writeTVar sweepStateVar (SweepOrphans nEbs (nTxs + evicted))
-                      pure False
-                    Nothing -> do
-                      when (nEbs > 0 || nTxs > 0) $ do
-                        -- Flush the WAL only after real work.
-                        dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
-                        traceWith tracer $ TraceLeiosDbEvicted nEbs
-                      atomically $ writeTVar sweepStateVar SweepIdle
-                      pure False
+            SweepEbs nEbs -> do
+              evicted <- sweepEbBatch sweeperConn gcBatchSize
+              if evicted == 0
+                then atomically $ writeTVar sweepStateVar (SweepOrphans nEbs 0)
+                else do
+                  bumpVolatileStatsVar statsVar (negate evicted)
+                  atomically $ writeTVar sweepStateVar (SweepEbs (nEbs + evicted))
+              pure False
+            SweepOrphans nEbs nTxs ->
+              sweepOrphanBatch sweeperConn gcOrphanTxBatchSize >>= \case
+                Just evicted -> do
+                  atomically $ writeTVar sweepStateVar (SweepOrphans nEbs (nTxs + evicted))
+                  pure False
+                Nothing -> do
+                  when (nEbs > 0 || nTxs > 0) $ do
+                    -- Flush the WAL only after real work.
+                    dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
+                    traceWith tracer $ TraceLeiosDbEvicted nEbs
+                  atomically $ writeTVar sweepStateVar SweepIdle
+                  pure False
 
-  threadId <- forkIO $ do
+  worker <- async $ do
     outcome <- try serve
+    let orphaned e = isJust (fromException e :: Maybe BlockedIndefinitelyOnSTM)
     cause <- case outcome of
       -- A served 'Shutdown' has already closed the connections.
       Right () -> pure closedException
@@ -1279,9 +1367,7 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
         -- without teardown, so nobody can submit again) this is the only
         -- close there will be.
         void (try closeConnections :: IO (Either SomeException ()))
-        pure $ case fromException e of
-          Just BlockedIndefinitelyOnSTM -> closedException
-          Nothing -> e
+        pure $ if orphaned e then closedException else e
     -- Seal, then fail what was already queued: nothing can be queued after
     -- the seal ('submitJob'), so afterwards the queue stays empty forever.
     atomically $ writeTVar sealedVar (Just cause)
@@ -1290,8 +1376,14 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
             Nothing -> pure ()
             Just job -> failJob cause job >> drain
     drain
-  labelThread threadId "leiosdb-writer"
-  pure WriteQueue{wqJobs = queue, wqSealed = sealedVar}
+    -- Then out, so the link takes the node down where the write failed
+    -- rather than at whatever submits next. Orphanhood is not a failure.
+    case outcome of
+      Left e | not (orphaned e) -> throwIO e
+      _ -> pure ()
+  labelThread (asyncThreadId worker) "leiosdb-writer"
+  link worker
+  pure WriteQueue{wqJobs = queue, wqSealed = sealedVar, wqTracer = tracer}
  where
   closedException =
     toException
@@ -2015,17 +2107,12 @@ sql_pin_eb :: String
 sql_pin_eb =
   "UPDATE ebs SET status = 1 WHERE ebHashBytes = ? AND status IN (0, 3)"
 
--- | Mark a pinned EB as copied (evictable), through the copier's connection
--- (the volatile partition is attached as @vol@ there). Only run strictly
--- after the immutable partition committed the EB's closure.
+-- | Mark a pinned EB as copied (evictable). A volatile write, so it goes
+-- through the writer as 'MarkCopied' -- only ever strictly after the
+-- immutable partition committed the EB's closure.
 sql_mark_as_copied :: String
 sql_mark_as_copied =
-  "UPDATE vol.ebs SET status = 2 WHERE ebHashBytes = ? AND status = 1"
-
--- | Whether the immutable partition already holds the EB.
-sql_imm_has_eb :: String
-sql_imm_has_eb =
-  "SELECT EXISTS (SELECT 1 FROM ebs WHERE ebHashBytes = ?1)"
+  "UPDATE ebs SET status = 2 WHERE ebHashBytes = ? AND status = 1"
 
 -- | Body row count and closure row count of the EB in the volatile
 -- partition, in one probe: the LEFT JOIN's second count skips missing txs,
@@ -2091,7 +2178,7 @@ sql_imm_filter_present =
 -- next start.
 sql_next_pinned_eb :: String
 sql_next_pinned_eb =
-  "SELECT ebHashBytes FROM ebs WHERE status = 1 ORDER BY ebSlot LIMIT 1"
+  "SELECT ebHashBytes FROM vol.ebs WHERE status = 1 ORDER BY ebSlot LIMIT 1"
 
 -- | Whether a GC at slot @?1@ could has any work, i.e.
 --   if there are any old volatile EBs or already copied EBs.
@@ -2267,60 +2354,12 @@ dbWithTransaction = dbWithTransactionAs "BEGIN"
 -- start over. Taking the lock at BEGIN removes the upgrade, so contention
 -- surfaces here instead, where waiting actually resolves it.
 dbWithWriteTransaction :: HasCallStack => Conn -> IO a -> IO a
-dbWithWriteTransaction Conn{conVolDb, connTracer} =
-  dbWithWriteTransactionRaw connTracer conVolDb
+dbWithWriteTransaction Conn{conVolDb} = dbWithWriteTransactionRaw conVolDb
 
 -- | 'dbWithWriteTransaction' for the maintenance paths (promotion to immutable, GC), which hold
 -- a raw 'DB.Database' rather than a 'Conn'.
-dbWithWriteTransactionRaw ::
-  HasCallStack => Tracer IO TraceLeiosDb -> DB.Database -> IO a -> IO a
-dbWithWriteTransactionRaw tracer db k = getMonotonicTime >>= go 0
- where
-  -- After this many refusals, a write transaction is no longer merely
-  -- contended.
-  --
-  -- This picks which constructor gets traced and nothing else. Crossing it does
-  -- not change how long we wait, does not throw, and does not abandon anything
-  -- -- 'dbWithWriteTransaction' retries forever either way. It exists only so
-  -- that the severity in the log matches the severity of the situation.
-  --
-  -- Each attempt is a full 'busy_timeout', so this is about half a minute of one
-  -- writer making no progress, re-traced every half minute it stays that way.
-  busyStuckAfter = 30
-
-  go !attempt t0 =
-    fmap (first fst) (DB.exec db (fromString "BEGIN IMMEDIATE")) >>= \case
-      Left DB.ErrorBusy -> do
-        -- Unbounded, deliberately. Nothing is held while waiting here -- that is
-        -- the whole point of taking the lock at BEGIN -- so waiting costs
-        -- latency and nothing else, whereas giving up throws, and a throw on
-        -- this path kills the Leios threads outright. Past
-        -- 'busyStuckAfter' attempts that is no longer ordinary contention, so
-        -- say so at a severity someone will notice, and keep waiting.
-        --
-        -- The wait is measured, not accumulated: most of it happens inside
-        -- SQLite's own busy handler, so summing the sleeps below would report a
-        -- fraction of the truth and disagree with the log timestamps.
-        now <- getMonotonicTime
-        let n = attempt + 1
-            waitedMs = 1000 * (now - t0)
-        traceWith tracer $
-          if n >= busyStuckAfter && n `mod` busyStuckAfter == 0
-            then TraceLeiosDbBusyStuck n waitedMs
-            else TraceLeiosDbBusyRetry n waitedMs
-        busyBackoff
-        go n t0
-      Left e -> throwDbException db e
-      Right () ->
-        fmap fst $
-          generalBracket
-            (pure ())
-            ( \() -> \case
-                ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
-                ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
-                ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
-            )
-            (\() -> k)
+dbWithWriteTransactionRaw :: HasCallStack => DB.Database -> IO a -> IO a
+dbWithWriteTransactionRaw = dbWithTransactionAs "BEGIN IMMEDIATE"
 
 dbWithTransactionAs :: HasCallStack => String -> DB.Database -> IO a -> IO a
 dbWithTransactionAs begin db k =
@@ -2368,22 +2407,11 @@ readSingleInt64 stmt =
 -- violation (duplicate key). Other errors are thrown as usual.
 dbStepInsert :: HasCallStack => DB.Statement -> IO Bool
 dbStepInsert stmt =
-  go maxBusyRetries (DB.stepNoCB stmt)
- where
-  go 0 io =
-    io >>= \case
-      Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
-      Right DB.Done -> pure True
-      Right DB.Row -> throwLeiosDbException "dbStepInsert: unexpected Row result"
-  go n io =
-    io >>= \case
-      Left DB.ErrorBusy -> do
-        busyBackoff
-        go (n - 1) io
-      Left DB.ErrorConstraint -> pure False
-      Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
-      Right DB.Done -> pure True
-      Right DB.Row -> throwLeiosDbException "dbStepInsert: unexpected Row result"
+  DB.stepNoCB stmt >>= \case
+    Left DB.ErrorConstraint -> pure False
+    Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
+    Right DB.Done -> pure True
+    Right DB.Row -> throwLeiosDbException "dbStepInsert: unexpected Row result"
 
 -- | Step an INSERT statement, absorbing UNIQUE/PRIMARY KEY violations and
 -- emitting a 'TraceLeiosDbInsertCollision' for each one. The caller supplies a
@@ -2408,50 +2436,19 @@ dbStepInsertOrTrace tracer table key stmt = do
 
 -- ** Error "handling"
 
--- | How many times a busy statement is re-attempted /after/ SQLite's own
--- 'busy_timeout' has already expired on that attempt, before it throws.
+-- | Run a database action that may return an error, and throw a
+-- 'LeiosDbException' if it does.
 --
--- Exhausting these throws 'LeiosDbException', which no caller catches: it leaves
--- the Leios thread it was raised in, and the node dies. That is the intent.
--- Unlike 'dbWithWriteTransaction', these retries happen /inside/ an open
--- transaction, so waiting is not free -- the transaction holds its snapshot
--- throughout, and a connection that sits on a stale snapshot indefinitely is
--- exactly what pins the WAL and stops back-fill. Half a minute of a statement
--- refusing inside a transaction is not contention, it is a deadlock, and dying
--- is better than silently wedging the log.
---
--- With 'busy_timeout' doing the real waiting, each attempt costs about a
--- timeout, so the ceiling is linear -- roughly 30 s -- rather than the quadratic
--- 83 minutes the escalating sleep used to reach at the old value of 10000.
-maxBusyRetries :: Int
-maxBusyRetries = 30
-
--- | A short fixed pause between attempts.
---
--- Deliberately not escalating.
-busyBackoff :: IO ()
-busyBackoff = do
-  jitter <- (`mod` 5000) <$> randomIO
-  threadDelay (20000 + jitter)
-
--- | Execute a database action that may return an error. If the error is
--- 'DB.ErrorBusy', retry up to 'maxBusyRetries' times with linear backoff and
--- jitter. Otherwise and after exhausting retries, throws a 'LeiosDbException'
--- with the error message from the database.
+-- Including 'DB.ErrorBusy': the connections set a 'busy_timeout', so SQLite
+-- has already waited that long in C before reporting it. Waiting again on
+-- top of that only converts a lock nobody is going to release into an
+-- unbounded stall -- and with one writer per partition, a lock nobody is
+-- going to release means another process has the file.
 withDie :: HasCallStack => DB.Database -> IO (Either DB.Error a) -> IO a
-withDie db = go maxBusyRetries
- where
-  go 0 io =
-    io >>= \case
-      Left e -> throwDbException db e
-      Right x -> pure x
-  go n io =
-    io >>= \case
-      Left DB.ErrorBusy -> do
-        busyBackoff
-        go (n - 1) io
-      Left e -> throwDbException db e
-      Right x -> pure x
+withDie db io =
+  io >>= \case
+    Left e -> throwDbException db e
+    Right x -> pure x
 
 withDieStmt :: HasCallStack => DB.Statement -> IO (Either DB.Error a) -> IO a
 withDieStmt stmt io = do

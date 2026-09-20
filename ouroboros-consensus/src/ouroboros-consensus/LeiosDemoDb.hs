@@ -1,3 +1,5 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+
 module LeiosDemoDb
   ( -- * API
     LeiosDbHandle (..)

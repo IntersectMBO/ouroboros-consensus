@@ -1592,17 +1592,10 @@ jsonLeiosDb = \case
       , "table" .= table
       , "key" .= key
       ]
-  TraceLeiosDbBusyRetry attempt waitedMs ->
+  TraceLeiosDbWriterQueueFull job ->
     mconcat
-      [ "kind" .= Aeson.String "LeiosDbBusyRetry"
-      , "attempt" .= attempt
-      , "waitedMs" .= waitedMs
-      ]
-  TraceLeiosDbBusyStuck attempt waitedMs ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbBusyStuck"
-      , "attempt" .= attempt
-      , "waitedMs" .= waitedMs
+      [ "kind" .= Aeson.String "LeiosDbWriterQueueFull"
+      , "job" .= job
       ]
   TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
     mconcat
