@@ -452,9 +452,8 @@ copyEbToImmutable ::
   EbHash ->
   IO ()
 copyEbToImmutable tracer statsVar conn ebHash = do
-  let CopierConn{ccMarkAsCopied} = conn
   copied <-
-    appendToImmutable conn ebHash >>= \case
+    appendToImmutable >>= \case
       Nothing -> do
         -- EB is not ready to be copied
         traceWith tracer $
@@ -472,58 +471,60 @@ copyEbToImmutable tracer statsVar conn ebHash = do
     useStmt ccMarkAsCopied $ do
       dbBindBlob ccMarkAsCopied 1 ebHash.ebHashBytes
       dbStep1Safe ccMarkAsCopied
+ where
+  CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertTxs, ccMarkAsCopied} = conn
 
--- | Attempt to do the actual copying.
---
--- Returns the number of copied body rows, or Nothing if
--- the volatile partition does not hold the full closure.
-appendToImmutable :: CopierConn -> EbHash -> IO (Maybe Int)
-appendToImmutable CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertTxs} ebHash =
-  dbWithTransaction ccDb $ do
-    -- the cert-RB is on our chain, hence the EB must be complete by this point.
-    -- Still check if it is, as a defensive programming measure, as it's very cheap.
-    (bodyCount, closureCount) <-
-      useStmt ccCompleteness $ do
-        dbBindBlob ccCompleteness 1 ebHash.ebHashBytes
-        -- step the first time, expecting a single result row
-        dbStepSafe ccCompleteness >>= \case
-          DB.Done ->
-            -- no row: critical error, fail fast and loud.
-            -- this should not happen.
-            throwLeiosDbException "sql_copy_completeness: expected a row"
-          DB.Row -> do
-            n <- DB.columnInt64 ccCompleteness 0
-            m <- DB.columnInt64 ccCompleteness 1
-            -- step again, expecting no more row
-            dbStepSafe ccCompleteness >>= \case
-              DB.Done ->
-                -- we have our result
-                pure (n, m)
-              DB.Row ->
-                -- another row: critical error, fail fast and loud.
-                -- this should not happen.
-                throwLeiosDbException "sql_copy_completeness: expected exactly one row"
-    if bodyCount == 0 || bodyCount /= closureCount
-      then
-        -- the EB is incomplete, don't copy
-        pure Nothing
-      else do
-        -- the EB is complete: body is non-empty and bodyCounty matches closureCount
-        --
-        -- copy the EB
-        useStmt ccInsertEb $ do
-          dbBindBlob ccInsertEb 1 ebHash.ebHashBytes
-          dbStep1Safe ccInsertEb
-        -- copy the eb-to-transactions mapping
-        useStmt ccInsertEbTxs $ do
-          dbBindBlob ccInsertEbTxs 1 ebHash.ebHashBytes
-          dbStep1Safe ccInsertEbTxs
-        nTxs <- DB.changes ccDb
-        -- copy the transactions
-        useStmt ccInsertTxs $ do
-          dbBindBlob ccInsertTxs 1 ebHash.ebHashBytes
-          dbStep1Safe ccInsertTxs
-        pure (Just nTxs)
+  -- Attempt to do the actual copying.
+  --
+  -- Returns the number of copied body rows, or Nothing if
+  -- the volatile partition does not hold the full closure.
+  appendToImmutable :: IO (Maybe Int)
+  appendToImmutable =
+    dbWithTransaction ccDb $ do
+      -- the cert-RB is on our chain, hence the EB must be complete by this point.
+      -- Still check if it is, as a defensive programming measure, as it's very cheap.
+      (bodyCount, closureCount) <-
+        useStmt ccCompleteness $ do
+          dbBindBlob ccCompleteness 1 ebHash.ebHashBytes
+          -- step the first time, expecting a single result row
+          dbStepSafe ccCompleteness >>= \case
+            DB.Done ->
+              -- no row: critical error, fail fast and loud.
+              -- this should not happen.
+              throwLeiosDbException "sql_copy_completeness: expected a row"
+            DB.Row -> do
+              n <- DB.columnInt64 ccCompleteness 0
+              m <- DB.columnInt64 ccCompleteness 1
+              -- step again, expecting no more row
+              dbStepSafe ccCompleteness >>= \case
+                DB.Done ->
+                  -- we have our result
+                  pure (n, m)
+                DB.Row ->
+                  -- another row: critical error, fail fast and loud.
+                  -- this should not happen.
+                  throwLeiosDbException "sql_copy_completeness: expected exactly one row"
+      if bodyCount == 0 || bodyCount /= closureCount
+        then
+          -- the EB is incomplete, don't copy
+          pure Nothing
+        else do
+          -- the EB is complete: body is non-empty and bodyCounty matches closureCount
+          --
+          -- copy the EB
+          useStmt ccInsertEb $ do
+            dbBindBlob ccInsertEb 1 ebHash.ebHashBytes
+            dbStep1Safe ccInsertEb
+          -- copy the eb-to-transactions mapping
+          useStmt ccInsertEbTxs $ do
+            dbBindBlob ccInsertEbTxs 1 ebHash.ebHashBytes
+            dbStep1Safe ccInsertEbTxs
+          nTxs <- DB.changes ccDb
+          -- copy the transactions
+          useStmt ccInsertTxs $ do
+            dbBindBlob ccInsertTxs 1 ebHash.ebHashBytes
+            dbStep1Safe ccInsertTxs
+          pure (Just nTxs)
 
 -- | Close the connection if the action throws, then rethrow. For partial
 -- acquisition of 'CopierConn': without it, a persistently failing attach or
