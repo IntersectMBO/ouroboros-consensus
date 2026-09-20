@@ -226,16 +226,18 @@ main = do
     hPutStrLn stderr (renderStats "after " after)
     hPutStr stderr (renderSummary opts phaseStats)
 
--- | The imm-file sibling of a volatile fixture path, for either naming
--- convention (@FOO.vol.db@), still accepting the @FOO.vol@ a pre-rename
--- fixture may carry.
+-- | The imm-file sibling of a volatile fixture path. Fixtures are named the
+-- way the node names its partitions (@FOO.vol.db@); a @FOO.vol@ from before
+-- that rename is still accepted, and keeps its own pairing.
 immSiblingOf :: FilePath -> FilePath
 immSiblingOf path
-  | ".vol.db" `List.isSuffixOf` path =
-      take (length path - length (".vol.db" :: String)) path <> ".imm.db"
-  | ".vol" `List.isSuffixOf` path =
-      take (length path - length (".vol" :: String)) path <> ".imm"
-  | otherwise = path <> ".imm"
+  | Just base <- stripSuffix ".vol.db" path = base <> ".imm.db"
+  | Just base <- stripSuffix ".vol" path = base <> ".imm"
+  | otherwise = path <> ".imm.db"
+ where
+  stripSuffix suffix s
+    | suffix `List.isSuffixOf` s = Just (take (length s - length suffix) s)
+    | otherwise = Nothing
 
 -- * Options
 
