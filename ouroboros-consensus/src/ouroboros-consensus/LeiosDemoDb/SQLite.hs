@@ -74,7 +74,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
-import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
 import qualified Data.Set as Set
 import Data.String (fromString)
@@ -295,11 +294,11 @@ startVolatileStatsSampler tracer statsVar volPath =
 
 -- | Fold a delta into the volatile EB count of the in-memory 'LeiosDbStats'.
 bumpVolatileStats :: Conn -> Int -> IO ()
-bumpVolatileStats Conn{connStats} = bumpVolatileStatsRef connStats
+bumpVolatileStats Conn{connStats} = bumpVolatileStatsVar connStats
 
 -- | 'bumpVolatileStats' for the maintenance paths, which have no 'Conn'.
-bumpVolatileStatsRef :: StrictTVar IO LeiosDbStats -> Int -> IO ()
-bumpVolatileStatsRef statsVar dEbs =
+bumpVolatileStatsVar :: StrictTVar IO LeiosDbStats -> Int -> IO ()
+bumpVolatileStatsVar statsVar dEbs =
   unless (dEbs == 0) $
     atomically $
       modifyTVar statsVar $
@@ -545,7 +544,7 @@ defaultGcBatchSize = 4
 gcOrphanTxBatchSize :: Int64
 gcOrphanTxBatchSize = 1024
 
--- | Page size of the 'reinitialiseGcTxCandidates' scan.
+-- | Page size of the 'gcReinit' scan.
 gcCandidatesPageSize :: Int64
 gcCandidatesPageSize = 4096
 
@@ -762,9 +761,16 @@ sweepOrphanBatch tracer conn batchSize = do
             execJson swPopOrphans orphanedTxsJson
             pure (Just nTxs)
 
--- | Implements 'GcReinit': stage every unstaged GC candidate, one page per
--- transaction. Runs on the writer -- once per process, so occupying it for
--- the paged scan is tolerable.
+-- | Stage every unstaged GC candidate, one page per transaction.
+--
+-- The sweeper only ever reads 'gcTxCandidates', which the mark phase fills
+-- ('sql_gc_stage_marked'). A tx orphaned by anything else -- a
+-- 'truncateLeiosDbAfterSlot' that dropped its EB's rows, a database written
+-- before the table existed -- is referenced by nothing and staged nowhere,
+-- and would never be collected.
+--
+-- Only such out-of-band edits can leave that behind, and only before the
+-- writer started, so this runs once per process, on the writer.
 gcReinit :: Tracer IO TraceLeiosDb -> SweeperConn -> IO ()
 gcReinit tracer conn = do
   let SweeperConn{swDb, swHasUnstagedGcCandidates, swUnstagedGcCandidatesPage, swInsertGcCandidates} = conn
@@ -1117,9 +1123,9 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
       `onException` (void (DB.close immDb) >> void (DB.close volDb))
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
-  sweepStateRef <- newIORef SweepIdle
-  gcReinitDoneRef <- newIORef False
-  jobsServedRef <- newIORef (0 :: Int)
+  sweepStateVar <- newTVarIO SweepIdle
+  gcReinitDoneVar <- newTVarIO False
+  jobsServedVar <- newTVarIO (0 :: Int)
   let notify = atomically . writeTChan notificationChan
 
       -- Statements before connections; an open statement holds the close off.
@@ -1163,19 +1169,21 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
       -- long as it likes, so 'maxJobsBetweenMaintenance' of them is the
       -- most that may pass before maintenance gets its turn regardless.
       serve = do
-        served <- readIORef jobsServedRef
-        mJob <-
+        mJob <- atomically $ do
+          served <- readTVar jobsServedVar
           if served >= maxJobsBetweenMaintenance
             then pure Nothing
-            else atomically (tryReadTBQueue queue)
+            else
+              tryReadTBQueue queue >>= \case
+                Nothing -> pure Nothing
+                Just job -> Just job <$ writeTVar jobsServedVar (served + 1)
         case mJob of
           Just job -> do
-            writeIORef jobsServedRef (served + 1)
             stop <- runJob job
             unless stop serve
           Nothing -> do
             quiet <- stepMaintenance
-            writeIORef jobsServedRef 0
+            atomically $ writeTVar jobsServedVar 0
             when quiet blockUntilWork
             serve
 
@@ -1195,7 +1203,7 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
           _ <- DB.exec volDb "ROLLBACK"
           _ <- DB.exec immDb "ROLLBACK"
           traceWith tracer $ TraceLeiosDbGCError (displayException e)
-          writeIORef sweepStateRef SweepIdle
+          atomically $ writeTVar sweepStateVar SweepIdle
           pure True
        where
         -- The pinned EBs are the copy work list, so an interrupted copy is
@@ -1222,41 +1230,42 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
                   traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
               pure False
             Nothing ->
-              readIORef sweepStateRef >>= \case
+              readTVarIO sweepStateVar >>= \case
                 SweepIdle -> do
                   asked <- atomically $ do
                     rung <- readTVar sweepDoorbell
-                    when rung $ writeTVar sweepDoorbell False
+                    when rung $ do
+                      writeTVar sweepDoorbell False
+                      writeTVar sweepStateVar (SweepEbs 0)
                     pure rung
                   if not asked
                     then pure True
                     else do
                       -- Stages the GC tx candidates a restart left behind.
-                      done <- readIORef gcReinitDoneRef
+                      done <- readTVarIO gcReinitDoneVar
                       unless done $ do
                         gcReinit tracer sweeperConn
-                        writeIORef gcReinitDoneRef True
-                      writeIORef sweepStateRef (SweepEbs 0)
+                        atomically $ writeTVar gcReinitDoneVar True
                       pure False
                 SweepEbs nEbs -> do
                   evicted <- sweepEbBatch tracer sweeperConn gcBatchSize
                   if evicted == 0
-                    then writeIORef sweepStateRef (SweepOrphans nEbs 0)
+                    then atomically $ writeTVar sweepStateVar (SweepOrphans nEbs 0)
                     else do
-                      bumpVolatileStatsRef statsVar (negate evicted)
-                      writeIORef sweepStateRef (SweepEbs (nEbs + evicted))
+                      bumpVolatileStatsVar statsVar (negate evicted)
+                      atomically $ writeTVar sweepStateVar (SweepEbs (nEbs + evicted))
                   pure False
                 SweepOrphans nEbs nTxs ->
                   sweepOrphanBatch tracer sweeperConn gcOrphanTxBatchSize >>= \case
                     Just evicted -> do
-                      writeIORef sweepStateRef (SweepOrphans nEbs (nTxs + evicted))
+                      atomically $ writeTVar sweepStateVar (SweepOrphans nEbs (nTxs + evicted))
                       pure False
                     Nothing -> do
                       when (nEbs > 0 || nTxs > 0) $ do
                         -- Flush the WAL only after real work.
                         dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
                         traceWith tracer $ TraceLeiosDbEvicted nEbs
-                      writeIORef sweepStateRef SweepIdle
+                      atomically $ writeTVar sweepStateVar SweepIdle
                       pure False
 
   threadId <- forkIO $ do
@@ -2194,7 +2203,7 @@ sql_has_unstaged_gc_candidates =
   \"
 
 -- | One keyset page of unstaged GC candidates (txs no EB references), for
--- 'reinitialiseGcTxCandidates': @?1@ = cursor (exclusive), @?2@ = page size.
+-- 'gcReinit': @?1@ = cursor (exclusive), @?2@ = page size.
 sql_unstaged_gc_candidates_page :: String
 sql_unstaged_gc_candidates_page =
   "SELECT txHashBytes FROM txs\n\
