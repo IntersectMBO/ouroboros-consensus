@@ -110,9 +110,10 @@ import LeiosUtils.CallTrace
   )
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Util.IOLike (atomically, labelThread)
-import System.Directory (doesFileExist, getFileSize)
+import System.Directory (createDirectoryIfMissing, doesFileExist, getFileSize)
 import System.Environment (lookupEnv)
 import System.Exit (die)
+import System.FilePath (takeDirectory)
 import System.Random (randomIO)
 
 -- * Public API
@@ -151,6 +152,8 @@ newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
 newLeiosDBSQLiteWithGcBatchSize ::
   Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
 newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
+  -- The database opens before whoever owns these directories creates them.
+  mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
   notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
