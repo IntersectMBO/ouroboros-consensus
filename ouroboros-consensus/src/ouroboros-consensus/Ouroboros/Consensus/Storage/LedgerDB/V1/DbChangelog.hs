@@ -197,7 +197,7 @@ import Data.SOP (K, unK)
 import Data.SOP.Functors
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbReader)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -386,7 +386,7 @@ reapplyThenPushLeios ::
   , ResolveLeiosBlock blk
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   LedgerDbCfg l ->
   blk ->
   KeySetsReader m l ->

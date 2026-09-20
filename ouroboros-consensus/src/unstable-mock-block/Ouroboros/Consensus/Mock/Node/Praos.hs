@@ -56,7 +56,7 @@ protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
           , topLevelConfigCodec = SimpleCodecConfig
           , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
-          , topLevelConfigVotingKey = Nothing
+          , topLevelConfigVotingKeys = []
           }
     , pInfoInitLedger =
         ExtLedgerState

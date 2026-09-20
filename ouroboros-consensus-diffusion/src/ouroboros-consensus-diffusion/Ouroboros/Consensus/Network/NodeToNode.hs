@@ -77,10 +77,12 @@ import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
-  ( LeiosDbConnection
-  , LeiosDbHandle (subscribeEbNotifications)
+  ( LeiosDbHandle (subscribeEbNotifications)
+  , LeiosDbReader
+  , LeiosDbWriter
   , LeiosEbNotification (..)
-  , withLeiosDb
+  , withReader
+  , withWriter
   )
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
@@ -342,14 +344,14 @@ data Handlers m addr blk = Handlers
         , m Void
         )
   , hLeiosFetchClient ::
-      LeiosDbConnection m ->
+      LeiosDbWriter m ->
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
       Leios.LeiosPeerVars m ->
       LeiosFetchClientPeerPipelined LeiosPoint LeiosEb LeiosTx m ()
   , hLeiosFetchServer ::
-      LeiosDbConnection m ->
+      LeiosDbReader m ->
       NodeToNodeVersion ->
       ConnectionId addr ->
       LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
@@ -670,6 +672,7 @@ mkHandlers
                   forever $ atomically $ do
                     msg <- pumpNext
                     c <- TVar.Unchecked.readTVar credits
+                    -- FIXME: Is this dropping messages when we run out of credits?
                     when (c > 0) $ do
                       TVar.Unchecked.writeTVar credits $! c - 1
                       q <- TVar.Unchecked.readTVar queue
@@ -680,14 +683,8 @@ mkHandlers
                           )
 
           pure (leiosNotifyServerPeerLookahead incr next, pump)
-      , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
+      , hLeiosFetchClient = \writer _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
-          -- Queue for responses received by the pipelined-peer collector
-          -- thread. The collector enqueues here rather than touching the
-          -- 'LeiosDbConnection' directly; 'nextLeiosFetchClientCommand'
-          -- drains and processes on the main peer thread, keeping all DB
-          -- access single-threaded.
-          responseQ <- LazySTM.atomically LazySTM.newTQueue
           pure $
             ( leiosFetchClientPeerPipelined $
                 Leios.nextLeiosFetchClientCommand
@@ -696,7 +693,7 @@ mkHandlers
                   ((== Terminate) <$> controlMessageSTM)
                   (getLeiosOutstanding, getLeiosReady)
                   getLeiosTxCache
-                  leiosConn
+                  writer
                   systemTime
                   ( Leios.mkMempoolPull
                       (atomically (getLeiosTxIndex getMempool))
@@ -704,10 +701,9 @@ mkHandlers
                   )
                   (Leios.MkPeerId peer)
                   reqVar
-                  responseQ
             )
-      , hLeiosFetchServer = \leiosConn _version peer -> Effect $ do
-          leiosFetchContext <- Leios.newLeiosFetchContext leiosConn
+      , hLeiosFetchServer = \reader _version peer -> Effect $ do
+          leiosFetchContext <- Leios.newLeiosFetchContext reader
           pure $
             leiosFetchServerPeer
               (pure $ Leios.leiosFetchHandler (leiosPeerTracer peer) leiosFetchContext)
@@ -1498,7 +1494,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     channel = do
       labelThisThread "LeiosFetchClient"
       bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
-        withLeiosDb leiosDB $ \leiosConn -> do
+        withWriter leiosDB $ \writer -> do
           ((), trailing) <-
             runPipelinedPeerWithLimits
               (TraceLabelPeer them `contramap` tLeiosFetchTracer)
@@ -1506,7 +1502,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
               blLeiosFetch
               timeLimitsLeiosFetch
               channel
-              $ hLeiosFetchClient leiosConn version controlMessageSTM them peerVars
+              $ hLeiosFetchClient writer version controlMessageSTM them peerVars
           pure (NoInitiatorResult, trailing)
 
   aLeiosFetchServer ::
@@ -1516,14 +1512,14 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     m ((), Maybe bLF)
   aLeiosFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosFetchServer"
-    withLeiosDb leiosDB $ \leiosConn ->
+    withReader leiosDB $ \reader ->
       runPeerWithLimits
         (TraceLabelPeer them `contramap` tLeiosFetchTracer)
         (cLeiosFetchCodec (mkCodecs version))
         blLeiosFetch
         timeLimitsLeiosFetch
         channel
-        $ hLeiosFetchServer leiosConn version them
+        $ hLeiosFetchServer reader version them
 
 {-------------------------------------------------------------------------------
   Projections from 'Apps'

@@ -1,10 +1,18 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+
 module LeiosDemoDb
   ( -- * API
-    withLeiosDb
-  , LeiosDbHandle (..)
+    LeiosDbHandle (..)
   , LeiosDbStats (..)
   , LeiosEbNotification (..)
-  , LeiosDbConnection (..)
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , withReader
+  , withWriter
+  , allocateReader
+  , allocateWriter
+  , awaitAll
   , CompletedEbs
   , TraceLeiosDb (..)
 
@@ -16,16 +24,16 @@ module LeiosDemoDb
 
     -- * SQLite implementation
   , newLeiosDBSQLiteFromEnv
-  , newLeiosDBSQLiteWithGcPacing
+  , newLeiosDBSQLiteWithGcBatchSize
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteReadOnly
+  , withLeiosDBSQLite
 
     -- * Re-exported for internal tooling
   , truncateLeiosDbAfterSlot
   , deleteDanglingTxs
   , vacuumLeiosDb
 
-    -- * SQL (re-exported for leiosdemo app)
+    -- * SQL (re-exported for leios-schedule-gen)
   , sql_schema
   , sql_insert_eb
   , sql_insert_ebBody
@@ -34,11 +42,17 @@ module LeiosDemoDb
 
 import LeiosDemoDb.Common
   ( CompletedEbs
-  , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosDbReader (..)
   , LeiosDbStats (..)
+  , LeiosDbWriter (..)
   , LeiosEbNotification (..)
-  , withLeiosDb
+  , Promise (..)
+  , allocateReader
+  , allocateWriter
+  , awaitAll
+  , withReader
+  , withWriter
   )
 import LeiosDemoDb.InMemory
   ( InMemoryLeiosDb (..)
@@ -50,13 +64,13 @@ import LeiosDemoDb.SQLite
   ( deleteDanglingTxs
   , newLeiosDBSQLite
   , newLeiosDBSQLiteFromEnv
-  , newLeiosDBSQLiteReadOnly
-  , newLeiosDBSQLiteWithGcPacing
+  , newLeiosDBSQLiteWithGcBatchSize
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx
   , sql_schema
   , truncateLeiosDbAfterSlot
   , vacuumLeiosDb
+  , withLeiosDBSQLite
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))

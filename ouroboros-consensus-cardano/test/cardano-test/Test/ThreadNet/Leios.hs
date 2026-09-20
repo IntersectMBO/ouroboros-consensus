@@ -74,9 +74,9 @@ import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoDb
-  ( LeiosDbConnection
+  ( LeiosDbReader
   , newLeiosDBInMemoryWith
-  , withLeiosDb
+  , withReader
   )
 import LeiosDemoTypes
   ( LeiosNotVotedReason (..)
@@ -897,7 +897,7 @@ sumChainTxBytes _topConfig _initLedger node = runSimOrThrow $ do
   let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
   stateVar <- StrictTVar.newTVarIO db
   leiosDb <- newLeiosDBInMemoryWith stateVar
-  withLeiosDb leiosDb $ \leiosConn ->
+  withReader leiosDb $ \leiosConn ->
     foldChain leiosConn Nothing 0 (Chain.toOldestFirst $ nodeOutputFinalChain node)
  where
   -- Fold the chain, inlining each CertRB's EB closure into its
@@ -934,7 +934,7 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
   let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
   stateVar <- StrictTVar.newTVarIO db
   leiosDb <- newLeiosDBInMemoryWith stateVar
-  withLeiosDb leiosDb $ \leiosConn -> do
+  withReader leiosDb $ \leiosConn -> do
     let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
         cfg = ExtLedgerCfg topConfig
     foldedState <- foldWithResolution leiosConn cfg chain initLedger
@@ -952,7 +952,7 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
 -- bumped for closure txs.
 foldWithResolution ::
   Monad m =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   LedgerCfg (ExtLedgerState (CardanoBlock StandardCrypto)) ->
   [CardanoBlock StandardCrypto] ->
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->

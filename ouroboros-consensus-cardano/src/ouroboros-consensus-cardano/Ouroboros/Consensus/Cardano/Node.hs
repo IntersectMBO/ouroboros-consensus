@@ -51,7 +51,7 @@ import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.LedgerState (NewEpochState, esSnapshotsL, nesEsL)
-import Cardano.Ledger.State (ssStakeGoL, ssStakeMarkL, ssStakeSetL)
+import Cardano.Ledger.State (mkGoSnapShot, mkSetSnapShot, ssStakeGoL, ssStakeMarkL, ssStakeSetL)
 import Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Codec.CBOR.Decoding as CBOR
@@ -111,7 +111,7 @@ import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Node.Common
   ( shelleyBlockIssuerVKey
-  , shelleyLeaderVotingKey
+  , shelleyLeaderVotingKeys
   )
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
@@ -504,12 +504,26 @@ seedInitialStakeSnapshots ::
   NewEpochState era ->
   NewEpochState era
 seedInitialStakeSnapshots trigger nes = case trigger of
-  TriggerHardForkAtEpoch (EpochNo 0) -> nes & setSnap ssStakeSetL & setSnap ssStakeGoL
-  TriggerHardForkAtEpoch (EpochNo 1) -> nes & setSnap ssStakeSetL
+  TriggerHardForkAtEpoch (EpochNo 0) ->
+    nes
+      & (nesEsL . esSnapshotsL . ssStakeSetL) .~ setSnap
+      & (nesEsL . esSnapshotsL . ssStakeGoL) .~ mkGoSnapShot setSnap
+  TriggerHardForkAtEpoch (EpochNo 1) ->
+    nes & (nesEsL . esSnapshotsL . ssStakeSetL) .~ setSnap
   _ -> nes
  where
   mark = nes ^. nesEsL . esSnapshotsL . ssStakeMarkL
-  setSnap l = (nesEsL . esSnapshotsL . l) .~ mark
+  -- Mark/Set/Go stopped being textually the same type (differentiated stake
+  -- snapshots by phase), so seating the committee on the set/go position now
+  -- goes through 'mkSetSnapShot' rather than a bare lens write. It wants a
+  -- max key age (CIP-0164) to judge every seat's key by; this function is
+  -- test/devnet-only (see the trigger match above), every key it seats was
+  -- just registered this same epoch, and pre-Dijkstra eras never force the
+  -- committee at all -- so a generous constant that cannot itself expire a
+  -- key here is as good as reading 'ppLeiosMaxKeyAgeEpochsL' would be, and
+  -- avoids adding a 'DijkstraEraPParams' constraint this function cannot
+  -- have (it fires uniformly across every Shelley-based era).
+  setSnap = mkSetSnapShot mark (SL.EpochInterval 1000000)
 
 newtype CardanoHardForkTriggers = CardanoHardForkTriggers
   { getCardanoHardForkTriggers ::
@@ -958,13 +972,10 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
-      , -- The Leios/Peras voting key comes from the block-producer credentials
-        -- (loaded from @--shelley-bls-key@). We vote with the first set of
-        -- credentials that carries a BLS key; 'Nothing' disables voting.
-        topLevelConfigVotingKey =
-          case credssShelleyBased of
-            [] -> Nothing
-            (c : _) -> shelleyLeaderVotingKey c
+      , -- The Leios/Peras voting keys come from the block-producer credentials
+        -- (loaded from @--shelley-bls-key@); an empty list disables voting.
+        topLevelConfigVotingKeys =
+          concatMap shelleyLeaderVotingKeys credssShelleyBased
       }
 
   -- When the initial ledger state is not in the Byron era, register various

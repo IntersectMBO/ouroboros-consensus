@@ -115,8 +115,9 @@ run ::
   LeiosSchedule ->
   IO Void
 run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry \registry -> do
-  -- Same naming convention as the node: <path>.vol and <path>.imm.
-  leiosDb <- LeiosDemoDb.newLeiosDBSQLite nullTracer (leiosDbFile <> ".vol") (leiosDbFile <> ".imm")
+  -- Same naming convention as the node: <path>.vol.db and <path>.imm.db.
+  leiosDb <-
+    LeiosDemoDb.newLeiosDBSQLite nullTracer (leiosDbFile <> ".vol.db") (leiosDbFile <> ".imm.db")
   let mkLeiosNotifyContext registry' = do
         -- each LeiosNotify server calls this when it initializes
         leiosMailbox <- MVar.newEmptyMVar
@@ -128,9 +129,9 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
             (leiosScheduler getSlotDelay leiosNotifyContext leiosSchedule)
         pure leiosNotifyContext
   let mkLeiosFetchContext = do
-        leiosConn <- LeiosDemoDb.open leiosDb -- XXX: leaks resources
+        reader <- LeiosDemoDb.allocateReader registry leiosDb
         LeiosLogic.MkSomeLeiosFetchContext
-          <$> LeiosLogic.newLeiosFetchContext leiosConn
+          <$> LeiosLogic.newLeiosFetchContext reader
   ImmutableDB.withDB
     (ImmutableDB.openDB (immDBArgs registry))
     \immDB ->

@@ -86,7 +86,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
   ( BytesSize
@@ -349,7 +349,7 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ How many blocks to roll back before applying the blocks
   , hdrs :: NonEmpty (Header blk)
   -- ^ The headers we want to apply
-  , leiosDB :: !(LeiosDbConnection m)
+  , leiosDB :: !(LeiosDbReader m)
   -- ^ Leios demo DB connection: 'applyBlock' calls 'resolveLeiosBlock'
   -- with this connection before each ledger application, so that
   -- Dijkstra blocks carrying a 'Maybe LeiosCert' can have the EB
@@ -441,7 +441,7 @@ switch ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   (forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -514,7 +514,7 @@ applyBlockToForker ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   BlockApplicationMode ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -543,7 +543,7 @@ applyBlock ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap m l blk ->
@@ -688,7 +688,7 @@ applyThenPush ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap m l blk ->
@@ -710,7 +710,7 @@ applyThenPushMany ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -761,7 +761,7 @@ data OCINStaleness = FreshOCIN | StaleOCIN
 --
 -- In Leios, a Dijkstra-era block may carry only a 'LeiosCert' on its body
 -- in place of the regular tx list: the actual transactions to apply live
--- in the EB's stored closure ('LeiosDbConnection'). 'resolveLeiosBlock'
+-- in the EB's stored closure ('LeiosDbReader'). 'resolveLeiosBlock'
 -- splices the EB closure back into the block before validation. For
 -- block types that do not carry such certificates, the default 'return
 -- blk' is correct.
@@ -784,7 +784,7 @@ class ResolveLeiosBlock blk where
   -- closure tx still needs full validation.
   resolveLeiosClosure ::
     Monad m =>
-    LeiosDbConnection m ->
+    LeiosDbReader m ->
     EbHash ->
     m (Either LeiosClosureError [(TxHash, GenTx blk)])
   resolveLeiosClosure _ _ = pure (Right [])
@@ -925,7 +925,7 @@ resolveLeiosBlock ::
   forall blk m.
   Monad m =>
   ResolveLeiosBlock blk =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   ChainDepState (BlockProtocol blk) ->
   blk ->
   m blk
@@ -956,7 +956,7 @@ resolveAndApplyLeiosClosure ::
   , ResolveLeiosBlock blk
   , HasLedgerTables (LedgerState blk)
   ) =>
-  LeiosDbConnection m ->
+  LeiosDbReader m ->
   LedgerCfg (LedgerState blk) ->
   -- | The EB to resolve
   EbHash ->

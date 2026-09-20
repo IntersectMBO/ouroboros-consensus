@@ -393,6 +393,7 @@ library
     direct-sqlite,
     directory,
     filelock,
+    filepath,
     fingertree-rm >=1.0,
     fs-api ^>=0.4,
     hashable,

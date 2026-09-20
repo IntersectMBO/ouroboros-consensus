@@ -55,8 +55,8 @@ truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leiosDbSource} args = 
   mLeiosDbPaths <- case leiosDbSource of
     NoLeiosDb -> pure Nothing
     LeiosDbFiles -> do
-      let volLeiosDBFile = dbDir FilePath.</> "leios.db.vol"
-          immLeiosDBFile = dbDir FilePath.</> "leios.db.imm"
+      let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
+          immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
       requireLeiosDbFile volLeiosDBFile
       requireLeiosDbFile immLeiosDBFile
       pure . Just $ (volLeiosDBFile, immLeiosDBFile)

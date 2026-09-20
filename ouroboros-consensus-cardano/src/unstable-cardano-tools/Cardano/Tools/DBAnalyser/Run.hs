@@ -22,7 +22,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
-import LeiosDemoDb (newLeiosDBInMemory, newLeiosDBSQLite, withLeiosDb)
+import LeiosDemoDb (newLeiosDBInMemory, newLeiosDBSQLite, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -156,8 +156,8 @@ analyse dbaConfig args =
     leiosDbHandle <- case leiosDbSource of
       NoLeiosDb -> newLeiosDBInMemory
       LeiosDbFiles -> do
-        let volLeiosDBFile = dbDir FilePath.</> "leios.db.vol"
-            immLeiosDBFile = dbDir FilePath.</> "leios.db.imm"
+        let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
+            immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
         requireLeiosDbFile volLeiosDBFile
         requireLeiosDbFile immLeiosDBFile
         newLeiosDBSQLite nullTracer volLeiosDBFile immLeiosDBFile
@@ -236,7 +236,7 @@ analyse dbaConfig args =
       -- Open one LeiosDb connection for the whole analysis run: the analysis
       -- loop is single-threaded, so a single bracketed connection is the right
       -- lifetime.
-      withLeiosDb leiosDbHandle $ \leiosConn -> do
+      withReader leiosDbHandle $ \reader -> do
         result <-
           ana
             AnalysisEnv
@@ -246,7 +246,7 @@ analyse dbaConfig args =
               , registry
               , limit = confLimit
               , tracer = analysisTracer
-              , leiosDb = leiosConn
+              , leiosDbReader = reader
               }
         tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
         putStrLn $ "ImmutableDB tip: " ++ show tipPoint

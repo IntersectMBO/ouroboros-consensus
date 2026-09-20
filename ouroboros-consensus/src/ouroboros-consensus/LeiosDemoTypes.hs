@@ -74,6 +74,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
+import Control.Exception (displayException)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
@@ -762,7 +763,7 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 --
 -- The 'cdbAcquiredLeiosEbs' field of the ChainDB (which gates ChainSel for
 -- CertRBs) is initialized in the exact same way: from
--- 'LeiosDemoDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot', already
+-- 'LeiosDemoDb.scanCompleteEbClosuresNotOlderThanSlot', already
 -- restricted to announcers no older than the immutable tip. And, it's
 -- necessarily initialized earlier, as part of the ChainDB. But for the sake of
 -- modularity/independence (see the TODO below), we're not reusing it to
@@ -1591,17 +1592,10 @@ jsonLeiosDb = \case
       , "table" .= table
       , "key" .= key
       ]
-  TraceLeiosDbBusyRetry attempt waitedMs ->
+  TraceLeiosDbWriterQueueFull job ->
     mconcat
-      [ "kind" .= Aeson.String "LeiosDbBusyRetry"
-      , "attempt" .= attempt
-      , "waitedMs" .= waitedMs
-      ]
-  TraceLeiosDbBusyStuck attempt waitedMs ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbBusyStuck"
-      , "attempt" .= attempt
-      , "waitedMs" .= waitedMs
+      [ "kind" .= Aeson.String "LeiosDbWriterQueueFull"
+      , "job" .= job
       ]
   TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
     mconcat
@@ -1624,11 +1618,6 @@ jsonLeiosDb = \case
     mconcat
       [ "kind" .= Aeson.String "LeiosDbSweepError"
       , "reason" .= reason
-      ]
-  TraceLeiosDbCopyQueueFull ebHash ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbCopyQueueFull"
-      , "ebHash" .= ebHash
       ]
   TraceLeiosDbCopyError ebHash reason ->
     mconcat
@@ -1934,7 +1923,6 @@ data LeiosKernelNS
   | LKNSDbCopied
   | LKNSDbEvicted
   | LKNSDbSweepError
-  | LKNSDbCopyQueueFull
   | LKNSDbCopyError
   | LKNSCertifiedAndAnnounced
   | LKNSAnnouncementAccepted
@@ -1968,7 +1956,6 @@ leiosKernelNSOf = \case
   TraceLeiosDb TraceLeiosDbCopiedToImmutable{} -> LKNSDbCopied
   TraceLeiosDb TraceLeiosDbEvicted{} -> LKNSDbEvicted
   TraceLeiosDb TraceLeiosDbGCError{} -> LKNSDbSweepError
-  TraceLeiosDb TraceLeiosDbCopyQueueFull{} -> LKNSDbCopyQueueFull
   TraceLeiosDb TraceLeiosDbCopyError{} -> LKNSDbCopyError
   TraceLeiosDb{} -> LKNSDb
   TraceLeiosCertifiedAndAnnounced{} -> LKNSCertifiedAndAnnounced
@@ -2054,17 +2041,8 @@ leiosKernelNSInfo = \case
       ["Db", "SweepError"]
       LSWarning
       [("leiosDbSweepErrors", "LeiosDb: failed sweep passes (retried)")]
-  -- Both mean the copier fell behind or failed; harmless for data (the EB
-  -- stays pinned and GC self-heal retries) but worth an operator's eye.
-  LKNSDbCopyQueueFull ->
-    LeiosNSInfo
-      ["Db", "CopyQueueFull"]
-      LSWarning
-      [
-        ( "leiosDbCopyQueueFull"
-        , "LeiosDb: promotions dropped on a full copy queue (re-delivered by GC self-heal)"
-        )
-      ]
+  -- The EB stays pinned, so it is still the next one to copy; harmless for
+  -- data but worth an operator's eye.
   LKNSDbCopyError ->
     LeiosNSInfo
       ["Db", "CopyError"]
@@ -2168,8 +2146,6 @@ traceLeiosKernelForHuman = \case
     "Leios DB evicted from the volatile partition: ebs=" <> showT evictedEbs
   TraceLeiosDb (TraceLeiosDbGCError reason) ->
     "Leios DB sweep pass failed (will be retried): " <> T.pack reason
-  TraceLeiosDb (TraceLeiosDbCopyQueueFull ebHash) ->
-    "Leios DB copy queue full, dropped " <> T.pack ebHash <> " (harmless: GC self-heal re-delivers)"
   TraceLeiosDb (TraceLeiosDbCopyError ebHash reason) ->
     "Leios DB copy failed for "
       <> T.pack ebHash
@@ -2243,7 +2219,7 @@ leiosPeerNSByPath p =
 traceLeiosPeerForHuman :: TraceLeiosPeer -> Text
 traceLeiosPeerForHuman = \case
   MkTraceLeiosPeer msg -> "LeiosPeer: " <> T.pack msg
-  TraceLeiosPeerDbException e -> "Leios peer DB exception: " <> T.pack (show e)
+  TraceLeiosPeerDbException e -> "Leios peer DB exception: " <> T.pack (displayException e)
   TraceLeiosPeerAnnouncement equiv fields ->
     "EB announcement from peer (" <> T.pack (show equiv) <> "): " <> T.pack (show fields)
 

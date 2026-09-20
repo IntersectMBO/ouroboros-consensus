@@ -24,7 +24,7 @@ data LeiosDbSource
 --
 -- Hence this check, rather than a check inside the SQLite backend: that backend
 -- opens with 'SQLOpenCreate' and it creates the schema when it finds no file.
--- So without this check the tool would write an empty leios.db.vol/leios.db.imm into the node's
+-- So without this check the tool would write an empty leios.vol.db/leios.imm.db into the node's
 -- directory and fail only at the first cert-RB.
 requireLeiosDbFile ::
   -- | Path to LeiosDB's volatile/immutable partition file

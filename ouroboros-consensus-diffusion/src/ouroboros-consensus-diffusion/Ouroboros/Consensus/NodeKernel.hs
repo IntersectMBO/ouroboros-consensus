@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -227,7 +228,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     --
     -- See 'LeiosPeerVars' for the write patterns.
     getLeiosDB :: LeiosDbHandle m
-  -- ^ Factory for opening per-thread connections to the Leios demo DB
+  -- ^ Factory for opening per-thread readers and writers of the Leios demo DB
   -- and subscribing to EB-notification events.
   , getLeiosVoteState :: LeiosVoteState m
   -- ^ Aggregated vote state across all peers. Empty in S4; populated
@@ -289,7 +290,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , leiosDB :: LeiosDbHandle m
   -- ^ Factory for opening per-thread Leios DB connections. Each consumer
   -- (forge loop, leios fetch logic, LeiosNotify / LeiosFetch handlers)
-  -- opens its own connection from this handle. 'LeiosDbConnection' is
+  -- opens its own connection from this handle. 'LeiosDbReader' is
   -- documented as not thread-safe, so connections must not be shared.
   , leiosTxCache :: LeiosTxCache m () () Leios.SerializedEbBody
   -- ^ The in-memory tx-presence index. Created in "Ouroboros.Consensus.Node"
@@ -571,10 +572,10 @@ initNodeKernel
               (Leios.summarizeDecisions newRequests)
           threadDelay $ loopInterval - duration
 
-    -- The Leios voting thread: when this node has a voting key, subscribe
+    -- The Leios voting thread: when this node has voting keys, subscribe
     -- to local "EB closure acquired" notifications and emit a vote for
-    -- each acquired EB (which the LeiosNotify server then publishes to
-    -- peers). 'Nothing' disables voting on this node.
+    -- each acquired EB and held committee seat (which the LeiosNotify
+    -- server then publishes to peers). No keys disables voting on this node.
     -- TODO: Also re-spawn voting thread upon SIGHUP similar to how the
     -- blockForgingController does it for block forging
     void $
@@ -587,7 +588,7 @@ initNodeKernel
           leiosDB
           getLeiosTxCache
           leiosVoteState
-          (topLevelConfigVotingKey cfg)
+          (topLevelConfigVotingKeys cfg)
 
     void $
       forkLinkedWatcher registry "NodeKernel.leiosImmTipPrune" $
@@ -763,8 +764,8 @@ initInternalState
           NotOrigin s -> s
     leiosOutstanding <- do
       acquiredClosures <-
-        LeiosDb.withLeiosDb leiosDB $ \leiosConn ->
-          LeiosDb.leiosDbScanCompleteEbClosuresNotOlderThanSlot leiosConn immTipSlot
+        LeiosDb.withReader leiosDB $ \reader ->
+          LeiosDb.scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
       MVar.newMVar $
         Leios.initializeLeiosOutstanding leiosFetchRng acquiredClosures immTipSlot
     leiosReady <- MVar.newEmptyMVar
@@ -820,7 +821,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     label
     allocateForging
     finalizeForging
-    ( \(bf, leiosConn, rootCCtx) -> do
+    ( \(bf, leiosDbReader, leiosDbWriter, rootCCtx) -> do
         knownSlotWatcher btime $
           \currentSlot ->
             callTraceSameThread
@@ -844,14 +845,14 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     mempool
                     leiosVoteState
                     bf
-                    leiosConn
+                    leiosDbReader
                     ( \forgedHeader forgedEb ->
                         Leios.onForgedLeiosEb
                           (leiosKernelTracer tracers)
                           leiosCentralState
                           (leiosOutstanding, leiosReady)
                           leiosTxCache
-                          leiosConn
+                          leiosDbWriter
                           systemTime
                           -- Safe here: the forge hands us a corresponding header
                           -- and closure.
@@ -864,18 +865,18 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   label :: String
   label = "NodeKernel.blockForging"
 
-  -- 'LeiosDbConnection' is not thread-safe, so we open one per
-  -- forge-credentials thread (and close it when the thread exits).
   allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    leiosConn <- LeiosDb.open leiosDB
+    leiosDbReader <- LeiosDb.openReader leiosDB
+    leiosDbWriter <- LeiosDb.openWriter leiosDB
     rootCCtx <- rootCallCtx "Forge"
-    pure (bf, leiosConn, rootCCtx)
+    pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 
-  finalizeForging (bf, leiosConn, _) = do
-    LeiosDb.close leiosConn
-    finalize bf
+  finalizeForging (bf, leiosDbReader, leiosDbWriter, _) =
+    leiosDbWriter.close
+      >> leiosDbReader.close
+      >> finalize bf
 
 {-------------------------------------------------------------------------------
   TxSubmission integration

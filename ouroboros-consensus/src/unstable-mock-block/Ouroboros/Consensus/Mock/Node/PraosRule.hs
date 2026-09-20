@@ -60,7 +60,7 @@ protocolInfoPraosRule
             , topLevelConfigCodec = SimpleCodecConfig
             , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
             , topLevelConfigCheckpoints = emptyCheckpointsMap
-            , topLevelConfigVotingKey = Nothing
+            , topLevelConfigVotingKeys = []
             }
       , pInfoInitLedger =
           ExtLedgerState

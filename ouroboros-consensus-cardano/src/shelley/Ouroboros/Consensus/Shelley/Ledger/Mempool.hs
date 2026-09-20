@@ -601,6 +601,7 @@ txMeasureAlonzo ::
   forall proto era.
   ( ShelleyCompatible proto era
   , L.AlonzoEraPParams era
+  , L.AlonzoEraTx era
   , L.AlonzoEraTxWits era
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
@@ -734,6 +735,7 @@ blockCapacityConwayMeasure st =
 txMeasureConway ::
   forall proto era.
   ( ShelleyCompatible proto era
+  , L.AlonzoEraTx era
   , L.AlonzoEraTxWits era
   , L.BabbageEraTxBody era
   , ExUnitsTooBigUTxO era
