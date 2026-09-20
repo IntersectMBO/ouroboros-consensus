@@ -76,13 +76,12 @@ source-repository-package
   subdir:
     typed-protocols
 
--- Points to cardano-ledger/leios-prototype, which carries the ledger-master
--- integration this branch builds against.
+-- Points to cardano-ledger/leios-prototype
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: 1587f21a7d1306dc590c2749a5c66232ef66aad0
-  --sha256: sha256-zGKFgOU+p0uMTNbIm0Em6GMYMUVZMJsJtynzXG46E58=
+  tag: daa38fec95ddba68ad4e780b933e7e094d68241d
+  --sha256: sha256-UtLWITAOilFFXXRwCyAoG+6NHd/34wIYG296z3+L7FA=
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api
