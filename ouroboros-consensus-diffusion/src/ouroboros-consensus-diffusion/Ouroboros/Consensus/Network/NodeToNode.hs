@@ -672,6 +672,7 @@ mkHandlers
                   forever $ atomically $ do
                     msg <- pumpNext
                     c <- TVar.Unchecked.readTVar credits
+                    -- FIXME: Is this dropping messages when we run out of credits?
                     when (c > 0) $ do
                       TVar.Unchecked.writeTVar credits $! c - 1
                       q <- TVar.Unchecked.readTVar queue
