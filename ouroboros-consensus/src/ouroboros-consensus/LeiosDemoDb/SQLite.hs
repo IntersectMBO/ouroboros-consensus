@@ -58,8 +58,15 @@ import Control.Exception
   , toException
   )
 import Control.Monad (forever, join, unless, void)
-import Control.Monad.Class.MonadThrow (generalBracket)
-import qualified Control.Monad.Class.MonadThrow as MonadThrow
+import Control.Monad.Class.MonadThrow
+  ( bracket
+  , catch
+  , displayException
+  , finally
+  , generalBracket
+  , onException
+  , try
+  )
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
@@ -109,7 +116,7 @@ import LeiosUtils.CallTrace
   , rootCallCtx
   )
 import Numeric.Natural (Natural)
-import Ouroboros.Consensus.Util.IOLike (atomically, labelThread)
+import Ouroboros.Consensus.Util.IOLike (ExitCase (..), atomically, labelThread)
 import System.Directory (createDirectoryIfMissing, doesFileExist, getFileSize)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -179,27 +186,57 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
       gcBatchSize
       volLeiosDbPath
       immLeiosDbPath
-
-  let closeDb = do
-        -- The sampler holds no connection -- it only reads counters -- so
-        -- killing it is safe at any point.
-        killThread samplerId
-        -- Flushes every pending write, then closes the connections. A dead
-        -- worker refuses the job -- its death path has closed them already --
-        -- but a failed close propagates: a leaked connection must be loud.
-        (MonadThrow.try (submitJob writeQueue Shutdown) :: IO (Either LeiosDbException (Promise IO ()))) >>= \case
-          Left _alreadyClosed -> pure ()
-          Right promise -> await promise
   pure
     LeiosDbHandle
-      { close = closeDb
+      { close = close samplerId writeQueue
+      , openReader = openReader statsVar
+      , openWriter = openWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
       , leiosDbGarbageCollect = sqlGarbageCollect tracer gcRootCtx writeQueue
       , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copyPending
       , leiosDbSampleStats = readTVarIO statsVar
-      , openReader = openSQLiteReader tracer volLeiosDbPath immLeiosDbPath statsVar
-      , openWriter = pure (sqliteWriter writeQueue)
       }
+ where
+  close samplerId writeQueue = do
+    -- The sampler holds no connection -- it only reads counters -- so
+    -- killing it is safe at any point.
+    killThread samplerId
+    -- The queue is FIFO, so serving this job flushes everything
+    -- submitted before it; awaiting it waits for the connections to
+    -- close, and a failed close propagates -- a leaked connection must
+    -- be loud.
+    --
+    -- A sealed queue refuses the job. Nothing is left to close then: the
+    -- worker closes the connections on every exit path before it seals,
+    -- and whatever killed it already reached the awaiter of the write
+    -- that failed.
+    try (submitJob writeQueue Shutdown) >>= \case
+      Left (_writerGone :: LeiosDbException) -> pure ()
+      Right promise -> await promise
+
+  openReader statsVar = do
+    volDb <- openVolRawConnection volLeiosDbPath
+    immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
+    conn <- mkConn tracer statsVar volDb immDb
+    pure
+      LeiosDbReader
+        { close = closeConn conn
+        , scanEbPoints = sqlScanEbPoints conn
+        , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
+        , lookupEbBody = sqlLookupEbBody conn
+        , batchRetrieveTxs = sqlBatchRetrieveTxs conn
+        , lookupEbClosure = sqlLookupEbClosure conn
+        }
+
+  openWriter writeQueue =
+    pure
+      LeiosDbWriter
+        { -- Not a teardown -- the write connection outlives every writer.
+          close = void . await =<< submitJob writeQueue Flush
+        , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
+        , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
+        , writeTxs = \txs -> submitJob writeQueue (WriteTxs txs)
+        }
 
 -- | 'newLeiosDBSQLite' bracketed with its 'close': on release every pending
 -- write has landed, the background threads are gone and the connections are
@@ -207,7 +244,7 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
 withLeiosDBSQLite ::
   Tracer IO TraceLeiosDb -> FilePath -> FilePath -> (LeiosDbHandle IO -> IO a) -> IO a
 withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
-  MonadThrow.bracket
+  bracket
     (newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath)
     (\db -> db.close)
 
@@ -282,7 +319,7 @@ bumpImmutableStats statsVar dEbs =
 -- swallows it and tries again on the next tick.
 withReadOnlyConn :: HasCallStack => FilePath -> (DB.Database -> IO a) -> IO a
 withReadOnlyConn dbPath =
-  MonadThrow.bracket (openReadOnlyRawConnection dbPath) (void . DB.close)
+  bracket (openReadOnlyRawConnection dbPath) (void . DB.close)
 
 -- | Open an existing file read-only: no create, no DDL.
 openReadOnlyRawConnection :: HasCallStack => FilePath -> IO DB.Database
@@ -295,7 +332,7 @@ openReadOnlyRawConnection dbPath = do
 -- | Run a query that yields exactly one integer column.
 queryInt64 :: HasCallStack => DB.Database -> String -> IO Int64
 queryInt64 db sql =
-  MonadThrow.bracket (dbPrepare db (fromString sql)) dbFinalize $ \stmt ->
+  bracket (dbPrepare db (fromString sql)) dbFinalize $ \stmt ->
     dbStep stmt >>= \case
       DB.Row -> DB.columnInt64 stmt 0
       DB.Done -> error ("queryInt64: expected a row: " <> sql)
@@ -350,7 +387,7 @@ openVolRawConnection path = do
 
 -- | Prepare a statement, run the action, finalize.
 withStmt :: HasCallStack => DB.Database -> String -> (DB.Statement -> IO a) -> IO a
-withStmt db sql = MonadThrow.bracket (dbPrepare db (fromString sql)) dbFinalize
+withStmt db sql = bracket (dbPrepare db (fromString sql)) dbFinalize
 
 -- * Copying EBs to the immutable partition
 
@@ -494,7 +531,7 @@ appendToImmutable CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, cc
 -- prepare would leak one connection per retry.
 orCloseOnError :: DB.Database -> IO a -> IO a
 orCloseOnError db act =
-  act `MonadThrow.catch` \(e :: SomeException) -> do
+  act `catch` \(e :: SomeException) -> do
     _ <- DB.close db
     throwIO e
 
@@ -870,20 +907,7 @@ finalizeVolStmts VolStmts{..} = do
 -- reset; we let the original exception propagate instead.
 useStmt :: DB.Statement -> IO a -> IO a
 useStmt stmt action =
-  action `MonadThrow.finally` (void $ DB.reset stmt)
-
--- | Open a reader: fresh connections to both partitions, so any number of
--- readers may run concurrently.
-openSQLiteReader ::
-  Tracer IO TraceLeiosDb ->
-  FilePath ->
-  FilePath ->
-  StrictTVar IO LeiosDbStats ->
-  IO (LeiosDbReader IO)
-openSQLiteReader tracer volPath immPath statsVar = do
-  volDb <- openVolRawConnection volPath
-  immDb <- orCloseOnError volDb $ openRawConnection immPath
-  sqliteReader <$> mkConn tracer statsVar volDb immDb
+  action `finally` (void $ DB.reset stmt)
 
 -- | Build a 'Conn' over two open partition connections, preparing every
 -- statement; 'closeConn' undoes it.
@@ -925,18 +949,6 @@ closeChecked db =
           , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
           }
     Right () -> pure ()
-
--- | The read half of the API over a 'Conn'.
-sqliteReader :: Conn -> LeiosDbReader IO
-sqliteReader conn =
-  LeiosDbReader
-    { close = closeConn conn
-    , scanEbPoints = sqlScanEbPoints conn
-    , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
-    , lookupEbBody = sqlLookupEbBody conn
-    , batchRetrieveTxs = sqlBatchRetrieveTxs conn
-    , lookupEbClosure = sqlLookupEbClosure conn
-    }
 
 -- * The single writer
 
@@ -1102,7 +1114,7 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
         nextPinnedStmt <- dbPrepare volDb (fromString sql_next_pinned_eb)
         pure (conn, copierConn, sweeperConn, gcStmts, pinStmt, nextPinnedStmt)
     )
-      `MonadThrow.onException` (void (DB.close immDb) >> void (DB.close volDb))
+      `onException` (void (DB.close immDb) >> void (DB.close volDb))
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   sweepStateRef <- newIORef SweepIdle
@@ -1123,7 +1135,7 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
       runJob = \case
         Shutdown resultVar -> do
           -- No rethrow: a failed close must not close a second time.
-          result <- MonadThrow.try closeConnections
+          result <- try closeConnections
           atomically $ putTMVar resultVar result
           pure True
         WriteEbPoint point size resultVar ->
@@ -1179,10 +1191,10 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
       -- problem, not the writer's: trace it, roll back anything left open,
       -- and let the pin or the next GC tick bring the work back.
       stepMaintenance =
-        step `MonadThrow.catch` \(e :: LeiosDbException) -> do
+        step `catch` \(e :: LeiosDbException) -> do
           _ <- DB.exec volDb "ROLLBACK"
           _ <- DB.exec immDb "ROLLBACK"
-          traceWith tracer $ TraceLeiosDbGCError (MonadThrow.displayException e)
+          traceWith tracer $ TraceLeiosDbGCError (displayException e)
           writeIORef sweepStateRef SweepIdle
           pure True
        where
@@ -1204,10 +1216,10 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
           nextPinned >>= \case
             Just ebHash -> do
               copyEbToImmutable tracer statsVar copierConn ebHash
-                `MonadThrow.catch` \(e :: LeiosDbException) ->
+                `catch` \(e :: LeiosDbException) ->
                   -- The EB stays pinned, so it is still the next to copy;
                   -- nothing to re-enqueue and nothing to retry here.
-                  traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (MonadThrow.displayException e)
+                  traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
               pure False
             Nothing ->
               readIORef sweepStateRef >>= \case
@@ -1248,7 +1260,7 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
                       pure False
 
   threadId <- forkIO $ do
-    outcome <- MonadThrow.try serve
+    outcome <- try serve
     cause <- case outcome of
       -- A served 'Shutdown' has already closed the connections.
       Right () -> pure closedException
@@ -1256,7 +1268,7 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
         -- Close on the way down; on orphanhood (the handle was dropped
         -- without teardown, so nobody can submit again) this is the only
         -- close there will be.
-        void (MonadThrow.try closeConnections :: IO (Either SomeException ()))
+        void (try closeConnections :: IO (Either SomeException ()))
         pure $ case fromException e of
           Just BlockedIndefinitelyOnSTM -> closedException
           Nothing -> e
@@ -1281,7 +1293,7 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
   -- cancellation above all -- belongs to this thread, not to the job.
   publish :: WriteResult a -> IO a -> IO ()
   publish resultVar action =
-    MonadThrow.try action >>= \case
+    try action >>= \case
       Right x -> atomically $ putTMVar resultVar (Right x)
       Left (e :: LeiosDbException) -> do
         atomically $ putTMVar resultVar (Left (toException e))
@@ -1292,24 +1304,12 @@ startWriter tracer statsVar notificationChan copyPending sweepDoorbell gcBatchSi
   -- failed and would otherwise leave a transaction open under every later job.
   publishMaintenance :: DB.Database -> DB.Database -> WriteResult a -> IO a -> IO ()
   publishMaintenance volDb immDb resultVar action =
-    MonadThrow.try action >>= \case
+    try action >>= \case
       Right x -> atomically $ putTMVar resultVar (Right x)
       Left (e :: LeiosDbException) -> do
         _ <- DB.exec volDb "ROLLBACK"
         _ <- DB.exec immDb "ROLLBACK"
         atomically $ putTMVar resultVar (Left (toException e))
-
--- | The write half of the API: every operation is queued for the worker of
--- 'startWriter', and the 'Promise' waits for that job's result.
-sqliteWriter :: WriteQueue -> LeiosDbWriter IO
-sqliteWriter queue =
-  LeiosDbWriter
-    { -- Not a teardown -- the write connection outlives every writer.
-      close = void . await =<< submitJob queue Flush
-    , writeEbPoint = \point size -> submitJob queue (WriteEbPoint point size)
-    , writeEbBody = \point eb -> submitJob queue (WriteEbBody point eb)
-    , writeTxs = \txs -> submitJob queue (WriteTxs txs)
-    }
 
 -- * Top-level implementations
 
@@ -1686,13 +1686,13 @@ vacuumLeiosDb dbPath =
 -- Unrelated to 'withReader', which brackets a 'LeiosDbReader' that a
 -- 'LeiosDbHandle' opens.
 --
--- No 'SQLOpenCreate', unlike 'openSQLiteReader': a wrong path must fail
+-- No 'SQLOpenCreate', unlike 'openRawConnection': a wrong path must fail
 -- rather than gain an empty database. No 'busy_timeout' either, so a write that
 -- meets the node's own write lock gives up after the retries in 'withDie'
 -- rather than block.
 withExistingLeiosDbFile :: FilePath -> (DB.Database -> IO a) -> IO a
 withExistingLeiosDbFile dbPath =
-  MonadThrow.bracket
+  bracket
     (open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault)
     (void . DB.close)
 
@@ -2306,9 +2306,9 @@ dbWithWriteTransactionRaw tracer db k = getMonotonicTime >>= go 0
           generalBracket
             (pure ())
             ( \() -> \case
-                MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
-                MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
-                MonadThrow.ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
+                ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
+                ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
+                ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
             )
             (\() -> k)
 
@@ -2319,9 +2319,9 @@ dbWithTransactionAs begin db k =
     $ generalBracket
       (dbExec db (fromString begin))
       ( \() -> \case
-          MonadThrow.ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
-          MonadThrow.ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
-          MonadThrow.ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
+          ExitCaseSuccess _ -> dbExec db (fromString "COMMIT")
+          ExitCaseException _ -> dbExec db (fromString "ROLLBACK")
+          ExitCaseAbort -> dbExec db (fromString "ROLLBACK")
       )
       (\() -> k)
 
