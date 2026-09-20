@@ -40,14 +40,12 @@ import LeiosDemoTypes
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
--- | The database. Hands out readers and writers; owns neither.
+-- | The Leios database. Hands out readers, writers and subscriptions.
 data LeiosDbHandle m = LeiosDbHandle
   { openReader :: HasCallStack => m (LeiosDbReader m)
+  -- ^ Get a new reader. No interaction between readers or writers.
   , openWriter :: HasCallStack => m (LeiosDbWriter m)
-  -- ^ The database's one write path. Opening allocates nothing -- the backend
-  -- creates whatever serialises writes (for SQLite, one connection and one
-  -- worker thread) together with the database -- so every writer submits to
-  -- the same place and 'close' merely flushes this caller's writes.
+  -- ^ Get a new writer. All writes of all writers are serialised.
   , subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
   -- ^ New EBs and EB closures as they are stored, from the moment of
   -- subscription.
@@ -65,10 +63,7 @@ data LeiosDbHandle m = LeiosDbHandle
   -- ^ Sample 'LeiosDbStats' counters.
   }
 
--- | Queries. Never writes, so any number may run concurrently -- each on its
--- own backing connection.
---
--- NOTE: Not thread-safe, so do not share a reader across threads.
+-- | Query API into the LeiosDb. Use one reader per thread.
 data LeiosDbReader m = LeiosDbReader
   { close :: m ()
   , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
@@ -90,26 +85,25 @@ data LeiosDbReader m = LeiosDbReader
   -- given slot. Seeds the ChainDB's acquired-closures set at startup.
   }
 
--- | The whole write surface. Writes are serialised by the backend, so holding
--- one of these is not permission to write concurrently -- it is a submission
--- point.
+-- | Modifying API into the LeiosDb.
 --
--- Each operation returns as soon as the write is /queued/; the 'Promise' is
--- how a caller waits for it to be durable. The forge waits (its EB must be on
--- disk before the RB referencing it propagates); the fetch path need not.
+-- Asynchronous interface where each operation returns upon submission. The
+-- returned 'Promise' can be used to 'await' the write being performed. Any
+-- exceptions are thrown through 'await'.
 data LeiosDbWriter m = LeiosDbWriter
   { close :: m ()
-  -- ^ Not a teardown -- the write path outlives every writer. Flushes: when
-  -- this returns, everything this caller submitted is durable.
+  -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
-  -- ^ Record an announced EB's point and expected size. Idempotent.
+  -- ^ Record an announced EB's point and expected size.
   , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m CompletedEbs)
-  -- ^ Persist an EB body; its point must already have been submitted.
-  -- Yields the EBs whose closure this completed.
+  -- ^ Persist an EB body. Returns any EBs whose closure this completed.
+  --
+  -- XXX: return type only used for tracing and too broad: it can actually only
+  -- be this same EB which got completed
   , writeTxs ::
       HasCallStack =>
       [(TxHash, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies. Yields the EBs whose closure this completed.
+  -- ^ Persist tx bodies. Returns the EBs whose closure this completed.
   }
 
 -- | The result of a submitted write.

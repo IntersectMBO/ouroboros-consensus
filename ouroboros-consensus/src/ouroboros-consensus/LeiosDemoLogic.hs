@@ -56,7 +56,6 @@ import LeiosDemoDb
   , batchRetrieveTxs
   , lookupEbBody
   )
-import LeiosDemoException (LeiosDbException)
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -149,22 +148,11 @@ import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   )
 import System.Random (StdGen)
 
--- | Trace a Leios DB failure on this peer's tracer, then rethrow it. Catches
--- 'LeiosDbException' only, so that everything else -- an async cancellation
--- above all -- passes through unmislabelled.
-traceDbException :: IOLike m => Tracer m TraceLeiosPeer -> m b -> m b
-traceDbException tracer action =
-  action `catch` \(e :: LeiosDbException) -> do
-    traceWith tracer $ TraceLeiosPeerDbException e
-    throwIO e
-
--- | Run an 'await' tail on its own thread, linked to this one: a write
--- failure surfaces on that thread, where it is traced, and the link carries
--- it back here -- the peer path treats it exactly like a failure of the
--- inline (forging) await.
-forkLinkedAwait :: IOLike m => Tracer m TraceLeiosPeer -> m () -> m ()
-forkLinkedAwait tracer action =
-  link =<< async (traceDbException tracer action)
+-- | Wrap an action with exception tracing. Catches the exception,
+-- traces it using the provided handler, and re-throws.
+traceException :: (IOLike m, Exception e) => Tracer m a -> (e -> a) -> m b -> m b
+traceException tracer toTrace action =
+  action `catch` \e -> traceWith tracer (toTrace e) >> throwIO e
 
 {-------------------------------------------------------------------------------
   Shadow LeiosTxCache wiring
@@ -264,7 +252,7 @@ leiosFetchHandler tracer leiosContext = LF.MkLeiosFetchRequestHandler $ \case
     x <- msgLeiosBlockRequest tracer leiosContext p
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
     pure $ LF.MsgLeiosBlock x
-  LF.MsgLeiosBlockTxsRequest p bitmaps -> traceDbException tracer $ do
+  LF.MsgLeiosBlockTxsRequest p bitmaps -> traceException tracer TraceLeiosPeerDbException $ do
     traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
     x <- msgLeiosBlockTxsRequest tracer leiosContext p bitmaps
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
@@ -278,7 +266,7 @@ msgLeiosBlockRequest ::
   m LeiosEb
 msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
   let MkLeiosFetchContext{leiosDbReader, leiosEbBuffer = buf} = leiosContext
-  n <- traceDbException tracer $ do
+  n <- traceException tracer TraceLeiosPeerDbException $ do
     -- get the EB items using new db
     items <- lookupEbBody leiosDbReader pointEbHash
     let loop !i [] = pure i
@@ -932,20 +920,13 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- fetch set -- all in-memory, no disk IO under the lock. Persistence and
         -- the mempool-tx copy happen after this lock (forked for received bodies;
         -- see 'persistAndIngest' below).
-        mbTxCacheMissesFromBody <- do
-          mbSummaryTxCacheMisses <-
-            insertBody
-              txCache
-              ebHash
-              (Leios.serializeEbBody eb)
-              IntMap.empty
-              (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
-          -- 'TraceLeiosBlockAcquired' is deferred to when the body write
-          -- lands (see below), so it means the same as its txs counterpart:
-          -- acquired /and/ on disk. The 'TraceLeiosBodyHits' trace is
-          -- deferred to after the mempool pull below, so it can report the
-          -- mempool-hit count alongside this cache summary.
-          pure mbSummaryTxCacheMisses
+        mbTxCacheMissesFromBody <-
+          insertBody
+            txCache
+            ebHash
+            (Leios.serializeEbBody eb)
+            IntMap.empty
+            (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
         (bodyClass, misses, mbBodyTxCacheSummary) <- case source of
           -- A forge holds its whole closure, so nothing is missing. Its txs are
           -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
@@ -1009,10 +990,10 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
     ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
     ReceivedBlockFrom{} -> traceWith ktracer $ TraceLeiosFetchBodyArrival bodyClass
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
-  -- The DB-heavy tail: persist the body (~16k reference rows) and copy the
-  -- mempool-resident txs into the DB.
+  -- Last: ingest the txs we found in our own mempool (they were removed from the
+  -- fetch job set above)
   when shouldPersist $
-    traceDbException tracer $ do
+    traceException tracer TraceLeiosPeerDbException $ do
       -- FIXME: once EB announcements are wired in the point MUST already
       -- be present (announcement handling inserts it); until then insert
       -- it idempotently as a stop-gap and trace a warning.
@@ -1032,7 +1013,12 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
               traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
       case source of
         ForgedBlock{} -> traceAcquired
-        ReceivedBlockFrom{} -> forkLinkedAwait tracer traceAcquired
+        ReceivedBlockFrom{} ->
+          -- Off this thread, but linked to it: the write fails on the new
+          -- thread, is traced there, and the link brings it back here, so a
+          -- failed peer write ends this client the way a failed forge write
+          -- ends the forge.
+          link =<< async (traceException tracer TraceLeiosPeerDbException traceAcquired)
   -- The cache updates: the fetch logic reads them to decide what is still
   -- missing, so they must land before we return.
   --
@@ -1384,25 +1370,20 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
   ingestAcquiredTxs ::
     RelativeTime -> WhetherApplied -> [(TxHash, BS.ByteString)] -> m Leios.FetchArrivalBytes
   ingestAcquiredTxs now applied toIngest = do
-    -- The DB write goes to the single writer; the closure-completion trace
-    -- rides along with it, since only the write knows what it completed.
-    -- Submitted here, awaited elsewhere; see 'processLeiosBlock' for why the
-    -- submit stays on this thread and what would remove the wait altogether.
-    traceDbException tracer $ do
-      txsWritten <- writeTxs writer toIngest
-      let traceCompleted = do
-            completed <- await txsWritten
-            ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
-            forM_ completed $ \p ->
-              traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
-      case source of
-        -- The forge's closure has to be on disk before the RB that references
-        -- it goes out.
-        ForgedTxs{} -> traceCompleted
-        _ -> forkLinkedAwait tracer traceCompleted
+    txsWritten <- writeTxs writer toIngest
+    let traceCompleted = do
+          completed <- traceException tracer TraceLeiosPeerDbException $ await txsWritten
+          ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
+          forM_ completed $ \p ->
+            traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
+    case source of
+      ForgedTxs{} -> traceCompleted -- synchronous
+      ReceivedTxsFrom{} -> link =<< async traceCompleted
+      MempoolTxs{} -> link =<< async traceCompleted
     -- The cache update: the fetch logic consults it to decide what is still
     -- missing, so it cannot lag behind the caller.
-    arrival <- case applied of
+    -- TODO: do this before the DB write (like in processLeiosBlock)
+    case applied of
       Applied -> do
         withLockedInsertAppliedTx txCache $ \w0 step ->
           foldM (\w (txh, _bs) -> step w txh ()) w0 toIngest
@@ -1410,7 +1391,6 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
       Unapplied ->
         withLockedInsertUnappliedTx txCache $ \w0 step ->
           foldM (\w (txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
-    pure arrival
 
 -- | Whether ingested txs are tagged applied (from our forge's validated mempool)
 -- or unapplied (fetched from a peer).
