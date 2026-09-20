@@ -11,9 +11,6 @@ module LeiosDemoDb.SQLite
   ( newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLite
   , newLeiosDBSQLiteWithGcBatchSize
-  , newLeiosDBSQLiteReadOnly
-  , openLeiosDBSQLite
-  , openLeiosDBSQLiteWithGcBatchSize
   , withLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -153,29 +150,7 @@ newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
 -- Note that orphan transaction batch size is set by the 'gcOrphanTxBatchSize' constant.
 newLeiosDBSQLiteWithGcBatchSize ::
   Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
-newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize =
-  fst <$> openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
-
--- | 'newLeiosDBSQLite' bracketed with its teardown: on release every pending
--- write has landed, the background threads are gone and the connections are
--- closed, so e.g. the database files can be deleted.
-withLeiosDBSQLite ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> (LeiosDbHandle IO -> IO a) -> IO a
-withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath action =
-  MonadThrow.bracket (openLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath) snd (action . fst)
-
--- | 'newLeiosDBSQLite' together with its teardown, for callers whose lifetime
--- does not fit a bracket -- e.g. the node, which tears down on shutdown.
-openLeiosDBSQLite ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO, IO ())
-openLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
-  openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath defaultGcBatchSize
-
--- | 'newLeiosDBSQLiteWithGcBatchSize' together with its teardown, for callers
--- that outlive the database (see 'withLeiosDBSQLite' for the bracket).
-openLeiosDBSQLiteWithGcBatchSize ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO, IO ())
-openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
+newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
@@ -202,7 +177,7 @@ openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSiz
       volLeiosDbPath
       immLeiosDbPath
 
-  let teardown = do
+  let closeDb = do
         -- The sampler holds no connection -- it only reads counters -- so
         -- killing it is safe at any point.
         killThread samplerId
@@ -213,45 +188,25 @@ openLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSiz
           Left _alreadyClosed -> pure ()
           Right promise -> await promise
   pure
-    ( LeiosDbHandle
-        { subscribeEbNotifications =
-            atomically (dupTChan notificationChan)
-        , leiosDbGarbageCollect =
-            sqlGarbageCollect tracer gcRootCtx writeQueue
-        , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copyPending
-        , leiosDbSampleStats = readTVarIO statsVar
-        , openReader = openSQLiteReader tracer volLeiosDbPath immLeiosDbPath statsVar
-        , openWriter = pure (sqliteWriter writeQueue)
-        }
-    , teardown
-    )
-
--- | Open LeiosDB for read-only operations.
---
---   See 'newLeiosDBSQLite' for the read-write connection.
---
---   Note: as opposed to 'newLeiosDBSQLite', this function does not start any background GC threads.
-newLeiosDBSQLiteReadOnly :: Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
-newLeiosDBSQLiteReadOnly tracer volLeiosDbPath immLeiosDbPath = do
-  notificationChan <- atomically newBroadcastTChan
-  statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
-  pure $
     LeiosDbHandle
-      { subscribeEbNotifications = atomically (dupTChan notificationChan)
-      , leiosDbGarbageCollect = \_ -> pure ()
-      , leiosDbPromoteToImmutable = \_ -> pure ()
+      { close = closeDb
+      , subscribeEbNotifications = atomically (dupTChan notificationChan)
+      , leiosDbGarbageCollect = sqlGarbageCollect tracer gcRootCtx writeQueue
+      , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copyPending
       , leiosDbSampleStats = readTVarIO statsVar
-      , openReader = do
-          volDb <- openReadOnlyRawConnection volLeiosDbPath
-          immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
-          sqliteReader <$> mkConn tracer statsVar volDb immDb
-      , openWriter =
-          throwIO
-            LeiosDbException
-              { errorMessage = "newLeiosDBSQLiteReadOnly: no writer on a read-only database"
-              , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
-              }
+      , openReader = openSQLiteReader tracer volLeiosDbPath immLeiosDbPath statsVar
+      , openWriter = pure (sqliteWriter writeQueue)
       }
+
+-- | 'newLeiosDBSQLite' bracketed with its 'close': on release every pending
+-- write has landed, the background threads are gone and the connections are
+-- closed, so e.g. the database files can be deleted.
+withLeiosDBSQLite ::
+  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> (LeiosDbHandle IO -> IO a) -> IO a
+withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
+  MonadThrow.bracket
+    (newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath)
+    (\db -> db.close)
 
 -- | Initialise 'LeiosDbStats' by counting the EB rows of both partitions.
 --   This will only run once per process.

@@ -42,7 +42,11 @@ import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), brack
 
 -- | The Leios database. Hands out readers, writers and subscriptions.
 data LeiosDbHandle m = LeiosDbHandle
-  { openReader :: HasCallStack => m (LeiosDbReader m)
+  { close :: m ()
+  -- ^ Close the database: flush what is in flight, stop whatever it runs
+  -- behind the scenes, release its connections. Readers and writers handed
+  -- out earlier are not usable afterwards.
+  , openReader :: HasCallStack => m (LeiosDbReader m)
   -- ^ Get a new reader. No interaction between readers or writers.
   , openWriter :: HasCallStack => m (LeiosDbWriter m)
   -- ^ Get a new writer. All writes of all writers are serialised.

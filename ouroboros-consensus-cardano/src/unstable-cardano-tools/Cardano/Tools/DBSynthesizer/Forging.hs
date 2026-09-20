@@ -30,7 +30,6 @@ import Data.Word (Word64)
 import LeiosDemoDb
   ( LeiosDbReader
   , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
-  , Promise (await)
   , awaitAll
   )
 import LeiosDemoTypes

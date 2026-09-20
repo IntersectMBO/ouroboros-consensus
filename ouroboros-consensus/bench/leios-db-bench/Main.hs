@@ -44,7 +44,6 @@ import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosDbWriter (..)
-  , Promise (await)
   , awaitAll
   , batchRetrieveTxs
   , leiosDbGarbageCollect

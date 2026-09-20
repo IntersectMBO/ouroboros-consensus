@@ -24,9 +24,6 @@ module LeiosDemoDb
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLiteWithGcBatchSize
   , newLeiosDBSQLite
-  , newLeiosDBSQLiteReadOnly
-  , openLeiosDBSQLite
-  , openLeiosDBSQLiteWithGcBatchSize
   , withLeiosDBSQLite
 
     -- * Re-exported for internal tooling
@@ -65,10 +62,7 @@ import LeiosDemoDb.SQLite
   ( deleteDanglingTxs
   , newLeiosDBSQLite
   , newLeiosDBSQLiteFromEnv
-  , newLeiosDBSQLiteReadOnly
   , newLeiosDBSQLiteWithGcBatchSize
-  , openLeiosDBSQLite
-  , openLeiosDBSQLiteWithGcBatchSize
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx

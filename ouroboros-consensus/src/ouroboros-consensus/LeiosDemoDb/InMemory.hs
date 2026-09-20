@@ -116,7 +116,9 @@ newLeiosDBInMemoryWith stateVar = do
   notificationChan <- atomically newBroadcastTChan
   pure $
     LeiosDbHandle
-      { subscribeEbNotifications =
+      { -- Nothing to close: the state is a 'StrictTVar'.
+        close = pure ()
+      , subscribeEbNotifications =
           atomically (dupTChan notificationChan)
       , -- No-op for now; see 'leiosDbGarbageCollect'.
         leiosDbGarbageCollect = \_slotNo -> pure ()
