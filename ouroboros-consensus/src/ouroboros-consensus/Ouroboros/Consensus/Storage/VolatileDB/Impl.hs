@@ -138,6 +138,7 @@ import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import LeiosDemoTypes (EbHash, pointEbHash)
@@ -242,6 +243,7 @@ openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
           , filterByPredecessor = filterByPredecessorImpl env
           , getBlockInfo = getBlockInfoImpl env
           , getLeiosAnnouncers = getLeiosAnnouncersImpl env
+          , forgetLeiosCertsAtStartUpExcept = forgetLeiosCertsAtStartUpExceptImpl env
           , getMaxSlotNo = getMaxSlotNoImpl env
           }
   return volatileDB
@@ -278,12 +280,14 @@ getBlockComponentImpl ::
   HeaderHash blk ->
   m (Maybe b)
 getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockComponent hash =
-  withOpenState env $ \hasFS OpenState{currentRevMap} ->
+  withOpenState env $ \hasFS OpenState{currentRevMap, currentForgotten} ->
     case Map.lookup hash currentRevMap of
-      Nothing -> return Nothing
-      Just internalBlockInfo ->
-        Just
-          <$> getBlockComponent hasFS internalBlockInfo blockComponent
+      -- Treat forgotten block as absent despite being present; see
+      -- 'forgetLeiosCertsAtStartUpExcept'.
+      Just internalBlockInfo
+        | not (Set.member hash currentForgotten) ->
+            Just <$> getBlockComponent hasFS internalBlockInfo blockComponent
+      _ -> return Nothing
  where
   getBlockComponent ::
     forall b' h.
@@ -397,9 +401,15 @@ putBlockImpl
   env@VolatileDBEnv{maxBlocksPerFile, tracer, codecConfig}
   blk =
     appendOpenState env $ \hasFS -> do
-      OpenState{currentRevMap, currentWriteHandle} <- get
+      st@OpenState{currentRevMap, currentWriteHandle} <- get
       if Map.member biHash currentRevMap
-        then
+        then do
+          -- Already stored. If it was forgotten, un-forget it it; see
+          -- 'forgetLeiosCertsAtStartUpExcept'. Either way no bytes are written,
+          -- which is what keeps a second on-disk copy from ever existing.
+          when (Set.member biHash (currentForgotten st)) $ do
+            lift $ lift $ traceWith tracer $ ReadmittedForgottenBlock biHash
+            put st{currentForgotten = Set.delete biHash (currentForgotten st)}
           lift $ lift $ traceWith tracer $ BlockAlreadyHere biHash
         else do
           let bytes = CBOR.toLazyByteString $ encodeDisk codecConfig blk
@@ -573,6 +583,7 @@ garbageCollectFile hasFS (fileId, fileInfo) = do
       , currentRevMap = currentRevMap'
       , currentSuccMap = currentSuccMap'
       , currentLeiosAnnouncerMap = currentLeiosAnnouncerMap'
+      , currentForgotten = currentForgotten st `Set.difference` hashes
       }
 
 filterByPredecessorImpl ::
@@ -581,7 +592,13 @@ filterByPredecessorImpl ::
   VolatileDBEnv m blk ->
   STM m (ChainHash blk -> Set (HeaderHash blk))
 filterByPredecessorImpl = getterSTM $ \st hash ->
-  fromMaybe Set.empty (Map.lookup hash (currentSuccMap st))
+  let succs = fromMaybe Set.empty (Map.lookup hash (currentSuccMap st))
+   in -- Guarded because this one filters the result rather than testing a
+      -- single hash, so without it every query would unnecessarily walk its
+      -- successor set.
+      if Set.null (currentForgotten st)
+        then succs
+        else succs `Set.difference` currentForgotten st
 
 getBlockInfoImpl ::
   forall m blk.
@@ -589,7 +606,28 @@ getBlockInfoImpl ::
   VolatileDBEnv m blk ->
   STM m (HeaderHash blk -> Maybe (BlockInfo blk))
 getBlockInfoImpl = getterSTM $ \st hash ->
-  ibiBlockInfo <$> Map.lookup hash (currentRevMap st)
+  if Set.member hash (currentForgotten st)
+    then Nothing
+    else ibiBlockInfo <$> Map.lookup hash (currentRevMap st)
+
+-- | Forget every cert-carrying block but the given ones; see
+-- 'forgetLeiosCertsAtStartUpExcept'.
+forgetLeiosCertsAtStartUpExceptImpl ::
+  forall m blk.
+  (IOLike m, StandardHash blk, Typeable blk) =>
+  VolatileDBEnv m blk ->
+  Set (HeaderHash blk) ->
+  m ()
+forgetLeiosCertsAtStartUpExceptImpl env keep =
+  appendOpenState env $ \_hasFS -> do
+    st <- get
+    let forgotten =
+          Map.keysSet $
+            Map.filterWithKey
+              (\h ibi -> biHasLeiosCert (ibiBlockInfo ibi) && not (Set.member h keep))
+              (currentRevMap st)
+    lift $ lift $ traceWith (tracer env) $ ForgotLeiosCertBlocks (Set.size forgotten)
+    put st{currentForgotten = currentForgotten st `Set.union` forgotten}
 
 getLeiosAnnouncersImpl ::
   forall m blk.

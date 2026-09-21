@@ -19,6 +19,7 @@ module Test.Ouroboros.Storage.VolatileDB.Model
   , garbageCollectModel
   , getBlockComponentModel
   , getBlockInfoModel
+  , forgetLeiosCertsAtStartUpExceptModel
   , getLeiosAnnouncersModel
   , getMaxSlotNoModel
   , isOpenModel
@@ -386,6 +387,13 @@ getLeiosAnnouncersModel ::
   DBModel blk ->
   Either (VolatileDBError blk) (EbHash -> Set (Point blk))
 getLeiosAnnouncersModel dbm = whenOpen dbm $ const Set.empty
+
+-- | The model uses no-op Leios extractors (see 'getBlockInfoModel'), so no
+-- block carries a certificate and there is never anything to forget.
+forgetLeiosCertsAtStartUpExceptModel ::
+  DBModel blk ->
+  Either (VolatileDBError blk) (DBModel blk)
+forgetLeiosCertsAtStartUpExceptModel dbm = whenOpen dbm dbm
 
 getMaxSlotNoModel ::
   HasHeader blk =>

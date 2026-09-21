@@ -2,8 +2,6 @@
 
 Part of: [System Overview](index.md)
 
-TODO this design alternative isn't yet implemented
-
 ## Problem
 
 A CertRB already in the VolatileDB at startup never passes through `chainSelAddBlock` again — `isMember` short-circuits it and BlockFetch won't re-fetch it — so nothing hands it the ledger view its certificate must be checked against.
@@ -69,3 +67,48 @@ What remains are three invariants the mechanism must uphold regardless, because 
 **Downstream consumers.**
 DBImmutaliser is the only interesting one: it opens the VolatileDB and nothing more, so it never calls the forget operation and the set stays empty for it — it sees the whole index, unchanged.
 Any other tool that opens the VolatileDB directly is in the same position.
+
+## Alternative Designs
+
+### Forget by deleting
+
+This design would isolate the changes to the VolDB to all happen at startup.
+However, it also introduces a non-trivial concept to the VolDB: mutation.
+
+In particular, the forgotten state could be eliminated by *actually* forgetting — deleting those blocks from disk, so that "we do not have it" needs no new semantics at all.
+That would introduce non-append mutation to the VolatileDB's design, which is not a small step.
+The affected files would have to be rewritten, and the durability that doing so would need is deliberately out of reach — `fsync` is _intentionally_ so far not even offered by the filesystem API the VolatileDB is implemented against.
+That's because `fsync` is unacceptable during the node's normal behavior.
+On the other hand, `fsync` would tolerable as part of startup, but nothing else has justified adding it to the interfaces.
+
+### Leverage LeiosDB
+
+This design was rejected for the following reason.
+
+We could properly persist each verified Leios cert — in the LeiosDb, say — and load `ValidClaims` from it at startup, so that the verdict survives the restart and no CertRB need be forgotten.
+However, that cannot replace the forgotten state, because correctness would require the persisted claim to be durable before the block is: `chainSelAddBlock` would have to verify the cert _and persist it_ before `putBlock`, putting a synchronous SQLite commit on the block-add path, once per new claim — contending with exactly the EB and closure traffic that is already requiring some redesign of the LeiosDb, since it's bottlenecking some devnets.
+
+Notes:
+- Switching to this design would also require some bespoke migration logic for a node that upgrades to it, since its first subsequent restart couldn't populate `ValidClaims` from the _new_ persistent store.
+  That migration logic would be comparable to the startup scan that initialized the forgotten state.
+- Demoting this design to an optimization layered on top of the forgotten state would free its writes to be lazy and best-effort, but then it merely avoids only the CertRB re-fetches that arise from forgetting them.
+
+### React to MsgRollForward
+
+This design was implemented and then reverted, so we have some concrete insights into it.
+
+A CertRB's header is revalidated by every peer whose candidate chain runs through it, and a validated header carries the ledger view at its predecessor's slot.
+That is the announcing slot, and so exactly the view the claimed certificate must satisfy.
+The ChainSync client therefore can hand that view to the ChainDB, which could read the block _it already holds_ and verify the certificate.
+However, `verifyLeiosCert` costs milliseconds, so that verification cannot run on the ChainSync client's thread: it needs a work queue and a background thread to drain it, plus a new edge from the network layer into the ChainDB's internals to fill the queue.
+
+That concurrency was the most painful part of the implementation, and none of it is incidental.
+Every peer's client discovers the same work at about the same time, so the producers have to deduplicate — keying the queue by CertRB is what collapses tens of identical items into one.
+The queue consumer's lifetime has to be the node's rather than a peer's: anything simpler, such as letting one client do the work while the others skip it, silently loses the job when that client's peer disconnects mid-verification, because the other clients that already skipped it don't get a second chance.
+The forgotten state introduces none of this: it reaches the same verified claim through the ordinary fetch-and-add path, which already carries that view, already deduplicates across peers in BlockFetch, and already runs off the ChainSync threads — in exchange for re-fetching a handful of off-selection blocks.
+
+Notes:
+- The reverted work included a benchmark that measures `verifyLeiosCert` at roughly 0.9ms plus 1.9us per signer — about 2ms for a committee of 1000 and 9ms for one of 5000.
+  Those would be significant additions to the established costs of header validation.
+- This design does cover one corner case the forgotten state does not: a candidate chain whose blocks BlockFetch never fetches, where the header alone would settle the claim (since it triggers reading the previously-fetched CertRB from disk).
+  That only matters for acquiring - via The Recovery Path — an EB certified by a CertRB even before we want to select it, so the loss is merely latency, but not on the scale that the The Recovery Path should prioritize.
