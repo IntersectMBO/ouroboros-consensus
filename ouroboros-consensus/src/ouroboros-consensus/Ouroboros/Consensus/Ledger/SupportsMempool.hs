@@ -417,12 +417,9 @@ class
   -- absence implies the tx is invalid. In fact, that invalidity could be
   -- reported by this function, but it need not be.
   --
-  -- INVARIANT @Right x = txMeasure cfg st tx@ implies @x 'Measure.<='
-  -- 'blockCapacityTxMeasure cfg st'. Otherwise, the mempool could block
-  -- forever.
-  --
-  -- TODO: the bound against 'blockCapacityTxMeasure' names 'txMeasure', which
-  -- no longer exists. Restate it over 'txMeasurePhase1' and 'txMeasurePhase2'.
+  -- INVARIANT @Right x = txMeasurePhase1 cfg st tx@ implies @x 'Measure.<='
+  -- 'tmPhase1' ('blockCapacityTxMeasure' cfg st)@. Otherwise, the mempool
+  -- could block forever.
   --
   -- Returns an exception if and only if the transaction violates the per-tx
   -- limits.
@@ -435,6 +432,12 @@ class
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasurePhase1 blk)
 
+  -- | INVARIANT @Right y = txMeasurePhase2 cfg st tx@ implies @y 'Measure.<='
+  -- 'tmPhase2' ('blockCapacityTxMeasure' cfg st)@. Otherwise, the mempool
+  -- could block forever.
+  --
+  -- Returns an exception if and only if the transaction violates the per-tx
+  -- limits.
   txMeasurePhase2 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
@@ -446,7 +449,7 @@ class
 
   -- | What is the allowed capacity for the txs in an individual block?
   blockCapacityTxMeasure ::
-    -- | at least for symmetry with 'txMeasure'
+    -- | at least for symmetry with 'txMeasurePhase1'
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
     TxMeasure blk
