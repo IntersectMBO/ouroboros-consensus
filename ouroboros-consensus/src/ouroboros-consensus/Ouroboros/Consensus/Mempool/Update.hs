@@ -40,7 +40,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker hiding (trace)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
-import Ouroboros.Consensus.Util.STM
 import Ouroboros.Network.Block
 
 {-------------------------------------------------------------------------------
