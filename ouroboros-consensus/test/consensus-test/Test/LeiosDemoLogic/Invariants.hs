@@ -51,7 +51,7 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
-import LeiosDemoDb (withWriter)
+import LeiosDemoDb (withReader, withWriter)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
   ( LeiosBlockSource (..)
@@ -113,6 +113,17 @@ tests =
               runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
           , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
               runCmdsReFetchViolations reproForgeThenOffer @?= Right []
+          , testCase "two points sharing an EbHash both get registered (EB-hash collision)" $ do
+              -- We forge [0, 1] at slot 5 (as if our own mempool produced it),
+              -- then a peer's independently-forged EB with the *same* content
+              -- arrives, announced at the later slot 8 (the certification-gap
+              -- retry scenario: same backlog, different announcing RB). Both
+              -- points must register in the LeiosDb as a vote is signed over
+              -- the *announcing RB's hash*, so an unregistered point can never
+              -- be voted on/certified even though its bytes did diffuse fine.
+              let h = hashLeiosEb (ebOf [0, 1])
+              runCmdsAndScanEbPoints [Forge [0, 1] 5, ArriveBody [0, 1] 8]
+                @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
           ]
       , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
           let eb = ebOf [0, 1]
@@ -390,31 +401,46 @@ runCmds = (() <$) . runCmdsReFetchViolations
 -- re-fetch-storm regression signal: it must be empty. See
 -- 'prop_neverRefetchesHeldBody'.
 runCmdsReFetchViolations :: [Cmd] -> Either String [EbHash]
-runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
- where
-  go :: forall s. [Cmd] -> IOSim s (Either String [EbHash])
-  go cs0 = do
-    dbHandle <- LeiosDb.newLeiosDBInMemory
-    withWriter dbHandle $ \conn -> do
-      outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
-      readyVar <- newEmptyMVar
-      peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
-      let kv = (outstandingVar, readyVar)
-          txCache = nullLeiosTxCache
-          peerId = MkPeerId (0 :: Int)
-          loop acc [] = pure (Right acc)
-          loop acc (c : cs) = do
-            r <-
-              try (applyCmd conn txCache kv peerVars peerId c) ::
-                IOSim s (Either SomeException [EbHash])
-            case r of
-              Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
-              Right violations -> do
-                outstanding <- readMVar outstandingVar
-                case checkInvariant outstanding of
-                  Left msg -> pure (Left (msg <> " (after " <> show c <> ")"))
-                  Right () -> loop (acc <> violations) cs
-      loop [] cs0
+runCmdsReFetchViolations cmds = runSimOrThrow (snd <$> runCmdsReFetchViolationsWithDb cmds)
+
+-- | Like 'runCmds', but on success also return every @(slot, hash)@ point
+-- registered in the LeiosDb by the end of the sequence.
+runCmdsAndScanEbPoints :: [Cmd] -> Either String [(SlotNo, EbHash)]
+runCmdsAndScanEbPoints cmds = runSimOrThrow $ do
+  (dbHandle, result) <- runCmdsReFetchViolationsWithDb cmds
+  case result of
+    Left msg -> pure (Left msg)
+    Right _violations -> Right <$> withReader dbHandle LeiosDb.scanEbPoints
+
+-- | Like 'runCmdsReFetchViolations', but also hand back the still-open
+-- 'LeiosDbHandle' the run used (the writer inside it is already closed,
+-- flushing anything still in flight) so a caller can read the DB back
+-- afterwards, e.g. via 'withReader'.
+runCmdsReFetchViolationsWithDb ::
+  forall s. [Cmd] -> IOSim s (LeiosDb.LeiosDbHandle (IOSim s), Either String [EbHash])
+runCmdsReFetchViolationsWithDb cs0 = do
+  dbHandle <- LeiosDb.newLeiosDBInMemory
+  result <- withWriter dbHandle $ \conn -> do
+    outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+    readyVar <- newEmptyMVar
+    peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
+    let kv = (outstandingVar, readyVar)
+        txCache = nullLeiosTxCache
+        peerId = MkPeerId (0 :: Int)
+        loop acc [] = pure (Right acc)
+        loop acc (c : cs) = do
+          r <-
+            try (applyCmd conn txCache kv peerVars peerId c) ::
+              IOSim s (Either SomeException [EbHash])
+          case r of
+            Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
+            Right violations -> do
+              outstanding <- readMVar outstandingVar
+              case checkInvariant outstanding of
+                Left msg -> pure (Left (msg <> " (after " <> show c <> ")"))
+                Right () -> loop (acc <> violations) cs
+    loop [] cs0
+  pure (dbHandle, result)
 
 -- | Apply a command, returning any EB bodies it requested that are already held
 -- (per 'ebStateHasBody') — the re-fetch-storm violation. Empty for everything

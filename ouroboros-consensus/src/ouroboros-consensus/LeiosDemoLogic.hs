@@ -992,13 +992,16 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   -- Last: ingest the txs we found in our own mempool (they were removed from the
   -- fetch job set above)
-  when shouldPersist $
-    traceException tracer TraceLeiosPeerDbException $ do
-      -- FIXME: once EB announcements are wired in the point MUST already
-      -- be present (announcement handling inserts it); until then insert
-      -- it idempotently as a stop-gap and trace a warning.
-      traceWith ktracer $ TraceLeiosBlockPointMissing point
-      pointWritten <- writeEbPoint writer point ebBytesSize
+  traceException tracer TraceLeiosPeerDbException $ do
+    -- FIXME: once EB announcements are wired in the point MUST already
+    -- be present (announcement handling inserts it); until then insert
+    -- it idempotently as a stop-gap and trace a warning. Unconditional
+    -- (not gated on 'shouldPersist'): a second point sharing an
+    -- already-held EB's hash must still register, since a vote is signed
+    -- over the announcing RB's hash.
+    traceWith ktracer $ TraceLeiosBlockPointMissing point
+    pointWritten <- writeEbPoint writer point ebBytesSize
+    when shouldPersist $ do
       bodyWritten <- writeEbBody writer point eb
       -- Wait for the writes to complete (and trace) synchronously when we are
       -- forging: need to ensure the data is written before advertising it.
