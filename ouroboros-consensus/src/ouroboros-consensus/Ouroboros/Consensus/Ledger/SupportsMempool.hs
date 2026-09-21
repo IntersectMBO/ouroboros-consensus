@@ -383,9 +383,12 @@ class
   ) =>
   TxLimits blk
   where
-  -- | The (possibly multi-dimensional) size of a transaction in a block.
+  -- | The (possibly multi-dimensional) size of a transaction in a block, for
+  -- the components that do not need the UTxO.
   type TxMeasurePhase1 blk
 
+  -- | The components of the size that need the UTxO. In Cardano this is the
+  -- reference scripts.
   type TxMeasurePhase2 blk
 
   -- | The size of the transaction from the perspective of diffusion layer
@@ -414,21 +417,27 @@ class
   -- absence implies the tx is invalid. In fact, that invalidity could be
   -- reported by this function, but it need not be.
   --
-  -- INVARIANT @Right x = txMeasure cfg st tx@ implies @x 'Measure.<='
-  -- 'blockCapacityTxMeasure cfg st'. Otherwise, the mempool could block
-  -- forever.
+  -- INVARIANT @Right x = txMeasurePhase1 cfg st tx@ implies @x 'Measure.<='
+  -- 'tmPhase1' ('blockCapacityTxMeasure' cfg st)@. Otherwise, the mempool
+  -- could block forever.
   --
   -- Returns an exception if and only if the transaction violates the per-tx
   -- limits.
   txMeasurePhase1 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
-    -- | This state needs values as a transaction measure might depend on
-    -- those. For example in Cardano they look at the reference scripts.
+    -- | This state has no values. The mempool measures phase 1 before it reads
+    -- the ledger tables, so it can reject a transaction without that read.
     TickedLedgerState blk EmptyMK ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasurePhase1 blk)
 
+  -- | INVARIANT @Right y = txMeasurePhase2 cfg st tx@ implies @y 'Measure.<='
+  -- 'tmPhase2' ('blockCapacityTxMeasure' cfg st)@. Otherwise, the mempool
+  -- could block forever.
+  --
+  -- Returns an exception if and only if the transaction violates the per-tx
+  -- limits.
   txMeasurePhase2 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
@@ -440,7 +449,7 @@ class
 
   -- | What is the allowed capacity for the txs in an individual block?
   blockCapacityTxMeasure ::
-    -- | at least for symmetry with 'txMeasure'
+    -- | at least for symmetry with 'txMeasurePhase1'
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
     TxMeasure blk
