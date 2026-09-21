@@ -45,6 +45,7 @@ openDBMock maxBlocksPerFile ccfg = do
       , filterByPredecessor = querySTME $ filterByPredecessorModel
       , getBlockInfo = querySTME $ getBlockInfoModel
       , getLeiosAnnouncers = querySTME $ getLeiosAnnouncersModel
+      , forgetLeiosCertsAtStartUpExcept = const $ updateE_ forgetLeiosCertsAtStartUpExceptModel
       , getMaxSlotNo = querySTME $ getMaxSlotNoModel
       }
    where

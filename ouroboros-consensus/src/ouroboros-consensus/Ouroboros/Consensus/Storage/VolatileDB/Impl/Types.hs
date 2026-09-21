@@ -98,6 +98,11 @@ deriving instance StandardHash blk => Show (ParseError blk)
 data TraceEvent blk
   = DBAlreadyClosed
   | BlockAlreadyHere (HeaderHash blk)
+  | -- | How many cert-carrying blocks 'forgetLeiosCertsAtStartUpExcept' just forgot.
+    ForgotLeiosCertBlocks Int
+  | -- | A forgotten block was added again, so it is known once more. This is
+    -- the event that shows the re-acquisition path actually firing.
+    ReadmittedForgottenBlock (HeaderHash blk)
   | Truncate (ParseError blk) FsPath BlockOffset
   | InvalidFileNames [FsPath]
   | DBClosed

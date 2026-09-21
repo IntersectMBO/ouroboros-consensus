@@ -95,6 +95,31 @@ data VolatileDB m blk = VolatileDB
   -- Keyed by 'EbHash' to match the acquired-EB set that drives reprocessing.
   --
   -- TODO(EbAnnouncement): see the note on 'biLeiosAnnouncedEb'.
+  , forgetLeiosCertsAtStartUpExcept :: HasCallStack => Set (HeaderHash blk) -> m ()
+  -- ^ Forget every block carrying a Leios certificate ('biHasLeiosCert') except
+  -- the given ones.
+  --
+  -- The VolDB knows that a /forgotten/ block is stored but it otherwise behaves
+  -- as if the block is absent: its bytes stay on disk, and this DB still
+  -- recognises its hash if the block is added again, but every query answers as
+  -- though we do not hold it --- 'getBlockInfo', 'filterByPredecessor' and
+  -- 'getBlockComponent' alike. 'putBlock' is the one exception: a re-add of a
+  -- forgotten block writes nothing and simply starts admitting that it is
+  -- present. One could interpret "forgotten" as /hidden until added again/.
+  --
+  -- See docs\/website\/contents\/explanations\/valid_claims_startup.md for why
+  -- /forgetten/ is a worthwhile state to include in the design.
+  --
+  -- Only 'putBlock' un-forgets a block. Forgotten blocks are garbage collected.
+  --
+  -- PRECONDITION: called at most once, during node start-up, before the ChainDB
+  -- has revealed its initial chain selection to anything --- not to a
+  -- downstream peer, not to a local client, not even to another component of
+  -- this node.  Forgetting is only sound while nobody can already be aware of a
+  -- forgotten block, and no one can be before that reveal.
+  --
+  -- PRECONDITION: forgetting a block on the initial selection would break the
+  -- ChainDB, so the caller must not ask for that.
   , garbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Try to remove all blocks with a slot number less than the given
   -- one.

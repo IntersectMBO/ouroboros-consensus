@@ -50,6 +50,7 @@ import Control.Tracer
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Common (scanCompleteEbClosuresNotOlderThanSlot, withReader)
 import LeiosDemoTypes
@@ -246,6 +247,14 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- Initial chain selection validated these headers, so they already carry
     -- what validation reveals; see 'HeaderWithTime'.
     let chain = forgetValidation chainWithTime
+
+    -- Cause this execution of the node (ie since the latest restart) to
+    -- re-fetch CertRBs that aren't on the initial selection. See
+    -- docs/website/contents/explanations/valid_claims_startup.md for why.
+    VolatileDB.forgetLeiosCertsAtStartUpExcept volatileDB $
+      Set.fromList $
+        map headerHash $
+          AF.toOldestFirst chain
 
     varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
     varTentativeState <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
