@@ -28,6 +28,7 @@ const sidebars = {
               'explanations/ledger_interaction',
               'explanations/queries',
               'explanations/node_tasks',
+              'explanations/valid_claims_startup',
              ]
     }
   ],
