@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
@@ -25,6 +26,8 @@ module Ouroboros.Consensus.Util.MonadSTM.StrictSVar
   , tryTakeSVar
   , updateSVar
   , updateSVar_
+  , withSVar
+  , withSVarAnd
 
     -- * constructors exported for benefit of tests
   , StrictSVar (..)
@@ -43,6 +46,43 @@ import Control.Monad.Class.MonadThrow
   )
 import GHC.Stack
 import NoThunks.Class (NoThunks (..))
+
+{-------------------------------------------------------------------------------
+  withSVar / withSVarAnd
+-------------------------------------------------------------------------------}
+
+-- | Apply @f@ with the content of @sv@ as state, restoring the original value
+-- when an exception occurs. Pure readers using 'readSVarSTM' never block even
+-- while @f@ holds the lock.
+withSVar ::
+  (MonadSTM m, MonadCatch m) =>
+  StrictSVar m a ->
+  (a -> m (c, a)) ->
+  m c
+withSVar sv f = withSVarAnd sv (const $ pure ()) (\a () -> f a)
+
+-- | Like 'withSVar' but also runs an additional STM action atomically in the
+-- same transaction as the acquire (useful for STM retry conditions).
+withSVarAnd ::
+  (MonadSTM m, MonadCatch m) =>
+  StrictSVar m a ->
+  (a -> STM m b) ->
+  (a -> b -> m (c, a)) ->
+  m c
+withSVarAnd sv guard f =
+  fst . fst
+    <$> generalBracket
+      ( atomically $ do
+          a <- Lazy.takeTMVar (tmvar sv)
+          b <- guard a
+          pure (a, b)
+      )
+      ( \(origState, _) -> \case
+          ExitCaseSuccess (_, newState) -> putSVar sv newState
+          ExitCaseException _ -> putSVar sv origState
+          ExitCaseAbort -> putSVar sv origState
+      )
+      (uncurry f)
 
 {-------------------------------------------------------------------------------
   Strict SVar

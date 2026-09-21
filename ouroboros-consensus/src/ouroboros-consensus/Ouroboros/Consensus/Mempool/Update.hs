@@ -212,7 +212,7 @@ doAddTx mpEnv caller wti tx = do
             Nothing -> pure ()
             Just prevSize -> check $ isMempoolSize is /= prevSize
 
-    eRes <- withTMVarAnd istate additionalCheck $
+    eRes <- withSVarAnd istate additionalCheck $
       \is () -> do
         -- NOTE: the input read and the full validation ('pureTryAddTx') both run
         -- under the lock, serialising ingestion. They could move off it
@@ -450,7 +450,7 @@ implRemoveTxsEvenIfValid ::
   NE.NonEmpty (GenTxId blk) ->
   m ()
 implRemoveTxsEvenIfValid mpEnv toRemove =
-  withTMVar istate $
+  withSVar istate $
     \is -> do
       let toKeep =
             filter
@@ -589,7 +589,7 @@ implSyncWithLedger projectResult mpEnv =
 
   checkTodo = atomically $ do
     view <- getCurrentLedgerState ldgrInterface
-    is0 <- readTMVar istate
+    is0 <- readSVarSTM istate
     let ls0 = mldViewState view
         tipHash0 = getTipHash ls0
         (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls0
@@ -615,7 +615,7 @@ implSyncWithLedger projectResult mpEnv =
 
     go acc@(RevalidateTxsResult cand _) iterN = do
       (isNow, curTipHash) <- atomically $ do
-        isNow <- readTMVar istate
+        isNow <- readSVarSTM istate
         view <- getCurrentLedgerState ldgrInterface
         pure (isNow, getTipHash (mldViewState view))
       if stale cand isNow curTipHash
@@ -631,7 +631,7 @@ implSyncWithLedger projectResult mpEnv =
               go next (iterN + 1)
             else
               -- Delta is small enough (or out of iterations); commit under the lock.
-              withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
+              withSVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
                 \isLocked (MempoolLedgerDBView ls _getForker) -> do
                   -- ON-LOCK: the same staleness check, now atomic with the commit.
                   -- The off-lock checks above cannot be final: the tip can still
