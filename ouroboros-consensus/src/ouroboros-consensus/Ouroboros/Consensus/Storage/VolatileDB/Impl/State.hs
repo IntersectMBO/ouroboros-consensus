@@ -48,6 +48,7 @@ import Data.List as List (foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
@@ -109,6 +110,9 @@ data OpenState blk h = OpenState
   -- ^ The successors for each block.
   , currentLeiosAnnouncerMap :: !(LeiosAnnouncerIndex blk)
   -- ^ The blocks (RBs) announcing each endorser block.
+  , currentForgotten :: !(Set (HeaderHash blk))
+  -- ^ Blocks that are stored but that the DB does not admit to holding; see
+  -- 'forgetLeiosCertsAtStartUpExcept'. Empty until that function is called.
   , currentMaxSlotNo :: !MaxSlotNo
   -- ^ Highest stored SlotNo.
   --
@@ -415,6 +419,7 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
       , currentRevMap = currentRevMap'
       , currentSuccMap = currentSuccMap'
       , currentLeiosAnnouncerMap = currentAnnouncerMap'
+      , currentForgotten = Set.empty
       , currentMaxSlotNo = FileInfo.maxSlotNoInFiles (Index.elems currentMap')
       }
  where
