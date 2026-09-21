@@ -1009,12 +1009,16 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   -- Last: ingest the txs we found in our own mempool (they were removed from the
   -- fetch job set above)
-  when shouldPersist $
-    traceException tracer TraceLeiosPeerDbException $ do
-      -- FIXME: once EB announcements are wired in the point MUST already
-      -- be present (announcement handling inserts it); until then insert
-      -- it idempotently as a stop-gap and trace a warning.
-      traceWith ktracer $ TraceLeiosBlockPointMissing point
+  traceException tracer TraceLeiosPeerDbException $ do
+    -- FIXME: once EB announcements are wired in the point MUST already
+    -- be present (announcement handling inserts it); until then insert
+    -- it idempotently as a stop-gap and trace a warning. Unconditional
+    -- (not gated on 'shouldPersist'): a second point sharing an
+    -- already-held EB's hash must still register, since a vote is signed
+    -- over the announcing RB's hash.
+    traceWith ktracer $ TraceLeiosBlockPointMissing point
+    pointWritten <- writeEbPoint writer point ebBytesSize
+    when shouldPersist $ do
       -- Enqueue the write first, then claim the body. 'writeEbBody' only parks
       -- on a free writer-queue slot (bounded backpressure), so a cancellation
       -- there -- e.g. the peer going away while the queue is full -- happens
@@ -1025,7 +1029,6 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       --
       -- A failed write is fatal: the single writer rethrows and is 'link'ed to the
       -- node, so there is no lost-write case to recover from here.
-      pointWritten <- writeEbPoint writer point ebBytesSize
       bodyWritten <- writeEbBody writer point eb fills
       let settle = do
             await pointWritten
