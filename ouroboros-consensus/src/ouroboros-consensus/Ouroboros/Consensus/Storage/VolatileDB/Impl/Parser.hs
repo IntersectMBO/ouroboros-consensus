@@ -16,9 +16,11 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as Lazy
+import Data.Functor ((<&>))
 import Data.Maybe (isJust)
 import Data.Maybe.Strict (maybeToStrictMaybe)
 import Data.Word (Word64)
+import LeiosDemoTypes (AnnouncementFields (..), LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Storage.Serialisation
@@ -129,7 +131,10 @@ extractBlockInfo blk =
     , biHeaderSize = headerSize
     , biHasLeiosCert = isJust $ blockLeiosCert blk
     , biLeiosAnnouncedEb =
-        maybeToStrictMaybe . fmap fst . headerLeiosAnnouncement $ getHeader blk
+        maybeToStrictMaybe $
+          headerLeiosAnnouncement hdr <&> \(point, size) ->
+            MkAnnouncementFields (headerElId hdr) (pointEbHash point) size
     }
  where
+  hdr = getHeader blk
   BinaryBlockInfo{headerOffset, headerSize} = getBinaryBlockInfo blk

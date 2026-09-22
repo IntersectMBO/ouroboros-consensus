@@ -292,7 +292,7 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       GenesisHash -> Nothing
       BlockHash predHash -> Just predHash
     predInfo <- getBI predHash
-    strictMaybeToMaybe (VolatileDB.biLeiosAnnouncedEb predInfo)
+    LeiosDemoTypes.announcementLeiosPoint <$> strictMaybeToMaybe (VolatileDB.biLeiosAnnouncedEb predInfo)
 
   -- \| Remove the header corresponding to the given point from the beginning
   -- of the current chain fragment.

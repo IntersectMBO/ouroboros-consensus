@@ -68,7 +68,7 @@ import LeiosDemoLogic.Announcements
   , prunePeerState
   )
 import qualified LeiosDemoLogic.Announcements as Announcements
-import LeiosDemoLogic.Announcements.ElBimap (ElId)
+import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
 import LeiosDemoLogic.Announcements.Validate
   ( AnnouncementInvalidity
   , validateAnnouncementHeader
@@ -368,11 +368,6 @@ leiosFetchLogicIteration ::
   -- | The current slot, or 'Nothing' when it is not yet known (i.e. we are
   -- syncing), in which case we fetch freshest-last instead of freshest-first.
   Maybe SlotNo ->
-  -- | Whether we may fetch this endorser block at all. An offer that fails
-  -- this is skipped rather than dropped, so it is reconsidered once the
-  -- predicate admits it; see 'Ouroboros.Consensus.NodeKernel', which passes
-  -- the certified-announcement gate.
-  (LeiosPoint -> Bool) ->
   Map (PeerId pid) (Map LeiosPoint AlsoOfferedTxsClosure) ->
   -- | Which peers are big-ledger peers (a peer absent from this map is treated as
   -- 'IsNotBigLedgerPeer').
@@ -383,7 +378,7 @@ leiosFetchLogicIteration ::
   , Map (PeerId pid) (NESeq LeiosFetchRequest)
   , Map (PeerId pid) (NESet.NESet LeiosPoint)
   )
-leiosFetchLogicIteration env mbCurrentSlot mayFetch offerings bigLedgerPeers = \acc0 ->
+leiosFetchLogicIteration env mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
   -- One pass per peer. Bodies and tx-closure jobs compete on equal footing,
   -- ranked by each EB's slot in 'ebState' (its greatest announcement slot), so
   -- the freshest EBs are fetched first regardless of which half they still need.
@@ -393,7 +388,7 @@ leiosFetchLogicIteration env mbCurrentSlot mayFetch offerings bigLedgerPeers = \
     ( \(acc, reqs, drops) peerId offers ->
         let isBig = Map.findWithDefault IsNotBigLedgerPeer peerId bigLedgerPeers
             (acc', peerReqs, peerDrops) =
-              assignPeer env mbCurrentSlot mayFetch isBig peerId offers acc
+              assignPeer env mbCurrentSlot isBig peerId offers acc
          in ( acc'
             , case NESeq.nonEmptySeq peerReqs of
                 Nothing -> reqs
@@ -467,13 +462,12 @@ assignPeer ::
   Ord pid =>
   LeiosFetchStaticEnv ->
   Maybe SlotNo ->
-  (LeiosPoint -> Bool) ->
   IsBigLedgerPeer ->
   PeerId pid ->
   Map LeiosPoint AlsoOfferedTxsClosure ->
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest, Set LeiosPoint)
-assignPeer env mbCurrentSlot mayFetch isBig peerId offers acc =
+assignPeer env mbCurrentSlot isBig peerId offers acc =
   -- Walk the high-priority tier, then the low, threading the accumulator; the
   -- second walk immediately short-circuits if the first already saturated the
   -- peer.
@@ -483,7 +477,11 @@ assignPeer env mbCurrentSlot mayFetch isBig peerId offers acc =
     fetchPriorityTiers
       mbCurrentSlot
       (Leios.fetchPriorityWindowSlots env)
-      (Map.filterWithKey (\point _ -> mayFetch point) offers)
+      -- Only what some election is currently fetching. An offer of anything
+      -- else is skipped rather than dropped, so it comes back into play if some
+      -- election later fetches that endorser block --- because a certificate
+      -- moved an election onto it, or because another election announced it.
+      (Map.filterWithKey (\point _ -> Leios.isFocusedEb point.pointEbHash acc) offers)
 
   go st@(acc', _dec, _drops) = \case
     [] -> st
@@ -1570,6 +1568,16 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
 -- state ('chainDepStateLeiosAnnouncement'), which the CertRB's own transition
 -- would overwrite. A no-op otherwise. The announcement-side handling of the same
 -- header is separate; see the ChainSync client's 'leiosMsgRollForwardCallback'.
+--
+-- This execution of the node may never have processed the announcement this
+-- offer is for. If the CertRB's predecessor has been on our selection since
+-- before we started, then ChainSync intersects at or after it and its header
+-- never rolls forward, so nothing announces it to us. No election is then
+-- fetching that endorser block and the decision logic skips this offer --- but
+-- the offer is still recorded. The claim this CertRB establishes names the
+-- election, since the announcing block's 'VolatileDB.BlockInfo' carries it, so
+-- verifying the certificate focuses that election on this announcement's EB and
+-- now the decision logic can act on the offer.
 checkMsgRollForwardForLeiosOffers ::
   forall blk pid m.
   (IOLike m, ResolveLeiosBlock blk) =>
@@ -1692,7 +1700,7 @@ processAnnouncementCentrally
     -- The announced EB's slot is the announcing header's own slot (see
     -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
     point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
-    recordAnnounced = recordAnnouncedEb kernelVars onset (point, Leios.announcementEbBodySize fields)
+    recordAnnounced = recordAnnouncedEb kernelVars onset fields
     markForged =
       MVar.modifyMVar_ (fst kernelVars) $
         pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
@@ -1823,13 +1831,17 @@ recordAnnouncedEb ::
   ) ->
   -- | This announcement slot's wall-clock onset, if known.
   StrictMaybe RelativeTime ->
-  (LeiosPoint, BytesSize) ->
+  AnnouncementFields ->
   m ()
-recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
+recordAnnouncedEb (outstandingVar, readyVar) onset fields = do
   changed <- MVar.modifyMVar outstandingVar (pure . upd)
   when changed $ void $ MVar.tryPutMVar readyVar ()
  where
-  MkLeiosPoint ebSlot ebHash = point
+  MkAnnouncementFields elId ebHash ebBytesSize = fields
+  -- The announced EB's slot is its election's slot (see
+  -- 'headerLeiosAnnouncement').
+  MkElId ebSlot _poolId = elId
+  point = MkLeiosPoint ebSlot ebHash
 
   -- The same in-lock guard as 'recordEbBodyOffer' (too old / already held /
   -- already listed). No cache lookup: 'ebState' is authoritative here.
@@ -1837,7 +1849,9 @@ recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
     let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
         !outstanding'
           | tooOld = outstanding
-          | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot onset outstanding
+          | otherwise =
+              Leios.focusElectionIfUnfocused elId ebHash $
+                Leios.recordMaxAnnouncementSlot ebHash ebSlot onset outstanding
         skip =
           tooOld
             || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it

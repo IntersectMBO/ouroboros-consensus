@@ -25,6 +25,8 @@ import Control.Monad (void)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
@@ -47,6 +49,7 @@ import LeiosDemoLogic
   , msgLeiosBlockRequest
   , newLeiosFetchContext
   )
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( AlsoOfferedTxsClosure (..)
   , BytesSize
@@ -66,6 +69,7 @@ import LeiosDemoTypes
   , markBodyImminent
   , maxTxsPerEb
   , mergeOffer
+  , focusElectionIfUnfocused
   , recordMaxAnnouncementSlot
   )
 import System.Random (mkStdGen)
@@ -220,14 +224,25 @@ withMissingBody :: LeiosPoint -> BytesSize -> Scenario pid -> Scenario pid
 withMissingBody p@(MkLeiosPoint slot ebHash) size =
   onOutstanding $ \o ->
     -- Seed everything the announce path would: the missing-body point and its
-    -- reverse index, plus (via 'recordMaxAnnouncementSlot') the 'ebState' NoBody
-    -- entry that the fetch loop now drives bodies off of.
-    recordMaxAnnouncementSlot ebHash slot SNothing $
-      o
-        { missingEbBodies = Map.insert p size (missingEbBodies o)
-        , reverseSlotIndexByEbHash =
-            Map.insertWith NESet.union ebHash (NESet.singleton slot) (reverseSlotIndexByEbHash o)
-        }
+    -- reverse index, (via 'recordMaxAnnouncementSlot') the 'ebState' NoBody
+    -- entry that the fetch loop now drives bodies off of, and the election that
+    -- is fetching it, without which the loop asks no one for it. Only a
+    -- certificate overrules an election that is already fetching something,
+    -- so this seeds it the way an announcement would.
+    focusElectionIfUnfocused (MkElId slot fixtureIssuer) ebHash $
+      recordMaxAnnouncementSlot ebHash slot SNothing $
+        o
+          { missingEbBodies = Map.insert p size (missingEbBodies o)
+          , reverseSlotIndexByEbHash =
+              Map.insertWith NESet.union ebHash (NESet.singleton slot) (reverseSlotIndexByEbHash o)
+          }
+
+-- | The one pool these scenarios pretend announced everything, since they have
+-- no headers to take an issuer from. An endorser block's election is therefore
+-- just its slot: two announced in one slot would share an election, and only
+-- the first would be fetched. None of these announce two in a slot.
+fixtureIssuer :: ShortByteString
+fixtureIssuer = SBS.pack [0]
 
 -- | Mark an EB as one our own forge produced -- the 'BodyImminent' 'ebState'
 -- entry that 'onForgedLeiosEb' installs at announcement time.
@@ -303,8 +318,6 @@ runIteration sc =
         leiosFetchLogicIteration
           sc.scEnv
           (Just minBound)
-          -- These scenarios are about the ranking, so nothing is gated out.
-          (const True)
           sc.scOfferings
           Map.empty
           sc.scOutstanding

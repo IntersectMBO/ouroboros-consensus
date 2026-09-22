@@ -54,7 +54,7 @@ import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack
-import LeiosDemoTypes (pointEbHash)
+import LeiosDemoTypes (announcementEbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -459,7 +459,7 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
                     SNothing -> annMap
                     SJust eb ->
                       insertMapSet
-                        (pointEbHash eb)
+                        (announcementEbHash eb)
                         (BlockPoint (biSlotNo pbiBlockInfo) (biHash pbiBlockInfo))
                         annMap
               )

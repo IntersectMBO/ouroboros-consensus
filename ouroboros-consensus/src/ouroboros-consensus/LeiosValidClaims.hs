@@ -18,6 +18,7 @@ module LeiosValidClaims
   , emptyValidClaims
   , insertValidClaim
   , memberValidClaim
+  , certifiedEbs
   , isCertifiedEb
   , pruneValidClaims
   , sizeValidClaims
@@ -33,13 +34,13 @@ import qualified Data.Foldable
 import qualified Data.Map.Strict as Map
 import qualified Data.Map.Strict as Strict (Map)
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.MultiSet (MultiSet)
-import qualified Data.MultiSet as MultiSet
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import GHC.Generics (Generic)
+import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
-  ( EbHash
+  ( AnnouncementFields (..)
+  , EbHash
   , LeiosCert
   , LeiosCommittee
   , LeiosForecastRejection
@@ -61,22 +62,29 @@ import Ouroboros.Consensus.Block (RealPoint (..), StandardHash)
 -- block is no longer in the VolatileDB, or announced nothing at all. Such a
 -- claim still dedups certificate checks; it just cannot license fetching an
 -- endorser block, which costs a fetch we could have made.
-data Claim = MkClaim !SlotNo !(StrictMaybe EbHash)
+data Claim = MkClaim !SlotNo !(StrictMaybe AnnouncementFields)
   deriving stock (Eq, Show, Generic)
 
 -- | Claims known to be certified, indexed by claim, by the slot of the
--- announcing block (so that pruning is a range operation), and by the endorser
--- block announced (so that the fetch logic can ask whether an endorser block's
--- announcement is certified).
+-- announcing block (so that pruning is a range operation), and by the election
+-- whose announcement was certified (so that the fetch logic can move that
+-- election onto the endorser block it names).
 --
 -- INVARIANT: the three agree --- @slotOfClaim ! r == MkClaim s e@ iff @r@
--- occurs in @claimsBySlot ! s@, and (when @e@ is @SJust@) @certifiedEbs@ has
--- one occurrence of @e@ per such @r@.
+-- occurs in @claimsBySlot ! s@, and (when @e@ is @SJust@) @certifiedEbs@ maps
+-- that announcement's election to its endorser block.
 data ValidClaims
   = MkValidClaims
   { slotOfClaim :: !(Strict.Map RbHash Claim)
   , claimsBySlot :: !(Strict.Map SlotNo (NESet RbHash))
-  , certifiedEbs :: !(MultiSet EbHash)
+  , certifiedEbs :: !(Strict.Map ElId EbHash)
+  -- ^ The endorser block certified for each election: the same shape as the
+  -- fetch logic's own focus, which is what it copies these entries into.
+  --
+  -- One entry per election, since the protocol admits only one certificate per
+  -- election; a second one would mean the committee equivocated, and it simply
+  -- overwrites here, matching the last-claim-wins behaviour documented on
+  -- 'LeiosDemoTypes.focusElection'.
   }
   deriving stock (Show, Generic)
 
@@ -86,31 +94,36 @@ deriving via
     NoThunks ValidClaims
 
 emptyValidClaims :: ValidClaims
-emptyValidClaims = MkValidClaims Map.empty Map.empty MultiSet.empty
+emptyValidClaims = MkValidClaims Map.empty Map.empty Map.empty
 
 -- | Record that this claim is certified, as of the slot of the block that
 -- announced the EB, and which endorser block that was.
 insertValidClaim ::
-  SlotNo -> StrictMaybe EbHash -> RbHash -> ValidClaims -> ValidClaims
-insertValidClaim slot mbEbHash rbHash vc
+  SlotNo -> StrictMaybe AnnouncementFields -> RbHash -> ValidClaims -> ValidClaims
+insertValidClaim slot mbFields rbHash vc
   | Map.member rbHash (slotOfClaim vc) = vc
   | otherwise =
       MkValidClaims
         { slotOfClaim =
-            Map.insert rbHash (MkClaim slot mbEbHash) (slotOfClaim vc)
+            Map.insert rbHash (MkClaim slot mbFields) (slotOfClaim vc)
         , claimsBySlot =
             Map.insertWith (<>) slot (NESet.singleton rbHash) (claimsBySlot vc)
-        , certifiedEbs = case mbEbHash of
+        , certifiedEbs = case mbFields of
             SNothing -> certifiedEbs vc
-            SJust ebHash -> MultiSet.insert ebHash (certifiedEbs vc)
+            SJust fields ->
+              Map.insert
+                (announcementElection fields)
+                (announcementEbHash fields)
+                (certifiedEbs vc)
         }
 
 memberValidClaim :: RbHash -> ValidClaims -> Bool
 memberValidClaim rbHash = Map.member rbHash . slotOfClaim
 
--- | Whether some certified claim announced this endorser block.
-isCertifiedEb :: EbHash -> ValidClaims -> Bool
-isCertifiedEb ebHash = MultiSet.member ebHash . certifiedEbs
+-- | Whether some certified claim announced this endorser block, for this
+-- election.
+isCertifiedEb :: ElId -> EbHash -> ValidClaims -> Bool
+isCertifiedEb elId ebHash = (== Just ebHash) . Map.lookup elId . certifiedEbs
 
 -- | Forget every claim announced strictly before the given slot.
 --
@@ -137,9 +150,9 @@ pruneValidClaims immTipSlot vc =
   slotOfClaim' =
     Data.Foldable.foldl' (flip Map.delete) (slotOfClaim vc) droppedRbHashes
 
-  dropEb ebs (MkClaim _slot mbEbHash) = case mbEbHash of
+  dropEb ebs (MkClaim _slot mbFields) = case mbFields of
     SNothing -> ebs
-    SJust ebHash -> MultiSet.delete ebHash ebs
+    SJust fields -> Map.delete (announcementElection fields) ebs
 
 sizeValidClaims :: ValidClaims -> Int
 sizeValidClaims = Map.size . slotOfClaim
