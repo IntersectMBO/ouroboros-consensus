@@ -10,7 +10,7 @@ import MAlonzo.Code.Spec.Foreign.HSConsensus.TickNonce                         a
 import MAlonzo.Code.Spec.Foreign.HSConsensus.UpdateNonce                       as X
   (UpdateNonceEnv(..), UpdateNonceState(..), updnStep)
 import MAlonzo.Code.Spec.Foreign.HSConsensus.BlockDefinitions                  as X
-  (BHeader(..), BHBody(..), OCert(..))
+  (BHeader(..), BHBody(..), OCert(..), AnnouncedEB(..))
 import MAlonzo.Code.Spec.Foreign.HSConsensus.OperationalCertificate            as X
   (OCertEnv(..), OCertState(..), OCertCounters, ocertStep, ocertDebug)
 import MAlonzo.Code.Spec.Foreign.HSConsensus.Protocol                          as X
