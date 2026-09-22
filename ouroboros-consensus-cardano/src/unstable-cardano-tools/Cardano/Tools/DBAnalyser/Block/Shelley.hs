@@ -119,22 +119,22 @@ instance PerEraAnalysis MaryEra where txExUnitsSteps = Nothing
 
 instance PerEraAnalysis AlonzoEra where
   txExUnitsSteps = Just $ \tx ->
-    let (Alonzo.ExUnits _mem steps) = Alonzo.getTotalExUnits tx
+    let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
      in toEnum $ fromEnum steps
 
 instance PerEraAnalysis BabbageEra where
   txExUnitsSteps = Just $ \tx ->
-    let (Alonzo.ExUnits _mem steps) = Alonzo.getTotalExUnits tx
+    let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
      in toEnum $ fromEnum steps
 
 instance PerEraAnalysis ConwayEra where
   txExUnitsSteps = Just $ \tx ->
-    let (Alonzo.ExUnits _mem steps) = Alonzo.getTotalExUnits tx
+    let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
      in toEnum $ fromEnum steps
 
 instance PerEraAnalysis DijkstraEra where
   txExUnitsSteps = Just $ \tx ->
-    let (Alonzo.ExUnits _mem steps) = Alonzo.getTotalExUnits tx
+    let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
      in toEnum $ fromEnum steps
 
 -- | Shelley-era specific
