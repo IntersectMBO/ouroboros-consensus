@@ -11,20 +11,29 @@
 module Test.LeiosDemoDb (module Test.LeiosDemoDb) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent (forkIO)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , atomically
   , readTChan
   , tryReadTChan
   )
-import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
+import Control.Concurrent.MVar (newEmptyMVar, readMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
-import Control.Exception (bracket)
+import Control.Exception
+  ( SomeException
+  , bracket
+  , displayException
+  , fromException
+  , throwIO
+  , try
+  )
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
+import Data.List (isInfixOf, isPrefixOf)
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
@@ -43,6 +52,7 @@ import LeiosDemoDb
   , withReader
   , withWriter
   )
+import LeiosDemoException (LeiosDbException (LeiosDbWriteException, writeFailure, writeJob))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
@@ -93,6 +103,10 @@ tests =
          , testGroup
              "close"
              [ testCase "returns while an EB stays pinned" test_closeWithPinnedEb
+             ]
+         , testGroup
+             "writer"
+             [ testCase "tells the awaiter when a job throws" test_awaiterHearsAFailedJob
              ]
          ]
 
@@ -877,6 +891,79 @@ prop_completedEbNoBody impl =
           & tabulate "lookupEbClosure (no body)" [timeBucket queryTime]
 
 -- * truncateLeiosDbAfterSlot
+
+-- | The writer takes a job off its queue before it runs it, so the drain that
+-- fails the still-queued jobs when the writer stops can no longer reach that
+-- one. Its awaiter must be told anyway, whatever the job threw.
+--
+-- Three things can unblock the awaiter, and only one of them counts.
+-- 'startWriter' links its worker to the thread that created the handle, so the
+-- awaiter runs on a thread of its own and the link exception cannot be what
+-- wakes it. A result nobody can write any more is the failure under test, so
+-- 'BlockedIndefinitelyOnSTM' is not an answer either. And a submission that a
+-- sealed queue refuses throws a 'LeiosDbWriteException' just as a reported
+-- failure does, so submitting happens outside the 'try'.
+test_awaiterHearsAFailedJob :: Assertion
+test_awaiterHearsAFailedJob = do
+  sysTmp <- getCanonicalTemporaryDirectory
+  bracket (createTempDirectory sysTmp "leios-test") removeDirectoryRecursive $ \tmpDir -> do
+    outcomeVar <- newEmptyMVar
+    let volDbPath = tmpDir <> "/test.vol.db"
+        immDbPath = tmpDir <> "/test.imm.db"
+        point = mkTestPoint 5 1
+        eb = mkTestEb 2
+        -- 'sqlInsertEbBody' traces a collision from inside the job it runs,
+        -- and an 'IOException' is not a 'LeiosDbException', so 'publish' lets
+        -- it past and the job dies with its result unwritten. That trace is
+        -- the only one a job makes, so if it moves out of the job the second
+        -- write below succeeds and this test fails, asking for another way to
+        -- make a job throw.
+        tracer = Tracer . emit $ \case
+          TraceLeiosDbInsertCollision{} -> throwIO (userError jobFailureMarker)
+          _ -> pure ()
+        forkAwaiter w =
+          void . forkIO $ do
+            -- Submitting is outside the 'try'. If it throws, nothing is
+            -- recorded, and the budget below reports that the awaiter was
+            -- never told rather than counting a refused submission as a
+            -- report.
+            promise <- writeEbBody w point eb
+            outcome <- try (await promise) :: IO (Either SomeException CompletedEbs)
+            void $ tryPutMVar outcomeVar outcome
+        -- This thread creates the handle, so this is where the worker's
+        -- parting exception lands. It does nothing else.
+        runUntilTheWriterDies =
+          withLeiosDBSQLite tracer volDbPath immDbPath $ \db ->
+            withWriter db $ \w -> do
+              void $ await =<< writeEbPoint w point (encodeLeiosEbSize eb)
+              void $ await =<< writeEbBody w point eb
+              -- The same body again collides on the primary key of ebTxs, so
+              -- this second write is the job whose action throws.
+              forkAwaiter w
+              void $ Timeout.timeout awaitBudgetMicros (readMVar outcomeVar)
+    _ <- try runUntilTheWriterDies :: IO (Either SomeException ())
+    -- Again, because the link exception can end the block above before the
+    -- awaiter runs.
+    Timeout.timeout awaitBudgetMicros (readMVar outcomeVar) >>= \case
+      Nothing ->
+        assertFailure "the awaiter was never told the write's fate"
+      Just (Right completed) ->
+        assertFailure $ "the write should have failed, but reported " <> show completed
+      Just (Left e) -> case (fromException e :: Maybe LeiosDbException) of
+        Just LeiosDbWriteException{writeJob = job, writeFailure = cause}
+          | "WriteEbBody" `isPrefixOf` job
+          , jobFailureMarker `isInfixOf` displayException cause ->
+              pure ()
+        _ ->
+          assertFailure $
+            "the awaiter should have been told the write failed; it got: "
+              <> displayException e
+ where
+  jobFailureMarker :: String
+  jobFailureMarker = "the tracer threw inside the write job"
+
+  awaitBudgetMicros :: Int
+  awaitBudgetMicros = 20_000_000
 
 -- | A pinned EB whose tx closure never arrives cannot be copied, so the
 -- copier keeps retrying it for as long as the database is open. 'close' must
