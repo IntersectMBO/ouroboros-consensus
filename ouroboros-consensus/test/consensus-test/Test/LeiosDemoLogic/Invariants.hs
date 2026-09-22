@@ -144,6 +144,18 @@ tests =
               let cmds = [Forge [0, 1] 5, ArriveBody [0, 1] 8, ArriveBody [0, 1] 8]
               runCmdsAndCollectAcquiredTxPoints cmds
                 @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
+          , testCase
+              "a bare announcement of an already-held EbHash still registers and notifies its new point (EB-hash collision, announcement path)"
+              $ do
+                -- Same scenario as the two tests above, but the second point's
+                -- body never "arrives" via 'ArriveBody' -- it is only
+                -- announced ('Announce').
+                let h = hashLeiosEb (ebOf [0, 1])
+                    cmds = [Forge [0, 1] 5, Announce [0, 1] 8]
+                runCmdsAndScanEbPoints cmds
+                  @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
+                runCmdsAndCollectAcquiredTxPoints cmds
+                  @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
           ]
       , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
           let eb = ebOf [0, 1]
@@ -505,7 +517,7 @@ applyCmd conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
-    recordAnnouncedEb kv SNothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
+    recordAnnouncedEb conn kv SNothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure []
   Offer ids slot -> do
     recordEbBodyOffer
@@ -844,7 +856,7 @@ raceSameHashMultiSlot = do
     concurrently_
       (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
       ( concurrently_
-          (recordAnnouncedEb kv SNothing (announcePoint, ebBytesSize))
+          (recordAnnouncedEb conn kv SNothing (announcePoint, ebBytesSize))
           ( processLeiosBlock
               nullTracer
               nullTracer

@@ -423,17 +423,19 @@ mkHandlers
                   -- onset (its ChainSync arrival latency).
                   whenJust (Leios.mkAnnouncingHeader hdr) $ \ancHdr -> do
                     now <- systemTimeCurrent systemTime
-                    Leios.processAnnouncementCentrally
-                      (Node.leiosKernelTracer tracers)
-                      getLeiosCentralState
-                      (getLeiosOutstanding, getLeiosReady)
-                      getLeiosTxCache
-                      (Just peer)
-                      Leios.ReceivedViaChainSync
-                      Announcements.DoRelay
-                      (SJust hdrSlotTime)
-                      (Just (diffRelTime now hdrSlotTime))
-                      ancHdr
+                    withWriter (getLeiosDB nodeKernel) $ \writer ->
+                      Leios.processAnnouncementCentrally
+                        (Node.leiosKernelTracer tracers)
+                        getLeiosCentralState
+                        (getLeiosOutstanding, getLeiosReady)
+                        getLeiosTxCache
+                        writer
+                        (Just peer)
+                        Leios.ReceivedViaChainSync
+                        Announcements.DoRelay
+                        (SJust hdrSlotTime)
+                        (Just (diffRelTime now hdrSlotTime))
+                        ancHdr
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -540,17 +542,19 @@ mkHandlers
                               traceWith tracer $
                                 MkTraceLeiosPeer $
                                   "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
-                              Leios.processAnnouncementCentrally
-                                kernelTracer
-                                getLeiosCentralState
-                                (getLeiosOutstanding, getLeiosReady)
-                                getLeiosTxCache
-                                (Just peer)
-                                Leios.ReceivedViaLeiosNotify
-                                shouldRelay
-                                (SJust onset)
-                                (Just age)
-                                ancHdr
+                              withWriter (getLeiosDB nodeKernel) $ \writer ->
+                                Leios.processAnnouncementCentrally
+                                  kernelTracer
+                                  getLeiosCentralState
+                                  (getLeiosOutstanding, getLeiosReady)
+                                  getLeiosTxCache
+                                  writer
+                                  (Just peer)
+                                  Leios.ReceivedViaLeiosNotify
+                                  shouldRelay
+                                  (SJust onset)
+                                  (Just age)
+                                  ancHdr
                           )
                           peerSt0
                           anc
