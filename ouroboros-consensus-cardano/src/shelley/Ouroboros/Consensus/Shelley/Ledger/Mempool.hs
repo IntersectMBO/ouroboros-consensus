@@ -600,9 +600,7 @@ blockCapacityAlonzoMeasure ledgerState =
 txMeasureAlonzo ::
   forall proto era.
   ( ShelleyCompatible proto era
-  , L.AlonzoEraPParams era
   , L.AlonzoEraTx era
-  , L.AlonzoEraTxWits era
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   ) =>
@@ -736,7 +734,6 @@ txMeasureConway ::
   forall proto era.
   ( ShelleyCompatible proto era
   , L.AlonzoEraTx era
-  , L.AlonzoEraTxWits era
   , L.BabbageEraTxBody era
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
