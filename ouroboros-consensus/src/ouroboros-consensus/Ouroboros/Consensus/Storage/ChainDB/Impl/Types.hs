@@ -407,7 +407,7 @@ data ChainDbEnv m blk = CDB
   -- from the LeiosDb, grown by 'leiosAcquiredEbsRunner' from closure-completion
   -- notifications (which also enqueue a 'ChainSelReprocessLeiosEb'), and pruned
   -- by age as a GC is scheduled.
-  , cdbLeiosValidClaims :: !(StrictTVar m ValidClaims)
+  , cdbLeiosValidClaims :: !(StrictTVar m (WithFingerprint ValidClaims))
   -- ^ The Leios claims we have verified a certificate for, if the slot of the
   -- announcing block is >= the slot of the imm tip. ChainSel verifies the
   -- certificate in a CertRB before selecting it, and records the claim here so
@@ -473,10 +473,6 @@ data Internal m blk = Internal
   -- thread.
   , intKillBgThreads :: StrictTVar m (m ())
   -- ^ A handle to kill the background threads.
-  , intLeiosValidClaims :: STM m ValidClaims
-  -- ^ Merely reads 'cdbLeiosValidClaims'; /so far/, tests are the only code
-  -- /outside/ of the ChainDB that needs to do that (recall that ChainSel is
-  -- inside the ChainDB).
   }
 
 {-------------------------------------------------------------------------------

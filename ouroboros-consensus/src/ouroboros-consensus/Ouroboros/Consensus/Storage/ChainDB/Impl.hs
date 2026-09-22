@@ -229,7 +229,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
     varAcquiredLeiosEbs <-
       newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
-    varLeiosValidClaims <- newTVarIO emptyValidClaims
+    varLeiosValidClaims <- newTVarIO (WithFingerprint emptyValidClaims (Fingerprint 0))
     chainWithTime <-
       ChainSel.initialChainSelection
         immutableDB
@@ -335,6 +335,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
+            , getLeiosValidClaims = getEnvSTM h (readTVar . cdbLeiosValidClaims)
             }
     addBlockTestFuse <- newFuse "test chain selection"
     let testing =
@@ -352,7 +353,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     maxBound
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
-            , intLeiosValidClaims = getEnvSTM h (readTVar . cdbLeiosValidClaims)
             }
 
     traceWith tracer $

@@ -229,7 +229,13 @@ tests =
               -- a peer offers every seeded EB, body and closure
               offerings = Map.singleton peerId (referencedOffers o)
               (_out', decs, _drops) =
-                leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (SlotNo 10)) offerings Map.empty o
+                leiosFetchLogicIteration
+                  demoLeiosFetchStaticEnv
+                  (Just (SlotNo 10))
+                  (const True)
+                  offerings
+                  Map.empty
+                  o
           -- no body is re-requested (the whole point of the seed) ...
           ebBodyRequestHashes decs @?= []
           -- ... and with empty pools there is nothing at all to request
@@ -260,6 +266,7 @@ tests =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
                         (Just (SlotNo 11))
+                        (const True)
                         offers
                         bigLedgerPeers
                         outstanding
@@ -558,6 +565,9 @@ applyCmd conn txCache kv peerVars peerId = \case
           leiosFetchLogicIteration
             demoLeiosFetchStaticEnv
             (Just (fromIntegral slot))
+            -- This module is about the handlers and the state invariant, not
+            -- about the certified-announcement gate.
+            (const True)
             offerings
             Map.empty
             outstanding

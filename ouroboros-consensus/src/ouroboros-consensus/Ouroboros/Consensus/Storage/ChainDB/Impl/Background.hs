@@ -538,8 +538,11 @@ pruneLeiosValidClaims CDB{..} immTip = case immTip of
   Origin -> pure ()
   NotOrigin immTipSlot ->
     atomically $
+      -- The fingerprint is left alone: as with 'cdbInvalid', it marks new
+      -- entries, and a prune creates no new fetch opportunity for the watcher
+      -- to wake anyone about.
       modifyTVar cdbLeiosValidClaims $
-        LeiosValidClaims.pruneValidClaims immTipSlot
+        fmap (LeiosValidClaims.pruneValidClaims immTipSlot)
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections

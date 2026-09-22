@@ -2,8 +2,12 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -49,6 +53,9 @@ module Test.Util.LeiosTestBlock
   , applyLeiosTestTx
   , containsCertOf
   , hashLeiosTestBody
+  , leiosTestEbPoint
+  , leiosTestTxBytes
+  , mkLeiosTestEb
   , maxLeiosTestChainLength
 
     -- * Building chains
@@ -72,6 +79,7 @@ module Test.Util.LeiosTestBlock
   , leiosTestLedgerConfig
 
     -- * Protocol
+  , LeiosTestChainDepState (..)
   , LeiosTestProtocol
   , LeiosTestView (..)
 
@@ -83,15 +91,15 @@ import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize)
 import Cardano.Ledger.Binary (decodeFull', serialize', shelleyProtVer)
 import Cardano.Slotting.EpochInfo (epochInfoEpoch, fixedEpochInfo)
 import Codec.CBOR.Decoding (Decoder)
-import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import Codec.Serialise (Serialise (..), serialise)
+import Codec.Serialise (Serialise (..), deserialiseOrFail, serialise)
 import Control.Monad (foldM, guard, replicateM, replicateM_)
 import Control.Monad.Except (throwError)
 import Data.String (fromString)
 import qualified Data.Binary.Get as Get
 import qualified Data.Binary.Put as Put
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
@@ -100,24 +108,35 @@ import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Strict as Map
 import Data.Proxy
 import Data.Ratio (denominator, numerator, (%))
+import qualified Data.Text as Text
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
+import qualified Data.Vector.Strict as V
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoDb (lookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( BytesSize
   , HasLeiosVoting (..)
   , LeiosCert
+  , LeiosClosureError (LeiosClosureMissing, LeiosClosureTxUndecodable)
   , LeiosCommittee
+  , LeiosEb (..)
   , LeiosPoint (..)
+  , LeiosTx (MkLeiosTx)
   , RbHash (MkRbHash)
+  , TxHash
   , Weight
   , decodeEbHash
   , encodeEbHash
+  , encodeLeiosEb
+  , hashLeiosEb
+  , hashLeiosTx
   )
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
@@ -132,21 +151,39 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.CommonProtocolParams
+  ( CommonProtocolParams (..)
+  )
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+  ( LedgerSupportsPeerSelection (..)
+  )
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Node.InitStorage (NodeInitStorage (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Run
+  ( RunNode
+  , SerialiseNodeToClientConstraints
+  , SerialiseNodeToNodeConstraints (..)
+  )
+import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
+import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Network.Block (Serialised)
 import Ouroboros.Network.Magic (NetworkMagic (..))
+import Ouroboros.Network.Tx (HasRawTxId (..))
 import Test.Util.Orphans.ToExpr ()
 import Test.Util.TestBlock (TestHash (..), Validity (..), unTestHash)
 
@@ -201,7 +238,7 @@ data LeiosTestTxError
     -- exceed it.
     NonAscendingWrite !Int !Char !Char
   deriving stock (Eq, Show, Generic)
-  deriving anyclass NoThunks
+  deriving anyclass (Serialise, NoThunks)
 
 applyLeiosTestTx ::
   LeiosTestTx -> IntMap Char -> Either LeiosTestTxError (IntMap Char)
@@ -261,9 +298,7 @@ data instance Header LeiosTestBlock = LeiosTestHeader
 -- | Enough of a digest for a test: the header must not be free to accept any
 -- body.
 hashLeiosTestBody :: LeiosTestBody -> Word64
-hashLeiosTestBody = BL.foldl' step 5381 . serialise
- where
-  step acc w = acc * 33 + fromIntegral w
+hashLeiosTestBody = djb2 . serialise
 
 type instance HeaderHash LeiosTestBlock = TestHash
 
@@ -426,6 +461,34 @@ instance ResolveLeiosBlock LeiosTestBlock where
   headerElId hdr =
     MkElId (lthSlot hdr) (SBS.pack [fromIntegral (lthIssuer hdr)])
 
+  protocolStateLeiosAnnouncement = ltcdsAnnouncement
+
+  -- The closure the LeiosDb holds for this endorser block, decoded back into
+  -- transactions. A CertRB is not selectable until this succeeds.
+  resolveLeiosClosure leiosDb ebHash =
+    lookupEbClosure leiosDb ebHash >>= \case
+      Nothing -> pure $ Left $ LeiosClosureMissing ebHash
+      Just closure -> pure $ traverse decodeOne closure
+   where
+    decodeOne (txHash, bytes) =
+      case deserialiseOrFail (BL.fromStrict bytes) of
+        Left err ->
+          Left $
+            LeiosClosureTxUndecodable ebHash txHash $
+              Text.pack (show err)
+        Right tx -> Right (txHash, tx)
+
+  applyLeiosClosure _cfg txs st =
+    case foldM (flip applyLeiosTestTx) (ltlsState st) (unLeiosTestGenTx <$> txs) of
+      Left err -> Left $ LeiosTestInvalidTx err
+      Right st' -> Right st{ltlsState = st'}
+
+  inlineLeiosClosure blk txs = setBody (ltbBody blk){ltbTxs = map unLeiosTestGenTx txs} blk
+
+  leiosClosureTxKeySets = getTransactionKeySets
+
+  assumeValidatedClosureTx = ValidatedLeiosTestGenTx
+
 -- | The committee lives in the ledger view, which the forecast computes from
 -- the ledger config; the ledger /state/ carries none, so the voting-path
 -- methods have nothing to offer. The harness does not vote.
@@ -439,8 +502,24 @@ instance HasLeiosVoting LeiosTestBlock where
   Protocol
 -------------------------------------------------------------------------------}
 
--- | No leader schedule, no header crypto, no chain-dependent state: the only
--- thing this protocol contributes is the ledger view.
+-- | The announcement the latest header carried, which is the whole of this
+-- protocol's chain-dependent state: a CertRB certifies the endorser block its
+-- predecessor announced, and this is where the apply path reads that from.
+newtype LeiosTestChainDepState = LeiosTestChainDepState
+  { ltcdsAnnouncement :: Maybe (LeiosPoint, BytesSize)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+instance Serialise LeiosTestChainDepState where
+  encode = encodeMaybe encodeLeiosPointAndSize . ltcdsAnnouncement
+  decode = LeiosTestChainDepState <$> decodeMaybe decodeLeiosPointAndSize
+
+newtype instance Ticked LeiosTestChainDepState
+  = TickedLeiosTestChainDepState LeiosTestChainDepState
+
+-- | No leader schedule and no header crypto: what this protocol contributes is
+-- the ledger view and the announcement above.
 data LeiosTestProtocol
 
 -- | What Leios needs of the ledger view, and nothing else.
@@ -464,12 +543,12 @@ data instance ConsensusConfig LeiosTestProtocol = LeiosTestProtocolConfig
   deriving anyclass NoThunks
 
 instance ConsensusProtocol LeiosTestProtocol where
-  type ChainDepState LeiosTestProtocol = ()
+  type ChainDepState LeiosTestProtocol = LeiosTestChainDepState
   type IsLeader LeiosTestProtocol = ()
   type CanBeLeader LeiosTestProtocol = ()
   type LedgerView LeiosTestProtocol = LeiosTestView
   type ValidationErr LeiosTestProtocol = Void
-  type ValidateView LeiosTestProtocol = ()
+  type ValidateView LeiosTestProtocol = Maybe (LeiosPoint, BytesSize)
 
   protocolSecurityParam = ltpcSecurityParam
 
@@ -477,14 +556,14 @@ instance ConsensusProtocol LeiosTestProtocol where
   -- minted.
   checkIsLeader _ _ _ _ = Just ()
 
-  tickChainDepState _ _ _ _ = TickedTrivial
-  updateChainDepState _ _ _ _ = pure ()
-  reupdateChainDepState _ _ _ _ = ()
+  tickChainDepState _ _ _ = TickedLeiosTestChainDepState
+  updateChainDepState _ announcement _ _ = pure (LeiosTestChainDepState announcement)
+  reupdateChainDepState _ announcement _ _ = LeiosTestChainDepState announcement
 
 type instance BlockProtocol LeiosTestBlock = LeiosTestProtocol
 
 instance BlockSupportsProtocol LeiosTestBlock where
-  validateView _ _ = ()
+  validateView _ = lthAnnouncement
 
 {-------------------------------------------------------------------------------
   Ledger
@@ -560,7 +639,7 @@ leiosTestInitExtLedger ::
 leiosTestInitExtLedger cfg st =
   ExtLedgerState
     { ledgerState = leiosTestInitLedger cfg st
-    , headerState = genesisHeaderState ()
+    , headerState = genesisHeaderState (LeiosTestChainDepState Nothing)
     }
 
 -- | No UTxO HD for this block, at least not yet
@@ -919,8 +998,8 @@ instance EncodeDiskDep (NestedCtxt Header) LeiosTestBlock
 instance DecodeDiskDep (NestedCtxt Header) LeiosTestBlock
 
 -- at least because ChainDepState LeiosTestProtocol ~ ()
-instance EncodeDisk LeiosTestBlock ()
-instance DecodeDisk LeiosTestBlock ()
+instance EncodeDisk LeiosTestBlock LeiosTestChainDepState
+instance DecodeDisk LeiosTestBlock LeiosTestChainDepState
 
 instance SerialiseDiskConstraints LeiosTestBlock
 
@@ -928,3 +1007,211 @@ deriving via
   SelectViewDiffusionPipelining LeiosTestBlock
   instance
     BlockSupportsDiffusionPipelining LeiosTestBlock
+
+{-------------------------------------------------------------------------------
+  Mempool
+
+  Transactions reach a real node through the mempool, and 'RunNode' demands it
+  even of a node that never forges. Nothing here is interesting: the mempool's
+  notion of applying a transaction is 'applyLeiosTestTx', and the sizes are
+  arbitrary.
+-------------------------------------------------------------------------------}
+
+newtype instance GenTx LeiosTestBlock = LeiosTestGenTx
+  { unLeiosTestGenTx :: LeiosTestTx
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialise, NoThunks)
+
+newtype instance Validated (GenTx LeiosTestBlock) = ValidatedLeiosTestGenTx
+  { forgetValidatedLeiosTestGenTx :: GenTx LeiosTestBlock
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+type instance ApplyTxErr LeiosTestBlock = LeiosTestTxError
+
+newtype instance TxId (GenTx LeiosTestBlock) = LeiosTestTxId Word64
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (Serialise, NoThunks)
+
+instance ShowProxy (GenTx LeiosTestBlock)
+instance ShowProxy (TxId (GenTx LeiosTestBlock))
+instance ShowProxy LeiosTestTxError
+
+instance HasTxId (GenTx LeiosTestBlock) where
+  txId = LeiosTestTxId . djb2 . serialise
+
+instance ConvertRawTxId (GenTx LeiosTestBlock) where
+  toRawTxIdHash = SBS.toShort . BL.toStrict . serialise
+
+instance LedgerSupportsMempool LeiosTestBlock where
+  applyTx _cfg _wti _slot tx (TickedLeiosTestLedger st) =
+    case applyLeiosTestTx (unLeiosTestGenTx tx) (ltlsState st) of
+      Left err -> throwError err
+      Right st' ->
+        pure
+          ( TickedLeiosTestLedger st{ltlsState = st'}
+          , ValidatedLeiosTestGenTx tx
+          )
+
+  reapplyTx cfg slot tx st =
+    applyDiffs st . fst
+      <$> applyTx cfg DoNotIntervene slot (forgetValidatedLeiosTestGenTx tx) st
+
+  txForgetValidated = forgetValidatedLeiosTestGenTx
+
+  getTransactionKeySets _tx = trivialLedgerTables
+
+  mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+
+instance TxLimits LeiosTestBlock where
+  type TxMeasure LeiosTestBlock = IgnoringOverflow ByteSize32
+  txWireSize = const 0
+  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024
+  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+
+{-------------------------------------------------------------------------------
+  Queries
+
+  No test asks the node anything, so there are no queries.
+-------------------------------------------------------------------------------}
+
+data instance BlockQuery LeiosTestBlock fp result
+  deriving stock Show
+
+instance ShowProxy (BlockQuery LeiosTestBlock)
+
+instance ShowQuery (BlockQuery LeiosTestBlock fp) where
+  showResult = \case {}
+
+instance BlockSupportsLedgerQuery LeiosTestBlock where
+  answerPureBlockQuery _ = \case {}
+  answerBlockQueryLookup _ = \case {}
+  answerBlockQueryTraverse _ = \case {}
+  blockQueryIsSupportedOnVersion = \case {}
+
+instance SameDepIndex2 (BlockQuery LeiosTestBlock) where
+  sameDepIndex2 = \case {}
+
+{-------------------------------------------------------------------------------
+  The rest of what a node insists on
+-------------------------------------------------------------------------------}
+
+instance CommonProtocolParams LeiosTestBlock where
+  maxHeaderSize _ = maxBound
+  maxTxSize _ = maxBound
+
+instance LedgerSupportsPeerSelection LeiosTestBlock where
+  getPeers = const []
+
+instance NodeInitStorage LeiosTestBlock where
+  nodeCheckIntegrity _ _ = True
+  nodeImmutableDbChunkInfo _ = simpleChunkInfo (EpochSize 10)
+
+instance BlockSupportsMetrics LeiosTestBlock where
+  isSelfIssued = isSelfIssuedConstUnknown
+
+instance BlockSupportsSanityCheck LeiosTestBlock where
+  configAllSecurityParams = pure . configSecurityParam
+
+instance SupportedNetworkProtocolVersion LeiosTestBlock where
+  supportedNodeToNodeVersions _ =
+    Map.singleton maxBound ()
+  supportedNodeToClientVersions _ =
+    Map.singleton maxBound ()
+  latestReleasedNodeVersion = latestReleasedNodeVersionDefault
+
+-- | A cheap deterministic digest; see 'hashLeiosTestBody'.
+djb2 :: BL.ByteString -> Word64
+djb2 = BL.foldl' step 5381
+ where
+  step acc w = acc * 33 + fromIntegral w
+
+{-------------------------------------------------------------------------------
+  Node-to-node and node-to-client serialisation
+
+  These tests connect the node to its environment with the identity codecs, so
+  none of this is exercised; 'RunNode' demands it regardless. Everything rides
+  on the same 'Serialise' instances the on-disk format uses.
+-------------------------------------------------------------------------------}
+
+instance SerialiseNodeToNode LeiosTestBlock LeiosTestBlock
+instance SerialiseNodeToNode LeiosTestBlock (Header LeiosTestBlock)
+instance SerialiseNodeToNode LeiosTestBlock (Serialised LeiosTestBlock)
+instance SerialiseNodeToNode LeiosTestBlock (SerialisedHeader LeiosTestBlock) where
+  encodeNodeToNode _ _ = encodeTrivialSerialisedHeader
+  decodeNodeToNode _ _ = decodeTrivialSerialisedHeader
+instance SerialiseNodeToNode LeiosTestBlock (GenTx LeiosTestBlock)
+instance SerialiseNodeToNode LeiosTestBlock (GenTxId LeiosTestBlock)
+
+instance SerialiseNodeToNodeConstraints LeiosTestBlock where
+  estimateBlockSize = const 0
+
+instance SerialiseNodeToClient LeiosTestBlock LeiosTestBlock
+instance SerialiseNodeToClient LeiosTestBlock (Serialised LeiosTestBlock)
+instance SerialiseNodeToClient LeiosTestBlock (GenTx LeiosTestBlock)
+instance SerialiseNodeToClient LeiosTestBlock (GenTxId LeiosTestBlock)
+instance SerialiseNodeToClient LeiosTestBlock SlotNo
+instance SerialiseNodeToClient LeiosTestBlock LeiosTestTxError
+instance SerialiseNodeToClient LeiosTestBlock LeiosTestLedgerConfig where
+  encodeNodeToClient _ _ = error "LeiosTestBlock: no node-to-client config"
+  decodeNodeToClient _ _ = error "LeiosTestBlock: no node-to-client config"
+
+instance SerialiseNodeToClient LeiosTestBlock (SomeBlockQuery (BlockQuery LeiosTestBlock)) where
+  encodeNodeToClient _ _ = \case {}
+  decodeNodeToClient _ _ = fail "LeiosTestBlock: no queries"
+
+instance SerialiseBlockQueryResult LeiosTestBlock BlockQuery where
+  encodeBlockQueryResult _ _ = \case {}
+  decodeBlockQueryResult _ _ = \case {}
+
+instance SerialiseNodeToClientConstraints LeiosTestBlock
+
+instance RunNode LeiosTestBlock
+
+-- | The node under test has no credentials, so it never forges; these exist
+-- only because 'RunNode' asks for them.
+type instance CannotForge LeiosTestBlock = Void
+
+type instance ForgeStateInfo LeiosTestBlock = ()
+type instance ForgeStateUpdateError LeiosTestBlock = Void
+
+instance HasRawTxId (TxId (GenTx LeiosTestBlock)) where
+  type RawTxId (TxId (GenTx LeiosTestBlock)) = Word64
+  getRawTxId (LeiosTestTxId w) = w
+
+{-------------------------------------------------------------------------------
+  Endorser blocks
+
+  An endorser block is a list of transaction hashes and sizes; its closure is
+  those transactions' bytes. A transaction's bytes here are its 'Serialise'
+  encoding --- the same encoding it has on the wire, as for a real block.
+-------------------------------------------------------------------------------}
+
+-- | The wire bytes of a transaction, which are what the endorser block's
+-- hashes are over and what the LeiosDb stores.
+leiosTestTxBytes :: LeiosTestTx -> BS.ByteString
+leiosTestTxBytes = BL.toStrict . serialise . LeiosTestGenTx
+
+-- | The endorser block over these transactions, its closure, and the size of
+-- the body on the wire --- which is what a header announces.
+mkLeiosTestEb :: [LeiosTestTx] -> (LeiosEb, [(TxHash, BS.ByteString)], BytesSize)
+mkLeiosTestEb txs =
+  ( eb
+  , [(txHash, bytes) | (txHash, _size, bytes) <- entries]
+  , fromIntegral $ BS.length $ serialize' shelleyProtVer $ encodeLeiosEb eb
+  )
+ where
+  entries =
+    [ (hashLeiosTx leiosTx, fromIntegral (BS.length bytes), bytes)
+    | tx <- txs
+    , let bytes = leiosTestTxBytes tx
+    , let leiosTx = MkLeiosTx bytes
+    ]
+
+  eb = MkLeiosEb $ V.fromList [(txHash, size) | (txHash, size, _bytes) <- entries]
+
+-- | Where a header announcing this endorser block points.
+leiosTestEbPoint :: SlotNo -> LeiosEb -> LeiosPoint
+leiosTestEbPoint slot eb = MkLeiosPoint slot (hashLeiosEb eb)
