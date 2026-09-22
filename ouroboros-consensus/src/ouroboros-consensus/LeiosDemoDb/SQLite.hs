@@ -46,6 +46,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTMVar
   , readTVar
   , readTVarIO
+  , tryPutTMVar
   , tryReadTBQueue
   , writeTBQueue
   , writeTChan
@@ -1178,7 +1179,8 @@ describeJob = \case
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
 
--- | Publish the worker's parting exception as a queued job's result.
+-- | Publish an exception as a job's result: for each job still queued when
+-- the worker stops, and for the job in hand when running it throws.
 failJob :: SomeException -> WriteJob -> IO ()
 failJob cause = \case
   WriteEbPoint _ _ rv -> put rv
@@ -1190,8 +1192,11 @@ failJob cause = \case
   GcMark _ rv -> put rv
   Shutdown rv -> put rv
  where
+  -- 'publish' writes the result before it rethrows, and 'serve' catches that
+  -- exception and calls this. The writer thread then writes the same job's
+  -- result twice, so the second write must not block.
   put :: WriteResult a -> IO ()
-  put rv = atomically $ putTMVar rv (Left cause)
+  put rv = atomically $ void $ tryPutTMVar rv (Left cause)
 
 -- | How many queued jobs the writer serves back-to-back before it takes a
 -- turn of maintenance anyway.
@@ -1327,7 +1332,10 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
                 Just job -> Just job <$ writeTVar jobsServedVar (served + 1)
         case mJob of
           Just job -> do
-            stop <- runJob job
+            -- 'tryReadTBQueue' above removed the job, so the drain that runs
+            -- when the worker stops cannot reach it. If running it throws,
+            -- only this handler can still tell the awaiter.
+            stop <- runJob job `catch` \(e :: SomeException) -> failJob e job >> throwIO e
             traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
             unless stop serve
           Nothing -> do
@@ -1428,8 +1436,9 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
         { errorMessage = "the LeiosDB writer is closed"
         , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
         }
-  -- Only a 'LeiosDbException' is a failed write; anything else -- a
-  -- cancellation above all -- belongs to this thread, not to the job.
+  -- Only a 'LeiosDbException' is a failed write, so only that is published
+  -- here. Anything else belongs to this thread, and 'serve' publishes it to
+  -- the job it holds before it rethrows.
   publish :: WriteResult a -> IO a -> IO ()
   publish resultVar action =
     try action >>= \case
