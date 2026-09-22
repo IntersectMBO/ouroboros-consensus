@@ -29,6 +29,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTxIn (..)
   , WrapTxMeasurePhase1 (..)
   , WrapTxMeasurePhase2 (..)
+  , WrapTxEbMeasure (..)
   , WrapTxOut (..)
   , WrapValidatedGenTx (..)
   , WrapPerasVote (..)
@@ -108,6 +109,7 @@ newtype WrapValidatedGenTx blk = WrapValidatedGenTx {unwrapValidatedGenTx :: Val
 
 newtype WrapTxMeasurePhase1 blk = WrapTxMeasurePhase1 {unwrapTxMeasurePhase1 :: TxMeasurePhase1 blk}
 newtype WrapTxMeasurePhase2 blk = WrapTxMeasurePhase2 {unwrapTxMeasurePhase2 :: TxMeasurePhase2 blk}
+newtype WrapTxEbMeasure blk = WrapTxEbMeasure {unwrapTxEbMeasure :: TxEbMeasure blk}
 
 newtype WrapTxIn blk = WrapTxIn {unwrapTxIn :: TxIn blk}
 newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut blk}
