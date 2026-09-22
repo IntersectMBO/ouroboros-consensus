@@ -159,6 +159,22 @@ tests =
                   @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
                 runCmdsAndCollectAcquiredTxPoints cmds
                   @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
+          , testCase
+              "a bare offer of an already-held EbHash neither registers nor notifies its new point (EB-hash collision, offer path)"
+              $ do
+                -- Same scenario as the announcement-path test above, but via
+                -- 'recordEbBodyOffer' ('Offer') -- 'checkMsgRollForwardForLeiosOffers'
+                -- /'MsgLeiosBlockOffer''s handler. An offer is an unverified
+                -- peer claim: only announcements and actually received data
+                -- may change the LeiosDb, so the offered point must not be
+                -- registered (and hence not notified) -- only the announcement
+                -- path registers a colliding point.
+                let h = hashLeiosEb (ebOf [0, 1])
+                    cmds = [Forge [0, 1] 5, Offer [0, 1] 8]
+                runCmdsAndScanEbPoints cmds
+                  @?= Right [(SlotNo 5, h)]
+                runCmdsAndCollectAcquiredTxPoints cmds
+                  @?= Right [pointOf [0, 1] 5]
           ]
       , testCase "a body is claimed acquired only by a settled write" $ do
           let eb = ebOf [0, 1]
