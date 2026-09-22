@@ -53,11 +53,6 @@ import LeiosDemoTypes
   , EbHash
   , HasLeiosVoting (getLeiosCommitteeFromView)
   , LeiosExtValidationError (LeiosCertificateForecastRejected)
-  , LeiosForecastRejection
-    ( LeiosForecastAfterGenesis
-    , LeiosForecastInvalidCertificate
-    , LeiosForecastMissingCommittee
-    )
   , TraceLeiosChainSel
     ( TraceLeiosCertRbWithoutCandidate
     , TraceLeiosValidClaim
@@ -65,7 +60,6 @@ import LeiosDemoTypes
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsSetMember
   , pointEbHash
-  , verifyLeiosCert
   )
 import LeiosUtils.CallTrace
   ( CallCtx
@@ -756,39 +750,32 @@ precheckLeiosCert ::
   m (Either LeiosExtValidationError ())
 precheckLeiosCert CDB{..} predecessor b = case blockLeiosCert b of
   Nothing -> pure $ Right ()
-  Just cert -> case (announcingRbHash b, blockPrevHash b, predecessor) of
-    (Just rbHash, BlockHash announcingHash, Predecessor announcingSlot announcingView) -> do
-      let announcingPoint = RealPoint announcingSlot announcingHash
-      known <-
-        atomically $
-          LeiosValidClaims.memberValidClaim rbHash <$> readTVar cdbLeiosValidClaims
-      if
-        -- We've already validated a cert that makes the same claim as this one,
-        -- so there is nothing left to check, even if /this/ cert is invalid.
-        | known -> pure $ Right ()
-        | otherwise -> case getLeiosCommitteeFromView (Proxy @blk) announcingView of
-            Nothing -> reject cert $ LeiosForecastMissingCommittee rbHash
-            Just (committee, threshold) ->
-              case verifyLeiosCert committee threshold rbHash cert of
-                Left invalid ->
-                  reject cert $ LeiosForecastInvalidCertificate rbHash invalid
-                Right _weight -> do
-                  size <- atomically $ do
-                    modifyTVar cdbLeiosValidClaims $
-                      LeiosValidClaims.insertValidClaim announcingSlot rbHash
-                    LeiosValidClaims.sizeValidClaims
-                      <$> readTVar cdbLeiosValidClaims
-                  traceWith (TraceAddBlockEvent >$< cdbTracer) $
-                    AddBlockLeiosEvent $
-                      TraceLeiosValidClaim
-                        (blockRealPoint b)
-                        announcingPoint
-                        size
-                  pure $ Right ()
-    -- Certifying at genesis: all three of these say there is no announcing
-    -- block, so they cannot disagree.
-    _ -> reject cert LeiosForecastAfterGenesis
+  Just cert -> do
+    claims <- atomically $ readTVar cdbLeiosValidClaims
+    case LeiosValidClaims.decideClaim claims (announcingOf b) cert of
+      LeiosValidClaims.ClaimAlreadyEstablished -> pure $ Right ()
+      LeiosValidClaims.ClaimRejected why -> reject cert why
+      LeiosValidClaims.ClaimEstablished announcingPoint rbHash -> do
+        size <- atomically $ do
+          modifyTVar cdbLeiosValidClaims $
+            LeiosValidClaims.insertValidClaim (realPointSlot announcingPoint) rbHash
+          LeiosValidClaims.sizeValidClaims <$> readTVar cdbLeiosValidClaims
+        traceWith (TraceAddBlockEvent >$< cdbTracer) $
+          AddBlockLeiosEvent $
+            TraceLeiosValidClaim (blockRealPoint b) announcingPoint size
+        pure $ Right ()
  where
+  -- What this block says about its announcing predecessor. The three indicators
+  -- of certifying at genesis cannot disagree, so any of them decides it.
+  announcingOf :: blk -> LeiosValidClaims.Announcing blk
+  announcingOf blk' = case (announcingRbHash blk', blockPrevHash blk', predecessor) of
+    (Just rbHash, BlockHash announcingHash, Predecessor announcingSlot announcingView) ->
+      LeiosValidClaims.Announcing
+        (RealPoint announcingSlot announcingHash)
+        rbHash
+        (getLeiosCommitteeFromView (Proxy @blk) announcingView)
+    _ -> LeiosValidClaims.AnnouncingAtGenesis
+
   reject cert why =
     pure $ Left $ LeiosCertificateForecastRejected cert (predecessorSlot predecessor) why
 
