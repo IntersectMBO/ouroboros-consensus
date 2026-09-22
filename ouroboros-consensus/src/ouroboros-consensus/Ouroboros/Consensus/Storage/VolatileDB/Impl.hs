@@ -141,7 +141,7 @@ import qualified Data.Text as Text
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
-import LeiosDemoTypes (EbHash, pointEbHash)
+import LeiosDemoTypes (EbHash, announcementEbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
@@ -459,7 +459,7 @@ putBlockImpl
               SJust eb ->
                 LeiosAnnouncerIndex $
                   insertMapSet
-                    (pointEbHash eb)
+                    (announcementEbHash eb)
                     (BlockPoint biSlotNo biHash)
                     (getLeiosAnnouncerIndex currentLeiosAnnouncerMap)
           , currentMaxSlotNo = currentMaxSlotNo `max` MaxSlotNo biSlotNo
@@ -567,7 +567,7 @@ garbageCollectFile hasFS (fileId, fileInfo) = do
           ( \h -> do
               ibi <- Map.lookup h currentRevMap
               eb <- strictMaybeToMaybe (biLeiosAnnouncedEb (ibiBlockInfo ibi))
-              pure (pointEbHash eb, BlockPoint (biSlotNo (ibiBlockInfo ibi)) h)
+              pure (announcementEbHash eb, BlockPoint (biSlotNo (ibiBlockInfo ibi)) h)
           )
           (Set.toList hashes)
       currentLeiosAnnouncerMap' =

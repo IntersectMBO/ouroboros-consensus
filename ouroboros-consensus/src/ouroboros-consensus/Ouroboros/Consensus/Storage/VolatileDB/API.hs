@@ -38,7 +38,7 @@ import Data.Typeable (Typeable)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import LeiosDemoTypes (EbHash, LeiosPoint)
+import LeiosDemoTypes (AnnouncementFields (..), EbHash)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
@@ -204,7 +204,7 @@ data BlockInfo blk = BlockInfo
   -- Derived from the block via 'blockHasLeiosCert' (see 'extractBlockInfo'),
   -- which is why the VolatileDB carries a 'ResolveLeiosBlock' constraint on the
   -- block type.
-  , biLeiosAnnouncedEb :: !(StrictMaybe LeiosPoint)
+  , biLeiosAnnouncedEb :: !(StrictMaybe AnnouncementFields)
   -- ^ The endorser block this block announces, if any. Note this is /not/ a
   -- bijection: many RBs may announce the same EB.
   --

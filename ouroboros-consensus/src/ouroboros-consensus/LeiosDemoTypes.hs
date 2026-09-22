@@ -91,6 +91,8 @@ import Data.IntSet.NonEmpty (NEIntSet)
 import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.MultiSet (MultiSet)
+import qualified Data.MultiSet as MultiSet
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Ord (Down (..))
 import Data.Sequence (Seq)
@@ -447,6 +449,26 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --
   -- TODO will also be redundant with by 'CentralState.selfPeer.live' once
   -- offers are no longer trusted.
+  , elFocus :: !(Map ElId EbHash)
+  -- ^ The endorser block each election is fetching: the first announcement we
+  -- processed for that election, until a certificate names one, which wins.
+  --
+  -- Two activities decide it. Processing an announcement fills an empty slot
+  -- and nothing more ('focusElectionIfUnfocused'). Processing a certificate
+  -- overrides whatever is there ('focusElection') --- the CertRB itself, when
+  -- its certificate is verified, not its header, which only records an offer.
+  -- Pruning is the only other writer, and it just drops the elections below
+  -- the immutable tip.
+  , focusedEbs :: !(MultiSet EbHash)
+  -- ^ The image of 'elFocus', as a multiset so that an election switching away
+  -- from an endorser block does not speak for another election that announced
+  -- the same one.
+  --
+  -- Unless an endorser block is in here, the decision logic asks no peer for
+  -- anything about it: neither its body nor any of its closure's jobs, since
+  -- this is what filters a peer's offers before either is considered. A body
+  -- we already hold stays held and its job pool stays as it is, so an election
+  -- that focuses it later resumes rather than restarts.
   , acquiredEbBodiesPrunedSlot :: !SlotNo
   -- ^ The slot 'ebState' has most recently been pruned up to (see
   -- 'pruneOutstandingToImmTip').
@@ -492,6 +514,8 @@ emptyLeiosOutstanding prng prunedSlot =
   MkLeiosOutstanding
     { ebState = Map.empty
     , ebsPerMaxAnnouncementSlot = Map.empty
+    , elFocus = Map.empty
+    , focusedEbs = MultiSet.empty
     , acquiredEbBodiesPrunedSlot = prunedSlot
     , missingEbBodies = Map.empty
     , reverseSlotIndexByEbHash = Map.empty
@@ -788,6 +812,52 @@ initializeLeiosOutstanding prng points immTipSlot =
     insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool
       . recordMaxAnnouncementSlot ebHash slot SNothing
 
+-- | Make this endorser block the one this election is fetching, unless the
+-- election is already fetching one.
+--
+-- The first announcement we see for an election wins, which is what an honest
+-- electee's single announcement gives; only a certificate ('focusElection')
+-- overrules it.
+focusElectionIfUnfocused :: ElId -> EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+focusElectionIfUnfocused elId ebHash outstanding
+  | Map.member elId (elFocus outstanding) = outstanding
+  | otherwise = focusElection elId ebHash outstanding
+
+-- | Make this endorser block the one this election is fetching, whatever it was
+-- fetching before.
+--
+-- Whatever it was fetching stops being asked for, unless another election is
+-- also fetching it. Nothing else about that endorser block is disturbed: we
+-- keep the body if we acquired it, and we still take whatever was already
+-- requested for it, since those bytes are paid for either way.
+--
+-- TODO One election, one certified endorser block --- which holds only while
+-- enough of the committee's weight is honest, since two valid certificates for
+-- one election means the committee equivocated. Should that ever happen, this
+-- is last-claim-wins: the focus lands on whichever certificate we validated
+-- most recently, so the node can be left fetching the endorser block of one
+-- fork while the chain it would select needs the other, and it stays stuck
+-- there until something moves the focus again. The recourse is to restart the
+-- node and hope the certificates arrive in the other order, since this state is
+-- in memory only and the order they come back in is the network's to decide. We
+-- deliberately do not spend complexity on that case here, since it requires
+-- catastrophically buggy nodes and/or an amount of adversarial stake the
+-- protocol itself is not designed to resist.
+focusElection :: ElId -> EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstanding) of
+  Just oldEbHash | oldEbHash == ebHash -> outstanding
+  mbOldEbHash ->
+    outstanding
+      { elFocus = Map.insert elId ebHash (elFocus outstanding)
+      , focusedEbs =
+          MultiSet.insert ebHash $
+            maybe id MultiSet.delete mbOldEbHash (focusedEbs outstanding)
+      }
+
+-- | Whether some election is currently fetching this endorser block.
+isFocusedEb :: EbHash -> LeiosOutstanding pid -> Bool
+isFocusedEb ebHash = MultiSet.member ebHash . focusedEbs
+
 -- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
 -- whenever the entry's max slot moves. The supplied function must be
 -- slot-monotonic (never lower the greatest slot), which both callers are.
@@ -837,6 +907,8 @@ pruneOutstandingToImmTip immTipSlot outstanding =
   , outstanding
       { ebState = ebState outstanding `Map.withoutKeys` prunedHashes
       , ebsPerMaxAnnouncementSlot = atOrAbove
+      , elFocus = elFocusAtOrAbove
+      , focusedEbs = focusedEbs'
       , acquiredEbBodiesPrunedSlot = max (acquiredEbBodiesPrunedSlot outstanding) immTipSlot
       , missingEbBodies = missingEbBodiesAtOrAbove
       , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
@@ -846,6 +918,16 @@ pruneOutstandingToImmTip immTipSlot outstanding =
   (below, atOrAbove) =
     Map.spanAntitone (< immTipSlot) (ebsPerMaxAnnouncementSlot outstanding)
   prunedHashes = Set.unions (map NESet.toSet (Map.elems below))
+
+  -- 'ElId' orders slot-first, so the below-tip elections are a prefix. A
+  -- pruned election releases whatever it was fetching, which stops being
+  -- fetched only if no election above the tip is fetching it too.
+  (staleFocus, elFocusAtOrAbove) =
+    Map.spanAntitone
+      (\(MkElId elSlot _poolId) -> elSlot < immTipSlot)
+      (elFocus outstanding)
+  focusedEbs' =
+    F.foldl' (flip MultiSet.delete) (focusedEbs outstanding) (Map.elems staleFocus)
 
   -- 'LeiosPoint' orders slot-first, so the below-tip points are a prefix.
   (belowBodies, missingEbBodiesAtOrAbove) =
@@ -1532,7 +1614,16 @@ data AnnouncementFields = MkAnnouncementFields
   , announcementEbHash :: !EbHash
   , announcementEbBodySize :: !BytesSize
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+
+deriving via
+  OnlyCheckWhnfNamed "AnnouncementFields" AnnouncementFields
+  instance
+    NoThunks AnnouncementFields
+
+announcementLeiosPoint :: AnnouncementFields -> LeiosPoint
+announcementLeiosPoint fields = case announcementElection fields of
+  MkElId slot _poolId -> MkLeiosPoint slot (announcementEbHash fields)
 
 -- | The bytes of one LeiosFetch arrival ('MsgLeiosBlock' or 'MsgLeiosBlockTxs'),
 -- partitioned by the arriving item's /prior/ state in the LeiosTxCache. The four

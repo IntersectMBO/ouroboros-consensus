@@ -82,6 +82,8 @@ import LeiosDemoTypes
   , hashLeiosTx
   , newLeiosPeerVars
   )
+import qualified Data.ByteString.Short as SBS
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, newPureLeiosTxCache, nullLeiosTxCache)
@@ -209,7 +211,6 @@ tests =
                 leiosFetchLogicIteration
                   demoLeiosFetchStaticEnv
                   (Just (SlotNo 10))
-                  (const True)
                   offerings
                   Map.empty
                   o
@@ -236,14 +237,18 @@ tests =
               run bigLedgerPeers used =
                 let outstanding =
                       (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
-                        Leios.insertAcquiredEbBody h jobPool $
-                          Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
-                            (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                        -- the election fetching it, without which nothing is requested
+                        Leios.focusElectionIfUnfocused
+                          (Leios.announcementElection (announcementOf point 0))
+                          h
+                          $
+                          Leios.insertAcquiredEbBody h jobPool $
+                            Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing
+                              (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                     (_o, reqs, _d) =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
                         (Just (SlotNo 11))
-                        (const True)
                         offers
                         bigLedgerPeers
                         outstanding
@@ -439,7 +444,8 @@ applyCmd conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
-    recordAnnouncedEb kv SNothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
+    recordAnnouncedEb kv SNothing $
+      announcementOf (pointOf ids slot) (encodeLeiosEbSize (ebOf ids))
     pure []
   Offer ids slot -> do
     recordEbBodyOffer
@@ -508,9 +514,6 @@ applyCmd conn txCache kv peerVars peerId = \case
           leiosFetchLogicIteration
             demoLeiosFetchStaticEnv
             (Just (fromIntegral slot))
-            -- This module is about the handlers and the state invariant, not
-            -- about the certified-announcement gate.
-            (const True)
             offerings
             Map.empty
             outstanding
@@ -781,7 +784,7 @@ raceSameHashMultiSlot = do
     concurrently_
       (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
       ( concurrently_
-          (recordAnnouncedEb kv SNothing (announcePoint, ebBytesSize))
+          (recordAnnouncedEb kv SNothing (announcementOf announcePoint ebBytesSize))
           ( processLeiosBlock
               nullTracer
               nullTracer
@@ -803,3 +806,17 @@ raceSameHashMultiSlot = do
       counterexample
         ("held EB body still listed for fetching: " <> show heldAndListed)
         (null heldAndListed)
+
+-- | An announcement of this endorser block, in an election of its own.
+--
+-- These tests are about the fetch bookkeeping rather than about which
+-- announcement an election is fetching, so the election is derived from the
+-- endorser block: no two announcements here ever compete for one election.
+announcementOf :: LeiosPoint -> Leios.BytesSize -> Leios.AnnouncementFields
+announcementOf point size =
+  Leios.MkAnnouncementFields
+    (MkElId (Leios.pointSlotNo point) (SBS.toShort (Leios.ebHashBytes ebHash)))
+    ebHash
+    size
+ where
+  ebHash = Leios.pointEbHash point

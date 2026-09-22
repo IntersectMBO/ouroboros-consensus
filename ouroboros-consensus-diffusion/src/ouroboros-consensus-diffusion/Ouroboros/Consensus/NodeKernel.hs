@@ -521,22 +521,10 @@ initNodeKernel
                   CurrentSlot s -> Just s
                   CurrentSlotUnknown -> Nothing
             let bigLedgerPeers = Map.map Leios.whetherBigLedgerPeer stillLivePeers
-            -- TEMPORARY, and stricter than the Recovery Path will be: fetch an
-            -- endorser block only once some block we hold that announces it is
-            -- a verified claim. That is too strong --- it ignores offers we
-            -- could act on, in particular anything heralded only by LeiosNotify
-            -- --- but it is the shape the Recovery Path needs (a claim is what
-            -- licenses fetching a second endorser block for one election), and
-            -- it keeps the gate exercised until the real rule replaces it.
-            mayFetch <- atomically $ do
-              claims <- forgetFingerprint <$> ChainDB.getLeiosValidClaims chainDB
-              pure $ \point ->
-                LeiosValidClaims.isCertifiedEb (Leios.pointEbHash point) claims
             let (!outstanding', requests, offerDrops) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
                     mbCurrentSlot
-                    mayFetch
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
                     bigLedgerPeers
                     outstanding
@@ -632,18 +620,39 @@ initNodeKernel
                     pure . Map.dropWhileAntitone ((< immTipSlot) . Leios.pointSlotNo)
           }
 
-    -- An offer whose announcement is not yet certified is skipped rather than
-    -- dropped (see the gate passed to 'Leios.leiosFetchLogicIteration'), so the
-    -- claim can arrive after the offer did. Nothing else would wake the fetch
-    -- logic in that order, hence this watcher.
+    -- The Recovery Path: a certificate moves its election's focus onto the
+    -- endorser block it certifies, which is how a node that only ever saw some
+    -- other announcement for that election --- or none, because the announcing
+    -- block has been on its selection since before it started --- comes to
+    -- fetch the right one.
+    --
+    -- Each iteration compares the certified announcements against the ones it
+    -- last saw, so a claim that arrives after the offer did still moves the
+    -- focus, which nothing else would do in that order.
     void $
-      forkLinkedWatcher registry "NodeKernel.leiosValidClaimsWake" $
-        Watcher
-          { wFingerprint = getFingerprint
-          , wInitial = Nothing
-          , wReader = ChainDB.getLeiosValidClaims chainDB
-          , wNotify = \_claims -> void $ MVar.tryPutMVar getLeiosReady ()
-          }
+      forkLinkedThread registry "NodeKernel.leiosFocus" $
+        let loop lastFp lastCertified = do
+              (claims, fp) <-
+                atomically $
+                  blockUntilChanged
+                    getFingerprint
+                    lastFp
+                    (ChainDB.getLeiosValidClaims chainDB)
+              let certified = LeiosValidClaims.certifiedEbs (forgetFingerprint claims)
+                  arrived =
+                    Map.differenceWith
+                      (\new old -> if new == old then Nothing else Just new)
+                      certified
+                      lastCertified
+              MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
+                pure $!
+                  Map.foldlWithKey'
+                    (\acc elId ebHash -> Leios.focusElection elId ebHash acc)
+                    outstanding
+                    arrived
+              void $ MVar.tryPutMVar getLeiosReady ()
+              loop fp certified
+         in loop (Fingerprint 0) Map.empty
 
     return
       NodeKernel
