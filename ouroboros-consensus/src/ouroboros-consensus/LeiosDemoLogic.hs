@@ -890,7 +890,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- only novelty check we need: keyed off the lock, two peers delivering the same
   -- body cannot both write it (the second sees 'novel = False'), so we neither
   -- re-pay the ~16k-row write nor emit a storm of 'LeiosDbInsertCollision's.
-  (shouldPersist, bodyClass, mempoolIngest, missedBoth, fills) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+  (shouldPersist, bodyClass, mempoolIngest, missedBoth, fills, alreadyHeld) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
         novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
@@ -931,6 +931,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
             , IntMap.empty
             , IntMap.empty
             , []
+            , not tooOld -- alreadyHeld: novel is False, so this is the hash-collision case
             )
           )
       else do
@@ -1001,7 +1002,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- has been enqueued. Until then the body reads as not-held, so a
         -- concurrent offer may redundantly re-fetch it -- accepted, and simpler
         -- than an in-flight state that a lost/cancelled write would have to undo.
-        pure (outstandingCleaned, (True, bodyClass, mempoolIngest, missedBoth, fills))
+        pure (outstandingCleaned, (True, bodyClass, mempoolIngest, missedBoth, fills, False))
   void $ MVar.tryPutMVar readyVar ()
   case source of
     ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
@@ -1018,6 +1019,19 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
     -- over the announcing RB's hash.
     traceWith ktracer $ TraceLeiosBlockPointMissing point
     pointWritten <- writeEbPoint writer point ebBytesSize
+    -- The hash is already held under another point (an EB-hash collision):
+    -- its tx closure is therefore already complete too, so this point counts
+    -- as acquired the moment its own registration lands, with no body/tx
+    -- write of its own to await.
+    when alreadyHeld $ do
+      let traceAlreadyAcquired = do
+            await pointWritten
+            st <- Leios.ebState <$> MVar.readMVar outstandingVar
+            traceWith ktracer $ TraceLeiosBlockTxsAcquired point (ebPointAge now st point)
+      case source of
+        ForgedBlock{} -> traceAlreadyAcquired
+        ReceivedBlockFrom{} ->
+          link =<< async (traceException tracer TraceLeiosPeerDbException traceAlreadyAcquired)
     when shouldPersist $ do
       -- Enqueue the write first, then claim the body. 'writeEbBody' only parks
       -- on a free writer-queue slot (bounded backpressure), so a cancellation
