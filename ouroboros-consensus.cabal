@@ -832,6 +832,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
+    Test.Ouroboros.Storage.LeiosDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.PerasCertDB
     Test.Ouroboros.Storage.PerasCertDB.Model
@@ -858,12 +859,13 @@ test-suite storage-test
     cborg,
     containers,
     contra-tracer,
+    deepseq,
     directory,
     filepath,
     fs-api,
     fs-sim,
     generics-sop,
-    io-classes:{io-classes, strict-stm},
+    io-classes:{io-classes, si-timers, strict-stm},
     io-sim,
     mempack,
     mtl,
