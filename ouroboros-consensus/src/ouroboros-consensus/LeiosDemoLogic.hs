@@ -1417,6 +1417,7 @@ data WhetherApplied = Applied | Unapplied
 -- serving candidate.
 recordEbBodyOffer ::
   IOLike m =>
+  LeiosDbWriter m ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -1425,9 +1426,9 @@ recordEbBodyOffer ::
   -- | The offered EB: its point and on-the-wire body size.
   (LeiosPoint, BytesSize) ->
   m ()
-recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebBytesSize) = do
+recordEbBodyOffer writer (outstandingVar, readyVar) peerVars offeredClosure (point, ebBytesSize) = do
   let MkLeiosPoint ebSlot ebHash = point
-  MVar.modifyMVar_ outstandingVar $ \outstanding ->
+  alreadyHeld <- MVar.modifyMVar outstandingVar $ \outstanding ->
     pure $!
       let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
           malformed = ebBytesSize == 0 -- malformed offer
@@ -1439,24 +1440,33 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
           outstanding'
             | tooOld || malformed = outstanding
             | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
+          alreadyHeld =
+            not (tooOld || malformed)
+              && maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
           skip =
             tooOld
               || malformed
-              || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
+              || alreadyHeld
               || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
-       in if skip
-            then outstanding'
-            else
-              outstanding'
-                { Leios.missingEbBodies =
-                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
-                , Leios.reverseSlotIndexByEbHash =
-                    Map.insertWith
-                      NESet.union
-                      ebHash
-                      (NESet.singleton ebSlot)
-                      (Leios.reverseSlotIndexByEbHash outstanding')
-                }
+          outstanding''
+            | skip = outstanding'
+            | otherwise =
+                outstanding'
+                  { Leios.missingEbBodies =
+                      Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
+                  , Leios.reverseSlotIndexByEbHash =
+                      Map.insertWith
+                        NESet.union
+                        ebHash
+                        (NESet.singleton ebSlot)
+                        (Leios.reverseSlotIndexByEbHash outstanding')
+                  }
+       in (outstanding'', alreadyHeld)
+  -- The bytes are already held under another point (an EB-hash collision):
+  -- no fetch is needed, but this point must still be registered in the
+  -- LeiosDb, or it can never be voted on/certified, even though no fetch
+  -- is needed.
+  when alreadyHeld $ void $ writeEbPoint writer point ebBytesSize
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \offers ->
     -- store the offer as-is; 'mergeOffer' keeps the closure if either offer had it
     pure $! Map.insertWith Leios.mergeOffer point offeredClosure offers
@@ -1474,6 +1484,7 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
 checkMsgRollForwardForLeiosOffers ::
   forall blk pid m.
   (IOLike m, ResolveLeiosBlock blk) =>
+  LeiosDbWriter m ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -1481,10 +1492,10 @@ checkMsgRollForwardForLeiosOffers ::
   Header blk ->
   ChainDepState (BlockProtocol blk) ->
   m ()
-checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
+checkMsgRollForwardForLeiosOffers writer kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
-      recordEbBodyOffer kernelVars peerVars TxsClosureAlsoOffered announcement
+      recordEbBodyOffer writer kernelVars peerVars TxsClosureAlsoOffered announcement
 
 -----
 

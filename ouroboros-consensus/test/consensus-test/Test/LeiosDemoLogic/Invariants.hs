@@ -156,6 +156,19 @@ tests =
                   @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
                 runCmdsAndCollectAcquiredTxPoints cmds
                   @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
+          , testCase
+              "a bare offer of an already-held EbHash still registers and notifies its new point (EB-hash collision, offer path)"
+              $ do
+                -- Same bug as the announcement-path test above, but via
+                -- 'recordEbBodyOffer' ('Offer') -- 'checkMsgRollForwardForLeiosOffers'
+                -- /'MsgLeiosBlockOffer''s handler -- which has the identical
+                -- hash-only 'skip' check and never calls 'writeEbPoint' either.
+                let h = hashLeiosEb (ebOf [0, 1])
+                    cmds = [Forge [0, 1] 5, Offer [0, 1] 8]
+                runCmdsAndScanEbPoints cmds
+                  @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
+                runCmdsAndCollectAcquiredTxPoints cmds
+                  @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
           ]
       , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
           let eb = ebOf [0, 1]
@@ -521,6 +534,7 @@ applyCmd conn txCache kv peerVars peerId = \case
     pure []
   Offer ids slot -> do
     recordEbBodyOffer
+      conn
       kv
       peerVars
       TxsClosureNotAlsoOffered
@@ -854,7 +868,7 @@ raceSameHashMultiSlot = do
         announcePoint = pointOf ids 11
         arrivalPoint = pointOf ids 12
     concurrently_
-      (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
+      (recordEbBodyOffer conn kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
       ( concurrently_
           (recordAnnouncedEb conn kv SNothing (announcePoint, ebBytesSize))
           ( processLeiosBlock

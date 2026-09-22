@@ -411,11 +411,13 @@ mkHandlers
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
               , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime cds -> do
-                  Leios.checkMsgRollForwardForLeiosOffers
-                    (getLeiosOutstanding, getLeiosReady)
-                    peerVars
-                    hdr
-                    cds
+                  withWriter (getLeiosDB nodeKernel) $ \writer ->
+                    Leios.checkMsgRollForwardForLeiosOffers
+                      writer
+                      (getLeiosOutstanding, getLeiosReady)
+                      peerVars
+                      hdr
+                      cds
                   -- Feed any EB this header announces into the central
                   -- announcement state (relay + dedup + txCache), central-only:
                   -- a roll-forward is not this peer announcing over LeiosNotify,
@@ -567,11 +569,13 @@ mkHandlers
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     -- TODO punish peer for a too-old offer, modulo clock/immtip skew.
-                    Leios.recordEbBodyOffer
-                      (getLeiosOutstanding, getLeiosReady)
-                      peerVars
-                      Leios.TxsClosureNotAlsoOffered
-                      (point, ebBytesSize)
+                    withWriter (getLeiosDB nodeKernel) $ \writer ->
+                      Leios.recordEbBodyOffer
+                        writer
+                        (getLeiosOutstanding, getLeiosReady)
+                        peerVars
+                        Leios.TxsClosureNotAlsoOffered
+                        (point, ebBytesSize)
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
                     -- A closure offer implies the body too.
