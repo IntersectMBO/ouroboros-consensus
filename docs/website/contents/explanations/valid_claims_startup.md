@@ -93,6 +93,13 @@ Notes:
   That migration logic would be comparable to the startup scan that initialized the forgotten state.
 - Demoting this design to an optimization layered on top of the forgotten state would free its writes to be lazy and best-effort, but then it merely avoids only the CertRB re-fetches that arise from forgetting them.
 
+TODO rewrite this subsection: resting the rejection on the durability ordering is too strong, because that ordering is escapable.
+Give the claims their own store, co-located with the blocks so that a block and its claim commit in one transaction, and batching the commits then costs only the blocks of an unflushed batch — never a persisted CertRB whose claim is missing.
+So the hole stays closed at any batch size, and both designs end up accepting the same loss, namely re-fetching recent blocks after a crash.
+The escape needs co-location, which is why it is unavailable to the LeiosDb as such: a block in the VolatileDB and a claim in SQLite are two stores and cannot commit together.
+What it takes instead is a transactional VolatileDB, giving up append-only writes, the no-journal recovery property, and file-speed reads on the block path, plus a read path that consults the pending batch.
+The rejection therefore belongs on that cost, not on correctness: both designs get their blocks back from the network, and only this one also pays for ACID to get there.
+
 ### React to MsgRollForward
 
 This design was implemented and then reverted, so we have some concrete insights into it.
