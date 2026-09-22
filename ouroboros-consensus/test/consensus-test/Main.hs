@@ -34,6 +34,7 @@ import qualified Test.LeiosTxCache.Reference (tests)
 import qualified Test.LeiosUtils.CallTrace (tests)
 import qualified Test.LeiosUtils.TimeBoundedLoop (tests)
 import qualified Test.LeiosValidClaims (tests)
+import qualified Test.LeiosValidClaimsChainDB (tests)
 import qualified Test.LeiosVoteState (tests)
 import qualified Test.LeiosVoting (tests)
 import Test.Tasty
@@ -96,6 +97,7 @@ tests =
         , Test.LeiosTxCache.Optimized.MutableHashTable.tests
         , Test.LeiosTxCache.Reference.tests
         , Test.LeiosValidClaims.tests
+        , Test.LeiosValidClaimsChainDB.tests
         , Test.LeiosVoteState.tests
         , Test.LeiosVoting.tests
         , Test.LeiosUtils.CallTrace.tests

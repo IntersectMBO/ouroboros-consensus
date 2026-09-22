@@ -352,6 +352,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     maxBound
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
+            , intLeiosValidClaims = getEnvSTM h (readTVar . cdbLeiosValidClaims)
             }
 
     traceWith tracer $

@@ -529,6 +529,7 @@ library unstable-consensus-testlib
     Test.Util.InvertedMap
     Test.Util.LedgerStateOnlyTables
     Test.Util.LeiosHash
+    Test.Util.LeiosTestBlock
     Test.Util.LogicalClock
     Test.Util.MockChain
     Test.Util.Orphans.Arbitrary
@@ -571,7 +572,7 @@ library unstable-consensus-testlib
     bytestring,
     cardano-binary:{cardano-binary, testlib},
     cardano-crypto-class,
-    cardano-ledger-binary:testlib,
+    cardano-ledger-binary:{cardano-ledger-binary, testlib},
     cardano-ledger-core,
     cardano-prelude,
     cardano-slotting,
@@ -776,6 +777,7 @@ test-suite consensus-test
     Test.LeiosUtils.CallTrace
     Test.LeiosUtils.TimeBoundedLoop
     Test.LeiosValidClaims
+    Test.LeiosValidClaimsChainDB
     Test.LeiosVoteState
     Test.LeiosVoting
 
