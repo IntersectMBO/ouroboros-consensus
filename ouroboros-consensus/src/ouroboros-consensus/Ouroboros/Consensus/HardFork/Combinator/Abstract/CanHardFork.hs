@@ -93,9 +93,11 @@ class
 
   type HardForkTxMeasurePhase2 xs
 
-  -- | A measure that can accurately represent the 'TxEbMeasure' of any era.
+  -- | One measure that can accurately represent the 'TxEbMeasure' of every era
+  -- in @xs@.
   --
-  -- Trivial for eras without Leios endorser blocks; see 'TxEbMeasure'.
+  -- Usually, this can simply be the union of the sets of components of each
+  -- individual era's 'TxEbMeasure'.
   type HardForkTxEbMeasure xs
 
   hardForkEraTranslation :: EraTranslation xs
