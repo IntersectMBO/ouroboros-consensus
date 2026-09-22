@@ -113,6 +113,11 @@ data OpenState blk h = OpenState
   , currentForgotten :: !(Set (HeaderHash blk))
   -- ^ Blocks that are stored but that the DB does not admit to holding; see
   -- 'forgetLeiosCertsAtStartUpExcept'. Empty until that function is called.
+  --
+  -- TODO: an @IntMap BitField@, one entry per file, would be constant-size and
+  -- would let garbage collection drop a 'FileId' instead of a 'Set.difference'.
+  -- It costs at least enriching the parser to retain a block's index within its
+  -- file, which nothing records today.
   , currentMaxSlotNo :: !MaxSlotNo
   -- ^ Highest stored SlotNo.
   --
