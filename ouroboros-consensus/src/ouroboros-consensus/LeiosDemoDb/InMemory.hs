@@ -166,7 +166,9 @@ openInMemoryWriter stateVar notificationChan =
     LeiosDbWriter
       { close = pure ()
       , writeEbPoint = \point ebBytesSize ->
-          resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
+          resolved
+            ("WriteEbPoint " <> show point)
+            (imInsertEbPoint stateVar notificationChan point ebBytesSize)
       , writeEbBody = \point eb fills ->
           resolved
             ("WriteEbBody " <> show point)
@@ -202,10 +204,27 @@ imScanEbPoints stateVar = atomically $ do
 
 -- | Insert an announced EB point. Idempotent: a second insert at the
 -- same point keeps the first-seen size.
-imInsertEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> BytesSize -> m ()
-imInsertEbPoint stateVar point ebBytesSize = atomically $
+--
+-- If this point's hash is already complete under another point (e.g. the
+-- same EB forged twice, announced at two slots), no 'writeEbBody'/'writeTxs'
+-- will ever arrive for this specific point to trigger its own completion
+-- notification -- so this point's own completeness is checked and notified
+-- here instead.
+imInsertEbPoint ::
+  IOLike m =>
+  StrictTVar m InMemoryLeiosDb ->
+  StrictTChan m LeiosEbNotification ->
+  LeiosPoint ->
+  BytesSize ->
+  m ()
+imInsertEbPoint stateVar notificationChan point ebBytesSize = atomically $ do
   modifyTVar stateVar $ \s ->
     s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
+  state <- readTVar stateVar
+  let alreadyComplete = hashCompleteIn state point.pointEbHash
+  when (alreadyComplete && not (Set.member point (imCompletedEbs state))) $ do
+    modifyTVar stateVar $ \s -> s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
+    writeTChan notificationChan (AcquiredEbTxs point)
 
 imLookupEbBody :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m [(TxHash, BytesSize)]
 imLookupEbBody stateVar ebHash = atomically $ do
@@ -333,20 +352,24 @@ imInsertTxs stateVar notificationChan point offBytes = atomically $ do
             ]
      in s{imEbTxBytes = Map.insertWith IntMap.union ebHash accepted (imEbTxBytes s)}
   state <- readTVar stateVar
-  -- Candidates: every point of THIS content hash whose body has been
-  -- downloaded and whose closure is now complete. Bytes are per-EB, so no
-  -- other hash can have been affected.
+  -- Candidates: every registered point of THIS content hash, once its closure
+  -- is complete. Bytes are per-EB, so no other hash can have been affected.
+  -- Registered rather than downloaded: this also catches a point whose own
+  -- 'writeEbBody' was never called (its hash was already held under another
+  -- point when it was registered, per 'imInsertEbPoint') but whose hash only
+  -- just became complete via this batch. Two points referencing the same EB
+  -- hash both light up once the hash is complete.
   --
   -- 'hashCompleteIn' does not depend on the point, so judge the closure once
-  -- rather than once per downloaded point. A batch that does not complete the
+  -- rather than once per registered point. A batch that does not complete the
   -- closure -- the common case while a multi-batch fetch is in flight -- then
   -- scans nothing, which keeps a catching-up node's per-write cost off the
-  -- unboundedly-growing 'imEbBodiesDownloaded' set (otherwise every tx write is
-  -- O(downloaded EBs), quadratic over a sync).
+  -- unboundedly-growing 'imEbPoints' map (otherwise every tx write is
+  -- O(registered EBs), quadratic over a sync).
   let candidates
         | hashCompleteIn state ebHash =
             [ p
-            | p <- Set.toList (imEbBodiesDownloaded state)
+            | p <- Map.keys (imEbPoints state)
             , pointEbHash p == ebHash
             ]
         | otherwise = []
