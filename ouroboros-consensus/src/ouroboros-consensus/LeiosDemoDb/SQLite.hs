@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -913,6 +912,7 @@ gcReinit conn = do
 data VolStmts = VolStmts
   { stScanEbPoints :: !DB.Statement
   , stInsertEbPoint :: !DB.Statement
+  , stEbHasBody :: !DB.Statement
   , stLookupEbBody :: !DB.Statement
   , stInsertEbTxsRow :: !DB.Statement
   , stInitMissingCount :: !DB.Statement
@@ -977,6 +977,7 @@ prepareVolStmts :: DB.Database -> IO VolStmts
 prepareVolStmts db = do
   stScanEbPoints <- dbPrepare db (fromString sql_scan_ebs)
   stInsertEbPoint <- dbPrepare db (fromString sql_insert_eb)
+  stEbHasBody <- dbPrepare db (fromString sql_eb_has_body)
   stLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
   stInsertEbTxsRow <- dbPrepare db (fromString sql_insert_ebBody)
   stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
@@ -999,6 +1000,7 @@ finalizeVolStmts :: VolStmts -> IO ()
 finalizeVolStmts VolStmts{..} = do
   dbFinalize stScanEbPoints
   dbFinalize stInsertEbPoint
+  dbFinalize stEbHasBody
   dbFinalize stLookupEbBody
   dbFinalize stInsertEbTxsRow
   dbFinalize stInitMissingCount
@@ -1269,7 +1271,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
           atomically $ putTMVar resultVar result
           pure True
         WriteEbPoint point size resultVar ->
-          publish resultVar (sqlInsertEbPoint conn point size) >> pure False
+          publish resultVar (sqlInsertEbPoint conn notify point size) >> pure False
         WriteEbBody point eb resultVar ->
           publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure False
         WriteTxs txs resultVar ->
@@ -1542,17 +1544,69 @@ bodyLoop stmt acc =
       size <- fromIntegral <$> DB.columnInt64 stmt 1
       bodyLoop stmt ((txHash, size) : acc)
 
-sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint conn point ebBytesSize = do
-  inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
-    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-    dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
-    dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
-    dbStep1 stmt
-    DB.changes db
-  bumpVolatileStats conn inserted
+-- | Initialize (or re-derive) a point's missing-tx count from the current
+-- 'ebsMissingTxs' rows for its hash, and mark it notified if that count is
+-- already zero. Must run inside the same write transaction as whatever just
+-- made the count meaningful: a body insert ('sqlInsertEbBody'), or -- for a
+-- point sharing an already-registered hash -- the point insert itself
+-- ('sqlInsertEbPoint'). Returns the point iff it just became complete.
+sqlMarkPointCompleteIfZero :: Conn -> LeiosPoint -> IO CompletedEbs
+sqlMarkPointCompleteIfZero conn point = do
+  missingCount <- useStmt stInitMissingCount $ do
+    dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
+    dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
+    dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
+    readReturningInt64 stInitMissingCount
+  if missingCount == 0
+    then do
+      useStmt stMarkPointNotified $ do
+        dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+        dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+        dbStep1 stMarkPointNotified
+      pure [point]
+    else pure []
  where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stInsertEbPoint = stmt}} = conn
+  Conn{connVolStmts} = conn
+  VolStmts{stInitMissingCount, stMarkPointNotified} = connVolStmts
+
+-- | Insert an announced EB point. If it is genuinely new (not a duplicate
+-- of an already-known point) and its hash already has a body registered
+-- under another point (an EB-hash collision: the same content, a different
+-- announcing RB), start tracking this point's own missing-tx count too --
+-- notifying right away if the hash is already complete. Without this, a
+-- point whose own 'writeEbBody' is never called (because the body is
+-- already held) would never reach 'sql_find_complete_ebs' at all, since its
+-- @missingTxCount@ would stay unset forever.
+sqlInsertEbPoint :: Conn -> (LeiosEbNotification -> IO ()) -> LeiosPoint -> BytesSize -> IO ()
+sqlInsertEbPoint conn notify point ebBytesSize = do
+  (inserted, completedNow) <- dbWithWriteTransaction conn $ do
+    inserted <- useStmt stInsertEbPoint $ do
+      dbBindInt64 stInsertEbPoint 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+      dbBindBlob stInsertEbPoint 2 point.pointEbHash.ebHashBytes
+      dbBindInt64 stInsertEbPoint 3 (fromIntegral ebBytesSize)
+      dbStep1 stInsertEbPoint
+      DB.changes db
+    completedNow <-
+      if inserted == 0
+        then pure []
+        else do
+          hasBody <-
+            (/= 0)
+              <$> useStmt
+                stEbHasBody
+                ( do
+                    dbBindBlob stEbHasBody 1 point.pointEbHash.ebHashBytes
+                    readSingleInt64 stEbHasBody
+                )
+          if not hasBody
+            then pure []
+            else sqlMarkPointCompleteIfZero conn point
+    pure (inserted, completedNow)
+  bumpVolatileStats conn inserted
+  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
+ where
+  Conn{conVolDb = db, connVolStmts} = conn
+  VolStmts{stInsertEbPoint, stEbHasBody} = connVolStmts
 
 -- | Persist an EB body. The point MUST already be present (inserted
 -- via 'sqlInsertEbPoint' on the announcement path).
@@ -1583,22 +1637,9 @@ sqlInsertEbBody tracer conn notify point eb = do
     useStmt stInsertMissingTxs $ do
       dbBindBlob stInsertMissingTxs 1 point.pointEbHash.ebHashBytes
       dbStep1 stInsertMissingTxs
-    -- Initialize missingTxCount and read the resulting value via
-    -- @RETURNING missingTxCount@. Only /this/ point's row can have
-    -- transitioned to 0 as a consequence of the insert above.
-    missingCount <- useStmt stInitMissingCount $ do
-      dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
-      dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
-      dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
-      readReturningInt64 stInitMissingCount
-    if missingCount == 0
-      then do
-        useStmt stMarkPointNotified $ do
-          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-          dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
-          dbStep1 stMarkPointNotified
-        pure [point]
-      else pure []
+    -- Only /this/ point's row can have transitioned to 0 as a consequence
+    -- of the insert above.
+    sqlMarkPointCompleteIfZero conn point
   notify $ AcquiredEb point ebBytesSize
   forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
   pure completedNow
@@ -1606,12 +1647,7 @@ sqlInsertEbBody tracer conn notify point eb = do
   items = leiosEbBodyItems eb
   ebBytesSize = encodeLeiosEbSize eb
   Conn{connVolStmts} = conn
-  VolStmts
-    { stInsertEbTxsRow
-    , stInsertMissingTxs
-    , stInitMissingCount
-    , stMarkPointNotified
-    } = connVolStmts
+  VolStmts{stInsertEbTxsRow, stInsertMissingTxs} = connVolStmts
 
 -- | Read a single-column @Int64@ from a statement that uses a
 -- @RETURNING@ clause on a PK-scoped @UPDATE@ (i.e. produces exactly one
@@ -1988,6 +2024,16 @@ sql_scan_complete_ebs_since =
 sql_insert_eb :: String
 sql_insert_eb =
   "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize) VALUES (?, ?, ?)"
+
+-- | Whether an EB body ('ebTxs' rows) is already registered for a hash.
+-- Guards 'sqlInsertEbPoint': without it, a hash with no body yet would read
+-- as "zero txs missing" (an empty count, not an unknown one) and be treated
+-- as complete.
+--
+-- Parameter 1: ebHashBytes
+sql_eb_has_body :: String
+sql_eb_has_body =
+  "SELECT EXISTS(SELECT 1 FROM ebTxs WHERE ebHashBytes = ?)"
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =

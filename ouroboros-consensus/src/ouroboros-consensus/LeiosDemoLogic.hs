@@ -873,7 +873,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- only novelty check we need: keyed off the lock, two peers delivering the same
   -- body cannot both write it (the second sees 'novel = False'), so we neither
   -- re-pay the ~16k-row write nor emit a storm of 'LeiosDbInsertCollision's.
-  (shouldPersist, bodyClass, mempoolNotCache, mempoolAndCache) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+  (shouldPersist, bodyClass, mempoolNotCache, mempoolAndCache, alreadyHeld) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
         novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
@@ -913,6 +913,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
             , (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
             , Map.empty
             , Map.empty
+            , not tooOld -- alreadyHeld: novel is False, so this is the hash-collision case
             )
           )
       else do
@@ -984,7 +985,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                 (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
                 missedBoth
             !outstanding' = Leios.insertAcquiredEbBody ebHash jobPool outstandingCleaned
-        pure (outstanding', (True, bodyClass, mempoolNotCache, mempoolAndCache))
+        pure (outstanding', (True, bodyClass, mempoolNotCache, mempoolAndCache, False))
   void $ MVar.tryPutMVar readyVar ()
   case source of
     ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
@@ -992,13 +993,29 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   -- Last: ingest the txs we found in our own mempool (they were removed from the
   -- fetch job set above)
-  when shouldPersist $
-    traceException tracer TraceLeiosPeerDbException $ do
-      -- FIXME: once EB announcements are wired in the point MUST already
-      -- be present (announcement handling inserts it); until then insert
-      -- it idempotently as a stop-gap and trace a warning.
-      traceWith ktracer $ TraceLeiosBlockPointMissing point
-      pointWritten <- writeEbPoint writer point ebBytesSize
+  traceException tracer TraceLeiosPeerDbException $ do
+    -- FIXME: once EB announcements are wired in the point MUST already
+    -- be present (announcement handling inserts it); until then insert
+    -- it idempotently as a stop-gap and trace a warning. Unconditional
+    -- (not gated on 'shouldPersist'): a second point sharing an
+    -- already-held EB's hash must still register, since a vote is signed
+    -- over the announcing RB's hash.
+    traceWith ktracer $ TraceLeiosBlockPointMissing point
+    pointWritten <- writeEbPoint writer point ebBytesSize
+    -- The hash is already held under another point (an EB-hash collision):
+    -- its tx closure is therefore already complete too, so this point counts
+    -- as acquired the moment its own registration lands, with no body/tx
+    -- write of its own to await.
+    when alreadyHeld $ do
+      let traceAlreadyAcquired = do
+            await pointWritten
+            st <- Leios.ebState <$> MVar.readMVar outstandingVar
+            traceWith ktracer $ TraceLeiosBlockTxsAcquired point (ebPointAge now st point)
+      case source of
+        ForgedBlock{} -> traceAlreadyAcquired
+        ReceivedBlockFrom{} ->
+          link =<< async (traceException tracer TraceLeiosPeerDbException traceAlreadyAcquired)
+    when shouldPersist $ do
       bodyWritten <- writeEbBody writer point eb
       -- Wait for the writes to complete (and trace) synchronously when we are
       -- forging: need to ensure the data is written before advertising it.
@@ -1414,6 +1431,7 @@ data WhetherApplied = Applied | Unapplied
 -- serving candidate.
 recordEbBodyOffer ::
   IOLike m =>
+  LeiosDbWriter m ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -1422,9 +1440,9 @@ recordEbBodyOffer ::
   -- | The offered EB: its point and on-the-wire body size.
   (LeiosPoint, BytesSize) ->
   m ()
-recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebBytesSize) = do
+recordEbBodyOffer writer (outstandingVar, readyVar) peerVars offeredClosure (point, ebBytesSize) = do
   let MkLeiosPoint ebSlot ebHash = point
-  MVar.modifyMVar_ outstandingVar $ \outstanding ->
+  alreadyHeld <- MVar.modifyMVar outstandingVar $ \outstanding ->
     pure $!
       let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
           malformed = ebBytesSize == 0 -- malformed offer
@@ -1436,24 +1454,33 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
           outstanding'
             | tooOld || malformed = outstanding
             | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
+          alreadyHeld =
+            not (tooOld || malformed)
+              && maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
           skip =
             tooOld
               || malformed
-              || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
+              || alreadyHeld
               || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
-       in if skip
-            then outstanding'
-            else
-              outstanding'
-                { Leios.missingEbBodies =
-                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
-                , Leios.reverseSlotIndexByEbHash =
-                    Map.insertWith
-                      NESet.union
-                      ebHash
-                      (NESet.singleton ebSlot)
-                      (Leios.reverseSlotIndexByEbHash outstanding')
-                }
+          outstanding''
+            | skip = outstanding'
+            | otherwise =
+                outstanding'
+                  { Leios.missingEbBodies =
+                      Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
+                  , Leios.reverseSlotIndexByEbHash =
+                      Map.insertWith
+                        NESet.union
+                        ebHash
+                        (NESet.singleton ebSlot)
+                        (Leios.reverseSlotIndexByEbHash outstanding')
+                  }
+       in (outstanding'', alreadyHeld)
+  -- The bytes are already held under another point (an EB-hash collision):
+  -- no fetch is needed, but this point must still be registered in the
+  -- LeiosDb, or it can never be voted on/certified, even though no fetch
+  -- is needed.
+  when alreadyHeld $ void $ writeEbPoint writer point ebBytesSize
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \offers ->
     -- store the offer as-is; 'mergeOffer' keeps the closure if either offer had it
     pure $! Map.insertWith Leios.mergeOffer point offeredClosure offers
@@ -1471,6 +1498,7 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
 checkMsgRollForwardForLeiosOffers ::
   forall blk pid m.
   (IOLike m, ResolveLeiosBlock blk) =>
+  LeiosDbWriter m ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -1478,10 +1506,10 @@ checkMsgRollForwardForLeiosOffers ::
   Header blk ->
   ChainDepState (BlockProtocol blk) ->
   m ()
-checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
+checkMsgRollForwardForLeiosOffers writer kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
-      recordEbBodyOffer kernelVars peerVars TxsClosureAlsoOffered announcement
+      recordEbBodyOffer writer kernelVars peerVars TxsClosureAlsoOffered announcement
 
 -----
 
@@ -1541,6 +1569,7 @@ processAnnouncementCentrally ::
   MVar m (Announcements.CentralState m peer (AnnouncingHeader blk)) ->
   (MVar m (LeiosOutstanding pid), MVar m ()) ->
   LeiosTxCache m () () SerializedEbBody ->
+  LeiosDbWriter m ->
   Maybe peer ->
   AnnouncementSource ->
   ShouldRelay ->
@@ -1558,6 +1587,7 @@ processAnnouncementCentrally
   centralVar
   kernelVars
   txCache
+  writer
   source
   provenance
   shouldRelay
@@ -1590,7 +1620,7 @@ processAnnouncementCentrally
     -- The announced EB's slot is the announcing header's own slot (see
     -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
     point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
-    recordAnnounced = recordAnnouncedEb kernelVars onset (point, Leios.announcementEbBodySize fields)
+    recordAnnounced = recordAnnouncedEb writer kernelVars onset (point, Leios.announcementEbBodySize fields)
     markForged =
       MVar.modifyMVar_ (fst kernelVars) $
         pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
@@ -1716,6 +1746,7 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
 -- pruned\/tracked\/acquired
 recordAnnouncedEb ::
   IOLike m =>
+  LeiosDbWriter m ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
@@ -1723,8 +1754,13 @@ recordAnnouncedEb ::
   StrictMaybe RelativeTime ->
   (LeiosPoint, BytesSize) ->
   m ()
-recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
-  changed <- MVar.modifyMVar outstandingVar (pure . upd)
+recordAnnouncedEb writer (outstandingVar, readyVar) onset (point, ebBytesSize) = do
+  (changed, alreadyHeld) <- MVar.modifyMVar outstandingVar (pure . upd)
+  -- The bytes are already held under another point (an EB-hash collision):
+  -- no fetch is needed, but this point must still be registered in the
+  -- LeiosDb, or it can never be voted on/certified (mirrors the
+  -- unconditional 'writeEbPoint' in 'processLeiosBlock').
+  when alreadyHeld $ void $ writeEbPoint writer point ebBytesSize
   when changed $ void $ MVar.tryPutMVar readyVar ()
  where
   MkLeiosPoint ebSlot ebHash = point
@@ -1736,9 +1772,12 @@ recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
         !outstanding'
           | tooOld = outstanding
           | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot onset outstanding
+        alreadyHeld =
+          not tooOld
+            && maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
         skip =
           tooOld
-            || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
+            || alreadyHeld
             || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
         !outstanding''
           | skip = outstanding'
@@ -1753,7 +1792,7 @@ recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
                       (NESet.singleton ebSlot)
                       (Leios.reverseSlotIndexByEbHash outstanding')
                 }
-     in (outstanding'', not skip)
+     in (outstanding'', (not skip, alreadyHeld))
 
 prunePeerStateToImmTip ::
   LedgerSupportsProtocol blk =>
@@ -1860,6 +1899,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedE
     centralVar
     kv
     txCache
+    writer
     Nothing
     ForgedLocally
     Announcements.DoRelay

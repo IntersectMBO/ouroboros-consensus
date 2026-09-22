@@ -14,7 +14,7 @@ import LeiosDemoDb
   ( LeiosDbReader (scanEbPoints)
   , LeiosDbWriter (writeEbPoint)
   , Promise (await)
-  , newLeiosDBSQLite
+  , withLeiosDBSQLite
   , withReader
   , withWriter
   )
@@ -157,16 +157,23 @@ blockCountTest logStep = do
   -- DBSynthesizer writes no leios.vol.db and leios.imm.db, so the test writes them too.
   -- The kept EB is announced below the truncation slot, and the dropped one above every block
   -- the synthesis forged.
-  leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.vol.db") (chainDB <> "/leios.imm.db")
   let keptEb = MkLeiosPoint 0 (mkEbHash '1')
       droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
-  withWriter leiosDb $ \con ->
-    mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
+  withLeiosDBSQLite mempty (chainDB <> "/leios.vol.db") (chainDB <> "/leios.imm.db") $ \leiosDb ->
+    withWriter leiosDb $ \con ->
+      mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
 
+  -- The write above must close its 'LeiosDb' first: 'DBTruncater.truncate'
+  -- opens its own raw connection to the same files and gives up rather than
+  -- wait if it finds them locked (see 'withExistingLeiosDbFile'), and a
+  -- leftover background writer here leaves that connection with no owner to
+  -- answer it, which hangs the read below instead.
   logStep "running truncation"
   DBTruncater.truncate testTruncaterConfig testBlockArgs
 
-  ebPoints <- withReader leiosDb scanEbPoints
+  ebPoints <-
+    withLeiosDBSQLite mempty (chainDB <> "/leios.vol.db") (chainDB <> "/leios.imm.db") $ \leiosDb ->
+      withReader leiosDb scanEbPoints
   ebPoints == [(0, pointEbHash keptEb)]
     @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
 

@@ -39,7 +39,7 @@ import Data.ByteString as BS (ByteString, readFile)
 import qualified Data.ByteString.Lazy.Char8 as BSL8 (unpack)
 import Data.Functor (($>))
 import qualified Data.Set as Set
-import LeiosDemoDb (newLeiosDBSQLite, withReader, withWriter)
+import LeiosDemoDb (withLeiosDBSQLite, withReader, withWriter)
 import LeiosDemoTypes
   ( TraceLeiosKernel (TraceLeiosDb)
   , traceLeiosKernelToObject
@@ -196,34 +196,13 @@ synthesize ::
   IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confVotingKey} runP =
   withRegistry $ \registry -> do
-    -- The node writes its LeiosDb next to the other ChainDB files.
-    -- The tool derives that paths for the volatile and immutable partitions from --db.
-    -- That is also where db-analyser looks for it.
     leiosTracer <- mkLeiosTracer
-    leiosDbHandle <-
-      newLeiosDBSQLite
-        (TraceLeiosDb >$< leiosTracer)
-        (confDbDir </> "leios.vol.db")
-        (confDbDir </> "leios.imm.db")
     (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) <-
       protocolInfoCardano (SomeHasFS (ioHasFS (MountPoint confDbDir))) runP
     let
       epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
       flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
-      dbArgs =
-        ChainDB.completeChainDbArgs
-          registry
-          pInfoConfig
-          pInfoInitLedger
-          chunkInfo
-          (const True)
-          (Node.stdMkChainDbHasFS confDbDir)
-          (Node.stdMkChainDbHasFS confDbDir)
-          flavargs
-          leiosDbHandle
-          (\_ -> pure ()) -- no LeiosTxCache in this tool
-          $ ChainDB.defaultArgs
 
     mbfs <- mkForgers nullTracer
     allocatedForgers <-
@@ -239,30 +218,60 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
           preOpenChainDB synthOpenMode confDbDir
           let dbTracer = nullTracer
-          -- Open after 'preOpenChainDB'. That call creates the db directory, and
-          -- with -f it deletes and recreates it. An earlier open loses the file
-          -- with no error.
-          withReader leiosDbHandle $ \leiosDbReader -> withWriter leiosDbHandle $ \leiosDbWriter ->
-            ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
-              slotNo <- do
-                tip <- atomically (ChainDB.getTipPoint chainDB)
-                pure $ case pointSlot tip of
-                  Origin -> 0
-                  At s -> succ s
+          -- The node writes its LeiosDb next to the other ChainDB files. The
+          -- tool derives that paths for the volatile and immutable
+          -- partitions from --db. That is also where db-analyser looks for
+          -- it.
+          --
+          -- Open after 'preOpenChainDB'. That call creates the db directory,
+          -- and with -f it deletes and recreates it; 'newLeiosDBSQLite'
+          -- opens its write connection eagerly, so an earlier open would
+          -- have it holding a file 'preOpenChainDB' is about to remove.
+          --
+          -- 'withLeiosDBSQLite', not 'newLeiosDBSQLite': its 'close' stops
+          -- the background writer and its connections, so a second
+          -- 'synthesize' call (e.g. an append run right after a create run)
+          -- doesn't contend with threads this one never tore down.
+          withLeiosDBSQLite
+            (TraceLeiosDb >$< leiosTracer)
+            (confDbDir </> "leios.vol.db")
+            (confDbDir </> "leios.imm.db")
+            $ \leiosDbHandle -> do
+              let
+                dbArgs =
+                  ChainDB.completeChainDbArgs
+                    registry
+                    pInfoConfig
+                    pInfoInitLedger
+                    chunkInfo
+                    (const True)
+                    (Node.stdMkChainDbHasFS confDbDir)
+                    (Node.stdMkChainDbHasFS confDbDir)
+                    flavargs
+                    leiosDbHandle
+                    (\_ -> pure ()) -- no LeiosTxCache in this tool
+                    $ ChainDB.defaultArgs
+              withReader leiosDbHandle $ \leiosDbReader -> withWriter leiosDbHandle $ \leiosDbWriter ->
+                ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
+                  slotNo <- do
+                    tip <- atomically (ChainDB.getTipPoint chainDB)
+                    pure $ case pointSlot tip of
+                      Origin -> 0
+                      At s -> succ s
 
-              putStrLn $ "--> starting at: " ++ show slotNo
-              runForge
-                epochSize
-                slotNo
-                synthLimit
-                chainDB
-                forgers
-                pInfoConfig
-                confVotingKey
-                (genTxs pInfoConfig)
-                leiosDbReader
-                leiosDbWriter
-                leiosTracer
+                  putStrLn $ "--> starting at: " ++ show slotNo
+                  runForge
+                    epochSize
+                    slotNo
+                    synthLimit
+                    chainDB
+                    forgers
+                    pInfoConfig
+                    confVotingKey
+                    (genTxs pInfoConfig)
+                    leiosDbReader
+                    leiosDbWriter
+                    leiosTracer
         else do
           putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
           pure $ ForgeResult 0
