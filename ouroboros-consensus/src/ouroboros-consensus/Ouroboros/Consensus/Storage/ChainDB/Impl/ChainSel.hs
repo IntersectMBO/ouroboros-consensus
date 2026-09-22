@@ -51,6 +51,7 @@ import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( AcquiredLeiosEbsSet
   , EbHash
+  , announcementEbHash
   , HasLeiosVoting (getLeiosCommitteeFromView)
   , LeiosExtValidationError (LeiosCertificateForecastRejected)
   , TraceLeiosChainSel
@@ -59,7 +60,6 @@ import LeiosDemoTypes
     )
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsSetMember
-  , pointEbHash
   )
 import LeiosUtils.CallTrace
   ( CallCtx
@@ -757,10 +757,11 @@ precheckLeiosCert CDB{..} predecessor b = case blockLeiosCert b of
       LeiosValidClaims.ClaimRejected why -> do
         pure $ Left $ LeiosCertificateForecastRejected cert (predecessorSlot predecessor) why
       LeiosValidClaims.ClaimEstablished announcingPoint rbHash -> do
-        -- Which endorser block the announcing block announced, so that the
-        -- Leios fetch logic can tell that this endorser block's announcement
-        -- is certified. 'SNothing' if we no longer hold the announcing block.
-        mbEbHash <- atomically $ do
+        -- What the announcing block announced --- which election, which
+        -- endorser block --- so that the Leios fetch logic can move that
+        -- election's focus onto it. 'SNothing' if we no longer hold the
+        -- announcing block.
+        mbFields <- atomically $ do
           lookupBlockInfo <- VolatileDB.getBlockInfo cdbVolatileDB
           pure $ case lookupBlockInfo (realPointHash announcingPoint) of
             Nothing -> SNothing
@@ -770,7 +771,7 @@ precheckLeiosCert CDB{..} predecessor b = case blockLeiosCert b of
             WithFingerprint
               ( LeiosValidClaims.insertValidClaim
                   (realPointSlot announcingPoint)
-                  (LeiosDemoTypes.pointEbHash <$> mbEbHash)
+                  mbFields
                   rbHash
                   claims'
               )
@@ -1778,7 +1779,8 @@ isUnacquiredCertRB acquiredEbs lookupBlockInfo h = case lookupBlockInfo h of
             -- malformed and rejected by header validation (as above). Either
             -- way, report it unacquired.
             Nothing -> True
-            Just ebPt -> not (acquiredLeiosEbsSetMember (pointEbHash ebPt) acquiredEbs)
+            Just fields ->
+              not (acquiredLeiosEbsSetMember (announcementEbHash fields) acquiredEbs)
 
 -- | Wrap @getBlockInfo@ so that a cert-RB whose required EB closure has not been
 -- acquired ('isUnacquiredCertRB') is reported as absent — hiding it from chain

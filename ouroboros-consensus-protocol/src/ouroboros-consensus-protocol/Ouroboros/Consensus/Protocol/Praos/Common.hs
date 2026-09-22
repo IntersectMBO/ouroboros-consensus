@@ -66,7 +66,6 @@ import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
 import Control.DeepSeq (NFData (..))
 import qualified Control.Tracer as Tracer
-import qualified Data.ByteString as BS
 import Data.Function (on)
 import Data.Kind (Constraint, Type)
 import Data.Map.Strict (Map)
