@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -31,13 +32,16 @@ import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
+import Data.Map.Strict.Internal (Map (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
+import qualified Data.Strict.Either as Strict
 import Data.Typeable (Typeable)
 import Data.Void (Void)
+import GHC.Generics (Generic)
 import NoThunks.Class
   ( InspectHeapNamed (..)
   , NoThunks (..)
@@ -121,6 +125,11 @@ instance NoThunks v => NoThunks (NESet v) where
   showTypeOf _ = "NESet"
   wNoThunks ctxt = wNoThunks ctxt . NESet.toSet
 
+instance (NoThunks a, NoThunks b) => NoThunks (Strict.Either a b) where
+  showTypeOf _ = "Strict.Either"
+  wNoThunks ctxt (Strict.Left a) = noThunks ctxt a
+  wNoThunks ctxt (Strict.Right b) = noThunks ctxt b
+
 instance NoThunks a => NoThunks (Array i a) where
   showTypeOf _ = "Array"
   wNoThunks ctxt = wNoThunks ctxt . Array.elems
@@ -149,3 +158,9 @@ deriving via
 
 instance ShowProxy Void
 instance ShowProxy ()
+
+{-------------------------------------------------------------------------------
+  Generic
+-------------------------------------------------------------------------------}
+
+deriving instance Generic (Map k v)

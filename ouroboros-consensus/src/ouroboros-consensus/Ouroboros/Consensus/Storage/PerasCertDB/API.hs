@@ -101,11 +101,11 @@ data PerasCertDB m blk = PerasCertDB
 -- or not.
 data WithBoostedBlockStatus cert
   = -- | Certificate boosting a block within the volatile chain suffix
-    CertBoostingBlockInVolatileDB cert
+    CertBoostingBlockInVolatileDB !cert
   | -- | Certificate boosting a block that no longer belongs to the volatile
     -- chain suffix. This typically means that the block has been copied to the
     -- immutable prefix, and then garbage collected from the volatile suffix.
-    CertBoostingBlockNoLongerInVolatileDB cert
+    CertBoostingBlockNoLongerInVolatileDB !cert
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 

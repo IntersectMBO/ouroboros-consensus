@@ -147,11 +147,11 @@ import Ouroboros.Consensus.Util.IOLike
 -- | A 'PerasEpochContext' that is valid only in a given range of round numbers
 data BoundedPerasEpochContext blk
   = BoundedPerasEpochContext
-  { startPerasRoundNo :: PerasRoundNo
+  { startPerasRoundNo :: !PerasRoundNo
   -- ^ Inclusive lower bound
-  , endPerasRoundNo :: PerasRoundNo
+  , endPerasRoundNo :: !PerasRoundNo
   -- ^ Exclusive upper bound
-  , epochContext :: PerasEpochContext blk
+  , epochContext :: !(PerasEpochContext blk)
   -- ^ Epcoh context that is valid within the given bounds
   }
 

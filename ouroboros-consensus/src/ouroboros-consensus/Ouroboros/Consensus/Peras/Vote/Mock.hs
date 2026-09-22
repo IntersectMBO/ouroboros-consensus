@@ -42,9 +42,9 @@ import Ouroboros.Network.Util (ShowProxy (..))
 -- NOTE: this is parameterized around the concrete block type being voted for.
 data MockPerasVote blk
   = MockPerasVote
-  { mockVoteRound :: PerasRoundNo
-  , mockVoteBlock :: Point blk
-  , mockVoteSeatIndex :: PerasSeatIndex
+  { mockVoteRound :: !(PerasRoundNo)
+  , mockVoteBlock :: !(Point blk)
+  , mockVoteSeatIndex :: !PerasSeatIndex
   }
 
 deriving instance StandardHash blk => Show (MockPerasVote blk)

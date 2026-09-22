@@ -53,9 +53,9 @@ import Ouroboros.Network.Util (ShowProxy (..))
 -- NOTE: this is parameterized around the concrete block type being certified.
 data MockPerasCert blk
   = MockPerasCert
-  { mockCertRound :: PerasRoundNo
-  , mockCertBlock :: Point blk
-  , mockCertVoters :: NE (Set PerasSeatIndex)
+  { mockCertRound :: !PerasRoundNo
+  , mockCertBlock :: !(Point blk)
+  , mockCertVoters :: !(NE (Set PerasSeatIndex))
   }
 
 deriving instance StandardHash blk => Show (MockPerasCert blk)
