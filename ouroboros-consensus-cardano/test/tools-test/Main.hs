@@ -14,7 +14,7 @@ import LeiosDemoDb
   ( LeiosDbReader (scanEbPoints)
   , LeiosDbWriter (writeEbPoint)
   , Promise (await)
-  , newLeiosDBSQLite
+  , withLeiosDBSQLite
   , withReader
   , withWriter
   )
@@ -154,19 +154,25 @@ blockCountTest logStep = do
       ++ ")"
 
   logStep "writing a LeiosDb next to the chain"
-  -- DBSynthesizer writes no leios.vol.db and leios.imm.db, so the test writes them too.
-  -- The kept EB is announced below the truncation slot, and the dropped one above every block
-  -- the synthesis forged.
-  leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.vol.db") (chainDB <> "/leios.imm.db")
-  let keptEb = MkLeiosPoint 0 (mkEbHash '1')
+  -- The synthesis leaves both partitions behind with no EBs, because the stub
+  -- generator below makes no transactions. The kept EB is announced below the
+  -- truncation slot, and the dropped one above every block the synthesis forged.
+  let leiosVolDb = chainDB <> "/leios.vol.db"
+      leiosImmDb = chainDB <> "/leios.imm.db"
+      keptEb = MkLeiosPoint 0 (mkEbHash '1')
       droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
-  withWriter leiosDb $ \con ->
-    mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
+  withLeiosDBSQLite mempty leiosVolDb leiosImmDb $ \leiosDb ->
+    withWriter leiosDb $ \con ->
+      mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
 
   logStep "running truncation"
+  -- The truncater VACUUMs both partitions on its own connections, so the
+  -- database above is closed before this runs.
   DBTruncater.truncate testTruncaterConfig testBlockArgs
 
-  ebPoints <- withReader leiosDb scanEbPoints
+  ebPoints <-
+    withLeiosDBSQLite mempty leiosVolDb leiosImmDb $ \leiosDb ->
+      withReader leiosDb scanEbPoints
   ebPoints == [(0, pointEbHash keptEb)]
     @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
 
