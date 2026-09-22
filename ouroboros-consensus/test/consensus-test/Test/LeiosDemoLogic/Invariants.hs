@@ -35,6 +35,10 @@ import Control.Concurrent.Class.MonadMVar
   , newMVar
   , readMVar
   )
+import Control.Concurrent.Class.MonadSTM.Strict
+  ( atomically
+  , tryReadTChan
+  )
 import Control.Monad.Class.MonadAsync (concurrently_)
 import Control.Monad.Class.MonadTest (exploreRaces)
 import Control.Monad.Class.MonadThrow (SomeException, try)
@@ -113,7 +117,7 @@ tests =
               runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
           , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
               runCmdsReFetchViolations reproForgeThenOffer @?= Right []
-          , testCase "two points sharing an EbHash both get registered (EB-hash collision)" $ do
+          , testCase "two points sharing an EbHash both get registered in the LeiosDb (EB-hash collision)" $ do
               -- We forge [0, 1] at slot 5 (as if our own mempool produced it),
               -- then a peer's independently-forged EB with the *same* content
               -- arrives, announced at the later slot 8 (the certification-gap
@@ -122,8 +126,24 @@ tests =
               -- the *announcing RB's hash*, so an unregistered point can never
               -- be voted on/certified even though its bytes did diffuse fine.
               let h = hashLeiosEb (ebOf [0, 1])
-              runCmdsAndScanEbPoints [Forge [0, 1] 5, ArriveBody [0, 1] 8]
+                  cmds = [Forge [0, 1] 5, ArriveBody [0, 1] 8]
+              runCmdsAndScanEbPoints cmds
                 @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
+          , testCase "two points sharing an EbHash both get an AcquiredEbTxs notification (EB-hash collision)" $ do
+              -- Same setup as above (forge at slot 5, then a peer's
+              -- independently-forged EB with the same content, announced at
+              -- the later slot 8), plus a second, duplicate arrival of that
+              -- very same point (e.g. a retry, or a second peer offering it).
+              -- Registration in the LeiosDb alone is not enough:
+              -- 'runLeiosVoting' only schedules a vote for a point once it
+              -- observes that point's 'LeiosDb.AcquiredEbTxs' notification.
+              -- Both points must get exactly one -- the duplicate arrival
+              -- must not cause a second notification for slot 8's point, or
+              -- the voting layer would treat it as a fatal 'AlreadyKnown'
+              -- from 'addVote'.
+              let cmds = [Forge [0, 1] 5, ArriveBody [0, 1] 8, ArriveBody [0, 1] 8]
+              runCmdsAndCollectAcquiredTxPoints cmds
+                @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
           ]
       , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
           let eb = ebOf [0, 1]
@@ -401,46 +421,73 @@ runCmds = (() <$) . runCmdsReFetchViolations
 -- re-fetch-storm regression signal: it must be empty. See
 -- 'prop_neverRefetchesHeldBody'.
 runCmdsReFetchViolations :: [Cmd] -> Either String [EbHash]
-runCmdsReFetchViolations cmds = runSimOrThrow (snd <$> runCmdsReFetchViolationsWithDb cmds)
+runCmdsReFetchViolations cmds = runSimOrThrow $ do
+  dbHandle <- LeiosDb.newLeiosDBInMemory
+  runCmdsReFetchViolationsWithDb dbHandle cmds
 
 -- | Like 'runCmds', but on success also return every @(slot, hash)@ point
 -- registered in the LeiosDb by the end of the sequence.
 runCmdsAndScanEbPoints :: [Cmd] -> Either String [(SlotNo, EbHash)]
 runCmdsAndScanEbPoints cmds = runSimOrThrow $ do
-  (dbHandle, result) <- runCmdsReFetchViolationsWithDb cmds
+  dbHandle <- LeiosDb.newLeiosDBInMemory
+  result <- runCmdsReFetchViolationsWithDb dbHandle cmds
   case result of
     Left msg -> pure (Left msg)
     Right _violations -> Right <$> withReader dbHandle LeiosDb.scanEbPoints
 
--- | Like 'runCmdsReFetchViolations', but also hand back the still-open
--- 'LeiosDbHandle' the run used (the writer inside it is already closed,
--- flushing anything still in flight) so a caller can read the DB back
--- afterwards, e.g. via 'withReader'.
+-- | Like 'runCmdsReFetchViolations', but against an already-open
+-- 'LeiosDb.LeiosDbHandle' (the writer inside it is already closed on
+-- return, flushing anything still in flight, so a caller can read the DB
+-- back afterwards, e.g. via 'withReader') -- so a caller can also
+-- 'LeiosDb.subscribeEbNotifications' on it before any command runs.
 runCmdsReFetchViolationsWithDb ::
-  forall s. [Cmd] -> IOSim s (LeiosDb.LeiosDbHandle (IOSim s), Either String [EbHash])
-runCmdsReFetchViolationsWithDb cs0 = do
+  forall s.
+  LeiosDb.LeiosDbHandle (IOSim s) ->
+  [Cmd] ->
+  IOSim s (Either String [EbHash])
+runCmdsReFetchViolationsWithDb dbHandle cs0 = withWriter dbHandle $ \conn -> do
+  outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+  readyVar <- newEmptyMVar
+  peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
+  let kv = (outstandingVar, readyVar)
+      txCache = nullLeiosTxCache
+      peerId = MkPeerId (0 :: Int)
+      loop acc [] = pure (Right acc)
+      loop acc (c : cs) = do
+        r <-
+          try (applyCmd conn txCache kv peerVars peerId c) ::
+            IOSim s (Either SomeException [EbHash])
+        case r of
+          Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
+          Right violations -> do
+            outstanding <- readMVar outstandingVar
+            case checkInvariant outstanding of
+              Left msg -> pure (Left (msg <> " (after " <> show c <> ")"))
+              Right () -> loop (acc <> violations) cs
+  loop [] cs0
+
+-- | Like 'runCmds', but subscribes to the LeiosDb's notifications /before/
+-- any command runs, then on success drains the channel and returns every
+-- point that received an 'LeiosDb.AcquiredEbTxs' notification -- the one
+-- 'runLeiosVoting' listens for (via 'LeiosDb.subscribeEbNotifications')
+-- before it will ever schedule a vote (see "LeiosVoting"). A point can be
+-- correctly registered (see 'runCmdsAndScanEbPoints') yet missing from this
+-- list, in which case it can never be voted on/certified.
+runCmdsAndCollectAcquiredTxPoints :: [Cmd] -> Either String [LeiosPoint]
+runCmdsAndCollectAcquiredTxPoints cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
-  result <- withWriter dbHandle $ \conn -> do
-    outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
-    readyVar <- newEmptyMVar
-    peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
-    let kv = (outstandingVar, readyVar)
-        txCache = nullLeiosTxCache
-        peerId = MkPeerId (0 :: Int)
-        loop acc [] = pure (Right acc)
-        loop acc (c : cs) = do
-          r <-
-            try (applyCmd conn txCache kv peerVars peerId c) ::
-              IOSim s (Either SomeException [EbHash])
-          case r of
-            Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
-            Right violations -> do
-              outstanding <- readMVar outstandingVar
-              case checkInvariant outstanding of
-                Left msg -> pure (Left (msg <> " (after " <> show c <> ")"))
-                Right () -> loop (acc <> violations) cs
-    loop [] cs0
-  pure (dbHandle, result)
+  chan <- LeiosDb.subscribeEbNotifications dbHandle
+  result <- runCmdsReFetchViolationsWithDb dbHandle cmds
+  case result of
+    Left msg -> pure (Left msg)
+    Right _violations -> do
+      notifications <- drainChan chan
+      pure $ Right [p | LeiosDb.AcquiredEbTxs p <- notifications]
+ where
+  drainChan chan =
+    atomically (tryReadTChan chan) >>= \case
+      Nothing -> pure []
+      Just n -> (n :) <$> drainChan chan
 
 -- | Apply a command, returning any EB bodies it requested that are already held
 -- (per 'ebStateHasBody') — the re-fetch-storm violation. Empty for everything
