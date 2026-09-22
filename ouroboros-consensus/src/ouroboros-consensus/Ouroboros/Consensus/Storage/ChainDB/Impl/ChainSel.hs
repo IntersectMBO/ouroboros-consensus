@@ -754,7 +754,8 @@ precheckLeiosCert CDB{..} predecessor b = case blockLeiosCert b of
     claims <- atomically $ readTVar cdbLeiosValidClaims
     case LeiosValidClaims.decideClaim claims (announcingOf b) cert of
       LeiosValidClaims.ClaimAlreadyEstablished -> pure $ Right ()
-      LeiosValidClaims.ClaimRejected why -> reject cert why
+      LeiosValidClaims.ClaimRejected why -> do
+        pure $ Left $ LeiosCertificateForecastRejected cert (predecessorSlot predecessor) why
       LeiosValidClaims.ClaimEstablished announcingPoint rbHash -> do
         size <- atomically $ do
           modifyTVar cdbLeiosValidClaims $
@@ -775,9 +776,6 @@ precheckLeiosCert CDB{..} predecessor b = case blockLeiosCert b of
         rbHash
         (getLeiosCommitteeFromView (Proxy @blk) announcingView)
     _ -> LeiosValidClaims.AnnouncingAtGenesis
-
-  reject cert why =
-    pure $ Left $ LeiosCertificateForecastRejected cert (predecessorSlot predecessor) why
 
 -- | Record the invalid block in the given map and change its fingerprint
 addInvalidBlock ::
