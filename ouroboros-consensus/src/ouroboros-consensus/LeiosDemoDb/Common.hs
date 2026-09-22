@@ -61,8 +61,11 @@ data LeiosDbHandle m = LeiosDbHandle
   --   act as the MARK phase of GC and "create work" for a background SWEEP thread.
   --
   --   See 'sqlGarbageCollect' for the SQL backend implementation.
-  , leiosDbPromoteToImmutable :: HasCallStack => LeiosPoint -> m ()
-  -- ^ Promote the given EB's body and tx closure from volatile into immutable LeiosDb.
+  , leiosDbPromoteToImmutable :: HasCallStack => [LeiosPoint] -> m ()
+  -- ^ Promote the given EBs' bodies and tx closures from volatile into immutable
+  --   LeiosDb. Takes a batch: the caller holds the ImmutableDB write lock and
+  --   blocks on the shared writer queue, so this must be one round-trip per
+  --   'copyToImmutableDB' pass, not one per certified EB.
   , leiosDbSampleStats :: HasCallStack => m LeiosDbStats
   -- ^ Sample 'LeiosDbStats' counters.
   }

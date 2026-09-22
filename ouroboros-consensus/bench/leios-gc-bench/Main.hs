@@ -94,7 +94,7 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
 import Control.Exception (evaluate)
-import Control.Monad (forM, forM_, forever, replicateM, void, when)
+import Control.Monad (forM, forever, replicateM, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (Tracer (..), emit)
 import qualified Data.ByteString as BS
@@ -564,9 +564,11 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
                 -- ceiling, so the 1-EB steady phases promote their EB and
                 -- exercise the copier (floor would promote none)
                 ceiling (promoteFraction * fromIntegral (length due) :: Double)
+          -- One batched call, as 'copyToImmutableDB' does it.
           (_, promoteWall) <- timed $
-            forM_ (take nPromote due) $ \(s, h) ->
-              leiosDbPromoteToImmutable db (MkLeiosPoint (SlotNo s) (MkEbHash h))
+            leiosDbPromoteToImmutable
+              db
+              [MkLeiosPoint (SlotNo s) (MkEbHash h) | (s, h) <- take nPromote due]
           promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain

@@ -58,7 +58,7 @@ import Control.Exception
   , throwIO
   , toException
   )
-import Control.Monad (forever, join, unless, void)
+import Control.Monad (filterM, forever, join, unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , catch
@@ -415,9 +415,9 @@ withStmt db sql = bracket (dbPrepare db (fromString sql)) dbFinalize
 --     through the writer ('PinEb');
 --   - put the hash into the queue for the copier to pick up, only once the pin
 --     is durable.
-sqlPromoteToImmutable :: WriteQueue -> StrictTVar IO Bool -> LeiosPoint -> IO ()
-sqlPromoteToImmutable writeQueue copyPending point = do
-  await =<< submitJob writeQueue (PinEb point.pointEbHash)
+sqlPromoteToImmutable :: WriteQueue -> StrictTVar IO Bool -> [LeiosPoint] -> IO ()
+sqlPromoteToImmutable writeQueue copyPending points = unless (null points) $ do
+  await =<< submitJob writeQueue (PinEb [p.pointEbHash | p <- points])
   -- The pin is the work list; this only saves the writer a lookup when
   -- there is nothing to copy.
   atomically $ writeTVar copyPending True
@@ -564,24 +564,36 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
       `onException` void (DB.close ccDb)
   stopVar <- newTVarIO False
   stoppedVar <- newEmptyTMVarIO
-  let nextPinned =
+  let nextPinnedBatch = do
+        dbBindInt64 nextPinnedStmt 1 (fromIntegral copyBatchSize)
         useStmt nextPinnedStmt $
-          dbStepSafe nextPinnedStmt >>= \case
-            DB.Done -> pure Nothing
-            DB.Row -> Just . MkEbHash <$> DB.columnBlob nextPinnedStmt 0
+          let rows acc =
+                dbStepSafe nextPinnedStmt >>= \case
+                  DB.Done -> pure (reverse acc)
+                  DB.Row -> do
+                    h <- MkEbHash <$> DB.columnBlob nextPinnedStmt 0
+                    rows (h : acc)
+           in rows []
 
-      -- The EB stays pinned either way, so it is still the next to copy.
+      -- 'True' when the EB is in the immutable partition and its pin can be
+      -- retired. The EB stays pinned either way, so it is still next to copy.
       -- Backing off is what keeps a closure that never completes -- or a
       -- partition that keeps refusing the write -- from spinning here.
       copyOne ebHash =
-        ( copyEbToImmutable tracer statsVar copierConn ebHash >>= \case
-            True -> await =<< submitJob writeQueue (MarkCopied ebHash)
-            False -> threadDelay copyRetryMicros
-        )
+        copyEbToImmutable tracer statsVar copierConn ebHash
           `catch` \(e :: LeiosDbException) -> do
             _ <- DB.exec ccDb "ROLLBACK"
             traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
-            threadDelay copyRetryMicros
+            pure False
+
+      -- One 'MarkCopied' for the batch: the mark is what makes a copied EB
+      -- evictable, and under sync a queue round-trip per EB queues behind
+      -- saturated ingest.
+      copyBatch ebHashes = do
+        copied <- filterM copyOne ebHashes
+        if null copied
+          then threadDelay copyRetryMicros
+          else void . await =<< submitJob writeQueue (MarkCopied copied)
 
       closeConnection = do
         finalizeCopierConn copierConn
@@ -592,9 +604,9 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
         -- Clear before looking, so a pin that lands while we look rings
         -- again instead of being lost.
         atomically $ writeTVar copyPending False
-        nextPinned >>= \case
-          Just ebHash -> copyOne ebHash >> loop
-          Nothing -> do
+        nextPinnedBatch >>= \case
+          batch@(_ : _) -> copyBatch batch >> loop
+          [] -> do
             stop <- IO.atomically $ do
               stop <- readTVar stopVar
               pending <- readTVar copyPending
@@ -616,6 +628,10 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
 -- | How long the copier waits before trying a pinned EB again.
 copyRetryMicros :: Int
 copyRetryMicros = 1000000
+
+-- | How many pinned EBs the copier takes per pass, and so per 'MarkCopied'.
+copyBatchSize :: Int
+copyBatchSize = 32
 
 -- | Close the connection if the action throws, then rethrow. For whatever
 -- is acquired on a fresh connection -- an attach, a schema, a statement --
@@ -1063,11 +1079,11 @@ data WriteJob
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
-  | -- | Pin an EB for promotion; see 'sqlPromoteToImmutable'.
-    PinEb !EbHash !(WriteResult ())
+  | -- | Pin EBs for promotion; see 'sqlPromoteToImmutable'.
+    PinEb ![EbHash] !(WriteResult ())
   | -- | The volatile half of a copy: the EB is in the immutable partition
     -- now, so its volatile rows are evictable. Submitted by 'startCopier'.
-    MarkCopied !EbHash !(WriteResult ())
+    MarkCopied ![EbHash] !(WriteResult ())
   | -- | The GC MARK phase; see 'gcMark'.
     GcMark !SlotNo !(WriteResult ())
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
@@ -1145,8 +1161,8 @@ describeJob = \case
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
   WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
-  PinEb ebHash _ -> "PinEb " <> show ebHash
-  MarkCopied ebHash _ -> "MarkCopied " <> show ebHash
+  PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
+  MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
 
@@ -1257,19 +1273,27 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
           publish resultVar (sqlInsertTxs tracer conn notify txs) >> pure False
         Flush resultVar ->
           publish resultVar (pure ()) >> pure False
-        PinEb ebHash resultVar -> do
+        PinEb ebHashes resultVar -> do
+          -- One transaction for the batch: the submitter awaits this while
+          -- holding the ImmutableDB write lock, so a round-trip per EB throttles
+          -- block immutalisation to this queue's drain rate.
           publishMaintenance volDb immDb resultVar $
             dbWithWriteTransactionRaw volDb $
-              useStmt pinStmt $ do
-                dbBindBlob pinStmt 1 ebHash.ebHashBytes
-                dbStep1Safe pinStmt
+              forM_ ebHashes $ \ebHash ->
+                useStmt pinStmt $ do
+                  dbBindBlob pinStmt 1 ebHash.ebHashBytes
+                  dbStep1Safe pinStmt
           pure False
-        MarkCopied ebHash resultVar -> do
+        MarkCopied ebHashes resultVar -> do
+          -- One transaction for the batch: the mark is what makes a copied EB
+          -- evictable, and under sync it otherwise costs a queue round-trip
+          -- per EB behind a saturated ingest FIFO.
           publishMaintenance volDb immDb resultVar $
             dbWithWriteTransactionRaw volDb $
-              useStmt markCopiedStmt $ do
-                dbBindBlob markCopiedStmt 1 ebHash.ebHashBytes
-                dbStep1Safe markCopiedStmt
+              forM_ ebHashes $ \ebHash ->
+                useStmt markCopiedStmt $ do
+                  dbBindBlob markCopiedStmt 1 ebHash.ebHashBytes
+                  dbStep1Safe markCopiedStmt
           pure False
         GcMark slot resultVar -> do
           publishMaintenance volDb immDb resultVar $
@@ -2130,18 +2154,22 @@ sql_copy_completeness =
 --
 -- TODO(geo2a): should not need to copy missingTxCount and status to immutable,
 -- this is only relevant for the volatile.
+-- @OR IGNORE@: the mark that retires the pin is a separate volatile write, so
+-- a crash in between leaves the EB copied and still pinned, and the copier
+-- repeats the copy on the next start.
 sql_copy_insert_eb :: String
 sql_copy_insert_eb =
-  "INSERT INTO ebs (ebSlot, ebHashBytes, ebBytesSize, missingTxCount, status)\n\
+  "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize, missingTxCount, status)\n\
   \SELECT ebSlot, ebHashBytes, ebBytesSize, -1, 2 FROM vol.ebs\n\
   \WHERE ebHashBytes = ?1\n\
   \ORDER BY ebSlot DESC LIMIT 1\n\
   \"
 
--- | Copy the EB's body rows.
+-- | Copy the EB's body rows. @OR IGNORE@ for the same reason as
+-- 'sql_copy_insert_eb'.
 sql_copy_insert_ebTxs :: String
 sql_copy_insert_ebTxs =
-  "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize)\n\
+  "INSERT OR IGNORE INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize)\n\
   \SELECT ebHashBytes, txOffset, txHashBytes, txBytesSize FROM vol.ebTxs\n\
   \WHERE ebHashBytes = ?1\n\
   \"
@@ -2178,7 +2206,7 @@ sql_imm_filter_present =
 -- next start.
 sql_next_pinned_eb :: String
 sql_next_pinned_eb =
-  "SELECT ebHashBytes FROM vol.ebs WHERE status = 1 ORDER BY ebSlot LIMIT 1"
+  "SELECT ebHashBytes FROM vol.ebs WHERE status = 1 ORDER BY ebSlot LIMIT ?1"
 
 -- | Whether a GC at slot @?1@ could has any work, i.e.
 --   if there are any old volatile EBs or already copied EBs.

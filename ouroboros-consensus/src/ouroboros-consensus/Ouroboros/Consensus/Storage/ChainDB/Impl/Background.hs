@@ -43,7 +43,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
 
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Exception (assert)
-import Control.Monad (forM_, forever, guard, void, when)
+import Control.Monad (forM, forever, guard, void, when)
 import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
@@ -51,6 +51,7 @@ import Control.Tracer
 import qualified Data.Aeson as Aeson
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (catMaybes)
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
@@ -228,33 +229,44 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
     -- manually, which means it might be called when there are no blocks to
     -- copy.
     then trace NoBlocksToCopyToImmutableDB
-    else forM_ toCopy $ \pt -> do
-      let hash = case pointHash pt of
-            BlockHash h -> h
-            -- There is no actual genesis block that can occur on a chain
-            GenesisHash -> error "genesis block on current chain"
-      slotNoAtImmutableDBTip <- atomically $ ImmutableDB.getTipSlot cdbImmutableDB
-      assert (pointSlot pt >= slotNoAtImmutableDBTip) $ return ()
-      -- When the block is corrupt, the function below will throw an
-      -- exception. This exception will make sure that we shut down the node
-      -- and that the next time we start, validation will be enabled.
-      blk <- VolatileDB.getKnownBlockComponent cdbVolatileDB GetVerifiedBlock hash
-      -- We're the only one modifying the ImmutableDB, so the tip cannot
-      -- have changed since we last checked it.
-      ImmutableDB.appendBlock cdbImmutableDB blk
-      -- This block is now immutable. If it is a cert-RB, immutalise the EB it
-      -- /certifies/ -- the one its predecessor announced -- before the later,
-      -- slot-scheduled VolatileDB-side GC can evict its body and closure. By the
-      -- parking invariant a cert-RB is only selected once its certified EB's
-      -- closure is acquired, so an immutalised cert-RB's closure is necessarily
-      -- present (and complete) now. See 'leiosDbPromoteToImmutable'.
-      getBI <- atomically $ VolatileDB.getBlockInfo cdbVolatileDB
-      forM_ (certifiedEb getBI hash) $ leiosDbPromoteToImmutable cdbLeiosDb
-      -- TODO the invariant of 'cdbChain' is shortly violated between
-      -- these two lines: the tip was updated on the line above, but the
-      -- anchor point is only updated on the line below.
-      atomically $ removeFromChain pt
-      trace $ CopiedBlockToImmutableDB pt
+    else do
+      certified <- forM toCopy $ \pt -> do
+        let hash = case pointHash pt of
+              BlockHash h -> h
+              -- There is no actual genesis block that can occur on a chain
+              GenesisHash -> error "genesis block on current chain"
+        slotNoAtImmutableDBTip <- atomically $ ImmutableDB.getTipSlot cdbImmutableDB
+        assert (pointSlot pt >= slotNoAtImmutableDBTip) $ return ()
+        -- When the block is corrupt, the function below will throw an
+        -- exception. This exception will make sure that we shut down the node
+        -- and that the next time we start, validation will be enabled.
+        blk <- VolatileDB.getKnownBlockComponent cdbVolatileDB GetVerifiedBlock hash
+        -- We're the only one modifying the ImmutableDB, so the tip cannot
+        -- have changed since we last checked it.
+        ImmutableDB.appendBlock cdbImmutableDB blk
+        -- If this block is a cert-RB, note the EB it /certifies/ -- the one its
+        -- predecessor announced -- for the batched pin below. By the parking
+        -- invariant a cert-RB is only selected once its certified EB's closure is
+        -- acquired, so an immutalised cert-RB's closure is necessarily present
+        -- (and complete) now.
+        getBI <- atomically $ VolatileDB.getBlockInfo cdbVolatileDB
+        -- TODO the invariant of 'cdbChain' is shortly violated between
+        -- these two lines: the tip was updated on the line above, but the
+        -- anchor point is only updated on the line below.
+        atomically $ removeFromChain pt
+        trace $ CopiedBlockToImmutableDB pt
+        pure $ certifiedEb getBI hash
+      -- Immutalise the certified EBs before returning, and so before the
+      -- slot-scheduled VolatileDB-side GC that 'copyAndTrigger' goes on to
+      -- schedule can evict their bodies and closures.
+      --
+      -- One batched call, not one per cert-RB: this awaits the shared LeiosDb
+      -- writer queue while holding 'cdbImmutableDBLock', so a per-block
+      -- round-trip pins block immutalisation to that queue's drain rate. Under
+      -- catch-up the queue is saturated by EB/tx ingest, the immutable tip then
+      -- falls behind chain selection without bound, and the LedgerDB retains one
+      -- ledger state per un-immutalised block -- multiple GB of heap.
+      leiosDbPromoteToImmutable cdbLeiosDb (catMaybes certified)
 
   -- Get the /possibly/ updated tip of the ImmutableDB
   (,()) <$> atomically (ImmutableDB.getTipSlot cdbImmutableDB)

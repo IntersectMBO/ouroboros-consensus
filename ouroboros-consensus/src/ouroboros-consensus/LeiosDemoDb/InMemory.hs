@@ -123,7 +123,7 @@ newLeiosDBInMemoryWith stateVar = do
       , -- No-op for now; see 'leiosDbGarbageCollect'.
         leiosDbGarbageCollect = \_slotNo -> pure ()
       , -- No-op for now; see 'leiosDbPromoteToImmutable'.
-        leiosDbPromoteToImmutable = \_point -> pure ()
+        leiosDbPromoteToImmutable = \_points -> pure ()
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , openReader = openInMemoryReader stateVar
