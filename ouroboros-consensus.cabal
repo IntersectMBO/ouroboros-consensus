@@ -314,6 +314,12 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+    Ouroboros.Consensus.Storage.LeiosDB
+    Ouroboros.Consensus.Storage.LeiosDB.API
+    Ouroboros.Consensus.Storage.LeiosDB.Exception
+    Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
+    Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
+    Ouroboros.Consensus.Storage.LeiosDB.Trace
     Ouroboros.Consensus.Storage.PerasCertDB
     Ouroboros.Consensus.Storage.PerasCertDB.API
     Ouroboros.Consensus.Storage.PerasCertDB.Impl
@@ -383,9 +389,12 @@ library
     containers >=0.5 && <0.9,
     contra-tracer ^>=0.2.1,
     deepseq,
+    direct-sqlite,
+    directory,
     extra,
     FailT ^>=0.1.2,
     filelock,
+    filepath,
     fs-api ^>=0.4,
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1 || ^>=1.9,
