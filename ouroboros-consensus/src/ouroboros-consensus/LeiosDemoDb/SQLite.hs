@@ -218,8 +218,10 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
     -- killing it is safe at any point.
     killThread samplerId
     -- The copier first: it submits to the writer, so it must be gone
-    -- before the writer stops serving.
-    stopCopier
+    -- before the writer stops serving. It reports whatever ended it, and
+    -- that report must not cost the writer its shutdown.
+    stopCopier `finally` shutdownWriter
+   where
     -- The queue is FIFO, so serving this job flushes everything
     -- submitted before it; awaiting it waits for the connections to
     -- close, and a failed close propagates -- a leaked connection must
@@ -229,9 +231,10 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
     -- worker closes the connections on every exit path before it seals,
     -- and whatever killed it already reached the awaiter of the write
     -- that failed.
-    try (submitJob writeQueue Shutdown) >>= \case
-      Left (_writerGone :: LeiosDbException) -> pure ()
-      Right promise -> await promise
+    shutdownWriter =
+      try (submitJob writeQueue Shutdown) >>= \case
+        Left (_writerGone :: LeiosDbException) -> pure ()
+        Right promise -> await promise
 
   openReader statsVar = do
     volDb <- openVolRawConnection volLeiosDbPath
@@ -600,19 +603,25 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
         dbFinalize nextPinnedStmt
         closeChecked ccDb
 
+      -- Check the stop request on every pass, not only when nothing is left
+      -- to copy. A steady stream of promotions keeps the batch non-empty, so a
+      -- check on the empty batch alone makes 'stopCopier' wait for the copier
+      -- to catch up. This bounds the wait at one batch plus one backoff.
       loop = do
-        -- Clear before looking, so a pin that lands while we look rings
-        -- again instead of being lost.
-        atomically $ writeTVar copyPending False
-        nextPinnedBatch >>= \case
-          batch@(_ : _) -> copyBatch batch >> loop
-          [] -> do
-            stop <- IO.atomically $ do
-              stop <- readTVar stopVar
-              pending <- readTVar copyPending
-              check (stop || pending)
-              pure stop
-            unless stop loop
+        stopping <- readTVarIO stopVar
+        unless stopping $ do
+          -- Clear before looking, so a pin that lands while we look rings
+          -- again instead of being lost.
+          atomically $ writeTVar copyPending False
+          nextPinnedBatch >>= \case
+            batch@(_ : _) -> copyBatch batch >> loop
+            [] -> do
+              stop <- IO.atomically $ do
+                stop <- readTVar stopVar
+                pending <- readTVar copyPending
+                check (stop || pending)
+                pure stop
+              unless stop loop
   worker <- async $ do
     outcome <- try (loop `finally` closeConnection)
     atomically $ putTMVar stoppedVar (outcome :: Either SomeException ())
