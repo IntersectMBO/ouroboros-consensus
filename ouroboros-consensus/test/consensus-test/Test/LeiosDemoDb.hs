@@ -196,6 +196,10 @@ mkTestGroups impl =
           withFreshDb impl test_noReNotifyOnRelatedTxReinsert
       , testCase "same EB hash at multiple slots notifies each completion" $
           withFreshDb impl test_multipleSlotsSameHash
+      , testCase "no re-notification when a known point is re-registered" $
+          withFreshDb impl test_noReNotifyOnPointReinsert
+      , testCase "a point registered while its hash is still incomplete is notified once it completes" $
+          withFreshDb impl test_pointRegisteredWhileHashIncompleteIsNotifiedLater
       ]
   , testGroup
       "lookupEbClosure"
@@ -751,6 +755,79 @@ test_multipleSlotsSameHash db = do
     length completionNotifs @?= 2
  where
   setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
+
+-- | Re-registering a point whose hash is already known complete -- the same
+-- (slot, hash), e.g. a duplicate announcement/arrival of the same EB point
+-- -- must not re-fire 'AcquiredEbTxs'. This guards the notify-on-register
+-- path 'imInsertEbPoint'/'sqlInsertEbPoint' take when a point's hash is
+-- already complete under another point (see 'test_multipleSlotsSameHash'):
+-- that path must be idempotent per point, the same way 'rwInsertTxs' already
+-- is (see 'test_noReNotifyCompletedEbs'). The voting layer treats a
+-- duplicate 'AcquiredEbTxs' as a fatal 'AlreadyKnown' from 'addVote'.
+test_noReNotifyOnPointReinsert :: LeiosDbHandle IO -> IO ()
+test_noReNotifyOnPointReinsert db = do
+  chan <- subscribeEbNotifications db
+  let hashSeed = 1
+      point1 = mkTestPoint (SlotNo 1) hashSeed
+      point2 = mkTestPoint (SlotNo 2) hashSeed
+      eb = mkTestEb 2
+      ebTxList = V.toList (leiosEbTxs eb)
+  withRW db $ \con -> do
+    -- Complete the EB under the first point only.
+    rwInsertEbPoint con point1 (encodeLeiosEbSize eb)
+    void $ rwInsertEbBody con point1 eb
+    _ <- rwInsertTxs con [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
+    _ <- readTChanWithin 1_000_000 chan "AcquiredEb"
+    _ <- readTChanWithin 1_000_000 chan "AcquiredEbTxs"
+    -- Register a second point at the same hash: notified once.
+    rwInsertEbPoint con point2 (encodeLeiosEbSize eb)
+    acquiredTxs <- readTChanWithin 1_000_000 chan "AcquiredEbTxs"
+    assertOfferBlockTxs point2 acquiredTxs
+    -- Re-register the SAME point2 (e.g. a duplicate arrival/announcement):
+    -- must not re-notify.
+    rwInsertEbPoint con point2 (encodeLeiosEbSize eb)
+    maybeNotif <- atomically $ tryReadTChan chan
+    case maybeNotif of
+      Nothing -> pure ()
+      Just _ -> assertFailure "already-notified point should not be re-notified on re-registration"
+
+-- | A point registered while its hash is still incomplete (body written,
+-- but not all txs yet -- 'processLeiosBlock' writes the point before the
+-- body/txs finish, and a second point can arrive in that window since
+-- 'ebStateHasBody' flips as soon as the body is accepted, independently of
+-- its txs) must still be notified once the hash later completes. The
+-- notify-on-register check in 'imInsertEbPoint'/'sqlInsertEbPoint' only
+-- runs once, at registration time; the point must not be forgotten if the
+-- hash wasn't complete yet at that instant.
+test_pointRegisteredWhileHashIncompleteIsNotifiedLater :: LeiosDbHandle IO -> IO ()
+test_pointRegisteredWhileHashIncompleteIsNotifiedLater db = do
+  chan <- subscribeEbNotifications db
+  let hashSeed = 1
+      point1 = mkTestPoint (SlotNo 1) hashSeed
+      point2 = mkTestPoint (SlotNo 2) hashSeed
+      eb = mkTestEb 2
+      ebTxList = V.toList (leiosEbTxs eb)
+  withRW db $ \con -> do
+    -- The body for point1 arrives, but none of its txs have yet.
+    rwInsertEbPoint con point1 (encodeLeiosEbSize eb)
+    void $ rwInsertEbBody con point1 eb
+    _ <- readTChanWithin 1_000_000 chan "AcquiredEb"
+    -- Register point2 (same hash) WHILE the hash is still incomplete.
+    rwInsertEbPoint con point2 (encodeLeiosEbSize eb)
+    noEarlyNotif <- atomically $ tryReadTChan chan
+    case noEarlyNotif of
+      Nothing -> pure ()
+      Just AcquiredEb{} -> assertFailure "must not notify (AcquiredEb) before the hash is complete"
+      Just AcquiredEbTxs{} -> assertFailure "must not notify (AcquiredEbTxs) before the hash is complete"
+    -- Now complete the hash: every referenced tx arrives.
+    _ <- rwInsertTxs con [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
+    -- Both points must eventually be notified: point1 (whose 'writeEbBody'
+    -- triggered the usual completion check) AND point2 (registered earlier,
+    -- while the hash was still incomplete).
+    notifs <- replicateM 2 (readTChanWithin 1_000_000 chan "AcquiredEbTxs")
+    let notifiedPoints = [p | AcquiredEbTxs p <- notifs]
+    Map.fromList [(p, ()) | p <- notifiedPoints]
+      @?= Map.fromList [(p, ()) | p <- [point1, point2]]
 
 -- * Test utilities
 
