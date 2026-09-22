@@ -1150,7 +1150,10 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
     Right True -> pure ()
     Right False -> do
       traceWith wqTracer $ TraceLeiosDbWriterQueueFull (describeJob job)
+      -- Otherwise silent: no exception reaches the write path, and there is
+      -- no continuation yet to carry one.
       join (atomically park)
+        `onException` traceWith wqTracer (TraceLeiosDbWriteAbandoned (describeJob job))
   pure $ Promise (either (throwIO . wrap) pure =<< atomically (readTMVar resultVar))
 
 -- | Name a job for 'LeiosDbWriteException': what it is and what it is about,
@@ -1316,6 +1319,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
         case mJob of
           Just job -> do
             stop <- runJob job
+            traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
             unless stop serve
           Nothing -> do
             quiet <- stepMaintenance

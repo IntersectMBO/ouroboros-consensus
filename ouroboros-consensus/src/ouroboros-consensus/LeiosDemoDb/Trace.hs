@@ -24,6 +24,11 @@ data TraceLeiosDb
     -- the bottleneck and every producer is now behind it. Field: the job
     -- that waited.
     TraceLeiosDbWriterQueueFull String
+  | -- | The submitting thread died waiting for room in the queue, so this
+    -- write is lost and no exception says so. Field: the job.
+    TraceLeiosDbWriteAbandoned String
+  | -- | The only evidence that the writer ran a job at all. Field: the job.
+    TraceLeiosDbWriteJobDone String
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
   | -- | The background copier committed this many EBs' closures to the

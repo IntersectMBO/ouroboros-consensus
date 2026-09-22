@@ -1597,6 +1597,16 @@ jsonLeiosDb = \case
       [ "kind" .= Aeson.String "LeiosDbWriterQueueFull"
       , "job" .= job
       ]
+  TraceLeiosDbWriteAbandoned job ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbWriteAbandoned"
+      , "job" .= job
+      ]
+  TraceLeiosDbWriteJobDone job ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbWriteJobDone"
+      , "job" .= job
+      ]
   TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosDbStats"
@@ -1924,6 +1934,8 @@ data LeiosKernelNS
   | LKNSDbEvicted
   | LKNSDbSweepError
   | LKNSDbCopyError
+  | LKNSDbWriteAbandoned
+  | LKNSDbWriteJobDone
   | LKNSCertifiedAndAnnounced
   | LKNSAnnouncementAccepted
   | LKNSFetchDecision
@@ -1957,6 +1969,8 @@ leiosKernelNSOf = \case
   TraceLeiosDb TraceLeiosDbEvicted{} -> LKNSDbEvicted
   TraceLeiosDb TraceLeiosDbGCError{} -> LKNSDbSweepError
   TraceLeiosDb TraceLeiosDbCopyError{} -> LKNSDbCopyError
+  TraceLeiosDb TraceLeiosDbWriteAbandoned{} -> LKNSDbWriteAbandoned
+  TraceLeiosDb TraceLeiosDbWriteJobDone{} -> LKNSDbWriteJobDone
   TraceLeiosDb{} -> LKNSDb
   TraceLeiosCertifiedAndAnnounced{} -> LKNSCertifiedAndAnnounced
   TraceLeiosAnnouncementAccepted{} -> LKNSAnnouncementAccepted
@@ -2048,6 +2062,13 @@ leiosKernelNSInfo = \case
       ["Db", "CopyError"]
       LSWarning
       [("leiosDbCopyErrors", "LeiosDb: failed copy attempts (the EB stays pinned and is retried)")]
+  -- A lost write that reports itself nowhere else.
+  LKNSDbWriteAbandoned ->
+    LeiosNSInfo
+      ["Db", "WriteAbandoned"]
+      LSWarning
+      [("leiosDbWritesAbandoned", "LeiosDb: writes abandoned before being enqueued")]
+  LKNSDbWriteJobDone -> LeiosNSInfo ["Db", "WriteJobDone"] LSDebug []
   LKNSCertifiedAndAnnounced -> LeiosNSInfo ["CertifiedAndAnnounced"] LSInfo []
   LKNSAnnouncementAccepted -> LeiosNSInfo ["AnnouncementAccepted"] LSInfo []
   LKNSFetchDecision -> LeiosNSInfo ["FetchDecision"] LSInfo []
@@ -2151,6 +2172,8 @@ traceLeiosKernelForHuman = \case
       <> T.pack ebHash
       <> " (the EB stays pinned and will be retried): "
       <> T.pack reason
+  TraceLeiosDb (TraceLeiosDbWriteAbandoned job) ->
+    "Leios DB write abandoned before it was enqueued: " <> T.pack job
   TraceLeiosDb ev -> "Leios DB event: " <> T.pack (show ev)
   TraceLeiosCertifiedAndAnnounced{atSlot, rbHash} ->
     "RB certified an EB and announced a new one at slot "
