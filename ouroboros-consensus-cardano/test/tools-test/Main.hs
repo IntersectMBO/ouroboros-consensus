@@ -6,8 +6,21 @@ import Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
+import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
+import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
+import Cardano.Tools.LeiosDb (LeiosDbSource (..))
+import Data.String (fromString)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Leios.Types (EbHash (..), LeiosPoint (..))
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader (scanEbPoints)
+  , LeiosDbWriter (writeEbPoint)
+  , Promise (await)
+  , newLeiosDBSQLite
+  , withReader
+  , withWriter
+  )
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -73,6 +86,20 @@ testAnalyserConfig =
     , confLimit = Unlimited
     }
 
+-- | The truncater cuts the chain back to this slot. Far enough into the
+-- synthesized chain that a block precedes it, and far enough from its end that
+-- blocks follow it.
+truncateAfter :: SlotNo
+truncateAfter = 4096
+
+testTruncaterConfig :: DBTruncater.DBTruncaterConfig
+testTruncaterConfig =
+  DBTruncater.DBTruncaterConfig
+    { DBTruncater.dbDir = chainDB
+    , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
+    , DBTruncater.verbose = False
+    }
+
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
 testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 
@@ -81,7 +108,9 @@ testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 -- 1. step: synthesize a ChainDB from scratch and count the amount of blocks forged.
 -- 2. step: append to the previous ChainDB and coutn the amount of blocks forged.
 -- 3. step: copy the VolatileDB into the ImmutableDB.
--- 3. step: analyze the ImmutableDB resulting from previous steps and confirm the total block count.
+-- 4. step: analyze the ImmutableDB resulting from previous steps and confirm the total block count.
+-- 5. step: write a LeiosDb next to the chain, truncate both, and confirm the LeiosDb kept
+--    only the EB announced below the cut and the chain shrank.
 
 --
 blockCountTest :: (String -> IO ()) -> Assertion
@@ -117,14 +146,47 @@ blockCountTest logStep = do
       ++ "; expected: "
       ++ show blockCount
       ++ ")"
+
+  logStep "writing a LeiosDb next to the chain"
+  -- DBSynthesizer writes no leios.vol.db and leios.imm.db, so the test writes
+  -- them. The kept EB is announced below the truncation slot, and the dropped
+  -- one above every block the synthesis forged.
+  leiosDb <- newLeiosDBSQLite mempty (chainDB <> "/leios.vol.db") (chainDB <> "/leios.imm.db")
+  let keptEb = MkLeiosPoint 0 (mkEbHash '1')
+      droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
+  withWriter leiosDb $ \con ->
+    mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
+
+  logStep "running truncation"
+  DBTruncater.truncate testTruncaterConfig testBlockArgs
+
+  ebPoints <- withReader leiosDb scanEbPoints
+  ebPoints == [(0, pointEbHash keptEb)]
+    @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
+
+  logStep "running analysis after truncation"
+  resultTruncated <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
+  -- The leader schedule picks the slots, so the surviving count is not known
+  -- here. Check only that the chain shrank and is not empty.
+  case resultTruncated of
+    Just (ResultCountBlock countAfter) ->
+      (countAfter > 0 && countAfter < blockCount)
+        @? "truncation left "
+          ++ show countAfter
+          ++ " of "
+          ++ show blockCount
+          ++ " blocks"
+    _ -> assertFailure $ "analysis after truncation returned " ++ show resultTruncated
  where
   genTxs _ _ _ _ = pure []
+
+  mkEbHash c = MkEbHash (fromString (replicate 32 c))
 
 tests :: TestTree
 tests =
   testGroup
     "cardano-tools"
-    [ testCaseSteps "synthesize and analyse: blockCount\n" blockCountTest
+    [ testCaseSteps "synthesize, analyse and truncate\n" blockCountTest
     , Test.Cardano.Tools.Headers.tests
     ]
 
