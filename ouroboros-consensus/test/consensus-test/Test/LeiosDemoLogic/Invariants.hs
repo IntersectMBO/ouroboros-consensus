@@ -43,7 +43,7 @@ import Control.Monad.Class.MonadAsync (concurrently_)
 import Control.Monad.Class.MonadTest (exploreRaces)
 import Control.Monad.Class.MonadThrow (SomeException, try)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
-import Control.Tracer (nullTracer)
+import Control.Tracer (Tracer, nullTracer)
 import qualified Data.ByteString as BS
 import Data.Foldable (toList)
 import qualified Data.IntMap.Strict as IntMap
@@ -104,6 +104,7 @@ import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestEnv (adjustQuickCheckTests)
+import Test.Util.Tracer (recordingTracerTVar)
 
 tests :: TestTree
 tests =
@@ -168,6 +169,20 @@ tests =
                 runCmdsAndScanEbPoints cmds
                   @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
                 runCmdsAndCollectAcquiredTxPoints cmds
+                  @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
+          , testCase
+              "a second point sharing an already-held EbHash still traces TraceLeiosBlockTxsAcquired (EB-hash collision, kernel-trace gap)"
+              $ do
+                -- Even once a point is registered and internally notified (the
+                -- tests above), 'processLeiosBlock' only traces
+                -- 'TraceLeiosBlockTxsAcquired' when the arriving body is
+                -- genuinely novel ('shouldPersist') -- which a colliding
+                -- second point never is, since its hash is already held.
+                -- "Test.ThreadNet.Leios" scans exactly this trace to judge an
+                -- EB's diffusion complete, so this point never counts as
+                -- acquired there even though it gets voted on and certified.
+                let cmds = [Forge [0, 1] 5, ArriveBody [0, 1] 8]
+                runCmdsAndCollectAcquiredTxTraces cmds
                   @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
           ]
       , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
@@ -448,14 +463,14 @@ runCmds = (() <$) . runCmdsReFetchViolations
 runCmdsReFetchViolations :: [Cmd] -> Either String [EbHash]
 runCmdsReFetchViolations cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
-  runCmdsReFetchViolationsWithDb dbHandle cmds
+  runCmdsReFetchViolationsWithDb nullTracer dbHandle cmds
 
 -- | Like 'runCmds', but on success also return every @(slot, hash)@ point
 -- registered in the LeiosDb by the end of the sequence.
 runCmdsAndScanEbPoints :: [Cmd] -> Either String [(SlotNo, EbHash)]
 runCmdsAndScanEbPoints cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
-  result <- runCmdsReFetchViolationsWithDb dbHandle cmds
+  result <- runCmdsReFetchViolationsWithDb nullTracer dbHandle cmds
   case result of
     Left msg -> pure (Left msg)
     Right _violations -> Right <$> withReader dbHandle LeiosDb.scanEbPoints
@@ -464,13 +479,16 @@ runCmdsAndScanEbPoints cmds = runSimOrThrow $ do
 -- 'LeiosDb.LeiosDbHandle' (the writer inside it is already closed on
 -- return, flushing anything still in flight, so a caller can read the DB
 -- back afterwards, e.g. via 'withReader') -- so a caller can also
--- 'LeiosDb.subscribeEbNotifications' on it before any command runs.
+-- 'LeiosDb.subscribeEbNotifications' on it before any command runs. Also
+-- takes the 'TraceLeiosKernel' tracer, so a caller can observe what
+-- 'ArriveBody'/'Forge' trace (e.g. via 'recordingTracerTVar').
 runCmdsReFetchViolationsWithDb ::
   forall s.
+  Tracer (IOSim s) Leios.TraceLeiosKernel ->
   LeiosDb.LeiosDbHandle (IOSim s) ->
   [Cmd] ->
   IOSim s (Either String [EbHash])
-runCmdsReFetchViolationsWithDb dbHandle cs0 = withWriter dbHandle $ \conn -> do
+runCmdsReFetchViolationsWithDb ktracer dbHandle cs0 = withWriter dbHandle $ \conn -> do
   outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
   readyVar <- newEmptyMVar
   peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
@@ -480,7 +498,7 @@ runCmdsReFetchViolationsWithDb dbHandle cs0 = withWriter dbHandle $ \conn -> do
       loop acc [] = pure (Right acc)
       loop acc (c : cs) = do
         r <-
-          try (applyCmd conn txCache kv peerVars peerId c) ::
+          try (applyCmd ktracer conn txCache kv peerVars peerId c) ::
             IOSim s (Either SomeException [EbHash])
         case r of
           Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
@@ -502,7 +520,7 @@ runCmdsAndCollectAcquiredTxPoints :: [Cmd] -> Either String [LeiosPoint]
 runCmdsAndCollectAcquiredTxPoints cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
   chan <- LeiosDb.subscribeEbNotifications dbHandle
-  result <- runCmdsReFetchViolationsWithDb dbHandle cmds
+  result <- runCmdsReFetchViolationsWithDb nullTracer dbHandle cmds
   case result of
     Left msg -> pure (Left msg)
     Right _violations -> do
@@ -514,11 +532,32 @@ runCmdsAndCollectAcquiredTxPoints cmds = runSimOrThrow $ do
       Nothing -> pure []
       Just n -> (n :) <$> drainChan chan
 
+-- | Like 'runCmds', but on success also return every point for which a
+-- 'Leios.TraceLeiosBlockTxsAcquired' /kernel trace/ fired -- the trace
+-- "Test.ThreadNet.Leios" scans to decide whether an EB's diffusion is
+-- complete. Unlike 'runCmdsAndCollectAcquiredTxPoints' (the LeiosDb's own
+-- internal notification, which is what 'runLeiosVoting' needs to schedule a
+-- vote), this trace is only ever emitted from inside
+-- 'processLeiosBlock'/'processLeiosBlockTxs', gated on the arriving body
+-- being genuinely novel -- so a point can be registered, notified, voted on
+-- and even certified, yet still never appear here.
+runCmdsAndCollectAcquiredTxTraces :: [Cmd] -> Either String [LeiosPoint]
+runCmdsAndCollectAcquiredTxTraces cmds = runSimOrThrow $ do
+  dbHandle <- LeiosDb.newLeiosDBInMemory
+  (ktracer, getTraces) <- recordingTracerTVar
+  result <- runCmdsReFetchViolationsWithDb ktracer dbHandle cmds
+  case result of
+    Left msg -> pure (Left msg)
+    Right _violations -> do
+      traces <- getTraces
+      pure $ Right [p | Leios.TraceLeiosBlockTxsAcquired p _age <- traces]
+
 -- | Apply a command, returning any EB bodies it requested that are already held
 -- (per 'ebStateHasBody') — the re-fetch-storm violation. Empty for everything
 -- but a misbehaving 'Decide'.
 applyCmd ::
   forall s.
+  Tracer (IOSim s) Leios.TraceLeiosKernel ->
   LeiosDb.LeiosDbWriter (IOSim s) ->
   LeiosTxCache (IOSim s) () () Leios.SerializedEbBody ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
@@ -526,7 +565,7 @@ applyCmd ::
   PeerId Int ->
   Cmd ->
   IOSim s [EbHash]
-applyCmd conn txCache kv peerVars peerId = \case
+applyCmd ktracer conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
@@ -544,7 +583,7 @@ applyCmd conn txCache kv peerVars peerId = \case
     let eb = ebOf ids
         req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
     processLeiosBlock
-      nullTracer
+      ktracer
       nullTracer
       kv
       txCache
@@ -573,7 +612,7 @@ applyCmd conn txCache kv peerVars peerId = \case
     -- silently.
     modifyMVar_ (fst kv) (pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo)
     processLeiosBlock
-      nullTracer
+      ktracer
       nullTracer
       kv
       txCache
@@ -583,7 +622,7 @@ applyCmd conn txCache kv peerVars peerId = \case
       (ForgedBlock point)
       eb
     processLeiosBlockTxs
-      nullTracer
+      ktracer
       nullTracer
       kv
       txCache
