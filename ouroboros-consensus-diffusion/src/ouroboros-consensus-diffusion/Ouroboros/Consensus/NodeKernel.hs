@@ -10,6 +10,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.NodeKernel
@@ -79,6 +80,7 @@ import LeiosUtils.CallTrace
   , callTraceSameThread
   , rootCallCtx
   )
+import qualified LeiosValidClaims
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import LeiosVoting (HasLeiosVoting (..), runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -519,10 +521,22 @@ initNodeKernel
                   CurrentSlot s -> Just s
                   CurrentSlotUnknown -> Nothing
             let bigLedgerPeers = Map.map Leios.whetherBigLedgerPeer stillLivePeers
+            -- TEMPORARY, and stricter than the Recovery Path will be: fetch an
+            -- endorser block only once some block we hold that announces it is
+            -- a verified claim. That is too strong --- it ignores offers we
+            -- could act on, in particular anything heralded only by LeiosNotify
+            -- --- but it is the shape the Recovery Path needs (a claim is what
+            -- licenses fetching a second endorser block for one election), and
+            -- it keeps the gate exercised until the real rule replaces it.
+            mayFetch <- atomically $ do
+              claims <- forgetFingerprint <$> ChainDB.getLeiosValidClaims chainDB
+              pure $ \point ->
+                LeiosValidClaims.isCertifiedEb (Leios.pointEbHash point) claims
             let (!outstanding', requests, offerDrops) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
                     mbCurrentSlot
+                    mayFetch
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
                     bigLedgerPeers
                     outstanding
@@ -616,6 +630,19 @@ initNodeKernel
                 forM_ peersVars $ \vars ->
                   MVar.modifyMVar_ (Leios.offerings vars) $
                     pure . Map.dropWhileAntitone ((< immTipSlot) . Leios.pointSlotNo)
+          }
+
+    -- An offer whose announcement is not yet certified is skipped rather than
+    -- dropped (see the gate passed to 'Leios.leiosFetchLogicIteration'), so the
+    -- claim can arrive after the offer did. Nothing else would wake the fetch
+    -- logic in that order, hence this watcher.
+    void $
+      forkLinkedWatcher registry "NodeKernel.leiosValidClaimsWake" $
+        Watcher
+          { wFingerprint = getFingerprint
+          , wInitial = Nothing
+          , wReader = ChainDB.getLeiosValidClaims chainDB
+          , wNotify = \_claims -> void $ MVar.tryPutMVar getLeiosReady ()
           }
 
     return

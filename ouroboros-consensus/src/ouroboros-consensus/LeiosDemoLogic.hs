@@ -355,6 +355,11 @@ leiosFetchLogicIteration ::
   -- | The current slot, or 'Nothing' when it is not yet known (i.e. we are
   -- syncing), in which case we fetch freshest-last instead of freshest-first.
   Maybe SlotNo ->
+  -- | Whether we may fetch this endorser block at all. An offer that fails
+  -- this is skipped rather than dropped, so it is reconsidered once the
+  -- predicate admits it; see 'Ouroboros.Consensus.NodeKernel', which passes
+  -- the certified-announcement gate.
+  (LeiosPoint -> Bool) ->
   Map (PeerId pid) (Map LeiosPoint AlsoOfferedTxsClosure) ->
   -- | Which peers are big-ledger peers (a peer absent from this map is treated as
   -- 'IsNotBigLedgerPeer').
@@ -365,7 +370,7 @@ leiosFetchLogicIteration ::
   , Map (PeerId pid) (NESeq LeiosFetchRequest)
   , Map (PeerId pid) (NESet.NESet LeiosPoint)
   )
-leiosFetchLogicIteration env mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
+leiosFetchLogicIteration env mbCurrentSlot mayFetch offerings bigLedgerPeers = \acc0 ->
   -- One pass per peer. Bodies and tx-closure jobs compete on equal footing,
   -- ranked by each EB's slot in 'ebState' (its greatest announcement slot), so
   -- the freshest EBs are fetched first regardless of which half they still need.
@@ -374,7 +379,8 @@ leiosFetchLogicIteration env mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
   Map.foldlWithKey'
     ( \(acc, reqs, drops) peerId offers ->
         let isBig = Map.findWithDefault IsNotBigLedgerPeer peerId bigLedgerPeers
-            (acc', peerReqs, peerDrops) = assignPeer env mbCurrentSlot isBig peerId offers acc
+            (acc', peerReqs, peerDrops) =
+              assignPeer env mbCurrentSlot mayFetch isBig peerId offers acc
          in ( acc'
             , case NESeq.nonEmptySeq peerReqs of
                 Nothing -> reqs
@@ -448,18 +454,23 @@ assignPeer ::
   Ord pid =>
   LeiosFetchStaticEnv ->
   Maybe SlotNo ->
+  (LeiosPoint -> Bool) ->
   IsBigLedgerPeer ->
   PeerId pid ->
   Map LeiosPoint AlsoOfferedTxsClosure ->
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest, Set LeiosPoint)
-assignPeer env mbCurrentSlot isBig peerId offers acc =
+assignPeer env mbCurrentSlot mayFetch isBig peerId offers acc =
   -- Walk the high-priority tier, then the low, threading the accumulator; the
   -- second walk immediately short-circuits if the first already saturated the
   -- peer.
   go (go (acc, Seq.empty, Set.empty) highTier) lowTier
  where
-  (highTier, lowTier) = fetchPriorityTiers mbCurrentSlot (Leios.fetchPriorityWindowSlots env) offers
+  (highTier, lowTier) =
+    fetchPriorityTiers
+      mbCurrentSlot
+      (Leios.fetchPriorityWindowSlots env)
+      (Map.filterWithKey (\point _ -> mayFetch point) offers)
 
   go st@(acc', _dec, _drops) = \case
     [] -> st

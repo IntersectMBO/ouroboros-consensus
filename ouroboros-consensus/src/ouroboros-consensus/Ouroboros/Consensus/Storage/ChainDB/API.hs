@@ -88,6 +88,7 @@ import Control.Monad (void)
 import Control.ResourceRegistry
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
+import LeiosValidClaims (ValidClaims)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.HeaderStateHistory
@@ -502,6 +503,16 @@ data ChainDB m blk = ChainDB
   --
   -- Returns 'Nothing' if the block does not contain a Peras certificate, or
   -- if the block is from an era that does not support Peras certificates.
+  , getLeiosValidClaims :: STM m (WithFingerprint ValidClaims)
+  -- ^ The Leios claims ChainSel has verified: the announcing blocks whose
+  -- endorser block some CertRB has been seen to certify.
+  --
+  -- The fingerprint changes when a claim is added, but not when claims are
+  -- pruned, exactly as for 'getIsInvalidBlock'.
+  --
+  -- The Leios fetch logic reads this to decide which offered endorser blocks
+  -- it may fetch, and watches it to notice a claim arriving after the offer
+  -- did.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --

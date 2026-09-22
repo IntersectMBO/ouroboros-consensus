@@ -18,6 +18,7 @@ module LeiosValidClaims
   , emptyValidClaims
   , insertValidClaim
   , memberValidClaim
+  , isCertifiedEb
   , pruneValidClaims
   , sizeValidClaims
 
@@ -31,11 +32,15 @@ import Cardano.Slotting.Slot (SlotNo)
 import qualified Data.Foldable
 import qualified Data.Map.Strict as Map
 import qualified Data.Map.Strict as Strict (Map)
+import Data.Maybe.Strict (StrictMaybe (..))
+import Data.MultiSet (MultiSet)
+import qualified Data.MultiSet as MultiSet
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import GHC.Generics (Generic)
 import LeiosDemoTypes
-  ( LeiosCert
+  ( EbHash
+  , LeiosCert
   , LeiosCommittee
   , LeiosForecastRejection
     ( LeiosForecastAfterGenesis
@@ -49,15 +54,29 @@ import LeiosDemoTypes
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block (RealPoint (..), StandardHash)
 
--- | Claims known to be certified, indexed both by claim and by the slot of the
--- announcing block, the latter so that pruning is a range operation.
+-- | What a claim records: the slot of the announcing block, and the endorser
+-- block it announced.
 --
--- INVARIANT: the halves agree --- @slotOfClaim ! r == s@ iff @r@ occurs in
--- @claimsBySlot ! s@.
+-- The endorser block is 'SNothing' when we could not name it --- the announcing
+-- block is no longer in the VolatileDB, or announced nothing at all. Such a
+-- claim still dedups certificate checks; it just cannot license fetching an
+-- endorser block, which costs a fetch we could have made.
+data Claim = MkClaim !SlotNo !(StrictMaybe EbHash)
+  deriving stock (Eq, Show, Generic)
+
+-- | Claims known to be certified, indexed by claim, by the slot of the
+-- announcing block (so that pruning is a range operation), and by the endorser
+-- block announced (so that the fetch logic can ask whether an endorser block's
+-- announcement is certified).
+--
+-- INVARIANT: the three agree --- @slotOfClaim ! r == MkClaim s e@ iff @r@
+-- occurs in @claimsBySlot ! s@, and (when @e@ is @SJust@) @certifiedEbs@ has
+-- one occurrence of @e@ per such @r@.
 data ValidClaims
   = MkValidClaims
-  { slotOfClaim :: !(Strict.Map RbHash SlotNo)
+  { slotOfClaim :: !(Strict.Map RbHash Claim)
   , claimsBySlot :: !(Strict.Map SlotNo (NESet RbHash))
+  , certifiedEbs :: !(MultiSet EbHash)
   }
   deriving stock (Show, Generic)
 
@@ -67,22 +86,31 @@ deriving via
     NoThunks ValidClaims
 
 emptyValidClaims :: ValidClaims
-emptyValidClaims = MkValidClaims Map.empty Map.empty
+emptyValidClaims = MkValidClaims Map.empty Map.empty MultiSet.empty
 
 -- | Record that this claim is certified, as of the slot of the block that
--- announced the EB.
-insertValidClaim :: SlotNo -> RbHash -> ValidClaims -> ValidClaims
-insertValidClaim slot rbHash vc
+-- announced the EB, and which endorser block that was.
+insertValidClaim ::
+  SlotNo -> StrictMaybe EbHash -> RbHash -> ValidClaims -> ValidClaims
+insertValidClaim slot mbEbHash rbHash vc
   | Map.member rbHash (slotOfClaim vc) = vc
   | otherwise =
       MkValidClaims
-        { slotOfClaim = Map.insert rbHash slot (slotOfClaim vc)
+        { slotOfClaim =
+            Map.insert rbHash (MkClaim slot mbEbHash) (slotOfClaim vc)
         , claimsBySlot =
             Map.insertWith (<>) slot (NESet.singleton rbHash) (claimsBySlot vc)
+        , certifiedEbs = case mbEbHash of
+            SNothing -> certifiedEbs vc
+            SJust ebHash -> MultiSet.insert ebHash (certifiedEbs vc)
         }
 
 memberValidClaim :: RbHash -> ValidClaims -> Bool
 memberValidClaim rbHash = Map.member rbHash . slotOfClaim
+
+-- | Whether some certified claim announced this endorser block.
+isCertifiedEb :: EbHash -> ValidClaims -> Bool
+isCertifiedEb ebHash = MultiSet.member ebHash . certifiedEbs
 
 -- | Forget every claim announced strictly before the given slot.
 --
@@ -93,13 +121,25 @@ memberValidClaim rbHash = Map.member rbHash . slotOfClaim
 pruneValidClaims :: SlotNo -> ValidClaims -> ValidClaims
 pruneValidClaims immTipSlot vc =
   MkValidClaims
-    { slotOfClaim = Data.Foldable.foldl' dropSlot (slotOfClaim vc) pruned
+    { slotOfClaim = slotOfClaim'
     , claimsBySlot = claimsBySlot'
+    , certifiedEbs =
+        Data.Foldable.foldl' dropEb (certifiedEbs vc) droppedClaims
     }
  where
   (pruned, claimsBySlot') = Map.spanAntitone (< immTipSlot) (claimsBySlot vc)
 
-  dropSlot fwd rs = Data.Foldable.foldl' (flip Map.delete) fwd rs
+  droppedRbHashes = Data.Foldable.foldMap Data.Foldable.toList pruned
+
+  droppedClaims =
+    [claim | r <- droppedRbHashes, Just claim <- [Map.lookup r (slotOfClaim vc)]]
+
+  slotOfClaim' =
+    Data.Foldable.foldl' (flip Map.delete) (slotOfClaim vc) droppedRbHashes
+
+  dropEb ebs (MkClaim _slot mbEbHash) = case mbEbHash of
+    SNothing -> ebs
+    SJust ebHash -> MultiSet.delete ebHash ebs
 
 sizeValidClaims :: ValidClaims -> Int
 sizeValidClaims = Map.size . slotOfClaim
