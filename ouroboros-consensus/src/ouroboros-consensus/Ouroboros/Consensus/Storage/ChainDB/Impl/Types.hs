@@ -473,6 +473,10 @@ data Internal m blk = Internal
   -- thread.
   , intKillBgThreads :: StrictTVar m (m ())
   -- ^ A handle to kill the background threads.
+  , intLeiosValidClaims :: STM m ValidClaims
+  -- ^ Merely reads 'cdbLeiosValidClaims'; /so far/, tests are the only code
+  -- /outside/ of the ChainDB that needs to do that (recall that ChainSel is
+  -- inside the ChainDB).
   }
 
 {-------------------------------------------------------------------------------

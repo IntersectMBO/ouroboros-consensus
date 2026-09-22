@@ -6,7 +6,7 @@
 
 -- | Tests for 'LeiosValidClaims': the claim cache and the verdict ChainSel
 -- reaches about a CertRB's certificate.
-module Test.LeiosValidClaims (tests) where
+module Test.LeiosValidClaims (mkCert, tests, wholeCommittee) where
 
 import Cardano.Crypto.DSIGN (signDSIGN)
 import qualified Data.Map.Strict as Map
