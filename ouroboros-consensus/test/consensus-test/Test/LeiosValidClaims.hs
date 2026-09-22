@@ -10,6 +10,7 @@ module Test.LeiosValidClaims (mkCert, tests, wholeCommittee) where
 
 import Cardano.Crypto.DSIGN (signDSIGN)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Ratio ((%))
 import LeiosDemoTypes
   ( LeiosCert
@@ -94,7 +95,7 @@ shrinkOps = shrinkList shrinkOp
 applyOp :: (ValidClaims, Model) -> Op -> (ValidClaims, Model)
 applyOp (vc, m) = \case
   Insert slot rbHash ->
-    ( insertValidClaim slot rbHash vc
+    ( insertValidClaim slot SNothing rbHash vc
     , Map.insertWith (\_new old -> old) rbHash slot m
     )
   Prune slot ->
@@ -121,8 +122,8 @@ prop_insertIdempotent =
   forAll genRbHash $ \rbHash ->
     forAll (choose (0, 20)) $ \s0 ->
       forAll (choose (0, 20)) $ \s1 ->
-        let vc1 = insertValidClaim (SlotNo s0) rbHash emptyValidClaims
-            vc2 = insertValidClaim (SlotNo s1) rbHash vc1
+        let vc1 = insertValidClaim (SlotNo s0) SNothing rbHash emptyValidClaims
+            vc2 = insertValidClaim (SlotNo s1) SNothing rbHash vc1
          in conjoin
               [ counterexample "size" $ sizeValidClaims vc2 === 1
               , -- The first slot decides, so pruning at it keeps the claim
@@ -138,7 +139,7 @@ prop_pruneIsStrict :: Property
 prop_pruneIsStrict =
   forAll genRbHash $ \rbHash ->
     forAll (choose (1, 20)) $ \s ->
-      let vc = insertValidClaim (SlotNo s) rbHash emptyValidClaims
+      let vc = insertValidClaim (SlotNo s) SNothing rbHash emptyValidClaims
        in conjoin
             [ counterexample "at the tip: kept" $
                 memberValidClaim rbHash (pruneValidClaims (SlotNo s) vc)
@@ -186,7 +187,7 @@ prop_knownShortCircuits =
     forAll genRbHash $ \rbHash ->
       forAll genRbHash $ \otherHash ->
         rbHash /= otherHash ==>
-          let vc = insertValidClaim (SlotNo 7) rbHash emptyValidClaims
+          let vc = insertValidClaim (SlotNo 7) SNothing rbHash emptyValidClaims
               -- Signed over the wrong claim, so it would not verify.
               badCert = mkCert tc otherHash
            in decideClaim

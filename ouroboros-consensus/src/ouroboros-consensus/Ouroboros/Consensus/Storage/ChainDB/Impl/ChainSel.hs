@@ -751,16 +751,32 @@ precheckLeiosCert ::
 precheckLeiosCert CDB{..} predecessor b = case blockLeiosCert b of
   Nothing -> pure $ Right ()
   Just cert -> do
-    claims <- atomically $ readTVar cdbLeiosValidClaims
+    claims <- atomically $ forgetFingerprint <$> readTVar cdbLeiosValidClaims
     case LeiosValidClaims.decideClaim claims (announcingOf b) cert of
       LeiosValidClaims.ClaimAlreadyEstablished -> pure $ Right ()
       LeiosValidClaims.ClaimRejected why -> do
         pure $ Left $ LeiosCertificateForecastRejected cert (predecessorSlot predecessor) why
       LeiosValidClaims.ClaimEstablished announcingPoint rbHash -> do
+        -- Which endorser block the announcing block announced, so that the
+        -- Leios fetch logic can tell that this endorser block's announcement
+        -- is certified. 'SNothing' if we no longer hold the announcing block.
+        mbEbHash <- atomically $ do
+          lookupBlockInfo <- VolatileDB.getBlockInfo cdbVolatileDB
+          pure $ case lookupBlockInfo (realPointHash announcingPoint) of
+            Nothing -> SNothing
+            Just bi -> VolatileDB.biLeiosAnnouncedEb bi
         size <- atomically $ do
-          modifyTVar cdbLeiosValidClaims $
-            LeiosValidClaims.insertValidClaim (realPointSlot announcingPoint) rbHash
-          LeiosValidClaims.sizeValidClaims <$> readTVar cdbLeiosValidClaims
+          modifyTVar cdbLeiosValidClaims $ \(WithFingerprint claims' fp) ->
+            WithFingerprint
+              ( LeiosValidClaims.insertValidClaim
+                  (realPointSlot announcingPoint)
+                  (LeiosDemoTypes.pointEbHash <$> mbEbHash)
+                  rbHash
+                  claims'
+              )
+              (succ fp)
+          LeiosValidClaims.sizeValidClaims . forgetFingerprint
+            <$> readTVar cdbLeiosValidClaims
         traceWith (TraceAddBlockEvent >$< cdbTracer) $
           AddBlockLeiosEvent $
             TraceLeiosValidClaim (blockRealPoint b) announcingPoint size

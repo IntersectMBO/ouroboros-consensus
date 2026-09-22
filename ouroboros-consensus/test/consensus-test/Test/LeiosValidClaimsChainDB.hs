@@ -27,8 +27,7 @@ import qualified Data.IntMap.Strict as IntMap
 import Data.Maybe (isJust)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes
-  ( EbHash
-  , LeiosPoint (..)
+  ( LeiosPoint (..)
   , RbHash (MkRbHash)
   )
 import LeiosValidClaims (memberValidClaim, sizeValidClaims)
@@ -205,12 +204,14 @@ addAtGenesis :: Node (IOSim s) -> Blk -> IOSim s ()
 addAtGenesis node = addBlockWith node NoPredecessor
 
 claimCount :: Node (IOSim s) -> IOSim s Int
-claimCount Node{nInternal} =
-  sizeValidClaims <$> atomically (ChainDBImpl.intLeiosValidClaims nInternal)
+claimCount Node{nChainDB} =
+  sizeValidClaims . forgetFingerprint
+    <$> atomically (ChainDB.getLeiosValidClaims nChainDB)
 
 claimEstablished :: Node (IOSim s) -> RbHash -> IOSim s Bool
-claimEstablished Node{nInternal} rbHash =
-  memberValidClaim rbHash <$> atomically (ChainDBImpl.intLeiosValidClaims nInternal)
+claimEstablished Node{nChainDB} rbHash =
+  memberValidClaim rbHash . forgetFingerprint
+    <$> atomically (ChainDB.getLeiosValidClaims nChainDB)
 
 -- | Whether ChainSel has rejected this block.
 isInvalid :: Node (IOSim s) -> Blk -> IOSim s Bool

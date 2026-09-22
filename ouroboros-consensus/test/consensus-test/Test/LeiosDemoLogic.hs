@@ -300,7 +300,14 @@ runIteration sc =
   let (_out, reqs, _drops) =
         -- No big-ledger peers in these scenarios (the aggressive-fetch path is
         -- exercised in "Test.LeiosDemoLogic.Invariants").
-        leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings Map.empty sc.scOutstanding
+        leiosFetchLogicIteration
+          sc.scEnv
+          (Just minBound)
+          -- These scenarios are about the ranking, so nothing is gated out.
+          (const True)
+          sc.scOfferings
+          Map.empty
+          sc.scOutstanding
    in reqs
 
 ------------------------------------------------------------

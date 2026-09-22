@@ -1429,6 +1429,9 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Leios.Environment
+    Test.Consensus.Leios.NodeUnderTest
+    Test.Consensus.Leios.RecoveryPath
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.Node
     Test.Consensus.PeerSimulator.BlockFetch
@@ -1467,10 +1470,12 @@ test-suite consensus-diffusion-test
     bytestring,
     cardano-binary,
     cardano-crypto-class:cardano-crypto-class,
-    cardano-diffusion:api,
+    cardano-crypto-leios:testlib,
+    cardano-diffusion:{api, cardano-diffusion},
     cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
+    cborg,
     containers,
     contra-tracer,
     directory,
@@ -1484,7 +1489,7 @@ test-suite consensus-diffusion-test
     mtl,
     nothunks,
     ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
-    ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
+    ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols, protocols-tests-lib},
     pretty,
     quickcheck-dynamic ^>=4,
     quiet,
