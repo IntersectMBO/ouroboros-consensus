@@ -46,7 +46,7 @@ import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.LedgerState (NewEpochState, esSnapshotsL, nesEsL)
-import Cardano.Ledger.State (ssStakeGoL, ssStakeMarkL, ssStakeSetL)
+import Cardano.Ledger.State (mkGoSnapShot, mkSetSnapShot, ssStakeGoL, ssStakeMarkL, ssStakeSetL)
 import Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Codec.CBOR.Decoding as CBOR
@@ -382,12 +382,19 @@ seedInitialStakeSnapshots ::
   NewEpochState era ->
   NewEpochState era
 seedInitialStakeSnapshots trigger nes = case trigger of
-  TriggerHardForkAtEpoch (EpochNo 0) -> nes & setSnap ssStakeSetL & setSnap ssStakeGoL
-  TriggerHardForkAtEpoch (EpochNo 1) -> nes & setSnap ssStakeSetL
+  TriggerHardForkAtEpoch (EpochNo 0) ->
+    nes
+      & (nesEsL . esSnapshotsL . ssStakeSetL) .~ newSet
+      & (nesEsL . esSnapshotsL . ssStakeGoL) .~ mkGoSnapShot newSet
+  TriggerHardForkAtEpoch (EpochNo 1) ->
+    nes & (nesEsL . esSnapshotsL . ssStakeSetL) .~ newSet
   _ -> nes
  where
   mark = nes ^. nesEsL . esSnapshotsL . ssStakeMarkL
-  setSnap l = (nesEsL . esSnapshotsL . l) .~ mark
+  -- Max key age for the Leios committee only matters from the Dijkstra era
+  -- onwards; earlier eras' own Snap rules pass the same 'EpochInterval 0'
+  -- placeholder here (see e.g. Cardano.Ledger.Shelley.Rules.Snap).
+  newSet = mkSetSnapShot mark (SL.EpochInterval 0)
 
 newtype CardanoHardForkTriggers = CardanoHardForkTriggers
   { getCardanoHardForkTriggers ::
