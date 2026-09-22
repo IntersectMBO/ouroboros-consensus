@@ -95,6 +95,7 @@ tests =
         , Test.LeiosTxCache.Optimized.tests
         , Test.LeiosTxCache.Optimized.MutableHashTable.tests
         , Test.LeiosTxCache.Reference.tests
+        , Test.LeiosValidClaims.tests
         , Test.LeiosVoteState.tests
         , Test.LeiosVoting.tests
         , Test.LeiosUtils.CallTrace.tests
