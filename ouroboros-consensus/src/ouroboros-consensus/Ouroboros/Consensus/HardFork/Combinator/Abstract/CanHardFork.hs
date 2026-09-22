@@ -2,6 +2,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -74,6 +76,11 @@ class
   , NoThunks (HardForkTxMeasurePhase2 xs)
   , Show (HardForkTxMeasurePhase2 xs)
   , TxMeasurePhase2Metrics (HardForkTxMeasurePhase2 xs)
+  , -- \* Endorser block
+    Measure (HardForkTxEbMeasure xs)
+  , NoThunks (HardForkTxEbMeasure xs)
+  , Eq (HardForkTxEbMeasure xs)
+  , Show (HardForkTxEbMeasure xs)
   ) =>
   CanHardFork xs
   where
@@ -86,6 +93,11 @@ class
 
   type HardForkTxMeasurePhase2 xs
 
+  -- | A measure that can accurately represent the 'TxEbMeasure' of any era.
+  --
+  -- Trivial for eras without Leios endorser blocks; see 'TxEbMeasure'.
+  type HardForkTxEbMeasure xs
+
   hardForkEraTranslation :: EraTranslation xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
 
@@ -97,6 +109,19 @@ class
   hardForkInjTxMeasurePhase1 :: SOP.NS WrapTxMeasurePhase1 xs -> HardForkTxMeasurePhase1 xs
 
   hardForkInjTxMeasurePhase2 :: SOP.NS WrapTxMeasurePhase2 xs -> HardForkTxMeasurePhase2 xs
+
+  -- | Same as 'hardForkInjTxMeasurePhase1', for the endorser-block measure.
+  hardForkInjTxEbMeasure :: SOP.NS WrapTxEbMeasure xs -> HardForkTxEbMeasure xs
+
+  -- | 'txEbMeasure' for the hard fork block.
+  --
+  -- The two arguments are the fields of its 'TxMeasure'. Naming that type
+  -- needs @HardForkBlock xs@, which is defined downstream of this module.
+  hardForkTxEbMeasure ::
+    proxy xs ->
+    HardForkTxMeasurePhase1 xs ->
+    HardForkTxMeasurePhase2 xs ->
+    HardForkTxEbMeasure xs
 
   -- | Whether two transaction ids of @xs@ are equal, ignoring which era each
   -- sits in. Two txids in different eras can be equal; see the
@@ -124,12 +149,16 @@ rawHashNS = SOP.hcollapse . SOP.hcmap proxySingle (K . toRawTxIdHash . unwrapGen
 instance SingleEraBlock blk => CanHardFork '[blk] where
   type HardForkTxMeasurePhase1 '[blk] = TxMeasurePhase1 blk
   type HardForkTxMeasurePhase2 '[blk] = TxMeasurePhase2 blk
+  type HardForkTxEbMeasure '[blk] = TxEbMeasure blk
 
   hardForkEraTranslation = trivialEraTranslation
   hardForkChainSel = Tails.mk1
 
   hardForkInjTxMeasurePhase1 (SOP.Z (WrapTxMeasurePhase1 x)) = x
   hardForkInjTxMeasurePhase2 (SOP.Z (WrapTxMeasurePhase2 x)) = x
+  hardForkInjTxEbMeasure (SOP.Z (WrapTxEbMeasure x)) = x
+
+  hardForkTxEbMeasure _ p1 p2 = txEbMeasure (Proxy @blk) (TxMeasure p1 p2)
 
   -- No production code uses a single-era hard fork, so an allocating raw-hash
   -- comparison is fine here.

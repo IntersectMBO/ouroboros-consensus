@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -11,6 +12,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
@@ -47,7 +49,7 @@ import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
-import Data.Measure (Measure)
+import Data.Measure (Measure, zero)
 import qualified Data.Measure as M
 import Data.Text (Text)
 import Data.Word (Word32)
@@ -380,6 +382,11 @@ class
   , NoThunks (TxMeasurePhase2 blk)
   , TxMeasurePhase2Metrics (TxMeasurePhase2 blk)
   , Show (TxMeasurePhase2 blk)
+  , -- \* Endorser block
+    Measure (TxEbMeasure blk)
+  , NoThunks (TxEbMeasure blk)
+  , Eq (TxEbMeasure blk)
+  , Show (TxEbMeasure blk)
   ) =>
   TxLimits blk
   where
@@ -453,6 +460,51 @@ class
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
     TxMeasure blk
+
+  -- | The (possibly multi-dimensional) size of a transaction in a Leios
+  -- endorser block: what it costs of 'ebCapacityTxMeasure'. The block measure
+  -- itself for protocols without endorser blocks.
+  type TxEbMeasure blk
+
+  type TxEbMeasure blk = TxMeasure blk
+
+  -- | The size of a transaction in a Leios endorser block, derived from its
+  -- block measure.
+  --
+  -- The block measure itself by default. A transaction must never measure
+  -- zero: a zero measure fits a zero 'ebCapacityTxMeasure', so an
+  -- endorser-block fill would take the whole mempool instead of nothing.
+  txEbMeasure ::
+    proxy blk ->
+    TxMeasure blk ->
+    TxEbMeasure blk
+  default txEbMeasure ::
+    TxEbMeasure blk ~ TxMeasure blk =>
+    proxy blk ->
+    TxMeasure blk ->
+    TxEbMeasure blk
+  txEbMeasure _ = id
+
+  -- | What is the allowed capacity for the txs in a Leios endorser block?
+  --
+  -- Zero for blocks without endorser blocks: an endorser-block fill against a
+  -- zero capacity takes no transactions, so none are forged.
+  ebCapacityTxMeasure ::
+    LedgerConfig blk ->
+    TickedLedgerState blk mk ->
+    TxEbMeasure blk
+  ebCapacityTxMeasure _ _ = zero
+
+  -- | What one full endorser-block fill drains from the mempool, in
+  -- 'TxMeasure' terms: an endorser block's closure is transactions. Only used
+  -- to size the mempool ('Ouroboros.Consensus.Mempool.computeMempoolCapacity').
+  --
+  -- Zero for blocks without endorser blocks.
+  ebClosureCapacityTxMeasure ::
+    LedgerConfig blk ->
+    TickedLedgerState blk mk ->
+    TxMeasure blk
+  ebClosureCapacityTxMeasure _ _ = zero
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for

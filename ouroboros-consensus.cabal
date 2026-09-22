@@ -686,6 +686,7 @@ test-suite consensus-test
     Test.Consensus.HeaderValidation
     Test.Consensus.Ledger.Tables.Diff
     Test.Consensus.Mempool
+    Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
     Test.Consensus.Mempool.StateMachine
@@ -1738,6 +1739,7 @@ test-suite cardano-test
   hs-source-dirs: ouroboros-consensus-cardano/test/cardano-test
   main-is: Main.hs
   other-modules:
+    Test.Consensus.Cardano.Capacity
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden
@@ -1780,6 +1782,7 @@ test-suite cardano-test
     filepath,
     fs-api,
     fs-sim,
+    measures,
     microlens,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
     ouroboros-network:{api, protocols, protocols-tests-lib},

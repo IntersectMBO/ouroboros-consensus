@@ -13,6 +13,7 @@ import qualified Test.Consensus.HardFork.Summary (tests)
 import qualified Test.Consensus.HeaderValidation (tests)
 import qualified Test.Consensus.Ledger.Tables.Diff (tests)
 import qualified Test.Consensus.Mempool (tests)
+import qualified Test.Consensus.Mempool.Capacity (tests)
 import qualified Test.Consensus.Mempool.Fairness (tests)
 import qualified Test.Consensus.Mempool.StateMachine (tests)
 import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
@@ -64,6 +65,7 @@ tests =
     , testGroup
         "Mempool"
         [ Test.Consensus.Mempool.tests
+        , Test.Consensus.Mempool.Capacity.tests
         , Test.Consensus.Mempool.Fairness.tests
         , Test.Consensus.Mempool.StateMachine.tests
         ]

@@ -193,6 +193,9 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , TranslateTxMeasure
       (TxMeasurePhase2 (ShelleyBlock proto1 era1))
       (TxMeasurePhase2 (ShelleyBlock proto2 era2))
+  , TranslateTxMeasure
+      (TxEbMeasure (ShelleyBlock proto1 era1))
+      (TxEbMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
   , SL.TranslateEra era2 (SL.Tx SL.TopTx)
@@ -232,6 +235,15 @@ instance TranslateTxMeasure RefScriptSize RefScriptSize where
   translateTxMeasure = id
 
 instance
+  ( TranslateTxMeasure (TxMeasurePhase1 x) (TxMeasurePhase1 y)
+  , TranslateTxMeasure (TxMeasurePhase2 x) (TxMeasurePhase2 y)
+  ) =>
+  TranslateTxMeasure (TxMeasure x) (TxMeasure y)
+  where
+  translateTxMeasure (TxMeasure p1 p2) =
+    TxMeasure (translateTxMeasure p1) (translateTxMeasure p2)
+
+instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   SerialiseHFC (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
 
@@ -247,6 +259,9 @@ instance
   type
     HardForkTxMeasurePhase2 (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
       TxMeasurePhase2 (ShelleyBlock proto2 era2)
+  type
+    HardForkTxEbMeasure (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+      TxEbMeasure (ShelleyBlock proto2 era2)
 
   hardForkEraTranslation =
     EraTranslation
@@ -295,6 +310,13 @@ instance
   hardForkInjTxMeasurePhase2 = \case
     (Z (WrapTxMeasurePhase2 x)) -> translateTxMeasure x
     S (Z (WrapTxMeasurePhase2 x)) -> x
+
+  hardForkInjTxEbMeasure = \case
+    (Z (WrapTxEbMeasure x)) -> translateTxMeasure x
+    S (Z (WrapTxEbMeasure x)) -> x
+
+  hardForkTxEbMeasure _ p1 p2 =
+    txEbMeasure (Proxy @(ShelleyBlock proto2 era2)) (TxMeasure p1 p2)
 
   -- Test-only hard fork. For a test block the unoptimized raw-hash
   -- comparison is fine.
