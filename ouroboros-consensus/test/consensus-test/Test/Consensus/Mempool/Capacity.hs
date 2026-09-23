@@ -119,6 +119,12 @@ instance Ledger.TxLimits TestBlock where
   txMeasurePhase1 _cfg _st _tx = pure $ Ledger.IgnoringOverflow mempty
   txMeasurePhase2 _cfg _st _tx = pure Ledger.TrivialTxMeasurePhase2
 
+  type TxEbMeasure TestBlock = Ledger.TxMeasure TestBlock
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+
   ebClosureCapacityTxMeasure _cfg _st =
     Ledger.TxMeasure
       (Ledger.IgnoringOverflow ebClosureCapacity)

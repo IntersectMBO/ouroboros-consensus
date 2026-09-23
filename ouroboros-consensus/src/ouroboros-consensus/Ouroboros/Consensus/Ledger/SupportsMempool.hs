@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -466,24 +465,16 @@ class
   -- itself for protocols without endorser blocks.
   type TxEbMeasure blk
 
-  type TxEbMeasure blk = TxMeasure blk
-
   -- | The size of a transaction in a Leios endorser block, derived from its
   -- block measure.
   --
-  -- The block measure itself by default. A transaction must never measure
-  -- zero: a zero measure fits a zero 'ebCapacityTxMeasure', so an
-  -- endorser-block fill would take the whole mempool instead of nothing.
+  -- INVARIANT the result must never be zero. A zero measure fits a zero
+  -- 'ebCapacityTxMeasure', so one endorser-block fill takes the whole mempool
+  -- instead of nothing.
   txEbMeasure ::
     proxy blk ->
     TxMeasure blk ->
     TxEbMeasure blk
-  default txEbMeasure ::
-    TxEbMeasure blk ~ TxMeasure blk =>
-    proxy blk ->
-    TxMeasure blk ->
-    TxEbMeasure blk
-  txEbMeasure _ = id
 
   -- | What is the allowed capacity for the txs in a Leios endorser block?
   --
@@ -493,7 +484,6 @@ class
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
     TxEbMeasure blk
-  ebCapacityTxMeasure _ _ = zero
 
   -- | What one full endorser-block fill drains from the mempool, in
   -- 'TxMeasure' terms: an endorser block's closure is transactions. Only used
@@ -504,7 +494,6 @@ class
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
     TxMeasure blk
-  ebClosureCapacityTxMeasure _ _ = zero
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for

@@ -11,6 +11,7 @@ module Ouroboros.Consensus.ByronSpec.Ledger.Mempool
   ) where
 
 import Codec.Serialise
+import qualified Data.Measure as Measure
 import GHC.Generics (Generic)
 import NoThunks.Class (AllowThunk (..), NoThunks)
 import Ouroboros.Consensus.ByronSpec.Ledger.Block
@@ -70,3 +71,10 @@ instance TxLimits ByronSpecBlock where
 
   txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
   txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+
+  type TxEbMeasure ByronSpecBlock = TxMeasure ByronSpecBlock
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  ebClosureCapacityTxMeasure _cfg _st = Measure.zero

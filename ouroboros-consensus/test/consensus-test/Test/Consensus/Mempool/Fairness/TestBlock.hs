@@ -21,6 +21,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.DeepSeq (NFData)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -131,6 +132,13 @@ instance Ledger.TxLimits TestBlock where
 
   txMeasurePhase1 _cfg _st = pure . Ledger.IgnoringOverflow . txSize . unGenTx
   txMeasurePhase2 _cfg _st _tx = pure Ledger.TrivialTxMeasurePhase2
+
+  type TxEbMeasure TestBlock = Ledger.TxMeasure TestBlock
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
 
 {-------------------------------------------------------------------------------
   Ledger support (empty tables)
