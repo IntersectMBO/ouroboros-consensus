@@ -44,6 +44,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
+import qualified Data.Measure as Measure
 import Data.Semigroup (stimes)
 import qualified Data.Set as Set
 import Data.Word
@@ -51,7 +52,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
-import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..))
+import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..), MempoolMeasure (..))
 import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
 import Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Mock.Ledger hiding (TxId)
@@ -82,6 +83,12 @@ tests =
         [ testProperty
             "snapshotTxs == snapshotTxsAfter zeroTicketNo"
             prop_Mempool_snapshotTxs_snapshotTxsAfter
+        , testProperty
+            "snapshotPartition: zero endorser-block capacity takes nothing"
+            prop_Mempool_snapshotPartition_zeroEbCapacity
+        , testProperty
+            "snapshotPartition: block part is the greatest prefix within capacity"
+            prop_Mempool_snapshotPartition_blockPrefix
         , testProperty "valid added txs == getTxs" prop_Mempool_addTxs_getTxs
         , testProperty "addTxs [..] == forM [..] addTxs" prop_Mempool_semigroup_addTxs
         , testProperty "result of addTxs" prop_Mempool_addTxs_result
@@ -110,6 +117,47 @@ prop_Mempool_snapshotTxs_snapshotTxsAfter setup =
     let Mempool{getSnapshot} = mempool
     MempoolSnapshot{snapshotTxs, snapshotTxsAfter} <- atomically getSnapshot
     return $ snapshotTxs === snapshotTxsAfter zeroTicketNo
+
+-- | A zero endorser-block capacity takes no transactions. A zero block limit
+-- leaves the whole mempool for the endorser-block split, so this fails if that
+-- split takes everything instead of nothing.
+prop_Mempool_snapshotPartition_zeroEbCapacity :: TestSetupWithTxs -> Property
+prop_Mempool_snapshotPartition_zeroEbCapacity setup =
+  withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
+    _ <- addTxs mempool (allTxs setup)
+    MempoolSnapshot{snapshotPartition} <- atomically $ getSnapshot mempool
+    let (_blockTxs, _blockSize, ebTxs, _ebSize) = snapshotPartition Measure.zero Measure.zero
+    return $
+      counterexample ("endorser-block part not empty: " <> condense (map txForgetValidated ebTxs)) $
+        null ebTxs
+
+-- | With a zero endorser-block capacity, the block part of 'snapshotPartition'
+-- is the greatest prefix of 'snapshotTxs' whose summed measure fits the block
+-- capacity, and its size is that sum. This is what the forge selects.
+prop_Mempool_snapshotPartition_blockPrefix :: TestSetupWithTxs -> Property
+prop_Mempool_snapshotPartition_blockPrefix setup =
+  forAll (choose (0, 120 :: Word32)) $ \percent ->
+    withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
+      _ <- addTxs mempool (allTxs setup)
+      MempoolSnapshot{snapshotTxs, snapshotPartition} <- atomically $ getSnapshot mempool
+      let measures = [m | (_, _, m) <- snapshotTxs]
+          TxMeasure (IgnoringOverflow (ByteSize32 totalBytes)) _ = List.foldl' Measure.plus Measure.zero measures
+          capacity =
+            TxMeasure
+              ( IgnoringOverflow
+                  (ByteSize32 (fromIntegral (fromIntegral totalBytes * fromIntegral percent `div` (100 :: Word64))))
+              )
+              TrivialTxMeasurePhase2
+          prefixLength =
+            length $ takeWhile (Measure.<= capacity) $ drop 1 $ scanl Measure.plus Measure.zero measures
+          expectedTxs = map (txForgetValidated . prjTx) (take prefixLength snapshotTxs)
+          expectedSize = List.foldl' Measure.plus Measure.zero (take prefixLength measures)
+          (blockTxs, blockSize, ebTxs, _ebSize) = snapshotPartition capacity Measure.zero
+      return $
+        counterexample ("capacity: " <> show capacity) $
+          map txForgetValidated blockTxs === expectedTxs
+            .&&. mmTxMeasure blockSize === expectedSize
+            .&&. null ebTxs
 
 -- | Test that all valid transactions added to a 'Mempool' can be retrieved
 -- afterward.

@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Mempool.TxSeq
   , lookupByTicketNo
   , splitAfterTicketNo
   , splitAfterTxSize
+  , splitAfterTxSizeOn
   , toList
   , toSize
   , toTuples
@@ -210,8 +211,21 @@ splitAfterTxSize ::
   TxSeq sz tx ->
   sz ->
   (TxSeq sz tx, TxSeq sz tx)
-splitAfterTxSize (TxSeq txs) n =
-  case FingerTree.split (\m -> not $ mSize m Measure.<= n) txs of
+splitAfterTxSize = splitAfterTxSizeOn id
+
+-- | \( O(\log(n)) \). Like 'splitAfterTxSize', but bounds only a projection
+-- of the summed @sz@. The other components are not bounded.
+--
+-- The projection must distribute over 'Measure.plus', or the split predicate
+-- is not monotone. The projection to one record field satisfies this.
+splitAfterTxSizeOn ::
+  (Measure sz, Measure sz') =>
+  (sz -> sz') ->
+  TxSeq sz tx ->
+  sz' ->
+  (TxSeq sz tx, TxSeq sz tx)
+splitAfterTxSizeOn proj (TxSeq txs) n =
+  case FingerTree.split (\m -> not $ proj (mSize m) Measure.<= n) txs of
     (l, r) -> (TxSeq l, TxSeq r)
 
 -- | \( O(n) \). Specification of 'splitAfterTxSize'.
