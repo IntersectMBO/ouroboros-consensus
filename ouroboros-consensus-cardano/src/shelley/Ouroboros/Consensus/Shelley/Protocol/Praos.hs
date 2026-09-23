@@ -307,7 +307,8 @@ instance
     case praosStateLeiosAnnouncement cs of
       SNothingLeios -> Nothing
       SJustLeios SNothing -> Nothing
-      SJustLeios (SJust ann) -> Just (ann, praosStateLastSlot cs)
+      SJustLeios (SJust announced) ->
+        Just (announcedEb announced, praosStateLastSlot cs)
 
 instance
   ( PraosCrypto c
