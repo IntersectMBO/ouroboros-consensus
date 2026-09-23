@@ -30,7 +30,7 @@ import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
-import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime (..))
+import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( TraceBlockFetchServerEvent
   )
@@ -206,6 +206,7 @@ showTracers ::
   , Show (CannotForge blk)
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
+  , Show (TxEbMeasure blk)
   , Show (PerasVote blk)
   , Show (PerasCert blk)
   , Show (PerasError blk)
@@ -403,7 +404,7 @@ data TraceForgeEvent blk
     -- * TraceAdoptedBlock (normally)
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
-    TraceForgedBlock SlotNo (Point blk) blk MempoolSize (TxMeasureWithDiffTime blk)
+    TraceForgedBlock SlotNo (Point blk) blk MempoolSize (MempoolMeasure blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,
@@ -428,6 +429,7 @@ deriving instance
   , Eq (CannotForge blk)
   , Eq (TxMeasurePhase1 blk)
   , Eq (TxMeasurePhase2 blk)
+  , Eq (TxEbMeasure blk)
   , Eq (PerasError blk)
   ) =>
   Eq (TraceForgeEvent blk)
@@ -439,6 +441,7 @@ deriving instance
   , Show (CannotForge blk)
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
+  , Show (TxEbMeasure blk)
   , Show (PerasError blk)
   ) =>
   Show (TraceForgeEvent blk)

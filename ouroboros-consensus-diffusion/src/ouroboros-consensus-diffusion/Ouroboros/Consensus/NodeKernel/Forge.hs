@@ -17,6 +17,7 @@ import Control.Monad.Except
 import Control.Tracer
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
+import qualified Data.Measure
 import Data.Proxy
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
@@ -33,7 +34,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
-import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime)
+import Ouroboros.Consensus.Mempool.API (MempoolMeasure)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.Protocol.Abstract
@@ -463,7 +464,7 @@ getTransactionsToForge ::
   SlotNo ->
   Ticked LedgerState blk DiffMK ->
   ReadOnlyForker m l blk ->
-  WithEarlyExit m ([Validated (GenTx blk)], TxMeasureWithDiffTime blk, MempoolSize)
+  WithEarlyExit m ([Validated (GenTx blk)], MempoolMeasure blk, MempoolSize)
 getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $ do
   mempoolSnapshot <-
     getSnapshotFor
@@ -472,9 +473,13 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $
       tickedLedgerState
       (roforkerReadTables forker)
 
-  let (txs, txssz) =
-        snapshotTake mempoolSnapshot $
-          blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+  -- The endorser-block capacity is zero, so the endorser-block part of the
+  -- partition is empty and the block part is the whole selection.
+  let (txs, txssz, _, _) =
+        snapshotPartition
+          mempoolSnapshot
+          (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
+          Data.Measure.zero
   -- NB respect the capacity of the ledger state we're extending,
   -- which is /not/ 'snapshotLedgerState'
 
