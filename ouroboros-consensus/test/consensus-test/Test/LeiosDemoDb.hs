@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Tests for the LeiosDemoDb interface.
 --
@@ -11,7 +12,7 @@
 module Test.LeiosDemoDb (module Test.LeiosDemoDb) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , atomically
@@ -21,8 +22,10 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Concurrent.MVar (newEmptyMVar, readMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
 import Control.Exception
-  ( SomeException
+  ( IOException
+  , SomeException
   , bracket
+  , catch
   , displayException
   , fromException
   , throwIO
@@ -47,6 +50,7 @@ import LeiosDemoDb
   , TraceLeiosDb (..)
   , deleteDanglingTxs
   , newLeiosDBInMemory
+  , newLeiosDBSQLite
   , truncateLeiosDbAfterSlot
   , withLeiosDBSQLite
   , withReader
@@ -65,6 +69,7 @@ import LeiosDemoTypes
   )
 import System.Directory (removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
+import System.Mem (performMajorGC)
 import qualified System.Timeout as Timeout
 import Test.QuickCheck
   ( Gen
@@ -107,6 +112,10 @@ tests =
          , testGroup
              "writer"
              [ testCase "tells the awaiter when a job throws" test_awaiterHearsAFailedJob
+             ]
+         , testGroup
+             "orphanhood"
+             [ testCase "dropping the handle does not kill its owner" test_droppingTheHandleSpreadsNoException
              ]
          ]
 
@@ -891,6 +900,37 @@ prop_completedEbNoBody impl =
           & tabulate "lookupEbClosure (no body)" [timeBucket queryTime]
 
 -- * truncateLeiosDbAfterSlot
+
+-- | A caller that drops the handle without closing it leaves the background
+-- threads with nothing that can reach them, and the runtime raises
+-- 'BlockedIndefinitelyOnSTM' at them. That is the handle going away, not a
+-- failed write, so it must not reach the thread that opened the database.
+test_droppingTheHandleSpreadsNoException :: Assertion
+test_droppingTheHandleSpreadsNoException = do
+  sysTmp <- getCanonicalTemporaryDirectory
+  outcome <-
+    bracket (createTempDirectory sysTmp "leios-test") removeQuietly $ \tmpDir ->
+      try $ do
+        -- Nothing binds the handle, so the collection below finds the threads
+        -- it started unreachable. Without it the test allocates too little to
+        -- collect, and the exception would land on a later test instead.
+        void $
+          newLeiosDBSQLite nullTracer (tmpDir <> "/test.vol.db") (tmpDir <> "/test.imm.db")
+        performMajorGC
+        -- The copier has to finish and its link watcher has to wake before
+        -- anything reaches this thread.
+        threadDelay settleMicros
+  case outcome :: Either SomeException () of
+    Right () -> pure ()
+    Left e ->
+      assertFailure $ "dropping the handle threw at its owner: " <> displayException e
+ where
+  -- The dropped handle closes its connections on its own schedule, so it can
+  -- still be deleting its write-ahead files here.
+  removeQuietly dir =
+    removeDirectoryRecursive dir `catch` \(_ :: IOException) -> pure ()
+
+  settleMicros = 1_000_000
 
 -- | The writer takes a job off its queue before it runs it, so the drain that
 -- fails the still-queued jobs when the writer stops can no longer reach that

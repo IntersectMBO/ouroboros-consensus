@@ -604,6 +604,22 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
         dbFinalize nextPinnedStmt
         closeChecked ccDb
 
+      -- The runtime raises 'BlockedIndefinitelyOnSTM' at a thread when no
+      -- other thread can reach the variables it waits on. The copier waits
+      -- only on 'stopVar' and 'copyPending', which live in the handle, so
+      -- this exception says nothing can reach the handle any more. A close
+      -- would have stopped the copier through 'stopVar', so no close ran.
+      --
+      -- 'link' below stops the node when the copier stops, because a stopped
+      -- copier leaves the volatile partition growing with no way to evict it.
+      -- A handle nothing can reach pins no further EBs, so nothing grows and
+      -- there is nothing to stop the node for. Rethrowing lets 'link' carry the
+      -- exception to whichever thread opened the database, at whatever it was
+      -- doing.
+      rethrowUnlessOrphaned e
+        | isJust (fromException e :: Maybe BlockedIndefinitelyOnSTM) = pure ()
+        | otherwise = throwIO e
+
       -- Check the stop request on every pass, not only when nothing is left
       -- to copy. A steady stream of promotions keeps the batch non-empty, so a
       -- check on the empty batch alone makes 'stopCopier' wait for the copier
@@ -626,10 +642,10 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
   worker <- async $ do
     outcome <- try (loop `finally` closeConnection)
     atomically $ putTMVar stoppedVar (outcome :: Either SomeException ())
-    -- A copier that stopped is a volatile partition that stops being
-    -- evictable, so the link takes the node down rather than let it grow.
-    either throwIO pure outcome
+    either rethrowUnlessOrphaned pure outcome
   labelThread (asyncThreadId worker) "leiosdb-copier"
+  -- A copier that stopped is a volatile partition that stops being
+  -- evictable, so the link takes the node down rather than let it grow.
   link worker
   pure $ do
     atomically $ writeTVar stopVar True
