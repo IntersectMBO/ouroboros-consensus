@@ -70,6 +70,7 @@ import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import Data.ByteString.Short (ShortByteString)
 import Data.Maybe (maybeToList)
+import qualified Data.Measure as Measure
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class (InspectHeapNamed (..), NoThunks (..))
@@ -190,6 +191,13 @@ instance TxLimits ByronBlock where
           Utxo.TxValidationTxTooLarge txszNat maxTxSize
 
   txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
+
+  type TxEbMeasure ByronBlock = TxMeasure ByronBlock
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
 
 data instance TxId (GenTx ByronBlock)
   = ByronTxId !Utxo.TxId
