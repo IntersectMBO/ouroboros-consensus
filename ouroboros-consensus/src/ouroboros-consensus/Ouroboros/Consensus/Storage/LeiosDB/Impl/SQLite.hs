@@ -190,7 +190,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       immLeiosDbPath
   -- And the immutable partition's one writer, off the queue so that a copy
   -- -- which is O(closure) -- never holds up ingest.
-  stopCopier <-
+  copierThread <-
     startCopier
       registry
       tracer
@@ -201,7 +201,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       immLeiosDbPath
   pure
     LeiosDbHandle
-      { close = close samplerThread stopCopier writeQueue
+      { close = close samplerThread copierThread writeQueue
       , openReader = openReader statsVar
       , openWriter = openWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
@@ -210,14 +210,15 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       , leiosDbSampleStats = readTVarIO statsVar
       }
  where
-  close :: Thread IO () -> IO () -> WriteQueue -> IO ()
-  close samplerThread stopCopier writeQueue = do
+  close :: Thread IO () -> Thread IO () -> WriteQueue -> IO ()
+  close samplerThread copierThread writeQueue = do
     -- The sampler holds no connection -- it only reads counters -- so
     -- cancelling it is safe at any point.
     cancelThread samplerThread
-    -- The copier first: it submits to the writer, so it must be gone
-    -- before the writer stops serving.
-    stopCopier
+    -- The copier before the writer: it submits to the writer, so it must be
+    -- gone before the writer stops serving. Cancelling it rolls back any
+    -- copy in flight; the EB stays pinned, so the next start copies it again.
+    cancelThread copierThread
     -- The queue is FIFO, so serving this job flushes everything
     -- submitted before it; awaiting it waits for the connections to
     -- close, and a failed close propagates -- a leaked connection must
@@ -545,7 +546,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
 -- partition while it does. The mark that follows a copy /is/ a volatile
 -- write, and goes through the writer like every other one.
 --
--- Returns the action that stops the copier and closes its connection.
+-- Returns the copier's thread: cancelling it closes its connection.
 startCopier ::
   ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
@@ -554,7 +555,7 @@ startCopier ::
   WriteQueue ->
   FilePath ->
   FilePath ->
-  IO (IO ())
+  IO (Thread IO ())
 startCopier registry tracer statsVar copyPending writeQueue volPath immPath = do
   ccDb <- openRawConnection immPath
   (copierConn, nextPinnedStmt) <-
@@ -567,8 +568,6 @@ startCopier registry tracer statsVar copyPending writeQueue volPath immPath = do
         pure (copierConn, nextPinnedStmt)
     )
       `onException` void (DB.close ccDb)
-  stopVar <- newTVarIO False
-  stoppedVar <- newEmptyTMVarIO
   let nextPinnedBatch = do
         dbBindInt64 nextPinnedStmt 1 (fromIntegral copyBatchSize)
         useStmt nextPinnedStmt $
@@ -612,22 +611,9 @@ startCopier registry tracer statsVar copyPending writeQueue volPath immPath = do
         nextPinnedBatch >>= \case
           batch@(_ : _) -> copyBatch batch >> loop
           [] -> do
-            stop <- IO.atomically $ do
-              stop <- readTVar stopVar
-              pending <- readTVar copyPending
-              check (stop || pending)
-              pure stop
-            unless stop loop
-  void $ forkLinkedThread registry "leiosdb-copier" $ do
-    outcome <- try (loop `finally` closeConnection)
-    atomically $ putTMVar stoppedVar (outcome :: Either SomeException ())
-    -- A copier that stopped is a volatile partition that stops being
-    -- evictable, so the link takes the node down rather than let it grow.
-    -- Cancellation by the registry is the one stop the link lets pass.
-    either throwIO pure outcome
-  pure $ do
-    atomically $ writeTVar stopVar True
-    either throwIO pure =<< atomically (readTMVar stoppedVar)
+            IO.atomically $ readTVar copyPending >>= check
+            loop
+  forkLinkedThread registry "leiosdb-copier" $ loop `finally` closeConnection
 
 -- | How long the copier waits before trying a pinned EB again.
 copyRetryMicros :: Int
