@@ -103,6 +103,7 @@ library
     LeiosDemoDb.InMemory
     LeiosDemoDb.SQLite
     LeiosDemoDb.Trace
+    LeiosDemoDb.WithCallTrace
     LeiosDemoException
     LeiosDemoLogic
     LeiosDemoLogic.Announcements

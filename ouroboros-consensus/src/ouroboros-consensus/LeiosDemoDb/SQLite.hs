@@ -112,7 +112,7 @@ import LeiosUtils.CallTrace
   ( CallCtx
   , CallName
   , SomeJsonCallTrace (..)
-  , callTraceSameThread
+  , callTrace
   , rootCallCtx
   )
 import Numeric.Natural (Natural)
@@ -706,7 +706,7 @@ sqlGarbageCollect tracer rootCtx writeQueue gcSlot =
   gcSpan ::
     (Aeson.ToJSON arg, Aeson.ToJSON res) =>
     CallCtx IO -> CallName -> arg -> (CallCtx IO -> IO res) -> IO res
-  gcSpan = callTraceSameThread (traceWith tracer . TraceLeiosDbCall . SomeJsonCallTrace)
+  gcSpan = callTrace (traceWith tracer . TraceLeiosDbCall . SomeJsonCallTrace)
 
 -- | The MARK phase of GC mark-and-sweep:
 --   - mark for GC (@status = 3@) every EB hash all of whose announcements are older
