@@ -19,7 +19,8 @@ import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Monad (unless)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim
-  ( IOSim
+  ( Failure (FailureException)
+  , IOSim
   , runSimTrace
   , selectTraceEventsSay'
   , traceResult
@@ -30,6 +31,7 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import Data.Ratio ((%))
 import qualified LeiosDemoDb as LeiosDb
+import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( BytesSize
   , LeiosCert
@@ -74,6 +76,9 @@ tests =
     [ testCase
         "a forgotten CertRB is re-acquired and selected"
         test_forgottenCertRBIsSelectedAgain
+    , testCase
+        "a peer claiming two certified endorser blocks for one election is dropped"
+        test_twoCertificationClaimsIsDropped
     ]
 
 type Blk = LeiosTestBlock
@@ -337,6 +342,53 @@ data AfterRestart = AfterRestart
   , arRivalCertified :: Bool
   , arRivalCertRbHeld :: Bool
   }
+
+-- | A peer may claim a certificate for at most one endorser block per
+-- election, and the second claim costs it the connection.
+--
+-- Nothing this peer says is ever checked: it serves the two headers that make
+-- the claims and no blocks at all, which is what an adversary would do, since
+-- a certificate lives in a block body and a body it never sends is a body we
+-- cannot reject. What bounds it is the claim itself.
+test_twoCertificationClaimsIsDropped :: Assertion
+test_twoCertificationClaimsIsDropped = do
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Left (FailureException e) | isTwoClaims e -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the peer to be dropped, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  -- The peer's ChainSync client dies of it, and the thread is linked, so the
+  -- exception arrives wrapped.
+  isTwoClaims :: SomeException -> Bool
+  isTwoClaims e
+    | Just (ExceptionInLinkedThread _ inner) <- fromException e = isTwoClaims inner
+    | Just Leios.ExnLeiosTwoCertificationClaims{} <- fromException e = True
+    | otherwise = False
+
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    peer <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest nodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        -- Headers only, never a block.
+        serveChainThrough peer GenesisPoint $ chainOf [announcer, certRB]
+        connectPeer nut registry (PeerAddr 0) peer
+        awaitPollingWith getTraces "the first claim is in" $
+          ebOfferedBy nut (PeerAddr 0) endorserPoint
+
+        -- The same election, a different endorser block, and again a header
+        -- claiming a certificate for it.
+        serveChainThrough peer GenesisPoint $ chainOf [decoyAnnouncer, decoyCertRB]
+        threadDelay 30
 
 {-------------------------------------------------------------------------------
   Watching the node

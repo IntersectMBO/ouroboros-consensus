@@ -328,9 +328,9 @@ decideLeiosCertify ::
   ExtLedgerState blk EmptyMK ->
   m (Maybe (LeiosCert, Leios.EbHash))
 decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState =
-  case (,) <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs) <*> mMinGap of
+  case (,) <$> announcedPoint <*> mMinGap of
     Nothing -> pure Nothing
-    Just ((ebPoint, _ebSize), minGap)
+    Just (ebPoint, minGap)
       | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= unSlotNo minGap ->
           pure Nothing
       | otherwise -> do
@@ -372,6 +372,12 @@ decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState
   -- The gap comes from the era's protocol parameters, so only the era knows it;
   -- 'Nothing' means this era does not do Leios and nothing is certifiable.
   mMinGap = Leios.getMinCertificationGap ledgerCfg (ledgerState extState)
+
+  -- What the parent announced, if anything: the endorser block a certificate
+  -- here would be for.
+  announcedPoint =
+    Leios.announcementLeiosPoint
+      <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
 
   hs = headerState extState
 

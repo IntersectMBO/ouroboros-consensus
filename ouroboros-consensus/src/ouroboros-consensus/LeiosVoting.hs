@@ -41,7 +41,8 @@ import LeiosDemoDb
   , withReader
   )
 import LeiosDemoTypes
-  ( HasLeiosVoting (..)
+  ( announcementLeiosPoint
+  , HasLeiosVoting (..)
   , LeiosClosureError (..)
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
@@ -545,7 +546,8 @@ tipAnnouncerFor ::
   LeiosPoint ->
   Maybe RbHash
 tipAnnouncerFor hs point = do
-  (announcedPoint, _) <- protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
+  announcedPoint <-
+    announcementLeiosPoint <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
   NotOrigin tip <- Just (headerStateTip hs)
   -- 'protocolStateLeiosAnnouncement' returns the pending announcement
   -- keyed by the tip's slot; equality with the acquired point (which

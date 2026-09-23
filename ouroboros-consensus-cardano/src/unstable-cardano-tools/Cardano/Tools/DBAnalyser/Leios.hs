@@ -97,7 +97,10 @@ parentAnnouncement ::
   ExtLedgerState blk mk ->
   Maybe (LeiosPoint, BytesSize)
 parentAnnouncement =
-  protocolStateLeiosAnnouncement @blk . headerStateChainDep . headerState
+  fmap (\fields -> (announcementLeiosPoint fields, announcementEbBodySize fields))
+    . protocolStateLeiosAnnouncement @blk
+    . headerStateChainDep
+    . headerState
 
 -- | Verify the Leios certificate of a cert-RB against the committee of the
 -- parent ledger state. 'Right ()' for a block that carries no certificate.

@@ -424,6 +424,18 @@ data LeiosPeerVars m = MkLeiosPeerVars
   -- order (freshest-first via 'Map.toDescList'), no dedup by EB hash needed
   -- (honest announcements don't reuse a hash, and an adversary defeats such
   -- dedup anyway). Written to only by the LeiosNotify client and eviction.
+  , certificationClaims :: !(MVar m (Map ElId EbHash))
+  -- ^ For each election, the endorser block this peer has claimed a
+  -- certificate for.
+  --
+  -- These are assertions its roll-forwards make, not certificates we have
+  -- checked: a cert-claiming header says nothing we can verify, since the
+  -- certificate is in the body. What we have verified is @ValidClaims@, which
+  -- is node-wide; this is per peer and is only ever evidence against it.
+  --
+  -- A second, different claim for one election is misbehaviour and costs the
+  -- peer its connection; see 'LeiosDemoLogic.noteCertificationClaim'. Pruned
+  -- with the immutable tip, like the rest of the per-election state.
   , requestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
   -- ^ written to by the fetch logic and the LeiosFetch client
   --
@@ -444,8 +456,9 @@ data LeiosPeerVars m = MkLeiosPeerVars
 newLeiosPeerVars :: IOLike m => IsBigLedgerPeer -> m (LeiosPeerVars m)
 newLeiosPeerVars whetherBigLedgerPeer = do
   offerings <- MVar.newMVar Map.empty
+  certificationClaims <- MVar.newMVar Map.empty
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
-  pure MkLeiosPeerVars{whetherBigLedgerPeer, offerings, requestsToSend}
+  pure MkLeiosPeerVars{whetherBigLedgerPeer, offerings, certificationClaims, requestsToSend}
 
 -- | Main data structure used in the Leios fetching logic.
 --

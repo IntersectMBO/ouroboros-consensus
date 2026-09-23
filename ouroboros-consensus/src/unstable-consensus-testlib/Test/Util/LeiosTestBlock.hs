@@ -90,7 +90,7 @@ module Test.Util.LeiosTestBlock
 import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize)
 import Cardano.Ledger.Binary (decodeFull', serialize', shelleyProtVer)
 import Cardano.Slotting.EpochInfo (epochInfoEpoch, fixedEpochInfo)
-import Codec.CBOR.Decoding (Decoder)
+import Codec.CBOR.Decoding (Decoder, decodeBytes)
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), deserialiseOrFail, serialise)
@@ -103,6 +103,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
+import Data.Functor ((<&>))
 import Data.Functor.Identity (runIdentity)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
@@ -121,7 +122,8 @@ import GHC.Generics (Generic)
 import LeiosDemoDb (lookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
-  ( BytesSize
+  ( AnnouncementFields (..)
+  , BytesSize
   , HasLeiosVoting (..)
   , LeiosCert
   , LeiosClosureError (LeiosClosureMissing, LeiosClosureTxUndecodable)
@@ -506,14 +508,14 @@ instance HasLeiosVoting LeiosTestBlock where
 -- protocol's chain-dependent state: a CertRB certifies the endorser block its
 -- predecessor announced, and this is where the apply path reads that from.
 newtype LeiosTestChainDepState = LeiosTestChainDepState
-  { ltcdsAnnouncement :: Maybe (LeiosPoint, BytesSize)
+  { ltcdsAnnouncement :: Maybe AnnouncementFields
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
 instance Serialise LeiosTestChainDepState where
-  encode = encodeMaybe encodeLeiosPointAndSize . ltcdsAnnouncement
-  decode = LeiosTestChainDepState <$> decodeMaybe decodeLeiosPointAndSize
+  encode = encodeMaybe encodeAnnouncementFields . ltcdsAnnouncement
+  decode = LeiosTestChainDepState <$> decodeMaybe decodeAnnouncementFields
 
 newtype instance Ticked LeiosTestChainDepState
   = TickedLeiosTestChainDepState LeiosTestChainDepState
@@ -548,7 +550,7 @@ instance ConsensusProtocol LeiosTestProtocol where
   type CanBeLeader LeiosTestProtocol = ()
   type LedgerView LeiosTestProtocol = LeiosTestView
   type ValidationErr LeiosTestProtocol = Void
-  type ValidateView LeiosTestProtocol = Maybe (LeiosPoint, BytesSize)
+  type ValidateView LeiosTestProtocol = Maybe AnnouncementFields
 
   protocolSecurityParam = ltpcSecurityParam
 
@@ -563,7 +565,9 @@ instance ConsensusProtocol LeiosTestProtocol where
 type instance BlockProtocol LeiosTestBlock = LeiosTestProtocol
 
 instance BlockSupportsProtocol LeiosTestBlock where
-  validateView _ = lthAnnouncement
+  validateView _ hdr =
+    lthAnnouncement hdr <&> \(point, size) ->
+      MkAnnouncementFields (headerElId hdr) (pointEbHash point) size
 
 {-------------------------------------------------------------------------------
   Ledger
@@ -898,6 +902,29 @@ decodeLeiosPointAndSize = do
   ebHash <- decodeEbHash
   size <- decode
   pure (MkLeiosPoint ebSlot ebHash, size)
+
+-- | The announcement the chain-dependent state carries: the election that made
+-- it, the endorser block it names and the size it claims for the body.
+--
+-- Neither 'ElId' nor the hash inside it has a 'Serialise' instance, so this
+-- spells the fields out, taking the hash through the fixed-size codec
+-- 'LeiosDemoTypes' exports.
+encodeAnnouncementFields :: AnnouncementFields -> Encoding
+encodeAnnouncementFields (MkAnnouncementFields (MkElId elSlot poolId) ebHash size) =
+  CBOR.encodeListLen 4
+    <> encode elSlot
+    <> CBOR.encodeBytes (SBS.fromShort poolId)
+    <> encodeEbHash ebHash
+    <> encode size
+
+decodeAnnouncementFields :: Decoder s AnnouncementFields
+decodeAnnouncementFields = do
+  enforceSize (fromString "AnnouncementFields") 4
+  elSlot <- decode
+  poolId <- SBS.toShort <$> decodeBytes
+  ebHash <- decodeEbHash
+  size <- decode
+  pure $ MkAnnouncementFields (MkElId elSlot poolId) ebHash size
 
 -- | The certificate rides on the ledger's own encoding, which is the one real
 -- nodes use.

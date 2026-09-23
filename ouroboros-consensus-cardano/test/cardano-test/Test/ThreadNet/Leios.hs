@@ -87,6 +87,7 @@ import LeiosDemoDb
   )
 import LeiosDemoTypes
   ( LeiosNotVotedReason (..)
+  , announcementEbHash
   , LeiosPoint (..)
   , LeiosVote (..)
   , RbHash (..)
@@ -1011,8 +1012,9 @@ foldWithResolution leiosDb cfg blks initState =
       Just _cert -> case protocolStateLeiosAnnouncement @(CardanoBlock StandardCrypto) cds of
         Nothing ->
           error "foldWithResolution: CertRB but no announcement on parent chain-dep state"
-        Just (point, _) -> do
-          closureTxs <- map snd . orFail <$> resolveLeiosClosure leiosDb (pointEbHash point)
+        Just fields -> do
+          closureTxs <-
+            map snd . orFail <$> resolveLeiosClosure leiosDb (announcementEbHash fields)
           let ls = ledgerState state
               lcfg = configLedger (getExtLedgerCfg cfg)
           case applyLeiosClosure lcfg closureTxs ls of

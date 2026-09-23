@@ -78,6 +78,7 @@ import LeiosDemoTypes
   ( AlsoOfferedTxsClosure (..)
   , AnnouncementEquivocation (..)
   , AnnouncementFields (..)
+  , announcementLeiosPoint
   , AnnouncementSource (..)
   , BytesSize
   , EbHash (..)
@@ -1590,8 +1591,54 @@ checkMsgRollForwardForLeiosOffers ::
   m ()
 checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
-    forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
-      recordEbBodyOffer kernelVars peerVars TxsClosureAlsoOffered announcement
+    forM_ (protocolStateLeiosAnnouncement @blk cds) $ \fields -> do
+      noteCertificationClaim
+        peerVars
+        (announcementElection fields)
+        (announcementEbHash fields)
+      recordEbBodyOffer
+        kernelVars
+        peerVars
+        TxsClosureAlsoOffered
+        (announcementLeiosPoint fields, announcementEbBodySize fields)
+
+-- | Count this peer's claim that an endorser block is certified for an
+-- election, disconnecting if it contradicts a prior claim by this peer
+--
+-- One certified announcement per election is all an honest peer ever has
+-- selected. Its roll-forwards follow its own selection, so a second certified
+-- announcement would mean it followed a fork where a different endorser block
+-- was certified for that election --- which takes two valid certificates to
+-- exist at all, and that requires that /the committee/ equivocated, which can
+-- only happen if the protocol itself is defeated.
+--
+-- This is deliberately stricter than the two announcements per election
+-- 'LeiosDemoLogic.Announcements.extendLive' tolerates: that allowance exists so
+-- equivocation proofs can spread, and nothing asks a peer to show us two
+-- certificates.
+--
+-- Without this, the offer path is a second door into 'ebState' and
+-- 'missingEbBodies' that the announcement cap does not guard: a pool can
+-- equivocate its own won slots into arbitrarily many announcing blocks, put a
+-- cert-claiming header on each --- the certificate is in the body, which we
+-- need never fetch --- and roll them all forward, arbitrarily increasing the
+-- node's memory usage.
+noteCertificationClaim :: IOLike m => LeiosPeerVars m -> ElId -> EbHash -> m ()
+noteCertificationClaim peerVars elId ebHash =
+  MVar.modifyMVar (Leios.certificationClaims peerVars) $ \claimed ->
+    case Map.lookup elId claimed of
+      Just alreadyClaimed
+        | alreadyClaimed /= ebHash ->
+            throwIO $ ExnLeiosTwoCertificationClaims elId alreadyClaimed ebHash
+      _ -> pure (Map.insert elId ebHash claimed, ())
+
+-- | Thrown when a peer's roll-forwards claim that two different endorser
+-- blocks are certified for one election; the ensuing thread death disconnects
+-- it. See 'noteCertificationClaim'.
+data ExnLeiosTwoCertificationClaims = ExnLeiosTwoCertificationClaims !ElId !EbHash !EbHash
+  deriving Show
+
+instance Exception ExnLeiosTwoCertificationClaims
 
 -----
 

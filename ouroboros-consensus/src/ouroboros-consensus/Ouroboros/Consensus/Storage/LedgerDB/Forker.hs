@@ -89,7 +89,8 @@ import GHC.Generics
 import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
-  ( BytesSize
+  ( AnnouncementFields
+  , BytesSize
   , EbHash
   , HasLeiosVoting (..)
   , LeiosCert
@@ -98,6 +99,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , RbHash
   , TxHash
+  , announcementLeiosPoint
   , verifyLeiosCert
   )
 import NoThunks.Class
@@ -591,7 +593,8 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             -- NOTE: We deliberately keep the 'error' call here because this
             -- would point us to a bug in our currently running implementation.
             error $ "applyBlock ReapplyVal: nothing announced!?"
-          Just (announcedPoint, _) -> do
+          Just fields -> do
+            let announcedPoint = announcementLeiosPoint fields
             let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
                 readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
             res <-
@@ -635,8 +638,8 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
           -- A CertRB certifies an EB announced by its predecessor; if the
           -- parent's chain-dep state announced none, there is nothing to
           -- certify, so the block is invalid.
-          (announcedPoint, _) <-
-            protocolStateLeiosAnnouncement @blk cds
+          announcedPoint <-
+            (announcementLeiosPoint <$> protocolStateLeiosAnnouncement @blk cds)
               ?>= ExtValidationErrorLeios (LeiosCertificateWithoutAnnouncement cert)
 
           -- FIXME: Check the min certification gap between announcement and certification
@@ -953,10 +956,11 @@ class ResolveLeiosBlock blk where
   validateAnnouncementChainDepState cfg vv slot tcs =
     FreshOCIN <$ updateChainDepState cfg vv slot tcs
 
-  -- | The EB most recent announcement in the 'HeaderState', if any. 'Nothing'
-  -- for headers in eras that don't carry Leios announcements.
+  -- | The most recent EB announcement in the 'HeaderState', if any: the
+  -- election that made it, the endorser block's hash, and its body size.
+  -- 'Nothing' for headers in eras that don't carry Leios announcements.
   protocolStateLeiosAnnouncement ::
-    ChainDepState (BlockProtocol blk) -> Maybe (LeiosPoint, BytesSize)
+    ChainDepState (BlockProtocol blk) -> Maybe AnnouncementFields
   protocolStateLeiosAnnouncement _ = Nothing
 
   -- | For a CertRB, the hash of the ranking block that announced the EB this CertRB
@@ -988,9 +992,9 @@ resolveLeiosBlock ::
   blk ->
   m blk
 resolveLeiosBlock leiosDb cds b =
-  case protocolStateLeiosAnnouncement @blk cds of
+  case announcementLeiosPoint <$> protocolStateLeiosAnnouncement @blk cds of
     Nothing -> pure b
-    Just (announcedPoint, _) ->
+    Just announcedPoint ->
       -- NOTE: This produces a block that would fail full validation.
       resolveLeiosClosure leiosDb (pointEbHash announcedPoint)
         <&> \case
