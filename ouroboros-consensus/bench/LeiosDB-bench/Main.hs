@@ -35,6 +35,7 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
 import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
+import Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import Control.Tracer (debugTracer, (>$<))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -84,8 +85,8 @@ main = do
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
       , ""
       ]
-  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
-    env <- setupBenchEnv tmpDir
+  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> withRegistry $ \registry -> do
+    env <- setupBenchEnv registry tmpDir
     runBench (benchConcurrentAll env)
 
 -- * Configuration
@@ -186,10 +187,14 @@ data BenchEnv = BenchEnv
 
 -- | Create a fresh SQLite DB and insert 'numPrePopulatedEbs' complete EBs.
 -- This setup cost is not included in the timed measurements.
-setupBenchEnv :: FilePath -> IO BenchEnv
-setupBenchEnv tmpDir = do
+setupBenchEnv :: ResourceRegistry IO -> FilePath -> IO BenchEnv
+setupBenchEnv registry tmpDir = do
   db <-
-    newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.vol.db") (tmpDir <> "/bench.imm.db")
+    newLeiosDBSQLite
+      registry
+      (show >$< debugTracer)
+      (tmpDir <> "/bench.vol.db")
+      (tmpDir <> "/bench.imm.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
     withWriter db (`insertOneEb` i)

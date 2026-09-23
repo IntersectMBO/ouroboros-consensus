@@ -93,6 +93,7 @@ import Control.Concurrent.Async (withAsync)
 import Control.Exception (evaluate)
 import Control.Monad (forM, forever, replicateM, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
+import Control.ResourceRegistry (withRegistry)
 import Control.Tracer (Tracer (..), emit)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -141,14 +142,14 @@ main = do
   hSetBuffering stdout LineBuffering
   opts <- execParser optsInfo
   validateOpts opts
-  withSystemTempDirectory "leios-gc-bench" $ \tmpDir -> do
+  withSystemTempDirectory "leios-gc-bench" $ \tmpDir -> withRegistry $ \registry -> do
     -- Same naming convention as 'newLeiosDBSQLiteFromEnv'.
     let benchVol = tmpDir <> "/bench.vol.db"
         benchImm = tmpDir <> "/bench.imm.db"
     (tracer, flushEvents) <- mkCollectingTracer
     let mkDb = case optGcPacing opts of
-          GcPacingDefault -> newLeiosDBSQLite tracer benchVol benchImm
-          GcPacingZero -> newLeiosDBSQLiteWithGcBatchSize tracer benchVol benchImm 0
+          GcPacingDefault -> newLeiosDBSQLite registry tracer benchVol benchImm
+          GcPacingZero -> newLeiosDBSQLiteWithGcBatchSize registry tracer benchVol benchImm 0
     -- get the series of (slot, ebHash)
     (db, schedule) <- case optDbPath opts of
       Just path -> do
