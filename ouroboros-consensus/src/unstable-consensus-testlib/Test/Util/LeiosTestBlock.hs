@@ -99,6 +99,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (for_)
+import Data.Functor ((<&>))
 import Data.Functor.Identity (runIdentity)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
@@ -112,12 +113,13 @@ import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
 import qualified Data.Vector.Strict as V
 import Data.Void (Void)
-import Data.Word (Word64)
+import Data.Word (Word64, Word8)
 import GHC.Generics (Generic)
 import LeiosDemoDb (lookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
-  ( BytesSize
+  ( AnnouncementFields (..)
+  , BytesSize
   , EbHash
   , HasLeiosVoting (..)
   , LeiosCert
@@ -501,14 +503,24 @@ instance HasLeiosVoting LeiosTestBlock where
 -- protocol's chain-dependent state: a CertRB certifies the endorser block its
 -- predecessor announced, and this is where the apply path reads that from.
 newtype LeiosTestChainDepState = LeiosTestChainDepState
-  { ltcdsAnnouncement :: Maybe (LeiosPoint, BytesSize)
+  { ltcdsAnnouncement :: Maybe AnnouncementFields
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
 instance Serialise LeiosTestChainDepState where
-  encode = encode . fmap flattenAnnouncement . ltcdsAnnouncement
-  decode = LeiosTestChainDepState . fmap unflattenAnnouncement <$> decode
+  encode = encode . fmap flattenElected . ltcdsAnnouncement
+  decode = LeiosTestChainDepState . fmap unflattenElected <$> decode
+
+-- | The announcement's fields as plain components, since neither 'ElId' nor
+-- 'EbHash' has a 'Serialise' instance of its own.
+flattenElected :: AnnouncementFields -> (SlotNo, [Word8], EbHash, BytesSize)
+flattenElected (MkAnnouncementFields (MkElId elSlot poolId) ebHash size) =
+  (elSlot, SBS.unpack poolId, ebHash, size)
+
+unflattenElected :: (SlotNo, [Word8], EbHash, BytesSize) -> AnnouncementFields
+unflattenElected (elSlot, poolId, ebHash, size) =
+  MkAnnouncementFields (MkElId elSlot (SBS.pack poolId)) ebHash size
 
 -- | The announcement as plain components, since 'LeiosPoint' has no
 -- 'Serialise' instance of its own.
@@ -551,7 +563,7 @@ instance ConsensusProtocol LeiosTestProtocol where
   type CanBeLeader LeiosTestProtocol = ()
   type LedgerView LeiosTestProtocol = LeiosTestView
   type ValidationErr LeiosTestProtocol = Void
-  type ValidateView LeiosTestProtocol = Maybe (LeiosPoint, BytesSize)
+  type ValidateView LeiosTestProtocol = Maybe AnnouncementFields
 
   protocolSecurityParam = ltpcSecurityParam
 
@@ -566,7 +578,9 @@ instance ConsensusProtocol LeiosTestProtocol where
 type instance BlockProtocol LeiosTestBlock = LeiosTestProtocol
 
 instance BlockSupportsProtocol LeiosTestBlock where
-  validateView _ = lthAnnouncement
+  validateView _ hdr =
+    lthAnnouncement hdr <&> \(point, size) ->
+      MkAnnouncementFields (headerElId hdr) (pointEbHash point) size
 
 {-------------------------------------------------------------------------------
   Ledger

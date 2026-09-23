@@ -68,6 +68,7 @@ import LeiosDemoDb
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( LeiosOutstanding
   , LeiosPeerVars
@@ -618,6 +619,11 @@ initNodeKernel
                 forM_ peersVars $ \vars ->
                   MVar.modifyMVar_ (Leios.offerings vars) $
                     pure . Map.dropWhileAntitone ((< immTipSlot) . Leios.pointSlotNo)
+                -- Same for what each peer has claimed is certified: 'ElId'
+                -- orders slot-first, so the below-tip elections are a prefix.
+                forM_ peersVars $ \vars ->
+                  MVar.modifyMVar_ (Leios.certificationClaims vars) $
+                    pure . Map.dropWhileAntitone (\(MkElId elSlot _poolId) -> elSlot < immTipSlot)
           }
 
     -- The Recovery Path: a certificate moves its election's focus onto the

@@ -17,7 +17,8 @@
 {-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Protocol.Praos
-  ( BasePraos
+  ( AnnouncedBy (..)
+  , BasePraos
   , BasePraosState (..)
   , BasePraosValidationErr (..)
   , ConsensusConfig (..)
@@ -322,7 +323,7 @@ data BasePraosState pext = PraosState
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
   , praosStateLeiosAnnouncement ::
-      !(StrictMaybeLeios (PraosExtensionHasLeios pext) (StrictMaybe EbAnnouncement))
+      !(StrictMaybeLeios (PraosExtensionHasLeios pext) (StrictMaybe AnnouncedBy))
   -- ^ The Leios 'EbAnnouncement' from the most recently applied header on
   -- this chain — overwritten on every header tick (so a header with no
   -- announcement clears the field). The 'ResolveLeiosBlock' instance for
@@ -331,6 +332,29 @@ data BasePraosState pext = PraosState
   -- immediately-previous announcement is ever certified.
   }
   deriving (Generic, Show, Eq)
+
+-- | An EB announcement, and the issuer of the header that carried it.
+--
+-- With that header's slot ('praosStateLastSlot') the issuer gives the
+-- election. A CertRB is validated against its predecessor's chain-dep state,
+-- so this is what lets the arrival of a CertRB /header/ name the election it
+-- claims a certificate for --- which is how a peer claiming two different
+-- ones for a single election is caught (see
+-- @LeiosDemoLogic.checkMsgRollForwardForLeiosOffers@).
+data AnnouncedBy = MkAnnouncedBy
+  { announcedByIssuer :: !(KeyHash SL.BlockIssuer)
+  , announcedEb :: !EbAnnouncement
+  }
+  deriving (Generic, Show, Eq, NoThunks)
+
+encodeAnnouncedBy :: AnnouncedBy -> CBOR.Encoding
+encodeAnnouncedBy (MkAnnouncedBy issuer ann) =
+  CBOR.encodeListLen 2 <> toCBOR issuer <> encodeEbAnnouncement ann
+
+decodeAnnouncedBy :: Decoder s AnnouncedBy
+decodeAnnouncedBy = do
+  enforceSize "AnnouncedBy" 2
+  MkAnnouncedBy <$> fromCBOR <*> decodeEbAnnouncement
 
 type PraosState = BasePraosState PextNone
 
@@ -390,7 +414,7 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
           , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
           , toEraCBOR @ShelleyEra praosStateLabNonce
           , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
-          , foldMap (encodeNullStrictMaybe encodeEbAnnouncement) praosStateLeiosAnnouncement
+          , foldMap (encodeNullStrictMaybe encodeAnnouncedBy) praosStateLeiosAnnouncement
           ]
 
   decode =
@@ -411,7 +435,7 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra
         <*> traverse
-          (\() -> decodeNullStrictMaybe decodeEbAnnouncement)
+          (\() -> decodeNullStrictMaybe decodeAnnouncedBy)
           ( case praosExtensionHasLeios (Proxy @pext) of
               PextDoesNotHaveLeiosDecided -> SNothingLeios
               PextHasLeiosDecided -> SJustLeios ()
@@ -606,7 +630,10 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
         , praosStateLeiosAnnouncement =
             case singPraosExtension (Proxy @pext) of
               SingPextNone -> SNothingLeios
-              SingPextLeios -> SJustLeios $ fromCodecEbAnnouncement <$> LeiosCodec.hbEbAnnouncement (Views.hvSigned b)
+              SingPextLeios ->
+                SJustLeios $
+                  MkAnnouncedBy hk . fromCodecEbAnnouncement
+                    <$> LeiosCodec.hbEbAnnouncement (Views.hvSigned b)
         }
      where
       epochInfoWithErr =

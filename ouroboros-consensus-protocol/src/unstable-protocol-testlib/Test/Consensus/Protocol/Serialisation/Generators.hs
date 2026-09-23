@@ -31,7 +31,10 @@ import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , EbHash (MkEbHash)
   )
-import Ouroboros.Consensus.Protocol.Praos (BasePraosState (PraosState))
+import Ouroboros.Consensus.Protocol.Praos
+  ( AnnouncedBy (MkAnnouncedBy)
+  , BasePraosState (PraosState)
+  )
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( KnownPraosExtension (praosExtensionHasLeios)
@@ -55,6 +58,9 @@ instance Arbitrary EbHash where
 
 instance Arbitrary EbAnnouncement where
   arbitrary = EbAnnouncement <$> arbitrary <*> arbitrary
+
+instance Arbitrary AnnouncedBy where
+  arbitrary = MkAnnouncedBy <$> arbitrary <*> arbitrary
 
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary

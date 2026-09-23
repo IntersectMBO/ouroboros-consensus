@@ -43,7 +43,8 @@ import qualified Data.Text as Text
 import LeiosDemoDb (lookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
-  ( EbAnnouncement (..)
+  ( AnnouncementFields (..)
+  , EbAnnouncement (..)
   , LeiosClosureError (..)
   , LeiosPoint (..)
   , LeiosTx (..)
@@ -56,7 +57,8 @@ import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos
-  ( BasePraosState (..)
+  ( AnnouncedBy (..)
+  , BasePraosState (..)
   , ConsensusConfig (..)
   , Praos
   , PraosCrypto
@@ -274,15 +276,17 @@ instance
 
   protocolStateLeiosAnnouncement st = do
     -- 'SNothingLeios' is unreachable at this extension, so this is total.
-    ann <- case praosStateLeiosAnnouncement st of
+    MkAnnouncedBy issuer ann <- case praosStateLeiosAnnouncement st of
       SJustLeios mbAnn -> strictMaybeToMaybe mbAnn
     pure
-      ( MkLeiosPoint
-          { pointSlotNo = fromWithOrigin (SlotNo 0) st.praosStateLastSlot
-          , pointEbHash = ann.ebAnnouncementHash
-          }
-      , ann.ebAnnouncementSize
-      )
+      MkAnnouncementFields
+        { announcementElection =
+            MkElId
+              (fromWithOrigin (SlotNo 0) st.praosStateLastSlot)
+              (Crypto.hashToBytesShort $ unKeyHash issuer)
+        , announcementEbHash = ann.ebAnnouncementHash
+        , announcementEbBodySize = ann.ebAnnouncementSize
+        }
 
   -- The announcing RB is this block's parent
   announcingRbHash blk =
