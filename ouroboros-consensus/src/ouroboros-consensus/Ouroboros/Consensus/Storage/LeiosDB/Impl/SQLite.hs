@@ -26,7 +26,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
 
 import Cardano.Prelude (forM_, traverse_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTBQueue
   , StrictTChan
@@ -51,9 +51,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTVar
   )
 import Control.Exception
-  ( BlockedIndefinitelyOnSTM (..)
-  , SomeException
-  , fromException
+  ( SomeException
   , throwIO
   , toException
   )
@@ -67,6 +65,13 @@ import Control.Monad.Class.MonadThrow
   , onException
   , try
   )
+import Control.ResourceRegistry
+  ( ResourceRegistry
+  , Thread
+  , cancelThread
+  , forkLinkedThread
+  , withRegistry
+  )
 import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
@@ -74,7 +79,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
-import Data.Maybe (isJust)
 import qualified Data.Set as Set
 import Data.String (fromString)
 import Database.SQLite3
@@ -107,13 +111,7 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException (..), throwLeiosDbException)
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..), TraceLeiosDb (..))
-import Ouroboros.Consensus.Util.IOLike
-  ( ExitCase (..)
-  , MonadAsync (async, asyncThreadId)
-  , atomically
-  , labelThread
-  , link
-  )
+import Ouroboros.Consensus.Util.IOLike (ExitCase (..), atomically)
 import System.Directory (createDirectoryIfMissing, doesFileExist, getFileSize)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -124,8 +122,8 @@ import System.FilePath (takeDirectory)
 --- | Create a new Leios database connection from environment variable.
 --- This looks up the LEIOS_VOL_DB_PATH and LEIOS_VOL_DB_PATH environment variables
 --  and opens the database.
-newLeiosDBSQLiteFromEnv :: Tracer IO TraceLeiosDb -> IO (LeiosDbHandle IO)
-newLeiosDBSQLiteFromEnv tracer = do
+newLeiosDBSQLiteFromEnv :: ResourceRegistry IO -> Tracer IO TraceLeiosDb -> IO (LeiosDbHandle IO)
+newLeiosDBSQLiteFromEnv registry tracer = do
   volDbPath <-
     lookupEnv "LEIOS_VOL_DB_PATH" >>= \case
       Nothing -> die "You must define the LEIOS_VOL_DB_PATH variable for this demo."
@@ -134,7 +132,7 @@ newLeiosDBSQLiteFromEnv tracer = do
     lookupEnv "LEIOS_IMM_DB_PATH" >>= \case
       Nothing -> die "You must define the LEIOS_IMM_DB_PATH variable for this demo."
       Just x -> pure x
-  newLeiosDBSQLite tracer volDbPath immDbPath
+  newLeiosDBSQLite registry tracer volDbPath immDbPath
 
 -- | Create a new Leios database using the SQLite implementation.
 --
@@ -143,25 +141,33 @@ newLeiosDBSQLiteFromEnv tracer = do
 -- threads. All writers submit to the one write connection created here, on
 -- its own worker thread.
 --
--- Note: this also starts a thread that samples the database's size.
-newLeiosDBSQLite :: Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
-newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
-  newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath defaultGcBatchSize
+-- The registry owns the background threads (writer, copier and a thread that
+-- samples the database's size): 'close' stops them in order, and closing the
+-- registry cancels whatever is still running.
+newLeiosDBSQLite ::
+  ResourceRegistry IO -> Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
+newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath =
+  newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath defaultGcBatchSize
 
 -- | 'newLeiosDBSQLite' with an explicit GC sweep batch size: how many EBs
 -- the writer evicts per turn, between the jobs it serves.
 --
 -- Note that orphan transaction batch size is set by the 'gcOrphanTxBatchSize' constant.
 newLeiosDBSQLiteWithGcBatchSize ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
-newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
+  ResourceRegistry IO ->
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  FilePath ->
+  Int64 ->
+  IO (LeiosDbHandle IO)
+newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   -- The database opens before whoever owns these directories creates them.
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
   notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
-  samplerId <- startVolatileStatsSampler tracer statsVar volLeiosDbPath
+  samplerThread <- startVolatileStatsSampler registry tracer statsVar volLeiosDbPath
   -- Both start set, so a restart picks up whatever the last run left
   -- pinned or marked; the copier and the writer clear them once they find
   -- nothing.
@@ -171,9 +177,10 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
   -- The volatile partition's one writer: every write to it -- ingest,
   -- promotion, GC -- happens on this one worker, on the only open write
   -- connection, created with the database and torn down by the returned
-  -- action (or by orphanhood, for callers that never tear down).
+  -- action (or by the registry closing, for callers that never tear down).
   writeQueue <-
     startWriter
+      registry
       tracer
       statsVar
       notificationChan
@@ -185,6 +192,7 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
   -- -- which is O(closure) -- never holds up ingest.
   stopCopier <-
     startCopier
+      registry
       tracer
       statsVar
       copyPending
@@ -193,7 +201,7 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
       immLeiosDbPath
   pure
     LeiosDbHandle
-      { close = close samplerId stopCopier writeQueue
+      { close = close samplerThread stopCopier writeQueue
       , openReader = openReader statsVar
       , openWriter = openWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
@@ -202,11 +210,11 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
       , leiosDbSampleStats = readTVarIO statsVar
       }
  where
-  close :: ThreadId -> IO () -> WriteQueue -> IO ()
-  close samplerId stopCopier writeQueue = do
+  close :: Thread IO () -> IO () -> WriteQueue -> IO ()
+  close samplerThread stopCopier writeQueue = do
     -- The sampler holds no connection -- it only reads counters -- so
-    -- killing it is safe at any point.
-    killThread samplerId
+    -- cancelling it is safe at any point.
+    cancelThread samplerThread
     -- The copier first: it submits to the writer, so it must be gone
     -- before the writer stops serving.
     stopCopier
@@ -252,10 +260,12 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
 -- closed, so e.g. the database files can be deleted.
 withLeiosDBSQLite ::
   Tracer IO TraceLeiosDb -> FilePath -> FilePath -> (LeiosDbHandle IO -> IO a) -> IO a
-withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
-  bracket
-    (newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath)
-    (\db -> db.close)
+withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath k =
+  withRegistry $ \registry ->
+    bracket
+      (newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath)
+      (\db -> db.close)
+      k
 
 -- | Initialise 'LeiosDbStats' by counting the EB rows of both partitions.
 --   This will only run once per process.
@@ -281,9 +291,13 @@ initialStats volPath immPath = do
 -- | Fork a thread that traces 'TraceLeiosDbStats' every 10 seconds. Samples
 -- the volatile partition's file only.
 startVolatileStatsSampler ::
-  Tracer IO TraceLeiosDb -> StrictTVar IO LeiosDbStats -> FilePath -> IO ThreadId
-startVolatileStatsSampler tracer statsVar volPath =
-  forkIO $ forever $ do
+  ResourceRegistry IO ->
+  Tracer IO TraceLeiosDb ->
+  StrictTVar IO LeiosDbStats ->
+  FilePath ->
+  IO (Thread IO ())
+startVolatileStatsSampler registry tracer statsVar volPath =
+  forkLinkedThread registry "leiosdb-stats-sampler" $ forever $ do
     -- wait one sample window to side-step contention with starting the LeiosDB
     threadDelay tenSeconds
     stats <- readTVarIO statsVar
@@ -533,6 +547,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
 --
 -- Returns the action that stops the copier and closes its connection.
 startCopier ::
+  ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   StrictTVar IO Bool ->
@@ -540,7 +555,7 @@ startCopier ::
   FilePath ->
   FilePath ->
   IO (IO ())
-startCopier tracer statsVar copyPending writeQueue volPath immPath = do
+startCopier registry tracer statsVar copyPending writeQueue volPath immPath = do
   ccDb <- openRawConnection immPath
   (copierConn, nextPinnedStmt) <-
     ( do
@@ -603,14 +618,13 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
               check (stop || pending)
               pure stop
             unless stop loop
-  worker <- async $ do
+  void $ forkLinkedThread registry "leiosdb-copier" $ do
     outcome <- try (loop `finally` closeConnection)
     atomically $ putTMVar stoppedVar (outcome :: Either SomeException ())
     -- A copier that stopped is a volatile partition that stops being
     -- evictable, so the link takes the node down rather than let it grow.
+    -- Cancellation by the registry is the one stop the link lets pass.
     either throwIO pure outcome
-  labelThread (asyncThreadId worker) "leiosdb-copier"
-  link worker
   pure $ do
     atomically $ writeTVar stopVar True
     either throwIO pure =<< atomically (readTMVar stoppedVar)
@@ -1202,6 +1216,7 @@ writerQueueDepth = numUpstreamPeers + forge + maintenance + slack
 -- the submitting scheduler's problem instead (traced, paced, retried); the
 -- worker survives it.
 startWriter ::
+  ResourceRegistry IO ->
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   StrictTChan IO LeiosEbNotification ->
@@ -1210,7 +1225,7 @@ startWriter ::
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath immPath = do
+startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath immPath = do
   volDb <- openVolRawConnection volPath
   immDb <- orCloseOnError volDb $ openRawConnection immPath
   -- A throw anywhere below closes both connections (best effort -- an
@@ -1363,18 +1378,16 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
                   atomically $ writeTVar sweepStateVar SweepIdle
                   pure False
 
-  worker <- async $ do
+  void $ forkLinkedThread registry "leiosdb-writer" $ do
     outcome <- try serve
-    let orphaned e = isJust (fromException e :: Maybe BlockedIndefinitelyOnSTM)
     cause <- case outcome of
       -- A served 'Shutdown' has already closed the connections.
       Right () -> pure closedException
       Left e -> do
-        -- Close on the way down; on orphanhood (the handle was dropped
-        -- without teardown, so nobody can submit again) this is the only
-        -- close there will be.
+        -- Close on the way down; when the registry cancels the writer
+        -- before 'close' ran, this is the only close there will be.
         void (try closeConnections :: IO (Either SomeException ()))
-        pure $ if orphaned e then closedException else e
+        pure e
     -- Seal, then fail what was already queued: nothing can be queued after
     -- the seal ('submitJob'), so afterwards the queue stays empty forever.
     atomically $ writeTVar sealedVar (Just cause)
@@ -1384,12 +1397,9 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
             Just job -> failJob cause job >> drain
     drain
     -- Then out, so the link takes the node down where the write failed
-    -- rather than at whatever submits next. Orphanhood is not a failure.
-    case outcome of
-      Left e | not (orphaned e) -> throwIO e
-      _ -> pure ()
-  labelThread (asyncThreadId worker) "leiosdb-writer"
-  link worker
+    -- rather than at whatever submits next. Cancellation by the registry is
+    -- the one stop the link lets pass.
+    either throwIO pure outcome
   pure WriteQueue{wqJobs = queue, wqSealed = sealedVar, wqTracer = tracer}
  where
   closedException =
