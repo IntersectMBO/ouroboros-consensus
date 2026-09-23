@@ -8,8 +8,6 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
 import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
-import Cardano.Tools.LeiosDb (LeiosDbSource (..))
-import Control.ResourceRegistry (withRegistry)
 import Data.String (fromString)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
@@ -18,7 +16,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbReader (scanEbPoints)
   , LeiosDbWriter (writeEbPoint)
   , Promise (await)
-  , newLeiosDBSQLite
+  , withLeiosDBSQLite
   , withReader
   , withWriter
   )
@@ -151,35 +149,37 @@ blockCountTest logStep = do
   logStep "writing a LeiosDb next to the chain"
   -- DBSynthesizer writes no leios.vol.db and leios.imm.db, so the test writes
   -- them. The kept EB is announced below the truncation slot, and the dropped
-  -- one above every block the synthesis forged.
-  withRegistry $ \registry -> do
-    leiosDb <-
-      newLeiosDBSQLite registry mempty (chainDB <> "/leios.vol.db") (chainDB <> "/leios.imm.db")
-    let keptEb = MkLeiosPoint 0 (mkEbHash '1')
-        droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
+  -- one above every block the synthesis forged. The handle is closed before
+  -- the truncater runs: it opens the files itself and VACUUMs them.
+  let volLeiosDb = chainDB <> "/leios.vol.db"
+      immLeiosDb = chainDB <> "/leios.imm.db"
+      keptEb = MkLeiosPoint 0 (mkEbHash '1')
+      droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
+  withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->
     withWriter leiosDb $ \con ->
       mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
 
-    logStep "running truncation"
-    DBTruncater.truncate testTruncaterConfig testBlockArgs
+  logStep "running truncation"
+  DBTruncater.truncate testTruncaterConfig testBlockArgs
 
-    ebPoints <- withReader leiosDb scanEbPoints
-    ebPoints == [(0, pointEbHash keptEb)]
-      @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
+  ebPoints <- withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->
+    withReader leiosDb scanEbPoints
+  ebPoints == [(0, pointEbHash keptEb)]
+    @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
 
-    logStep "running analysis after truncation"
-    resultTruncated <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
-    -- The leader schedule picks the slots, so the surviving count is not known
-    -- here. Check only that the chain shrank and is not empty.
-    case resultTruncated of
-      Just (ResultCountBlock countAfter) ->
-        (countAfter > 0 && countAfter < blockCount)
-          @? "truncation left "
-            ++ show countAfter
-            ++ " of "
-            ++ show blockCount
-            ++ " blocks"
-      _ -> assertFailure $ "analysis after truncation returned " ++ show resultTruncated
+  logStep "running analysis after truncation"
+  resultTruncated <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
+  -- The leader schedule picks the slots, so the surviving count is not known
+  -- here. Check only that the chain shrank and is not empty.
+  case resultTruncated of
+    Just (ResultCountBlock countAfter) ->
+      (countAfter > 0 && countAfter < blockCount)
+        @? "truncation left "
+          ++ show countAfter
+          ++ " of "
+          ++ show blockCount
+          ++ " blocks"
+    _ -> assertFailure $ "analysis after truncation returned " ++ show resultTruncated
  where
   genTxs _ _ _ _ = pure []
 
