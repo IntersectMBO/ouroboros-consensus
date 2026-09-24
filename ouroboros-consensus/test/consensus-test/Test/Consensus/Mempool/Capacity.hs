@@ -10,11 +10,11 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | The mempool capacity ignores the endorser-block capacity.
+-- | The mempool capacity counts the endorser-block capacity.
 --
--- Every block type in the repository has a zero 'Ledger.ebCapacityTxMeasure',
--- so a test block with a non-zero one is the only way to observe whether
--- 'computeMempoolCapacity' reads it.
+-- Only Dijkstra has a non-zero 'Ledger.ebCapacityTxMeasure', and its
+-- parameters come from an arbitrary ledger state. A test block with fixed
+-- capacities pins the formula to a number.
 module Test.Consensus.Mempool.Capacity (tests) where
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
@@ -24,7 +24,6 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.DeepSeq (NFData)
 import qualified Data.Map.Strict as Map
-import qualified Data.Measure as Measure
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -62,21 +61,20 @@ tests =
   testGroup
     "Mempool capacity"
     [ testProperty
-        "the endorser-block capacity does not widen the mempool"
-        prop_mempoolCapacityIgnoresEbCapacity
+        "the mempool holds two blocks and two endorser blocks"
+        prop_mempoolCapacityCountsEbCapacity
     ]
 
--- | Without an override the mempool holds two blocks, and nothing else.
---
--- 'ebCapacity' is deliberately non-zero, so the property fails if
--- 'computeMempoolCapacity' ever adds it to the block capacity.
-prop_mempoolCapacityIgnoresEbCapacity :: Property
-prop_mempoolCapacityIgnoresEbCapacity =
+-- | Without an override the mempool holds two blocks and two endorser blocks:
+-- 2 * ('blockCapacity' + 'ebCapacity') bytes.
+prop_mempoolCapacityCountsEbCapacity :: Property
+prop_mempoolCapacityCountsEbCapacity =
   once $
     computeMempoolCapacity cfg st NoMempoolCapacityBytesOverride
-      === Measure.plus oneBlock oneBlock
+      === Ledger.TxMeasure
+        (Ledger.IgnoringOverflow (Ledger.ByteSize32 10240))
+        Ledger.TrivialTxMeasurePhase2
  where
-  oneBlock = Ledger.blockCapacityTxMeasure cfg st
 
   cfg :: TestBlockLedgerConfig
   cfg =
@@ -100,8 +98,8 @@ data Tx = Tx
 blockCapacity :: Ledger.ByteSize32
 blockCapacity = Ledger.ByteSize32 4096
 
--- | Non-zero, so that a mempool capacity that reads it differs from one that
--- does not.
+-- | Non-zero, so that a mempool capacity that ignores it differs from one that
+-- counts it.
 ebCapacity :: Ledger.ByteSize32
 ebCapacity = Ledger.ByteSize32 1024
 
