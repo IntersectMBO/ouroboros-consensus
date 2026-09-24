@@ -95,8 +95,7 @@ import Control.Monad.Identity (Identity (..))
 import Data.ByteString.Short (ShortByteString)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
-import Data.Measure (Measure)
-import qualified Data.Measure as Measure
+import Data.Measure (Measure, zero)
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import Data.Word (Word32)
@@ -547,8 +546,8 @@ instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) 
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  ebCapacityTxMeasure _cfg _st = zero
+  ebClosureCapacityTxMeasure _cfg _st = zero
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasurePhase1 (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
@@ -562,8 +561,8 @@ instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) 
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  ebCapacityTxMeasure _cfg _st = zero
+  ebClosureCapacityTxMeasure _cfg _st = zero
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasurePhase1 (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
@@ -577,8 +576,8 @@ instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  ebCapacityTxMeasure _cfg _st = zero
+  ebClosureCapacityTxMeasure _cfg _st = zero
 
 -----
 
@@ -717,8 +716,8 @@ instance
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  ebCapacityTxMeasure _cfg _st = zero
+  ebClosureCapacityTxMeasure _cfg _st = zero
 
 -----
 
@@ -808,8 +807,8 @@ instance
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  ebCapacityTxMeasure _cfg _st = zero
+  ebClosureCapacityTxMeasure _cfg _st = zero
 
 instance
   ShelleyCompatible p ConwayEra =>
@@ -826,8 +825,8 @@ instance
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  ebCapacityTxMeasure _cfg _st = zero
+  ebClosureCapacityTxMeasure _cfg _st = zero
 
 instance
   ShelleyCompatible p DijkstraEra =>
@@ -844,5 +843,5 @@ instance
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  ebCapacityTxMeasure _cfg _st = zero
+  ebClosureCapacityTxMeasure _cfg _st = zero
