@@ -17,7 +17,7 @@ module Ouroboros.Consensus.Storage.LedgerDB
 
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
-import Control.Tracer ((>$<))
+import Hermod.Tracing.API.Tracer ((>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract

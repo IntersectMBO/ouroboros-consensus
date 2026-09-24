@@ -12,10 +12,10 @@ import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
 import Control.ResourceRegistry (withRegistry)
-import Control.Tracer
 import Data.Foldable (asum)
 import Data.Functor ((<&>))
 import Data.Functor.Identity
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Node as Node

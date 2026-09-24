@@ -45,10 +45,10 @@ import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow (MonadThrow)
 import Control.Monad.Class.MonadTimer (threadDelay)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
-import Control.Tracer (Tracer, traceWith)
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Time (NominalDiffTime)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import qualified Ouroboros.Consensus.BlockchainTime.WallClock.Types as Clock
 import qualified Ouroboros.Consensus.HardFork.Abstract as HardFork
 import qualified Ouroboros.Consensus.HardFork.History as HardFork

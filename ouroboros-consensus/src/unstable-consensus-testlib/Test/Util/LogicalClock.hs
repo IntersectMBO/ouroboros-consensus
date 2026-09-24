@@ -29,10 +29,10 @@ module Test.Util.LogicalClock
 
 import Control.Monad
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, contramapM)
 import Data.Time (NominalDiffTime)
 import Data.Word
 import GHC.Stack
+import Hermod.Tracing.API.Tracer (Tracer, contramapM)
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM

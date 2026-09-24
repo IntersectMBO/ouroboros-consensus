@@ -126,7 +126,6 @@ import Control.Monad.State.Strict
   )
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.List as List (foldl')
 import qualified Data.Map.Strict as Map
@@ -136,6 +135,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, traceWith)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.Serialisation

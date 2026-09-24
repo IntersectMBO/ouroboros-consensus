@@ -10,7 +10,7 @@ module Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
   , runScheduledBlockFetchServer
   ) where
 
-import Control.Tracer
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block (Point)
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM))
 import Ouroboros.Network.BlockFetch.ClientState (ChainRange)

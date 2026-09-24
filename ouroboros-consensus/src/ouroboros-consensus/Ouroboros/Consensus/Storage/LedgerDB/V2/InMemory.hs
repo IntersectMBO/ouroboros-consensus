@@ -34,7 +34,6 @@ import Control.Monad.Class.MonadThrow
 import Control.Monad.Except
 import Control.Monad.State.Strict (execStateT)
 import Control.Monad.Trans.Except
-import Control.Tracer
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder.Extra (defaultChunkSize)
@@ -44,6 +43,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
 import Data.Void
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract

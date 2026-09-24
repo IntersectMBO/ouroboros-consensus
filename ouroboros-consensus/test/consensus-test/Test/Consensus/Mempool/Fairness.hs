@@ -19,11 +19,11 @@ import Control.Concurrent (threadDelay)
 import qualified Control.Concurrent.Async as Async
 import Control.Exception (assert)
 import Control.Monad (forever, void)
-import qualified Control.Tracer as Tracer
 import Data.Foldable (asum)
 import qualified Data.List as List
 import Data.List.NonEmpty hiding (length)
 import Data.Void (Void, vacuous)
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))

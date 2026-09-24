@@ -19,7 +19,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ) where
 
 import Control.ResourceRegistry (ResourceRegistry)
-import Control.Tracer
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( ChainDB

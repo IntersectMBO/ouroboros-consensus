@@ -83,7 +83,6 @@ import Control.DeepSeq (NFData (..))
 import Control.Monad (join, void)
 import Control.Monad.Class.MonadTimer (MonadTimer)
 import Control.Monad.Except (runExcept, throwError)
-import Control.Tracer
 import Data.Foldable (traverse_)
 import Data.Functor ((<&>))
 import Data.Kind (Type)
@@ -96,6 +95,7 @@ import Data.Typeable
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer
 import Network.TypedProtocol.Core
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)

@@ -16,9 +16,9 @@ import Cardano.Tools.DBAnalyser.Types
 import Control.Monad (unless)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
-import Control.Tracer (mkTracer, nullTracer, (>$<))
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
+import Hermod.Tracing.API.Tracer (mkTracer, nullTracer, (>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract

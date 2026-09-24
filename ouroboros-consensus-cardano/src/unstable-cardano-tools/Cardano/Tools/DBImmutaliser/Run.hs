@@ -24,7 +24,6 @@ import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import Control.Monad (unless)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, mkTracer, stdoutTracer, traceWith, (>$<))
 import Data.Foldable (for_)
 import Data.List (intercalate, sortOn)
 import Data.List.NonEmpty (NonEmpty)
@@ -36,6 +35,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Traversable (for)
 import qualified Dot
+import Hermod.Tracing.API.Tracer (Tracer, mkTracer, stdoutTracer, traceWith, (>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.SupportsProtocol

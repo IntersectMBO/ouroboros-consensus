@@ -25,7 +25,6 @@ import Control.Exception (assert)
 import Control.Monad (when)
 import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow
-import Control.Tracer (Tracer, traceWith)
 import Data.Data (Typeable)
 import Data.Foldable as Foldable (foldl', toList)
 import Data.List qualified as List
@@ -38,6 +37,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API

@@ -13,14 +13,14 @@ module Test.Consensus.PeerSimulator.ChainSync
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.Exception (SomeException)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import Control.Tracer
+import Data.Proxy (Proxy (..))
+import Hermod.Tracing.API.Tracer
   ( Tracer
   , contramap
   , mkTracer
   , nullTracer
   , traceWith
   )
-import Data.Proxy (Proxy (..))
 import Network.TypedProtocol.Codec (AnyMessage)
 import Ouroboros.Consensus.Block (Header, Point)
 import Ouroboros.Consensus.BlockchainTime (RelativeTime (..))

@@ -19,12 +19,12 @@ import Codec.CBOR.Write (toLazyByteString)
 import Control.Exception (assert)
 import Control.Monad (join)
 import Control.ResourceRegistry (ResourceRegistry)
-import Control.Tracer (contramap, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor ((<&>))
 import Data.Functor.Identity (Identity (..))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Hermod.Tracing.API.Tracer (contramap, traceWith)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Storage.ChainDB.API

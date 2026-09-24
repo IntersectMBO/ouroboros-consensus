@@ -9,8 +9,8 @@ module Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   , TraceLocalTxSubmissionServerEvent (..)
   ) where
 
-import Control.Tracer
 import Data.Tuple (Solo (..))
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Util.IOLike

@@ -15,8 +15,8 @@ module Test.Consensus.PeerSimulator.ScheduledServer
   , runHandlerWithTrace
   ) where
 
-import Control.Tracer (Tracer, traceWith)
 import Data.Foldable (traverse_)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadSTM (STM, atomically)

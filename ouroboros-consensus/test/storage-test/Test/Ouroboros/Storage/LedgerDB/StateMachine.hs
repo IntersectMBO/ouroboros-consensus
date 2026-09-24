@@ -35,13 +35,13 @@ import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.State hiding (state)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, mkTracer, (>$<))
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Word
+import Hermod.Tracing.API.Tracer (Tracer, mkTracer, (>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract

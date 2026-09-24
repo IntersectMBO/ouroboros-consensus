@@ -19,7 +19,7 @@ import Control.Monad (void)
 import Control.Monad.Class.MonadTime
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, nullTracer, traceWith, (>$<))
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, traceWith, (>$<))
 import Network.TypedProtocol.Codec
   ( ActiveState
   , AnyMessage

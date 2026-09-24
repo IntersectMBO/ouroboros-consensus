@@ -35,7 +35,6 @@ import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Monad.Trans.State.Strict
-import Control.Tracer (Tracer, nullTracer, traceWith, (>$<))
 import Data.Bifunctor (first)
 import Data.Function (on)
 import Data.List (sortBy)
@@ -49,6 +48,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, traceWith, (>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Config

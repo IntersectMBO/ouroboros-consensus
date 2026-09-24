@@ -30,12 +30,13 @@ import Control.Monad.Class.MonadTime
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Data.Bifunctor (first)
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Traversable (for)
+import Hermod.Tracing.API.ContraTracer (toContraTracer)
+import Hermod.Tracing.API.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Network.TypedProtocol.Channel (createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage (..))
 import Network.TypedProtocol.Core (PeerRole (..))
@@ -209,7 +210,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
           fst
             <$> Driver.runConnectedPeersPipelined
               createConnectedChannels
-              blockFetchTracer
+              (toContraTracer blockFetchTracer)
               codecBlockFetchId
               bfClient
               bfServer

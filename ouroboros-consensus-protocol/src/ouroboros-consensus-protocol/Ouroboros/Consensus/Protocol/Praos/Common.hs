@@ -38,12 +38,12 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
-import qualified Control.Tracer as Tracer
 import Data.Function (on)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey

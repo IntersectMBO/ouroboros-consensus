@@ -11,9 +11,9 @@ module Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server (tests) wher
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Control.Monad (void)
-import Control.Tracer (Tracer, nullTracer, stdoutTracer, (>$<))
 import Data.SOP.Strict (index_NS)
 import qualified Data.SOP.Telescope as Telescope
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, stdoutTracer, (>$<))
 import Network.TypedProtocol.Proofs (connect)
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Config (topLevelConfigLedger)

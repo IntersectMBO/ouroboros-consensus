@@ -108,9 +108,9 @@ import Control.Monad (replicateM_, unless, when)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.State.Strict (get, modify, put)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, traceWith)
 import Ouroboros.Consensus.Block hiding (headerHash)
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.ImmutableDB.API

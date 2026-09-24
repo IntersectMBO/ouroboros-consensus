@@ -52,10 +52,10 @@ import Codec.CBOR.Read (DeserialiseFailure)
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
 import Data.Typeable
 import Data.Void (Void)
+import Hermod.Tracing.API.Tracer
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful

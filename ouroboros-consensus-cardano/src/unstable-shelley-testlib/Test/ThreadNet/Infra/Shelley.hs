@@ -78,7 +78,6 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
   , OCertSignable (..)
   )
 import Control.Monad.Except (throwError)
-import qualified Control.Tracer as Tracer
 import qualified Data.ByteString as BS
 import Data.Coerce (coerce)
 import Data.ListMap (ListMap (ListMap))
@@ -92,6 +91,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime

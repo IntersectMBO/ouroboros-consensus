@@ -21,7 +21,6 @@ import Control.Monad.Trans.Except.Extra
   , runExceptT
   )
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.Aeson as Aeson
   ( FromJSON
   , Result (..)
@@ -34,6 +33,7 @@ import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
 import Data.Functor (($>))
 import qualified Data.Set as Set
+import Hermod.Tracing.API.Tracer
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node

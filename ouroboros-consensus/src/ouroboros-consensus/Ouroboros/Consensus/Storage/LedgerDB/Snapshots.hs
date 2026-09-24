@@ -119,7 +119,6 @@ import Control.Monad
 import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
-import Control.Tracer
 import Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser)
@@ -133,6 +132,7 @@ import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
 import Data.Word
 import GHC.Generics
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam

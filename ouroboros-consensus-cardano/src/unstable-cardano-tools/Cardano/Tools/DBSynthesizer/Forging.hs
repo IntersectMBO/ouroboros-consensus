@@ -18,11 +18,11 @@ import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Class (liftIO)
 import qualified Control.Monad.Trans.Class as Trans
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
-import Control.Tracer as Trace (nullTracer)
 import Data.Either (isRight)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
+import Hermod.Tracing.API.Tracer as Trace (nullTracer)
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)

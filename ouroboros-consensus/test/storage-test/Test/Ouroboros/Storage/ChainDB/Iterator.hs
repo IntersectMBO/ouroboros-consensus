@@ -15,9 +15,9 @@ import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (..)

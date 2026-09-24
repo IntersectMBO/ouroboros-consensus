@@ -21,9 +21,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 
 import Control.Monad.Except
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.Proxy
 import Data.Typeable
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract

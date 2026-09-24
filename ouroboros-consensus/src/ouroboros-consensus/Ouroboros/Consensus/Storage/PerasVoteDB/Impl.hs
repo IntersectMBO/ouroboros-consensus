@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
 
 import Control.Monad (when)
 import Control.Monad.Except (throwError)
-import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Data (Typeable)
 import Data.Foldable (for_)
 import Data.Foldable qualified as Foldable
@@ -30,6 +29,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, traceWith)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))

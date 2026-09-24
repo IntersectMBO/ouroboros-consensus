@@ -21,9 +21,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import Control.Exception
 import Control.Monad (when)
 import Control.RAWLock (RAWLock, withWriteAccess)
-import Control.Tracer
 import Data.Maybe (fromMaybe)
 import GHC.Generics
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils

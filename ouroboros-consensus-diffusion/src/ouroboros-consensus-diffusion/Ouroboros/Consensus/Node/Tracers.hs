@@ -18,9 +18,9 @@ module Ouroboros.Consensus.Node.Tracers
   ) where
 
 import Control.Exception (SomeException)
-import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Text (Text)
 import Data.Time (UTCTime)
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, (>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)

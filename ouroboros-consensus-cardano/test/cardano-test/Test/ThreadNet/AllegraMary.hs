@@ -13,7 +13,6 @@ import qualified Cardano.Ledger.Shelley.Core as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import Control.Monad (replicateM)
-import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import Data.Proxy (Proxy (..))
@@ -21,6 +20,7 @@ import Data.SOP.Strict (NP (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Cardano.Condense ()

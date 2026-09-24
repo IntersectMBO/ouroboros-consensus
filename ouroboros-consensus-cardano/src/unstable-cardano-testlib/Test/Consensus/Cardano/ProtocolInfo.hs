@@ -28,10 +28,10 @@ import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Cardano.Slotting.Time as Time
-import qualified Control.Tracer as Tracer
 import Data.Proxy (Proxy (..))
 import Data.SOP.Strict
 import Data.Word (Word64)
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.BlockchainTime (SlotLength)
 import Ouroboros.Consensus.Byron.Node

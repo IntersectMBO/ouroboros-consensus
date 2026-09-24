@@ -37,7 +37,6 @@ import Control.Monad.State.Strict
   , runState
   , state
   )
-import Control.Tracer (Tracer, debugTracer, mkTracer, traceWith)
 import Data.Bifunctor (first)
 import Data.Foldable as Foldable (foldl', foldr')
 import Data.List (intersperse, mapAccumL, sort, transpose)
@@ -55,6 +54,7 @@ import qualified Data.Vector.Mutable as MV
 import Data.Word (Word64)
 import qualified Debug.Trace as Debug
 import GHC.Exts (IsList (..))
+import Hermod.Tracing.API.Tracer (Tracer, debugTracer, mkTracer, traceWith)
 import Ouroboros.Consensus.Block
   ( ChainHash (BlockHash)
   , GetHeader

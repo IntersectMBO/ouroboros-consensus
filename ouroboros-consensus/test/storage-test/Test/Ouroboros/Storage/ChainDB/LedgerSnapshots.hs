@@ -20,7 +20,6 @@ import Cardano.Ledger.BaseTypes.NonZero
 import Control.Monad (guard, replicateM)
 import Control.Monad.IOSim (runSim)
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.Foldable (for_)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (mapMaybe)
@@ -28,6 +27,7 @@ import qualified Data.Set as Set
 import Data.Time (secondsToDiffTime)
 import Data.Traversable (for)
 import Data.Word (Word64)
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB

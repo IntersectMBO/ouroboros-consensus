@@ -83,7 +83,6 @@ import Codec.Serialise (Serialise)
 import Control.Exception (assert)
 import Control.Monad (replicateM, void)
 import Control.ResourceRegistry
-import Control.Tracer as CT
 import Data.Bifoldable
 import Data.Bifunctor
 import qualified Data.Bifunctor.TH as TH
@@ -108,6 +107,7 @@ import Data.Void (Void)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
+import Hermod.Tracing.API.Tracer as CT
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types

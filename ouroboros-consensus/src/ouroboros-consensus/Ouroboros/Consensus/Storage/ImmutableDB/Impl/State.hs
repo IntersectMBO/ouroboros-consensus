@@ -28,10 +28,10 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.State
 import Control.Monad (unless)
 import Control.Monad.State.Strict (StateT, lift)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer (Tracer)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ImmutableDB.API
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks

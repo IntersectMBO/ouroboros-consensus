@@ -20,8 +20,8 @@ import Control.Monad.Class.MonadAsync
   ( AsyncCancelled (AsyncCancelled)
   )
 import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
-import Control.Tracer (debugTracer, traceWith)
 import Data.Maybe (mapMaybe)
+import Hermod.Tracing.API.Tracer (debugTracer, traceWith)
 import Ouroboros.Consensus.Block.Abstract
   ( ChainHash (..)
   , ConvertRawHash

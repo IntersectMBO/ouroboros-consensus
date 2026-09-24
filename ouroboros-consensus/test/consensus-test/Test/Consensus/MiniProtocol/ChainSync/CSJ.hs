@@ -10,8 +10,9 @@ import Control.Monad (void)
 import Control.Monad.Class.MonadTimer (MonadTimer)
 import Control.Monad.IOSim (runSim)
 import Control.ResourceRegistry
-import Control.Tracer (nullTracer)
 import Data.Typeable
+import Hermod.Tracing.API.ContraTracer (toContraTracer)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Network.TypedProtocol.Channel
 import Network.TypedProtocol.Driver.Simple
 import Ouroboros.Consensus.Block
@@ -221,7 +222,7 @@ runTest TestSetup = withRegistry $ \registry -> do
         void $ forkLinkedThread registry ("client " <> show peer) $ do
           bracketedClient peer $ \client -> do
             runPipelinedPeer
-              nullTracer
+              (toContraTracer nullTracer)
               codecChainSyncId
               clientChannel
               (chainSyncClientPeerPipelined client)
@@ -229,7 +230,7 @@ runTest TestSetup = withRegistry $ \registry -> do
           $ forkLinkedThread registry ("server " <> show peer)
           $ do
             runPeer
-              nullTracer
+              (toContraTracer nullTracer)
               codecChainSyncId
               serverChannel
           $ chainSyncServerPeer

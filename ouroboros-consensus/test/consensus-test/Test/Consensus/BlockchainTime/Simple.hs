@@ -49,9 +49,9 @@ import Control.Monad.Except (Except, runExcept, throwError)
 import Control.Monad.IOSim
 import Control.Monad.Reader (ReaderT (..), lift)
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.Fixed
 import qualified Data.Time.Clock as Time
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime

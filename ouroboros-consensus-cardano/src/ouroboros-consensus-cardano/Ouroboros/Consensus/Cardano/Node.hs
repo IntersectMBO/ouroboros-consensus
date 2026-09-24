@@ -56,7 +56,6 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Exception (assert)
-import qualified Control.Tracer as Tracer
 import qualified Data.ByteString.Short as Short
 import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
@@ -68,6 +67,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Word (Word16, Word64)
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.ByronHFC

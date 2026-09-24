@@ -59,7 +59,6 @@ import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import qualified Control.Monad.Except as Exc
 import Control.ResourceRegistry
-import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor.Identity (Identity)
 import qualified Data.List as List
@@ -73,6 +72,7 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Generics
 import GHC.Stack
+import Hermod.Tracing.API.Tracer
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure

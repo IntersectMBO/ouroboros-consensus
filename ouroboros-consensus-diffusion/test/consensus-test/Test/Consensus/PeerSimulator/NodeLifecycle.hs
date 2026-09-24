@@ -15,11 +15,11 @@ module Test.Consensus.PeerSimulator.NodeLifecycle
   ) where
 
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, mkTracer, traceWith)
 import Data.Functor (void)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
+import Hermod.Tracing.API.Tracer (Tracer, mkTracer, traceWith)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)

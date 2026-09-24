@@ -6,8 +6,8 @@ module Test.Util.Tracer
   , recordingTracerTVar
   ) where
 
-import Control.Tracer
 import Data.IORef
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Util.IOLike
 import System.IO.Unsafe (unsafePerformIO)
 

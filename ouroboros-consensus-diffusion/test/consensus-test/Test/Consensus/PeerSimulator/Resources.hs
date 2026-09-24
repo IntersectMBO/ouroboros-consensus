@@ -21,12 +21,12 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTChan
   , writeTChan
   )
-import Control.Tracer (Tracer)
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Traversable (for)
+import Hermod.Tracing.API.Tracer (Tracer)
 import Ouroboros.Consensus.Block.Abstract
   ( GetHeader
   , Header

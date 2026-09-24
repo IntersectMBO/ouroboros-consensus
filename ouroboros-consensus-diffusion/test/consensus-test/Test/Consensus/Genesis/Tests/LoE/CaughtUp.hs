@@ -36,9 +36,9 @@ import Control.Monad.Class.MonadTest (MonadTest (..))
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.IOSim (exploreSimTrace, traceResult)
 import Control.ResourceRegistry
-import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)

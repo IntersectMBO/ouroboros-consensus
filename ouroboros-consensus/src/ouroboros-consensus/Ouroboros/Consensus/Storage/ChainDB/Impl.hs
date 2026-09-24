@@ -46,11 +46,11 @@ import Control.ResourceRegistry
   ( allocate
   , runWithTempRegistry
   )
-import Control.Tracer
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

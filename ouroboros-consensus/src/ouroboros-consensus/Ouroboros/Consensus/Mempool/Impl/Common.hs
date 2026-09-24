@@ -46,7 +46,6 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import Control.Monad.Trans.Except (runExcept)
-import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
@@ -57,6 +56,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Typeable
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation

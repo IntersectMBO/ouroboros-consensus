@@ -10,8 +10,8 @@ module Ouroboros.Consensus.Mempool.Init
 import Control.Monad (void)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.Functor.Identity (runIdentity)
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool

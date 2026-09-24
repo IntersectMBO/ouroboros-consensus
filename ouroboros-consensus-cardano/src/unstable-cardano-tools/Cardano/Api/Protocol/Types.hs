@@ -9,7 +9,7 @@ module Cardano.Api.Protocol.Types
   ) where
 
 import Cardano.Chain.Slotting (EpochSlots)
-import qualified Control.Tracer as Tracer
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Ouroboros.Consensus.Block.Forging (MkBlockForging (..))
 import Ouroboros.Consensus.Byron.ByronHFC (ByronBlockHFC)
 import Ouroboros.Consensus.Cardano

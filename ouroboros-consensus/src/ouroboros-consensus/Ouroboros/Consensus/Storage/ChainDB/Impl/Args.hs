@@ -16,10 +16,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args
   ) where
 
 import Control.ResourceRegistry (ResourceRegistry)
-import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Function ((&))
 import Data.Kind
 import Data.Time.Clock (secondsToDiffTime)
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, (>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract

@@ -35,7 +35,6 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.State (State, evalState, get, modify)
-import Control.Tracer (mkTracer)
 import Data.Bifunctor (first, second)
 import Data.Either (isRight)
 import Data.Functor ((<&>))
@@ -47,6 +46,7 @@ import Data.Maybe (mapMaybe)
 import Data.Semigroup (stimes)
 import qualified Data.Set as Set
 import Data.Word
+import Hermod.Tracing.API.Tracer (mkTracer)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils

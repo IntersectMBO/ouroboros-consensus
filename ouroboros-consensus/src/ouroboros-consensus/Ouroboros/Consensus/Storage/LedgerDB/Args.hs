@@ -21,10 +21,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.Args
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
-import Control.Tracer
 import Data.Kind
 import Data.Word
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam

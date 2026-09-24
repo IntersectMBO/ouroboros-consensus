@@ -81,7 +81,6 @@ import Control.Monad (when)
 import Control.Monad.Trans.Class
 import Control.RAWLock
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.Foldable (traverse_)
 import Data.Map.Strict (Map)
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -91,6 +90,7 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)

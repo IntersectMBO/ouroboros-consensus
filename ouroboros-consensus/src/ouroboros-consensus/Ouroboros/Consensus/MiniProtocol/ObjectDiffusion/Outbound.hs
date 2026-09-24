@@ -14,13 +14,13 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.Monad (join, unless, when)
 import Control.Monad.Class.MonadSTM
 import Control.Monad.Class.MonadThrow
-import Control.Tracer (Tracer, traceWith)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Sequence.Strict (StrictSeq)
 import Data.Sequence.Strict qualified as Seq
 import Data.Set qualified as Set
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type

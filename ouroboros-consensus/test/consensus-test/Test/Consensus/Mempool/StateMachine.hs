@@ -29,7 +29,6 @@ import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (Except, runExcept)
-import qualified Control.Tracer as CT (Tracer, mkTracer, traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
 import qualified Data.Map.Strict as Map
@@ -41,6 +40,7 @@ import qualified Data.Set as Set
 import Data.TreeDiff
 import qualified Data.TreeDiff.OMap as TD
 import GHC.Generics
+import qualified Hermod.Tracing.API.Tracer as CT (Tracer, mkTracer, traceWith)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)

@@ -34,7 +34,6 @@ module Ouroboros.Consensus.Genesis.Governor
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Monad (guard, void, when)
-import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (second)
 import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable (for_, toList)
@@ -47,6 +46,7 @@ import Data.Maybe (maybeToList)
 import Data.Maybe.Strict (StrictMaybe)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
   ( TopLevelConfig

@@ -57,7 +57,6 @@ import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.Maybe (MaybeT (..), maybeToExceptT)
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.ByteString (toStrict)
 import qualified Data.ByteString.Builder as BS
 import Data.ByteString.Char8 (readInt)
@@ -81,6 +80,8 @@ import Data.Word
 import Database.LSMTree (Salt, Session, Table)
 import qualified Database.LSMTree as LSM
 import GHC.Generics
+import Hermod.Tracing.API.ContraTracer (toContraTracer)
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -693,7 +694,7 @@ instance
       allocateTemp
         ( encloseTimedWith (BackendTrace . SomeBackendTrace . LSMOpenSession >$< trcr) $
             LSM.openSession
-              (BackendTrace . SomeBackendTrace . LSMTreeTrace >$< trcr)
+              (toContraTracer (BackendTrace . SomeBackendTrace . LSMTreeTrace >$< trcr))
               fs
               blockio
               salt
@@ -882,7 +883,7 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
     -- bracket anyways.
     runWithTempRegistry $ (\x -> (x, ())) <$> mkFS lsmDbPath
   salt <- fst . genWord64 <$> mkGen
-  session <- LSM.openSession nullTracer hasFS blockIO salt (mkFsPath [])
+  session <- LSM.openSession (toContraTracer nullTracer) hasFS blockIO salt (mkFsPath [])
   tb <-
     LSM.openTableFromSnapshot
       session
@@ -925,7 +926,7 @@ mkExportedLSMYieldArgs exportDir ds mkFSBIO mkFS mkGen = do
   let snapName = LSM.toSnapshotName (snapshotToDirName ds)
   session <-
     LSM.newSession
-      nullTracer
+      (toContraTracer nullTracer)
       hasFS
       blockIO
       nonce
@@ -977,7 +978,7 @@ mkExportedLSMSinkArgs exportDir ds snapFs mkBlockIOFS mkGen = do
   -- 'LSM.exportSnapshot' requires the destination directory to not exist.
   whenM (doesDirectoryExist hasFS exportFsPath) $
     removeDirectoryRecursive hasFS exportFsPath
-  session <- LSM.newSession nullTracer hasFS blockIO salt scratch
+  session <- LSM.newSession (toContraTracer nullTracer) hasFS blockIO salt scratch
   let afterSave =
         LSM.exportSnapshot session (LSM.toSnapshotName (snapshotToDirName ds)) exportFsPath
   pure (SinkLSM 1000 snapFs shfsbio ds session afterSave (removeDirectoryRecursive hasFS scratch))
@@ -1000,7 +1001,7 @@ lsmDbExportSnapshot dbPath snapName exportDir = do
     sessionDir <- toRootFsPath dbPath
     exportFs <- toRootFsPath exportDir
     bracket
-      (LSM.openSession nullTracer hasFS blockIO salt sessionDir)
+      (LSM.openSession (toContraTracer nullTracer) hasFS blockIO salt sessionDir)
       LSM.closeSession
       (\session -> LSM.exportSnapshot session (LSM.toSnapshotName snapName) exportFs)
 
@@ -1026,7 +1027,7 @@ lsmDbImportSnapshot dbPath snapName srcDir =
 
     bracket
       ( LSM.newSession
-          nullTracer
+          (toContraTracer nullTracer)
           hasFS
           blockIO
           salt
@@ -1131,5 +1132,5 @@ mkLSMSinkArgs (splitFileName -> (lsmDbParentPath, lsmDbPath)) ds snapFs mkBlockI
   removeDirectoryRecursive hasFS lsmDbPath'
   createDirectory hasFS lsmDbPath'
   salt <- fst . genWord64 <$> mkGen
-  session <- LSM.newSession nullTracer hasFS blockIO salt lsmDbPath'
+  session <- LSM.newSession (toContraTracer nullTracer) hasFS blockIO salt lsmDbPath'
   pure (SinkLSM 1000 snapFs shfsbio ds session (pure ()) (pure ()))

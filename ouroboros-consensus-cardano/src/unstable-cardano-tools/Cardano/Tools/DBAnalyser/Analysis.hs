@@ -37,7 +37,6 @@ import Cardano.Tools.DBAnalyser.Types
 import Control.Monad (join, unless, void, when)
 import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Int (Int64)
 import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
@@ -45,6 +44,7 @@ import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, traceWith)
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

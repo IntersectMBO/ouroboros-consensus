@@ -29,7 +29,6 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import Control.Exception (assert)
 import Control.Monad (replicateM)
-import qualified Control.Tracer as Tracer
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import Data.Proxy (Proxy (..))
@@ -37,6 +36,7 @@ import Data.SOP.Functors
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Lens.Micro
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Byron.Ledger (LedgerState (..))

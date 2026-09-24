@@ -56,7 +56,6 @@ import Control.Monad.Class.MonadTime (MonadTime, getCurrentTime)
 import Control.Monad.Class.MonadTimer (MonadTimer)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
-import Control.Tracer (contramap, contramapM, nullTracer)
 import Data.DerivingVia (InstantiatedAt (InstantiatedAt))
 import Data.List as List (foldl', intercalate)
 import qualified Data.Map.Merge.Strict as Map
@@ -67,6 +66,8 @@ import qualified Data.Set as Set
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Data.Typeable
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.ContraTracer (toContraTracer)
+import Hermod.Tracing.API.Tracer (contramap, contramapM, nullTracer)
 import Network.TypedProtocol.Channel
 import Network.TypedProtocol.Driver.Simple
 import Ouroboros.Consensus.Block
@@ -605,7 +606,7 @@ runChainSync
                   handles <- cschcMap cschCol
                   modifyTVar varFinalCandidates $ Map.insert serverId (handles Map.! serverId)
                 (result, _) <-
-                  runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
+                  runPipelinedPeer (toContraTracer protocolTracer) codecChainSyncId clientChannel $
                     chainSyncClientPeerPipelined $
                       client csState
                 atomically $ writeTVar varClientResult (Just (ClientFinished result))
@@ -617,7 +618,7 @@ runChainSync
           void $
             forkLinkedThread registry "ChainSyncServer" $
               runPeer
-                nullTracer
+                (toContraTracer nullTracer)
                 codecChainSyncId
                 serverChannel
                 (chainSyncServerPeer server)

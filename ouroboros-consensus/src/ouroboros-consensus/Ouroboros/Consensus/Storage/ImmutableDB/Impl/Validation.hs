@@ -22,12 +22,12 @@ import Control.Monad (forM_, unless, when)
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, contramap, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor (($>))
 import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer (Tracer, contramap, traceWith)
 import Ouroboros.Consensus.Block hiding (hashSize)
 import Ouroboros.Consensus.Storage.ImmutableDB.API
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks

@@ -25,8 +25,8 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTVar
   )
 import Control.DeepSeq (NFData (rnf))
-import Control.Tracer (Tracer)
 import qualified Data.List.NonEmpty as NE
+import Hermod.Tracing.API.Tracer (Tracer)
 import Ouroboros.Consensus.HeaderValidation as Header
 import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger

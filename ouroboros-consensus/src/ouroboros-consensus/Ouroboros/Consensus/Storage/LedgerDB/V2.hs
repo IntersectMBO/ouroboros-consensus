@@ -18,7 +18,6 @@ import qualified Control.Monad as Monad (forM, join, unless, void)
 import Control.Monad.Except
 import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
-import Control.Tracer
 import Data.Bifunctor (first)
 import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable (for_)
@@ -33,6 +32,7 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
+import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

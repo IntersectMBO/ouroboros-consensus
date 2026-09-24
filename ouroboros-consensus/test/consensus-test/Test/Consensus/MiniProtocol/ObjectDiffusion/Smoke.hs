@@ -25,13 +25,14 @@ module Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Monad.IOSim (runSimStrictShutdown)
 import Control.ResourceRegistry (forkLinkedThread, waitAnyThread, withRegistry)
-import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Containers.ListUtils (nubOrdOn)
 import Data.Data (Typeable)
 import Data.Functor.Contravariant (contramap)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Word (Word64)
+import Hermod.Tracing.API.ContraTracer (toContraTracer)
+import Hermod.Tracing.API.Tracer (Tracer, nullTracer, traceWith)
 import Network.TypedProtocol.Channel (Channel, createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
@@ -251,7 +252,7 @@ prop_smoke =
  where
   runOutboundPeer outbound outboundChannel tracer =
     runPeer
-      ((\x -> "Outbound (Server): " ++ show x) `contramap` tracer)
+      (toContraTracer ((\x -> "Outbound (Server): " ++ show x) `contramap` tracer))
       codecObjectDiffusionId
       outboundChannel
       (objectDiffusionOutboundPeer outbound)
@@ -259,7 +260,7 @@ prop_smoke =
 
   runInboundPeer inbound inboundChannel tracer =
     runPipelinedPeer
-      ((\x -> "Inbound (Client): " ++ show x) `contramap` tracer)
+      (toContraTracer ((\x -> "Inbound (Client): " ++ show x) `contramap` tracer))
       codecObjectDiffusionId
       inboundChannel
       (objectDiffusionInboundPeerPipelined inbound)

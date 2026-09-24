@@ -41,7 +41,6 @@ import Control.Exception (assert)
 import Control.Monad (forM, forM_, forever, unless, void, when)
 import Control.Monad.Except (throwError)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, traceWith)
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.IntPSQ (IntPSQ)
@@ -56,6 +55,7 @@ import qualified Data.Vector as Vector
 import Data.Void (Void)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.Block
   ( ConvertRawHash
   , IsEBB (..)

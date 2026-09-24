@@ -8,9 +8,9 @@ module Cardano.Tools.ImmDBServer.Diffusion (run) where
 import qualified Cardano.Network.NodeToNode as N2N
 import Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer)
 import Control.ResourceRegistry
-import Control.Tracer
 import qualified Data.ByteString.Lazy as BL
 import Data.Void (Void)
+import Hermod.Tracing.API.Tracer
 import qualified Network.Mux as Mux
 import Network.Socket (SockAddr (..))
 import Ouroboros.Consensus.Block

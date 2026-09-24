@@ -18,10 +18,10 @@ import Cardano.Network.PeerSelection.Bootstrap
   , requiresBootstrapPeers
   )
 import Control.Monad
-import Control.Tracer (Tracer)
 import Data.Map.Strict (Map)
 import Data.Time.Clock (UTCTime)
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer (Tracer)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.BlockchainTime

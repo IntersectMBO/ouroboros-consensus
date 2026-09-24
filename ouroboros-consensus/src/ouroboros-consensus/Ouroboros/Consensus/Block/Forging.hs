@@ -23,10 +23,10 @@ module Ouroboros.Consensus.Block.Forging
   , UpdateInfo (..)
   ) where
 
-import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract

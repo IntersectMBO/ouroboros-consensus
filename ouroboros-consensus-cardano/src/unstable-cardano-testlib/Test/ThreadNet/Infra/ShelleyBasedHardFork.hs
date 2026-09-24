@@ -54,7 +54,6 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import Control.Monad.Except (runExcept)
-import qualified Control.Tracer as Tracer
 import Data.Coerce
 import Data.Function (on)
 import qualified Data.Map.Strict as Map
@@ -68,6 +67,7 @@ import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Lens.Micro ((%~), (&), (.~), (^.))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)

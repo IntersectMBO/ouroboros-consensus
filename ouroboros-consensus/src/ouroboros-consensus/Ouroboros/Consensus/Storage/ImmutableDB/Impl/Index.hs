@@ -19,13 +19,13 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index
   ) where
 
 import Control.ResourceRegistry
-import Control.Tracer (Tracer)
 import Data.Functor.Identity (Identity (..))
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer (Tracer)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block (ConvertRawHash, IsEBB, StandardHash)
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks

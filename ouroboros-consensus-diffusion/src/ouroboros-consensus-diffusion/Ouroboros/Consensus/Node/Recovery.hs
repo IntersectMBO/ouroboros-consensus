@@ -9,9 +9,9 @@ module Ouroboros.Consensus.Node.Recovery
   ) where
 
 import Control.Monad (unless, when)
-import Control.Tracer (Tracer, traceWith)
 import Data.Proxy (Proxy)
 import Data.Typeable (Typeable)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.Block (StandardHash)
 import Ouroboros.Consensus.Node.Exit (ExitReason (..), toExitReason)
 import Ouroboros.Consensus.Storage.ChainDB

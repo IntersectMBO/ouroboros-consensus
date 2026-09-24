@@ -34,11 +34,11 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.EpochInfo
 import Cardano.Slotting.Time (mkSlotLength)
 import Control.Monad.Except (Except)
-import qualified Control.Tracer as Tracer
 import Data.Bifunctor (first)
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Text as T
 import qualified Data.Text as Text
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

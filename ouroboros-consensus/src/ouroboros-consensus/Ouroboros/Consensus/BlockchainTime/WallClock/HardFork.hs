@@ -9,10 +9,10 @@ module Ouroboros.Consensus.BlockchainTime.WallClock.HardFork
 
 import Control.Monad
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.Time (NominalDiffTime)
 import Data.Void
 import GHC.Stack
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.BlockchainTime.API
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.BlockchainTime.WallClock.Util

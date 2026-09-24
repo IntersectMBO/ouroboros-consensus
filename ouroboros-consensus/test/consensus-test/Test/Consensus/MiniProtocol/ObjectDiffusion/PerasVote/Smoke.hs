@@ -15,11 +15,12 @@ import qualified Cardano.Crypto.DSIGN.Class as SL
 import qualified Cardano.Crypto.Seed as SL
 import qualified Cardano.Ledger.Keys as SL
 import Control.Monad (join)
-import Control.Tracer (contramap, nullTracer)
 import Data.Data (Typeable)
 import qualified Data.Map as Map
 import Data.Ratio ((%))
 import Data.String (IsString (..))
+import Hermod.Tracing.API.ContraTracer (toContraTracer)
+import Hermod.Tracing.API.Tracer (contramap, nullTracer)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -159,14 +160,14 @@ prop_smoke =
  where
   runOutboundPeer outbound outboundChannel tracer =
     runPeer
-      ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
+      (toContraTracer ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer))
       codecObjectDiffusionId
       outboundChannel
       (objectDiffusionOutboundPeer outbound)
       >> pure ()
   runInboundPeer inbound inboundChannel tracer =
     runPipelinedPeer
-      ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
+      (toContraTracer ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer))
       codecObjectDiffusionId
       inboundChannel
       (objectDiffusionInboundPeerPipelined inbound)

@@ -37,12 +37,12 @@ module Test.ThreadNet.General
 import Control.Exception (assert)
 import Control.Monad (guard)
 import Control.Monad.IOSim (runSimOrThrow, setCurrentTime)
-import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Block.Abstract as BA
 import qualified Ouroboros.Consensus.BlockchainTime as BTime

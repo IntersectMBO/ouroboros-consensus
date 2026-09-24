@@ -10,13 +10,13 @@ import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
 import Control.Arrow (first)
 import Control.DeepSeq
 import Control.Monad (unless)
-import qualified Control.Tracer as Tracer
 import Data.Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Csv as Csv
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Main.Utf8 (withStdTerminalHandles)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool

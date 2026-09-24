@@ -27,7 +27,6 @@ import Control.Monad.State
   , StateT
   , evalStateT
   )
-import Control.Tracer (nullTracer)
 import Data.Char (chr)
 import Data.Functor (($>))
 import qualified Data.List.NonEmpty as NE
@@ -39,6 +38,7 @@ import qualified Data.Set as Set
 import Data.String (IsString (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)

@@ -18,8 +18,8 @@ module Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.ResourceRegistry (ResourceRegistry)
-import Control.Tracer (Tracer, traceWith)
 import Data.Typeable (Typeable)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB
   ( ChainDB

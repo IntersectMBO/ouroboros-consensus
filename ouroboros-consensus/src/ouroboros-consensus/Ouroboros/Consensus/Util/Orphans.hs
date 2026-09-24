@@ -17,13 +17,13 @@ import Cardano.Crypto.Hash (Hash, HashAlgorithm)
 import Cardano.Ledger.Genesis (NoGenesis (..))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.Serialise (Serialise (..))
-import Control.Tracer (Tracer)
 import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
 import Data.Typeable (Typeable)
+import Hermod.Tracing.API.Tracer (Tracer)
 import NoThunks.Class
   ( InspectHeapNamed (..)
   , NoThunks (..)

@@ -18,11 +18,11 @@ module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 
 import Control.Monad (join)
 import Control.Monad.State
-import Control.Tracer (nullTracer)
 import Data.Function ((&))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
 import Data.Word (Word64)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)

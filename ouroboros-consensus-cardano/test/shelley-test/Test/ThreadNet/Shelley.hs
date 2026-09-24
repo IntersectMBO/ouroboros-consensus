@@ -20,9 +20,9 @@ import qualified Cardano.Ledger.Shelley.Translation as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Control.Monad (replicateM)
-import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Word (Word64)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam

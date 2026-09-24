@@ -27,7 +27,6 @@ import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import Control.Monad.Except (Except, runExcept)
 import Control.Monad.State (StateT (..))
 import qualified Control.Monad.State as State
-import Control.Tracer (nullTracer)
 import Data.Bifunctor
 import Data.Foldable (toList)
 import Data.Functor.Classes
@@ -40,6 +39,7 @@ import qualified Data.Set as Set
 import Data.TreeDiff
 import Data.Word
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract

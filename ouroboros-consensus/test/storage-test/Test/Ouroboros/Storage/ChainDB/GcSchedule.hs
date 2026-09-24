@@ -22,11 +22,11 @@ module Test.Ouroboros.Storage.ChainDB.GcSchedule
 
 import Control.Monad (forM)
 import Control.Monad.IOSim (runSimOrThrow)
-import Control.Tracer (nullTracer)
 import Data.Fixed (div')
 import Data.List as List (foldl', partition, sort)
 import Data.Time.Clock
 import Data.Void (Void)
+import Hermod.Tracing.API.Tracer (nullTracer)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   ( GcParams (..)

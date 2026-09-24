@@ -20,7 +20,6 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad (forever)
 import Control.ResourceRegistry
-import Control.Tracer
 import Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as BL
 import Data.Functor ((<&>))
@@ -28,6 +27,7 @@ import qualified Data.Map.Strict as Map
 import Data.Typeable (Typeable)
 import Data.Void (Void)
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer
 import qualified Network.Mux as Mux
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server

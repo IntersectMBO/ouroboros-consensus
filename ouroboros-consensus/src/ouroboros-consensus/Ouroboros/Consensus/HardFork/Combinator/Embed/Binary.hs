@@ -8,7 +8,6 @@
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Binary (protocolInfoBinary) where
 
 import Control.Exception (assert)
-import qualified Control.Tracer as Tracer
 import Data.Align (alignWith)
 import Data.SOP.Counting (exactlyTwo)
 import Data.SOP.Functors (Flip (..))
@@ -16,6 +15,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP (..))
 import Data.SOP.Strict (NP (..))
 import Data.Text (Text)
 import Data.These (These (..))
+import qualified Hermod.Tracing.API.Tracer as Tracer
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator

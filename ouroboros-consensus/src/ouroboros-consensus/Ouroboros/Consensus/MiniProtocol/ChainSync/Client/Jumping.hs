@@ -194,7 +194,6 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
 
 import Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..))
 import Control.Monad (forM, forM_, when)
-import Control.Tracer (Tracer, traceWith)
 import Data.Foldable (toList, traverse_)
 import Data.List (sortOn)
 import qualified Data.Map as Map
@@ -206,6 +205,7 @@ import qualified Data.Strict.Either as Strict
 import Data.Typeable (Typeable)
 import Data.Void (absurd)
 import GHC.Generics (Generic)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.Block
   ( HasHeader (getHeaderFields)
   , Header

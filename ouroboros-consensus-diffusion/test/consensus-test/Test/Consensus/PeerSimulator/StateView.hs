@@ -18,11 +18,11 @@ module Test.Consensus.PeerSimulator.StateView
   , stateViewTracersWithInitial
   ) where
 
-import Control.Tracer (Tracer, traceWith)
 import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable (for_)
 import Data.List (sort)
 import Data.Maybe (mapMaybe)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Network.TypedProtocol.Codec (AnyMessage)
 import Ouroboros.Consensus.Block (Header, Point)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
@@ -178,8 +178,8 @@ collectDisconnectedPeers stateView =
     map psePeerId (svPeerSimulatorResults stateView)
 
 -- | State view tracers are a lightweight mechanism to record information that
--- can later be used to produce a state view. This mechanism relies on
--- contra-tracers which we already use in a pervasives way.
+-- can later be used to produce a state view. This mechanism relies on the
+-- tracers which we already use in a pervasive way.
 data StateViewTracers blk m = StateViewTracers
   { svtPeerSimulatorResultsTracer :: Tracer m (PeerSimulatorResult blk)
   , svtGetPeerSimulatorResults :: m [PeerSimulatorResult blk]

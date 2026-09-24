@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Mempool.Update
 import Cardano.Slotting.Slot
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
-import Control.Tracer
 import qualified Data.Foldable as Foldable
 import Data.Functor.Identity (Identity (Identity))
 import Data.Kind (Type)
@@ -24,6 +23,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool

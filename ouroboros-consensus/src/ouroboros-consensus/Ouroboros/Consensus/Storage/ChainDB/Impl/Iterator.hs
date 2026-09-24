@@ -27,7 +27,6 @@ import Control.Monad.Except
   )
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (ResourceRegistry)
-import Control.Tracer
 import Data.Functor (($>))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
@@ -37,6 +36,7 @@ import Data.Maybe (isJust)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (..)

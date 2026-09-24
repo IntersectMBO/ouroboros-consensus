@@ -19,10 +19,10 @@ import Control.Monad.Class.MonadTime.SI
   , MonadMonotonicTime (..)
   , diffTime
   )
-import Control.Tracer (Tracer, traceWith)
+import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 
 -- $setup
--- >>> import Control.Tracer
+-- >>> import Hermod.Tracing.API.Tracer
 -- >>> import Data.Functor.Contravariant
 -- >>> import Ouroboros.Consensus.Util.IOLike
 
