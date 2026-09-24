@@ -1,11 +1,15 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TypeApplications #-}
+
 module Test.Consensus.GSM.PeerState (tests) where
 
-import qualified Control.Exception as E
+import Control.Monad (unless)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SNothing))
+import GHC.Stack (SrcLoc, callStack, getCallStack)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
 import Ouroboros.Consensus.MiniProtocol.Util.Idling
@@ -14,6 +18,8 @@ import Ouroboros.Consensus.Node.GSM.PeerState
 import Ouroboros.Consensus.Node.GsmState (GsmState (..))
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
+  , MonadCatch (try)
+  , MonadThrow (throwIO)
   , atomically
   , modifyTVar
   , newTVar
@@ -41,8 +47,9 @@ tests =
         runSimOrThrow unsupported @?= [False, True]
     , testCase "real GSM waits for certificate idling before entering CaughtUp" $
         runSimOrThrow transition @?= [Syncing, Syncing, CaughtUp]
-    , testCase "client failure removes its certificate handle" $
-        failureRemovesHandle
+    , testCase "client failure removes its certificate handle"
+        . either assertFailure (assertBool "expected not idle afterwards" . not)
+        $ runSimOrThrow failureRemovesHandle
     ]
 
 -- Use the real collections and predicate used by NodeKernel. In particular,
@@ -164,21 +171,29 @@ transition = do
       caughtUp <- observe
       pure [missing, registered, caughtUp]
 
-failureRemovesHandle :: Assertion
+failureRemovesHandle :: IOSim s (Either String Bool)
 failureRemovesHandle = do
   (cs, cert) <- newHandles
   _ <- addChainSync cs 0 PerasSupported True
-  result <-
-    E.try
-      ( bracketObjectDiffusionInbound cert 0 $ \view -> do
-          idlingStart (odisvIdling view)
-          allIdle cs cert >>= (@?= True)
-          E.throwIO (userError "certificate client failed")
-      ) ::
-      IO (Either IOError ())
-  case result of
-    Left _ -> pure ()
-    Right () -> assertFailure "expected the client exception"
-  remaining <- atomically $ odihcMap cert
-  assertBool "failed client retained a handle" (Map.null remaining)
-  allIdle cs cert >>= (@?= False)
+  try @_ @IOError
+    ( bracketObjectDiffusionInbound cert 0 $ \view -> do
+        idlingStart (odisvIdling view)
+        idle <- allIdle cs cert
+        unless idle (throwFailure "expected idle before")
+        throwIO (userError "certificate client failed")
+    )
+    >>= \case
+      Right () -> pure $ Left "expected the client exception"
+      Left _ -> do
+        remaining <- atomically $ odihcMap cert
+        if Map.null remaining
+          then Right <$> allIdle cs cert
+          else pure $ Left "failed client retained a handle"
+
+throwFailure :: IOLike m => String -> m a
+throwFailure msg = throwIO (HUnitFailure location msg)
+ where
+  location :: Maybe SrcLoc
+  location = case reverse $ drop 1 $ getCallStack $ callStack of
+    (_, loc) : _ -> Just loc
+    [] -> Nothing
