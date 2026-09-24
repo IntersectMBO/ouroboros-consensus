@@ -12,6 +12,7 @@ import qualified Test.Consensus.HardFork.History (tests)
 import qualified Test.Consensus.HardFork.Summary (tests)
 import qualified Test.Consensus.HeaderValidation (tests)
 import qualified Test.Consensus.Ledger.Tables.Diff (tests)
+import qualified Test.Consensus.Leios.EndorserBlock (tests)
 import qualified Test.Consensus.Mempool (tests)
 import qualified Test.Consensus.Mempool.Capacity (tests)
 import qualified Test.Consensus.Mempool.Fairness (tests)
@@ -95,4 +96,5 @@ tests =
             ]
         ]
     , Test.Consensus.Ledger.Tables.Diff.tests
+    , Test.Consensus.Leios.EndorserBlock.tests
     ]
