@@ -82,6 +82,7 @@ import Codec.Serialise (Serialise (..), serialise)
 import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Kind (Type)
+import qualified Data.Measure as Measure
 import Data.Proxy
 import Data.Typeable
 import Data.Word
@@ -649,6 +650,13 @@ instance TxLimits (SimpleBlock c ext) where
       . simpleGenTx
 
   txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+
+  type TxEbMeasure (SimpleBlock c ext) = TxMeasure (SimpleBlock c ext)
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 simpleBlockCapacity :: ByteSize32
 simpleBlockCapacity = ByteSize32 512

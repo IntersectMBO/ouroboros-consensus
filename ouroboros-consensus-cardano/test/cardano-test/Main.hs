@@ -1,6 +1,7 @@
 module Main (main) where
 
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
+import qualified Test.Consensus.Cardano.Capacity (tests)
 import qualified Test.Consensus.Cardano.DiffusionPipelining
 import Test.Consensus.Cardano.GenCDDLs
 import qualified Test.Consensus.Cardano.Golden
@@ -30,7 +31,8 @@ tests :: TestTree
 tests =
   testGroup
     "cardano"
-    [ Test.Consensus.Cardano.DiffusionPipelining.tests
+    [ Test.Consensus.Cardano.Capacity.tests
+    , Test.Consensus.Cardano.DiffusionPipelining.tests
     , withCDDLs $
         testGroup
           "Serialisation"

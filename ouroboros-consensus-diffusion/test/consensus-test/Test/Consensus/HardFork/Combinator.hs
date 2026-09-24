@@ -463,6 +463,7 @@ type TestBlock = HardForkBlock '[BlockA, BlockB]
 instance CanHardFork '[BlockA, BlockB] where
   type HardForkTxMeasurePhase1 '[BlockA, BlockB] = IgnoringOverflow ByteSize32
   type HardForkTxMeasurePhase2 '[BlockA, BlockB] = TrivialTxMeasurePhase2
+  type HardForkTxEbMeasure '[BlockA, BlockB] = TxEbMeasure BlockB
 
   hardForkEraTranslation =
     EraTranslation
@@ -480,6 +481,16 @@ instance CanHardFork '[BlockA, BlockB] where
   hardForkInjTxMeasurePhase2 = \case
     (Z (WrapTxMeasurePhase2 x)) -> x
     S (Z (WrapTxMeasurePhase2 x)) -> x
+
+  hardForkInjTxEbMeasure = \case
+    (Z (WrapTxEbMeasure (TxMeasure p1 p2))) ->
+      txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
+    S (Z (WrapTxEbMeasure x)) -> x
+
+  hardForkTxEbMeasure _ p1 p2 = txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
+
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @BlockB) eb in (p1, p2)
 
   hardForkEqGenTxId = (==) `on` rawHashNS
   hardForkCompareGenTxId = compare `on` rawHashNS

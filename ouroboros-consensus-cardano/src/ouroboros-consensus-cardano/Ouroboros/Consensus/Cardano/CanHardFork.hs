@@ -75,8 +75,12 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
   , IgnoringOverflow
   , TrivialTxMeasurePhase2 (..)
+  , TxEbMeasure
+  , TxMeasure (..)
   , TxMeasurePhase1
   , TxMeasurePhase2
+  , mempoolEbReservation
+  , txEbMeasure
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
@@ -130,6 +134,7 @@ type CardanoHardForkConstraints c =
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   type HardForkTxMeasurePhase1 (CardanoEras c) = AlonzoMeasure
   type HardForkTxMeasurePhase2 (CardanoEras c) = RefScriptSize
+  type HardForkTxEbMeasure (CardanoEras c) = TxEbMeasure (ShelleyBlock (Praos c) DijkstraEra)
 
   hardForkEraTranslation =
     EraTranslation
@@ -201,9 +206,6 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxMeasurePhase1 x) -> f x
       SOP.S y -> g y
 
-    fromByteSize :: IgnoringOverflow ByteSize32 -> AlonzoMeasure
-    fromByteSize x = AlonzoMeasure x mempty
-
   hardForkInjTxMeasurePhase2 =
     fromTrivial
       `o` fromTrivial
@@ -228,8 +230,46 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxMeasurePhase2 x) -> f x
       SOP.S y -> g y
 
-    fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
-    fromTrivial TrivialTxMeasurePhase2 = mempty
+  hardForkInjTxEbMeasure =
+    inj fromByteSize fromTrivial
+      `o` inj fromByteSize fromTrivial
+      `o` inj fromByteSize fromTrivial
+      `o` inj fromByteSize fromTrivial
+      `o` inj id fromTrivial
+      `o` inj id fromTrivial
+      `o` inj id id
+      `o` inj id id
+      `o` nil
+   where
+    nil :: SOP.NS f '[] -> a
+    nil = \case {}
+
+    infixr 9 `o`
+    o ::
+      (TxEbMeasure x -> a) ->
+      (SOP.NS WrapTxEbMeasure xs -> a) ->
+      SOP.NS WrapTxEbMeasure (x : xs) ->
+      a
+    o f g = \case
+      SOP.Z (WrapTxEbMeasure x) -> f x
+      SOP.S y -> g y
+
+    -- In every era 'TxEbMeasure' is 'TxMeasure', so each position widens both
+    -- phases the same way 'hardForkInjTxMeasurePhase1' and
+    -- 'hardForkInjTxMeasurePhase2' do.
+    inj ::
+      (TxMeasurePhase1 x -> AlonzoMeasure) ->
+      (TxMeasurePhase2 x -> RefScriptSize) ->
+      TxMeasure x ->
+      TxEbMeasure (ShelleyBlock (Praos c) DijkstraEra)
+    inj f g (TxMeasure p1 p2) = TxMeasure (f p1) (g p2)
+
+  hardForkTxEbMeasure _ p1 p2 =
+    txEbMeasure (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) (TxMeasure p1 p2)
+
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) eb
+     in (p1, p2)
 
   -- Both ids are ordered by their txid hash, ignoring the era. Equality reuses
   -- 'compare' rather than a separate path: 'hardForkEqGenTxId' is
@@ -243,6 +283,12 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
+
+fromByteSize :: IgnoringOverflow ByteSize32 -> AlonzoMeasure
+fromByteSize x = AlonzoMeasure x mempty
+
+fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
+fromTrivial TrivialTxMeasurePhase2 = mempty
 
 {-------------------------------------------------------------------------------
   Translation from Byron to Shelley

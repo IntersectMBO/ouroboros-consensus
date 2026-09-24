@@ -43,6 +43,7 @@ import qualified Data.Binary as B
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void
@@ -380,6 +381,13 @@ instance TxLimits BlockB where
   blockCapacityTxMeasure _cfg _st = TxMeasure (IgnoringOverflow $ ByteSize32 $ 100 * 1024) TrivialTxMeasurePhase2 -- arbitrary
   txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
   txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+
+  type TxEbMeasure BlockB = TxMeasure BlockB
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 data instance TxId (GenTx BlockB)
   deriving stock (Show, Eq, Ord, Generic)

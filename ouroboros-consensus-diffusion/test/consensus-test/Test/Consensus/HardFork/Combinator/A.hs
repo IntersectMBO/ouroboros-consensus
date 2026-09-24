@@ -54,6 +54,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.Functor.Identity
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void
@@ -447,6 +448,13 @@ instance TxLimits BlockA where
   blockCapacityTxMeasure _cfg _st = TxMeasure (IgnoringOverflow $ ByteSize32 $ 100 * 1024) TrivialTxMeasurePhase2 -- arbitrary
   txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
   txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+
+  type TxEbMeasure BlockA = TxMeasure BlockA
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock (Show, Eq, Ord, Generic)

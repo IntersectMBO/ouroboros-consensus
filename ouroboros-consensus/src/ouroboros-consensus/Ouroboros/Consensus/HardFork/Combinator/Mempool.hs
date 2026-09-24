@@ -308,6 +308,9 @@ instance
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasurePhase1 (HardForkBlock xs) = HardForkTxMeasurePhase1 xs
   type TxMeasurePhase2 (HardForkBlock xs) = HardForkTxMeasurePhase2 xs
+  type TxEbMeasure (HardForkBlock xs) = HardForkTxEbMeasure xs
+
+  txEbMeasure _ (TxMeasure p1 p2) = hardForkTxEbMeasure (Proxy @xs) p1 p2
 
   txWireSize =
     \tx ->
@@ -431,6 +434,36 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
             (unwrapLedgerConfig cfg)
             (getFlipTickedLedgerState st')
             tx'
+
+  ebCapacityTxMeasure
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState) =
+      hcollapse $
+        hcizipWith proxySingle aux pcfgs hardForkState
+     where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkLedgerConfigShape
+          transition
+          hardForkState
+
+      aux ::
+        SingleEraBlock blk =>
+        Index xs blk ->
+        WrapPartialLedgerConfig blk ->
+        FlipTickedLedgerState mk blk ->
+        K (HardForkTxEbMeasure xs) blk
+      aux idx pcfg st' =
+        K $
+          hardForkInjTxEbMeasure . injectNS idx . WrapTxEbMeasure $
+            ebCapacityTxMeasure
+              (completeLedgerConfig' ei pcfg)
+              (getFlipTickedLedgerState st')
+
+  mempoolEbReservation _ eb =
+    let (p1, p2) = hardForkMempoolEbReservation (Proxy @xs) eb
+     in TxMeasure p1 p2
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs blk = ApplyResult
