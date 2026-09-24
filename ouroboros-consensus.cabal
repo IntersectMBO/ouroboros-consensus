@@ -860,6 +860,7 @@ test-suite storage-test
     containers,
     contra-tracer,
     deepseq,
+    direct-sqlite,
     directory,
     filepath,
     fs-api,

@@ -144,6 +144,9 @@ newLeiosDBSQLiteFromEnv registry tracer = do
 -- The registry owns the background threads (writer, copier and a thread that
 -- samples the database's size): 'close' stops them in order, and closing the
 -- registry cancels whatever is still running.
+--
+-- Creates both files with their schemas before returning, so call it only
+-- once their directories may be non-empty (after the ChainDB marker check).
 newLeiosDBSQLite ::
   ResourceRegistry IO -> Tracer IO TraceLeiosDb -> FilePath -> FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath =
@@ -163,6 +166,8 @@ newLeiosDBSQLiteWithGcBatchSize ::
 newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   -- The database opens before whoever owns these directories creates them.
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
+  -- create .db files
+  initialiseLeiosDbFiles volLeiosDbPath immLeiosDbPath
   notificationChan <- atomically newBroadcastTChan
   -- seed the in-memory stats by counting the EB rows once per handle
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
@@ -233,7 +238,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       Right promise -> await promise
 
   openReader statsVar = do
-    volDb <- openVolRawConnection volLeiosDbPath
+    volDb <- openRawConnection volLeiosDbPath
     immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
     conn <- mkConn tracer statsVar volDb immDb
     pure
@@ -272,8 +277,8 @@ withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath k =
 --   This will only run once per process.
 initialStats :: HasCallStack => FilePath -> FilePath -> IO LeiosDbStats
 initialStats volPath immPath = do
-  vol <- countEbsIfExists volPath
-  imm <- countEbsIfExists immPath
+  vol <- countEbs volPath
+  imm <- countEbs immPath
   pure
     LeiosDbStats
       { volatileEbs = vol
@@ -281,11 +286,8 @@ initialStats volPath immPath = do
       , walBytes = 0
       }
  where
-  countEbsIfExists path = do
-    exists <- doesFileExist path
-    if exists
-      then fromIntegral <$> withReadOnlyConn path (\db -> queryInt64 db "SELECT COUNT(*) FROM ebs")
-      else pure 0
+  countEbs path =
+    fromIntegral <$> withReadOnlyConn path (\db -> queryInt64 db "SELECT COUNT(*) FROM ebs")
 
 -- * Stats sampling
 
@@ -337,10 +339,7 @@ bumpImmutableStats statsVar dEbs =
       modifyTVar statsVar $
         \s -> s{immutableEbs = s.immutableEbs + dEbs}
 
--- | Open a strictly read-only connection, for sampling DB statistics.
---
--- Opening fails harmlessly if the database does not exist yet; the caller
--- swallows it and tries again on the next tick.
+-- | Open a strictly read-only connection, for seeding DB statistics.
 withReadOnlyConn :: HasCallStack => FilePath -> (DB.Database -> IO a) -> IO a
 withReadOnlyConn dbPath =
   bracket (openReadOnlyRawConnection dbPath) (void . DB.close)
@@ -361,53 +360,67 @@ queryInt64 db sql =
       DB.Row -> DB.columnInt64 stmt 0
       DB.Done -> error ("queryInt64: expected a row: " <> sql)
 
--- | Open a read-write connection to the given file, creating it and running
--- the schema DDL if it does not exist yet. Both partitions share 'sql_schema'.
+-- | Create the volatile and immutable LeiosDB partition files
+--   if missing and apply their schemas.
+initialiseLeiosDbFiles :: HasCallStack => FilePath -> FilePath -> IO ()
+initialiseLeiosDbFiles volPath immPath = do
+  initialiseFile volPath (sql_schema <> sql_schema_gc)
+  initialiseFile immPath sql_schema
+ where
+  initialiseFile path ddl =
+    bracket
+      (open2 (fromString path) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault)
+      (void . DB.close)
+      $ \db -> do
+        traverse_ (dbExec db) (connectionPragmas <> creationPragmas)
+        dbWithWriteTransactionRaw db $ dbExec db (fromString ddl)
+
+-- | Open a read-write connection to an existing partition file, whose schema
+-- 'initialiseLeiosDbFiles' has already applied.
 openRawConnection :: HasCallStack => FilePath -> IO DB.Database
 openRawConnection path = do
-  shouldInitSchema <- not <$> doesFileExist path
-  db <- open2 (fromString path) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
-  traverse_ (dbExec db) $
-    [ -- First, before any pragma that takes a lock -- 'journal_mode' does. Until
-      -- this runs the timeout is zero, so a contended lock is refused outright
-      -- rather than waited for, and opening a second connection to a busy
-      -- database fails where it should merely be slow.
-      --
-      -- Let SQLite do that waiting in C, retrying tightly rather than sleeping
-      -- through the window it is waiting for. Safe because writers take the lock
-      -- at BEGIN, so nothing waits here holding a snapshot; see
-      -- 'dbWithWriteTransaction'.
-      "pragma busy_timeout = 1000;"
-    , "pragma synchronous = normal;"
-    , -- Must precede 'journal_mode': SQLite cannot change the page size of a
-      -- database already in WAL mode, so the order this list used to have left
-      -- the setting a silent no-op and every run so far on the 4096 default.
-      -- Which is where it belongs anyway. Measured: a devnet run with 32768
-      -- actually in effect reached 35x WAL amplification (34 GiB of log for 0.97
-      -- GiB of data) against ~18x for the same workload at 4096. The WAL is a
-      -- page-level redo log, so a commit rewrites each dirtied page whole, and
-      -- both hot indexes are keyed by hash, so writes scatter -- the page count
-      -- barely falls as the page grows, the bytes just multiply.
-      "pragma page_size = 4096;"
-    , "pragma mmap_size = 268435500;"
-    , "pragma journal_mode = WAL;"
-    , -- SQLite's own default, spelled out because it is what keeps the log
-      -- bounded: passive checkpoints reset the WAL every 1000 frames, provided
-      -- no connection is sitting on a stale read snapshot. One that is will
-      -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
-      "pragma wal_autocheckpoint = 1000;"
-    ]
-  when shouldInitSchema $
-    dbExec db (fromString sql_schema)
+  db <- open2 (fromString path) [SQLOpenReadWrite] SQLVFSDefault
+  orCloseOnError db $ traverse_ (dbExec db) connectionPragmas
   pure db
 
--- | 'openRawConnection' for the volatile partition: additionally applies the
--- GC-only DDL ('sql_schema_gc').
-openVolRawConnection :: HasCallStack => FilePath -> IO DB.Database
-openVolRawConnection path = do
-  db <- openRawConnection path
-  orCloseOnError db $ dbExec db (fromString sql_schema_gc)
-  pure db
+-- | Pragmas every connection sets.
+connectionPragmas :: [DB.Utf8]
+connectionPragmas =
+  [ -- First, before any pragma that takes a lock -- 'journal_mode' does. Until
+    -- this runs the timeout is zero, so a contended lock is refused outright
+    -- rather than waited for, and opening a second connection to a busy
+    -- database fails where it should merely be slow.
+    --
+    -- Let SQLite do that waiting in C, retrying tightly rather than sleeping
+    -- through the window it is waiting for. Safe because writers take the lock
+    -- at BEGIN, so nothing waits here holding a snapshot; see
+    -- 'dbWithWriteTransaction'.
+    "pragma busy_timeout = 1000;"
+  , "pragma synchronous = normal;"
+  , "pragma mmap_size = 268435500;"
+  , -- SQLite's own default, spelled out because it is what keeps the log
+    -- bounded: passive checkpoints reset the WAL every 1000 frames, provided
+    -- no connection is sitting on a stale read snapshot. One that is will
+    -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
+    "pragma wal_autocheckpoint = 1000;"
+  ]
+
+-- | Persistent pragmas, set once by 'initialiseLeiosDbFiles' after
+-- 'connectionPragmas'.
+creationPragmas :: [DB.Utf8]
+creationPragmas =
+  [ -- Must precede 'journal_mode': SQLite cannot change the page size of a
+    -- database already in WAL mode, so the order this list used to have left
+    -- the setting a silent no-op and every run so far on the 4096 default.
+    -- Which is where it belongs anyway. Measured: a devnet run with 32768
+    -- actually in effect reached 35x WAL amplification (34 GiB of log for 0.97
+    -- GiB of data) against ~18x for the same workload at 4096. The WAL is a
+    -- page-level redo log, so a commit rewrites each dirtied page whole, and
+    -- both hot indexes are keyed by hash, so writes scatter -- the page count
+    -- barely falls as the page grows, the bytes just multiply.
+    "pragma page_size = 4096;"
+  , "pragma journal_mode = WAL;"
+  ]
 
 -- | Prepare a statement, run the action, finalize.
 withStmt :: HasCallStack => DB.Database -> String -> (DB.Statement -> IO a) -> IO a
@@ -603,8 +616,8 @@ startCopier registry tracer statsVar copierDoorbell writeQueue volPath immPath =
         closeChecked ccDb
 
       loop = do
-        -- Clear before looking, so a pin that lands while we look rings
-        -- again instead of being lost.
+        -- Clear the copier doorbell before looking if there's any copying work to do,
+        -- so a pin that lands while we look rings again instead of being lost.
         atomically $ writeTVar copierDoorbell False
         nextPinnedBatch >>= \case
           batch@(_ : _) -> copyBatch batch >> loop
@@ -1210,7 +1223,7 @@ startWriter ::
   FilePath ->
   IO WriteQueue
 startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath immPath = do
-  volDb <- openVolRawConnection volPath
+  volDb <- openRawConnection volPath
   immDb <- orCloseOnError volDb $ openRawConnection immPath
   -- A throw anywhere below closes both connections (best effort -- an
   -- already-prepared statement can hold a close off) instead of leaking them.
@@ -1789,7 +1802,7 @@ vacuumLeiosDb dbPath =
 -- Unrelated to 'withReader', which brackets a 'LeiosDbReader' that a
 -- 'LeiosDbHandle' opens.
 --
--- No 'SQLOpenCreate', unlike 'openRawConnection': a wrong path must fail
+-- No 'SQLOpenCreate', unlike 'initialiseLeiosDbFiles': a wrong path must fail
 -- rather than gain an empty database. No 'busy_timeout' either, so a write that
 -- meets the node's own write lock gives up after the retries in 'withDie'
 -- rather than block.
@@ -1871,10 +1884,11 @@ closureLoop stmt acc =
 -- copy is a server-side @INSERT ... SELECT@ over ATTACH. In the immutable
 -- file 'missingTxCount', @status@ and @ebsMissingTxs@ are unused (rows land
 -- complete, with the canonical @missingTxCount = -1, status = 2@).
+-- Idempotent: 'initialiseLeiosDbFiles' applies it on every handle creation.
 sql_schema :: String
 sql_schema =
   unlines
-    [ "CREATE TABLE ebs ("
+    [ "CREATE TABLE IF NOT EXISTS ebs ("
     , "  ebSlot INTEGER NOT NULL,"
     , "  ebHashBytes BLOB NOT NULL,"
     , "  ebBytesSize INTEGER NOT NULL,"
@@ -1886,8 +1900,8 @@ sql_schema =
       "  status INTEGER NOT NULL DEFAULT 0,"
     , "  PRIMARY KEY (ebSlot, ebHashBytes)"
     , ");"
-    , "CREATE INDEX idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
-    , "CREATE TABLE ebTxs ("
+    , "CREATE INDEX IF NOT EXISTS idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
+    , "CREATE TABLE IF NOT EXISTS ebTxs ("
     , "  ebHashBytes BLOB NOT NULL,"
     , "  txOffset INTEGER NOT NULL,"
     , "  txHashBytes BLOB NOT NULL,"
@@ -1896,23 +1910,23 @@ sql_schema =
     , ");"
     , -- This index speeds up tx -> EB lookups, which is necessary for GCing orphaned transactions
       -- after their EB was GCed.
-      "CREATE INDEX idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);"
-    , "CREATE TABLE ebsMissingTxs ("
+      "CREATE INDEX IF NOT EXISTS idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);"
+    , "CREATE TABLE IF NOT EXISTS ebsMissingTxs ("
     , "  txHashBytes BLOB NOT NULL,"
     , "  ebHashBytes BLOB NOT NULL,"
     , "  PRIMARY KEY (txHashBytes, ebHashBytes)"
     , ");"
-    , "CREATE INDEX idx_ebsMissingTxs_ebHashBytes ON ebsMissingTxs(ebHashBytes);"
-    , "CREATE TABLE txs ("
+    , "CREATE INDEX IF NOT EXISTS idx_ebsMissingTxs_ebHashBytes ON ebsMissingTxs(ebHashBytes);"
+    , "CREATE TABLE IF NOT EXISTS txs ("
     , "  txHashBytes BLOB NOT NULL PRIMARY KEY,"
     , "  txBytes BLOB NOT NULL,"
     , "  txBytesSize INTEGER NOT NULL"
     , ");"
     ]
 
--- | GC-only objects of the volatile partition, applied idempotently on every
--- read-write open ('openVolRawConnection'), so pre-existing files migrate on
--- first open. Deliberately not part of 'sql_schema': in the immutable
+-- | GC-only objects of the volatile partition, applied idempotently by
+-- 'initialiseLeiosDbFiles', so pre-existing files migrate on the next handle
+-- creation. Deliberately not part of 'sql_schema': in the immutable
 -- partition every row has @status = 2@, so @idx_ebs_sweepable@ there would
 -- index the whole table for nothing.
 sql_schema_gc :: String

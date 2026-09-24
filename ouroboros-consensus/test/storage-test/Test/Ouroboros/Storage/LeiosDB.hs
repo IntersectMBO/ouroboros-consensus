@@ -25,7 +25,9 @@ import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
+import qualified Database.SQLite3 as SQL
 import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -51,7 +53,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , withReader
   , withWriter
   )
-import System.Directory (removeDirectoryRecursive)
+import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import qualified System.Timeout as Timeout
 import Test.QuickCheck
@@ -71,7 +73,7 @@ import Test.QuickCheck
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
@@ -87,6 +89,15 @@ tests =
              "deleteDanglingTxs"
              [ testCase "keeps the txs an EB references" $
                  withFreshSQLiteFile test_deleteDanglingTxs
+             ]
+         , testGroup
+             "file initialisation (SQLite)"
+             [ testCase "handle creation applies both schemas" $
+                 withTempLeiosDbPaths test_schemaAtHandleCreation
+             , testCase "zero-byte files get a schema" $
+                 withTempLeiosDbPaths test_zeroByteFilesGetSchema
+             , testCase "reopening keeps the data" $
+                 withTempLeiosDbPaths test_reopenKeepsData
              ]
          ]
 
@@ -143,17 +154,20 @@ withFreshSQLiteDb action = withFreshSQLiteFile (\_vol _imm -> action)
 -- removed; a still-open connection makes the removal flaky (a hard failure
 -- on Windows, where deleting an open WAL is a sharing violation).
 withFreshSQLiteFile :: (FilePath -> FilePath -> LeiosDbHandle IO -> IO a) -> IO a
-withFreshSQLiteFile action = do
+withFreshSQLiteFile action =
+  withTempLeiosDbPaths $ \volDbPath immDbPath ->
+    withLeiosDBSQLite nullTracer volDbPath immDbPath $
+      action volDbPath immDbPath
+
+-- | Paths for both partition files in a fresh temporary directory, which is
+-- removed afterwards. Nothing is created at the paths.
+withTempLeiosDbPaths :: (FilePath -> FilePath -> IO a) -> IO a
+withTempLeiosDbPaths action = do
   sysTmp <- getCanonicalTemporaryDirectory
   bracket
     (createTempDirectory sysTmp "leios-test")
     removeDirectoryRecursive
-    ( \tmpDir -> do
-        let volDbPath = tmpDir <> "/test.vol.db"
-            immDbPath = tmpDir <> "/test.imm.db"
-        withLeiosDBSQLite nullTracer volDbPath immDbPath $
-          action volDbPath immDbPath
-    )
+    (\tmpDir -> action (tmpDir <> "/test.vol.db") (tmpDir <> "/test.imm.db"))
 
 -- | Run tests for each database implementation.
 forEachImplementation :: (DbImpl -> [TestTree]) -> [TestTree]
@@ -894,6 +908,59 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
     keptBody @?= V.toList (leiosEbTxs eb)
     droppedBody <- rwLookupEbBody con droppedHash
     droppedBody @?= []
+
+-- * File initialisation
+
+-- | Names of the tables and indexes in a database file.
+schemaObjects :: FilePath -> IO [String]
+schemaObjects path =
+  bracket (SQL.open (T.pack path)) SQL.close $ \db ->
+    bracket
+      (SQL.prepare db (T.pack "SELECT name FROM sqlite_master WHERE type IN ('table', 'index')"))
+      SQL.finalize
+      $ \stmt ->
+        let loop acc =
+              SQL.step stmt >>= \case
+                SQL.Row -> SQL.columnText stmt 0 >>= \name -> loop (T.unpack name : acc)
+                SQL.Done -> pure acc
+         in loop []
+
+test_schemaAtHandleCreation :: FilePath -> FilePath -> IO ()
+test_schemaAtHandleCreation volDbPath immDbPath =
+  -- No reader or writer is opened: the schema must not depend on one.
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \_db -> do
+    forM_ [volDbPath, immDbPath] $ \path ->
+      doesFileExist path >>= assertBool (path <> " exists")
+    vol <- schemaObjects volDbPath
+    imm <- schemaObjects immDbPath
+    forM_ [(vol, "vol"), (imm, "imm")] $ \(objs, file) ->
+      forM_ ["ebs", "ebTxs", "ebsMissingTxs", "txs", "idx_ebTxs_txHashBytes"] $ \name ->
+        assertBool (file <> " has " <> name) (name `elem` objs)
+    forM_ ["gcTxCandidates", "idx_ebs_sweepable", "idx_ebs_markedForGc", "idx_ebs_pinned"] $ \name -> do
+      assertBool ("vol has " <> name) (name `elem` vol)
+      assertBool ("imm lacks " <> name) (name `notElem` imm)
+
+-- | A file that exists without a schema, as a crash between creating the file
+-- and applying the schema leaves it.
+test_zeroByteFilesGetSchema :: FilePath -> FilePath -> IO ()
+test_zeroByteFilesGetSchema volDbPath immDbPath = do
+  writeFile volDbPath ""
+  writeFile immDbPath ""
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db ->
+    withReader db $ \reader -> do
+      points <- scanCompleteEbClosuresNotOlderThanSlot reader 0
+      points @?= []
+
+test_reopenKeepsData :: FilePath -> FilePath -> IO ()
+test_reopenKeepsData volDbPath immDbPath = do
+  let eb = mkTestEb 2
+      ebHash = mkTestEbHash 1
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db ->
+    withRW db $ \con -> rwInsertEbPoint con (MkLeiosPoint 5 ebHash) (encodeLeiosEbSize eb)
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \db ->
+    withRW db $ \con -> do
+      points <- rwScanEbPoints con
+      points @?= [(5, ebHash)]
 
 -- * deleteDanglingTxs
 
