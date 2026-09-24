@@ -14,6 +14,7 @@ import Cardano.Ledger.Shelley.Translation
   )
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import qualified Data.Measure as Measure
+import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( slotLengthFromSec
   )
@@ -92,8 +93,8 @@ prop_capacityHasNoEndorserBlock cfg st =
   conjoin
     [ counterexample "endorser-block capacity" $
         ebCapacityTxMeasure cfg st === Measure.zero
-    , counterexample "endorser-block closure capacity" $
-        ebClosureCapacityTxMeasure cfg st === Measure.zero
+    , counterexample "mempool reservation for an endorser block" $
+        mempoolEbReservation (Proxy @blk) (ebCapacityTxMeasure cfg st) === Measure.zero
     ]
 
 prop_byron :: Property

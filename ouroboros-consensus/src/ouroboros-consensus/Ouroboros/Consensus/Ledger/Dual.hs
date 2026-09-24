@@ -773,8 +773,8 @@ instance Bridge m a => TxLimits (DualBlock m a) where
   ebCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
     ebCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
 
-  ebClosureCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
-    let TxMeasure a b = ebClosureCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+  mempoolEbReservation _ eb =
+    let TxMeasure a b = mempoolEbReservation (Proxy @m) eb
      in TxMeasure a b
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction

@@ -454,7 +454,7 @@ instance TxLimits BlockA where
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock (Show, Eq, Ord, Generic)

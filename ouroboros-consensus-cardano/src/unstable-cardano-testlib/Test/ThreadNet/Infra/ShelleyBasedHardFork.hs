@@ -318,6 +318,10 @@ instance
   hardForkTxEbMeasure _ p1 p2 =
     txEbMeasure (Proxy @(ShelleyBlock proto2 era2)) (TxMeasure p1 p2)
 
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock proto2 era2)) eb
+     in (p1, p2)
+
   -- Test-only hard fork. For a test block the unoptimized raw-hash
   -- comparison is fine.
   hardForkEqGenTxId = (==) `on` rawHashNS

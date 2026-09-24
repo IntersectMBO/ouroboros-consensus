@@ -10,10 +10,10 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | The mempool capacity ignores the endorser-block closure capacity.
+-- | The mempool capacity ignores the endorser-block capacity.
 --
--- No block type in the repository overrides 'Ledger.ebClosureCapacityTxMeasure',
--- so a test block that does is the only way to observe whether
+-- Every block type in the repository has a zero 'Ledger.ebCapacityTxMeasure',
+-- so a test block with a non-zero one is the only way to observe whether
 -- 'computeMempoolCapacity' reads it.
 module Test.Consensus.Mempool.Capacity (tests) where
 
@@ -62,16 +62,16 @@ tests =
   testGroup
     "Mempool capacity"
     [ testProperty
-        "the endorser-block closure capacity does not widen the mempool"
-        prop_mempoolCapacityIgnoresEbClosure
+        "the endorser-block capacity does not widen the mempool"
+        prop_mempoolCapacityIgnoresEbCapacity
     ]
 
 -- | Without an override the mempool holds two blocks, and nothing else.
 --
--- 'ebClosureCapacity' is deliberately non-zero, so the property fails if
+-- 'ebCapacity' is deliberately non-zero, so the property fails if
 -- 'computeMempoolCapacity' ever adds it to the block capacity.
-prop_mempoolCapacityIgnoresEbClosure :: Property
-prop_mempoolCapacityIgnoresEbClosure =
+prop_mempoolCapacityIgnoresEbCapacity :: Property
+prop_mempoolCapacityIgnoresEbCapacity =
   once $
     computeMempoolCapacity cfg st NoMempoolCapacityBytesOverride
       === Measure.plus oneBlock oneBlock
@@ -102,8 +102,8 @@ blockCapacity = Ledger.ByteSize32 4096
 
 -- | Non-zero, so that a mempool capacity that reads it differs from one that
 -- does not.
-ebClosureCapacity :: Ledger.ByteSize32
-ebClosureCapacity = Ledger.ByteSize32 1024
+ebCapacity :: Ledger.ByteSize32
+ebCapacity = Ledger.ByteSize32 1024
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasurePhase1 TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
@@ -123,12 +123,12 @@ instance Ledger.TxLimits TestBlock where
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = Measure.zero
-
-  ebClosureCapacityTxMeasure _cfg _st =
+  ebCapacityTxMeasure _cfg _st =
     Ledger.TxMeasure
-      (Ledger.IgnoringOverflow ebClosureCapacity)
+      (Ledger.IgnoringOverflow ebCapacity)
       Ledger.TrivialTxMeasurePhase2
+
+  mempoolEbReservation _ = id
 
 {-------------------------------------------------------------------------------
   Block scaffolding

@@ -656,7 +656,7 @@ instance TxLimits (SimpleBlock c ext) where
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 simpleBlockCapacity :: ByteSize32
 simpleBlockCapacity = ByteSize32 512

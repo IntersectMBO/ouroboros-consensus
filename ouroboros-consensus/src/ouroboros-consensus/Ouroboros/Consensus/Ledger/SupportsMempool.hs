@@ -485,14 +485,14 @@ class
     TickedLedgerState blk mk ->
     TxEbMeasure blk
 
-  -- | What one full endorser-block fill drains from the mempool, in
-  -- 'TxMeasure' terms: an endorser block's closure is transactions. Only used
-  -- to size the mempool ('Ouroboros.Consensus.Mempool.computeMempoolCapacity').
+  -- | Convert an endorser-block measure to a 'TxMeasure', keeping only the
+  -- parts the mempool counts, so that the mempool can reserve room for
+  -- endorser blocks.
   --
-  -- Zero for blocks without endorser blocks.
-  ebClosureCapacityTxMeasure ::
-    LedgerConfig blk ->
-    TickedLedgerState blk mk ->
+  -- The identity for blocks without endorser blocks.
+  mempoolEbReservation ::
+    proxy blk ->
+    TxEbMeasure blk ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@

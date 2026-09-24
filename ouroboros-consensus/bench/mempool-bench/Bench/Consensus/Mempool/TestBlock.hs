@@ -335,7 +335,7 @@ instance Ledger.TxLimits TestBlock where
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
   deriving stock Generic
