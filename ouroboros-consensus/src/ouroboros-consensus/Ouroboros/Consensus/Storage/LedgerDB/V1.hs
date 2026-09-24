@@ -28,7 +28,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb.WithCallTrace (LeiosDbHandle, closeReader, openReader)
+import LeiosDemoDb.WithCallTrace (LeiosDbHandle, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
 import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
@@ -115,7 +115,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix = do
                 ds
             )
       , initReapplyBlock = \cctx cfg blk (chlog, bstore) -> do
-          !chlog' <- bracket (openReader ldbLeiosDb cctx) (\r -> closeReader r cctx) $ \reader ->
+          !chlog' <- withReader ldbLeiosDb cctx $ \reader ->
             reapplyThenPushLeios reader cctx cfg blk (readKeySets bstore) chlog
           -- It's OK to flush without a lock here, since the `LedgerDB` has not
           -- finished initializing, only this thread has access to the backing
@@ -299,7 +299,7 @@ implValidate h ldbEnv cctx tr cache rollbacks hdrs onSuccess =
   -- 'validateFork' is the ChainSel/block-adder thread. Storing a
   -- shared connection in 'ldbEnv' was crashing SQLite when a
   -- non-owner thread invoked this path.
-  bracket (openReader (ldbLeiosDb ldbEnv) cctx) (\r -> closeReader r cctx) $ \reader ->
+  withReader (ldbLeiosDb ldbEnv) cctx $ \reader ->
     validate cctx (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
       ValidateArgs
         (ldbResolveBlock ldbEnv)
@@ -478,7 +478,7 @@ implIntReapplyThenPush ::
 implIntReapplyThenPush env cctx blk = do
   chlog <- readTVarIO $ ldbChangelog env
   chlog' <-
-    bracket (openReader (ldbLeiosDb env) cctx) (\r -> closeReader r cctx) $ \reader ->
+    withReader (ldbLeiosDb env) cctx $ \reader ->
       reapplyThenPushLeios reader cctx (ldbCfg env) blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
