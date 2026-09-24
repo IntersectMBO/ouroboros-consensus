@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -26,6 +27,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , HasTxs (..)
   , IgnoringOverflow (..)
   , Invalidated (..)
+  , IsTxSizeable (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
   , TxId
@@ -47,7 +49,7 @@ import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
-import Data.Measure (Measure)
+import Data.Measure (Measure, zero)
 import qualified Data.Measure as M
 import Data.Text (Text)
 import Data.Word (Word32)
@@ -453,6 +455,14 @@ class
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
     TxMeasure blk
+
+-- | A class to get the "size" of an object as if it were a transaction.
+--
+-- This is used to select fewer transactions when forging a block that should contain
+-- more than transactions as a payload (e.g. a Peras certificate), to avoid exceeding
+-- the maximum block size.
+class TxMeasurePhase1Metrics m => IsTxSizeable a m where
+  getTxLikeSize :: a -> m
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for

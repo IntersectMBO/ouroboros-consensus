@@ -28,15 +28,18 @@ This example uses several extensions:
 > {-# LANGUAGE DerivingVia                #-}
 > {-# LANGUAGE DataKinds                  #-}
 > {-# LANGUAGE DeriveGeneric              #-}
+> {-# LANGUAGE FlexibleContexts           #-}
 > {-# LANGUAGE FlexibleInstances          #-}
 > {-# LANGUAGE DeriveAnyClass             #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
+> {-# LANGUAGE UndecidableInstances       #-}
 
 > module Ouroboros.Consensus.Tutorial.Simple () where
 
 First, some imports we'll need:
 
+> import qualified Data.Measure as Measure
 > import Data.Void(Void, absurd)
 > import Data.Set(Set)
 > import qualified Data.Set as Set
@@ -71,6 +74,12 @@ First, some imports we'll need:
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
 >    LedgerState, ApplyBlock(..), UpdateLedger, GetBlockKeySets (..),
 >    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
+> import Ouroboros.Consensus.Ledger.SupportsMempool
+>   ( ByteSize32 (..)
+>   , IgnoringOverflow (..)
+>   , TrivialTxMeasurePhase2 (..)
+>   , TxLimits (..)
+>   )
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
 > import Ouroboros.Consensus.Forecast (trivialForecast)
@@ -409,6 +418,15 @@ this value.  We'll implement those typeclasses next.
 
 We also need to instantiate `BlockSupportsPeras` for `BlockC`. Since `BlockC`
 does not support Peras, we use the void Peras types and default implementations.
+
+> instance TxLimits BlockC where
+>   type TxMeasurePhase1 BlockC = IgnoringOverflow ByteSize32
+>   type TxMeasurePhase2 BlockC = TrivialTxMeasurePhase2
+>   txWireSize _ = 0
+>   txMeasurePhase1 _ _ _ = pure Measure.zero
+>   txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
+>   blockCapacityTxMeasure _ _ = Measure.zero
+
 
 > instance BlockSupportsPeras BlockC where
 >   type PerasVote BlockC = VoidPerasVote BlockC

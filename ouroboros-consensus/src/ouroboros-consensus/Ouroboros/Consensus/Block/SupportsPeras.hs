@@ -95,6 +95,7 @@ import Ouroboros.Consensus.Committee.Class
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (ElectionId, PrivateKey, VoteCandidate)
 import Ouroboros.Consensus.Committee.Types (PoolId (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool (IsTxSizeable, TxLimits (TxMeasurePhase1))
 import Ouroboros.Consensus.Peras.Cert.Class
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
@@ -183,6 +184,7 @@ class
   ( -- Basic block constraints
     StandardHash blk
   , Typeable blk
+  , TxLimits blk
   , -- PerasVote constraints
     Typeable (PerasVote blk)
   , Show (PerasVote blk)
@@ -199,6 +201,7 @@ class
   , Eq (PerasCert blk)
   , NoThunks (PerasCert blk)
   , IsPerasCert (PerasCert blk) blk
+  , IsTxSizeable (PerasCert blk) (TxMeasurePhase1 blk)
   , Typeable (BoostedBlock (PerasCert blk))
   , Show (BoostedBlock (PerasCert blk))
   , Eq (BoostedBlock (PerasCert blk))

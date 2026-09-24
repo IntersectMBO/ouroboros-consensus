@@ -27,6 +27,7 @@ import Control.DeepSeq (NFData)
 import Data.Containers.NonEmpty (NE)
 import Data.Data (Proxy (..))
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
 import Data.Set.NonEmpty.Internal (NESet (..))
@@ -37,6 +38,11 @@ import Ouroboros.Consensus.Block.Abstract
   ( ConvertRawHash
   , Point
   , StandardHash
+  )
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32
+  , IgnoringOverflow
+  , IsTxSizeable (..)
   )
 import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Cert.Class (IsPerasCert (..))
@@ -70,6 +76,9 @@ type instance BoostedBlock (MockPerasCert blk) = Point blk
 instance IsPerasCert (MockPerasCert blk) blk where
   getPerasCertRound = mockCertRound
   getPerasCertBlock = mockCertBlock
+
+instance IsTxSizeable (MockPerasCert blk) (IgnoringOverflow ByteSize32) where
+  getTxLikeSize = const Measure.zero
 
 instance ShowProxy blk => ShowProxy (MockPerasCert blk) where
   showProxy _ = "MockPerasCert(" <> showProxy (Proxy @blk) <> ")"

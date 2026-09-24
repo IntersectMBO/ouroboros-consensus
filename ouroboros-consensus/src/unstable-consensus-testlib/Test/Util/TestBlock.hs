@@ -111,6 +111,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
+import qualified Data.Measure as Measure
 import Data.Proxy
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
@@ -138,6 +139,12 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32
+  , IgnoringOverflow
+  , TrivialTxMeasurePhase2 (..)
+  , TxLimits (..)
+  )
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -263,6 +270,15 @@ data TestBlockWith ptype = TestBlockWith
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass (Serialise, NoThunks, ToExpr)
+
+-- Dummy instance, only needed for Peras Support
+instance {-# OVERLAPPABLE #-} TxLimits (TestBlockWith ptype) where
+  type TxMeasurePhase1 (TestBlockWith ptype) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (TestBlockWith ptype) = TrivialTxMeasurePhase2
+  txWireSize _ = 0
+  txMeasurePhase1 _ _ _ = pure Measure.zero
+  txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _ _ = Measure.zero
 
 -- | Create a block directly with the given parameters. This allows creating
 -- inconsistent blocks; prefer 'firstBlockWithPayload' or 'successorBlockWithPayload'.
@@ -719,7 +735,9 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
 
 -- NOTE: this is a mocked up implementation without crypto!
 instance
-  Typeable ptype =>
+  ( TxLimits (TestBlockWith ptype)
+  , Typeable ptype
+  ) =>
   BlockSupportsPeras (TestBlockWith ptype)
   where
   type PerasCrypto (TestBlockWith ptype) = MockPerasCrypto (TestBlockWith ptype)
