@@ -110,6 +110,7 @@ import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import LeiosDemoDb (LeiosDbHandle)
+import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes (SerializedEbBody)
 import LeiosTxCache
   ( LeiosTxCache
@@ -1015,6 +1016,7 @@ mkNodeKernelArgs
           , leiosDB
           , leiosTxCache
           , leiosFetchRng = lfRng
+          , leiosMinOfferLead = Leios.defaultLeiosMinOfferLead
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'

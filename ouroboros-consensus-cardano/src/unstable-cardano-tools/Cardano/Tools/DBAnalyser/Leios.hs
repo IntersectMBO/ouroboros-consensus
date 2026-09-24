@@ -42,6 +42,8 @@ import LeiosDemoTypes
   , HasLeiosVoting (..)
   , LeiosExtValidationError (..)
   , LeiosPoint
+  , announcementEbBodySize
+  , announcementLeiosPoint
   , pointEbHash
   , verifyLeiosCert
   )

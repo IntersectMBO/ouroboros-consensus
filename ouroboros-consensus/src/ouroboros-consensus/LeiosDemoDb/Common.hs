@@ -149,6 +149,10 @@ type CompletedEbs = [LeiosPoint]
 -- 'TxLocation' in another EB. See 'writeEbBody'.
 type LocalFill = (TxOffset, TxLocation)
 
+-- | What we have just stored.
+--
+-- Whether a peer hears about it is the LeiosNotify server's decision, not the
+-- database's; see @Leios.leiosOfferRelayDecision@.
 data LeiosEbNotification
   = AcquiredEb LeiosPoint BytesSize
   | AcquiredEbTxs LeiosPoint

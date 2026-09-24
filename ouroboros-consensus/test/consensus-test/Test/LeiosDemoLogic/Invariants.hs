@@ -43,6 +43,7 @@ import Control.Monad.Class.MonadTimer (threadDelay)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -66,9 +67,9 @@ import LeiosDemoLogic
   , recordEbBodyOffer
   , removePeerFromOutstanding
   )
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
-  ( AlsoOfferedTxsClosure (..)
-  , BytesSize
+  ( BytesSize
   , EbHash
   , LeiosBlockRequest (..)
   , LeiosEb (..)
@@ -78,6 +79,7 @@ import LeiosDemoTypes
   , LeiosTx (..)
   , PeerId (..)
   , TxHash
+  , WhetherTxsClosureOffered (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , encodeLeiosEbSize
@@ -85,8 +87,6 @@ import LeiosDemoTypes
   , hashLeiosTx
   , newLeiosPeerVars
   )
-import qualified Data.ByteString.Short as SBS
-import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, newPureLeiosTxCache, nullLeiosTxCache)
@@ -252,7 +252,11 @@ tests =
                   (Leios.maxJobTxCount demoLeiosFetchStaticEnv)
                   misses
               peerId = MkPeerId (0 :: Int)
-              offers = Map.singleton peerId (Map.singleton point TxsClosureAlsoOffered)
+              -- The body is already held in these runs, so the offer names no
+              -- size; only its closure half is consulted.
+              offers =
+                Map.singleton peerId $
+                  Map.singleton point (Leios.MkPeerOffer SNothing TxsClosureOffered)
               ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
               bigLedgerCap = Leios.maxRequestedBytesSizePerBigLedgerPeer demoLeiosFetchStaticEnv
               -- hold the body (so the pool is live), with the peer's in-flight bytes
@@ -485,9 +489,8 @@ applyCmd conn txCache kv peerVars peerId = \case
     pure []
   Offer ids slot -> do
     recordEbBodyOffer
-      kv
+      (snd kv)
       peerVars
-      TxsClosureNotAlsoOffered
       (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure []
   ArriveBody ids slot -> do
@@ -584,15 +587,27 @@ applyCmd conn txCache kv peerVars peerId = \case
     let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
     pure (filter (\h -> Set.member h held) (ebBodyRequestHashes decs))
 
--- | Offer every EB the outstanding state tracks, at its 'ebStateMaxSlot' and as
--- 'TxsClosureAlsoOffered' (which implies the body too) -- an all-offering peer, so
--- the fetch logic can act on whichever half each EB still needs.
-referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.AlsoOfferedTxsClosure
+-- | Offer every EB the outstanding state tracks, at its 'ebStateMaxSlot',
+-- offering both its body and its closure -- an all-offering peer, so the fetch
+-- logic can act on whichever of the two each EB still needs.
+--
+-- The two are independent offers, so the body offer is stated explicitly, by
+-- the size the outstanding state is pursuing.
+referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.PeerOffer
 referencedOffers o =
   Map.fromList
-    [ (Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h, Leios.TxsClosureAlsoOffered)
+    [ ( Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h
+      , Leios.MkPeerOffer (sizeOf h) Leios.TxsClosureOffered
+      )
     | (h, s) <- Map.toList (Leios.ebState o)
     ]
+ where
+  -- The size this outstanding state is pursuing for that endorser block, which
+  -- is what 'assignBody' matches a peer's offer against.
+  sizeOf h =
+    case [sz | (Leios.MkLeiosPoint _ h', sz) <- Map.toList (Leios.missingEbBodies o), h' == h] of
+      [] -> SNothing
+      sz : _ -> SJust sz
 
 -- | Force the requests to a scalar, so any @impossible!@ hidden in a thunk
 -- surfaces when the caller 'evaluate's it. Touches each tx request's covered
@@ -859,7 +874,7 @@ raceSameHashMultiSlot = do
         announcePoint = pointOf ids 11
         arrivalPoint = pointOf ids 12
     concurrently_
-      (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
+      (recordEbBodyOffer (snd kv) peerVars (offerPoint, ebBytesSize))
       ( concurrently_
           (recordAnnouncedEb kv SNothing (announcementOf announcePoint ebBytesSize))
           ( processLeiosBlock

@@ -33,20 +33,25 @@ import qualified Data.IntMap.Strict as IntMap
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
 import qualified LeiosDemoDb as LeiosDb
+import qualified LeiosDemoLogic as Leios
 import LeiosTxCache (nullLeiosTxCache)
 import Ouroboros.Consensus.BlockchainTime
-  ( BlockchainTime (..)
-  , CurrentSlot (..)
+  ( BackoffDelay (..)
+  , BlockchainTime
+  , HardForkBlockchainTimeArgs (..)
   , SystemStart (..)
   , SystemTime
+  , hardForkBlockchainTime
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Default (defaultSystemTime)
 import Ouroboros.Consensus.Config
   ( DiffusionPipeliningSupport (..)
   , SecurityParam (..)
   , TopLevelConfig
+  , configLedger
   )
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Mempool (MempoolCapacityBytesOverride (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -91,11 +96,19 @@ type Blk = LeiosTestBlock
 data NodeUnderTestConfig = NodeUnderTestConfig
   { nutcLedgerConfig :: LeiosTestLedgerConfig
   , nutcSecurityParam :: SecurityParam
+  , nutcMinOfferLead :: Leios.LeiosMinOfferLead
+  -- ^ See 'leiosMinOfferLead'. These tests run a handful of slots, so the
+  -- real hour would hold back every offer they make.
   }
 
 defaultNodeUnderTestConfig ::
   LeiosTestLedgerConfig -> SecurityParam -> NodeUnderTestConfig
-defaultNodeUnderTestConfig = NodeUnderTestConfig
+defaultNodeUnderTestConfig nutcLedgerConfig nutcSecurityParam =
+  NodeUnderTestConfig
+    { nutcLedgerConfig
+    , nutcSecurityParam
+    , nutcMinOfferLead = Leios.MkLeiosMinOfferLead 2
+    }
 
 -- | The peer address these tests use: a peer is just a number.
 newtype PeerAddr = PeerAddr Int
@@ -132,7 +145,8 @@ withNodeUnderTest cfg nodeDBs leiosDb chainDBTracer body =
       (ChainDBImpl.openDB chainDbArgs)
       ChainDB.closeDB
       $ \chainDB -> withRegistry $ \kernelRegistry -> do
-        kernelArgs <- mkNodeKernelArgs cfg kernelRegistry chainDB leiosDb
+        btime <- mkBlockchainTime cfg kernelRegistry chainDB
+        kernelArgs <- mkNodeKernelArgs cfg kernelRegistry chainDB leiosDb btime
         kernel <- initNodeKernel kernelArgs
         body
           NodeUnderTest
@@ -144,12 +158,28 @@ withNodeUnderTest cfg nodeDBs leiosDb chainDBTracer body =
                 NTN.mkHandlers kernelArgs kernel TxSubmissionLogicV2
             }
 
--- | A slot clock that never knows the slot, which nothing the node under test
--- does depends on: it neither forges nor votes, BlockFetch then simply stays in
--- bulk-sync mode, and the LeiosFetch logic defaults to putting /every/ offer in
--- its high-priority tier, ie oldest first.
-stubBlockchainTime :: BlockchainTime (IOSim s)
-stubBlockchainTime = BlockchainTime{getCurrentSlot = pure CurrentSlotUnknown}
+-- | The node's slot clock, derived from the ledger as a real node's is.
+--
+-- A stub that never knows the slot would do for everything else the node under
+-- test does --- it neither forges nor votes --- but the LeiosNotify client
+-- does not start until the immutable tip can forecast to the current slot, so
+-- a peer's notifications would never be read.
+mkBlockchainTime ::
+  NodeUnderTestConfig ->
+  ResourceRegistry (IOSim s) ->
+  ChainDB (IOSim s) Blk ->
+  IOSim s (BlockchainTime (IOSim s))
+mkBlockchainTime cfg registry chainDB =
+  hardForkBlockchainTime
+    HardForkBlockchainTimeArgs
+      { hfbtBackoffDelay = pure (BackoffDelay 1)
+      , hfbtGetLedgerState = ledgerState <$> ChainDB.getCurrentLedger chainDB
+      , hfbtLedgerConfig = configLedger (topLevelConfigOf cfg)
+      , hfbtRegistry = registry
+      , hfbtSystemTime = nutSystemTime
+      , hfbtTracer = nullTracer
+      , hfbtMaxClockRewind = 0
+      }
 
 -- | The node, with no credentials: it neither forges nor votes, so a test only
 -- has to account for what it does with what the environment sends it.
@@ -158,8 +188,9 @@ mkNodeKernelArgs ::
   ResourceRegistry (IOSim s) ->
   ChainDB (IOSim s) Blk ->
   LeiosDb.LeiosDbHandle (IOSim s) ->
+  BlockchainTime (IOSim s) ->
   IOSim s (NodeKernelArgs (IOSim s) PeerAddr () Blk)
-mkNodeKernelArgs cfg registry chainDB leiosDB = do
+mkNodeKernelArgs cfg registry chainDB leiosDB btime = do
   publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
   pure
     NodeKernelArgs
@@ -167,7 +198,7 @@ mkNodeKernelArgs cfg registry chainDB leiosDB = do
       , registry
       , cfg = topLevelConfigOf cfg
       , featureFlags = mempty
-      , btime = stubBlockchainTime
+      , btime
       , systemTime = nutSystemTime
       , chainDB
       , initChainDB = \_ _ -> pure ()
@@ -182,12 +213,11 @@ mkNodeKernelArgs cfg registry chainDB leiosDB = do
       , miniProtocolParameters = defaultMiniProtocolParameters
       , blockFetchConfiguration =
           BlockFetchConfiguration
-            { -- The slot clock is stubbed, so the node is always in bulk-sync
-              -- mode; one peer at a time would let a peer that never answers
-              -- starve every other peer, and indefinitely: the environment
-              -- runs the mini-protocols without time limits, so nothing here
-              -- ever disconnects a peer that a real node would eventually
-              -- give up on.
+            { -- One peer at a time lets a peer that never answers starve every
+              -- other peer, and indefinitely: the environment runs the
+              -- mini-protocols without time limits, so nothing here ever
+              -- disconnects a peer that a real node would eventually give up
+              -- on.
               bfcMaxConcurrencyBulkSync = 4
             , bfcMaxConcurrencyDeadline = 4
             , bfcMaxRequestsInflight = 10
@@ -220,6 +250,7 @@ mkNodeKernelArgs cfg registry chainDB leiosDB = do
       , leiosDB
       , leiosTxCache = nullLeiosTxCache
       , leiosFetchRng = mkStdGen 4
+      , leiosMinOfferLead = nutcMinOfferLead cfg
       }
 
 topLevelConfigOf :: NodeUnderTestConfig -> TopLevelConfig Blk

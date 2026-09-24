@@ -10,7 +10,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.NodeKernel
@@ -236,7 +235,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
     --
     -- See 'LeiosPeerVars' for the write patterns.
-    getLeiosDB :: LeiosDbHandle m
+    getLeiosMinOfferLead :: Leios.LeiosMinOfferLead
+  , getLeiosDB :: LeiosDbHandle m
   -- ^ Factory for opening per-thread readers and writers of the Leios demo DB
   -- and subscribing to EB-notification events.
   , getLeiosVoteState :: LeiosVoteState m
@@ -309,6 +309,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ Seeds the LeiosFetch decision loop's PRNG (see 'Leios.leiosFetchPrng'),
   -- which shuffles job assignment to peers. An independent split of the node
   -- generator, like 'keepAliveRng' / 'peerSharingRng'.
+  , leiosMinOfferLead :: Leios.LeiosMinOfferLead
   }
 
 initNodeKernel ::
@@ -340,6 +341,7 @@ initNodeKernel
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
     , leiosDB
+    , leiosMinOfferLead
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -653,7 +655,7 @@ initNodeKernel
               MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
                 pure $!
                   Map.foldlWithKey'
-                    (\acc elId ebHash -> Leios.focusElection elId ebHash acc)
+                    (\acc _elId fields -> Leios.focusCertifiedEb fields acc)
                     outstanding
                     arrived
               void $ MVar.tryPutMVar getLeiosReady ()
@@ -682,6 +684,7 @@ initNodeKernel
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getLeiosMinOfferLead = leiosMinOfferLead
         , getLeiosDB = leiosDB
         , getLeiosVoteState = leiosVoteState
         , getLeiosPeersVars = getLeiosPeersVars
@@ -761,6 +764,7 @@ data InternalState m addrNTN addrNTC blk = IS
   -- ^ Accumulator for Leios votes; assembles certificates once a
   -- point's tally crosses 'minCertificationThreshold'. Source of
   -- 'fbLeiosVoteState' threaded into 'ForgeBlockArgs'.
+  , leiosMinOfferLead :: Leios.LeiosMinOfferLead
   }
 
 initInternalState ::
@@ -791,6 +795,7 @@ initInternalState
     , leiosDB
     , leiosTxCache
     , leiosFetchRng
+    , leiosMinOfferLead
     } = do
     varGsmState <- do
       let GsmNodeKernelArgs{..} = gsmArgs
