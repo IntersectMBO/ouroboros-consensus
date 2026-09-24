@@ -16,9 +16,9 @@ import qualified Data.Map.Strict as Strict (Map)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
+import qualified Data.Set.NonEmpty as NESet
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import qualified Data.Set.NonEmpty as NESet
 
 -- | The slot number and pool id of an election
 data ElId

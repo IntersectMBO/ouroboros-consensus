@@ -168,7 +168,11 @@ newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
 -- | 'newLeiosDBSQLite' with an explicit GC sweep batch size: how many EBs
 -- the writer evicts per turn, between the jobs it serves.
 newLeiosDBSQLiteWithGcBatchSize ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  FilePath ->
+  Int64 ->
+  IO (LeiosDbHandle IO)
 newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   -- The database opens before whoever owns these directories creates them.
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
@@ -1193,7 +1197,8 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
   sealedVar <- newTVarIO Nothing
   sweepStateVar <- newTVarIO SweepIdle
   jobsServedVar <- newTVarIO (0 :: Int)
-  let notify = atomically . writeTChan notificationChan
+  let notify :: LeiosEbNotification -> IO ()
+      notify = atomically . writeTChan notificationChan
 
       -- Statements before connections; an open statement holds the close off.
       closeConnections = do
@@ -1572,7 +1577,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
         else pure []
     pure (completed, reverse filledOffs)
   notify $ AcquiredEb point ebBytesSize
-  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
+  forM_ completedNow $ notify . AcquiredEbTxs
   pure (completedNow, filledOffs)
  where
   ebHashRaw = ebHashBytes point.pointEbHash
@@ -1650,7 +1655,7 @@ sqlInsertTxs _tracer conn notify point offBytes = do
           dbStep1 stMarkPointNotified
         pure [MkLeiosPoint slot point.pointEbHash | slot <- completedSlots]
   -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ \p -> notify (AcquiredEbTxs p)
+  forM_ completed $ notify . AcquiredEbTxs
   pure completed
  where
   Conn{connVolStmts} = conn

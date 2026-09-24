@@ -163,7 +163,24 @@ instance Protocol (LeiosNotify point announcement vote) where
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockOffer ::
       !point ->
-      !Word32 -> -- TODO this size should be redundant, determined by the announcement
+      -- The point alone would not say which announcement's size is being
+      -- offered: two announcements, even from different elections, can name
+      -- one endorser block in one slot at different sizes. Suppressing the
+      -- contrasting announcement is not open to us either, since L_hdr is
+      -- precisely the window in which an honest peer relays both, before it
+      -- can know which size is right.
+      --
+      -- There would be two ways to drop it. Name the announcing block's RbHash,
+      -- instead of or alongside the endorser block's hash: one announcing block
+      -- is one announcement, hence one size. Or inflate the outstanding-bytes
+      -- budget conservatively --- charge each request the codec limit rather
+      -- than a claimed size --- which needs no size at all, at the cost of a
+      -- budget denominated in the worst case.
+      --
+      -- TODO update the CIP/blueprint, which still has this message carrying
+      -- the point alone. Both alternatives change the mini-protocol message or
+      -- its accounting, so the choice belongs in that discussion.
+      !Word32 ->
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockTxsOffer ::
       !point ->

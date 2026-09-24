@@ -41,8 +41,7 @@ import LeiosDemoDb
   , withReader
   )
 import LeiosDemoTypes
-  ( announcementLeiosPoint
-  , HasLeiosVoting (..)
+  ( HasLeiosVoting (..)
   , LeiosClosureError (..)
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
@@ -50,6 +49,7 @@ import LeiosDemoTypes
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
+  , announcementLeiosPoint
   , getLeiosSeatId
   , prettyLeiosPoint
   , signLeiosVote

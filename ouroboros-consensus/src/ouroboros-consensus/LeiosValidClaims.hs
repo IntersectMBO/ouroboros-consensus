@@ -77,7 +77,7 @@ data ValidClaims
   = MkValidClaims
   { slotOfClaim :: !(Strict.Map RbHash Claim)
   , claimsBySlot :: !(Strict.Map SlotNo (NESet RbHash))
-  , certifiedEbs :: !(Strict.Map ElId EbHash)
+  , certifiedEbs :: !(Strict.Map ElId AnnouncementFields)
   -- ^ The endorser block certified for each election: the same shape as the
   -- fetch logic's own focus, which is what it copies these entries into.
   --
@@ -111,10 +111,7 @@ insertValidClaim slot mbFields rbHash vc
         , certifiedEbs = case mbFields of
             SNothing -> certifiedEbs vc
             SJust fields ->
-              Map.insert
-                (announcementElection fields)
-                (announcementEbHash fields)
-                (certifiedEbs vc)
+              Map.insert (announcementElection fields) fields (certifiedEbs vc)
         }
 
 memberValidClaim :: RbHash -> ValidClaims -> Bool
@@ -123,7 +120,8 @@ memberValidClaim rbHash = Map.member rbHash . slotOfClaim
 -- | Whether some certified claim announced this endorser block, for this
 -- election.
 isCertifiedEb :: ElId -> EbHash -> ValidClaims -> Bool
-isCertifiedEb elId ebHash = (== Just ebHash) . Map.lookup elId . certifiedEbs
+isCertifiedEb elId ebHash =
+  (== Just ebHash) . fmap announcementEbHash . Map.lookup elId . certifiedEbs
 
 -- | Forget every claim announced strictly before the given slot.
 --

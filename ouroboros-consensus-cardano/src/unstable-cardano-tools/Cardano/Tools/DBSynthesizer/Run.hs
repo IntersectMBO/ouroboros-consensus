@@ -243,27 +243,28 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
             (confDbDir </> "leios.vol.db")
             (confDbDir </> "leios.imm.db")
             $ \leiosDbHandle ->
-              withReader leiosDbHandle $ \leiosDbReader -> withWriter leiosDbHandle $ \leiosDbWriter ->
-                ChainDB.withDB (ChainDB.updateTracer dbTracer (mkDbArgs leiosDbHandle)) $ \chainDB -> do
-                  slotNo <- do
-                    tip <- atomically (ChainDB.getTipPoint chainDB)
-                    pure $ case pointSlot tip of
-                      Origin -> 0
-                      At s -> succ s
+              withReader leiosDbHandle $ \leiosDbReader ->
+                withWriter leiosDbHandle $ \leiosDbWriter ->
+                  ChainDB.withDB (ChainDB.updateTracer dbTracer (mkDbArgs leiosDbHandle)) $ \chainDB -> do
+                    slotNo <- do
+                      tip <- atomically (ChainDB.getTipPoint chainDB)
+                      pure $ case pointSlot tip of
+                        Origin -> 0
+                        At s -> succ s
 
-                  putStrLn $ "--> starting at: " ++ show slotNo
-                  runForge
-                    epochSize
-                    slotNo
-                    synthLimit
-                    chainDB
-                    forgers
-                    pInfoConfig
-                    confVotingKey
-                    (genTxs pInfoConfig)
-                    leiosDbReader
-                    leiosDbWriter
-                    leiosTracer
+                    putStrLn $ "--> starting at: " ++ show slotNo
+                    runForge
+                      epochSize
+                      slotNo
+                      synthLimit
+                      chainDB
+                      forgers
+                      pInfoConfig
+                      confVotingKey
+                      (genTxs pInfoConfig)
+                      leiosDbReader
+                      leiosDbWriter
+                      leiosTracer
         else do
           putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
           pure $ ForgeResult 0

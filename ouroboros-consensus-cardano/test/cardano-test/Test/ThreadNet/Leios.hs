@@ -87,11 +87,11 @@ import LeiosDemoDb
   )
 import LeiosDemoTypes
   ( LeiosNotVotedReason (..)
-  , announcementEbHash
   , LeiosPoint (..)
   , LeiosVote (..)
   , RbHash (..)
   , TraceLeiosKernel (..)
+  , announcementEbHash
   , hashLeiosEb
   , minCertificationGap
   , prettyEbHash
