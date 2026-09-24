@@ -58,7 +58,7 @@ import Cardano.Ledger.BaseTypes
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
+import LeiosDemoDb.WithCallTrace (LeiosDbReader)
 import LeiosDemoTypes (LeiosPoint (..))
 import LeiosUtils.CallTrace (CallCtx)
 import NoThunks.Class
@@ -254,7 +254,7 @@ reapplyThenPush ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   LedgerDbCfg l ->
   blk ->
@@ -277,7 +277,7 @@ reapplyBlock ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->

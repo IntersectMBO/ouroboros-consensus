@@ -32,7 +32,7 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb.WithCallTrace (HandleWithCallTrace, withReader)
+import LeiosDemoDb.WithCallTrace (LeiosDbHandle, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
 import LeiosUtils.CallTrace (CallCtx)
 import NoThunks.Class
@@ -448,9 +448,9 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLeiosDb :: !(HandleWithCallTrace m)
-  -- ^ 'HandleWithCallTrace', not a live connection: every consumer opens
-  -- its own per-call 'ReaderWithCallTrace' at use time (a
+  , ldbLeiosDb :: !(LeiosDbHandle m)
+  -- ^ 'LeiosDbHandle', not a live connection: every consumer opens
+  -- its own per-call 'LeiosDbReader' at use time (a
   -- 'direct-sqlite' connection is single-thread).
   }
   deriving Generic

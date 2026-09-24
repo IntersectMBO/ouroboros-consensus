@@ -61,15 +61,15 @@ import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Text as Text
 import Data.Void (Void)
 import LeiosDemoDb
-  ( LeiosDbHandle (..)
+  ( LeiosDbHandle
   )
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoDb.WithCallTrace
-  ( handleOpenReader
-  , handleOpenWriter
-  , readerClose
+  ( closeReader
+  , closeWriter
+  , openReader
+  , openWriter
   , withCallTraceHandle
-  , writerClose
   )
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
@@ -877,13 +877,13 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     labelThisThread $ Text.unpack $ forgeLabel bf
     rootCCtx <- rootCallCtx "Forge"
     let leiosDbHandle = withCallTraceHandle nullTracer leiosDB
-    leiosDbReader <- handleOpenReader leiosDbHandle rootCCtx
-    leiosDbWriter <- handleOpenWriter leiosDbHandle rootCCtx
+    leiosDbReader <- openReader leiosDbHandle rootCCtx
+    leiosDbWriter <- openWriter leiosDbHandle rootCCtx
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 
   finalizeForging (bf, leiosDbReader, leiosDbWriter, rootCCtx) =
-    leiosDbWriter.close rootCCtx
-      >> leiosDbReader.close rootCCtx
+    leiosDbWriter.closeWriter rootCCtx
+      >> leiosDbReader.closeReader rootCCtx
       >> finalize bf
 
 {-------------------------------------------------------------------------------

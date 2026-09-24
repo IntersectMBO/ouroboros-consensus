@@ -86,7 +86,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
+import LeiosDemoDb.WithCallTrace (LeiosDbReader)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
   ( BytesSize
@@ -350,7 +350,7 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ How many blocks to roll back before applying the blocks
   , hdrs :: NonEmpty (Header blk)
   -- ^ The headers we want to apply
-  , leiosDB :: !(ReaderWithCallTrace m)
+  , leiosDB :: !(LeiosDbReader m)
   -- ^ Leios demo DB connection: 'applyBlock' calls 'resolveLeiosBlock'
   -- with this connection before each ledger application, so that
   -- Dijkstra blocks carrying a 'Maybe LeiosCert' can have the EB
@@ -444,7 +444,7 @@ switch ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   (forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
@@ -519,7 +519,7 @@ applyBlockToForker ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   BlockApplicationMode ->
   ComputeLedgerEvents ->
@@ -549,7 +549,7 @@ applyBlock ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -697,7 +697,7 @@ applyThenPush ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -720,7 +720,7 @@ applyThenPushMany ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
@@ -795,7 +795,7 @@ class ResolveLeiosBlock blk where
   -- closure tx still needs full validation.
   resolveLeiosClosure ::
     Monad m =>
-    ReaderWithCallTrace m ->
+    LeiosDbReader m ->
     CallCtx m ->
     EbHash ->
     m (Either LeiosClosureError [(TxHash, GenTx blk)])
@@ -937,7 +937,7 @@ resolveLeiosBlock ::
   forall blk m.
   Monad m =>
   ResolveLeiosBlock blk =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   ChainDepState (BlockProtocol blk) ->
   blk ->
@@ -969,7 +969,7 @@ resolveAndApplyLeiosClosure ::
   , ResolveLeiosBlock blk
   , HasLedgerTables (LedgerState blk)
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   LedgerCfg (LedgerState blk) ->
   -- | The EB to resolve

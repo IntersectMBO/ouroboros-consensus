@@ -28,7 +28,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb.WithCallTrace (HandleWithCallTrace, handleOpenReader, readerClose)
+import LeiosDemoDb.WithCallTrace (LeiosDbHandle, closeReader, openReader)
 import LeiosDemoTypes (HasLeiosVoting)
 import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
@@ -115,7 +115,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix = do
                 ds
             )
       , initReapplyBlock = \cctx cfg blk (chlog, bstore) -> do
-          !chlog' <- bracket (handleOpenReader ldbLeiosDb cctx) (\r -> readerClose r cctx) $ \reader ->
+          !chlog' <- bracket (openReader ldbLeiosDb cctx) (\r -> closeReader r cctx) $ \reader ->
             reapplyThenPushLeios reader cctx cfg blk (readKeySets bstore) chlog
           -- It's OK to flush without a lock here, since the `LedgerDB` has not
           -- finished initializing, only this thread has access to the backing
@@ -294,12 +294,12 @@ implValidate ::
   SuccessForkerAction m l ->
   m (ValidateResult l blk)
 implValidate h ldbEnv cctx tr cache rollbacks hdrs onSuccess =
-  -- Open a connection scoped to this call: the 'ReaderWithCallTrace'
+  -- Open a connection scoped to this call: the 'LeiosDbReader'
   -- must be owned by the thread calling 'validate', which for
   -- 'validateFork' is the ChainSel/block-adder thread. Storing a
   -- shared connection in 'ldbEnv' was crashing SQLite when a
   -- non-owner thread invoked this path.
-  bracket (handleOpenReader (ldbLeiosDb ldbEnv) cctx) (\r -> readerClose r cctx) $ \reader ->
+  bracket (openReader (ldbLeiosDb ldbEnv) cctx) (\r -> closeReader r cctx) $ \reader ->
     validate cctx (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
       ValidateArgs
         (ldbResolveBlock ldbEnv)
@@ -478,7 +478,7 @@ implIntReapplyThenPush ::
 implIntReapplyThenPush env cctx blk = do
   chlog <- readTVarIO $ ldbChangelog env
   chlog' <-
-    bracket (handleOpenReader (ldbLeiosDb env) cctx) (\r -> readerClose r cctx) $ \reader ->
+    bracket (openReader (ldbLeiosDb env) cctx) (\r -> closeReader r cctx) $ \reader ->
       reapplyThenPushLeios reader cctx (ldbCfg env) blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
@@ -584,9 +584,9 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLeiosDb :: !(HandleWithCallTrace m)
-  -- ^ 'HandleWithCallTrace', not a live connection: every consumer opens its
-  -- own per-thread 'ReaderWithCallTrace' at use time (a
+  , ldbLeiosDb :: !(LeiosDbHandle m)
+  -- ^ 'LeiosDbHandle', not a live connection: every consumer opens its
+  -- own per-thread 'LeiosDbReader' at use time (a
   -- 'direct-sqlite' handle is single-thread).
   }
   deriving Generic

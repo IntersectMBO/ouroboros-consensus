@@ -28,7 +28,7 @@ import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import LeiosDemoDb (allocateHandle)
 import qualified LeiosDemoDb
-import LeiosDemoDb.WithCallTrace (handleOpenReader, readerClose, withCallTraceHandle)
+import LeiosDemoDb.WithCallTrace (closeReader, openReader, withCallTraceHandle)
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoTypes as Leios
 import LeiosUtils.CallTrace (rootCallCtx)
@@ -141,7 +141,7 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
         cctx <- rootCallCtx "LeiosFetchServer"
         let leiosDbHandle = withCallTraceHandle nullTracer leiosDb
         (_, reader) <-
-          allocate registry (\_ -> handleOpenReader leiosDbHandle cctx) (\r -> readerClose r cctx)
+          allocate registry (\_ -> openReader leiosDbHandle cctx) (\r -> closeReader r cctx)
         LeiosLogic.MkSomeLeiosFetchContext
           <$> LeiosLogic.newLeiosFetchContext reader
   ImmutableDB.withDB

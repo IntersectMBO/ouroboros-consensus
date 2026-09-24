@@ -52,7 +52,7 @@ import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
 import qualified LeiosDemoDb as LeiosDb
-import LeiosDemoDb.WithCallTrace (WriterWithCallTrace, withCallTraceHandle, withWriter)
+import LeiosDemoDb.WithCallTrace (LeiosDbWriter, withCallTraceHandle, withWriter)
 import LeiosDemoLogic
   ( LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
@@ -425,7 +425,7 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
 applyCmd ::
   forall s.
   CallCtx (IOSim s) ->
-  WriterWithCallTrace (IOSim s) ->
+  LeiosDbWriter (IOSim s) ->
   LeiosTxCache (IOSim s) () () Leios.SerializedEbBody ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
   LeiosPeerVars (IOSim s) ->

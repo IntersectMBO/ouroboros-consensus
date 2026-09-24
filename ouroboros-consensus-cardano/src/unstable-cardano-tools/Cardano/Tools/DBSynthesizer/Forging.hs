@@ -29,8 +29,8 @@ import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb (awaitAll)
 import LeiosDemoDb.WithCallTrace
-  ( ReaderWithCallTrace
-  , WriterWithCallTrace (writeEbBody, writeEbPoint, writeTxs)
+  ( LeiosDbReader
+  , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
   )
 import LeiosDemoTypes
   ( ForgedLeiosEb (..)
@@ -157,8 +157,8 @@ runForge ::
   -- | The BLS key that this forger votes with, if it has one.
   Maybe LeiosSigningKey ->
   GenTxs blk ->
-  ReaderWithCallTrace IO ->
-  WriterWithCallTrace IO ->
+  LeiosDbReader IO ->
+  LeiosDbWriter IO ->
   Tracer IO TraceLeiosKernel ->
   IO ForgeResult
 runForge cctx epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDbReader leiosDbWriter leiosTracer = do

@@ -26,7 +26,7 @@ import qualified Codec.CBOR.Write as CBOR.Write
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
+import LeiosDemoDb.WithCallTrace (LeiosDbReader)
 import LeiosDemoTypes (LeiosPoint (..))
 import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
@@ -120,7 +120,7 @@ chainSyncBlocksServer ::
   Tracer m (TraceChainSyncServerEvent blk) ->
   ChainDB m blk ->
   CodecConfig blk ->
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
   ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
 chainSyncBlocksServer cctx tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ do

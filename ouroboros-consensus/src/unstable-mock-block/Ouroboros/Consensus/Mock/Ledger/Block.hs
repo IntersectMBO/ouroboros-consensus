@@ -90,7 +90,7 @@ import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace (..))
+import LeiosDemoDb.WithCallTrace (LeiosDbReader (..))
 import LeiosDemoTypes (LeiosClosureError (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))

@@ -25,7 +25,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import qualified Data.Measure
 import Data.Proxy
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace (..))
+import LeiosDemoDb.WithCallTrace (LeiosDbReader (..))
 import LeiosDemoTypes
   ( LeiosCert
   , TraceLeiosKernel (..)
@@ -95,7 +95,7 @@ forge ::
   Mempool m blk ->
   LeiosVoteState m ->
   BlockForging m blk ->
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   -- | Invoked with the header and closure of each EB we forge, to ingest it
   -- through the same handlers an upstream peer's messages (see
   -- 'Leios.onForgedLeiosEb').
@@ -304,7 +304,7 @@ decideLeiosCertify ::
   , HasAnnTip blk
   ) =>
   CallCtx m ->
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
   -- | The era's ledger config, which is where the certification gap comes from.
@@ -691,7 +691,7 @@ traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
 partitionMempool ::
   forall m blk.
   (IOLike m, RunNode blk) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
   -- | Same call-tracing machinery as 'forge's own @ctrace@: traces onto the

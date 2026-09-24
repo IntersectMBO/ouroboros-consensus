@@ -75,7 +75,7 @@ import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoDb (newLeiosDBInMemoryWith)
 import LeiosDemoDb.WithCallTrace
-  ( ReaderWithCallTrace
+  ( LeiosDbReader
   , withCallTraceHandle
   , withReader
   )
@@ -959,7 +959,7 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
 foldWithResolution ::
   Monad m =>
   CallCtx m ->
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   LedgerCfg (ExtLedgerState (CardanoBlock StandardCrypto)) ->
   [CardanoBlock StandardCrypto] ->
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->

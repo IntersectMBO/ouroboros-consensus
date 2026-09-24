@@ -24,8 +24,8 @@ import LeiosDemoDb
   , newLeiosDBInMemory
   )
 import LeiosDemoDb.WithCallTrace
-  ( ReaderWithCallTrace
-  , WriterWithCallTrace (..)
+  ( LeiosDbReader
+  , LeiosDbWriter (..)
   , withCallTraceHandle
   , withReader
   , withWriter
@@ -191,7 +191,7 @@ runValidateTwice acquired txs = withHarness acquired txs $ \cctx h -> do
   pure (first', tagged, second')
 
 data Harness = Harness
-  { hReader :: ReaderWithCallTrace IO
+  { hReader :: LeiosDbReader IO
   , hCache :: LeiosTxCache IO () () SerializedEbBody
   , hPoint :: LeiosPoint
   }

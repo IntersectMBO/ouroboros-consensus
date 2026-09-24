@@ -81,8 +81,8 @@ import LeiosDemoDb
   , LeiosEbNotification (..)
   )
 import LeiosDemoDb.WithCallTrace
-  ( ReaderWithCallTrace
-  , WriterWithCallTrace
+  ( LeiosDbReader
+  , LeiosDbWriter
   , withCallTraceHandle
   , withReader
   , withWriter
@@ -349,7 +349,7 @@ data Handlers m addr blk = Handlers
         )
   , hLeiosFetchClient ::
       CallCtx m ->
-      WriterWithCallTrace m ->
+      LeiosDbWriter m ->
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
@@ -357,7 +357,7 @@ data Handlers m addr blk = Handlers
       LeiosFetchClientPeerPipelined LeiosPoint LeiosEb LeiosTx m ()
   , hLeiosFetchServer ::
       CallCtx m ->
-      ReaderWithCallTrace m ->
+      LeiosDbReader m ->
       NodeToNodeVersion ->
       ConnectionId addr ->
       LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()

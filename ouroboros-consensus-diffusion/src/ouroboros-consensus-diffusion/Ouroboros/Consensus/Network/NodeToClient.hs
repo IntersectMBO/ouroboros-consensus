@@ -62,7 +62,7 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Typeable
 import Data.Void (Void)
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace, withCallTraceHandle, withReader)
+import LeiosDemoDb.WithCallTrace (LeiosDbReader, withCallTraceHandle, withReader)
 import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
@@ -119,7 +119,7 @@ import Ouroboros.Network.Protocol.LocalTxSubmission.Type
 data Handlers m peer blk = Handlers
   { hChainSyncServer ::
       CallCtx m ->
-      ReaderWithCallTrace m ->
+      LeiosDbReader m ->
       ChainDB.Follower m blk (ChainDB.WithPoint blk (Header blk, Serialised blk)) ->
       ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
   , hTxSubmissionServer ::

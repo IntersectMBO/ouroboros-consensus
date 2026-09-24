@@ -62,7 +62,7 @@ import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
+import LeiosDemoDb.WithCallTrace (LeiosDbReader)
 import LeiosDemoTypes
   ( BytesSize
   , HasLeiosVoting (..)
@@ -170,7 +170,7 @@ data AnalysisEnv m blk startFrom = AnalysisEnv
   , registry :: ResourceRegistry IO
   , limit :: Limit
   , tracer :: Tracer m (TraceEvent blk)
-  , leiosDbReader :: ReaderWithCallTrace IO
+  , leiosDbReader :: LeiosDbReader IO
   -- ^ Connection to the node's LeiosDb. For pre-Leios chains this is
   -- a connection to the empty in-memory stub and is never consulted.
   }

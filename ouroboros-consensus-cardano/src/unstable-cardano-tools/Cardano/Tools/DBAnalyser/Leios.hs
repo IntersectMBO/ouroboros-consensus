@@ -35,7 +35,7 @@ module Cardano.Tools.DBAnalyser.Leios
 
 import Cardano.Tools.DBAnalyser.Types (LedgerApplicationMode (..))
 import Control.Monad (when)
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace (..))
+import LeiosDemoDb.WithCallTrace (LeiosDbReader (..))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -166,7 +166,7 @@ certifiedEbHash prevAnnouncement blk =
 certifiedEbTxSizes ::
   ResolveLeiosBlock blk =>
   CallCtx IO ->
-  ReaderWithCallTrace IO ->
+  LeiosDbReader IO ->
   -- | The EB that the previous block announced
   Maybe (LeiosPoint, BytesSize) ->
   blk ->
@@ -196,7 +196,7 @@ certifiedEbTxSizes cctx reader prevAnnouncement blk =
 blockWithCertifiedEbTxs ::
   ResolveLeiosBlock blk =>
   CallCtx IO ->
-  ReaderWithCallTrace IO ->
+  LeiosDbReader IO ->
   -- | The EB that the previous block announced
   Maybe (LeiosPoint, BytesSize) ->
   blk ->
@@ -214,7 +214,7 @@ blockWithCertifiedEbTxs cctx reader prevAnnouncement blk =
 readEbClosure ::
   ResolveLeiosBlock blk =>
   CallCtx IO ->
-  ReaderWithCallTrace IO ->
+  LeiosDbReader IO ->
   EbHash ->
   IO ([LedgerSupportsMempool.GenTx blk], BytesSize)
 readEbClosure cctx reader ebHash = do
@@ -313,7 +313,7 @@ applyBlockAtTip ::
   , HasLeiosVoting blk
   ) =>
   CallCtx IO ->
-  ReaderWithCallTrace IO ->
+  LeiosDbReader IO ->
   LedgerApplicationMode ->
   TopLevelConfig blk ->
   LedgerDB.LedgerDB' IO blk ->
@@ -336,7 +336,7 @@ applyBlockToTipForker ::
   , HasLeiosVoting blk
   ) =>
   CallCtx IO ->
-  ReaderWithCallTrace IO ->
+  LeiosDbReader IO ->
   LedgerApplicationMode ->
   TopLevelConfig blk ->
   LedgerDB.Forker' IO blk ->

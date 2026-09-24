@@ -35,12 +35,12 @@ import Data.Proxy (Proxy (..))
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
 import LeiosDemoDb
-  ( LeiosDbHandle
-  , LeiosEbNotification (..)
+  ( LeiosEbNotification (..)
   )
+import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoDb.WithCallTrace
-  ( HandleWithCallTrace (..)
-  , ReaderWithCallTrace
+  ( LeiosDbHandle (..)
+  , LeiosDbReader
   , withCallTraceHandle
   , withReader
   )
@@ -266,7 +266,7 @@ runLeiosVoting ::
   LedgerConfig blk ->
   ChainDB m blk ->
   SystemTime m ->
-  LeiosDbHandle m ->
+  LeiosDb.LeiosDbHandle m ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosVoteState m ->
   [LeiosSigningKey] ->
@@ -282,7 +282,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
       -- A 'LeiosDbReader' is not thread-safe, so this thread owns one for its
       -- lifetime, the way each forge-credentials thread does.
       let leiosDbHandle = withCallTraceHandle (TraceLeiosDb >$< tracer) leiosDB
-      withReader leiosDbHandle cctx $ \reader -> do
+      withReader leiosDbHandle cctx $ \leiosReader -> do
         chan <- subscribeEbNotifications leiosDbHandle cctx
         -- One message per transaction, even the ones we do not act on. Looping
         -- here instead would be a read that only sticks if the transaction
@@ -301,7 +301,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
             >>= \case
               Left mPoint -> mapM_ scheduleVoteTime mPoint
               Right (point, deadline) ->
-                goVote cctx reader sks point deadline >>= \case
+                goVote cctx leiosReader point deadline >>= \case
                   Left reason -> traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason}
                   Right () -> pure ()
  where
@@ -320,15 +320,13 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
   -- an EB we would not vote for is never validated.
   goVote ::
     CallCtx m ->
-    ReaderWithCallTrace m ->
-    -- \| Our voting keys, to find our committee seats and sign votes.
-    [LeiosSigningKey] ->
+    LeiosDbReader m ->
     -- \| The leios point of the EB to vote on.
     LeiosPoint ->
     -- \| The moment after which a vote is too late.
     RelativeTime ->
     m (Either LeiosNotVotedReason ())
-  goVote cctx reader sks point deadline = do
+  goVote cctx reader point deadline = do
     -- Before opening a forker, let alone validating: the window may already
     -- have shut before this timer was ever armed.
     expired <- (> deadline) <$> systemTimeCurrent systemTime
@@ -456,7 +454,7 @@ validateEbClosure ::
   ) =>
   LedgerConfig blk ->
   CallCtx m ->
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   LeiosTxCache m () () SerializedEbBody ->
   -- | Read the ledger tables the closure's txs need, as
   -- 'resolveAndApplyLeiosClosure' does on the apply path.

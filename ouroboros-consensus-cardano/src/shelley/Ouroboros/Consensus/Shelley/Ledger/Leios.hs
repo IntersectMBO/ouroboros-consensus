@@ -40,7 +40,7 @@ import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as Text
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace (..))
+import LeiosDemoDb.WithCallTrace (LeiosDbReader (..))
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( EbAnnouncement (..)

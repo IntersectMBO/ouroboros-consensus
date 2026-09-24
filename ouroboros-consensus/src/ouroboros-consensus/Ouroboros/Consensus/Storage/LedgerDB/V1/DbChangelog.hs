@@ -197,7 +197,7 @@ import Data.SOP (K, unK)
 import Data.SOP.Functors
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
+import LeiosDemoDb.WithCallTrace (LeiosDbReader)
 import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -387,7 +387,7 @@ reapplyThenPushLeios ::
   , ResolveLeiosBlock blk
   , l ~ ExtLedgerState blk
   ) =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   CallCtx m ->
   LedgerDbCfg l ->
   blk ->

@@ -25,7 +25,7 @@ import Control.Tracer
 import Data.Kind
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb.WithCallTrace (HandleWithCallTrace)
+import LeiosDemoDb.WithCallTrace (LeiosDbHandle)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
@@ -64,9 +64,9 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   -- ^ If provided, the ledgerdb will start using said snapshot and fallback
   -- to genesis. It will ignore any other existing snapshots. Useful for
   -- db-analyser.
-  , lgrLeiosDb :: HKD f (HandleWithCallTrace m)
+  , lgrLeiosDb :: HKD f (LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
-  -- its own per-thread 'ReaderWithCallTrace' from this handle.
+  -- its own per-thread 'LeiosDbReader' from this handle.
   }
 
 -- | Default arguments

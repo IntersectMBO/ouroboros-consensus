@@ -50,7 +50,7 @@ import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb (Promise (..))
-import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace (..), WriterWithCallTrace (..))
+import LeiosDemoDb.WithCallTrace (LeiosDbReader (..), LeiosDbWriter (..))
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -214,7 +214,7 @@ data SomeLeiosFetchContext m
   = MkSomeLeiosFetchContext !(LeiosFetchContext m)
 
 data LeiosFetchContext m = MkLeiosFetchContext
-  { leiosDbReader :: !(ReaderWithCallTrace m)
+  { leiosDbReader :: !(LeiosDbReader m)
   , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
   , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
   }
@@ -227,7 +227,7 @@ data LeiosFetchContext m = MkLeiosFetchContext
 -- 'close' pair for the lifetime of that instance (see 'withReader').
 newLeiosFetchContext ::
   PrimMonad m =>
-  ReaderWithCallTrace m ->
+  LeiosDbReader m ->
   m (LeiosFetchContext m)
 newLeiosFetchContext leiosDbReader = do
   leiosEbBuffer <- MV.new maxTxsPerEb
@@ -688,7 +688,7 @@ nextLeiosFetchClientCommand ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   CallCtx m ->
-  WriterWithCallTrace m ->
+  LeiosDbWriter m ->
   -- | For reporting each arriving EB's age (see 'processLeiosBlock').
   SystemTime m ->
   -- | Pull EB-body misses out of the local mempool; see 'processLeiosBlock'.
@@ -819,7 +819,7 @@ processLeiosBlock ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   CallCtx m ->
-  WriterWithCallTrace m ->
+  LeiosDbWriter m ->
   -- | For reporting the EB's age on arrival (now minus its recorded onset).
   SystemTime m ->
   -- | Pull the txs we already hold in our local mempool out of the given misses
@@ -1265,7 +1265,7 @@ processLeiosBlockTxs ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   CallCtx m ->
-  WriterWithCallTrace m ->
+  LeiosDbWriter m ->
   -- | For reporting each completed closure's age on arrival.
   SystemTime m ->
   LeiosBlockTxsSource pid ->
@@ -1852,7 +1852,7 @@ onForgedLeiosEb ::
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
   CallCtx m ->
-  WriterWithCallTrace m ->
+  LeiosDbWriter m ->
   -- | Threaded through to the body/closure handlers for age reporting
   SystemTime m ->
   -- | Built by the caller (see 'mkForgedAnnouncingHeader'), at the call site
