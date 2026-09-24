@@ -35,7 +35,7 @@ module Cardano.Tools.DBAnalyser.Leios
 
 import Cardano.Tools.DBAnalyser.Types (LedgerApplicationMode (..))
 import Control.Monad (when)
-import LeiosDemoDb (LeiosDbReader, lookupEbBody)
+import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace (..))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -45,6 +45,7 @@ import LeiosDemoTypes
   , pointEbHash
   , verifyLeiosCert
   )
+import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation (HeaderState (..))
@@ -164,16 +165,17 @@ certifiedEbHash prevAnnouncement blk =
 -- and no tx is deserialised.
 certifiedEbTxSizes ::
   ResolveLeiosBlock blk =>
-  LeiosDbReader IO ->
+  CallCtx IO ->
+  ReaderWithCallTrace IO ->
   -- | The EB that the previous block announced
   Maybe (LeiosPoint, BytesSize) ->
   blk ->
   IO [SizeInBytes]
-certifiedEbTxSizes reader prevAnnouncement blk =
+certifiedEbTxSizes cctx reader prevAnnouncement blk =
   case certifiedEbHash prevAnnouncement blk of
     Nothing -> pure []
     Just ebHash ->
-      lookupEbBody reader ebHash >>= \case
+      lookupEbBody reader cctx ebHash >>= \case
         -- 'lookupEbBody' returns a bare list, so an absent EB and an EB
         -- with no txs both give []. Here the EB is a certified one, and a
         -- certified EB holds at least one tx: a committee member votes for an
@@ -193,15 +195,16 @@ certifiedEbTxSizes reader prevAnnouncement blk =
 -- False.
 blockWithCertifiedEbTxs ::
   ResolveLeiosBlock blk =>
-  LeiosDbReader IO ->
+  CallCtx IO ->
+  ReaderWithCallTrace IO ->
   -- | The EB that the previous block announced
   Maybe (LeiosPoint, BytesSize) ->
   blk ->
   IO (Maybe blk)
-blockWithCertifiedEbTxs reader prevAnnouncement blk =
+blockWithCertifiedEbTxs cctx reader prevAnnouncement blk =
   case certifiedEbHash prevAnnouncement blk of
     Nothing -> pure Nothing
-    Just ebHash -> Just . inlineLeiosClosure blk . fst <$> readEbClosure reader ebHash
+    Just ebHash -> Just . inlineLeiosClosure blk . fst <$> readEbClosure cctx reader ebHash
 
 -- | The txs of the EB with the given hash, in the order they appear in the EB,
 -- and their total size in bytes.
@@ -210,16 +213,17 @@ blockWithCertifiedEbTxs reader prevAnnouncement blk =
 -- anyway, so the total size costs no further read of the LeiosDb.
 readEbClosure ::
   ResolveLeiosBlock blk =>
-  LeiosDbReader IO ->
+  CallCtx IO ->
+  ReaderWithCallTrace IO ->
   EbHash ->
   IO ([LedgerSupportsMempool.GenTx blk], BytesSize)
-readEbClosure reader ebHash = do
+readEbClosure cctx reader ebHash = do
   -- Check that the EB is here before resolving it. On an absent EB
   -- 'resolveLeiosClosure' errors with "chain-sel selected a cert-RB without its
   -- EB closure". Report the absence here.
-  ebBody <- lookupEbBody reader ebHash
+  ebBody <- lookupEbBody reader cctx ebHash
   when (null ebBody) $ error (missingEbBodyError ebHash)
-  txs <- either (error . show) (map snd) <$> resolveLeiosClosure reader ebHash
+  txs <- either (error . show) (map snd) <$> resolveLeiosClosure reader cctx ebHash
   pure (txs, sum (snd <$> ebBody))
 
 missingEbBodyError :: EbHash -> String
@@ -308,20 +312,21 @@ applyBlockAtTip ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
-  LeiosDbReader IO ->
+  CallCtx IO ->
+  ReaderWithCallTrace IO ->
   LedgerApplicationMode ->
   TopLevelConfig blk ->
   LedgerDB.LedgerDB' IO blk ->
   blk ->
   IO (ExtLedgerState blk ValuesMK, ExtLedgerState blk DiffMK)
-applyBlockAtTip reader mode cfg ldb blk =
+applyBlockAtTip cctx reader mode cfg ldb blk =
   LedgerDB.withTipForker ldb $ \frk -> do
     oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
     oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
     let preState = oldLedgerSt `withLedgerTables` oldLedgerTbs
     applied <-
       either (error . show . LedgerDB.annLedgerErr) id
-        <$> applyBlockToTipForker reader mode cfg frk blk
+        <$> applyBlockToTipForker cctx reader mode cfg frk blk
     pure (preState, applied)
 
 -- | Apply the block to the given forker, in the given mode.
@@ -330,7 +335,8 @@ applyBlockToTipForker ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
-  LeiosDbReader IO ->
+  CallCtx IO ->
+  ReaderWithCallTrace IO ->
   LedgerApplicationMode ->
   TopLevelConfig blk ->
   LedgerDB.Forker' IO blk ->
@@ -340,9 +346,10 @@ applyBlockToTipForker ::
         (LedgerDB.AnnLedgerError (ExtLedgerState blk) blk)
         (ExtLedgerState blk DiffMK)
     )
-applyBlockToTipForker reader mode cfg frk blk =
+applyBlockToTipForker cctx reader mode cfg frk blk =
   LedgerDB.applyBlockToForker
     reader
+    cctx
     (blockApplicationMode mode)
     OmitLedgerEvents
     (ExtLedgerCfg cfg)

@@ -41,6 +41,7 @@ import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
 import LeiosDemoDb (newLeiosDBInMemory)
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
@@ -94,6 +95,7 @@ prop_test =
 
 run :: forall m. (IOLike m, SI.MonadTimer m) => m Property
 run = withRegistry \registry -> do
+  cctx <- rootCallCtx "CaughtUpTest"
   -- Setup
   varGsmState <- newTVarIO PreSyncing
   varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
@@ -107,7 +109,7 @@ run = withRegistry \registry -> do
     (readTVar varLoEFragment)
     varGetLoEFragment
 
-  chainDB <- openChainDB registry (join $ readTVarIO varGetLoEFragment)
+  chainDB <- openChainDB cctx registry (join $ readTVarIO varGetLoEFragment)
   let addBlk = ChainDB.addBlock_ chainDB Punishment.noPunishment
 
   chainSyncHandles <- atomically newChainSyncClientHandleCollection
@@ -242,10 +244,11 @@ mkTestChainSyncClientHandle frag = do
 openChainDB ::
   forall m.
   IOLike m =>
+  CallCtx m ->
   ResourceRegistry m ->
   ChainDB.GetLoEFragment m TestBlock ->
   m (ChainDB m TestBlock)
-openChainDB registry getLoEFragment = do
+openChainDB cctx registry getLoEFragment = do
   chainDbArgs <- do
     mcdbNodeDBs <- emptyNodeDBs
     let mcdbTopLevelConfig = cfg
@@ -269,7 +272,7 @@ openChainDB registry getLoEFragment = do
   (_, (chainDB, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
     allocate
       registry
-      (\_ -> ChainDB.Impl.openDBInternal chainDbArgs False)
+      (\_ -> ChainDB.Impl.openDBInternal cctx chainDbArgs False)
       (ChainDB.closeDB . fst)
   _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
   pure chainDB

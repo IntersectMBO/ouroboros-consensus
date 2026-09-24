@@ -32,9 +32,9 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (withReader)
-import LeiosDemoDb.Common (LeiosDbHandle (..), LeiosDbReader (..))
+import LeiosDemoDb.WithCallTrace (HandleWithCallTrace, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
+import LeiosUtils.CallTrace (CallCtx)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -103,16 +103,15 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                   res
                   ds
             )
-      , initReapplyBlock = \cfg ap db ->
-          withReader ldbLeiosDb $ \reader ->
-            reapplyThenPush reader cfg ap db
+      , initReapplyBlock = \cctx cfg ap db ->
+          withReader ldbLeiosDb cctx $ \reader ->
+            reapplyThenPush reader cctx cfg ap db
       , currentTip = ledgerState . current
       , mkLedgerDb = \lseq -> do
           varDB <- newTVarIO lseq
           prevApplied <- newTVarIO Set.empty
           lock <- RAWLock.new ()
           nextForkerKey <- newTVarIO (ForkerKey 0)
-          ldbLeiosDbReader <- openReader lgrLeiosDb
           let env =
                 LedgerDBEnv
                   { ldbSeq = varDB
@@ -127,7 +126,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                   , ldbOpenHandlesLock = lock
                   , ldbGetVolatileSuffix = getVolatileSuffix
                   , ldbBackendResources = SomeResources res
-                  , ldbLeiosDbReader
+                  , ldbLeiosDb = ldbLeiosDb
                   }
           h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
           pure $ implMkLedgerDb h snapManager
@@ -170,7 +169,7 @@ implMkLedgerDb h snapManager =
           , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
           , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
           , openForkerAtTarget = openNewForkerAtTarget h
-          , validateFork = getEnv5 h (implValidate h)
+          , validateFork = getEnv6 h (implValidate h)
           , getPrevApplied = getEnvSTM h implGetPrevApplied
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
           , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
@@ -211,13 +210,14 @@ mkInternals ldb h snapManager =
               forkerPush frk st >> Monad.join (atomically (forkerCommit frk))
               getEnv h pruneLedgerSeq
           )
-    , reapplyThenPushNOW = \blk -> getEnv h $ \env -> do
+    , reapplyThenPushNOW = \cctx blk -> getEnv h $ \env -> do
         withTipForker
           ldb
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
               let cds = headerStateChainDep (headerState st)
-              blk' <- resolveLeiosBlock (ldbLeiosDbReader env) cds blk -- TODO resolveLeiosBlock is the wrong function to call here
+              blk' <- withReader (ldbLeiosDb env) cctx $ \reader ->
+                resolveLeiosBlock reader cctx cds blk -- TODO resolveLeiosBlock is the wrong function to call here
               tables <- forkerReadTables frk (getBlockKeySets blk')
               let st' =
                     tickThenReapply
@@ -309,29 +309,32 @@ implValidate ::
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
+  CallCtx m ->
   (TraceValidateEvent blk -> m ()) ->
   BlockCache blk ->
   Word64 ->
   NonEmpty (Header blk) ->
   SuccessForkerAction m l ->
   m (ValidateResult l blk)
-implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
-  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
-    ValidateArgs
-      (ldbResolveBlock ldbEnv)
-      (ledgerDbCfg $ ldbCfg ldbEnv)
-      ( \l -> do
-          prev <- readTVar (ldbPrevApplied ldbEnv)
-          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
-      )
-      (readTVar (ldbPrevApplied ldbEnv))
-      (withForkerByRollback h)
-      onSuccess
-      tr
-      cache
-      rollbacks
-      hdrs
-      (ldbLeiosDbReader ldbEnv)
+implValidate h ldbEnv cctx tr cache rollbacks hdrs onSuccess =
+  -- See V1.implValidate for the rationale on opening per-call.
+  withReader (ldbLeiosDb ldbEnv) cctx $ \reader ->
+    validate cctx (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+      ValidateArgs
+        (ldbResolveBlock ldbEnv)
+        (ledgerDbCfg $ ldbCfg ldbEnv)
+        ( \l -> do
+            prev <- readTVar (ldbPrevApplied ldbEnv)
+            writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
+        )
+        (readTVar (ldbPrevApplied ldbEnv))
+        (withForkerByRollback h)
+        onSuccess
+        tr
+        cache
+        rollbacks
+        hdrs
+        reader
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -392,14 +395,13 @@ implCloseDB (LDBHandle varState) = do
         LedgerDBClosed -> pure Nothing
         LedgerDBOpen env -> do
           writeTVar varState LedgerDBClosed
-          pure (Just $ (ldbSeq env, ldbBackendResources env, ldbLeiosDbReader env))
+          pure (Just $ (ldbSeq env, ldbBackendResources env))
   whenJust
     res
-    ( \(s, SomeResources res', leiosDbReader) -> do
+    ( \(s, SomeResources res') -> do
         s' <- readTVarIO s
         closeLedgerSeq s'
         releaseResources (Proxy @blk) res'
-        leiosDbReader.close
     )
 
 {-------------------------------------------------------------------------------
@@ -446,7 +448,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLeiosDbReader :: !(LeiosDbReader m)
+  , ldbLeiosDb :: !(HandleWithCallTrace m)
+  -- ^ 'HandleWithCallTrace', not a live connection: every consumer opens
+  -- its own per-call 'ReaderWithCallTrace' at use time (a
+  -- 'direct-sqlite' connection is single-thread).
   }
   deriving Generic
 
@@ -510,18 +515,18 @@ getEnv3 ::
   m r
 getEnv3 h f a b c = getEnv h (\env -> f env a b c)
 
--- | Variant 'of 'getEnv' for functions taking five arguments.
-getEnv5 ::
+getEnv6 ::
   (IOLike m, HasCallStack) =>
   LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> m r) ->
+  (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> f -> m r) ->
   a ->
   b ->
   c ->
   d ->
   e ->
+  f ->
   m r
-getEnv5 h f a b c d e = getEnv h (\env -> f env a b c d e)
+getEnv6 h fn a b c d e f = getEnv h (\env -> fn env a b c d e f)
 
 -- | Variant of 'getEnv' that works in 'STM'.
 getEnvSTM ::

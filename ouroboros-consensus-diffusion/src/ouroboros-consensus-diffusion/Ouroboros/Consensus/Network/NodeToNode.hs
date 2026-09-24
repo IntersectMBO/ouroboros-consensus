@@ -78,9 +78,12 @@ import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
   ( LeiosDbHandle (subscribeEbNotifications)
-  , LeiosDbReader
-  , LeiosDbWriter
   , LeiosEbNotification (..)
+  )
+import LeiosDemoDb.WithCallTrace
+  ( ReaderWithCallTrace
+  , WriterWithCallTrace
+  , withCallTraceHandle
   , withReader
   , withWriter
   )
@@ -129,6 +132,7 @@ import LeiosDemoTypes
   , TraceLeiosPeer (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import LeiosVoteState
   ( AddVoteResult (..)
   , LeiosVoteState (..)
@@ -344,14 +348,16 @@ data Handlers m addr blk = Handlers
         , m Void
         )
   , hLeiosFetchClient ::
-      LeiosDbWriter m ->
+      CallCtx m ->
+      WriterWithCallTrace m ->
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
       Leios.LeiosPeerVars m ->
       LeiosFetchClientPeerPipelined LeiosPoint LeiosEb LeiosTx m ()
   , hLeiosFetchServer ::
-      LeiosDbReader m ->
+      CallCtx m ->
+      ReaderWithCallTrace m ->
       NodeToNodeVersion ->
       ConnectionId addr ->
       LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
@@ -683,7 +689,7 @@ mkHandlers
                           )
 
           pure (leiosNotifyServerPeerLookahead incr next, pump)
-      , hLeiosFetchClient = \writer _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
+      , hLeiosFetchClient = \cctx writer _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           pure $
             ( leiosFetchClientPeerPipelined $
@@ -693,6 +699,7 @@ mkHandlers
                   ((== Terminate) <$> controlMessageSTM)
                   (getLeiosOutstanding, getLeiosReady)
                   getLeiosTxCache
+                  cctx
                   writer
                   systemTime
                   ( Leios.mkMempoolPull
@@ -702,11 +709,11 @@ mkHandlers
                   (Leios.MkPeerId peer)
                   reqVar
             )
-      , hLeiosFetchServer = \reader _version peer -> Effect $ do
+      , hLeiosFetchServer = \cctx reader _version peer -> Effect $ do
           leiosFetchContext <- Leios.newLeiosFetchContext reader
           pure $
             leiosFetchServerPeer
-              (pure $ Leios.leiosFetchHandler (leiosPeerTracer peer) leiosFetchContext)
+              (pure $ Leios.leiosFetchHandler (leiosPeerTracer peer) cctx leiosFetchContext)
       }
    where
     NodeKernel
@@ -1493,8 +1500,10 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
       }
     channel = do
       labelThisThread "LeiosFetchClient"
+      cctx <- rootCallCtx "LeiosFetchClient"
+      let leiosDbHandle = withCallTraceHandle nullTracer leiosDB
       bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
-        withWriter leiosDB $ \writer -> do
+        withWriter leiosDbHandle cctx $ \writer -> do
           ((), trailing) <-
             runPipelinedPeerWithLimits
               (TraceLabelPeer them `contramap` tLeiosFetchTracer)
@@ -1502,7 +1511,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
               blLeiosFetch
               timeLimitsLeiosFetch
               channel
-              $ hLeiosFetchClient writer version controlMessageSTM them peerVars
+              $ hLeiosFetchClient cctx writer version controlMessageSTM them peerVars
           pure (NoInitiatorResult, trailing)
 
   aLeiosFetchServer ::
@@ -1512,14 +1521,16 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     m ((), Maybe bLF)
   aLeiosFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosFetchServer"
-    withReader leiosDB $ \reader ->
+    cctx <- rootCallCtx "LeiosFetchServer"
+    let leiosDbHandle = withCallTraceHandle nullTracer leiosDB
+    withReader leiosDbHandle cctx $ \reader ->
       runPeerWithLimits
         (TraceLabelPeer them `contramap` tLeiosFetchTracer)
         (cLeiosFetchCodec (mkCodecs version))
         blLeiosFetch
         timeLimitsLeiosFetch
         channel
-        $ hLeiosFetchServer reader version them
+        $ hLeiosFetchServer cctx reader version them
 
 {-------------------------------------------------------------------------------
   Projections from 'Apps'

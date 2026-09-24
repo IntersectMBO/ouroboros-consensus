@@ -57,6 +57,7 @@ import LeiosDemoTypes
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsFromList
   )
+import LeiosUtils.CallTrace (CallCtx)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -119,10 +120,11 @@ withDB ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
+  CallCtx m ->
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
   m a
-withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
+withDB cctx args = bracket (fst <$> openDBInternal cctx args True) API.closeDB
 
 openDB ::
   forall m blk.
@@ -138,9 +140,10 @@ openDB ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
+  CallCtx m ->
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
-openDB args = fst <$> openDBInternal args True
+openDB cctx args = fst <$> openDBInternal cctx args True
 
 openDBInternal ::
   forall m blk.
@@ -157,11 +160,12 @@ openDBInternal ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
+  CallCtx m ->
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks
   Bool ->
   m (ChainDB m blk, Internal m blk)
-openDBInternal args launchBgTasks = runWithTempRegistry $ do
+openDBInternal cctx args launchBgTasks = runWithTempRegistry $ do
   ( immutableDB
     , immutableDbTipPoint
     , volatileDB
@@ -199,6 +203,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   -- explanation of why.
   (lgrDB, replayed) <-
     LedgerDB.openDB
+      cctx
       argsLgrDb
       (ImmutableDB.streamAPI immutableDB)
       immutableDbTipPoint
@@ -240,6 +245,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         (acquiredLeiosEbHashes <$> readTVar varAcquiredLeiosEbs)
         (void initialLoE)
         (forgetFingerprint initialWeights)
+        cctx
     traceWith initChainSelTracer InitialChainSelected
     LedgerDB.tryFlush lgrDB
 

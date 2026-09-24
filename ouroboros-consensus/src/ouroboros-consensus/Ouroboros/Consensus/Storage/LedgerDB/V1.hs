@@ -28,8 +28,9 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbHandle, withReader)
+import LeiosDemoDb.WithCallTrace (HandleWithCallTrace, handleOpenReader, readerClose)
 import LeiosDemoTypes (HasLeiosVoting)
+import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -113,9 +114,9 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix = do
                 lgrHasFS'
                 ds
             )
-      , initReapplyBlock = \cfg blk (chlog, bstore) -> do
-          !chlog' <- withReader ldbLeiosDb $ \reader ->
-            reapplyThenPushLeios reader cfg blk (readKeySets bstore) chlog
+      , initReapplyBlock = \cctx cfg blk (chlog, bstore) -> do
+          !chlog' <- bracket (handleOpenReader ldbLeiosDb cctx) (\r -> readerClose r cctx) $ \reader ->
+            reapplyThenPushLeios reader cctx cfg blk (readKeySets bstore) chlog
           -- It's OK to flush without a lock here, since the `LedgerDB` has not
           -- finished initializing, only this thread has access to the backing
           -- store.
@@ -195,7 +196,7 @@ implMkLedgerDb h snapManager =
       , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
       , openForkerAtTarget = openNewForkerAtTarget h
-      , validateFork = getEnv5 h (implValidate h)
+      , validateFork = getEnv6 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
       , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
@@ -285,20 +286,21 @@ implValidate ::
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
+  CallCtx m ->
   (TraceValidateEvent blk -> m ()) ->
   BlockCache blk ->
   Word64 ->
   NonEmpty (Header blk) ->
   SuccessForkerAction m l ->
   m (ValidateResult l blk)
-implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
-  -- Open a connection scoped to this call: the 'LeiosDbReader'
+implValidate h ldbEnv cctx tr cache rollbacks hdrs onSuccess =
+  -- Open a connection scoped to this call: the 'ReaderWithCallTrace'
   -- must be owned by the thread calling 'validate', which for
   -- 'validateFork' is the ChainSel/block-adder thread. Storing a
   -- shared connection in 'ldbEnv' was crashing SQLite when a
   -- non-owner thread invoked this path.
-  withReader (ldbLeiosDb ldbEnv) $ \reader ->
-    validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+  bracket (handleOpenReader (ldbLeiosDb ldbEnv) cctx) (\r -> readerClose r cctx) $ \reader ->
+    validate cctx (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
       ValidateArgs
         (ldbResolveBlock ldbEnv)
         (ledgerDbCfg $ ldbCfg ldbEnv)
@@ -409,7 +411,7 @@ mkInternals h snapManager =
     , wipeLedgerDB = void $ destroySnapshots snapManager
     , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     , push = getEnv1 h implIntPush
-    , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPush
+    , reapplyThenPushNOW = getEnv2 h implIntReapplyThenPush
     , closeLedgerDB = getEnv h $ void . bsClose . ldbBackingStore
     , getNumLedgerTablesHandles = pure 0
     }
@@ -472,12 +474,12 @@ implIntReapplyThenPush ::
   , ResolveLeiosBlock blk
   , l ~ ExtLedgerState blk
   ) =>
-  LedgerDBEnv m l blk -> blk -> m ()
-implIntReapplyThenPush env blk = do
+  LedgerDBEnv m l blk -> CallCtx m -> blk -> m ()
+implIntReapplyThenPush env cctx blk = do
   chlog <- readTVarIO $ ldbChangelog env
   chlog' <-
-    withReader (ldbLeiosDb env) $ \reader ->
-      reapplyThenPushLeios reader (ldbCfg env) blk (readKeySets (ldbBackingStore env)) chlog
+    bracket (handleOpenReader (ldbLeiosDb env) cctx) (\r -> readerClose r cctx) $ \reader ->
+      reapplyThenPushLeios reader cctx (ldbCfg env) blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
 {-------------------------------------------------------------------------------
@@ -582,9 +584,9 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLeiosDb :: !(LeiosDbHandle m)
-  -- ^ 'LeiosDbHandle', not a live connection: every consumer opens its
-  -- own per-thread connection via 'withReader' at use time (a
+  , ldbLeiosDb :: !(HandleWithCallTrace m)
+  -- ^ 'HandleWithCallTrace', not a live connection: every consumer opens its
+  -- own per-thread 'ReaderWithCallTrace' at use time (a
   -- 'direct-sqlite' handle is single-thread).
   }
   deriving Generic
@@ -642,18 +644,19 @@ getEnv3 ::
   m r
 getEnv3 h f a b c = getEnv h (\env -> f env a b c)
 
--- | Variant 'of 'getEnv' for functions taking five arguments.
-getEnv5 ::
+-- | Variant 'of 'getEnv' for functions taking six arguments.
+getEnv6 ::
   (IOLike m, HasCallStack) =>
   LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> m r) ->
+  (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> f' -> m r) ->
   a ->
   b ->
   c ->
   d ->
   e ->
+  f' ->
   m r
-getEnv5 h f a b c d e = getEnv h (\env -> f env a b c d e)
+getEnv6 h f a b c d e f' = getEnv h (\env -> f env a b c d e f')
 
 -- | Variant of 'getEnv' that works in 'STM'.
 getEnvSTM ::

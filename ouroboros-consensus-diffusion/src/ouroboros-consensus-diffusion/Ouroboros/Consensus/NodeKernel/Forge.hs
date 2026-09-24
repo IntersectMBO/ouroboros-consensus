@@ -25,9 +25,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import qualified Data.Measure
 import Data.Proxy
-import LeiosDemoDb
-  ( LeiosDbReader (..)
-  )
+import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace (..))
 import LeiosDemoTypes
   ( LeiosCert
   , TraceLeiosKernel (..)
@@ -97,7 +95,7 @@ forge ::
   Mempool m blk ->
   LeiosVoteState m ->
   BlockForging m blk ->
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
   -- | Invoked with the header and closure of each EB we forge, to ingest it
   -- through the same handlers an upstream peer's messages (see
   -- 'Leios.onForgedLeiosEb').
@@ -305,7 +303,8 @@ decideLeiosCertify ::
   , ConvertRawHash blk
   , HasAnnTip blk
   ) =>
-  LeiosDbReader m ->
+  CallCtx m ->
+  ReaderWithCallTrace m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
   -- | The era's ledger config, which is where the certification gap comes from.
@@ -315,7 +314,7 @@ decideLeiosCertify ::
   -- | Unticked ledger state that we can extend.
   ExtLedgerState blk EmptyMK ->
   m (Maybe (LeiosCert, Leios.EbHash))
-decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState =
+decideLeiosCertify cctx leiosDbReader voteState tracer ledgerCfg currentSlot extState =
   case (,) <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs) <*> mMinGap of
     Nothing -> pure Nothing
     Just ((ebPoint, _ebSize), minGap)
@@ -325,7 +324,7 @@ decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
           -- detect it the other way around: if we have a cert, but not
           -- downloaded it ourselves -> warning!
-          mClosure <- lookupEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
+          mClosure <- lookupEbClosure leiosDbReader cctx (Leios.pointEbHash ebPoint)
           case mClosure of
             Nothing -> do
               traceWith tracer $
@@ -692,7 +691,7 @@ traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
 partitionMempool ::
   forall m blk.
   (IOLike m, RunNode blk) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
   -- | Same call-tracing machinery as 'forge's own @ctrace@: traces onto the
@@ -729,6 +728,7 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
   mayLeiosCertAndAnnouncement <-
     pmTrace'Via (fmap (Leios.prettyEbHash . snd)) "decide-leios-certifiy" currentSlot $
       decideLeiosCertify @blk
+        pmCallCtx
         leiosDbReader
         leiosVoteState
         leiosTracer
@@ -759,6 +759,7 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
           pmTrace'Via (const ()) "resolve-and-apply-leios-closure" (Leios.prettyEbHash announcedPoint) $
             resolveAndApplyLeiosClosure
               leiosDbReader
+              pmCallCtx
               (configLedger cfg)
               announcedPoint
               readTables

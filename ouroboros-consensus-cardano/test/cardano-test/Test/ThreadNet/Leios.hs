@@ -73,9 +73,10 @@ import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoDb
-  ( LeiosDbReader
-  , newLeiosDBInMemoryWith
+import LeiosDemoDb (newLeiosDBInMemoryWith)
+import LeiosDemoDb.WithCallTrace
+  ( ReaderWithCallTrace
+  , withCallTraceHandle
   , withReader
   )
 import LeiosDemoTypes
@@ -89,6 +90,7 @@ import LeiosDemoTypes
   , prettyEbHash
   , prettyLeiosPoint
   )
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Lens.Micro ((%~), (.~), (^.))
 import Ouroboros.Consensus.Block (SlotNo (..), blockSlot, getHeader)
 import Ouroboros.Consensus.Block.Forging
@@ -897,21 +899,23 @@ sumChainTxBytes _topConfig _initLedger node = runSimOrThrow $ do
   let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
   stateVar <- StrictTVar.newTVarIO db
   leiosDb <- newLeiosDBInMemoryWith stateVar
-  withReader leiosDb $ \leiosConn ->
-    foldChain leiosConn Nothing 0 (Chain.toOldestFirst $ nodeOutputFinalChain node)
+  cctx <- rootCallCtx "TestLeios"
+  let leiosDbHandle = withCallTraceHandle Tracer.nullTracer leiosDb
+  withReader leiosDbHandle cctx $ \leiosConn ->
+    foldChain cctx leiosConn Nothing 0 (Chain.toOldestFirst $ nodeOutputFinalChain node)
  where
   -- Fold the chain, inlining each CertRB's EB closure into its
   -- (empty-on-wire) body using the announcement carried by the previous
   -- header — mirroring what the ChainSync server does when serving blocks.
-  foldChain _ _ !total [] = pure total
-  foldChain leiosDb prevAnn !total (blk : rest) = do
+  foldChain _ _ _ !total [] = pure total
+  foldChain cctx leiosDb prevAnn !total (blk : rest) = do
     blk' <- case (blockLeiosCert blk, prevAnn) of
       (Just _, Just point) ->
         inlineLeiosClosure blk . map snd . orFail
-          <$> resolveLeiosClosure leiosDb (pointEbHash point)
+          <$> resolveLeiosClosure leiosDb cctx (pointEbHash point)
       _ -> pure blk
     let nextAnn = fst <$> headerLeiosAnnouncement (getHeader blk)
-    foldChain leiosDb nextAnn (total + blockTxSizeSum blk') rest
+    foldChain cctx leiosDb nextAnn (total + blockTxSizeSum blk') rest
 
   blockTxSizeSum (BlockDijkstra shelleyBlk) =
     let SL.Block _ body = shelleyBlockRaw shelleyBlk
@@ -934,10 +938,12 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
   let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
   stateVar <- StrictTVar.newTVarIO db
   leiosDb <- newLeiosDBInMemoryWith stateVar
-  withReader leiosDb $ \leiosConn -> do
+  cctx <- rootCallCtx "TestLeios"
+  let leiosDbHandle = withCallTraceHandle Tracer.nullTracer leiosDb
+  withReader leiosDbHandle cctx $ \leiosConn -> do
     let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
         cfg = ExtLedgerCfg topConfig
-    foldedState <- foldWithResolution leiosConn cfg chain initLedger
+    foldedState <- foldWithResolution cctx leiosConn cfg chain initLedger
     pure $ forgetLedgerTables . ledgerState $ foldedState
 
 -- | Fold a chain of blocks over an initial ledger state, mirroring the
@@ -952,12 +958,13 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
 -- bumped for closure txs.
 foldWithResolution ::
   Monad m =>
-  LeiosDbReader m ->
+  CallCtx m ->
+  ReaderWithCallTrace m ->
   LedgerCfg (ExtLedgerState (CardanoBlock StandardCrypto)) ->
   [CardanoBlock StandardCrypto] ->
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
   m (ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK)
-foldWithResolution leiosDb cfg blks initState =
+foldWithResolution cctx leiosDb cfg blks initState =
   foldM step initState blks
  where
   step state blk = do
@@ -973,7 +980,7 @@ foldWithResolution leiosDb cfg blks initState =
         Nothing ->
           error "foldWithResolution: CertRB but no announcement on parent chain-dep state"
         Just (point, _) -> do
-          closureTxs <- map snd . orFail <$> resolveLeiosClosure leiosDb (pointEbHash point)
+          closureTxs <- map snd . orFail <$> resolveLeiosClosure leiosDb cctx (pointEbHash point)
           let ls = ledgerState state
               lcfg = configLedger (getExtLedgerCfg cfg)
           case applyLeiosClosure lcfg closureTxs ls of

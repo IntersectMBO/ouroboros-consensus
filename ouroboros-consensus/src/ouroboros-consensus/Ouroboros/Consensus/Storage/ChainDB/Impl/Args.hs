@@ -25,6 +25,7 @@ import Data.Function ((&))
 import Data.Kind
 import Data.Time.Clock (secondsToDiffTime)
 import qualified LeiosDemoDb.Common
+import LeiosDemoDb.WithCallTrace (withCallTraceHandle)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -237,7 +238,7 @@ completeChainDbArgs
                   cdbsTopLevelConfig
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
             , LedgerDB.lgrBackendArgs = flavorArgs
-            , LedgerDB.lgrLeiosDb = leiosDb
+            , LedgerDB.lgrLeiosDb = withCallTraceHandle nullTracer leiosDb
             }
       , cdbPerasCertDbArgs =
           PerasCertDB.PerasCertDbArgs

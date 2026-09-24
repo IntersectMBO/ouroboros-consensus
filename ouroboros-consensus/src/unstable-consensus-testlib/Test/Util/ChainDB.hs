@@ -15,6 +15,7 @@ import Control.Concurrent.Class.MonadSTM.Strict hiding (StrictTVar)
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
 import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb.WithCallTrace (withCallTraceHandle)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
   , configCodec
@@ -139,7 +140,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
-          , lgrLeiosDb = mcdbLeiosDb
+          , lgrLeiosDb = withCallTraceHandle nullTracer mcdbLeiosDb
           }
     , cdbPerasCertDbArgs =
         PerasCertDbArgs

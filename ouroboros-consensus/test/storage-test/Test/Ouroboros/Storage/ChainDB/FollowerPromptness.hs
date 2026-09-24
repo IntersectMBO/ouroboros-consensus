@@ -31,6 +31,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
 import qualified LeiosDemoDb as LeiosDb
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -123,6 +124,7 @@ runFollowerPromptnessTest ::
   FollowerPromptnessTestSetup ->
   m FollowerPromptnessOutcome
 runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \registry -> do
+  cctx <- rootCallCtx "FollowerPromptnessTest"
   varTentativeSetTimings <- uncheckedNewTVarM Map.empty
   varTentativeUnsetTimings <- uncheckedNewTVarM Map.empty
   varFollowerInstrTimings <- uncheckedNewTVarM Map.empty
@@ -147,7 +149,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
               _ -> pure ()
             _ -> pure ()
         _ -> pure ()
-  chainDB <- openChainDB registry chainDBTracer
+  chainDB <- openChainDB cctx registry chainDBTracer
 
   -- Continually fetch instructions from a tentative follower.
   follower <-
@@ -172,10 +174,11 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
   pure FollowerPromptnessOutcome{..}
  where
   openChainDB ::
+    CallCtx m ->
     ResourceRegistry m ->
     Tracer m (ChainDBImpl.TraceEvent TestBlock) ->
     m (ChainDB m TestBlock)
-  openChainDB registry cdbTracer = do
+  openChainDB cctx registry cdbTracer = do
     chainDbArgs <- do
       let mcdbTopLevelConfig = singleNodeTestConfigWithK securityParam
           mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
@@ -188,7 +191,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
       allocate
         registry
-        (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
+        (\_ -> ChainDBImpl.openDBInternal cctx chainDbArgs False)
         (ChainDB.closeDB . fst)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
     pure chainDB

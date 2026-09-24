@@ -29,15 +29,19 @@ import Control.Monad.Class.MonadTimer.SI (diffTimeToMicrosecondsAsInt)
 import Control.Monad.Except (runExcept)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
-import Control.Tracer (Tracer, traceWith)
+import Control.Tracer (Tracer, traceWith, (>$<))
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
 import LeiosDemoDb
-  ( LeiosDbHandle (..)
-  , LeiosDbReader
+  ( LeiosDbHandle
   , LeiosEbNotification (..)
+  )
+import LeiosDemoDb.WithCallTrace
+  ( HandleWithCallTrace (..)
+  , ReaderWithCallTrace
+  , withCallTraceHandle
   , withReader
   )
 import LeiosDemoTypes
@@ -54,6 +58,7 @@ import LeiosDemoTypes
   , signLeiosVote
   )
 import LeiosTxCache (LeiosTxCache (..))
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..), VoteTally (..))
 import Ouroboros.Consensus.Block
   ( ConvertRawHash (..)
@@ -266,36 +271,39 @@ runLeiosVoting ::
   LeiosVoteState m ->
   [LeiosSigningKey] ->
   m ()
-runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
-  [] ->
-    traceWith tracer $
-      MkTraceLeiosKernel
-        "runLeiosVoting: disabled because no topLevelConfigVotingKeys"
-  sks ->
-    -- A 'LeiosDbReader' is not thread-safe, so this thread owns one for its
-    -- lifetime, the way each forge-credentials thread does.
-    withReader leiosDB $ \reader -> do
-      chan <- subscribeEbNotifications leiosDB
-      -- One message per transaction, even the ones we do not act on. Looping
-      -- here instead would be a read that only sticks if the transaction
-      -- commits: a run that ended in 'retry' would put every 'AcquiredEb' it
-      -- had skipped back, to be skipped again on the next wake.
-      let takeEbNotification =
-            readTChan chan >>= \case
-              AcquiredEb{} -> pure Nothing
-              AcquiredEbTxs point -> pure (Just point)
+runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
+  cctx <- rootCallCtx "LeiosVoting"
+  case sks of
+    [] ->
+      traceWith tracer $
+        MkTraceLeiosKernel
+          "runLeiosVoting: disabled because no topLevelConfigVotingKeys"
+    _ -> do
+      -- A 'LeiosDbReader' is not thread-safe, so this thread owns one for its
+      -- lifetime, the way each forge-credentials thread does.
+      let leiosDbHandle = withCallTraceHandle (TraceLeiosDb >$< tracer) leiosDB
+      withReader leiosDbHandle cctx $ \reader -> do
+        chan <- subscribeEbNotifications leiosDbHandle cctx
+        -- One message per transaction, even the ones we do not act on. Looping
+        -- here instead would be a read that only sticks if the transaction
+        -- commits: a run that ended in 'retry' would put every 'AcquiredEb' it
+        -- had skipped back, to be skipped again on the next wake.
+        let takeEbNotification =
+              readTChan chan >>= \case
+                AcquiredEb{} -> pure Nothing
+                AcquiredEbTxs point -> pure (Just point)
 
-      VoteTimers{scheduleVoteTime, waitNextVoteTime} <-
-        newVoteTimers tracer lcfg chainDB systemTime
+        VoteTimers{scheduleVoteTime, waitNextVoteTime} <-
+          newVoteTimers tracer lcfg chainDB systemTime
 
-      forever $
-        atomically ((Left <$> takeEbNotification) <|> (Right <$> waitNextVoteTime))
-          >>= \case
-            Left mPoint -> mapM_ scheduleVoteTime mPoint
-            Right (point, deadline) ->
-              goVote reader sks point deadline >>= \case
-                Left reason -> traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason}
-                Right () -> pure ()
+        forever $
+          atomically ((Left <$> takeEbNotification) <|> (Right <$> waitNextVoteTime))
+            >>= \case
+              Left mPoint -> mapM_ scheduleVoteTime mPoint
+              Right (point, deadline) ->
+                goVote cctx reader sks point deadline >>= \case
+                  Left reason -> traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason}
+                  Right () -> pure ()
  where
   -- Decide whether to vote for an acquired EB and, if we may, cast one vote
   -- per committee seat our keys hold. Every way of not voting at all leaves
@@ -311,7 +319,8 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
   -- reads when we are ready to sign. The cheap checks come first either way, so
   -- an EB we would not vote for is never validated.
   goVote ::
-    LeiosDbReader m ->
+    CallCtx m ->
+    ReaderWithCallTrace m ->
     -- \| Our voting keys, to find our committee seats and sign votes.
     [LeiosSigningKey] ->
     -- \| The leios point of the EB to vote on.
@@ -319,7 +328,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
     -- \| The moment after which a vote is too late.
     RelativeTime ->
     m (Either LeiosNotVotedReason ())
-  goVote reader sks point deadline = do
+  goVote cctx reader sks point deadline = do
     -- Before opening a forker, let alone validating: the window may already
     -- have shut before this timer was ever armed.
     expired <- (> deadline) <$> systemTimeCurrent systemTime
@@ -354,7 +363,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
 
           -- FIXME: Check the EB references size, txs size, ex units and ref scripts capacities
 
-          lift (validateEbClosure lcfg reader txCache readTables point ls) >>= \case
+          lift (validateEbClosure lcfg cctx reader txCache readTables point ls) >>= \case
             EbClosureUnreadable err ->
               throwE $ ClosureUnavailable err
             EbClosureInvalid err ->
@@ -446,7 +455,8 @@ validateEbClosure ::
   , LedgerSupportsMempool blk
   ) =>
   LedgerConfig blk ->
-  LeiosDbReader m ->
+  CallCtx m ->
+  ReaderWithCallTrace m ->
   LeiosTxCache m () () SerializedEbBody ->
   -- | Read the ledger tables the closure's txs need, as
   -- 'resolveAndApplyLeiosClosure' does on the apply path.
@@ -455,9 +465,9 @@ validateEbClosure ::
   -- | The announcing RB's unticked ledger state, which the closure applies to.
   LedgerState blk EmptyMK ->
   m (EbClosureVerdict blk)
-validateEbClosure lcfg reader txCache resolveValues point lsBase = do
+validateEbClosure lcfg cctx reader txCache resolveValues point lsBase = do
   -- Load txs from disk
-  resolveLeiosClosure reader (pointEbHash point) >>= \case
+  resolveLeiosClosure reader cctx (pointEbHash point) >>= \case
     Left err -> pure $ EbClosureUnreadable err
     Right closure -> do
       -- Resolve their input UTxOs

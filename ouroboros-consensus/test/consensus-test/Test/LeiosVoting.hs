@@ -12,6 +12,7 @@ module Test.LeiosVoting (tests) where
 
 import qualified Codec.Serialise as Serialise
 import Control.Monad (foldM, void)
+import Control.Tracer (nullTracer)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as Lazy
@@ -19,10 +20,13 @@ import Data.Function ((&))
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle
-  , LeiosDbReader (..)
-  , LeiosDbWriter (..)
   , Promise (..)
   , newLeiosDBInMemory
+  )
+import LeiosDemoDb.WithCallTrace
+  ( ReaderWithCallTrace
+  , WriterWithCallTrace (..)
+  , withCallTraceHandle
   , withReader
   , withWriter
   )
@@ -44,6 +48,7 @@ import LeiosTxCache
   , defaultLeiosTxCacheShift
   , newPureLeiosTxCache
   )
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import LeiosVoting (EbClosureVerdict (..), validateEbClosure)
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
@@ -175,27 +180,28 @@ summarise = \case
 -- in closure order, whether the cache now reports it validated.
 runValidate :: [Bool] -> [TestTx] -> IO (Verdict, [Bool])
 runValidate acquired txs = do
-  withHarness acquired txs $ \h -> validateOnce h txs
+  withHarness acquired txs $ \cctx h -> validateOnce cctx h txs
 
 -- | As 'runValidate', but validates the same closure twice against the same
 -- cache, so the second pass sees the first pass's tags.
 runValidateTwice :: [Bool] -> [TestTx] -> IO (Verdict, [Bool], Verdict)
-runValidateTwice acquired txs = withHarness acquired txs $ \h -> do
-  (first', tagged) <- validateOnce h txs
-  (second', _) <- validateOnce h txs
+runValidateTwice acquired txs = withHarness acquired txs $ \cctx h -> do
+  (first', tagged) <- validateOnce cctx h txs
+  (second', _) <- validateOnce cctx h txs
   pure (first', tagged, second')
 
 data Harness = Harness
-  { hReader :: LeiosDbReader IO
+  { hReader :: ReaderWithCallTrace IO
   , hCache :: LeiosTxCache IO () () SerializedEbBody
   , hPoint :: LeiosPoint
   }
 
-validateOnce :: Harness -> [TestTx] -> IO (Verdict, [Bool])
-validateOnce Harness{hReader, hCache, hPoint} txs = do
+validateOnce :: CallCtx IO -> Harness -> [TestTx] -> IO (Verdict, [Bool])
+validateOnce cctx Harness{hReader, hCache, hPoint} txs = do
   verdict <-
     validateEbClosure
       testLedgerConfigNoSizeLimits
+      cctx
       hReader
       hCache
       -- Restricted to what was asked for, not the whole UTxO: a closure whose
@@ -219,13 +225,15 @@ validateOnce Harness{hReader, hCache, hPoint} txs = do
 --
 -- @acquired@ says, per tx, whether the cache has seen it acquired; 'False'
 -- leaves the voting logic to find nothing for it.
-withHarness :: [Bool] -> [TestTx] -> (Harness -> IO a) -> IO a
+withHarness :: [Bool] -> [TestTx] -> (CallCtx IO -> Harness -> IO a) -> IO a
 withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
-  withReader db $ \reader -> withWriter db $ \writer -> do
-    void $ await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
-    void $ await =<< writeEbBody writer point eb
-    void $ await =<< writeTxs writer [(txHashOf tx, txBytes tx) | tx <- txs]
+  cctx <- rootCallCtx "TestLeiosVoting"
+  let leiosDbHandle = withCallTraceHandle nullTracer db
+  withReader leiosDbHandle cctx $ \reader -> withWriter leiosDbHandle cctx $ \writer -> do
+    void $ await =<< writeEbPoint writer cctx point (encodeLeiosEbSize eb)
+    void $ await =<< writeEbBody writer cctx point eb
+    void $ await =<< writeTxs writer cctx [(txHashOf tx, txBytes tx) | tx <- txs]
 
     cache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     void $ insertAnnouncement cache (pointSlotNo point) rbHash (pointEbHash point)
@@ -243,7 +251,7 @@ withHarness acquired txs k = do
         w0
         (zip txs acquired)
 
-    k Harness{hReader = reader, hCache = cache, hPoint = point}
+    k cctx Harness{hReader = reader, hCache = cache, hPoint = point}
  where
   eb = ebOf txs
   point = MkLeiosPoint (SlotNo 1) (hashLeiosEb eb)

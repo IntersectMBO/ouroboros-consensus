@@ -141,6 +141,7 @@ initialChainSelection ::
   STM m AcquiredLeiosEbsSet ->
   LoE () ->
   PerasWeightSnapshot blk ->
+  CallCtx m ->
   m (AnchoredFragment (Header blk))
 initialChainSelection
   immutableDB
@@ -151,7 +152,8 @@ initialChainSelection
   varInvalid
   getAcquiredEbs
   loE
-  weights = do
+  weights
+  cctx = do
     -- TODO: Improve the user experience by trimming any potential
     -- blocks from the future from the VolatileDB.
     --
@@ -258,6 +260,7 @@ initialChainSelection
           cse <- chainSelEnv
           fmap (getSuffix . fst)
             <$> chainSelection
+              cctx
               cse
               (first Diff.extend <$> candidates)
               (\_ _ -> MkSuccessForkerAction $ join . atomically . forkerCommit)
@@ -359,7 +362,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLoEBlocks varProcessed) =
     cctx
     "chain-sel-reprocess-loe-blocks"
     ()
-    (\_ -> chainSelReprocessLoEBlocks cdb varProcessed)
+    (\childCCtx -> chainSelReprocessLoEBlocks cdb childCCtx varProcessed)
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLeiosEb ebHash) =
   callTraceVia
     id
@@ -367,7 +370,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLeiosEb ebHash) =
     cctx
     "chain-sel-reprocess-leios-eb"
     (show ebHash)
-    (\_ -> chainSelReprocessLeiosEb cdb ebHash)
+    (\childCCtx -> chainSelReprocessLeiosEb cdb childCCtx ebHash)
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddBlock bta) =
   callTraceVia
     id
@@ -383,7 +386,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddPerasCert cert varProcessed) =
     cctx
     "chain-sel-add-peras-cert"
     (show $ getPerasCertRound cert)
-    (\_ -> chainSelAddPerasCert cdb cert varProcessed)
+    (\childCCtx -> chainSelAddPerasCert cdb childCCtx cert varProcessed)
 
 -- | Add a block to the ChainDB.
 --
@@ -405,7 +408,7 @@ chainSelAddBlock ::
   CallCtx m ->
   BlockToAdd m blk ->
   Electric m ()
-chainSelAddBlock cdb@CDB{..} _cctx BlockToAdd{blockToAdd = b, ..} = do
+chainSelAddBlock cdb@CDB{..} cctx BlockToAdd{blockToAdd = b, ..} = do
   (isMember, invalid, curChain) <-
     lift $
       atomically $
@@ -443,7 +446,7 @@ chainSelAddBlock cdb@CDB{..} _cctx BlockToAdd{blockToAdd = b, ..} = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+        chainSelectionForBlock cdb cctx (BlockCache.singleton b) hdr blockPunish
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -484,10 +487,11 @@ chainSelAddPerasCert ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   StrictTMVar m () ->
   Electric m ()
-chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
+chainSelAddPerasCert cdb@CDB{..} cctx cert varProcessed = do
   curChain <- lift $ atomically $ Query.getCurrentChain cdb
   let immTip = AF.castAnchor $ AF.anchor curChain
 
@@ -531,7 +535,7 @@ chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
 
     -- Trigger chain selection for the boosted block.
     lift $ lift $ traceWith tracer $ ChainSelectionForBoostedBlock certRound boostedBlock
-    lift $ chainSelectionForBlock cdb BlockCache.empty boostedHdr noPunishment
+    lift $ chainSelectionForBlock cdb cctx BlockCache.empty boostedHdr noPunishment
 
   -- Deliver promise indicating that we processed the cert.
   lift $ atomically $ putTMVar varProcessed ()
@@ -564,9 +568,10 @@ chainSelReprocessLeiosEb ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   EbHash ->
   Electric m ()
-chainSelReprocessLeiosEb cdb@CDB{..} ebHash = lift $ do
+chainSelReprocessLeiosEb cdb@CDB{..} cctx ebHash = lift $ do
   (getAnnouncers, succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
     (,,,,)
@@ -601,7 +606,7 @@ chainSelReprocessLeiosEb cdb@CDB{..} ebHash = lift $ do
     Just chainDiffs' ->
       -- As on LoE reprocess, we don't log the reason for a switch, hence 'void'.
       void $
-        chainSelection chainSelEnv chainDiffs' $
+        chainSelection cctx chainSelEnv chainDiffs' $
           switchTo cdb weights Nothing
     Nothing -> pure ()
 
@@ -630,9 +635,10 @@ chainSelReprocessLoEBlocks ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   StrictTMVar m () ->
   Electric m ()
-chainSelReprocessLoEBlocks cdb@CDB{..} varProcessed = lift $ do
+chainSelReprocessLoEBlocks cdb@CDB{..} cctx varProcessed = lift $ do
   (succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
     (,,,)
@@ -669,7 +675,7 @@ chainSelReprocessLoEBlocks cdb@CDB{..} varProcessed = lift $ do
       -- Find the best valid candidate. On LoE reprocess we don't log the reason
       -- for a switch, hence the 'void'.
       void $
-        chainSelection chainSelEnv chainDiffs' $
+        chainSelection cctx chainSelEnv chainDiffs' $
           switchTo cdb weights Nothing
     Nothing -> pure ()
 
@@ -745,11 +751,12 @@ chainSelectionForBlock ::
   , HasCallStack
   ) =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   BlockCache blk ->
   Header blk ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
+chainSelectionForBlock cdb@CDB{..} cctx blockCache hdr punish = electric $ do
   (invalid, curChain, weights) <-
     atomically $
       (,,)
@@ -803,6 +810,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
             -- switch. Log if none were found.
             flip whenNothing traceNoChange
               =<< chainSelection
+                cctx
                 chainSelEnv
                 chainDiffs'
                 (switchTo cdb weights (Just p))
@@ -1254,6 +1262,7 @@ chainSelection ::
   , BlockSupportsDiffusionPipelining blk
   , HasCallStack
   ) =>
+  CallCtx m ->
   ChainSelEnv m blk ->
   -- | The candidates
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
@@ -1263,7 +1272,7 @@ chainSelection ::
   -- or 'Nothing' if there is no valid chain diff preferred over the current
   -- chain.
   m (Maybe (ChainDiff (Header blk), ReasonForSwitch' blk))
-chainSelection chainSelEnv chainDiffs onSuccess =
+chainSelection cctx chainSelEnv chainDiffs onSuccess =
   assert
     ( all
         (shouldSwitch . preferAnchoredCandidate bcfg weights curChain . Diff.getSuffix . fst)
@@ -1297,7 +1306,7 @@ chainSelection chainSelEnv chainDiffs onSuccess =
       Nothing -> pure Nothing
       Just neHeaders -> do
         mTentativeHeader <- setTentativeHeader
-        validateCandidate chainSelEnv candidate neHeaders (onSuccess candidate reason) >>= \case
+        validateCandidate cctx chainSelEnv candidate neHeaders (onSuccess candidate reason) >>= \case
           FullyValid candidate' ->
             -- The entire candidate is valid
             assert (Diff.getTip candidate == Diff.getTip candidate') $ pure (Just (candidate, reason))
@@ -1430,15 +1439,17 @@ validateCandidate ::
   , LedgerSupportsProtocol blk
   , HasCallStack
   ) =>
+  CallCtx m ->
   ChainSelEnv m blk ->
   ChainDiff (Header blk) ->
   -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
   NonEmpty (Header blk) ->
   SuccessForkerAction m (ExtLedgerState blk) ->
   m (ValidationResult blk)
-validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders onSuccess =
+validateCandidate cctx chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders onSuccess =
   LedgerDB.validateFork
     lgrDB
+    cctx
     traceUpdate
     blockCache
     rollback

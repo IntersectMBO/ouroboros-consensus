@@ -43,7 +43,7 @@ import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.State hiding (state)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), mkTracer, (>$<))
+import Control.Tracer (Tracer (..), mkTracer, nullTracer, (>$<))
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
@@ -52,6 +52,8 @@ import Data.Maybe (fromMaybe)
 import qualified Data.SOP.Dict as Dict
 import Data.Word
 import LeiosDemoDb (newLeiosDBInMemory)
+import LeiosDemoDb.WithCallTrace (withCallTraceHandle)
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -571,18 +573,20 @@ blockNotFound =
 -------------------------------------------------------------------------------}
 
 openLedgerDB ::
+  CallCtx IO ->
   LedgerDbBackendArgs IO TestBlock ->
   ChainDB IO ->
   LedgerDbCfg (ExtLedgerState TestBlock) ->
   SomeHasFS IO ->
   IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock, IO NumOpenHandles)
-openLedgerDB flavArgs env cfg fs = do
+openLedgerDB cctx flavArgs env cfg fs = do
   (stream, volBlocks) <- dbStreamAPI env
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
   (tracer, getNumOpenHandles) <- mkTrackOpenHandles
-  leiosDbHandle <- newLeiosDBInMemory
-  let args =
+  leiosDb <- newLeiosDBInMemory
+  let leiosDbHandle = withCallTraceHandle nullTracer leiosDb
+      args =
         LedgerDbArgs
           (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
           (pure genesis)
@@ -606,7 +610,7 @@ openLedgerDB flavArgs env cfg fs = do
                 getBlock
                 snapManager
                 (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
-          lift $ openDBInternal args initDb snapManager stream replayGoal
+          lift $ openDBInternal cctx args initDb snapManager stream replayGoal
         LedgerDbBackendArgsV2 (V2.SomeBackendArgs bArgs) -> do
           res <-
             mkResources
@@ -624,13 +628,14 @@ openLedgerDB flavArgs env cfg fs = do
           initDb <-
             lift $
               V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
-          lift $ openDBInternal args initDb snapManager stream replayGoal
+          lift $ openDBInternal cctx args initDb snapManager stream replayGoal
   case NE.nonEmpty volBlocks of
     Nothing -> pure ()
     Just volBlocks' -> do
       vr <-
         validateFork
           ldb
+          cctx
           (const $ pure ())
           BlockCache.empty
           0
@@ -664,8 +669,9 @@ instance RunModel Model (StateT Environment IO) where
   perform _ (Init secParam salt) _ = do
     Environment _ _ chainDb mkArgs fs _ cleanup <- get
     (ldb, testInternals, getNumOpenHandles) <- lift $ do
+      cctx <- rootCallCtx "LedgerDBStateMachine"
       let args = mkArgs secParam salt
-      openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
+      openLedgerDB cctx (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
     lift $
       garbageCollect ldb . fromWithOrigin 0 . pointSlot . getTip =<< atomically (getImmutableTip ldb)
     put (Environment ldb testInternals chainDb mkArgs fs getNumOpenHandles cleanup)
@@ -687,11 +693,12 @@ instance RunModel Model (StateT Environment IO) where
       Just blks -> do
         Environment ldb _ chainDb _ _ _ _ <- get
         lift $ do
+          cctx <- rootCallCtx "LedgerDBStateMachine"
           atomically $
             modifyTVar (dbBlocks chainDb) $
               repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) $ NE.toList blks)
 
-          vr <- validateFork ldb (const $ pure ()) BlockCache.empty n (NE.map getHeader blks) $ MkSuccessForkerAction $ \forker -> do
+          vr <- validateFork ldb cctx (const $ pure ()) BlockCache.empty n (NE.map getHeader blks) $ MkSuccessForkerAction $ \forker -> do
             atomically $
               modifyTVar (dbChain chainDb) $
                 (reverse (map blockRealPoint $ NE.toList blks) ++) . drop (fromIntegral n)

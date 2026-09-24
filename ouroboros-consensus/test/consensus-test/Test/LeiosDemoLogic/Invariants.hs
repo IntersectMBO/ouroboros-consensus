@@ -51,8 +51,8 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
-import LeiosDemoDb (withWriter)
 import qualified LeiosDemoDb as LeiosDb
+import LeiosDemoDb.WithCallTrace (WriterWithCallTrace, withCallTraceHandle, withWriter)
 import LeiosDemoLogic
   ( LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
@@ -85,6 +85,7 @@ import LeiosDemoTypes
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, newPureLeiosTxCache, nullLeiosTxCache)
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
@@ -395,7 +396,9 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
   go :: forall s. [Cmd] -> IOSim s (Either String [EbHash])
   go cs0 = do
     dbHandle <- LeiosDb.newLeiosDBInMemory
-    withWriter dbHandle $ \conn -> do
+    cctx <- rootCallCtx "TestLeiosDemoLogic"
+    let leiosDbHandle = withCallTraceHandle nullTracer dbHandle
+    withWriter leiosDbHandle cctx $ \conn -> do
       outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
       readyVar <- newEmptyMVar
       peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
@@ -405,7 +408,7 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
           loop acc [] = pure (Right acc)
           loop acc (c : cs) = do
             r <-
-              try (applyCmd conn txCache kv peerVars peerId c) ::
+              try (applyCmd cctx conn txCache kv peerVars peerId c) ::
                 IOSim s (Either SomeException [EbHash])
             case r of
               Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
@@ -421,14 +424,15 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
 -- but a misbehaving 'Decide'.
 applyCmd ::
   forall s.
-  LeiosDb.LeiosDbWriter (IOSim s) ->
+  CallCtx (IOSim s) ->
+  WriterWithCallTrace (IOSim s) ->
   LeiosTxCache (IOSim s) () () Leios.SerializedEbBody ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
   LeiosPeerVars (IOSim s) ->
   PeerId Int ->
   Cmd ->
   IOSim s [EbHash]
-applyCmd conn txCache kv peerVars peerId = \case
+applyCmd cctx conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
@@ -449,6 +453,7 @@ applyCmd conn txCache kv peerVars peerId = \case
       nullTracer
       kv
       txCache
+      cctx
       conn
       dummySystemTime
       noMempoolPull
@@ -478,6 +483,7 @@ applyCmd conn txCache kv peerVars peerId = \case
       nullTracer
       kv
       txCache
+      cctx
       conn
       dummySystemTime
       noMempoolPull
@@ -488,6 +494,7 @@ applyCmd conn txCache kv peerVars peerId = \case
       nullTracer
       kv
       txCache
+      cctx
       conn
       dummySystemTime
       (ForgedTxs point eb $ V.fromList $ map leiosTxOf ids)
@@ -754,7 +761,9 @@ prop_neverRefetchesHeldBodyConcurrent =
 raceSameHashMultiSlot :: forall m. IOLike m => m Property
 raceSameHashMultiSlot = do
   dbHandle <- LeiosDb.newLeiosDBInMemory
-  withWriter dbHandle $ \conn -> do
+  cctx <- rootCallCtx "TestLeiosDemoLogic"
+  let leiosDbHandle = withCallTraceHandle nullTracer dbHandle
+  withWriter leiosDbHandle cctx $ \conn -> do
     outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
     readyVar <- newEmptyMVar
     peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
@@ -777,6 +786,7 @@ raceSameHashMultiSlot = do
               nullTracer
               kv
               txCache
+              cctx
               conn
               dummySystemTime
               noMempoolPull

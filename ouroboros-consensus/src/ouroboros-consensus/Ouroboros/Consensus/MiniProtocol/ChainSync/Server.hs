@@ -26,8 +26,9 @@ import qualified Codec.CBOR.Write as CBOR.Write
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
-import LeiosDemoDb (LeiosDbReader)
+import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
 import LeiosDemoTypes (LeiosPoint (..))
+import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (GetHeader, GetRawBlock)
@@ -115,13 +116,14 @@ chainSyncBlocksServer ::
   , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
   , EncodeDisk blk blk
   ) =>
+  CallCtx m ->
   Tracer m (TraceChainSyncServerEvent blk) ->
   ChainDB m blk ->
   CodecConfig blk ->
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
   Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
   ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
-chainSyncBlocksServer tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ do
+chainSyncBlocksServer cctx tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ do
   prevAnnVar <- newTVarIO Nothing
   runChainSyncServer $
     chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) $
@@ -167,7 +169,7 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDbReader flr = ChainSyncServer $ 
         Just prevAnn | headerContainsLeiosCert hdr -> case decodeRaw sblk of
           Left _ -> pure sblk
           Right blk -> do
-            resolveLeiosClosure leiosDbReader (pointEbHash prevAnn) >>= \case
+            resolveLeiosClosure leiosDbReader cctx (pointEbHash prevAnn) >>= \case
               -- Serve what we have rather than dying on a closure we cannot
               -- read; the peer validates the block regardless.
               Left _ -> pure sblk

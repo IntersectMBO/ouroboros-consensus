@@ -108,6 +108,7 @@ import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes (HasLeiosVoting)
+import LeiosUtils.CallTrace (rootCallCtx)
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -417,7 +418,8 @@ open ::
   (IOLike m, TestConstraints blk) =>
   ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
-  (chainDB, internal) <- openDBInternal args False
+  cctx <- rootCallCtx "ChainDBStateMachine"
+  (chainDB, internal) <- openDBInternal cctx args False
   addBlockAsync <- async (intAddBlockRunner internal)
   link addBlockAsync
   return ChainDBState{chainDB, internal, addBlockAsync}

@@ -92,6 +92,7 @@ import LeiosDemoOnlyTestFetch (LeiosFetch)
 import LeiosDemoOnlyTestNotify (LeiosNotify)
 import qualified LeiosDemoTypes
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, evictOlderThan, newPureLeiosTxCache)
+import LeiosUtils.CallTrace (rootCallCtx)
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure
@@ -881,6 +882,7 @@ runThreadNetwork
         , LimitedApp m NodeId blk
         )
     forkNode coreNodeId clock joinSlot registry pInfo mkBlockForging nodeInfo txs0 = do
+      cctx <- rootCallCtx "Node"
       let ProtocolInfo{..} = pInfo
 
       let NodeInfo
@@ -914,7 +916,7 @@ runThreadNetwork
           coreNodeId
       chainDB <-
         snd
-          <$> allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
+          <$> allocate registry (const (ChainDB.openDB cctx chainDbArgs)) ChainDB.closeDB
 
       let customForgeBlock ::
             BlockForging m blk ->

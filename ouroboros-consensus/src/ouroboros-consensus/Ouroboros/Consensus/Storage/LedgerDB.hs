@@ -21,6 +21,7 @@ import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
 import Data.Word
 import LeiosDemoTypes (HasLeiosVoting)
+import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -60,6 +61,7 @@ openDB ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
+  CallCtx m ->
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->
   -- | Stream source for blocks.
@@ -76,6 +78,7 @@ openDB ::
   GetVolatileSuffix m blk ->
   WithTempRegistry st m (LedgerDB' m blk, Word64)
 openDB
+  cctx
   args
   stream
   replayGoal
@@ -92,7 +95,7 @@ openDB
               getBlock
               snapManager
               getVolatileSuffix
-        lift $ doOpenDB args initDb snapManager stream replayGoal
+        lift $ doOpenDB cctx args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         -- Note this is the only step that cares about the temporary
         -- registry. Note also that the final state is an polymorphic and
@@ -112,7 +115,7 @@ openDB
                 snapTracer
                 (lgrHasFS args)
         initDb <- lift $ V2.mkInitDb args getBlock snapManager getVolatileSuffix res
-        lift $ doOpenDB args initDb snapManager stream replayGoal
+        lift $ doOpenDB cctx args initDb snapManager stream replayGoal
        where
         !tr = lgrTracer args
         !snapTracer = LedgerDBSnapshotEvent >$< tr
@@ -128,14 +131,15 @@ doOpenDB ::
   , InspectLedger blk
   , HasCallStack
   ) =>
+  CallCtx m ->
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
   SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
   m (LedgerDB' m blk, Word64)
-doOpenDB args initDb snapManager stream replayGoal =
-  f <$> openDBInternal args initDb snapManager stream replayGoal
+doOpenDB cctx args initDb snapManager stream replayGoal =
+  f <$> openDBInternal cctx args initDb snapManager stream replayGoal
  where
   f (ldb, replayCounter, _) = (ldb, replayCounter)
 
@@ -146,16 +150,18 @@ openDBInternal ::
   , InspectLedger blk
   , HasCallStack
   ) =>
+  CallCtx m ->
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
   SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
   m (LedgerDB' m blk, Word64, TestInternals' m blk)
-openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal = do
+openDBInternal cctx args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal = do
   createDirectoryIfMissing fs True (mkFsPath [])
   (_initLog, db, replayCounter) <-
     initialize
+      cctx
       replayTracer
       snapTracer
       lgrConfig

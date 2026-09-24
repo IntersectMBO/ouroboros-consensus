@@ -268,6 +268,7 @@ import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosUtils.CallTrace (CallCtx)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -338,6 +339,7 @@ data LedgerDB m l blk = LedgerDB
   -- Note this will allocate resources; see the "'Forker' management
   -- in the running node" comment above.
   , validateFork ::
+      CallCtx m ->
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->
@@ -407,7 +409,7 @@ data TestInternals m l blk = TestInternals
   -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
-  , reapplyThenPushNOW :: blk -> m ()
+  , reapplyThenPushNOW :: CallCtx m -> blk -> m ()
   -- ^ Apply block to the tip ledger state (using reapplication), and prune the
   -- 'LedgerDB' to its immutable tip.
   --
@@ -544,7 +546,7 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
+  , initReapplyBlock :: !(CallCtx m -> LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
   , currentTip :: !(db -> LedgerState blk EmptyMK)
@@ -582,6 +584,7 @@ initialize ::
   , InspectLedger blk
   , HasCallStack
   ) =>
+  CallCtx m ->
   Tracer m (TraceReplayEvent blk) ->
   Tracer m (TraceSnapshotEvent blk) ->
   LedgerDbCfg (ExtLedgerState blk) ->
@@ -592,6 +595,7 @@ initialize ::
   Maybe DiskSnapshot ->
   m (InitLog blk, db, Word64)
 initialize
+  cctx
   replayTracer
   snapTracer
   cfg
@@ -620,6 +624,7 @@ initialize
       traceMarkerIO "Genesis loaded"
       (db, replayed) <-
         replayStartingWith
+          cctx
           replayTracer''
           cfg
           stream
@@ -670,6 +675,7 @@ initialize
               let replayTracer'' = decorateReplayTracerWithStart pt' replayTracer'
               (db, replayed) <-
                 replayStartingWith
+                  cctx
                   replayTracer''
                   cfg
                   stream
@@ -694,6 +700,7 @@ replayStartingWith ::
   , InspectLedger blk
   , HasCallStack
   ) =>
+  CallCtx m ->
   Tracer m (ReplayStart blk -> ReplayGoal blk -> TraceReplayProgressEvent blk) ->
   LedgerDbCfg (ExtLedgerState blk) ->
   StreamAPI m blk blk ->
@@ -701,7 +708,7 @@ replayStartingWith ::
   Point blk ->
   InitDB db m blk ->
   m (db, Word64)
-replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
+replayStartingWith cctx tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
   res <-
     runExceptT $
       streamAll
@@ -709,7 +716,7 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
         from
         id
         (initDb, 0)
-        push
+        (push cctx)
   case res of
     Left _ ->
       error $
@@ -719,11 +726,12 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
     Right v -> pure v
  where
   push ::
+    CallCtx m ->
     blk ->
     (db, Word64) ->
     m (db, Word64)
-  push blk (!db, !replayed) = do
-    !db' <- initReapplyBlock cfg blk db
+  push cctx' blk (!db, !replayed) = do
+    !db' <- initReapplyBlock cctx' cfg blk db
 
     let !replayed' = replayed + 1
 

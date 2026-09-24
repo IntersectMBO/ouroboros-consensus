@@ -27,10 +27,10 @@ import Data.Either (isRight)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
-import LeiosDemoDb
-  ( LeiosDbReader
-  , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
-  , awaitAll
+import LeiosDemoDb (awaitAll)
+import LeiosDemoDb.WithCallTrace
+  ( ReaderWithCallTrace
+  , WriterWithCallTrace (writeEbBody, writeEbPoint, writeTxs)
   )
 import LeiosDemoTypes
   ( ForgedLeiosEb (..)
@@ -43,6 +43,7 @@ import LeiosDemoTypes
   , leiosCommitteeSize
   , signLeiosVote
   )
+import LeiosUtils.CallTrace (CallCtx)
 import LeiosVoteState
   ( AddVoteResult (Added)
   , LeiosVoteState (addVote)
@@ -146,6 +147,7 @@ runForge ::
   , ConvertRawHash blk
   , ResolveLeiosBlock blk
   ) =>
+  CallCtx IO ->
   EpochSize ->
   SlotNo ->
   ForgeLimit ->
@@ -155,11 +157,11 @@ runForge ::
   -- | The BLS key that this forger votes with, if it has one.
   Maybe LeiosSigningKey ->
   GenTxs blk ->
-  LeiosDbReader IO ->
-  LeiosDbWriter IO ->
+  ReaderWithCallTrace IO ->
+  WriterWithCallTrace IO ->
   Tracer IO TraceLeiosKernel ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDbReader leiosDbWriter leiosTracer = do
+runForge cctx epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDbReader leiosDbWriter leiosTracer = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   leiosVoteState <- newLeiosVoteState committee
@@ -213,9 +215,9 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   -- both LeiosNotify and the LeiosTxCache require the announcement first.
   storeEb :: ForgedLeiosEb -> IO ()
   storeEb forgedEb = do
-    pointWritten <- writeEbPoint leiosDbWriter forgedEb.point (encodeLeiosEbSize forgedEb.body)
-    bodyWritten <- writeEbBody leiosDbWriter forgedEb.point forgedEb.body
-    txsWritten <- writeTxs leiosDbWriter forgedEb.txClosure
+    pointWritten <- writeEbPoint leiosDbWriter cctx forgedEb.point (encodeLeiosEbSize forgedEb.body)
+    bodyWritten <- writeEbBody leiosDbWriter cctx forgedEb.point forgedEb.body
+    txsWritten <- writeTxs leiosDbWriter cctx forgedEb.txClosure
     awaitAll [pointWritten, void bodyWritten, void txsWritten]
     traceWith leiosTracer $
       TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
@@ -373,6 +375,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
     mCert <-
       lift $
         decideLeiosCertify
+          cctx
           leiosDbReader
           leiosVoteState
           leiosTracer

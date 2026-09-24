@@ -117,6 +117,7 @@ import LeiosTxCache
   , evictOlderThan
   , newHashTableLeiosTxCache
   )
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -499,7 +500,8 @@ runWith ::
   (NodeToNodeVersion -> forall s. CBOR.Decoder s addrNTN) ->
   LowLevelRunNodeArgs m addrNTN addrNTC blk ->
   m ()
-runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
+runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} = do
+  cctx <- rootCallCtx "Node"
   llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
     withRegistry $ \registry ->
       handleJust
@@ -561,6 +563,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
           (chainDB, finalArgs) <-
             openChainDB
+              cctx
               registry
               cfg
               initLedger
@@ -890,6 +893,7 @@ openChainDB ::
   ( RunNode blk
   , IOLike m
   ) =>
+  CallCtx m ->
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
@@ -909,7 +913,7 @@ openChainDB ::
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb leiosEvictTxCache defArgs customiseArgs =
+openChainDB cctx registry cfg initLedger fsImm fsVol flavorArgs leiosDb leiosEvictTxCache defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -924,7 +928,7 @@ openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb leiosEvictTxC
             leiosDb
             leiosEvictTxCache
             defArgs
-   in (,args) <$> ChainDB.openDB args
+   in (,args) <$> ChainDB.openDB cctx args
 
 mkNodeKernelArgs ::
   forall m addrNTN addrNTC blk.

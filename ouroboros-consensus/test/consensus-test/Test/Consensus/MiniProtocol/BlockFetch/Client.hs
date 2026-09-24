@@ -38,6 +38,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Traversable (for)
 import qualified LeiosDemoDb as LeiosDb
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Network.TypedProtocol.Channel (createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage (..))
 import Network.TypedProtocol.Core (PeerRole (..))
@@ -150,6 +151,7 @@ runBlockFetchTest ::
   BlockFetchClientTestSetup ->
   m BlockFetchClientOutcome
 runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
+  cctx <- rootCallCtx "BlockFetchTest"
   varChains <- uncheckedNewTVarM Map.empty
   varControlMessage <- uncheckedNewTVarM Continue
   varFetchedBlocks <- uncheckedNewTVarM (0 <$ peerUpdates)
@@ -162,7 +164,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
         lastTick <$> Map.elems peerUpdates
   (tracer, getTrace) <-
     first (LogicalClock.tickTracer clock) <$> recordingTracerTVar
-  chainDbView <- mkChainDbView registry tracer
+  chainDbView <- mkChainDbView cctx registry tracer
 
   let getCandidates = Map.map chainToAnchoredFragment <$> readTVar varChains
 
@@ -278,10 +280,11 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
   topLevelConfig = singleNodeTestConfigWithK securityParam
 
   mkChainDbView ::
+    CallCtx m ->
     ResourceRegistry m ->
     Tracer m String ->
     m (BlockFetchClientInterface.ChainDbView m TestBlock)
-  mkChainDbView registry tracer = do
+  mkChainDbView cctx registry tracer = do
     chainDbArgs <- do
       nodeDBs <- emptyNodeDBs
       mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
@@ -299,7 +302,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
       allocate
         registry
-        (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
+        (\_ -> ChainDBImpl.openDBInternal cctx chainDbArgs False)
         (ChainDB.closeDB . fst)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
 

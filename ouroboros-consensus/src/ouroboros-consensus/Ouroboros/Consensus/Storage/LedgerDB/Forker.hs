@@ -86,7 +86,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbReader)
+import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
   ( BytesSize
@@ -100,6 +100,7 @@ import LeiosDemoTypes
   , TxHash
   , verifyLeiosCert
   )
+import LeiosUtils.CallTrace (CallCtx)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configLedger)
@@ -349,7 +350,7 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ How many blocks to roll back before applying the blocks
   , hdrs :: NonEmpty (Header blk)
   -- ^ The headers we want to apply
-  , leiosDB :: !(LeiosDbReader m)
+  , leiosDB :: !(ReaderWithCallTrace m)
   -- ^ Leios demo DB connection: 'applyBlock' calls 'resolveLeiosBlock'
   -- with this connection before each ledger application, so that
   -- Dijkstra blocks carrying a 'Maybe LeiosCert' can have the EB
@@ -366,15 +367,17 @@ validate ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
+  CallCtx m ->
   ComputeLedgerEvents ->
   ValidateArgs m l blk ->
   m (ValidateResult l blk)
-validate evs args = do
+validate cctx evs args = do
   aps <- mkAps <$> atomically prevApplied
   res <-
     rewrap
       <$> switch
         leiosDB
+        cctx
         withForkerAtFromTip
         evs
         validateConfig
@@ -441,7 +444,8 @@ switch ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   (forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -453,13 +457,14 @@ switch ::
   ResolveBlock m blk ->
   SuccessForkerAction m l ->
   m (Either GetForkerError (Either (AnnLedgerError l blk) ()))
-switch leiosDb withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
+switch leiosDb cctx withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
     let start = PushStart . toRealPoint . NE.head $ newBlocks
         goal = PushGoal . toRealPoint . NE.last $ newBlocks
     ePush <-
       applyThenPushMany
         leiosDb
+        cctx
         (trace . StartedPushingBlockToTheLedgerDb start goal)
         evs
         cfg
@@ -514,15 +519,16 @@ applyBlockToForker ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   BlockApplicationMode ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Forker m l ->
   blk ->
   m (Either (AnnLedgerError l blk) (l DiffMK))
-applyBlockToForker leiosDb mode evs cfg fo blk =
-  applyBlock leiosDb evs cfg ap fo noResolution
+applyBlockToForker leiosDb cctx mode evs cfg fo blk =
+  applyBlock leiosDb cctx evs cfg ap fo noResolution
  where
   ap = case mode of
     ValidateBlock -> ApplyVal blk
@@ -543,14 +549,15 @@ applyBlock ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap m l blk ->
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) (l DiffMK))
-applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
+applyBlock leiosDb cctx evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b -> do
     case blockLeiosCert b of
       Nothing ->
@@ -574,6 +581,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             res <-
               resolveAndApplyLeiosClosure
                 leiosDb
+                cctx
                 (configLedger (getExtLedgerCfg cfg))
                 (pointEbHash announcedPoint)
                 readTables
@@ -652,6 +660,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             withExceptT ExtValidationErrorLedger . ExceptT $
               resolveAndApplyLeiosClosure
                 leiosDb
+                cctx
                 (configLedger (getExtLedgerCfg cfg))
                 (pointEbHash announcedPoint)
                 readTables
@@ -664,10 +673,10 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             Right blockDiff -> pure (prependDiffs lcaClosureDiff blockDiff)
   ReapplyRef r -> do
     b <- doResolveBlock r
-    applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
+    applyBlock leiosDb cctx evs cfg (ReapplyVal b) fo doResolveBlock
   ApplyRef r -> do
     b <- doResolveBlock r
-    applyBlock leiosDb evs cfg (ApplyVal b) fo doResolveBlock
+    applyBlock leiosDb cctx evs cfg (ApplyVal b) fo doResolveBlock
  where
   withValues ::
     blk ->
@@ -688,15 +697,16 @@ applyThenPush ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap m l blk ->
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) ())
-applyThenPush leiosDb evs cfg ap fo doResolve = do
-  eLerr <- applyBlock leiosDb evs cfg ap fo doResolve
+applyThenPush leiosDb cctx evs cfg ap fo doResolve = do
+  eLerr <- applyBlock leiosDb cctx evs cfg ap fo doResolve
   case eLerr of
     Left err -> pure (Left err)
     Right st -> Right <$> forkerPush fo st
@@ -710,7 +720,8 @@ applyThenPushMany ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -718,12 +729,12 @@ applyThenPushMany ::
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) ())
-applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = pushAndTrace aps
+applyThenPushMany leiosDb cctx trace evs cfg aps fo doResolveBlock = pushAndTrace aps
  where
   pushAndTrace [] = pure $ Right ()
   pushAndTrace (ap : aps') = do
     trace $ Pushing . toRealPoint $ ap
-    res <- applyThenPush leiosDb evs cfg ap fo doResolveBlock
+    res <- applyThenPush leiosDb cctx evs cfg ap fo doResolveBlock
     case res of
       Left err -> pure (Left err)
       Right () -> pushAndTrace aps'
@@ -784,10 +795,11 @@ class ResolveLeiosBlock blk where
   -- closure tx still needs full validation.
   resolveLeiosClosure ::
     Monad m =>
-    LeiosDbReader m ->
+    ReaderWithCallTrace m ->
+    CallCtx m ->
     EbHash ->
     m (Either LeiosClosureError [(TxHash, GenTx blk)])
-  resolveLeiosClosure _ _ = pure (Right [])
+  resolveLeiosClosure _ _ _ = pure (Right [])
 
   -- | Rebuild the 'Validated' token for a closure tx that the LeiosTxCache
   -- reports as already validated, so the voting thread can pick
@@ -925,16 +937,17 @@ resolveLeiosBlock ::
   forall blk m.
   Monad m =>
   ResolveLeiosBlock blk =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   ChainDepState (BlockProtocol blk) ->
   blk ->
   m blk
-resolveLeiosBlock leiosDb cds b =
+resolveLeiosBlock leiosDb cctx cds b =
   case protocolStateLeiosAnnouncement @blk cds of
     Nothing -> pure b
     Just (announcedPoint, _) ->
       -- NOTE: This produces a block that would fail full validation.
-      resolveLeiosClosure leiosDb (pointEbHash announcedPoint)
+      resolveLeiosClosure leiosDb cctx (pointEbHash announcedPoint)
         <&> \case
           Left err -> error $ "resolveLeiosBlock: failed to resolve closure " <> show err
           Right txs -> inlineLeiosClosure b (map snd txs)
@@ -956,7 +969,8 @@ resolveAndApplyLeiosClosure ::
   , ResolveLeiosBlock blk
   , HasLedgerTables (LedgerState blk)
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   LedgerCfg (LedgerState blk) ->
   -- | The EB to resolve
   EbHash ->
@@ -967,10 +981,10 @@ resolveAndApplyLeiosClosure ::
   -- | The base ledger state to apply the EB on top of.
   LedgerState blk EmptyMK ->
   m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
-resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
+resolveAndApplyLeiosClosure leiosDb cctx lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
   closureTxs <-
-    resolveLeiosClosure leiosDb ebHash <&> \case
+    resolveLeiosClosure leiosDb cctx ebHash <&> \case
       Left err -> error $ "resolveAndApplyLeiosClosure: failed to resolve closure " <> show err
       Right txs -> map snd txs
   -- UTXO-HD of the whole closure

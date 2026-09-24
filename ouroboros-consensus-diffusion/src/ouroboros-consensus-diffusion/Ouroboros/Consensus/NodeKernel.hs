@@ -6,7 +6,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -65,6 +64,13 @@ import LeiosDemoDb
   ( LeiosDbHandle (..)
   )
 import qualified LeiosDemoDb as LeiosDb
+import LeiosDemoDb.WithCallTrace
+  ( handleOpenReader
+  , handleOpenWriter
+  , readerClose
+  , withCallTraceHandle
+  , writerClose
+  )
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoTypes
@@ -852,6 +858,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                           leiosCentralState
                           (leiosOutstanding, leiosReady)
                           leiosTxCache
+                          forgeCCtx
                           leiosDbWriter
                           systemTime
                           -- Safe here: the forge hands us a corresponding header
@@ -868,13 +875,16 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    leiosDbReader <- LeiosDb.openReader leiosDB
-    leiosDbWriter <- LeiosDb.openWriter leiosDB
     rootCCtx <- rootCallCtx "Forge"
+    let leiosDbHandle = withCallTraceHandle nullTracer leiosDB
+    leiosDbReader <- handleOpenReader leiosDbHandle rootCCtx
+    leiosDbWriter <- handleOpenWriter leiosDbHandle rootCCtx
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 
-  finalizeForging (bf, leiosDbReader, leiosDbWriter, _) =
-    leiosDbWriter.close >> leiosDbReader.close >> finalize bf
+  finalizeForging (bf, leiosDbReader, leiosDbWriter, rootCCtx) =
+    leiosDbWriter.close rootCCtx
+      >> leiosDbReader.close rootCCtx
+      >> finalize bf
 
 {-------------------------------------------------------------------------------
   TxSubmission integration

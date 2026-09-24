@@ -39,11 +39,13 @@ import Data.ByteString as BS (ByteString, readFile)
 import qualified Data.ByteString.Lazy.Char8 as BSL8 (unpack)
 import Data.Functor (($>))
 import qualified Data.Set as Set
-import LeiosDemoDb (withLeiosDBSQLite, withReader, withWriter)
+import LeiosDemoDb (withLeiosDBSQLite)
+import LeiosDemoDb.WithCallTrace (withCallTraceHandle, withReader, withWriter)
 import LeiosDemoTypes
   ( TraceLeiosKernel (TraceLeiosDb)
   , traceLeiosKernelToObject
   )
+import LeiosUtils.CallTrace (rootCallCtx)
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
@@ -194,7 +196,8 @@ synthesize ::
   DBSynthesizerConfig ->
   (CardanoProtocolParams StandardCrypto) ->
   IO ForgeResult
-synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confVotingKey} runP =
+synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confVotingKey} runP = do
+  cctx <- rootCallCtx "DBSynthesizer"
   withRegistry $ \registry -> do
     -- The node writes its LeiosDb next to the other ChainDB files.
     -- The tool derives that paths for the volatile and immutable partitions from --db.
@@ -216,7 +219,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           (Node.stdMkChainDbHasFS confDbDir)
           (Node.stdMkChainDbHasFS confDbDir)
           flavargs
-          leiosDbHandle
+          leiosDb
           (\_ -> pure ()) -- no LeiosTxCache in this tool
           $ ChainDB.defaultArgs
 
@@ -242,9 +245,10 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
             (TraceLeiosDb >$< leiosTracer)
             (confDbDir </> "leios.vol.db")
             (confDbDir </> "leios.imm.db")
-            $ \leiosDbHandle ->
-              withReader leiosDbHandle $ \leiosDbReader -> withWriter leiosDbHandle $ \leiosDbWriter ->
-                ChainDB.withDB (ChainDB.updateTracer dbTracer (mkDbArgs leiosDbHandle)) $ \chainDB -> do
+            $ \leiosDb ->
+              let leiosDbHandle = withCallTraceHandle nullTracer leiosDb
+              in withReader leiosDbHandle cctx $ \leiosDbReader -> withWriter leiosDbHandle cctx $ \leiosDbWriter ->
+                ChainDB.withDB cctx (ChainDB.updateTracer dbTracer (mkDbArgs leiosDbHandle)) $ \chainDB -> do
                   slotNo <- do
                     tip <- atomically (ChainDB.getTipPoint chainDB)
                     pure $ case pointSlot tip of
@@ -253,6 +257,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
 
                   putStrLn $ "--> starting at: " ++ show slotNo
                   runForge
+                    cctx
                     epochSize
                     slotNo
                     synthLimit

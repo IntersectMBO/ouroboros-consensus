@@ -22,13 +22,10 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
-import LeiosDemoDb
-  ( allocateHandle
-  , newLeiosDBInMemory
-  , newLeiosDBSQLite
-  , withReader
-  )
+import LeiosDemoDb (allocateHandle, newLeiosDBInMemory, newLeiosDBSQLite)
+import LeiosDemoDb.WithCallTrace (withCallTraceHandle, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
+import LeiosUtils.CallTrace (rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -86,7 +83,8 @@ openLedgerDB ::
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args =
+openLedgerDB args = do
+  cctx <- rootCallCtx "DBAnalyser"
   runWithTempRegistry $
     (,()) <$> do
       (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
@@ -100,7 +98,7 @@ openLedgerDB args =
                 (\_ -> pure (error "no stream"))
                 snapManager
                 (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+          lift $ LedgerDB.openDBInternal cctx args initDb snapManager emptyStream genesisPoint
         LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
           res <-
             LedgerDB.V2.mkResources
@@ -123,7 +121,7 @@ openLedgerDB args =
                 snapManager
                 (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
                 res
-          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+          lift $ LedgerDB.openDBInternal cctx args initDb snapManager emptyStream genesisPoint
       pure (ldb, od)
 
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
@@ -150,7 +148,8 @@ analyse ::
   DBAnalyserConfig ->
   Args blk ->
   IO (Maybe AnalysisResult)
-analyse dbaConfig args =
+analyse dbaConfig args = do
+  cctx <- rootCallCtx "DBAnalyser"
   withRegistry $ \registry -> do
     lock <- newMVar ()
     chainDBTracer <- mkTracer lock verbose
@@ -163,7 +162,8 @@ analyse dbaConfig args =
     -- left writing to the immutable partition with nobody able to stop it.
     -- The registry releases youngest first and nothing else is in it yet, so
     -- the handle closes after every resource that reads through it.
-    leiosDbHandle <- allocateHandle registry openLeiosDb
+    leiosDb <- allocateHandle registry openLeiosDb
+    let leiosDbHandle = withCallTraceHandle nullTracer leiosDb
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -194,7 +194,7 @@ analyse dbaConfig args =
             shfs
             shfs
             flavargs
-            leiosDbHandle
+            leiosDb
             (\_ -> pure ()) -- no LeiosTxCache in this tool
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
@@ -239,9 +239,10 @@ analyse dbaConfig args =
       -- Open one LeiosDb connection for the whole analysis run: the analysis
       -- loop is single-threaded, so a single bracketed connection is the right
       -- lifetime.
-      withReader leiosDbHandle $ \reader -> do
+      withReader leiosDbHandle cctx $ \reader -> do
         result <-
           ana
+            cctx
             AnalysisEnv
               { cfg
               , startFrom

@@ -62,7 +62,8 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Typeable
 import Data.Void (Void)
-import LeiosDemoDb (LeiosDbReader, withReader)
+import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace, withCallTraceHandle, withReader)
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
@@ -117,7 +118,8 @@ import Ouroboros.Network.Protocol.LocalTxSubmission.Type
 -- | Protocol handlers for node-to-client (local) communication
 data Handlers m peer blk = Handlers
   { hChainSyncServer ::
-      LeiosDbReader m ->
+      CallCtx m ->
+      ReaderWithCallTrace m ->
       ChainDB.Follower m blk (ChainDB.WithPoint blk (Header blk, Serialised blk)) ->
       ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
   , hTxSubmissionServer ::
@@ -145,11 +147,13 @@ mkHandlers ::
   Handlers m addrNTC blk
 mkHandlers NodeKernelArgs{cfg, tracers} NodeKernel{getChainDB, getMempool} =
   Handlers
-    { hChainSyncServer =
+    { hChainSyncServer = \cctx reader ->
         chainSyncBlocksServer
+          cctx
           (Node.chainSyncServerBlockTracer tracers)
           getChainDB
           (configCodec cfg)
+          reader
     , hTxSubmissionServer =
         localTxSubmissionServer
           (Node.localTxSubmissionServerTracer tracers)
@@ -456,7 +460,9 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
     m ((), Maybe bCS)
   aChainSyncServer them channel = do
     labelThisThread "LocalChainSyncServer"
-    withReader kernelLeiosDB $ \reader ->
+    cctx <- rootCallCtx "LocalChainSyncServer"
+    let leiosDbHandle = withCallTraceHandle nullTracer kernelLeiosDB
+    withReader leiosDbHandle cctx $ \reader ->
       bracketWithPrivateRegistry
         (chainSyncBlockServerFollower (getChainDB kernel))
         ChainDB.followerClose
@@ -466,7 +472,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
             cChainSyncCodec
             channel
             $ chainSyncServerPeer
-            $ hChainSyncServer reader flr
+            $ hChainSyncServer cctx reader flr
 
   aTxSubmissionServer ::
     addrNTC ->

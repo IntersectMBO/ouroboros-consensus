@@ -10,14 +10,21 @@ module LeiosDemoDb.WithCallTrace
   ( -- * Handle
     HandleWithCallTrace (..)
   , withCallTraceHandle
+  , handleOpenReader
+  , handleOpenWriter
+  , withReader
+  , withReaderAndWriter
 
     -- * Reader
   , ReaderWithCallTrace (..)
   , withCallTraceReader
+  , readerClose
 
     -- * Writer
   , WriterWithCallTrace (..)
   , withCallTraceWriter
+  , writerClose
+  , withWriter
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
@@ -42,7 +49,8 @@ import LeiosUtils.CallTrace
   , SomeJsonCallTrace (..)
   , callTraceVia
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike)
+import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.Util.IOLike (IOLike, bracket)
 
 -- | Like 'LeiosDbHandle' but every method takes a 'CallCtx' as its first
 -- argument, which is used as the parent for the emitted call-trace event.
@@ -177,3 +185,63 @@ callWith tracer =
   callTraceVia
     (\_ -> ())
     (traceWith tracer . TraceLeiosDbCall . SomeJsonCallTrace)
+
+-- | Open a per-call reader from a 'HandleWithCallTrace'. Provided as an
+-- explicit function so callers without 'DuplicateRecordFields' can invoke it
+-- without relying on 'OverloadedRecordDot' disambiguation.
+handleOpenReader :: HandleWithCallTrace m -> CallCtx m -> m (ReaderWithCallTrace m)
+handleOpenReader h = h.openReader
+
+-- | Open a per-call writer from a 'HandleWithCallTrace'.
+handleOpenWriter :: HandleWithCallTrace m -> CallCtx m -> m (WriterWithCallTrace m)
+handleOpenWriter h = h.openWriter
+
+-- | Close a 'ReaderWithCallTrace'. Provided as an explicit function for the
+-- same reason as 'handleOpenReader'.
+readerClose :: ReaderWithCallTrace m -> CallCtx m -> m ()
+readerClose r = r.close
+
+-- | Close a 'WriterWithCallTrace'.
+writerClose :: WriterWithCallTrace m -> CallCtx m -> m ()
+writerClose w = w.close
+
+-- | Bracket-style equivalent of 'LeiosDemoDb.withReader' for a
+-- 'HandleWithCallTrace': opens a reader, runs the continuation, then closes.
+withReader ::
+  IOLike m =>
+  HandleWithCallTrace m ->
+  CallCtx m ->
+  (ReaderWithCallTrace m -> m a) ->
+  m a
+withReader h cctx = bracket (handleOpenReader h cctx) (\r -> readerClose r cctx)
+
+-- | Bracket-style equivalent of 'LeiosDemoDb.withWriter' for a
+-- 'HandleWithCallTrace': opens a writer, runs the continuation, then closes.
+withWriter ::
+  IOLike m =>
+  HandleWithCallTrace m ->
+  CallCtx m ->
+  (WriterWithCallTrace m -> m a) ->
+  m a
+withWriter h cctx = bracket (handleOpenWriter h cctx) (\w -> writerClose w cctx)
+
+-- | Bracket-style open of both a reader and a writer from a 'HandleWithCallTrace'.
+withReaderAndWriter ::
+  IOLike m =>
+  HandleWithCallTrace m ->
+  CallCtx m ->
+  (ReaderWithCallTrace m -> WriterWithCallTrace m -> m a) ->
+  m a
+withReaderAndWriter h cctx f = withReader h cctx $ \r -> withWriter h cctx $ \w -> f r w
+
+instance NoThunks (HandleWithCallTrace m) where
+  showTypeOf _ = "HandleWithCallTrace"
+  wNoThunks _ctx _a = return Nothing
+
+instance NoThunks (ReaderWithCallTrace m) where
+  showTypeOf _ = "ReaderWithCallTrace"
+  wNoThunks _ctx _a = return Nothing
+
+instance NoThunks (WriterWithCallTrace m) where
+  showTypeOf _ = "WriterWithCallTrace"
+  wNoThunks _ctx _a = return Nothing

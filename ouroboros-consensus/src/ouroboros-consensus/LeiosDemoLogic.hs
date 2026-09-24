@@ -49,13 +49,8 @@ import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
-import LeiosDemoDb
-  ( LeiosDbReader
-  , LeiosDbWriter (..)
-  , Promise (..)
-  , batchRetrieveTxs
-  , lookupEbBody
-  )
+import LeiosDemoDb (Promise (..))
+import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace (..), WriterWithCallTrace (..))
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -108,6 +103,7 @@ import LeiosDemoTypes
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache (..))
+import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
   ( BlockProtocol
   , ConvertRawHash
@@ -218,7 +214,7 @@ data SomeLeiosFetchContext m
   = MkSomeLeiosFetchContext !(LeiosFetchContext m)
 
 data LeiosFetchContext m = MkLeiosFetchContext
-  { leiosDbReader :: !(LeiosDbReader m)
+  { leiosDbReader :: !(ReaderWithCallTrace m)
   , leiosEbBuffer :: !(MV.MVector (PrimState m) (TxHash, BytesSize))
   , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
   }
@@ -231,7 +227,7 @@ data LeiosFetchContext m = MkLeiosFetchContext
 -- 'close' pair for the lifetime of that instance (see 'withReader').
 newLeiosFetchContext ::
   PrimMonad m =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
   m (LeiosFetchContext m)
 newLeiosFetchContext leiosDbReader = do
   leiosEbBuffer <- MV.new maxTxsPerEb
@@ -244,31 +240,33 @@ newLeiosFetchContext leiosDbReader = do
 leiosFetchHandler ::
   IOLike m =>
   Tracer m TraceLeiosPeer ->
+  CallCtx m ->
   LeiosFetchContext m ->
   LF.LeiosFetchRequestHandler LeiosPoint LeiosEb LeiosTx m
-leiosFetchHandler tracer leiosContext = LF.MkLeiosFetchRequestHandler $ \case
+leiosFetchHandler tracer cctx leiosContext = LF.MkLeiosFetchRequestHandler $ \case
   LF.MsgLeiosBlockRequest p -> do
     traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
-    x <- msgLeiosBlockRequest tracer leiosContext p
+    x <- msgLeiosBlockRequest tracer cctx leiosContext p
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockRequest " <> Leios.prettyLeiosPoint p
     pure $ LF.MsgLeiosBlock x
   LF.MsgLeiosBlockTxsRequest p bitmaps -> traceException tracer TraceLeiosPeerDbException $ do
     traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
-    x <- msgLeiosBlockTxsRequest tracer leiosContext p bitmaps
+    x <- msgLeiosBlockTxsRequest tracer cctx leiosContext p bitmaps
     traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlockTxsRequest " <> Leios.prettyLeiosPoint p
     pure $ LF.MsgLeiosBlockTxs p bitmaps x
 
 msgLeiosBlockRequest ::
   IOLike m =>
   Tracer m TraceLeiosPeer ->
+  CallCtx m ->
   LeiosFetchContext m ->
   LeiosPoint ->
   m LeiosEb
-msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
+msgLeiosBlockRequest tracer cctx leiosContext MkLeiosPoint{pointEbHash} = do
   let MkLeiosFetchContext{leiosDbReader, leiosEbBuffer = buf} = leiosContext
   n <- traceException tracer TraceLeiosPeerDbException $ do
     -- get the EB items using new db
-    items <- lookupEbBody leiosDbReader pointEbHash
+    items <- lookupEbBody leiosDbReader cctx pointEbHash
     let loop !i [] = pure i
         loop !i ((txHash, txBytesSize) : rest) = do
           MV.write buf i (txHash, txBytesSize)
@@ -280,11 +278,12 @@ msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
 msgLeiosBlockTxsRequest ::
   IOLike m =>
   Tracer m TraceLeiosPeer ->
+  CallCtx m ->
   LeiosFetchContext m ->
   LeiosPoint ->
   [(Word16, Word64)] ->
   m (V.Vector LeiosTx)
-msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
+msgLeiosBlockTxsRequest _tracer cctx leiosContext point bitmaps = do
   let MkLeiosFetchContext{leiosDbReader, leiosEbTxsBuffer = buf} = leiosContext
   do
     let idxs = map fst bitmaps
@@ -298,7 +297,7 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
   let txOffsets = bitmapOffsets bitmaps
   n <- do
     -- Use new db to batch retrieve transactions
-    results <- batchRetrieveTxs leiosDbReader point.pointEbHash txOffsets
+    results <- batchRetrieveTxs leiosDbReader cctx point.pointEbHash txOffsets
     -- Process results and write to buffer
     -- REVIEW: why a mutable vector?
     let loop !i [] = pure i
@@ -688,7 +687,8 @@ nextLeiosFetchClientCommand ::
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  LeiosDbWriter m ->
+  CallCtx m ->
+  WriterWithCallTrace m ->
   -- | For reporting each arriving EB's age (see 'processLeiosBlock').
   SystemTime m ->
   -- | Pull EB-body misses out of the local mempool; see 'processLeiosBlock'.
@@ -702,7 +702,7 @@ nextLeiosFetchClientCommand ::
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer systemTime pullFromMempool peerId reqsVar = do
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache cctx writer systemTime pullFromMempool peerId reqsVar = do
   StrictSTM.atomically checkOrBlock >>= \case
     Right result -> pure $ Right result
     Left () -> pure $ Left (StrictSTM.atomically awaitStopOrRequest)
@@ -746,6 +746,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer sys
               tracer
               kernelVars
               txCache
+              cctx
               writer
               systemTime
               pullFromMempool
@@ -764,6 +765,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer sys
                   tracer
                   kernelVars
                   txCache
+                  cctx
                   writer
                   systemTime
                   (ReceivedTxsFrom peerId req txs)
@@ -816,7 +818,8 @@ processLeiosBlock ::
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  LeiosDbWriter m ->
+  CallCtx m ->
+  WriterWithCallTrace m ->
   -- | For reporting the EB's age on arrival (now minus its recorded onset).
   SystemTime m ->
   -- | Pull the txs we already hold in our local mempool out of the given misses
@@ -829,7 +832,7 @@ processLeiosBlock ::
   LeiosBlockSource pid ->
   LeiosEb ->
   m ()
-processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer systemTime pullFromMempool source eb = do
+processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache cctx writer systemTime pullFromMempool source eb = do
   now <- systemTimeCurrent systemTime
   -- validate it
   let (mbPeer, point, ebBytesSize) = case source of
@@ -998,8 +1001,8 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       -- be present (announcement handling inserts it); until then insert
       -- it idempotently as a stop-gap and trace a warning.
       traceWith ktracer $ TraceLeiosBlockPointMissing point
-      pointWritten <- writeEbPoint writer point ebBytesSize
-      bodyWritten <- writeEbBody writer point eb
+      pointWritten <- writeEbPoint writer cctx point ebBytesSize
+      bodyWritten <- writeEbBody writer cctx point eb
       -- Wait for the writes to complete (and trace) synchronously when we are
       -- forging: need to ensure the data is written before advertising it.
       -- TODO: do we really? Can we just optimistically continue and risk a peer
@@ -1034,6 +1037,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       tracer
       (outstandingVar, readyVar)
       txCache
+      cctx
       writer
       systemTime
       (MempoolTxs point mempoolNotCache)
@@ -1260,12 +1264,13 @@ processLeiosBlockTxs ::
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  LeiosDbWriter m ->
+  CallCtx m ->
+  WriterWithCallTrace m ->
   -- | For reporting each completed closure's age on arrival.
   SystemTime m ->
   LeiosBlockTxsSource pid ->
   m ()
-processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer systemTime source = case source of
+processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache cctx writer systemTime source = case source of
   ForgedTxs _point eb txs -> do
     now <- systemTimeCurrent systemTime
     -- Ingest the whole closure (TODO even though we might already have some of
@@ -1370,7 +1375,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
   ingestAcquiredTxs ::
     RelativeTime -> WhetherApplied -> [(TxHash, BS.ByteString)] -> m Leios.FetchArrivalBytes
   ingestAcquiredTxs now applied toIngest = do
-    txsWritten <- writeTxs writer toIngest
+    txsWritten <- writeTxs writer cctx toIngest
     let traceCompleted = do
           completed <- traceException tracer TraceLeiosPeerDbException $ await txsWritten
           ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
@@ -1846,7 +1851,8 @@ onForgedLeiosEb ::
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  LeiosDbWriter m ->
+  CallCtx m ->
+  WriterWithCallTrace m ->
   -- | Threaded through to the body/closure handlers for age reporting
   SystemTime m ->
   -- | Built by the caller (see 'mkForgedAnnouncingHeader'), at the call site
@@ -1854,7 +1860,7 @@ onForgedLeiosEb ::
   AnnouncingHeader blk ->
   Leios.ForgedLeiosEb ->
   m ()
-onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedEb = do
+onForgedLeiosEb kernelTracer centralVar kv txCache cctx writer systemTime anc forgedEb = do
   processAnnouncementCentrally
     kernelTracer
     centralVar
@@ -1871,6 +1877,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedE
     nullTracer
     kv
     txCache
+    cctx
     writer
     systemTime
     noMempoolPull -- the forge holds the whole closure
@@ -1881,6 +1888,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedE
     nullTracer
     kv
     txCache
+    cctx
     writer
     systemTime
     (ForgedTxs forgedEb.point forgedEb.body $ V.fromList $ map (MkLeiosTx . snd) $ forgedEb.txClosure)

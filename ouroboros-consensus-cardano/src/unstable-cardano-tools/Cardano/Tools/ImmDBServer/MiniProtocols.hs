@@ -51,6 +51,7 @@ import LeiosDemoOnlyTestFetch as LF
 import LeiosDemoOnlyTestNotify
 import LeiosDemoTypes (messageLeiosFetchToObject)
 import qualified LeiosDemoTypes as Leios
+import LeiosUtils.CallTrace (rootCallCtx)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec (AnyMessage (AnyMessage))
 import Ouroboros.Consensus.Block
@@ -223,11 +224,12 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
                       (p, Nothing) -> MsgLeiosBlockTxsOffer p
                   )
       leiosFetchProt =
-        MiniProtocolCb $ \ctx channel ->
+        MiniProtocolCb $ \ctx channel -> do
+          cctx <- rootCallCtx "LeiosFetchServer"
           mkLeiosFetchContext >>= \(LeiosLogic.MkSomeLeiosFetchContext leiosContext) ->
             runPeer (traceMaybe (maybeShowSendRecvLF ctx) tracer) cLeiosFetchCodec channel $
               leiosFetchServerPeer $
-                pure (LeiosLogic.leiosFetchHandler nullTracer leiosContext)
+                pure (LeiosLogic.leiosFetchHandler nullTracer cctx leiosContext)
 
     mkMiniProtocol miniProtocolStart miniProtocolNum limits proto =
       MiniProtocol

@@ -197,7 +197,8 @@ import Data.SOP (K, unK)
 import Data.SOP.Functors
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbReader)
+import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
+import LeiosUtils.CallTrace (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -386,15 +387,16 @@ reapplyThenPushLeios ::
   , ResolveLeiosBlock blk
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   LedgerDbCfg l ->
   blk ->
   KeySetsReader m l ->
   DbChangelog l ->
   m (DbChangelog l)
-reapplyThenPushLeios leiosDb cfg b ksReader db = do
+reapplyThenPushLeios leiosDb cctx cfg b ksReader db = do
   let cds = headerStateChainDep (headerState (current db))
-  b' <- resolveLeiosBlock leiosDb cds b -- TODO resolveLeiosBlock is the wrong function to call here
+  b' <- resolveLeiosBlock leiosDb cctx cds b -- TODO resolveLeiosBlock is the wrong function to call here
   reapplyThenPush cfg b' ksReader db
 
 -- | Prune oldest ledger states according to the given 'LedgerDbPrune' strategy.

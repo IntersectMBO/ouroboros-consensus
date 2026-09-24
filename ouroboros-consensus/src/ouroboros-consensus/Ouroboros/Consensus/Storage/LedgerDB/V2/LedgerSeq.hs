@@ -58,8 +58,9 @@ import Cardano.Ledger.BaseTypes
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbReader)
+import LeiosDemoDb.WithCallTrace (ReaderWithCallTrace)
 import LeiosDemoTypes (LeiosPoint (..))
+import LeiosUtils.CallTrace (CallCtx)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configLedger)
@@ -253,13 +254,14 @@ reapplyThenPush ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   LedgerDbCfg l ->
   blk ->
   LedgerSeq m l ->
   m (LedgerSeq m l)
-reapplyThenPush leiosDb cfg ap db = do
-  newSt <- reapplyBlock leiosDb (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+reapplyThenPush leiosDb cctx cfg ap db = do
+  newSt <- reapplyBlock leiosDb cctx (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
   let (m, db') = pruneToImmTipOnly $ extend newSt db
   m
   pure db'
@@ -275,13 +277,14 @@ reapplyBlock ::
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
-  LeiosDbReader m ->
+  ReaderWithCallTrace m ->
+  CallCtx m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   blk ->
   LedgerSeq m l ->
   m (StateRef m l)
-reapplyBlock leiosDb evs cfg b db = do
+reapplyBlock leiosDb cctx evs cfg b db = do
   let StateRef st tbs = currentHandle db
       cds = headerStateChainDep (headerState st)
   st' <- case blockLeiosCert b of
@@ -298,6 +301,7 @@ reapplyBlock leiosDb evs cfg b db = do
           res <-
             resolveAndApplyLeiosClosure
               leiosDb
+              cctx
               (configLedger (getExtLedgerCfg cfg))
               (pointEbHash announcedPoint)
               readTables

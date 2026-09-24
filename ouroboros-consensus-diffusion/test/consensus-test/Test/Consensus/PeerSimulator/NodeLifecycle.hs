@@ -22,6 +22,7 @@ import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes (HasLeiosVoting)
+import LeiosUtils.CallTrace (rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
@@ -150,6 +151,7 @@ mkChainDb ::
   LiveResources blk m ->
   m (ChainDB m blk, m (WithOrigin SlotNo))
 mkChainDb resources = do
+  cctx <- rootCallCtx "PeerSimulatorNode"
   atomically $ do
     -- Reset only the non-persisted state of the ChainDB's file system mocks:
     -- - GSM state and Ledger DB are discarded
@@ -179,7 +181,7 @@ mkChainDb resources = do
   (_, (chainDB, internal)) <-
     allocate
       lrRegistry
-      (\_ -> ChainDB.openDBInternal chainDbArgs False)
+      (\_ -> ChainDB.openDBInternal cctx chainDbArgs False)
       (ChainDB.closeDB . fst)
   let ChainDB.Internal{intCopyToImmutableDB, intAddBlockRunner} = internal
   void $ forkLinkedThread lrRegistry "AddBlockRunner" (void intAddBlockRunner)

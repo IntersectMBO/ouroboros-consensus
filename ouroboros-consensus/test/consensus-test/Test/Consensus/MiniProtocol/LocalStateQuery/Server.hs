@@ -29,6 +29,8 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import LeiosDemoDb (newLeiosDBInMemory)
+import LeiosDemoDb.WithCallTrace (withCallTraceHandle)
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Network.TypedProtocol.Stateful.Proofs (connect)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -115,8 +117,9 @@ prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain ac
 
   actualOutcome :: [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
   actualOutcome = runSimOrThrow $ withRegistry $ \rr -> do
+    cctx <- rootCallCtx "TestLocalStateQuery"
     let client = mkClient points
-    server <- mkServer rr k chain
+    server <- mkServer cctx rr k chain
     (\(a, _, _) -> a)
       <$> connect
         StateIdle
@@ -198,12 +201,13 @@ mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <-
 
 mkServer ::
   IOLike m =>
+  CallCtx m ->
   ResourceRegistry m ->
   SecurityParam ->
   Chain TestBlock ->
   m (LocalStateQueryServer TestBlock (Point TestBlock) (Query TestBlock) m ())
-mkServer rr k chain = do
-  lgrDB <- initLedgerDB k chain
+mkServer cctx rr k chain = do
+  lgrDB <- initLedgerDB cctx k chain
   return $
     localStateQueryServer
       cfg
@@ -236,13 +240,15 @@ streamAPI = StreamAPI{streamAfter}
 -- | Initialise a 'LedgerDB' with the given chain.
 initLedgerDB ::
   IOLike m =>
+  CallCtx m ->
   SecurityParam ->
   Chain TestBlock ->
   m (LedgerDB' m TestBlock)
-initLedgerDB s c = do
+initLedgerDB cctx s c = do
   fs <- newTMVarIO MockFS.empty
-  leiosDbHandle <- newLeiosDBInMemory
-  let args =
+  leiosDb <- newLeiosDBInMemory
+  let leiosDbHandle = withCallTraceHandle nullTracer leiosDb
+      args =
         LedgerDbArgs
           { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
           , lgrHasFS = SomeHasFS $ simHasFS fs
@@ -260,6 +266,7 @@ initLedgerDB s c = do
         ( do
             db <-
               LedgerDB.openDB
+                cctx
                 args
                 streamAPI
                 (Chain.headPoint c)
@@ -274,6 +281,7 @@ initLedgerDB s c = do
       result <-
         LedgerDB.validateFork
           ldb
+          cctx
           (const $ pure ())
           BlockCache.empty
           0
