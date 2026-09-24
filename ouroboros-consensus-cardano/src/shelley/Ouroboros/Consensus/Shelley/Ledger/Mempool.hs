@@ -81,6 +81,12 @@ import qualified Cardano.Ledger.Conway.PParams as SL
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
+import Cardano.Ledger.Dijkstra.PParams
+  ( DijkstraEraPParams
+  , ppMaxEndorserBlockExUnitsL
+  , ppMaxEndorserBlockTxsSizeL
+  , ppMaxRefScriptSizePerEndorserBlockL
+  )
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
@@ -791,6 +797,30 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
             , mismatchExpected = limit
             }
 
+-- | What the transactions of one Leios endorser block may amount to, from the
+-- Dijkstra endorser-block protocol parameters.
+--
+-- 'ppMaxEndorserBlockReferencesSizeL' is not read: the Dijkstra 'TxEbMeasure'
+-- is its 'TxMeasure', which has no field for it.
+leiosEndorserBlockClosureMeasure ::
+  forall proto era mk.
+  ( ShelleyCompatible proto era
+  , DijkstraEraPParams era
+  ) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
+  (AlonzoMeasure, RefScriptSize)
+leiosEndorserBlockClosureMeasure st =
+  ( AlonzoMeasure
+      { byteSize = IgnoringOverflow $ ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
+      , exUnits = fromExUnits $ unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
+      }
+  , RefScriptSize $
+      IgnoringOverflow $
+        ByteSize32 (pparams ^. ppMaxRefScriptSizePerEndorserBlockL)
+  )
+ where
+  pparams = getPParams $ tickedShelleyLedgerState st
+
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance
   ShelleyCompatible p BabbageEra =>
@@ -843,5 +873,5 @@ instance
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg _st = zero
+  ebCapacityTxMeasure _cfg = uncurry TxMeasure . leiosEndorserBlockClosureMeasure
   mempoolEbReservation _ = id
