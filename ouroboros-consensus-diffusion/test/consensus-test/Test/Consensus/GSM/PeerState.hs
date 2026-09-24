@@ -41,23 +41,8 @@ tests =
         runSimOrThrow unsupported @?= [False, True]
     , testCase "real GSM waits for certificate idling before entering CaughtUp" $
         runSimOrThrow transition @?= [Syncing, Syncing, CaughtUp]
-    , testCase "client failure removes its certificate handle" $ do
-        (cs, cert) <- newHandles
-        _ <- addChainSync cs 0 PerasSupported True
-        result <-
-          E.try
-            ( bracketObjectDiffusionInbound cert 0 $ \view -> do
-                idlingStart (odisvIdling view)
-                allIdle cs cert >>= (@?= True)
-                E.throwIO (userError "certificate client failed")
-            ) ::
-            IO (Either IOError ())
-        case result of
-          Left _ -> pure ()
-          Right () -> assertFailure "expected the client exception"
-        remaining <- atomically $ odihcMap cert
-        assertBool "failed client retained a handle" (Map.null remaining)
-        allIdle cs cert >>= (@?= False)
+    , testCase "client failure removes its certificate handle" $
+        failureRemovesHandle
     ]
 
 -- Use the real collections and predicate used by NodeKernel. In particular,
@@ -178,3 +163,22 @@ transition = do
       idlingStart (odisvIdling view)
       caughtUp <- observe
       pure [missing, registered, caughtUp]
+
+failureRemovesHandle :: Assertion
+failureRemovesHandle = do
+  (cs, cert) <- newHandles
+  _ <- addChainSync cs 0 PerasSupported True
+  result <-
+    E.try
+      ( bracketObjectDiffusionInbound cert 0 $ \view -> do
+          idlingStart (odisvIdling view)
+          allIdle cs cert >>= (@?= True)
+          E.throwIO (userError "certificate client failed")
+      ) ::
+      IO (Either IOError ())
+  case result of
+    Left _ -> pure ()
+    Right () -> assertFailure "expected the client exception"
+  remaining <- atomically $ odihcMap cert
+  assertBool "failed client retained a handle" (Map.null remaining)
+  allIdle cs cert >>= (@?= False)
