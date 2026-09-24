@@ -32,6 +32,7 @@ import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Trace (LeiosDbStats (..))
+import LeiosUtils.CallTrace (CallCtx)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash

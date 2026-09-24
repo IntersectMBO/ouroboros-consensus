@@ -732,6 +732,7 @@ addBlockRunner ::
   ChainDbEnv m blk ->
   m Void
 addBlockRunner fuse cdb@CDB{..} = do
+  labelThisThread "ChainSel"
   rootCCtx <- rootCallCtx "ChainSel"
 
   let

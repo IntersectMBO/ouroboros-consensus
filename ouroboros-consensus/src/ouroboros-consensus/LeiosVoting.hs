@@ -111,6 +111,7 @@ import Ouroboros.Consensus.Util.IOLike
   , STM
   , atomically
   , bracket
+  , labelThisThread
   )
 import Ouroboros.Consensus.Util.Time (nominalDelay)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
@@ -272,6 +273,7 @@ runLeiosVoting ::
   [LeiosSigningKey] ->
   m ()
 runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
+  labelThisThread "LeiosVoting"
   cctx <- rootCallCtx "LeiosVoting"
   case sks of
     [] ->
