@@ -21,7 +21,7 @@ index-state:
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/kes-agent
-  tag: 4625f3cf543566517d08882e659c97932d106d86
+  tag: 920de6b5c578c4d2fb7639a9734a96e39400e2b8
   --sha256: sha256-CSHWndpeJFqCEFNT6ysfyN6x+O4vZ9TtYOOsZKcLnIA=
   subdir:
     kes-agent
