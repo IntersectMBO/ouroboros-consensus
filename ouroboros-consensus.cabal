@@ -203,6 +203,7 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.Types
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -313,6 +314,12 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+    Ouroboros.Consensus.Storage.LeiosDB
+    Ouroboros.Consensus.Storage.LeiosDB.API
+    Ouroboros.Consensus.Storage.LeiosDB.Exception
+    Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
+    Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
+    Ouroboros.Consensus.Storage.LeiosDB.Trace
     Ouroboros.Consensus.Storage.PerasCertDB
     Ouroboros.Consensus.Storage.PerasCertDB.API
     Ouroboros.Consensus.Storage.PerasCertDB.Impl
@@ -382,9 +389,12 @@ library
     containers >=0.5 && <0.9,
     contra-tracer ^>=0.2.1,
     deepseq,
+    direct-sqlite,
+    directory,
     extra,
     FailT ^>=0.1.2,
     filelock,
+    filepath,
     fs-api ^>=0.4,
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1 || ^>=1.9,
@@ -822,6 +832,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
+    Test.Ouroboros.Storage.LeiosDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.PerasCertDB
     Test.Ouroboros.Storage.PerasCertDB.Model
@@ -848,12 +859,14 @@ test-suite storage-test
     cborg,
     containers,
     contra-tracer,
+    deepseq,
+    direct-sqlite,
     directory,
     filepath,
     fs-api,
     fs-sim,
     generics-sop,
-    io-classes:{io-classes, strict-stm},
+    io-classes:{io-classes, si-timers, strict-stm},
     io-sim,
     mempack,
     mtl,
@@ -981,6 +994,48 @@ benchmark PerasCertDB-bench
     ouroboros-network:api,
     tasty-bench,
     unstable-consensus-testlib,
+
+benchmark LeiosDB-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus/bench/LeiosDB-bench
+  main-is: Main.hs
+  ghc-options: -with-rtsopts=-N4
+  build-depends:
+    async,
+    base,
+    bytestring,
+    cardano-slotting,
+    contra-tracer,
+    io-classes:si-timers,
+    ouroboros-consensus,
+    resource-registry,
+    temporary,
+    time,
+    vector,
+
+benchmark LeiosDB-gc-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus/bench/LeiosDB-gc-bench
+  main-is: Main.hs
+  ghc-options: -with-rtsopts=-N4
+  build-depends:
+    async,
+    base,
+    bytestring,
+    cardano-slotting,
+    contra-tracer,
+    direct-sqlite,
+    directory,
+    io-classes:si-timers,
+    optparse-applicative,
+    ouroboros-consensus,
+    resource-registry,
+    temporary,
+    text,
+    time,
+    vector,
 
 benchmark txid-eq-ord-instances-bench
   import: common-bench
@@ -1827,6 +1882,7 @@ library unstable-cardano-tools
     Cardano.Tools.Headers
     Cardano.Tools.ImmDBServer.Diffusion
     Cardano.Tools.ImmDBServer.MiniProtocols
+    Cardano.Tools.LeiosDb
 
   other-modules:
     Cardano.Api.Key
