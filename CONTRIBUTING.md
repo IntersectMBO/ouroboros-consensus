@@ -148,8 +148,19 @@ from a binary, and then build the haddocks for the project.
 
 Often times, it is useful to have a
 [`hoogle`](https://github.com/ndmitchell/hoogle) server at hand, with the
-packages and its dependencies. Our suggestion is to install
-[`cabal-hoogle`](https://github.com/kokobd/cabal-hoogle) from github:
+packages and its dependencies. 
+
+Our suggestion is to use
+[`cabal-hoogle`](https://github.com/kokobd/cabal-hoogle), which is included in
+the `nix` shell:
+
+```bash
+nix develop
+$ cabal-hoogle generate
+$ cabal-hoogle run -- server --local
+```
+
+If you're not using `nix`, you may install `cabal-hoogle` from github:
 
 ```bash
 git clone git@github.com:kokobd/cabal-hoogle
@@ -157,7 +168,7 @@ cd cabal-hoogle
 cabal install exe:cabal-hoogle
 ```
 
-and then run `cabal-hoogle`:
+Regardless, once it's available in your environment, run `cabal-hoogle`:
 
 ```bash
 cabal-hoogle generate
@@ -216,29 +227,6 @@ the right version of `fourmolu`.
 ```bash
 nix develop -c ./scripts/ci/run-fourmolu.sh
 ```
-
-# Generating documentation and setting up hoogle
-
-To generate the documentation, use the documentation script:
-
-```bash
-./scripts/docs/haddocks.sh
-```
-
-Often times, it is useful to have a
-[`hoogle`](https://github.com/ndmitchell/hoogle) server at hand, with the
-packages and its dependencies. Our suggestion is to use
-[`cabal-hoogle`](https://github.com/kokobd/cabal-hoogle) which is included in
-the `nix` shell:
-
-```bash
-nix develop
-$ cabal-hoogle generate
-$ cabal-hoogle run -- server --local
-```
-
-This will fire a `hoogle` server at https://localhost:8080/ with the local
-packages and their dependencies.
 
 ## Making and reviewing changes
 
