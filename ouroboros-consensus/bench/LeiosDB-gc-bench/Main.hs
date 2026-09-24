@@ -427,7 +427,7 @@ populateDb opts db =
       pure (slot, hashBytes)
 
 -- | Drop the tx -> referencing-EB index from the volatile partition
--- ('sql_schema' only runs at file creation, so the drop persists).
+-- (the next handle creation re-creates it; this run keeps its handle open).
 dropTxIndex :: FilePath -> IO ()
 dropTxIndex path = do
   db <- SQL.open (T.pack path)
