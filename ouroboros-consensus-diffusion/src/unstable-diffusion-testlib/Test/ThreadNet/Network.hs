@@ -88,6 +88,7 @@ import Data.Void (Void)
 import GHC.Generics
 import GHC.Stack
 import qualified LeiosDemoDb
+import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch (LeiosFetch)
 import LeiosDemoOnlyTestNotify (LeiosNotify)
 import qualified LeiosDemoTypes
@@ -1172,6 +1173,10 @@ runThreadNetwork
               , leiosDB = leiosDbHandle
               , leiosTxCache
               , leiosFetchRng = lfRng
+              , -- These runs are a couple of hundred slots long with the
+                -- immutable tip near genesis, so the real lead would hold
+                -- back every offer there is.
+                leiosMinOfferLead = Leios.MkLeiosMinOfferLead 0
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs

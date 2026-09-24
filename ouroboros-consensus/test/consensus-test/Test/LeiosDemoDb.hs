@@ -48,6 +48,7 @@ import LeiosDemoDb
   , LeiosEbNotification (..)
   , Promise (..)
   , TraceLeiosDb (..)
+  , alwaysRelay
   , deleteDanglingTxs
   , newLeiosDBInMemory
   , newLeiosDBSQLite
@@ -132,7 +133,7 @@ data RW = RW
   }
 
 withRW :: LeiosDbHandle IO -> (RW -> IO a) -> IO a
-withRW db k = withReader db $ \r -> withWriter db $ \w -> k (RW r w)
+withRW db k = withReader db $ \r -> withWriter db alwaysRelay $ \w -> k (RW r w)
 
 -- Writes are awaited, so a read that follows one sees it.
 rwInsertEbPoint :: RW -> LeiosPoint -> BytesSize -> IO ()
@@ -487,9 +488,9 @@ test_singleSubscriber db = do
     void $ rwInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
-    AcquiredEb notifPoint _ ->
+    AcquiredEb notifPoint _ _ ->
       notifPoint @?= point
-    AcquiredEbTxs _ ->
+    AcquiredEbTxs _ _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Test that multiple subscribers each receive the notification.
@@ -523,11 +524,11 @@ test_correctData db = do
     void $ rwInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
-    AcquiredEb notifPoint notifSize -> do
+    AcquiredEb notifPoint notifSize _ -> do
       notifPoint.pointSlotNo @?= point.pointSlotNo
       notifPoint.pointEbHash @?= point.pointEbHash
       notifSize @?= expectedSize
-    AcquiredEbTxs _ ->
+    AcquiredEbTxs _ _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Test that a subscriber who subscribes after an insertion does not receive
@@ -684,7 +685,7 @@ test_noReNotifyCompletedEbs db = do
     -- Consume the AcquiredEbTxs notification
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
-      Just (AcquiredEbTxs p) -> p @?= point
+      Just (AcquiredEbTxs p _) -> p @?= point
       _ -> assertFailure "expected AcquiredEbTxs notification"
     -- Insert an unrelated tx
     _ <- rwInsertTxs con [(mkTestTxHash 99, maxTxBytesZero)]
@@ -721,7 +722,7 @@ test_noReNotifyOnRelatedTxReinsert db = do
     _ <- rwInsertTxs con txsToInsert
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
-      Just (AcquiredEbTxs p) -> p @?= point
+      Just (AcquiredEbTxs p _) -> p @?= point
       _ -> assertFailure "expected AcquiredEbTxs notification"
     -- Re-insert one of the EB's own txs (a no-op at the tx storage
     -- level — it's already present). The completed EB must NOT be
@@ -765,7 +766,7 @@ test_multipleSlotsSameHash db = do
     -- Drain the two AcquiredEb notifications (order matches insertion).
     acquiredEbs <- drainNotifications
     let acquiredEbPoints =
-          [p | AcquiredEb p _ <- acquiredEbs]
+          [p | AcquiredEb p _ _ <- acquiredEbs]
     acquiredEbPoints `setEquals` [point1, point2]
     -- Insert every tx the EB references — closure completes for both rows.
     _ <-
@@ -775,7 +776,7 @@ test_multipleSlotsSameHash db = do
     -- Both rows must notify completion, once each.
     completionNotifs <- drainNotifications
     let completionPoints =
-          [p | AcquiredEbTxs p <- completionNotifs]
+          [p | AcquiredEbTxs p _ <- completionNotifs]
     completionPoints `setEquals` [point1, point2]
     length completionNotifs @?= 2
  where
@@ -799,17 +800,17 @@ readTChanWithin micros chan label =
 -- | Assert that a notification is AcquiredEb with the expected point.
 assertOfferBlock :: LeiosPoint -> LeiosEbNotification -> IO ()
 assertOfferBlock expectedPoint = \case
-  AcquiredEb actualPoint _ ->
+  AcquiredEb actualPoint _ _ ->
     actualPoint @?= expectedPoint
-  AcquiredEbTxs _ ->
+  AcquiredEbTxs _ _ ->
     assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Assert that a notification is AcquiredEbTxs with the expected point.
 assertOfferBlockTxs :: LeiosPoint -> LeiosEbNotification -> IO ()
 assertOfferBlockTxs expectedPoint = \case
-  AcquiredEbTxs actualPoint ->
+  AcquiredEbTxs actualPoint _ ->
     actualPoint @?= expectedPoint
-  AcquiredEb _ _ ->
+  AcquiredEb _ _ _ ->
     assertFailure "expected AcquiredEbTxs, got AcquiredEb"
 
 -- * Property tests for lookupEbClosure
@@ -974,7 +975,7 @@ test_awaiterHearsAFailedJob = do
         -- parting exception lands. It does nothing else.
         runUntilTheWriterDies =
           withLeiosDBSQLite tracer volDbPath immDbPath $ \db ->
-            withWriter db $ \w -> do
+            withWriter db alwaysRelay $ \w -> do
               void $ await =<< writeEbPoint w point (encodeLeiosEbSize eb)
               void $ await =<< writeEbBody w point eb
               -- The same body again collides on the primary key of ebTxs, so

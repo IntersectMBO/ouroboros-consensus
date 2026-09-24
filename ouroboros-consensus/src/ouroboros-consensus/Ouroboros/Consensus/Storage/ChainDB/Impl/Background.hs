@@ -177,7 +177,10 @@ leiosAcquiredEbsRunner CDB{..} = do
   forever $
     atomically (readTChan chan) >>= \case
       AcquiredEb{} -> pure ()
-      AcquiredEbTxs point -> do
+      -- Regardless of the notification's 'ShouldRelay': that only governs
+      -- what we offer our peers, and this set is what lets us select our own
+      -- chain.
+      AcquiredEbTxs point _shouldRelay -> do
         mNovel <- atomically $ do
           acquired <- readTVar cdbAcquiredLeiosEbs
           case LeiosDemoTypes.insertAcquiredLeiosEb point acquired of
@@ -292,7 +295,8 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       GenesisHash -> Nothing
       BlockHash predHash -> Just predHash
     predInfo <- getBI predHash
-    LeiosDemoTypes.announcementLeiosPoint <$> strictMaybeToMaybe (VolatileDB.biLeiosAnnouncedEb predInfo)
+    LeiosDemoTypes.announcementLeiosPoint
+      <$> strictMaybeToMaybe (VolatileDB.biLeiosAnnouncedEb predInfo)
 
   -- \| Remove the header corresponding to the given point from the beginning
   -- of the current chain fragment.

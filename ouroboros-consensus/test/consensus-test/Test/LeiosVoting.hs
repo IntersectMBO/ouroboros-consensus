@@ -22,6 +22,7 @@ import LeiosDemoDb
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
+  , alwaysRelay
   , newLeiosDBInMemory
   , withReader
   , withWriter
@@ -222,7 +223,7 @@ validateOnce Harness{hReader, hCache, hPoint} txs = do
 withHarness :: [Bool] -> [TestTx] -> (Harness -> IO a) -> IO a
 withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
-  withReader db $ \reader -> withWriter db $ \writer -> do
+  withReader db $ \reader -> withWriter db alwaysRelay $ \writer -> do
     void $ await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
     void $ await =<< writeEbBody writer point eb
     void $ await =<< writeTxs writer [(txHashOf tx, txBytes tx) | tx <- txs]

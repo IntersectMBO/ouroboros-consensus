@@ -21,20 +21,19 @@ module Test.LeiosDemoLogic (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString as BS
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (StrictMaybe (SNothing))
+import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import LeiosDemoLogic (fetchPriorityTiers, leiosFetchLogicIteration)
-import Data.ByteString.Short (ShortByteString)
-import qualified Data.ByteString.Short as SBS
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
-  ( AlsoOfferedTxsClosure (..)
-  , BytesSize
+  ( BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosFetchRequest (..)
@@ -42,11 +41,12 @@ import LeiosDemoTypes
   , LeiosOutstanding (..)
   , LeiosPoint (..)
   , PeerId (..)
+  , PeerOffer (MkPeerOffer)
+  , WhetherTxsClosureOffered (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
-  , markBodyImminent
-  , mergeOffer
   , focusElectionIfUnfocused
+  , markBodyImminent
   , recordMaxAnnouncementSlot
   )
 import System.Random (mkStdGen)
@@ -176,7 +176,7 @@ test_forgedEbOfferIgnored =
 -- | A test fixture: static env, peer offerings, outstanding work.
 data Scenario pid = Scenario
   { scEnv :: !LeiosFetchStaticEnv
-  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint AlsoOfferedTxsClosure))
+  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint WhetherTxsClosureOffered))
   , scOutstanding :: !(LeiosOutstanding pid)
   }
 
@@ -206,10 +206,10 @@ withMissingBody p@(MkLeiosPoint slot ebHash) size =
               Map.insertWith NESet.union ebHash (NESet.singleton slot) (reverseSlotIndexByEbHash o)
           }
 
--- | The one pool these scenarios pretend announced everything, since they have
--- no headers to take an issuer from. An endorser block's election is therefore
--- just its slot: two announced in one slot would share an election, and only
--- the first would be fetched. None of these announce two in a slot.
+-- | The one pool a scenario here pretends announced everything, since these
+-- have no headers to take an issuer from. An endorser block's election is
+-- therefore just its slot, so two announced in one slot share an election and
+-- only the first is fetched.
 fixtureIssuer :: ShortByteString
 fixtureIssuer = SBS.pack [0]
 
@@ -247,24 +247,27 @@ withRequestedBytesPerPeer pid n =
 -- | Peer @p@ offers the body (only) of these points.
 offersBody :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBody pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotAlsoOffered) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotOffered) | p <- points])
 
 -- | Peer @p@ offers both the body and the tx-closure of these points.
 offersBodyAndClosure :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBodyAndClosure pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureAlsoOffered) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureOffered) | p <- points])
 
 insertOffering ::
   Ord pid =>
   PeerId pid ->
-  Map.Map LeiosPoint AlsoOfferedTxsClosure ->
+  Map.Map LeiosPoint WhetherTxsClosureOffered ->
   Scenario pid ->
   Scenario pid
 insertOffering pid offers sc =
   sc
     { scOfferings =
-        Map.insertWith (Map.unionWith mergeOffer) pid offers (scOfferings sc)
+        Map.insertWith (Map.unionWith mergeClosure) pid offers (scOfferings sc)
     }
+ where
+  mergeClosure TxsClosureOffered _ = TxsClosureOffered
+  mergeClosure _ y = y
 
 -- | Internal: lift a function on 'LeiosOutstanding' to one on 'Scenario'.
 onOutstanding ::
@@ -287,10 +290,18 @@ runIteration sc =
         leiosFetchLogicIteration
           sc.scEnv
           (Just minBound)
-          sc.scOfferings
+          (Map.map (Map.mapWithKey (resolveOfferSize sc.scOutstanding)) sc.scOfferings)
           Map.empty
           sc.scOutstanding
    in reqs
+
+-- | Give a fixture's offer the size the scenario is pursuing for that point,
+-- which is what 'assignBody' matches a peer's offer against. A peer offering a
+-- point with no listed body offers no size, which is the closure-only case.
+resolveOfferSize ::
+  LeiosOutstanding pid -> LeiosPoint -> WhetherTxsClosureOffered -> PeerOffer
+resolveOfferSize o p closure =
+  MkPeerOffer (maybe SNothing SJust (Map.lookup p (missingEbBodies o))) closure
 
 ------------------------------------------------------------
 -- Assertions

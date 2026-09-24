@@ -41,8 +41,7 @@ import LeiosDemoDb
   , withReader
   )
 import LeiosDemoTypes
-  ( announcementLeiosPoint
-  , HasLeiosVoting (..)
+  ( HasLeiosVoting (..)
   , LeiosClosureError (..)
   , LeiosNotVotedReason (..)
   , LeiosPoint (..)
@@ -50,6 +49,7 @@ import LeiosDemoTypes
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
+  , announcementLeiosPoint
   , getLeiosSeatId
   , prettyLeiosPoint
   , signLeiosVote
@@ -284,7 +284,9 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
       let takeEbNotification =
             readTChan chan >>= \case
               AcquiredEb{} -> pure Nothing
-              AcquiredEbTxs point -> pure (Just point)
+              -- Regardless of the notification's 'ShouldRelay': that only
+              -- governs what we offer our peers.
+              AcquiredEbTxs point _shouldRelay -> pure (Just point)
 
       VoteTimers{scheduleVoteTime, waitNextVoteTime} <-
         newVoteTimers tracer lcfg chainDB systemTime

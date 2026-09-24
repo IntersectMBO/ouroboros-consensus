@@ -51,7 +51,6 @@ import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( AcquiredLeiosEbsSet
   , EbHash
-  , announcementEbHash
   , HasLeiosVoting (getLeiosCommitteeFromView)
   , LeiosExtValidationError (LeiosCertificateForecastRejected)
   , TraceLeiosChainSel
@@ -60,6 +59,7 @@ import LeiosDemoTypes
     )
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsSetMember
+  , announcementEbHash
   )
 import LeiosUtils.CallTrace
   ( CallCtx

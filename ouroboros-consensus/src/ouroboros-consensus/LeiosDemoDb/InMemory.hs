@@ -42,6 +42,7 @@ import LeiosDemoDb.Common
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  , RelayDecision (..)
   )
 import LeiosDemoException
   ( LeiosDbException (LeiosDbWriteException, submittedFrom, writeFailure, writeJob)
@@ -127,7 +128,8 @@ newLeiosDBInMemoryWith stateVar = do
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , openReader = openInMemoryReader stateVar
-      , openWriter = openInMemoryWriter stateVar notificationChan
+      , openWriter = \relayDecision ->
+          openInMemoryWriter relayDecision stateVar notificationChan
       }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.
@@ -152,19 +154,24 @@ openInMemoryReader stateVar =
 openInMemoryWriter ::
   forall m.
   IOLike m =>
+  RelayDecision m ->
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
   m (LeiosDbWriter m)
-openInMemoryWriter stateVar notificationChan =
+openInMemoryWriter relayDecision stateVar notificationChan =
   pure
     LeiosDbWriter
       { close = pure ()
       , writeEbPoint = \point ebBytesSize ->
           resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
       , writeEbBody = \point eb ->
-          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb)
+          resolved
+            ("WriteEbBody " <> show point)
+            (imInsertEbBody relayDecision stateVar notificationChan point eb)
       , writeTxs = \txs ->
-          resolved ("WriteTxs (" <> show (length txs) <> " txs)") (imInsertTxs stateVar notificationChan txs)
+          resolved
+            ("WriteTxs (" <> show (length txs) <> " txs)")
+            (imInsertTxs relayDecision stateVar notificationChan txs)
       }
  where
   resolved :: HasCallStack => String -> m a -> m (Promise m a)
@@ -210,12 +217,13 @@ imLookupEbBody stateVar ebHash = atomically $ do
 
 imInsertEbBody ::
   IOLike m =>
+  RelayDecision m ->
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   LeiosEb ->
   m CompletedEbs
-imInsertEbBody stateVar notificationChan point eb = do
+imInsertEbBody (MkRelayDecision shouldRelay) stateVar notificationChan point eb = do
   let items = leiosEbBodyItems eb
       ebBytesSize = encodeLeiosEbSize eb
   when (null items) $
@@ -243,7 +251,8 @@ imInsertEbBody stateVar notificationChan point eb = do
           imEbBodiesDownloaded =
             Set.insert point (imEbBodiesDownloaded s)
         }
-    writeTChan notificationChan $ AcquiredEb point ebBytesSize
+    shouldRelay (pointSlotNo point)
+      >>= writeTChan notificationChan . AcquiredEb point ebBytesSize
     -- If every tx referenced by this body is already present, the closure
     -- is complete the moment the body lands — no subsequent
     -- 'writeTxs' will fire for this point, so we must notify here.
@@ -258,17 +267,19 @@ imInsertEbBody stateVar notificationChan point eb = do
       then do
         modifyTVar stateVar $ \s ->
           s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-        writeTChan notificationChan (AcquiredEbTxs point)
+        shouldRelay (pointSlotNo point)
+          >>= writeTChan notificationChan . AcquiredEbTxs point
         pure [point]
       else pure []
 
 imInsertTxs ::
   IOLike m =>
+  RelayDecision m ->
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
   [(TxHash, ByteString)] ->
   m CompletedEbs
-imInsertTxs stateVar notificationChan txs = atomically $ do
+imInsertTxs (MkRelayDecision shouldRelay) stateVar notificationChan txs = atomically $ do
   let insertedTxHashes = [txHash | (txHash, _) <- txs]
   forM_ txs $ \(txHash, txBytes) -> do
     let txBytesSize = fromIntegral $ BS.length txBytes
@@ -311,7 +322,8 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
   -- Emit a closure-completion notification for each newly-complete EB. The
   -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
   forM_ completed $ \point ->
-    writeTChan notificationChan (AcquiredEbTxs point)
+    shouldRelay (pointSlotNo point)
+      >>= writeTChan notificationChan . AcquiredEbTxs point
   pure completed
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs

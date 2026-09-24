@@ -91,9 +91,9 @@ import Data.IntSet.NonEmpty (NEIntSet)
 import Data.List (sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
-import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Ord (Down (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -377,30 +377,69 @@ prettyBitmap (idx, bitmap) =
 -- patterns of access to the "Ouroboros.Consensus.NodeKernel"'s shared state.
 --
 
--- | Whether an EB offer also implies its tx-closure is on offer. A CertRB does
--- (it certifies the whole EB); a bare 'MsgLeiosBlockOffer' does not -- the closure
--- is offered separately, as a 'MsgLeiosBlockTxsOffer'. This is also the value we
--- store per offered point: 'TxsClosureAlsoOffered' means the peer can serve the
--- body /and/ the closure (a closure offer implies the body), while
--- 'TxsClosureNotAlsoOffered' is body-only.
-data AlsoOfferedTxsClosure = TxsClosureAlsoOffered | TxsClosureNotAlsoOffered
+-- | Whether a peer has offered an endorser block's tx-closure.
+data WhetherTxsClosureOffered = TxsClosureOffered | TxsClosureNotOffered
   deriving (Eq, Show)
 
--- | Merge two offers for one point: the closure is on offer if either says so.
-mergeOffer :: AlsoOfferedTxsClosure -> AlsoOfferedTxsClosure -> AlsoOfferedTxsClosure
-mergeOffer TxsClosureAlsoOffered _ = TxsClosureAlsoOffered
-mergeOffer _ TxsClosureAlsoOffered = TxsClosureAlsoOffered
-mergeOffer _ _ = TxsClosureNotAlsoOffered
+-- | Offered if either says so.
+instance Semigroup WhetherTxsClosureOffered where
+  TxsClosureOffered <> _ = TxsClosureOffered
+  _ <> y = y
+
+instance Monoid WhetherTxsClosureOffered where
+  mempty = TxsClosureNotOffered
+
+-- | What one peer has offered for one endorser block point.
+--
+-- The two LeiosNotify offers are independent messages: either can arrive
+-- first, or alone. A CertRB roll-forward makes both at once.
+--
+-- The body offer carries a size and the closure offer does not, and that
+-- asymmetry is not an oversight. A body request is per /candidate/, and a
+-- point can have more than one --- two announcements can name one endorser
+-- block at different sizes, and only one of them is the truth --- so the size
+-- is what says which candidate this peer can serve. Closure jobs are per
+-- endorser block: 'assignClosure' only ever runs once we hold the body, by
+-- which point the true size is known and the losing candidates are gone.
+data PeerOffer = MkPeerOffer
+  { poOfferedBody :: !(StrictMaybe BytesSize)
+  -- ^ The size this peer offered the body at, if it has offered the body.
+  --
+  -- Every offer of one endorser block from one peer names the same size, or
+  -- that peer is lying: an offer says it holds the body, it can only have
+  -- acquired that body at the size announced --- 'processLeiosBlock' refuses
+  -- one of any other size --- and so it knows the one true size. Which is why
+  -- nothing here arbitrates between two of them.
+  --
+  -- TODO disconnect a peer that ever offers one 'EbHash' at two sizes,
+  -- whichever messages the two arrived on. That is proof it is lying, and
+  -- today we merely keep one of the two and carry on.
+  , poClosure :: !WhetherTxsClosureOffered
+  }
+  deriving (Eq, Show)
+
+-- | Each field on its own terms: the leftmost size wins, which for
+-- 'Map.insertWith' is the newer offer's, and a peer that makes that choice
+-- matter has already lost our trust (see 'poOfferedBody').
+instance Semigroup PeerOffer where
+  MkPeerOffer sz1 c1 <> MkPeerOffer sz2 c2 = MkPeerOffer (pickSize sz1 sz2) (c1 <> c2)
+   where
+    pickSize SNothing y = y
+    pickSize x _ = x
+
+instance Monoid PeerOffer where
+  mempty = MkPeerOffer SNothing mempty
 
 data LeiosPeerVars m = MkLeiosPeerVars
   { whetherBigLedgerPeer :: !IsBigLedgerPeer
   -- ^ fixed for the connection's lifetime; the fetch logic fetches more
   -- aggressively from a big-ledger peer (see 'leiosFetchLogicIteration')
-  , offerings :: !(MVar m (Map LeiosPoint AlsoOfferedTxsClosure))
+  , offerings :: !(MVar m (Map LeiosPoint PeerOffer))
   -- ^ the peer's current offers, keyed by point -- so the map is already in slot
   -- order (freshest-first via 'Map.toDescList'), no dedup by EB hash needed
   -- (honest announcements don't reuse a hash, and an adversary defeats such
-  -- dedup anyway). Written to only by the LeiosNotify client and eviction.
+  -- dedup anyway). One entry per point, since a peer may offer each point's
+  -- body once. Written to only by the LeiosNotify client and eviction.
   , certificationClaims :: !(MVar m (Map ElId EbHash))
   -- ^ For each election, the endorser block this peer has claimed a
   -- certificate for.
@@ -802,6 +841,22 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 --     actually depend on them read the LeiosDb directly, never via this
 --     outstanding state.
 --
+-- The announcements on the initially selected chain are likewise not replayed
+-- here, though those blocks never roll forward and so are never announced to
+-- us this run. Only two things list an endorser block to fetch --- the
+-- announcement that takes an election's focus, and 'focusCertifiedEb' on a
+-- verified certificate --- and between them they reach every endorser block we
+-- could come to need. A CertRB on the initial chain has its endorser block
+-- already, since it could not have been selected otherwise; one that is not on
+-- the initial chain is re-fetched if some chain we would select needs it, and
+-- verifying its certificate then sets the focus and lists it.
+--
+-- Not replaying them does leave the 'LeiosTxCache' without an entry for those
+-- endorser blocks, since only the announcement path calls
+-- @recordAnnouncementInTxCache@ and the cache starts empty. That costs nothing
+-- but cache misses: their txs read as absent, so a later endorser block that
+-- shares one re-fetches it. The LeiosDb still holds it either way.
+--
 -- The per-peer request-tracking fields must start empty regardless: there are
 -- no connections yet and nothing is in flight.
 --
@@ -856,6 +911,60 @@ focusElectionIfUnfocused elId ebHash outstanding
 -- deliberately do not spend complexity on that case here, since it requires
 -- catastrophically buggy nodes and/or an amount of adversarial stake the
 -- protocol itself is not designed to resist.
+-- | A verified certificate moves its election's focus onto the endorser block
+-- it names, and lists that body as one to fetch.
+--
+-- The endorser block this names may never have been listed. The announcement
+-- that took the election's focus listed its own; this one's may have lost that
+-- race, or may never have reached us --- and nothing lists it in the meantime,
+-- because an unverified claim must not be able to make us track an endorser
+-- block.
+focusCertifiedEb :: AnnouncementFields -> LeiosOutstanding pid -> LeiosOutstanding pid
+focusCertifiedEb fields =
+  focusElection (announcementElection fields) (announcementEbHash fields)
+    . listEbBodyToFetch (announcementLeiosPoint fields) (announcementEbBodySize fields)
+
+-- | List an endorser block's body as one to fetch, at the given size, unless
+-- it is too old, malformed, already held or already listed.
+--
+-- "Already listed" is by endorser block hash, so the first size listed for a
+-- hash is the only one ever pursued. Two announcements can name one hash at
+-- different sizes, at most one of which is the truth, so a lying announcement
+-- that arrives first leaves us unable to fetch that endorser block at all.
+--
+-- That is deliberate, and is what @lHdrWait@ is for. Being stuck this way
+-- means we saw the equivocation early, and we relay the announcement we saw,
+-- so nodes that were not stuck have the proof in hand before their vote window
+-- opens and withhold their votes. No certificate forms, and an endorser block
+-- that is never certified is one it costs us nothing to have missed. Should
+-- that fail, the Recovery Path gets us the endorser block eventually.
+listEbBodyToFetch ::
+  LeiosPoint -> BytesSize -> LeiosOutstanding pid -> LeiosOutstanding pid
+listEbBodyToFetch point ebBytesSize outstanding =
+  let MkLeiosPoint ebSlot ebHash = point
+      tooOld = ebSlot < acquiredEbBodiesPrunedSlot outstanding
+      malformed = ebBytesSize == 0
+      outstanding'
+        | tooOld || malformed = outstanding
+        | otherwise = recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
+      skip =
+        tooOld
+          || malformed
+          || maybe False ebStateHasBody (Map.lookup ebHash (ebState outstanding))
+          || Map.member ebHash (reverseSlotIndexByEbHash outstanding)
+   in if skip
+        then outstanding'
+        else
+          outstanding'
+            { missingEbBodies = Map.insert point ebBytesSize (missingEbBodies outstanding')
+            , reverseSlotIndexByEbHash =
+                Map.insertWith
+                  NESet.union
+                  ebHash
+                  (NESet.singleton ebSlot)
+                  (reverseSlotIndexByEbHash outstanding')
+            }
+
 focusElection :: ElId -> EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
 focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstanding) of
   Just oldEbHash | oldEbHash == ebHash -> outstanding
@@ -957,7 +1066,7 @@ pruneOutstandingToImmTip immTipSlot outstanding =
 
 -- | Pretty-print the per-peer 'offerings' map: for each peer, its offered points
 -- freshest-first, each tagged with the strongest kind offered. Hashes truncated.
-prettyOfferings :: Show pid => Map (PeerId pid) (Map LeiosPoint AlsoOfferedTxsClosure) -> String
+prettyOfferings :: Show pid => Map (PeerId pid) (Map LeiosPoint PeerOffer) -> String
 prettyOfferings m =
   unlines $
     map ("    [leios] " ++) $
@@ -974,9 +1083,14 @@ prettyOfferings m =
           | (MkLeiosPoint slot h, k) <- points
           ]
         ++ "}"
-  kindTag = \case
-    TxsClosureNotAlsoOffered -> "b"
-    TxsClosureAlsoOffered -> "c"
+  kindTag (MkPeerOffer mbSize closure) = body ++ txs
+   where
+    body = case mbSize of
+      SNothing -> ""
+      SJust{} -> "b"
+    txs = case closure of
+      TxsClosureNotOffered -> ""
+      TxsClosureOffered -> "c"
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
@@ -2624,6 +2738,7 @@ leiosExtValidationErrorForHuman = \case
       <> ")"
 
 -- * Protocol parameters
+
 --
 -- The node-to-node limits below are constants, but no longer a policy of their
 -- own: they restate the LeiosFetch codec's message limit, so the buffers sized

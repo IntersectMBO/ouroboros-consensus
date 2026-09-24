@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -24,8 +25,13 @@
 -- say --- that it never delivers.
 module Test.Consensus.Leios.Environment
   ( PeerEnv (..)
+  , announceEb
   , connectPeer
+  , heardOffers
+  , heardUnannouncedOffers
   , newPeerEnv
+  , offerEb
+  , offerEbTxs
   , plantEb
   , serveChain
   , serveChainThrough
@@ -57,11 +63,15 @@ import LeiosDemoOnlyTestFetch
   , Message (..)
   , leiosFetchServerPeer
   )
+import LeiosDemoOnlyTestNotify (LeiosNotify (StBusy, StIdle))
+import qualified LeiosDemoOnlyTestNotify as Notify
 import LeiosDemoTypes
-  ( EbHash
+  ( BytesSize
+  , EbHash
   , LeiosEb (..)
   , LeiosPoint (..)
   , LeiosTx (..)
+  , LeiosVote
   , TxHash
   , hashLeiosEb
   )
@@ -73,6 +83,7 @@ import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Channel (createConnectedChannels)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
+import Ouroboros.Network.Context (ResponderContext (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Driver.Simple (runPeer)
 import Ouroboros.Network.Mock.Chain (Chain)
@@ -114,14 +125,47 @@ data PeerEnv m = PeerEnv
   -- ^ The last block of 'peChain' this peer hands over; see
   -- 'serveChainThrough'.
   , peEbs :: StrictTVar m (Map EbHash (LeiosEb, Map TxHash BS.ByteString))
+  , peNotifications :: PlainSTM.StrictTVar m [LeiosNotification]
+  -- ^ What this peer has yet to say over LeiosNotify, in order.
+  , peHeard :: PlainSTM.StrictTVar m [LeiosNotification]
+  -- ^ What the node has said to this peer over LeiosNotify, in order. The
+  -- node is the upstream peer on this second LeiosNotify connection, which is
+  -- how a test sees what it relays.
   }
+
+-- | One thing a peer says over LeiosNotify.
+type LeiosNotification =
+  Notify.Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle
 
 newPeerEnv :: IOSim s (PeerEnv (IOSim s))
 newPeerEnv = do
   peChain <- PlainSTM.newTVarIO (initChainProducerState Chain.Genesis)
   peServeThrough <- newTVarIO GenesisPoint
   peEbs <- newTVarIO Map.empty
-  pure PeerEnv{peChain, peServeThrough, peEbs}
+  peNotifications <- PlainSTM.newTVarIO []
+  peHeard <- PlainSTM.newTVarIO []
+  pure PeerEnv{peChain, peServeThrough, peEbs, peNotifications, peHeard}
+
+-- | The endorser blocks the node offered this peer without having first
+-- announced them to it.
+--
+-- That is the rule the node itself enforces on its upstream peers, so any
+-- answer but the empty list is the node doing what it would disconnect a peer
+-- for.
+heardUnannouncedOffers :: PeerEnv (IOSim s) -> IOSim s [LeiosPoint]
+heardUnannouncedOffers PeerEnv{peHeard} =
+  go [] <$> atomically (PlainSTM.readTVar peHeard)
+ where
+  go :: [LeiosPoint] -> [LeiosNotification] -> [LeiosPoint]
+  go _announced [] = []
+  go announced (msg : rest) = case msg of
+    Notify.MsgLeiosBlockAnnouncement hdr ->
+      go (maybe id ((:) . fst) (lthAnnouncement hdr) announced) rest
+    Notify.MsgLeiosBlockOffer point _size
+      | point `notElem` announced -> point : go announced rest
+    Notify.MsgLeiosBlockTxsOffer point
+      | point `notElem` announced -> point : go announced rest
+    _ -> go announced rest
 
 -- | Make this the chain the peer serves, all of it. Switching to one that is
 -- not an extension rolls the node back, as a real peer's would.
@@ -142,6 +186,48 @@ serveChainThrough PeerEnv{peChain, peServeThrough} through chain =
     PlainSTM.modifyTVar peChain $ switchFork chain
     writeTVar peServeThrough through
 
+-- | Have this peer announce, over LeiosNotify, the endorser block this header
+-- announces.
+--
+-- This is what an offer from this peer has to be backed by; the peer's own
+-- chain has nothing to do with it.
+announceEb :: PeerEnv (IOSim s) -> Header Blk -> IOSim s ()
+announceEb PeerEnv{peNotifications} hdr =
+  atomically $
+    PlainSTM.modifyTVar peNotifications (<> [Notify.MsgLeiosBlockAnnouncement hdr])
+
+-- | Have this peer offer this endorser block over LeiosNotify.
+--
+-- Offering is not announcing: this says only that the peer has the body, and
+-- an honest peer says it only after its own 'Notify.MsgLeiosBlockAnnouncement'
+-- for that endorser block.
+offerEb :: PeerEnv (IOSim s) -> LeiosPoint -> BytesSize -> IOSim s ()
+offerEb PeerEnv{peNotifications} point size =
+  atomically $
+    PlainSTM.modifyTVar peNotifications (<> [Notify.MsgLeiosBlockOffer point size])
+
+-- | Have this peer offer this endorser block's closure over LeiosNotify.
+--
+-- Independent of 'offerEb': either may be sent first, or alone. Like it, this
+-- is not an announcement, so an honest peer says it only after its own
+-- 'Notify.MsgLeiosBlockAnnouncement' for that endorser block.
+offerEbTxs :: PeerEnv (IOSim s) -> LeiosPoint -> IOSim s ()
+offerEbTxs PeerEnv{peNotifications} point =
+  atomically $
+    PlainSTM.modifyTVar peNotifications (<> [Notify.MsgLeiosBlockTxsOffer point])
+
+-- | The endorser blocks the node has offered this peer, in order.
+heardOffers :: PeerEnv (IOSim s) -> IOSim s [LeiosPoint]
+heardOffers PeerEnv{peHeard} =
+  atomically $
+    foldMap offered <$> PlainSTM.readTVar peHeard
+ where
+  offered :: LeiosNotification -> [LeiosPoint]
+  offered = \case
+    Notify.MsgLeiosBlockOffer point _size -> [point]
+    Notify.MsgLeiosBlockTxsOffer point -> [point]
+    _ -> []
+
 -- | Make this endorser block, and its closure, available from this peer.
 plantEb ::
   PeerEnv (IOSim s) -> LeiosEb -> [(TxHash, BS.ByteString)] -> IOSim s ()
@@ -150,15 +236,15 @@ plantEb PeerEnv{peEbs} eb closure =
     modifyTVar peEbs $
       Map.insert (hashLeiosEb eb) (eb, Map.fromList closure)
 
--- | Run one peer against the node: the node's ChainSync, BlockFetch and Leios
--- fetch clients, each against this environment's server.
+-- | Run one peer against the node: the node's ChainSync, BlockFetch,
+-- LeiosNotify, and LeiosFetch clients, each against this environment's server
+-- AND the node's LeiosNotify server against this environment's client (to
+-- observe what the node relays).
 --
 -- The other mini-protocols are simply never started. Nothing in the node
 -- starts them on its own, and a protocol that is not running cannot time out.
--- LeiosNotify is one of them: the node learns of an endorser block from the
--- CertRB header that certifies it, so this environment has nothing to say
--- over that protocol.
 connectPeer ::
+  forall s.
   NodeUnderTest (IOSim s) ->
   ResourceRegistry (IOSim s) ->
   PeerAddr ->
@@ -168,10 +254,15 @@ connectPeer nut registry addr penv = do
   (csClient, csServer) <- createConnectedChannels
   (bfClient, bfServer) <- createConnectedChannels
   (kaClient, kaServer) <- createConnectedChannels
+  (lnClient, lnServer) <- createConnectedChannels
+  (lnDownClient, lnDownServer) <- createConnectedChannels
   (lfClient, lfServer) <- createConnectedChannels
 
   let codecs = peerCodecs nut
       apps = peerApps nut
+
+      record :: LeiosNotification -> IOSim s ()
+      record msg = atomically $ PlainSTM.modifyTVar (peHeard penv) (<> [msg])
 
       fork name action = void $ forkLinkedThread registry name $ do
         say (name <> " starting")
@@ -208,6 +299,26 @@ connectPeer nut registry addr penv = do
       runPeer (sayTracer ("ka " <> show addr)) (NTN.cKeepAliveCodec codecs) kaServer $
         keepAliveServerPeer keepAliveServer
 
+  fork ("LeiosNotify client " <> show addr) $
+    void $
+      NTN.aLeiosNotifyClient apps version (initiatorCtx addr) lnClient
+  fork ("LeiosNotify server " <> show addr) $
+    void $
+      runPeer (sayTracer ("ln " <> show addr)) (NTN.cLeiosNotifyCodec codecs) lnServer $
+        Notify.leiosNotifyServerPeer (nextNotification penv)
+
+  -- The other direction of LeiosNotify: the node is the upstream peer, and
+  -- this environment client records everything it says. Nothing here ever
+  -- stops asking for more.
+  fork ("LeiosNotify server (node) " <> show addr) $
+    void $
+      NTN.aLeiosNotifyServer apps version (responderCtx addr) lnDownServer
+  fork ("LeiosNotify client (env) " <> show addr) $
+    void $
+      runPeer (sayTracer ("ln-down " <> show addr)) (NTN.cLeiosNotifyCodec codecs) lnDownClient $
+        Notify.leiosNotifyClientPeer
+          (pure (Right record) :: IOSim s (Either () (LeiosNotification -> IOSim s ())))
+
   fork ("LeiosFetch client " <> show addr) $
     void $
       NTN.aLeiosFetchClient apps version (initiatorCtx addr) lfClient
@@ -219,6 +330,15 @@ connectPeer nut registry addr penv = do
 {-------------------------------------------------------------------------------
   The servers
 -------------------------------------------------------------------------------}
+
+-- | The next thing this peer has to say, blocking until it has something.
+nextNotification :: PeerEnv (IOSim s) -> IOSim s LeiosNotification
+nextNotification PeerEnv{peNotifications} = atomically $ do
+  PlainSTM.readTVar peNotifications >>= \case
+    [] -> retry
+    notification : rest -> do
+      PlainSTM.writeTVar peNotifications rest
+      pure notification
 
 -- | Answers every keep-alive, forever.
 keepAliveServer :: KeepAliveServer (IOSim s) ()
@@ -386,3 +506,7 @@ initiatorCtx addr =
     , eicIsBigLedgerPeer = IsBigLedgerPeer
     , eicExtraFlags = IsNotTrustable
     }
+
+-- | The node's side of a connection on which the node is the upstream peer.
+responderCtx :: PeerAddr -> ResponderContext PeerAddr
+responderCtx addr = ResponderContext{rcConnectionId = ConnectionId addr addr}

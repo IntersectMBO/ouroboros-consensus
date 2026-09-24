@@ -95,9 +95,11 @@ import LeiosDemoDb.Common
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  , RelayDecision (..)
   )
 import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..), throwLeiosDbException)
+import LeiosDemoLogic.Announcements (ShouldRelay)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
@@ -162,7 +164,11 @@ newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
 --
 -- Note that orphan transaction batch size is set by the 'gcOrphanTxBatchSize' constant.
 newLeiosDBSQLiteWithGcBatchSize ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  FilePath ->
+  Int64 ->
+  IO (LeiosDbHandle IO)
 newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   -- The database opens before whoever owns these directories creates them.
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
@@ -250,14 +256,15 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
         , lookupEbClosure = sqlLookupEbClosure conn
         }
 
-  openWriter writeQueue =
+  openWriter writeQueue relayDecision =
     pure
       LeiosDbWriter
         { -- Not a teardown -- the write connection outlives every writer.
           close = void . await =<< submitJob writeQueue Flush
         , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
-        , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
-        , writeTxs = \txs -> submitJob writeQueue (WriteTxs txs)
+        , writeEbBody = \point eb ->
+            submitJob writeQueue (WriteEbBody relayDecision point eb)
+        , writeTxs = \txs -> submitJob writeQueue (WriteTxs relayDecision txs)
         }
 
 -- | 'newLeiosDBSQLite' bracketed with its 'close': on release every pending
@@ -1109,8 +1116,8 @@ closeChecked db =
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
   = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
-  | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
-  | WriteTxs ![(TxHash, ByteString)] !(WriteResult CompletedEbs)
+  | WriteEbBody !(RelayDecision IO) !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
+  | WriteTxs !(RelayDecision IO) ![(TxHash, ByteString)] !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
@@ -1196,8 +1203,8 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
-  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
-  WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
+  WriteEbBody _ point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
+  WriteTxs _ txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
   MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
@@ -1209,8 +1216,8 @@ describeJob = \case
 failJob :: SomeException -> WriteJob -> IO ()
 failJob cause = \case
   WriteEbPoint _ _ rv -> put rv
-  WriteEbBody _ _ rv -> put rv
-  WriteTxs _ rv -> put rv
+  WriteEbBody _ _ _ rv -> put rv
+  WriteTxs _ _ rv -> put rv
   Flush rv -> put rv
   PinEb _ rv -> put rv
   MarkCopied _ rv -> put rv
@@ -1290,7 +1297,11 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
   sweepStateVar <- newTVarIO SweepIdle
   gcReinitDoneVar <- newTVarIO False
   jobsServedVar <- newTVarIO (0 :: Int)
-  let notify = atomically . writeTChan notificationChan
+  let notify ::
+        RelayDecision IO -> LeiosPoint -> (ShouldRelay -> LeiosEbNotification) -> IO ()
+      notify (MkRelayDecision shouldRelay) point mk =
+        atomically $
+          shouldRelay point.pointSlotNo >>= writeTChan notificationChan . mk
 
       -- Statements before connections; an open statement holds the close off.
       closeConnections = do
@@ -1309,10 +1320,12 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
           pure True
         WriteEbPoint point size resultVar ->
           publish resultVar (sqlInsertEbPoint conn point size) >> pure False
-        WriteEbBody point eb resultVar ->
-          publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure False
-        WriteTxs txs resultVar ->
-          publish resultVar (sqlInsertTxs tracer conn notify txs) >> pure False
+        WriteEbBody relayDecision point eb resultVar ->
+          publish resultVar (sqlInsertEbBody tracer conn (notify relayDecision) point eb)
+            >> pure False
+        WriteTxs relayDecision txs resultVar ->
+          publish resultVar (sqlInsertTxs tracer conn (notify relayDecision) txs)
+            >> pure False
         Flush resultVar ->
           publish resultVar (pure ()) >> pure False
         PinEb ebHashes resultVar -> do
@@ -1602,7 +1615,7 @@ sqlInsertEbPoint conn point ebBytesSize = do
 sqlInsertEbBody ::
   Tracer IO TraceLeiosDb ->
   Conn ->
-  (LeiosEbNotification -> IO ()) ->
+  (LeiosPoint -> (ShouldRelay -> LeiosEbNotification) -> IO ()) ->
   LeiosPoint ->
   LeiosEb ->
   IO CompletedEbs
@@ -1642,8 +1655,8 @@ sqlInsertEbBody tracer conn notify point eb = do
           dbStep1 stMarkPointNotified
         pure [point]
       else pure []
-  notify $ AcquiredEb point ebBytesSize
-  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
+  notify point (AcquiredEb point ebBytesSize)
+  forM_ completedNow $ \p -> notify p (AcquiredEbTxs p)
   pure completedNow
  where
   items = leiosEbBodyItems eb
@@ -1673,7 +1686,7 @@ readReturningInt64 stmt =
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
   Conn ->
-  (LeiosEbNotification -> IO ()) ->
+  (LeiosPoint -> (ShouldRelay -> LeiosEbNotification) -> IO ()) ->
   [(TxHash, ByteString)] ->
   IO CompletedEbs
 sqlInsertTxs _tracer conn notify txs = do
@@ -1716,7 +1729,7 @@ sqlInsertTxs _tracer conn notify txs = do
     useStmt stMarkNotifiedEbs $ dbStep1 stMarkNotifiedEbs
     pure completed
   -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ \point -> notify (AcquiredEbTxs point)
+  forM_ completed $ \point -> notify point (AcquiredEbTxs point)
   pure completed
  where
   Conn{connVolStmts} = conn

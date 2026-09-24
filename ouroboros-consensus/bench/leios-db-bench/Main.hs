@@ -45,6 +45,7 @@ import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosDbWriter (..)
+  , alwaysRelay
   , awaitAll
   , batchRetrieveTxs
   , leiosDbGarbageCollect
@@ -146,7 +147,7 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
 -- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
 fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
 fetchClient db range =
-  withWriter db $ \w ->
+  withWriter db alwaysRelay $ \w ->
     forM_ range (insertOneEb w)
 
 -- | Mirrors chain-selection's block-apply path: repeated
@@ -195,7 +196,7 @@ setupBenchEnv tmpDir = do
     newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.vol.db") (tmpDir <> "/bench.imm.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
-    withWriter db (`insertOneEb` i)
+    withWriter db alwaysRelay (`insertOneEb` i)
     when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
       putStr (show (i + 1) <> " ") >> hFlush stdout
   putStrLn "done"
