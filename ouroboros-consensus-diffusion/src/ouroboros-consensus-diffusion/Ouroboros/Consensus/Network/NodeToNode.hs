@@ -207,7 +207,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       FetchedMetricsTracer m ->
-      BlockFetchClient (HeaderWithTime blk) blk m ()
+      BlockFetchClient (HeaderWithTime blk) blk blk m ()
   , hBlockFetchServer ::
       ConnectionId addr ->
       NodeToNodeVersion ->

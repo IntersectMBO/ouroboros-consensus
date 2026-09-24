@@ -113,7 +113,7 @@ startBlockFetchLogic ::
   Tracer m (TraceEvent blk) ->
   ProtocolInfo blk ->
   ChainDB m blk ->
-  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk blk m ->
   KeepAliveRegistry PeerId m ->
   ChainSyncClientHandleCollection PeerId m blk ->
   m ()
@@ -188,7 +188,7 @@ runBlockFetchClient ::
   PeerId ->
   BlockFetchTimeout ->
   StateViewTracers blk m ->
-  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk blk m ->
   KeepAliveRegistry PeerId m ->
   ControlMessageSTM m ->
   -- | Send and receive message via the given 'Channel'.
