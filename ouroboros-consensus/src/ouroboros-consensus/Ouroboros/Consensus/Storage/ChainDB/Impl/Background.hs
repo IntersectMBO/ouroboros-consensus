@@ -60,16 +60,13 @@ import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb.Common
-  ( LeiosEbNotification (..)
-  , leiosDbGarbageCollect
-  , leiosDbPromoteToImmutable
-  , subscribeEbNotifications
-  )
+import LeiosDemoDb.Common (LeiosEbNotification (..))
+import LeiosDemoDb.WithCallTrace (leiosDbGarbageCollect, leiosDbPromoteToImmutable, subscribeEbNotifications)
 import LeiosDemoTypes (LeiosPoint, pointEbHash)
 import qualified LeiosDemoTypes
 import LeiosUtils.CallTrace
-  ( CallTrace
+  ( CallCtx
+  , CallTrace
   , SomeJsonCallTrace (SomeJsonCallTrace)
   , rootCallCtx
   )
@@ -95,7 +92,7 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
+import Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcherAllocate)
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -122,14 +119,21 @@ launchBgTasks cdb@CDB{..} replayed = do
 
   ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
   !ledgerDbMaintenaceThread <-
-    forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
-      ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
+    forkLinkedWatcherAllocate
+      cdbRegistry
+      "ChainDB.ledgerDbTaskWatcher"
+      (do labelThisThread "LedgerDbMaintenance"
+          rootCallCtx "LedgerDbMaintenance")
+      (\_ -> pure ())
+      (\cctx -> ledgerDbTaskWatcher cctx cdb ledgerDbTasksTrigger)
 
   gcSchedule <- newGcSchedule
   !gcThread <-
-    launch "ChainDB.gcBlocksScheduleRunner" $
+    launch "ChainDB.gcBlocksScheduleRunner" $ do
+      labelThisThread "ChainDBGC"
+      cctx <- rootCallCtx "ChainDBGC"
       gcScheduleRunner gcSchedule $
-        garbageCollectBlocks cdb
+        garbageCollectBlocks cctx cdb
 
   !copyToImmutableDBThread <-
     launch "ChainDB.copyToImmutableDBRunner" $
@@ -170,7 +174,9 @@ leiosAcquiredEbsRunner ::
   ChainDbEnv m blk ->
   m Void
 leiosAcquiredEbsRunner CDB{..} = do
-  chan <- subscribeEbNotifications cdbLeiosDb
+  labelThisThread "LeiosEbClosureWatcher"
+  cctx <- rootCallCtx "LeiosEbClosureWatcher"
+  chan <- subscribeEbNotifications cdbLeiosDb cctx
   forever $
     atomically (readTChan chan) >>= \case
       AcquiredEb{} -> pure ()
@@ -209,9 +215,10 @@ copyToImmutableDB ::
   , GetHeader blk
   , HasCallStack
   ) =>
+  CallCtx m ->
   ChainDbEnv m blk ->
   m (WithOrigin SlotNo)
-copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
+copyToImmutableDB cctx cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
   toCopy <- atomically $ do
     curChain <- icWithoutTime <$> readTVar cdbChain
     curChainVolSuffix <- Query.getCurrentChain cdb
@@ -266,7 +273,7 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- catch-up the queue is saturated by EB/tx ingest, the immutable tip then
       -- falls behind chain selection without bound, and the LedgerDB retains one
       -- ledger state per un-immutalised block -- multiple GB of heap.
-      leiosDbPromoteToImmutable cdbLeiosDb (catMaybes certified)
+      leiosDbPromoteToImmutable cdbLeiosDb cctx (catMaybes certified)
 
   -- Get the /possibly/ updated tip of the ImmutableDB
   (,()) <$> atomically (ImmutableDB.getTipSlot cdbImmutableDB)
@@ -345,13 +352,15 @@ copyToImmutableDBRunner ::
   GcSchedule m ->
   m Void
 copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
+  labelThisThread "ChainDBCopy"
+  cctx <- rootCallCtx "ChainDBCopy"
   -- this first flush will persist the differences that come from the initial
   -- chain selection.
   LedgerDB.tryFlush cdbLedgerDB
-  forever copyAndTrigger
+  forever $ copyAndTrigger cctx
  where
-  copyAndTrigger :: m ()
-  copyAndTrigger = do
+  copyAndTrigger :: CallCtx m -> m ()
+  copyAndTrigger cctx = do
     -- Wait for 'cdbChain' to become longer than 'getCurrentChain'.
     numToWrite <- atomically $ do
       curChain <- icWithoutTime <$> readTVar cdbChain
@@ -364,7 +373,7 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
     --
     -- This is a synchronous operation: when it returns, the blocks have been
     -- copied to disk (though not flushed, necessarily).
-    gcSlotNo <- copyToImmutableDB cdb
+    gcSlotNo <- copyToImmutableDB cctx cdb
 
     triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo numToWrite
     -- Prune the acquired-EB set now, as the GC is scheduled. The GC (and the
@@ -441,10 +450,11 @@ triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) immTip numWritten =
 ledgerDbTaskWatcher ::
   forall m blk.
   (IOLike m, ConsensusProtocol (BlockProtocol blk), GetHeader blk, HasHeader blk) =>
+  CallCtx m ->
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
   Watcher m LedgerDbTaskState (WithOrigin SlotNo)
-ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
+ledgerDbTaskWatcher cctx cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
   Watcher
     { wFingerprint = ldbtsImmTip
     , wInitial = Nothing
@@ -465,7 +475,7 @@ ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
                 } <-
                 LedgerDB.tryTakeSnapshot
                   cdbLedgerDB
-                  (void $ copyToImmutableDB cdb)
+                  (void $ copyToImmutableDB cctx cdb)
                   ((,now) <$> prevSnapTime)
                   blocksSinceLast
               when (ntBlocksSinceLastSnap == 0) $ traceMarkerIO "Took snapshot"
@@ -495,8 +505,8 @@ ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
 --
 -- TODO will a long GC be a bottleneck? It will block any other calls to
 -- @putBlock@ and @getBlock@.
-garbageCollectBlocks :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
-garbageCollectBlocks CDB{..} slotNo = do
+garbageCollectBlocks :: forall m blk. IOLike m => CallCtx m -> ChainDbEnv m blk -> SlotNo -> m ()
+garbageCollectBlocks cctx CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
@@ -507,7 +517,7 @@ garbageCollectBlocks CDB{..} slotNo = do
   -- an in-memory index of the LeiosDb, so it MUST be pruned to 'slotNo' first --
   -- otherwise it could report a hit for a tx this GC is about to drop.
   cdbLeiosEvictTxCache slotNo
-  leiosDbGarbageCollect cdbLeiosDb slotNo
+  leiosDbGarbageCollect cdbLeiosDb cctx slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 
 -- | Prune the acquired-EB set by age as a VolatileDB GC is scheduled, dropping

@@ -69,7 +69,6 @@ import Control.Monad.Class.MonadThrow
   , try
   )
 import Control.Tracer (Tracer, traceWith)
-import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -107,13 +106,6 @@ import LeiosDemoTypes
   , encodeLeiosEbSize
   , leiosEbBodyItems
   , leiosEbTxs
-  )
-import LeiosUtils.CallTrace
-  ( CallCtx
-  , CallName
-  , SomeJsonCallTrace (..)
-  , callTrace
-  , rootCallCtx
   )
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Util.IOLike
@@ -176,8 +168,6 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
   -- nothing.
   copyPending <- newTVarIO True
   sweepDoorbell <- newTVarIO True
-  gcRootCtx <- rootCallCtx "leiosdb-gc"
-
   -- The volatile partition's one writer: every write to it -- ingest,
   -- promotion, GC -- happens on this one worker, on the only open write
   -- connection, created with the database and torn down by the returned
@@ -207,7 +197,7 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
       , openReader = openReader statsVar
       , openWriter = openWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
-      , leiosDbGarbageCollect = sqlGarbageCollect tracer gcRootCtx writeQueue
+      , leiosDbGarbageCollect = sqlGarbageCollect writeQueue
       , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copyPending
       , leiosDbSampleStats = readTVarIO statsVar
       }
@@ -693,20 +683,9 @@ gcCandidatesPageSize = 4096
 
 -- | Implements 'leiosDbGarbageCollect': the MARK phase of GC mark-and-sweep,
 -- as a 'GcMark' job on the writer (see 'gcMark').
-sqlGarbageCollect ::
-  Tracer IO TraceLeiosDb ->
-  CallCtx IO ->
-  WriteQueue ->
-  SlotNo ->
-  IO ()
-sqlGarbageCollect tracer rootCtx writeQueue gcSlot =
-  gcSpan rootCtx "sqlGarbageCollect" (unSlotNo gcSlot) $ \_gcCtx ->
-    await =<< submitJob writeQueue (GcMark gcSlot)
- where
-  gcSpan ::
-    (Aeson.ToJSON arg, Aeson.ToJSON res) =>
-    CallCtx IO -> CallName -> arg -> (CallCtx IO -> IO res) -> IO res
-  gcSpan = callTrace (traceWith tracer . TraceLeiosDbCall . SomeJsonCallTrace)
+sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
+sqlGarbageCollect writeQueue gcSlot =
+  await =<< submitJob writeQueue (GcMark gcSlot)
 
 -- | The MARK phase of GC mark-and-sweep:
 --   - mark for GC (@status = 3@) every EB hash all of whose announcements are older

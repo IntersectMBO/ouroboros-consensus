@@ -96,7 +96,7 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoDb.Common (LeiosDbHandle)
+import LeiosDemoDb.WithCallTrace (LeiosDbHandle)
 import LeiosDemoTypes (AcquiredLeiosEbs, EbHash)
 import LeiosUtils.CallTrace (SomeJsonCallTrace)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))

@@ -52,6 +52,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Common (scanCompleteEbClosuresNotOlderThanSlot, withReader)
+import LeiosDemoDb.WithCallTrace (withCallTraceHandle)
 import LeiosDemoTypes
   ( HasLeiosVoting
   , acquiredLeiosEbHashes
@@ -299,7 +300,7 @@ openDBInternal cctx args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
-            , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
+            , cdbLeiosDb = withCallTraceHandle nullTracer (Args.cdbsLeiosDb cdbSpecificArgs)
             , cdbLeiosEvictTxCache = Args.cdbsLeiosEvictTxCache cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
@@ -344,15 +345,16 @@ openDBInternal cctx args launchBgTasks = runWithTempRegistry $ do
     addBlockTestFuse <- newFuse "test chain selection"
     let testing =
           Internal
-            { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
+            { intCopyToImmutableDB = getEnv h $ \e ->
+                Background.copyToImmutableDB cctx e
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
-                Background.garbageCollectBlocks e slot
+                Background.garbageCollectBlocks cctx e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
             , intTryTakeSnapshot = getEnv h $ \env' ->
                 void $
                   LedgerDB.tryTakeSnapshot
                     (cdbLedgerDB env')
-                    (void $ Background.copyToImmutableDB env')
+                    (void $ Background.copyToImmutableDB cctx env')
                     Nothing
                     maxBound
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
