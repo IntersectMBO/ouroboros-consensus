@@ -10,6 +10,7 @@ module Test.Consensus.Cardano.Capacity (tests) where
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.PParams
   ( ppMaxEndorserBlockExUnitsL
+  , ppMaxEndorserBlockReferencesSizeL
   , ppMaxEndorserBlockTxsSizeL
   , ppMaxRefScriptSizePerEndorserBlockL
   )
@@ -62,6 +63,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( AlonzoMeasure (..)
+  , DijkstraEbMeasure (..)
   , RefScriptSize (..)
   , fromExUnits
   )
@@ -98,6 +100,7 @@ tests =
     , testProperty "Conway" $
         prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
     , testProperty "Dijkstra" prop_dijkstra
+    , testProperty "Dijkstra transaction" prop_dijkstraTxEbMeasure
     ]
 
 -- | Both endorser-block measures are zero.
@@ -133,8 +136,10 @@ prop_shelleyBased genTranslationContext st =
       (fixedShelleyLedgerConfig translationContext)
       (tickShelley st)
 
--- | Each of the three endorser-block parameters lands in its own field of the
--- endorser-block capacity. The values differ, so a swapped lens fails.
+-- | Each of the four endorser-block parameters lands in its own field of the
+-- endorser-block capacity. The values differ, so a swapped lens fails. The
+-- references capacity is the parameter less the 5 bytes of the widest CBOR map
+-- header.
 --
 -- Few runs: setting the parameters forces the whole arbitrary ledger state,
 -- which is slow to generate, and the result depends only on the parameters.
@@ -143,17 +148,30 @@ prop_dijkstra ::
   Property
 prop_dijkstra st =
   withNumTests 10 $
-  forAllBlind arbitrary $ \translationContext ->
-    ebCapacityTxMeasure
-      (fixedShelleyLedgerConfig translationContext)
-      (withEndorserBlockParams (tickShelley st))
-      === TxMeasure
-        AlonzoMeasure
-          { byteSize = IgnoringOverflow (ByteSize32 1001)
-          , exUnits = fromExUnits (ExUnits 2002 3003)
-          }
-        (RefScriptSize (IgnoringOverflow (ByteSize32 4004)))
+    forAllBlind arbitrary $ \translationContext ->
+      let capacity =
+            ebCapacityTxMeasure
+              (fixedShelleyLedgerConfig translationContext)
+              (withEndorserBlockParams (tickShelley st))
+       in conjoin
+            [ counterexample "endorser-block capacity" $
+                capacity
+                  === DijkstraEbMeasure
+                    { ebClosureMeasure = (closureAlonzo, closureRefScripts)
+                    , txReferencesSize = IgnoringOverflow (ByteSize32 5000)
+                    }
+            , counterexample "mempool reservation for an endorser block" $
+                mempoolEbReservation (Proxy @(ShelleyBlock (Praos Crypto) DijkstraEra)) capacity
+                  === TxMeasure closureAlonzo closureRefScripts
+            ]
  where
+  closureAlonzo =
+    AlonzoMeasure
+      { byteSize = IgnoringOverflow (ByteSize32 1001)
+      , exUnits = fromExUnits (ExUnits 2002 3003)
+      }
+  closureRefScripts = RefScriptSize (IgnoringOverflow (ByteSize32 4004))
+
   withEndorserBlockParams (TickedShelleyLedgerState tip transition nes ledgerTables) =
     TickedShelleyLedgerState
       tip
@@ -163,8 +181,28 @@ prop_dijkstra st =
           & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockExUnitsL
             .~ OrdExUnits (ExUnits 2002 3003)
           & nesEsL . curPParamsEpochStateL . ppMaxRefScriptSizePerEndorserBlockL .~ 4004
+          & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockReferencesSizeL .~ 5005
       )
       ledgerTables
+
+-- | A Dijkstra transaction costs its block measure in the closure, and the
+-- reference 'encodeLeiosEb' writes for its byte size. The reference-scripts
+-- size differs from the byte size, so reading the wrong field fails.
+prop_dijkstraTxEbMeasure :: Property
+prop_dijkstraTxEbMeasure =
+  txEbMeasure (Proxy @(ShelleyBlock (Praos Crypto) DijkstraEra)) (TxMeasure alonzo refScripts)
+    === DijkstraEbMeasure
+      { ebClosureMeasure = (alonzo, refScripts)
+      , -- 34 bytes for the hash, 3 bytes for a size of 300
+        txReferencesSize = IgnoringOverflow (ByteSize32 37)
+      }
+ where
+  alonzo =
+    AlonzoMeasure
+      { byteSize = IgnoringOverflow (ByteSize32 300)
+      , exUnits = fromExUnits (ExUnits 1 2)
+      }
+  refScripts = RefScriptSize (IgnoringOverflow (ByteSize32 10))
 
 {-------------------------------------------------------------------------------
   Fixtures

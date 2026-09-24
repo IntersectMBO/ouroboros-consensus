@@ -238,7 +238,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       `o` inj id fromTrivial
       `o` inj id fromTrivial
       `o` inj id id
-      `o` inj id id
+      `o` id
       `o` nil
    where
     nil :: SOP.NS f '[] -> a
@@ -254,15 +254,23 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxEbMeasure x) -> f x
       SOP.S y -> g y
 
-    -- In every era 'TxEbMeasure' is 'TxMeasure', so each position widens both
-    -- phases the same way 'hardForkInjTxMeasurePhase1' and
+    -- Before Dijkstra 'TxEbMeasure' is 'TxMeasure', so each position widens
+    -- both phases the same way 'hardForkInjTxMeasurePhase1' and
     -- 'hardForkInjTxMeasurePhase2' do.
+    --
+    -- Eras before Dijkstra have no endorser blocks, so their references cost
+    -- nothing. The closure keeps the block measure, because
+    -- 'txEbMeasure' must never be zero.
     inj ::
       (TxMeasurePhase1 x -> AlonzoMeasure) ->
       (TxMeasurePhase2 x -> RefScriptSize) ->
       TxMeasure x ->
-      TxEbMeasure (ShelleyBlock (Praos c) DijkstraEra)
-    inj f g (TxMeasure p1 p2) = TxMeasure (f p1) (g p2)
+      DijkstraEbMeasure
+    inj f g (TxMeasure p1 p2) =
+      DijkstraEbMeasure
+        { ebClosureMeasure = (f p1, g p2)
+        , txReferencesSize = mempty
+        }
 
   hardForkTxEbMeasure _ p1 p2 =
     txEbMeasure (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) (TxMeasure p1 p2)

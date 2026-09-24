@@ -203,6 +203,7 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.EndorserBlock
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -686,6 +687,7 @@ test-suite consensus-test
     Test.Consensus.HardFork.Summary
     Test.Consensus.HeaderValidation
     Test.Consensus.Ledger.Tables.Diff
+    Test.Consensus.Leios.EndorserBlock
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
@@ -761,6 +763,7 @@ test-suite consensus-test
     typed-protocols:{examples, stateful, typed-protocols},
     unstable-consensus-testlib,
     unstable-mock-block,
+    vector,
 
 test-suite consensus-infra-test
   import: common-test
