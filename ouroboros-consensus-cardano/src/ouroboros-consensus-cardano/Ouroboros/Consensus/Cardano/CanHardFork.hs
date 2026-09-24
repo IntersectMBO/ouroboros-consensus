@@ -205,9 +205,6 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxMeasurePhase1 x) -> f x
       SOP.S y -> g y
 
-    fromByteSize :: IgnoringOverflow ByteSize32 -> AlonzoMeasure
-    fromByteSize x = AlonzoMeasure x mempty
-
   hardForkInjTxMeasurePhase2 =
     fromTrivial
       `o` fromTrivial
@@ -231,9 +228,6 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     o f g = \case
       SOP.Z (WrapTxMeasurePhase2 x) -> f x
       SOP.S y -> g y
-
-    fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
-    fromTrivial TrivialTxMeasurePhase2 = mempty
 
   hardForkInjTxEbMeasure =
     inj fromByteSize fromTrivial
@@ -259,21 +253,15 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxEbMeasure x) -> f x
       SOP.S y -> g y
 
-    -- Every era takes the default 'TxEbMeasure', its own 'TxMeasure', so each
-    -- position widens both phases the same way 'hardForkInjTxMeasurePhase1'
-    -- and 'hardForkInjTxMeasurePhase2' do.
+    -- In every era 'TxEbMeasure' is 'TxMeasure', so each position widens both
+    -- phases the same way 'hardForkInjTxMeasurePhase1' and
+    -- 'hardForkInjTxMeasurePhase2' do.
     inj ::
       (TxMeasurePhase1 x -> AlonzoMeasure) ->
       (TxMeasurePhase2 x -> RefScriptSize) ->
       TxMeasure x ->
       TxEbMeasure (ShelleyBlock (Praos c) DijkstraEra)
     inj f g (TxMeasure p1 p2) = TxMeasure (f p1) (g p2)
-
-    fromByteSize :: IgnoringOverflow ByteSize32 -> AlonzoMeasure
-    fromByteSize x = AlonzoMeasure x mempty
-
-    fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
-    fromTrivial TrivialTxMeasurePhase2 = mempty
 
   hardForkTxEbMeasure _ p1 p2 =
     txEbMeasure (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) (TxMeasure p1 p2)
@@ -290,6 +278,12 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
+
+fromByteSize :: IgnoringOverflow ByteSize32 -> AlonzoMeasure
+fromByteSize x = AlonzoMeasure x mempty
+
+fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
+fromTrivial TrivialTxMeasurePhase2 = mempty
 
 {-------------------------------------------------------------------------------
   Translation from Byron to Shelley
