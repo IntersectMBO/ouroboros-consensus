@@ -35,11 +35,11 @@ $(PDF_DIR)/$(PDF_NAME).pdf: $(LATEX_DIR)/Spec/PDF.tex $(latexFiles) $(PRE)
 # Agda -> Haskell
 define agdaToHs
     @echo "Generating $@"
-    $(eval CABAL_FILE=$(1).cabal)
+    $(eval CABAL_FILE=conformance-example.cabal)
     $(eval HS_DIST=$(HS_DIR)/Spec)
     mkdir -p $(HS_DIST)
-    cp -r Spec/hs-src/* $(HS_DIST)/
-    cp Spec/hs-src/$(CABAL_FILE) $(HS_DIST)/
+    cp -r ../conformance-example/* $(HS_DIST)/
+    cp ../conformance-example/$(CABAL_FILE) $(HS_DIST)/
     $(AGDA_RUN) -c --ghc-dont-call-ghc --compile-dir $(HS_DIST) $<
     find $(HS_DIST)/MAlonzo -name "*.hs" -print\
       | sed "s#^$(HS_DIST)/#        #;s#\.hs##;s#/#.#g"\
