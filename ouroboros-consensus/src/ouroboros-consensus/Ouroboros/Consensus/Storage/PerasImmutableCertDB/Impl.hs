@@ -33,10 +33,12 @@ module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
   ) where
 
 import Cardano.Binary
-import Control.Monad (forM, void)
+import Control.Monad (void)
 import Control.Monad.State.Strict (StateT, get, lift, put)
 import Control.ResourceRegistry (WithTempRegistry, allocateTemp, modifyWithTempRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.List (stripPrefix)
+import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (pack)
@@ -49,6 +51,7 @@ import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (.
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API.Lazy
+import Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------
   Database state
@@ -129,10 +132,10 @@ createDB
     , picdbaTracer
     } = do
     createDirectoryIfMissing hasFS True (mkFsPath [])
-    -- Validate every certificate file present on disk once, up front, and
-    -- keep only the (much cheaper) round numbers around: certificates
-    -- themselves are read back from disk on demand, see 'implGetCertsAfter'.
-    rounds <- indexCertRounds picdbaCodecConfig hasFS
+    -- Index the certificate files present on disk by recovering their round
+    -- numbers from their file names; the certificates themselves are read back
+    -- from disk on demand, see 'implGetCertsAfter'.
+    rounds <- indexCertRounds hasFS
     picdbKnownRounds <- newSVar rounds
     let env =
           PerasImmutableCertDbEnv
@@ -219,8 +222,30 @@ implGetCertsAfter env roundNo maxCerts = do
   On-disk serialisation
 -------------------------------------------------------------------------------}
 
+-- | The extension shared by all certificate files. A directory entry without
+-- this extension is not a certificate file and is ignored when indexing.
+certFileExtension :: String
+certFileExtension = ".cert"
+
+-- | The name of the file storing the certificate of the given round number.
+--
+-- The round number is encoded in the file name (and nowhere else), so that it
+-- can be recovered without reading the file, see 'certRoundFromFileName'.
+certFileName :: PerasRoundNo -> String
+certFileName roundNo = show (unPerasRoundNo roundNo) <> certFileExtension
+
 fsPathCertFile :: PerasRoundNo -> FsPath
-fsPathCertFile roundNo = mkFsPath [show (unPerasRoundNo roundNo) <> ".cert"]
+fsPathCertFile roundNo = mkFsPath [certFileName roundNo]
+
+-- | Recover the round number of a certificate from its file name, or 'Nothing'
+-- if the name is not a well-formed certificate file name. Inverse of
+-- 'certFileName'.
+certRoundFromFileName :: String -> Maybe PerasRoundNo
+certRoundFromFileName name = do
+  digits <- stripSuffix certFileExtension name
+  PerasRoundNo <$> readMaybe digits
+ where
+  stripSuffix suffix s = reverse <$> stripPrefix (reverse suffix) (reverse s)
 
 encodeCert ::
   EncodeDisk blk (PerasCert blk) =>
@@ -303,21 +328,19 @@ readCertFileAt ccfg hasFS path = do
     -- so error handling is bubbled up.
     Left err -> throwIO $ CorruptPerasImmutableCertFile path (show err)
 
--- | Read and decode all certificate files in the database directory.
+-- | Index the round numbers of all certificate files in the database
+-- directory.
 --
--- PRECONDITION: all certificate files are valid.
--- POSTCONDITION: the returned list is finite.
+-- The round number of each certificate is recovered from its file name (see
+-- 'certFileName'), so the certificates themselves are not read or decoded here;
+-- that happens on demand in 'readCertFile'. Directory entries that are not
+-- well-formed certificate file names are ignored.
+--
+-- POSTCONDITION: the returned set is finite.
 indexCertRounds ::
-  forall m h blk.
-  ( IOLike m
-  , IsPerasCert (PerasCert blk) blk
-  , DecodeDisk blk (PerasCert blk)
-  ) =>
-  CodecConfig blk ->
+  IOLike m =>
   HasFS m h ->
   m (Set PerasRoundNo)
-indexCertRounds ccfg hasFS = do
-  names <- Set.toList <$> listDirectory hasFS (mkFsPath [])
-  fmap Set.fromList $ forM names $ \name -> do
-    cert <- readCertFileAt ccfg hasFS (mkFsPath [name])
-    pure (getPerasCertRound cert)
+indexCertRounds hasFS = do
+  names <- listDirectory hasFS (mkFsPath [])
+  pure $ Set.fromList $ mapMaybe certRoundFromFileName $ Set.toList names
