@@ -489,6 +489,9 @@ instance CanHardFork '[BlockA, BlockB] where
 
   hardForkTxEbMeasure _ p1 p2 = txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
 
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @BlockB) eb in (p1, p2)
+
   hardForkEqGenTxId = (==) `on` rawHashNS
   hardForkCompareGenTxId = compare `on` rawHashNS
 

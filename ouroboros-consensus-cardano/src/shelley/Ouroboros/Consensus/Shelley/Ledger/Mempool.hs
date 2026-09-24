@@ -547,7 +547,7 @@ instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) 
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = zero
-  ebClosureCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasurePhase1 (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
@@ -562,7 +562,7 @@ instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) 
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = zero
-  ebClosureCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasurePhase1 (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
@@ -577,7 +577,7 @@ instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = zero
-  ebClosureCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 -----
 
@@ -717,7 +717,7 @@ instance
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = zero
-  ebClosureCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 -----
 
@@ -808,7 +808,7 @@ instance
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = zero
-  ebClosureCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 instance
   ShelleyCompatible p ConwayEra =>
@@ -826,7 +826,7 @@ instance
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = zero
-  ebClosureCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 instance
   ShelleyCompatible p DijkstraEra =>
@@ -844,4 +844,4 @@ instance
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = zero
-  ebClosureCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id

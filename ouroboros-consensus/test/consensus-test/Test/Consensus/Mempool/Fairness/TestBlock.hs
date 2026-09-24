@@ -138,7 +138,7 @@ instance Ledger.TxLimits TestBlock where
   txEbMeasure _ = id
 
   ebCapacityTxMeasure _cfg _st = Measure.zero
-  ebClosureCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 {-------------------------------------------------------------------------------
   Ledger support (empty tables)

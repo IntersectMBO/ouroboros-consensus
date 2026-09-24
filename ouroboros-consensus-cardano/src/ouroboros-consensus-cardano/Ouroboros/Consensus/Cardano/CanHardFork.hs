@@ -79,6 +79,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasure (..)
   , TxMeasurePhase1
   , TxMeasurePhase2
+  , mempoolEbReservation
   , txEbMeasure
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -265,6 +266,10 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
   hardForkTxEbMeasure _ p1 p2 =
     txEbMeasure (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) (TxMeasure p1 p2)
+
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) eb
+     in (p1, p2)
 
   -- Both ids are ordered by their txid hash, ignoring the era. Equality reuses
   -- 'compare' rather than a separate path: 'hardForkEqGenTxId' is

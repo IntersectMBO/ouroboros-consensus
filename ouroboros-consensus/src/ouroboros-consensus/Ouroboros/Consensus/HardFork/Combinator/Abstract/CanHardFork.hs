@@ -125,6 +125,15 @@ class
     HardForkTxMeasurePhase2 xs ->
     HardForkTxEbMeasure xs
 
+  -- | 'mempoolEbReservation' for the hard fork block.
+  --
+  -- The result is the fields of its 'TxMeasure', for the reason given at
+  -- 'hardForkTxEbMeasure'.
+  hardForkMempoolEbReservation ::
+    proxy xs ->
+    HardForkTxEbMeasure xs ->
+    (HardForkTxMeasurePhase1 xs, HardForkTxMeasurePhase2 xs)
+
   -- | Whether two transaction ids of @xs@ are equal, ignoring which era each
   -- sits in. Two txids in different eras can be equal; see the
   -- 'Ouroboros.Consensus.HardFork.Combinator.AcrossEras.OneEraGenTxId' 'Eq'
@@ -161,6 +170,9 @@ instance SingleEraBlock blk => CanHardFork '[blk] where
   hardForkInjTxEbMeasure (SOP.Z (WrapTxEbMeasure x)) = x
 
   hardForkTxEbMeasure _ p1 p2 = txEbMeasure (Proxy @blk) (TxMeasure p1 p2)
+
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @blk) eb in (p1, p2)
 
   -- No production code uses a single-era hard fork, so an allocating raw-hash
   -- comparison is fine here.
