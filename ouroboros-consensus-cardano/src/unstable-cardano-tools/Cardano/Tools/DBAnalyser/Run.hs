@@ -25,7 +25,7 @@ import qualified Debug.Trace as Debug
 import LeiosDemoDb (allocateHandle, newLeiosDBInMemory, newLeiosDBSQLite)
 import LeiosDemoDb.WithCallTrace (withCallTraceHandle, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
-import LeiosUtils.CallTrace (rootCallCtx)
+import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -78,13 +78,13 @@ openLedgerDB ::
   , LedgerDB.ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
+  CallCtx IO ->
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args = do
-  cctx <- rootCallCtx "DBAnalyser"
+openLedgerDB cctx args =
   runWithTempRegistry $
     (,()) <$> do
       (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
@@ -228,7 +228,7 @@ analyse dbaConfig args = do
                 Just hash -> pure $ BlockPoint slot hash
                 Nothing -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
         SStartFromLedgerState -> do
-          (ledgerDB, intLedgerDB) <- openLedgerDB ldbArgs
+          (ledgerDB, intLedgerDB) <- openLedgerDB cctx ldbArgs
           -- This marker divides the "loading" phase of the program, where the
           -- system is principally occupied with reading snapshot data from
           -- disk, from the "processing" phase, where we are streaming blocks
