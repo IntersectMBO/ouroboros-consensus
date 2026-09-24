@@ -171,7 +171,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
   -- Both start set, so a restart picks up whatever the last run left
   -- pinned or marked; the copier and the writer clear them once they find
   -- nothing.
-  copyPending <- newTVarIO True
+  copierDoorbell <- newTVarIO True
   sweepDoorbell <- newTVarIO True
 
   -- The volatile partition's one writer: every write to it -- ingest,
@@ -195,7 +195,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       registry
       tracer
       statsVar
-      copyPending
+      copierDoorbell
       writeQueue
       volLeiosDbPath
       immLeiosDbPath
@@ -206,7 +206,7 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       , openWriter = openWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
       , leiosDbGarbageCollect = sqlGarbageCollect writeQueue
-      , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copyPending
+      , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copierDoorbell
       , leiosDbSampleStats = readTVarIO statsVar
       }
  where
@@ -416,16 +416,14 @@ withStmt db sql = bracket (dbPrepare db (fromString sql)) dbFinalize
 -- * Copying EBs to the immutable partition
 
 -- | Implements 'leiosDbPromoteToImmutable':
---   - pin the EB rows in the volatile partition for promotion (@status@ 0 -> 1),
+--   - synchronously pin the EB rows in the volatile partition for promotion (@status@ 0 -> 1),
 --     through the writer ('PinEb');
---   - put the hash into the queue for the copier to pick up, only once the pin
---     is durable.
+--   - ring the copier's doorbell.
 sqlPromoteToImmutable :: WriteQueue -> StrictTVar IO Bool -> [LeiosPoint] -> IO ()
-sqlPromoteToImmutable writeQueue copyPending points = unless (null points) $ do
+sqlPromoteToImmutable writeQueue copierDoorbell points = unless (null points) $ do
   await =<< submitJob writeQueue (PinEb [p.pointEbHash | p <- points])
-  -- The pin is the work list; this only saves the writer a lookup when
-  -- there is nothing to copy.
-  atomically $ writeTVar copyPending True
+  -- notify the copier thread that there's work to be done
+  atomically $ writeTVar copierDoorbell True
 
 -- | The copy statements, prepared on the writer's immutable connection --
 -- main is the immutable file, the volatile file is ATTACHed as @vol@.
@@ -556,7 +554,7 @@ startCopier ::
   FilePath ->
   FilePath ->
   IO (Thread IO ())
-startCopier registry tracer statsVar copyPending writeQueue volPath immPath = do
+startCopier registry tracer statsVar copierDoorbell writeQueue volPath immPath = do
   ccDb <- openRawConnection immPath
   (copierConn, nextPinnedStmt) <-
     ( do
@@ -607,11 +605,11 @@ startCopier registry tracer statsVar copyPending writeQueue volPath immPath = do
       loop = do
         -- Clear before looking, so a pin that lands while we look rings
         -- again instead of being lost.
-        atomically $ writeTVar copyPending False
+        atomically $ writeTVar copierDoorbell False
         nextPinnedBatch >>= \case
           batch@(_ : _) -> copyBatch batch >> loop
           [] -> do
-            IO.atomically $ readTVar copyPending >>= check
+            IO.atomically $ readTVar copierDoorbell >>= check
             loop
   forkLinkedThread registry "leiosdb-copier" $ loop `finally` closeConnection
 
