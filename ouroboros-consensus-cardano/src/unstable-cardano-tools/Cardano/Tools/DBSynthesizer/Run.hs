@@ -188,7 +188,9 @@ synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig
           flavargs
           $ ChainDB.defaultArgs
 
-    mbfs <- mkForgers nullTracer
+    -- The KES agent client only reports a failure to connect by tracing it, so
+    -- without this an unreachable agent would just forge nothing.
+    mbfs <- mkForgers $ (("--> KES agent: " <>) . show) >$< stdoutTracer
     allocatedForgers <-
       traverse
         (\mbf -> allocate registry (const (BlockForging.mkBlockForging mbf)) BlockForging.finalize)
