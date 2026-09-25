@@ -63,7 +63,7 @@ testAnalyserConfig :: DBAnalyserConfig
 testAnalyserConfig =
   DBAnalyserConfig
     { dbDir = chainDB
-    , ldbBackend = Just V2InMem
+    , ldbBackend = Just InMemFlag
     , verbose = False
     , selectDB = SelectImmutableDB Origin
     , validation = Just ValidateAllBlocks

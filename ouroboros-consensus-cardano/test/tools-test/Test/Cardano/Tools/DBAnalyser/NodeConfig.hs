@@ -32,8 +32,11 @@ import Cardano.Tools.DBAnalyser.Block.Cardano
   )
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfoAndBackend)
 import Cardano.Tools.DBAnalyser.Types
-  ( LSMOptions (..)
+  ( LSMFlags (..)
+  , LSMOptions (..)
   , LedgerDBBackend (..)
+  , LedgerDBBackendFlags (..)
+  , selectLedgerDBBackend
   )
 import Control.Exception (try)
 import qualified Data.Aeson as Aeson
@@ -82,6 +85,9 @@ tests =
     , testCase "LedgerDB backend defaults to in-memory" test_ledgerDBBackendDefault
     , testCase "LedgerDB LSM backend" test_ledgerDBBackendLSM
     , testCase "LedgerDB LSM rejects an absolute path" test_ledgerDBBackendLSMAbsolute
+    , testCase "--lsm keeps the configured LSM settings" test_lsmFlagKeepsConfig
+    , testCase "--lsm-export prefers the configured export path" test_lsmExportFlagConfigured
+    , testCase "--lsm over a non-LSM configuration uses the defaults" test_lsmFlagDefaults
     , testCase "a malformed configuration is a ConfigError" test_malformedIsConfigError
     , testCase "builds a ProtocolInfo" test_mkProtocolInfoAndBackend
     ]
@@ -318,6 +324,44 @@ test_ledgerDBBackendLSMAbsolute =
       Left err -> do
         "DatabasePath" `isInfixOf` err @? "unexpected message: " <> err
         "must be relative" `isInfixOf` err @? "unexpected message: " <> err
+
+-- | The LSM settings of a configuration that selects LSM, for the
+-- 'selectLedgerDBBackend' tests.
+configuredLSM :: LSMOptions
+configuredLSM =
+  LSMOptions
+    { lsmDatabasePath = "some-lsm-dir"
+    , lsmExportPath = Just "some-export-dir"
+    , lsmNoDiskCache = False
+    }
+
+-- | A bare @--lsm@ must not drop what the configuration sets: in particular a
+-- configured @ExportPath@ keeps exporting snapshots.
+test_lsmFlagKeepsConfig :: Assertion
+test_lsmFlagKeepsConfig =
+  case selectLedgerDBBackend (Just (LSMFlag (LSMFlags False True))) (Just (V2LSM configuredLSM)) of
+    Just (V2LSM opts) -> do
+      lsmDatabasePath opts @?= "some-lsm-dir"
+      lsmExportPath opts @?= Just "some-export-dir"
+      lsmNoDiskCache opts @?= True
+    other -> assertFailure $ "expected the LSM backend, but got " <> describe other
+
+-- | @--lsm-export@ exports into the configured directory, not the default one.
+test_lsmExportFlagConfigured :: Assertion
+test_lsmExportFlagConfigured =
+  case selectLedgerDBBackend (Just (LSMFlag (LSMFlags True False))) (Just (V2LSM configuredLSM)) of
+    Just (V2LSM opts) -> lsmExportPath opts @?= Just "some-export-dir"
+    other -> assertFailure $ "expected the LSM backend, but got " <> describe other
+
+-- | With no LSM settings to start from, @--lsm@ uses the defaults.
+test_lsmFlagDefaults :: Assertion
+test_lsmFlagDefaults =
+  case selectLedgerDBBackend (Just (LSMFlag (LSMFlags True False))) (Just V2InMem) of
+    Just (V2LSM opts) -> do
+      lsmDatabasePath opts @?= "lsm"
+      lsmExportPath opts @?= Just "lsm-exported"
+      lsmNoDiskCache opts @?= False
+    other -> assertFailure $ "expected the LSM backend, but got " <> describe other
 
 -- | @cardano-config@ reports a missing mandatory key by throwing, not in its
 -- result, so check that such a configuration still reaches the user as a plain
