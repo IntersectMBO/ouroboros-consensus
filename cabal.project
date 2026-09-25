@@ -84,14 +84,14 @@ multi-repl: True
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-config.git
-  tag: 6d1f9cd94a35a3a16b96acc9e6e6eb2940466e9e
-  --sha256: sha256-MYzFXynFPkYngKBsa7dRJMX5n6QIrMwyZ8vpxkb/iaU=
+  tag: d6340b13b9c789441905f27d90984a6018bbe503
+  --sha256: sha256-diV4bf/cU0u0VNC6dMMe4Y/pPFI0s+MqxCIpzd9c+E8=
 
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-keys
-  tag: 98954b73084c53e6753c303482140300875d18da
-  --sha256: sha256-2kRFav7jxLkJK2XGbvSw22tNgvjrhNsOB/bmIJnd2kY=
+  tag: 72d1b84ef88cc51e5a735cc429286cb2c1e061d3
+  --sha256: sha256-ST0XtYOuqgNZRV6aC3JZ7JhkY1oPw8pMVlcTJENp5ic=
   subdir: cardano-keys
 
 import: cabal/asserts.cabal
