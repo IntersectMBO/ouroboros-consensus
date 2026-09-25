@@ -71,7 +71,7 @@ data LSMOptions = LSMOptions
 
 -- | The directory holding the working LSM database, used when the command line
 -- selects the LSM backend and when the node configuration file does not set
--- @LedgerDB.LSMDatabasePath@.
+-- @LedgerDB.Backend.LSM.DatabasePath@.
 defaultLSMDatabasePath :: FilePath
 defaultLSMDatabasePath = "lsm"
 
