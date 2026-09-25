@@ -55,7 +55,7 @@ class EndorserBlockFormat era where
   encodedMaxFramingSize :: proxy era -> ByteSize32
 
 -- | The references capacity a @maxEndorserBlockReferencesSize@ parameter
--- yields: the parameter less the framing 'encodeEndorserBlock' writes ahead of the
+-- yields: the parameter minus the framing 'encodeEndorserBlock' writes ahead of the
 -- references. A parameter smaller than the framing exhausts the capacity, so
 -- no reference fits, rather than wrapping around to \"no limit\".
 referencesCapacity :: EndorserBlockFormat era => proxy era -> BytesSize -> BytesSize
