@@ -136,19 +136,19 @@ data LeiosEbNotification
   | AcquiredEbTxs LeiosPoint
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
-withReader db = bracket (openReader db) (\r -> r.close)
+withReader db = bracket (openReader db) (.close)
 
 withWriter :: MonadThrow m => LeiosDbHandle m -> (LeiosDbWriter m -> m a) -> m a
-withWriter db = bracket (openWriter db) (\w -> w.close)
+withWriter db = bracket (openWriter db) (.close)
 
 allocateReader :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbReader m)
-allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) (\r -> r.close)
+allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) (.close)
 
 allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
-allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) (\w -> w.close)
+allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) (.close)
 
 allocateHandle :: IOLike m => ResourceRegistry m -> m (LeiosDbHandle m) -> m (LeiosDbHandle m)
-allocateHandle registry open = snd <$> allocate registry (\_ -> open) (\db -> db.close)
+allocateHandle registry open = snd <$> allocate registry (\_ -> open) (.close)
 
 instance NoThunks (LeiosDbHandle m) where
   showTypeOf _ = "LeiosDbHandle"

@@ -237,8 +237,8 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
         Right promise -> await promise
 
   openReader statsVar = do
-    volDb <- openVolRawConnection volLeiosDbPath
-    immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
+    volDb <- openReadOnlyRawConnection volLeiosDbPath
+    immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
     conn <- mkConn tracer statsVar volDb immDb
     pure
       LeiosDbReader
@@ -268,7 +268,7 @@ withLeiosDBSQLite ::
 withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
   bracket
     (newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath)
-    (\db -> db.close)
+    (.close)
 
 -- | Initialise 'LeiosDbStats' by counting the EB rows of both partitions.
 --   This will only run once per process.
@@ -347,7 +347,7 @@ withReadOnlyConn dbPath =
 openReadOnlyRawConnection :: HasCallStack => FilePath -> IO DB.Database
 openReadOnlyRawConnection dbPath = do
   db <- open2 (fromString dbPath) [SQLOpenReadOnly] SQLVFSDefault
-  -- Only mmap_size: journal_mode and page_size need write access.
+  dbExec db "pragma busy_timeout = 1000;"
   dbExec db "pragma mmap_size = 268435500;"
   pure db
 
