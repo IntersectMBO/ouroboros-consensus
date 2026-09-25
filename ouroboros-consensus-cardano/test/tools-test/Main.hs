@@ -22,7 +22,7 @@ chainDB = "ouroboros-consensus-cardano/test/tools-test/disk/chaindb"
 bulkCredentials = "ouroboros-consensus-cardano/test/tools-test/disk/config/bulk-creds-k2.json"
 
 -- | A tenth of an epoch, then a further 8192 slots: enough for both steps to
--- forge a few hundred blocks, small enough for the analysis to stay quick. The
+-- forge hundreds of blocks, small enough for the analysis to stay quick. The
 -- tool also accepts block and epoch limits ('ForgeLimitBlock',
 -- 'ForgeLimitEpoch').
 testSynthOptionsCreate :: DBSynthesizerOptions
