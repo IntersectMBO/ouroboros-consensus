@@ -394,6 +394,16 @@ openRawConnection path = do
       -- no connection is sitting on a stale read snapshot. One that is will
       -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
       "pragma wal_autocheckpoint = 1000;"
+    , -- Sweep-sized sorts otherwise spill to a temp file.
+      "pragma temp_store = memory;"
+    , -- Without this the WAL keeps whatever high-water mark it ever reached:
+      -- SQLite reuses the file in place rather than truncating it after a
+      -- checkpoint, so one write burst sets the footprint for the life of the
+      -- database. The limit becomes the resting size, so it is the footprint:
+      -- measured on a sync, 64 MiB rests at 64 MiB and truncates spikes of
+      -- 110-460 MB back down, while staying far above the 4 MB a checkpoint
+      -- cycle needs ('wal_autocheckpoint' x 'page_size').
+      "pragma journal_size_limit = 67108864;"
     ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
