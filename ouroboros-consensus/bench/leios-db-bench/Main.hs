@@ -33,6 +33,7 @@ module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
+import Control.Exception (bracket)
 import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (debugTracer, (>$<))
@@ -84,9 +85,11 @@ main = do
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
       , ""
       ]
-  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> do
-    env <- setupBenchEnv tmpDir
-    runBench (benchConcurrentAll env)
+  withSystemTempDirectory "leios-db-bench" $ \tmpDir ->
+    -- The directory goes with this scope, so the connections must close
+    -- before it does.
+    bracket (setupBenchEnv tmpDir) (\env -> env.beDb.close) $ \env ->
+      runBench (benchConcurrentAll env)
 
 -- * Configuration
 

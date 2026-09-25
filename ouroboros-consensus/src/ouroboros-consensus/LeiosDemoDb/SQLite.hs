@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -46,6 +45,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTMVar
   , readTVar
   , readTVarIO
+  , tryPutTMVar
   , tryReadTBQueue
   , writeTBQueue
   , writeTChan
@@ -218,8 +218,10 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
     -- killing it is safe at any point.
     killThread samplerId
     -- The copier first: it submits to the writer, so it must be gone
-    -- before the writer stops serving.
-    stopCopier
+    -- before the writer stops serving. It reports whatever ended it, and
+    -- that report must not cost the writer its shutdown.
+    stopCopier `finally` shutdownWriter
+   where
     -- The queue is FIFO, so serving this job flushes everything
     -- submitted before it; awaiting it waits for the connections to
     -- close, and a failed close propagates -- a leaked connection must
@@ -229,13 +231,14 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
     -- worker closes the connections on every exit path before it seals,
     -- and whatever killed it already reached the awaiter of the write
     -- that failed.
-    try (submitJob writeQueue Shutdown) >>= \case
-      Left (_writerGone :: LeiosDbException) -> pure ()
-      Right promise -> await promise
+    shutdownWriter =
+      try (submitJob writeQueue Shutdown) >>= \case
+        Left (_writerGone :: LeiosDbException) -> pure ()
+        Right promise -> await promise
 
   openReader statsVar = do
-    volDb <- openVolRawConnection volLeiosDbPath
-    immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
+    volDb <- openReadOnlyRawConnection volLeiosDbPath
+    immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
     conn <- mkConn tracer statsVar volDb immDb
     pure
       LeiosDbReader
@@ -265,7 +268,7 @@ withLeiosDBSQLite ::
 withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
   bracket
     (newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath)
-    (\db -> db.close)
+    (.close)
 
 -- | Initialise 'LeiosDbStats' by counting the EB rows of both partitions.
 --   This will only run once per process.
@@ -344,7 +347,7 @@ withReadOnlyConn dbPath =
 openReadOnlyRawConnection :: HasCallStack => FilePath -> IO DB.Database
 openReadOnlyRawConnection dbPath = do
   db <- open2 (fromString dbPath) [SQLOpenReadOnly] SQLVFSDefault
-  -- Only mmap_size: journal_mode and page_size need write access.
+  dbExec db "pragma busy_timeout = 1000;"
   dbExec db "pragma mmap_size = 268435500;"
   pure db
 
@@ -391,6 +394,16 @@ openRawConnection path = do
       -- no connection is sitting on a stale read snapshot. One that is will
       -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
       "pragma wal_autocheckpoint = 1000;"
+    , -- Sweep-sized sorts otherwise spill to a temp file.
+      "pragma temp_store = memory;"
+    , -- Without this the WAL keeps whatever high-water mark it ever reached:
+      -- SQLite reuses the file in place rather than truncating it after a
+      -- checkpoint, so one write burst sets the footprint for the life of the
+      -- database. The limit becomes the resting size, so it is the footprint:
+      -- measured on a sync, 64 MiB rests at 64 MiB and truncates spikes of
+      -- 110-460 MB back down, while staying far above the 4 MB a checkpoint
+      -- cycle needs ('wal_autocheckpoint' x 'page_size').
+      "pragma journal_size_limit = 67108864;"
     ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
@@ -600,26 +613,48 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
         dbFinalize nextPinnedStmt
         closeChecked ccDb
 
+      -- The runtime raises 'BlockedIndefinitelyOnSTM' at a thread when no
+      -- other thread can reach the variables it waits on. The copier waits
+      -- only on 'stopVar' and 'copyPending', which live in the handle, so
+      -- this exception says nothing can reach the handle any more. A close
+      -- would have stopped the copier through 'stopVar', so no close ran.
+      --
+      -- 'link' below stops the node when the copier stops, because a stopped
+      -- copier leaves the volatile partition growing with no way to evict it.
+      -- A handle nothing can reach pins no further EBs, so nothing grows and
+      -- there is nothing to stop the node for. Rethrowing lets 'link' carry the
+      -- exception to whichever thread opened the database, at whatever it was
+      -- doing.
+      rethrowUnlessOrphaned e
+        | isJust (fromException e :: Maybe BlockedIndefinitelyOnSTM) = pure ()
+        | otherwise = throwIO e
+
+      -- Check the stop request on every pass, not only when nothing is left
+      -- to copy. A steady stream of promotions keeps the batch non-empty, so a
+      -- check on the empty batch alone makes 'stopCopier' wait for the copier
+      -- to catch up. This bounds the wait at one batch plus one backoff.
       loop = do
-        -- Clear before looking, so a pin that lands while we look rings
-        -- again instead of being lost.
-        atomically $ writeTVar copyPending False
-        nextPinnedBatch >>= \case
-          batch@(_ : _) -> copyBatch batch >> loop
-          [] -> do
-            stop <- IO.atomically $ do
-              stop <- readTVar stopVar
-              pending <- readTVar copyPending
-              check (stop || pending)
-              pure stop
-            unless stop loop
+        stopping <- readTVarIO stopVar
+        unless stopping $ do
+          -- Clear before looking, so a pin that lands while we look rings
+          -- again instead of being lost.
+          atomically $ writeTVar copyPending False
+          nextPinnedBatch >>= \case
+            batch@(_ : _) -> copyBatch batch >> loop
+            [] -> do
+              stop <- IO.atomically $ do
+                stop <- readTVar stopVar
+                pending <- readTVar copyPending
+                check (stop || pending)
+                pure stop
+              unless stop loop
   worker <- async $ do
     outcome <- try (loop `finally` closeConnection)
     atomically $ putTMVar stoppedVar (outcome :: Either SomeException ())
-    -- A copier that stopped is a volatile partition that stops being
-    -- evictable, so the link takes the node down rather than let it grow.
-    either throwIO pure outcome
+    either rethrowUnlessOrphaned pure outcome
   labelThread (asyncThreadId worker) "leiosdb-copier"
+  -- A copier that stopped is a volatile partition that stops being
+  -- evictable, so the link takes the node down rather than let it grow.
   link worker
   pure $ do
     atomically $ writeTVar stopVar True
@@ -1169,7 +1204,8 @@ describeJob = \case
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
 
--- | Publish the worker's parting exception as a queued job's result.
+-- | Publish an exception as a job's result: for each job still queued when
+-- the worker stops, and for the job in hand when running it throws.
 failJob :: SomeException -> WriteJob -> IO ()
 failJob cause = \case
   WriteEbPoint _ _ rv -> put rv
@@ -1181,8 +1217,11 @@ failJob cause = \case
   GcMark _ rv -> put rv
   Shutdown rv -> put rv
  where
+  -- 'publish' writes the result before it rethrows, and 'serve' catches that
+  -- exception and calls this. The writer thread then writes the same job's
+  -- result twice, so the second write must not block.
   put :: WriteResult a -> IO ()
-  put rv = atomically $ putTMVar rv (Left cause)
+  put rv = atomically $ void $ tryPutTMVar rv (Left cause)
 
 -- | How many queued jobs the writer serves back-to-back before it takes a
 -- turn of maintenance anyway.
@@ -1318,7 +1357,10 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
                 Just job -> Just job <$ writeTVar jobsServedVar (served + 1)
         case mJob of
           Just job -> do
-            stop <- runJob job
+            -- 'tryReadTBQueue' above removed the job, so the drain that runs
+            -- when the worker stops cannot reach it. If running it throws,
+            -- only this handler can still tell the awaiter.
+            stop <- runJob job `catch` \(e :: SomeException) -> failJob e job >> throwIO e
             traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
             unless stop serve
           Nothing -> do
@@ -1419,8 +1461,9 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
         { errorMessage = "the LeiosDB writer is closed"
         , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
         }
-  -- Only a 'LeiosDbException' is a failed write; anything else -- a
-  -- cancellation above all -- belongs to this thread, not to the job.
+  -- Only a 'LeiosDbException' is a failed write, so only that is published
+  -- here. Anything else belongs to this thread, and 'serve' publishes it to
+  -- the job it holds before it rethrows.
   publish :: WriteResult a -> IO a -> IO ()
   publish resultVar action =
     try action >>= \case

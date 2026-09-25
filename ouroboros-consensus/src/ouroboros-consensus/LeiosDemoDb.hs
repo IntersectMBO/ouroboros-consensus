@@ -10,6 +10,7 @@ module LeiosDemoDb
   , Promise (..)
   , withReader
   , withWriter
+  , allocateHandle
   , allocateReader
   , allocateWriter
   , awaitAll
@@ -48,6 +49,7 @@ import LeiosDemoDb.Common
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  , allocateHandle
   , allocateReader
   , allocateWriter
   , awaitAll

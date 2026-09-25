@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Benchmark for the sqlite backend of 'LeiosDemoDb': full-EB insertion,
@@ -93,7 +94,7 @@ module Main (main) where
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
-import Control.Exception (evaluate)
+import Control.Exception (evaluate, finally)
 import Control.Monad (forM, forever, replicateM, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (Tracer (..), emit)
@@ -181,50 +182,53 @@ main = do
         db <- mkDb
         schedule <- populateDb opts db
         pure (db, schedule)
-    when (optNoTxIndex opts) $ do
-      hPutStrLn stderr "Dropping idx_ebTxs_txHashBytes from the volatile partition"
-      dropTxIndex benchVol
-    when (null schedule) $
-      die "empty EB schedule (no volatile ebs)"
-    when (sum (map snd (phaseSeries (optScenario opts))) > length schedule) $
-      hPutStrLn stderr $
-        "NOTE: the phases want "
-          <> show (sum (map snd (phaseSeries (optScenario opts))))
-          <> " EBs but only "
-          <> show (length schedule)
-          <> " are scheduled; later phases will be skipped"
-    let describeSeries =
-          List.intercalate
-            " + "
-            [ scenario <> "×" <> show (length grp) <> " (" <> show n <> " EBs each)"
-            | grp@((scenario, n) : _) <- List.group (phaseSeries (optScenario opts))
-            ]
-    hPutStr stderr $
-      unlines
-        [ ""
-        , "Scheduled EBs       : " <> show (length schedule)
-        , "Phases              : " <> describeSeries
-        , "GC pacing           : " <> gcPacingName (optGcPacing opts)
-        , "idx_ebTxs_txHashBytes: " <> (if optNoTxIndex opts then "DROPPED" else "present")
-        , ""
-        ]
-    -- Await the sweeper's startup self-heal (GC-candidates initialisation +
-    -- resume of persisted marks), so it is not attributed to phase 1.
-    sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
-    initialBacklog <- mkBacklogProbe benchVol sqlInitialBacklog
-    (_, initialSweepWall) <- timed $ awaitZero "initial self-heal" initialBacklog
-    hPutStrLn stderr ("initial sweep: " <> showTime initialSweepWall)
-    before <- leiosDbSampleStats db
-    hPutStrLn stderr (renderStats "before" before)
-    latRef <- newIORef 0
-    putStrLn csvHeader
-    phaseStats <-
-      withAsync mutator $ \_ ->
-        withAsync (tickProbe latRef) $ \_ ->
-          runPhases opts db flushEvents latRef sweepBacklog schedule (immutableEbs before)
-    after <- leiosDbSampleStats db
-    hPutStrLn stderr (renderStats "after " after)
-    hPutStr stderr (renderSummary opts phaseStats)
+    -- 'withSystemTempDirectory' removes the directory on the way out, so the
+    -- connections must be closed before that.
+    (`finally` db.close) $ do
+      when (optNoTxIndex opts) $ do
+        hPutStrLn stderr "Dropping idx_ebTxs_txHashBytes from the volatile partition"
+        dropTxIndex benchVol
+      when (null schedule) $
+        die "empty EB schedule (no volatile ebs)"
+      when (sum (map snd (phaseSeries (optScenario opts))) > length schedule) $
+        hPutStrLn stderr $
+          "NOTE: the phases want "
+            <> show (sum (map snd (phaseSeries (optScenario opts))))
+            <> " EBs but only "
+            <> show (length schedule)
+            <> " are scheduled; later phases will be skipped"
+      let describeSeries =
+            List.intercalate
+              " + "
+              [ scenario <> "×" <> show (length grp) <> " (" <> show n <> " EBs each)"
+              | grp@((scenario, n) : _) <- List.group (phaseSeries (optScenario opts))
+              ]
+      hPutStr stderr $
+        unlines
+          [ ""
+          , "Scheduled EBs       : " <> show (length schedule)
+          , "Phases              : " <> describeSeries
+          , "GC pacing           : " <> gcPacingName (optGcPacing opts)
+          , "idx_ebTxs_txHashBytes: " <> (if optNoTxIndex opts then "DROPPED" else "present")
+          , ""
+          ]
+      -- Await the sweeper's startup self-heal (GC-candidates initialisation +
+      -- resume of persisted marks), so it is not attributed to phase 1.
+      sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
+      initialBacklog <- mkBacklogProbe benchVol sqlInitialBacklog
+      (_, initialSweepWall) <- timed $ awaitZero "initial self-heal" initialBacklog
+      hPutStrLn stderr ("initial sweep: " <> showTime initialSweepWall)
+      before <- leiosDbSampleStats db
+      hPutStrLn stderr (renderStats "before" before)
+      latRef <- newIORef 0
+      putStrLn csvHeader
+      phaseStats <-
+        withAsync mutator $ \_ ->
+          withAsync (tickProbe latRef) $ \_ ->
+            runPhases opts db flushEvents latRef sweepBacklog schedule (immutableEbs before)
+      after <- leiosDbSampleStats db
+      hPutStrLn stderr (renderStats "after " after)
+      hPutStr stderr (renderSummary opts phaseStats)
 
 -- | The imm-file sibling of a volatile fixture path. Fixtures are named the
 -- way the node names its partitions (@FOO.vol.db@); a @FOO.vol@ from before
@@ -565,10 +569,11 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
                 -- exercise the copier (floor would promote none)
                 ceiling (promoteFraction * fromIntegral (length due) :: Double)
           -- One batched call, as 'copyToImmutableDB' does it.
-          (_, promoteWall) <- timed $
-            leiosDbPromoteToImmutable
-              db
-              [MkLeiosPoint (SlotNo s) (MkEbHash h) | (s, h) <- take nPromote due]
+          (_, promoteWall) <-
+            timed $
+              leiosDbPromoteToImmutable
+                db
+                [MkLeiosPoint (SlotNo s) (MkEbHash h) | (s, h) <- take nPromote due]
           promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain

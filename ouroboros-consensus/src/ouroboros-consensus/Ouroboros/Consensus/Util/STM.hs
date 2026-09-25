@@ -28,6 +28,10 @@ module Ouroboros.Consensus.Util.STM
     -- * withTMVar
   , withTMVar
   , withTMVarAnd
+
+    -- * withSVar
+  , withSVar
+  , withSVarAnd
   ) where
 
 import Control.Monad (void)

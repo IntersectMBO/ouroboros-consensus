@@ -117,11 +117,11 @@ mkMempool mpEnv =
   Mempool
     { addTx = fmap runIdentity .: implAddTx mpEnv ProductionAddTx
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
-    , getSnapshot = snapshotFromIS <$> readTMVar istate
+    , getSnapshot = snapshotFromIS <$> readSVarSTM istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getSnapshotForNoCache = implGetSnapshotForNoCache mpEnv
-    , getCapacity = isCapacity <$> readTMVar istate
-    , getLeiosTxIndex = isLeiosTxIndex <$> readTMVar istate
+    , getCapacity = isCapacity <$> readSVarSTM istate
+    , getLeiosTxIndex = isLeiosTxIndex <$> readSVarSTM istate
     , testSyncWithLedger = implSyncWithLedger snapshotFromIS mpEnv
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
     }

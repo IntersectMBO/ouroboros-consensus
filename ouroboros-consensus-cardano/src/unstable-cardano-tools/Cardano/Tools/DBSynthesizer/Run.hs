@@ -39,7 +39,7 @@ import Data.ByteString as BS (ByteString, readFile)
 import qualified Data.ByteString.Lazy.Char8 as BSL8 (unpack)
 import Data.Functor (($>))
 import qualified Data.Set as Set
-import LeiosDemoDb (newLeiosDBSQLite, withReader, withWriter)
+import LeiosDemoDb (withLeiosDBSQLite, withReader, withWriter)
 import LeiosDemoTypes
   ( TraceLeiosKernel (TraceLeiosDb)
   , traceLeiosKernelToObject
@@ -200,18 +200,13 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
     -- The tool derives that paths for the volatile and immutable partitions from --db.
     -- That is also where db-analyser looks for it.
     leiosTracer <- mkLeiosTracer
-    leiosDbHandle <-
-      newLeiosDBSQLite
-        (TraceLeiosDb >$< leiosTracer)
-        (confDbDir </> "leios.vol.db")
-        (confDbDir </> "leios.imm.db")
     (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) <-
       protocolInfoCardano (SomeHasFS (ioHasFS (MountPoint confDbDir))) runP
     let
       epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
       flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
-      dbArgs =
+      mkDbArgs leiosDbHandle =
         ChainDB.completeChainDbArgs
           registry
           pInfoConfig
@@ -239,30 +234,36 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
           preOpenChainDB synthOpenMode confDbDir
           let dbTracer = nullTracer
-          -- Open after 'preOpenChainDB'. That call creates the db directory, and
-          -- with -f it deletes and recreates it. An earlier open loses the file
-          -- with no error.
-          withReader leiosDbHandle $ \leiosDbReader -> withWriter leiosDbHandle $ \leiosDbWriter ->
-            ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
-              slotNo <- do
-                tip <- atomically (ChainDB.getTipPoint chainDB)
-                pure $ case pointSlot tip of
-                  Origin -> 0
-                  At s -> succ s
+          -- Open after 'preOpenChainDB'. That call creates the db directory,
+          -- and with -f it deletes and recreates it, so an earlier open both
+          -- makes 'OpenCreate' refuse a fresh directory and leaves the Leios
+          -- database writing to files that -f has already unlinked.
+          withLeiosDBSQLite
+            (TraceLeiosDb >$< leiosTracer)
+            (confDbDir </> "leios.vol.db")
+            (confDbDir </> "leios.imm.db")
+            $ \leiosDbHandle ->
+              withReader leiosDbHandle $ \leiosDbReader -> withWriter leiosDbHandle $ \leiosDbWriter ->
+                ChainDB.withDB (ChainDB.updateTracer dbTracer (mkDbArgs leiosDbHandle)) $ \chainDB -> do
+                  slotNo <- do
+                    tip <- atomically (ChainDB.getTipPoint chainDB)
+                    pure $ case pointSlot tip of
+                      Origin -> 0
+                      At s -> succ s
 
-              putStrLn $ "--> starting at: " ++ show slotNo
-              runForge
-                epochSize
-                slotNo
-                synthLimit
-                chainDB
-                forgers
-                pInfoConfig
-                confVotingKey
-                (genTxs pInfoConfig)
-                leiosDbReader
-                leiosDbWriter
-                leiosTracer
+                  putStrLn $ "--> starting at: " ++ show slotNo
+                  runForge
+                    epochSize
+                    slotNo
+                    synthLimit
+                    chainDB
+                    forgers
+                    pInfoConfig
+                    confVotingKey
+                    (genTxs pInfoConfig)
+                    leiosDbReader
+                    leiosDbWriter
+                    leiosTracer
         else do
           putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
           pure $ ForgeResult 0

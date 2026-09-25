@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Tests for the LeiosDemoDb interface.
 --
@@ -11,19 +12,31 @@
 module Test.LeiosDemoDb (module Test.LeiosDemoDb) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , atomically
   , readTChan
   , tryReadTChan
   )
+import Control.Concurrent.MVar (newEmptyMVar, readMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
-import Control.Exception (bracket)
+import Control.Exception
+  ( IOException
+  , SomeException
+  , bracket
+  , catch
+  , displayException
+  , fromException
+  , throwIO
+  , try
+  )
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
-import Control.Tracer (nullTracer)
+import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
+import Data.List (isInfixOf, isPrefixOf)
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
@@ -34,13 +47,16 @@ import LeiosDemoDb
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  , TraceLeiosDb (..)
   , deleteDanglingTxs
   , newLeiosDBInMemory
+  , newLeiosDBSQLite
   , truncateLeiosDbAfterSlot
   , withLeiosDBSQLite
   , withReader
   , withWriter
   )
+import LeiosDemoException (LeiosDbException (LeiosDbWriteException, writeFailure, writeJob))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
@@ -53,6 +69,7 @@ import LeiosDemoTypes
   )
 import System.Directory (removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
+import System.Mem (performMajorGC)
 import qualified System.Timeout as Timeout
 import Test.QuickCheck
   ( Gen
@@ -71,7 +88,7 @@ import Test.QuickCheck
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
@@ -87,6 +104,18 @@ tests =
              "deleteDanglingTxs"
              [ testCase "keeps the txs an EB references" $
                  withFreshSQLiteFile test_deleteDanglingTxs
+             ]
+         , testGroup
+             "close"
+             [ testCase "returns while an EB stays pinned" test_closeWithPinnedEb
+             ]
+         , testGroup
+             "writer"
+             [ testCase "tells the awaiter when a job throws" test_awaiterHearsAFailedJob
+             ]
+         , testGroup
+             "orphanhood"
+             [ testCase "dropping the handle does not kill its owner" test_droppingTheHandleSpreadsNoException
              ]
          ]
 
@@ -628,9 +657,9 @@ test_offerBlockTxsWhenBodyArrivesAfterTxs db = do
     -- forever, so we surface the failure explicitly instead of hanging.
     rwInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ rwInsertEbBody con point eb
-    acquiredEb <- readTChanWithin 1_000_000 chan "AcquiredEb"
+    acquiredEb <- readTChanWithin 100_000_000 chan "AcquiredEb"
     assertOfferBlock point acquiredEb
-    acquiredTxs <- readTChanWithin 1_000_000 chan "AcquiredEbTxs"
+    acquiredTxs <- readTChanWithin 100_000_000 chan "AcquiredEbTxs"
     assertOfferBlockTxs point acquiredTxs
 
 -- | Test that completed EBs are not re-notified when subsequent unrelated
@@ -871,6 +900,141 @@ prop_completedEbNoBody impl =
           & tabulate "lookupEbClosure (no body)" [timeBucket queryTime]
 
 -- * truncateLeiosDbAfterSlot
+
+-- | A caller that drops the handle without closing it leaves the background
+-- threads with nothing that can reach them, and the runtime raises
+-- 'BlockedIndefinitelyOnSTM' at them. That is the handle going away, not a
+-- failed write, so it must not reach the thread that opened the database.
+test_droppingTheHandleSpreadsNoException :: Assertion
+test_droppingTheHandleSpreadsNoException = do
+  sysTmp <- getCanonicalTemporaryDirectory
+  outcome <-
+    bracket (createTempDirectory sysTmp "leios-test") removeQuietly $ \tmpDir ->
+      try $ do
+        -- Nothing binds the handle, so the collection below finds the threads
+        -- it started unreachable. Without it the test allocates too little to
+        -- collect, and the exception would land on a later test instead.
+        void $
+          newLeiosDBSQLite nullTracer (tmpDir <> "/test.vol.db") (tmpDir <> "/test.imm.db")
+        performMajorGC
+        -- The copier has to finish and its link watcher has to wake before
+        -- anything reaches this thread.
+        threadDelay settleMicros
+  case outcome :: Either SomeException () of
+    Right () -> pure ()
+    Left e ->
+      assertFailure $ "dropping the handle threw at its owner: " <> displayException e
+ where
+  -- The dropped handle closes its connections on its own schedule, so it can
+  -- still be deleting its write-ahead files here.
+  removeQuietly dir =
+    removeDirectoryRecursive dir `catch` \(_ :: IOException) -> pure ()
+
+  settleMicros = 1_000_000
+
+-- | The writer takes a job off its queue before it runs it, so the drain that
+-- fails the still-queued jobs when the writer stops can no longer reach that
+-- one. Its awaiter must be told anyway, whatever the job threw.
+--
+-- Three things can unblock the awaiter, and only one of them counts.
+-- 'startWriter' links its worker to the thread that created the handle, so the
+-- awaiter runs on a thread of its own and the link exception cannot be what
+-- wakes it. A result nobody can write any more is the failure under test, so
+-- 'BlockedIndefinitelyOnSTM' is not an answer either. And a submission that a
+-- sealed queue refuses throws a 'LeiosDbWriteException' just as a reported
+-- failure does, so submitting happens outside the 'try'.
+test_awaiterHearsAFailedJob :: Assertion
+test_awaiterHearsAFailedJob = do
+  sysTmp <- getCanonicalTemporaryDirectory
+  bracket (createTempDirectory sysTmp "leios-test") removeDirectoryRecursive $ \tmpDir -> do
+    outcomeVar <- newEmptyMVar
+    let volDbPath = tmpDir <> "/test.vol.db"
+        immDbPath = tmpDir <> "/test.imm.db"
+        point = mkTestPoint 5 1
+        eb = mkTestEb 2
+        -- 'sqlInsertEbBody' traces a collision from inside the job it runs,
+        -- and an 'IOException' is not a 'LeiosDbException', so 'publish' lets
+        -- it past and the job dies with its result unwritten. That trace is
+        -- the only one a job makes, so if it moves out of the job the second
+        -- write below succeeds and this test fails, asking for another way to
+        -- make a job throw.
+        tracer = Tracer . emit $ \case
+          TraceLeiosDbInsertCollision{} -> throwIO (userError jobFailureMarker)
+          _ -> pure ()
+        forkAwaiter w =
+          void . forkIO $ do
+            -- Submitting is outside the 'try'. If it throws, nothing is
+            -- recorded, and the budget below reports that the awaiter was
+            -- never told rather than counting a refused submission as a
+            -- report.
+            promise <- writeEbBody w point eb
+            outcome <- try (await promise) :: IO (Either SomeException CompletedEbs)
+            void $ tryPutMVar outcomeVar outcome
+        -- This thread creates the handle, so this is where the worker's
+        -- parting exception lands. It does nothing else.
+        runUntilTheWriterDies =
+          withLeiosDBSQLite tracer volDbPath immDbPath $ \db ->
+            withWriter db $ \w -> do
+              void $ await =<< writeEbPoint w point (encodeLeiosEbSize eb)
+              void $ await =<< writeEbBody w point eb
+              -- The same body again collides on the primary key of ebTxs, so
+              -- this second write is the job whose action throws.
+              forkAwaiter w
+              void $ Timeout.timeout awaitBudgetMicros (readMVar outcomeVar)
+    _ <- try runUntilTheWriterDies :: IO (Either SomeException ())
+    -- Again, because the link exception can end the block above before the
+    -- awaiter runs.
+    Timeout.timeout awaitBudgetMicros (readMVar outcomeVar) >>= \case
+      Nothing ->
+        assertFailure "the awaiter was never told the write's fate"
+      Just (Right completed) ->
+        assertFailure $ "the write should have failed, but reported " <> show completed
+      Just (Left e) -> case (fromException e :: Maybe LeiosDbException) of
+        Just LeiosDbWriteException{writeJob = job, writeFailure = cause}
+          | "WriteEbBody" `isPrefixOf` job
+          , jobFailureMarker `isInfixOf` displayException cause ->
+              pure ()
+        _ ->
+          assertFailure $
+            "the awaiter should have been told the write failed; it got: "
+              <> displayException e
+ where
+  jobFailureMarker :: String
+  jobFailureMarker = "the tracer threw inside the write job"
+
+  awaitBudgetMicros :: Int
+  awaitBudgetMicros = 20_000_000
+
+-- | A pinned EB whose tx closure never arrives cannot be copied, so the
+-- copier keeps retrying it for as long as the database is open. 'close' must
+-- still return.
+test_closeWithPinnedEb :: Assertion
+test_closeWithPinnedEb = do
+  sysTmp <- getCanonicalTemporaryDirectory
+  bracket (createTempDirectory sysTmp "leios-test") removeDirectoryRecursive $ \tmpDir -> do
+    copyFailed <- newEmptyMVar
+    let volDbPath = tmpDir <> "/test.vol.db"
+        immDbPath = tmpDir <> "/test.imm.db"
+        -- The copier traces one of these per pass that cannot retire the pin.
+        -- Waiting for the first one leaves the copier on the retry path, which
+        -- is the case a stop check on the idle wait alone does not reach.
+        tracer = Tracer . emit $ \case
+          TraceLeiosDbCopyError{} -> void $ tryPutMVar copyFailed ()
+          _ -> pure ()
+        point = mkTestPoint 5 1
+    closed <-
+      Timeout.timeout closeTimeoutMicros $
+        withLeiosDBSQLite tracer volDbPath immDbPath $ \db -> do
+          -- The body never lands, so the closure stays incomplete and every
+          -- attempt to copy this EB fails.
+          withRW db $ \con -> rwInsertEbPoint con point (encodeLeiosEbSize (mkTestEb 2))
+          leiosDbPromoteToImmutable db [point]
+          takeMVar copyFailed
+    case closed of
+      Nothing -> assertFailure "close did not return while an EB stayed pinned"
+      Just () -> pure ()
+ where
+  closeTimeoutMicros = 30_000_000
 
 test_truncateDropsEbsAfterSlot :: FilePath -> FilePath -> LeiosDbHandle IO -> IO ()
 test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do

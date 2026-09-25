@@ -47,7 +47,6 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , snapshot
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import Control.Monad.Trans.Except (runExcept)
 import Control.Tracer
 import qualified Data.Aeson as Aeson
@@ -296,7 +295,7 @@ data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
   , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk))
   , mpEnvLedgerCfg :: LedgerConfig blk
-  , mpEnvStateVar :: StrictTMVar m (InternalState blk)
+  , mpEnvStateVar :: StrictSVar m (InternalState blk)
   -- ^ The single, authoritative internal state of the mempool, which doubles as
   -- the /writer/ lock. Writers (adds, removes and the sync merge) 'takeTMVar'
   -- it, do their work, and 'putTMVar' the new state; readers ('getSnapshot',
@@ -336,7 +335,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
       frkMVar <- newMVar frk
       let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
       isVar <-
-        newTMVarIO $
+        uncheckedNewSVar $
           initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
       addTxRemoteFifo <- newMVar ()
       addTxAllFifo <- newMVar ()

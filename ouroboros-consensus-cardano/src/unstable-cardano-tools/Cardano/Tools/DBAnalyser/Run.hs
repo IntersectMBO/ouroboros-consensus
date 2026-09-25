@@ -22,7 +22,12 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
-import LeiosDemoDb (newLeiosDBInMemory, newLeiosDBSQLite, withReader)
+import LeiosDemoDb
+  ( allocateHandle
+  , newLeiosDBInMemory
+  , newLeiosDBSQLite
+  , withReader
+  )
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -153,14 +158,12 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
-    leiosDbHandle <- case leiosDbSource of
-      NoLeiosDb -> newLeiosDBInMemory
-      LeiosDbFiles -> do
-        let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
-            immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
-        requireLeiosDbFile volLeiosDBFile
-        requireLeiosDbFile immLeiosDBFile
-        newLeiosDBSQLite nullTracer volLeiosDBFile immLeiosDBFile
+    -- 'withReader' below captures the reader, not the handle, so without an
+    -- owner the handle dies as soon as the reader is open and the copier is
+    -- left writing to the immutable partition with nobody able to stop it.
+    -- The registry releases youngest first and nothing else is in it yet, so
+    -- the handle closes after every resource that reads through it.
+    leiosDbHandle <- allocateHandle registry openLeiosDb
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -252,6 +255,15 @@ analyse dbaConfig args =
         putStrLn $ "ImmutableDB tip: " ++ show tipPoint
         pure result
  where
+  openLeiosDb = case leiosDbSource of
+    NoLeiosDb -> newLeiosDBInMemory
+    LeiosDbFiles -> do
+      let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
+          immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
+      requireLeiosDbFile volLeiosDBFile
+      requireLeiosDbFile immLeiosDBFile
+      newLeiosDBSQLite nullTracer volLeiosDBFile immLeiosDBFile
+
   DBAnalyserConfig
     { analysis
     , confLimit

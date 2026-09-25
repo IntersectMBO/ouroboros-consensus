@@ -874,9 +874,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 
   finalizeForging (bf, leiosDbReader, leiosDbWriter, _) =
-    leiosDbWriter.close
-      >> leiosDbReader.close
-      >> finalize bf
+    leiosDbWriter.close >> leiosDbReader.close >> finalize bf
 
 {-------------------------------------------------------------------------------
   TxSubmission integration

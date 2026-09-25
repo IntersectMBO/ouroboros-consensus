@@ -1,9 +1,11 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -30,7 +32,8 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbHandle, withReader)
+import LeiosDemoDb (withReader)
+import LeiosDemoDb.Common (LeiosDbHandle (..), LeiosDbReader (..))
 import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -83,12 +86,6 @@ mkInitDb ::
   Resources m backend ->
   m (InitDB (LedgerSeq' m blk) m blk)
 mkInitDb args getBlock snapManager getVolatileSuffix res = do
-  -- 'lgrLeiosDb' is a 'LeiosDbHandle' — a factory for per-thread
-  -- 'LeiosDbReader's. We do NOT open a shared connection here:
-  -- a direct-sqlite handle must be used from the thread that opened
-  -- it, and every consumer (initial replay, ChainSel validate,
-  -- reapplyThenPushNOW, ...) runs on a different thread. Each opens
-  -- its own via 'withReader' at use time instead.
   let ldbLeiosDb = lgrLeiosDb
   pure $
     InitDB
@@ -115,6 +112,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
           prevApplied <- newTVarIO Set.empty
           lock <- RAWLock.new ()
           nextForkerKey <- newTVarIO (ForkerKey 0)
+          ldbLeiosDbReader <- openReader lgrLeiosDb
           let env =
                 LedgerDBEnv
                   { ldbSeq = varDB
@@ -129,7 +127,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                   , ldbOpenHandlesLock = lock
                   , ldbGetVolatileSuffix = getVolatileSuffix
                   , ldbBackendResources = SomeResources res
-                  , ldbLeiosDb
+                  , ldbLeiosDbReader
                   }
           h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
           pure $ implMkLedgerDb h snapManager
@@ -219,8 +217,7 @@ mkInternals ldb h snapManager =
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
               let cds = headerStateChainDep (headerState st)
-              blk' <- withReader (ldbLeiosDb env) $ \reader ->
-                resolveLeiosBlock reader cds blk -- TODO resolveLeiosBlock is the wrong function to call here
+              blk' <- resolveLeiosBlock (ldbLeiosDbReader env) cds blk -- TODO resolveLeiosBlock is the wrong function to call here
               tables <- forkerReadTables frk (getBlockKeySets blk')
               let st' =
                     tickThenReapply
@@ -319,24 +316,22 @@ implValidate ::
   SuccessForkerAction m l ->
   m (ValidateResult l blk)
 implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
-  -- See V1.implValidate for the rationale on opening per-call.
-  withReader (ldbLeiosDb ldbEnv) $ \reader ->
-    validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
-      ValidateArgs
-        (ldbResolveBlock ldbEnv)
-        (ledgerDbCfg $ ldbCfg ldbEnv)
-        ( \l -> do
-            prev <- readTVar (ldbPrevApplied ldbEnv)
-            writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
-        )
-        (readTVar (ldbPrevApplied ldbEnv))
-        (withForkerByRollback h)
-        onSuccess
-        tr
-        cache
-        rollbacks
-        hdrs
-        reader
+  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+    ValidateArgs
+      (ldbResolveBlock ldbEnv)
+      (ledgerDbCfg $ ldbCfg ldbEnv)
+      ( \l -> do
+          prev <- readTVar (ldbPrevApplied ldbEnv)
+          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
+      )
+      (readTVar (ldbPrevApplied ldbEnv))
+      (withForkerByRollback h)
+      onSuccess
+      tr
+      cache
+      rollbacks
+      hdrs
+      (ldbLeiosDbReader ldbEnv)
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -397,13 +392,14 @@ implCloseDB (LDBHandle varState) = do
         LedgerDBClosed -> pure Nothing
         LedgerDBOpen env -> do
           writeTVar varState LedgerDBClosed
-          pure (Just $ (ldbSeq env, ldbBackendResources env))
+          pure (Just $ (ldbSeq env, ldbBackendResources env, ldbLeiosDbReader env))
   whenJust
     res
-    ( \(s, SomeResources res') -> do
+    ( \(s, SomeResources res', leiosDbReader) -> do
         s' <- readTVarIO s
         closeLedgerSeq s'
         releaseResources (Proxy @blk) res'
+        leiosDbReader.close
     )
 
 {-------------------------------------------------------------------------------
@@ -450,10 +446,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLeiosDb :: !(LeiosDbHandle m)
-  -- ^ 'LeiosDbHandle', not a live connection: every consumer opens
-  -- its own per-thread connection via 'withReader' at use time (a
-  -- 'direct-sqlite' handle is single-thread).
+  , ldbLeiosDbReader :: !(LeiosDbReader m)
   }
   deriving Generic
 
@@ -588,7 +581,7 @@ withStateRef ::
 withStateRef ldbEnv project f =
   bracket
     (openStateRef ldbEnv project)
-    (traverse (close . tables))
+    (traverse (.tables.close))
     f
 
 openStateRefAtTarget ::

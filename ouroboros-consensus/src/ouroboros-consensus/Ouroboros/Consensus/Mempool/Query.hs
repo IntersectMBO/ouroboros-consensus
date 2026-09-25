@@ -89,7 +89,7 @@ getSnapshotUsingPolicyFor ::
   (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
   m (MempoolSnapshot blk)
 getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
-  is <- atomically $ readTMVar istate
+  is <- atomically $ readSVarSTM istate
   -- Whether we may trust the cached tables/snapshot: only when the tip
   -- coincides /and/ the policy permits it (the rebase path forbids it even
   -- though the tip coincides, since its ledger tables differ).
