@@ -1157,17 +1157,32 @@ data ByteLimits bCS bBF bTX bKA bPS bLN bLF = ByteLimits
         bLF
   }
 
+-- | Every protocol unlimited, for tests that do not want the production caps.
+--
+-- NOTE: 2026 September 25. Once this was 'byteLimitsChainSync' and friends
+-- applied to @const 0@, which measured every message as empty. The
+-- 'ProtocolSizeLimits' type lost that size function to the 'BearerBytes' class,
+-- and the conversion incorrectly left this record equal to 'byteLimits' --- so
+-- every caller asking for no limits was instead getting the production
+-- limits. That apparently didn't cause intractable problems, because it was
+-- months ago.
 noByteLimits :: ByteLimits bCS bBF bTX bKA bPS bLN bLF
 noByteLimits =
   ByteLimits
-    { blChainSync = byteLimitsChainSync
-    , blBlockFetch = byteLimitsBlockFetch
-    , blTxSubmission2 = byteLimitsTxSubmission2
-    , blKeepAlive = byteLimitsKeepAlive
-    , blPeerSharing = byteLimitsPeerSharing
-    , blLeiosNotify = byteLimitsLeiosNotify
-    , blLeiosFetch = byteLimitsLeiosFetch
+    { blChainSync = unlimitedSizeLimits
+    , blBlockFetch = unlimitedSizeLimits
+    , blTxSubmission2 = unlimitedSizeLimits
+    , blKeepAlive = unlimitedSizeLimits
+    , blPeerSharing = unlimitedSizeLimits
+    , blLeiosNotify = unlimitedSizeLimits
+    , blLeiosFetch = unlimitedSizeLimits
     }
+ where
+  -- A limit no message can reach. The decoder only ever tests
+  -- @consumed > limit@, so nothing underflows and no real message comes near
+  -- 'maxBound'.
+  unlimitedSizeLimits :: ProtocolSizeLimits ps bytes
+  unlimitedSizeLimits = ProtocolSizeLimits{sizeLimitForState = const maxBound}
 
 byteLimits ::
   ByteLimits ByteString ByteString ByteString ByteString ByteString ByteString ByteString
