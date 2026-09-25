@@ -46,15 +46,15 @@ parseDBAnalyserConfig =
 
 -- | The LedgerDB backend to use. Optional: when omitted, the backend and its
 -- settings are taken from the node configuration file instead.
-parseLedgerDBBackend :: Parser LedgerDBBackend
+parseLedgerDBBackend :: Parser LedgerDBBackendFlags
 parseLedgerDBBackend =
   Foldable.asum
-    [ flag' V2InMem $
+    [ flag' InMemFlag $
         mconcat
           [ long "in-mem"
           , help "use v2 in-memory backend"
           ]
-    , V2LSM
+    , LSMFlag
         <$> ( flag'
                 ()
                 ( mconcat
@@ -67,7 +67,7 @@ parseLedgerDBBackend =
     ]
  where
   parseLSMOptions =
-    mkLSMOptions
+    (\noDiskCache export -> LSMFlags{lsmExportFlag = export, lsmNoDiskCacheFlag = noDiskCache})
       <$> switch
         ( mconcat
             [ long "lsm-no-cache"
@@ -82,18 +82,12 @@ parseLedgerDBBackend =
             [ long "lsm-export"
             , help $
                 "Additionally export every snapshot that is taken as a"
-                  <> " standalone LSM snapshot, into the "
+                  <> " standalone LSM snapshot, into the configuration's"
+                  <> " LedgerDB.Backend.LSM.ExportPath, or else into the "
                   <> defaultLSMExportPath
                   <> " directory of the ChainDB."
             ]
         )
-
-  mkLSMOptions noDiskCache export =
-    LSMOptions
-      { lsmDatabasePath = defaultLSMDatabasePath
-      , lsmExportPath = if export then Just defaultLSMExportPath else Nothing
-      , lsmNoDiskCache = noDiskCache
-      }
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =

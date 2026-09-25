@@ -14,7 +14,6 @@ import Cardano.Tools.Config (throwConfigError)
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
-import Control.Applicative ((<|>))
 import Control.Monad (unless)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
@@ -169,8 +168,7 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     (ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg}, configBackend) <-
       mkProtocolInfoAndBackend args
-    -- The command line takes precedence over the configuration file.
-    backend <- case ldbBackend <|> configBackend of
+    backend <- case selectLedgerDBBackend ldbBackend configBackend of
       Just backend -> pure backend
       Nothing ->
         throwConfigError $

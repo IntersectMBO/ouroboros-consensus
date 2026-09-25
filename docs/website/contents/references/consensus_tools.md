@@ -121,11 +121,14 @@ it (see
 
 - `--in-mem`: the whole UTxO set lives in memory. Fastest, but needs as much
   RAM as a pre-UTxO-HD node.
-- `--lsm`: the UTxO set lives in an LSM tree on disk. The tool creates its
-  working LSM database under `<db>/lsm`, with a fresh random bloom-filter salt
-  on every run.
+- `--lsm`: the UTxO set lives in an LSM tree on disk, with a fresh random
+  bloom-filter salt on every run. If the node configuration file also selects
+  LSM, its `DatabasePath` and `ExportPath` still apply, and the two switches
+  below only add to them. Otherwise the tool creates its working LSM database
+  under `<db>/lsm` and exports nothing unless asked to.
   - `--lsm-export`: additionally *export* every snapshot taken with
-    `--store-ledger` into `<db>/lsm-exported`, as a standalone LSM snapshot
+    `--store-ledger`, into the configured `ExportPath` if there is one and into
+    `<db>/lsm-exported` otherwise, as a standalone LSM snapshot
     that [`snapshot-converter`](#snapshot-converter) can convert or import (the
     random salt is irrelevant here, as exported snapshots record their own
     salt).
