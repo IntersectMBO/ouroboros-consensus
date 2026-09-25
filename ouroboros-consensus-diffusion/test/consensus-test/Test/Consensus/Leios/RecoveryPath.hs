@@ -140,6 +140,22 @@ tests =
         "an endorser block misstating a size is not offered onward (body first)"
         (test_lyingSizeIsNotOffered BodyBeforeTx)
     , testCase
+        "a request for an endorser block we do not have is refused"
+        (test_requestIsRefused NothingHeld (`requestEb` honestPoint))
+    , testCase
+        "a request for an offset the endorser block does not have is refused"
+        ( test_requestIsRefused ClosureHeld $ \peer ->
+            requestEbTxs peer honestPoint (Leios.offsetsToBitmap (IntSet.fromList [0, 1]))
+        )
+    , testCase
+        "a request for a transaction we do not hold is refused"
+        ( test_requestIsRefused BodyOnlyHeld $ \peer ->
+            requestEbTxs peer honestPoint (Leios.offsetsToBitmap (IntSet.singleton 0))
+        )
+    , testCase
+        "a transaction request with a malformed bitmap is refused"
+        (test_requestIsRefused NothingHeld (\peer -> requestEbTxs peer honestPoint [(0, 0)]))
+    , testCase
         "a request for more transaction bytes than one message may carry is refused"
         test_oversizedTxsRequestIsRefused
     , testCase
@@ -695,6 +711,84 @@ test_oversizedTxsRequestIsRefused = do
         -- Now ask for all of it at once, which no honest peer would.
         requestEbTxs greedy bulkyPoint $
           Leios.offsetsToBitmap (IntSet.fromList [0 .. bulkyTxCount - 1])
+        threadDelay 30
+
+-- | How much of 'honestEb' the node has acquired before the request arrives.
+data WhatIsHeld
+  = -- | Nothing at all; no peer ever offers it.
+    NothingHeld
+  | -- | The body, from a peer that then withholds the transactions.
+    BodyOnlyHeld
+  | -- | The body and the whole closure.
+    ClosureHeld
+
+-- | The node refuses a LeiosFetch request it cannot answer, which costs the
+-- asking peer its connection.
+--
+-- It does not check that it ever /offered/ what was asked for --- that would
+-- need state the LeiosFetch server does not keep --- only that it can answer.
+--
+-- The empty-body case is the one that used to be silently wrong: the server
+-- built an endorser block out of the nothing it found and sent that, a reply
+-- the requester cannot tell from a real one until it hashes it.
+test_requestIsRefused ::
+  WhatIsHeld -> (forall s. PeerEnv (IOSim s) -> IOSim s ()) -> Assertion
+test_requestIsRefused held asksIt = do
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Left (FailureException e) | isInvalidRequest e -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the request to be refused, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  isInvalidRequest :: SomeException -> Bool
+  isInvalidRequest e
+    | Just (ExceptionInLinkedThread _ inner) <- fromException e = isInvalidRequest inner
+    | Just (_ :: Leios.ExnLeiosInvalidRequest) <- fromException e = True
+    | otherwise = False
+
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    holder <- newPeerEnv
+    greedy <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest nodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        connectPeer nut registry (PeerAddr 0) holder
+        connectPeer nut registry (PeerAddr 1) greedy
+
+        -- The announcing header is in slot 2, which this simulation starts
+        -- before, and a header from the future is rejected as such.
+        threadDelay 8
+
+        case held of
+          NothingHeld -> pure ()
+          BodyOnlyHeld -> do
+            -- An empty closure is a peer that has the body and never hands
+            -- the transactions over, so the node is left holding one without
+            -- the other.
+            plantEb holder honestEb []
+            announceEb holder (getHeader honestAnnouncer)
+            offerEb holder honestPoint honestSize
+            awaitPollingWith getTraces "the body is in the LeiosDb" $
+              LeiosDb.withReader leiosDb $ \r ->
+                not . null <$> LeiosDb.lookupEbBody r (pointEbHash honestPoint)
+          ClosureHeld -> do
+            plantEb holder honestEb honestClosure
+            announceEb holder (getHeader honestAnnouncer)
+            offerEb holder honestPoint honestSize
+            offerEbTxs holder honestPoint
+            awaitPollingWith getTraces "the closure is in the LeiosDb" $
+              LeiosDb.withReader leiosDb $ \r ->
+                isJust <$> LeiosDb.lookupTrustedEbClosure r (pointEbHash honestPoint)
+
+        asksIt greedy
         threadDelay 30
 
 -- | The node offers an endorser block to its downstream peers only once the

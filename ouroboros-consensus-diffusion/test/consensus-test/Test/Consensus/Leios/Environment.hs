@@ -29,6 +29,7 @@ module Test.Consensus.Leios.Environment
   , connectPeer
   , heardBodyOffers
   , heardClosureOffers
+  , requestEb
   , requestEbTxs
   , heardOffers
   , heardUnannouncedOffers
@@ -275,6 +276,17 @@ heardClosureOffers PeerEnv{peHeard} =
   offered = \case
     Notify.MsgLeiosBlockTxsOffer point -> [point]
     _ -> []
+
+-- | Have this peer ask the node for this endorser block's body.
+requestEb :: PeerEnv (IOSim s) -> LeiosPoint -> IOSim s ()
+requestEb PeerEnv{peFetchRequests} point =
+  atomically $
+    PlainSTM.modifyTVar peFetchRequests (<> [job])
+ where
+  job =
+    MkSomeLeiosFetchJob
+      (MsgLeiosBlockRequest point)
+      (pure (\_reply -> pure ()))
 
 -- | Have this peer ask the node for these offsets of this endorser block's
 -- closure.
