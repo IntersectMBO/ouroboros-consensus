@@ -105,7 +105,8 @@ readShelley creds =
     (SNothing, SNothing, SNothing) -> pure []
     (SNothing, _, _) -> throwE $ missingOption "shelley-operational-certificate"
     (_, SNothing, _) -> throwE $ missingOption "shelley-vrf-key"
-    (_, _, SNothing) -> throwE $ missingOption "shelley-kes-key"
+    (_, _, SNothing) ->
+      throwE $ missingOption "shelley-kes-key or --shelley-kes-agent-socket"
     (SJust certFile, SJust vrfFile, SJust kesSource) -> do
       opCert <- readTextEnvelope certFile
       Keys.VrfSigningKey vrfSignKey <- readTextEnvelope vrfFile
