@@ -621,7 +621,6 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
     closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
   chainDbArgs registry nodeDbs tracer = do
-    mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
     let args =
           fromMinimalChainDbArgs
             MinimalChainDbArgs
@@ -630,7 +629,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
               , mcdbInitLedger = extLedgerState
               , mcdbRegistry = registry
               , mcdbNodeDBs = nodeDbs
-              , mcdbLeiosDb
+              , mcdbLeiosDb = LeiosDb.leiosDbInMemory
               }
     pure $ updateTracer tracer args
 

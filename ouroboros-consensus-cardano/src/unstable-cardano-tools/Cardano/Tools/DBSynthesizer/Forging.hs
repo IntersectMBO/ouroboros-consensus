@@ -31,6 +31,7 @@ import LeiosDemoDb
   ( LeiosDbReader
   , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
   , awaitAll
+  , withReaderAndWriter
   )
 import LeiosDemoTypes
   ( ForgedLeiosEb (..)
@@ -86,6 +87,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   , getCurrentChain
   , getCurrentLedger
   , getPastLedger
+  , leiosDb
   , withReadOnlyForkerAtPoint
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -155,22 +157,21 @@ runForge ::
   -- | The BLS key that this forger votes with, if it has one.
   Maybe LeiosSigningKey ->
   GenTxs blk ->
-  LeiosDbReader IO ->
-  LeiosDbWriter IO ->
   Tracer IO TraceLeiosKernel ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosDbReader leiosDbWriter leiosTracer = do
-  putStrLn $ "--> epoch size: " ++ show epochSize_
-  putStrLn $ "--> will process until: " ++ show opts
-  leiosVoteState <- newLeiosVoteState committee
-  reportCommittee
-  endState <- go leiosVoteState initialForgeState{currentSlot = nextSlot}
-  putStrLn $
-    "--> forged and adopted "
-      ++ show (forged endState)
-      ++ " blocks; reached "
-      ++ show (currentSlot endState)
-  pure $ ForgeResult $ fromIntegral $ forged endState
+runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leiosTracer =
+  withReaderAndWriter chainDB.leiosDb $ \leiosDbReader leiosDbWriter -> do
+    putStrLn $ "--> epoch size: " ++ show epochSize_
+    putStrLn $ "--> will process until: " ++ show opts
+    leiosVoteState <- newLeiosVoteState committee
+    reportCommittee
+    endState <- go leiosDbReader leiosDbWriter leiosVoteState initialForgeState{currentSlot = nextSlot}
+    putStrLn $
+      "--> forged and adopted "
+        ++ show (forged endState)
+        ++ " blocks; reached "
+        ++ show (currentSlot endState)
+    pure $ ForgeResult $ fromIntegral $ forged endState
  where
   epochSize = unEpochSize epochSize_
 
@@ -211,8 +212,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   -- that gains either one must call 'onForgedLeiosEb' instead of repeating
   -- these writes: the body write is what triggers the LeiosNotify offer, and
   -- both LeiosNotify and the LeiosTxCache require the announcement first.
-  storeEb :: ForgedLeiosEb -> IO ()
-  storeEb forgedEb = do
+  storeEb :: LeiosDbWriter IO -> ForgedLeiosEb -> IO ()
+  storeEb leiosDbWriter forgedEb = do
     pointWritten <- writeEbPoint leiosDbWriter forgedEb.point (encodeLeiosEbSize forgedEb.body)
     bodyWritten <- writeEbBody leiosDbWriter forgedEb.point forgedEb.body
     txsWritten <- writeTxs leiosDbWriter forgedEb.txClosure
@@ -280,12 +281,12 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
     ForgeLimitBlock b -> (b ==) . forged
     ForgeLimitEpoch e -> (e ==) . currentEpoch
 
-  go :: LeiosVoteState IO -> ForgeState -> IO ForgeState
-  go leiosVoteState forgeState
+  go :: LeiosDbReader IO -> LeiosDbWriter IO -> LeiosVoteState IO -> ForgeState -> IO ForgeState
+  go leiosDbReader leiosDbWriter leiosVoteState forgeState
     | forgingDone forgeState = pure forgeState
     | otherwise =
-        go leiosVoteState . nextForgeState forgeState . isRight
-          =<< runExceptT (goSlot leiosVoteState $ currentSlot forgeState)
+        go leiosDbReader leiosDbWriter leiosVoteState . nextForgeState forgeState . isRight
+          =<< runExceptT (goSlot leiosDbReader leiosDbWriter leiosVoteState $ currentSlot forgeState)
 
   nextForgeState :: ForgeState -> Bool -> ForgeState
   nextForgeState ForgeState{currentSlot, forged, currentEpoch, processed} didForge =
@@ -303,8 +304,9 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   exitEarly' = throwE
   lift = liftIO
 
-  goSlot :: LeiosVoteState IO -> SlotNo -> ExceptT String IO ()
-  goSlot leiosVoteState currentSlot = do
+  goSlot ::
+    LeiosDbReader IO -> LeiosDbWriter IO -> LeiosVoteState IO -> SlotNo -> ExceptT String IO ()
+  goSlot leiosDbReader leiosDbWriter leiosVoteState currentSlot = do
     -- Figure out which block to connect to
     BlockContext{bcBlockNo, bcPrevPoint} <- do
       eBlkCtx <-
@@ -411,7 +413,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
             , fbMayLeiosCert = fst <$> mCert
             }
 
-    lift $ forM_ mForgedEb storeEb
+    lift $ forM_ mForgedEb (storeEb leiosDbWriter)
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment
