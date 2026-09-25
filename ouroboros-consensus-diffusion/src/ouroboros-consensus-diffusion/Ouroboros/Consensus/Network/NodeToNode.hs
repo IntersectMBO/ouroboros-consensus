@@ -42,6 +42,7 @@ module Ouroboros.Consensus.Network.NodeToNode
   , initiatorAndResponder
 
     -- * Leios mini-protocol limits
+  , leiosFetchPipelineDepth
   , leiosNotifyPipelineDepth
   , leiosNotifyProtocolLimits
   , leiosFetchProtocolLimits
@@ -803,7 +804,7 @@ mkHandlers
       , hLeiosFetchClient = \writer _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           pure $
-            ( leiosFetchClientPeerPipelined $
+            ( leiosFetchClientPeerPipelined leiosFetchPipelineDepth $
                 Leios.nextLeiosFetchClientCommand
                   (Node.leiosKernelTracer tracers)
                   (leiosPeerTracer peer)
@@ -1802,6 +1803,28 @@ perasUnsupportedInitiatorResponder =
 
 leiosNotifyPipelineDepth :: Int
 leiosNotifyPipelineDepth = 100 -- TODO magic number
+
+-- | The most LeiosFetch requests to leave outstanding on one connection.
+--
+-- Sized from what an honest client needs, which is set by
+-- 'maxRequestedBytesSizePerBigLedgerPeer': enough to ask a big-ledger peer for
+-- five endorser blocks of the largest size the protocol allows. Each such
+-- closure is 12 MiB, which is 192 jobs of 'maxJobBytesSize', and a request
+-- carries 7 of those --- the 8th would pass 'maxRequestBytesSize', and a job
+-- may not span two requests. So 28 requests per endorser block, 140 for five,
+-- rounded up for headroom.
+--
+-- Far below what the mini-protocol's ingress queue could hold, so this is a
+-- statement about fetch concurrency rather than about buffering.
+--
+-- At the limit the client collects one response for each request it sends. A
+-- low-water mark would instead let it drain before refilling, so that it is
+-- not blocked on a response between one send and the next --- but each send
+-- still hands the driver a single message either way, so whether that changes
+-- anything on the wire is a question for measurement rather than for this
+-- comment. Left out until someone has one.
+leiosFetchPipelineDepth :: Int
+leiosFetchPipelineDepth = 150
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits =
