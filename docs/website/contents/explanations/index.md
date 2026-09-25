@@ -54,7 +54,7 @@ The polymorphic core (in [`ouroboros-consensus`][oc-src]) defines the consensus 
 
 - [`byron`][byron-src] — Byron era: PBFT protocol, Byron-specific block/ledger types, EBBs
 - [`shelley`][shelley-src] — Shelley-based eras (Shelley through Conway): Praos protocol, shared ledger integration
-- [`ouroboros-consensus-cardano`][cardano-src] — the Cardano block type combining all eras, hard fork transitions, and node configuration
+- [`cardano`][cardano-src] — the Cardano block type combining all eras, hard fork transitions, and node configuration
 
 [Components' Data Flow](data_flow.md) explains how ChainDB, the mempool, and the mini-protocols interact.
 
@@ -66,7 +66,7 @@ The polymorphic core (in [`ouroboros-consensus`][oc-src]) defines the consensus 
 - [Queries](queries.md) — how consensus exposes information to clients
 - [Node Tasks](node_tasks.md) — a practical view of what a running node does
 
-[oc-src]: https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus
-[byron-src]: https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/byron
-[shelley-src]: https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/shelley
-[cardano-src]: https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano
+[oc-src]: https://github.com/IntersectMBO/ouroboros-consensus/tree/main/lib/ouroboros-consensus
+[byron-src]: https://github.com/IntersectMBO/ouroboros-consensus/tree/main/lib/byron
+[shelley-src]: https://github.com/IntersectMBO/ouroboros-consensus/tree/main/lib/shelley
+[cardano-src]: https://github.com/IntersectMBO/ouroboros-consensus/tree/main/lib/cardano

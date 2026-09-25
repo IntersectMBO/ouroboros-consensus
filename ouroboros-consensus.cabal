@@ -16,16 +16,11 @@ maintainer: operations@iohk.io
 category: Network
 build-type: Simple
 data-files:
-  ouroboros-consensus-cardano/cddl/**/*.cddl
-  ouroboros-consensus-cardano/cddl/base.cddl
+  cddl/**/*.cddl
+  cddl/base.cddl
 
 extra-doc-files:
   docs/haddocks/*.svg
-  ouroboros-consensus-cardano/CHANGELOG.md
-  ouroboros-consensus-cardano/README.md
-  ouroboros-consensus-diffusion/CHANGELOG.md
-  ouroboros-consensus-protocol/CHANGELOG.md
-  ouroboros-consensus/CHANGELOG.md
 
 source-repository head
   type: git
@@ -95,7 +90,7 @@ common common-exe
 
 library
   import: common-lib
-  hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus
+  hs-source-dirs: lib/ouroboros-consensus
   exposed-modules:
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract
@@ -425,7 +420,7 @@ library
 library tracing
   import: common-lib
   visibility: public
-  hs-source-dirs: tracing
+  hs-source-dirs: lib/tracing
   exposed-modules:
     Ouroboros.Consensus.Tracing
     Ouroboros.Consensus.Tracing.Era.Shelley.Render
@@ -482,7 +477,7 @@ library tracing
 test-suite tracing-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: tracing/test
+  hs-source-dirs: test/tracing-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Tracing.Golden
@@ -514,7 +509,7 @@ test-suite tracing-test
 library lsm
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus-lsm
+  hs-source-dirs: lib/lsm
   exposed-modules:
     Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
@@ -545,7 +540,7 @@ library lsm
 library unstable-consensus-testlib
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus/src/unstable-consensus-testlib
+  hs-source-dirs: testlib/unstable-consensus-testlib
   exposed-modules:
     Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
@@ -673,7 +668,7 @@ library unstable-consensus-testlib
 library unstable-mock-block
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus/src/unstable-mock-block
+  hs-source-dirs: testlib/unstable-mock-block
   exposed-modules:
     Ouroboros.Consensus.Mock.Ledger
     Ouroboros.Consensus.Mock.Ledger.Address
@@ -722,7 +717,7 @@ library unstable-mock-block
 library unstable-mempool-test-utils
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus/src/unstable-mempool-test-utils
+  hs-source-dirs: testlib/unstable-mempool-test-utils
   exposed-modules: Test.Consensus.Mempool.Mocked
   build-depends:
     base,
@@ -734,7 +729,7 @@ library unstable-mempool-test-utils
 library unstable-tutorials
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus/src/unstable-tutorials
+  hs-source-dirs: testlib/unstable-tutorials
   other-modules:
     Ouroboros.Consensus.Tutorial.Simple
     Ouroboros.Consensus.Tutorial.WithEpoch
@@ -754,7 +749,7 @@ library unstable-tutorials
 test-suite consensus-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/test/consensus-test
+  hs-source-dirs: test/consensus-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.BlockchainTime.Simple
@@ -852,7 +847,7 @@ test-suite consensus-test
 test-suite consensus-infra-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/test/infra-test
+  hs-source-dirs: test/infra-test
   main-is: Main.hs
   other-modules:
     Ouroboros.Consensus.Util.Tests
@@ -884,7 +879,7 @@ test-suite consensus-infra-test
 test-suite storage-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/test/storage-test
+  hs-source-dirs: test/storage-test
   main-is: Main.hs
   other-modules:
     Test.Ouroboros.Storage
@@ -971,7 +966,7 @@ test-suite storage-test
 benchmark mempool-bench
   import: common-bench
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/bench/mempool-bench
+  hs-source-dirs: bench/mempool-bench
   main-is: Main.hs
   other-modules:
     Bench.Consensus.Mempool
@@ -1005,8 +1000,8 @@ benchmark mempool-state-bench
   import: common-bench
   type: exitcode-stdio-1.0
   hs-source-dirs:
-    ouroboros-consensus/bench/mempool-state-bench
-    ouroboros-consensus/bench/mempool-bench
+    bench/mempool-state-bench
+    bench/mempool-bench
 
   main-is: Main.hs
   other-modules:
@@ -1039,7 +1034,7 @@ benchmark mempool-state-bench
 benchmark ChainSync-client-bench
   import: common-bench
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/bench/ChainSync-client-bench
+  hs-source-dirs: bench/ChainSync-client-bench
   main-is: Main.hs
   other-modules: Bench.Consensus.ChainSyncClient.Driver
   build-depends:
@@ -1060,7 +1055,7 @@ benchmark ChainSync-client-bench
 benchmark PerasCertDB-bench
   import: common-bench
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/bench/PerasCertDB-bench
+  hs-source-dirs: bench/PerasCertDB-bench
   main-is: Main.hs
   other-modules:
   build-depends:
@@ -1074,7 +1069,7 @@ benchmark PerasCertDB-bench
 benchmark txid-eq-ord-instances-bench
   import: common-bench
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-cardano/bench/txid-eq-ord-instances-bench
+  hs-source-dirs: bench/txid-eq-ord-instances-bench
   main-is: Main.hs
   ghc-options:
     -with-rtsopts=-T
@@ -1094,7 +1089,7 @@ test-suite doctest
   import: common-test
   main-is: doctest.hs
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/test
+  hs-source-dirs: test
   default-language: Haskell2010
   ghc-options: -Wno-unused-packages
   build-depends:
@@ -1104,7 +1099,7 @@ test-suite doctest
 library protocol
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-protocol/src/ouroboros-consensus-protocol
+  hs-source-dirs: lib/protocol
   exposed-modules:
     Ouroboros.Consensus.Protocol.Ledger.HotKey
     Ouroboros.Consensus.Protocol.Ledger.Util
@@ -1144,7 +1139,7 @@ library protocol
 library unstable-protocol-testlib
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-protocol/src/unstable-protocol-testlib
+  hs-source-dirs: testlib/unstable-protocol-testlib
   exposed-modules:
     Test.Consensus.Protocol.Serialisation.Generators
     Test.Ouroboros.Consensus.Protocol.Praos.Header
@@ -1170,7 +1165,7 @@ library unstable-protocol-testlib
 test-suite protocol-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-protocol/test/protocol-test
+  hs-source-dirs: test/protocol-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Protocol.Praos.SelectView
@@ -1190,7 +1185,7 @@ test-suite protocol-test
 library diffusion
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion
+  hs-source-dirs: lib/diffusion
   exposed-modules:
     Ouroboros.Consensus.Network.NodeToClient
     Ouroboros.Consensus.Network.NodeToNode
@@ -1242,7 +1237,7 @@ library diffusion
 library unstable-diffusion-testlib
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-diffusion/src/unstable-diffusion-testlib
+  hs-source-dirs: testlib/unstable-diffusion-testlib
   exposed-modules:
     Test.ThreadNet.General
     Test.ThreadNet.Network
@@ -1288,7 +1283,7 @@ library unstable-diffusion-testlib
 library unstable-mock-testlib
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-diffusion/src/unstable-mock-testlib
+  hs-source-dirs: testlib/unstable-mock-testlib
   exposed-modules:
     Test.Consensus.Ledger.Mock.Generators
     Test.ThreadNet.TxGen.Mock
@@ -1308,7 +1303,7 @@ library unstable-mock-testlib
 test-suite diffusion-infra-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-diffusion/test/infra-test
+  hs-source-dirs: test/diffusion-infra-test
   main-is: Main.hs
   other-modules: Test.ThreadNet.Util.Tests
   build-depends:
@@ -1322,7 +1317,7 @@ test-suite diffusion-infra-test
 test-suite mock-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-diffusion/test/mock-test
+  hs-source-dirs: test/mock-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
@@ -1351,7 +1346,7 @@ test-suite mock-test
 test-suite consensus-diffusion-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-diffusion/test/consensus-test
+  hs-source-dirs: test/consensus-diffusion-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.BlockTree
@@ -1457,9 +1452,9 @@ library cardano
   import: common-lib
   visibility: public
   hs-source-dirs:
-    ouroboros-consensus-cardano/src/ouroboros-consensus-cardano
-    ouroboros-consensus-cardano/src/byron
-    ouroboros-consensus-cardano/src/shelley
+    lib/cardano
+    lib/byron
+    lib/shelley
 
   exposed-modules:
     Ouroboros.Consensus.Byron.ByronHFC
@@ -1573,7 +1568,7 @@ library cardano
 library unstable-byronspec
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-cardano/src/unstable-byronspec
+  hs-source-dirs: testlib/unstable-byronspec
   exposed-modules:
     Ouroboros.Consensus.ByronSpec.Ledger
     Ouroboros.Consensus.ByronSpec.Ledger.Accessors
@@ -1608,7 +1603,7 @@ library unstable-byronspec
 library unstable-byron-testlib
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-cardano/src/unstable-byron-testlib
+  hs-source-dirs: testlib/unstable-byron-testlib
   exposed-modules:
     Ouroboros.Consensus.ByronDual.Ledger
     Ouroboros.Consensus.ByronDual.Node
@@ -1646,7 +1641,7 @@ library unstable-byron-testlib
 test-suite byron-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-cardano/test/byron-test
+  hs-source-dirs: test/byron-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Byron.Golden
@@ -1685,7 +1680,7 @@ test-suite byron-test
 library unstable-shelley-testlib
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-cardano/src/unstable-shelley-testlib
+  hs-source-dirs: testlib/unstable-shelley-testlib
   exposed-modules:
     Test.Consensus.Shelley.Examples
     Test.Consensus.Shelley.Generators
@@ -1726,7 +1721,7 @@ library unstable-shelley-testlib
 test-suite shelley-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-cardano/test/shelley-test
+  hs-source-dirs: test/shelley-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Shelley.Coherence
@@ -1771,7 +1766,7 @@ test-suite shelley-test
 library unstable-cardano-testlib
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-cardano/src/unstable-cardano-testlib
+  hs-source-dirs: testlib/unstable-cardano-testlib
   exposed-modules:
     Test.Consensus.Cardano.Examples
     Test.Consensus.Cardano.Generators
@@ -1824,7 +1819,7 @@ library unstable-cardano-testlib
 test-suite cardano-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-cardano/test/cardano-test
+  hs-source-dirs: test/cardano-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Cardano.DiffusionPipelining
@@ -1890,7 +1885,7 @@ test-suite cardano-test
 library unstable-cardano-tools
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-cardano/src/unstable-cardano-tools
+  hs-source-dirs: testlib/unstable-cardano-tools
   exposed-modules:
     Cardano.Tools.Config
     Cardano.Tools.Credentials
@@ -1972,7 +1967,7 @@ library unstable-cardano-tools
 
 executable db-analyser
   import: common-lib
-  hs-source-dirs: ouroboros-consensus-cardano/app
+  hs-source-dirs: app
   main-is: db-analyser.hs
   build-depends:
     base,
@@ -2003,7 +1998,7 @@ executable db-analyser
 
 executable db-immutaliser
   import: common-exe
-  hs-source-dirs: ouroboros-consensus-cardano/app
+  hs-source-dirs: app
   main-is: db-immutaliser.hs
   build-depends:
     base,
@@ -2014,7 +2009,7 @@ executable db-immutaliser
 
 executable db-synthesizer
   import: common-exe
-  hs-source-dirs: ouroboros-consensus-cardano/app
+  hs-source-dirs: app
   main-is: db-synthesizer.hs
   build-depends:
     base,
@@ -2029,7 +2024,7 @@ executable db-synthesizer
 
 executable db-truncater
   import: common-exe
-  hs-source-dirs: ouroboros-consensus-cardano/app
+  hs-source-dirs: app
   main-is: db-truncater.hs
   build-depends:
     base,
@@ -2044,7 +2039,7 @@ executable db-truncater
 
 executable immdb-server
   import: common-exe
-  hs-source-dirs: ouroboros-consensus-cardano/app
+  hs-source-dirs: app
   main-is: immdb-server.hs
   build-depends:
     base,
@@ -2057,7 +2052,7 @@ executable immdb-server
 library unstable-snapshot-conversion
   import: common-lib
   visibility: public
-  hs-source-dirs: ouroboros-consensus-cardano/src/unstable-snapshot-conversion
+  hs-source-dirs: testlib/unstable-snapshot-conversion
   other-modules:
     Ouroboros.Consensus.Cardano.StreamingLedgerTables
 
@@ -2087,7 +2082,7 @@ library unstable-snapshot-conversion
 
 executable snapshot-converter
   import: common-exe
-  hs-source-dirs: ouroboros-consensus-cardano/app
+  hs-source-dirs: app
   main-is: snapshot-converter.hs
   build-depends:
     base,
@@ -2110,7 +2105,7 @@ executable snapshot-converter
 test-suite tools-test
   import: common-test
   type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus-cardano/test/tools-test
+  hs-source-dirs: test/tools-test
   main-is: Main.hs
   build-depends:
     aeson,
@@ -2140,7 +2135,7 @@ test-suite tools-test
 
 executable gen-header
   import: common-exe
-  hs-source-dirs: ouroboros-consensus-cardano/app
+  hs-source-dirs: app
   main-is: gen-header.hs
   build-depends:
     base,

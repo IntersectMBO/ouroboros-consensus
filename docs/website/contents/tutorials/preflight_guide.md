@@ -83,7 +83,7 @@ Here are two options:
 
 You need a local ChainDB for this step, see the previous step.
 
-[db-analyser][] is a tool maintained by the Consensus team to gather information and investigate problems (especially performance-related) by analyzing a local ChainDB, providing a variety of analysis passes.
+`db-analyser` is a tool maintained by the Consensus team to gather information and investigate problems (especially performance-related) by analyzing a local ChainDB, providing a variety of analysis passes.
 
 ### Ledger snapshots
 
@@ -93,8 +93,8 @@ On disk, the file name of a ledger snapshot usually contains the slot number of 
 
 ### Running db-analyser passes
 
-Most [db-analyser][] passes need a ledger snapshot for the specified starting slot.
-Read the [db-analyser][] documentation up to the [the corresponding example][db-analyser snapshot] to create a ledger snapshot for slot `4492800`[^first-shelley-slot].
+Most `db-analyser` passes need a ledger snapshot for the specified starting slot.
+Read the `db-analyser` [documentation](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/consensus_tools#db-analyser) up to the the corresponding example to create a ledger snapshot for slot `4492800`[^first-shelley-slot].
 
 Starting from there (using `--analyse-from 4492800`), try the following two db-analyser passes:
 
@@ -114,7 +114,7 @@ You can reuse these snapshots in db-analyser, and vice versa.
 
 > ‼️ Note that the format of ledger snapshots can change with every new ledger release, so in order for this to work, make sure that your db-analyser and your node use the same ledger version.
 > Some ways to achieve this:
->  - Click on the [release page][node release page] corresponding to your node, expand the "Individual packages' changelogs" section, and then check out the corresponding `ouroboros-consensus-cardano` release tag in the Consensus repo.
+>  - Click on the [release page][node release page] corresponding to your node, expand the "Individual packages' changelogs" section, and then check out the corresponding `ouroboros-consensus` release tag in the Consensus repo.
 >  - If you used Nix to get the `cardano-node` binary, you can use `nix build .#db-analyser` to get a compatible db-analyser, assuming you are in the root of the `cardano-node` repo.
 >
 > You might also run into this when you update the node to a newer version.
@@ -301,10 +301,8 @@ for Ungrindable Blockchains" by Kiayias et al](https://eprint.iacr.org/2021/1698
 [Mithril client]: https://mithril.network/doc/
 [Mithril instructions]: https://mithril.network/doc/manual/getting-started/bootstrap-cardano-node/
 [Magic Wormhole]: https://github.com/magic-wormhole/magic-wormhole
-[db-analyser]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/README.md#db-analyser
 [Cardano ledger]: https://github.com/IntersectMBO/cardano-ledger
 [Glossary]: https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/glossary/
-[db-analyser snapshot]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/README.md#saving-a-snapshot
 [preflight epic]: https://github.com/IntersectMBO/ouroboros-consensus/issues/887
 [Ouroboros Praos paper]: https://www.iog.io/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol
 [scipy.stats]: https://docs.scipy.org/doc/scipy/reference/stats.html

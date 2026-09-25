@@ -4,7 +4,6 @@
 -- These are in a separate file in order to make it easy to disable all
 -- assertion flags again.
 --
-
 package cardano-ledger-core
   flags: +asserts
 
@@ -20,32 +19,16 @@ package io-classes
 -- https://github.com/input-output-hk/io-sim/issues/94
 -- package io-sim
 --   flags: +asserts
-
 package network-mux
   flags: +asserts
 
 package ouroboros-consensus
   flags: +asserts
 
-package ouroboros-consensus-protocols
-  flags: +asserts
-
-package ouroboros-consensus-cardano
-  flags: +asserts
-
-package ouroboros-consensus-diffusion
-  flags: +asserts
-
 package cardano-diffusion
   flags: +asserts
 
 package ouroboros-network
-  flags: +asserts
-
-package si-timers
-  flags: +asserts
-
-package strict-stm
   flags: +asserts
 
 package text-short
