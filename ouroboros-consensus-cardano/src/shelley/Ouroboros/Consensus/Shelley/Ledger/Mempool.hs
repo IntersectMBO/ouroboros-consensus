@@ -820,13 +820,13 @@ data DijkstraEbMeasure p = DijkstraEbMeasure
 
 -- | The cost of one transaction in an endorser block: its closure cost is the
 -- transaction's block measure, and its reference costs the bytes
--- 'Leios.encodeLeiosEb' writes for it.
+-- 'Leios.encodeEndorserBlock' writes for it.
 txEbMeasureDijkstra :: TxMeasure (ShelleyBlock p DijkstraEra) -> DijkstraEbMeasure p
 txEbMeasureDijkstra closure =
   DijkstraEbMeasure
     { ebClosureMeasure = closure
     , txReferencesSize =
-        IgnoringOverflow . Leios.encodeLeiosEbItemSize (Proxy @DijkstraEra) $
+        IgnoringOverflow . Leios.encodedReferenceSize (Proxy @DijkstraEra) $
           txMeasureByteSize closure
     }
 
@@ -848,14 +848,14 @@ leiosEndorserBlockMeasure st =
               IgnoringOverflow $
                 ByteSize32 (pparams ^. ppMaxRefScriptSizePerEndorserBlockL)
           )
-    , -- Transactions are charged 'Leios.encodeLeiosEbItemSize' for their
-      -- reference and nothing else, so the framing 'Leios.encodeLeiosEb' writes
+    , -- Transactions are charged 'Leios.encodedReferenceSize' for their
+      -- reference and nothing else, so the framing 'Leios.encodeEndorserBlock' writes
       -- ahead of them comes off the capacity here.
       --
       -- Nothing checks that an endorser block of this size fits one LeiosFetch
       -- message. That check must come with the LeiosFetch protocol.
       txReferencesSize =
-        IgnoringOverflow . ByteSize32 . Leios.leiosReferencesCapacity (Proxy @DijkstraEra) $
+        IgnoringOverflow . ByteSize32 . Leios.referencesCapacity (Proxy @DijkstraEra) $
           pparams ^. ppMaxEndorserBlockReferencesSizeL
     }
  where
@@ -864,7 +864,7 @@ leiosEndorserBlockMeasure st =
 -- | A Dijkstra endorser block is a CBOR map from each transaction hash to the
 -- size of that transaction.
 instance Leios.EndorserBlockFormat DijkstraEra where
-  encodeLeiosEb _ (Leios.MkLeiosEb references) =
+  encodeEndorserBlock _ (Leios.MkEndorserBlock references) =
     foldl
       ( \acc (Leios.MkTxHash bytes, txBytesSize) ->
           acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
@@ -873,14 +873,14 @@ instance Leios.EndorserBlockFormat DijkstraEra where
       references
 
   -- The hash and the size.
-  encodeLeiosEbItemSize _ (ByteSize32 txSize) =
+  encodedReferenceSize _ (ByteSize32 txSize) =
     ByteSize32 $ cborBytesSize 32 + Leios.cborIntBytesSize txSize
    where
     cborBytesSize len = Leios.cborIntBytesSize len + len
 
   -- The map header. CBOR map headers have the same widths as
-  -- 'Leios.cborIntBytesSize', and the item count fits 'Leios.BytesSize'.
-  encodeLeiosEbMaxFramingSize _ =
+  -- 'Leios.cborIntBytesSize', and the reference count fits 'Leios.BytesSize'.
+  encodedMaxFramingSize _ =
     ByteSize32 $ Leios.cborIntBytesSize (maxBound :: Leios.BytesSize)
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.

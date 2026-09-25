@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | The sizes the Dijkstra mempool charges for an endorser block agree with
--- the bytes 'encodeLeiosEb' writes.
+-- the bytes 'encodeEndorserBlock' writes.
 module Test.Consensus.Shelley.EndorserBlock (tests) where
 
 import qualified Codec.CBOR.Encoding as CBOR
@@ -12,10 +12,10 @@ import qualified Data.Vector.Strict as V
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Leios.EndorserBlock
   ( BytesSize
+  , EndorserBlock (..)
   , EndorserBlockFormat (..)
-  , LeiosEb (..)
   , TxHash (..)
-  , leiosReferencesCapacity
+  , referencesCapacity
   )
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Ledger.Mempool ()
@@ -26,10 +26,10 @@ tests :: TestTree
 tests =
   testGroup
     "Dijkstra endorser block"
-    [ testProperty "encodeLeiosEbItemSize consistent with encodeLeiosEb" prop_ebItemSizeConsistent
-    , testProperty "encodeLeiosEb framing bounded by encodeLeiosEbMaxFramingSize" prop_ebFramingBounded
+    [ testProperty "encodedReferenceSize consistent with encodeEndorserBlock" prop_referenceSizeConsistent
+    , testProperty "encodeEndorserBlock framing bounded by encodedMaxFramingSize" prop_ebFramingBounded
     , testProperty
-        "leiosReferencesCapacity floors at zero instead of wrapping"
+        "referencesCapacity floors at zero instead of wrapping"
         prop_referencesCapacityFloorsAtZero
     ]
 
@@ -52,10 +52,10 @@ genTxBytesSize =
     , (5, chooseEnum (55, 16384))
     ]
 
--- | The number of items with good coverage of CBOR encoding boundaries for
+-- | The number of references with good coverage of CBOR encoding boundaries for
 -- the map length: 0-23 in 1 byte, 24-255 in 2 bytes, 256 and more in 3 bytes.
-genNumItems :: Gen Int
-genNumItems =
+genNumReferences :: Gen Int
+genNumReferences =
   frequency
     [ (1, pure 0)
     , (1, pure 1)
@@ -66,37 +66,37 @@ genNumItems =
     , (3, chooseInt (0, 1000))
     ]
 
-genEb :: Int -> Gen LeiosEb
-genEb numTxs =
-  MkLeiosEb . V.fromList <$> vectorOf numTxs ((,) <$> genTxHash <*> genTxBytesSize)
+genEndorserBlock :: Int -> Gen EndorserBlock
+genEndorserBlock numTxs =
+  MkEndorserBlock . V.fromList <$> vectorOf numTxs ((,) <$> genTxHash <*> genTxBytesSize)
 
--- | The per-item charge 'encodeLeiosEbItemSize', which the mempool charges a
--- transaction for its reference, agrees with the bytes 'encodeLeiosEb' writes
--- for that item.
-prop_ebItemSizeConsistent :: Property
-prop_ebItemSizeConsistent =
+-- | The per-reference charge 'encodedReferenceSize', which the mempool charges a
+-- transaction for its reference, agrees with the bytes 'encodeEndorserBlock' writes
+-- for that reference.
+prop_referenceSizeConsistent :: Property
+prop_referenceSizeConsistent =
   forAll ((,) <$> genTxHash <*> genTxBytesSize) $ \(txHash@(MkTxHash bytes), txSize) ->
     let encoded = toStrictByteString $ CBOR.encodeBytes bytes <> CBOR.encodeWord32 txSize
-        ByteSize32 estimatedSize = encodeLeiosEbItemSize dijkstra (ByteSize32 txSize)
+        ByteSize32 estimatedSize = encodedReferenceSize dijkstra (ByteSize32 txSize)
      in counterexample
-          ("item: " <> show (txHash, txSize))
+          ("reference: " <> show (txHash, txSize))
           (estimatedSize === fromIntegral (BS.length encoded))
 
--- | Whatever 'encodeLeiosEb' writes around the items stays within
--- 'encodeLeiosEbMaxFramingSize', the one-off amount capacities subtract.
+-- | Whatever 'encodeEndorserBlock' writes around the references stays within
+-- 'encodedMaxFramingSize', the one-off amount capacities subtract.
 prop_ebFramingBounded :: Property
 prop_ebFramingBounded =
-  forAll (genNumItems >>= genEb) $ \eb ->
-    let actualSize = fromIntegral $ BS.length (toStrictByteString (encodeLeiosEb dijkstra eb))
+  forAll (genNumReferences >>= genEndorserBlock) $ \eb ->
+    let actualSize = fromIntegral $ BS.length (toStrictByteString (encodeEndorserBlock dijkstra eb))
         itemsSize =
           sum
-            [ unByteSize32 (encodeLeiosEbItemSize dijkstra (ByteSize32 txSize))
-            | (_txHash, txSize) <- V.toList (leiosEbTxs eb)
+            [ unByteSize32 (encodedReferenceSize dijkstra (ByteSize32 txSize))
+            | (_txHash, txSize) <- V.toList (endorserBlockReferences eb)
             ]
         framing = actualSize - itemsSize
      in counterexample
-          ("items: " <> show (V.length (leiosEbTxs eb)) <> ", framing: " <> show framing)
-          (property $ actualSize >= itemsSize && framing <= unByteSize32 (encodeLeiosEbMaxFramingSize dijkstra))
+          ("references: " <> show (V.length (endorserBlockReferences eb)) <> ", framing: " <> show framing)
+          (property $ actualSize >= itemsSize && framing <= unByteSize32 (encodedMaxFramingSize dijkstra))
 
 -- | A @maxEndorserBlockReferencesSize@ at or below the framing yields a zero
 -- references capacity, so nothing fits. It never wraps around to \"no limit\",
@@ -104,7 +104,7 @@ prop_ebFramingBounded =
 prop_referencesCapacityFloorsAtZero :: Property
 prop_referencesCapacityFloorsAtZero =
   forAll genParamLimit $ \paramLimit ->
-    let capacity = leiosReferencesCapacity dijkstra paramLimit
+    let capacity = referencesCapacity dijkstra paramLimit
      in counterexample ("capacity: " <> show capacity) $
           conjoin
             [ counterexample "capacity must never exceed the parameter (wrap-around)" $
@@ -114,7 +114,7 @@ prop_referencesCapacityFloorsAtZero =
                 paramLimit > framing .||. capacity === 0
             ]
  where
-  framing = unByteSize32 (encodeLeiosEbMaxFramingSize dijkstra)
+  framing = unByteSize32 (encodedMaxFramingSize dijkstra)
 
   -- Weighted towards the boundary a plain subtraction wraps on.
   genParamLimit =
