@@ -60,7 +60,7 @@ That same fundamental hypothetical of genuine chains with different block types 
 Each `ShelleyNodeToClientVersion` has a set of queries it supports. Assume the maximum version is $X$, and that it has queries $Q_0, \dots, Q_{n-1}$ associated to it. If no node was released that supports version $X$, ie `ShelleyNodeToClientVersionX`, we have a reasonable degree of certainty that no client will send any $Q_i$, $x \in [0, n - 1]$ to older nodes (since no such node was yet released). Therefore, if we add a new query $Q_n$ we can associate it to the unreleased version $X$ (`ShelleyNodeToClientVersionX`).
 
 On the other hand, the node that supports version `X` has been released, then we
-need to increase the maximum Shelley node-to-client version, by adding one more constructor to `ShelleyNodeToClientVersion`, which is defined in module [Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs). By adding this new version the node is able to detect if other Cardano clients that respect this versioning mechanism support said query.
+need to increase the maximum Shelley node-to-client version, by adding one more constructor to `ShelleyNodeToClientVersion`, which is defined in module [Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs). By adding this new version the node is able to detect if other Cardano clients that respect this versioning mechanism support said query.
 
 Henceforth, we call an unreleased version "experimental" (ie only used for demo purposes/specific to an unreleased era).
 
@@ -95,7 +95,7 @@ So when you remove a `NodeToClientVersion`, a `CardanoNodeToClientVersion` or a 
 
      - If the query is experimental, you only need one if there is no [`NodeToClientVersion`][n2c] beyond the [`latestReleasedNodeVersion`][latestReleasedNodeVersion] (usually, it should already exist).
 
-     - If the query is not experimental, you need one if the current [`latestReleasedNodeVersion`][latestReleasedNodeVersion] is already used in a released version of the node. For this, check the version of `ouroboros-consensus-cardano` in the latest node release, and navigate to the corresponding [`latestReleasedNodeVersion`][latestReleasedNodeVersion].
+     - If the query is not experimental, you need one if the current [`latestReleasedNodeVersion`][latestReleasedNodeVersion] is already used in a released version of the node. For this, check the version of `ouroboros-consensus` in the latest node release, and navigate to the corresponding [`latestReleasedNodeVersion`][latestReleasedNodeVersion].
 
     If you determine that you need a new [`NodeToClientVersion`][n2c], create a corresponding PR in the [Network repository][network-repo], and wait for a new release to CHaP.
 
@@ -132,8 +132,8 @@ Old pull-requests that added new queries serve as good reference material when a
 [network-repo]: https://github.com/IntersectMBO/ouroboros-network
 [shelley-supportedNodeToClientVersions]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs#L56-L65
 [decodeShelleyResult]: https://github.com/IntersectMBO/ouroboros-consensus/blob/3d55ae3ca7a9e1c63a19266d35ef5512bbef13ab/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L733
-[goldenTest_SerialiseNodeToClient]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Golden.hs
-[nodeToClientVersionToQueryVersion]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Query/Version.hs
+[goldenTest_SerialiseNodeToClient]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/testlib/unstable-consensus-testlib/Test/Util/Serialisation/Golden.hs
+[nodeToClientVersionToQueryVersion]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/Query/Version.hs
 
 [^conway-queries]: There are already queries that morally are Conway-specific, but still work in older eras, returning something along the lines of `mempty` in that case.
 

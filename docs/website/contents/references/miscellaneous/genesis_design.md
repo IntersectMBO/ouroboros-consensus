@@ -711,7 +711,7 @@ A stale snapshot is not necessarily useful; the threshold is beyond the scope of
 
 Additionally, the SDET team should be able to catch fundamental regressions via a scenario in which a very slow upstream peer serves a denser chain while a very fast peer serves a less dense alternative chain.
 The denser chain needs to have at least k blocks after the intersection, and the syncing node must select the denser chain in order for the test to pass.
-The [`immdb-server`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/app/immdb-server.hs) tool will be useful.
+The [`immdb-server`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/app/immdb-server.hs) tool will be useful.
 
 The Genesis feature is intended to supercede the Bootstrap Peers method.
 However, the fundamentally stronger assumption of Bootstrap Peers may be more useful than Genesis during disaster scenarios and/or attacks, so it seems beneficial to preserve the capability to spin-up Bootstrap Peers on relatively short notice.

@@ -13,10 +13,13 @@ let
       ../NOTICE
       ../cabal
       ../cabal.project
-      ../ouroboros-consensus
-      ../ouroboros-consensus-cardano
-      ../ouroboros-consensus-diffusion
-      ../ouroboros-consensus-protocol
+      ../lib
+      ../testlib
+      ../test
+      ../app
+      ../golden
+      ../bench
+      ../cddl
       ../ouroboros-consensus.cabal
     ];
   };
@@ -69,7 +72,7 @@ let
           lib.listToAttrs (map
             (n: lib.nameValuePair "${n}-test" {
               testFlags = lib.mkForce [ "--no-create --hide-successes" ];
-              extraSrcFiles = [ "ouroboros-consensus-cardano/golden/${n}/**/*" ];
+              extraSrcFiles = [ "golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
       ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
@@ -86,7 +89,7 @@ let
         packages.ouroboros-consensus.components.tests.cardano-test = {
           build-tools =
             [ pkgs.cddlc pkgs.cuddle ];
-          extraSrcFiles = [ "ouroboros-consensus-cardano/cddl/**/*" ];
+          extraSrcFiles = [ "cddl/**/*" ];
         };
       })
     ];

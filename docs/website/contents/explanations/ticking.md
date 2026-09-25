@@ -109,8 +109,8 @@ This is why ticking can be a *total* function while forecasting is partial — e
 - Haddocks: [`Ticked`][ticked], [`applyChainTickLedgerResult`][apply-chain-tick], [`tickChainDepState`][tick-chain-dep-state], [`ledgerViewForecastAt`][ledger-view-forecast], [`Forecast`][forecast].
 - [Issue #345](https://github.com/IntersectMBO/ouroboros-consensus/issues/345) — proposal for a cross-era ticking interface.
 
-[ticked]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ticked.hs
-[apply-chain-tick]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs
-[tick-chain-dep-state]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs
-[ledger-view-forecast]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsProtocol.hs
-[forecast]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Forecast.hs
+[ticked]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ticked.hs
+[apply-chain-tick]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs
+[tick-chain-dep-state]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs
+[ledger-view-forecast]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsProtocol.hs
+[forecast]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Forecast.hs

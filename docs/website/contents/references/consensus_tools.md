@@ -7,7 +7,7 @@ node configuration files — so they are useful to node operators, benchmarking
 teams, and developers debugging Consensus or Ledger issues.
 
 The sources live in
-[`ouroboros-consensus-cardano/app`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/app).
+[`app`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/app).
 
 For the configuration knobs and on-disk formats these tools operate on, see
 [Consensus configuration values](./consensus_configuration).
@@ -212,19 +212,19 @@ Exactly one analysis can be selected per run.
   validated, which isolates the cost of the cheaper code path a caught-up node
   pays when adopting its own chain again or replaying.
 
-  The [`ouroboros-consensus-cardano/scripts/plot-ledger-ops-cost.gp`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/scripts/plot-ledger-ops-cost.gp)
+  The [`scripts/plotting/plot-ledger-ops-cost.gp`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/scripts/plotting/plot-ledger-ops-cost.gp)
   gnuplot script can plot the output; see the script header for usage:
 
   ```sh
   gnuplot -e "bench_data='ledger-ops-cost.csv'" \
           -e "out_file='results.png'" \
-          ouroboros-consensus-cardano/scripts/plot-ledger-ops-cost.gp
+          scripts/plotting/plot-ledger-ops-cost.gp
   ```
 
 * `--get-block-application-metrics NUM [--out-file FILE]` — computes block
   application metrics every `NUM` blocks: block and slot number, UTxO size in
   MB and number of UTxO map entries. The
-  [`ouroboros-consensus-cardano/scripts/plot_utxo_growth.py`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/scripts/plot_utxo_growth.py)
+  [`scripts/plotting/plot_utxo_growth.py`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/scripts/plotting/plot_utxo_growth.py)
   script plots the results.
 
 * `--repro-mempool-and-forge INT` — populates the mempool with the
@@ -365,13 +365,13 @@ length cheaply, e.g. as input for benchmarks.
 
 A minimal working setup — a staked genesis with bulk credentials for two
 forgers — is provided in
-[`ouroboros-consensus-cardano/test/tools-test/disk/config`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/tools-test/disk/config):
+[`test/tools-test/disk/config`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/test/tools-test/disk/config):
 
 ```sh
 cabal run db-synthesizer -- \
-  --config ouroboros-consensus-cardano/test/tools-test/disk/config/config.json \
+  --config test/tools-test/disk/config/config.json \
   --db /tmp/synthesized-db \
-  --bulk-credentials-file ouroboros-consensus-cardano/test/tools-test/disk/config/bulk-creds-k2.json \
+  --bulk-credentials-file test/tools-test/disk/config/bulk-creds-k2.json \
   -s 10000
 ```
 
