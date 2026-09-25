@@ -377,19 +377,28 @@ length cheaply, e.g. as input for benchmarks.
   genesis file of every era the configuration names (their paths are relative
   to the configuration file's directory).
 - `--db PATH` — where to write the ChainDB.
-- Block forging credentials, either as separate files
+- Block forging credentials, as separate files
   (`--shelley-operational-certificate`, `--shelley-vrf-key` and
-  `--shelley-kes-key`, all in JSON TextEnvelope format) or in bulk
+  `--shelley-kes-key`, all in JSON TextEnvelope format), in bulk
   (`--bulk-credentials-file`, a JSON array of `[opcert, VRF key, KES key]`
-  triples). Byron-era credentials (`--byron-delegation-certificate` with
-  `--byron-signing-key`) and a KES agent (`--shelley-kes-agent-socket` instead
-  of `--shelley-kes-key`) work too. These are `cardano-node`'s own flags —
-  db-synthesizer takes them from `cardano-config`, so they are spelled and
-  documented exactly as the node spells them, and the files they name are
-  decoded by `cardano-keys`. Each operational certificate must name the KES key
-  it is paired with, or the tool refuses it rather than forging blocks the
-  certificate does not authorise. The genesis must give the corresponding pools
-  enough stake to be elected.
+  triples), or both, which gives the forgers of both. The three `--shelley-*`
+  options go together: give all of them or none. Byron-era credentials
+  (`--byron-delegation-certificate` with `--byron-signing-key`) and a KES agent
+  (`--shelley-kes-agent-socket` instead of `--shelley-kes-key`) work too. These
+  are `cardano-node`'s own flags — db-synthesizer takes them from
+  `cardano-config`, so they are spelled and documented exactly as the node
+  spells them, and the files they name are decoded by `cardano-keys`. The
+  genesis must give the corresponding pools enough stake to be elected.
+
+  Each operational certificate must name the KES key it is paired with, or the
+  tool refuses it rather than forging blocks the certificate does not
+  authorise. With a KES agent the tool cannot check this, because the
+  certificate it forges with comes from the agent rather than from
+  `--shelley-operational-certificate`.
+
+  With no credentials at all the tool has no forgers: it prints `no forgers
+  found`, leaves the ChainDB untouched and still exits successfully, so an
+  empty ChainDB does not mean the run worked.
 
 A minimal working setup — a staked genesis with bulk credentials for two
 forgers — is provided in
