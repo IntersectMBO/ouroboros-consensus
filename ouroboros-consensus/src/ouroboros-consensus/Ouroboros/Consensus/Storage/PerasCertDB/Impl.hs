@@ -19,16 +19,12 @@ module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   , TraceEvent (..)
   ) where
 
-import Control.Monad (when)
-import Control.Monad.Except (throwError)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
-import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -52,15 +48,8 @@ data PerasCertDbEnv m blk = PerasCertDbEnv
 
 -- | INVARIANT: See 'invariantForPerasCertDbState'.
 data PerasCertDbState blk = PerasCertDbState
-  { pcdsCertIds :: !(Set PerasRoundNo)
-  -- ^ The round numbers of all certificates currently in the db.
-  , pcdsCertsByTicket :: !(Map PerasCertTicketNo (WithArrivalTime (ValidatedPerasCert blk)))
-  -- ^ The certificates by 'PerasCertTicketNo'.
-  --
-  -- INVARIANT: In sync with 'pcdsCertIds'.
-  , pcdsLastTicketNo :: !PerasCertTicketNo
-  -- ^ The most recent 'PerasCertTicketNo' (or 'zeroPerasCertTicketNo'
-  -- otherwise).
+  { pcdsCerts :: !(Map PerasRoundNo (WithArrivalTime (ValidatedPerasCert blk)))
+  -- ^ The certificates by 'PerasRoundNo'.
   , pcdsLatestCertSeen ::
       !(StrictMaybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
   -- ^ The certificate with the highest round number that has been added to the
@@ -80,40 +69,10 @@ initialPerasCertDbState :: WithFingerprint (PerasCertDbState blk)
 initialPerasCertDbState =
   WithFingerprint
     PerasCertDbState
-      { pcdsCertIds = Set.empty
-      , pcdsCertsByTicket = Map.empty
-      , pcdsLastTicketNo = zeroPerasCertTicketNo
+      { pcdsCerts = Map.empty
       , pcdsLatestCertSeen = SNothing
       }
     (Fingerprint 0)
-
--- | Check that the fields of 'PerasCertDbState' are in sync.
-invariantForPerasCertDbState ::
-  IsPerasCert (PerasCert blk) blk =>
-  WithFingerprint (PerasCertDbState blk) ->
-  Either String ()
-invariantForPerasCertDbState pcds = do
-  checkEqual
-    "pcdsCertsByTicket"
-    (Set.fromList (getPerasCertRound <$> Map.elems pcdsCertsByTicket))
-    pcdsCertIds
-  for_ (Map.keys pcdsCertsByTicket) $ \ticketNo ->
-    when (ticketNo > pcdsLastTicketNo) $
-      throwError $
-        "Ticket number monotonicity violation: "
-          <> show ticketNo
-          <> " > "
-          <> show pcdsLastTicketNo
- where
-  PerasCertDbState
-    { pcdsCertIds
-    , pcdsCertsByTicket
-    , pcdsLastTicketNo
-    } = forgetFingerprint pcds
-
-  checkEqual :: (Eq a, Show a) => String -> a -> a -> Either String ()
-  checkEqual msg a b =
-    when (a /= b) $ throwError $ msg <> ": Not equal: " <> show a <> ", " <> show b
 
 {-------------------------------------------------------------------------------
   Trace types
@@ -160,8 +119,7 @@ createDB ::
   m (PerasCertDB m blk)
 createDB args = do
   pcdbState <-
-    newTVarWithInvariantIO
-      (either Just (const Nothing) . invariantForPerasCertDbState)
+    newTVarIO
       initialPerasCertDbState
   let env =
         PerasCertDbEnv
@@ -199,12 +157,10 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
   let roundNo = getPerasCertRound cert
   addPerasCertRes <- do
     WithFingerprint pcds fp <- readTVar pcdbState
-    if Set.member roundNo (pcdsCertIds pcds)
+    if Map.member roundNo (pcdsCerts pcds)
       then pure PerasCertAlreadyInDB
       else do
-        let pcdsLastTicketNo' = succ (pcdsLastTicketNo pcds)
-            pcdsCertIds' = Set.insert roundNo (pcdsCertIds pcds)
-            pcdsCertsByTicket' = Map.insert pcdsLastTicketNo' cert (pcdsCertsByTicket pcds)
+        let pcdsCerts' = Map.insert roundNo cert (pcdsCerts pcds)
             pcdsLatestCertSeen' =
               case pcdsLatestCertSeen pcds of
                 SNothing ->
@@ -218,9 +174,7 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
         writeTVar pcdbState $
           WithFingerprint
             PerasCertDbState
-              { pcdsCertIds = pcdsCertIds'
-              , pcdsCertsByTicket = pcdsCertsByTicket'
-              , pcdsLastTicketNo = pcdsLastTicketNo'
+              { pcdsCerts = pcdsCerts'
               , pcdsLatestCertSeen = pcdsLatestCertSeen'
               }
             (succ fp)
@@ -241,7 +195,7 @@ implGetWeightSnapshot PerasCertDbEnv{pcdbState} = do
   let weights =
         mkPerasWeightSnapshot
           [ (getPerasCertPoint cert, vpcCertBoost (forgetArrivalTime cert))
-          | cert <- Map.elems (pcdsCertsByTicket pcds)
+          | cert <- Map.elems (pcdsCerts pcds)
           ]
   pure (WithFingerprint weights fp)
 
@@ -250,19 +204,19 @@ implGetCertIds ::
   PerasCertDbEnv m blk ->
   STM m (Set PerasRoundNo)
 implGetCertIds PerasCertDbEnv{pcdbState} = do
-  PerasCertDbState{pcdsCertIds} <-
+  PerasCertDbState{pcdsCerts} <-
     forgetFingerprint <$> readTVar pcdbState
-  pure pcdsCertIds
+  pure $ Map.keysSet pcdsCerts
 
 implGetCertsAfter ::
   IOLike m =>
   PerasCertDbEnv m blk ->
-  PerasCertTicketNo ->
-  STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
-implGetCertsAfter PerasCertDbEnv{pcdbState} ticketNo = do
-  PerasCertDbState{pcdsCertsByTicket} <-
+  PerasRoundNo ->
+  STM m (Map PerasRoundNo (m (WithArrivalTime (ValidatedPerasCert blk))))
+implGetCertsAfter PerasCertDbEnv{pcdbState} roundNo = do
+  PerasCertDbState{pcdsCerts} <-
     forgetFingerprint <$> readTVar pcdbState
-  let strictlyGreater = snd $ Map.split ticketNo pcdsCertsByTicket
+  let strictlyGreater = snd $ Map.split roundNo pcdsCerts
   pure $ pure <$> strictlyGreater
 
 implGetLatestCertSeen ::
@@ -291,16 +245,13 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
   gc :: PerasCertDbState blk -> PerasCertDbState blk
   gc
     PerasCertDbState
-      { pcdsCertsByTicket
-      , pcdsLastTicketNo
+      { pcdsCerts
       , pcdsLatestCertSeen
       } =
-      let pcdsCertsByTicket' =
+      let pcdsCerts' =
             Map.filter
               (\cert -> pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo)
-              pcdsCertsByTicket
-          pcdsCertIds' =
-            Set.fromList (getPerasCertRound <$> Map.elems pcdsCertsByTicket')
+              pcdsCerts
           pcdsLatestCertSeen' =
             updateIfBoostingGarbageCollectedBlock <$> pcdsLatestCertSeen
 
@@ -313,8 +264,6 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
             | otherwise =
                 cert
        in PerasCertDbState
-            { pcdsCertIds = pcdsCertIds'
-            , pcdsCertsByTicket = pcdsCertsByTicket'
-            , pcdsLastTicketNo = pcdsLastTicketNo
+            { pcdsCerts = pcdsCerts'
             , pcdsLatestCertSeen = pcdsLatestCertSeen'
             }
