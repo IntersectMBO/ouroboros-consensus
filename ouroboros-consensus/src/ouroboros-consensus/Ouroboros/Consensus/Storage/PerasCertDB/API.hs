@@ -53,6 +53,17 @@ data PerasCertDB m blk = PerasCertDB
   , getCertIds ::
       STM m (Set PerasRoundNo)
   -- ^ Get the set of all cert IDs currently in the database.
+  , getCertsBoosting ::
+      Point blk ->
+      STM m [ValidatedPerasCert blk]
+  -- ^ Get all certificates currently in the database whose boosted block
+  -- equals the given point, i.e. all certificates known to boost that
+  -- point. Certificates from different rounds can boost the same point.
+  --
+  -- Unlike 'addCert' and 'getCertsAfter', the arrival time of the
+  -- certificates is not returned, since callers of this method (namely
+  -- copying certificates to the 'PerasImmutableCertDB') only need the
+  -- validated certificate itself.
   , getCertsAfter ::
       PerasCertTicketNo ->
       STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
