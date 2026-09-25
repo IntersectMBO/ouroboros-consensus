@@ -8,19 +8,19 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | A simplified variant of the ImmutableDB specialised to storing immutable
--- Peras certificates.
+-- | An on-disk store for immutable (historical) Peras certificates: each
+-- certificate is stored in its own file, named after the Peras round number
+-- that uniquely identifies it. The certificates themselves are never cached in
+-- memory; only the (much smaller) set of round numbers known to be on disk is
+-- kept in memory, guarded by a 'StrictSVar', and every database operation goes
+-- through this guarded set.
 --
--- Unlike the ImmutableDB, this database does not use chunking: each certificate
--- is stored in its own file, named after the Peras round number of the
--- certificate (which uniquely identifies it). Certificates themselves are
--- therefore never cached in memory; only the (much smaller) set of certificate
--- round numbers known to be on disk is kept in memory, guarded by a
--- 'StrictSVar', similarly to how the ImmutableDB guards its
--- 'Ouroboros.Consensus.Storage.ImmutableDB.Impl.State.OpenState'.
--- Every database operation goes through this guarded set,
--- which acts as this database's (much simpler, since there is no chunking)
--- equivalent of the ImmutableDB's on-disk indices.
+-- The design follows the same approach as the consensus ImmutableDB — an
+-- append-only store whose in-memory index is guarded much like the ImmutableDB
+-- guards its
+-- 'Ouroboros.Consensus.Storage.ImmutableDB.Impl.State.OpenState' — but is
+-- considerably simpler: it does no chunking, so the guarded round-number set
+-- plays the role the ImmutableDB's on-disk indices play there.
 --
 -- Robustness against on-disk failures (corruption, partial writes, missing
 -- files) rests on three mechanisms:
