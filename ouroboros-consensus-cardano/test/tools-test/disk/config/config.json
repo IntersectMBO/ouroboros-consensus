@@ -1,5 +1,5 @@
 {
-    "$schema": "https://raw.githubusercontent.com/IntersectMBO/cardano-config/v1/schemas/config.schema.json",
+    "$schema": "https://raw.githubusercontent.com/IntersectMBO/cardano-config/v2/schemas/config.schema.json",
     "Configuration": {
         "HermodTracing": {
             "TraceOptions": {
@@ -119,5 +119,5 @@
             "TestShelleyHardForkAtEpoch": 0
         }
     },
-    "Version": 1
+    "Version": 2
 }

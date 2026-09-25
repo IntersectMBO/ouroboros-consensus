@@ -174,13 +174,14 @@ lsmBackend options =
 -- and is already in the current format, so neither that nor a migration warning
 -- should appear.
 --
--- 'Cfg.ExperimentalGenesisIgnored' does appear: the configuration names a
--- @DijkstraGenesisFile@ without enabling the experimental era, which is what
--- lets the two Dijkstra cases below tell the fallback from the file.
+-- The configuration names a @DijkstraGenesisFile@ without enabling the
+-- experimental era, which is what lets the two Dijkstra cases below tell the
+-- fallback from the file. @cardano-config@ does not open the file then, and
+-- does not warn about it either.
 test_resolvesWithExpectedWarnings :: Assertion
 test_resolvesWithExpectedWarnings = do
   (_nc, warns) <- resolveNodeConfiguration configFile
-  warns @?= [Cfg.ExperimentalGenesisIgnored "dijkstra-genesis.json"]
+  warns @?= []
 
 -- | The epochs the configuration sets must survive into the triggers. A silent
 -- fallback to 'CardanoTriggerHardForkAtDefaultVersion' would make db-analyser
