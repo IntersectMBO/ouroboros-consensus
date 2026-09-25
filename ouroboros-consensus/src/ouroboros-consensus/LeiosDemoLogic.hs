@@ -268,11 +268,12 @@ msgLeiosBlockRequest ::
   LeiosFetchContext m ->
   LeiosPoint ->
   m LeiosEb
-msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
+msgLeiosBlockRequest tracer leiosContext point@MkLeiosPoint{pointEbHash} = do
   let MkLeiosFetchContext{leiosDbReader, leiosEbBuffer = buf} = leiosContext
   n <- traceException tracer TraceLeiosPeerDbException $ do
     -- get the EB items using new db
     items <- lookupEbBody leiosDbReader pointEbHash
+    when (null items) $ throwIO $ ExnLeiosUnknownBlockRequested point
     -- A database written by an older build can hold a body with more rows
     -- than the buffer has room for.
     let rowCount = length items
@@ -317,10 +318,15 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
           <> show maxTxsPerEb
     -- Process results and write to buffer
     -- REVIEW: why a mutable vector?
+    -- Every requested offset must come back, or the request named one this
+    -- endorser block does not have.
+    when (length results /= length txOffsets) $
+      throwIO $
+        ExnLeiosUnknownTxsRequested point txOffsets
     let loop !i [] = pure i
         loop !i ((offset, _txHash, mbTxBytes) : rest) = do
           case mbTxBytes of
-            Nothing -> error $ "Missing txBytes for offset " ++ show offset
+            Nothing -> throwIO $ ExnLeiosUnknownTxsRequested point [offset]
             Just txBytes -> do
               -- NOTE: We do not need to decode the stored bytes into a proper
               -- 'Tx era' in order to serve them through the mini-protocols.
@@ -1797,6 +1803,70 @@ data ExnLeiosInvalidOffer
   deriving Show
 
 instance Exception ExnLeiosInvalidOffer
+
+-- | Thrown when a peer asks over LeiosFetch for something we do not have, or
+-- asks for it in a way no honest peer would; the ensuing thread death
+-- disconnects it.
+--
+-- An honest peer can still lose the connection here, by asking for something we
+-- pruned between sending our offer and receiving their request. Nothing
+-- prevents that, but it should be rare between healthy nodes on a healthy
+-- connection (and especially so if the nearly-immutable Chain Growth was also
+-- healthy).
+--
+-- Offered over LeiosNotify, the endorser block is at least 'LeiosMinOfferLead'
+-- slots above our immutable tip, and is deleted no sooner than @cdbGcDelay@
+-- after our immutable tip passes it: 60+1 minutes at the mainnet defaults. An
+-- immutable tip can lurch --- while syncing, on escaping an eclipse, or over a
+-- Chain-Growth gap replayed k blocks later --- which consumes a chunk of that
+-- 60 minute buffer arbitrarily fast. @cdbGcDelay@ is wall clock, though, so the
+-- peer keeps that last minute regardless.
+--
+-- Offered over ChainSync, by rolling a CertRB forward, there is no such lead:
+-- only @cdbGcDelay@. However, it also takes two deep fork switches, one to roll
+-- forward onto the CertRB near the frontier and another to roll back off it to
+-- prevent it from becoming immutable (and hence always requestable).
+--
+-- The two do not compound under a ProtocolBurstAttack, where hours of suddenly
+-- released endorser blocks queue ahead of ours and freshest-first leaves our
+-- offer sitting for well over a minute. Withheld blocks are uncertified ---
+-- certification needs a quorum of honest voters to have held the closure
+-- /during the voting window/ --- and only a certified EB is offered (by an
+-- honest server!) by rolling a CertRB forward. So that attack's EBs only reach
+-- the path with the 61-minute margin, never the one with the 60-second
+-- margin. That rests on @leiosQuorumStakeThreshold@ staying out of an
+-- adversary's reach.
+--
+-- However, if a ProtocolBurstAttack consists of EBs /younger/ than one we just
+-- offered (either via LeiosNotify or via ChainSync), then that might prevent
+-- the honest downstream peer from sending a request in response to our offer
+-- until "arbitrarily" later---it depends on how long it takes them to fetch the
+-- ProtocolBurstAttack's EBs. If they finish acquiring the ProtocolBurstAttack
+-- EBs just before we prune our EB/they prune their offers, then it's possible
+-- this race condition will disconnect the two honest nodes. We're accepting
+-- this risk for the MVP, since it seems quite difficult for the adversary to
+-- arrange it: the ProtocolBurstAttack can't end too soon or too late---its
+-- target moment does depend on some /known/ blocks' slots, but the actual
+-- state/timings of the two nodes' connection is hard to predict.
+--
+-- TODO perhaps an analog of /MsgNoBlocks/ is worthwhile, only sent if the
+-- request's slot is old enough for the EB to have been pruned out.
+--
+-- TODO check that we /offered/ what was asked for /to the peer that asked for
+-- it/. We don't do that already because a) it requires some tedious
+-- rearranging\/plumbing\/more complicated state to catch and b) it's /so far/,
+-- at least, harmless to serve something we could have offered but didn't. If
+-- the egress scheduler begins to rely on un-offered things being
+-- un-requestable, then we'd have to fill this gap.
+data ExnLeiosInvalidRequest
+  = -- | An endorser block whose body we do not hold.
+    ExnLeiosUnknownBlockRequested !LeiosPoint
+  | -- | Offsets into an endorser block that it does not have, or whose
+    -- transactions we do not hold.
+    ExnLeiosUnknownTxsRequested !LeiosPoint ![Int]
+  deriving Show
+
+instance Exception ExnLeiosInvalidRequest
 
 -- | Which of a point's two independent offers a LeiosNotify message makes.
 data OfferedBodyOrClosure = OfferedBody | OfferedClosure
