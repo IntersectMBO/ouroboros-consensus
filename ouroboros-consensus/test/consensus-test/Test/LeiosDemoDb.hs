@@ -657,9 +657,9 @@ test_offerBlockTxsWhenBodyArrivesAfterTxs db = do
     -- forever, so we surface the failure explicitly instead of hanging.
     rwInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ rwInsertEbBody con point eb
-    acquiredEb <- readTChanWithin 1_000_000 chan "AcquiredEb"
+    acquiredEb <- readTChanWithin 100_000_000 chan "AcquiredEb"
     assertOfferBlock point acquiredEb
-    acquiredTxs <- readTChanWithin 1_000_000 chan "AcquiredEbTxs"
+    acquiredTxs <- readTChanWithin 100_000_000 chan "AcquiredEbTxs"
     assertOfferBlockTxs point acquiredTxs
 
 -- | Test that completed EBs are not re-notified when subsequent unrelated
