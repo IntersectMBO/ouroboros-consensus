@@ -17,10 +17,9 @@
 --
 -- The design follows the same approach as the consensus ImmutableDB — an
 -- append-only store whose in-memory index is guarded much like the ImmutableDB
--- guards its
--- 'Ouroboros.Consensus.Storage.ImmutableDB.Impl.State.OpenState' — but is
--- considerably simpler: it does no chunking, so the guarded round-number set
--- plays the role the ImmutableDB's on-disk indices play there.
+-- guards its open state — but is considerably simpler: it does no chunking, so
+-- the guarded round-number set plays the role the ImmutableDB's on-disk indices
+-- play there.
 --
 -- Robustness against on-disk failures (corruption, partial writes, missing
 -- files) rests on three mechanisms:
@@ -37,8 +36,7 @@
 --
 -- * A certificate whose file is missing or corrupt is /quarantined/ rather than
 --   crashing the database: it is dropped from the in-memory index and traced,
---   keeping the remaining certificates available (see 'implGetCertsAfter' and
---   'PerasImmutableCertDbValidationPolicy').
+--   keeping the remaining certificates available to syncing nodes.
 module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
   ( -- * Opening
     PerasImmutableCertDbArgs (..)
@@ -110,10 +108,10 @@ type ModifyKnownRounds m = StateT (Set PerasRoundNo) (WithTempRegistry (Set Pera
 -- | Reason why a certificate file on disk could not be read back into a
 -- 'ValidatedPerasCert'.
 --
--- These are not thrown: a certificate whose file is unreadable is /quarantined/
--- (dropped from the in-memory index and traced via 'QuarantinedCert') rather
--- than bringing down the whole database, so that the remaining, intact
--- certificates stay available to syncing nodes. See 'implGetCertsAfter'.
+-- These are never thrown: a certificate whose file is unreadable is
+-- /quarantined/ (dropped from the in-memory index and traced) rather than
+-- bringing down the whole database, so the remaining certificates stay
+-- available to syncing nodes.
 data CertFileError
   = -- | The file could not be opened or read (e.g. it is missing).
     CertFileReadError FsError
@@ -157,14 +155,13 @@ data PerasImmutableCertDbArgs f m blk = PerasImmutableCertDbArgs
   , picdbaTracer :: Tracer m (TraceEvent blk)
   , picdbaValidationPolicy :: PerasImmutableCertDbValidationPolicy
   -- ^ How thoroughly to check the certificate files on disk when opening.
-  -- See 'PerasImmutableCertDbValidationPolicy'.
   }
 
 -- | How much of the on-disk state to validate when opening the database.
 --
 -- Regardless of the policy, corruption is always detected lazily when a
--- certificate is actually served (see 'implGetCertsAfter'); the policy only
--- controls whether we additionally pay for an eager, up-front integrity sweep.
+-- certificate is actually served; the policy only controls whether we
+-- additionally pay for an eager, up-front integrity sweep.
 data PerasImmutableCertDbValidationPolicy
   = -- | Trust the certificate file names to build the index and defer all
     -- integrity checks to read time. Opening is cheap. This is the default.
@@ -207,7 +204,7 @@ createDB
     sweepTempCertFiles hasFS
     -- Index the certificate files present on disk by recovering their round
     -- numbers from their file names; the certificates themselves are read back
-    -- from disk on demand, see 'implGetCertsAfter'.
+    -- from disk on demand.
     rounds <- case picdbaValidationPolicy of
       ValidateOnRead -> indexCertRounds hasFS
       ValidateAllOnOpen ->
@@ -251,13 +248,12 @@ implAddCert env cert = do
   getSt :: m (Set PerasRoundNo)
   getSt = takeSVar (picdbKnownRounds env)
 
-  -- Taking and putting back the 'StrictSVar' makes the whole
-  -- check-then-write below atomic wrt concurrent 'addCert' calls, closing
-  -- the race that a plain 'StrictTVar' check-then-update can't avoid. On
-  -- abort or exception, restore the state as it was before this call; any
-  -- certificate file written in the meantime is cleaned up by
-  -- 'allocateTemp' (see 'modifyRounds') since it never becomes part of the
-  -- committed state.
+  -- Taking and putting back the 'StrictSVar' makes the whole check-then-write
+  -- below atomic with respect to concurrent adds, closing the race that a plain
+  -- 'StrictTVar' check-then-update cannot avoid. On abort or exception we
+  -- restore the state to what it was before this call; any certificate file
+  -- written in the meantime is cleaned up by 'allocateTemp', since it never
+  -- becomes part of the committed state.
   putSt :: Set PerasRoundNo -> ExitCase (Set PerasRoundNo) -> m ()
   putSt before ec =
     putSVar (picdbKnownRounds env) $ case ec of
@@ -288,8 +284,8 @@ implGetCertsAfter ::
   Word64 ->
   m [ValidatedPerasCert blk]
 implGetCertsAfter env roundNo maxCerts = do
-  -- A possibly slightly stale read is fine: concurrently added certificates
-  -- may or may not show up, just as for the ImmutableDB (see 'getOpenState').
+  -- A possibly slightly stale read is fine: certificates added concurrently may
+  -- or may not show up in this snapshot.
   rounds <- atomically $ readSVarSTM (picdbKnownRounds env)
   let roundsAfter = snd $ Set.split roundNo rounds
       candidates = take (fromIntegral maxCerts) (Set.toAscList roundsAfter)
@@ -469,7 +465,7 @@ removeCertFile env roundNo =
 
 -- | Read, integrity-check and decode the certificate of the given round
 -- number, returning a 'CertFileError' if the file is missing, unreadable or
--- corrupt (see 'quarantineCert').
+-- corrupt.
 readCertFile ::
   forall m blk.
   ( IOLike m
