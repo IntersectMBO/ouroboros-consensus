@@ -16,8 +16,8 @@ module Ouroboros.Consensus.Shelley.HFEras
   , StandardShelleyBlock
   ) where
 
-import Cardano.Ledger.Dijkstra.Era (DijkstraEraBlockHeader (..))
-import Cardano.Protocol.Crypto
+import Cardano.Ledger.Block (LeiosEraBlockHeader (..))
+import Cardano.Protocol.Crypto (Crypto, StandardCrypto)
 import Cardano.Protocol.Praos.BlockHeader (Header)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
@@ -85,5 +85,5 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
 
-instance Crypto c => DijkstraEraBlockHeader (Header c) DijkstraEra where
+instance Crypto c => LeiosEraBlockHeader (Header c) DijkstraEra where
   prevNonceBlockHeaderL = error "Not implemented. Peras placeholder"

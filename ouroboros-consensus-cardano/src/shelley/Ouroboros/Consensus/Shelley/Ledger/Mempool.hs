@@ -63,7 +63,7 @@ import Cardano.Ledger.Alonzo.Scripts
   , pointWiseExUnits
   , unWrapExUnits
   )
-import Cardano.Ledger.Alonzo.Tx (totExUnits)
+import Cardano.Ledger.Alonzo.Tx (AlonzoEraTx, getTotalExUnits)
 import qualified Cardano.Ledger.Api as L
 import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError))
 import qualified Cardano.Ledger.Babbage.Rules as BabbageEra
@@ -605,8 +605,7 @@ blockCapacityAlonzoMeasure ledgerState =
 txMeasureAlonzo ::
   forall proto era.
   ( ShelleyCompatible proto era
-  , L.AlonzoEraPParams era
-  , L.AlonzoEraTxWits era
+  , AlonzoEraTx era
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   ) =>
@@ -616,7 +615,7 @@ txMeasureAlonzo ::
 txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
   AlonzoMeasure <$> txInBlockSize st tx <*> exunits
  where
-  txsz = totExUnits tx'
+  txsz = getTotalExUnits tx'
 
   pparams = getPParams $ tickedShelleyLedgerState st
   limit = pparams ^. L.ppMaxTxExUnitsL

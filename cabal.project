@@ -21,7 +21,7 @@ index-state:
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/kes-agent
-  tag: 4625f3cf543566517d08882e659c97932d106d86
+  tag: 920de6b5c578c4d2fb7639a9734a96e39400e2b8
   --sha256: sha256-CSHWndpeJFqCEFNT6ysfyN6x+O4vZ9TtYOOsZKcLnIA=
   subdir:
     kes-agent
@@ -30,8 +30,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: fb723848a28256fe372ea9ba692eccded6a12a53
-  --sha256: sha256-iL61RTn4OPRNzzPn/2YcVJNMJYolXghaQ9cDG/DOOWM=
+  tag: 51756884d0279b185b6c820f681632766ac86579
+  --sha256: sha256-Urfo/LRTlGwihogsbNGmVYM/+LcNv1FAMJ0kWMXHZyk=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -55,11 +55,22 @@ source-repository-package
     libs/small-steps
     libs/vector-map
 
+-- Pinned to 3d5e2ba1 rather than cardano-base's current master tip: the very
+-- next commit (58f5a53a) refactors cardano-crypto-class's BLS12-381 DSIGN
+-- API (ContextDSIGN (BLS12381DSIGN curve) changes from BLS12381SignContext
+-- to (), and verifyPossessionProofDSIGN/verifyDSIGN drop an argument
+-- accordingly), which cardano-crypto-leios's own source (pulled in via this
+-- same SRP) is written against once bumped past that point -- but CHaP's
+-- published cardano-crypto-class-2.6.0.0 (what this project actually
+-- resolves cardano-crypto-class from) still has the pre-refactor shape, so
+-- anything past 3d5e2ba1 fails to typecheck. 3d5e2ba1 is the newest commit
+-- that still matches CHaP's API. Matches cardano-node's own pin for the same
+-- reason -- keep them in sync rather than drifting independently.
 source-repository-package
   type: git
   location: https://github.com/intersectmbo/cardano-base.git
-  --sha256: sha256-WUBluY6UqvBkS5cNsJnKMOaW+1dTfL3mg8iq/kVPV0o=
-  tag: d92e2e3841eaad354c5e1ef77b458b347f471271
+  --sha256: sha256-Wr6CZW4OR4nsbARIbLKIf61jQfO1WsiT9HPLV+mfZYU=
+  tag: 3d5e2ba1e76b7cd3bead8bd3f81a2e7ee743ce5c
   subdir: cardano-crypto-leios
 
 packages: .
@@ -70,8 +81,8 @@ packages: .
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network.git
-  tag: 09495ae9e6a063929ac9f2a8a80d210735c3a66e
-  --sha256: sha256-/m3CUFKSnTw8YpyIMhcpdVbHWu6FEqjiQFiPORWLFFI=
+  tag: a3d8017e798b225055aaf9118ad062fe58bc650f
+  --sha256: sha256-nrDi43HfvKAg+5wE6PF4QI4HmYh1rav3a5uqw24BFv0=
   subdir:
     ouroboros-network
     cardano-diffusion
