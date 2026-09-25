@@ -109,6 +109,7 @@ import LeiosDemoTypes
   , hashLeiosEb
   , hashLeiosTx
   , leiosEbTxs
+  , maxLeiosTxsRequestBytesSize
   , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
@@ -302,7 +303,8 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
   let txOffsets = bitmapOffsets bitmaps
   n <- do
     -- Use new db to batch retrieve transactions
-    results <- batchRetrieveTxs leiosDbReader point.pointEbHash txOffsets
+    results <-
+      batchRetrieveTxs leiosDbReader point.pointEbHash maxLeiosTxsRequestBytesSize txOffsets
     -- Process results and write to buffer
     -- REVIEW: why a mutable vector?
     let loop !i [] = pure i

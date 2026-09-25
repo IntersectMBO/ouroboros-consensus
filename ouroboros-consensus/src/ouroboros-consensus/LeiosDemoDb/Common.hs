@@ -104,13 +104,34 @@ data LeiosDbReader m = LeiosDbReader
   { close :: m ()
   , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
   -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
-  , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
+  , lookupTrustedEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
   -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
   -- not complete.
+  --
+  -- PREREQ: the caller has established that this endorser block is
+  -- trustworthy, which is why this read carries no byte budget --- unlike
+  -- 'batchRetrieveTxs', whose offsets come from a peer. Two things establish
+  -- it: a certificate, for ChainSel applying a cert-RB and for the forge; and
+  -- the LeiosDb having called the closure complete, for voting. Calling it on
+  -- anything else reads an unbounded number of bytes chosen by whoever made
+  -- the endorser block.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into one EB.
+      EbHash -> BytesSize -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  -- ^ Tx bytes for a batch of offsets into one EB, totalling at most the given
+  -- budget.
+  --
+  -- Throws as soon as the rows read pass the budget, instead of reading the
+  -- rest. The offsets alone do not say how many bytes they name, so this is
+  -- the first point at which the answer is known --- and the last at which the
+  -- work can still be cut off.
+  --
+  -- Throwing is only tolerable because the node's sole caller is the
+  -- LeiosFetch server, which runs one thread per peer: the exception kills
+  -- that peer's mini-protocol and nothing else, which is the right answer to a
+  -- peer requesting more than any honest one would. A central thread calling
+  -- this would instead take the node down, so any future one must pass a
+  -- budget its own callers cannot breach.
   , scanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
   -- ^ Every announced EB point. No node path wants this; it is how the tests
   -- observe point writes and truncation.

@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -34,14 +35,29 @@ import Control.Monad.IOSim
 import Control.ResourceRegistry (withRegistry)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.IntMap.Strict as IntMap
+import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.Ratio ((%))
 import qualified LeiosDemoDb as LeiosDb
+import LeiosDemoException (LeiosDbException)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoLogic.Announcements (ShouldRelay (..))
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
-import LeiosDemoTypes (BytesSize, LeiosCert, LeiosEb, LeiosPoint (..), LeiosSeatId (..), PeerId (..), RbHash (MkRbHash), TxHash, Weight, aggregateLeiosCert, offerings)
+import LeiosDemoTypes
+  ( BytesSize
+  , LeiosCert
+  , LeiosEb
+  , LeiosPoint (..)
+  , LeiosSeatId (..)
+  , PeerId (..)
+  , RbHash (MkRbHash)
+  , TxHash
+  , Weight
+  , aggregateLeiosCert
+  , maxLeiosTxsRequestBytesSize
+  , offerings
+  )
 import LeiosValidClaims (isCertifiedEb, memberValidClaim, sizeValidClaims)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
@@ -123,6 +139,9 @@ tests =
     , testCase
         "an endorser block misstating a size is not offered onward (body first)"
         (test_lyingSizeIsNotOffered BodyBeforeTx)
+    , testCase
+        "a request for more transaction bytes than one message may carry is refused"
+        test_oversizedTxsRequestIsRefused
     , testCase
         "an endorser block too near the immutable tip is not offered onward"
         (test_offeredOnlyAboveTheLead DoNotRelay)
@@ -300,6 +319,43 @@ lyingAnnouncer :: Blk
 lyingAnnouncer =
   announcing lyingPoint lyingSize $
     iterate successorLeiosBlock (firstLeiosBlock 5) !! 3
+
+-- | A transaction large enough that a few dozen of them come to more than one
+-- @MsgLeiosBlockTxs@ may carry.
+--
+-- Each writes its own range of keys, so they are distinct transactions and all
+-- of them apply.
+bulkyTx :: Int -> LeiosTestTx
+bulkyTx i =
+  LeiosTestTx
+    { ltxAsserts = IntMap.empty
+    , ltxWrites = IntMap.fromList [(base + k, 'a') | k <- [0 .. bulkyTxWrites - 1]]
+    }
+ where
+  base = 1_000_000 + i * bulkyTxWrites
+
+bulkyTxWrites :: Int
+bulkyTxWrites = 3_000
+
+bulkyTxCount :: Int
+bulkyTxCount = 40
+
+-- | An endorser block whose closure exceeds the fetch server's byte budget.
+-- 'test_oversizedTxsRequestIsRefused' checks that it does before relying on it.
+bulkyEb :: LeiosEb
+bulkyClosure :: [(TxHash, BS8.ByteString)]
+bulkySize :: BytesSize
+(bulkyEb, bulkyClosure, bulkySize) =
+  mkLeiosTestEb (map bulkyTx [0 .. bulkyTxCount - 1])
+
+bulkyPoint :: LeiosPoint
+bulkyPoint = leiosTestEbPoint 6 bulkyEb
+
+-- | Announces 'bulkyEb', in its own election.
+bulkyAnnouncer :: Blk
+bulkyAnnouncer =
+  announcing bulkyPoint bulkySize $
+    iterate successorLeiosBlock (firstLeiosBlock 6) !! 5
 
 -- | A chain that shares nothing with the announcer and carries no
 -- certificates, so the node can select it without needing any endorser block.
@@ -563,7 +619,7 @@ test_lyingSizeIsNotOffered arrival = do
               offerEbTxs holder honestPoint
               awaitPollingWith getTraces "the shared transaction is in the LeiosDb" $
                 LeiosDb.withReader leiosDb $ \r ->
-                  isJust <$> LeiosDb.lookupEbClosure r (pointEbHash honestPoint)
+                  isJust <$> LeiosDb.lookupTrustedEbClosure r (pointEbHash honestPoint)
             servesTheLie = do
               announceEb liar (getHeader lyingAnnouncer)
               offerEb liar lyingPoint lyingSize
@@ -577,6 +633,69 @@ test_lyingSizeIsNotOffered arrival = do
         threadDelay 5
 
         (,) <$> heardBodyOffers listener <*> heardClosureOffers listener
+
+-- | The node refuses a LeiosFetch request for more transaction bytes than one
+-- @MsgLeiosBlockTxs@ may carry, rather than reading them all out of the
+-- LeiosDb.
+--
+-- The requested offsets say nothing about how many bytes they name, so the
+-- refusal cannot come before the read; it comes partway through it, and takes
+-- the connection with it. No honest peer reaches this: the fetch logic batches
+-- its own requests to 'maxRequestBytesSize', which is the same bound.
+--
+-- The node first acquires the endorser block and its closure honestly, from a
+-- peer that announces and offers it, so that it has something oversized to be
+-- asked for.
+test_oversizedTxsRequestIsRefused :: Assertion
+test_oversizedTxsRequestIsRefused = do
+  assertBool
+    "the closure has to exceed the budget, or the request would be servable"
+    (sum (map (BS8.length . snd) bulkyClosure) > fromIntegral maxLeiosTxsRequestBytesSize)
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Left (FailureException e) | isDbRefusal e -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the request to be refused, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  isDbRefusal :: SomeException -> Bool
+  isDbRefusal e
+    | Just (ExceptionInLinkedThread _ inner) <- fromException e = isDbRefusal inner
+    | Just (_ :: LeiosDbException) <- fromException e = True
+    | otherwise = False
+
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    holder <- newPeerEnv
+    greedy <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest nodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        connectPeer nut registry (PeerAddr 0) holder
+        connectPeer nut registry (PeerAddr 1) greedy
+        plantEb holder bulkyEb bulkyClosure
+
+        -- The announcing header is in slot 6, which this simulation starts
+        -- before, and a header from the future is rejected as such.
+        threadDelay 8
+
+        announceEb holder (getHeader bulkyAnnouncer)
+        offerEb holder bulkyPoint bulkySize
+        offerEbTxs holder bulkyPoint
+        awaitPollingWith getTraces "the whole closure is in the LeiosDb" $
+          LeiosDb.withReader leiosDb $ \r ->
+            isJust <$> LeiosDb.lookupTrustedEbClosure r (pointEbHash bulkyPoint)
+
+        -- Now ask for all of it at once, which no honest peer would.
+        requestEbTxs greedy bulkyPoint $
+          Leios.offsetsToBitmap (IntSet.fromList [0 .. bulkyTxCount - 1])
+        threadDelay 30
 
 -- | The node offers an endorser block to its downstream peers only once the
 -- endorser block's slot is 'nutcMinOfferLead' above the node's own immutable
