@@ -139,7 +139,7 @@ prop_shelleyBased genTranslationContext st =
 
 -- | Each of the four endorser-block parameters lands in its own field of the
 -- endorser-block capacity. The values differ, so a swapped lens fails. The
--- references capacity is the parameter less the 5 bytes of the widest CBOR map
+-- references capacity is the parameter minus the 5 bytes of the widest CBOR map
 -- header.
 --
 -- Few runs: setting the parameters forces the whole arbitrary ledger state,
