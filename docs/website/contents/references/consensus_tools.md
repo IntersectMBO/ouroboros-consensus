@@ -55,7 +55,9 @@ nix build .#hydraJobs.x86_64-linux.native.haskell912.exesNoAsserts.db-analyser
 Most tools need the **node configuration file** that was used to populate the
 database they read (the `--config` flag): the file usually called
 `config.json`/`mainnet-config.json`, which points at the genesis files of each
-era. The examples below assume:
+era. Each genesis file must come with its hash, so even a stub configuration
+needs `ByronGenesisHash`, `ShelleyGenesisHash`, `AlonzoGenesisHash` and
+`ConwayGenesisHash`. The examples below assume:
 
 ```sh
 export NODE_HOME=/path/to/cardano-node/working/dir
