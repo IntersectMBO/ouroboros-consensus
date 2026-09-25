@@ -77,6 +77,7 @@ import Test.Consensus.Byron.Generators
 import Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
 import Test.Consensus.Shelley.Generators ()
 import Test.Tasty
+import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.QuickCheck
 
 type Crypto = MockCryptoCompatByron
@@ -100,7 +101,7 @@ tests =
     , testProperty "Conway" $
         prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
     , testProperty "Dijkstra" prop_dijkstra
-    , testProperty "Dijkstra transaction" prop_dijkstraTxEbMeasure
+    , testCase "Dijkstra transaction" test_dijkstraTxEbMeasure
     ]
 
 -- | Both endorser-block measures are zero.
@@ -188,10 +189,10 @@ prop_dijkstra st =
 -- | A Dijkstra transaction costs its block measure in the closure, and the
 -- reference 'encodeEndorserBlock' writes for its byte size. The reference-scripts
 -- size differs from the byte size, so reading the wrong field fails.
-prop_dijkstraTxEbMeasure :: Property
-prop_dijkstraTxEbMeasure =
+test_dijkstraTxEbMeasure :: Assertion
+test_dijkstraTxEbMeasure =
   txEbMeasure (Proxy @(ShelleyBlock (Praos Crypto) DijkstraEra)) (TxMeasure alonzo refScripts)
-    === DijkstraEbMeasure
+    @?= DijkstraEbMeasure
       { ebClosureMeasure = TxMeasure alonzo refScripts
       , -- 34 bytes for the hash, 3 bytes for a size of 300
         txReferencesSize = IgnoringOverflow (ByteSize32 37)
