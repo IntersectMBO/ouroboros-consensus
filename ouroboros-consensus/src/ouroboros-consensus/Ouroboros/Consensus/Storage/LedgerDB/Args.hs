@@ -25,7 +25,6 @@ import Control.Tracer
 import Data.Kind
 import Data.Word
 import GHC.Generics (Generic)
-import qualified LeiosDemoDb
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
@@ -64,14 +63,11 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   -- ^ If provided, the ledgerdb will start using said snapshot and fallback
   -- to genesis. It will ignore any other existing snapshots. Useful for
   -- db-analyser.
-  , lgrLeiosDb :: HKD f (LeiosDemoDb.LeiosDbHandle m)
-  -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
-  -- its own per-thread 'LeiosDbReader' from this handle.
   }
 
 -- | Default arguments
 defaultArgs ::
-  Monad m =>
+  IOLike m =>
   V2.SomeBackendArgs m blk ->
   Incomplete LedgerDbArgs m blk
 defaultArgs backendArgs =
@@ -86,7 +82,6 @@ defaultArgs backendArgs =
       -- will be the default for end-users.
       lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs
     , lgrStartSnapshot = Nothing
-    , lgrLeiosDb = NoDefault
     }
 
 data LedgerDbBackendArgs m blk

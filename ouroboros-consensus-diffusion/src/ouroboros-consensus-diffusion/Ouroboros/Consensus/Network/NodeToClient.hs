@@ -447,7 +447,7 @@ mkApps ::
   Codecs blk e m bCS bTX bSQ bTM ->
   Handlers m addrNTC blk ->
   Apps m addrNTC bCS bTX bSQ bTM ()
-mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Handlers{..} =
+mkApps kernel@NodeKernel{getChainDB = ChainDB.ChainDB{ChainDB.leiosDb = leiosDb}} Tracers{..} Codecs{..} Handlers{..} =
   Apps{..}
  where
   aChainSyncServer ::
@@ -456,7 +456,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
     m ((), Maybe bCS)
   aChainSyncServer them channel = do
     labelThisThread "LocalChainSyncServer"
-    withReader kernelLeiosDB $ \reader ->
+    withReader leiosDb $ \reader ->
       bracketWithPrivateRegistry
         (chainSyncBlockServerFollower (getChainDB kernel))
         ChainDB.followerClose

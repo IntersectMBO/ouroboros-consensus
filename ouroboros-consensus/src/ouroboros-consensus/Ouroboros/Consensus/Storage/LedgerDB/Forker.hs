@@ -349,7 +349,7 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ How many blocks to roll back before applying the blocks
   , hdrs :: NonEmpty (Header blk)
   -- ^ The headers we want to apply
-  , leiosDB :: !(LeiosDbReader m)
+  , leiosDb :: !(LeiosDbReader m)
   -- ^ Leios demo DB connection: 'applyBlock' calls 'resolveLeiosBlock'
   -- with this connection before each ledger application, so that
   -- Dijkstra blocks carrying a 'Maybe LeiosCert' can have the EB
@@ -374,7 +374,7 @@ validate evs args = do
   res <-
     rewrap
       <$> switch
-        leiosDB
+        leiosDb
         withForkerAtFromTip
         evs
         validateConfig
@@ -397,7 +397,7 @@ validate evs args = do
     , numRollbacks
     , hdrs
     , onSuccess
-    , leiosDB
+    , leiosDb
     } = args
 
   rewrap ::

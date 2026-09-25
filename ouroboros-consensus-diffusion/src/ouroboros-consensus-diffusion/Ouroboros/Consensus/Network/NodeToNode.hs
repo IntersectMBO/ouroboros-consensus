@@ -605,7 +605,7 @@ mkHandlers
                         _ -> pure ()
               )
       , hLeiosNotifyServer = \_version peer -> do
-          chan <- subscribeEbNotifications leiosDB
+          chan <- subscribeEbNotifications leiosDb
           LeiosVoteSubscription{getNextVote} <- subscribeVotes leiosVoteState
 
           -- This peer's single outgoing LeiosNotify queue and its credit
@@ -710,7 +710,7 @@ mkHandlers
       }
    where
     NodeKernel
-      { getLeiosDB = leiosDB
+      { getChainDB = ChainDB.ChainDB{ChainDB.leiosDb = leiosDb}
       , getLeiosVoteState = leiosVoteState
       , getLeiosOutstanding
       , getLeiosReady
@@ -1100,7 +1100,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
   Apps{..}
  where
   (chainSyncRng, chainSyncRng') = splitGen rng
-  NodeKernel{getDiffusionPipeliningSupport, getLeiosDB = leiosDB} = kernel
+  NodeKernel{getDiffusionPipeliningSupport, getChainDB = ChainDB.ChainDB{ChainDB.leiosDb = leiosDb}} = kernel
 
   aChainSyncClient ::
     NodeToNodeVersion ->
@@ -1494,7 +1494,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     channel = do
       labelThisThread "LeiosFetchClient"
       bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
-        withWriter leiosDB $ \writer -> do
+        withWriter leiosDb $ \writer -> do
           ((), trailing) <-
             runPipelinedPeerWithLimits
               (TraceLabelPeer them `contramap` tLeiosFetchTracer)
@@ -1512,7 +1512,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     m ((), Maybe bLF)
   aLeiosFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosFetchServer"
-    withReader leiosDB $ \reader ->
+    withReader leiosDb $ \reader ->
       runPeerWithLimits
         (TraceLabelPeer them `contramap` tLeiosFetchTracer)
         (cLeiosFetchCodec (mkCodecs version))

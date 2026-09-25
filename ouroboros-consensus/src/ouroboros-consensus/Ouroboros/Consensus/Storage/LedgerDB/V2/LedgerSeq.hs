@@ -258,8 +258,8 @@ reapplyThenPush ::
   blk ->
   LedgerSeq m l ->
   m (LedgerSeq m l)
-reapplyThenPush leiosDb cfg ap db = do
-  newSt <- reapplyBlock leiosDb (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+reapplyThenPush leiosDbReader cfg ap db = do
+  newSt <- reapplyBlock leiosDbReader (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
   let (m, db') = pruneToImmTipOnly $ extend newSt db
   m
   pure db'
@@ -281,7 +281,7 @@ reapplyBlock ::
   blk ->
   LedgerSeq m l ->
   m (StateRef m l)
-reapplyBlock leiosDb evs cfg b db = do
+reapplyBlock leiosDbReader evs cfg b db = do
   let StateRef st tbs = currentHandle db
       cds = headerStateChainDep (headerState st)
   st' <- case blockLeiosCert b of
@@ -297,7 +297,7 @@ reapplyBlock leiosDb evs cfg b db = do
               readTables = fmap castLedgerTables . read tbs st . castLedgerTables
           res <-
             resolveAndApplyLeiosClosure
-              leiosDb
+              leiosDbReader
               (configLedger (getExtLedgerCfg cfg))
               (pointEbHash announcedPoint)
               readTables

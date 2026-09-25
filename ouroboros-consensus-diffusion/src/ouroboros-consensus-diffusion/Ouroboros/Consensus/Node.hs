@@ -109,7 +109,7 @@ import Data.Maybe (fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbArgs (..))
 import LeiosDemoTypes (SerializedEbBody)
 import LeiosTxCache
   ( LeiosTxCache
@@ -263,10 +263,9 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   -- See the networking specs' section on tx-submission
   -- https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf.
   , rnTxSubmissionInitDelay :: TxSubmissionInitDelay
-  , rnLeiosDb :: LeiosDbHandle m
-  -- ^ Caller-supplied Leios demo DB. The caller owns its lifecycle: it must
-  -- outlive the node and be closed after 'run' returns (see
-  -- 'LeiosDemoDb.withLeiosDBSQLite').
+  , rnLeiosDb :: LeiosDbArgs m
+  -- ^ How to open the Leios demo DB. 'openChainDB' calls 'ldbOpen' exactly
+  -- once; the handle is then shared via 'ChainDB.leiosDb'.
   }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -631,7 +630,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
-                  rnLeiosDb
                   leiosTxCache
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
@@ -899,8 +897,8 @@ openChainDB ::
   -- | Volatile FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   LedgerDbBackendArgs m blk ->
-  -- | Leios demo DB handle
-  LeiosDbHandle m ->
+  -- | How to open the Leios demo DB
+  LeiosDbArgs m ->
   -- | Prune the LeiosTxCache to a slot; the ChainDB GC runs this just before it
   -- GCs the LeiosDb at the same slot (the "LeiosTxCache" ordering contract).
   (SlotNo -> m ()) ->
@@ -950,7 +948,6 @@ mkNodeKernelArgs ::
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
   TxSubmissionInitDelay ->
-  LeiosDbHandle m ->
   LeiosTxCache m () () SerializedEbBody ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
@@ -975,7 +972,6 @@ mkNodeKernelArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
   txSubmissionInitDelay
-  leiosDB
   leiosTxCache =
     do
       let (kaRng, rng') = splitGen rng
@@ -1012,7 +1008,6 @@ mkNodeKernelArgs
           , genesisArgs
           , getDiffusionPipeliningSupport
           , txSubmissionInitDelay
-          , leiosDB
           , leiosTxCache
           , leiosFetchRng = lfRng
           }

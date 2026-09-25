@@ -393,23 +393,13 @@ data ChainDbEnv m blk = CDB
   -- from the LeiosDb, grown by 'leiosAcquiredEbsRunner' from closure-completion
   -- notifications (which also enqueue a 'ChainSelReprocessLeiosEb'), and pruned
   -- by age as a GC is scheduled.
-  , cdbLeiosDb :: !(LeiosDbHandle m)
   , cdbLeiosEvictTxCache :: !(SlotNo -> m ())
   -- ^ Prune the LeiosTxCache to a slot; run just before 'leiosDbGarbageCollect'
   -- at the same slot. See 'Args.cdbsLeiosEvictTxCache'.
-  -- ^ The LeiosDb handle. The LeiosDb is one of the stores the ChainDB owns and
-  -- orchestrates -- alongside the ImmutableDB, VolatileDB, LedgerDB and
-  -- PerasCertDB -- so, like them, the ChainDB drives its lifecycle. Concretely
-  -- it uses the handle to:
-  --
-  --     * seed 'cdbAcquiredLeiosEbs' at open, via
-  --       'scanCompleteEbClosuresNotOlderThanSlot';
-  --     * grow 'cdbAcquiredLeiosEbs' from closure-completion notifications
-  --       ('subscribeEbNotifications'), in @leiosAcquiredEbsRunner@;
-  --     * promote a copied cert-RB's certified EB into immutable storage
-  --       ('leiosDbPromoteToImmutable'), in @copyToImmutableDB@;
-  --     * garbage-collect volatile LeiosDb data as the immutable tip advances
-  --       ('leiosDbGarbageCollect'), in @garbageCollectBlocks@.
+  , cdbLeiosDb :: !(LeiosDbHandle m)
+  -- ^ The Leios demo DB handle. Opened once in 'openDBInternal' and shared with
+  -- LedgerDB (which opens per-thread readers from it). Closed when the ChainDB
+  -- registry is released.
   }
   deriving Generic
 

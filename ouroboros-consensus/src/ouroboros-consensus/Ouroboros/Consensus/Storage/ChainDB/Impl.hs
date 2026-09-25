@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -51,6 +52,7 @@ import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb (LeiosDbArgs (..), allocateHandle)
 import LeiosDemoDb.Common (scanCompleteEbClosuresNotOlderThanSlot, withReader)
 import LeiosDemoTypes
   ( HasLeiosVoting
@@ -192,13 +194,22 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       , setGetCurrentChainForLedgerDB
       )
 
+  -- Open the Leios demo DB handle into the main registry; LedgerDB receives it
+  -- and opens per-thread readers. The registry closes the handle after the
+  -- ChainDB (LIFO), so all readers are already closed by then.
+  leiosDb <-
+    lift $
+      allocateHandle (Args.cdbsRegistry cdbSpecificArgs) $
+        ldbOpen (Args.cdbsLeiosDb cdbSpecificArgs)
+
   -- Note this is the only step that actually cares about the temporary registry
   -- while initializing the ChainDB. It opens the handle to the backend and we
   -- want to track that one to close it on exception. See "Resource management
   -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API" for an
   -- explanation of why.
-  (lgrDB, replayed) <-
+  (lgrDB, replayed, _) <-
     LedgerDB.openDB
+      leiosDb
       argsLgrDb
       (ImmutableDB.streamAPI immutableDB)
       immutableDbTipPoint
@@ -223,7 +234,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- tip. 'Background.leiosAcquiredEbsRunner' grows it thereafter from LeiosDb
     -- closure-completion notifications.
     initialAcquiredLeiosEbs <-
-      withReader (Args.cdbsLeiosDb cdbSpecificArgs) $ \reader ->
+      withReader leiosDb $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
           reader
           (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
@@ -293,8 +304,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
-            , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
             , cdbLeiosEvictTxCache = Args.cdbsLeiosEvictTxCache cdbSpecificArgs
+            , cdbLeiosDb = leiosDb
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
             }
@@ -319,6 +330,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , newFollower = Follower.newFollower h
             , getIsInvalidBlock = getEnvSTM h Query.getIsInvalidBlock
             , getChainSelStarvation = getEnvSTM h Query.getChainSelStarvation
+            , leiosDb = leiosDb
             , closeDB = closeDB h
             , isOpen = isOpen h
             , getCurrentLedger = getEnvSTM h Query.getCurrentLedger
