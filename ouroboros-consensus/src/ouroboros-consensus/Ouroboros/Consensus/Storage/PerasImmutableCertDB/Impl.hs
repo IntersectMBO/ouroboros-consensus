@@ -29,11 +29,11 @@
 --   renamed into place, see 'writeCertFile'), so a certificate file that
 --   exists is always complete.
 --
--- * Each certificate file is self-verifying: it carries a format version and a
---   CRC32 of its payload (see 'encodeCertFileBytes'). Integrity is re-checked
---   whenever a certificate is read back. Certificates are /not/ semantically
---   re-validated here; that already happened before they were written, and the
---   syncing nodes that consume them validate them again themselves.
+-- * Each certificate file is self-verifying: it stores a CRC32 of its payload
+--   (see 'encodeCertFileBytes'). Integrity is re-checked whenever a certificate
+--   is read back. Certificates are /not/ semantically re-validated here; that
+--   already happened before they were written, and the syncing nodes that
+--   consume them validate them again themselves.
 --
 -- * A certificate whose file is missing or corrupt is /quarantined/ rather than
 --   crashing the database: it is dropped from the in-memory index and traced,
@@ -68,7 +68,7 @@ import Data.Maybe (catMaybes, mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (pack)
-import Data.Word (Word32, Word64, Word8)
+import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
@@ -119,8 +119,6 @@ data CertFileError
     CertFileReadError FsError
   | -- | The file envelope or the certificate payload could not be decoded.
     CertFileMalformed DecoderError
-  | -- | The file uses an on-disk format version we do not understand.
-    CertFileUnsupportedVersion Word8
   | -- | The payload's checksum does not match the one stored in the file,
     -- i.e. the file is corrupt (bit rot, a partial write, etc).
     CertFileChecksumMismatch
@@ -131,7 +129,6 @@ displayCertFileError :: CertFileError -> String
 displayCertFileError = \case
   CertFileReadError err -> "Read error: " <> show err
   CertFileMalformed err -> "Malformed: " <> show err
-  CertFileUnsupportedVersion v -> "Unsupported on-disk format version " <> show v
   CertFileChecksumMismatch -> "Checksum mismatch"
 
 {-------------------------------------------------------------------------------
@@ -349,10 +346,6 @@ fsPathCertFileTmp roundNo = mkFsPath [certFileName roundNo <> certFileTmpSuffix]
 isCertFileTmpName :: String -> Bool
 isCertFileTmpName = (certFileTmpSuffix `isSuffixOf`)
 
--- | The on-disk format version of a certificate file. Bump whenever the
--- envelope produced by 'encodeCertFileBytes' changes.
-certFileVersion :: Word8
-certFileVersion = 1
 
 -- | Recover the round number of a certificate from its file name, or 'Nothing'
 -- if the name is not a well-formed certificate file name. Inverse of
@@ -385,13 +378,12 @@ decodeCert ccfg = do
   boost <- fromCBOR
   pure (ValidatedPerasCert cert boost)
 
--- | Serialise a certificate into the self-verifying, versioned bytes stored on
--- disk: a CBOR 3-element list @[version, crc, payload]@, where @payload@ is the
--- (inline) certificate encoding produced by 'encodeCert' and @crc@ is a CRC32
--- computed over exactly @payload@'s bytes.
+-- | Serialise a certificate into the self-verifying bytes stored on disk: a
+-- CRC32 of the certificate payload followed by the (inline) certificate
+-- encoding produced by 'encodeCert'.
 --
 -- Placing @payload@ /last/ lets us both fold the CRC over it and append it to
--- the already-serialised header in a single streaming pass, so the payload is
+-- the already-serialised CRC in a single streaming pass, so the payload is
 -- serialised exactly once. In particular, we avoid the strict copy and the
 -- extra serialisation roundtrip that embedding the payload as a nested CBOR
 -- byte string would force.
@@ -399,23 +391,22 @@ decodeCert ccfg = do
 -- The CRC lets 'decodeCertFile' detect corruption (including a partial write
 -- that somehow slipped past the atomic rename in 'writeCertFile') without
 -- having to re-run the certificate's (expensive) semantic validation, which
--- already happened before the certificate was ever written here.
+-- already happened before the certificate was ever written here. It is also
+-- what keeps the format self-guarding: there is no version tag, but a file
+-- whose layout does not match this encoding will fail either the CRC check or
+-- decoding rather than be served as a valid-but-wrong certificate.
 encodeCertFileBytes ::
   EncodeDisk blk (PerasCert blk) =>
   CodecConfig blk ->
   ValidatedPerasCert blk ->
   BSL.ByteString
 encodeCertFileBytes ccfg cert =
-  header <> payload
+  crc <> payload
  where
   payload :: BSL.ByteString
   payload = serialize $ encodeCert ccfg cert
-  header :: BSL.ByteString
-  header =
-    serialize $
-      encodeListLen 3
-        <> toCBOR certFileVersion
-        <> toCBOR (getCRC (updateCRC payload initCRC))
+  crc :: BSL.ByteString
+  crc = serialize $ toCBOR (getCRC (updateCRC payload initCRC))
 
 -- | Decode and integrity-check the bytes produced by 'encodeCertFileBytes',
 -- returning the reason on any failure.
@@ -425,24 +416,18 @@ decodeCertFile ::
   BSL.ByteString ->
   Either CertFileError (ValidatedPerasCert blk)
 decodeCertFile ccfg fileBytes = do
-  -- Decoding only the header leaves the inline payload as the unconsumed
+  -- Decoding only the leading CRC leaves the inline payload as the unconsumed
   -- suffix, which is exactly the byte range the CRC was computed over on write.
-  (payload, (version, expectedCRC)) <-
+  (payload, expectedCRC) <-
     first (CertFileMalformed . asDeserialiseFailure) $
-      CBOR.deserialiseFromBytes decodeHeader fileBytes
-  unless (version == certFileVersion) $
-    Left (CertFileUnsupportedVersion version)
+      CBOR.deserialiseFromBytes decodeCRC fileBytes
   unless (getCRC (updateCRC payload initCRC) == expectedCRC) $
     Left CertFileChecksumMismatch
   first CertFileMalformed $
     decodeFullDecoder (pack "Immutable Peras Certificate") (decodeCert ccfg) payload
  where
-  decodeHeader :: Decoder s (Word8, Word32)
-  decodeHeader = do
-    decodeListLenOf 3
-    version <- fromCBOR
-    expectedCRC <- fromCBOR
-    pure (version, expectedCRC)
+  decodeCRC :: Decoder s Word32
+  decodeCRC = fromCBOR
   asDeserialiseFailure =
     DecoderErrorDeserialiseFailure (pack "Immutable Peras Certificate file")
 
