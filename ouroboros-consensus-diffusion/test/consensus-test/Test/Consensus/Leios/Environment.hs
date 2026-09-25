@@ -27,6 +27,8 @@ module Test.Consensus.Leios.Environment
   ( PeerEnv (..)
   , announceEb
   , connectPeer
+  , heardBodyOffers
+  , heardClosureOffers
   , heardOffers
   , heardUnannouncedOffers
   , newPeerEnv
@@ -85,7 +87,7 @@ import Ouroboros.Network.Channel (createConnectedChannels)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Context (ResponderContext (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
-import Ouroboros.Network.Driver.Simple (runPeer)
+import Ouroboros.Network.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import Ouroboros.Network.Mock.ProducerState
@@ -228,7 +230,37 @@ heardOffers PeerEnv{peHeard} =
     Notify.MsgLeiosBlockTxsOffer point -> [point]
     _ -> []
 
+-- | The endorser blocks whose /body/ the node has told this peer it holds.
+heardBodyOffers :: PeerEnv (IOSim s) -> IOSim s [LeiosPoint]
+heardBodyOffers PeerEnv{peHeard} =
+  atomically $
+    foldMap offered <$> PlainSTM.readTVar peHeard
+ where
+  offered :: LeiosNotification -> [LeiosPoint]
+  offered = \case
+    Notify.MsgLeiosBlockOffer point _size -> [point]
+    _ -> []
+
+-- | The endorser blocks whose /closure/ the node has told this peer it holds.
+--
+-- Narrower than 'heardOffers' on purpose: offering a body says only that the
+-- node has the reference list, which it checked against the announced size,
+-- whereas offering the closure says it holds every transaction the block names
+-- at the size the block names it at.
+heardClosureOffers :: PeerEnv (IOSim s) -> IOSim s [LeiosPoint]
+heardClosureOffers PeerEnv{peHeard} =
+  atomically $
+    foldMap offered <$> PlainSTM.readTVar peHeard
+ where
+  offered :: LeiosNotification -> [LeiosPoint]
+  offered = \case
+    Notify.MsgLeiosBlockTxsOffer point -> [point]
+    _ -> []
+
 -- | Make this endorser block, and its closure, available from this peer.
+--
+-- An empty closure is a peer that has the body and withholds the transactions:
+-- it will answer body requests but stalls on a closure request forever.
 plantEb ::
   PeerEnv (IOSim s) -> LeiosEb -> [(TxHash, BS.ByteString)] -> IOSim s ()
 plantEb PeerEnv{peEbs} eb closure =
@@ -313,11 +345,17 @@ connectPeer nut registry addr penv = do
   fork ("LeiosNotify server (node) " <> show addr) $
     void $
       NTN.aLeiosNotifyServer apps version (responderCtx addr) lnDownServer
+  -- Pipelined, to the same depth the node's own client uses. The node drops a
+  -- notification it has no credit to send, by design, so a downstream peer
+  -- that does not keep its requests outstanding silently misses offers --- and
+  -- a test built on one would conclude the node never made them.
   fork ("LeiosNotify client (env) " <> show addr) $
     void $
-      runPeer (sayTracer ("ln-down " <> show addr)) (NTN.cLeiosNotifyCodec codecs) lnDownClient $
-        Notify.leiosNotifyClientPeer
-          (pure (Right record) :: IOSim s (Either () (LeiosNotification -> IOSim s ())))
+      runPipelinedPeer (sayTracer ("ln-down " <> show addr)) (NTN.cLeiosNotifyCodec codecs) lnDownClient $
+        Notify.toLeiosNotifyClientPeerPipelined $
+          Notify.leiosNotifyClientPeerPipelined
+            (pure (Right NTN.leiosNotifyPipelineDepth) :: IOSim s (Either () Int))
+            (pure record)
 
   fork ("LeiosFetch client " <> show addr) $
     void $
@@ -405,14 +443,17 @@ leiosFetchHandlerOf PeerEnv{peEbs} = MkLeiosFetchRequestHandler $ \case
   MsgLeiosBlockRequest point -> do
     (eb, _closure) <- atomically $ awaitEb point
     pure $ MsgLeiosBlock eb
+  -- A peer that holds the body but not (all of) the closure simply does not
+  -- answer, which is the one thing no peer can be caught at. Answering with
+  -- fewer txs than were asked for would instead be a protocol violation, and
+  -- the node would rightly kill the connection over it.
   MsgLeiosBlockTxsRequest point bitmaps -> do
-    (eb, closure) <- atomically $ awaitEb point
-    let txs =
-          V.fromList
-            [ MkLeiosTx bytes
-            | (txHash, _size) <- V.toList (leiosEbTxs eb)
-            , Just bytes <- [Map.lookup txHash closure]
-            ]
+    txs <- atomically $ do
+      (eb, closure) <- awaitEb point
+      let held = [Map.lookup txHash closure | (txHash, _size) <- V.toList (leiosEbTxs eb)]
+      case sequence held of
+        Nothing -> retry
+        Just bytess -> pure $ V.fromList (map MkLeiosTx bytess)
     pure $ MsgLeiosBlockTxs point bitmaps txs
  where
   awaitEb point = do

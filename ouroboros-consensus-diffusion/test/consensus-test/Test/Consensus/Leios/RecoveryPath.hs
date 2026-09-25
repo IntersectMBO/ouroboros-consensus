@@ -11,6 +11,11 @@
 -- peer holds and when, and the node does the rest by itself --- syncing
 -- headers, fetching blocks, verifying the certificate, fetching the endorser
 -- block, and selecting.
+--
+-- TODO The name no longer fits what is here. Only the first test is about the
+-- Recovery Path; the rest are about what the node will say to a peer and what
+-- it will believe from one. Either rename this module for the harness it
+-- actually is, or float those tests out into their own.
 module Test.Consensus.Leios.RecoveryPath (tests) where
 
 import Cardano.Crypto.DSIGN (signDSIGN)
@@ -30,6 +35,7 @@ import Control.ResourceRegistry (withRegistry)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Ratio ((%))
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
@@ -111,6 +117,12 @@ tests =
     , testCase
         "every offer the node makes a peer follows its announcement to that peer"
         test_offerFollowsAnnouncementPerPeer
+    , testCase
+        "an endorser block misstating a size is not offered onward (transaction first)"
+        (test_lyingSizeIsNotOffered TxBeforeBody)
+    , testCase
+        "an endorser block misstating a size is not offered onward (body first)"
+        (test_lyingSizeIsNotOffered BodyBeforeTx)
     , testCase
         "an endorser block too near the immutable tip is not offered onward"
         (test_offeredOnlyAboveTheLead DoNotRelay)
@@ -242,6 +254,52 @@ freshChain = [freshRoot, freshAnnouncer, freshCertRB]
     certifying
       (mkCert testCommittee (MkRbHash (toRawHash (Proxy @Blk) (blockHash freshAnnouncer))))
       (successorLeiosBlock freshAnnouncer)
+
+-- | A transaction that two endorser blocks name: 'honestEb', which states its
+-- size correctly, and 'lyingEb', which does not.
+sharedTx :: LeiosTestTx
+sharedTx =
+  LeiosTestTx
+    { ltxAsserts = IntMap.singleton 4 Nothing
+    , ltxWrites = IntMap.singleton 4 'd'
+    }
+
+-- | Names 'sharedTx' at its true size. The node fetches this one's closure,
+-- which is how 'sharedTx' comes to be in its LeiosDb at all.
+honestEb :: LeiosEb
+honestClosure :: [(TxHash, BS8.ByteString)]
+honestSize :: BytesSize
+(honestEb, honestClosure, honestSize) = mkLeiosTestEb [sharedTx]
+
+honestPoint :: LeiosPoint
+honestPoint = leiosTestEbPoint 2 honestEb
+
+-- | The header that announces 'honestEb'. No peer ever serves it as part of a
+-- chain: this test is entirely about LeiosNotify and LeiosFetch, so the only
+-- thing said about it is the announcement itself.
+honestAnnouncer :: Blk
+honestAnnouncer =
+  announcing honestPoint honestSize $
+    successorLeiosBlock (firstLeiosBlock 4)
+
+-- | Names the same transaction as 'honestEb', at one byte.
+--
+-- Nothing about this endorser block is detectably wrong on arrival: it is its
+-- own block, for its own election, and its body is exactly the size its
+-- announcement claims. The lie is inside the body, about a transaction the
+-- node is not going to fetch.
+lyingEb :: LeiosEb
+lyingSize :: BytesSize
+(lyingEb, _, lyingSize) = mkLeiosTestEbClaiming [(sharedTx, 1)]
+
+lyingPoint :: LeiosPoint
+lyingPoint = leiosTestEbPoint 4 lyingEb
+
+-- | Announced in slot 4, so this is a different election from 'honestEb''s.
+lyingAnnouncer :: Blk
+lyingAnnouncer =
+  announcing lyingPoint lyingSize $
+    iterate successorLeiosBlock (firstLeiosBlock 5) !! 3
 
 -- | A chain that shares nothing with the announcer and carries no
 -- certificates, so the node can select it without needing any endorser block.
@@ -406,6 +464,119 @@ test_forgottenCertRBIsSelectedAgain = do
       "the block claiming to certify the rival never arrives"
       (not (arRivalCertRbHeld after'))
     assertBool "so the rival is never certified" (not (arRivalCertified after'))
+
+-- | Which of the lying endorser block's body and the transaction it misstates
+-- reaches the node first. They complete its closure at different places ---
+-- the body's own insert, or the arrival of the last transaction it waited on
+-- --- so each has to be checked.
+data LieArrival = TxBeforeBody | BodyBeforeTx
+  deriving Show
+
+-- | An endorser block may not be offered onward on the strength of a closure
+-- the node never checked.
+--
+-- The node first acquires 'honestEb', whose body states 'sharedTx''s size
+-- correctly, so the transaction lands in its LeiosDb at its true size. Then a
+-- second peer announces 'lyingEb', which names that same transaction at one
+-- byte. The node fetches that body --- it matches its announced hash and size,
+-- so there is nothing to object to --- and the LeiosDb finds every transaction
+-- it names already present, because presence is keyed by transaction hash
+-- alone. The closure is therefore declared complete without a single byte being
+-- fetched for it, and never having been compared against what the body claimed.
+--
+-- So the node tells its downstream peers it holds a closure matching a body
+-- that lies about its own size. A peer that believes it, and asks for the
+-- transactions, is served far more than the body led it to expect: here one
+-- byte becomes the whole of 'sharedTx', and in general an endorser block whose
+-- body is well under the size ceiling can name a closure of unbounded size.
+--
+-- Only the closure offer is at issue. Offering the body is honest --- the node
+-- does hold that reference list, at the hash and size announced.
+--
+-- Both arrival orders are run, because the closure is completed at a different
+-- place in each: by the body's own insert when the transaction is already
+-- held, and by the arrival of the last transaction it was waiting on when it
+-- is not. Both end in the same offer.
+--
+-- The node does own a check that would catch this --- 'checkJobSize' compares
+-- arriving transactions against the sizes the body claimed --- but it only
+-- runs on what the node fetches. No peer here offers the lying closure, so
+-- there is nothing to fetch for it: the transaction arrives on the honest
+-- endorser block's fetch, under the size that block states, and completes the
+-- lying one as a side-effect.
+--
+-- TODO Both cases fail. A bugfix commit is imminent.
+test_lyingSizeIsNotOffered :: LieArrival -> Assertion
+test_lyingSizeIsNotOffered arrival = do
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Right (bodyOffers, closureOffers) -> do
+      -- Without this the test could pass for the wrong reason: if the node
+      -- never offered the listener anything about this endorser block, there
+      -- was no closure offer to catch.
+      assertBool
+        "the node never offered this endorser block's body, so the test proves nothing"
+        (lyingPoint `elem` bodyOffers)
+      assertEqual
+        "the node offered a closure for an endorser block that misstates a size"
+        []
+        (filter (== lyingPoint) closureOffers)
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected " <> show arrival <> " to be caught, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  scenario :: forall s. IOSim s ([LeiosPoint], [LeiosPoint])
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    holder <- newPeerEnv
+    listener <- newPeerEnv
+    liar <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest nodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        -- The listener joins first, so the node relays it every announcement
+        -- and its own send-side gate is never what keeps an offer away.
+        connectPeer nut registry (PeerAddr 1) listener
+        connectPeer nut registry (PeerAddr 0) holder
+        connectPeer nut registry (PeerAddr 2) liar
+
+        -- The liar's body is genuine and genuinely the size it announced;
+        -- only the size inside it is a lie. It never offers the closure, so
+        -- the only way the node can come to hold that transaction is the
+        -- honest endorser block's own fetch.
+        plantEb liar lyingEb []
+        plantEb holder honestEb honestClosure
+
+        -- Both announcing headers sit in slots this simulation starts before,
+        -- and a header from the future is rejected as such. Nothing here turns
+        -- on when they arrive, only on the order they arrive in.
+        threadDelay 6
+
+        let servesTheTransaction = do
+              announceEb holder (getHeader honestAnnouncer)
+              offerEb holder honestPoint honestSize
+              offerEbTxs holder honestPoint
+              awaitPollingWith getTraces "the shared transaction is in the LeiosDb" $
+                LeiosDb.withReader leiosDb $ \r ->
+                  isJust <$> LeiosDb.lookupEbClosure r (pointEbHash honestPoint)
+            servesTheLie = do
+              announceEb liar (getHeader lyingAnnouncer)
+              offerEb liar lyingPoint lyingSize
+              awaitPollingWith getTraces "the lying body is in the LeiosDb" $
+                LeiosDb.withReader leiosDb $ \r ->
+                  not . null <$> LeiosDb.lookupEbBody r (pointEbHash lyingPoint)
+
+        case arrival of
+          TxBeforeBody -> servesTheTransaction >> servesTheLie
+          BodyBeforeTx -> servesTheLie >> servesTheTransaction
+        threadDelay 5
+
+        (,) <$> heardBodyOffers listener <*> heardClosureOffers listener
 
 -- | The node offers an endorser block to its downstream peers only once the
 -- endorser block's slot is 'nutcMinOfferLead' above the node's own immutable

@@ -56,6 +56,7 @@ module Test.Util.LeiosTestBlock
   , leiosTestEbPoint
   , leiosTestTxBytes
   , mkLeiosTestEb
+  , mkLeiosTestEbClaiming
   , maxLeiosTestChainLength
 
     -- * Building chains
@@ -1198,14 +1199,29 @@ leiosTestTxBytes = BL.toStrict . serialise . LeiosTestGenTx
 -- the body on the wire --- which is what a header announces.
 mkLeiosTestEb :: [LeiosTestTx] -> (LeiosEb, [(TxHash, BS.ByteString)], BytesSize)
 mkLeiosTestEb txs =
+  mkLeiosTestEbClaiming
+    [ (tx, fromIntegral $ BS.length $ leiosTestTxBytes tx)
+    | tx <- txs
+    ]
+
+-- | As 'mkLeiosTestEb', but each reference claims the given size rather than
+-- the transaction's actual size.
+--
+-- Only an adversary builds one of these. An endorser block naming a
+-- transaction is asserting how big it is, and a node that already holds that
+-- transaction --- having fetched it for some other endorser block --- never
+-- fetches it again, so it never compares the assertion against the bytes.
+mkLeiosTestEbClaiming ::
+  [(LeiosTestTx, BytesSize)] -> (LeiosEb, [(TxHash, BS.ByteString)], BytesSize)
+mkLeiosTestEbClaiming claims =
   ( eb
   , [(txHash, bytes) | (txHash, _size, bytes) <- entries]
   , fromIntegral $ BS.length $ serialize' shelleyProtVer $ encodeLeiosEb eb
   )
  where
   entries =
-    [ (hashLeiosTx leiosTx, fromIntegral (BS.length bytes), bytes)
-    | tx <- txs
+    [ (hashLeiosTx leiosTx, claimed, bytes)
+    | (tx, claimed) <- claims
     , let bytes = leiosTestTxBytes tx
     , let leiosTx = MkLeiosTx bytes
     ]

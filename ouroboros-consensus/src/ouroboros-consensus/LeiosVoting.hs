@@ -442,6 +442,11 @@ data EbClosureVerdict blk
 -- Each tx is validated in full, except where the LeiosTxCache reports it
 -- already validated: then only the state-dependent checks re-run
 -- ('LedgerSupportsMempool.reapplyTx' rather than 'applyTx').
+--
+-- TODO Issue https://github.com/input-output-hk/ouroboros-leios/issues/1115.
+-- Waiting on @AcquiredEbTxs@ is enough today, since that is where an endorser
+-- block misstating a transaction's size will be caught. Voting logic that
+-- does not wait that long would have to check the sizes itself.
 validateEbClosure ::
   forall m blk.
   ( IOLike m
