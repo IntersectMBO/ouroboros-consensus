@@ -130,6 +130,7 @@ makeTestPerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
     , opwHasObject = do
         voteIds <- PerasVoteDB.getVoteIds perasVoteDB
         pure $ \voteId -> Set.member voteId voteIds
+    , opwIsRequestable = pure $ const True
     }
 
 -- | Create a pool writer from the 'ChainDB'.
@@ -161,4 +162,5 @@ makePerasVotePoolWriterFromChainDB systemTime chainDB =
         , opwHasObject = do
             voteIds <- ChainDB.getPerasVoteIds chainDB
             pure $ \voteId -> Set.member voteId voteIds
+        , opwIsRequestable = pure $ const True
         }

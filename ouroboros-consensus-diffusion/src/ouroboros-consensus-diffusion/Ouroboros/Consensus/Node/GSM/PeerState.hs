@@ -17,7 +17,8 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
   ( ObjectDiffusionInboundHandle (odihState)
   , ObjectDiffusionInboundHandleCollection (odihcMap)
-  , ObjectDiffusionInboundState (odIdling)
+  , ObjectDiffusionInboundState (unState)
+  , ObjectDiffusionInboundStatus (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert (PerasCertDiffusionInboundState)
 import Ouroboros.Consensus.Util.IOLike (MonadSTM (STM), readTVar)
@@ -55,7 +56,7 @@ gsmPeerIsIdle :: GsmPeerState blk -> Bool
 gsmPeerIsIdle (GsmPeerState these) =
   case these of
     -- We have both ChainSync and PerasCertDiffusion connections => idle if both are idling
-    These csState pcdState -> csIdling csState && odIdling pcdState
+    These csState pcdState -> csIdling csState && (unState pcdState == Idling)
     -- Certificate diffusion was not negotiated => ChainSync idling is sufficient
     This csState
       | PerasUnsupported <- csPerasSupport csState ->

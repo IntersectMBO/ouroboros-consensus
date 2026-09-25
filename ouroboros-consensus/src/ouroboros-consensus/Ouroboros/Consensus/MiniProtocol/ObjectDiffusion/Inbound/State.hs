@@ -8,6 +8,7 @@
 
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
   ( ObjectDiffusionInboundState (..)
+  , ObjectDiffusionInboundStatus (..)
   , ObjectDiffusionInboundHandle (..)
   , ObjectDiffusionInboundHandleCollection (..)
   , newObjectDiffusionInboundHandleCollection
@@ -20,7 +21,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (BlockSupportsProtocol, HasHeader, Header)
-import Ouroboros.Consensus.MiniProtocol.Util.Idling (Idling (Idling, idlingStart, idlingStop))
+import Ouroboros.Consensus.MiniProtocol.Util.Idling (Idling (idlingStart, idlingStop))
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadSTM (STM, atomically)
@@ -32,25 +33,38 @@ import Ouroboros.Consensus.Util.IOLike
   , newTVarIO
   , readTVar
   )
+import qualified Ouroboros.Consensus.MiniProtocol.Util.Idling as Util.Idling
 
--- | An ObjectDiffusion inbound client state that's used by other components.
+-- | The curent status of the ObjectDiffusion mini protocol, exposed through
+-- @ObjectDiffusionInboundState@.
 --
--- NOTE: 'blk' is not needed for now, but we keep it for future use.
-data ObjectDiffusionInboundState blk = ObjectDiffusionInboundState
-  { odIdling :: !Bool
-  -- ^ Whether the client has reached the server's current object-ID front.
-  --
-  -- We use "idling" consistently with ChainSync: it starts when the server
-  -- sends @MsgAwaitReply@ and ends when the server supplies new object IDs. In
-  -- this sense, idling means that the client is caught up with this particular
-  -- server, and contributes to the GSM caught-up decision.
-  --
-  -- This is distinct from the Object Diffusion protocol state @StIdle@. After
-  -- @MsgAwaitReply@ the protocol is in @StObjectIds (StObjectIdsBlocking
-  -- StMustReply)@, where the server has agency. Moreover, after
-  -- @MsgServerIdle@ returns the protocol to @StIdle@, this flag deliberately
-  -- remains 'True' until the server supplies new object IDs.
-  }
+-- Active implies that the protocol is currently connected to a peer and
+-- receiving objects.
+--
+-- Idling indicates that the client has reached the server's current object-ID
+-- front. We use "idling" consistently with ChainSync: it starts when the server
+-- sends @MsgAwaitReply@ and ends when the server supplies new object IDs. In
+-- this sense, idling means that the client is caught up with this particular
+-- server, and contributes to the GSM caught-up decision. This is distinct
+-- from the Object Diffusion protocol state @StIdle@. After @MsgAwaitReply@ the
+-- protocol is in @StObjectIds (StObjectIdsBlocking StMustReply)@, where the
+-- server has agency. Moreover, after @MsgServerIdle@ returns the protocol to
+-- @StIdle@, this flag deliberately remains 'True' until the server supplies new
+-- object IDs.
+--
+-- Finally, Blocked indicates that the client is paused because the first
+-- unrequested object ID in the peer's advertised FIFO is not currently
+-- requestable according to 'opwIsRequestable'. Unlike 'odIdling', this does not
+-- establish that the client has reached the server's current object-ID front.
+data ObjectDiffusionInboundStatus = Active | Idling | Blocked
+  deriving stock Generic
+  deriving Eq
+
+deriving anyclass instance
+  NoThunks ObjectDiffusionInboundStatus
+
+
+data ObjectDiffusionInboundState blk = ObjectDiffusionInboundState { unState :: ObjectDiffusionInboundStatus }
   deriving stock Generic
 
 deriving anyclass instance
@@ -60,10 +74,7 @@ deriving anyclass instance
   NoThunks (ObjectDiffusionInboundState blk)
 
 initObjectDiffusionInboundState :: ObjectDiffusionInboundState blk
-initObjectDiffusionInboundState =
-  ObjectDiffusionInboundState
-    { odIdling = False
-    }
+initObjectDiffusionInboundState = ObjectDiffusionInboundState Active
 
 -- | An interface to an ObjectDiffusion inbound client that's used by other components.
 data ObjectDiffusionInboundHandle m blk = ObjectDiffusionInboundHandle
@@ -110,6 +121,7 @@ data ObjectDiffusionInboundStateView m = ObjectDiffusionInboundStateView
   { odisvIdling :: !(Idling m)
   -- ^ Actions that record whether the client has reached the server's current
   -- object-ID front. See 'odIdling'.
+  , odisvSetRequestBlocked :: !(Bool -> m ())
   }
   deriving stock Generic
 
@@ -126,10 +138,14 @@ bracketObjectDiffusionInbound handles peer body = do
     . body
     $ ObjectDiffusionInboundStateView
       { odisvIdling =
-          Idling
-            { idlingStart = atomically $ modifyTVar odiState $ \s -> s{odIdling = True}
-            , idlingStop = atomically $ modifyTVar odiState $ \s -> s{odIdling = False}
+          Util.Idling.Idling
+            { idlingStart = atomically $ modifyTVar odiState $ \s -> s{unState = Idling}
+            , idlingStop = atomically $ modifyTVar odiState $ \s -> s{unState = Active}
             }
+      , odisvSetRequestBlocked =
+          \blocked -> atomically $ modifyTVar odiState $ \s -> s {unState = case blocked of
+          True -> Blocked
+          False -> Active}
       }
  where
   acquireContext odiState =

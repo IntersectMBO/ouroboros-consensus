@@ -25,11 +25,19 @@ import Network.TypedProtocol.Codec (AnyMessage)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
-  ( TraceObjectDiffusionInbound (TraceObjectDiffusionInboundServerIdle)
+  ( TraceObjectDiffusionInbound
+      ( TraceObjectDiffusionInboundBlocked
+      , TraceObjectDiffusionInboundServerIdle
+      , TraceObjectDiffusionInboundUnblocked
+      )
   , objectDiffusionInbound
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
-  ( ObjectDiffusionInboundStateView (ObjectDiffusionInboundStateView, odisvIdling)
+  ( ObjectDiffusionInboundStateView
+      ( ObjectDiffusionInboundStateView
+      , odisvIdling
+      , odisvSetRequestBlocked
+      )
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
@@ -86,6 +94,12 @@ tests =
     , testProperty
         "ObjectDiffusion times out after await despite stale pool reads"
         prop_server_idle_after_stale_reads
+    , testProperty
+        "ObjectDiffusion requests only an eligible FIFO prefix"
+        prop_request_eligible_prefix
+    , testProperty
+        "ObjectDiffusion can terminate while locally blocked"
+        prop_terminate_while_blocked
     ]
 
 {-------------------------------------------------------------------------------
@@ -137,6 +151,7 @@ makeObjectPoolWriter (SmokeObjectPool poolContentTvar) =
     , opwHasObject = do
         poolContent <- readTVar poolContentTvar
         pure $ \objectId -> any (\obj -> getSmokeObjectId obj == objectId) poolContent
+    , opwIsRequestable = pure $ const True
     }
 
 mkMockPoolInterfaces ::
@@ -254,7 +269,10 @@ prop_object_after_await =
             (makeObjectPoolWriter inboundPool)
             nodeToNodeVersion
             (readTVar controlMessage)
-            (ObjectDiffusionInboundStateView{odisvIdling = idling})
+            ObjectDiffusionInboundStateView
+              { odisvIdling = idling
+              , odisvSetRequestBlocked = \_ -> pure ()
+              }
         outbound =
           objectDiffusionOutbound
             nullTracer
@@ -354,6 +372,7 @@ prop_await_after_commit =
                 inboundObjects <- readTVar inboundObjectsVar
                 pure $ \objectId ->
                   any ((== objectId) . getSmokeObjectId) inboundObjects
+            , opwIsRequestable = pure $ const True
             }
         inbound =
           objectDiffusionInbound
@@ -362,7 +381,10 @@ prop_await_after_commit =
             inboundWriter
             nodeToNodeVersion
             (readTVar controlMessage)
-            (ObjectDiffusionInboundStateView{odisvIdling = idling})
+            ObjectDiffusionInboundStateView
+              { odisvIdling = idling
+              , odisvSetRequestBlocked = \_ -> pure ()
+              }
         outbound =
           objectDiffusionOutbound
             nullTracer
@@ -462,7 +484,10 @@ prop_server_idle_after_stale_reads =
             (makeObjectPoolWriter inboundPool)
             nodeToNodeVersion
             (readTVar controlMessage)
-            (ObjectDiffusionInboundStateView{odisvIdling = idling})
+            ObjectDiffusionInboundStateView
+              { odisvIdling = idling
+              , odisvSetRequestBlocked = \_ -> pure ()
+              }
         outbound =
           objectDiffusionOutbound
             nullTracer
@@ -505,6 +530,239 @@ prop_server_idle_after_stale_reads =
         check (n == 2)
 
       pure (mAwait, mIdle, idleFollowedAwait, mTerminated)
+
+-- | An ineligible object stops selection at its position in the FIFO. Even an
+-- eligible object behind it must not be requested until the eligibility
+-- predicate advances.
+prop_request_eligible_prefix :: Property
+prop_request_eligible_prefix =
+  case runSimStrictShutdown simulation of
+    Right
+      ( mBlocked
+        , mBypassed
+        , mAwaitWhileBlocked
+        , mUnblocked
+        , mDelivered
+        , mTerminated
+        , inboundObjects
+        , requestBlockedUpdates
+        ) ->
+        counterexample "the inbound peer did not block at the first ineligible object" (isJust mBlocked)
+          .&&. counterexample "the inbound peer bypassed the blocked FIFO entry" (not $ isJust mBypassed)
+          .&&. counterexample
+            "local validation blockage was reported as server idling"
+            (not $ isJust mAwaitWhileBlocked)
+          .&&. counterexample "the inbound peer did not resume when eligibility advanced" (isJust mUnblocked)
+          .&&. counterexample "the remaining FIFO suffix was not delivered" (isJust mDelivered)
+          .&&. counterexample "peers did not terminate after delivery" (isJust mTerminated)
+          .&&. inboundObjects === objects
+          .&&. counterexample
+            "the externally visible request-blocked state did not bracket the wait"
+            (take 2 requestBlockedUpdates === [True, False])
+    Left err -> counterexample (show err) $ property False
+ where
+  objects = SmokeObject . SmokeObjectId <$> [1, 3, 2]
+
+  simulation ::
+    forall s.
+    IOSim
+      s
+      ( Maybe ()
+      , Maybe ()
+      , Maybe ()
+      , Maybe ()
+      , Maybe ()
+      , Maybe ()
+      , [SmokeObject]
+      , [Bool]
+      )
+  simulation = do
+    let maxFifoSize = NumObjectsUnacknowledged 5
+        maxIdsToReq = NumObjectIdsReq 3
+        maxObjectsToReq = NumObjectsReq 3
+
+    outboundPool <- newObjectPool objects
+    inboundPool@(SmokeObjectPool inboundObjectsVar) <- newObjectPool []
+    controlMessage <- uncheckedNewTVarM Continue
+    requestableUpperBound <- uncheckedNewTVarM (3 :: Int)
+    blockedSeen <- uncheckedNewTVarM False
+    unblockedSeen <- uncheckedNewTVarM False
+    awaitSeen <- uncheckedNewTVarM False
+    requestBlockedUpdates <- uncheckedNewTVarM []
+
+    let inboundTracer = mkTracer $ \event -> case event of
+          TraceObjectDiffusionInboundBlocked (SmokeObjectId 3) ->
+            atomically $ writeTVar blockedSeen True
+          TraceObjectDiffusionInboundUnblocked (SmokeObjectId 3) ->
+            atomically $ writeTVar unblockedSeen True
+          _ -> pure ()
+        idling =
+          Idling.Idling
+            { Idling.idlingStart = atomically $ writeTVar awaitSeen True
+            , Idling.idlingStop = pure ()
+            }
+        inboundWriter =
+          (makeObjectPoolWriter inboundPool)
+            { opwIsRequestable = do
+                upperBound <- readTVar requestableUpperBound
+                pure $ \(SmokeObjectId objectId) -> objectId < upperBound
+            }
+        inbound =
+          objectDiffusionInbound
+            inboundTracer
+            (maxFifoSize, maxIdsToReq, maxObjectsToReq)
+            inboundWriter
+            nodeToNodeVersion
+            (readTVar controlMessage)
+            ObjectDiffusionInboundStateView
+              { odisvIdling = idling
+              , odisvSetRequestBlocked =
+                  \blocked -> atomically $ modifyTVar requestBlockedUpdates (++ [blocked])
+              }
+        outbound =
+          objectDiffusionOutbound
+            nullTracer
+            maxFifoSize
+            1
+            (makeObjectPoolReader outboundPool)
+            nodeToNodeVersion
+
+    withRegistry $ \reg -> do
+      (outboundChannel, inboundChannel) <- createConnectedChannels
+      peersDone <- uncheckedNewTVarM (0 :: Int)
+      let trackDone action = do
+            _ <- action
+            atomically $ modifyTVar peersDone (+ 1)
+
+      _outboundThread <-
+        forkLinkedThread reg "ObjectDiffusion FIFO-prefix outbound peer" $
+          trackDone $
+            runPeer
+              nullTracer
+              codecObjectDiffusionId
+              outboundChannel
+              (objectDiffusionOutboundPeer outbound)
+      _inboundThread <-
+        forkLinkedThread reg "ObjectDiffusion FIFO-prefix inbound peer" $
+          trackDone $
+            runPipelinedPeer
+              nullTracer
+              codecObjectDiffusionId
+              inboundChannel
+              (objectDiffusionInboundPeerPipelined inbound)
+
+      mBlocked <- timeout 1 $ atomically $ readTVar blockedSeen >>= check
+      mBypassed <- timeout 0.25 $ atomically $ do
+        inboundObjects <- readTVar inboundObjectsVar
+        check (length inboundObjects > 1)
+      mAwaitWhileBlocked <- timeout 0.25 $ atomically $ readTVar awaitSeen >>= check
+
+      atomically $ writeTVar requestableUpperBound 4
+      mUnblocked <- timeout 0.25 $ atomically $ readTVar unblockedSeen >>= check
+      mDelivered <- timeout 0.25 $ atomically $ do
+        inboundObjects <- readTVar inboundObjectsVar
+        check (inboundObjects == objects)
+
+      atomically $ writeTVar controlMessage Terminate
+      mTerminated <- timeout 3 $ atomically $ do
+        n <- readTVar peersDone
+        check (n == 2)
+
+      inboundObjects <- atomically $ readTVar inboundObjectsVar
+      blockedUpdates <- atomically $ readTVar requestBlockedUpdates
+      pure
+        ( mBlocked
+        , mBypassed
+        , mAwaitWhileBlocked
+        , mUnblocked
+        , mDelivered
+        , mTerminated
+        , inboundObjects
+        , blockedUpdates
+        )
+
+-- | Waiting for local validation state must not delay graceful termination.
+prop_terminate_while_blocked :: Property
+prop_terminate_while_blocked =
+  case runSimStrictShutdown simulation of
+    Right (mBlocked, mTerminated, inboundObjects) ->
+      counterexample "the inbound peer did not enter the locally blocked state" (isJust mBlocked)
+        .&&. counterexample "peers did not terminate from the locally blocked state" (isJust mTerminated)
+        .&&. inboundObjects === []
+    Left err -> counterexample (show err) $ property False
+ where
+  object = SmokeObject (SmokeObjectId 3)
+
+  simulation :: forall s. IOSim s (Maybe (), Maybe (), [SmokeObject])
+  simulation = do
+    let maxFifoSize = NumObjectsUnacknowledged 5
+        maxIdsToReq = NumObjectIdsReq 3
+        maxObjectsToReq = NumObjectsReq 3
+
+    outboundPool <- newObjectPool [object]
+    inboundPool@(SmokeObjectPool inboundObjectsVar) <- newObjectPool []
+    controlMessage <- uncheckedNewTVarM Continue
+    blockedSeen <- uncheckedNewTVarM False
+
+    let inboundTracer = mkTracer $ \event -> case event of
+          TraceObjectDiffusionInboundBlocked (SmokeObjectId 3) ->
+            atomically $ writeTVar blockedSeen True
+          _ -> pure ()
+        inboundWriter =
+          (makeObjectPoolWriter inboundPool)
+            { opwIsRequestable = pure $ const False
+            }
+        inbound =
+          objectDiffusionInbound
+            inboundTracer
+            (maxFifoSize, maxIdsToReq, maxObjectsToReq)
+            inboundWriter
+            nodeToNodeVersion
+            (readTVar controlMessage)
+            ObjectDiffusionInboundStateView
+              { odisvIdling = Idling.noIdling
+              , odisvSetRequestBlocked = \_ -> pure ()
+              }
+        outbound =
+          objectDiffusionOutbound
+            nullTracer
+            maxFifoSize
+            1
+            (makeObjectPoolReader outboundPool)
+            nodeToNodeVersion
+
+    withRegistry $ \reg -> do
+      (outboundChannel, inboundChannel) <- createConnectedChannels
+      peersDone <- uncheckedNewTVarM (0 :: Int)
+      let trackDone action = do
+            _ <- action
+            atomically $ modifyTVar peersDone (+ 1)
+
+      _outboundThread <-
+        forkLinkedThread reg "ObjectDiffusion blocked-termination outbound peer" $
+          trackDone $
+            runPeer
+              nullTracer
+              codecObjectDiffusionId
+              outboundChannel
+              (objectDiffusionOutboundPeer outbound)
+      _inboundThread <-
+        forkLinkedThread reg "ObjectDiffusion blocked-termination inbound peer" $
+          trackDone $
+            runPipelinedPeer
+              nullTracer
+              codecObjectDiffusionId
+              inboundChannel
+              (objectDiffusionInboundPeerPipelined inbound)
+
+      mBlocked <- timeout 1 $ atomically $ readTVar blockedSeen >>= check
+      atomically $ writeTVar controlMessage Terminate
+      mTerminated <- timeout 0.25 $ atomically $ do
+        n <- readTVar peersDone
+        check (n == 2)
+
+      inboundObjects <- atomically $ readTVar inboundObjectsVar
+      pure (mBlocked, mTerminated, inboundObjects)
 
 --- The core logic of the smoke test is shared between the generic smoke tests for ObjectDiffusion, and the ones specialised to PerasCert/PerasVote diffusion
 prop_smoke_object_diffusion ::
@@ -569,7 +827,10 @@ prop_smoke_object_diffusion
               inboundPoolWriter
               nodeToNodeVersion
               (readTVar controlMessage)
-              (ObjectDiffusionInboundStateView{odisvIdling = Idling.noIdling})
+              ObjectDiffusionInboundStateView
+                { odisvIdling = Idling.noIdling
+                , odisvSetRequestBlocked = \_ -> pure ()
+                }
 
           outbound =
             objectDiffusionOutbound

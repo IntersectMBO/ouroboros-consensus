@@ -1076,7 +1076,11 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       labelThisThread "PerasVoteDiffusionClient"
       -- Only certificate diffusion participates in GSM caught-up detection.
       -- Votes must not register in or remove entries from the certificate handles.
-      let state = ObjectDiffusionInboundStateView{odisvIdling = Idling.noIdling}
+      let state =
+            ObjectDiffusionInboundStateView
+              { odisvIdling = Idling.noIdling
+              , odisvSetRequestBlocked = \_ -> pure ()
+              }
       ((), trailing) <-
         runPipelinedPeerWithLimits
           (TraceLabelPeer them `contramap` tPerasVoteDiffusionTracer)

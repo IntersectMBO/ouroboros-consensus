@@ -31,7 +31,8 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   , ObjectPoolWriter (..)
   )
 import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolverHandle
+  ( PerasEpochContextResolverHandle (..)
+  , perasEpochContextResolverBounds
   , verifyPerasCertWithHandle
   )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -129,6 +130,7 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
     , opwHasObject = do
         certIds <- PerasCertDB.getCertIds perasCertDB
         pure $ \roundNo -> Set.member roundNo certIds
+    , opwIsRequestable = perasCertIsRequestable resolverHandle
     }
 
 -- | Create a pool writer from the 'ChainDB'. This properly handles any needed
@@ -159,4 +161,22 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
         , opwHasObject = do
             certIds <- ChainDB.getPerasCertIds chainDB
             pure $ \roundNo -> Set.member roundNo certIds
+        , opwIsRequestable = perasCertIsRequestable resolverHandle
         }
+
+-- | Certificates are advertised in arrival order. Only request the prefix for
+-- which the local ledger currently provides epoch contexts: asking for a later
+-- certificate would make validation fail before the ledger catches up.
+--
+-- An honest peer does not advertise certificates below the lower bound because
+-- they boost immutable blocks. Such an advertisement therefore violates the
+-- expected ordering and should cause the inbound client to reject the peer,
+-- rather than silently acknowledge the certificate.
+perasCertIsRequestable ::
+  MonadSTM m =>
+  PerasEpochContextResolverHandle m blk ->
+  STM m (PerasRoundNo -> Bool)
+perasCertIsRequestable resolverHandle = do
+  resolver <- getPerasEpochContextResolver resolverHandle
+  let (lowerBound, upperBound) = perasEpochContextResolverBounds resolver
+  pure $ \roundNo -> lowerBound <= roundNo && roundNo < upperBound
