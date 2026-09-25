@@ -157,7 +157,7 @@ prop_dijkstra st =
             [ counterexample "endorser-block capacity" $
                 capacity
                   === DijkstraEbMeasure
-                    { ebClosureMeasure = (closureAlonzo, closureRefScripts)
+                    { ebClosureMeasure = TxMeasure closureAlonzo closureRefScripts
                     , txReferencesSize = IgnoringOverflow (ByteSize32 5000)
                     }
             , counterexample "mempool reservation for an endorser block" $
@@ -192,7 +192,7 @@ prop_dijkstraTxEbMeasure :: Property
 prop_dijkstraTxEbMeasure =
   txEbMeasure (Proxy @(ShelleyBlock (Praos Crypto) DijkstraEra)) (TxMeasure alonzo refScripts)
     === DijkstraEbMeasure
-      { ebClosureMeasure = (alonzo, refScripts)
+      { ebClosureMeasure = TxMeasure alonzo refScripts
       , -- 34 bytes for the hash, 3 bytes for a size of 300
         txReferencesSize = IgnoringOverflow (ByteSize32 37)
       }
