@@ -82,6 +82,7 @@ import Network.TypedProtocol.Core
   , Protocol (..)
   , ReflRelativeAgency (..)
   , StateAgency
+  , natToInt
   )
 import Network.TypedProtocol.Peer
   ( Peer (..)
@@ -609,6 +610,8 @@ data WhetherDraining = AlreadyDraining | NotYetDraining
 leiosFetchClientPeerPipelined ::
   forall m point eb tx a.
   PrimMonad m =>
+  -- | the most requests to leave outstanding at once
+  Int ->
   -- | either the return value or the next job, or a blocking request for those two
   m
     ( Either
@@ -616,7 +619,7 @@ leiosFetchClientPeerPipelined ::
         (Either a (SomeLeiosFetchJob point eb tx m))
     ) ->
   Peer (LeiosFetch point eb tx) AsClient (Pipelined Z C) StIdle m a
-leiosFetchClientPeerPipelined tryNext =
+leiosFetchClientPeerPipelined depth tryNext =
   Effect $ do
     stop <- Prim.newMutVar NotYetDraining
     pure $ go1 stop Zero
@@ -648,10 +651,16 @@ leiosFetchClientPeerPipelined tryNext =
     Right job ->
       case n of
         Zero -> send stop n job
-        Succ m ->
-          Collect
-            (Just $ send stop n job)
-            (\MkC -> send stop m job)
+        Succ m
+          -- At the limit, wait for a response rather than adding to the pipe.
+          -- Sending anyway is what an unbounded client does, and a server that
+          -- bounds what it will accept outstanding would drop the connection
+          -- over it.
+          | natToInt n >= depth -> Collect Nothing (\MkC -> send stop m job)
+          | otherwise ->
+              Collect
+                (Just $ send stop n job)
+                (\MkC -> send stop m job)
 
   send ::
     MutVar (PrimState m) WhetherDraining ->
