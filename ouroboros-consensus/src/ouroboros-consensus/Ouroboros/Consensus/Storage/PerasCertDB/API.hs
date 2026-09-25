@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Ouroboros.Consensus.Storage.PerasCertDB.API
@@ -11,8 +10,7 @@ module Ouroboros.Consensus.Storage.PerasCertDB.API
   , WithBoostedBlockStatus (..)
   , forgetBoostedBlockStatus
   , AddPerasCertResult (..)
-  , PerasCertTicketNo
-  , zeroPerasCertTicketNo
+  , PerasRoundNo
 
     -- * Invariants
   , prop_addCertThenGetCertIds
@@ -28,7 +26,6 @@ import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -54,8 +51,8 @@ data PerasCertDB m blk = PerasCertDB
       STM m (Set PerasRoundNo)
   -- ^ Get the set of all cert IDs currently in the database.
   , getCertsAfter ::
-      PerasCertTicketNo ->
-      STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
+      PerasRoundNo ->
+      STM m (Map PerasRoundNo (m (WithArrivalTime (ValidatedPerasCert blk))))
   -- ^ Get all certs with a ticket number strictly greater than the given one,
   -- in ascending order.
   -- Unlike 'getVotesAfter' in 'PerasVoteDB', the resulting map contains 'm' actions to
@@ -115,21 +112,6 @@ forgetBoostedBlockStatus = \case
   CertBoostingBlockInVolatileDB cert -> cert
   CertBoostingBlockNoLongerInVolatileDB cert -> cert
 
--- | A sequence number, incremented every time we receive a new certificate.
---
--- Note that we will /usually/ receive certificates monotonically by round
--- number, so round numbers could /almost/ fulfill the role of ticket numbers.
--- However, in certain edge cases (while catching up, or during cooldowns), this
--- might not be true, such as during syncing or during cooldown periods.
--- Therefore, for robustness, we choose to maintain dedicated ticket numbers
--- separately.
-newtype PerasCertTicketNo = PerasCertTicketNo Word64
-  deriving stock Show
-  deriving newtype (Eq, Ord, Enum, NoThunks)
-
-zeroPerasCertTicketNo :: PerasCertTicketNo
-zeroPerasCertTicketNo = PerasCertTicketNo 0
-
 data AddPerasCertResult
   = AddedPerasCertToDB
   | PerasCertAlreadyInDB
@@ -166,7 +148,7 @@ prop_getCertsAfterZero ::
   m Bool
 prop_getCertsAfterZero db = do
   (allCertActions, certIds) <- atomically $ do
-    allCerts <- getCertsAfter db zeroPerasCertTicketNo
+    allCerts <- getCertsAfter db zeroPerasRoundNo
     certIds <- getCertIds db
     pure (allCerts, certIds)
   allCertValues <- sequence (Map.elems allCertActions)
@@ -183,15 +165,15 @@ prop_getCertsAfterZero db = do
 prop_getCertsAfterMonotonic ::
   MonadSTM m =>
   PerasCertDB m blk ->
-  PerasCertTicketNo ->
+  PerasRoundNo ->
   m Bool
-prop_getCertsAfterMonotonic db ticketNo =
+prop_getCertsAfterMonotonic db roundNo =
   atomically $ do
-    certs <- getCertsAfter db ticketNo
+    certs <- getCertsAfter db roundNo
     let tickets = Map.keys certs
     pure $
       tickets == List.sort tickets
-        && all (> ticketNo) tickets
+        && all (> roundNo) tickets
 
 -- | After garbage collection for slot S, no certs with target slot < S should remain.
 -- NOTE: this property is not purely STM.
@@ -205,7 +187,7 @@ prop_garbageCollectRemovesOldCerts ::
 prop_garbageCollectRemovesOldCerts db slotNo = do
   allCertActions <- atomically $ do
     _ <- garbageCollect db slotNo
-    getCertsAfter db zeroPerasCertTicketNo
+    getCertsAfter db zeroPerasRoundNo
   allCertValues <- sequence (Map.elems allCertActions)
   let targetSlots = pointSlot . getPerasCertPoint <$> allCertValues
   pure $

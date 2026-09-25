@@ -21,7 +21,6 @@ import Ouroboros.Consensus.Peras.Context (mockPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertDB
-  , PerasCertTicketNo
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.Impl as PerasCertDB
@@ -78,8 +77,9 @@ prop_smoke =
               forall m.
               IOLike m =>
               m
-                ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasCertTicketNo m
+                ( ObjectPoolReader PerasRoundNo (PerasCert TestBlock) PerasRoundNo m
                 , ObjectPoolWriter PerasRoundNo (PerasCert TestBlock) m
+                , m [PerasCert TestBlock]
                 , m [PerasCert TestBlock]
                 )
             mkPoolInterfaces = do
@@ -90,18 +90,22 @@ prop_smoke =
 
               let outboundPoolReader = makeTestPerasCertPoolReaderFromCertDB outboundPool
                   inboundPoolWriter = makeTestPerasCertPoolWriterFromCertDB mockSystemTime inboundPool epochContextResolverHandle
-                  getAllInboundPoolContent = do
+                  getAllPoolContent pool = do
                     certsMap <-
                       atomically $
-                        PerasCertDB.getCertsAfter inboundPool (PerasCertDB.zeroPerasCertTicketNo)
+                        PerasCertDB.getCertsAfter pool zeroPerasRoundNo
                     certs' <- sequence (Map.elems certsMap)
                     pure $ vpcCert . forgetArrivalTime <$> certs'
 
-              return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
+              return
+                ( outboundPoolReader
+                , inboundPoolWriter
+                , getAllPoolContent outboundPool
+                , getAllPoolContent inboundPool
+                )
            in
             prop_smoke_object_diffusion
               protocolConstants
-              (map (vpcCert . forgetArrivalTime) watValidatedCerts)
               runOutboundPeer
               runInboundPeer
               mkPoolInterfaces

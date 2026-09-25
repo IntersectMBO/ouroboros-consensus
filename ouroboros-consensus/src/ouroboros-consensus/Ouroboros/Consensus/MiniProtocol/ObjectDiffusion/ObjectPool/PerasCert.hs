@@ -21,6 +21,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , IsPerasCert (..)
   , PerasRoundNo
   , ValidatedPerasCert (..)
+  , zeroPerasRoundNo
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( SystemTime (..)
@@ -38,7 +39,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB
-  , PerasCertTicketNo
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (..))
@@ -56,14 +56,14 @@ makePerasCertPoolReader ::
   ( IOLike m
   , IsPerasCert (PerasCert blk) blk
   ) =>
-  ( PerasCertTicketNo ->
-    STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
+  ( PerasRoundNo ->
+    STM m (Map PerasRoundNo (m (WithArrivalTime (ValidatedPerasCert blk))))
   ) ->
-  ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
+  ObjectPoolReader PerasRoundNo (PerasCert blk) PerasRoundNo m
 makePerasCertPoolReader getCertsAfterSTM =
   ObjectPoolReader
     { oprObjectId = getPerasCertRound
-    , oprZeroTicketNo = PerasCertDB.zeroPerasCertTicketNo
+    , oprZeroTicketNo = zeroPerasRoundNo
     , oprObjectsAfter = \lastKnown limit -> do
         certsAfterLastKnownNoLimit <- getCertsAfterSTM lastKnown
         if Map.null certsAfterLastKnownNoLimit
@@ -80,7 +80,7 @@ makeTestPerasCertPoolReaderFromCertDB ::
   , IsPerasCert (PerasCert blk) blk
   ) =>
   PerasCertDB m blk ->
-  ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
+  ObjectPoolReader PerasRoundNo (PerasCert blk) PerasRoundNo m
 makeTestPerasCertPoolReaderFromCertDB perasCertDB =
   makePerasCertPoolReader
     (PerasCertDB.getCertsAfter perasCertDB)
@@ -90,7 +90,7 @@ makePerasCertPoolReaderFromChainDB ::
   , IsPerasCert (PerasCert blk) blk
   ) =>
   ChainDB m blk ->
-  ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
+  ObjectPoolReader PerasRoundNo (PerasCert blk) PerasRoundNo m
 makePerasCertPoolReaderFromChainDB chainDB =
   makePerasCertPoolReader
     (ChainDB.getPerasCertsAfter chainDB)

@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Peras.Types
   ( -- * Peras round numbers
     PerasRoundNo (..)
   , onPerasRoundNo
+  , zeroPerasRoundNo
 
     -- * Peras boosted blocks
   , PerasBoostedBlock (..)
@@ -87,6 +88,9 @@ newtype PerasRoundNo
     , ToCBOR
     , FromCBOR
     )
+
+zeroPerasRoundNo :: PerasRoundNo
+zeroPerasRoundNo = PerasRoundNo 0
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo

@@ -82,6 +82,7 @@ prop_smoke =
                 ( ObjectPoolReader PerasVoteId (PerasVote TestBlock) PerasVoteTicketNo m
                 , ObjectPoolWriter PerasVoteId (PerasVote TestBlock) m
                 , m [PerasVote TestBlock]
+                , m [PerasVote TestBlock]
                 )
             mkPoolInterfaces = do
               epochContextResolverHandle <- mockPerasEpochContextResolverHandle epochContext
@@ -91,17 +92,21 @@ prop_smoke =
 
               let outboundPoolReader = makeTestPerasVotePoolReaderFromVoteDB outboundPool
                   inboundPoolWriter = makeTestPerasVotePoolWriterFromVoteDB mockSystemTime inboundPool epochContextResolverHandle
-                  getAllInboundPoolContent = do
+                  getAllPoolContent pool = do
                     votesMap <-
                       atomically $
-                        PerasVoteDB.getVotesAfter inboundPool zeroPerasVoteTicketNo
+                        PerasVoteDB.getVotesAfter pool zeroPerasVoteTicketNo
                     pure $ vpvVote . forgetArrivalTime <$> Map.elems votesMap
 
-              return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
+              return
+                ( outboundPoolReader
+                , inboundPoolWriter
+                , getAllPoolContent outboundPool
+                , getAllPoolContent inboundPool
+                )
            in
             prop_smoke_object_diffusion
               protocolConstants
-              (map (vpvVote . forgetArrivalTime) watValidatedVotes)
               runOutboundPeer
               runInboundPeer
               mkPoolInterfaces
