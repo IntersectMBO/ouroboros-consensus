@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( GenTx (..)
   , SL.ApplyTxError (..)
   , TxId (..)
+  , DijkstraEbMeasure (..)
   , Validated (..)
   , fixedBlockBodyOverhead
   , mkShelleyTx
@@ -82,8 +83,8 @@ import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
 import Cardano.Ledger.Dijkstra.PParams
-  ( DijkstraEraPParams
-  , ppMaxEndorserBlockExUnitsL
+  ( ppMaxEndorserBlockExUnitsL
+  , ppMaxEndorserBlockReferencesSizeL
   , ppMaxEndorserBlockTxsSizeL
   , ppMaxRefScriptSizePerEndorserBlockL
   )
@@ -94,6 +95,7 @@ import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)
+import qualified Codec.CBOR.Encoding as CBOR
 import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
@@ -114,6 +116,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Leios.EndorserBlock as Leios
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -797,29 +800,89 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
             , mismatchExpected = limit
             }
 
--- | What the transactions of one Leios endorser block may amount to, from the
--- Dijkstra endorser-block protocol parameters.
+-- | Measure of transactions in a Dijkstra-era Leios endorser block.
 --
--- 'ppMaxEndorserBlockReferencesSizeL' is not read: the Dijkstra 'TxEbMeasure'
--- is its 'TxMeasure', which has no field for it.
-leiosEndorserBlockClosureMeasure ::
-  forall proto era mk.
-  ( ShelleyCompatible proto era
-  , DijkstraEraPParams era
-  ) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  (AlonzoMeasure, RefScriptSize)
-leiosEndorserBlockClosureMeasure st =
-  ( AlonzoMeasure
-      { byteSize = IgnoringOverflow $ ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
-      , exUnits = fromExUnits $ unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
-      }
-  , RefScriptSize $
-      IgnoringOverflow $
-        ByteSize32 (pparams ^. ppMaxRefScriptSizePerEndorserBlockL)
-  )
+-- An endorser block carries references to transactions, while the referenced
+-- transactions, its closure, must satisfy block-like limits. So this pairs the
+-- closure's block measure with the one dimension specific to endorser blocks:
+-- the size of the references themselves.
+data DijkstraEbMeasure p = DijkstraEbMeasure
+  { ebClosureMeasure :: !(TxMeasure (ShelleyBlock p DijkstraEra))
+  , txReferencesSize :: !(IgnoringOverflow ByteSize32)
+  -- ^ Size of transaction references _excluding_ any framing overhead: of one
+  -- transaction's reference, or summed over whatever is measured (an endorser
+  -- block, a run of mempool transactions).
+  }
+  deriving stock (Eq, Generic, Show)
+  deriving anyclass NoThunks
+  deriving
+    Measure
+    via (InstantiatedAt Generic (DijkstraEbMeasure p))
+
+-- | The cost of one transaction in an endorser block: its closure cost is the
+-- transaction's block measure, and its reference costs the bytes
+-- 'Leios.encodeEndorserBlock' writes for it.
+txEbMeasureDijkstra :: TxMeasure (ShelleyBlock p DijkstraEra) -> DijkstraEbMeasure p
+txEbMeasureDijkstra closure =
+  DijkstraEbMeasure
+    { ebClosureMeasure = closure
+    , txReferencesSize =
+        IgnoringOverflow . Leios.encodedReferenceSize (Proxy @DijkstraEra) $
+          txMeasureByteSize closure
+    }
+
+-- | What one Leios endorser block may hold, from the Dijkstra endorser-block
+-- protocol parameters.
+leiosEndorserBlockMeasure ::
+  forall proto mk.
+  TickedLedgerState (ShelleyBlock proto DijkstraEra) mk ->
+  DijkstraEbMeasure proto
+leiosEndorserBlockMeasure st =
+  DijkstraEbMeasure
+    { ebClosureMeasure =
+        TxMeasure
+          AlonzoMeasure
+            { byteSize = IgnoringOverflow $ ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
+            , exUnits = fromExUnits $ unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
+            }
+          ( RefScriptSize $
+              IgnoringOverflow $
+                ByteSize32 (pparams ^. ppMaxRefScriptSizePerEndorserBlockL)
+          )
+    , -- Transactions are charged 'Leios.encodedReferenceSize' for their
+      -- reference and nothing else, so the framing 'Leios.encodeEndorserBlock' writes
+      -- ahead of them comes off the capacity here.
+      --
+      -- Nothing checks that an endorser block of this size fits one LeiosFetch
+      -- message. That check must come with the LeiosFetch protocol.
+      txReferencesSize =
+        IgnoringOverflow . ByteSize32 . Leios.referencesCapacity (Proxy @DijkstraEra) $
+          pparams ^. ppMaxEndorserBlockReferencesSizeL
+    }
  where
   pparams = getPParams $ tickedShelleyLedgerState st
+
+-- | A Dijkstra endorser block is a CBOR map from each transaction hash to the
+-- size of that transaction.
+instance Leios.EndorserBlockFormat DijkstraEra where
+  encodeEndorserBlock _ (Leios.MkEndorserBlock references) =
+    foldl
+      ( \acc (Leios.MkTxHash bytes, txBytesSize) ->
+          acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
+      )
+      (CBOR.encodeMapLen $ fromIntegral $ length references)
+      references
+
+  -- The hash and the size.
+  encodedReferenceSize _ (ByteSize32 txSize) =
+    ByteSize32 $ cborBytesSize 32 + Leios.cborIntBytesSize txSize
+   where
+    cborBytesSize len = Leios.cborIntBytesSize len + len
+
+  -- The map header. CBOR map headers have the same widths as
+  -- 'Leios.cborIntBytesSize', and the reference count fits 'Leios.BytesSize'.
+  encodedMaxFramingSize _ =
+    ByteSize32 $ Leios.cborIntBytesSize (maxBound :: Leios.BytesSize)
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance
@@ -869,9 +932,9 @@ instance
   txMeasurePhase2 _cfg st tx = runValidation $ txMeasureRefScripts st tx
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
 
-  type TxEbMeasure (ShelleyBlock p DijkstraEra) = TxMeasure (ShelleyBlock p DijkstraEra)
+  type TxEbMeasure (ShelleyBlock p DijkstraEra) = DijkstraEbMeasure p
 
-  txEbMeasure _ = id
+  txEbMeasure _ = txEbMeasureDijkstra
 
-  ebCapacityTxMeasure _cfg = uncurry TxMeasure . leiosEndorserBlockClosureMeasure
-  mempoolEbReservation _ = id
+  ebCapacityTxMeasure _cfg = leiosEndorserBlockMeasure
+  mempoolEbReservation _ = ebClosureMeasure

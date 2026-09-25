@@ -203,6 +203,7 @@ library
     Ouroboros.Consensus.Ledger.Tables.Kinds
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Leios.EndorserBlock
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -1648,6 +1649,7 @@ test-suite shelley-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Shelley.Coherence
+    Test.Consensus.Shelley.EndorserBlock
     Test.Consensus.Shelley.Golden
     Test.Consensus.Shelley.LedgerTables
     Test.Consensus.Shelley.Serialisation
@@ -1685,6 +1687,7 @@ test-suite shelley-test
     tasty-quickcheck,
     unstable-cardano-testlib,
     unstable-shelley-testlib,
+    vector,
 
 library unstable-cardano-testlib
   import: common-lib
