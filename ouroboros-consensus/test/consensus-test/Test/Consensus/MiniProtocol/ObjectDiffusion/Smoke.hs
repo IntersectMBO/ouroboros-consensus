@@ -145,15 +145,21 @@ mkMockPoolInterfaces ::
     ( ObjectPoolReader SmokeObjectId SmokeObject Int m
     , ObjectPoolWriter SmokeObjectId SmokeObject m
     , m [SmokeObject]
+    , m [SmokeObject]
     )
 mkMockPoolInterfaces objects = do
-  outboundPool <- newObjectPool objects
-  inboundPool@(SmokeObjectPool tvar) <- newObjectPool []
+  outboundPool@(SmokeObjectPool outboundTvar) <- newObjectPool objects
+  inboundPool@(SmokeObjectPool inboundTvar) <- newObjectPool []
 
   let outboundPoolReader = makeObjectPoolReader outboundPool
       inboundPoolWriter = makeObjectPoolWriter inboundPool
 
-  return (outboundPoolReader, inboundPoolWriter, atomically $ readTVar tvar)
+  return
+    ( outboundPoolReader
+    , inboundPoolWriter
+    , atomically $ readTVar outboundTvar
+    , atomically $ readTVar inboundTvar
+    )
 
 {-------------------------------------------------------------------------------
   Protocol constants
@@ -189,7 +195,6 @@ prop_smoke =
       \(ListWithUniqueIds objects) ->
         prop_smoke_object_diffusion
           protocolConstants
-          objects
           runOutboundPeer
           runInboundPeer
           (mkMockPoolInterfaces objects)
@@ -502,7 +507,6 @@ prop_smoke_object_diffusion ::
   , NoThunks object
   ) =>
   ProtocolConstants ->
-  [object] ->
   ( forall m.
     IOLike m =>
     ObjectDiffusionOutbound objectId object m () ->
@@ -523,12 +527,12 @@ prop_smoke_object_diffusion ::
       ( ObjectPoolReader objectId object ticketNo m
       , ObjectPoolWriter objectId object m
       , m [object]
+      , m [object]
       )
   ) ->
   Property
 prop_smoke_object_diffusion
   (ProtocolConstants (maxFifoSize, maxIdsToReq, maxObjectsToReq))
-  objects
   runOutboundPeer
   runInboundPeer
   mkPoolInterfaces =
@@ -537,9 +541,9 @@ prop_smoke_object_diffusion
         let tracer = nullTracer
 
         traceWith tracer "========== [ Starting ObjectDiffusion smoke test ] =========="
-        traceWith tracer (show objects)
 
-        (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent) <- mkPoolInterfaces
+        (outboundPoolReader, inboundPoolWriter, getAllOutboundPoolContent, getAllInboundPoolContent) <-
+          mkPoolInterfaces
         controlMessage <- uncheckedNewTVarM Continue
 
         let
@@ -589,17 +593,20 @@ prop_smoke_object_diffusion
             check (n == 2)
 
         traceWith tracer "========== [ ObjectDiffusion smoke test finished ] =========="
-        poolContent <- getAllInboundPoolContent
+        outboundPoolContent <- getAllOutboundPoolContent
+        inboundPoolContent <- getAllInboundPoolContent
 
+        traceWith tracer "outboundPoolContent:"
+        traceWith tracer (show outboundPoolContent)
         traceWith tracer "inboundPoolContent:"
-        traceWith tracer (show poolContent)
+        traceWith tracer (show inboundPoolContent)
         traceWith tracer "========== ======================================= =========="
-        pure (mTerminated, poolContent)
+        pure (mTerminated, outboundPoolContent, inboundPoolContent)
      in
       case simulationResult of
-        Right (mTerminated, inboundPoolContent) ->
+        Right (mTerminated, outboundPoolContent, inboundPoolContent) ->
           counterexample
             "peers did not terminate after the Terminate control message"
             (isJust mTerminated)
-            .&&. inboundPoolContent === objects
+            .&&. outboundPoolContent === inboundPoolContent
         Left msg -> counterexample (show msg) $ property False
