@@ -93,6 +93,13 @@ be adding is the Alonzo era, which comes after the Mary era.
   the `TestingConfiguration` record, and in `Cardano.Tools.Config`, map it onto
   the new era's trigger in `mkHardForkTriggers`.
 
+  The testing keys live under `Configuration.TestingConfig` in the current
+  configuration format. `TestEnableDevelopmentHardForkEras` is gone: its
+  replacement is `ExperimentalHardForksEnabled`, which also requires a
+  `DijkstraGenesisFile` and a `DijkstraGenesisHash` when it is true. A
+  configuration that still sets the old key gets an "unrecognised key" warning,
+  and the experimental era stays off.
+
 ### CDDLs
 
 The various entities, such as block headers, block bodies, transactions, etc. need to be serialised for on-disk storage and over-the-wire transmission. Adding an era changes the serialised representation, and thus the CDDL specs need to change as well.
