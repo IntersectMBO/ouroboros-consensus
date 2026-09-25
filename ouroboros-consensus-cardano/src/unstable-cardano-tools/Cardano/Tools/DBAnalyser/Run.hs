@@ -171,9 +171,10 @@ analyse dbaConfig args =
     backend <- case selectLedgerDBBackend ldbBackend configBackend of
       Just backend -> pure backend
       Nothing ->
-        throwConfigError $
-          "no LedgerDB backend was selected on the command line and none could"
-            <> " be determined from the configuration; pass --in-mem or --lsm."
+        -- Unreachable for the Cardano instance, whose configuration always
+        -- resolves a backend; this guards a block type whose Args carry none.
+        throwConfigError
+          "no LedgerDB backend was selected and none could be determined from the configuration."
     snapshotDelayRng <- newStdGen
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
