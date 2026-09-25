@@ -30,7 +30,7 @@
 --   exists is always complete.
 --
 -- * Each certificate file is self-verifying: it carries a format version and a
---   CRC32 of its payload (see 'encodeCertFile'). Integrity is re-checked
+--   CRC32 of its payload (see 'encodeCertFileBytes'). Integrity is re-checked
 --   whenever a certificate is read back. Certificates are /not/ semantically
 --   re-validated here; that already happened before they were written, and the
 --   syncing nodes that consume them validate them again themselves.
@@ -56,12 +56,12 @@ module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
 where
 
 import Cardano.Binary
+import qualified Codec.CBOR.Read as CBOR
 import Control.Monad (filterM, forM, forM_, unless, void)
 import Control.Monad.State.Strict (StateT, get, lift, put)
 import Control.ResourceRegistry (WithTempRegistry, allocateTemp, modifyWithTempRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Bifunctor (first)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (isSuffixOf, stripPrefix)
 import Data.Maybe (catMaybes, mapMaybe)
@@ -77,7 +77,7 @@ import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (.
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API.Lazy
-import System.FS.CRC (CRC (..), computeCRC)
+import System.FS.CRC (CRC (..), initCRC, updateCRC)
 import Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------
@@ -350,7 +350,7 @@ isCertFileTmpName :: String -> Bool
 isCertFileTmpName = (certFileTmpSuffix `isSuffixOf`)
 
 -- | The on-disk format version of a certificate file. Bump whenever the
--- envelope produced by 'encodeCertFile' changes.
+-- envelope produced by 'encodeCertFileBytes' changes.
 certFileVersion :: Word8
 certFileVersion = 1
 
@@ -385,52 +385,66 @@ decodeCert ccfg = do
   boost <- fromCBOR
   pure (ValidatedPerasCert cert boost)
 
--- | Wrap an encoded certificate in a self-verifying, versioned file envelope:
--- a format version, the certificate payload, and a CRC32 of that payload.
+-- | Serialise a certificate into the self-verifying, versioned bytes stored on
+-- disk: a CBOR 3-element list @[version, crc, payload]@, where @payload@ is the
+-- (inline) certificate encoding produced by 'encodeCert' and @crc@ is a CRC32
+-- computed over exactly @payload@'s bytes.
+--
+-- Placing @payload@ /last/ lets us both fold the CRC over it and append it to
+-- the already-serialised header in a single streaming pass, so the payload is
+-- serialised exactly once. In particular, we avoid the strict copy and the
+-- extra serialisation roundtrip that embedding the payload as a nested CBOR
+-- byte string would force.
 --
 -- The CRC lets 'decodeCertFile' detect corruption (including a partial write
 -- that somehow slipped past the atomic rename in 'writeCertFile') without
 -- having to re-run the certificate's (expensive) semantic validation, which
 -- already happened before the certificate was ever written here.
-encodeCertFile ::
+encodeCertFileBytes ::
   EncodeDisk blk (PerasCert blk) =>
   CodecConfig blk ->
   ValidatedPerasCert blk ->
-  Encoding
-encodeCertFile ccfg cert =
-  encodeListLen 3
-    <> toCBOR certFileVersion
-    <> toCBOR payload
-    <> toCBOR (getCRC (computeCRC payload))
+  BSL.ByteString
+encodeCertFileBytes ccfg cert =
+  header <> payload
  where
-  payload :: BS.ByteString
-  payload = BSL.toStrict $ serialize $ encodeCert ccfg cert
+  payload :: BSL.ByteString
+  payload = serialize $ encodeCert ccfg cert
+  header :: BSL.ByteString
+  header =
+    serialize $
+      encodeListLen 3
+        <> toCBOR certFileVersion
+        <> toCBOR (getCRC (updateCRC payload initCRC))
 
--- | Decode and integrity-check a certificate file envelope produced by
--- 'encodeCertFile', returning the reason on any failure.
+-- | Decode and integrity-check the bytes produced by 'encodeCertFileBytes',
+-- returning the reason on any failure.
 decodeCertFile ::
   DecodeDisk blk (PerasCert blk) =>
   CodecConfig blk ->
   BSL.ByteString ->
   Either CertFileError (ValidatedPerasCert blk)
 decodeCertFile ccfg fileBytes = do
-  (version, payload, expectedCRC) <-
-    first CertFileMalformed $
-      decodeFullDecoder (pack "Immutable Peras Certificate file") decodeEnvelope fileBytes
+  -- Decoding only the header leaves the inline payload as the unconsumed
+  -- suffix, which is exactly the byte range the CRC was computed over on write.
+  (payload, (version, expectedCRC)) <-
+    first (CertFileMalformed . asDeserialiseFailure) $
+      CBOR.deserialiseFromBytes decodeHeader fileBytes
   unless (version == certFileVersion) $
     Left (CertFileUnsupportedVersion version)
-  unless (getCRC (computeCRC payload) == expectedCRC) $
+  unless (getCRC (updateCRC payload initCRC) == expectedCRC) $
     Left CertFileChecksumMismatch
   first CertFileMalformed $
-    decodeFullDecoder (pack "Immutable Peras Certificate") (decodeCert ccfg) (BSL.fromStrict payload)
+    decodeFullDecoder (pack "Immutable Peras Certificate") (decodeCert ccfg) payload
  where
-  decodeEnvelope :: Decoder s (Word8, BS.ByteString, Word32)
-  decodeEnvelope = do
+  decodeHeader :: Decoder s (Word8, Word32)
+  decodeHeader = do
     decodeListLenOf 3
     version <- fromCBOR
-    payload <- fromCBOR
     expectedCRC <- fromCBOR
-    pure (version, payload, expectedCRC)
+    pure (version, expectedCRC)
+  asDeserialiseFailure =
+    DecoderErrorDeserialiseFailure (pack "Immutable Peras Certificate file")
 
 writeCertFile ::
   ( IOLike m
@@ -454,7 +468,7 @@ writeCertFile env roundNo cert =
  where
   tmpPath = fsPathCertFileTmp roundNo
   path = fsPathCertFile roundNo
-  bytes = serialize $ encodeCertFile (picdbCodecConfig env) cert
+  bytes = encodeCertFileBytes (picdbCodecConfig env) cert
 
 -- | Remove the file of a certificate.
 --
