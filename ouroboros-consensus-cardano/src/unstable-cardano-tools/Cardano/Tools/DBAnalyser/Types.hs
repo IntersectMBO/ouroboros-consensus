@@ -1,7 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) where
 
+import Data.Maybe (fromMaybe)
 import Data.Word
 import Ouroboros.Consensus.Block
 
@@ -15,7 +17,10 @@ data DBAnalyserConfig = DBAnalyserConfig
   , validation :: Maybe ValidateBlocks
   , analysis :: AnalysisName
   , confLimit :: Limit
-  , ldbBackend :: LedgerDBBackend
+  , ldbBackend :: Maybe LedgerDBBackendFlags
+  -- ^ The LedgerDB backend selected on the command line. When 'Nothing', the
+  -- backend and its settings are taken from the node configuration file
+  -- instead; see 'selectLedgerDBBackend'.
   }
 
 data AnalysisName
@@ -50,9 +55,77 @@ data Limit = Limit Int | Unlimited
 
 data LedgerDBBackend
   = V2InMem
-  | -- | The 'Bool' bypasses the OS page cache for UTxO table reads/writes
-    -- (instead of caching all). Intended for benchmarking.
-    V2LSM Bool
+  | V2LSM LSMOptions
+
+-- | The settings of the LSM-trees backend.
+data LSMOptions = LSMOptions
+  { lsmDatabasePath :: FilePath
+  -- ^ The directory, relative to the LedgerDB filesystem root, holding the
+  -- working LSM database.
+  , lsmExportPath :: Maybe FilePath
+  -- ^ The directory, relative to the LedgerDB filesystem root, into which the
+  -- LSM backend exports snapshots as it takes them. When 'Nothing', snapshots
+  -- are not exported.
+  , lsmNoDiskCache :: Bool
+  -- ^ Bypass the OS page cache for UTxO table reads/writes (instead of caching
+  -- all). Intended for benchmarking.
+  }
+
+-- | The LedgerDB backend as the command line selects it: @--in-mem@, or @--lsm@
+-- with its switches.
+data LedgerDBBackendFlags
+  = InMemFlag
+  | LSMFlag LSMFlags
+
+-- | The switches that accompany @--lsm@. Each can only turn its setting on, so
+-- 'False' leaves the setting as the node configuration file has it.
+data LSMFlags = LSMFlags
+  { lsmExportFlag :: Bool
+  -- ^ @--lsm-export@
+  , lsmNoDiskCacheFlag :: Bool
+  -- ^ @--lsm-no-cache@
+  }
+
+-- | The backend to use, from the one the command line selects and the one the
+-- node configuration file selects. The command line wins, but @--lsm@ against
+-- a configuration that also selects LSM overrides only what its switches set:
+-- the paths come from the configuration, and @--lsm-export@ exports into the
+-- configured @ExportPath@ when there is one. Against any other configuration,
+-- @--lsm@ starts from the defaults.
+selectLedgerDBBackend ::
+  Maybe LedgerDBBackendFlags -> Maybe LedgerDBBackend -> Maybe LedgerDBBackend
+selectLedgerDBBackend flags configBackend = case flags of
+  Nothing -> configBackend
+  Just InMemFlag -> Just V2InMem
+  Just (LSMFlag LSMFlags{lsmExportFlag, lsmNoDiskCacheFlag}) ->
+    Just $
+      V2LSM
+        base
+          { lsmExportPath =
+              if lsmExportFlag
+                then Just (fromMaybe defaultLSMExportPath (lsmExportPath base))
+                else lsmExportPath base
+          , lsmNoDiskCache = lsmNoDiskCache base || lsmNoDiskCacheFlag
+          }
+ where
+  base = case configBackend of
+    Just (V2LSM opts) -> opts
+    _ ->
+      LSMOptions
+        { lsmDatabasePath = defaultLSMDatabasePath
+        , lsmExportPath = Nothing
+        , lsmNoDiskCache = False
+        }
+
+-- | The directory holding the working LSM database, used when the node
+-- configuration file does not set @LedgerDB.Backend.LSM.DatabasePath@.
+defaultLSMDatabasePath :: FilePath
+defaultLSMDatabasePath = "lsm"
+
+-- | The directory that @--lsm-export@ exports snapshots into, when the node
+-- configuration file does not set @LedgerDB.Backend.LSM.ExportPath@.
+defaultLSMExportPath :: FilePath
+defaultLSMExportPath = "lsm-exported"
 
 -- | The extent of the ChainDB on-disk files validation. This is completely
 -- unrelated to validation of the ledger rules.

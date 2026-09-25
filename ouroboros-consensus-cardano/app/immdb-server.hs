@@ -4,6 +4,7 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.Config (withConfigErrorHandling)
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import qualified Cardano.Tools.ImmDBServer.Diffusion as ImmDBServer
@@ -14,7 +15,7 @@ import Options.Applicative
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 
 main :: IO ()
-main = withStdTerminalHandles $ do
+main = withStdTerminalHandles $ withConfigErrorHandling $ do
   cryptoInit
   Opts{immDBDir, port, configFile} <- execParser optsParser
   let sockAddr = Socket.SockAddrInet port hostAddr

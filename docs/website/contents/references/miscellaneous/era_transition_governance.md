@@ -112,6 +112,7 @@ The node currently supports that for testing purposes via the following steps.
 - Declare the `protocolVersion` field to be X (eg `{major: 6, minor: 0}`) within the `protocolParams` field within top-level JSON object of the Shelley Genesis file.
 - In the node configuration file, include a `Test<Era>HardForkAtEpoch: 0` declaration for each Cardano era up to and including the era that contains X.
   In the running example, protocol version X=6.0 is in Alonzo (refer to the table in the Introduction above), so the following declarations need to be present within the node configuration file.
+  In the current configuration format they live under `Configuration.TestingConfig`; `cardano-config migrate` moves them there from the top level.
 
 ```
   ...
