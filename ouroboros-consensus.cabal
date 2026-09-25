@@ -796,7 +796,6 @@ test-suite consensus-test
     Test.Consensus.HardFork.Summary
     Test.Consensus.HeaderValidation
     Test.Consensus.Ledger.Tables.Diff
-    Test.Consensus.Leios.EndorserBlock
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
@@ -872,7 +871,6 @@ test-suite consensus-test
     typed-protocols:{examples, stateful, typed-protocols},
     unstable-consensus-testlib,
     unstable-mock-block,
-    vector,
 
 test-suite consensus-infra-test
   import: common-test
@@ -1803,6 +1801,7 @@ test-suite shelley-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Shelley.Coherence
+    Test.Consensus.Shelley.EndorserBlock
     Test.Consensus.Shelley.Golden
     Test.Consensus.Shelley.LedgerTables
     Test.Consensus.Shelley.Serialisation
@@ -1840,6 +1839,7 @@ test-suite shelley-test
     tasty-quickcheck,
     unstable-cardano-testlib,
     unstable-shelley-testlib,
+    vector,
 
 library unstable-cardano-testlib
   import: common-lib
