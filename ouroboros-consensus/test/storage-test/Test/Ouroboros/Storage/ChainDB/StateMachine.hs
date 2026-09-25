@@ -2599,6 +2599,7 @@ traceEventName = \case
     "PerasImmutableCertDB." <> case ev of
       PerasImmutableCertDB.OpenedDB _ -> "OpenedDB"
       PerasImmutableCertDB.AddedCert _ _ -> "AddedCert"
+      PerasImmutableCertDB.QuarantinedCert _ _ -> "QuarantinedCert"
   TracePerasVoteDbEvent ev -> "PerasVoteDB." <> constrName ev
   TraceLastShutdownUnclean -> "LastShutdownUnclean"
   TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev
