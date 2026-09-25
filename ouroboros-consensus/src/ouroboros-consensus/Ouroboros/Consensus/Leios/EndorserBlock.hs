@@ -15,7 +15,8 @@ import Data.Vector.Strict (Vector)
 import Data.Word (Word32)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 
--- | Hash of a transaction.
+-- | Hash of a whole encoded transaction. It is deliberately different from
+-- a 'TxId', which is the hash of the transaction body only.
 newtype TxHash = MkTxHash ByteString
   deriving (Eq, Show)
 
