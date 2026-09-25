@@ -10,14 +10,13 @@ BASE_REF="${BASE_REF:-main}"
 ok=1
 
 # libraries :: [relative src directory]
-libraries=("ouroboros-consensus/src/ouroboros-consensus"
-           "ouroboros-consensus/src/ouroboros-consensus-lmdb"
-           "ouroboros-consensus/src/ouroboros-consensus-lsm"
-           "ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion"
-           "ouroboros-consensus-protocol/src/ouroboros-consensus-protocol"
-           "ouroboros-consensus-cardano/src/ouroboros-consensus-cardano"
-           "ouroboros-consensus-cardano/src/byron"
-           "ouroboros-consensus-cardano/src/shelley"
+libraries=("lib/ouroboros-consensus"
+           "lib/lsm"
+           "lib/diffusion"
+           "lib/protocol"
+           "lib/cardano"
+           "lib/byron"
+           "lib/shelley"
           )
 
 echo "####### Checking for Haskell changes"

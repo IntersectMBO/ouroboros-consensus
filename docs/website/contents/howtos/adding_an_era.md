@@ -16,8 +16,7 @@ There are two main driving changes: adding the new era to
 `Ouroboros.Consensus.Cardano.Block`. The compiler should point the rest of the
 way. It's mostly a matter of following the existing patterns by imitating the
 previous Shelley-based case. Be sure to run both the Shelley
-(`ouroboros-consensus-shelley-test`) and the Cardano
-(`ouroboros-consensus-cardano-test`) tests.
+(`shelley-test`) and the Cardano (`cardano-test`) tests.
 
 For exhaustiveness, we give an overview of the changes needed. The new era we'll
 be adding is the Alonzo era, which comes after the Mary era.
@@ -48,7 +47,7 @@ be adding is the Alonzo era, which comes after the Mary era.
   the `cabal.project` file. You will have to add it to some other cabal files
   too, let the compiler tell you which ones.
 
-## `ouroboros-consensus-cardano`
+## `cardano` sublibrary
 
 * Define `StandardAlonzo` in `Ouroboros.Consensus.Shelley.Eras` and add any
   missing instances to that module, update the export list appropriately.
@@ -97,8 +96,8 @@ The various entities, such as block headers, block bodies, transactions, etc. ne
 
 * In `Test.Consensus.Cardano.GenCDDLs`, modify the `setupCDDLCEnv` function to bring the new era's CDDL in scope from Ledger. It could be the case that the new era is empty for now, and Ledger does not yet provide a CDDL. In this case, the new era's CDDL should be a copy of the previous era's one.
 * In `Test.Consensus.Cardano.GenCDDLs`, possibly modify the `fixupBlockCDDL` function, adding a new `sed` replacement. These calls to `sed` are intended to be a temporary hack to fix-up the Ledger-provided CDDLs and will hopefully be removed soon.
-* In `ouroboros-consensus-cardano/cddl/disk`, update the on-disk representation.
-* In `ouroboros-consensus-cardano/cddl/node-to-node`, update the over-the-wire representation.
+* In `cddl/disk`, update the on-disk representation.
+* In `cddl/node-to-node`, update the over-the-wire representation.
 
 For feedback, run the CDDL tests:
 
@@ -108,7 +107,7 @@ cabal test cardano-test --test-options '-p "CDDL"'
 
 These test serialise blocks, headers, transactions and transactions IDs into CDOR, and then validate the resulting binary blobs against the CDDL specs.
 
-Failing golden tests will produce several files in the `ouroboros-consensus-cardano/failing_cddl_tests` directory, for example:
+Failing golden tests will produce several files in the `failing_cddl_tests` directory, for example:
 
 | Filename                                      | Description                                                       |
 |:----------------------------------------------|:------------------------------------------------------------------|
@@ -119,7 +118,7 @@ Failing golden tests will produce several files in the `ouroboros-consensus-card
 Assuming the `cuddle` and `pretty-simple` executable are available, the `cuddle` failure could be pretty-printed as follows:
 
 ```sh
-bash ouroboros-consensus-cardano/failing_cddl_tests/call_cuddle_serialisedCardanoBlock_failing.sh 2>&1 | pretty-simple
+bash failing_cddl_tests/call_cuddle_serialisedCardanoBlock_failing.sh 2>&1 | pretty-simple
 ```
 
 ### `test`
@@ -136,7 +135,7 @@ bash ouroboros-consensus-cardano/failing_cddl_tests/call_cuddle_serialisedCardan
   `Test.ThreadNet.TxGen.Mary`.
 
 * Run the golden tests
-  (`cabal run ouroboros-consensus-cardano:cardano-test -- -p /Golden/`).
+  (`cabal run cardano-test -- -p /Golden/`).
   Golden test results should have been created for the new Cardano versions.
   Don't forget to commit those files, otherwise they will be recreated on each
   run in CI and not compared against the previous results, rendering them
@@ -151,7 +150,7 @@ bash ouroboros-consensus-cardano/failing_cddl_tests/call_cuddle_serialisedCardan
   been created in the ledger (e.g., `TxOut`), the `examples` function might have
   to take more arguments. This is where the golden test examples are defined,
   but only the Shelley ones are tested as part of this test suite. The others
-  are only tested as part of the `ouroboros-consensus-cardano-test` test suite.
+  are only tested as part of the `cardano-test` test suite.
 
 #### `unstable-cardano-testlib`
 

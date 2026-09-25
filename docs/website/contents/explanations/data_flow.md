@@ -14,8 +14,8 @@ Local clients (such as wallets and explorers) can also submit transactions and q
 
 Communication with the network happens through [mini-protocols](../references/glossary.md#mini-protocol), each responsible for a specific kind of data exchange.
 Cardano distinguishes two kinds of network connections:
-- **[Node-to-Node (NTN)](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Network/NodeToNode.hs)** for communication with other Cardano nodes, which are untrusted, and
-- **[Node-to-Client (NTC)](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Network/NodeToClient.hs)** for communication with local clients (wallets, explorers, CLI tools), which are trusted.
+- **[Node-to-Node (NTN)](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/diffusion/Ouroboros/Consensus/Network/NodeToNode.hs)** for communication with other Cardano nodes, which are untrusted, and
+- **[Node-to-Client (NTC)](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/diffusion/Ouroboros/Consensus/Network/NodeToClient.hs)** for communication with local clients (wallets, explorers, CLI tools), which are trusted.
 
 This distinction matters because NTN and NTC connections offer different sets of mini-protocols and have different security considerations.
 NTN connections are further split into upstream (peers from which we pull data) and downstream (peers to which we serve data).
@@ -212,15 +212,15 @@ graph TD
 For a lower-level view using a different notation, see the [reference data flow diagram](../references/data_flow.md).
 
 <!-- Reference-style links to source modules -->
-[chainsync-client]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs
-[blockfetch-client]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/BlockFetch/ClientInterface.hs
-[chainsync-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Server.hs
-[blockfetch-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/BlockFetch/Server.hs
-[localtxsubmission-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/LocalTxSubmission/Server.hs
-[localstatequery-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/LocalStateQuery/Server.hs
-[localtxmonitor-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/LocalTxMonitor/Server.hs
-[chaindb-api]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/API.hs
-[mempool-api]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/API.hs
-[block-forging]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Forging.hs
-[chainsel]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs
-[nodekernel]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs
+[chainsync-client]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs
+[blockfetch-client]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/BlockFetch/ClientInterface.hs
+[chainsync-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Server.hs
+[blockfetch-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/BlockFetch/Server.hs
+[localtxsubmission-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/LocalTxSubmission/Server.hs
+[localstatequery-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/LocalStateQuery/Server.hs
+[localtxmonitor-server]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/LocalTxMonitor/Server.hs
+[chaindb-api]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/API.hs
+[mempool-api]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Mempool/API.hs
+[block-forging]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Block/Forging.hs
+[chainsel]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs
+[nodekernel]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/diffusion/Ouroboros/Consensus/NodeKernel.hs

@@ -34,15 +34,9 @@ This repository also provides some executables:
 | `snapshot-converter` | Converts snapshots among the UTxO-HD formats of the database (InMemory, LSM)                          |
 
 Some documentation on how to use the tools can be found in the
-[`ouroboros-consensus:cardano` README](./ouroboros-consensus-cardano/README.md).
+[website](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/consensus_tools).
 
-To list all the available Cabal components, one can use the following script
-because unfortunately, `cabal` doesn't have a command to list the [available
-targets](https://github.com/haskell/cabal/issues/4070):
-
-``` bash
-grep -E "^(library|test-suite|executable|benchmark)" ouroboros-consensus.cabal --color=never | column -t | sort | sed 's/^/\t/'
-```
+To list all the available Cabal components, use `cabal target`.
 
 ## Building the project
 

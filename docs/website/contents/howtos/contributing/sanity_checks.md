@@ -6,13 +6,10 @@ This document is intended for anyone testing or benchmarking the Consensus compo
 ## Enable assertions
 
 Even if the Consensus code is being benchmarked, it might be a good idea to *temporarily* enable assertions to perform additional checks on consistency.
-The following snippet can be added to the `cabal.project` file to enable assertions in our two main components:
+The following snippet can be added to the `cabal.project` file to enable assertions in our components:
 
 ```cabal
 package ouroboros-consensus
-  flags: +asserts
-
-package ouroboros-consensus-cardano
   flags: +asserts
 ```
 

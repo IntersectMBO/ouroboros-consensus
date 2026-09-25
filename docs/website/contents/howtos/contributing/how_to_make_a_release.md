@@ -576,14 +576,14 @@ The consensus packages are now split as follows:
 - `ouroboros-consensus`: contains the whole implementation of consensus, with an
   abstract `blk` type variable (and `BlockProtocol blk` type family) all over
   the place.
-- `ouroboros-consensus-diffusion`: glues together `ouroboros-consensus` and
+- `diffusion`: glues together `ouroboros-consensus` and
   `ouroboros-network` code.
-- `ouroboros-consensus-protocol`: defines the `Praos` and `TPraos`
+- `protocol`: defines the `Praos` and `TPraos`
   instantiations of the protocols.
-- `ouroboros-consensus-cardano`: contains the instantiations of `blk` for the
+- `cardano`: contains the instantiations of `blk` for the
   Cardano case, which also entails all the typeclass instances required to
   support `ouroboros-consensus` and the association with the protocols in
-  `ouroboros-consensus-protocol`. In particular it contains 3 subdirectories
+  `protocol`. In particular it contains 3 subdirectories
   with the `byron`, `shelley` and `cardano` (`HardForkBlock`) instantitations.
 
   It also contains the code for the `cardano-tools` like `db-analyzer` and
@@ -591,8 +591,8 @@ The consensus packages are now split as follows:
 
 ``` mermaid
 flowchart TD
-    D[ouroboros-consensus-diffusion] --> C
-    A[ouroboros-consensus-cardano] --> B[ouroboros-consensus-protocol]
+    D[diffusion] --> C
+    A[cardano] --> B[protocol]
     A --> C
     B --> C[ouroboros-consensus]
 ```
