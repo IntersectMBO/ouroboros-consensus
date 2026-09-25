@@ -9,6 +9,7 @@ module LeiosDemoDb.Common
     LeiosDbHandle (..)
   , LeiosDbStats (..)
   , LeiosEbNotification (..)
+  , allocateHandle
 
     -- * Reading
   , LeiosDbReader (..)
@@ -145,6 +146,9 @@ allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) (\r
 
 allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
 allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) (\w -> w.close)
+
+allocateHandle :: IOLike m => ResourceRegistry m -> m (LeiosDbHandle m) -> m (LeiosDbHandle m)
+allocateHandle registry open = snd <$> allocate registry (\_ -> open) (\db -> db.close)
 
 instance NoThunks (LeiosDbHandle m) where
   showTypeOf _ = "LeiosDbHandle"

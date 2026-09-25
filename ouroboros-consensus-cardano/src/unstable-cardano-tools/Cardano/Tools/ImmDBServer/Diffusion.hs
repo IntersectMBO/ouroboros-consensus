@@ -4,7 +4,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Cardano.Tools.ImmDBServer.Diffusion
@@ -27,7 +26,7 @@ import qualified Data.Text.Encoding as T
 import Data.Void (Void)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbHandle (..))
+import LeiosDemoDb (allocateHandle)
 import qualified LeiosDemoDb
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoTypes as Leios
@@ -121,16 +120,11 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
   -- The readers below go into the same registry, which releases youngest
   -- first, so they close before the database does.
   leiosDb <-
-    fmap snd
-      . allocate
-        registry
-        ( \_ ->
-            LeiosDemoDb.newLeiosDBSQLite
-              nullTracer
-              (leiosDbFile <> ".vol.db")
-              (leiosDbFile <> ".imm.db")
-        )
-      $ \handle -> handle.close
+    allocateHandle registry $
+      LeiosDemoDb.newLeiosDBSQLite
+        nullTracer
+        (leiosDbFile <> ".vol.db")
+        (leiosDbFile <> ".imm.db")
   let mkLeiosNotifyContext registry' = do
         -- each LeiosNotify server calls this when it initializes
         leiosMailbox <- MVar.newEmptyMVar

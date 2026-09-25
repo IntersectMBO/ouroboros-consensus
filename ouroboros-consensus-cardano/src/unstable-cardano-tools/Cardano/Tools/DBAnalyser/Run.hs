@@ -3,7 +3,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
@@ -23,7 +22,12 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
-import LeiosDemoDb (LeiosDbHandle (..), newLeiosDBInMemory, newLeiosDBSQLite, withReader)
+import LeiosDemoDb
+  ( allocateHandle
+  , newLeiosDBInMemory
+  , newLeiosDBSQLite
+  , withReader
+  )
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -159,8 +163,7 @@ analyse dbaConfig args =
     -- left writing to the immutable partition with nobody able to stop it.
     -- The registry releases youngest first and nothing else is in it yet, so
     -- the handle closes after every resource that reads through it.
-    leiosDbHandle <-
-      fmap snd . allocate registry (\_ -> openLeiosDb) $ \handle -> handle.close
+    leiosDbHandle <- allocateHandle registry openLeiosDb
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
