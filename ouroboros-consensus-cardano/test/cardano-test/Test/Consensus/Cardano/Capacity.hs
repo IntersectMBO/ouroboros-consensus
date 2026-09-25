@@ -186,7 +186,7 @@ prop_dijkstra st =
       ledgerTables
 
 -- | A Dijkstra transaction costs its block measure in the closure, and the
--- reference 'encodeLeiosEb' writes for its byte size. The reference-scripts
+-- reference 'encodeEndorserBlock' writes for its byte size. The reference-scripts
 -- size differs from the byte size, so reading the wrong field fails.
 prop_dijkstraTxEbMeasure :: Property
 prop_dijkstraTxEbMeasure =
