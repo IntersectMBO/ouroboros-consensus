@@ -130,8 +130,9 @@ protocolParams nc triggers leaderCredentials =
   CardanoProtocolParams
     ProtocolParamsByron
       { byronGenesis = Cfg.byronGenesisConfig nc
-      , -- Not modelled by cardano-config; the node's own default is to leave the
-        -- genesis-imposed threshold alone.
+      , -- cardano-config removed the PBftSignatureThreshold key, so there is
+        -- nothing to read: 'Nothing' makes 'protocolInfoByron' use consensus'
+        -- own 'defaultPBftSignatureThreshold' of 0.22.
         byronPbftSignatureThreshold = Nothing
       , -- What a forged Byron block announces about itself; see their haddocks.
         byronProtocolVersion = defaultByronProtocolVersion
