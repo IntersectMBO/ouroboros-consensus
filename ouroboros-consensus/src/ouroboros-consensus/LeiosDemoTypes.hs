@@ -533,6 +533,16 @@ data EbFetchState
     -- EbFetchState\/EbState\/LeiosOutstanding and a monadic body-acquire;
     -- deferred.
     BodyAcquired !Jobs.LeiosJobPool
+  | -- | The body's bytes are in hand and its LeiosDb write is in flight, but not
+    -- yet durable.
+    --
+    -- Distinct from 'BodyAcquired' because that one asserts the LeiosDb holds the
+    -- body, and the fetch logic retires a peer's offer for good on the strength of
+    -- it. A write that never lands would stranding the EB permanently. This state
+    -- suppresses re-fetching just the same (so no redundant body write), but is
+    -- owned by the thread doing the write: 'confirmBodyPersisted' promotes it once
+    -- the write is durable, and any other exit restores 'NoBody'.
+    BodyPersisting !Jobs.LeiosJobPool
   deriving (Eq, Show)
 
 ebStateMaxSlot :: EbState -> SlotNo
@@ -545,11 +555,28 @@ ebStateOnset (MkEbState _slot onset _fetchState) = onset
 
 -- | Whether we already hold the EB's body (the "do we have it?" test that the
 -- offer/announcement/arrival paths consult before fetching).
+-- | Read a 'BodyPersisting' as the 'BodyAcquired' it is on its way to becoming.
+--
+-- Every fetch decision is the same either way -- the body's bytes are in hand,
+-- so what is left to fetch is the closure -- and the distinction only exists so
+-- that a write which never lands cannot retire an offer for good. Normalising at
+-- the few decision sites keeps that distinction out of them.
+settled :: EbFetchState -> EbFetchState
+settled = \case
+  BodyPersisting jobPool -> BodyAcquired jobPool
+  other -> other
+
+settledEbState :: EbState -> EbState
+settledEbState (MkEbState slot onset fetchState) = MkEbState slot onset (settled fetchState)
+
 ebStateHasBody :: EbState -> Bool
 ebStateHasBody (MkEbState _slot _onset fetchState) = case fetchState of
   NoBody -> False
   BodyImminent -> False
   BodyAcquired{} -> True
+  -- The bytes are in hand, so re-fetching would be redundant; this is also the
+  -- exclusion that stops a second deliverer re-paying the body write.
+  BodyPersisting{} -> True
 
 -- | A size summary of the LeiosFetch decision loop's working set
 --
@@ -676,6 +703,9 @@ summarizeDecisions decs =
  where
   reqs = concatMap toList (Map.elems decs)
 
+-- | Record that the body's bytes are in hand and its write is in flight. The
+-- write's own thread must then either 'confirmBodyPersisted' it or
+-- 'abandonBodyPersist' it; see 'BodyPersisting'.
 insertAcquiredEbBody ::
   EbHash -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
 insertAcquiredEbBody ebHash jobPool =
@@ -689,10 +719,32 @@ insertAcquiredEbBody ebHash jobPool =
       Nothing
     Just (MkEbState slot onset fetchState) -> case fetchState of
       BodyAcquired{} -> Nothing
-      NoBody -> Just $ MkEbState slot onset (BodyAcquired jobPool)
+      BodyPersisting{} -> Nothing
+      NoBody -> Just $ MkEbState slot onset (BodyPersisting jobPool)
       BodyImminent ->
         -- note that we ignore the given jobPool here
-        Just $ MkEbState slot onset (BodyAcquired Jobs.emptyLeiosJobPool)
+        Just $ MkEbState slot onset (BodyPersisting Jobs.emptyLeiosJobPool)
+
+-- | The body's write is durable: the LeiosDb holds it, so the claim
+-- 'BodyAcquired' makes is now true.
+confirmBodyPersisted :: EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+confirmBodyPersisted ebHash =
+  alterEbState ebHash $ \case
+    Nothing -> Nothing
+    Just (MkEbState slot onset fetchState) -> case fetchState of
+      BodyPersisting jobPool -> Just $ MkEbState slot onset (BodyAcquired jobPool)
+      _ -> Nothing
+
+-- | The write did not land -- the writer failed, or the thread carrying it was
+-- killed. Back to 'NoBody', so the next offer is acted on rather than retired
+-- against a body the LeiosDb does not have.
+abandonBodyPersist :: EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+abandonBodyPersist ebHash =
+  alterEbState ebHash $ \case
+    Nothing -> Nothing
+    Just (MkEbState slot onset fetchState) -> case fetchState of
+      BodyPersisting{} -> Just $ MkEbState slot onset NoBody
+      _ -> Nothing
 
 -- | Record that our own forge is producing this EB
 markBodyImminent ::
@@ -706,6 +758,9 @@ markBodyImminent ebHash slot =
       NoBody -> Just $ MkEbState oldSlot onset BodyImminent
       BodyImminent -> Nothing
       BodyAcquired{} -> Just $ MkEbState oldSlot onset (BodyAcquired Jobs.emptyLeiosJobPool)
+      -- The forge has the whole closure, so nothing is left to fetch; but the
+      -- in-flight write still owns the promotion, so stay transient.
+      BodyPersisting{} -> Just $ MkEbState oldSlot onset (BodyPersisting Jobs.emptyLeiosJobPool)
 
 -- | Record that the EB with this hash is referenced (announced or offered) at this
 -- slot, along with that slot's wall-clock onset if known.
@@ -777,8 +832,12 @@ initializeLeiosOutstanding :: StdGen -> [LeiosPoint] -> SlotNo -> LeiosOutstandi
 initializeLeiosOutstanding prng points immTipSlot =
   F.foldl' (flip seed1) (emptyLeiosOutstanding prng immTipSlot) points
  where
+  -- These points were read back out of the LeiosDb, so the body is durable
+  -- already: settle it at once. Together with a confirmed write, this is the only
+  -- other way 'BodyAcquired' is reached -- both derived from the database.
   seed1 (MkLeiosPoint slot ebHash) =
-    insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool
+    confirmBodyPersisted ebHash
+      . insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool
       . recordMaxAnnouncementSlot ebHash slot SNothing
 
 -- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
