@@ -1020,7 +1020,9 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       -- 'BodyPersisting', so if both race the first wins; abandoning a body that
       -- did land costs one re-fetch, which is the safe direction.
       let confirmed = MVar.modifyMVar_ outstandingVar $ pure . Leios.confirmBodyPersisted ebHash
-          abandoned = MVar.modifyMVar_ outstandingVar $ pure . Leios.abandonBodyPersist ebHash
+          abandoned = do
+            MVar.modifyMVar_ outstandingVar $ pure . Leios.abandonBodyPersist ebHash
+            traceWith ktracer $ TraceLeiosBodyPersistAbandoned point
       flip onException abandoned $ do
         pointWritten <- writeEbPoint writer point ebBytesSize
         bodyWritten <- writeEbBody writer point eb
