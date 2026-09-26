@@ -739,12 +739,19 @@ confirmBodyPersisted ebHash =
 -- killed. Back to 'NoBody', so the next offer is acted on rather than retired
 -- against a body the LeiosDb does not have.
 abandonBodyPersist :: EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
-abandonBodyPersist ebHash =
-  alterEbState ebHash $ \case
-    Nothing -> Nothing
-    Just (MkEbState slot onset fetchState) -> case fetchState of
-      BodyPersisting{} -> Just $ MkEbState slot onset NoBody
-      _ -> Nothing
+abandonBodyPersist ebHash o =
+  case Map.lookup ebHash (ebState o) of
+    Just (MkEbState _ _ BodyPersisting{}) ->
+      -- Drop this EB's in-flight job records along with the pool they index
+      -- into. A later arrival builds a fresh pool, and a record left behind
+      -- would have a disconnect unpick a job that pool never picked.
+      (alterEbState ebHash (fmap (\(MkEbState slot onset _) -> MkEbState slot onset NoBody)) o)
+        { requestedJobsPerPeer =
+            Map.mapMaybe (nonNullMap . Map.delete ebHash) (requestedJobsPerPeer o)
+        }
+    _ -> o
+ where
+  nonNullMap m = if Map.null m then Nothing else Just m
 
 -- | Record that our own forge is producing this EB
 markBodyImminent ::

@@ -229,8 +229,11 @@ unpickJob (MkLeiosJobId jid) pool =
   -- One traversal of 'jobs': the pair functor carries the prior and new
   -- multiplicities (for the reverse-index move) alongside the new value.
   decrement1 Nothing = (Nothing, Nothing)
+  -- Floored: the multiplicity is an in-flight count, so it has no meaning below
+  -- zero, and a negative one would sort the job into a bucket ahead of every
+  -- genuinely unrequested one.
   decrement1 (Just (MkLeiosJobState job (MkLeiosJobMultiplicity m))) =
-    let m' = m - 1
+    let m' = max 0 (m - 1)
      in (Just (m, m'), Just (MkLeiosJobState job (MkLeiosJobMultiplicity m')))
 
 -- | Remove a job from the pool entirely (on its response arriving).
