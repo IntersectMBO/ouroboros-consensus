@@ -1022,7 +1022,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       let confirmed = MVar.modifyMVar_ outstandingVar $ pure . Leios.confirmBodyPersisted ebHash
           abandoned = do
             MVar.modifyMVar_ outstandingVar $ pure . Leios.abandonBodyPersist ebHash
-            traceWith ktracer $ TraceLeiosBodyPersistAbandoned point
+            traceWith ktracer $ TraceLeiosBlockAbandoned point
       flip onException abandoned $ do
         pointWritten <- writeEbPoint writer point ebBytesSize
         bodyWritten <- writeEbBody writer point eb
@@ -1412,7 +1412,10 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
         Unapplied
         toIngest
         (adjust (completeTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs)))
-        (adjust (releaseTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs)))
+        ( do
+            adjust (releaseTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs))
+            traceWith ktracer $ TraceLeiosBlockTxsAbandoned point
+        )
     traceWith ktracer $ TraceLeiosFetchTxsArrival (txArrival <> redundantExtra)
     -- 'refundTxRequest' reverses this peer's per-request byte accounting (but skips
     -- it if the peer was already cancelled in bulk by a disconnect).
