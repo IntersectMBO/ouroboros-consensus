@@ -1462,14 +1462,17 @@ data TraceLeiosKernel
     -- announcement and not forged locally.
     TraceLeiosBlockAcquired LeiosPoint (Maybe NominalDiffTime)
   | -- | The body's LeiosDb write did not land, so the claim that we hold it was
-    -- withdrawn and the EB is fetchable again. See 'BodyPersisting'.
-    TraceLeiosBodyPersistAbandoned LeiosPoint
+    -- withdrawn and the body is fetchable again. See 'BodyPersisting'.
+    TraceLeiosBlockAbandoned LeiosPoint
   | -- | The EB body was received but the point was not in the database. This is
     -- unexpected as the point should have been inserted during announcement handling.
     TraceLeiosBlockPointMissing LeiosPoint
   | -- | An EB's tx closure was first completed. Carries the EB's age on arrival,
     -- as for 'TraceLeiosBlockAcquired'.
     TraceLeiosBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
+  | -- | A delivered tx batch's LeiosDb write did not land, so its jobs were
+    -- handed back rather than retired and the txs are fetchable again.
+    TraceLeiosBlockTxsAbandoned LeiosPoint
   | -- | An EB body was inserted into the LeiosTxCache
     --
     -- Carries the LeiosTxCache summary (cache hits), how many of its txs we found
@@ -1761,9 +1764,9 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosKernelMsg"
       , "msg" .= s
       ]
-  TraceLeiosBodyPersistAbandoned (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+  TraceLeiosBlockAbandoned (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
-      [ "kind" .= Aeson.String "LeiosBodyPersistAbandoned"
+      [ "kind" .= Aeson.String "LeiosBlockAbandoned"
       , "ebSlot" .= ebSlot
       , "ebHash" .= prettyEbHash ebHash
       ]
@@ -1777,6 +1780,12 @@ traceLeiosKernelToObject = \case
   TraceLeiosBlockPointMissing (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockPointMissing"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      ]
+  TraceLeiosBlockTxsAbandoned (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockTxsAbandoned"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
@@ -1987,9 +1996,10 @@ data LeiosNSInfo = LeiosNSInfo
 data LeiosKernelNS
   = LKNSMsg
   | LKNSBlockAcquired
-  | LKNSBodyPersistAbandoned
+  | LKNSBlockAbandoned
   | LKNSBlockPointMissing
   | LKNSBlockTxsAcquired
+  | LKNSBlockTxsAbandoned
   | LKNSFetchBodyArrival
   | LKNSFetchTxsArrival
   | LKNSBodyHits
@@ -2021,9 +2031,10 @@ leiosKernelNSOf :: TraceLeiosKernel -> LeiosKernelNS
 leiosKernelNSOf = \case
   MkTraceLeiosKernel{} -> LKNSMsg
   TraceLeiosBlockAcquired{} -> LKNSBlockAcquired
-  TraceLeiosBodyPersistAbandoned{} -> LKNSBodyPersistAbandoned
+  TraceLeiosBlockAbandoned{} -> LKNSBlockAbandoned
   TraceLeiosBlockPointMissing{} -> LKNSBlockPointMissing
   TraceLeiosBlockTxsAcquired{} -> LKNSBlockTxsAcquired
+  TraceLeiosBlockTxsAbandoned{} -> LKNSBlockTxsAbandoned
   TraceLeiosFetchBodyArrival{} -> LKNSFetchBodyArrival
   TraceLeiosFetchTxsArrival{} -> LKNSFetchTxsArrival
   TraceLeiosBodyHits{} -> LKNSBodyHits
@@ -2057,13 +2068,18 @@ leiosKernelNSInfo :: LeiosKernelNS -> LeiosNSInfo
 leiosKernelNSInfo = \case
   LKNSMsg -> LeiosNSInfo ["Msg"] LSInfo []
   LKNSBlockAcquired -> LeiosNSInfo ["BlockAcquired"] LSInfo []
-  LKNSBodyPersistAbandoned ->
+  LKNSBlockAbandoned ->
     LeiosNSInfo
-      ["BodyPersistAbandoned"]
+      ["BlockAbandoned"]
       LSWarning
       [("leiosBodiesAbandoned", "LeiosFetch: bodies whose LeiosDb write did not land")]
   LKNSBlockPointMissing -> LeiosNSInfo ["BlockPointMissing"] LSWarning []
   LKNSBlockTxsAcquired -> LeiosNSInfo ["BlockTxsAcquired"] LSInfo []
+  LKNSBlockTxsAbandoned ->
+    LeiosNSInfo
+      ["BlockTxsAbandoned"]
+      LSWarning
+      [("leiosBlockTxsAbandoned", "LeiosFetch: tx batches whose LeiosDb write did not land")]
   LKNSFetchBodyArrival ->
     LeiosNSInfo
       ["FetchBodyArrival"]
@@ -2168,10 +2184,12 @@ traceLeiosKernelForHuman :: TraceLeiosKernel -> Text
 traceLeiosKernelForHuman = \case
   MkTraceLeiosKernel msg -> "LeiosKernel: " <> T.pack msg
   TraceLeiosBlockAcquired pt age -> "EB body acquired: " <> T.pack (show pt) <> " age=" <> showT age
-  TraceLeiosBodyPersistAbandoned pt ->
+  TraceLeiosBlockAbandoned pt ->
     "EB body write did not land, body fetchable again: " <> T.pack (show pt)
   TraceLeiosBlockPointMissing pt -> "EB point missing on body acquisition: " <> T.pack (show pt)
   TraceLeiosBlockTxsAcquired pt age -> "EB txs acquired: " <> T.pack (show pt) <> " age=" <> showT age
+  TraceLeiosBlockTxsAbandoned pt ->
+    "EB txs write did not land, txs fetchable again: " <> T.pack (show pt)
   TraceLeiosFetchBodyArrival fab ->
     "LeiosFetch EB body arrival (bytes): invalid="
       <> showT (fabInvalid fab)
