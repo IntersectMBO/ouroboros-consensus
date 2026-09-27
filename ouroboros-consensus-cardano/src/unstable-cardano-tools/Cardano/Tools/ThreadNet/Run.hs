@@ -161,7 +161,7 @@ run Opts{..} = do
       , imEbBodiesDownloaded . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut
       )
     print $
-      ("> eb-txs", length . imTxs . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
+      ("> eb-txs", sum . fmap length . imEbTxBytes . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
 
   putStrLn "*** Outputting log files"
 

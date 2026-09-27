@@ -253,9 +253,9 @@ imInsertEbBody stateVar notificationChan point eb fills = do
         }
     -- Cross-EB fills: copy locally-held bytes into this EB's closure, before
     -- completion is judged. Same guards as the SQLite backend: the row must be
-    -- one the body declared, not yet filled, the source must hold the bytes,
-    -- and the size must match the declaration; a vanished source fills
-    -- nothing.
+    -- one the body declared, not yet filled, the source must hold the bytes
+    -- and declare the SAME tx hash (a stale location resolving to the wrong
+    -- EB fills nothing), and the size must match the declaration.
     st0 <- readTVar stateVar
     let ebHash = point.pointEbHash
         declared = Map.findWithDefault IntMap.empty ebHash (imEbBodies st0)
@@ -266,6 +266,9 @@ imInsertEbBody stateVar notificationChan point eb fills = do
             | (dstOff, srcEb, srcOff) <- fills
             , Just e <- [IntMap.lookup dstOff declared]
             , not (IntMap.member dstOff held)
+            , Just srcE <-
+                [IntMap.lookup srcOff (Map.findWithDefault IntMap.empty srcEb (imEbBodies st0))]
+            , eteTxHash srcE == eteTxHash e
             , Just bytes <-
                 [IntMap.lookup srcOff (Map.findWithDefault IntMap.empty srcEb (imEbTxBytes st0))]
             , fromIntegral (BS.length bytes) == eteTxBytesSize e

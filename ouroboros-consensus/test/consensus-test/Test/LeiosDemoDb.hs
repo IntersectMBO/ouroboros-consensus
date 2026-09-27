@@ -657,6 +657,16 @@ test_crossEbFill db = do
     -- and the closure reads back with A's bytes
     closure <- rwLookupEbClosure con (pointEbHash pointB)
     fmap (map snd) closure @?= Just [txBytesFor ebA 0, txBytesFor ebA 1]
+    -- C declares a DIFFERENT tx hash of the same size as A's offset 0: a
+    -- stale location resolving to the wrong EB must fill nothing even when
+    -- the lengths agree.
+    let pointC = mkTestPoint (SlotNo 3) 3
+        ebC = MkLeiosEb $ V.fromList [(mkTestTxHash 77, 100)]
+    rwInsertEbPoint con pointC (encodeLeiosEbSize ebC)
+    (completedC, filledC) <-
+      await =<< writeEbBody (rwWriter con) pointC ebC [(0, hashA, 0)]
+    filledC @?= []
+    completedC @?= []
 
 -- | Rows are pre-allocated by the body write, so bytes arriving before the
 -- body are dropped: there is no row to fill, and nothing may count towards
