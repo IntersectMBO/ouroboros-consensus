@@ -225,7 +225,7 @@ withHarness acquired txs k = do
   withReader db $ \reader -> withWriter db $ \writer -> do
     void $ await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
     void $ await =<< writeEbBody writer point eb
-    void $ await =<< writeTxs writer [(txHashOf tx, txBytes tx) | tx <- txs]
+    void $ await =<< writeTxs writer point (zip [0 ..] (map txBytes txs))
 
     cache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     void $ insertAnnouncement cache (pointSlotNo point) rbHash (pointEbHash point)

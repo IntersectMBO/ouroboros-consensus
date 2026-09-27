@@ -21,7 +21,7 @@ module LeiosDemoDb.SQLite
   , sql_schema
   , sql_insert_eb
   , sql_insert_ebBody
-  , sql_insert_tx
+  , sql_insert_ebTxBytes
   ) where
 
 import Cardano.Prelude (forM_, traverse_, when)
@@ -59,7 +59,7 @@ import Control.Exception
   , throwIO
   , toException
   )
-import Control.Monad (filterM, forever, join, unless, void)
+import Control.Monad (filterM, foldM, forever, join, unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , catch
@@ -73,7 +73,6 @@ import Control.Tracer (Tracer, traceWith)
 import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
@@ -162,8 +161,6 @@ newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
 
 -- | 'newLeiosDBSQLite' with an explicit GC sweep batch size: how many EBs
 -- the writer evicts per turn, between the jobs it serves.
---
--- Note that orphan transaction batch size is set by the 'gcOrphanTxBatchSize' constant.
 newLeiosDBSQLiteWithGcBatchSize ::
   Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
 newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
@@ -260,7 +257,7 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
           close = void . await =<< submitJob writeQueue Flush
         , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
         , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
-        , writeTxs = \txs -> submitJob writeQueue (WriteTxs txs)
+        , writeTxs = \point offBytes -> submitJob writeQueue (WriteTxs point offBytes)
         }
 
 -- | 'newLeiosDBSQLite' bracketed with its 'close': on release every pending
@@ -469,8 +466,8 @@ data CopierConn = CopierConn
   -- ^ 'sql_copy_insert_eb'
   , ccInsertEbTxs :: !DB.Statement
   -- ^ 'sql_copy_insert_ebTxs'
-  , ccInsertTxs :: !DB.Statement
-  -- ^ 'sql_copy_insert_txs'
+  , ccInsertEbTxBytes :: !DB.Statement
+  -- ^ 'sql_copy_insert_ebTxBytes'
   }
 
 -- | Prepare the copy statements on the writer's immutable connection, which
@@ -480,7 +477,7 @@ prepareCopierConn ccDb = do
   ccCompleteness <- dbPrepare ccDb (fromString sql_copy_completeness)
   ccInsertEb <- dbPrepare ccDb (fromString sql_copy_insert_eb)
   ccInsertEbTxs <- dbPrepare ccDb (fromString sql_copy_insert_ebTxs)
-  ccInsertTxs <- dbPrepare ccDb (fromString sql_copy_insert_txs)
+  ccInsertEbTxBytes <- dbPrepare ccDb (fromString sql_copy_insert_ebTxBytes)
   pure CopierConn{..}
 
 -- | Statements only; 'ccDb' is the writer's immutable connection.
@@ -489,7 +486,7 @@ finalizeCopierConn CopierConn{..} = do
   dbFinalize ccCompleteness
   dbFinalize ccInsertEb
   dbFinalize ccInsertEbTxs
-  dbFinalize ccInsertTxs
+  dbFinalize ccInsertEbTxBytes
 
 -- | Copy one pinned EB's closure into the immutable partition. 'True' when
 -- it landed, so the caller may have its volatile rows marked as copied.
@@ -514,7 +511,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       traceWith tracer $ TraceLeiosDbCopiedToImmutable 1
       pure True
  where
-  CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertTxs} = conn
+  CopierConn{ccDb, ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertEbTxBytes} = conn
 
   -- Attempt to do the actual copying.
   --
@@ -563,9 +560,9 @@ copyEbToImmutable tracer statsVar conn ebHash =
             dbStep1Safe ccInsertEbTxs
           nTxs <- DB.changes ccDb
           -- copy the transactions
-          useStmt ccInsertTxs $ do
-            dbBindBlob ccInsertTxs 1 ebHash.ebHashBytes
-            dbStep1Safe ccInsertTxs
+          useStmt ccInsertEbTxBytes $ do
+            dbBindBlob ccInsertEbTxBytes 1 ebHash.ebHashBytes
+            dbStep1Safe ccInsertEbTxBytes
           pure (Just nTxs)
 
 -- | The copier: the only writer into the immutable partition.
@@ -706,14 +703,6 @@ orCloseOnError db act =
 defaultGcBatchSize :: Int64
 defaultGcBatchSize = 4
 
--- | How many orphaned txs to GC in one sweep.
-gcOrphanTxBatchSize :: Int64
-gcOrphanTxBatchSize = 1024
-
--- | Page size of the 'gcReinit' scan.
-gcCandidatesPageSize :: Int64
-gcCandidatesPageSize = 4096
-
 -- | Implements 'leiosDbGarbageCollect': the MARK phase of GC mark-and-sweep,
 -- as a 'GcMark' job on the writer (see 'gcMark').
 sqlGarbageCollect ::
@@ -747,29 +736,20 @@ gcMark ::
   SlotNo ->
   IO ()
 gcMark sweepDoorbell db gcStmts gcSlot = do
-  let GcStmts{gsHasWork, gsAddGcCandidatesTxs, gsMarkEbForGC} = gcStmts
+  let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
   -- check if GC has any work to do
   hasWork <-
     useStmt gsHasWork $ do
       dbBindInt64 gsHasWork 1 slot
       (/= 0) <$> readSingleInt64 gsHasWork
   when hasWork $ do
-    (nTxsStagedAsGCCandidates, nEbsMarked) <-
+    nEbsMarked <-
       dbWithWriteTransactionRaw db $ do
-        -- transactions must be marked for GC before their EBs,
-        -- due to the way the sql statements are written.
-        -- mark transactions b for GC
-        useStmt gsAddGcCandidatesTxs $ do
-          dbBindInt64 gsAddGcCandidatesTxs 1 slot
-          dbStep1Safe gsAddGcCandidatesTxs
-        nTxsStagedAsGCCandidates <- DB.changes db
-        -- now mark the EB
         useStmt gsMarkEbForGC $ do
           dbBindInt64 gsMarkEbForGC 1 slot
           dbStep1Safe gsMarkEbForGC
-        nEbsMarked <- DB.changes db
-        pure (nTxsStagedAsGCCandidates, nEbsMarked)
-    when (nTxsStagedAsGCCandidates > 0 || nEbsMarked > 0) $
+        DB.changes db
+    when (nEbsMarked > 0) $
       atomically $
         writeTVar sweepDoorbell True
  where
@@ -780,8 +760,6 @@ gcMark sweepDoorbell db gcStmts gcSlot = do
 data GcStmts = GcStmts
   { gsHasWork :: !DB.Statement
   -- ^ 'sql_gc_has_work'
-  , gsAddGcCandidatesTxs :: !DB.Statement
-  -- ^ 'sql_gc_stage_marked'
   , gsMarkEbForGC :: !DB.Statement
   -- ^ 'sql_gc_mark'
   }
@@ -789,14 +767,12 @@ data GcStmts = GcStmts
 prepareGcStmts :: HasCallStack => DB.Database -> IO GcStmts
 prepareGcStmts db = do
   gsHasWork <- dbPrepare db (fromString sql_gc_has_work)
-  gsAddGcCandidatesTxs <- dbPrepare db (fromString sql_gc_stage_marked)
   gsMarkEbForGC <- dbPrepare db (fromString sql_gc_mark)
   pure GcStmts{..}
 
 finalizeGcStmts :: GcStmts -> IO ()
 finalizeGcStmts GcStmts{..} = do
   dbFinalize gsHasWork
-  dbFinalize gsAddGcCandidatesTxs
   dbFinalize gsMarkEbForGC
 
 -- | Step a statement (safe FFI) to completion, collecting blob column 0.
@@ -828,24 +804,10 @@ data SweeperConn = SweeperConn
   -- ^ 'sql_sweep_pick_marked'
   , swEvictEbTxs :: !DB.Statement
   -- ^ 'sql_gc_ebTxs'
-  , swEvictMissingTxs :: !DB.Statement
-  -- ^ 'sql_gc_missing_txs'
+  , swEvictEbTxBytes :: !DB.Statement
+  -- ^ 'sql_gc_ebTxBytes'
   , swEvictEbs :: !DB.Statement
   -- ^ 'sql_gc_ebs_by_hash'
-  , swAnyMarked :: !DB.Statement
-  -- ^ 'sql_sweep_any_marked'
-  , swPickOrphans :: !DB.Statement
-  -- ^ 'sql_sweep_pick_orphans'
-  , swOrphanTxs :: !DB.Statement
-  -- ^ 'sql_sweep_orphan_txs'
-  , swPopOrphans :: !DB.Statement
-  -- ^ 'sql_sweep_pop_orphans'
-  , swHasUnstagedGcCandidates :: !DB.Statement
-  -- ^ 'sql_has_unstaged_gc_candidates'
-  , swUnstagedGcCandidatesPage :: !DB.Statement
-  -- ^ 'sql_unstaged_gc_candidates_page'
-  , swInsertGcCandidates :: !DB.Statement
-  -- ^ 'sql_insert_gc_candidates'
   }
 
 -- | Prepare the sweep statements on the writer's volatile connection.
@@ -853,15 +815,8 @@ prepareSweeperConn :: HasCallStack => DB.Database -> IO SweeperConn
 prepareSweeperConn swDb = do
   swPickMarked <- dbPrepare swDb (fromString sql_sweep_pick_marked)
   swEvictEbTxs <- dbPrepare swDb (fromString sql_gc_ebTxs)
-  swEvictMissingTxs <- dbPrepare swDb (fromString sql_gc_missing_txs)
+  swEvictEbTxBytes <- dbPrepare swDb (fromString sql_gc_ebTxBytes)
   swEvictEbs <- dbPrepare swDb (fromString sql_gc_ebs_by_hash)
-  swAnyMarked <- dbPrepare swDb (fromString sql_sweep_any_marked)
-  swPickOrphans <- dbPrepare swDb (fromString sql_sweep_pick_orphans)
-  swOrphanTxs <- dbPrepare swDb (fromString sql_sweep_orphan_txs)
-  swPopOrphans <- dbPrepare swDb (fromString sql_sweep_pop_orphans)
-  swHasUnstagedGcCandidates <- dbPrepare swDb (fromString sql_has_unstaged_gc_candidates)
-  swUnstagedGcCandidatesPage <- dbPrepare swDb (fromString sql_unstaged_gc_candidates_page)
-  swInsertGcCandidates <- dbPrepare swDb (fromString sql_insert_gc_candidates)
   pure SweeperConn{..}
 
 -- | Statements only; 'swDb' is the writer's volatile connection.
@@ -869,90 +824,30 @@ finalizeSweeperConn :: SweeperConn -> IO ()
 finalizeSweeperConn SweeperConn{..} = do
   dbFinalize swPickMarked
   dbFinalize swEvictEbTxs
-  dbFinalize swEvictMissingTxs
+  dbFinalize swEvictEbTxBytes
   dbFinalize swEvictEbs
-  dbFinalize swAnyMarked
-  dbFinalize swPickOrphans
-  dbFinalize swOrphanTxs
-  dbFinalize swPopOrphans
-  dbFinalize swHasUnstagedGcCandidates
-  dbFinalize swUnstagedGcCandidatesPage
-  dbFinalize swInsertGcCandidates
 
 -- | One 'SweepEbBatch' transaction: evict up to the given number of GC-marked
 -- EBs. Runs on the writer.
 sweepEbBatch :: SweeperConn -> Int64 -> IO Int
 sweepEbBatch conn batchSize = do
-  let SweeperConn{swDb, swPickMarked, swEvictEbTxs, swEvictMissingTxs, swEvictEbs} = conn
+  let SweeperConn{swDb, swPickMarked, swEvictEbTxs, swEvictEbTxBytes, swEvictEbs} = conn
   dbWithWriteTransactionRaw swDb $ do
     -- check if any EBs are ready to be evicted
     evictableEbs <- useStmt swPickMarked $ do
       -- a negative LIMIT means no limit in SQLite
       dbBindInt64 swPickMarked 1 (if batchSize <= 0 then -1 else batchSize)
       collectBlobs swPickMarked
-    -- evict EBs if any are ready to be GCed
+    -- Three range deletes: the bytes are owned by their EB, so there is
+    -- nothing to orphan and nothing to probe.
     if null evictableEbs
       then pure 0
       else do
         let evictableEbsJson = jsonHexArray evictableEbs
+        execJson swEvictEbTxBytes evictableEbsJson
         execJson swEvictEbTxs evictableEbsJson
-        execJson swEvictMissingTxs evictableEbsJson
         execJson swEvictEbs evictableEbsJson
         DB.changes swDb
-
--- | One 'SweepOrphanBatch' transaction: evict up to the given number of
--- orphaned txs, or 'Nothing' if there was nothing to do. Runs on the writer.
-sweepOrphanBatch :: SweeperConn -> Int64 -> IO (Maybe Int)
-sweepOrphanBatch conn batchSize = do
-  let SweeperConn{swDb, swAnyMarked, swPickOrphans, swOrphanTxs, swPopOrphans} = conn
-  dbWithWriteTransactionRaw swDb $ do
-    -- don't run the sweep if any GC-marked EBs remain
-    blocked <- useStmt swAnyMarked $ (/= 0) <$> readSingleInt64 swAnyMarked
-    if blocked
-      then pure Nothing
-      else do
-        -- look for txs to GC
-        orphanedTxs <- useStmt swPickOrphans $ do
-          dbBindInt64 swPickOrphans 1 batchSize
-          collectBlobs swPickOrphans
-        if null orphanedTxs
-          then pure Nothing
-          else do
-            let orphanedTxsJson = jsonHexArray orphanedTxs
-            -- evict transactions
-            execJson swOrphanTxs orphanedTxsJson
-            nTxs <- DB.changes swDb
-            -- and delete them from the GC transaction candidates table
-            execJson swPopOrphans orphanedTxsJson
-            pure (Just nTxs)
-
--- | Stage every unstaged GC candidate, one page per transaction.
---
--- The sweeper only ever reads 'gcTxCandidates', which the mark phase fills
--- ('sql_gc_stage_marked'). A tx orphaned by anything else -- a
--- 'truncateLeiosDbAfterSlot' that dropped its EB's rows, a database written
--- before the table existed -- is referenced by nothing and staged nowhere,
--- and would never be collected.
---
--- Only such out-of-band edits can leave that behind, and only before the
--- writer started, so this runs once per process, on the writer.
-gcReinit :: SweeperConn -> IO ()
-gcReinit conn = do
-  let SweeperConn{swDb, swHasUnstagedGcCandidates, swUnstagedGcCandidatesPage, swInsertGcCandidates} = conn
-  anyUnstaged <-
-    useStmt swHasUnstagedGcCandidates $
-      (/= 0) <$> readSingleInt64 swHasUnstagedGcCandidates
-  let pageLoop cursor = do
-        page <- useStmt swUnstagedGcCandidatesPage $ do
-          dbBindBlob swUnstagedGcCandidatesPage 1 cursor
-          dbBindInt64 swUnstagedGcCandidatesPage 2 gcCandidatesPageSize
-          collectBlobs swUnstagedGcCandidatesPage
-        unless (null page) $ do
-          dbWithWriteTransactionRaw swDb $
-            execJson swInsertGcCandidates (jsonHexArray page)
-          when (length page == fromIntegral gcCandidatesPageSize) $
-            pageLoop (last page)
-  when anyUnstaged $ pageLoop BS.empty
 
 -- * Connection management
 
@@ -974,15 +869,10 @@ data VolStmts = VolStmts
   , stLookupEbBody :: !DB.Statement
   , stInsertEbTxsRow :: !DB.Statement
   , stInitMissingCount :: !DB.Statement
-  , stInsertTx :: !DB.Statement
+  , stInsertEbTxBytes :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
-  , stInsertMissingTxs :: !DB.Statement
-  , stDeleteMissingTxs :: !DB.Statement
-  , stFindCompleteEbs :: !DB.Statement
-  , stMarkNotifiedEbs :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
-  , stFilterMissingTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
   }
@@ -1038,15 +928,10 @@ prepareVolStmts db = do
   stLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
   stInsertEbTxsRow <- dbPrepare db (fromString sql_insert_ebBody)
   stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
-  stInsertTx <- dbPrepare db (fromString sql_insert_tx)
+  stInsertEbTxBytes <- dbPrepare db (fromString sql_insert_ebTxBytes)
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
-  stInsertMissingTxs <- dbPrepare db (fromString sql_insert_missing_txs)
-  stDeleteMissingTxs <- dbPrepare db (fromString sql_delete_missing_txs)
-  stFindCompleteEbs <- dbPrepare db (fromString sql_find_complete_ebs)
-  stMarkNotifiedEbs <- dbPrepare db (fromString sql_mark_notified_ebs)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
-  stFilterMissingTxs <- dbPrepare db (fromString sql_filter_missing_txs_json)
   stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
   pure VolStmts{..}
@@ -1060,15 +945,10 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stLookupEbBody
   dbFinalize stInsertEbTxsRow
   dbFinalize stInitMissingCount
-  dbFinalize stInsertTx
+  dbFinalize stInsertEbTxBytes
   dbFinalize stDecrMissingCount
-  dbFinalize stInsertMissingTxs
-  dbFinalize stDeleteMissingTxs
-  dbFinalize stFindCompleteEbs
-  dbFinalize stMarkNotifiedEbs
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
-  dbFinalize stFilterMissingTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince
 
@@ -1133,7 +1013,7 @@ closeChecked db =
 data WriteJob
   = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
   | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
-  | WriteTxs ![(TxHash, ByteString)] !(WriteResult CompletedEbs)
+  | WriteTxs !LeiosPoint ![(Int, ByteString)] !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
@@ -1155,10 +1035,9 @@ type WriteResult a = StrictTMVar IO (Either SomeException a)
 -- most.
 data SweepState
   = SweepIdle
-  | -- | Evicting GC-marked EBs; carries how many so far.
+  | -- | Evicting GC-marked EBs; carries how many so far. There is no orphan
+    -- phase: an EB's tx bytes live in its own rows and die with it.
     SweepEbs !Int
-  | -- | Evicting the txs they orphaned; carries the EB and tx counts.
-    SweepOrphans !Int !Int
   deriving Eq
 
 -- | The writer's submission side: the job queue, and -- once the worker has
@@ -1220,7 +1099,7 @@ describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
-  WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
+  WriteTxs point offBytes _ -> "WriteTxs " <> show point <> " (" <> show (length offBytes) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
   MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
@@ -1233,7 +1112,7 @@ failJob :: SomeException -> WriteJob -> IO ()
 failJob cause = \case
   WriteEbPoint _ _ rv -> put rv
   WriteEbBody _ _ rv -> put rv
-  WriteTxs _ rv -> put rv
+  WriteTxs _ _ rv -> put rv
   Flush rv -> put rv
   PinEb _ rv -> put rv
   MarkCopied _ rv -> put rv
@@ -1326,7 +1205,6 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   sweepStateVar <- newTVarIO SweepIdle
-  gcReinitDoneVar <- newTVarIO False
   jobsServedVar <- newTVarIO (0 :: Int)
   jobsSinceCheckpointVar <- newTVarIO (0 :: Int)
   let notify = atomically . writeTChan notificationChan
@@ -1350,8 +1228,8 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
           publish resultVar (sqlInsertEbPoint conn point size) >> pure False
         WriteEbBody point eb resultVar ->
           publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure False
-        WriteTxs txs resultVar ->
-          publish resultVar (sqlInsertTxs tracer conn notify txs) >> pure False
+        WriteTxs point offBytes resultVar ->
+          publish resultVar (sqlInsertTxs tracer conn notify point offBytes) >> pure False
         Flush resultVar ->
           publish resultVar (pure ()) >> pure False
         PinEb ebHashes resultVar -> do
@@ -1444,35 +1322,20 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
                   writeTVar sweepDoorbell False
                   writeTVar sweepStateVar (SweepEbs 0)
                 pure rung
-              if not asked
-                then pure True
-                else do
-                  -- Stages the GC tx candidates a restart left behind.
-                  done <- readTVarIO gcReinitDoneVar
-                  unless done $ do
-                    gcReinit sweeperConn
-                    atomically $ writeTVar gcReinitDoneVar True
-                  pure False
+              pure (not asked)
             SweepEbs nEbs -> do
               evicted <- sweepEbBatch sweeperConn gcBatchSize
-              if evicted == 0
-                then atomically $ writeTVar sweepStateVar (SweepOrphans nEbs 0)
-                else do
+              if evicted > 0
+                then do
                   bumpVolatileStatsVar statsVar (negate evicted)
                   atomically $ writeTVar sweepStateVar (SweepEbs (nEbs + evicted))
-              pure False
-            SweepOrphans nEbs nTxs ->
-              sweepOrphanBatch sweeperConn gcOrphanTxBatchSize >>= \case
-                Just evicted -> do
-                  atomically $ writeTVar sweepStateVar (SweepOrphans nEbs (nTxs + evicted))
-                  pure False
-                Nothing -> do
-                  when (nEbs > 0 || nTxs > 0) $ do
+                else do
+                  when (nEbs > 0) $ do
                     -- Flush the WAL only after real work.
                     dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
                     traceWith tracer $ TraceLeiosDbEvicted nEbs
                   atomically $ writeTVar sweepStateVar SweepIdle
-                  pure False
+              pure False
 
   worker <- async $ do
     outcome <- try serve
@@ -1668,15 +1531,10 @@ sqlInsertEbBody tracer conn notify point eb = do
         "ebTxs"
         (show point.pointEbHash <> "@" <> show txOffset)
         stInsertEbTxsRow
-    -- Record which of this body's txs we still lack, then count them. Both in
-    -- this transaction, so an arrival can never see the rows without the count
-    -- or the other way round.
-    useStmt stInsertMissingTxs $ do
-      dbBindBlob stInsertMissingTxs 1 point.pointEbHash.ebHashBytes
-      dbStep1 stInsertMissingTxs
-    -- Initialize missingTxCount and read the resulting value via
-    -- @RETURNING missingTxCount@. Only /this/ point's row can have
-    -- transitioned to 0 as a consequence of the insert above.
+    -- Initialize missingTxCount from the two ranges (body rows minus bytes
+    -- rows already present for this content hash) and read the result via
+    -- @RETURNING missingTxCount@. In this transaction, so an arrival can never
+    -- see the rows without the count.
     missingCount <- useStmt stInitMissingCount $ do
       dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
       dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
@@ -1699,7 +1557,6 @@ sqlInsertEbBody tracer conn notify point eb = do
   Conn{connVolStmts} = conn
   VolStmts
     { stInsertEbTxsRow
-    , stInsertMissingTxs
     , stInitMissingCount
     , stMarkPointNotified
     } = connVolStmts
@@ -1722,60 +1579,57 @@ sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
   Conn ->
   (LeiosEbNotification -> IO ()) ->
-  [(TxHash, ByteString)] ->
+  LeiosPoint ->
+  [(Int, ByteString)] ->
   IO CompletedEbs
-sqlInsertTxs _tracer conn notify txs = do
-  -- Skip txs already persisted in 'txs'. Under mempool backlog,
-  -- successive forges (or overlapping peer EBs) re-present the same tx
-  -- hashes; attempting the INSERT and catching a constraint violation
-  -- still pays the bind + PK-lookup + reset cost per row.
-  missing <- Set.fromList <$> sqlFilterMissingTxs conn (map fst txs)
+sqlInsertTxs _tracer conn notify point offBytes = do
   completed <- dbWithWriteTransaction conn $ do
-    -- 'dbStepInsert' still handles the rare race where a concurrent
-    -- writer inserted the same hash between the filter above and the
-    -- INSERT below.
-    forM_ (novel missing) $ \(txHash, txBytes) -> do
-      let txBytesSize = fromIntegral $ BS.length txBytes
-          txHashBytes = let MkTxHash bytes = txHash in bytes
-      inserted <- useStmt stInsertTx $ do
-        dbBindBlob stInsertTx 1 txHashBytes
-        dbBindBlob stInsertTx 2 txBytes
-        dbBindInt64 stInsertTx 3 txBytesSize
-        dbStepInsert stInsertTx
-      when inserted $ do
-        useStmt stDecrMissingCount $ do
-          dbBindBlob stDecrMissingCount 1 txHashBytes
-          dbStep1 stDecrMissingCount
-        -- Strictly after the decrement, which reads these rows.
-        useStmt stDeleteMissingTxs $ do
-          dbBindBlob stDeleteMissingTxs 1 txHashBytes
-          dbStep1 stDeleteMissingTxs
-    -- Find newly-complete EBs (missingTxCount reached 0)
-    completed <- useStmt stFindCompleteEbs $ do
-      let loop acc =
-            dbStep stFindCompleteEbs >>= \case
-              DB.Done -> pure (reverse acc)
-              DB.Row -> do
-                ebHash <- MkEbHash <$> DB.columnBlob stFindCompleteEbs 0
-                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stFindCompleteEbs 1
-                loop (MkLeiosPoint slot ebHash : acc)
-      loop []
-    -- Mark them as notified so they are not found again
-    useStmt stMarkNotifiedEbs $ dbStep1 stMarkNotifiedEbs
-    pure completed
+    -- Sequential inserts within this EB's range; 'dbStepInsert' absorbs the
+    -- duplicate delivery of an offset (a second peer answering the same job).
+    n <-
+      foldM
+        ( \acc (txOffset, txBytes) -> do
+            inserted <- useStmt stInsertEbTxBytes $ do
+              dbBindBlob stInsertEbTxBytes 1 point.pointEbHash.ebHashBytes
+              dbBindInt64 stInsertEbTxBytes 2 (fromIntegral txOffset)
+              dbBindBlob stInsertEbTxBytes 3 txBytes
+              dbStepInsert stInsertEbTxBytes
+            pure (if inserted then acc + 1 else acc)
+        )
+        (0 :: Int64)
+        offBytes
+    if n == 0
+      then pure []
+      else do
+        -- Decrement every announcement of this content hash and collect the
+        -- ones this batch completed.
+        completedSlots <- useStmt stDecrMissingCount $ do
+          dbBindBlob stDecrMissingCount 1 point.pointEbHash.ebHashBytes
+          dbBindInt64 stDecrMissingCount 2 n
+          let loop acc =
+                dbStep stDecrMissingCount >>= \case
+                  DB.Done -> pure (reverse acc)
+                  DB.Row -> do
+                    slot <- SlotNo . fromIntegral <$> DB.columnInt64 stDecrMissingCount 0
+                    left <- DB.columnInt64 stDecrMissingCount 1
+                    loop (if left == 0 then slot : acc else acc)
+          loop []
+        -- Mark them notified so they are not completed twice.
+        forM_ completedSlots $ \slot -> useStmt stMarkPointNotified $ do
+          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo slot)
+          dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+          dbStep1 stMarkPointNotified
+        pure [MkLeiosPoint slot point.pointEbHash | slot <- completedSlots]
   -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ \point -> notify (AcquiredEbTxs point)
+  forM_ completed $ \p -> notify (AcquiredEbTxs p)
   pure completed
  where
   Conn{connVolStmts} = conn
   VolStmts
-    { stInsertTx
+    { stInsertEbTxBytes
     , stDecrMissingCount
-    , stDeleteMissingTxs
-    , stFindCompleteEbs
-    , stMarkNotifiedEbs
+    , stMarkPointNotified
     } = connVolStmts
-  novel missing = filter (\(h, _) -> h `Set.member` missing) txs
 
 -- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
 -- the offsets list as a JSON int array bound to a single parameter;
@@ -1829,24 +1683,6 @@ retrieveLoop stmt acc =
       let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
       retrieveLoop stmt ((offset, txHash, mbTxBytes) : acc)
 
--- | Batch-filter tx hashes against @txs@: passes txHashes as a JSON array
--- of hex strings; SQL decodes with @unhex()@ so index lookups on
--- @txs.txHashBytes@ still fire. Used internally by 'sqlInsertTxs' to skip
--- already-persisted txs.
-sqlFilterMissingTxs :: Conn -> [TxHash] -> IO [TxHash]
-sqlFilterMissingTxs conn txHashes =
-  dbWithTransaction db $ useStmt stmt $ do
-    dbBindUtf8 stmt 1 (jsonHexArray [b | MkTxHash b <- txHashes])
-    loop []
- where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stFilterMissingTxs = stmt}} = conn
-  loop acc =
-    dbStep stmt >>= \case
-      DB.Done -> pure (reverse acc)
-      DB.Row -> do
-        txHash <- MkTxHash <$> DB.columnBlob stmt 0
-        loop (txHash : acc)
-
 -- | Delete the EBs announced after the given slot.
 --
 -- For internal tooling.
@@ -1864,8 +1700,8 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
  where
   deletes =
     unlines
-      [ "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
-      , "DELETE FROM ebsMissingTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      [ "DELETE FROM ebTxBytes WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      , "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
       , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
       ]
 
@@ -1890,7 +1726,7 @@ deleteDanglingTxs :: HasCallStack => FilePath -> IO ()
 deleteDanglingTxs dbPath =
   withExistingLeiosDbFile dbPath $ \db ->
     dbExec db . fromString $
-      "DELETE FROM txs WHERE txHashBytes NOT IN (SELECT txHashBytes FROM ebTxs)"
+      "DELETE FROM ebTxBytes WHERE ebHashBytes NOT IN (SELECT ebHashBytes FROM ebs)"
 
 -- | Shrink a LeiosDb file to the space its rows need.
 --
@@ -2005,26 +1841,31 @@ sql_schema =
     , "  PRIMARY KEY (ebSlot, ebHashBytes)"
     , ");"
     , "CREATE INDEX idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
-    , "CREATE TABLE ebTxs ("
+    , -- The body: one row per referenced tx, written in one pass when the body
+      -- arrives. 'txHashBytes' is a payload here, not a key -- nothing indexes
+      -- by tx hash, so the insert is sequential within the EB. Optimized for
+      -- the worst case: an adversary shares no txs between EBs, so a shared
+      -- store only ever saved bytes an adversary declines to share, while its
+      -- hash-scattered writes cost ~1 dirtied page per row on every EB
+      -- (measured 79% of the body write) and scale with a tx count the EB
+      -- producer chooses.
+      "CREATE TABLE ebTxs ("
     , "  ebHashBytes BLOB NOT NULL,"
     , "  txOffset INTEGER NOT NULL,"
     , "  txHashBytes BLOB NOT NULL,"
     , "  txBytesSize INTEGER NOT NULL,"
     , "  PRIMARY KEY (ebHashBytes, txOffset)"
     , ");"
-    , -- This index speeds up tx -> EB lookups, which is necessary for GCing orphaned transactions
-      -- after their EB was GCed.
-      "CREATE INDEX idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);"
-    , "CREATE TABLE ebsMissingTxs ("
-    , "  txHashBytes BLOB NOT NULL,"
+    , -- The closure: tx bytes owned by the referencing EB, one row per FETCHED
+      -- tx, same key as its 'ebTxs' row. A tx shared by two EBs is stored
+      -- twice; in exchange writes are sequential (the wire delivers offset
+      -- ranges), completion is counting, and eviction is a range delete -- no
+      -- orphan concept, no tx-hash index.
+      "CREATE TABLE ebTxBytes ("
     , "  ebHashBytes BLOB NOT NULL,"
-    , "  PRIMARY KEY (txHashBytes, ebHashBytes)"
-    , ");"
-    , "CREATE INDEX idx_ebsMissingTxs_ebHashBytes ON ebsMissingTxs(ebHashBytes);"
-    , "CREATE TABLE txs ("
-    , "  txHashBytes BLOB NOT NULL PRIMARY KEY,"
+    , "  txOffset INTEGER NOT NULL,"
     , "  txBytes BLOB NOT NULL,"
-    , "  txBytesSize INTEGER NOT NULL"
+    , "  PRIMARY KEY (ebHashBytes, txOffset)"
     , ");"
     ]
 
@@ -2036,11 +1877,7 @@ sql_schema =
 sql_schema_gc :: String
 sql_schema_gc =
   unlines
-    [ -- Persistent orphan-tx hints: txs of GC-marked EBs, deleted only once
-      -- provably unreferenced ('sql_sweep_orphan_txs'). Survives restarts
-      -- together with the status = 3 marks.
-      "CREATE TABLE IF NOT EXISTS gcTxCandidates (txHashBytes BLOB NOT NULL PRIMARY KEY);"
-    , -- What the mark scan reads; marking removes the row from it, so
+    [ -- What the mark scan reads; marking removes the row from it, so
       -- each row is marked at most once.
       "CREATE INDEX IF NOT EXISTS idx_ebs_sweepable ON ebs(ebSlot) WHERE status IN (0, 2);"
     , -- What the sweeper's batch pick reads.
@@ -2092,83 +1929,37 @@ sql_insert_ebBody =
   "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize) VALUES (?, ?, ?, ?)\n\
   \"
 
-sql_insert_tx :: String
-sql_insert_tx =
-  "INSERT INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
+sql_insert_ebTxBytes :: String
+sql_insert_ebTxBytes =
+  "INSERT INTO ebTxBytes (ebHashBytes, txOffset, txBytes) VALUES (?, ?, ?)\n\
   \"
 
--- | Batch-filter txHashes via JSON1. Parameter is a JSON array of hex
--- strings; 'unhex(je.value)' decodes back into a BLOB comparable against
--- the indexed @txs.txHashBytes@ column.
-sql_filter_missing_txs_json :: String
-sql_filter_missing_txs_json =
-  "SELECT unhex(je.value) FROM json_each(?) je\n\
-  \WHERE NOT EXISTS (SELECT 1 FROM txs t WHERE t.txHashBytes = unhex(je.value))\n\
-  \"
-
--- | Find EBs that are now complete (missingTxCount reached 0). Volatile rows
--- only: completion is decided within the one coherent volatile set.
-sql_find_complete_ebs :: String
-sql_find_complete_ebs =
-  "SELECT ebHashBytes, ebSlot FROM ebs WHERE missingTxCount = 0 AND status = 0"
-
--- | Mark complete EBs as notified so they are not found again by
--- 'sql_find_complete_ebs'. Uses -1 as a sentinel for "already notified".
-sql_mark_notified_ebs :: String
-sql_mark_notified_ebs =
-  "UPDATE ebs SET missingTxCount = -1 WHERE missingTxCount = 0 AND status = 0"
-
--- | Decrement missingTxCount for every EB still /waiting/ on the given txHash.
+-- | Decrement missingTxCount on every announcement of this content hash by
+-- the number of tx-bytes rows a batch actually inserted, returning each
+-- touched row so the caller can spot the ones that just completed. Counting
+-- replaces the old per-tx 'ebsMissingTxs' bookkeeping: bytes are keyed by
+-- @(ebHash, txOffset)@, so an insert can only ever fill a hole in this EB.
 --
--- Uses 'ebsMissingTxs' rather than 'ebTxs', which makes this more efficient
--- than a full scan of 'ebTxs' in the average case.
---
--- Must be paired with 'sql_delete_missing_txs' in the same transaction.
---
--- Parameter 1: txHashBytes
+-- Parameters: 1 = ebHashBytes, 2 = rows inserted
 sql_decrement_missing_tx_count :: String
 sql_decrement_missing_tx_count =
-  "UPDATE ebs SET missingTxCount = missingTxCount - 1\n\
-  \WHERE ebHashBytes IN (SELECT ebHashBytes FROM ebsMissingTxs WHERE txHashBytes = ?)\n\
-  \  AND status = 0\n\
+  "UPDATE ebs SET missingTxCount = missingTxCount - ?2\n\
+  \WHERE ebHashBytes = ?1 AND status = 0 AND missingTxCount IS NOT NULL\n\
+  \RETURNING ebSlot, missingTxCount\n\
   \"
 
--- | Retire the waiting rows for a tx that has just landed.
--- Parameter 1: txHashBytes
-sql_delete_missing_txs :: String
-sql_delete_missing_txs =
-  "DELETE FROM ebsMissingTxs WHERE txHashBytes = ?"
-
--- | Record which of a freshly-inserted body's txs we do not yet hold.
---
--- One anti-join over the EB's own 'ebTxs' range -- the same work
--- 'sql_init_missing_tx_count' used to do to produce a count, now materialised so
--- that the arrival side reads the rows instead of recomputing them. Paying it
--- here rather than on every tx arrival is what earns the index removal: this
--- runs once per body, against ~4.7 times per tx for the old reverse lookup.
---
--- Parameter 1: ebHashBytes
-sql_insert_missing_txs :: String
-sql_insert_missing_txs =
-  "INSERT OR IGNORE INTO ebsMissingTxs (txHashBytes, ebHashBytes)\n\
-  \SELECT e.txHashBytes, e.ebHashBytes FROM ebTxs e\n\
-  \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
-  \WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
-  \"
-
--- | Initialize missingTxCount after EB body is inserted, returning the
--- resulting count. Counts ebTxs entries that don't yet have a corresponding
--- tx in the txs table. The RETURNING clause lets the caller detect the
--- special case @missingTxCount = 0@ (all referenced txs already present) with
--- a PK lookup on the row that was just touched, instead of a full-table
--- scan via 'sql_find_complete_ebs'.
+-- | Initialize missingTxCount after an EB body is inserted: the body rows
+-- minus the bytes rows already present for this content hash (a redelivered
+-- body at a second point finds the first point's bytes). RETURNING lets the
+-- caller detect @missingTxCount = 0@ with a PK lookup on the touched row.
 --
 -- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
 sql_init_missing_tx_count :: String
 sql_init_missing_tx_count =
   "UPDATE ebs SET missingTxCount = (\n\
-  \    SELECT COUNT(*) FROM ebsMissingTxs WHERE ebHashBytes = ?\n\
-  \) WHERE ebHashBytes = ? AND ebSlot = ?\n\
+  \    (SELECT COUNT(*) FROM ebTxs WHERE ebHashBytes = ?1)\n\
+  \  - (SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = ?1)\n\
+  \) WHERE ebHashBytes = ?2 AND ebSlot = ?3\n\
   \RETURNING missingTxCount\n\
   \"
 
@@ -2187,19 +1978,19 @@ sql_mark_point_notified =
 -- @(ebHashBytes, txOffset)@, so index lookups still fire.
 sql_retrieve_from_ebTxs_json :: String
 sql_retrieve_from_ebTxs_json =
-  "SELECT je.value, e.txHashBytes, t.txBytes\n\
+  "SELECT je.value, e.txHashBytes, b.txBytes\n\
   \FROM json_each(?2) je\n\
   \JOIN ebTxs e ON e.ebHashBytes = ?1 AND e.txOffset = je.value\n\
-  \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
+  \LEFT JOIN ebTxBytes b ON b.ebHashBytes = ?1 AND b.txOffset = je.value\n\
   \ORDER BY je.value ASC\n\
   \"
 
 sql_lookup_eb_closure :: String
 sql_lookup_eb_closure =
   unlines
-    [ "SELECT ebTx.txHashBytes, tx.txBytes"
+    [ "SELECT ebTx.txHashBytes, b.txBytes"
     , "FROM ebTxs as ebTx"
-    , "LEFT JOIN txs as tx ON ebTx.txHashBytes = tx.txHashBytes"
+    , "LEFT JOIN ebTxBytes as b ON b.ebHashBytes = ebTx.ebHashBytes AND b.txOffset = ebTx.txOffset"
     , "WHERE ebTx.ebHashBytes = ?"
     , "ORDER BY ebTx.txOffset ASC"
     ]
@@ -2234,13 +2025,12 @@ sql_mark_as_copied =
   "UPDATE ebs SET status = 2 WHERE ebHashBytes = ? AND status = 1"
 
 -- | Body row count and closure row count of the EB in the volatile
--- partition, in one probe: the LEFT JOIN's second count skips missing txs,
--- so the EB's closure is complete iff both counts are equal (and non-zero).
+-- partition, in one probe: the EB's closure is complete iff both counts are
+-- equal (and non-zero). Two range COUNTs on the shared PK.
 sql_copy_completeness :: String
 sql_copy_completeness =
-  "SELECT COUNT(*), COUNT(t.txHashBytes)\n\
-  \FROM vol.ebTxs e LEFT JOIN vol.txs t ON t.txHashBytes = e.txHashBytes\n\
-  \WHERE e.ebHashBytes = ?1\n\
+  "SELECT (SELECT COUNT(*) FROM vol.ebTxs WHERE ebHashBytes = ?1),\n\
+  \       (SELECT COUNT(*) FROM vol.ebTxBytes WHERE ebHashBytes = ?1)\n\
   \"
 
 -- | Copy the EB's newest announcement row, with the canonical immutable
@@ -2269,14 +2059,13 @@ sql_copy_insert_ebTxs =
   \WHERE ebHashBytes = ?1\n\
   \"
 
--- | Copy the EB's txs. @OR IGNORE@: a tx shared with an earlier-copied EB is
--- already present.
-sql_copy_insert_txs :: String
-sql_copy_insert_txs =
-  "INSERT OR IGNORE INTO txs (txHashBytes, txBytes, txBytesSize)\n\
-  \SELECT t.txHashBytes, t.txBytes, t.txBytesSize FROM vol.txs t\n\
-  \WHERE t.txHashBytes IN\n\
-  \  (SELECT txHashBytes FROM vol.ebTxs WHERE ebHashBytes = ?1)\n\
+-- | Copy the EB's tx bytes: a range copy on the shared PK. @OR IGNORE@ for
+-- the same reason as 'sql_copy_insert_eb'.
+sql_copy_insert_ebTxBytes :: String
+sql_copy_insert_ebTxBytes =
+  "INSERT OR IGNORE INTO ebTxBytes (ebHashBytes, txOffset, txBytes)\n\
+  \SELECT ebHashBytes, txOffset, txBytes FROM vol.ebTxBytes\n\
+  \WHERE ebHashBytes = ?1\n\
   \"
 
 -- | Which of the given hashes (JSON hex array) the immutable partition holds.
@@ -2309,9 +2098,8 @@ sql_gc_has_work :: String
 sql_gc_has_work =
   "SELECT EXISTS (SELECT 1 FROM ebs WHERE status IN (0, 2) AND ebSlot < ?1)"
 
--- | The markability predicate, shared by 'sql_gc_mark' and
--- 'sql_gc_stage_marked' so the marked set and the staged set can never
--- diverge. @c@ is the row under test; it is markable if it is
+-- | The markability predicate of 'sql_gc_mark'.
+-- @c@ is the row under test; it is markable if it is
 --   - old enough (its slot is before the GC frontier @?1@) and
 --   - either volatile (status 0) or already copied (status 2) and
 --   - not vetoed by a live row of the same hash (pinned, or announced at or
@@ -2323,19 +2111,6 @@ sql_gc_markable =
   \    (SELECT 1 FROM ebs live\n\
   \     WHERE live.ebHashBytes = c.ebHashBytes\n\
   \       AND (live.status = 1 OR live.ebSlot >= ?1))"
-
--- | Add the txs of every EB 'sql_gc_mark' is about to hit as GC candidates.
--- Must run strictly BEFORE 'sql_gc_mark' in the same transaction:
--- the UPDATE changes the 'status' of EBs and orphans the transactions.
-sql_gc_stage_marked :: String
-sql_gc_stage_marked =
-  "INSERT OR IGNORE INTO gcTxCandidates (txHashBytes)\n\
-  \SELECT DISTINCT e.txHashBytes FROM ebTxs e\n\
-  \WHERE e.ebHashBytes IN\n\
-  \  (SELECT DISTINCT c.ebHashBytes FROM ebs c\n\
-  \   WHERE "
-    <> sql_gc_markable
-    <> ")"
 
 -- | Mark for GC (@status = 3@) every row satisfying 'sql_gc_markable'.
 sql_gc_mark :: String
@@ -2368,67 +2143,15 @@ sql_gc_ebTxs :: String
 sql_gc_ebTxs =
   "DELETE FROM ebTxs WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
 
--- | Evict the 'ebsMissingTxs' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
-sql_gc_missing_txs :: String
-sql_gc_missing_txs =
-  "DELETE FROM ebsMissingTxs WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
+-- | Evict the 'ebTxBytes' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
+sql_gc_ebTxBytes :: String
+sql_gc_ebTxBytes =
+  "DELETE FROM ebTxBytes WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
 
 -- | Evict the 'ebs' rows with the specified 'ebHashBytes' (a JSON array of byte strings).
 sql_gc_ebs_by_hash :: String
 sql_gc_ebs_by_hash =
   "DELETE FROM ebs WHERE ebHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)"
-
--- | Whether any GC-marked EBs remain.
-sql_sweep_any_marked :: String
-sql_sweep_any_marked =
-  "SELECT EXISTS (SELECT 1 FROM ebs WHERE status = 3)"
-
--- | Get up to @?1@ transactions to be evicted.
-sql_sweep_pick_orphans :: String
-sql_sweep_pick_orphans =
-  "SELECT txHashBytes FROM gcTxCandidates LIMIT ?1"
-
--- | Evict transactions with the specified hashes (a JSON array of byte strings),
---   making sure that they are not referenced by any EBs.
-sql_sweep_orphan_txs :: String
-sql_sweep_orphan_txs =
-  "DELETE FROM txs\n\
-  \WHERE txHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)\n\
-  \  AND NOT EXISTS\n\
-  \    (SELECT 1 FROM ebTxs WHERE ebTxs.txHashBytes = txs.txHashBytes)\n\
-  \"
-
--- | Delete GC transaction candidates with the specified hashes (a JSON array of byte strings).
-sql_sweep_pop_orphans :: String
-sql_sweep_pop_orphans =
-  "DELETE FROM gcTxCandidates\n\
-  \WHERE txHashBytes IN (SELECT unhex(je.value) FROM json_each(?1) je)\n\
-  \"
-
--- | Whether the volatile partition holds any unstaged GC candidates (txs no
--- EB references).
-sql_has_unstaged_gc_candidates :: String
-sql_has_unstaged_gc_candidates =
-  "SELECT EXISTS (SELECT 1 FROM txs WHERE NOT EXISTS\n\
-  \  (SELECT 1 FROM ebTxs WHERE ebTxs.txHashBytes = txs.txHashBytes))\n\
-  \"
-
--- | One keyset page of unstaged GC candidates (txs no EB references), for
--- 'gcReinit': @?1@ = cursor (exclusive), @?2@ = page size.
-sql_unstaged_gc_candidates_page :: String
-sql_unstaged_gc_candidates_page =
-  "SELECT txHashBytes FROM txs\n\
-  \WHERE txHashBytes > ?1\n\
-  \  AND NOT EXISTS (SELECT 1 FROM ebTxs WHERE ebTxs.txHashBytes = txs.txHashBytes)\n\
-  \ORDER BY txHashBytes LIMIT ?2\n\
-  \"
-
--- | Stage one page of GC candidates (JSON hex array @?1@).
-sql_insert_gc_candidates :: String
-sql_insert_gc_candidates =
-  "INSERT OR IGNORE INTO gcTxCandidates (txHashBytes)\n\
-  \SELECT unhex(je.value) FROM json_each(?1) je\n\
-  \"
 
 -- * Low-level terminating SQLite functions
 

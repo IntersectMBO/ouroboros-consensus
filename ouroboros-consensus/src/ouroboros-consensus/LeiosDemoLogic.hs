@@ -806,7 +806,7 @@ data LeiosBlockTxsSource pid
   | -- | Carries an EB's txs that 'processLeiosBlock' found in our local mempool
     -- (so it removed them from the fetch job set), already paired with their
     -- (known) tx hashes, to be ingested applied.
-    MempoolTxs !LeiosPoint !(Map TxHash BS.ByteString)
+    MempoolTxs !LeiosPoint !(IntMap.IntMap (TxHash, BS.ByteString))
 
 -- | The age of an EB on arrival: the wall-clock elapsed from its recorded oldest
 -- announcement-slot onset (see 'Leios.ebStateOnset') to @now@, or 'Nothing' if
@@ -885,7 +885,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- only novelty check we need: keyed off the lock, two peers delivering the same
   -- body cannot both write it (the second sees 'novel = False'), so we neither
   -- re-pay the ~16k-row write nor emit a storm of 'LeiosDbInsertCollision's.
-  (shouldPersist, bodyClass, mempoolNotCache, mempoolAndCache) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
+  (shouldPersist, bodyClass, mempoolIngest) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
     let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
         novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
@@ -923,8 +923,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
           ,
             ( False
             , (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
-            , Map.empty
-            , Map.empty
+            , IntMap.empty
             )
           )
       else do
@@ -939,7 +938,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
             (Leios.serializeEbBody eb)
             IntMap.empty
             (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
-        (bodyClass, misses, mbBodyTxCacheSummary) <- case source of
+        (bodyClass, _cacheMisses, mbBodyTxCacheSummary) <- case source of
           -- A forge holds its whole closure, so nothing is missing. Its txs are
           -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
           -- 'insertBody' above only served to register the cache entries.
@@ -971,13 +970,17 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         let MkLeiosEb ebTxs = eb
             fullTxSet = IntMap.fromList (zip [0 ..] (V.toList ebTxs))
         (notInMempool, mempoolHits) <- pullFromMempool fullTxSet
-        let cacheMissHashes = Set.fromList [txh | (txh, _sz) <- IntMap.elems misses]
-            -- in the mempool but not the cache: full ingest (DB + Applied cache).
-            mempoolNotCache = Map.restrictKeys mempoolHits cacheMissHashes
-            -- in both: already persisted, so we only mark them Applied in the cache.
-            mempoolAndCache = Map.withoutKeys mempoolHits cacheMissHashes
-            -- in neither the mempool nor the cache: the actual fetch set.
-            missedBoth = IntMap.intersection misses notInMempool
+        -- The fetch set is everything the mempool cannot supply. The cache is
+        -- NOT consulted for it: it records tx hashes we have seen, but bytes
+        -- are owned per (ebHash, txOffset) now, so a hash seen in another EB
+        -- says nothing about whether THIS EB's row is filled. Letting it
+        -- suppress a fetch is how a closure never completes. ('misses' above
+        -- still feeds the cache-hit telemetry.)
+        let mempoolIngest =
+              IntMap.mapMaybeWithKey
+                (\_ (txh, _sz) -> (,) txh <$> Map.lookup txh mempoolHits)
+                (IntMap.difference fullTxSet notInMempool)
+            missedBoth = notInMempool
         -- Report the body's cache+mempool hit picture: the cache summary, the full
         -- mempool-resident count, and how many txs were in neither (so the combined
         -- hit rate is @(txsInEb - missedBoth) / txsInEb@, avoiding double counting).
@@ -996,7 +999,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                 (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
                 missedBoth
             !outstanding' = Leios.insertAcquiredEbBody ebHash jobPool outstandingCleaned
-        pure (outstanding', (True, bodyClass, mempoolNotCache, mempoolAndCache))
+        pure (outstanding', (True, bodyClass, mempoolIngest))
   void $ MVar.tryPutMVar readyVar ()
   case source of
     ForgedBlock{} -> pure () -- self-produced: not a fetch arrival
@@ -1047,16 +1050,10 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                 ( traceException tracer TraceLeiosPeerDbException settle
                     `onException` abandoned
                 )
-  -- The cache updates: the fetch logic reads them to decide what is still
-  -- missing, so they must land before we return.
-  --
-  -- Overlap (in both the mempool and the cache): already persisted, so only
-  -- upgrade them to Applied in the cache -- no (redundant) DB insert.
-  unless (Map.null mempoolAndCache) $
-    withLockedInsertAppliedTx txCache $ \w0 step ->
-      foldM (\w txh -> step w txh ()) w0 (Map.keys mempoolAndCache)
-  -- Mempool-only (not in the cache): full ingest into the DB and cache.
-  unless (Map.null mempoolNotCache) $
+  -- Every mempool hit is ingested for THIS EB: bytes are per (ebHash, offset),
+  -- so "the tx is already persisted" (for some other EB) no longer excuses
+  -- skipping the write. Also what marks them Applied in the cache.
+  unless (IntMap.null mempoolIngest) $
     processLeiosBlockTxs
       ktracer
       tracer
@@ -1064,7 +1061,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       txCache
       writer
       systemTime
-      (MempoolTxs point mempoolNotCache)
+      (MempoolTxs point mempoolIngest)
 
 -- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
 -- mempool (the forge, which already holds the whole closure, and tests): keep
@@ -1289,14 +1286,18 @@ ingestJob ::
   IntMap.IntMap (LeiosTx, BS.ByteString) ->
   Jobs.LeiosJobId ->
   Jobs.LeiosJob ->
-  Either String [(TxHash, BS.ByteString)]
+  Either String [(Int, TxHash, BS.ByteString)]
 ingestJob aligned (Jobs.MkLeiosJobId jid) (Jobs.MkLeiosJob offs _expectedBytes expectedRoot)
-  | Jobs.jobRootHashOfTxHashes (map fst hashed) /= expectedRoot =
+  | Jobs.jobRootHashOfTxHashes [h | (_, h, _) <- hashed] /= expectedRoot =
       Left $ "MsgLeiosBlockTxs job " ++ show jid ++ " root-hash mismatch"
   | otherwise = Right hashed
  where
-  -- 'IntMap.elems' is ascending by offset -- the order the root hash commits to.
-  hashed = [(hashLeiosTx tx, bs) | (tx, bs) <- IntMap.elems (IntMap.restrictKeys aligned offs)]
+  -- 'IntMap.toAscList' is ascending by offset -- the order the root hash
+  -- commits to, and the key the LeiosDb stores the bytes under.
+  hashed =
+    [ (off, hashLeiosTx tx, bs)
+    | (off, (tx, bs)) <- IntMap.toAscList (IntMap.restrictKeys aligned offs)
+    ]
 
 -----
 
@@ -1329,7 +1330,10 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
       ingestAcquiredTxs
         now
         Applied
-        (V.toList (V.map fst (leiosEbTxs eb)) `zip` V.toList (V.map cbor txs))
+        [ (off, txh, bs)
+        | (off, (txh, _sz), bs) <-
+            zip3 [0 ..] (V.toList (leiosEbTxs eb)) (V.toList (V.map cbor txs))
+        ]
         (pure ())
         (pure ())
     void $ MVar.tryPutMVar readyVar ()
@@ -1338,7 +1342,13 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     -- Txs found in our local mempool (so already-known-valid): ingest applied,
     -- using the hashes we already have. No peer accounting, no arrival telemetry.
     -- Mempool-sourced: likewise no fetch jobs of ours.
-    _ <- ingestAcquiredTxs now Applied (Map.toList hits) (pure ()) (pure ())
+    _ <-
+      ingestAcquiredTxs
+        now
+        Applied
+        [(off, txh, bs) | (off, (txh, bs)) <- IntMap.toAscList hits]
+        (pure ())
+        (pure ())
     void $ MVar.tryPutMVar readyVar ()
   ReceivedTxsFrom peerId req@(MkLeiosBlockTxsRequest point jobs) txs -> do
     now <- systemTimeCurrent systemTime
@@ -1437,18 +1447,25 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
   adjust :: (LeiosOutstanding pid -> LeiosOutstanding pid) -> m ()
   adjust f = MVar.modifyMVar_ outstandingVar (pure . f)
 
+  -- The EB whose rows this call fills; every source names it.
+  ingestPoint :: LeiosPoint
+  ingestPoint = case source of
+    ForgedTxs point _ _ -> point
+    MempoolTxs point _ -> point
+    ReceivedTxsFrom _ (MkLeiosBlockTxsRequest point _) _ -> point
+
   -- 'onDurable' runs once the txs are in the LeiosDb, 'onLost' if they never get
   -- there; exactly one of them runs.
   ingestAcquiredTxs ::
     RelativeTime ->
     WhetherApplied ->
-    [(TxHash, BS.ByteString)] ->
+    [(Int, TxHash, BS.ByteString)] ->
     m () ->
     m () ->
     m Leios.FetchArrivalBytes
   ingestAcquiredTxs now applied toIngest onDurable onLost = do
     flip onException onLost $ do
-      txsWritten <- writeTxs writer toIngest
+      txsWritten <- writeTxs writer ingestPoint [(off, bs) | (off, _txh, bs) <- toIngest]
       let traceCompleted = do
             completed <- traceException tracer TraceLeiosPeerDbException $ await txsWritten
             onDurable
@@ -1465,11 +1482,11 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     case applied of
       Applied -> do
         withLockedInsertAppliedTx txCache $ \w0 step ->
-          foldM (\w (txh, _bs) -> step w txh ()) w0 toIngest
+          foldM (\w (_off, txh, _bs) -> step w txh ()) w0 toIngest
         pure mempty
       Unapplied ->
         withLockedInsertUnappliedTx txCache $ \w0 step ->
-          foldM (\w (txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
+          foldM (\w (_off, txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
 
 -- | Whether ingested txs are tagged applied (from our forge's validated mempool)
 -- or unapplied (fetched from a peer).

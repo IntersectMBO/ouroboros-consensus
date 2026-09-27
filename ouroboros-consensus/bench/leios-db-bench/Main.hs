@@ -244,13 +244,12 @@ insertOneEb writer ebIdx = do
   let point = genPoint ebIdx
       eb = genEb ebIdx
       txs =
-        [ (h, genTx h)
+        [ (txIdx, genTx (genTxHash ebIdx txIdx))
         | txIdx <- [0 .. txsPerEb - 1]
-        , let h = genTxHash ebIdx txIdx
         ]
   pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
   bodyWritten <- writeEbBody writer point eb
-  txsWritten <- writeTxs writer txs
+  txsWritten <- writeTxs writer point txs
   awaitAll [pointWritten, void bodyWritten, void txsWritten]
 
 -- * Deterministic data generation
