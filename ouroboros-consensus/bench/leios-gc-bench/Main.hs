@@ -425,10 +425,10 @@ populateDb opts db =
           MkEbHash hashBytes = genEbHash ebIdx
           point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
           eb = genEb opts ebIdx
-          txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
+          txs = [(off, genTx opts h) | (off, h) <- zip [0 ..] (ebTxHashesFor opts ebIdx)]
       pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
       bodyWritten <- writeEbBody writer point eb
-      txsWritten <- writeTxs writer txs
+      txsWritten <- writeTxs writer point txs
       awaitAll [pointWritten, void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
 
@@ -528,13 +528,13 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           let ebIdx = 10_000_000 + k
               point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
               eb = genEb opts ebIdx
-              txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
+              txs = [(off, genTx opts h) | (off, h) <- zip [0 ..] (ebTxHashesFor opts ebIdx)]
           snd
             <$> timed
               ( do
                   pointWritten <- writeEbPoint w point (encodeLeiosEbSize eb)
                   bodyWritten <- writeEbBody w point eb
-                  txsWritten <- writeTxs w txs
+                  txsWritten <- writeTxs w point txs
                   -- Awaiting all three times them to durability.
                   awaitAll [pointWritten, void bodyWritten, void txsWritten]
                   pure ()
@@ -625,21 +625,15 @@ medianTime ts = List.sort ts !! (length ts `div` 2)
 
 -- * Sweep backlog probes
 
--- | What the sweeper still owes: GC-marked rows plus unresolved orphan hints.
+-- | What the sweeper still owes: GC-marked rows. There is no orphan phase --
+-- an EB's tx bytes die with its rows.
 sqlSweepBacklog :: T.Text
 sqlSweepBacklog =
-  "SELECT (SELECT COUNT(*) FROM ebs WHERE status = 3)\n\
-  \     + (SELECT COUNT(*) FROM gcTxCandidates)"
+  "SELECT (SELECT COUNT(*) FROM ebs WHERE status = 3)"
 
--- | 'sqlSweepBacklog' plus whether any legacy orphan tx exists at all: only 0
--- once the sweeper's GC-candidates initialisation has both run and been swept
--- (counting staged candidates alone would race the initialisation scan).
+-- | Same as 'sqlSweepBacklog': there is no initialisation scan anymore.
 sqlInitialBacklog :: T.Text
-sqlInitialBacklog =
-  "SELECT (SELECT COUNT(*) FROM ebs WHERE status = 3)\n\
-  \     + (SELECT COUNT(*) FROM gcTxCandidates)\n\
-  \     + (SELECT EXISTS (SELECT 1 FROM txs WHERE NOT EXISTS\n\
-  \          (SELECT 1 FROM ebTxs WHERE ebTxs.txHashBytes = txs.txHashBytes)))"
+sqlInitialBacklog = sqlSweepBacklog
 
 -- | A reusable single-integer probe on its own connection (WAL readers do
 -- not block the sweeper's writes; the reset after each poll releases the

@@ -110,8 +110,14 @@ data LeiosDbWriter m = LeiosDbWriter
   -- be this same EB which got completed
   , writeTxs ::
       HasCallStack =>
-      [(TxHash, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies. Returns the EBs whose closure this completed.
+      LeiosPoint -> [(Int, ByteString)] -> m (Promise m CompletedEbs)
+  -- ^ Persist tx bodies for one EB, keyed by their offset into its body.
+  --
+  --   Bytes are owned by the referencing EB (stored per @(ebHash, txOffset)@,
+  --   duplicated when EBs share a tx), so writes are sequential within the EB
+  --   rather than scattered by hash, and eviction is a range delete. Returns
+  --   the points this completed: the given EB's, plus any other point
+  --   announcing the same content hash.
   }
 
 -- | The result of a submitted write.
