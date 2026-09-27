@@ -328,12 +328,20 @@ tagNotYetInserted = 0
 tagAlreadyInserted = 1
 tagAlreadyValidated = 2
 
--- value = location (high 32 bits) | (refcount << 2) | tag (low 32 bits)
+-- The packed value is @(TxState, Maybe TxLocation)@ flattened into a 'Word64':
 --
--- location = valid(1) | ringIdx(7) | txOffset(24), or 0 when none: where the
--- tx's durable bytes live, as a slot of the source-EB ring ('hsLocRing') and
--- an offset into that EB. Every write below preserves it via 'withLoc' --
--- only 'setTxLocations' sets it, and entry deletion drops it.
+-- > bit  63     62..56   55..32     31..2      1..0
+-- >      valid  ringIdx  txOffset   refcount   tag
+-- >      └──── Maybe TxLocation ┘   └── TxState ──┘
+--
+-- Bit 63 is the location's @Just@\/@Nothing@ tag: a fresh entry is all zeroes
+-- in the high half, and ring slot 0 \/ offset 0 is a legitimate location, so
+-- absence needs its own bit. The ring index names a slot of 'hsLocRing'
+-- (7 bits ↔ 'maxAnnouncementCount' slots); 24 offset bits cover the wire's
+-- 22-bit addressable range. Only 'setTxLocations' writes the high half; every
+-- 'TxState' write preserves it via 'withLoc', and entry deletion drops it.
+
+-- | @(refcount << 2) | tag@ — the low ('TxState') half only, location cleared.
 mkVal :: Word64 -> Word64 -> Word64
 mkVal rc tag = ((rc .&. 0x3FFFFFFF) `unsafeShiftL` 2) .|. tag
 
@@ -347,6 +355,8 @@ valTag w = w .&. 3
 withLoc :: Word64 -> Word64 -> Word64
 withLoc old new = (old .&. 0xFFFFFFFF00000000) .|. (new .&. 0xFFFFFFFF)
 
+-- | @Just (ringIdx, txOffset)@ as a high half: valid bit set, low word zero
+-- (combine with the entry's 'TxState' half via @.|.@).
 encodeLoc :: Int -> Int -> Word64
 encodeLoc ringIdx off =
   ( 0x80000000
@@ -355,6 +365,7 @@ encodeLoc ringIdx off =
   )
     `unsafeShiftL` 32
 
+-- | Decode 'encodeLoc': 'Nothing' unless the valid bit is set.
 valLoc :: Word64 -> Maybe (Int, Int)
 valLoc w
   | hi .&. 0x80000000 == 0 = Nothing
