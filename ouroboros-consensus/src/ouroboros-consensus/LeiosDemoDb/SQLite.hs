@@ -1262,10 +1262,17 @@ maxJobsBetweenMaintenance = fromIntegral writerQueueDepth
 -- | How many jobs the writer serves between WAL checkpoints.
 --
 -- Replaces @wal_autocheckpoint@'s frame threshold with a job count: coarser,
--- but it puts the cost somewhere we chose and can trace. 1000 frames is ~4 MB,
--- which a handful of EB bodies reaches, so this is the same order.
+-- but it puts the cost somewhere we chose and can trace.
+--
+-- Chosen for parity with the 1000-frame default it replaces, so the first
+-- measurement is comparable. Measured against a devnet snapshot, one
+-- 'WriteEbBody' dirties ~1600 frames and one 'WriteTxs' ~350, which at the
+-- devnet's job mix averages ~690 frames a job -- so the default was firing
+-- roughly every 1.5 jobs, not every handful. Relaxing this is the obvious
+-- experiment, but it is an experiment: less checkpointing buys throughput and
+-- pays for it in log size and tail latency.
 jobsBetweenCheckpoint :: Int
-jobsBetweenCheckpoint = 8
+jobsBetweenCheckpoint = 2
 
 -- | Depth of the write queue. One slot per producer that can be mid-write --
 -- each upstream peer's fetch client, the forge, and the maintenance
