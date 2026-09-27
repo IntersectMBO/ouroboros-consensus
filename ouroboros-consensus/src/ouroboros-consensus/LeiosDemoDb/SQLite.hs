@@ -403,17 +403,14 @@ openRawConnection path = do
       "pragma page_size = 4096;"
     , "pragma mmap_size = 268435500;"
     , "pragma journal_mode = WAL;"
-    , -- Off: the writer checkpoints explicitly instead, every
-      -- 'jobsBetweenCheckpoint' jobs, so the cost lands at a known point and is
-      -- traced ('TraceLeiosDbCheckpoint') rather than falling on whichever
-      -- commit happens to cross the frame threshold. Measured on a devnet
-      -- snapshot, checkpointing is ~40% of write throughput, so it is worth
-      -- being able to see and to move.
-      --
-      -- A checkpoint still only back-fills as far as the oldest reader's
-      -- snapshot; one sitting on a stale snapshot freezes it regardless of who
-      -- triggers it. See 'dbWithWriteTransaction'.
-      "pragma wal_autocheckpoint = 0;"
+    , -- SQLite's default, spelled out. The volatile connection overrides this
+      -- to 0 ('openVolRawConnection'): there the writer checkpoints explicitly.
+      -- Every other connection keeps automatic checkpointing -- the immutable
+      -- partition is written by the copier, and with nobody checkpointing it
+      -- its WAL grows without bound ('journal_size_limit' cannot truncate a
+      -- log that never checkpoints; observed 5 GB of WAL on a 1 GB partition,
+      -- twelve of which filled a disk).
+      "pragma wal_autocheckpoint = 1000;"
     , -- Sweep-sized sorts otherwise spill to a temp file.
       "pragma temp_store = memory;"
     , -- Without this the WAL keeps whatever high-water mark it ever reached:
