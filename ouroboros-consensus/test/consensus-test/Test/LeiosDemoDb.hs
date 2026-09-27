@@ -139,7 +139,7 @@ rwInsertEbPoint :: RW -> LeiosPoint -> BytesSize -> IO ()
 rwInsertEbPoint rw point sz = void $ await =<< writeEbPoint (rwWriter rw) point sz
 
 rwInsertEbBody :: RW -> LeiosPoint -> LeiosEb -> IO CompletedEbs
-rwInsertEbBody rw point eb = await =<< writeEbBody (rwWriter rw) point eb
+rwInsertEbBody rw point eb = fst <$> (await =<< writeEbBody (rwWriter rw) point eb [])
 
 rwInsertTxs :: RW -> LeiosPoint -> [(Int, BS.ByteString)] -> IO CompletedEbs
 rwInsertTxs rw point offBytes = await =<< writeTxs (rwWriter rw) point offBytes
@@ -220,6 +220,8 @@ mkTestGroups impl =
       , testCase "offerBlockTxs on last update" $ withFreshDb impl test_offerBlockTxs
       , testCase "offerBlockTxs when body arrives after all txs" $
           withFreshDb impl test_offerBlockTxsWhenBodyArrivesAfterTxs
+      , testCase "cross-EB fill copies local bytes and can complete at body time" $
+          withFreshDb impl test_crossEbFill
       , testCase "no re-notification of completed EBs" $ withFreshDb impl test_noReNotifyCompletedEbs
       , testCase "no re-notification when re-inserting an EB's own tx" $
           withFreshDb impl test_noReNotifyOnRelatedTxReinsert
@@ -616,6 +618,46 @@ test_offerBlockTxs db = do
     notification <- atomically $ readTChan chan
     assertOfferBlockTxs point notification
 
+-- | A body write naming fill sources copies their durable bytes in the same
+-- transaction: an EB whose closure another EB already holds completes at body
+-- time, without fetching anything. A vanished source fills nothing and the
+-- offset stays missing.
+test_crossEbFill :: LeiosDbHandle IO -> IO ()
+test_crossEbFill db = do
+  chan <- subscribeEbNotifications db
+  let pointA = mkTestPoint (SlotNo 1) 1
+      ebA = mkTestEb 3
+      hashA = pointEbHash pointA
+      -- B references the same first two txs (same declared sizes), so A's rows
+      -- are valid fill sources for B's offsets 0 and 1.
+      pointB = mkTestPoint (SlotNo 2) 2
+      ebB = mkTestEb 2
+  withRW db $ \con -> do
+    -- A: full closure, the durable source.
+    rwInsertEbPoint con pointA (encodeLeiosEbSize ebA)
+    void $ rwInsertEbBody con pointA ebA
+    _ <- rwInsertTxs con pointA [(i, txBytesFor ebA i) | i <- [0 .. 2]]
+    _ <- atomically $ tryReadTChan chan -- AcquiredEb A
+    _ <- atomically $ tryReadTChan chan -- AcquiredEbTxs A
+    -- B: body write with fills from A, plus one from a source that does not
+    -- exist -- the vanished-source case must fill nothing for that offset.
+    rwInsertEbPoint con pointB (encodeLeiosEbSize ebB)
+    (completed, filled) <-
+      await
+        =<< writeEbBody
+          (rwWriter con)
+          pointB
+          ebB
+          [ (0, hashA, 0)
+          , (1, hashA, 1)
+          , (1, mkTestEbHash 99, 0) -- redundant AND vanished: must be a no-op
+          ]
+    filled @?= [0, 1]
+    completed @?= [pointB]
+    -- and the closure reads back with A's bytes
+    closure <- rwLookupEbClosure con (pointEbHash pointB)
+    fmap (map snd) closure @?= Just [txBytesFor ebA 0, txBytesFor ebA 1]
+
 -- | Rows are pre-allocated by the body write, so bytes arriving before the
 -- body are dropped: there is no row to fill, and nothing may count towards
 -- completion. Once the body has allocated the rows, the same fills land and
@@ -959,8 +1001,8 @@ test_awaiterHearsAFailedJob = do
             -- recorded, and the budget below reports that the awaiter was
             -- never told rather than counting a refused submission as a
             -- report.
-            promise <- writeEbBody w point eb
-            outcome <- try (await promise) :: IO (Either SomeException CompletedEbs)
+            promise <- writeEbBody w point eb []
+            outcome <- try (await promise) :: IO (Either SomeException (CompletedEbs, [Int]))
             void $ tryPutMVar outcomeVar outcome
         -- This thread creates the handle, so this is where the worker's
         -- parting exception lands. It does nothing else.
@@ -968,7 +1010,7 @@ test_awaiterHearsAFailedJob = do
           withLeiosDBSQLite tracer volDbPath immDbPath $ \db ->
             withWriter db $ \w -> do
               void $ await =<< writeEbPoint w point (encodeLeiosEbSize eb)
-              void $ await =<< writeEbBody w point eb
+              void $ await =<< writeEbBody w point eb []
               -- The same body again collides on the primary key of ebTxs, so
               -- this second write is the job whose action throws.
               forkAwaiter w

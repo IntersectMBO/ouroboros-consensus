@@ -257,7 +257,7 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
         { -- Not a teardown -- the write connection outlives every writer.
           close = void . await =<< submitJob writeQueue Flush
         , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
-        , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
+        , writeEbBody = \point eb fills -> submitJob writeQueue (WriteEbBody point eb fills)
         , writeTxs = \point offBytes -> submitJob writeQueue (WriteTxs point offBytes)
         }
 
@@ -869,6 +869,7 @@ data VolStmts = VolStmts
   , stInitMissingCount :: !DB.Statement
   , stPreallocEbTxBytes :: !DB.Statement
   , stFillEbTxBytes :: !DB.Statement
+  , stFillFromLocal :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
@@ -929,6 +930,7 @@ prepareVolStmts db = do
   stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
   stPreallocEbTxBytes <- dbPrepare db (fromString sql_prealloc_ebTxBytes)
   stFillEbTxBytes <- dbPrepare db (fromString sql_fill_ebTxBytes)
+  stFillFromLocal <- dbPrepare db (fromString sql_fill_from_local)
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
@@ -947,6 +949,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stInitMissingCount
   dbFinalize stPreallocEbTxBytes
   dbFinalize stFillEbTxBytes
+  dbFinalize stFillFromLocal
   dbFinalize stDecrMissingCount
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
@@ -1013,7 +1016,7 @@ closeChecked db =
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
   = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
-  | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
+  | WriteEbBody !LeiosPoint !LeiosEb ![(Int, EbHash, Int)] !(WriteResult (CompletedEbs, [Int]))
   | WriteTxs !LeiosPoint ![(Int, ByteString)] !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
@@ -1099,7 +1102,14 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
-  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
+  WriteEbBody point eb fills _ ->
+    "WriteEbBody "
+      <> show point
+      <> " ("
+      <> show (length (leiosEbTxs eb))
+      <> " txs, "
+      <> show (length fills)
+      <> " local fills)"
   WriteTxs point offBytes _ -> "WriteTxs " <> show point <> " (" <> show (length offBytes) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
@@ -1112,7 +1122,7 @@ describeJob = \case
 failJob :: SomeException -> WriteJob -> IO ()
 failJob cause = \case
   WriteEbPoint _ _ rv -> put rv
-  WriteEbBody _ _ rv -> put rv
+  WriteEbBody _ _ _ rv -> put rv
   WriteTxs _ _ rv -> put rv
   Flush rv -> put rv
   PinEb _ rv -> put rv
@@ -1227,8 +1237,8 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
           pure True
         WriteEbPoint point size resultVar ->
           publish resultVar (sqlInsertEbPoint conn point size) >> pure False
-        WriteEbBody point eb resultVar ->
-          publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure False
+        WriteEbBody point eb fills resultVar ->
+          publish resultVar (sqlInsertEbBody tracer conn notify point eb fills) >> pure False
         WriteTxs point offBytes resultVar ->
           publish resultVar (sqlInsertTxs tracer conn notify point offBytes) >> pure False
         Flush resultVar ->
@@ -1517,11 +1527,12 @@ sqlInsertEbBody ::
   (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
   LeiosEb ->
-  IO CompletedEbs
-sqlInsertEbBody tracer conn notify point eb = do
+  [(Int, EbHash, Int)] ->
+  IO (CompletedEbs, [Int])
+sqlInsertEbBody tracer conn notify point eb fills = do
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
-  completedNow <- dbWithWriteTransaction conn $ do
+  (completedNow, filledOffs) <- dbWithWriteTransaction conn $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
@@ -1537,6 +1548,23 @@ sqlInsertEbBody tracer conn notify point eb = do
     useStmt stPreallocEbTxBytes $ do
       dbBindBlob stPreallocEbTxBytes 1 point.pointEbHash.ebHashBytes
       dbStep1 stPreallocEbTxBytes
+    -- Cross-EB fills: copy locally-held bytes into the freshly-allocated
+    -- rows, in this transaction, so the count below already sees them. A
+    -- vanished source changes nothing and the offset stays missing.
+    filledOffs <-
+      foldM
+        ( \acc (dstOff, MkEbHash srcHash, srcOff) -> do
+            useStmt stFillFromLocal $ do
+              dbBindBlob stFillFromLocal 1 point.pointEbHash.ebHashBytes
+              dbBindInt64 stFillFromLocal 2 (fromIntegral dstOff)
+              dbBindBlob stFillFromLocal 3 srcHash
+              dbBindInt64 stFillFromLocal 4 (fromIntegral srcOff)
+              dbStep1Safe stFillFromLocal
+            changed <- DB.changes (conVolDb conn)
+            pure (if changed > 0 then dstOff : acc else acc)
+        )
+        []
+        fills
     -- Initialize missingTxCount from the unfilled rows and read the result
     -- via @RETURNING missingTxCount@. In this transaction, so an arrival can
     -- never see the rows without the count.
@@ -1545,17 +1573,19 @@ sqlInsertEbBody tracer conn notify point eb = do
       dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       readReturningInt64 stInitMissingCount
-    if missingCount == 0
-      then do
-        useStmt stMarkPointNotified $ do
-          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-          dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
-          dbStep1 stMarkPointNotified
-        pure [point]
-      else pure []
+    completed <-
+      if missingCount == 0
+        then do
+          useStmt stMarkPointNotified $ do
+            dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+            dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+            dbStep1 stMarkPointNotified
+          pure [point]
+        else pure []
+    pure (completed, reverse filledOffs)
   notify $ AcquiredEb point ebBytesSize
   forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
-  pure completedNow
+  pure (completedNow, filledOffs)
  where
   items = leiosEbBodyItems eb
   ebBytesSize = encodeLeiosEbSize eb
@@ -1563,6 +1593,7 @@ sqlInsertEbBody tracer conn notify point eb = do
   VolStmts
     { stInsertEbTxsRow
     , stPreallocEbTxBytes
+    , stFillFromLocal
     , stInitMissingCount
     , stMarkPointNotified
     } = connVolStmts
@@ -1957,6 +1988,23 @@ sql_prealloc_ebTxBytes =
   "INSERT OR IGNORE INTO ebTxBytes (ebHashBytes, txOffset, filled, txBytes)\n\
   \SELECT ebHashBytes, txOffset, 0, zeroblob(txBytesSize) FROM ebTxs\n\
   \WHERE ebHashBytes = ?1 ORDER BY txOffset\n\
+  \"
+
+-- | Copy one tx's bytes from another EB's durable row into this EB's
+-- pre-allocated one, in place. Same guards as 'sql_fill_ebTxBytes', plus the
+-- source must exist and be filled -- a source swept between the location
+-- lookup and this write simply fills nothing.
+--
+-- Parameters: 1 = dst ebHashBytes, 2 = dst txOffset, 3 = src ebHashBytes,
+-- 4 = src txOffset
+sql_fill_from_local :: String
+sql_fill_from_local =
+  "UPDATE ebTxBytes AS d\n\
+  \SET txBytes = s.txBytes, filled = 1\n\
+  \FROM ebTxBytes AS s\n\
+  \WHERE d.ebHashBytes = ?1 AND d.txOffset = ?2 AND d.filled = 0\n\
+  \  AND s.ebHashBytes = ?3 AND s.txOffset = ?4 AND s.filled = 1\n\
+  \  AND length(s.txBytes) = length(d.txBytes)\n\
   \"
 
 -- | Fill one pre-allocated row in place. Guarded three ways: the row must

@@ -248,7 +248,7 @@ insertOneEb writer ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         ]
   pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
-  bodyWritten <- writeEbBody writer point eb
+  bodyWritten <- writeEbBody writer point eb []
   txsWritten <- writeTxs writer point txs
   awaitAll [pointWritten, void bodyWritten, void txsWritten]
 
