@@ -42,6 +42,7 @@ import LeiosDemoTypes
   , RbHash
   , SerializedEbBody (..)
   , TxHash
+  , TxLocation (..)
   , decodeLeiosEb
   , fetchArrivalEvicted
   , fetchArrivalExtra
@@ -100,6 +101,17 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- ^ Has exclusive write-access
   , withLookupTx :: forall r. ((TxHash -> m (Maybe (Either a v))) -> m r) -> m r
   -- ^ Also holds the lock
+  , setTxLocations :: EbHash -> [(Int, TxHash)] -> m ()
+  -- ^ Advertise where these txs' DURABLE bytes live -- the given EB's rows at
+  -- the given offsets -- for cross-EB fill. Call this on write confirmation
+  -- only: a location must never name bytes that could still be lost. A tx the
+  -- cache no longer tracks is skipped, never resurrected. First location wins.
+  , withLookupTxLocations ::
+      forall r.
+      ((TxHash -> m (Maybe TxLocation)) -> m r) -> m r
+  -- ^ Batch-resolve fill sources; holds the lock. A returned location may be
+  -- stale (the source swept, its ring slot reused): the LeiosDb fill guards
+  -- make that a no-op, so staleness costs a fetch, never corruption.
   }
 
 -- | A body @b@ from which the referenced txs can be enumerated, each paired with

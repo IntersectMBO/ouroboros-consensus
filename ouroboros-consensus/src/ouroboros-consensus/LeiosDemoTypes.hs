@@ -468,18 +468,6 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   , requestedJobsPerPeer :: !(Map (PeerId pid) (Map EbHash NEIntSet))
   -- ^ Per peer, per EB, the job ids it currently has in flight -- for
   -- decrementing those multiplicities on disconnect
-  , recentTxLocations :: !(Map TxHash TxLocation)
-  -- ^ Where a recently-ingested tx's DURABLE bytes live, for cross-EB fill: a
-  -- later EB referencing the same tx copies them locally instead of
-  -- re-fetching. Only durably-written locations are advertised (populated on
-  -- write confirmation), and staleness is harmless -- the fill's guards make a
-  -- vanished source a no-op and the tx stays in the fetch set.
-  --
-  -- Bounded to the last 'recentTxLocationEbs' source EBs, evicted FIFO via
-  -- 'recentTxLocationQueue'; the production tx cache cannot carry payloads
-  -- (it is a packed tag table), so this small index exists beside it.
-  , recentTxLocationQueue :: !(Seq (EbHash, [TxHash]))
-  -- ^ Insertion-ordered source EBs backing 'recentTxLocations' eviction.
   , leiosFetchPrng :: !StdGen
   -- ^ The LeiosFetch decision loop's own PRNG, threaded through each iteration.
   -- Used to shuffle which job is drawn when assigning tx-closure work to a peer
@@ -503,8 +491,6 @@ emptyLeiosOutstanding prng prunedSlot =
     , requestedEbPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
     , requestedJobsPerPeer = Map.empty
-    , recentTxLocations = Map.empty
-    , recentTxLocationQueue = Seq.empty
     , leiosFetchPrng = prng
     }
 
@@ -556,7 +542,7 @@ data EbFetchState
     -- suppresses re-fetching the body (no redundant body write) while KEEPING
     -- closure offers unassigned: it carries no job pool, because none may exist
     -- yet -- the body write fills what it can from local bytes
-    -- ('recentTxLocations'), and only the settled write knows what is still
+    -- (via the LeiosTxCache's tx locations), and only the settled write knows what is still
     -- missing. 'confirmBodyPersisted' installs the pool built from that; any
     -- other exit restores 'NoBody'.
     BodyPersisting
@@ -707,48 +693,12 @@ summarizeDecisions decs =
   reqs = concatMap toList (Map.elems decs)
 
 -- | Where a tx's durable bytes live: an EB that references it, and the offset
--- of its row there.
+-- of its row there. Recorded in the LeiosTxCache on write confirmation, read
+-- back for cross-EB fill: a later EB referencing the same tx copies the bytes
+-- locally instead of re-fetching. Staleness is harmless -- the fill's guards
+-- make a vanished source a no-op and the tx stays in the fetch set.
 data TxLocation = MkTxLocation !EbHash !Int
   deriving (Eq, Show)
-
--- | How many source EBs 'recentTxLocations' retains. Sharing happens between
--- temporally close EBs, so a short window catches most of it; a miss only
--- costs the fetch that would have happened anyway.
-recentTxLocationEbs :: Int
-recentTxLocationEbs = 64
-
--- | Advertise an EB's durably-written txs as fill sources, evicting the
--- oldest source EB beyond the bound. First writer wins: an existing location
--- is at least as durable as a new one.
-recordTxLocations :: EbHash -> [(Int, TxHash)] -> LeiosOutstanding pid -> LeiosOutstanding pid
-recordTxLocations _ [] o = o
-recordTxLocations ebHash offTxs o =
-  evict
-    o
-      { recentTxLocations =
-          F.foldl'
-            (\m (off, txh) -> Map.insertWith (\_ old -> old) txh (MkTxLocation ebHash off) m)
-            (recentTxLocations o)
-            offTxs
-      , recentTxLocationQueue = recentTxLocationQueue o Seq.|> (ebHash, map snd offTxs)
-      }
- where
-  evict o' = case Seq.viewl (recentTxLocationQueue o') of
-    (oldEb, oldTxs) Seq.:< rest
-      | Seq.length (recentTxLocationQueue o') > recentTxLocationEbs ->
-          evict
-            o'
-              { recentTxLocations =
-                  F.foldl'
-                    ( \m txh -> case Map.lookup txh m of
-                        Just (MkTxLocation h _) | h == oldEb -> Map.delete txh m
-                        _ -> m
-                    )
-                    (recentTxLocations o')
-                    oldTxs
-              , recentTxLocationQueue = rest
-              }
-    _ -> o'
 
 -- | Record that the body's bytes are in hand and its write is in flight. The
 -- write's own thread must then either 'confirmBodyPersisted' it or

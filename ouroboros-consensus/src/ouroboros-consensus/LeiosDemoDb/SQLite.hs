@@ -1992,8 +1992,11 @@ sql_prealloc_ebTxBytes =
 
 -- | Copy one tx's bytes from another EB's durable row into this EB's
 -- pre-allocated one, in place. Same guards as 'sql_fill_ebTxBytes', plus the
--- source must exist and be filled -- a source swept between the location
--- lookup and this write simply fills nothing.
+-- source must exist, be filled, and declare the SAME tx hash -- a source
+-- swept or a stale location resolving to the wrong EB simply fills nothing.
+-- The length guard stays besides the hash guard: two EBs can declare
+-- different sizes for the same hash, and an in-place overwrite must not
+-- change the row size.
 --
 -- Parameters: 1 = dst ebHashBytes, 2 = dst txOffset, 3 = src ebHashBytes,
 -- 4 = src txOffset
@@ -2001,9 +2004,12 @@ sql_fill_from_local :: String
 sql_fill_from_local =
   "UPDATE ebTxBytes AS d\n\
   \SET txBytes = s.txBytes, filled = 1\n\
-  \FROM ebTxBytes AS s\n\
+  \FROM ebTxBytes AS s, ebTxs AS dt, ebTxs AS st\n\
   \WHERE d.ebHashBytes = ?1 AND d.txOffset = ?2 AND d.filled = 0\n\
   \  AND s.ebHashBytes = ?3 AND s.txOffset = ?4 AND s.filled = 1\n\
+  \  AND dt.ebHashBytes = d.ebHashBytes AND dt.txOffset = d.txOffset\n\
+  \  AND st.ebHashBytes = s.ebHashBytes AND st.txOffset = s.txOffset\n\
+  \  AND st.txHashBytes = dt.txHashBytes\n\
   \  AND length(s.txBytes) = length(d.txBytes)\n\
   \"
 

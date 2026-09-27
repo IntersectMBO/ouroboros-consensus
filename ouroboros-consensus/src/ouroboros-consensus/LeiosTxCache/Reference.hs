@@ -45,6 +45,8 @@ module LeiosTxCache.Reference
   , insertAppliedTx
   , lookupTx
   , lookupBody
+  , setTxLocations
+  , lookupTxLocation
 
     -- * Internal state (exposed for testing)
   , TxState (..)
@@ -57,6 +59,7 @@ module LeiosTxCache.Reference
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import Data.List (foldl')
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
@@ -64,7 +67,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import LeiosDemoTypes (BytesSize, EbHash, RbHash, TxHash)
+import LeiosDemoTypes (BytesSize, EbHash, RbHash, TxHash, TxLocation (..))
 import LeiosTxCache.API
   ( BodyState (..)
   , LeiosTxCacheInsertBodySummary
@@ -104,6 +107,15 @@ data LeiosTxCacheIndex a v b = MkLeiosTxCacheIndex
   , prunedSlot :: !SlotNo
   -- ^ The greatest slot 'evictOlderThan' has pruned to (monotonically
   -- non-decreasing; 'SlotNo' @0@ until the first prune)
+  , txLocState :: !(Map TxHash (Int, Int))
+  -- ^ Where a tracked tx's durable bytes live: a 'locRing' slot and an offset
+  -- into that EB. INVARIANT: keys are a subset of 'txState''s.
+  , locRing :: !(Map Int EbHash)
+  -- ^ The EBs recent tx locations point into, keyed by ring slot
+  -- (@'locNext' \`mod\` 'maxAnnouncementCount'@ at claim time). Slot reuse
+  -- makes a stored location stale, not wrong: the db fill guards it.
+  , locNext :: !Int
+  -- ^ Next ring slot to claim (monotone).
   }
 
 emptyLeiosTxCacheIndex :: LeiosTxCacheIndex a v b
@@ -114,6 +126,9 @@ emptyLeiosTxCacheIndex =
     , bodyState = Map.empty
     , txState = Map.empty
     , prunedSlot = SlotNo 0
+    , txLocState = Map.empty
+    , locRing = Map.empty
+    , locNext = 0
     }
 
 {-------------------------------------------------------------------------------
@@ -206,6 +221,9 @@ insertAnnouncement slot rbh ebh idx
             (bodyState idx)
       , txState = txState idx
       , prunedSlot = prunedSlot idx
+      , txLocState = txLocState idx
+      , locRing = locRing idx
+      , locNext = locNext idx
       }
 
 -- | Repeatedly 'evictOldest' while @shouldEvict@ holds of the index: the shared
@@ -261,6 +279,9 @@ evictOldest idx =
       , bodyState = bodyState'
       , txState = txState'
       , prunedSlot = prunedSlot idx
+      , txLocState = txLocState idx `Map.withoutKeys` evTxs
+      , locRing = locRing idx
+      , locNext = locNext idx
       }
   , evEbs
   , evTxs
@@ -335,6 +356,9 @@ insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState i
             , bodyState = Map.insert ebh (BodyAlreadyInserted rc body) (bodyState idx)
             , txState = txState'
             , prunedSlot = prunedSlot idx
+            , txLocState = txLocState idx
+            , locRing = locRing idx
+            , locNext = locNext idx
             }
      in ( idx'
         , Just
@@ -390,6 +414,9 @@ insertAppliedTx txh v idx =
     , bodyState = bodyState idx
     , txState = Map.alter upd txh (txState idx)
     , prunedSlot = prunedSlot idx
+    , txLocState = txLocState idx
+    , locRing = locRing idx
+    , locNext = locNext idx
     }
  where
   upd Nothing = Nothing
@@ -409,3 +436,28 @@ lookupBody :: EbHash -> LeiosTxCacheIndex a v b -> Maybe b
 lookupBody ebh idx = case Map.lookup ebh (bodyState idx) of
   Just (BodyAlreadyInserted _ b) -> Just b
   _ -> Nothing
+
+-- | Record where each tx's durable bytes now live: claim the next ring slot for
+-- the source EB and point each /tracked/ tx at it. The latest location wins --
+-- the newest source EB outlives older ones in both the ring and the db.
+setTxLocations ::
+  EbHash -> [(Int, TxHash)] -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
+setTxLocations ebh offTxs idx =
+  idx
+    { locRing = Map.insert slot ebh (locRing idx)
+    , locNext = locNext idx + 1
+    , txLocState = foldl' upd (txLocState idx) offTxs
+    }
+ where
+  slot = locNext idx `mod` maxAnnouncementCount
+  upd m (off, txh)
+    | Map.member txh (txState idx) = Map.insert txh (slot, off) m
+    | otherwise = m
+
+-- | Where this tx's durable bytes live, if a tracked tx has a recorded location
+-- whose ring slot is still populated. Possibly stale (see 'locRing').
+lookupTxLocation :: TxHash -> LeiosTxCacheIndex a v b -> Maybe TxLocation
+lookupTxLocation txh idx = do
+  (ringIdx, off) <- Map.lookup txh (txLocState idx)
+  srcEb <- Map.lookup ringIdx (locRing idx)
+  Just (MkTxLocation srcEb off)

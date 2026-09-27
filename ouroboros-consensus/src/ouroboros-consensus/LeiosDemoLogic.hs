@@ -995,13 +995,16 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- again. Optimistic -- a source swept in the meantime fills nothing --
         -- so the fetch set is decided at settle time from what actually
         -- filled, not promised here.
-        let fills =
-              [ (off, srcEb, srcOff)
-              | (off, (txh, _sz)) <- IntMap.toAscList missedBoth
-              , Just (Leios.MkTxLocation srcEb srcOff) <-
-                  [Map.lookup txh (Leios.recentTxLocations outstanding)]
-              ]
-            !outstanding' = Leios.insertAcquiredEbBody ebHash outstandingCleaned
+        fills <- withLookupTxLocations txCache $ \lookLoc ->
+          foldM
+            ( \acc (off, (txh, _sz)) ->
+                lookLoc txh <&> \case
+                  Just (Leios.MkTxLocation srcEb srcOff) -> (off, srcEb, srcOff) : acc
+                  Nothing -> acc
+            )
+            []
+            (IntMap.toDescList missedBoth)
+        let !outstanding' = Leios.insertAcquiredEbBody ebHash outstandingCleaned
         pure (outstanding', (True, bodyClass, mempoolIngest, missedBoth, fills))
   void $ MVar.tryPutMVar readyVar ()
   case source of
@@ -1488,11 +1491,10 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
             onDurable
             -- These bytes are durable now: advertise them as fill sources for
             -- later EBs referencing the same txs.
-            MVar.modifyMVar_ outstandingVar $
-              pure
-                . Leios.recordTxLocations
-                  ingestPoint.pointEbHash
-                  [(off, txh) | (off, txh, _bs) <- toIngest]
+            setTxLocations
+              txCache
+              ingestPoint.pointEbHash
+              [(off, txh) | (off, txh, _bs) <- toIngest]
             ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
             forM_ completed $ \p ->
               traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
