@@ -21,7 +21,8 @@ module LeiosDemoDb.SQLite
   , sql_schema
   , sql_insert_eb
   , sql_insert_ebBody
-  , sql_insert_ebTxBytes
+  , sql_fill_ebTxBytes
+  , sql_prealloc_ebTxBytes
   ) where
 
 import Cardano.Prelude (forM_, traverse_, when)
@@ -866,7 +867,8 @@ data VolStmts = VolStmts
   , stLookupEbBody :: !DB.Statement
   , stInsertEbTxsRow :: !DB.Statement
   , stInitMissingCount :: !DB.Statement
-  , stInsertEbTxBytes :: !DB.Statement
+  , stPreallocEbTxBytes :: !DB.Statement
+  , stFillEbTxBytes :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
@@ -925,7 +927,8 @@ prepareVolStmts db = do
   stLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
   stInsertEbTxsRow <- dbPrepare db (fromString sql_insert_ebBody)
   stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
-  stInsertEbTxBytes <- dbPrepare db (fromString sql_insert_ebTxBytes)
+  stPreallocEbTxBytes <- dbPrepare db (fromString sql_prealloc_ebTxBytes)
+  stFillEbTxBytes <- dbPrepare db (fromString sql_fill_ebTxBytes)
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
@@ -942,7 +945,8 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stLookupEbBody
   dbFinalize stInsertEbTxsRow
   dbFinalize stInitMissingCount
-  dbFinalize stInsertEbTxBytes
+  dbFinalize stPreallocEbTxBytes
+  dbFinalize stFillEbTxBytes
   dbFinalize stDecrMissingCount
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
@@ -1528,10 +1532,14 @@ sqlInsertEbBody tracer conn notify point eb = do
         "ebTxs"
         (show point.pointEbHash <> "@" <> show txOffset)
         stInsertEbTxsRow
-    -- Initialize missingTxCount from the two ranges (body rows minus bytes
-    -- rows already present for this content hash) and read the result via
-    -- @RETURNING missingTxCount@. In this transaction, so an arrival can never
-    -- see the rows without the count.
+    -- Allocate the closure's rows in one offset-ordered pass; see
+    -- 'sql_prealloc_ebTxBytes'.
+    useStmt stPreallocEbTxBytes $ do
+      dbBindBlob stPreallocEbTxBytes 1 point.pointEbHash.ebHashBytes
+      dbStep1 stPreallocEbTxBytes
+    -- Initialize missingTxCount from the unfilled rows and read the result
+    -- via @RETURNING missingTxCount@. In this transaction, so an arrival can
+    -- never see the rows without the count.
     missingCount <- useStmt stInitMissingCount $ do
       dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
       dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
@@ -1554,6 +1562,7 @@ sqlInsertEbBody tracer conn notify point eb = do
   Conn{connVolStmts} = conn
   VolStmts
     { stInsertEbTxsRow
+    , stPreallocEbTxBytes
     , stInitMissingCount
     , stMarkPointNotified
     } = connVolStmts
@@ -1581,17 +1590,20 @@ sqlInsertTxs ::
   IO CompletedEbs
 sqlInsertTxs _tracer conn notify point offBytes = do
   completed <- dbWithWriteTransaction conn $ do
-    -- Sequential inserts within this EB's range; 'dbStepInsert' absorbs the
-    -- duplicate delivery of an offset (a second peer answering the same job).
+    -- In-place fills of the pre-allocated rows; the guards in
+    -- 'sql_fill_ebTxBytes' make one change exactly one previously-missing
+    -- valid tx, so counting by @changes()@ is sound: a bogus offset, a
+    -- duplicate delivery or a wrong-sized payload changes nothing.
     n <-
       foldM
         ( \acc (txOffset, txBytes) -> do
-            inserted <- useStmt stInsertEbTxBytes $ do
-              dbBindBlob stInsertEbTxBytes 1 point.pointEbHash.ebHashBytes
-              dbBindInt64 stInsertEbTxBytes 2 (fromIntegral txOffset)
-              dbBindBlob stInsertEbTxBytes 3 txBytes
-              dbStepInsert stInsertEbTxBytes
-            pure (if inserted then acc + 1 else acc)
+            useStmt stFillEbTxBytes $ do
+              dbBindBlob stFillEbTxBytes 1 point.pointEbHash.ebHashBytes
+              dbBindInt64 stFillEbTxBytes 2 (fromIntegral txOffset)
+              dbBindBlob stFillEbTxBytes 3 txBytes
+              dbStep1 stFillEbTxBytes
+            changed <- DB.changes (conVolDb conn)
+            pure (acc + fromIntegral changed)
         )
         (0 :: Int64)
         offBytes
@@ -1623,7 +1635,7 @@ sqlInsertTxs _tracer conn notify point offBytes = do
  where
   Conn{connVolStmts} = conn
   VolStmts
-    { stInsertEbTxBytes
+    { stFillEbTxBytes
     , stDecrMissingCount
     , stMarkPointNotified
     } = connVolStmts
@@ -1853,14 +1865,24 @@ sql_schema =
     , "  txBytesSize INTEGER NOT NULL,"
     , "  PRIMARY KEY (ebHashBytes, txOffset)"
     , ");"
-    , -- The closure: tx bytes owned by the referencing EB, one row per FETCHED
-      -- tx, same key as its 'ebTxs' row. A tx shared by two EBs is stored
-      -- twice; in exchange writes are sequential (the wire delivers offset
-      -- ranges), completion is counting, and eviction is a range delete -- no
-      -- orphan concept, no tx-hash index.
+    , -- The closure: tx bytes owned by the referencing EB, same key as its
+      -- 'ebTxs' row. A tx shared by two EBs is stored twice; in exchange
+      -- writes are sequential, completion is counting, and eviction is a
+      -- range delete -- no orphan concept, no tx-hash index.
+      --
+      -- Every row is allocated at body-arrival time as @zeroblob@ of the
+      -- declared size, in one offset-ordered pass, so the range's pages are
+      -- physically contiguous and fully packed. A closure is written once but
+      -- served many times: peers fetch it as offset ranges, voting reads it
+      -- whole, the copier streams it -- all sequential reads over that
+      -- layout. Arrivals then overwrite rows in place ('filled' 0 -> 1),
+      -- which cannot split pages because the size cannot change.
+      --
+      -- 'filled' precedes the blob so probing it never touches overflow pages.
       "CREATE TABLE ebTxBytes ("
     , "  ebHashBytes BLOB NOT NULL,"
     , "  txOffset INTEGER NOT NULL,"
+    , "  filled INTEGER NOT NULL DEFAULT 0,"
     , "  txBytes BLOB NOT NULL,"
     , "  PRIMARY KEY (ebHashBytes, txOffset)"
     , ");"
@@ -1926,9 +1948,29 @@ sql_insert_ebBody =
   "INSERT INTO ebTxs (ebHashBytes, txOffset, txHashBytes, txBytesSize) VALUES (?, ?, ?, ?)\n\
   \"
 
-sql_insert_ebTxBytes :: String
-sql_insert_ebTxBytes =
-  "INSERT INTO ebTxBytes (ebHashBytes, txOffset, txBytes) VALUES (?, ?, ?)\n\
+-- | Allocate the body's whole 'ebTxBytes' range in one offset-ordered pass:
+-- one @zeroblob@ row per body row, physically contiguous and fully packed.
+-- @OR IGNORE@: a redelivered body (second announcement of the same content)
+-- must not clobber rows already filled.
+sql_prealloc_ebTxBytes :: String
+sql_prealloc_ebTxBytes =
+  "INSERT OR IGNORE INTO ebTxBytes (ebHashBytes, txOffset, filled, txBytes)\n\
+  \SELECT ebHashBytes, txOffset, 0, zeroblob(txBytesSize) FROM ebTxs\n\
+  \WHERE ebHashBytes = ?1 ORDER BY txOffset\n\
+  \"
+
+-- | Fill one pre-allocated row in place. Guarded three ways: the row must
+-- exist (a bogus offset updates nothing), must not be filled yet (a duplicate
+-- delivery updates nothing), and the payload must have exactly the declared
+-- size (the row was allocated as @zeroblob@ of it, and an in-place overwrite
+-- must not change the row size). One successful UPDATE is therefore exactly
+-- one previously-missing valid tx, which is what makes counting by
+-- @changes()@ sound.
+sql_fill_ebTxBytes :: String
+sql_fill_ebTxBytes =
+  "UPDATE ebTxBytes SET txBytes = ?3, filled = 1\n\
+  \WHERE ebHashBytes = ?1 AND txOffset = ?2 AND filled = 0\n\
+  \  AND length(txBytes) = length(?3)\n\
   \"
 
 -- | Decrement missingTxCount on every announcement of this content hash by
@@ -1945,17 +1987,16 @@ sql_decrement_missing_tx_count =
   \RETURNING ebSlot, missingTxCount\n\
   \"
 
--- | Initialize missingTxCount after an EB body is inserted: the body rows
--- minus the bytes rows already present for this content hash (a redelivered
--- body at a second point finds the first point's bytes). RETURNING lets the
--- caller detect @missingTxCount = 0@ with a PK lookup on the touched row.
+-- | Initialize missingTxCount after an EB body is inserted: the rows still
+-- unfilled (a redelivered body at a second point finds the first point's
+-- fills). RETURNING lets the caller detect @missingTxCount = 0@ with a PK
+-- lookup on the touched row.
 --
 -- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
 sql_init_missing_tx_count :: String
 sql_init_missing_tx_count =
   "UPDATE ebs SET missingTxCount = (\n\
-  \    (SELECT COUNT(*) FROM ebTxs WHERE ebHashBytes = ?1)\n\
-  \  - (SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = ?1)\n\
+  \    SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = ?1 AND filled = 0\n\
   \) WHERE ebHashBytes = ?2 AND ebSlot = ?3\n\
   \RETURNING missingTxCount\n\
   \"
@@ -1975,7 +2016,8 @@ sql_mark_point_notified =
 -- @(ebHashBytes, txOffset)@, so index lookups still fire.
 sql_retrieve_from_ebTxs_json :: String
 sql_retrieve_from_ebTxs_json =
-  "SELECT je.value, e.txHashBytes, b.txBytes\n\
+  "SELECT je.value, e.txHashBytes,\n\
+  \       CASE WHEN b.filled = 1 THEN b.txBytes END\n\
   \FROM json_each(?2) je\n\
   \JOIN ebTxs e ON e.ebHashBytes = ?1 AND e.txOffset = je.value\n\
   \LEFT JOIN ebTxBytes b ON b.ebHashBytes = ?1 AND b.txOffset = je.value\n\
@@ -1985,7 +2027,7 @@ sql_retrieve_from_ebTxs_json =
 sql_lookup_eb_closure :: String
 sql_lookup_eb_closure =
   unlines
-    [ "SELECT ebTx.txHashBytes, b.txBytes"
+    [ "SELECT ebTx.txHashBytes, CASE WHEN b.filled = 1 THEN b.txBytes END"
     , "FROM ebTxs as ebTx"
     , "LEFT JOIN ebTxBytes as b ON b.ebHashBytes = ebTx.ebHashBytes AND b.txOffset = ebTx.txOffset"
     , "WHERE ebTx.ebHashBytes = ?"
@@ -2027,7 +2069,7 @@ sql_mark_as_copied =
 sql_copy_completeness :: String
 sql_copy_completeness =
   "SELECT (SELECT COUNT(*) FROM vol.ebTxs WHERE ebHashBytes = ?1),\n\
-  \       (SELECT COUNT(*) FROM vol.ebTxBytes WHERE ebHashBytes = ?1)\n\
+  \       (SELECT COUNT(*) FROM vol.ebTxBytes WHERE ebHashBytes = ?1 AND filled = 1)\n\
   \"
 
 -- | Copy the EB's newest announcement row, with the canonical immutable
@@ -2060,9 +2102,9 @@ sql_copy_insert_ebTxs =
 -- the same reason as 'sql_copy_insert_eb'.
 sql_copy_insert_ebTxBytes :: String
 sql_copy_insert_ebTxBytes =
-  "INSERT OR IGNORE INTO ebTxBytes (ebHashBytes, txOffset, txBytes)\n\
-  \SELECT ebHashBytes, txOffset, txBytes FROM vol.ebTxBytes\n\
-  \WHERE ebHashBytes = ?1\n\
+  "INSERT OR IGNORE INTO ebTxBytes (ebHashBytes, txOffset, filled, txBytes)\n\
+  \SELECT ebHashBytes, txOffset, filled, txBytes FROM vol.ebTxBytes\n\
+  \WHERE ebHashBytes = ?1 ORDER BY txOffset\n\
   \"
 
 -- | Which of the given hashes (JSON hex array) the immutable partition holds.

@@ -38,7 +38,8 @@ module LeiosDemoDb
   , sql_schema
   , sql_insert_eb
   , sql_insert_ebBody
-  , sql_insert_ebTxBytes
+  , sql_fill_ebTxBytes
+  , sql_prealloc_ebTxBytes
   ) where
 
 import LeiosDemoDb.Common
@@ -67,9 +68,10 @@ import LeiosDemoDb.SQLite
   , newLeiosDBSQLite
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLiteWithGcBatchSize
+  , sql_fill_ebTxBytes
   , sql_insert_eb
   , sql_insert_ebBody
-  , sql_insert_ebTxBytes
+  , sql_prealloc_ebTxBytes
   , sql_schema
   , truncateLeiosDbAfterSlot
   , vacuumLeiosDb
