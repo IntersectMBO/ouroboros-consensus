@@ -127,18 +127,19 @@ tests =
                 Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
                   (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
               -- the bytes arrive: transient, because the write is still in flight
-              persisting = Leios.insertAcquiredEbBody h jobPool announced
-          fetchStateOf persisting @?= Just (Leios.BodyPersisting jobPool)
+              persisting = Leios.insertAcquiredEbBody h announced
+          fetchStateOf persisting @?= Just Leios.BodyPersisting
           -- it still counts as held, so no second peer re-pays the body write
           Map.lookup h (Leios.ebState persisting)
-            @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyPersisting jobPool))
-          -- the write lands: only now may the state claim the LeiosDb has it
-          fetchStateOf (Leios.confirmBodyPersisted h persisting)
+            @?= Just (Leios.MkEbState (SlotNo 5) SNothing Leios.BodyPersisting)
+          -- the write lands: only now may the state claim the LeiosDb has it,
+          -- and only the settled write knows the pool (what is still missing)
+          fetchStateOf (Leios.confirmBodyPersisted h jobPool persisting)
             @?= Just (Leios.BodyAcquired jobPool)
           -- the write is lost: back to unheld, so the next offer is acted on
           fetchStateOf (Leios.abandonBodyPersist h persisting) @?= Just Leios.NoBody
           -- neither transition touches a settled body
-          let settled = Leios.confirmBodyPersisted h persisting
+          let settled = Leios.confirmBodyPersisted h jobPool persisting
           fetchStateOf (Leios.abandonBodyPersist h settled) @?= Just (Leios.BodyAcquired jobPool)
       , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
           let eb = ebOf [0, 1]
@@ -147,8 +148,8 @@ tests =
               jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
               -- announce at slot 5, then again at the smaller slot 3, and acquire
               o =
-                Leios.confirmBodyPersisted h $
-                  Leios.insertAcquiredEbBody h jobPool $
+                Leios.confirmBodyPersisted h jobPool $
+                  Leios.insertAcquiredEbBody h $
                     Leios.recordMaxAnnouncementSlot h (SlotNo 3) SNothing $
                       Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
                         (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
@@ -257,9 +258,10 @@ tests =
               run bigLedgerPeers used =
                 let outstanding =
                       (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
-                        Leios.insertAcquiredEbBody h jobPool $
-                          Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
-                            (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                        Leios.confirmBodyPersisted h jobPool $
+                          Leios.insertAcquiredEbBody h $
+                            Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
+                              (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                     (_o, reqs, _d) =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
@@ -505,7 +507,7 @@ applyCmd conn txCache kv peerVars peerId = \case
         req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
         -- The body write is never enqueued, so its promise never resolves and
         -- the acquisition is never confirmed.
-        lostConn = conn{LeiosDb.writeEbBody = \_ _ -> pure (LeiosDb.Promise (forever (threadDelay 1000000)))}
+        lostConn = conn{LeiosDb.writeEbBody = \_ _ _ -> pure (LeiosDb.Promise (forever (threadDelay 1000000)))}
     processLeiosBlock
       nullTracer
       nullTracer

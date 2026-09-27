@@ -164,8 +164,10 @@ openInMemoryWriter stateVar notificationChan =
       { close = pure ()
       , writeEbPoint = \point ebBytesSize ->
           resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
-      , writeEbBody = \point eb ->
-          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb)
+      , writeEbBody = \point eb fills ->
+          resolved
+            ("WriteEbBody " <> show point)
+            (imInsertEbBody stateVar notificationChan point eb fills)
       , writeTxs = \point offBytes ->
           resolved
             ("WriteTxs " <> show point <> " (" <> show (length offBytes) <> " txs)")
@@ -219,8 +221,9 @@ imInsertEbBody ::
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   LeiosEb ->
-  m CompletedEbs
-imInsertEbBody stateVar notificationChan point eb = do
+  [(Int, EbHash, Int)] ->
+  m (CompletedEbs, [Int])
+imInsertEbBody stateVar notificationChan point eb fills = do
   let items = leiosEbBodyItems eb
       ebBytesSize = encodeLeiosEbSize eb
   when (null items) $
@@ -248,6 +251,27 @@ imInsertEbBody stateVar notificationChan point eb = do
           imEbBodiesDownloaded =
             Set.insert point (imEbBodiesDownloaded s)
         }
+    -- Cross-EB fills: copy locally-held bytes into this EB's closure, before
+    -- completion is judged. Same guards as the SQLite backend: the row must be
+    -- one the body declared, not yet filled, the source must hold the bytes,
+    -- and the size must match the declaration; a vanished source fills
+    -- nothing.
+    st0 <- readTVar stateVar
+    let ebHash = point.pointEbHash
+        declared = Map.findWithDefault IntMap.empty ebHash (imEbBodies st0)
+        held = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes st0)
+        accepted =
+          IntMap.fromList
+            [ (dstOff, bytes)
+            | (dstOff, srcEb, srcOff) <- fills
+            , Just e <- [IntMap.lookup dstOff declared]
+            , not (IntMap.member dstOff held)
+            , Just bytes <-
+                [IntMap.lookup srcOff (Map.findWithDefault IntMap.empty srcEb (imEbTxBytes st0))]
+            , fromIntegral (BS.length bytes) == eteTxBytesSize e
+            ]
+    modifyTVar stateVar $ \s ->
+      s{imEbTxBytes = Map.insertWith IntMap.union ebHash accepted (imEbTxBytes s)}
     writeTChan notificationChan $ AcquiredEb point ebBytesSize
     -- If every tx referenced by this body is already present, the closure
     -- is complete the moment the body lands — no subsequent
@@ -258,13 +282,15 @@ imInsertEbBody stateVar notificationChan point eb = do
     state <- readTVar stateVar
     let allTxsPresent = hashCompleteIn state point.pointEbHash
         alreadyNotified = Set.member point (imCompletedEbs state)
-    if allTxsPresent && not alreadyNotified
-      then do
-        modifyTVar stateVar $ \s ->
-          s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-        writeTChan notificationChan (AcquiredEbTxs point)
-        pure [point]
-      else pure []
+    completed <-
+      if allTxsPresent && not alreadyNotified
+        then do
+          modifyTVar stateVar $ \s ->
+            s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
+          writeTChan notificationChan (AcquiredEbTxs point)
+          pure [point]
+        else pure []
+    pure (completed, IntMap.keys accepted)
 
 -- | Whether every offset of this content hash's body has its bytes.
 hashCompleteIn :: InMemoryLeiosDb -> EbHash -> Bool

@@ -427,7 +427,7 @@ populateDb opts db =
           eb = genEb opts ebIdx
           txs = [(off, genTx opts h) | (off, h) <- zip [0 ..] (ebTxHashesFor opts ebIdx)]
       pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
-      bodyWritten <- writeEbBody writer point eb
+      bodyWritten <- writeEbBody writer point eb []
       txsWritten <- writeTxs writer point txs
       awaitAll [pointWritten, void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
@@ -533,7 +533,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
             <$> timed
               ( do
                   pointWritten <- writeEbPoint w point (encodeLeiosEbSize eb)
-                  bodyWritten <- writeEbBody w point eb
+                  bodyWritten <- writeEbBody w point eb []
                   txsWritten <- writeTxs w point txs
                   -- Awaiting all three times them to durability.
                   awaitAll [pointWritten, void bodyWritten, void txsWritten]

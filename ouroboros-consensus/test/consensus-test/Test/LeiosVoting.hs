@@ -224,7 +224,7 @@ withHarness acquired txs k = do
   db :: LeiosDbHandle IO <- newLeiosDBInMemory
   withReader db $ \reader -> withWriter db $ \writer -> do
     void $ await =<< writeEbPoint writer point (encodeLeiosEbSize eb)
-    void $ await =<< writeEbBody writer point eb
+    void $ await =<< writeEbBody writer point eb []
     void $ await =<< writeTxs writer point (zip [0 ..] (map txBytes txs))
 
     cache <- newPureLeiosTxCache defaultLeiosTxCacheShift

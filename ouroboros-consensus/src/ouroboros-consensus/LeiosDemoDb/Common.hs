@@ -103,11 +103,15 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
   -- ^ Record an announced EB's point and expected size.
-  , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m CompletedEbs)
-  -- ^ Persist an EB body. Returns any EBs whose closure this completed.
-  --
-  -- XXX: return type only used for tracing and too broad: it can actually only
-  -- be this same EB which got completed
+  , writeEbBody ::
+      HasCallStack =>
+      LeiosPoint -> LeiosEb -> [(Int, EbHash, Int)] -> m (Promise m (CompletedEbs, [Int]))
+  -- ^ Persist an EB body, and fill what it can from local bytes: each
+  --   @(offset, source EB, source offset)@ names a row of another EB durably
+  --   holding the same tx ('recentTxLocations'), copied in the same
+  --   transaction. Returns the points this completed and the offsets that
+  --   actually filled -- a vanished source fills nothing and the tx stays
+  --   fetchable, decided by the caller from this return.
   , writeTxs ::
       HasCallStack =>
       LeiosPoint -> [(Int, ByteString)] -> m (Promise m CompletedEbs)
