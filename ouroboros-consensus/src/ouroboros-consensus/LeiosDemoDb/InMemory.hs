@@ -25,6 +25,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTChan
   )
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
@@ -282,15 +283,23 @@ imInsertTxs ::
   m CompletedEbs
 imInsertTxs stateVar notificationChan point offBytes = atomically $ do
   let ebHash = pointEbHash point
+  -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
+  -- pre-allocated row, i.e. an offset the body declared, once, at the declared
+  -- size. Anything else changes nothing -- in particular, bytes arriving
+  -- before the body are dropped (production cannot produce them: the writer
+  -- queue is FIFO and tx writes follow their body write).
   modifyTVar stateVar $ \s ->
-    s
-      { imEbTxBytes =
-          Map.insertWith
-            (flip IntMap.union) -- first insert of an offset wins
-            ebHash
-            (IntMap.fromList offBytes)
-            (imEbTxBytes s)
-      }
+    let declared = Map.findWithDefault IntMap.empty ebHash (imEbBodies s)
+        held = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes s)
+        accepted =
+          IntMap.fromList
+            [ (off, bytes)
+            | (off, bytes) <- offBytes
+            , Just e <- [IntMap.lookup off declared]
+            , fromIntegral (BS.length bytes) == eteTxBytesSize e
+            , not (IntMap.member off held)
+            ]
+     in s{imEbTxBytes = Map.insertWith IntMap.union ebHash accepted (imEbTxBytes s)}
   state <- readTVar stateVar
   -- Candidates: every point of THIS content hash whose body has been
   -- downloaded and whose closure is now complete. Bytes are per-EB, so no
