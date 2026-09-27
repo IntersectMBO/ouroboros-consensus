@@ -45,6 +45,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTMVar
   , readTVar
   , readTVarIO
+  , stateTVar
   , tryPutTMVar
   , tryReadTBQueue
   , writeTBQueue
@@ -120,6 +121,8 @@ import Ouroboros.Consensus.Util.IOLike
   ( ExitCase (..)
   , MonadAsync (async, asyncThreadId)
   , atomically
+  , diffTime
+  , getMonotonicTime
   , labelThread
   , link
   )
@@ -359,6 +362,20 @@ queryInt64 db sql =
       DB.Row -> DB.columnInt64 stmt 0
       DB.Done -> error ("queryInt64: expected a row: " <> sql)
 
+-- | Run a WAL checkpoint, returning @(busy, log frames, frames copied back)@
+-- as @wal_checkpoint@ reports them. @busy@ means a reader held it up, so the
+-- log was only partly drained.
+checkpointWal :: HasCallStack => DB.Database -> IO (Bool, Int, Int)
+checkpointWal db =
+  bracket (dbPrepare db "PRAGMA wal_checkpoint(PASSIVE);") dbFinalize $ \stmt ->
+    dbStep stmt >>= \case
+      DB.Row -> do
+        busy <- DB.columnInt64 stmt 0
+        nLog <- DB.columnInt64 stmt 1
+        nCkpt <- DB.columnInt64 stmt 2
+        pure (busy /= 0, fromIntegral nLog, fromIntegral nCkpt)
+      DB.Done -> pure (False, 0, 0)
+
 -- | Open a read-write connection to the given file, creating it and running
 -- the schema DDL if it does not exist yet. Both partitions share 'sql_schema'.
 openRawConnection :: HasCallStack => FilePath -> IO DB.Database
@@ -389,11 +406,17 @@ openRawConnection path = do
       "pragma page_size = 4096;"
     , "pragma mmap_size = 268435500;"
     , "pragma journal_mode = WAL;"
-    , -- SQLite's own default, spelled out because it is what keeps the log
-      -- bounded: passive checkpoints reset the WAL every 1000 frames, provided
-      -- no connection is sitting on a stale read snapshot. One that is will
-      -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
-      "pragma wal_autocheckpoint = 1000;"
+    , -- Off: the writer checkpoints explicitly instead, every
+      -- 'jobsBetweenCheckpoint' jobs, so the cost lands at a known point and is
+      -- traced ('TraceLeiosDbCheckpoint') rather than falling on whichever
+      -- commit happens to cross the frame threshold. Measured on a devnet
+      -- snapshot, checkpointing is ~40% of write throughput, so it is worth
+      -- being able to see and to move.
+      --
+      -- A checkpoint still only back-fills as far as the oldest reader's
+      -- snapshot; one sitting on a stale snapshot freezes it regardless of who
+      -- triggers it. See 'dbWithWriteTransaction'.
+      "pragma wal_autocheckpoint = 0;"
     , -- Sweep-sized sorts otherwise spill to a temp file.
       "pragma temp_store = memory;"
     , -- Without this the WAL keeps whatever high-water mark it ever reached:
@@ -1236,6 +1259,14 @@ failJob cause = \case
 maxJobsBetweenMaintenance :: Int
 maxJobsBetweenMaintenance = fromIntegral writerQueueDepth
 
+-- | How many jobs the writer serves between WAL checkpoints.
+--
+-- Replaces @wal_autocheckpoint@'s frame threshold with a job count: coarser,
+-- but it puts the cost somewhere we chose and can trace. 1000 frames is ~4 MB,
+-- which a handful of EB bodies reaches, so this is the same order.
+jobsBetweenCheckpoint :: Int
+jobsBetweenCheckpoint = 8
+
 -- | Depth of the write queue. One slot per producer that can be mid-write --
 -- each upstream peer's fetch client, the forge, and the maintenance
 -- schedulers (copier, sweeper, the ChainDB's GC and promote calls) -- and a
@@ -1290,6 +1321,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
   sweepStateVar <- newTVarIO SweepIdle
   gcReinitDoneVar <- newTVarIO False
   jobsServedVar <- newTVarIO (0 :: Int)
+  jobsSinceCheckpointVar <- newTVarIO (0 :: Int)
   let notify = atomically . writeTChan notificationChan
 
       -- Statements before connections; an open statement holds the close off.
@@ -1362,7 +1394,16 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
             -- only this handler can still tell the awaiter.
             stop <- runJob job `catch` \(e :: SomeException) -> failJob e job >> throwIO e
             traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
-            unless stop serve
+            unless stop $ do
+              sinceCkpt <- atomically $ stateTVar jobsSinceCheckpointVar $ \n ->
+                if n + 1 >= jobsBetweenCheckpoint then (True, 0) else (False, n + 1)
+              when sinceCkpt $ do
+                before <- getMonotonicTime
+                (busy, nLog, nCkpt) <- checkpointWal volDb
+                after <- getMonotonicTime
+                traceWith tracer $
+                  TraceLeiosDbCheckpoint (diffTime after before) nLog nCkpt busy
+              serve
           Nothing -> do
             quiet <- stepMaintenance
             atomically $ writeTVar jobsServedVar 0

@@ -1,5 +1,6 @@
 module LeiosDemoDb.Trace (TraceLeiosDb (..), LeiosDbStats (..)) where
 
+import Data.Time.Clock (DiffTime)
 import LeiosUtils.CallTrace (SomeJsonCallTrace)
 
 -- | In-memory LeiosDb counters: seeded from the database files once per
@@ -29,6 +30,12 @@ data TraceLeiosDb
     TraceLeiosDbWriteAbandoned String
   | -- | The only evidence that the writer ran a job at all. Field: the job.
     TraceLeiosDbWriteJobDone String
+  | -- | A WAL checkpoint the writer ran. Fields: how long it took, the frames
+    -- in the log, the frames it copied back, and whether a reader held it up.
+    --
+    -- Automatic checkpointing is off, so this is every checkpoint on the write
+    -- path: the log's own record of a cost that was previously invisible.
+    TraceLeiosDbCheckpoint !DiffTime !Int !Int !Bool
   | -- | Size of the volatile LeiosDB partition and its on-disk footprint.
     TraceLeiosDbStats LeiosDbStats
   | -- | The background copier committed this many EBs' closures to the
