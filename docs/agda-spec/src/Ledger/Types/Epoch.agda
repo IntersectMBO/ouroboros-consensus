@@ -30,12 +30,12 @@ record EpochStructure : Type₁ where
         firstSlot                     : Epoch → Slot
         StabilityWindow               : Slot
         RandomnessStabilisationWindow : Slot
-        -- The wall-clock time at which a slot begins, measured from the same
-        -- origin for every slot. Used to interpret the Leios timing protocol
-        -- parameters, which CIP-164 specifies as durations rather than as slot
-        -- counts. A function rather than a slot-length constant, so that it
-        -- remains meaningful when the slot length changes between eras.
-        slotToTime                    : Slot → Milliseconds
+        -- The number of slots spanning a wall-clock duration, rounded up. Used
+        -- to interpret the Leios timing protocol parameters, which CIP-164
+        -- specifies as durations rather than as slot counts. A field because
+        -- Slot is abstract here: `durationToSlots` yields a number, which only
+        -- the structure can present as a Slot.
+        slotsFromDuration             : Milliseconds → Slot
         sucᵉ                          : Epoch → Epoch
         kesPeriod                     : Slot → KESPeriod
         _+ᵏ_                          : KESPeriod → ℕ → KESPeriod
@@ -92,7 +92,7 @@ record GlobalConstants : Type₁ where
          SlotsPerEpochᶜ : ℕ; ⦃ NonZero-SlotsPerEpochᶜ ⦄ : NonZero SlotsPerEpochᶜ
          StabilityWindowᶜ : ℕ
          RandomnessStabilisationWindowᶜ : ℕ
-         SlotLengthᶜ : ℕ -- in milliseconds
+         SlotLengthᶜ : Milliseconds; ⦃ NonZero-SlotLengthᶜ ⦄ : NonZero SlotLengthᶜ
          Quorum : ℕ
          NetworkId : Network
          SlotsPerKESPeriodᶜ : ℕ; ⦃ NonZero-SlotsPerKESPeriodᶜ ⦄ : NonZero SlotsPerKESPeriodᶜ
@@ -113,8 +113,7 @@ record GlobalConstants : Type₁ where
     .firstSlot e                   → e * SlotsPerEpochᶜ
     .StabilityWindow               → StabilityWindowᶜ
     .RandomnessStabilisationWindow → RandomnessStabilisationWindowᶜ
-    -- A uniform slot length; the abstract interface does not require one.
-    .slotToTime s                  → s * SlotLengthᶜ
+    .slotsFromDuration d           → durationToSlots SlotLengthᶜ d
     .sucᵉ                          → suc
     ._+ᵉ'_                         → _+_
     .kesPeriod slot                → slot / SlotsPerKESPeriodᶜ

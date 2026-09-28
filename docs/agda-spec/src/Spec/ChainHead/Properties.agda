@@ -53,8 +53,7 @@ certChecks? : ∀ ps lab b s → Dec (certChecks ps lab b s)
 certChecks? _  _                               false _ = yes tt
 certChecks? _  nothing                         true  _ = no λ ()
 certChecks? _  (just ⟦ _ , _  , _ , nothing ⟧ℓ) true  _ = no λ ()
-certChecks? ps (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s =
-  slotToTime sℓ + certificationDelay ps ≤? slotToTime s
+certChecks? ps (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s = sℓ + certificationDelay ps ≤? s
 
 instance
 
