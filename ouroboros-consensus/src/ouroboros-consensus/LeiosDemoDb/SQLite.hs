@@ -360,19 +360,23 @@ queryInt64 db sql =
       DB.Row -> DB.columnInt64 stmt 0
       DB.Done -> error ("queryInt64: expected a row: " <> sql)
 
--- | Run a WAL checkpoint, returning @(busy, log frames, frames copied back)@
--- as @wal_checkpoint@ reports them. @busy@ means a reader held it up, so the
--- log was only partly drained.
-checkpointWal :: HasCallStack => DB.Database -> IO (Bool, Int, Int)
-checkpointWal db =
-  bracket (dbPrepare db "PRAGMA wal_checkpoint(PASSIVE);") dbFinalize $ \stmt ->
-    dbStep stmt >>= \case
-      DB.Row -> do
-        busy <- DB.columnInt64 stmt 0
-        nLog <- DB.columnInt64 stmt 1
-        nCkpt <- DB.columnInt64 stmt 2
-        pure (busy /= 0, fromIntegral nLog, fromIntegral nCkpt)
-      DB.Done -> pure (False, 0, 0)
+-- | Run a WAL checkpoint on a pre-prepared @PRAGMA wal_checkpoint(PASSIVE)@
+-- statement, returning @(busy, log frames, frames copied back)@ as
+-- @wal_checkpoint@ reports them. @busy@ means a reader held it up, so the log
+-- was only partly drained. The statement is prepared once in 'startWriter' and
+-- reused: this runs on the write path every 'jobsBetweenCheckpoint' jobs, so a
+-- prepare\/finalize per call would be hot-path allocation.
+checkpointWal :: HasCallStack => DB.Statement -> IO (Bool, Int, Int)
+checkpointWal stmt =
+  (dbStep stmt >>= go) `finally` void (DB.reset stmt)
+ where
+  go = \case
+    DB.Row -> do
+      busy <- DB.columnInt64 stmt 0
+      nLog <- DB.columnInt64 stmt 1
+      nCkpt <- DB.columnInt64 stmt 2
+      pure (busy /= 0, fromIntegral nLog, fromIntegral nCkpt)
+    DB.Done -> pure (False, 0, 0)
 
 -- | Open a read-write connection to the given file, creating it and running
 -- the schema DDL if it does not exist yet. Both partitions share 'sql_schema'.
@@ -427,12 +431,17 @@ openRawConnection path = do
     dbExec db (fromString sql_schema)
   pure db
 
--- | 'openRawConnection' for the volatile partition: additionally applies the
--- GC-only DDL ('sql_schema_gc').
+-- | 'openRawConnection' for the volatile partition: turns automatic
+-- checkpointing off (the writer checkpoints explicitly, every
+-- 'jobsBetweenCheckpoint' jobs, so the cost lands on the write path where it
+-- can be traced and correlated with latency tails) and applies the GC-only DDL
+-- ('sql_schema_gc').
 openVolRawConnection :: HasCallStack => FilePath -> IO DB.Database
 openVolRawConnection path = do
   db <- openRawConnection path
-  orCloseOnError db $ dbExec db (fromString sql_schema_gc)
+  orCloseOnError db $ do
+    dbExec db (fromString "pragma wal_autocheckpoint = 0;")
+    dbExec db (fromString sql_schema_gc)
   pure db
 
 -- | Prepare a statement, run the action, finalize.
@@ -1203,14 +1212,15 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
   immDb <- orCloseOnError volDb $ openRawConnection immPath
   -- A throw anywhere below closes both connections (best effort -- an
   -- already-prepared statement can hold a close off) instead of leaking them.
-  (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt) <-
+  (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt, checkpointStmt) <-
     ( do
         conn <- mkConn tracer statsVar volDb immDb
         sweeperConn <- prepareSweeperConn volDb
         gcStmts <- prepareGcStmts volDb
         pinStmt <- dbPrepare volDb (fromString sql_pin_eb)
         markCopiedStmt <- dbPrepare volDb (fromString sql_mark_as_copied)
-        pure (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt)
+        checkpointStmt <- dbPrepare volDb (fromString "PRAGMA wal_checkpoint(PASSIVE);")
+        pure (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt, checkpointStmt)
     )
       `onException` (void (DB.close immDb) >> void (DB.close volDb))
   queue <- newTBQueueIO writerQueueDepth
@@ -1226,6 +1236,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
         finalizeGcStmts gcStmts
         dbFinalize pinStmt
         dbFinalize markCopiedStmt
+        dbFinalize checkpointStmt
         closeConn conn
 
       runJob :: WriteJob -> IO Bool
@@ -1295,7 +1306,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
                 if n + 1 >= jobsBetweenCheckpoint then (True, 0) else (False, n + 1)
               when sinceCkpt $ do
                 before <- getMonotonicTime
-                (busy, nLog, nCkpt) <- checkpointWal volDb
+                (busy, nLog, nCkpt) <- checkpointWal checkpointStmt
                 after <- getMonotonicTime
                 traceWith tracer $
                   TraceLeiosDbCheckpoint (diffTime after before) nLog nCkpt busy
@@ -1748,7 +1759,7 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
   -- The EBs whose bodies the truncation drops.
   --
   -- 'ebs' holds one row per announcement, so the same EB hash can appear at
-  -- several slots. 'ebTxs' and 'ebsMissingTxs' hold one copy per hash and carry
+  -- several slots. 'ebTxs' and 'ebTxBytes' hold one copy per hash and carry
   -- no slot. So an EB announced at slot 5 and again at slot 15 keeps its body
   -- when the cut is at slot 10. That is what the EXCEPT does: take the hashes
   -- announced after the cut, then remove the ones also announced at or before
@@ -1863,8 +1874,8 @@ closureLoop stmt acc =
 -- | Schema of both partitions (@leios.vol.db@ and @leios.imm.db@): identical
 -- on purpose, so the fallback reads reuse the volatile SQL verbatim and the
 -- copy is a server-side @INSERT ... SELECT@ over ATTACH. In the immutable
--- file 'missingTxCount', @status@ and @ebsMissingTxs@ are unused (rows land
--- complete, with the canonical @missingTxCount = -1, status = 2@).
+-- file 'missingTxCount' and @status@ are unused (rows land complete, with the
+-- canonical @missingTxCount = -1, status = 2@).
 sql_schema :: String
 sql_schema =
   unlines
