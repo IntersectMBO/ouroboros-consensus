@@ -832,11 +832,11 @@ txEbMeasureDijkstra closure =
 
 -- | What one Leios endorser block may hold, from the Dijkstra endorser-block
 -- protocol parameters.
-leiosEndorserBlockMeasure ::
+leiosEndorserBlockCapacity ::
   forall proto mk.
   TickedLedgerState (ShelleyBlock proto DijkstraEra) mk ->
   DijkstraEbMeasure proto
-leiosEndorserBlockMeasure st =
+leiosEndorserBlockCapacity st =
   DijkstraEbMeasure
     { ebClosureMeasure =
         TxMeasure
@@ -935,5 +935,5 @@ instance
 
   txEbMeasure _ = txEbMeasureDijkstra
 
-  ebCapacityTxMeasure _cfg = leiosEndorserBlockMeasure
+  ebCapacityTxMeasure _cfg = leiosEndorserBlockCapacity
   mempoolEbReservation _ = ebClosureMeasure
