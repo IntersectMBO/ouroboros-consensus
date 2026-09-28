@@ -941,30 +941,18 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
             (Leios.serializeEbBody eb)
             IntMap.empty
             (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
-        (bodyClass, _cacheMisses, mbBodyTxCacheSummary) <- case source of
+        (bodyClass, mbBodyTxCacheSummary) <- case source of
           -- A forge holds its whole closure, so nothing is missing. Its txs are
           -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
           -- 'insertBody' above only served to register the cache entries.
-          ForgedBlock{} -> pure (fetchArrivalGood ebBytesSize', IntMap.empty, Nothing)
+          ForgedBlock{} -> pure (fetchArrivalGood ebBytesSize', Nothing)
           ReceivedBlockFrom{} -> case mbTxCacheMissesFromBody of
             -- 'BodyNotYetInserted': the announcement was present and we filled it.
-            Just (txCacheSummary, ms) -> pure (fetchArrivalGood ebBytesSize', ms, Just txCacheSummary)
-            Nothing -> do
-              -- Announcement absent (assumed present once, since evicted): the
-              -- cache insert was a no-op. Backstop: classify the txs directly to
-              -- build the misses. No cache summary, so no 'TraceLeiosBodyHits'.
-              let MkLeiosEb v = eb
-              ms <- withLookupTx txCache $ \look ->
-                V.ifoldM
-                  ( \acc i (txh, sz) -> do
-                      r <- look txh
-                      pure $ case r of
-                        Just{} -> acc
-                        Nothing -> IntMap.insert i (txh, sz) acc
-                  )
-                  IntMap.empty
-                  v
-              pure (fetchArrivalEvicted ebBytesSize', ms, Nothing)
+            Just (txCacheSummary, _ms) -> pure (fetchArrivalGood ebBytesSize', Just txCacheSummary)
+            -- Announcement absent (assumed present once, since evicted): the
+            -- cache insert was a no-op, and there is no cache summary, so no
+            -- 'TraceLeiosBodyHits'.
+            Nothing -> pure (fetchArrivalEvicted ebBytesSize', Nothing)
         -- Look the /full/ tx set up in our local mempool (not just the cache
         -- misses), so txs in BOTH the mempool and the cache surface here: we prefer
         -- to (re-)apply those from the mempool, since that is what sets their
@@ -977,8 +965,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- NOT consulted for it: it records tx hashes we have seen, but bytes
         -- are owned per (ebHash, txOffset) now, so a hash seen in another EB
         -- says nothing about whether THIS EB's row is filled. Letting it
-        -- suppress a fetch is how a closure never completes. ('misses' above
-        -- still feeds the cache-hit telemetry.)
+        -- suppress a fetch is how a closure never completes.
         let mempoolIngest =
               IntMap.mapMaybeWithKey
                 (\_ (txh, _sz) -> (,) txh <$> Map.lookup txh mempoolHits)
@@ -1030,6 +1017,10 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       -- did land costs one re-fetch, which is the safe direction.
       let abandoned = do
             MVar.modifyMVar_ outstandingVar $ pure . Leios.abandonBodyPersist ebHash
+            -- The body is fetchable again; wake the decision loop so it is
+            -- re-requested now rather than at the next unrelated event. Mirrors
+            -- the signal 'confirmBodyPersisted' sends on the settle path.
+            void $ MVar.tryPutMVar readyVar ()
             traceWith ktracer $ TraceLeiosBlockAbandoned point
       flip onException abandoned $ do
         pointWritten <- writeEbPoint writer point ebBytesSize
