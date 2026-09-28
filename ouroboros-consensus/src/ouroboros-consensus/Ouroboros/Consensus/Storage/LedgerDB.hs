@@ -170,7 +170,7 @@ openDBInternal cctx args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapMana
       initDb
       snapManager
       lgrStartSnapshot
-  (ledgerDb, internal) <- mkLedgerDb initDb db
+  (ledgerDb, internal) <- mkLedgerDb initDb cctx db
   return (ledgerDb, replayCounter, internal)
  where
   LedgerDbArgs

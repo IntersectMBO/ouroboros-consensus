@@ -130,7 +130,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix = do
                 else pure chlog'
           pure (chlog'', bstore)
       , currentTip = \(ch, _) -> ledgerState . current $ ch
-      , mkLedgerDb = \(db, ldbBackingStore) -> do
+      , mkLedgerDb = \_cctx (db, ldbBackingStore) -> do
           (varDB, prevApplied) <-
             (,) <$> newTVarIO db <*> newTVarIO Set.empty
           flushLock <- mkLedgerDBLock
@@ -412,7 +412,7 @@ mkInternals h snapManager =
     , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     , push = getEnv1 h implIntPush
     , reapplyThenPushNOW = getEnv2 h implIntReapplyThenPush
-    , closeLedgerDB = getEnv h $ void . bsClose . ldbBackingStore
+    , closeLedgerDB = \_cctx -> getEnv h $ void . bsClose . ldbBackingStore
     , getNumLedgerTablesHandles = pure 0
     }
 

@@ -415,7 +415,7 @@ data TestInternals m l blk = TestInternals
   --
   -- This does not modify the set of previously applied points.
   , truncateSnapshots :: m ()
-  , closeLedgerDB :: m ()
+  , closeLedgerDB :: CallCtx m -> m ()
   , getNumLedgerTablesHandles :: m Word64
   -- ^ Get the number of referenced 'LedgerTablesHandle's for V2. For V1, this
   -- always returns 0.
@@ -552,7 +552,7 @@ data InitDB db m blk = InitDB
   , currentTip :: !(db -> LedgerState blk EmptyMK)
   -- ^ Getting the current tip for tracing the Ledger Events.
   , mkLedgerDb ::
-      !(db -> m (LedgerDB m (ExtLedgerState blk) blk, TestInternals m (ExtLedgerState blk) blk))
+      !(CallCtx m -> db -> m (LedgerDB m (ExtLedgerState blk) blk, TestInternals m (ExtLedgerState blk) blk))
   -- ^ Create a LedgerDB from the initialized data structures from previous
   -- steps.
   }

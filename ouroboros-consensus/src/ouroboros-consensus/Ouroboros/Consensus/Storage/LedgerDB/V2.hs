@@ -32,7 +32,11 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb.WithCallTrace (LeiosDbHandle, withReader)
+import LeiosDemoDb.WithCallTrace
+  ( LeiosDbHandle (openReader)
+  , LeiosDbReader (closeReader)
+  , withReader
+  )
 import LeiosDemoTypes (HasLeiosVoting)
 import LeiosUtils.CallTrace (CallCtx)
 import NoThunks.Class
@@ -107,11 +111,12 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
           withReader ldbLeiosDb cctx $ \reader ->
             reapplyThenPush reader cctx cfg ap db
       , currentTip = ledgerState . current
-      , mkLedgerDb = \lseq -> do
+      , mkLedgerDb = \cctx lseq -> do
           varDB <- newTVarIO lseq
           prevApplied <- newTVarIO Set.empty
           lock <- RAWLock.new ()
           nextForkerKey <- newTVarIO (ForkerKey 0)
+          ldbLeiosDbReader <- ldbLeiosDb.openReader cctx
           let env =
                 LedgerDBEnv
                   { ldbSeq = varDB
@@ -126,10 +131,10 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                   , ldbOpenHandlesLock = lock
                   , ldbGetVolatileSuffix = getVolatileSuffix
                   , ldbBackendResources = SomeResources res
-                  , ldbLeiosDb = ldbLeiosDb
+                  , ldbLeiosDbReader
                   }
           h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-          pure $ implMkLedgerDb h snapManager
+          pure $ implMkLedgerDb cctx h snapManager
       }
  where
   LedgerDbArgs
@@ -158,10 +163,11 @@ implMkLedgerDb ::
   , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>
+  CallCtx m ->
   LedgerDBHandle m l blk ->
   SnapshotManager m m blk (StateRef m l) ->
   (LedgerDB m l blk, TestInternals m l blk)
-implMkLedgerDb h snapManager =
+implMkLedgerDb cctx h snapManager =
   let ldb =
         LedgerDB
           { getVolatileTip = getEnvSTM h implGetVolatileTip
@@ -174,7 +180,7 @@ implMkLedgerDb h snapManager =
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
           , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
           , tryFlush = getEnv h implTryFlush
-          , closeDB = implCloseDB h
+          , closeDB = implCloseDB cctx h
           }
    in (ldb, mkInternals ldb h snapManager)
 
@@ -216,8 +222,7 @@ mkInternals ldb h snapManager =
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
               let cds = headerStateChainDep (headerState st)
-              blk' <- withReader (ldbLeiosDb env) cctx $ \reader ->
-                resolveLeiosBlock reader cctx cds blk -- TODO resolveLeiosBlock is the wrong function to call here
+              blk' <- resolveLeiosBlock (ldbLeiosDbReader env) cctx cds blk -- TODO resolveLeiosBlock is the wrong function to call here
               tables <- forkerReadTables frk (getBlockKeySets blk')
               let st' =
                     tickThenReapply
@@ -228,7 +233,7 @@ mkInternals ldb h snapManager =
               forkerPush frk st' >> Monad.join (atomically (forkerCommit frk))
               pruneLedgerSeq env
           )
-    , closeLedgerDB = implCloseDB h
+    , closeLedgerDB = \cctx -> implCloseDB cctx h
     , getNumLedgerTablesHandles = getEnv h $ \env -> do
         l <- readTVarIO (ldbSeq env)
         -- We always have a state at the anchor.
@@ -317,24 +322,22 @@ implValidate ::
   SuccessForkerAction m l ->
   m (ValidateResult l blk)
 implValidate h ldbEnv cctx tr cache rollbacks hdrs onSuccess =
-  -- See V1.implValidate for the rationale on opening per-call.
-  withReader (ldbLeiosDb ldbEnv) cctx $ \reader ->
-    validate cctx (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
-      ValidateArgs
-        (ldbResolveBlock ldbEnv)
-        (ledgerDbCfg $ ldbCfg ldbEnv)
-        ( \l -> do
-            prev <- readTVar (ldbPrevApplied ldbEnv)
-            writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
-        )
-        (readTVar (ldbPrevApplied ldbEnv))
-        (withForkerByRollback h)
-        onSuccess
-        tr
-        cache
-        rollbacks
-        hdrs
-        reader
+  validate cctx (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+    ValidateArgs
+      (ldbResolveBlock ldbEnv)
+      (ledgerDbCfg $ ldbCfg ldbEnv)
+      ( \l -> do
+          prev <- readTVar (ldbPrevApplied ldbEnv)
+          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
+      )
+      (readTVar (ldbPrevApplied ldbEnv))
+      (withForkerByRollback h)
+      onSuccess
+      tr
+      cache
+      rollbacks
+      hdrs
+      (ldbLeiosDbReader ldbEnv)
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -386,8 +389,8 @@ implTryTakeSnapshot snapManager env copyBlocks mTime nrBlocks =
 implTryFlush :: Applicative m => LedgerDBEnv m l blk -> m ()
 implTryFlush _ = pure ()
 
-implCloseDB :: forall m l blk. IOLike m => LedgerDBHandle m l blk -> m ()
-implCloseDB (LDBHandle varState) = do
+implCloseDB :: forall m l blk. IOLike m => CallCtx m -> LedgerDBHandle m l blk -> m ()
+implCloseDB cctx (LDBHandle varState) = do
   res <-
     atomically $
       readTVar varState >>= \case
@@ -395,13 +398,14 @@ implCloseDB (LDBHandle varState) = do
         LedgerDBClosed -> pure Nothing
         LedgerDBOpen env -> do
           writeTVar varState LedgerDBClosed
-          pure (Just $ (ldbSeq env, ldbBackendResources env))
+          pure (Just $ (ldbSeq env, ldbBackendResources env, ldbLeiosDbReader env))
   whenJust
     res
-    ( \(s, SomeResources res') -> do
+    ( \(s, SomeResources res', leiosDbReader) -> do
         s' <- readTVarIO s
         closeLedgerSeq s'
         releaseResources (Proxy @blk) res'
+        leiosDbReader.closeReader cctx
     )
 
 {-------------------------------------------------------------------------------
@@ -448,10 +452,9 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLeiosDb :: !(LeiosDbHandle m)
-  -- ^ 'LeiosDbHandle', not a live connection: every consumer opens
-  -- its own per-call 'LeiosDbReader' at use time (a
-  -- 'direct-sqlite' connection is single-thread).
+  , ldbLeiosDbReader :: !(LeiosDbReader m)
+  -- ^ Single shared reader for this LedgerDB instance. Opened once at
+  -- 'mkLedgerDb' time and closed in 'implCloseDB'.
   }
   deriving Generic
 
