@@ -117,6 +117,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Leios.EndorserBlock as Leios
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -805,8 +806,12 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
 -- transactions, its closure, must satisfy block-like limits. So this pairs the
 -- closure's 'TxMeasure' with the one dimension specific to endorser blocks:
 -- the size of the references themselves.
-data DijkstraEbMeasure p = DijkstraEbMeasure
-  { ebClosureMeasure :: !(TxMeasure (ShelleyBlock p DijkstraEra))
+--
+-- The closure type names one protocol, 'Praos' 'StandardCrypto'. The phase
+-- measures do not depend on the protocol, so 'txEbMeasureDijkstra' and
+-- 'mempoolEbReservation' rebuild the 'TxMeasure' for any protocol.
+data DijkstraEbMeasure = DijkstraEbMeasure
+  { ebClosureMeasure :: !(TxMeasure (ShelleyBlock (Praos StandardCrypto) DijkstraEra))
   , txReferencesSize :: !(IgnoringOverflow ByteSize32)
   -- ^ Size of transaction references _excluding_ any framing overhead: of one
   -- transaction's reference, or summed over whatever is measured (an endorser
@@ -816,18 +821,18 @@ data DijkstraEbMeasure p = DijkstraEbMeasure
   deriving anyclass NoThunks
   deriving
     Measure
-    via (InstantiatedAt Generic (DijkstraEbMeasure p))
+    via (InstantiatedAt Generic DijkstraEbMeasure)
 
 -- | The cost of one transaction in an endorser block: its closure cost is the
 -- transaction's 'TxMeasure', and its reference costs the bytes
 -- 'Leios.encodeEndorserBlock' writes for it.
-txEbMeasureDijkstra :: TxMeasure (ShelleyBlock p DijkstraEra) -> DijkstraEbMeasure p
-txEbMeasureDijkstra closure =
+txEbMeasureDijkstra :: TxMeasure (ShelleyBlock p DijkstraEra) -> DijkstraEbMeasure
+txEbMeasureDijkstra (TxMeasure alonzo refScripts) =
   DijkstraEbMeasure
-    { ebClosureMeasure = closure
+    { ebClosureMeasure = TxMeasure alonzo refScripts
     , txReferencesSize =
         IgnoringOverflow . Leios.encodedReferenceSize (Proxy @DijkstraEra) $
-          txMeasureByteSize closure
+          txMeasureByteSize alonzo
     }
 
 -- | What one Leios endorser block may hold, from the Dijkstra endorser-block
@@ -835,7 +840,7 @@ txEbMeasureDijkstra closure =
 leiosEndorserBlockCapacity ::
   forall proto mk.
   TickedLedgerState (ShelleyBlock proto DijkstraEra) mk ->
-  DijkstraEbMeasure proto
+  DijkstraEbMeasure
 leiosEndorserBlockCapacity st =
   DijkstraEbMeasure
     { ebClosureMeasure =
@@ -931,9 +936,10 @@ instance
   txMeasurePhase2 _cfg st tx = runValidation $ txMeasureRefScripts st tx
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
 
-  type TxEbMeasure (ShelleyBlock p DijkstraEra) = DijkstraEbMeasure p
+  type TxEbMeasure (ShelleyBlock p DijkstraEra) = DijkstraEbMeasure
 
   txEbMeasure _ = txEbMeasureDijkstra
 
   ebCapacityTxMeasure _cfg = leiosEndorserBlockCapacity
-  mempoolEbReservation _ = ebClosureMeasure
+  mempoolEbReservation _ DijkstraEbMeasure{ebClosureMeasure = TxMeasure alonzo refScripts} =
+    TxMeasure alonzo refScripts

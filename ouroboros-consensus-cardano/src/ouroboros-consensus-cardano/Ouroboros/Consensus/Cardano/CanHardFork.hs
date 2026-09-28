@@ -265,7 +265,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       (TxMeasurePhase1 x -> AlonzoMeasure) ->
       (TxMeasurePhase2 x -> RefScriptSize) ->
       TxMeasure x ->
-      DijkstraEbMeasure (Praos c)
+      DijkstraEbMeasure
     inj f g (TxMeasure p1 p2) =
       DijkstraEbMeasure
         { ebClosureMeasure = TxMeasure (f p1) (g p2)
