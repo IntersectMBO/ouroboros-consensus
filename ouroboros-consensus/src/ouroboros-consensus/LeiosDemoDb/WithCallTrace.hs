@@ -30,6 +30,7 @@ module LeiosDemoDb.WithCallTrace
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Control.Tracer (Tracer, traceWith)
+import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
 import LeiosDemoDb.Common
@@ -83,18 +84,27 @@ instance Functor m => Functor (Promise m) where
 awaitAll :: (Foldable t, Applicative m) => CallCtx m -> t (Promise m ()) -> m ()
 awaitAll cctx = traverse_ (\p -> await p cctx)
 
--- | Wrap a raw 'DB.Promise' so that awaiting it emits a call-trace event
--- named @name@.
+-- | Wrap a raw 'DB.Promise' so that awaiting it emits a call-trace event.
+-- @arg@ mirrors the argument of the corresponding submit call.
+-- @projectResult@ projects the result to a JSON for tracing; pass
+-- @'const' ()@ when the result carries no useful information.
 wrapPromise ::
-  IOLike m =>
+  (IOLike m, Aeson.ToJSON arg, Aeson.ToJSON res') =>
   Tracer m SomeJsonCallTrace ->
   CallName ->
-  DB.Promise m a ->
-  Promise m a
-wrapPromise tracer name rawPromise =
+  arg ->
+  (res -> res') ->
+  DB.Promise m res ->
+  Promise m res
+wrapPromise tracer name arg projectResult rawPromise =
   Promise $ \ctx ->
-    callWith tracer ctx name "" $ \_ctx' ->
-      DB.await rawPromise
+    callTraceVia
+      projectResult
+      (traceWith tracer . SomeJsonCallTrace)
+      ctx
+      name
+      arg
+      $ \_ctx' -> DB.await rawPromise
 
 -- | Like 'DB.LeiosDbWriter' but every method takes a 'CallCtx' as its first
 -- argument. Both the submission and the 'await' of each write are traced; the
@@ -132,7 +142,7 @@ withCallTraceHandle tracer h =
             callWith tracer ctx "leios-db-garbage-collect" (show slot) $ \_ctx' ->
               DB.leiosDbGarbageCollect h slot
         , leiosDbPromoteToImmutable = \ctx points ->
-            callWith tracer ctx "leios-db-promote-to-immutable" (show (length points)) $ \_ctx' ->
+            callWith tracer ctx "leios-db-promote-to-immutable" (length points) $ \_ctx' ->
               DB.leiosDbPromoteToImmutable h points
         , leiosDbSampleStats = \ctx ->
             callWith tracer ctx "leios-db-sample-stats" "" $ \_ctx' ->
@@ -184,25 +194,25 @@ mkCallTraceWriter tracer w =
               rawClose
         , writeEbPoint = \ctx point size ->
             callWith tracer ctx "leios-db-write-eb-point" (show point) $ \_ctx' ->
-              wrapPromise tracer "await-leios-db-write-eb-point" <$> DB.writeEbPoint w point size
+              wrapPromise tracer "await-leios-db-write-eb-point" (show point) (const ())
+                <$> DB.writeEbPoint w point size
         , writeEbBody = \ctx point eb ->
             callWith tracer ctx "leios-db-write-eb-body" (show point) $ \_ctx' ->
-              wrapPromise tracer "await-leios-db-write-eb-body" <$> DB.writeEbBody w point eb
+              wrapPromise tracer "await-leios-db-write-eb-body" (show point) length <$> DB.writeEbBody w point eb
         , writeTxs = \ctx txs ->
-            callWith tracer ctx "leios-db-write-txs" (show (length txs)) $ \_ctx' ->
-              wrapPromise tracer "await-leios-db-write-txs" <$> DB.writeTxs w txs
+            callWith tracer ctx "leios-db-write-txs" (length txs) $ \_ctx' ->
+              wrapPromise tracer "await-leios-db-write-txs" (length txs) length <$> DB.writeTxs w txs
         }
 
 -- | Instrument one call: emit 'CallStart' before and 'CallEnd' after the
 -- action. The result is projected to '()' in the trace so any return type is
--- accepted; the actual result is returned unchanged. The argument is a
--- 'String' built from the relevant call inputs.
+-- accepted; the actual result is returned unchanged.
 callWith ::
-  IOLike m =>
+  (IOLike m, Aeson.ToJSON a) =>
   Tracer m SomeJsonCallTrace ->
   CallCtx m ->
   CallName ->
-  String ->
+  a ->
   (CallCtx m -> m r) ->
   m r
 callWith tracer =
