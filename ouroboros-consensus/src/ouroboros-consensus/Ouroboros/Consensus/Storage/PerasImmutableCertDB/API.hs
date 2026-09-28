@@ -5,10 +5,12 @@
 
 module Ouroboros.Consensus.Storage.PerasImmutableCertDB.API (PerasImmutableCertDB (..), AddPerasImmutableCertResult (..)) where
 
+import Data.Set (Set)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Util.IOLike (STM)
 
 -- | API for the 'PerasImmutableCertDB', which stores immutable (aka historical)
 -- Peras certificates, ie those relevant for syncing nodes only.
@@ -21,6 +23,11 @@ data PerasImmutableCertDB m blk = PerasImmutableCertDB
   -- ^ @'getCertsAfter' roundNo maxCerts@ gets at most @maxCerts@ immutable
   -- certificates with a round number strictly greater than @roundNo@, in
   -- ascending round number order.
+  , getQuarantinedRounds :: STM m (Set PerasRoundNo)
+  -- ^ Get the round numbers of the certificates that were found to be
+  -- unreadable or corrupt on disk and were therefore quarantined. These are no
+  -- longer served by 'getCertsAfter'; adding a certificate for such a round
+  -- (e.g. one fetched anew from a peer) releases it from quarantine.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasImmutableCertDB" (PerasImmutableCertDB m blk)
 
