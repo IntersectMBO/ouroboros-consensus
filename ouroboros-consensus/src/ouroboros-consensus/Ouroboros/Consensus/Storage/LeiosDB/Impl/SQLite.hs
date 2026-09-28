@@ -1057,19 +1057,47 @@ closeChecked db =
 -- for a write lock on the volatile partition. Sweeping is not a job at all
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
-  = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
-  | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
-  | WriteTxs ![(TxHash, ByteString)] !(WriteResult CompletedEbs)
+  = WriteEbPoint
+      -- | the announced EB
+      !LeiosPoint
+      -- | its announced size
+      !BytesSize
+      -- | where the worker puts the result
+      !(WriteResult ())
+  | WriteEbBody
+      -- | the EB's point
+      !LeiosPoint
+      -- | the EB body
+      !LeiosEb
+      -- | where the worker puts the result
+      !(WriteResult CompletedEbs)
+  | WriteTxs
+      -- | txs with their bytes
+      ![(TxHash, ByteString)]
+      -- | where the worker puts the result
+      !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
   | -- | Pin EBs for promotion; see 'sqlPromoteToImmutable'.
-    PinEb ![EbHash] !(WriteResult ())
+    PinEb
+      -- | the EBs to pin
+      ![EbHash]
+      -- | where the worker puts the result
+      !(WriteResult ())
   | -- | The volatile half of a copy: the EB is in the immutable partition
     -- now, so its volatile rows are evictable. Submitted by 'startCopier'.
-    MarkCopied ![EbHash] !(WriteResult ())
+    MarkCopied
+      -- | the EBs now in the immutable partition
+      ![EbHash]
+      -- | where the worker puts the result
+      !(WriteResult ())
   | -- | The GC MARK phase; see 'gcMark'.
-    GcMark !SlotNo !(WriteResult ())
+    GcMark
+      -- | the GC frontier slot
+      !SlotNo
+      -- | where the worker puts the result
+      !(WriteResult ())
   | -- | Stop the worker: awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed and the connections are closed.
     Shutdown !(WriteResult ())
@@ -1081,10 +1109,16 @@ type WriteResult a = StrictTMVar IO (Either SomeException a)
 -- most.
 data SweepState
   = SweepIdle
-  | -- | Evicting GC-marked EBs; carries how many so far.
-    SweepEbs !Int
-  | -- | Evicting the txs they orphaned; carries the EB and tx counts.
-    SweepOrphans !Int !Int
+  | -- | Evicting GC-marked EBs.
+    SweepEbs
+      -- | EBs evicted so far
+      !Int
+  | -- | Evicting the txs they orphaned.
+    SweepOrphans
+      -- | EBs evicted in the EB phase
+      !Int
+      -- | txs evicted so far
+      !Int
   deriving Eq
 
 -- | The writer's submission side: the job queue, and -- once the worker has

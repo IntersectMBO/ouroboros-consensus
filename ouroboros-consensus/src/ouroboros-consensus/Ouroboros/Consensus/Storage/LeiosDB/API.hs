@@ -138,8 +138,16 @@ awaitAll = traverse_ await
 type CompletedEbs = [LeiosPoint]
 
 data LeiosEbNotification
-  = AcquiredEb LeiosPoint BytesSize
-  | AcquiredEbTxs LeiosPoint
+  = -- | An EB body was written.
+    AcquiredEb
+      -- | the EB's point
+      LeiosPoint
+      -- | its size in bytes
+      BytesSize
+  | -- | Every tx of the EB is now in the DB.
+    AcquiredEbTxs
+      -- | the EB's point
+      LeiosPoint
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) (\r -> r.close)
