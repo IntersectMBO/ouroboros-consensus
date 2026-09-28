@@ -49,8 +49,7 @@ import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
-import LeiosDemoDb (Promise (..))
-import LeiosDemoDb.WithCallTrace (LeiosDbReader (..), LeiosDbWriter (..))
+import LeiosDemoDb.WithCallTrace (LeiosDbReader (..), LeiosDbWriter (..), Promise (..))
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -1008,8 +1007,8 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache cctx writer 
       -- TODO: do we really? Can we just optimistically continue and risk a peer
       -- disconnect if we can't serve what we offer "in time"?
       let traceAcquired = do
-            await pointWritten
-            completedByBody <- await bodyWritten
+            pointWritten.await cctx
+            completedByBody <- bodyWritten.await cctx
             st <- Leios.ebState <$> MVar.readMVar outstandingVar
             traceWith ktracer $ TraceLeiosBlockAcquired point (ebPointAge now st point)
             forM_ completedByBody $ \p ->
@@ -1377,7 +1376,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache cctx writ
   ingestAcquiredTxs now applied toIngest = do
     txsWritten <- writeTxs writer cctx toIngest
     let traceCompleted = do
-          completed <- traceException tracer TraceLeiosPeerDbException $ await txsWritten
+          completed <- traceException tracer TraceLeiosPeerDbException $ txsWritten.await cctx
           ebStates <- Leios.ebState <$> MVar.readMVar outstandingVar
           forM_ completed $ \p ->
             traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)

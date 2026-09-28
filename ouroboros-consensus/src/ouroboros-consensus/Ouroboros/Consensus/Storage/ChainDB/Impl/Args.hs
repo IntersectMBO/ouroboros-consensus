@@ -239,7 +239,10 @@ completeChainDbArgs
                   cdbsTopLevelConfig
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
             , LedgerDB.lgrBackendArgs = flavorArgs
-            , LedgerDB.lgrLeiosDb = withCallTraceHandle ((TraceAddBlockEvent . TraceAddBlockCall) >$< cdbsTracer (cdbsArgs defArgs)) leiosDb
+            , LedgerDB.lgrLeiosDb =
+                withCallTraceHandle
+                  ((TraceAddBlockEvent . TraceAddBlockCall) >$< cdbsTracer (cdbsArgs defArgs))
+                  leiosDb
             }
       , cdbPerasCertDbArgs =
           PerasCertDB.PerasCertDbArgs

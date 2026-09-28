@@ -463,7 +463,10 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
   aChainSyncServer them channel = do
     labelThisThread "LocalChainSyncServer"
     cctx <- rootCallCtx "LocalChainSyncServer"
-    let leiosDbHandle = withCallTraceHandle ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel)) kernelLeiosDB
+    let leiosDbHandle =
+          withCallTraceHandle
+            ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel))
+            kernelLeiosDB
     withReader leiosDbHandle cctx $ \reader ->
       bracketWithPrivateRegistry
         (chainSyncBlockServerFollower (getChainDB kernel))

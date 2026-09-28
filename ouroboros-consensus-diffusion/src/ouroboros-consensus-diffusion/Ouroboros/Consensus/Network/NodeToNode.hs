@@ -1502,7 +1502,10 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     channel = do
       labelThisThread "LeiosFetchClient"
       cctx <- rootCallCtx "LeiosFetchClient"
-      let leiosDbHandle = withCallTraceHandle ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel)) leiosDB
+      let leiosDbHandle =
+            withCallTraceHandle
+              ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel))
+              leiosDB
       bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
         withWriter leiosDbHandle cctx $ \writer -> do
           ((), trailing) <-
@@ -1523,7 +1526,10 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
   aLeiosFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosFetchServer"
     cctx <- rootCallCtx "LeiosFetchServer"
-    let leiosDbHandle = withCallTraceHandle ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel)) leiosDB
+    let leiosDbHandle =
+          withCallTraceHandle
+            ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel))
+            leiosDB
     withReader leiosDbHandle cctx $ \reader ->
       runPeerWithLimits
         (TraceLabelPeer them `contramap` tLeiosFetchTracer)

@@ -877,7 +877,10 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     rootCCtx <- rootCallCtx "Forge"
-    let leiosDbHandle = withCallTraceHandle ((TraceLeiosDb . LeiosDb.TraceLeiosDbCall) >$< leiosKernelTracer tracers) leiosDB
+    let leiosDbHandle =
+          withCallTraceHandle
+            ((TraceLeiosDb . LeiosDb.TraceLeiosDbCall) >$< leiosKernelTracer tracers)
+            leiosDB
     leiosDbReader <- leiosDbHandle.openReader rootCCtx
     leiosDbWriter <- leiosDbHandle.openWriter rootCCtx
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)

@@ -21,17 +21,21 @@ module LeiosDemoDb.WithCallTrace
   , LeiosDbWriter (..)
   , mkCallTraceWriter
   , withWriter
+
+    -- * Promise
+  , Promise (..)
+  , awaitAll
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Control.Tracer (Tracer, traceWith)
 import Data.ByteString (ByteString)
+import Data.Foldable (traverse_)
 import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbStats
   , LeiosEbNotification
-  , Promise
   )
 import qualified LeiosDemoDb.Common as DB
 import LeiosDemoTypes (BytesSize, EbHash, LeiosEb, LeiosPoint, TxHash)
@@ -67,9 +71,34 @@ data LeiosDbReader m = LeiosDbReader
   , scanCompleteEbClosuresNotOlderThanSlot :: CallCtx m -> SlotNo -> m [LeiosPoint]
   }
 
+-- | Like 'DB.Promise' but 'await' takes a 'CallCtx', so the blocking half of
+-- an async write is visible in the call trace under a name that identifies
+-- which write operation is being awaited.
+newtype Promise m a = Promise {await :: CallCtx m -> m a}
+
+instance Functor m => Functor (Promise m) where
+  fmap f (Promise g) = Promise (fmap f . g)
+
+-- | Await every promise in order, passing the same 'CallCtx' to each.
+awaitAll :: (Foldable t, Applicative m) => CallCtx m -> t (Promise m ()) -> m ()
+awaitAll cctx = traverse_ (\p -> await p cctx)
+
+-- | Wrap a raw 'DB.Promise' so that awaiting it emits a call-trace event
+-- named @name@.
+wrapPromise ::
+  IOLike m =>
+  Tracer m SomeJsonCallTrace ->
+  CallName ->
+  DB.Promise m a ->
+  Promise m a
+wrapPromise tracer name rawPromise =
+  Promise $ \ctx ->
+    callWith tracer ctx name "" $ \_ctx' ->
+      DB.await rawPromise
+
 -- | Like 'DB.LeiosDbWriter' but every method takes a 'CallCtx' as its first
--- argument. Only the submission side of each write is traced; the returned
--- 'Promise' is not modified.
+-- argument. Both the submission and the 'await' of each write are traced; the
+-- returned 'Promise' carries the await call name baked in.
 data LeiosDbWriter m = LeiosDbWriter
   { closeWriter :: CallCtx m -> m ()
   , writeEbPoint :: CallCtx m -> LeiosPoint -> BytesSize -> m (Promise m ())
@@ -155,13 +184,13 @@ mkCallTraceWriter tracer w =
               rawClose
         , writeEbPoint = \ctx point size ->
             callWith tracer ctx "leios-db-write-eb-point" (show point) $ \_ctx' ->
-              DB.writeEbPoint w point size
+              wrapPromise tracer "await-leios-db-write-eb-point" <$> DB.writeEbPoint w point size
         , writeEbBody = \ctx point eb ->
             callWith tracer ctx "leios-db-write-eb-body" (show point) $ \_ctx' ->
-              DB.writeEbBody w point eb
+              wrapPromise tracer "await-leios-db-write-eb-body" <$> DB.writeEbBody w point eb
         , writeTxs = \ctx txs ->
             callWith tracer ctx "leios-db-write-txs" (show (length txs)) $ \_ctx' ->
-              DB.writeTxs w txs
+              wrapPromise tracer "await-leios-db-write-txs" <$> DB.writeTxs w txs
         }
 
 -- | Instrument one call: emit 'CallStart' before and 'CallEnd' after the

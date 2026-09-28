@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Unit tests for 'validateEbClosure', the part of the Leios voting thread
@@ -20,12 +21,12 @@ import Data.Function ((&))
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle
-  , Promise (..)
   , newLeiosDBInMemory
   )
 import LeiosDemoDb.WithCallTrace
   ( LeiosDbReader
   , LeiosDbWriter (..)
+  , Promise (..)
   , withCallTraceHandle
   , withReader
   , withWriter
@@ -231,9 +232,9 @@ withHarness acquired txs k = do
   cctx <- rootCallCtx "TestLeiosVoting"
   let leiosDbHandle = withCallTraceHandle nullTracer db
   withReader leiosDbHandle cctx $ \reader -> withWriter leiosDbHandle cctx $ \writer -> do
-    void $ await =<< writeEbPoint writer cctx point (encodeLeiosEbSize eb)
-    void $ await =<< writeEbBody writer cctx point eb
-    void $ await =<< writeTxs writer cctx [(txHashOf tx, txBytes tx) | tx <- txs]
+    writeEbPoint writer cctx point (encodeLeiosEbSize eb) >>= \p -> void $ p.await cctx
+    writeEbBody writer cctx point eb >>= \p -> void $ p.await cctx
+    writeTxs writer cctx [(txHashOf tx, txBytes tx) | tx <- txs] >>= \p -> void $ p.await cctx
 
     cache <- newPureLeiosTxCache defaultLeiosTxCacheShift
     void $ insertAnnouncement cache (pointSlotNo point) rbHash (pointEbHash point)

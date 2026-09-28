@@ -27,10 +27,10 @@ import Data.Either (isRight)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
-import LeiosDemoDb (awaitAll)
 import LeiosDemoDb.WithCallTrace
   ( LeiosDbReader
   , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
+  , awaitAll
   )
 import LeiosDemoTypes
   ( ForgedLeiosEb (..)
@@ -218,7 +218,7 @@ runForge cctx epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs
     pointWritten <- writeEbPoint leiosDbWriter cctx forgedEb.point (encodeLeiosEbSize forgedEb.body)
     bodyWritten <- writeEbBody leiosDbWriter cctx forgedEb.point forgedEb.body
     txsWritten <- writeTxs leiosDbWriter cctx forgedEb.txClosure
-    awaitAll [pointWritten, void bodyWritten, void txsWritten]
+    awaitAll cctx [pointWritten, void bodyWritten, void txsWritten]
     traceWith leiosTracer $
       TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
 

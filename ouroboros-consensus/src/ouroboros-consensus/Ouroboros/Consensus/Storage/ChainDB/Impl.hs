@@ -300,7 +300,10 @@ openDBInternal cctx args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
-            , cdbLeiosDb = withCallTraceHandle ((TraceAddBlockEvent . TraceAddBlockCall) >$< tracer) (Args.cdbsLeiosDb cdbSpecificArgs)
+            , cdbLeiosDb =
+                withCallTraceHandle
+                  ((TraceAddBlockEvent . TraceAddBlockCall) >$< tracer)
+                  (Args.cdbsLeiosDb cdbSpecificArgs)
             , cdbLeiosEvictTxCache = Args.cdbsLeiosEvictTxCache cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
