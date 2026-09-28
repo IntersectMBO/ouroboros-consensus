@@ -37,7 +37,8 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   , LoE (LoEDisabled)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
-  ( TraceEvent (..)
+  ( TraceAddBlockEvent (TraceAddBlockCall)
+  , TraceEvent (..)
   )
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbBackendArgs)
@@ -238,7 +239,7 @@ completeChainDbArgs
                   cdbsTopLevelConfig
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
             , LedgerDB.lgrBackendArgs = flavorArgs
-            , LedgerDB.lgrLeiosDb = withCallTraceHandle nullTracer leiosDb
+            , LedgerDB.lgrLeiosDb = withCallTraceHandle ((TraceAddBlockEvent . TraceAddBlockCall) >$< cdbsTracer (cdbsArgs defArgs)) leiosDb
             }
       , cdbPerasCertDbArgs =
           PerasCertDB.PerasCertDbArgs

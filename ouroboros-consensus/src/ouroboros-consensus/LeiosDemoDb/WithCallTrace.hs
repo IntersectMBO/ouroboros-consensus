@@ -34,7 +34,6 @@ import LeiosDemoDb.Common
   , Promise
   )
 import qualified LeiosDemoDb.Common as DB
-import LeiosDemoDb.Trace (TraceLeiosDb (..))
 import LeiosDemoTypes (BytesSize, EbHash, LeiosEb, LeiosPoint, TxHash)
 import LeiosUtils.CallTrace
   ( CallCtx
@@ -82,7 +81,7 @@ data LeiosDbWriter m = LeiosDbWriter
 -- 'CallCtx' supplied by the call site, then delegates to the underlying handle.
 withCallTraceHandle ::
   IOLike m =>
-  Tracer m TraceLeiosDb ->
+  Tracer m SomeJsonCallTrace ->
   DB.LeiosDbHandle m ->
   LeiosDbHandle m
 withCallTraceHandle tracer h =
@@ -115,7 +114,7 @@ withCallTraceHandle tracer h =
 -- 'CallCtx' supplied by the call site.
 mkCallTraceReader ::
   IOLike m =>
-  Tracer m TraceLeiosDb ->
+  Tracer m SomeJsonCallTrace ->
   DB.LeiosDbReader m ->
   LeiosDbReader m
 mkCallTraceReader tracer r =
@@ -145,7 +144,7 @@ mkCallTraceReader tracer r =
 -- 'CallCtx' supplied by the call site.
 mkCallTraceWriter ::
   IOLike m =>
-  Tracer m TraceLeiosDb ->
+  Tracer m SomeJsonCallTrace ->
   DB.LeiosDbWriter m ->
   LeiosDbWriter m
 mkCallTraceWriter tracer w =
@@ -171,7 +170,7 @@ mkCallTraceWriter tracer w =
 -- 'String' built from the relevant call inputs.
 callWith ::
   IOLike m =>
-  Tracer m TraceLeiosDb ->
+  Tracer m SomeJsonCallTrace ->
   CallCtx m ->
   CallName ->
   String ->
@@ -180,7 +179,7 @@ callWith ::
 callWith tracer =
   callTraceVia
     (\_ -> ())
-    (traceWith tracer . TraceLeiosDbCall . SomeJsonCallTrace)
+    (traceWith tracer . SomeJsonCallTrace)
 
 -- | Bracket-style equivalent of 'LeiosDemoDb.withReader' for a
 -- 'LeiosDbHandle': opens a reader, runs the continuation, then closes.

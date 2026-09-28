@@ -40,6 +40,7 @@ import qualified Data.ByteString.Lazy.Char8 as BSL8 (unpack)
 import Data.Functor (($>))
 import qualified Data.Set as Set
 import LeiosDemoDb (withLeiosDBSQLite)
+import LeiosDemoDb.Trace (TraceLeiosDb (TraceLeiosDbCall))
 import LeiosDemoDb.WithCallTrace (withCallTraceHandle, withReaderAndWriter)
 import LeiosDemoTypes
   ( TraceLeiosKernel (TraceLeiosDb)
@@ -246,7 +247,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
             (confDbDir </> "leios.vol.db")
             (confDbDir </> "leios.imm.db")
             $ \leiosDb ->
-              let leiosDbHandle = withCallTraceHandle nullTracer leiosDb
+              let leiosDbHandle = withCallTraceHandle ((TraceLeiosDb . TraceLeiosDbCall) >$< leiosTracer) leiosDb
                in withReaderAndWriter leiosDbHandle cctx $ \leiosDbReader leiosDbWriter ->
                     ChainDB.withDB cctx (ChainDB.updateTracer dbTracer (mkDbArgs leiosDb)) $ \chainDB -> do
                       slotNo <- do

@@ -62,7 +62,9 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Typeable
 import Data.Void (Void)
+import LeiosDemoDb (TraceLeiosDb (TraceLeiosDbCall))
 import LeiosDemoDb.WithCallTrace (LeiosDbReader, withCallTraceHandle, withReader)
+import LeiosDemoTypes (TraceLeiosKernel (TraceLeiosDb))
 import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
@@ -461,7 +463,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
   aChainSyncServer them channel = do
     labelThisThread "LocalChainSyncServer"
     cctx <- rootCallCtx "LocalChainSyncServer"
-    let leiosDbHandle = withCallTraceHandle nullTracer kernelLeiosDB
+    let leiosDbHandle = withCallTraceHandle ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel)) kernelLeiosDB
     withReader leiosDbHandle cctx $ \reader ->
       bracketWithPrivateRegistry
         (chainSyncBlockServerFollower (getChainDB kernel))

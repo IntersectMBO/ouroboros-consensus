@@ -283,7 +283,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
     _ -> do
       -- A 'LeiosDbReader' is not thread-safe, so this thread owns one for its
       -- lifetime, the way each forge-credentials thread does.
-      let leiosDbHandle = withCallTraceHandle (TraceLeiosDb >$< tracer) leiosDB
+      let leiosDbHandle = withCallTraceHandle ((TraceLeiosDb . LeiosDb.TraceLeiosDbCall) >$< tracer) leiosDB
       withReader leiosDbHandle cctx $ \leiosReader -> do
         chan <- subscribeEbNotifications leiosDbHandle cctx
         -- One message per transaction, even the ones we do not act on. Looping
