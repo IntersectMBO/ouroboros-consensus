@@ -99,7 +99,7 @@ forge ::
   -- | Invoked with the header and closure of each EB we forge, to ingest it
   -- through the same handlers an upstream peer's messages (see
   -- 'Leios.onForgedLeiosEb').
-  (Header blk -> Leios.ForgedLeiosEb -> m ()) ->
+  (CallCtx m -> Header blk -> Leios.ForgedLeiosEb -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
 forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosDbReader onForgedLeiosEb currentSlot = do
@@ -264,11 +264,12 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
   -- of accidental discrepancies. 'onForgedLeiosEb' hands our freshly-forged EB's
   -- announcement, body, and closure to the very handlers those mini-protocol
   -- messages use.
-  forgeTrace'Via
+  forgeTraceVia
     (const ())
     "on-forged-leios-eb"
     currentSlot
-    (lift $ forM_ mForgedEb $ onForgedLeiosEb (getHeader newBlock))
+    $ \ebCCtx ->
+      lift $ forM_ mForgedEb $ onForgedLeiosEb ebCCtx (getHeader newBlock)
 
   forgeTrace'Via
     (const ())

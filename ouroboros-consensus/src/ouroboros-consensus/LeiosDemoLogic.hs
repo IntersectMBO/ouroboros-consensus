@@ -1844,13 +1844,13 @@ onForgedLeiosEb ::
   , HasHeader (Header blk)
   , Ord pid
   ) =>
+  CallCtx m ->
   Tracer m TraceLeiosKernel ->
   MVar m (Announcements.CentralState m pid (AnnouncingHeader blk)) ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
   LeiosTxCache m () () SerializedEbBody ->
-  CallCtx m ->
   LeiosDbWriter m ->
   -- | Threaded through to the body/closure handlers for age reporting
   SystemTime m ->
@@ -1859,7 +1859,7 @@ onForgedLeiosEb ::
   AnnouncingHeader blk ->
   Leios.ForgedLeiosEb ->
   m ()
-onForgedLeiosEb kernelTracer centralVar kv txCache cctx writer systemTime anc forgedEb = do
+onForgedLeiosEb cctx kernelTracer centralVar kv txCache writer systemTime anc forgedEb = do
   processAnnouncementCentrally
     kernelTracer
     centralVar

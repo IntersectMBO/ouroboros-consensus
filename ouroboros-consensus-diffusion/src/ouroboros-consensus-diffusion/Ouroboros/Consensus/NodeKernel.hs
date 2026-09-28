@@ -853,13 +853,13 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     leiosVoteState
                     bf
                     leiosDbReader
-                    ( \forgedHeader forgedEb ->
+                    ( \ebCCtx forgedHeader forgedEb ->
                         Leios.onForgedLeiosEb
+                          ebCCtx
                           (leiosKernelTracer tracers)
                           leiosCentralState
                           (leiosOutstanding, leiosReady)
                           leiosTxCache
-                          forgeCCtx
                           leiosDbWriter
                           systemTime
                           -- Safe here: the forge hands us a corresponding header
