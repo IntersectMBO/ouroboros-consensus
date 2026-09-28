@@ -112,7 +112,6 @@ class
 
   hardForkInjTxMeasurePhase2 :: SOP.NS WrapTxMeasurePhase2 xs -> HardForkTxMeasurePhase2 xs
 
-  -- | Same as 'hardForkInjTxMeasurePhase1', for the endorser-block measure.
   hardForkInjTxEbMeasure :: SOP.NS WrapTxEbMeasure xs -> HardForkTxEbMeasure xs
 
   -- | 'txEbMeasure' for the hard fork block.
