@@ -753,7 +753,7 @@ addBlockRunner fuse cdb@CDB{..} = do
 
   let
     trace = traceWith cdbTracer . TraceAddBlockEvent
-    ctrace :: (Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace a r -> m ()
+    ctrace :: (Aeson.ToJSON t, Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace t a r -> m ()
     ctrace = trace . TraceAddBlockCall . SomeJsonCallTrace
 
   forever $

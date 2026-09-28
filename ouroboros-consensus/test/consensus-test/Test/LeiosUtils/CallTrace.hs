@@ -55,7 +55,7 @@ tests =
         )
     ]
 
-fooBarBazParallel :: IOLike m => m [CallTrace String String]
+fooBarBazParallel :: IOLike m => m [CallTrace () String String]
 fooBarBazParallel = do
   (tracer, readTrace) <- newRecordingTracer
   rootCtx <- rootCallCtx "CallTraceTest"
@@ -67,13 +67,13 @@ fooBarBazParallel = do
       ""
       ( \mainCtx -> do
           fooA <- async $ do
-            let cctx = newCallCtx mainCtx "FooWorker"
+            cctx <- newCallCtx mainCtx "FooWorker"
             foo tracer cctx "hello foo"
           barA <- async $ do
-            let cctx = newCallCtx mainCtx "BarWorker"
+            cctx <- newCallCtx mainCtx "BarWorker"
             bar tracer cctx "hello bar"
           bazA <- async $ do
-            let cctx = newCallCtx mainCtx "BazWorker"
+            cctx <- newCallCtx mainCtx "BazWorker"
             baz tracer cctx "hello baz"
           _ <- wait fooA
           _ <- wait barA
@@ -81,7 +81,7 @@ fooBarBazParallel = do
       )
   readTrace
 
-fooBarBaz :: IOLike m => m [CallTrace String String]
+fooBarBaz :: IOLike m => m [CallTrace () String String]
 fooBarBaz = do
   (tracer, readTrace) <- newRecordingTracer
   rootCtx <- rootCallCtx "CallTraceTest"
@@ -100,28 +100,28 @@ fooBarBaz = do
 
   readTrace
 
-foo :: IOLike m => (CallTrace String String -> m ()) -> CallCtx m -> String -> m String
+foo :: IOLike m => (CallTrace () String String -> m ()) -> CallCtx m -> String -> m String
 foo trace ctx fooArg =
   callTrace trace ctx "foo" fooArg $ \fooCtx -> do
     threadDelay 1000
     barRes <- bar trace fooCtx "hello bar"
     return $ "bar says: " <> barRes
 
-bar :: IOLike m => (CallTrace String String -> m ()) -> CallCtx m -> String -> m String
+bar :: IOLike m => (CallTrace () String String -> m ()) -> CallCtx m -> String -> m String
 bar trace ctx barArg =
   callTrace trace ctx "bar" barArg $ \barCtx -> do
     threadDelay 1000
     bazRes <- baz trace barCtx "hello baz"
     return $ "baz says: " <> bazRes
 
-baz :: IOLike m => (CallTrace String String -> m ()) -> CallCtx m -> String -> m String
+baz :: IOLike m => (CallTrace () String String -> m ()) -> CallCtx m -> String -> m String
 baz trace ctx bazArg =
   callTrace trace ctx "baz" bazArg $ \_bazCtx -> do
     threadDelay 1000
     return $ "'sup"
 
 -- | Utils
-newRecordingTracer :: MonadSTM m => m (CallTrace a r -> m (), m [CallTrace a r])
+newRecordingTracer :: MonadSTM m => m (CallTrace t a r -> m (), m [CallTrace t a r])
 newRecordingTracer = do
   var <- atomically $ newTVar []
   let tracer ct = atomically $ do

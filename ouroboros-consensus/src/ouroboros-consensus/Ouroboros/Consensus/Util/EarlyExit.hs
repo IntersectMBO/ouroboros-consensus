@@ -47,6 +47,7 @@ import Data.Function (on)
 import Data.Proxy
 import LeiosUtils.CallTrace
   ( CallCtx
+  , CallCtxWith
   , CallName
   , CallTrace
   , MonadAllocationCounter (getAllocationCounter)
@@ -155,15 +156,15 @@ earlyExitFromMaybe = (>>= maybe exitEarly pure) . lift
 callTrace ::
   (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
   -- | Tracing action
-  (CallTrace a (Maybe r) -> m ()) ->
+  (CallTrace t a (Maybe r) -> m ()) ->
   -- | Parent context
-  CallCtx m ->
+  CallCtxWith t m ->
   -- | CallName
   CallName ->
   -- | Call argument
   a ->
   -- | Continuation with the new call context (to be passed to children calls)
-  (CallCtx m -> WithEarlyExit m r) ->
+  (CallCtxWith t m -> WithEarlyExit m r) ->
   WithEarlyExit m r
 callTrace = callTraceVia id
 
@@ -177,15 +178,15 @@ callTraceVia ::
   (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
   (r -> r') ->
   -- | Tracing action
-  (CallTrace a (Maybe r') -> m ()) ->
+  (CallTrace t a (Maybe r') -> m ()) ->
   -- | Parent context
-  CallCtx m ->
+  CallCtxWith t m ->
   -- | CallName
   CallName ->
   -- | Call argument
   a ->
   -- | Continuation with the new call context (to be passed to children calls)
-  (CallCtx m -> WithEarlyExit m r) ->
+  (CallCtxWith t m -> WithEarlyExit m r) ->
   WithEarlyExit m r
 callTraceVia f trace pctx cn arg action =
   earlyExitFromMaybe $

@@ -112,7 +112,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       -- NB: this runs directly in @m@, /not/ 'WithEarlyExit' -- it must trace
       -- the matching 'CallEnd' unconditionally, even when the traced action
       -- calls 'exitEarly'. See 'callTraceSameThreadEarlyExit'.
-      ctrace :: (Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace a (Maybe r) -> m ()
+      ctrace :: (Aeson.ToJSON t, Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace t a (Maybe r) -> m ()
       ctrace =
         traceWith forgeEventTracer
           . TraceLabelCreds (forgeLabel blockForging)
@@ -697,7 +697,7 @@ partitionMempool ::
   Tracer m TraceLeiosKernel ->
   -- | Same call-tracing machinery as 'forge's own @ctrace@: traces onto the
   -- 'TraceForgeEvent' tracer, already labelled with the forger's creds.
-  (forall a r. (Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace a (Maybe r) -> m ()) ->
+  (forall t a r. (Aeson.ToJSON t, Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace t a (Maybe r) -> m ()) ->
   CallCtx m ->
   TopLevelConfig blk ->
   Mempool m blk ->

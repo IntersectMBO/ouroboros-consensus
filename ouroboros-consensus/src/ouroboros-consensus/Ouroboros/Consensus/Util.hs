@@ -138,6 +138,7 @@ import GHC.Stack
 import GHC.TypeLits (Symbol)
 import LeiosUtils.CallTrace
   ( CallCtx
+  , CallCtxWith
   , CallName
   , CallTrace
   , MonadAllocationCounter
@@ -525,11 +526,11 @@ runElectric (Electric io) = io
 -- | Like 'CallTrace.callTrace', but for a traced action that lives in 'Electric'.
 callTrace ::
   (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  (CallTrace a r -> m ()) ->
-  CallCtx m ->
+  (CallTrace t a r -> m ()) ->
+  CallCtxWith t m ->
   CallName ->
   a ->
-  (CallCtx m -> Electric m r) ->
+  (CallCtxWith t m -> Electric m r) ->
   Electric m r
 callTrace = callTraceVia id
 
@@ -538,11 +539,11 @@ callTrace = callTraceVia id
 callTraceVia ::
   (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
   (r -> r') ->
-  (CallTrace a r' -> m ()) ->
-  CallCtx m ->
+  (CallTrace t a r' -> m ()) ->
+  CallCtxWith t m ->
   CallName ->
   a ->
-  (CallCtx m -> Electric m r) ->
+  (CallCtxWith t m -> Electric m r) ->
   Electric m r
 callTraceVia f trace pctx cn arg action =
   electric $
