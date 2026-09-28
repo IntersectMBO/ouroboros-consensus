@@ -144,15 +144,15 @@ leiosPeriods : PParams → LeiosPeriods
 leiosPeriods pp = leiosHeaderPeriod , leiosVotingPeriod , leiosDiffusionPeriod
   where open PParams pp
 
-certificationDelay : LeiosPeriods → Milliseconds
-certificationDelay (hdr , vote , diff) = 3 * hdr + vote + diff
+certificationDelay : LeiosPeriods → Slot
+certificationDelay (hdr , vote , diff) = slotsFromDuration (3 * hdr + vote + diff)
 
 certChecks : LeiosPeriods → Maybe LastAppliedBlock → Bool → Slot → Type
 certChecks _  _                                false _ = ⊤
 certChecks _  nothing                          true  _ = ⊥
 certChecks _  (just ⟦ _ , _  , _ , nothing ⟧ℓ) true  _ = ⊥
 certChecks ps (just ⟦ _ , sℓ , _ , just _  ⟧ℓ) true  s =
-  slotToTime sℓ + certificationDelay ps ≤ slotToTime s
+  sℓ + certificationDelay ps ≤ s
 \end{code}
 \end{AgdaAlign}
 \caption{Chain Head transition system functions}
@@ -188,9 +188,9 @@ retain what it announced, which is why \afld{LastAppliedBlock} carries an
 A certificate may only be included once $3 L_\text{hdr} + L_\text{vote} +
 L_\text{diff}$ has elapsed since the block that announced the endorser
 block~\cite{cip_164}, so that the endorser block has had time to reach the whole
-network. These three protocol parameters are wall-clock durations, so the comparison
-is made in wall-clock time: the two slots are mapped to times by \slotToTime, rather
-than the delay being converted to a number of slots. Because a header
+network. These three protocol parameters are wall-clock durations, so their sum is
+converted to a number of slots by \slotsFromDuration, using the genesis slot length
+and rounding up. Because a header
 that sets \afld{certifiedEB} obliges the corresponding body to carry a matching
 certificate, this constraint can be checked on the header alone --- exactly the kind
 of check that Property~\ref{prop:header-only-validation} exists to license.

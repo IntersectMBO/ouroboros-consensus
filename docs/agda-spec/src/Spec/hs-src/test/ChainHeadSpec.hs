@@ -116,9 +116,9 @@ chs' = MkChainHeadState
        = { maxHeaderSize = 1; maxBlockSize = 2; pv = (1 , 0)
          ; leiosHeaderPeriod = 1000; leiosVotingPeriod = 2000
          ; leiosDiffusionPeriod = 3000 }
-    certificationDelay (leiosPeriods pp) = 3 * 1000 + 2000 + 3000 = 8000ms
-    slotToTime s = s * 1000, so certifying at slot s requires
-      slotToTime sℓ + 8000 ≤ slotToTime s, i.e. s ≥ sℓ + 8
+    certificationDelay (leiosPeriods pp)
+       = slotsFromDuration (3 * 1000 + 2000 + 3000)
+       = ⌈ 8000 / SlotLengthᶜ ⌉ = ⌈ 8000 / 1000 ⌉ = 8 slots
     nₚₕ = prevHashToNonce (lastAppliedHash lab) = prevHashToNonce 2 = 0
     pd = extractPoolDistr (getPoolDelegatedStake forecast)
        = extractPoolDistr (getPoolDelegatedStake 126)
