@@ -53,7 +53,8 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , Promise (..)
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
-  ( LeiosDbException (LeiosDbWriteException, submittedFrom, writeFailure, writeJob)
+  ( LeiosDbException (LeiosDbWriteException)
+  , LeiosDbWriteFailure (..)
   , throwLeiosDbException
   )
 import Ouroboros.Consensus.Util.IOLike
@@ -173,12 +174,13 @@ openInMemoryWriter stateVar notificationChan =
     pure $ Promise $ case result of
       Right x -> pure x
       Left cause ->
-        throwIO
+        throwIO $
           LeiosDbWriteException
-            { writeJob = job
-            , submittedFrom = GHC.prettyCallStack GHC.callStack
-            , writeFailure = toException (cause :: LeiosDbException)
-            }
+            LeiosDbWriteFailure
+              { ldwfWriteJob = job
+              , ldwfSubmittedFrom = GHC.prettyCallStack GHC.callStack
+              , ldwfWriteFailure = toException (cause :: LeiosDbException)
+              }
 
 -- * Top-level implementations
 

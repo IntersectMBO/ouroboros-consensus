@@ -107,7 +107,12 @@ import Ouroboros.Consensus.Storage.LeiosDB.API
   , LeiosEbNotification (..)
   , Promise (..)
   )
-import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException (..), throwLeiosDbException)
+import Ouroboros.Consensus.Storage.LeiosDB.Exception
+  ( LeiosDbException (..)
+  , LeiosDbFailure (..)
+  , LeiosDbWriteFailure (..)
+  , throwLeiosDbException
+  )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import Ouroboros.Consensus.Util.IOLike (ExitCase (..), atomically)
 import System.Directory (createDirectoryIfMissing, doesFileExist, getFileSize)
@@ -1040,11 +1045,12 @@ closeChecked :: HasCallStack => DB.Database -> IO ()
 closeChecked db =
   DB.close db >>= \case
     Left err ->
-      throwIO
+      throwIO $
         LeiosDbException
-          { errorMessage = "failed to close the connection: " <> show err
-          , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
-          }
+          LeiosDbFailure
+            { ldfErrorMessage = "failed to close the connection: " <> show err
+            , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+            }
     Right () -> pure ()
 
 -- * The single writer
@@ -1146,10 +1152,11 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
       -- whichever thread awaits -- so name the write and its submission site.
       wrap cause =
         LeiosDbWriteException
-          { writeJob = describeJob job
-          , submittedFrom = GHC.Stack.prettyCallStack GHC.Stack.callStack
-          , writeFailure = cause
-          }
+          LeiosDbWriteFailure
+            { ldwfWriteJob = describeJob job
+            , ldwfSubmittedFrom = GHC.Stack.prettyCallStack GHC.Stack.callStack
+            , ldwfWriteFailure = cause
+            }
       -- Take a slot if there is one; 'Left' once the queue is sealed.
       offer =
         readTVar wqSealed >>= \case
@@ -1428,11 +1435,12 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
   pure WriteQueue{wqJobs = queue, wqSealed = sealedVar, wqTracer = tracer}
  where
   closedException =
-    toException
+    toException $
       LeiosDbException
-        { errorMessage = "the LeiosDB writer is closed"
-        , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
-        }
+        LeiosDbFailure
+          { ldfErrorMessage = "the LeiosDB writer is closed"
+          , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+          }
   -- Only a 'LeiosDbException' is a failed write; anything else -- a
   -- cancellation above all -- belongs to this thread, not to the job.
   publish :: WriteResult a -> IO a -> IO ()
@@ -2508,9 +2516,10 @@ withDieJust db io =
     Nothing ->
       throwIO $
         LeiosDbException
-          { errorMessage = "unexpected Nothing"
-          , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
-          }
+          LeiosDbFailure
+            { ldfErrorMessage = "unexpected Nothing"
+            , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+            }
     Just x -> pure x
 
 withDieDoneStmt :: HasCallStack => DB.Statement -> IO (Either DB.Error DB.StepResult) -> IO ()
@@ -2520,9 +2529,10 @@ withDieDoneStmt stmt io = do
     DB.Row ->
       throwIO $
         LeiosDbException
-          { errorMessage = "unexpected Row"
-          , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
-          }
+          LeiosDbFailure
+            { ldfErrorMessage = "unexpected Row"
+            , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+            }
     DB.Done -> pure ()
 
 throwDbException :: HasCallStack => DB.Database -> DB.Error -> IO a
@@ -2530,6 +2540,7 @@ throwDbException db e = do
   reason <- DB.errmsg db
   throwIO $
     LeiosDbException
-      { errorMessage = show e <> ": " <> show reason
-      , callStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
-      }
+      LeiosDbFailure
+        { ldfErrorMessage = show e <> ": " <> show reason
+        , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
+        }
