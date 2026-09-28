@@ -461,12 +461,12 @@ class
     TxMeasure blk
 
   -- | The (possibly multi-dimensional) size of a transaction in a Leios
-  -- endorser block: what it costs of 'ebCapacityTxMeasure'. The block measure
-  -- itself for protocols without endorser blocks.
+  -- endorser block: what it costs of 'ebCapacityTxMeasure'. It is 'TxMeasure'
+  -- for @blk@s without endorser blocks.
   type TxEbMeasure blk
 
   -- | The size of a transaction in a Leios endorser block, derived from its
-  -- block measure.
+  -- 'TxMeasure'.
   --
   -- INVARIANT the result must never be zero. A zero measure fits a zero
   -- 'ebCapacityTxMeasure', so one endorser-block fill takes the whole mempool
