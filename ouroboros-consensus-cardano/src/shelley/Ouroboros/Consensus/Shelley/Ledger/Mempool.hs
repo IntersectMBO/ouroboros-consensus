@@ -802,14 +802,14 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
 --
 -- 'ppMaxEndorserBlockReferencesSizeL' is not read: the Dijkstra 'TxEbMeasure'
 -- is its 'TxMeasure', which has no field for it.
-leiosEndorserBlockClosureMeasure ::
+leiosEndorserBlockCapacity ::
   forall proto era mk.
   ( ShelleyCompatible proto era
   , DijkstraEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   (AlonzoMeasure, RefScriptSize)
-leiosEndorserBlockClosureMeasure st =
+leiosEndorserBlockCapacity st =
   ( AlonzoMeasure
       { byteSize = IgnoringOverflow $ ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
       , exUnits = fromExUnits $ unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
@@ -873,5 +873,5 @@ instance
 
   txEbMeasure _ = id
 
-  ebCapacityTxMeasure _cfg = uncurry TxMeasure . leiosEndorserBlockClosureMeasure
+  ebCapacityTxMeasure _cfg = uncurry TxMeasure . leiosEndorserBlockCapacity
   mempoolEbReservation _ = id
