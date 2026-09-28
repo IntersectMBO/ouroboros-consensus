@@ -75,7 +75,6 @@ prop_mempoolCapacityCountsEbCapacity =
         (Ledger.IgnoringOverflow (Ledger.ByteSize32 10240))
         Ledger.TrivialTxMeasurePhase2
  where
-
   cfg :: TestBlockLedgerConfig
   cfg =
     testBlockLedgerConfigFrom $

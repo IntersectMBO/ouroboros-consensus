@@ -143,16 +143,16 @@ prop_dijkstra ::
   Property
 prop_dijkstra st =
   withNumTests 10 $
-  forAllBlind arbitrary $ \translationContext ->
-    ebCapacityTxMeasure
-      (fixedShelleyLedgerConfig translationContext)
-      (withEndorserBlockParams (tickShelley st))
-      === TxMeasure
-        AlonzoMeasure
-          { byteSize = IgnoringOverflow (ByteSize32 1001)
-          , exUnits = fromExUnits (ExUnits 2002 3003)
-          }
-        (RefScriptSize (IgnoringOverflow (ByteSize32 4004)))
+    forAllBlind arbitrary $ \translationContext ->
+      ebCapacityTxMeasure
+        (fixedShelleyLedgerConfig translationContext)
+        (withEndorserBlockParams (tickShelley st))
+        === TxMeasure
+          AlonzoMeasure
+            { byteSize = IgnoringOverflow (ByteSize32 1001)
+            , exUnits = fromExUnits (ExUnits 2002 3003)
+            }
+          (RefScriptSize (IgnoringOverflow (ByteSize32 4004)))
  where
   withEndorserBlockParams (TickedShelleyLedgerState tip transition nes ledgerTables) =
     TickedShelleyLedgerState
