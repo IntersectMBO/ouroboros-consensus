@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 
 -- | The Leios types that the storage layer needs: hashes, points, endorser
 -- block bodies and their sizes.
@@ -131,8 +130,8 @@ instance SignableRepresentation LeiosPoint where
   getSignableRepresentation point =
     toStrictByteString $
       -- REVIEW: Flat concatenation expected as what is signed?
-      encode point.pointSlotNo
-        <> encodeEbHash point.pointEbHash
+      encode (pointSlotNo point)
+        <> encodeEbHash (pointEbHash point)
 
 prettyLeiosPoint :: LeiosPoint -> String
 prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =

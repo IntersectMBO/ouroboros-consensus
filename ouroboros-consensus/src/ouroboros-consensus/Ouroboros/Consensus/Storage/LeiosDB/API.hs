@@ -1,8 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE RankNTypes #-}
 
 module Ouroboros.Consensus.Storage.LeiosDB.API
@@ -44,7 +42,7 @@ import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), brack
 
 -- | The Leios database. Hands out readers, writers and subscriptions.
 data LeiosDbHandle m = LeiosDbHandle
-  { close :: m ()
+  { closeLeiosDbHandle :: m ()
   -- ^ Close the database: flush what is in flight, stop whatever it runs
   -- behind the scenes, release its connections. Readers and writers handed
   -- out earlier are not usable afterwards.
@@ -75,7 +73,7 @@ data LeiosDbHandle m = LeiosDbHandle
 
 -- | Query API into the LeiosDb. Do not use a reader in two concurrent threads.
 data LeiosDbReader m = LeiosDbReader
-  { close :: m ()
+  { closeReader :: m ()
   , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
   -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
   , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
@@ -104,7 +102,7 @@ data LeiosDbReader m = LeiosDbReader
 -- returned 'Promise' can be used to 'await' the write being performed. Any
 -- exceptions are thrown through 'await'.
 data LeiosDbWriter m = LeiosDbWriter
-  { close :: m ()
+  { closeWriter :: m ()
   -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
   -- ^ Record an announced EB's point and expected size.
@@ -150,25 +148,13 @@ data LeiosEbNotification
       LeiosPoint
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
-withReader db = bracket (openReader db) (\r -> r.close)
+withReader db = bracket (openReader db) closeReader
 
 withWriter :: MonadThrow m => LeiosDbHandle m -> (LeiosDbWriter m -> m a) -> m a
-withWriter db = bracket (openWriter db) (\w -> w.close)
+withWriter db = bracket (openWriter db) closeWriter
 
 allocateReader :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbReader m)
-allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) (\r -> r.close)
+allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) closeReader
 
 allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
-allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) (\w -> w.close)
-
-instance NoThunks (LeiosDbHandle m) where
-  showTypeOf _ = "LeiosDbHandle"
-  wNoThunks _ctx _a = return Nothing
-
-instance NoThunks (LeiosDbReader m) where
-  showTypeOf _ = "LeiosDbReader"
-  wNoThunks _ctx _a = return Nothing
-
-instance NoThunks (LeiosDbWriter m) where
-  showTypeOf _ = "LeiosDbWriter"
-  wNoThunks _ctx _a = return Nothing
+allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) closeWriter

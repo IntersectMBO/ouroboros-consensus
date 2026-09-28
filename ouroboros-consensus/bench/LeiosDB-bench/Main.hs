@@ -1,6 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 
 -- | Concurrent benchmark for "Ouroboros.Consensus.Storage.LeiosDB" mirroring production access patterns.
 --
@@ -153,7 +152,7 @@ chainSelReader :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
 chainSelReader db points =
   withReader db $ \r ->
     forM_ (take numChainSelReads (cycle points)) $ \p ->
-      lookupEbClosure r p.pointEbHash
+      lookupEbClosure r (pointEbHash p)
 
 -- | Fires periodic garbage-collect calls. Handle-level operation; touches
 -- every table when implemented (currently a no-op backend-side, but the
@@ -167,8 +166,8 @@ gcTicker db =
 fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()
 fetchServer db points i =
   withReader db $ \r -> do
-    forM_ ebPoints $ \p -> lookupEbBody r p.pointEbHash
-    forM_ txPoints $ \p -> batchRetrieveTxs r p.pointEbHash sampleOffsets
+    forM_ ebPoints $ \p -> lookupEbBody r (pointEbHash p)
+    forM_ txPoints $ \p -> batchRetrieveTxs r (pointEbHash p) sampleOffsets
  where
   sampleOffsets = [0, 10 .. txsPerEb - 1]
   ebPoints = take 30 $ drop (i * 30) (cycle points)

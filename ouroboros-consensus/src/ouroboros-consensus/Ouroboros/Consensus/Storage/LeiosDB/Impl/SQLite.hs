@@ -1,4 +1,3 @@
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -145,8 +144,8 @@ newLeiosDBSQLiteFromEnv registry tracer = do
 -- its own worker thread.
 --
 -- The registry owns the background threads (writer, copier and a thread that
--- samples the database's size): 'close' stops them in order, and closing the
--- registry cancels whatever is still running.
+-- samples the database's size): 'closeLeiosDbHandle' stops them in order, and
+-- closing the registry cancels whatever is still running.
 --
 -- Creates both files with their schemas before returning, so call it only
 -- once their directories may be non-empty (after the ChainDB marker check).
@@ -205,9 +204,9 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       immLeiosDbPath
   pure
     LeiosDbHandle
-      { close = close samplerThread copierThread writeQueue
-      , openReader = openReader statsVar
-      , openWriter = openWriter writeQueue
+      { closeLeiosDbHandle = close samplerThread copierThread writeQueue
+      , openReader = implOpenReader statsVar
+      , openWriter = implOpenWriter writeQueue
       , subscribeEbNotifications = atomically (dupTChan notificationChan)
       , leiosDbGarbageCollect = sqlGarbageCollect writeQueue
       , leiosDbPromoteToImmutable = sqlPromoteToImmutable writeQueue copierDoorbell
@@ -242,8 +241,8 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
     conn <- mkConn tracer statsVar volDb immDb
     pure
       LeiosDbReader
-        { close = closeConn conn
-        , scanEbPoints = sqlScanEbPoints conn
+        { closeReader = closeConn conn
+        , testScanEbPoints = sqlScanEbPoints conn
         , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
         , lookupEbBody = sqlLookupEbBody conn
         , batchRetrieveTxs = sqlBatchRetrieveTxs conn
@@ -254,22 +253,22 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
     pure
       LeiosDbWriter
         { -- Not a teardown -- the write connection outlives every writer.
-          close = void . await =<< submitJob writeQueue Flush
+          closeWriter = void . await =<< submitJob writeQueue Flush
         , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
         , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
         , writeTxs = \txs -> submitJob writeQueue (WriteTxs txs)
         }
 
--- | 'newLeiosDBSQLite' bracketed with its 'close': on release every pending
--- write has landed, the background threads are gone and the connections are
--- closed, so e.g. the database files can be deleted.
+-- | 'newLeiosDBSQLite' bracketed with its 'closeLeiosDbHandle': on release
+-- every pending write has landed, the background threads are gone and the
+-- connections are closed, so e.g. the database files can be deleted.
 withLeiosDBSQLite ::
   Tracer IO TraceLeiosDb -> FilePath -> FilePath -> (LeiosDbHandle IO -> IO a) -> IO a
 withLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath k =
   withRegistry $ \registry ->
     bracket
       (newLeiosDBSQLite registry tracer volLeiosDbPath immLeiosDbPath)
-      (\db -> db.close)
+      closeLeiosDbHandle
       k
 
 -- | Initialise 'LeiosDbStats' by counting the EB rows of both partitions.
@@ -328,7 +327,7 @@ bumpVolatileStatsVar statsVar dEbs =
   unless (dEbs == 0) $
     atomically $
       modifyTVar statsVar $
-        \s -> s{volatileEbs = s.volatileEbs + dEbs}
+        \s -> s{volatileEbs = volatileEbs s + dEbs}
 
 -- | Fold a delta into the immutable EB count of the in-memory 'LeiosDbStats'.
 bumpImmutableStats :: StrictTVar IO LeiosDbStats -> Int -> IO ()
@@ -336,7 +335,7 @@ bumpImmutableStats statsVar dEbs =
   unless (dEbs == 0) $
     atomically $
       modifyTVar statsVar $
-        \s -> s{immutableEbs = s.immutableEbs + dEbs}
+        \s -> s{immutableEbs = immutableEbs s + dEbs}
 
 -- | Open a strictly read-only connection, for seeding DB statistics.
 withReadOnlyConn :: HasCallStack => FilePath -> (DB.Database -> IO a) -> IO a
@@ -433,7 +432,7 @@ withStmt db sql = bracket (dbPrepare db (fromString sql)) dbFinalize
 --   - ring the copier's doorbell.
 sqlPromoteToImmutable :: WriteQueue -> StrictTVar IO Bool -> [LeiosPoint] -> IO ()
 sqlPromoteToImmutable writeQueue copierDoorbell points = unless (null points) $ do
-  await =<< submitJob writeQueue (PinEb [p.pointEbHash | p <- points])
+  await =<< submitJob writeQueue (PinEb [pointEbHash p | p <- points])
   -- notify the copier thread that there's work to be done
   atomically $ writeTVar copierDoorbell True
 
@@ -506,7 +505,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       -- Still check if it is, as a defensive programming measure, as it's very cheap.
       (bodyCount, closureCount) <-
         useStmt ccCompleteness $ do
-          dbBindBlob ccCompleteness 1 ebHash.ebHashBytes
+          dbBindBlob ccCompleteness 1 (ebHashBytes ebHash)
           -- step the first time, expecting a single result row
           dbStepSafe ccCompleteness >>= \case
             DB.Done ->
@@ -534,16 +533,16 @@ copyEbToImmutable tracer statsVar conn ebHash =
           --
           -- copy the EB
           useStmt ccInsertEb $ do
-            dbBindBlob ccInsertEb 1 ebHash.ebHashBytes
+            dbBindBlob ccInsertEb 1 (ebHashBytes ebHash)
             dbStep1Safe ccInsertEb
           -- copy the eb-to-transactions mapping
           useStmt ccInsertEbTxs $ do
-            dbBindBlob ccInsertEbTxs 1 ebHash.ebHashBytes
+            dbBindBlob ccInsertEbTxs 1 (ebHashBytes ebHash)
             dbStep1Safe ccInsertEbTxs
           nTxs <- DB.changes ccDb
           -- copy the transactions
           useStmt ccInsertTxs $ do
-            dbBindBlob ccInsertTxs 1 ebHash.ebHashBytes
+            dbBindBlob ccInsertTxs 1 (ebHashBytes ebHash)
             dbStep1Safe ccInsertTxs
           pure (Just nTxs)
 
@@ -1310,7 +1309,7 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
             dbWithWriteTransactionRaw volDb $
               forM_ ebHashes $ \ebHash ->
                 useStmt pinStmt $ do
-                  dbBindBlob pinStmt 1 ebHash.ebHashBytes
+                  dbBindBlob pinStmt 1 (ebHashBytes ebHash)
                   dbStep1Safe pinStmt
           pure False
         MarkCopied ebHashes resultVar -> do
@@ -1321,7 +1320,7 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
             dbWithWriteTransactionRaw volDb $
               forM_ ebHashes $ \ebHash ->
                 useStmt markCopiedStmt $ do
-                  dbBindBlob markCopiedStmt 1 ebHash.ebHashBytes
+                  dbBindBlob markCopiedStmt 1 (ebHashBytes ebHash)
                   dbStep1Safe markCopiedStmt
           pure False
         GcMark slot resultVar -> do
@@ -1417,7 +1416,7 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
       Right () -> pure closedException
       Left e -> do
         -- Close on the way down; when the registry cancels the writer
-        -- before 'close' ran, this is the only close there will be.
+        -- before 'closeLeiosDbHandle' ran, this is the only close there will be.
         void (try closeConnections :: IO (Either SomeException ()))
         pure e
     -- Seal, then fail what was already queued: nothing can be queued after
@@ -1496,16 +1495,16 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
   -- insert). Presence in the immutable partition is proof of completeness:
   -- copies are atomic and only complete EBs are copied. Without this probe, a
   -- cert-RB parked across a restart would stay parked forever.
-  let volCompleteSet = Set.fromList [ebHashBytes p.pointEbHash | p <- volComplete]
-      unknown = [p | p <- recent, ebHashBytes p.pointEbHash `Set.notMember` volCompleteSet]
+  let volCompleteSet = Set.fromList [ebHashBytes (pointEbHash p) | p <- volComplete]
+      unknown = [p | p <- recent, ebHashBytes (pointEbHash p) `Set.notMember` volCompleteSet]
   if null unknown
     then pure volComplete
     else do
-      present <- immFilterPresent conn [ebHashBytes p.pointEbHash | p <- unknown]
+      present <- immFilterPresent conn [ebHashBytes (pointEbHash p) | p <- unknown]
       let presentSet = Set.fromList present
       pure $
         volComplete
-          <> [p | p <- unknown, ebHashBytes p.pointEbHash `Set.member` presentSet]
+          <> [p | p <- unknown, ebHashBytes (pointEbHash p) `Set.member` presentSet]
  where
   slot = fromIntegral $ unSlotNo sinceSlot
   Conn{conVolDb = db, connVolStmts = VolStmts{stScanCompleteEbsSince = stmt}} = conn
@@ -1567,8 +1566,8 @@ bodyLoop stmt acc =
 sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint conn point ebBytesSize = do
   inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
-    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-    dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
+    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+    dbBindBlob stmt 2 (ebHashBytes (pointEbHash point))
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
     dbStep1 stmt
     DB.changes db
@@ -1590,34 +1589,34 @@ sqlInsertEbBody tracer conn notify point eb = do
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   completedNow <- dbWithWriteTransaction conn $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
-      dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
+      dbBindBlob stInsertEbTxsRow 1 (ebHashBytes (pointEbHash point))
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
       dbBindBlob stInsertEbTxsRow 3 (let MkTxHash bytes = txHash in bytes)
       dbBindInt64 stInsertEbTxsRow 4 (fromIntegral txBytesSize)
       dbStepInsertOrTrace
         tracer
         "ebTxs"
-        (show point.pointEbHash <> "@" <> show txOffset)
+        (show (pointEbHash point) <> "@" <> show txOffset)
         stInsertEbTxsRow
     -- Record which of this body's txs we still lack, then count them. Both in
     -- this transaction, so an arrival can never see the rows without the count
     -- or the other way round.
     useStmt stInsertMissingTxs $ do
-      dbBindBlob stInsertMissingTxs 1 point.pointEbHash.ebHashBytes
+      dbBindBlob stInsertMissingTxs 1 (ebHashBytes (pointEbHash point))
       dbStep1 stInsertMissingTxs
     -- Initialize missingTxCount and read the resulting value via
     -- @RETURNING missingTxCount@. Only /this/ point's row can have
     -- transitioned to 0 as a consequence of the insert above.
     missingCount <- useStmt stInitMissingCount $ do
-      dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
-      dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
-      dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
+      dbBindBlob stInitMissingCount 1 (ebHashBytes (pointEbHash point))
+      dbBindBlob stInitMissingCount 2 (ebHashBytes (pointEbHash point))
+      dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo (pointSlotNo point))
       readReturningInt64 stInitMissingCount
     if missingCount == 0
       then do
         useStmt stMarkPointNotified $ do
-          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-          dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo (pointSlotNo point))
+          dbBindBlob stMarkPointNotified 2 (ebHashBytes (pointEbHash point))
           dbStep1 stMarkPointNotified
         pure [point]
       else pure []

@@ -1,8 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory
@@ -118,7 +116,7 @@ newLeiosDBInMemoryWith stateVar = do
   pure $
     LeiosDbHandle
       { -- Nothing to close: the state is a 'StrictTVar'.
-        close = pure ()
+        closeLeiosDbHandle = pure ()
       , subscribeEbNotifications =
           atomically (dupTChan notificationChan)
       , -- No-op for now; see 'leiosDbGarbageCollect'.
@@ -136,7 +134,7 @@ openInMemoryReader :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbRead
 openInMemoryReader stateVar =
   pure
     LeiosDbReader
-      { close = pure ()
+      { closeReader = pure ()
       , lookupEbBody = imLookupEbBody stateVar
       , lookupEbClosure = imLookupEbClosure stateVar
       , batchRetrieveTxs = imBatchRetrieveTxs stateVar
@@ -159,7 +157,7 @@ openInMemoryWriter ::
 openInMemoryWriter stateVar notificationChan =
   pure
     LeiosDbWriter
-      { close = pure ()
+      { closeWriter = pure ()
       , writeEbPoint = \point ebBytesSize ->
           resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
       , writeEbBody = \point eb ->
@@ -188,7 +186,7 @@ imScanEbPoints :: IOLike m => StrictTVar m InMemoryLeiosDb -> m [(SlotNo, EbHash
 imScanEbPoints stateVar = atomically $ do
   state <- readTVar stateVar
   pure
-    [ (p.pointSlotNo, p.pointEbHash)
+    [ (pointSlotNo p, pointEbHash p)
     | p <- Map.keys (imEbPoints state)
     ]
 
@@ -238,7 +236,7 @@ imInsertEbBody stateVar notificationChan point eb = do
         { -- The tx-hash list is fully determined by the EB content
           -- hash, so a second insertion at the same hash is a no-op.
           imEbBodies =
-            Map.insertWith (\_ old -> old) point.pointEbHash entries (imEbBodies s)
+            Map.insertWith (\_ old -> old) (pointEbHash point) entries (imEbBodies s)
         , -- Mark this point as downloaded. Other points referencing
           -- the same EB hash are unaffected; each needs its own
           -- 'writeEbBody' to be considered complete.

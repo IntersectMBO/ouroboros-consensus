@@ -1,7 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 
 -- | Tests for the "Ouroboros.Consensus.Storage.LeiosDB" interface.
 --
@@ -349,7 +348,7 @@ prop_pointsInsertThenScan impl =
       (_, insertTime) <- timed $ rwInsertEbPoint con point 1000
       (points, scanTime) <- timed $ rwScanEbPoints con
       pure $
-        (point.pointSlotNo, point.pointEbHash) `elem` points
+        (pointSlotNo point, pointEbHash point) `elem` points
           & tabulate "insertEbPoint" [timeBucket insertTime]
           & tabulate "scanEbPoints" [timeBucket scanTime]
 
@@ -362,7 +361,7 @@ prop_pointsAccumulate impl =
         insertTimes <- forM points $ \p ->
           snd <$> timed (rwInsertEbPoint con p 1000)
         (scanned, scanTime) <- timed $ rwScanEbPoints con
-        let expected = [(p.pointSlotNo, p.pointEbHash) | p <- points]
+        let expected = [(pointSlotNo p, pointEbHash p) | p <- points]
         pure $
           all (`elem` scanned) expected
             & tabulate "insertEbPoint" [timeBucket $ maximum insertTimes]
@@ -379,7 +378,7 @@ prop_ebsInsertThenLookup impl =
         let expectedTxs = V.toList (leiosEbTxs eb)
         rwInsertEbPoint con point (encodeLeiosEbSize eb)
         (_, insertTime) <- timed $ rwInsertEbBody con point eb
-        (result, lookupTime) <- timed $ rwLookupEbBody con point.pointEbHash
+        (result, lookupTime) <- timed $ rwLookupEbBody con (pointEbHash point)
         pure $
           result == expectedTxs
             & counterexample ("Expected: " ++ show expectedTxs ++ "\nGot: " ++ show result)
@@ -423,7 +422,7 @@ prop_txsInsertThenRetrieve impl =
           insertTime <- snd <$> timed (rwInsertTxs con txsToInsert)
           -- Retrieve all offsets
           let allOffsets = [0 .. numTxs - 1]
-          (results, retrieveTime) <- timed $ rwBatchRetrieveTxs con point.pointEbHash allOffsets
+          (results, retrieveTime) <- timed $ rwBatchRetrieveTxs con (pointEbHash point) allOffsets
           -- Check that inserted txs have bytes, others don't
           let checkResult (off, _txHash, mBytes) =
                 if off `elem` offsetsToInsert
@@ -505,8 +504,8 @@ test_correctData db = do
   notification <- atomically $ readTChan chan
   case notification of
     AcquiredEb notifPoint notifSize -> do
-      notifPoint.pointSlotNo @?= point.pointSlotNo
-      notifPoint.pointEbHash @?= point.pointEbHash
+      pointSlotNo notifPoint @?= pointSlotNo point
+      pointEbHash notifPoint @?= pointEbHash point
       notifSize @?= expectedSize
     AcquiredEbTxs _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
@@ -934,5 +933,5 @@ test_deleteDanglingTxs volDbPath _immDbPath db = do
         probePoint = MkLeiosPoint 6 (mkTestEbHash 2)
     rwInsertEbPoint con probePoint (encodeLeiosEbSize probeEb)
     void $ rwInsertEbBody con probePoint probeEb
-    probeClosure <- rwLookupEbClosure con probePoint.pointEbHash
+    probeClosure <- rwLookupEbClosure con (pointEbHash probePoint)
     probeClosure @?= Nothing

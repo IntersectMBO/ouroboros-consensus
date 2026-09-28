@@ -1,20 +1,4 @@
-{-# LANGUAGE DuplicateRecordFields #-}
-
-module Ouroboros.Consensus.Storage.LeiosDB
-  ( -- * API
-    LeiosDbHandle (..)
-  , LeiosDbStats (..)
-  , LeiosEbNotification (..)
-  , LeiosDbReader (..)
-  , LeiosDbWriter (..)
-  , Promise (..)
-  , withReader
-  , withWriter
-  , allocateReader
-  , allocateWriter
-  , awaitAll
-  , CompletedEbs
-  , TraceLeiosDb (..)
+module Ouroboros.Consensus.Storage.LeiosDB (module X) where
 
 import Ouroboros.Consensus.Storage.LeiosDB.API as X
 import Ouroboros.Consensus.Storage.LeiosDB.Impl.InMemory as X
