@@ -475,11 +475,16 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $
 
   -- The endorser-block capacity is zero, so the endorser-block part of the
   -- partition is empty and the block part is the whole selection.
-  let (txs, txssz, _, _) =
+  let (txs, txssz, ebTxs, _) =
         snapshotPartition
           mempoolSnapshot
           (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
           Data.Measure.zero
+  -- Only a transaction with a zero 'txEbMeasure' fits a zero capacity, and
+  -- the 'txEbMeasure' INVARIANT forbids a zero result.
+  unless (null ebTxs) $
+    throwIO $
+      userError "getTransactionsToForge: non-empty endorser-block part for a zero capacity"
   -- NB respect the capacity of the ledger state we're extending,
   -- which is /not/ 'snapshotLedgerState'
 
