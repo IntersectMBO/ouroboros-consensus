@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
-
 -- | The sizes the Dijkstra mempool charges for an endorser block agree with
 -- the bytes 'encodeEndorserBlock' writes.
 module Test.Consensus.Shelley.EndorserBlock (tests) where
