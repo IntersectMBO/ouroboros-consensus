@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -877,8 +878,8 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     labelThisThread $ Text.unpack $ forgeLabel bf
     rootCCtx <- rootCallCtx "Forge"
     let leiosDbHandle = withCallTraceHandle nullTracer leiosDB
-    leiosDbReader <- openReader leiosDbHandle rootCCtx
-    leiosDbWriter <- openWriter leiosDbHandle rootCCtx
+    leiosDbReader <- leiosDbHandle.openReader rootCCtx
+    leiosDbWriter <- leiosDbHandle.openWriter rootCCtx
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 
   finalizeForging (bf, leiosDbReader, leiosDbWriter, rootCCtx) =

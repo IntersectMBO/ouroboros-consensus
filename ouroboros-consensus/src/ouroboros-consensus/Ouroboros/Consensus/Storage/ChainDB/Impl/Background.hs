@@ -61,7 +61,11 @@ import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Common (LeiosEbNotification (..))
-import LeiosDemoDb.WithCallTrace (leiosDbGarbageCollect, leiosDbPromoteToImmutable, subscribeEbNotifications)
+import LeiosDemoDb.WithCallTrace
+  ( leiosDbGarbageCollect
+  , leiosDbPromoteToImmutable
+  , subscribeEbNotifications
+  )
 import LeiosDemoTypes (LeiosPoint, pointEbHash)
 import qualified LeiosDemoTypes
 import LeiosUtils.CallTrace
@@ -122,8 +126,10 @@ launchBgTasks cdb@CDB{..} replayed = do
     forkLinkedWatcherAllocate
       cdbRegistry
       "ChainDB.ledgerDbTaskWatcher"
-      (do labelThisThread "LedgerDbMaintenance"
-          rootCallCtx "LedgerDbMaintenance")
+      ( do
+          labelThisThread "LedgerDbMaintenance"
+          rootCallCtx "LedgerDbMaintenance"
+      )
       (\_ -> pure ())
       (\cctx -> ledgerDbTaskWatcher cctx cdb ledgerDbTasksTrigger)
 

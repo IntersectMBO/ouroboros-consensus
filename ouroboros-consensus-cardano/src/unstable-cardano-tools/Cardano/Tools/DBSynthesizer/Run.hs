@@ -40,7 +40,7 @@ import qualified Data.ByteString.Lazy.Char8 as BSL8 (unpack)
 import Data.Functor (($>))
 import qualified Data.Set as Set
 import LeiosDemoDb (withLeiosDBSQLite)
-import LeiosDemoDb.WithCallTrace (withCallTraceHandle, withReader, withWriter)
+import LeiosDemoDb.WithCallTrace (withCallTraceHandle, withReaderAndWriter)
 import LeiosDemoTypes
   ( TraceLeiosKernel (TraceLeiosDb)
   , traceLeiosKernelToObject
@@ -209,7 +209,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
       epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
       flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
-      mkDbArgs leiosDbHandle =
+      mkDbArgs leiosDb =
         ChainDB.completeChainDbArgs
           registry
           pInfoConfig
@@ -247,28 +247,28 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
             (confDbDir </> "leios.imm.db")
             $ \leiosDb ->
               let leiosDbHandle = withCallTraceHandle nullTracer leiosDb
-              in withReader leiosDbHandle cctx $ \leiosDbReader -> withWriter leiosDbHandle cctx $ \leiosDbWriter ->
-                ChainDB.withDB cctx (ChainDB.updateTracer dbTracer (mkDbArgs leiosDbHandle)) $ \chainDB -> do
-                  slotNo <- do
-                    tip <- atomically (ChainDB.getTipPoint chainDB)
-                    pure $ case pointSlot tip of
-                      Origin -> 0
-                      At s -> succ s
+               in withReaderAndWriter leiosDbHandle cctx $ \leiosDbReader leiosDbWriter ->
+                    ChainDB.withDB cctx (ChainDB.updateTracer dbTracer (mkDbArgs leiosDb)) $ \chainDB -> do
+                      slotNo <- do
+                        tip <- atomically (ChainDB.getTipPoint chainDB)
+                        pure $ case pointSlot tip of
+                          Origin -> 0
+                          At s -> succ s
 
-                  putStrLn $ "--> starting at: " ++ show slotNo
-                  runForge
-                    cctx
-                    epochSize
-                    slotNo
-                    synthLimit
-                    chainDB
-                    forgers
-                    pInfoConfig
-                    confVotingKey
-                    (genTxs pInfoConfig)
-                    leiosDbReader
-                    leiosDbWriter
-                    leiosTracer
+                      putStrLn $ "--> starting at: " ++ show slotNo
+                      runForge
+                        cctx
+                        epochSize
+                        slotNo
+                        synthLimit
+                        chainDB
+                        forgers
+                        pInfoConfig
+                        confVotingKey
+                        (genTxs pInfoConfig)
+                        leiosDbReader
+                        leiosDbWriter
+                        leiosTracer
         else do
           putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
           pure $ ForgeResult 0
