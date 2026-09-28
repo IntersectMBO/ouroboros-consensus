@@ -2597,7 +2597,7 @@ traceEventName = \case
   TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
   TracePerasImmutableCertDbEvent ev ->
     "PerasImmutableCertDB." <> case ev of
-      PerasImmutableCertDB.OpenedDB _ -> "OpenedDB"
+      PerasImmutableCertDB.OpenedDB _ _ -> "OpenedDB"
       PerasImmutableCertDB.AddedCert _ _ -> "AddedCert"
       PerasImmutableCertDB.QuarantinedCert _ _ -> "QuarantinedCert"
   TracePerasVoteDbEvent ev -> "PerasVoteDB." <> constrName ev
