@@ -58,7 +58,7 @@ tests =
 fooBarBazParallel :: IOLike m => m [CallTrace String String]
 fooBarBazParallel = do
   (tracer, readTrace) <- newRecordingTracer
-  rootCtx <- rootCallCtx "main"
+  rootCtx <- rootCallCtx "CallTraceTest"
   _ <-
     callTrace
       tracer
@@ -66,12 +66,15 @@ fooBarBazParallel = do
       "foobarbaz-parallel"
       ""
       ( \mainCtx -> do
-          let fooWorkerCtx = newCallCtx mainCtx "foo-worker"
-              barWorkerCtx = newCallCtx mainCtx "bar-worker"
-              bazWorkerCtx = newCallCtx mainCtx "baz-worker"
-          fooA <- async $ foo tracer fooWorkerCtx "hello foo"
-          barA <- async $ bar tracer barWorkerCtx "hello bar"
-          bazA <- async $ baz tracer bazWorkerCtx "hello baz"
+          fooA <- async $ do
+            let cctx = newCallCtx mainCtx "FooWorker"
+            foo tracer cctx "hello foo"
+          barA <- async $ do
+            let cctx = newCallCtx mainCtx "BarWorker"
+            bar tracer cctx "hello bar"
+          bazA <- async $ do
+            let cctx = newCallCtx mainCtx "BazWorker"
+            baz tracer cctx "hello baz"
           _ <- wait fooA
           _ <- wait barA
           wait bazA
@@ -81,7 +84,7 @@ fooBarBazParallel = do
 fooBarBaz :: IOLike m => m [CallTrace String String]
 fooBarBaz = do
   (tracer, readTrace) <- newRecordingTracer
-  rootCtx <- rootCallCtx "main"
+  rootCtx <- rootCallCtx "CallTraceTest"
   _ <-
     callTrace
       tracer
