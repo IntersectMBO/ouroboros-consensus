@@ -740,7 +740,8 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (GenTxId blk)
   , Eq (ApplyTxErr blk)
-  , Eq (TxMeasure blk)
+  , Eq (TxMeasurePhase1 blk)
+  , Eq (TxMeasurePhase2 blk)
   , StandardHash blk
   ) =>
   Eq (TraceEventMempool blk)
@@ -750,7 +751,8 @@ deriving instance
   , Show (Validated (GenTx blk))
   , Show (GenTxId blk)
   , Show (ApplyTxErr blk)
-  , Show (TxMeasure blk)
+  , Show (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase2 blk)
   , StandardHash blk
   ) =>
   Show (TraceEventMempool blk)
