@@ -14,7 +14,9 @@ import Ouroboros.Consensus.Block
 -- Peras certificates, ie those relevant for syncing nodes only.
 data PerasImmutableCertDB m blk = PerasImmutableCertDB
   { addCert :: ValidatedPerasCert blk -> m AddPerasImmutableCertResult
-  -- ^ Add a certificate to the Peras immutable certificate database.
+  -- ^ Add a certificate to the Peras immutable certificate database. If a
+  -- certificate for the same round is already stored but its file is
+  -- unreadable or corrupt, it is replaced by the given one.
   , getCertsAfter :: PerasRoundNo -> Word64 -> m [ValidatedPerasCert blk]
   -- ^ @'getCertsAfter' roundNo maxCerts@ gets at most @maxCerts@ immutable
   -- certificates with a round number strictly greater than @roundNo@, in
@@ -25,5 +27,8 @@ data PerasImmutableCertDB m blk = PerasImmutableCertDB
 data AddPerasImmutableCertResult
   = AddedCertToImmutableDB
   | CertAlreadyInImmutableDB
+  | -- | A certificate for the same round was already stored, but its file was
+    -- unreadable or corrupt, so it was replaced.
+    ReplacedCorruptCertInImmutableDB
   deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass NoThunks
