@@ -803,7 +803,7 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
 --
 -- An endorser block carries references to transactions, while the referenced
 -- transactions, its closure, must satisfy block-like limits. So this pairs the
--- closure's block measure with the one dimension specific to endorser blocks:
+-- closure's 'TxMeasure' with the one dimension specific to endorser blocks:
 -- the size of the references themselves.
 data DijkstraEbMeasure p = DijkstraEbMeasure
   { ebClosureMeasure :: !(TxMeasure (ShelleyBlock p DijkstraEra))
@@ -819,7 +819,7 @@ data DijkstraEbMeasure p = DijkstraEbMeasure
     via (InstantiatedAt Generic (DijkstraEbMeasure p))
 
 -- | The cost of one transaction in an endorser block: its closure cost is the
--- transaction's block measure, and its reference costs the bytes
+-- transaction's 'TxMeasure', and its reference costs the bytes
 -- 'Leios.encodeEndorserBlock' writes for it.
 txEbMeasureDijkstra :: TxMeasure (ShelleyBlock p DijkstraEra) -> DijkstraEbMeasure p
 txEbMeasureDijkstra closure =
