@@ -239,6 +239,7 @@ openDB
       PerasImmutableCertDB
         { addCert = implAddCert env
         , getCertsAfter = implGetCertsAfter env
+        , getQuarantinedRounds = cdsQuarantinedRounds <$> readSVarSTM picdbState
         }
 
 {-------------------------------------------------------------------------------
