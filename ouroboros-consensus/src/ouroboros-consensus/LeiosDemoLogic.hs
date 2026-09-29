@@ -1212,11 +1212,11 @@ refundTxRequest peerId txsBytesSize o
 completeTxRequest ::
   Ord pid =>
   PeerId pid ->
-  EbHash ->
-  NEIntSet ->
+  LeiosBlockTxsRequest ->
   LeiosOutstanding pid ->
   LeiosOutstanding pid
-completeTxRequest = adjustTxRequest Jobs.completeJob
+completeTxRequest peerId (MkLeiosBlockTxsRequest point jobs) =
+  adjustOutstandingTxRequest Jobs.completeJob peerId point.pointEbHash (NEIntMap.keysSet jobs)
 
 -- | Like 'completeTxRequest', but hand the jobs back rather than retiring them:
 -- for a delivery whose LeiosDb write did not land, so the txs must stay
@@ -1224,13 +1224,13 @@ completeTxRequest = adjustTxRequest Jobs.completeJob
 releaseTxRequest ::
   Ord pid =>
   PeerId pid ->
-  EbHash ->
-  NEIntSet ->
+  LeiosBlockTxsRequest ->
   LeiosOutstanding pid ->
   LeiosOutstanding pid
-releaseTxRequest = adjustTxRequest Jobs.unpickJob
+releaseTxRequest peerId (MkLeiosBlockTxsRequest point jobs) =
+  adjustOutstandingTxRequest Jobs.unpickJob peerId point.pointEbHash (NEIntMap.keysSet jobs)
 
-adjustTxRequest ::
+adjustOutstandingTxRequest ::
   Ord pid =>
   (Jobs.LeiosJobId -> Jobs.LeiosJobPool -> Jobs.LeiosJobPool) ->
   PeerId pid ->
@@ -1238,7 +1238,7 @@ adjustTxRequest ::
   NEIntSet ->
   LeiosOutstanding pid ->
   LeiosOutstanding pid
-adjustTxRequest onJob peerId ebHash jobIds o =
+adjustOutstandingTxRequest onJob peerId ebHash jobIds o =
   o
     { Leios.ebState = Map.adjust completeInJobPool ebHash (Leios.ebState o)
     , Leios.requestedJobsPerPeer =
@@ -1432,7 +1432,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     traceWith ktracer $ TraceLeiosFetchTxsArrival (txArrival <> redundantExtra)
     -- 'refundTxRequest' reverses this peer's per-request byte accounting (but skips
     -- it if the peer was already cancelled in bulk by a disconnect).
-    adjust (refundTxRequest peerId (fromIntegral batchBytes))
+    adjustOutstanding (refundTxRequest peerId (fromIntegral batchBytes))
     void $ MVar.tryPutMVar readyVar ()
     traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
  where
@@ -1475,6 +1475,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
               traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
       case source of
         ForgedTxs{} -> traceCompleted -- synchronous
+        -- REVIEW: onException needed? link should result in onLost being called
         _ -> link =<< async (traceCompleted `onException` onLost)
     -- The cache update: the fetch logic consults it to decide what is still
     -- missing, so it cannot lag behind the caller.
@@ -1487,23 +1488,20 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
         withLockedInsertAppliedTx txCache $ \w0 step ->
           foldM (\w (_off, txh, _bs) -> step w txh ()) w0 toIngest
         pure mempty
-   where
-    -- Retire this peer's picked jobs once its txs are durable, or hand them
-    -- back if the write is lost; forge\/mempool sources hold none.
-    (onDurable, onLost) = case source of
-      ReceivedTxsFrom peerId (MkLeiosBlockTxsRequest point jobs) _ ->
-        ( adjust (completeTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs))
-        , do
-            adjust (releaseTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs))
-            traceWith ktracer $ TraceLeiosBlockTxsAbandoned point
-        )
-      _ -> (pure (), pure ())
 
-  adjust :: (LeiosOutstanding pid -> LeiosOutstanding pid) -> m ()
-  adjust f = MVar.modifyMVar_ outstandingVar (pure . f)
+  onDurable = whenReceivedTxs $ \peerId req -> adjustOutstanding $ completeTxRequest peerId req
+
+  onLost = whenReceivedTxs $ \peerId req@(MkLeiosBlockTxsRequest point _) -> do
+    adjustOutstanding $ releaseTxRequest peerId req
+    traceWith ktracer $ TraceLeiosBlockTxsAbandoned point
+
+  whenReceivedTxs f = case source of
+    ReceivedTxsFrom peerId req _ -> f peerId req
+    _ -> pure ()
+
+  adjustOutstanding f = MVar.modifyMVar_ outstandingVar (pure . f)
 
   -- The EB whose rows this call fills; every source names it.
-  ingestPoint :: LeiosPoint
   ingestPoint = case source of
     ForgedTxs point _ _ -> point
     MempoolTxs point _ -> point
