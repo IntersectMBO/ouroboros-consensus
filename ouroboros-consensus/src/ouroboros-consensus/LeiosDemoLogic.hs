@@ -1346,13 +1346,10 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     _ <-
       ingestAcquiredTxs
         now
-        Applied
         [ (off, txh, bs)
         | (off, (txh, _sz), bs) <-
             zip3 [0 ..] (V.toList (leiosEbTxs eb)) (V.toList (V.map cbor txs))
         ]
-        (pure ())
-        (pure ())
     void $ MVar.tryPutMVar readyVar ()
   MempoolTxs _point hits -> do
     now <- systemTimeCurrent systemTime
@@ -1362,10 +1359,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     _ <-
       ingestAcquiredTxs
         now
-        Applied
         [(off, txh, bs) | (off, (txh, bs)) <- IntMap.toAscList hits]
-        (pure ())
-        (pure ())
     void $ MVar.tryPutMVar readyVar ()
   ReceivedTxsFrom peerId req@(MkLeiosBlockTxsRequest point jobs) txs -> do
     now <- systemTimeCurrent systemTime
@@ -1434,16 +1428,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     -- closure-acquired notification, and no later offer would be acted on.
     -- Until then they stay picked by this peer, which is already re-requestable
     -- by others and released wholesale on its disconnect.
-    txArrival <-
-      ingestAcquiredTxs
-        now
-        Unapplied
-        toIngest
-        (adjust (completeTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs)))
-        ( do
-            adjust (releaseTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs))
-            traceWith ktracer $ TraceLeiosBlockTxsAbandoned point
-        )
+    txArrival <- ingestAcquiredTxs now toIngest
     traceWith ktracer $ TraceLeiosFetchTxsArrival (txArrival <> redundantExtra)
     -- 'refundTxRequest' reverses this peer's per-request byte accounting (but skips
     -- it if the peer was already cancelled in bulk by a disconnect).
@@ -1463,18 +1448,17 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
   -- threads. Harmless --- the DB insert is idempotent and the cache buckets each
   -- tx by its prior state in one locked pass, tolerating duplicates.
   --
-  -- 'onDurable' runs once the txs are in the LeiosDb, 'onLost' if they never get
-  -- there; exactly one of them runs.
+  -- Everything source-specific -- applied vs unapplied, which fetch jobs to
+  -- retire on durability or hand back if the write is lost -- is read off
+  -- 'source' rather than passed in: a peer's txs are unapplied and carry its
+  -- picked jobs (see 'completeTxRequest' / 'releaseTxRequest'); forge and
+  -- mempool txs are applied and hold no jobs of ours. Of 'onDurable' \/
+  -- 'onLost', exactly one runs.
   ingestAcquiredTxs ::
     RelativeTime ->
-    WhetherApplied ->
     [(Int, TxHash, BS.ByteString)] ->
-    -- onDurable
-    m () ->
-    -- onLost
-    m () ->
     m Leios.FetchArrivalBytes
-  ingestAcquiredTxs now applied toIngest onDurable onLost = do
+  ingestAcquiredTxs now toIngest = do
     flip onException onLost $ do
       txsWritten <- writeTxs writer ingestPoint [(off, bs) | (off, _txh, bs) <- toIngest]
       let traceCompleted = do
@@ -1491,19 +1475,29 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
               traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
       case source of
         ForgedTxs{} -> traceCompleted -- synchronous
-        ReceivedTxsFrom{} -> link =<< async (traceCompleted `onException` onLost)
-        MempoolTxs{} -> link =<< async (traceCompleted `onException` onLost)
+        _ -> link =<< async (traceCompleted `onException` onLost)
     -- The cache update: the fetch logic consults it to decide what is still
     -- missing, so it cannot lag behind the caller.
     -- TODO: do this before the DB write (like in processLeiosBlock)
-    case applied of
-      Applied -> do
+    case source of
+      ReceivedTxsFrom{} ->
+        withLockedInsertUnappliedTx txCache $ \w0 step ->
+          foldM (\w (_off, txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
+      _ -> do
         withLockedInsertAppliedTx txCache $ \w0 step ->
           foldM (\w (_off, txh, _bs) -> step w txh ()) w0 toIngest
         pure mempty
-      Unapplied ->
-        withLockedInsertUnappliedTx txCache $ \w0 step ->
-          foldM (\w (_off, txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
+   where
+    -- Retire this peer's picked jobs once its txs are durable, or hand them
+    -- back if the write is lost; forge\/mempool sources hold none.
+    (onDurable, onLost) = case source of
+      ReceivedTxsFrom peerId (MkLeiosBlockTxsRequest point jobs) _ ->
+        ( adjust (completeTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs))
+        , do
+            adjust (releaseTxRequest peerId point.pointEbHash (NEIntMap.keysSet jobs))
+            traceWith ktracer $ TraceLeiosBlockTxsAbandoned point
+        )
+      _ -> (pure (), pure ())
 
   adjust :: (LeiosOutstanding pid -> LeiosOutstanding pid) -> m ()
   adjust f = MVar.modifyMVar_ outstandingVar (pure . f)
@@ -1514,10 +1508,6 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
     ForgedTxs point _ _ -> point
     MempoolTxs point _ -> point
     ReceivedTxsFrom _ (MkLeiosBlockTxsRequest point _) _ -> point
-
--- | Whether ingested txs are tagged applied (from our forge's validated mempool)
--- or unapplied (fetched from a peer).
-data WhetherApplied = Applied | Unapplied
 
 -----
 
