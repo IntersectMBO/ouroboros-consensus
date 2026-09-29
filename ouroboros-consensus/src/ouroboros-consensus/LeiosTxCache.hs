@@ -121,9 +121,6 @@ newPureLeiosTxCache nshift = do
           k $ \txh -> pure $! Pure.lookupTx txh idx
       , setTxLocations = \ebh offTxs ->
           MVar.modifyMVar_ var $ \idx -> pure $! Pure.setTxLocations ebh offTxs idx
-      , withLookupTxLocations = \k -> do
-          idx <- MVar.readMVar var
-          k $ \txh -> pure $! Pure.lookupTxLocation txh idx
       }
 
 -- | A handle whose every operation is inert: announcements evict nothing, bodies
@@ -141,5 +138,4 @@ nullLeiosTxCache =
     , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)
     , withLookupTx = \k -> k (\_txh -> pure Nothing)
     , setTxLocations = \_ebh _offTxs -> pure ()
-    , withLookupTxLocations = \k -> k (\_txh -> pure Nothing)
     }
