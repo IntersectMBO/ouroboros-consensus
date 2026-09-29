@@ -67,13 +67,15 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import LeiosDemoTypes (BytesSize, EbHash, RbHash, TxHash, TxLocation (..))
+import LeiosDemoTypes (BytesSize, EbHash, RbHash, TxHash, TxLocation (..), TxOffset)
 import LeiosTxCache.API
   ( BodyState (..)
+  , EbRingIndex
   , LeiosTxCacheInsertBodySummary
   , RefCount (..)
   , ReferencesTxsByHash (..)
   , TxArrivalPrior (..)
+  , ebRingIndexOf
   , maxAnnouncementCount
   , mkLeiosTxCacheInsertBodySummary
   )
@@ -107,10 +109,10 @@ data LeiosTxCacheIndex a v b = MkLeiosTxCacheIndex
   , prunedSlot :: !SlotNo
   -- ^ The greatest slot 'evictOlderThan' has pruned to (monotonically
   -- non-decreasing; 'SlotNo' @0@ until the first prune)
-  , txLocState :: !(Map TxHash (Int, Int))
+  , txLocState :: !(Map TxHash (EbRingIndex, TxOffset))
   -- ^ Where a tracked tx's durable bytes live: a 'locRing' slot and an offset
   -- into that EB. INVARIANT: keys are a subset of 'txState''s.
-  , locRing :: !(Map Int EbHash)
+  , locRing :: !(Map EbRingIndex EbHash)
   -- ^ The EBs recent tx locations point into, keyed by ring slot
   -- (@'locNext' \`mod\` 'maxAnnouncementCount'@ at claim time). Slot reuse
   -- makes a stored location stale, not wrong: the db fill guards it.
@@ -449,7 +451,7 @@ setTxLocations ebh offTxs idx =
     , txLocState = foldl' upd (txLocState idx) offTxs
     }
  where
-  slot = locNext idx `mod` maxAnnouncementCount
+  slot = ebRingIndexOf (locNext idx)
   upd m (off, txh)
     | Map.member txh (txState idx) = Map.insert txh (slot, off) m
     | otherwise = m

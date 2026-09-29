@@ -34,13 +34,16 @@ import Data.Word (Word64)
 import LeiosDemoTypes (BytesSize, EbHash, FetchArrivalBytes, RbHash, TxHash (..), TxLocation (..))
 import LeiosTxCache.API
   ( BodyState (..)
+  , EbRingIndex
   , LeiosTxCache (..)
   , RefCount (..)
   , ReferencesTxsByHash (..)
   , TxArrivalPrior (..)
   , bucketTxArrival
+  , ebRingIndexOf
   , maxAnnouncementCount
   , mkLeiosTxCacheInsertBodySummary
+  , unEbRingIndex
   )
 import qualified LeiosTxCache.Optimized.MutableHashTable as HT
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -53,7 +56,7 @@ data HtState b = HtState
   , hsPrunedSlot :: !SlotNo
   -- ^ Greatest slot 'evictOlderThan' has pruned to; 'insertAnnouncement' ignores
   -- any EB strictly older. Mirrors 'LeiosTxCache.Reference.prunedSlot'.
-  , hsLocRing :: !(Map Int EbHash)
+  , hsLocRing :: !(Map EbRingIndex EbHash)
   -- ^ The source-EB ring the packed tx locations index into: slot @i@ holds
   -- the @i@-th (mod 'maxAnnouncementCount') EB advertised via
   -- 'setTxLocations'. Reuse makes a stored location stale, not wrong: the
@@ -139,7 +142,7 @@ newHashTableLeiosTxCache nshift k0 k1 = do
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
       , setTxLocations = \ebh offTxs ->
           MVar.modifyMVar stateVar $ \st -> do
-            let slot = hsLocNext st `mod` maxAnnouncementCount
+            let slot = ebRingIndexOf (hsLocNext st)
             F.for_ offTxs $ \(off, txh) -> do
               let key = toKey txh
               mv <- HT.lookup ht key
@@ -356,22 +359,24 @@ withLoc :: Word64 -> Word64 -> Word64
 withLoc old new = (old .&. 0xFFFFFFFF00000000) .|. (new .&. 0xFFFFFFFF)
 
 -- | @Just (ringIdx, txOffset)@ as a high half: valid bit set, low word zero
--- (combine with the entry's 'TxState' half via @.|.@).
-encodeLoc :: Int -> Int -> Word64
+-- (combine with the entry's 'TxState' half via @.|.@). The ring index is
+-- 'EbRingIndex', so it fits the 7-bit field by construction.
+encodeLoc :: EbRingIndex -> Int -> Word64
 encodeLoc ringIdx off =
   ( 0x80000000
-      .|. ((fromIntegral ringIdx .&. 0x7F) `unsafeShiftL` 24)
+      .|. (fromIntegral (unEbRingIndex ringIdx) `unsafeShiftL` 24)
       .|. (fromIntegral off .&. 0xFFFFFF)
   )
     `unsafeShiftL` 32
 
--- | Decode 'encodeLoc': 'Nothing' unless the valid bit is set.
-valLoc :: Word64 -> Maybe (Int, Int)
+-- | Decode 'encodeLoc': 'Nothing' unless the valid bit is set. The 7-bit ring
+-- field is re-entered through 'ebRingIndexOf' (identity in range).
+valLoc :: Word64 -> Maybe (EbRingIndex, Int)
 valLoc w
   | hi .&. 0x80000000 == 0 = Nothing
   | otherwise =
       Just
-        ( fromIntegral ((hi `unsafeShiftR` 24) .&. 0x7F)
+        ( ebRingIndexOf (fromIntegral ((hi `unsafeShiftR` 24) .&. 0x7F))
         , fromIntegral (hi .&. 0xFFFFFF)
         )
  where
