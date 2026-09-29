@@ -23,51 +23,51 @@ flowchart LR;
   classDef kind fill:#EA4335;
 
   Block(Block)-->BlockProtocol[BlockProtocol blk]; class Block kind;
-  click Block "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
+  click Block "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
   Block-->BlockConfig[BlockConfig blk]; class BlockConfig df
   BlockProtocol[BlockProtocol blk]-.->Protocol(Protocol); class BlockProtocol tf;
-  click BlockProtocol "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
-  click BlockProtocol "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
-  click BlockConfig "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
+  click BlockProtocol "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
+  click BlockProtocol "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
+  click BlockConfig "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
   Block-->StorageConfig; class StorageConfig df
-  click StorageConfig "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
+  click StorageConfig "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
   Block-->CodecConfig[CodecConfig blk]; class CodecConfig df
-  click CodecConfig "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
+  click CodecConfig "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
   Block-->Header[Header blk]; class Header df
-  click Header "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
+  click Header "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs"
   Ledger(Ledger); class Ledger kind
-  click Ledger "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Abstract.hs"
+  click Ledger "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/Abstract.hs"
   Block-->LedgerState[LedgerState blk]; class LedgerState df;
-  click LedgerState "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs"
+  click LedgerState "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs"
 
   Block-->GenTx[GenTx blk]; class GenTx df
-  click GenTx "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsMemPool.hs"
+  click GenTx "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsMempool.hs"
   Block-->ApplyTxErr[ApplyTxErr blk]; class ApplyTxErr df
-  click ApplyTxErr "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsMemPool.hs"
+  click ApplyTxErr "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsMempool.hs"
   LedgerState-.->Ledger
   Ledger-->AuxLedgerEvent[AuxLedgerEvent l]; class AuxLedgerEvent tf
-  click AuxLedgerEvent "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs"
+  click AuxLedgerEvent "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs"
   Ledger-->LedgerErr[LedgerErr l]; class LedgerErr tf
-  click LedgerErr "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs"
+  click LedgerErr "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs"
 
   Protocol(Protocol); class Protocol kind
   Protocol-->ConsensusConfig[ConsensusConfig p]; class ConsensusConfig df
-  click ConsensusConfig "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
+  click ConsensusConfig "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
   subgraph ConsensusProtocol[class ConsensusProtocol]
     ChainDepState[ChainDepState p]; class ChainDepState tf
-    click ChainDepState "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
+    click ChainDepState "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
     IsLeader[IsLeader p]; class IsLeader tf
-    click IsLeader "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
+    click IsLeader "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
     CanBeLeader[CanBeLeader p]; class CanBeLeader tf
-    click CanBeLeader "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
+    click CanBeLeader "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
     SelectView[SelectView p]; class SelectView tf
-    click SelectView "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
+    click SelectView "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
     LedgerView[LedgerView p]; class LedgerView tf
-    click LedgerView "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
+    click LedgerView "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
     ValidationErr[ValidationErr p]; class ValidationErr tf
-    click ValidationErr "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
+    click ValidationErr "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
     ValidateView[ValidateView p]; class ValidateView tf
-    click ValidateView "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
+    click ValidateView "https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs"
   end
   Protocol-->ChainDepState
   Protocol-->IsLeader[IsLeader p]

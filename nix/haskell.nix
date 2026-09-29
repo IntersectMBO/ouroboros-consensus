@@ -13,13 +13,14 @@ let
       ../NOTICE
       ../cabal
       ../cabal.project
+      ../lib
+      ../testlib
+      ../test
+      ../app
       ../golden
-      ../ouroboros-consensus
-      ../ouroboros-consensus-cardano
-      ../ouroboros-consensus-diffusion
-      ../ouroboros-consensus-protocol
+      ../bench
+      ../cddl
       ../ouroboros-consensus.cabal
-      ../tracing
     ];
   };
   forAllProjectPackages = cfg: args@{ config, lib, ... }: {
@@ -76,9 +77,9 @@ let
             extraSrcFiles = [ "${golden}/**/*" ];
           })
           {
-            byron-test = "ouroboros-consensus-cardano/golden/byron";
-            shelley-test = "ouroboros-consensus-cardano/golden/shelley";
-            cardano-test = "ouroboros-consensus-cardano/golden/cardano";
+            byron-test = "golden/byron";
+            shelley-test = "golden/shelley";
+            cardano-test = "golden/cardano";
             tracing-test = "golden/tracing";
           };
       }
@@ -96,7 +97,7 @@ let
         packages.ouroboros-consensus.components.tests.cardano-test = {
           build-tools =
             [ pkgs.cddlc pkgs.cuddle ];
-          extraSrcFiles = [ "ouroboros-consensus-cardano/cddl/**/*" ];
+          extraSrcFiles = [ "cddl/**/*" ];
         };
       })
     ];

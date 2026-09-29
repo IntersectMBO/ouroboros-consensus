@@ -93,7 +93,7 @@ Note that 11.x introduced no new version: 10.7.1 and 11.0.1 both use
 
 This table is mirrored by the comment on `supportedNodeToClientVersions` for
 `CardanoBlock`, in
-[`Ouroboros/Consensus/Cardano/Node.hs`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs);
+[`Ouroboros/Consensus/Cardano/Node.hs`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/lib/cardano/Ouroboros/Consensus/Cardano/Node.hs);
 keep the two in sync when a new version is added.
 
 ## Codecs

@@ -166,7 +166,7 @@ echo "Copying images"
 # Generating the graph, note you need graphmod and a recent enough `dot` (ubuntu
 # ships 2.42.2 but latest versions in 10.0.0)
 #
-# > fd --full-path ouroboros-consensus/src/ouroboros-consensus -e 'hs' | xargs graphmod -p -d 20,20 -q | dot -Tsvg -o"${SCRIPTS_DIR}/modules-consensus.svg"
+# > fd --full-path lib/ouroboros-consensus -e 'hs' | xargs graphmod -p -d 20,20 -q | dot -Tsvg -o"${SCRIPTS_DIR}/modules-consensus.svg"
 cp "${SCRIPTS_DIR}/modules-consensus.svg" "${OUTPUT_DIR}"
 cp "${SCRIPTS_DIR}/packages-consensus.svg" "${OUTPUT_DIR}"
 
