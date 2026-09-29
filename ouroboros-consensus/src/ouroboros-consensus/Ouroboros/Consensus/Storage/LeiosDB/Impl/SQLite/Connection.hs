@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
     -- * Connections with prepared statements
   , Conn (..)
   , mkConn
+  , finalizeConnStmts
   , closeConn
   , dbWithWriteTransaction
   ) where
@@ -22,7 +23,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import Control.Exception (throwIO)
 import Control.Monad (void)
-import Control.Monad.Class.MonadThrow (bracket)
+import Control.Monad.Class.MonadThrow (bracket, onException)
 import Control.Tracer (Tracer)
 import Data.Foldable (traverse_)
 import Data.String (fromString)
@@ -134,7 +135,8 @@ data Conn = Conn
   }
 
 -- | Build a 'Conn' over two open partition connections, preparing every
--- statement; 'closeConn' undoes it.
+-- statement; 'closeConn' undoes it. If preparing the immutable statements
+-- throws, the volatile ones are finalized first.
 mkConn ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
@@ -143,7 +145,7 @@ mkConn ::
   IO Conn
 mkConn tracer statsVar volDb immDb = do
   stmts <- prepareVolStmts volDb
-  immStmts <- prepareImmStmts immDb
+  immStmts <- prepareImmStmts immDb `onException` finalizeVolStmts stmts
   pure
     Conn
       { conVolDb = volDb
@@ -154,11 +156,18 @@ mkConn tracer statsVar volDb immDb = do
       , connImmStmts = immStmts
       }
 
+-- | Finalize the statements of a 'Conn', leaving its connections open, for a
+-- caller that closes those itself.
+finalizeConnStmts :: Conn -> IO ()
+finalizeConnStmts conn = do
+  finalizeImmStmts (connImmStmts conn)
+  finalizeVolStmts (connVolStmts conn)
+
+-- | Finalize the statements of a 'Conn', then close both its connections.
 closeConn :: Conn -> IO ()
 closeConn conn = do
-  finalizeImmStmts (connImmStmts conn)
+  finalizeConnStmts conn
   closeChecked (conImmDb conn)
-  finalizeVolStmts (connVolStmts conn)
   closeChecked (conVolDb conn)
 
 -- | @sqlite3_close@ refuses -- and would silently leak the connection -- if

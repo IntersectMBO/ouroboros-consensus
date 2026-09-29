@@ -48,10 +48,9 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Control.Monad (filterM, forever, unless, void, when)
 import Control.Monad.Class.MonadThrow
-  ( catch
+  ( bracket
+  , catch
   , displayException
-  , finally
-  , onException
   )
 import Control.ResourceRegistry
   ( ResourceRegistry
@@ -192,13 +191,6 @@ copyEbToImmutable tracer statsVar conn ebHash =
 
 -- | The copier: the only writer into the immutable partition.
 --
--- A copy is O(closure) -- every tx body of the EB -- and writes nothing but
--- the immutable partition, so it runs off the writer, on its own connection
--- (main = immutable, the volatile partition ATTACHed as @vol@). Inserting keeps
--- the volatile write lock throughout; WAL lets the copy read the volatile
--- partition while it does. The mark that follows a copy /is/ a volatile
--- write, and goes through the writer like every other one.
---
 -- Returns the copier's thread: cancelling it closes its connection.
 startCopier ::
   ResourceRegistry IO ->
@@ -209,64 +201,65 @@ startCopier ::
   FilePath ->
   FilePath ->
   IO (Thread IO ())
-startCopier registry tracer statsVar copierDoorbell writeQueue volPath immPath = do
-  ccDb <- openRawConnection immPath
-  (copierConn, nextPinnedStmt) <-
-    ( do
-        withStmt ccDb "ATTACH ? AS vol" $ \stmt -> do
-          dbBindUtf8 stmt 1 (fromString volPath)
-          dbStep1Safe stmt
-        copierConn <- CopierConn ccDb <$> prepareCopierStmts ccDb
-        nextPinnedStmt <- dbPrepare ccDb (fromString sql_next_pinned_eb)
-        pure (copierConn, nextPinnedStmt)
-    )
-      `onException` void (DB.close ccDb)
-  let nextPinnedBatch = do
-        dbBindInt64 nextPinnedStmt 1 (fromIntegral copyBatchSize)
-        useStmt nextPinnedStmt $
-          let rows acc =
-                dbStepSafe nextPinnedStmt >>= \case
-                  DB.Done -> pure (reverse acc)
-                  DB.Row -> do
-                    h <- MkEbHash <$> DB.columnBlob nextPinnedStmt 0
-                    rows (h : acc)
-           in rows []
+startCopier registry tracer statsVar copierDoorbell writeQueue volPath immPath =
+  forkLinkedThread registry "leiosdb-copier" $
+    bracket (openRawConnection immPath) closeChecked $ \db -> do
+      withStmt db "ATTACH ? AS vol" $ \stmt -> do
+        dbBindUtf8 stmt 1 (fromString volPath)
+        dbStep1Safe stmt
+      bracket (prepareCopierStmts db) finalizeCopierStmts $ \stmts ->
+        bracket (dbPrepare db (fromString sql_next_pinned_eb)) dbFinalize $
+          runCopier (CopierConn db stmts)
+ where
+  runCopier ::
+    CopierConn ->
+    -- 'sql_next_pinned_eb'
+    DB.Statement ->
+    IO ()
+  runCopier copierConn nextPinnedStmt = loop
+   where
+    CopierConn{ccDb} = copierConn
 
-      -- 'True' when the EB is in the immutable partition and its pin can be
-      -- retired. The EB stays pinned either way, so it is still next to copy.
-      -- Backing off is what keeps a closure that never completes -- or a
-      -- partition that keeps refusing the write -- from spinning here.
-      copyOne ebHash =
-        copyEbToImmutable tracer statsVar copierConn ebHash
-          `catch` \(e :: LeiosDbException) -> do
-            _ <- DB.exec ccDb "ROLLBACK"
-            traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
-            pure False
+    nextPinnedBatch = do
+      dbBindInt64 nextPinnedStmt 1 (fromIntegral copyBatchSize)
+      useStmt nextPinnedStmt $
+        let rows acc =
+              dbStepSafe nextPinnedStmt >>= \case
+                DB.Done -> pure (reverse acc)
+                DB.Row -> do
+                  h <- MkEbHash <$> DB.columnBlob nextPinnedStmt 0
+                  rows (h : acc)
+         in rows []
 
-      -- One 'MarkCopied' for the batch: the mark is what makes a copied EB
-      -- evictable, and under sync a queue round-trip per EB queues behind
-      -- saturated inserts.
-      copyBatch ebHashes = do
-        copied <- filterM copyOne ebHashes
-        if null copied
-          then threadDelay copyRetryMicros
-          else void . await =<< submitJob writeQueue (MarkCopied copied)
+    -- 'True' when the EB is in the immutable partition and its pin can be
+    -- retired. The EB stays pinned either way, so it is still next to copy.
+    -- Backing off is what keeps a closure that never completes -- or a
+    -- partition that keeps refusing the write -- from spinning here.
+    copyOne ebHash =
+      copyEbToImmutable tracer statsVar copierConn ebHash
+        `catch` \(e :: LeiosDbException) -> do
+          _ <- DB.exec ccDb "ROLLBACK"
+          traceWith tracer $ TraceLeiosDbCopyError (show ebHash) (displayException e)
+          pure False
 
-      closeConnection = do
-        finalizeCopierStmts (ccStmts copierConn)
-        dbFinalize nextPinnedStmt
-        closeChecked ccDb
+    -- One 'MarkCopied' for the batch: the mark is what makes a copied EB
+    -- evictable, and under sync a queue round-trip per EB queues behind
+    -- saturated inserts.
+    copyBatch ebHashes = do
+      copied <- filterM copyOne ebHashes
+      if null copied
+        then threadDelay copyRetryMicros
+        else void . await =<< submitJob writeQueue (MarkCopied copied)
 
-      loop = do
-        -- Clear the copier doorbell before looking if there's any copying work to do,
-        -- so a pin that lands while we look rings again instead of being lost.
-        atomically $ writeTVar copierDoorbell False
-        nextPinnedBatch >>= \case
-          batch@(_ : _) -> copyBatch batch >> loop
-          [] -> do
-            IO.atomically $ readTVar copierDoorbell >>= check
-            loop
-  forkLinkedThread registry "leiosdb-copier" $ loop `finally` closeConnection
+    loop = do
+      -- Clear the copier doorbell before looking if there's any copying work to do,
+      -- so a pin that lands while we look rings again instead of being lost.
+      atomically $ writeTVar copierDoorbell False
+      nextPinnedBatch >>= \case
+        batch@(_ : _) -> copyBatch batch >> loop
+        [] -> do
+          IO.atomically $ readTVar copierDoorbell >>= check
+          loop
 
 -- | How long the copier waits before trying a pinned EB again.
 copyRetryMicros :: Int
