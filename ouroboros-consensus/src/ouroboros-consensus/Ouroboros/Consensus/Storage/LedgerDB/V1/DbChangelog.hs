@@ -198,7 +198,7 @@ import Data.SOP.Functors
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb.WithCallTrace (LeiosDbReader)
-import LeiosUtils.CallTrace (CallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)

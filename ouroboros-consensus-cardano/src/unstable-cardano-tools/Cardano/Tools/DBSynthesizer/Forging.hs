@@ -43,7 +43,7 @@ import LeiosDemoTypes
   , leiosCommitteeSize
   , signLeiosVote
   )
-import LeiosUtils.CallTrace (CallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import LeiosVoteState
   ( AddVoteResult (Added)
   , LeiosVoteState (addVote)

@@ -31,13 +31,9 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosUtils.CallTrace
-  ( CallCtx
-  , CallName
-  , CallTrace
-  , SomeJsonCallTrace (SomeJsonCallTrace)
-  )
-import qualified LeiosUtils.CallTrace as CallTrace
+import LeiosUtils.CallTrace.Json (CallCtx, CallName, CallTrace (..))
+import qualified LeiosUtils.CallTrace.Json as CTJson
+import LeiosUtils.CallTrace.Json.EarlyExit (callTraceVia)
 import LeiosVoteState (LeiosVoteState (..))
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
@@ -68,7 +64,6 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.EarlyExit
-import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
@@ -112,12 +107,8 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       -- NB: this runs directly in @m@, /not/ 'WithEarlyExit' -- it must trace
       -- the matching 'CallEnd' unconditionally, even when the traced action
       -- calls 'exitEarly'. See 'callTraceSameThreadEarlyExit'.
-      ctrace :: (Aeson.ToJSON t, Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace t a (Maybe r) -> m ()
-      ctrace =
-        traceWith forgeEventTracer
-          . TraceLabelCreds (forgeLabel blockForging)
-          . TraceCall
-          . SomeJsonCallTrace
+      callTracer =
+        TraceLabelCreds (forgeLabel blockForging) . TraceCall >$< forgeEventTracer
 
       _forgeTrace ::
         (Aeson.ToJSON a, Aeson.ToJSON r) =>
@@ -132,7 +123,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       forgeTraceVia ::
         (Aeson.ToJSON a, Aeson.ToJSON r') =>
         (r -> r') -> CallName -> a -> (CallCtx m -> WithEarlyExit m r) -> WithEarlyExit m r
-      forgeTraceVia f = EarlyExit.callTraceVia f ctrace forgeCCtx
+      forgeTraceVia f = callTraceVia f callTracer forgeCCtx
 
       forgeTrace' ::
         (Aeson.ToJSON a, Aeson.ToJSON r) =>
@@ -214,7 +205,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
                   leiosDbReader
                   leiosVoteState
                   leiosTracer
-                  ctrace
+                  callTracer
                   pmCCtx
                   cfg
                   mempool
@@ -695,9 +686,7 @@ partitionMempool ::
   LeiosDbReader m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
-  -- | Same call-tracing machinery as 'forge's own @ctrace@: traces onto the
-  -- 'TraceForgeEvent' tracer, already labelled with the forger's creds.
-  (forall t a r. (Aeson.ToJSON t, Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace t a (Maybe r) -> m ()) ->
+  Tracer m CallTrace ->
   CallCtx m ->
   TopLevelConfig blk ->
   Mempool m blk ->
@@ -712,13 +701,13 @@ partitionMempool ::
     , MempoolSnapshot blk
     , Maybe (LeiosCert, Leios.EbHash)
     )
-partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedLedgerState unticked forker = do
+partitionMempool leiosDbReader leiosVoteState leiosTracer pmCallTracer pmCallCtx cfg mempool currentSlot tickedLedgerState unticked forker = do
   let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
 
       pmTraceVia ::
         (Aeson.ToJSON a, Aeson.ToJSON r') =>
         (r -> r') -> CallName -> a -> (CallCtx m -> m r) -> m r
-      pmTraceVia f = CallTrace.callTraceVia (Just . f) pmCtrace pmCallCtx
+      pmTraceVia f = CTJson.callTraceVia (Just . f) pmCallTracer pmCallCtx
 
       pmTrace'Via ::
         (Aeson.ToJSON a, Aeson.ToJSON r') =>

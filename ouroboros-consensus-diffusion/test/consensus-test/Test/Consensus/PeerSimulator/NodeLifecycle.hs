@@ -22,7 +22,7 @@ import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes (HasLeiosVoting)
-import LeiosUtils.CallTrace (rootCallCtx)
+import LeiosUtils.CallTrace.Json (rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)

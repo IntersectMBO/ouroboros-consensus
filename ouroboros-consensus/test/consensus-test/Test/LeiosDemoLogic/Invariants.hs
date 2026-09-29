@@ -85,7 +85,7 @@ import LeiosDemoTypes
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, newPureLeiosTxCache, nullLeiosTxCache)
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)

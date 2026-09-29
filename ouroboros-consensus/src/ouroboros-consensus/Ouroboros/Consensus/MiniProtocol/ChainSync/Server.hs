@@ -28,7 +28,7 @@ import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import LeiosDemoDb.WithCallTrace (LeiosDbReader)
 import LeiosDemoTypes (LeiosPoint (..))
-import LeiosUtils.CallTrace (CallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (GetHeader, GetRawBlock)

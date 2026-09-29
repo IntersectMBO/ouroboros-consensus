@@ -81,11 +81,7 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import LeiosTxCache (LeiosTxCache)
-import LeiosUtils.CallTrace
-  ( SomeJsonCallTrace (SomeJsonCallTrace)
-  , callTrace
-  , rootCallCtx
-  )
+import LeiosUtils.CallTrace.Json (callTrace, rootCallCtxWith)
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import LeiosVoting (HasLeiosVoting (..), runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -132,7 +128,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
-import Ouroboros.Consensus.Util.EarlyExit hiding (callTrace, callTraceVia)
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.LeakyBucket
   ( atomicallyWithMonotonicTime
@@ -832,11 +828,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
         knownSlotWatcher btime $
           \currentSlot ->
             callTrace
-              ( traceWith (forgeTracer tracers)
-                  . TraceLabelCreds (forgeLabel bf)
-                  . TraceCall
-                  . SomeJsonCallTrace
-              )
+              (TraceLabelCreds (forgeLabel bf) . TraceCall >$< forgeTracer tracers)
               rootCCtx
               "forge"
               currentSlot
@@ -876,7 +868,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    rootCCtx <- rootCallCtx "Forge"
+    rootCCtx <- rootCallCtxWith "Forge" (forgeLabel bf)
     let leiosDbHandle =
           withCallTraceHandle
             ((TraceLeiosDb . LeiosDb.TraceLeiosDbCall) >$< leiosKernelTracer tracers)

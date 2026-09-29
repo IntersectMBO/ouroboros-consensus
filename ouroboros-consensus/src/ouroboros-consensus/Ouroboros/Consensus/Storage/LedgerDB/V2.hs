@@ -38,7 +38,7 @@ import LeiosDemoDb.WithCallTrace
   , withReader
   )
 import LeiosDemoTypes (HasLeiosVoting)
-import LeiosUtils.CallTrace (CallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

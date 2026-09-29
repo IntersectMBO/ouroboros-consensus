@@ -268,7 +268,7 @@ import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosUtils.CallTrace (CallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

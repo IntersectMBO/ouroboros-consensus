@@ -31,7 +31,7 @@ import qualified LeiosDemoDb
 import LeiosDemoDb.WithCallTrace (closeReader, openReader, withCallTraceHandle)
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoTypes as Leios
-import LeiosUtils.CallTrace (rootCallCtx)
+import LeiosUtils.CallTrace.Json (rootCallCtx)
 import qualified Network.Mux as Mux
 import Network.Socket (SockAddr (..))
 import Ouroboros.Consensus.Block

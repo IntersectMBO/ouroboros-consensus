@@ -45,7 +45,7 @@ import LeiosDemoTypes
   , pointEbHash
   , verifyLeiosCert
   )
-import LeiosUtils.CallTrace (CallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation (HeaderState (..))

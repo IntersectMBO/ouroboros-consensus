@@ -21,7 +21,7 @@ import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
 import Data.Word
 import LeiosDemoTypes (HasLeiosVoting)
-import LeiosUtils.CallTrace (CallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract

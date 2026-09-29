@@ -53,7 +53,7 @@ import qualified Data.SOP.Dict as Dict
 import Data.Word
 import LeiosDemoDb (newLeiosDBInMemory)
 import LeiosDemoDb.WithCallTrace (withCallTraceHandle)
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract

@@ -51,7 +51,7 @@ import LeiosDemoOnlyTestFetch as LF
 import LeiosDemoOnlyTestNotify
 import LeiosDemoTypes (messageLeiosFetchToObject)
 import qualified LeiosDemoTypes as Leios
-import LeiosUtils.CallTrace (rootCallCtx)
+import LeiosUtils.CallTrace.Json (rootCallCtx)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec (AnyMessage (AnyMessage))
 import Ouroboros.Consensus.Block

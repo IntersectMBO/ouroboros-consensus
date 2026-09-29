@@ -108,7 +108,7 @@ import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes (HasLeiosVoting)
-import LeiosUtils.CallTrace (rootCallCtx)
+import LeiosUtils.CallTrace.Json (rootCallCtx)
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types

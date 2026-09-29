@@ -92,7 +92,7 @@ import LeiosDemoOnlyTestFetch (LeiosFetch)
 import LeiosDemoOnlyTestNotify (LeiosNotify)
 import qualified LeiosDemoTypes
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, evictOlderThan, newPureLeiosTxCache)
-import LeiosUtils.CallTrace (rootCallCtx)
+import LeiosUtils.CallTrace.Json (rootCallCtx)
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure

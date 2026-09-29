@@ -23,7 +23,7 @@ import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
-import LeiosUtils.CallTrace (SomeJsonCallTrace)
+import LeiosUtils.CallTrace.Json (CallTrace)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
@@ -391,7 +391,7 @@ data TraceForgeEvent blk
   | -- | We adopted the block we produced, we also trace the transactions
     -- that were adopted.
     TraceAdoptedBlock SlotNo blk [Validated (GenTx blk)]
-  | TraceCall SomeJsonCallTrace
+  | TraceCall CallTrace
 
 deriving instance
   ( LedgerSupportsProtocol blk

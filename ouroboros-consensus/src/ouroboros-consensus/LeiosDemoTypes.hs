@@ -117,7 +117,7 @@ import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
-import LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
+import LeiosUtils.CallTrace.Json (callTraceToObject)
 import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
@@ -1637,7 +1637,7 @@ jsonLeiosDb = \case
       ]
   -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
   -- the forge loop's call traces, so one dashboard query shape covers both.
-  TraceLeiosDbCall (SomeJsonCallTrace ct) ->
+  TraceLeiosDbCall ct ->
     callTraceToObject ct
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object

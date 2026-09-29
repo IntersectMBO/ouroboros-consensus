@@ -31,7 +31,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
 import qualified LeiosDemoDb as LeiosDb
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)

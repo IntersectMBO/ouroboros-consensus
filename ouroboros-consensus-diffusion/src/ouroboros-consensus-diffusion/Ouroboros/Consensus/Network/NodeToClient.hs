@@ -65,7 +65,7 @@ import Data.Void (Void)
 import LeiosDemoDb (TraceLeiosDb (TraceLeiosDbCall))
 import LeiosDemoDb.WithCallTrace (LeiosDbReader, withCallTraceHandle, withReader)
 import LeiosDemoTypes (TraceLeiosKernel (TraceLeiosDb))
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful

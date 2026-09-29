@@ -98,7 +98,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import LeiosDemoDb.WithCallTrace (LeiosDbHandle)
 import LeiosDemoTypes (AcquiredLeiosEbs, EbHash)
-import LeiosUtils.CallTrace (SomeJsonCallTrace)
+import LeiosUtils.CallTrace.Json (CallTrace)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -982,7 +982,7 @@ data TraceAddBlockEvent blk
     -- the new chain.
     ChangingSelection (Point blk)
   | -- | A call-trace event emitted by the 'addBlockRunner' thread.
-    TraceAddBlockCall SomeJsonCallTrace
+    TraceAddBlockCall CallTrace
 
 deriving instance
   ( Eq (Header blk)

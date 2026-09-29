@@ -1,6 +1,6 @@
 module LeiosDemoDb.Trace (TraceLeiosDb (..), LeiosDbStats (..)) where
 
-import LeiosUtils.CallTrace (SomeJsonCallTrace)
+import LeiosUtils.CallTrace.Json (CallTrace)
 
 -- | In-memory LeiosDb counters: seeded from the database files once per
 -- handle, bumped by the write, copy and GC paths, never written back.
@@ -44,5 +44,5 @@ data TraceLeiosDb
     -- to copy. Fields: the EB hash, then the reason.
     TraceLeiosDbCopyError String String
   | -- | A trace event for LeiosUtils.CallTrace spans
-    TraceLeiosDbCall !SomeJsonCallTrace
+    TraceLeiosDbCall !CallTrace
   deriving Show

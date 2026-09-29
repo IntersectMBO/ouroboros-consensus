@@ -15,8 +15,7 @@ module Ouroboros.Consensus.Util.EarlyExit
   ( exitEarly
   , withEarlyExit
   , withEarlyExit_
-  , callTrace
-  , callTraceVia
+  , earlyExitFromMaybe
 
     -- * Re-exports
   , lift
@@ -45,14 +44,7 @@ import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import Data.Function (on)
 import Data.Proxy
-import LeiosUtils.CallTrace
-  ( CallCtx
-  , CallCtxWith
-  , CallName
-  , CallTrace
-  , MonadAllocationCounter (getAllocationCounter)
-  )
-import qualified LeiosUtils.CallTrace as CallTrace
+import LeiosUtils.CallTrace (MonadAllocationCounter (getAllocationCounter))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Util ((.:))
 import Ouroboros.Consensus.Util.IOLike
@@ -138,59 +130,6 @@ exitEarly = earlyExit $ pure Nothing
 -- tracing has completed do we turn it back into an early exit.
 earlyExitFromMaybe :: Monad m => m (Maybe r) -> WithEarlyExit m r
 earlyExitFromMaybe = (>>= maybe exitEarly pure) . lift
-
--- | Like 'CallTrace.callTrace', but for a traced action that itself lives in
--- 'WithEarlyExit'.
---
--- The wrapped action is run to completion in the /base/ monad @m@ (via
--- 'withEarlyExit'), so it is always timed and a matching 'CallEnd' is always
--- traced, even when the action calls 'exitEarly' -- in that case the traced
--- result is simply 'Nothing'. Only /after/ the 'CallEnd' has been traced do
--- we re-propagate the early exit into 'WithEarlyExit'.
---
--- Running the traced span directly in 'WithEarlyExit' instead (i.e.
--- instantiating 'callTrace's @m@ to @WithEarlyExit m@) would be wrong: an
--- 'exitEarly' inside the action would short-circuit 'callTrace' itself
--- before it gets to trace the 'CallEnd', leaving a 'CallStart' with no
--- matching end.
-callTrace ::
-  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  -- | Tracing action
-  (CallTrace t a (Maybe r) -> m ()) ->
-  -- | Parent context
-  CallCtxWith t m ->
-  -- | CallName
-  CallName ->
-  -- | Call argument
-  a ->
-  -- | Continuation with the new call context (to be passed to children calls)
-  (CallCtxWith t m -> WithEarlyExit m r) ->
-  WithEarlyExit m r
-callTrace = callTraceVia id
-
--- | Like 'callTrace', but the value recorded in the 'CallEnd' is
--- @f r@ rather than @r@ itself -- useful when @r@ doesn't have a suitable
--- 'Aeson.ToJSON'\/'Show' instance (or you don't want to log all of it), but
--- a projection of it does. On early exit there's no @r@ to project, so the
--- traced value is 'Nothing' regardless of @f@; the returned value (if any)
--- is still the real, un-projected @r@.
-callTraceVia ::
-  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  (r -> r') ->
-  -- | Tracing action
-  (CallTrace t a (Maybe r') -> m ()) ->
-  -- | Parent context
-  CallCtxWith t m ->
-  -- | CallName
-  CallName ->
-  -- | Call argument
-  a ->
-  -- | Continuation with the new call context (to be passed to children calls)
-  (CallCtxWith t m -> WithEarlyExit m r) ->
-  WithEarlyExit m r
-callTraceVia f trace pctx cn arg action =
-  earlyExitFromMaybe $
-    CallTrace.callTraceVia (fmap f) trace pctx cn arg (withEarlyExit . action)
 
 instance
   (forall a'. NoThunks (m a')) =>

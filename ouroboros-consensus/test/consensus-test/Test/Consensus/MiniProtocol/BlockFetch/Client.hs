@@ -38,7 +38,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Traversable (for)
 import qualified LeiosDemoDb as LeiosDb
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import Network.TypedProtocol.Channel (createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage (..))
 import Network.TypedProtocol.Core (PeerRole (..))

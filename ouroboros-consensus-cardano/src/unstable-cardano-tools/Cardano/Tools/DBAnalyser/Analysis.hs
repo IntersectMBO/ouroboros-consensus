@@ -68,7 +68,7 @@ import LeiosDemoTypes
   , HasLeiosVoting (..)
   , LeiosPoint
   )
-import LeiosUtils.CallTrace (CallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

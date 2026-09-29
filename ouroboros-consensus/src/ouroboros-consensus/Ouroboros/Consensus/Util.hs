@@ -92,10 +92,9 @@ module Ouroboros.Consensus.Util
   , Fuse
   , FuseBlownException (..)
   , electric
+  , runElectric
   , newFuse
   , withFuse
-  , callTraceVia
-  , callTrace
 
     -- * Type-safe boolean flags
   , Flag (..)
@@ -136,14 +135,6 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack
 import GHC.TypeLits (Symbol)
-import LeiosUtils.CallTrace
-  ( CallCtx
-  , CallCtxWith
-  , CallName
-  , CallTrace
-  , MonadAllocationCounter
-  )
-import qualified LeiosUtils.CallTrace as CallTrace
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.RedundantConstraints
 import Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
@@ -522,32 +513,6 @@ newtype FuseBlownException = FuseBlownException Text
 -- | Unwrap 'Electric'. Only safe when already inside 'withFuse'.
 runElectric :: Electric m a -> m a
 runElectric (Electric io) = io
-
--- | Like 'CallTrace.callTrace', but for a traced action that lives in 'Electric'.
-callTrace ::
-  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  (CallTrace t a r -> m ()) ->
-  CallCtxWith t m ->
-  CallName ->
-  a ->
-  (CallCtxWith t m -> Electric m r) ->
-  Electric m r
-callTrace = callTraceVia id
-
--- | Like 'callTrace', but the value recorded in the 'CallEnd' is
--- @f r@ rather than @r@ itself. See 'CallTrace.callTraceVia'.
-callTraceVia ::
-  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
-  (r -> r') ->
-  (CallTrace t a r' -> m ()) ->
-  CallCtxWith t m ->
-  CallName ->
-  a ->
-  (CallCtxWith t m -> Electric m r) ->
-  Electric m r
-callTraceVia f trace pctx cn arg action =
-  electric $
-    CallTrace.callTraceVia f trace pctx cn arg (runElectric . action)
 
 {-------------------------------------------------------------------------------
   Type-safe boolean flags

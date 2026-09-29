@@ -48,7 +48,6 @@ import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
-import qualified Data.Aeson as Aeson
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
@@ -68,13 +67,7 @@ import LeiosDemoDb.WithCallTrace
   )
 import LeiosDemoTypes (LeiosPoint, pointEbHash)
 import qualified LeiosDemoTypes
-import LeiosUtils.CallTrace
-  ( CallCtx
-  , CallTrace
-  , SomeJsonCallTrace (SomeJsonCallTrace)
-  , rootCallCtx
-  )
-import qualified LeiosUtils.CallTrace as CallTrace
+import LeiosUtils.CallTrace.Json (CallCtx, callTrace, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -753,14 +746,12 @@ addBlockRunner fuse cdb@CDB{..} = do
 
   let
     trace = traceWith cdbTracer . TraceAddBlockEvent
-    ctrace :: (Aeson.ToJSON t, Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace t a r -> m ()
-    ctrace = trace . TraceAddBlockCall . SomeJsonCallTrace
+    callTracer = (TraceAddBlockEvent . TraceAddBlockCall) >$< cdbTracer
 
   forever $
     -- TODO(bladyjoker): This CallTrace will not emit an End event in the case of an error/exception.
-    CallTrace.callTraceVia
-      id
-      ctrace
+    callTrace
+      callTracer
       rootCCtx
       "process-chain-sel-message"
       ()
@@ -771,9 +762,8 @@ addBlockRunner fuse cdb@CDB{..} = do
           withFuse fuse $
             bracketOnError
               ( lift
-                  $ CallTrace.callTraceVia
-                    (const ())
-                    ctrace
+                  $ callTrace
+                    callTracer
                     pcsCCtx
                     "get-chain-sel-message"
                     ()

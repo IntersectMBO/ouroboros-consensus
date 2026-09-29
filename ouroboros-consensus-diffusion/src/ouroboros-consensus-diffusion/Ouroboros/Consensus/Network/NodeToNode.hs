@@ -133,7 +133,7 @@ import LeiosDemoTypes
   , TraceLeiosPeer (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtxWith)
 import LeiosVoteState
   ( AddVoteResult (..)
   , LeiosVoteState (..)
@@ -1501,7 +1501,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
       }
     channel = do
       labelThisThread "LeiosFetchClient"
-      cctx <- rootCallCtx "LeiosFetchClient"
+      cctx <- rootCallCtxWith "LeiosFetchClient" (show (remoteAddress them))
       let leiosDbHandle =
             withCallTraceHandle
               ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel))
@@ -1525,7 +1525,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     m ((), Maybe bLF)
   aLeiosFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosFetchServer"
-    cctx <- rootCallCtx "LeiosFetchServer"
+    cctx <- rootCallCtxWith "LeiosFetchServer" (show (remoteAddress them))
     let leiosDbHandle =
           withCallTraceHandle
             ((TraceLeiosDb . TraceLeiosDbCall) >$< Node.leiosKernelTracer (getTracers kernel))

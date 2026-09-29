@@ -30,7 +30,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import LeiosDemoDb (newLeiosDBInMemory)
 import LeiosDemoDb.WithCallTrace (withCallTraceHandle)
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import Network.TypedProtocol.Stateful.Proofs (connect)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime

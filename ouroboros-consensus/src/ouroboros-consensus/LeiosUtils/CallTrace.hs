@@ -1,40 +1,34 @@
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 
 -- | CallTrace - Call trace utilities.
--- Lightweight call\/span tracing for instrumenting applications.
+-- Lightweight call tracing for instrumenting applications.
 --
 -- Use 'callTrace' to instrument your application and let it take care of
 -- measurements and call stacks for amazing observability.
 module LeiosUtils.CallTrace
-  ( callTraceToObject
-  , SomeJsonCallTrace (..)
-  , callTrace
+  ( callTrace
   , callTraceVia
   , ChildCallId
   , CallId
   , callId
+  , callStack
+  , callThreadId
   , CallName
   , ThreadName
   , ChildThreadId
-  , CallCtxWith (..)
-  , CallCtx
-  , CallCtxWithJson (..)
+  , CallCtx (..)
   , CallTrace (..)
   , CallEvent (..)
   , CallInfo (..)
   , CallMeasure (..)
   , rootCallCtx
-  , rootCallCtxWith
   , MonadAllocationCounter (getAllocationCounter)
   , foldCallTrace
   , foldCallTraceFromInit
   , CallState (..)
   , newCallCtx
-  , newCallCtxWith
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -47,10 +41,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad (foldM, void, when)
 import Control.Monad.Class.MonadTime.SI (MonadMonotonicTime (getMonotonicTime), diffTime)
 import Control.Monad.Class.MonadTimer.SI (DiffTime)
-import Data.Aeson (KeyValue ((.=)))
-import qualified Data.Aeson as Aeson
 import Data.Int (Int64)
-import Data.List (intercalate)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (isJust)
@@ -81,9 +72,8 @@ data CallInfo = CallInfo
   }
   deriving stock (Show, Eq)
 
--- | Call context parameterised by the thread-arg type @t@. Use the
--- 'CallCtx' synonym when no thread arg is needed.
-data CallCtxWith t m = CallCtxWith
+-- | Call context parameterised by the thread-arg type @t@.
+data CallCtx t m = CallCtx
   { ccCallInfo :: CallInfo
   , ccThreadName :: ThreadName
   -- ^ Execution thread inherited by child calls. Separate from 'ciThread' in
@@ -98,21 +88,12 @@ data CallCtxWith t m = CallCtxWith
   -- ^ Shared counter for minting unique thread IDs within this hierarchy.
   }
 
--- | 'CallCtxWith' with no thread arg — backward-compatible alias for existing
--- call sites that do not supply a thread argument.
-type CallCtx m = CallCtxWith () m
-
--- | Erase the thread-arg type, retaining only the ability to serialise it as
--- JSON — analogous to 'SomeJsonCallTrace'.
-data CallCtxWithJson m
-  = forall t. Aeson.ToJSON t => CallCtxWithJson (CallCtxWith t m)
-
 -- | `CallTrace` denotes events that describe a Call's life, with its Argument of type `a` and a result of type `r`.
 data CallTrace t a r = CallTrace
   { ctCallInfo :: CallInfo
   , ctThreadArgument :: t
   , ctCallArgument :: a
-  -- ^ Call argument (NOTE(bladyjoker): Was in `CallInfo a` but then I have to deal with existentials)
+  -- ^ Call argument
   , ctEvent :: CallEvent r
   -- ^ Start or End of a Call
   }
@@ -136,64 +117,10 @@ instance Monoid CallMeasure where
 instance Semigroup CallMeasure where
   (CallMeasure d a) <> (CallMeasure d' a') = CallMeasure (d + d') (a + a')
 
--- TODO(bladyjoker): This needs to be tested too, probably need callTraceFromObject and use the same testsuite
-callTraceToObject ::
-  forall t a r. (Aeson.ToJSON t, Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace t a r -> Aeson.Object
-callTraceToObject ct =
-  let
-    eventObject = case ctEvent ct of
-      CallStart ->
-        [ "event" .= Aeson.String "Start"
-        ]
-      CallEnd result measure ->
-        [ "event" .= Aeson.String "End"
-        , "result" .= Aeson.toJSON result
-        , "duration" .= Aeson.toJSON (cmDuration measure)
-        , "allocations" .= Aeson.toJSON (cmAllocations measure)
-        ]
-    ci = ctCallInfo ct
-   in
-    mconcat $
-      [ "kind" .= Aeson.String "Call"
-      , "thread" .= ciThreadName ci
-      , "thread_id" .= formatThreadId ci
-      , "thread_argument" .= (Aeson.toJSON . ctThreadArgument $ ct)
-      , "name" .= ciCallName ci
-      , "stack" .= formatCallStack ci
-      , "id" .= formatCallId ci
-      , "child_id" .= ciChildCallId ci
-      , "parent_id" .= maybe "" formatCallId (ciCallParent ci)
-      , "argument" .= (Aeson.toJSON . ctCallArgument $ ct)
-      ]
-        <> eventObject
- where
-  formatCallId = intercalate "." . fmap show . callId
-  formatCallStack = intercalate " -> " . reverse . fmap ciCallName . callStack
-  formatThreadId = intercalate "." . fmap show . callThreadId
-
--- | A 'CallTrace' with its argument and result types packed away, retaining
--- only the ability to render it as JSON via 'callTraceToObject'.
---
--- 'Eq' and 'Show' can't be derived for this type -- the packed-away @a@/@r@
--- are existential, so there's no way to derive structural equality or
--- showsPrec across two values that may hide different types. Instead both
--- instances go via 'callTraceToObject': 'Aeson.Object' has real 'Eq'/'Show'
--- instances, so two calls compare equal iff their rendered JSON does.
-data SomeJsonCallTrace
-  = forall t a r. (Aeson.ToJSON t, Aeson.ToJSON a, Aeson.ToJSON r) => SomeJsonCallTrace (CallTrace t a r)
-
-instance Eq SomeJsonCallTrace where
-  SomeJsonCallTrace ct1 == SomeJsonCallTrace ct2 =
-    callTraceToObject ct1 == callTraceToObject ct2
-
-instance Show SomeJsonCallTrace where
-  show (SomeJsonCallTrace ct) = show (callTraceToObject ct)
-
 -- | Like 'callTrace', but the value recorded in the 'CallEnd' is @f res@
 -- rather than @res@ itself -- useful when @res@ doesn't have a suitable
--- 'Aeson.ToJSON'\/'Show' instance (or you don't want to log all of it), but
--- a projection of it does. The returned value is still the real @res@,
--- untouched.
+-- 'Show' instance (or you don't want to log all of it), but a projection
+-- of it does. The returned value is still the real @res@, untouched.
 callTraceVia ::
   forall m t a r r'.
   (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
@@ -202,13 +129,13 @@ callTraceVia ::
   -- | Tracing action
   (CallTrace t a r' -> m ()) ->
   -- | Parent context
-  CallCtxWith t m ->
+  CallCtx t m ->
   -- | CallName
   CallName ->
   -- | Call argument
   a ->
   -- | Continuation with the new call context (to be passed to children calls)
-  (CallCtxWith t m -> m r) ->
+  (CallCtx t m -> m r) ->
   m r
 callTraceVia f trace pctx cn arg action = do
   ctx <- childCallCtx pctx cn
@@ -223,13 +150,13 @@ callTrace ::
   -- | Tracing action
   (CallTrace t a r -> m ()) ->
   -- | Parent context
-  CallCtxWith t m ->
+  CallCtx t m ->
   -- | CallName
   CallName ->
   -- | Call argument
   a ->
   -- | Continuation with the new call context (to be passed to children calls)
-  (CallCtxWith t m -> m r) ->
+  (CallCtx t m -> m r) ->
   m r
 callTrace = callTraceVia id
 
@@ -248,7 +175,7 @@ withMeasure action = do
         }
     )
 
-childCallCtx :: MonadSTM m => CallCtxWith t m -> CallName -> m (CallCtxWith t m)
+childCallCtx :: MonadSTM m => CallCtx t m -> CallName -> m (CallCtx t m)
 childCallCtx pctx cn = do
   (cid, nextChildCallIdVar) <- atomically $ do
     n <- readTVar (ccNextChildCallId pctx)
@@ -264,7 +191,7 @@ childCallCtx pctx cn = do
           , ciChildThreadId = ccChildThreadId pctx
           }
   return $
-    CallCtxWith
+    CallCtx
       { ccCallInfo = ci
       , ccThreadName = ccThreadName pctx
       , ccChildThreadId = ccChildThreadId pctx
@@ -284,18 +211,15 @@ rootCallInfo thread =
     }
 
 -- | Fresh top-level context to pass to the outermost 'callTrace' call.
-rootCallCtx :: MonadSTM m => ThreadName -> m (CallCtx m)
-rootCallCtx thread = rootCallCtxWith thread ()
-
--- | Like 'rootCallCtx' but supplies a thread argument.
-rootCallCtxWith :: MonadSTM m => ThreadName -> t -> m (CallCtxWith t m)
-rootCallCtxWith thread arg = do
+-- Supply the thread argument @t@ (use @()@ when no argument is needed).
+rootCallCtx :: MonadSTM m => ThreadName -> t -> m (CallCtx t m)
+rootCallCtx thread arg = do
   (nextChildCallIdVar, nextChildThreadIdVar) <- atomically $ do
     c <- newTVar 0
     t <- newTVar 0
     pure (c, t)
   return $
-    CallCtxWith
+    CallCtx
       { ccCallInfo = rootCallInfo thread
       , ccThreadName = thread
       , ccChildThreadId = 0
@@ -304,16 +228,12 @@ rootCallCtxWith thread arg = do
       , ccNextChildThreadId = nextChildThreadIdVar
       }
 
--- | Branch a context onto a new thread, minting a fresh 'ThreadId' from the
--- shared counter. The new context is a child of 'pctx' in the call tree but
--- carries a distinct thread name and ID. The thread arg is reset to @()@; use
--- 'newCallCtxWith' to supply a custom arg.
-newCallCtx :: MonadSTM m => CallCtxWith t m -> ThreadName -> m (CallCtx m)
-newCallCtx pctx thread = newCallCtxWith pctx thread ()
-
--- | Like 'newCallCtx' but supplies a thread argument.
-newCallCtxWith :: MonadSTM m => CallCtxWith t m -> ThreadName -> s -> m (CallCtxWith s m)
-newCallCtxWith pctx thisThreadName thisThreadArg = do
+-- | Branch a context onto a new thread, minting a fresh 'ChildThreadId' from
+-- the shared counter. The new context is a child of 'pctx' in the call tree
+-- but carries a distinct thread name, ID, and argument.
+-- Use @()@ for the argument when no thread argument is needed.
+newCallCtx :: MonadSTM m => CallCtx t m -> ThreadName -> s -> m (CallCtx s m)
+newCallCtx pctx thisThreadName thisThreadArg = do
   (thisThreadId, nextChildThreadIdVar) <- atomically $ do
     n <- readTVar (ccNextChildThreadId pctx)
     writeTVar (ccNextChildThreadId pctx) (n + 1)
@@ -375,7 +295,6 @@ foldCallTraceFromInit t = foldCallTrace t initCallState
 
 -- TODO(bladyjoker): Add `csMissingParents` for calls that start but parents are not in `csActiveCalls`
 -- TODO(bladyjoker): Add `csMissingStart` for calls that end but they are not in `csActiveCalls`
--- TODO(bladyjoker): Add threading model, for example, if a parent and children are in the same thread, then parent call must contain all others (and measure have to align).
 foldCallTrace :: [CallTrace t a r] -> CallState -> Either (CallTraceError t a r) CallState
 foldCallTrace = flip (foldM foldFn)
  where

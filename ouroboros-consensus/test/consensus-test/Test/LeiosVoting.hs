@@ -49,7 +49,7 @@ import LeiosTxCache
   , defaultLeiosTxCacheShift
   , newPureLeiosTxCache
   )
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import LeiosVoting (EbClosureVerdict (..), validateEbClosure)
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)

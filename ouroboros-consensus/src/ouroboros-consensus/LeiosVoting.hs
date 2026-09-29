@@ -58,7 +58,7 @@ import LeiosDemoTypes
   , signLeiosVote
   )
 import LeiosTxCache (LeiosTxCache (..))
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..), VoteTally (..))
 import Ouroboros.Consensus.Block
   ( ConvertRawHash (..)

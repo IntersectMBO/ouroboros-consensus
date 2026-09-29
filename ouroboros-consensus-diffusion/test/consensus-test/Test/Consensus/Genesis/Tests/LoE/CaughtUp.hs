@@ -41,7 +41,7 @@ import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
 import LeiosDemoDb (newLeiosDBInMemory)
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)

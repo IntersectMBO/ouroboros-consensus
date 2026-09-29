@@ -29,7 +29,7 @@ module LeiosDemoDb.WithCallTrace
 
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
-import Control.Tracer (Tracer, traceWith)
+import Control.Tracer (Tracer)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
@@ -40,10 +40,10 @@ import LeiosDemoDb.Common
   )
 import qualified LeiosDemoDb.Common as DB
 import LeiosDemoTypes (BytesSize, EbHash, LeiosEb, LeiosPoint, TxHash)
-import LeiosUtils.CallTrace
+import LeiosUtils.CallTrace.Json
   ( CallCtx
   , CallName
-  , SomeJsonCallTrace (..)
+  , CallTrace (..)
   , callTraceVia
   )
 import NoThunks.Class (NoThunks (..))
@@ -90,7 +90,7 @@ awaitAll cctx = traverse_ (\p -> await p cctx)
 -- @'const' ()@ when the result carries no useful information.
 wrapPromise ::
   (IOLike m, Aeson.ToJSON arg, Aeson.ToJSON res') =>
-  Tracer m SomeJsonCallTrace ->
+  Tracer m CallTrace ->
   CallName ->
   arg ->
   (res -> res') ->
@@ -100,7 +100,7 @@ wrapPromise tracer name arg projectResult rawPromise =
   Promise $ \ctx ->
     callTraceVia
       projectResult
-      (traceWith tracer . SomeJsonCallTrace)
+      tracer
       ctx
       name
       arg
@@ -120,7 +120,7 @@ data LeiosDbWriter m = LeiosDbWriter
 -- 'CallCtx' supplied by the call site, then delegates to the underlying handle.
 withCallTraceHandle ::
   IOLike m =>
-  Tracer m SomeJsonCallTrace ->
+  Tracer m CallTrace ->
   DB.LeiosDbHandle m ->
   LeiosDbHandle m
 withCallTraceHandle tracer h =
@@ -153,7 +153,7 @@ withCallTraceHandle tracer h =
 -- 'CallCtx' supplied by the call site.
 mkCallTraceReader ::
   IOLike m =>
-  Tracer m SomeJsonCallTrace ->
+  Tracer m CallTrace ->
   DB.LeiosDbReader m ->
   LeiosDbReader m
 mkCallTraceReader tracer r =
@@ -183,7 +183,7 @@ mkCallTraceReader tracer r =
 -- 'CallCtx' supplied by the call site.
 mkCallTraceWriter ::
   IOLike m =>
-  Tracer m SomeJsonCallTrace ->
+  Tracer m CallTrace ->
   DB.LeiosDbWriter m ->
   LeiosDbWriter m
 mkCallTraceWriter tracer w =
@@ -209,7 +209,7 @@ mkCallTraceWriter tracer w =
 -- accepted; the actual result is returned unchanged.
 callWith ::
   (IOLike m, Aeson.ToJSON a) =>
-  Tracer m SomeJsonCallTrace ->
+  Tracer m CallTrace ->
   CallCtx m ->
   CallName ->
   a ->
@@ -218,7 +218,7 @@ callWith ::
 callWith tracer =
   callTraceVia
     (\_ -> ())
-    (traceWith tracer . SomeJsonCallTrace)
+    tracer
 
 -- | Bracket-style equivalent of 'LeiosDemoDb.withReader' for a
 -- 'LeiosDbHandle': opens a reader, runs the continuation, then closes.

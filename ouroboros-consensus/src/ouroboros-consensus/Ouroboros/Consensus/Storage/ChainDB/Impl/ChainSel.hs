@@ -55,10 +55,8 @@ import LeiosDemoTypes
   , acquiredLeiosEbsSetMember
   , pointEbHash
   )
-import LeiosUtils.CallTrace
-  ( CallCtx
-  , SomeJsonCallTrace (SomeJsonCallTrace)
-  )
+import LeiosUtils.CallTrace.Json (CallCtx)
+import LeiosUtils.CallTrace.Json.Electric (callTraceVia)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
@@ -104,7 +102,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util (Electric, electric, whenJust, whenNothing)
 import Ouroboros.Consensus.Util.AnchoredFragment
 import Ouroboros.Consensus.Util.EarlyExit (exitEarly, withEarlyExit_)
 import Ouroboros.Consensus.Util.Enclose (encloseWith)
@@ -358,7 +356,7 @@ chainSelSync ::
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLoEBlocks varProcessed) =
   callTraceVia
     id
-    (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
+    ((TraceAddBlockEvent . TraceAddBlockCall) >$< cdbTracer)
     cctx
     "chain-sel-reprocess-loe-blocks"
     ()
@@ -366,7 +364,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLoEBlocks varProcessed) =
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLeiosEb ebHash) =
   callTraceVia
     id
-    (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
+    ((TraceAddBlockEvent . TraceAddBlockCall) >$< cdbTracer)
     cctx
     "chain-sel-reprocess-leios-eb"
     (show ebHash)
@@ -374,7 +372,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelReprocessLeiosEb ebHash) =
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddBlock bta) =
   callTraceVia
     id
-    (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
+    ((TraceAddBlockEvent . TraceAddBlockCall) >$< cdbTracer)
     cctx
     "chain-sel-add-block"
     (show $ blockHash $ blockToAdd bta)
@@ -382,7 +380,7 @@ chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddBlock bta) =
 chainSelSync cdb@CDB{cdbTracer} cctx (ChainSelAddPerasCert cert varProcessed) =
   callTraceVia
     id
-    (traceWith cdbTracer . TraceAddBlockEvent . TraceAddBlockCall . SomeJsonCallTrace)
+    ((TraceAddBlockEvent . TraceAddBlockCall) >$< cdbTracer)
     cctx
     "chain-sel-add-peras-cert"
     (show $ getPerasCertRound cert)

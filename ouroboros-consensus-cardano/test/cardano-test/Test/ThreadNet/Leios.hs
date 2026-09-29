@@ -90,7 +90,7 @@ import LeiosDemoTypes
   , prettyEbHash
   , prettyLeiosPoint
   )
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import Lens.Micro ((%~), (.~), (^.))
 import Ouroboros.Consensus.Block (SlotNo (..), blockSlot, getHeader)
 import Ouroboros.Consensus.Block.Forging

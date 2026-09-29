@@ -119,6 +119,9 @@ library
     LeiosTxCache.Optimized.MutableHashTable
     LeiosTxCache.Reference
     LeiosUtils.CallTrace
+    LeiosUtils.CallTrace.Json
+    LeiosUtils.CallTrace.Json.EarlyExit
+    LeiosUtils.CallTrace.Json.Electric
     LeiosUtils.TimeBoundedLoop
     LeiosVoteState
     LeiosVoting

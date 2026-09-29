@@ -25,7 +25,7 @@ import qualified Debug.Trace as Debug
 import LeiosDemoDb (allocateHandle, newLeiosDBInMemory, newLeiosDBSQLite)
 import LeiosDemoDb.WithCallTrace (withCallTraceHandle, withReader)
 import LeiosDemoTypes (HasLeiosVoting)
-import LeiosUtils.CallTrace (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
