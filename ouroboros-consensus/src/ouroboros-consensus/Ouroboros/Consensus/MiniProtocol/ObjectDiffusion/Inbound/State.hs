@@ -49,7 +49,11 @@ data ObjectDiffusionInboundState blk = ObjectDiffusionInboundState
   -- @MsgAwaitReply@ the protocol is in @StObjectIds (StObjectIdsBlocking
   -- StMustReply)@, where the server has agency. Moreover, after
   -- @MsgServerIdle@ returns the protocol to @StIdle@, this flag deliberately
-  -- remains 'True' until the server supplies new object IDs.
+  -- remains 'True' until the server supplies new object IDs. However, if the
+  -- protocol transitions to @StIdle@ via @MsgReplyObjectIds@, then this flag is
+  -- set to 'False'. So in the @StIdle@ state, this flag can be either 'True' or
+  -- 'False'. So the protocol state does not even functionally determine this
+  -- flag, which is why this flag is needed.
   }
   deriving stock Generic
 
