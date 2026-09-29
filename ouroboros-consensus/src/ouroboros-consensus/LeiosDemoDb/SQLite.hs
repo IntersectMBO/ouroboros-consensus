@@ -46,7 +46,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTMVar
   , readTVar
   , readTVarIO
-  , stateTVar
   , tryPutTMVar
   , tryReadTBQueue
   , writeTBQueue
@@ -121,8 +120,6 @@ import Ouroboros.Consensus.Util.IOLike
   ( ExitCase (..)
   , MonadAsync (async, asyncThreadId)
   , atomically
-  , diffTime
-  , getMonotonicTime
   , labelThread
   , link
   )
@@ -360,24 +357,6 @@ queryInt64 db sql =
       DB.Row -> DB.columnInt64 stmt 0
       DB.Done -> error ("queryInt64: expected a row: " <> sql)
 
--- | Run a WAL checkpoint on a pre-prepared @PRAGMA wal_checkpoint(PASSIVE)@
--- statement, returning @(busy, log frames, frames copied back)@ as
--- @wal_checkpoint@ reports them. @busy@ means a reader held it up, so the log
--- was only partly drained. The statement is prepared once in 'startWriter' and
--- reused: this runs on the write path every 'jobsBetweenCheckpoint' jobs, so a
--- prepare\/finalize per call would be hot-path allocation.
-checkpointWal :: HasCallStack => DB.Statement -> IO (Bool, Int, Int)
-checkpointWal stmt =
-  (dbStep stmt >>= go) `finally` void (DB.reset stmt)
- where
-  go = \case
-    DB.Row -> do
-      busy <- DB.columnInt64 stmt 0
-      nLog <- DB.columnInt64 stmt 1
-      nCkpt <- DB.columnInt64 stmt 2
-      pure (busy /= 0, fromIntegral nLog, fromIntegral nCkpt)
-    DB.Done -> pure (False, 0, 0)
-
 -- | Open a read-write connection to the given file, creating it and running
 -- the schema DDL if it does not exist yet. Both partitions share 'sql_schema'.
 openRawConnection :: HasCallStack => FilePath -> IO DB.Database
@@ -408,13 +387,13 @@ openRawConnection path = do
       "pragma page_size = 4096;"
     , "pragma mmap_size = 268435500;"
     , "pragma journal_mode = WAL;"
-    , -- SQLite's default, spelled out. The volatile connection overrides this
-      -- to 0 ('openVolRawConnection'): there the writer checkpoints explicitly.
-      -- Every other connection keeps automatic checkpointing -- the immutable
-      -- partition is written by the copier, and with nobody checkpointing it
-      -- its WAL grows without bound ('journal_size_limit' cannot truncate a
-      -- log that never checkpoints; observed 5 GB of WAL on a 1 GB partition,
-      -- twelve of which filled a disk).
+    , -- SQLite's default, spelled out. Automatic checkpointing is what keeps
+      -- the WAL bounded on both partitions: a checkpoint every 1000 frames,
+      -- run inline on whichever connection trips the threshold. Nothing must
+      -- disable it -- with nobody checkpointing, the WAL grows without bound
+      -- ('journal_size_limit' cannot truncate a log that never checkpoints;
+      -- observed 5 GB of WAL on a 1 GB partition, twelve of which filled a
+      -- disk).
       "pragma wal_autocheckpoint = 1000;"
     , -- Sweep-sized sorts otherwise spill to a temp file.
       "pragma temp_store = memory;"
@@ -431,17 +410,12 @@ openRawConnection path = do
     dbExec db (fromString sql_schema)
   pure db
 
--- | 'openRawConnection' for the volatile partition: turns automatic
--- checkpointing off (the writer checkpoints explicitly, every
--- 'jobsBetweenCheckpoint' jobs, so the cost lands on the write path where it
--- can be traced and correlated with latency tails) and applies the GC-only DDL
--- ('sql_schema_gc').
+-- | 'openRawConnection' for the volatile partition: additionally applies the
+-- GC-only DDL ('sql_schema_gc').
 openVolRawConnection :: HasCallStack => FilePath -> IO DB.Database
 openVolRawConnection path = do
   db <- openRawConnection path
-  orCloseOnError db $ do
-    dbExec db (fromString "pragma wal_autocheckpoint = 0;")
-    dbExec db (fromString sql_schema_gc)
+  orCloseOnError db $ dbExec db (fromString sql_schema_gc)
   pure db
 
 -- | Prepare a statement, run the action, finalize.
@@ -1158,20 +1132,6 @@ failJob cause = \case
 maxJobsBetweenMaintenance :: Int
 maxJobsBetweenMaintenance = fromIntegral writerQueueDepth
 
--- | How many jobs the writer serves between WAL checkpoints.
---
--- Replaces @wal_autocheckpoint@'s frame threshold with a job count: coarser,
--- but it puts the cost somewhere we chose and can trace.
---
--- An EB is a handful of write jobs -- a body plus its few tx batches, and the
--- odd pin/copy/sweep -- so this is roughly a checkpoint per EB or so rather
--- than one in the middle of writing each. Bigger closures mean more frames per
--- job, so under load a checkpoint drains more; 'journal_size_limit' is the
--- backstop. Trades off against log size and write-path tail latency; tune by
--- measurement, not by feel.
-jobsBetweenCheckpoint :: Int
-jobsBetweenCheckpoint = 10
-
 -- | Depth of the write queue. One slot per producer that can be mid-write --
 -- each upstream peer's fetch client, the forge, and the maintenance
 -- schedulers (copier, sweeper, the ChainDB's GC and promote calls) -- and a
@@ -1211,22 +1171,20 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
   immDb <- orCloseOnError volDb $ openRawConnection immPath
   -- A throw anywhere below closes both connections (best effort -- an
   -- already-prepared statement can hold a close off) instead of leaking them.
-  (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt, checkpointStmt) <-
+  (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt) <-
     ( do
         conn <- mkConn tracer statsVar volDb immDb
         sweeperConn <- prepareSweeperConn volDb
         gcStmts <- prepareGcStmts volDb
         pinStmt <- dbPrepare volDb (fromString sql_pin_eb)
         markCopiedStmt <- dbPrepare volDb (fromString sql_mark_as_copied)
-        checkpointStmt <- dbPrepare volDb (fromString "PRAGMA wal_checkpoint(PASSIVE);")
-        pure (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt, checkpointStmt)
+        pure (conn, sweeperConn, gcStmts, pinStmt, markCopiedStmt)
     )
       `onException` (void (DB.close immDb) >> void (DB.close volDb))
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   sweepStateVar <- newTVarIO SweepIdle
   jobsServedVar <- newTVarIO (0 :: Int)
-  jobsSinceCheckpointVar <- newTVarIO (0 :: Int)
   let notify = atomically . writeTChan notificationChan
 
       -- Statements before connections; an open statement holds the close off.
@@ -1235,7 +1193,6 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
         finalizeGcStmts gcStmts
         dbFinalize pinStmt
         dbFinalize markCopiedStmt
-        dbFinalize checkpointStmt
         closeConn conn
 
       runJob :: WriteJob -> IO Bool
@@ -1300,16 +1257,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
             -- only this handler can still tell the awaiter.
             stop <- runJob job `catch` \(e :: SomeException) -> failJob e job >> throwIO e
             traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
-            unless stop $ do
-              sinceCkpt <- atomically $ stateTVar jobsSinceCheckpointVar $ \n ->
-                if n + 1 >= jobsBetweenCheckpoint then (True, 0) else (False, n + 1)
-              when sinceCkpt $ do
-                before <- getMonotonicTime
-                (busy, nLog, nCkpt) <- checkpointWal checkpointStmt
-                after <- getMonotonicTime
-                traceWith tracer $
-                  TraceLeiosDbCheckpoint (diffTime after before) nLog nCkpt busy
-              serve
+            unless stop serve
           Nothing -> do
             quiet <- stepMaintenance
             atomically $ writeTVar jobsServedVar 0
