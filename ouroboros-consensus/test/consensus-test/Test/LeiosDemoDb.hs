@@ -64,6 +64,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , RbHash (..)
   , TxHash (..)
+  , TxLocation (..)
   , encodeLeiosEbSize
   , leiosEbTxs
   )
@@ -648,9 +649,9 @@ test_crossEbFill db = do
           (rwWriter con)
           pointB
           ebB
-          [ (0, hashA, 0)
-          , (1, hashA, 1)
-          , (1, mkTestEbHash 99, 0) -- redundant AND vanished: must be a no-op
+          [ (0, MkTxLocation hashA 0)
+          , (1, MkTxLocation hashA 1)
+          , (1, MkTxLocation (mkTestEbHash 99) 0) -- redundant AND vanished: must be a no-op
           ]
     filled @?= [0, 1]
     completed @?= [pointB]
@@ -664,7 +665,7 @@ test_crossEbFill db = do
         ebC = MkLeiosEb $ V.fromList [(mkTestTxHash 77, 100)]
     rwInsertEbPoint con pointC (encodeLeiosEbSize ebC)
     (completedC, filledC) <-
-      await =<< writeEbBody (rwWriter con) pointC ebC [(0, hashA, 0)]
+      await =<< writeEbBody (rwWriter con) pointC ebC [(0, MkTxLocation hashA 0)]
     filledC @?= []
     completedC @?= []
 
