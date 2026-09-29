@@ -118,6 +118,20 @@ tests =
               runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
           , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
               runCmdsReFetchViolations reproForgeThenOffer @?= Right []
+          , testCase "a bare announcement registers its point in the LeiosDb" $ do
+              -- The announcement is what makes a point known (and hence
+              -- votable/certifiable), so it must register the point itself,
+              -- without waiting for the body to arrive.
+              let h = hashLeiosEb (ebOf [0, 1])
+              runCmdsAndScanEbPoints [Announce [0, 1] 5]
+                @?= Right [(SlotNo 5, h)]
+          , testCase "two announcements sharing a not-yet-held EbHash both register their point in the LeiosDb" $ do
+              -- The second announcement finds the body already listed for
+              -- fetching (not held): no second fetch is needed, but its point
+              -- must still register.
+              let h = hashLeiosEb (ebOf [0, 1])
+              runCmdsAndScanEbPoints [Announce [0, 1] 5, Announce [0, 1] 8]
+                @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
           , testCase "two points sharing an EbHash both get registered in the LeiosDb (EB-hash collision)" $ do
               -- We forge [0, 1] at slot 5 (as if our own mempool produced it),
               -- then a peer's independently-forged EB with the *same* content

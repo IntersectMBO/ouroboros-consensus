@@ -1732,7 +1732,8 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
               Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, onset, age, v)
 
 -- | Record a validated, newly-announced EB body as missing, unless its already
--- pruned\/tracked\/acquired
+-- pruned\/tracked\/acquired; and, unless pruned, register its point in the
+-- LeiosDb
 recordAnnouncedEb ::
   IOLike m =>
   LeiosDbWriter m ->
@@ -1744,12 +1745,8 @@ recordAnnouncedEb ::
   (LeiosPoint, BytesSize) ->
   m ()
 recordAnnouncedEb writer (outstandingVar, readyVar) onset (point, ebBytesSize) = do
-  (changed, alreadyHeld) <- MVar.modifyMVar outstandingVar (pure . upd)
-  -- The bytes are already held under another point (an EB-hash collision):
-  -- no fetch is needed, but this point must still be registered in the
-  -- LeiosDb, or it can never be voted on/certified (mirrors the
-  -- unconditional 'writeEbPoint' in 'processLeiosBlock').
-  when alreadyHeld $ void $ writeEbPoint writer point ebBytesSize
+  (changed, shouldRegister) <- MVar.modifyMVar outstandingVar (pure . upd)
+  when shouldRegister $ void $ writeEbPoint writer point ebBytesSize
   when changed $ void $ MVar.tryPutMVar readyVar ()
  where
   MkLeiosPoint ebSlot ebHash = point
@@ -1781,7 +1778,7 @@ recordAnnouncedEb writer (outstandingVar, readyVar) onset (point, ebBytesSize) =
                       (NESet.singleton ebSlot)
                       (Leios.reverseSlotIndexByEbHash outstanding')
                 }
-     in (outstanding'', (not skip, alreadyHeld))
+     in (outstanding'', (not skip, not tooOld))
 
 prunePeerStateToImmTip ::
   LedgerSupportsProtocol blk =>
