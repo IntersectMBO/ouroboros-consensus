@@ -1194,12 +1194,12 @@ instance
       [ "kind" .= String "TraceMempoolRejectedTx"
       , "tx" .= forMachine dtal tx
       , "mempoolSize" .= forMachine dtal mpSz
+      , "errdetails" .= jsonMempoolRejectionDetails details
       ]
         <> if dtal < DDetailed
           then []
           else
             [ "err" .= forMachine dtal txApplyErr
-            , "errdetails" .= jsonMempoolRejectionDetails details
             ]
   forMachine dtal (TraceMempoolRemoveTxs txs mpSz) =
     mconcat
