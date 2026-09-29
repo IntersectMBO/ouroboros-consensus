@@ -22,7 +22,7 @@ import Ouroboros.Consensus.Block
   , realPointHash
   , realPointSlot
   )
-import Ouroboros.Consensus.Tracing.Render (renderHeaderHashForDetails)
+import Ouroboros.Consensus.Tracing.Render
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block
 
@@ -54,6 +54,8 @@ instance
   ConvertRawHash blk =>
   LogFormatting (Point blk)
   where
+  forHuman = renderPointAsPhrase
+
   forMachine _dtal GenesisPoint =
     mconcat
       ["kind" .= String "GenesisPoint"]
@@ -68,6 +70,8 @@ instance
   ConvertRawHash blk =>
   LogFormatting (RealPoint blk)
   where
+  forHuman = renderRealPointAsPhrase
+
   forMachine dtal p =
     mconcat
       [ "kind" .= String "Point"

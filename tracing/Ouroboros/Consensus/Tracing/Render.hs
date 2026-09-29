@@ -3,7 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Text rendering helpers for Consensus types, shared by the Consensus
+-- | Scalar text rendering helpers for Consensus types, shared by the Consensus
 -- tracing instances.
 --
 -- Moved here from @Cardano.Node.Tracing.Render@ in @cardano-node@. The
@@ -18,21 +18,17 @@ module Ouroboros.Consensus.Tracing.Render
   , renderTipBlockNo
   , renderTipHash
   , condenseT
-  , showT
   , renderPoint
   , renderPointAsPhrase
   , renderPointForDetails
   , renderRealPoint
   , renderRealPointAsPhrase
-  , renderSlotNo
-  , renderTip
-  , renderTipForDetails
   , renderTxId
   , renderTxIdForDetails
   , renderWithOrigin
   ) where
 
-import Cardano.Logging (DetailLevel (..), showT)
+import Cardano.Logging (DetailLevel (..))
 import Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..))
 import qualified Data.ByteString.Base16 as B16
 import Data.Proxy (Proxy (..))
@@ -46,13 +42,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal (ChunkNo (..))
 import Ouroboros.Consensus.Tracing.ConvertTxId (ConvertTxId (..))
 import Ouroboros.Consensus.Util.Condense (Condense, condense)
-import Ouroboros.Network.Block
-  ( ChainHash (..)
-  , HeaderHash
-  , StandardHash
-  , Tip
-  , getTipPoint
-  )
+import Ouroboros.Network.Block (ChainHash (..), HeaderHash, StandardHash)
 
 condenseT :: Condense a => a -> Text
 condenseT = Text.pack . condense
@@ -134,16 +124,6 @@ renderPointAsPhrase point =
       renderHeaderHash (Proxy @blk) h
         <> " at slot "
         <> renderSlotNo slot
-
-renderTipForDetails ::
-  ConvertRawHash blk =>
-  DetailLevel ->
-  Tip blk ->
-  Text
-renderTipForDetails dtal = renderPointForDetails dtal . getTipPoint
-
-renderTip :: ConvertRawHash blk => Tip blk -> Text
-renderTip = renderTipForDetails DDetailed
 
 renderHeaderHashForDetails ::
   ConvertRawHash blk =>
