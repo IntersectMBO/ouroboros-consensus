@@ -56,6 +56,8 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , GenTxId
   , HasTxId
   , LedgerSupportsMempool
+  , TxMeasurePhase1Metrics (..)
+  , TxMeasurePhase2Metrics (..)
   , txForgetValidated
   , txId
   )
@@ -1243,6 +1245,12 @@ instance
     mconcat
       [ "kind" .= String "TraceMempoolTipMovedBetweenSTMBlocks"
       ]
+  forMachine _dtal (TraceMempoolCapacityChanged capBefore capAfter) =
+    mconcat
+      [ "kind" .= String "TraceMempoolCapacityChanged"
+      , "capacityBefore" .= jsonTxMeasure capBefore
+      , "capacityAfter" .= jsonTxMeasure capAfter
+      ]
 
   asMetrics (TraceMempoolAddedTx _tx _mpSzBefore mpSz) =
     [ IntM "txsInMempool" (fromIntegral $ msNumTxs mpSz)
@@ -1273,6 +1281,16 @@ instance
   asMetrics TraceMempoolSyncNotNeeded{} = []
   asMetrics TraceMempoolAttemptingAdd{} = []
   asMetrics TraceMempoolTipMovedBetweenSTMBlocks{} = []
+  asMetrics TraceMempoolCapacityChanged{} = []
+
+jsonTxMeasure :: (TxMeasurePhase1Metrics m, TxMeasurePhase2Metrics m) => m -> Value
+jsonTxMeasure m =
+  Aeson.object
+    [ "txSizeBytes" .= unByteSize32 (txMeasureMetricTxSizeBytes m)
+    , "exUnitsMemory" .= txMeasureMetricExUnitsMemory m
+    , "exUnitsSteps" .= txMeasureMetricExUnitsSteps m
+    , "refScriptsSizeBytes" .= unByteSize32 (txMeasureMetricRefScriptsSizeBytes m)
+    ]
 
 instance LogFormatting MempoolSize where
   forMachine _dtal MempoolSize{msNumTxs, msNumBytes} =
@@ -1290,6 +1308,7 @@ instance MetaTrace (TraceEventMempool blk) where
   namespaceFor TraceMempoolSyncNotNeeded{} = Namespace [] ["SyncNotNeeded"]
   namespaceFor TraceMempoolAttemptingAdd{} = Namespace [] ["AttemptAdd"]
   namespaceFor TraceMempoolTipMovedBetweenSTMBlocks{} = Namespace [] ["TipMovedBetweenSTMBlocks"]
+  namespaceFor TraceMempoolCapacityChanged{} = Namespace [] ["CapacityChanged"]
 
   severityFor (Namespace _ ["AddedTx"]) _ = Just Info
   severityFor (Namespace _ ["RejectedTx"]) _ = Just Info
@@ -1299,6 +1318,7 @@ instance MetaTrace (TraceEventMempool blk) where
   severityFor (Namespace _ ["SyncNotNeeded"]) _ = Just Debug
   severityFor (Namespace _ ["AttemptAdd"]) _ = Just Debug
   severityFor (Namespace [] ["TipMovedBetweenSTMBlocks"]) _ = Just Debug
+  severityFor (Namespace _ ["CapacityChanged"]) _ = Just Debug
   severityFor _ _ = Nothing
 
   metricsDocFor (Namespace _ ["AddedTx"]) =
@@ -1359,6 +1379,9 @@ instance MetaTrace (TraceEventMempool blk) where
   documentFor (Namespace _ ["TipMovedBetweenSTMBlocks"]) =
     Just
       "LedgerDB moved to an alternative fork between two reads during re-sync."
+  documentFor (Namespace _ ["CapacityChanged"]) =
+    Just
+      "The mempool capacity has changed when re-syncing the mempool to the latest tip"
   documentFor _ = Nothing
 
   allNamespaces =
@@ -1370,6 +1393,7 @@ instance MetaTrace (TraceEventMempool blk) where
     , Namespace [] ["SyncNotNeeded"]
     , Namespace [] ["AttemptAdd"]
     , Namespace [] ["TipMovedBetweenSTMBlocks"]
+    , Namespace [] ["CapacityChanged"]
     ]
 
 --------------------------------------------------------------------------------
