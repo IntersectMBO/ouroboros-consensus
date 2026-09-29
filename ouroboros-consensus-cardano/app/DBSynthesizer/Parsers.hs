@@ -1,37 +1,38 @@
-module DBSynthesizer.Parsers (parseCommandLine) where
+module DBSynthesizer.Parsers
+  ( Options (..)
+  , parseCommandLine
+  ) where
 
+import qualified Cardano.Configuration.CliArgs as CLI
 import Cardano.Tools.DBSynthesizer.Types
 import Data.Word (Word64)
 import Options.Applicative as Opt
 import Ouroboros.Consensus.Block.Abstract (SlotNo (..))
 
-parseCommandLine :: IO (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
+-- | What db-synthesizer was asked to do.
+data Options = Options
+  { configFile :: FilePath
+  , chainDBDir :: FilePath
+  , credentials :: CLI.Credentials
+  , synthOptions :: DBSynthesizerOptions
+  }
+
+parseCommandLine :: IO Options
 parseCommandLine =
   Opt.customExecParser p opts
  where
   p = Opt.prefs Opt.showHelpOnEmpty
   opts = Opt.info parserCommandLine mempty
 
-parserCommandLine :: Parser (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
+parserCommandLine :: Parser Options
 parserCommandLine =
-  (,,)
-    <$> parseNodeFilePaths
-    <*> parseNodeCredentials
-    <*> parseDBSynthesizerOptions
-
-parseNodeFilePaths :: Parser NodeFilePaths
-parseNodeFilePaths =
-  NodeFilePaths
+  Options
     <$> parseNodeConfigFilePath
     <*> parseChainDBFilePath
-
-parseNodeCredentials :: Parser NodeCredentials
-parseNodeCredentials =
-  NodeCredentials
-    <$> optional parseOperationalCertFilePath
-    <*> optional parseVrfKeyFilePath
-    <*> optional parseKesKeyFilePath
-    <*> optional parseBulkFilePath
+    -- The credential flags are cardano-config's own, so that they are spelled
+    -- and documented exactly as they are for a node.
+    <*> CLI.parseCredentials
+    <*> parseDBSynthesizerOptions
 
 parseDBSynthesizerOptions :: Parser DBSynthesizerOptions
 parseDBSynthesizerOptions =
@@ -66,43 +67,6 @@ parseNodeConfigFilePath =
         <> completer (bashCompleter "file")
     )
 
-parseOperationalCertFilePath :: Parser FilePath
-parseOperationalCertFilePath =
-  strOption
-    ( long "shelley-operational-certificate"
-        <> metavar "FILE"
-        <> help "Path to the delegation certificate (in JSON TextEnvelope format)"
-        <> completer (bashCompleter "file")
-    )
-
-parseKesKeyFilePath :: Parser FilePath
-parseKesKeyFilePath =
-  strOption
-    ( long "shelley-kes-key"
-        <> metavar "FILE"
-        <> help "Path to the KES signing key (in JSON TextEnvelope format)"
-        <> completer (bashCompleter "file")
-    )
-
-parseVrfKeyFilePath :: Parser FilePath
-parseVrfKeyFilePath =
-  strOption
-    ( long "shelley-vrf-key"
-        <> metavar "FILE"
-        <> help "Path to the VRF signing key (in JSON TextEnvelope format)"
-        <> completer (bashCompleter "file")
-    )
-
-parseBulkFilePath :: Parser FilePath
-parseBulkFilePath =
-  strOption
-    ( long "bulk-credentials-file"
-        <> metavar "FILE"
-        <> help
-          "Path to the bulk credentials file (a JSON file containing an array of arrays containing 3 TextEnvelope objects for the opcert, VRF Signing key, KES signing key)"
-        <> completer (bashCompleter "file")
-    )
-
 parseSlotLimit :: Parser SlotNo
 parseSlotLimit =
   SlotNo
@@ -134,22 +98,22 @@ parseEpochLimit =
         <> help "Amount of epochs to process"
     )
 
-parseForce :: Parser Bool
-parseForce =
-  switch
+-- | @-f@ and @-a@ pick the open mode; without either of them, the ChainDB
+-- directory is expected not to exist yet.
+--
+-- These have to be 'flag'' rather than 'switch': a 'switch' succeeds whether or
+-- not its flag is present, so the first alternative would always win and every
+-- run would force-overwrite.
+parseOpenMode :: Parser DBSynthesizerOpenMode
+parseOpenMode =
+  flag'
+    OpenCreateForce
     ( short 'f'
         <> help "Force overwrite an existing Chain DB"
     )
-
-parseAppend :: Parser Bool
-parseAppend =
-  switch
-    ( short 'a'
-        <> help "Append to an existing Chain DB"
-    )
-
-parseOpenMode :: Parser DBSynthesizerOpenMode
-parseOpenMode =
-  (parseForce *> pure OpenCreateForce)
-    <|> (parseAppend *> pure OpenAppend)
+    <|> flag'
+      OpenAppend
+      ( short 'a'
+          <> help "Append to an existing Chain DB"
+      )
     <|> pure OpenCreate

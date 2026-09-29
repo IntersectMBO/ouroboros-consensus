@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Node.Tracers
   , TraceForgeEvent (..)
   , TraceLabelCreds (..)
   , TracePerasCertInclusionEvent (..)
+  , TracePerasVoteForgingEvent (..)
   ) where
 
 import Control.Exception (SomeException)
@@ -50,7 +51,7 @@ import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
   ( TracePerasCertInclusionEvent (..)
   )
-import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVoteForgingEvent)
+import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVoteForgingEvent (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )

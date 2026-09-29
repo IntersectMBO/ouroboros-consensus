@@ -42,31 +42,52 @@ parseDBAnalyserConfig =
     <*> parseValidationPolicy
     <*> parseAnalysis
     <*> parseLimit
-    <*> Foldable.asum
-      [ flag' V2InMem $
-          mconcat
-            [ long "in-mem"
-            , help "use v2 in-memory backend"
+    <*> optional parseLedgerDBBackend
+
+-- | The LedgerDB backend to use. Optional: when omitted, the backend and its
+-- settings are taken from the node configuration file instead.
+parseLedgerDBBackend :: Parser LedgerDBBackendFlags
+parseLedgerDBBackend =
+  Foldable.asum
+    [ flag' InMemFlag $
+        mconcat
+          [ long "in-mem"
+          , help "use v2 in-memory backend"
+          ]
+    , LSMFlag
+        <$> ( flag'
+                ()
+                ( mconcat
+                    [ long "lsm"
+                    , help "use v2 LSM backend"
+                    ]
+                )
+                *> parseLSMOptions
+            )
+    ]
+ where
+  parseLSMOptions =
+    (\noDiskCache export -> LSMFlags{lsmExportFlag = export, lsmNoDiskCacheFlag = noDiskCache})
+      <$> switch
+        ( mconcat
+            [ long "lsm-no-cache"
+            , help $
+                "Bypass the OS page cache for UTxO table reads/writes"
+                  <> " (O_DIRECT) instead of the default of caching"
+                  <> " everything; primarily useful for benchmarking."
             ]
-      , V2LSM
-          <$> ( flag'
-                  ()
-                  ( mconcat
-                      [ long "lsm"
-                      , help "use v2 LSM backend"
-                      ]
-                  )
-                  *> switch
-                    ( mconcat
-                        [ long "lsm-no-cache"
-                        , help $
-                            "Bypass the OS page cache for UTxO table reads/writes"
-                              <> " (O_DIRECT) instead of the default of caching"
-                              <> " everything; primarily useful for benchmarking."
-                        ]
-                    )
-              )
-      ]
+        )
+      <*> switch
+        ( mconcat
+            [ long "lsm-export"
+            , help $
+                "Additionally export every snapshot that is taken as a"
+                  <> " standalone LSM snapshot, into the configuration's"
+                  <> " LedgerDB.Backend.LSM.ExportPath, or else into the "
+                  <> defaultLSMExportPath
+                  <> " directory of the ChainDB."
+            ]
+        )
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =
