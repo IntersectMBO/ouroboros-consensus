@@ -1476,7 +1476,15 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
               traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now ebStates p)
       case source of
         ForgedTxs{} -> traceCompleted -- synchronous
-        -- REVIEW: onException needed? link should result in onLost being called
+        -- The worker outlives this scope, so a late write failure lands past the
+        -- outer 'onException'; the inner one is what releases the jobs then, and
+        -- 'link' only re-raises it so a failed write is not taken as durable.
+        --
+        -- TODO: the worker's lifetime is unbounded -- 'link' propagates its
+        -- exceptions but does not tie it to the peer, so on teardown it is
+        -- orphaned and keeps touching shared state. Fork it in the peer's
+        -- ResourceRegistry (or move to a writer-run completion callback) so it
+        -- dies with the peer. Separate PR.
         _ -> link =<< async (traceCompleted `onException` onLost)
     -- The cache update: the fetch logic consults it to decide what is still
     -- missing, so it cannot lag behind the caller.
