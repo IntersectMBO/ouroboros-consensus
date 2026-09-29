@@ -15,6 +15,9 @@ module LeiosTxCache.API
   , RefCount (..)
   , BodyState (..)
   , maxAnnouncementCount
+  , EbRingIndex
+  , ebRingIndexOf
+  , unEbRingIndex
 
     -- * Insert-body observability summary
   , LeiosTxCacheInsertBodySummary (..)
@@ -139,6 +142,22 @@ instance ReferencesTxsByHash SerializedEbBody where
 -- the oldest, cascading through the body and tx refcounts.
 maxAnnouncementCount :: Int
 maxAnnouncementCount = 128 -- TODO magic number
+
+-- | An index into the source-EB ring the tx-location machinery keeps (the last
+-- 'maxAnnouncementCount' EBs whose txs became durable). In
+-- @[0, 'maxAnnouncementCount')@ by construction: 'ebRingIndexOf' is the only way
+-- to make one, and it reduces its argument into range. So it fits the packed
+-- location word's ring field and can never key the ring out of bounds.
+newtype EbRingIndex = EbRingIndex Int
+  deriving (Eq, Ord, Show)
+
+-- | The ring slot a monotone claim counter currently points at.
+ebRingIndexOf :: Int -> EbRingIndex
+ebRingIndexOf n = EbRingIndex (n `mod` maxAnnouncementCount)
+
+-- | The raw slot, for packing into the location word.
+unEbRingIndex :: EbRingIndex -> Int
+unEbRingIndex (EbRingIndex i) = i
 
 -- | A reference count.
 --
