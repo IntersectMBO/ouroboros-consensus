@@ -70,12 +70,11 @@ import qualified Data.Set as Set
 import LeiosDemoTypes (BytesSize, EbHash, RbHash, TxHash, TxLocation (..), TxOffset)
 import LeiosTxCache.API
   ( BodyState (..)
-  , EbRingIndex
+  , EbRingIndex (UnsafeEbRingIndex)
   , LeiosTxCacheInsertBodySummary
   , RefCount (..)
   , ReferencesTxsByHash (..)
   , TxArrivalPrior (..)
-  , ebRingIndexOf
   , maxAnnouncementCount
   , mkLeiosTxCacheInsertBodySummary
   )
@@ -452,7 +451,7 @@ setTxLocations ebh offTxs idx =
     , txLocState = foldl' upd (txLocState idx) offTxs
     }
  where
-  slot = ebRingIndexOf (locNext idx)
+  slot = UnsafeEbRingIndex (locNext idx `mod` maxAnnouncementCount)
   upd m (off, txh)
     | Map.member txh (txState idx) = Map.insert txh (slot, off) m
     | otherwise = m
