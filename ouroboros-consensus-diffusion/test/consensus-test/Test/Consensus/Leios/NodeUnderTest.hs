@@ -53,6 +53,7 @@ import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Mempool (MempoolCapacityBytesOverride (..))
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -99,6 +100,9 @@ data NodeUnderTestConfig = NodeUnderTestConfig
   , nutcMinOfferLead :: Leios.LeiosMinOfferLead
   -- ^ See 'leiosMinOfferLead'. These tests run a handful of slots, so the
   -- real hour would hold back every offer they make.
+  , nutcCsjConfig :: CSClient.CSJConfig
+  -- ^ Off unless a test is about ChainSync jumping: with it on, only one peer
+  -- is the dynamo and the others are asked to jump rather than send headers.
   }
 
 defaultNodeUnderTestConfig ::
@@ -108,6 +112,7 @@ defaultNodeUnderTestConfig nutcLedgerConfig nutcSecurityParam =
     { nutcLedgerConfig
     , nutcSecurityParam
     , nutcMinOfferLead = Leios.MkLeiosMinOfferLead 2
+    , nutcCsjConfig = CSClient.CSJDisabled
     }
 
 -- | The peer address these tests use: a peer is just a number.
@@ -122,8 +127,7 @@ data NodeUnderTest m = NodeUnderTest
   , nutKernel :: NodeKernel m PeerAddr () Blk
   , nutKernelArgs :: NodeKernelArgs m PeerAddr () Blk
   , nutHandlers :: NTN.Handlers m PeerAddr Blk
-  -- ^ What the node's mini-protocol clients and servers are made of; the
-  -- environment turns these into running protocols.
+  , nutCsjConfig :: CSClient.CSJConfig
   }
 
 -- | Run the node over the given mocked filesystems and LeiosDb, then shut it
@@ -156,6 +160,7 @@ withNodeUnderTest cfg nodeDBs leiosDb chainDBTracer body =
             , nutKernelArgs = kernelArgs
             , nutHandlers =
                 NTN.mkHandlers kernelArgs kernel TxSubmissionLogicV2
+            , nutCsjConfig = nutcCsjConfig cfg
             }
 
 -- | The node's slot clock, derived from the ledger as a real node's is.
@@ -237,7 +242,15 @@ mkNodeKernelArgs cfg registry chainDB leiosDB btime = do
       , gsmArgs =
           GSM.GsmNodeKernelArgs
             { gsmAntiThunderingHerd = mkStdGen 2
-            , gsmDurationUntilTooOld = Nothing
+            , gsmDurationUntilTooOld = case nutcCsjConfig cfg of
+                CSClient.CSJDisabled -> Nothing
+                -- CSJ only runs while the GSM is not caught up, and a peer
+                -- that registers while it is caught up is disengaged for good.
+                -- So a test that turns CSJ on also has to keep the node out
+                -- of that state, which reporting every selection as already too
+                -- old does.
+                CSClient.CSJEnabled{} ->
+                  Just $ GSM.DurationUntilTooOld $ \_selection -> pure GSM.Already
             , gsmMarkerFileView =
                 GSM.MarkerFileView
                   { touchMarkerFile = pure ()
