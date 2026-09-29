@@ -1041,6 +1041,13 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                       (IntMap.withoutKeys missedBoth (IntSet.fromList filledOffs))
               MVar.modifyMVar_ outstandingVar $
                 pure . Leios.confirmBodyPersisted ebHash jobPool
+              -- Point the cache at THIS EB as the durable holder of the txs it
+              -- just filled locally, so a re-endorsement fills from the youngest
+              -- holder (evicted last) rather than the older source that goes
+              -- first. Fetched txs are recorded by 'ingestAcquiredTxs'; together
+              -- every durable holder points the cache at itself.
+              let MkLeiosEb ebv = eb
+              setTxLocations txCache ebHash [(off, fst (ebv V.! off)) | off <- filledOffs]
               void $ MVar.tryPutMVar readyVar ()
               st <- Leios.ebState <$> MVar.readMVar outstandingVar
               traceWith ktracer $ TraceLeiosBlockAcquired point (ebPointAge now st point)
