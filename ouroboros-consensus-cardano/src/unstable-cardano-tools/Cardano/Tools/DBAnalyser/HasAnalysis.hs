@@ -4,11 +4,11 @@
 module Cardano.Tools.DBAnalyser.HasAnalysis
   ( HasAnalysis (..)
   , HasProtocolInfo (..)
-  , LSMConfig (..)
   , SizeInBytes
   , WithLedgerState (..)
   ) where
 
+import Cardano.Tools.DBAnalyser.Types (LedgerDBBackend)
 import Data.Map.Strict (Map)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (HasAnnTip (..))
@@ -62,19 +62,21 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
 class HasProtocolInfo blk where
   data Args blk
+
   mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk)
+  mkProtocolInfo = fmap fst . mkProtocolInfoAndBackend
 
-  -- | The LSM-trees configuration to use when the LedgerDB runs on the LSM
-  -- backend. Defaults to no configuration (no snapshot exporting); only the
-  -- Cardano instance overrides this, reading the values from the node
-  -- configuration file.
-  mkLSMConfig :: Args blk -> IO LSMConfig
-  mkLSMConfig _ = pure (LSMConfig Nothing)
+  -- | The protocol info, together with the LedgerDB backend (and its settings)
+  -- that the node configuration file selects, which db-analyser uses when the
+  -- command line does not select one. Both are produced by a single call so that
+  -- the configuration only has to be read once.
+  --
+  -- Defaults to no backend (nothing to read one from); only the Cardano instance
+  -- overrides this.
+  mkProtocolInfoAndBackend :: Args blk -> IO (ProtocolInfo blk, Maybe LedgerDBBackend)
+  mkProtocolInfoAndBackend args = (\pInfo -> (pInfo, Nothing)) <$> mkProtocolInfo args
 
--- | LSM-trees configuration relevant to db-analyser.
-data LSMConfig = LSMConfig
-  { lsmConfigExportPath :: Maybe FilePath
-  -- ^ The directory (relative to the LedgerDB filesystem root) into which the
-  -- LSM backend exports snapshots as it takes them. When 'Nothing', snapshots
-  -- are not exported.
-  }
+  -- The two defaults above are mutually recursive, so without this pragma GHC
+  -- would infer an empty minimal complete definition and let an instance that
+  -- defines neither method diverge at runtime without any warning.
+  {-# MINIMAL mkProtocolInfo | mkProtocolInfoAndBackend #-}

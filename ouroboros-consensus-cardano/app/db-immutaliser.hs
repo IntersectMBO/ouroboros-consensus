@@ -4,13 +4,14 @@
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.Config (withConfigErrorHandling)
 import Cardano.Tools.DBImmutaliser.Run (DBDirs (..), Opts (..))
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import Main.Utf8 (withStdTerminalHandles)
 import Options.Applicative
 
 main :: IO ()
-main = withStdTerminalHandles $ do
+main = withStdTerminalHandles $ withConfigErrorHandling $ do
   cryptoInit
   DBImmutaliser.run =<< execParser optsParser
 

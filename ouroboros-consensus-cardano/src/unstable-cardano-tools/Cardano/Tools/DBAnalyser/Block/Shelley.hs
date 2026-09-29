@@ -1,22 +1,19 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Cardano.Tools.DBAnalyser.Block.Shelley
-  ( Args (..)
-  , ShelleyBlockArgs
-  ) where
+-- | The 'HasAnalysis' instances of the Shelley-based eras. db-analyser's
+-- analyses are per-era, so the Cardano instance dispatches to these. There is
+-- no Shelley-only db-analyser, hence no 'HasProtocolInfo' instance.
+module Cardano.Tools.DBAnalyser.Block.Shelley () where
 
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Alonzo (AlonzoEra)
 import qualified Cardano.Ledger.Alonzo.Scripts as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import Cardano.Ledger.Babbage (BabbageEra)
-import qualified Cardano.Ledger.BaseTypes as CL (natVersion)
 import Cardano.Ledger.Conway (ConwayEra)
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Mary (MaryEra)
@@ -24,7 +21,6 @@ import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.RewardUpdate as SL
 import Cardano.Tools.DBAnalyser.HasAnalysis
-import qualified Data.Aeson as Aeson
 import Data.Foldable as Foldable (foldl', toList)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, maybeToList)
@@ -34,9 +30,8 @@ import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
 import Lens.Micro ((^.))
 import Lens.Micro.Extras (view)
-import Ouroboros.Consensus.Node.ProtocolInfo
-import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Eras (DijkstraEra, StandardCrypto)
+import Ouroboros.Consensus.Protocol.TPraos ()
+import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyCompatible
@@ -44,18 +39,7 @@ import Ouroboros.Consensus.Shelley.Ledger
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger.Block as Shelley
-import Ouroboros.Consensus.Shelley.Node
-  ( Nonce (..)
-  , ProtocolParamsShelleyBased (..)
-  , ShelleyGenesis
-  , protocolInfoShelley
-  )
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
-import System.Directory (makeAbsolute)
-import System.FS.API (SomeHasFS (..))
-import System.FS.API.Types (MountPoint (MountPoint))
-import System.FS.IO (ioHasFS)
-import System.FilePath (takeDirectory)
 import TextBuilder (decimal)
 
 -- | Usable for each Shelley-based era
@@ -137,37 +121,3 @@ instance PerEraAnalysis DijkstraEra where
   txExUnitsSteps = Just $ \tx ->
     let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
      in toEnum $ fromEnum steps
-
--- | Shelley-era specific
-instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra) where
-  data Args (ShelleyBlock (TPraos StandardCrypto) ShelleyEra) = ShelleyBlockArgs
-    { configFileShelley :: FilePath
-    , initialNonce :: Nonce
-    }
-    deriving Show
-
-  mkProtocolInfo ShelleyBlockArgs{configFileShelley, initialNonce} = do
-    config <-
-      either (error . show) return
-        =<< Aeson.eitherDecodeFileStrict' configFileShelley
-    configDir <- takeDirectory <$> makeAbsolute configFileShelley
-    let fs = SomeHasFS (ioHasFS (MountPoint configDir))
-    mkShelleyProtocolInfo fs config initialNonce
-
-type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
-
-mkShelleyProtocolInfo ::
-  SomeHasFS IO ->
-  ShelleyGenesis ->
-  Nonce ->
-  IO (ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra))
-mkShelleyProtocolInfo fs genesis initialNonce =
-  fst
-    <$> protocolInfoShelley @IO
-      fs
-      genesis
-      ProtocolParamsShelleyBased
-        { shelleyBasedInitialNonce = initialNonce
-        , shelleyBasedLeaderCredentials = []
-        }
-      (SL.ProtVer (CL.natVersion @2) 0)

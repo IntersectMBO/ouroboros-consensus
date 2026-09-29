@@ -10,6 +10,7 @@
 module Cardano.Tools.DBAnalyser.Run (analyse) where
 
 import Cardano.Ledger.BaseTypes
+import Cardano.Tools.Config (throwConfigError)
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
@@ -164,23 +165,29 @@ analyse dbaConfig args =
     lock <- newMVar ()
     chainDBTracer <- mkVerboseTracer lock verbose
     analysisTracer <- mkVerboseTracer lock True
-    LSMConfig{lsmConfigExportPath} <- mkLSMConfig args
     lsmSalt <- fst . genWord64 <$> newStdGen
-    ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
-      mkProtocolInfo args
+    (ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg}, configBackend) <-
+      mkProtocolInfoAndBackend args
+    backend <- case selectLedgerDBBackend ldbBackend configBackend of
+      Just backend -> pure backend
+      Nothing ->
+        -- Unreachable for the Cardano instance, whose configuration always
+        -- resolves a backend; this guards a block type whose Args carry none.
+        throwConfigError
+          "no LedgerDB backend was selected and none could be determined from the configuration."
     snapshotDelayRng <- newStdGen
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
-        flavargs = case ldbBackend of
+        flavargs = case backend of
           V2InMem ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs
-          V2LSM lsmNoDiskCache ->
+          V2LSM LSMOptions{lsmDatabasePath, lsmExportPath, lsmNoDiskCache} ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs $
                 LSM.LSMArgs
-                  (mkFsPath ["lsm"])
-                  (mkFsPath . splitDirectories <$> lsmConfigExportPath)
+                  (mkFsPath (splitDirectories lsmDatabasePath))
+                  (mkFsPath . splitDirectories <$> lsmExportPath)
                   lsmSalt
                   (if lsmNoDiskCache then LSM.DiskCacheNone else LSM.DiskCacheAll)
                   (LSM.stdMkBlockIOFS dbDir)
