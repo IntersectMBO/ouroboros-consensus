@@ -117,8 +117,8 @@ tests =
       "LeiosDemoLogic.Invariants"
       [ testGroup
           "curated sequences"
-          [ testCase "forge purges a body it already holds (offered first)" $
-              runCmdsReFetchViolations reproForgeAfterOffer @?= Right []
+          [ testCase "forge purges a body it already holds (announced first)" $
+              runCmdsReFetchViolations reproForgeAfterAnnounce @?= Right []
           , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
               runCmdsReFetchViolations reproForgeThenOffer @?= Right []
           , testCase "a bare announcement registers its point in the LeiosDb" $ do
@@ -128,6 +128,24 @@ tests =
               let h = hashLeiosEb (ebOf [0, 1])
               runCmdsAndScanEbPoints [Announce [0, 1] 5]
                 @?= Right [(SlotNo 5, h)]
+          , testCase "a bare offer lists nothing for fetching" $
+              -- Only announcements (and actual data received) may change the
+              -- LeiosDb, and a body can only be written for a registered point.
+              -- An offer registers nothing, so it must not make its point
+              -- fetchable either: it only tells us who can serve the body.
+              runCmdsAndListMissingBodies [Offer [0, 1] 5] @?= Right []
+          , testCase "an offer at a later slot does not redirect the body request to its unregistered point" $
+              -- The request's point is the one 'processLeiosBlock' writes the
+              -- body for, so it must be a registered (announced) one. An offer
+              -- at slot 12 registers nothing, so we must still ask for slot 11.
+              runCmdsAndRequestedBodies [Announce [0, 1] 11, Offer [0, 1] 12, Decide 12]
+                @?= Right [pointOf [0, 1] 11]
+          , testCase "an offer that precedes its announcement is still fetched once announced" $
+              -- Offers can arrive before the announcement (they are pushed by
+              -- the peer at will). Not being fetchable yet must not get the
+              -- offer pruned, or that peer is never asked for the body.
+              runCmdsAndRequestedBodies [Offer [0, 1] 5, Decide 5, Announce [0, 1] 5, Decide 5]
+                @?= Right [pointOf [0, 1] 5]
           , testCase "two announcements sharing a not-yet-held EbHash both register their point in the LeiosDb" $ do
               -- The second announcement finds the body already listed for
               -- fetching (not held): no second fetch is needed, but its point
@@ -135,23 +153,11 @@ tests =
               let h = hashLeiosEb (ebOf [0, 1])
               runCmdsAndScanEbPoints [Announce [0, 1] 5, Announce [0, 1] 8]
                 @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
-          , testCase "two points sharing an EbHash both get registered in the LeiosDb (EB-hash collision)" $ do
-              -- We forge [0, 1] at slot 5 (as if our own mempool produced it),
-              -- then a peer's independently-forged EB with the *same* content
-              -- arrives, announced at the later slot 8 (the certification-gap
-              -- retry scenario: same backlog, different announcing RB). Both
-              -- points must register in the LeiosDb as a vote is signed over
-              -- the *announcing RB's hash*, so an unregistered point can never
-              -- be voted on/certified even though its bytes did diffuse fine.
-              let h = hashLeiosEb (ebOf [0, 1])
-                  cmds = [Forge [0, 1] 5, ArriveBody [0, 1] 8]
-              runCmdsAndScanEbPoints cmds
-                @?= Right [(SlotNo 5, h), (SlotNo 8, h)]
           , testCase "two points sharing an EbHash both get an AcquiredEbTxs notification (EB-hash collision)" $ do
-              -- Same setup as above (forge at slot 5, then a peer's
-              -- independently-forged EB with the same content, announced at
-              -- the later slot 8), plus a second, duplicate arrival of that
-              -- very same point (e.g. a retry, or a second peer offering it).
+              -- We forge [0, 1] at slot 5, then a peer's independently-forged
+              -- EB with the same content is announced at the later slot 8, and
+              -- that point's body then arrives twice (e.g. a retry, or a second
+              -- peer offering it).
               -- Registration in the LeiosDb alone is not enough:
               -- 'runLeiosVoting' only schedules a vote for a point once it
               -- observes that point's 'LeiosDb.AcquiredEbTxs' notification.
@@ -159,15 +165,19 @@ tests =
               -- must not cause a second notification for slot 8's point, or
               -- the voting layer would treat it as a fatal 'AlreadyKnown'
               -- from 'addVote'.
-              let cmds = [Forge [0, 1] 5, ArriveBody [0, 1] 8, ArriveBody [0, 1] 8]
+              let cmds = [Forge [0, 1] 5, Announce [0, 1] 8, ArriveBody [0, 1] 8, ArriveBody [0, 1] 8]
               runCmdsAndCollectAcquiredTxPoints cmds
                 @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
           , testCase
               "a bare announcement of an already-held EbHash still registers and notifies its new point (EB-hash collision, announcement path)"
               $ do
-                -- Same scenario as the two tests above, but the second point's
-                -- body never "arrives" via 'ArriveBody' -- it is only
-                -- announced ('Announce').
+                -- We forge [0, 1] at slot 5 (as if our own mempool produced
+                -- it), then a peer's independently-forged EB with the *same*
+                -- content is announced at the later slot 8 (the
+                -- certification-gap retry scenario: same backlog, different
+                -- announcing RB). Both points must register in the LeiosDb as
+                -- a vote is signed over the *announcing RB's hash*, so an
+                -- unregistered point can never be voted on/certified.
                 let h = hashLeiosEb (ebOf [0, 1])
                     cmds = [Forge [0, 1] 5, Announce [0, 1] 8]
                 runCmdsAndScanEbPoints cmds
@@ -191,17 +201,22 @@ tests =
                 runCmdsAndCollectAcquiredTxPoints cmds
                   @?= Right [pointOf [0, 1] 5]
           , testCase
-              "a second point sharing an already-held EbHash still traces TraceLeiosBlockTxsAcquired (EB-hash collision, kernel-trace gap)"
+              "a bare announcement of an already-held EbHash still traces TraceLeiosBlockTxsAcquired (EB-hash collision, announcement path)"
               $ do
-                -- Even once a point is registered and internally notified (the
-                -- tests above), 'processLeiosBlock' only traces
-                -- 'TraceLeiosBlockTxsAcquired' when the arriving body is
-                -- genuinely novel ('shouldPersist') -- which a colliding
-                -- second point never is, since its hash is already held.
-                -- "Test.ThreadNet.Leios" scans exactly this trace to judge an
-                -- EB's diffusion complete, so this point never counts as
-                -- acquired there even though it gets voted on and certified.
-                let cmds = [Forge [0, 1] 5, ArriveBody [0, 1] 8]
+                -- "Test.ThreadNet.Leios" scans this trace to judge an EB's
+                -- diffusion complete. The second point is only announced: its
+                -- body is already held, so it is never fetched and never
+                -- reaches 'processLeiosBlock'. The trace must then come from
+                -- the announcement path.
+                let cmds = [Forge [0, 1] 5, Announce [0, 1] 8]
+                runCmdsAndCollectAcquiredTxTraces cmds
+                  @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
+          , testCase
+              "an announced point sharing an already-held EbHash traces TraceLeiosBlockTxsAcquired once, even if its body then arrives (EB-hash collision)"
+              $ do
+                -- The announcement already traced the second point; a later
+                -- (redundant) arrival of its body must not trace it again.
+                let cmds = [Forge [0, 1] 5, Announce [0, 1] 8, ArriveBody [0, 1] 8]
                 runCmdsAndCollectAcquiredTxTraces cmds
                   @?= Right [pointOf [0, 1] 5, pointOf [0, 1] 8]
           ]
@@ -257,7 +272,7 @@ tests =
           -- so it survives pruning up to slot 9, and is dropped only past slot 10
           Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 9) o))) @?= True
           Map.member h (Leios.ebState (snd (Leios.pruneOutstandingToImmTip (SlotNo 11) o))) @?= False
-      , testCase "an announcement's onset is recorded (earliest kept); an offer never clobbers it" $ do
+      , testCase "an announcement's onset is recorded (earliest kept); an unknown onset never clobbers it" $ do
           let h = hashLeiosEb (ebOf [0, 1])
               t3 = RelativeTime 3
               t5 = RelativeTime 5
@@ -272,7 +287,8 @@ tests =
                 Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base
             )
             @?= Just (SJust t3)
-          -- an offer (no onset) bumps the slot but never clobbers a recorded onset
+          -- an announcement of unknown onset bumps the slot but never clobbers a
+          -- recorded onset
           onsetOf
             ( Leios.recordMaxAnnouncementSlot h (SlotNo 9) SNothing $
                 Leios.recordMaxAnnouncementSlot h (SlotNo 5) (SJust t5) base
@@ -421,7 +437,7 @@ tests =
           "the fetch logic never requests an already-held EB body"
           prop_neverRefetchesHeldBody
       , testProperty
-          "a concurrent offer and body arrival never leave a held EB body listed (IOSimPOR)"
+          "a concurrent announcement and body arrival never leave a held EB body listed (IOSimPOR)"
           prop_neverRefetchesHeldBodyConcurrent
       ]
 
@@ -437,9 +453,12 @@ type TestEb = [Int]
 data Cmd
   = -- | @recordAnnouncedEb@: announce this EB at this slot.
     Announce TestEb Word
-  | -- | @recordEbBodyOffer@: a peer offers this EB body at this slot.
+  | -- | @recordEbBodyOffer@: a peer offers this EB body at this slot. This only
+    -- records the peer as a serving candidate: it lists nothing for fetching.
     Offer TestEb Word
-  | -- | @processLeiosBlock@: the EB body arrives for that point.
+  | -- | @processLeiosBlock@: the EB body arrives for that point. It only answers
+    -- our request for it, so the point must be registered (announced or forged)
+    -- first; see 'onlyRequestedArrivals'.
     ArriveBody TestEb Word
   | -- | Disarmed: the EbTxs side is being rewritten from scratch, so tx delivery
     -- has no command for now (uninhabited).
@@ -514,19 +533,21 @@ data Observed = MkObserved
   -- ^ One entry per 'Decide': whether the peer offered it an EB whose body we
   -- already hold -- the only situation in which it could re-fetch a held body,
   -- hence what keeps 'prop_neverRefetchesHeldBody' from being vacuous.
+  , requestedBodies :: [LeiosPoint]
+  -- ^ The point of every EB body request, in 'Decide' order.
   }
 
 instance Semigroup Observed where
-  MkObserved v1 h1 <> MkObserved v2 h2 = MkObserved (v1 <> v2) (h1 <> h2)
+  MkObserved v1 h1 r1 <> MkObserved v2 h2 r2 = MkObserved (v1 <> v2) (h1 <> h2) (r1 <> r2)
 
 instance Monoid Observed where
-  mempty = MkObserved [] []
+  mempty = MkObserved [] [] []
 
 -- | Like 'runCmds', but on success also return what the sequence 'Observed'.
 runCmdsObserved :: [Cmd] -> Either String Observed
 runCmdsObserved cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
-  runCmdsWithDb nullTracer dbHandle cmds
+  fmap fst <$> runCmdsWithDb nullTracer dbHandle cmds
 
 -- | Like 'runCmds', but on success also return the 'reFetchViolations'.
 runCmdsReFetchViolations :: [Cmd] -> Either String [EbHash]
@@ -542,19 +563,34 @@ runCmdsAndScanEbPoints cmds = runSimOrThrow $ do
     Left msg -> pure (Left msg)
     Right _ -> Right <$> withReader dbHandle LeiosDb.scanEbPoints
 
+-- | Like 'runCmds', but on success also return every point still listed for
+-- fetching ('missingEbBodies') by the end of the sequence.
+runCmdsAndListMissingBodies :: [Cmd] -> Either String [LeiosPoint]
+runCmdsAndListMissingBodies cmds = runSimOrThrow $ do
+  dbHandle <- LeiosDb.newLeiosDBInMemory
+  result <- runCmdsWithDb nullTracer dbHandle cmds
+  case result of
+    Left msg -> pure (Left msg)
+    Right (_observed, outstanding) -> pure (Right (Map.keys (Leios.missingEbBodies outstanding)))
+
+-- | Like 'runCmds', but on success also return the 'requestedBodies'.
+runCmdsAndRequestedBodies :: [Cmd] -> Either String [LeiosPoint]
+runCmdsAndRequestedBodies = fmap requestedBodies . runCmdsObserved
+
 -- | Like 'runCmdsObserved', but against an already-open
 -- 'LeiosDb.LeiosDbHandle' (the writer inside it is already closed on
 -- return, flushing anything still in flight, so a caller can read the DB
 -- back afterwards, e.g. via 'withReader') -- so a caller can also
 -- 'LeiosDb.subscribeEbNotifications' on it before any command runs. Also
 -- takes the 'TraceLeiosKernel' tracer, so a caller can observe what
--- 'ArriveBody'/'Forge' trace (e.g. via 'recordingTracerTVar').
+-- 'ArriveBody'/'Forge' trace (e.g. via 'recordingTracerTVar'). Also returns
+-- the final 'LeiosOutstanding', so a caller can inspect the fetch state.
 runCmdsWithDb ::
   forall s.
   Tracer (IOSim s) Leios.TraceLeiosKernel ->
   LeiosDb.LeiosDbHandle (IOSim s) ->
   [Cmd] ->
-  IOSim s (Either String Observed)
+  IOSim s (Either String (Observed, LeiosOutstanding Int))
 runCmdsWithDb ktracer dbHandle cs0 = withWriter dbHandle $ \conn -> do
   outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
   readyVar <- newEmptyMVar
@@ -562,7 +598,7 @@ runCmdsWithDb ktracer dbHandle cs0 = withWriter dbHandle $ \conn -> do
   let kv = (outstandingVar, readyVar)
       txCache = nullLeiosTxCache
       peerId = MkPeerId (0 :: Int)
-      loop acc [] = pure (Right acc)
+      loop acc [] = Right . (,) acc <$> readMVar outstandingVar
       loop acc (c : cs) = do
         r <-
           try (applyCmd ktracer conn txCache kv peerVars peerId c) ::
@@ -611,10 +647,10 @@ runCmdsAndCollectAcquiredTxPoints cmds = runSimOrThrow $ do
 -- "Test.ThreadNet.Leios" scans to decide whether an EB's diffusion is
 -- complete. Unlike 'runCmdsAndCollectAcquiredTxPoints' (the LeiosDb's own
 -- internal notification, which is what 'runLeiosVoting' needs to schedule a
--- vote), this trace is only ever emitted from inside
--- 'processLeiosBlock'/'processLeiosBlockTxs', gated on the arriving body
--- being genuinely novel -- so a point can be registered, notified, voted on
--- and even certified, yet still never appear here.
+-- vote), this trace is emitted by the kernel handlers themselves
+-- ('recordAnnouncedEb', 'processLeiosBlock', 'processLeiosBlockTxs') -- so a
+-- point can be registered, notified, voted on and even certified, yet still
+-- never appear here if one of them misses it.
 runCmdsAndCollectAcquiredTxTraces :: [Cmd] -> Either String [LeiosPoint]
 runCmdsAndCollectAcquiredTxTraces cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
@@ -642,14 +678,10 @@ applyCmd ktracer conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
-    recordAnnouncedEb conn kv SNothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
+    recordAnnouncedEb ktracer conn kv SNothing Nothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure mempty
   Offer ids slot -> do
-    recordEbBodyOffer
-      kv
-      peerVars
-      TxsClosureNotAlsoOffered
-      (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
+    recordEbBodyOffer (snd kv) peerVars TxsClosureNotAlsoOffered (pointOf ids slot)
     pure mempty
   ArriveBody ids slot -> do
     let eb = ebOf ids
@@ -703,6 +735,7 @@ applyCmd ktracer conn txCache kv peerVars peerId = \case
     -- 'outstanding' changes, mirror it here or this regression coverage goes stale
     -- silently.
     modifyMVar_ (fst kv) (pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo)
+    _ <- LeiosDb.await =<< LeiosDb.writeEbPoint conn point (encodeLeiosEbSize eb)
     processLeiosBlock
       ktracer
       nullTracer
@@ -751,6 +784,7 @@ applyCmd ktracer conn txCache kv peerVars peerId = \case
       MkObserved
         { reFetchViolations = filter (\h -> Set.member h held) (ebBodyRequestHashes decs)
         , heldBodyOffered = [any (\p -> Set.member p.pointEbHash held) (Map.keys offers)]
+        , requestedBodies = ebBodyRequestPoints decs
         }
 
 -- | Offer every EB the outstanding state tracks, at its 'ebStateMaxSlot' and as
@@ -782,8 +816,12 @@ forceDecisions m =
 -- | The 'EbHash'es the requests fetch an EB body for (one entry per request; with
 -- no per-EB cap, an EB may appear once per offering peer).
 ebBodyRequestHashes :: Map.Map peer (NESeq Leios.LeiosFetchRequest) -> [EbHash]
-ebBodyRequestHashes m =
-  [ p.pointEbHash
+ebBodyRequestHashes = map (.pointEbHash) . ebBodyRequestPoints
+
+-- | The point of every EB body request, across all peers.
+ebBodyRequestPoints :: Map.Map peer (NESeq Leios.LeiosFetchRequest) -> [LeiosPoint]
+ebBodyRequestPoints m =
+  [ p
   | reqs <- Map.elems m
   , Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest p _sz) <- toList reqs
   ]
@@ -844,14 +882,15 @@ checkInvariant dbBodies o
 -- Curated repros
 ------------------------------------------------------------
 
--- | A peer offers an EB body; we forge the same EB before the offered body
--- arrives. Forging must purge the offered body from 'missingEbBodies' (its
--- 'ebState' now reads 'BodyAcquired'), so the fetch logic never re-requests a body
--- we already hold. Pre-fix the forge recorded the body as acquired without purging,
--- so the 'Decide' re-fetched it.
-reproForgeAfterOffer :: [Cmd]
-reproForgeAfterOffer =
-  [ Offer [0, 1] 10
+-- | A peer announces an EB; we forge the same EB before its body arrives.
+-- Forging must purge the announced body from 'missingEbBodies' (its 'ebState'
+-- now reads 'BodyAcquired'), so the fetch logic never re-requests a body we
+-- already hold. Pre-fix the forge recorded the body as acquired without purging,
+-- so the 'Decide' re-fetched it. (Originally an offer, back when offers listed
+-- bodies for fetching; only an announcement does now.)
+reproForgeAfterAnnounce :: [Cmd]
+reproForgeAfterAnnounce =
+  [ Announce [0, 1] 10
   , Forge [0, 1] 12
   , Decide 13
   ]
@@ -892,6 +931,32 @@ genCmd = do
     , pure (ArriveBodyLostWrite ids slot)
     ]
 
+-- | A body only arrives in answer to our request, which is only ever made for an
+-- announced (or forged) point: drop any 'ArriveBody' not preceded by one of
+-- those for its point. The generated slots are never pruned, so "preceded"
+-- means "registered".
+--
+-- The first half is guaranteed by the protocol: in LeiosFetch, 'MsgLeiosBlock'
+-- is only valid in @StBusy StBlock@, which only our own 'MsgLeiosBlockRequest'
+-- leads to.
+onlyRequestedArrivals :: [Cmd] -> [Cmd]
+onlyRequestedArrivals = go Set.empty
+ where
+  go _ [] = []
+  go known (c : cs) = case c of
+    Announce ids slot -> c : go (Set.insert (ids, slot) known) cs
+    Forge ids slot -> c : go (Set.insert (ids, slot) known) cs
+    ArriveBody ids slot
+      | Set.member (ids, slot) known -> c : go known cs
+      | otherwise -> go known cs
+    _ -> c : go known cs
+
+genCmds :: Gen [Cmd]
+genCmds = onlyRequestedArrivals <$> listOf genCmd
+
+shrinkCmds :: [Cmd] -> [[Cmd]]
+shrinkCmds = map onlyRequestedArrivals . shrinkList (const [])
+
 ------------------------------------------------------------
 -- Coverage
 ------------------------------------------------------------
@@ -911,8 +976,9 @@ cmdName = \case
   Disconnect -> "Disconnect"
   ArriveBodyLostWrite{} -> "ArriveBodyLostWrite"
 
--- | An EB made known (offer \/ announce \/ body arrival) and later forged: the
--- body forge hazard, where forging must purge the earlier listing.
+-- | An EB listed for fetching and later forged: the body forge hazard, where
+-- forging must purge the earlier listing. Only an announcement lists a body (an
+-- offer lists nothing, and a body arrival makes it held, not listed).
 listedThenForged :: [Cmd] -> Bool
 listedThenForged cmds =
   or
@@ -921,9 +987,7 @@ listedThenForged cmds =
     ]
  where
   listing = \case
-    Offer x _ -> Just x
     Announce x _ -> Just x
-    ArriveBody x _ -> Just x
     _ -> Nothing
 
 -- | Coverage shared by the generated properties: the command mix, and whether
@@ -938,7 +1002,7 @@ coverage cmds prop =
 
 prop_invariants :: Property
 prop_invariants =
-  forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
+  forAllShrink genCmds shrinkCmds $ \cmds ->
     coverage cmds (runCmds cmds === Right ())
 
 -- | Regression for the EB-body re-fetch storm: over any interleaving of
@@ -954,7 +1018,7 @@ prop_invariants =
 prop_neverRefetchesHeldBody :: Property
 prop_neverRefetchesHeldBody =
   checkCoverage $
-    forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
+    forAllShrink genCmds shrinkCmds $ \cmds ->
       coverage cmds $
         case runCmdsObserved cmds of
           Left msg -> counterexample msg (property False)
@@ -982,22 +1046,26 @@ prop_neverRefetchesHeldBody =
 -- | The sequential 'prop_neverRefetchesHeldBody' generates event /sequences/ but
 -- runs each handler to completion, so it can't reproduce an interleaving that
 -- splits one handler's critical section around a concurrent update to the shared
--- state. This scenario runs three handlers for the /same EB hash at three
--- different slots/ as genuinely concurrent threads over the shared MVars — an
--- offer (slot 10), an announcement (slot 11), and a body arrival (slot 12, which
--- inserts the body into the pure 'newPureLeiosTxCache' -- a lock distinct from the
--- outstanding lock -- while holding the outstanding lock) — and uses IOSimPOR to
--- explore every interleaving.
+-- state. Once an announcement (slot 11) has listed the body, this scenario runs
+-- three handlers for the /same EB hash at three different slots/ as genuinely
+-- concurrent threads over the shared MVars — an offer (slot 10), a second
+-- announcement (slot 12), and the body arrival answering our request for the
+-- listed point (slot 11, which inserts the body into the pure
+-- 'newPureLeiosTxCache' -- a lock distinct from the outstanding lock -- while
+-- holding the outstanding lock) — and uses IOSimPOR to explore every
+-- interleaving. The race that matters is between the second announcement and
+-- the arrival, the two handlers touching 'outstandingVar'; the offer only touches
+-- the peer's offerings, and is kept to check it stays out of the way.
 --
 -- An 'EbHash' is not 1-to-1 with slots, so this is exactly the shape that armed
 -- the storm: whichever listing wins is recorded at its own slot, and the arrival
--- (at yet another slot) must clear it /by hash/, not by point. In every
+-- (possibly at another slot) must clear it /by hash/, not by point. In every
 -- interleaving the state invariant "a held EB body is never still listed for
 -- fetching" must hold, which is what stops a later decision from re-requesting
 -- it.
 --
--- With the shipped fix each handler's "held?"/"listed?" test and its state update
--- are one 'outstandingVar' critical section, and acquisition purges every point
+-- With the shipped fix the announcement's "held?"/"listed?" test and its state
+-- update are one 'outstandingVar' critical section, and acquisition purges every point
 -- sharing the hash via 'reverseSlotIndexByEbHash', so no interleaving can violate
 -- this; the test guards against regressing either half (moving a check back out
 -- of the lock, or reverting to a delete-by-point that misses the other slots).
@@ -1010,7 +1078,7 @@ prop_neverRefetchesHeldBodyConcurrent =
 
 -- | An offer, an announcement, and a body arrival walk into a bar...
 --
--- All for the same EB hash but at three distinct slots, run concurrently over
+-- All for the same EB hash but at distinct slots, run concurrently over
 -- shared state; the returned 'Property' is the invariant "no held EB body is
 -- still listed for fetching".
 raceSameHashMultiSlot :: forall m. IOLike m => m Property
@@ -1027,13 +1095,20 @@ raceSameHashMultiSlot = do
         eb = ebOf ids
         ebBytesSize = encodeLeiosEbSize eb
         -- One hash (same ids), three different slots.
+        --
+        -- A client never receives a body it did not request: in LeiosFetch,
+        -- 'MsgLeiosBlock' is only valid in @StBusy StBlock@. And we only
+        -- request an announced point (an offer alone makes nothing fetchable),
+        -- so the arrival is for the point announced, and listed, beforehand.
         offerPoint = pointOf ids 10
         announcePoint = pointOf ids 11
-        arrivalPoint = pointOf ids 12
+        lateAnnouncePoint = pointOf ids 12
+        arrivalPoint = announcePoint
+    recordAnnouncedEb nullTracer conn kv SNothing Nothing (announcePoint, ebBytesSize)
     concurrently_
-      (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
+      (recordEbBodyOffer readyVar peerVars TxsClosureNotAlsoOffered offerPoint)
       ( concurrently_
-          (recordAnnouncedEb conn kv SNothing (announcePoint, ebBytesSize))
+          (recordAnnouncedEb nullTracer conn kv SNothing Nothing (lateAnnouncePoint, ebBytesSize))
           ( processLeiosBlock
               nullTracer
               nullTracer

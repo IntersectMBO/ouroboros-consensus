@@ -222,7 +222,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
         leiosDbWriter
         forgedEb.point
         [(off, bs) | (off, (_txh, bs)) <- zip [0 ..] forgedEb.txClosure]
-    awaitAll [pointWritten, void bodyWritten, void txsWritten]
+    awaitAll [void pointWritten, void bodyWritten, void txsWritten]
     traceWith leiosTracer $
       TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
 

@@ -163,7 +163,7 @@ instance Protocol (LeiosNotify point announcement vote) where
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockOffer ::
       !point ->
-      !Word32 -> -- TODO this size should be redundant, determined by the announcement
+      !Word32 -> -- TODO this size is redundant and ignored, determined by the announcement
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockTxsOffer ::
       !point ->
