@@ -930,9 +930,9 @@ instance MetaTrace (ChainDB.TraceAddBlockEvent blk) where
   severityFor (Namespace _ ["ChainSelectionLoEDebug"]) _ = Just Debug
   severityFor _ _ = Nothing
 
-  privacyFor (Namespace out ("AddBlockEvent" : tl)) (Just (ChainDB.AddBlockValidation ev')) =
+  privacyFor (Namespace out ("AddBlockValidation" : tl)) (Just (ChainDB.AddBlockValidation ev')) =
     privacyFor (Namespace out tl) (Just ev')
-  privacyFor (Namespace out ("AddBlockEvent" : tl)) Nothing =
+  privacyFor (Namespace out ("AddBlockValidation" : tl)) Nothing =
     privacyFor (Namespace out tl :: Namespace (ChainDB.TraceValidationEvent blk)) Nothing
   privacyFor (Namespace out ("PipeliningEvent" : tl)) (Just (ChainDB.PipeliningEvent ev')) =
     privacyFor (Namespace out tl) (Just ev')
@@ -940,9 +940,9 @@ instance MetaTrace (ChainDB.TraceAddBlockEvent blk) where
     privacyFor (Namespace out tl :: Namespace (ChainDB.TracePipeliningEvent blk)) Nothing
   privacyFor _ _ = Just Public
 
-  detailsFor (Namespace out ("AddBlockEvent" : tl)) (Just (ChainDB.AddBlockValidation ev')) =
+  detailsFor (Namespace out ("AddBlockValidation" : tl)) (Just (ChainDB.AddBlockValidation ev')) =
     detailsFor (Namespace out tl) (Just ev')
-  detailsFor (Namespace out ("AddBlockEvent" : tl)) Nothing =
+  detailsFor (Namespace out ("AddBlockValidation" : tl)) Nothing =
     detailsFor (Namespace out tl :: Namespace (ChainDB.TraceValidationEvent blk)) Nothing
   detailsFor (Namespace out ("PipeliningEvent" : tl)) (Just (ChainDB.PipeliningEvent ev')) =
     detailsFor (Namespace out tl) (Just ev')
@@ -2566,6 +2566,8 @@ instance MetaTrace V2.LedgerDBV2Trace where
     Just "Creating the first ledger tables handle"
   documentFor (Namespace _ ["LedgerTablesHandleDuplicate"]) =
     Just "Duplicating a ledger tables handle"
+  documentFor (Namespace out ("BackendTrace" : tl)) =
+    documentFor (Namespace out tl :: Namespace V2.SomeBackendTrace)
   documentFor _ = Nothing
 
   allNamespaces =
@@ -2790,8 +2792,6 @@ instance MetaTrace (ImmDB.TraceEvent blk) where
       severityFor (Namespace out tl) (Just ev')
   severityFor (Namespace out ("ChunkValidation" : tl)) Nothing =
     severityFor (Namespace out tl :: Namespace (ImmDB.TraceChunkValidation blk ImmDB.ChunkNo)) Nothing
-  severityFor (Namespace out ("ChunkValidationEvent" : tl)) Nothing =
-    severityFor (Namespace out tl :: Namespace (ImmDB.TraceChunkValidation blk chunkNo)) Nothing
   severityFor (Namespace _ ["ChunkFileDoesntFit"]) _ = Just Warning
   severityFor (Namespace _ ["Migrating"]) _ = Just Debug
   severityFor (Namespace _ ["DeletingAfter"]) _ = Just Debug
@@ -2809,24 +2809,28 @@ instance MetaTrace (ImmDB.TraceEvent blk) where
     (Namespace out ("ChunkValidation" : tl))
     (Just (ImmDB.ChunkValidationEvent ev')) =
       privacyFor (Namespace out tl) (Just ev')
-  privacyFor (Namespace out ("ChunkValidationEvent" : tl)) Nothing =
-    privacyFor (Namespace out tl :: Namespace (ImmDB.TraceChunkValidation blk chunkNo)) Nothing
+  privacyFor (Namespace out ("ChunkValidation" : tl)) Nothing =
+    privacyFor (Namespace out tl :: Namespace (ImmDB.TraceChunkValidation blk ImmDB.ChunkNo)) Nothing
   privacyFor
     (Namespace out ("CacheEvent" : tl))
     (Just (ImmDB.TraceCacheEvent ev')) =
       privacyFor (Namespace out tl) (Just ev')
+  privacyFor (Namespace out ("CacheEvent" : tl)) Nothing =
+    privacyFor (Namespace out tl :: Namespace ImmDB.TraceCacheEvent) Nothing
   privacyFor _ _ = Just Public
 
   detailsFor
     (Namespace out ("ChunkValidation" : tl))
     (Just (ImmDB.ChunkValidationEvent ev')) =
       detailsFor (Namespace out tl) (Just ev')
-  detailsFor (Namespace out ("ChunkValidationEvent" : tl)) Nothing =
-    detailsFor (Namespace out tl :: Namespace (ImmDB.TraceChunkValidation blk chunkNo)) Nothing
+  detailsFor (Namespace out ("ChunkValidation" : tl)) Nothing =
+    detailsFor (Namespace out tl :: Namespace (ImmDB.TraceChunkValidation blk ImmDB.ChunkNo)) Nothing
   detailsFor
     (Namespace out ("CacheEvent" : tl))
     (Just (ImmDB.TraceCacheEvent ev')) =
       detailsFor (Namespace out tl) (Just ev')
+  detailsFor (Namespace out ("CacheEvent" : tl)) Nothing =
+    detailsFor (Namespace out tl :: Namespace ImmDB.TraceCacheEvent) Nothing
   detailsFor _ _ = Just DNormal
 
   documentFor (Namespace _ ["NoValidLastLocation"]) =
