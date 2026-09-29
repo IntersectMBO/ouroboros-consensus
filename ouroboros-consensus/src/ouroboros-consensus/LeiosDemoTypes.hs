@@ -428,18 +428,17 @@ newLeiosPeerVars whetherBigLedgerPeer = do
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
     ebState :: !(Map EbHash EbState)
-  -- ^ Per-EB state for every EB we have seen announced (or offered)
+  -- ^ Per-EB state for every EB we have seen announced (or forged)
   --
-  -- TODO once offers are only valid if preceded by an announcement, then
-  -- 'ebState' and the @selfPeer@ field of
-  -- 'LeiosDemoLogic.Announcements.CentralState' are partially redundant
+  -- TODO now that offers no longer feed it, 'ebState' and the @selfPeer@ field
+  -- of 'LeiosDemoLogic.Announcements.CentralState' are partially redundant
   , ebsPerMaxAnnouncementSlot :: !(Map SlotNo (NESet EbHash))
   -- ^ Slot-keyed reverse index of 'ebStateMaxSlot' on 'ebState'
   --
   -- Used to accelerate pruning.
   --
-  -- TODO will also be redundant with by 'CentralState.selfPeer.live' once
-  -- offers are no longer trusted.
+  -- TODO likewise partially redundant with 'CentralState.selfPeer.live', now
+  -- that offers no longer feed 'ebState'.
   , acquiredEbBodiesPrunedSlot :: !SlotNo
   -- ^ The slot 'ebState' has most recently been pruned up to (see
   -- 'pruneOutstandingToImmTip').
@@ -453,8 +452,8 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- 1-to-1 with slots, so one body can be listed at several points; on acquiring
   -- the body (keyed by hash) 'processLeiosBlock' must clear every such point, and
   -- this index makes that a direct lookup rather than a scan of 'missingEbBodies'
-  -- (it likewise backs the "already listed?" check on the offer/announcement
-  -- paths). Kept in step with 'missingEbBodies' at every insert and delete.
+  -- (it likewise backs the "already listed?" check on the announcement path).
+  -- Kept in step with 'missingEbBodies' at every insert and delete.
   , -- Request tracking
     requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   -- ^ Which peers we've requested each EB from
@@ -496,11 +495,11 @@ emptyLeiosOutstanding prng prunedSlot =
 
 -- | Per-EB state tracked in 'ebState'
 data EbState
-  = -- | The greatest slot at which the EB has been announced (TODO or, for now,
-    -- offered); the wall-clock onset of its /oldest/ announcement slot (kept as the
-    -- minimum, so the body\/closure arrival handlers can report how old the EB was
-    -- when we first held it; 'SNothing' for an unheralded offer-only or self-forged
-    -- EB); and the current progress of fetching it.
+  = -- | The greatest slot at which the EB has been announced; the wall-clock
+    -- onset of its /oldest/ announcement slot (kept as the minimum, so the
+    -- body\/closure arrival handlers can report how old the EB was when we first
+    -- held it; 'SNothing' if unknown, e.g. for a self-forged or seeded EB); and
+    -- the current progress of fetching it.
     MkEbState !SlotNo !(StrictMaybe RelativeTime) !EbFetchState
   deriving (Eq, Show)
 
@@ -544,7 +543,7 @@ ebStateOnset :: EbState -> StrictMaybe RelativeTime
 ebStateOnset (MkEbState _slot onset _fetchState) = onset
 
 -- | Whether we already hold the EB's body (the "do we have it?" test that the
--- offer/announcement/arrival paths consult before fetching).
+-- announcement/arrival paths consult before fetching).
 ebStateHasBody :: EbState -> Bool
 ebStateHasBody (MkEbState _slot _onset fetchState) = case fetchState of
   NoBody -> False
@@ -707,15 +706,14 @@ markBodyImminent ebHash slot =
       BodyImminent -> Nothing
       BodyAcquired{} -> Just $ MkEbState oldSlot onset (BodyAcquired Jobs.emptyLeiosJobPool)
 
--- | Record that the EB with this hash is referenced (announced or offered) at this
--- slot, along with that slot's wall-clock onset if known.
+-- | Record that the EB with this hash is announced at this slot, along with that
+-- slot's wall-clock onset if known.
 --
 -- The same EB (hash) can be referenced by several points; we keep the
 -- /greatest/ such slot, so the EB's state isn't pruned prematurely. The onset,
 -- in contrast, is kept as the /minimum/ (oldest announcement), so the arrival
--- handlers report the age since the EB was first heralded. An offer carries no
--- onset ('SNothing') and so never overrides one already recorded by an
--- announcement.
+-- handlers report the age since the EB was first heralded. An unknown onset
+-- ('SNothing') never overrides one already recorded.
 recordMaxAnnouncementSlot ::
   EbHash -> SlotNo -> StrictMaybe RelativeTime -> LeiosOutstanding pid -> LeiosOutstanding pid
 recordMaxAnnouncementSlot ebHash slot onset =
@@ -747,7 +745,7 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 --
 --   * A merely body-held EB with a /partial/ closure is not seeded: an
 --     empty pool would strand its missing txs. Left absent, it is
---     re-derived from a fresh announcement/offer, and the redundant body
+--     re-derived from a fresh announcement, and the redundant body
 --     re-fetch + re-insert is idempotent (INSERT-OR-IGNORE / no-op on
 --     duplicate).
 --
@@ -1395,9 +1393,6 @@ data TraceLeiosKernel
     -- Carries how old the EB was on arrival, if it was preceded by an
     -- announcement and not forged locally.
     TraceLeiosBlockAcquired LeiosPoint (Maybe NominalDiffTime)
-  | -- | The EB body was received but the point was not in the database. This is
-    -- unexpected as the point should have been inserted during announcement handling.
-    TraceLeiosBlockPointMissing LeiosPoint
   | -- | An EB's tx closure was first completed. Carries the EB's age on arrival,
     -- as for 'TraceLeiosBlockAcquired'.
     TraceLeiosBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
@@ -1699,12 +1694,6 @@ traceLeiosKernelToObject = \case
       , "ebSlot" .= ebSlot
       ]
         ++ foldMap (\age -> ["bodyAgeSeconds" .= (realToFrac age :: Double)]) mbAge
-  TraceLeiosBlockPointMissing (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosBlockPointMissing"
-      , "ebHash" .= prettyEbHash ebHash
-      , "ebSlot" .= ebSlot
-      ]
   TraceLeiosBlockTxsAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) mbAge ->
     mconcat $
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
@@ -1912,7 +1901,6 @@ data LeiosNSInfo = LeiosNSInfo
 data LeiosKernelNS
   = LKNSMsg
   | LKNSBlockAcquired
-  | LKNSBlockPointMissing
   | LKNSBlockTxsAcquired
   | LKNSFetchBodyArrival
   | LKNSFetchTxsArrival
@@ -1945,7 +1933,6 @@ leiosKernelNSOf :: TraceLeiosKernel -> LeiosKernelNS
 leiosKernelNSOf = \case
   MkTraceLeiosKernel{} -> LKNSMsg
   TraceLeiosBlockAcquired{} -> LKNSBlockAcquired
-  TraceLeiosBlockPointMissing{} -> LKNSBlockPointMissing
   TraceLeiosBlockTxsAcquired{} -> LKNSBlockTxsAcquired
   TraceLeiosFetchBodyArrival{} -> LKNSFetchBodyArrival
   TraceLeiosFetchTxsArrival{} -> LKNSFetchTxsArrival
@@ -1980,7 +1967,6 @@ leiosKernelNSInfo :: LeiosKernelNS -> LeiosNSInfo
 leiosKernelNSInfo = \case
   LKNSMsg -> LeiosNSInfo ["Msg"] LSInfo []
   LKNSBlockAcquired -> LeiosNSInfo ["BlockAcquired"] LSInfo []
-  LKNSBlockPointMissing -> LeiosNSInfo ["BlockPointMissing"] LSWarning []
   LKNSBlockTxsAcquired -> LeiosNSInfo ["BlockTxsAcquired"] LSInfo []
   LKNSFetchBodyArrival ->
     LeiosNSInfo
@@ -2086,7 +2072,6 @@ traceLeiosKernelForHuman :: TraceLeiosKernel -> Text
 traceLeiosKernelForHuman = \case
   MkTraceLeiosKernel msg -> "LeiosKernel: " <> T.pack msg
   TraceLeiosBlockAcquired pt age -> "EB body acquired: " <> T.pack (show pt) <> " age=" <> showT age
-  TraceLeiosBlockPointMissing pt -> "EB point missing on body acquisition: " <> T.pack (show pt)
   TraceLeiosBlockTxsAcquired pt age -> "EB txs acquired: " <> T.pack (show pt) <> " age=" <> showT age
   TraceLeiosFetchBodyArrival fab ->
     "LeiosFetch EB body arrival (bytes): invalid="

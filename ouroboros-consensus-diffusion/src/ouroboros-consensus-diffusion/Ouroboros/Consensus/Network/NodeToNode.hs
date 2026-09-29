@@ -412,7 +412,7 @@ mkHandlers
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
               , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime cds -> do
                   Leios.checkMsgRollForwardForLeiosOffers
-                    (getLeiosOutstanding, getLeiosReady)
+                    getLeiosReady
                     peerVars
                     hdr
                     cds
@@ -564,14 +564,14 @@ mkHandlers
                     let (!latestPruneSlot', !peerSt2) =
                           Leios.prunePeerStateToImmTip immLedger latestPruneSlot peerSt1
                     Prim.writeMutVar peerStateVar (latestPruneSlot', peerSt2)
-                  MsgLeiosBlockOffer point ebBytesSize -> do
+                  MsgLeiosBlockOffer point _ignoredSizeAnnouncementIsAuthoritative -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     -- TODO punish peer for a too-old offer, modulo clock/immtip skew.
                     Leios.recordEbBodyOffer
-                      (getLeiosOutstanding, getLeiosReady)
+                      getLeiosReady
                       peerVars
                       Leios.TxsClosureNotAlsoOffered
-                      (point, ebBytesSize)
+                      point
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
                     -- A closure offer implies the body too.

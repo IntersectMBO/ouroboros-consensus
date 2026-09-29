@@ -207,7 +207,7 @@ imInsertEbPoint ::
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   BytesSize ->
-  m ()
+  m Bool
 imInsertEbPoint stateVar notificationChan point ebBytesSize = atomically $ do
   modifyTVar stateVar $ \s ->
     s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
@@ -215,9 +215,12 @@ imInsertEbPoint stateVar notificationChan point ebBytesSize = atomically $ do
   let alreadyComplete = case Map.lookup point.pointEbHash (imEbBodies state) of
         Nothing -> False
         Just entries -> all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
-  when (alreadyComplete && not (Set.member point (imCompletedEbs state))) $ do
-    modifyTVar stateVar $ \s -> s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-    writeTChan notificationChan (AcquiredEbTxs point)
+  if alreadyComplete && not (Set.member point (imCompletedEbs state))
+    then do
+      modifyTVar stateVar $ \s -> s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
+      writeTChan notificationChan (AcquiredEbTxs point)
+      pure True
+    else pure False
 
 imLookupEbBody :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m [(TxHash, BytesSize)]
 imLookupEbBody stateVar ebHash = atomically $ do

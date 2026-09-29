@@ -429,7 +429,7 @@ populateDb opts db =
       pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
       bodyWritten <- writeEbBody writer point eb
       txsWritten <- writeTxs writer txs
-      awaitAll [pointWritten, void bodyWritten, void txsWritten]
+      awaitAll [void pointWritten, void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
 
 -- | Drop the tx -> referencing-EB index from the volatile partition
@@ -536,7 +536,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
                   bodyWritten <- writeEbBody w point eb
                   txsWritten <- writeTxs w txs
                   -- Awaiting all three times them to durability.
-                  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+                  awaitAll [void pointWritten, void bodyWritten, void txsWritten]
                   pure ()
               )
     _ <- flushEvents -- discard events from handle setup

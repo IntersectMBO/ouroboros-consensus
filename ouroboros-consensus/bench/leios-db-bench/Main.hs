@@ -251,7 +251,7 @@ insertOneEb writer ebIdx = do
   pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
   bodyWritten <- writeEbBody writer point eb
   txsWritten <- writeTxs writer txs
-  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+  awaitAll [void pointWritten, void bodyWritten, void txsWritten]
 
 -- * Deterministic data generation
 

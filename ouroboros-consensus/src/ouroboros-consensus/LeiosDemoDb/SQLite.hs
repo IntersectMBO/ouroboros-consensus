@@ -1111,7 +1111,7 @@ closeChecked db =
 -- for a write lock on the volatile partition. Sweeping is not a job at all
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
-  = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
+  = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult Bool)
   | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
   | WriteTxs ![(TxHash, ByteString)] !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
@@ -1617,11 +1617,11 @@ sqlMarkPointCompleteIfZero conn point = do
 -- of an already-known point) and its hash already has a body registered
 -- under another point (an EB-hash collision: the same content, a different
 -- announcing RB), start tracking this point's own missing-tx count too --
--- notifying right away if the hash is already complete. Without this, a
--- point whose own 'writeEbBody' is never called (because the body is
--- already held) would never reach 'sql_find_complete_ebs' at all, since its
--- @missingTxCount@ would stay unset forever.
-sqlInsertEbPoint :: Conn -> (LeiosEbNotification -> IO ()) -> LeiosPoint -> BytesSize -> IO ()
+-- notifying (and returning 'True') right away if the hash is already complete.
+-- Without this, a point whose own 'writeEbBody' is never called (because the
+-- body is already held) would never reach 'sql_find_complete_ebs' at all,
+-- since its @missingTxCount@ would stay unset forever.
+sqlInsertEbPoint :: Conn -> (LeiosEbNotification -> IO ()) -> LeiosPoint -> BytesSize -> IO Bool
 sqlInsertEbPoint conn notify point ebBytesSize = do
   (inserted, completedNow) <- dbWithWriteTransaction conn $ do
     inserted <- useStmt stInsertEbPoint $ do
@@ -1648,6 +1648,7 @@ sqlInsertEbPoint conn notify point ebBytesSize = do
     pure (inserted, completedNow)
   bumpVolatileStats conn inserted
   forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
+  pure (not (null completedNow))
  where
   Conn{conVolDb = db, connVolStmts} = conn
   VolStmts{stInsertEbPoint, stEbHasBody} = connVolStmts

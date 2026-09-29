@@ -101,8 +101,10 @@ data LeiosDbReader m = LeiosDbReader
 data LeiosDbWriter m = LeiosDbWriter
   { close :: m ()
   -- ^ Close writer and flush all remaining writes.
-  , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
-  -- ^ Record an announced EB's point and expected size.
+  , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m Bool)
+  -- ^ Record an announced EB's point and expected size. Returns whether that
+  -- completed this point's closure (its EB's hash already complete under
+  -- another point).
   , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m CompletedEbs)
   -- ^ Persist an EB body. Returns any EBs whose closure this completed.
   --
