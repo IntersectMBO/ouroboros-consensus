@@ -387,8 +387,8 @@ length cheaply, e.g. as input for benchmarks.
   (`--shelley-kes-agent-socket` instead of `--shelley-kes-key`) work too. These
   are `cardano-node`'s own flags — db-synthesizer takes them from
   `cardano-config`, so they are spelled and documented exactly as the node
-  spells them. The genesis must give the corresponding pools enough stake to be
-  elected.
+  spells them, and the files they name are decoded by `cardano-keys`. The
+  genesis must give the corresponding pools enough stake to be elected.
 
   Each operational certificate must name the KES key it is paired with, or the
   tool refuses it rather than forging blocks the certificate does not
