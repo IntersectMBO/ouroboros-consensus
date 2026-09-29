@@ -76,6 +76,7 @@ import Data.Maybe.Strict (StrictMaybe (SJust))
 import qualified Data.Primitive.MutVar as Prim
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
+import Data.Typeable (Typeable)
 import Data.Void (Void)
 import LeiosDemoDb
   ( LeiosDbHandle (subscribeEbNotifications)
@@ -147,7 +148,14 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , systemTimeCurrent
   )
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
-import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.HeaderStateHistory
+  ( HeaderStateHistory (..)
+  , HeaderStateWithTime (..)
+  )
+import Ouroboros.Consensus.HeaderValidation
+  ( HeaderWithTime (..)
+  , headerStateChainDep
+  )
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mempool.API (getLeiosTxIndex)
@@ -157,6 +165,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncStateView (..)
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -164,6 +173,7 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
@@ -173,6 +183,8 @@ import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy, whenJust)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Block
   ( Serialised (..)
   , decodePoint
@@ -457,6 +469,21 @@ mkHandlers
                       (SJust hdrSlotTime)
                       (Just (diffRelTime now hdrSlotTime))
                       ancHdr
+              , CsClient.leiosJumpAcceptedCallback = \jumpInfo -> do
+                  let varMax = Leios.maxAcceptedJumpSlot peerVars
+                  acceptedThrough <- TVar.Unchecked.readTVarIO varMax
+                  forM_ (headersWithPredecessorStates acceptedThrough jumpInfo) $
+                    \(hdr, cds) ->
+                      Leios.checkMsgRollForwardForLeiosOffers
+                        (getLeiosOutstanding, getLeiosReady)
+                        peerVars
+                        hdr
+                        cds
+                  atomically $
+                    TVar.Unchecked.modifyTVar varMax $
+                      max $
+                        AF.headSlot $
+                          jTheirFragment jumpInfo
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -1815,6 +1842,50 @@ perasUnsupportedInitiatorResponder =
   InitiatorAndResponderProtocol
     (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
     (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
+
+-- | The part of the dynamo's candidate header fragment past the given slot ---
+-- the jump it offered is the whole fragment's tip --- each header paired with
+-- the chain-dep state as of its predecessor, the two arguments
+-- 'CsClient.leiosMsgRollForwardCallback' would have been given for it.
+--
+-- The history holds one state per header plus its anchor, and the state at an
+-- index is the one /after/ that header. So splitting the history at the same
+-- slot leaves its anchor holding the first kept header's predecessor state,
+-- and shifting by one pairs the rest up.
+--
+-- Both splits are @O(log n)@ in the underlying finger tree, which is the point
+-- of doing them here rather than filtering the list afterwards: successive
+-- jumps overlap in everything but their last @csjcJumpSize@ headers.
+--
+-- A split yields 'Nothing' if the sequence holds nothing at the given slot, in
+-- which case the whole of it is walked. That needs this peer to have accepted
+-- a jump on one chain and then a jump on an alternative chain, which in turn
+-- needs the dynamo to have changed --- one dynamo may not roll back before the
+-- last jump it requested, and CSJ disengages it if it tries. So the peer is
+-- either dishonest, or honest and close enough to the wall clock to have
+-- switched chains in between.
+headersWithPredecessorStates ::
+  (HasHeader (Header blk), Typeable blk) =>
+  WithOrigin SlotNo ->
+  JumpInfo blk ->
+  [(Header blk, ChainDepState (BlockProtocol blk))]
+headersWithPredecessorStates acceptedThrough jumpInfo =
+  zip
+    (hwtHeader <$> AF.toOldestFirst fragment)
+    ( headerStateChainDep . hswtHeaderState
+        <$> (AS.anchor history : AS.toOldestFirst history)
+    )
+ where
+  past ::
+    AS.Anchorable (WithOrigin SlotNo) a b =>
+    AS.AnchoredSeq (WithOrigin SlotNo) a b ->
+    AS.AnchoredSeq (WithOrigin SlotNo) a b
+  past s = case AS.splitAfterMeasure acceptedThrough (const True) s of
+    Just (_before, after) -> after
+    Nothing -> s
+
+  fragment = past $ jTheirFragment jumpInfo
+  history = past $ unHeaderStateHistory (jTheirHeaderStateHistory jumpInfo)
 
 leiosNotifyPipelineDepth :: Int
 leiosNotifyPipelineDepth = 100 -- TODO magic number

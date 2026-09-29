@@ -63,6 +63,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB (headerElId)
@@ -139,6 +140,9 @@ tests =
     , testCase
         "an endorser block misstating a size is not offered onward (body first)"
         (test_lyingSizeIsNotOffered BodyBeforeTx)
+    , testCase
+        "a jumper offers what it jumped over"
+        test_aJumperOffersWhatItJumpedOver
     , testCase
         "a request for an endorser block we do not have is refused"
         (test_requestIsRefused NothingHeld (`requestEb` honestPoint))
@@ -721,6 +725,83 @@ data WhatIsHeld
     BodyOnlyHeld
   | -- | The body and the whole closure.
     ClosureHeld
+
+-- | As 'nodeConfig', but with ChainSync jumping on.
+csjNodeConfig :: NodeUnderTestConfig
+csjNodeConfig =
+  nodeConfig
+    { nutcCsjConfig =
+        CSClient.CSJEnabled CSClient.CSJEnabledConfig{CSClient.csjcJumpSize = 1}
+    }
+
+-- | 'freshChain' with one more block, so that a jump can reach past the block
+-- that certifies 'freshEb'.
+--
+-- A jump is offered when the dynamo rolls forward, and covers its fragment up
+-- to but not including the header that triggered it.
+csjChain :: [Blk]
+csjChain = freshChain <> [successorLeiosBlock (last freshChain)]
+
+-- | A jumper offers the endorser block the dynamo announced, although it never
+-- sent that header itself.
+--
+-- It agreed to jump over that header, which asserts it would have sent the same
+-- one. Unless that counts as offering what those headers announce, a jumper has
+-- no offers at all, and so a node that loses its dynamo has nobody left to ask.
+--
+-- Neither peer announces its tip, since CSJ disengages a peer that says it
+-- has no more headers and this test needs it still steering. The first peer is
+-- alone when it connects, so it is made dynamo; extending its chain is then
+-- what makes it offer the jump that the second peer accepts.
+--
+-- No peer holds the endorser block, so nothing satisfies either offer and
+-- neither is pruned.
+test_aJumperOffersWhatItJumpedOver :: Assertion
+test_aJumperOffersWhatItJumpedOver = do
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Right offeredBy ->
+      assertEqual
+        "both peers should be recorded as offering the endorser block"
+        [True, True]
+        offeredBy
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the run to finish, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  scenario :: forall s. IOSim s [Bool]
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    peerA <- newPeerEnv
+    peerB <- newPeerEnv
+
+    (chainDBTracer, _getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest csjNodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        setAwaitAtTip peerA StayQuietAtTip
+        setAwaitAtTip peerB StayQuietAtTip
+        serveChain peerA $ chainOf freshChain
+        serveChain peerB $ chainOf csjChain
+
+        -- The announcing header is in slot 2, and a header from the future is
+        -- rejected as such.
+        threadDelay 8
+
+        connectPeer nut registry (PeerAddr 0) peerA
+        threadDelay 5
+        connectPeer nut registry (PeerAddr 1) peerB
+        threadDelay 5
+
+        -- Rolling forward onto this block is what makes the dynamo offer the
+        -- jump that the second peer accepts.
+        serveChain peerA $ chainOf csjChain
+        threadDelay 25
+
+        mapM (\addr -> ebOfferedBy nut addr freshPoint) [PeerAddr 0, PeerAddr 1]
 
 -- | The node refuses a LeiosFetch request it cannot answer, which costs the
 -- asking peer its connection.

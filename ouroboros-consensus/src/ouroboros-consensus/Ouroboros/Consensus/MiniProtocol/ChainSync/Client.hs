@@ -793,6 +793,17 @@ data ConfigEnv m blk = ConfigEnv
   -- /certifies/ as an offer from this peer, and feed any EB the header
   -- /announces/ into the central announcement state — dating that announcement
   -- from the slot onset. A no-op for non-Leios setups.
+  , leiosJumpAcceptedCallback :: JumpInfo blk -> m ()
+  -- ^ Invoked when this peer accepts a jump, with the dynamo's candidate
+  -- fragment that jump carries. For Leios the wiring records, for each header
+  -- in that fragment, the same per-peer offer that header's 'MsgRollForward'
+  -- would have. A no-op for non-Leios setups.
+  --
+  -- A jumper never runs 'leiosMsgRollForwardCallback' for the headers it
+  -- jumped over, so without this it has no offers at all, and a node that
+  -- loses its dynamo has nobody left to ask for the endorser blocks those
+  -- headers announced. Agreeing to a jump asserts the peer would have sent
+  -- those headers, which is what makes treating them as its offers sound.
   }
 
 -- | Arguments determined dynamically
@@ -1356,6 +1367,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               if
                 | pt == dynamoTipPt -> do
                     Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                    leiosJumpAcceptedCallback cfgEnv jumpInfo
                     traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
                     let kis' = case jump of
                           -- Since the updated kis is needed to validate headers,
