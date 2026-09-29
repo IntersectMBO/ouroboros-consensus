@@ -34,14 +34,14 @@ import Data.Word (Word64)
 import LeiosDemoTypes (BytesSize, EbHash, FetchArrivalBytes, RbHash, TxHash (..), TxLocation (..))
 import LeiosTxCache.API
   ( BodyState (..)
-  , EbRingIndex
+  , EbRingIndex (UnsafeEbRingIndex)
   , LeiosTxCache (..)
   , RefCount (..)
   , ReferencesTxsByHash (..)
   , TxArrivalPrior (..)
   , bucketTxArrival
-  , ebRingIndexOf
   , maxAnnouncementCount
+  , mkEbRingIndex
   , mkLeiosTxCacheInsertBodySummary
   , unEbRingIndex
   )
@@ -149,11 +149,11 @@ newHashTableLeiosTxCache nshift k0 k1 = do
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
       , setTxLocations = \ebh offTxs ->
           MVar.modifyMVar stateVar $ \st -> do
-            let slot = ebRingIndexOf (hsLocNext st)
+            let slot = UnsafeEbRingIndex (hsLocNext st `mod` maxAnnouncementCount)
             F.for_ offTxs $ \(off, txh) -> do
               let key = toKey txh
               mv <- HT.lookup ht key
-              -- latest location wins: the newest source EB outlives older
+              -- NOTE: Latest location wins: the newest source EB outlives older
               -- ones in both the ring and the db
               F.for_ mv $ \w ->
                 HT.insert ht key (encodeLoc slot off .|. (w .&. 0xFFFFFFFF))
@@ -367,16 +367,15 @@ encodeLoc ringIdx off =
   )
     `unsafeShiftL` 32
 
--- | Decode 'encodeLoc': 'Nothing' unless the valid bit is set. The 7-bit ring
--- field is re-entered through 'ebRingIndexOf' (identity in range).
+-- | Decode 'encodeLoc': 'Nothing' unless the valid bit is set, and the 7-bit ring
+-- field is re-checked through 'mkEbRingIndex' (so a field out of the ring's bounds
+-- declines the location rather than keying it wrongly).
 valLoc :: Word64 -> Maybe (EbRingIndex, Int)
 valLoc w
   | hi .&. 0x80000000 == 0 = Nothing
-  | otherwise =
-      Just
-        ( ebRingIndexOf (fromIntegral ((hi `unsafeShiftR` 24) .&. 0x7F))
-        , fromIntegral (hi .&. 0xFFFFFF)
-        )
+  | otherwise = do
+      ringIdx <- mkEbRingIndex (fromIntegral ((hi `unsafeShiftR` 24) .&. 0x7F))
+      Just (ringIdx, fromIntegral (hi .&. 0xFFFFFF))
  where
   hi = w `unsafeShiftR` 32
 

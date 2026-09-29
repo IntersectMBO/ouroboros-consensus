@@ -15,8 +15,8 @@ module LeiosTxCache.API
   , RefCount (..)
   , BodyState (..)
   , maxAnnouncementCount
-  , EbRingIndex
-  , ebRingIndexOf
+  , EbRingIndex (UnsafeEbRingIndex)
+  , mkEbRingIndex
   , unEbRingIndex
 
     -- * Insert-body observability summary
@@ -147,20 +147,26 @@ maxAnnouncementCount :: Int
 maxAnnouncementCount = 128 -- TODO magic number
 
 -- | An index into the source-EB ring the tx-location machinery keeps (the last
--- 'maxAnnouncementCount' EBs whose txs became durable). In
--- @[0, 'maxAnnouncementCount')@ by construction: 'ebRingIndexOf' is the only way
--- to make one, and it reduces its argument into range. So it fits the packed
--- location word's ring field and can never key the ring out of bounds.
-newtype EbRingIndex = EbRingIndex Int
+-- 'maxAnnouncementCount' EBs whose txs became durable). Meant to hold a value in
+-- @[0, 'maxAnnouncementCount')@, so it fits the packed location word's ring field
+-- and can never key the ring out of bounds. 'mkEbRingIndex' is the checked way in;
+-- 'UnsafeEbRingIndex' is the escape hatch for a caller that maintains the bound
+-- itself, e.g. after reducing a monotone claim counter mod the ring size.
+newtype EbRingIndex = UnsafeEbRingIndex Int
   deriving (Eq, Ord, Show)
 
--- | The ring slot a monotone claim counter currently points at.
-ebRingIndexOf :: Int -> EbRingIndex
-ebRingIndexOf n = EbRingIndex (n `mod` maxAnnouncementCount)
+-- | Check an 'Int' against the ring's bounds: 'Just' iff it lies in
+-- @[0, 'maxAnnouncementCount')@. Use for an index read back from packed or stored
+-- data, where out of range means corruption and the caller should decline the
+-- location rather than key the ring wrongly.
+mkEbRingIndex :: Int -> Maybe EbRingIndex
+mkEbRingIndex n
+  | n >= 0 && n < maxAnnouncementCount = Just (UnsafeEbRingIndex n)
+  | otherwise = Nothing
 
 -- | The raw slot, for packing into the location word.
 unEbRingIndex :: EbRingIndex -> Int
-unEbRingIndex (EbRingIndex i) = i
+unEbRingIndex (UnsafeEbRingIndex i) = i
 
 -- | A reference count.
 --
