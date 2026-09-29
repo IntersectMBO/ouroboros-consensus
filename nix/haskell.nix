@@ -13,6 +13,7 @@ let
       ../NOTICE
       ../cabal
       ../cabal.project
+      ../golden
       ../ouroboros-consensus
       ../ouroboros-consensus-cardano
       ../ouroboros-consensus-diffusion
@@ -78,7 +79,7 @@ let
             byron-test = "ouroboros-consensus-cardano/golden/byron";
             shelley-test = "ouroboros-consensus-cardano/golden/shelley";
             cardano-test = "ouroboros-consensus-cardano/golden/cardano";
-            tracing-test = "tracing/golden";
+            tracing-test = "golden/tracing";
           };
       }
       ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {

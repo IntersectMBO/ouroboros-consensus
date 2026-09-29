@@ -426,14 +426,6 @@ library tracing
   import: common-lib
   visibility: public
   hs-source-dirs: tracing
-  -- Orphan tracing instances (LogFormatting/MetaTrace) for Consensus types,
-  -- moved here from cardano-node so that the definitions live next to the
-  -- types they describe. Depends on trace-dispatcher (Cardano.Logging), the
-  -- same way ouroboros-network:tracing does.
-  -- Everything that carries an instance is private, and reachable only through
-  -- the Ouroboros.Consensus.Tracing umbrella, so that importing a subset cannot
-  -- silently lose an orphan. The two Render modules define no instances -- they
-  -- are plain rendering functions -- so exposing them costs nothing.
   exposed-modules:
     Ouroboros.Consensus.Tracing
     Ouroboros.Consensus.Tracing.Era.Shelley.Render

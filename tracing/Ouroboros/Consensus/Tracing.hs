@@ -1,12 +1,3 @@
--- | Tracing of Consensus events.
---
--- The @LogFormatting@ and @MetaTrace@ instances for the Consensus trace types
--- are orphans spread over the private @Ouroboros.Consensus.Tracing.*@ modules,
--- several of which define nothing else. This module is the only way in: it
--- brings all of them into scope and re-exports what those modules do define, so
--- that a consumer wiring up Consensus tracers cannot import a subset and
--- silently end up without an instance, and so that the split into modules stays
--- an internal matter.
 module Ouroboros.Consensus.Tracing
   ( module Ouroboros.Consensus.Tracing.BlockReplayProgress
   , module Ouroboros.Consensus.Tracing.ChainDB

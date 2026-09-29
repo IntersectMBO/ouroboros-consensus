@@ -70,7 +70,7 @@ tests =
     "Golden"
     [ goldenVsString
         "Era.Shelley.Render"
-        ($(getRelPath "tracing/golden") </> "era-shelley-render.golden")
+        ($(getRelPath "golden/tracing") </> "era-shelley-render.golden")
         (pure (report shelleyRender))
     ]
 
