@@ -81,6 +81,8 @@ tests =
              "truncateLeiosDbAfterSlot"
              [ testCase "drops the EBs announced after the slot, with their bodies" $
                  withFreshSQLiteFile test_truncateDropsEbsAfterSlot
+             , testCase "runs on the immutable partition, which has no ebsMissingTxs" $
+                 withTempLeiosDbPaths test_truncateImmutablePartition
              ]
          , testGroup
              "deleteDanglingTxs"
@@ -854,6 +856,14 @@ test_truncateDropsEbsAfterSlot volDbPath _immDbPath db = do
     droppedBody <- rwLookupEbBody con droppedHash
     droppedBody @?= []
 
+-- | The immutable schema lacks the volatile-only tables; the tooling that
+-- DBTruncater runs on both files must still work on it.
+test_truncateImmutablePartition :: FilePath -> FilePath -> IO ()
+test_truncateImmutablePartition volDbPath immDbPath = do
+  withLeiosDBSQLite nullTracer volDbPath immDbPath $ \_db -> pure ()
+  truncateLeiosDbAfterSlot immDbPath 10
+  deleteDanglingTxs immDbPath
+
 -- * File initialisation
 
 -- | Names of the tables and indexes in a database file.
@@ -879,11 +889,20 @@ test_schemaAtHandleCreation volDbPath immDbPath =
     vol <- schemaObjects volDbPath
     imm <- schemaObjects immDbPath
     forM_ [(vol, "vol"), (imm, "imm")] $ \(objs, file) ->
-      forM_ ["ebs", "ebTxs", "ebsMissingTxs", "txs", "idx_ebTxs_txHashBytes"] $ \name ->
+      forM_ ["ebs", "idx_ebs_ebHashBytes", "ebTxs", "txs"] $ \name ->
         assertBool (file <> " has " <> name) (name `elem` objs)
-    forM_ ["gcTxCandidates", "idx_ebs_sweepable", "idx_ebs_markedForGc", "idx_ebs_pinned"] $ \name -> do
-      assertBool ("vol has " <> name) (name `elem` vol)
-      assertBool ("imm lacks " <> name) (name `notElem` imm)
+    forM_
+      [ "ebsMissingTxs"
+      , "idx_ebsMissingTxs_ebHashBytes"
+      , "idx_ebTxs_txHashBytes"
+      , "gcTxCandidates"
+      , "idx_ebs_sweepable"
+      , "idx_ebs_markedForGc"
+      , "idx_ebs_pinned"
+      ]
+      $ \name -> do
+        assertBool ("vol has " <> name) (name `elem` vol)
+        assertBool ("imm lacks " <> name) (name `notElem` imm)
 
 -- | A file that exists without a schema, as a crash between creating the file
 -- and applying the schema leaves it.

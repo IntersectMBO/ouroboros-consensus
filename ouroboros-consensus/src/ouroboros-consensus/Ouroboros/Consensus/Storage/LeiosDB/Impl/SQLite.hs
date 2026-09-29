@@ -14,7 +14,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   , vacuumLeiosDb
 
     -- * SQL strings (re-exported for leios-schedule-gen)
-  , sql_schema
+  , sql_schema_vol
+  , sql_schema_imm
   , sql_insert_eb
   , sql_insert_ebBody
   , sql_insert_tx

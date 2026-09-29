@@ -28,23 +28,30 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 --
 -- For internal tooling.
 --
--- Note: this function works for both the volatile or the immutable appreciation,
---       as they share the same schema. It is the responsibility of the caller to
---       pass the right LeiosDB file.
+-- Note: this function works for both the volatile and the immutable partition
+--       files. The immutable one has no 'ebsMissingTxs' table (see
+--       'Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema.sql_schema_imm'),
+--       so the rows there are deleted only if the table exists.
 truncateLeiosDbAfterSlot :: HasCallStack => FilePath -> SlotNo -> IO ()
 truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
   withExistingLeiosDbFile dbPath $ \db ->
     -- One transaction, so a crash cannot leave an EB that is still announced
     -- but has no body.
-    dbWithTransactionAs "BEGIN IMMEDIATE" db $
-      dbExec db (fromString deletes)
+    dbWithTransactionAs "BEGIN IMMEDIATE" db $ do
+      hasMissingTxs <-
+        (/= 0)
+          <$> queryInt64
+            db
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ebsMissingTxs'"
+      dbExec db (fromString (deletes hasMissingTxs))
  where
-  deletes =
-    unlines
-      [ "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
-      , "DELETE FROM ebsMissingTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
-      , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
-      ]
+  deletes hasMissingTxs =
+    unlines $
+      ["DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"]
+        <> [ "DELETE FROM ebsMissingTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+           | hasMissingTxs
+           ]
+        <> ["DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"]
 
   -- The EBs whose bodies the truncation drops.
   --

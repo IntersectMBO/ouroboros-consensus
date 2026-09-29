@@ -60,8 +60,8 @@ openReadOnlyRawConnection dbPath = do
 --   if missing and apply their schemas.
 initialiseLeiosDbFiles :: HasCallStack => FilePath -> FilePath -> IO ()
 initialiseLeiosDbFiles volPath immPath = do
-  initialiseFile volPath (sql_schema <> sql_schema_gc)
-  initialiseFile immPath sql_schema
+  initialiseFile volPath sql_schema_vol
+  initialiseFile immPath sql_schema_imm
  where
   initialiseFile path ddl =
     bracket

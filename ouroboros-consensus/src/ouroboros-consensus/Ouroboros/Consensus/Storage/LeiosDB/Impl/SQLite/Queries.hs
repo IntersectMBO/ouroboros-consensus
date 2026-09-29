@@ -237,19 +237,17 @@ sql_copy_completeness =
   \WHERE e.ebHashBytes = ?1\n\
   \"
 
--- | Copy the EB's newest announcement row, with the canonical immutable
--- column values (@missingTxCount = -1@: complete and notified; @status = 2@:
--- copied).
+-- | Copy the EB's newest announcement row. Only the columns the immutable
+-- partition has ('sql_schema_imm'): completeness and GC status are
+-- volatile-only.
 --
--- TODO(geo2a): should not need to copy missingTxCount and status to immutable,
--- this is only relevant for the volatile.
 -- @OR IGNORE@: the mark that retires the pin is a separate volatile write, so
 -- a crash in between leaves the EB copied and still pinned, and the copier
 -- repeats the copy on the next start.
 sql_copy_insert_eb :: String
 sql_copy_insert_eb =
-  "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize, missingTxCount, status)\n\
-  \SELECT ebSlot, ebHashBytes, ebBytesSize, -1, 2 FROM vol.ebs\n\
+  "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize)\n\
+  \SELECT ebSlot, ebHashBytes, ebBytesSize FROM vol.ebs\n\
   \WHERE ebHashBytes = ?1\n\
   \ORDER BY ebSlot DESC LIMIT 1\n\
   \"
