@@ -83,6 +83,15 @@ benchmarks: true
 
 multi-repl: True
 
+-- The tools read the node configuration with cardano-config. Its main branch
+-- rather than the CHaP release, because the tools rely on changes not released
+-- yet; replace this with the CHaP release that carries them.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-config.git
+  tag: d6340b13b9c789441905f27d90984a6018bbe503
+  --sha256: sha256-diV4bf/cU0u0VNC6dMMe4Y/pPFI0s+MqxCIpzd9c+E8=
+
 import: cabal/asserts.cabal
 import: cabal/newer-ghcs.cabal
 
