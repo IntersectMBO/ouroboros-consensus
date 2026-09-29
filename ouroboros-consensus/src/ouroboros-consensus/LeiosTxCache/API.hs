@@ -46,6 +46,7 @@ import LeiosDemoTypes
   , SerializedEbBody (..)
   , TxHash
   , TxLocation (..)
+  , TxOffset
   , decodeLeiosEb
   , fetchArrivalEvicted
   , fetchArrivalExtra
@@ -79,15 +80,18 @@ data LeiosTxCache m a v b = LeiosTxCache
       EbHash ->
       b ->
       w ->
-      (w -> Int -> TxHash -> BytesSize -> w) ->
+      (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
       m (Maybe (LeiosTxCacheInsertBodySummary, w))
   -- ^ Record that we hold this EB's body, bumping the refcount of each tx it
-  -- references. In the same pass, fold a caller-supplied accumulator over the
-  -- referenced txs that are /not yet acquired/ (the "misses"): starting from the
-  -- nil @w@ and extending it with the snoc @w -> offset -> 'TxHash' -> 'BytesSize'
-  -- -> w@, where @offset@ is the tx's position in the body. Returns the summary
-  -- and the built @w@, or 'Nothing' when the EB is unannounced or its body is
-  -- already inserted (a no-op, so nothing is folded).
+  -- references. In the same pass, fold a caller-supplied accumulator over /every/
+  -- referenced tx: starting from the nil @w@ and extending it with the snoc @w ->
+  -- offset -> 'TxHash' -> 'BytesSize' -> 'Maybe' 'TxLocation' -> w@, where @offset@
+  -- is the tx's position in the body and the location is 'Just' iff some held EB
+  -- durably holds the tx's bytes ('setTxLocations'), i.e. it can serve a cross-EB
+  -- fill. The entry is already in hand for the refcount bump, so this location read
+  -- rides that pass rather than costing a second one. Returns the summary and the
+  -- built @w@, or 'Nothing' when the EB is unannounced or its body is already
+  -- inserted (a no-op, so nothing is folded).
   , lookupBody :: EbHash -> m (Maybe b)
   -- ^ The EB's body if we hold it (its 'BodyState' is 'BodyAlreadyInserted');
   -- 'Nothing' if the EB is untracked or only announced. Unlike a tx, an EB body
@@ -104,17 +108,16 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- ^ Has exclusive write-access
   , withLookupTx :: forall r. ((TxHash -> m (Maybe (Either a v))) -> m r) -> m r
   -- ^ Also holds the lock
-  , setTxLocations :: EbHash -> [(Int, TxHash)] -> m ()
+  , setTxLocations :: EbHash -> [(TxOffset, TxHash)] -> m ()
   -- ^ Advertise where these txs' DURABLE bytes live -- the given EB's rows at
   -- the given offsets -- for cross-EB fill. Call this on write confirmation
   -- only: a location must never name bytes that could still be lost. A tx the
   -- cache no longer tracks is skipped, never resurrected. First location wins.
-  , withLookupTxLocations ::
-      forall r.
-      ((TxHash -> m (Maybe TxLocation)) -> m r) -> m r
-  -- ^ Batch-resolve fill sources; holds the lock. A returned location may be
-  -- stale (the source swept, its ring slot reused): the LeiosDb fill guards
-  -- make that a no-op, so staleness costs a fetch, never corruption.
+  --
+  -- The read side is 'insertBody': the next body to reference a tx observes its
+  -- location in the same pass it bumps refcounts. A location so observed may be
+  -- stale (the source swept, its ring slot reused): the LeiosDb fill guards make
+  -- that a no-op, so staleness costs a fetch, never corruption.
   }
 
 -- | A body @b@ from which the referenced txs can be enumerated, each paired with

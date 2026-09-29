@@ -342,7 +342,7 @@ insertBody ::
   EbHash ->
   b ->
   w ->
-  (w -> Int -> TxHash -> BytesSize -> w) ->
+  (w -> TxOffset -> TxHash -> BytesSize -> Maybe TxLocation -> w) ->
   LeiosTxCacheIndex a v b ->
   (LeiosTxCacheIndex a v b, Maybe (LeiosTxCacheInsertBodySummary, w))
 insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState idx) of
@@ -375,22 +375,23 @@ insertBody loadCapacity ebh body nil snoc idx = case Map.lookup ebh (bodyState i
             )
         )
  where
-  -- Bump each tx's refcount and, in the same pass, classify its /prior/ state:
-  -- the counts feed the summary, and every not-yet-acquired tx (a "miss") is
-  -- snoc'd onto the caller's accumulator at its body offset ('nn'), so no second
-  -- traversal is needed.
+  -- Bump each tx's refcount and, in the same pass, classify its /prior/ state
+  -- (the counts feed the summary) and read its durable location, snoc'ing every
+  -- referenced tx onto the caller's accumulator at its body offset ('nn'). The
+  -- location is 'Just' iff a held EB owns the tx's bytes, so the fill lookup
+  -- needs no second traversal.
   bumpTx ((!nn, !tt, !aa, !vv, !w), ts) txh sz =
-    let (dt, da, dv, miss) = case Map.lookup txh ts of
-          Nothing -> (0, 0, 0, True) -- new: not yet tracked
-          Just (TxNotYetInserted _) -> (1, 0, 0, True) -- tracked, not acquired
-          Just (TxAlreadyInserted _ _) -> (1, 1, 0, False) -- acquired, not validated
-          Just (TxAlreadyValidated _ _) -> (1, 1, 1, False) -- acquired and validated
+    let (dt, da, dv) = case Map.lookup txh ts of
+          Nothing -> (0, 0, 0) -- new: not yet tracked
+          Just (TxNotYetInserted _) -> (1, 0, 0) -- tracked, not acquired
+          Just (TxAlreadyInserted _ _) -> (1, 1, 0) -- acquired, not validated
+          Just (TxAlreadyValidated _ _) -> (1, 1, 1) -- acquired and validated
         ts' =
           Map.alter
             (Just . maybe (TxNotYetInserted (MkRefCount 1)) (L.over txRefCountL incRefCount))
             txh
             ts
-        w' = if miss then snoc w nn txh sz else w
+        w' = snoc w nn txh sz (lookupTxLocation txh idx)
      in ((nn + 1, tt + dt, aa + da, vv + dv, w'), ts')
 
 -- | Record the payload of a fetched-but-not-yet-applied tx
@@ -443,7 +444,7 @@ lookupBody ebh idx = case Map.lookup ebh (bodyState idx) of
 -- the source EB and point each /tracked/ tx at it. The latest location wins --
 -- the newest source EB outlives older ones in both the ring and the db.
 setTxLocations ::
-  EbHash -> [(Int, TxHash)] -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
+  EbHash -> [(TxOffset, TxHash)] -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
 setTxLocations ebh offTxs idx =
   idx
     { locRing = Map.insert slot ebh (locRing idx)

@@ -231,7 +231,7 @@ withHarness acquired txs k = do
     void $ insertAnnouncement cache (pointSlotNo point) rbHash (pointEbHash point)
     -- The fold over the not-yet-acquired txs is what a fetch would use to build
     -- its request; here only the refcount bump matters, so it folds into ().
-    void $ insertBody cache (pointEbHash point) (serializeEbBody eb) () (\() _ _ _ -> ())
+    void $ insertBody cache (pointEbHash point) (serializeEbBody eb) () (\() _ _ _ _ -> ())
     -- Mark them acquired, as a fetch would -- but only the ones the caller asked
     -- for. A lookup that finds nothing must be tolerated exactly like one that
     -- finds an unapplied entry: a tx can reach the cache straight from the

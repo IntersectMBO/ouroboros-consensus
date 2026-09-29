@@ -107,14 +107,21 @@ newHashTableLeiosTxCache nshift k0 k1 = do
               Just BodyAlreadyInserted{} -> pure (st, Nothing)
               Just (BodyNotYetInserted rc) -> do
                 -- bump each tx's refcount and classify its prior state in one
-                -- pass; snoc every not-yet-acquired tx (@da == 0@, a "miss") onto
-                -- the caller's accumulator at its body offset (@nn@)
+                -- pass; snoc every referenced tx onto the caller's accumulator at
+                -- its body offset (@nn@), with its durable location if some held
+                -- EB owns its bytes -- the prior word 'bumpTx' returns already
+                -- carries it, so the fill lookup rides this pass.
                 (n, tracked, acquired, validated, w) <-
                   foldTxReferences
                     ( \acc txh sz -> do
                         (!nn, !tt, !aa, !vv, !w) <- acc
-                        (dt, da, dv) <- priorClass <$> bumpTx ht txh
-                        let w' = if da == 0 then snoc w nn txh sz else w
+                        mv <- bumpTx ht txh
+                        let (dt, da, dv) = priorClass mv
+                            mbLoc = do
+                              (ringIdx, off) <- valLoc =<< mv
+                              srcEb <- Map.lookup ringIdx (hsLocRing st)
+                              Just (MkTxLocation srcEb off)
+                            w' = snoc w nn txh sz mbLoc
                         pure (nn + 1, tt + dt, aa + da, vv + dv, w')
                     )
                     (pure (0, 0, 0, 0, nil))
@@ -157,15 +164,6 @@ newHashTableLeiosTxCache nshift k0 k1 = do
                   }
               , ()
               )
-      , withLookupTxLocations = \k ->
-          MVar.withMVar stateVar $ \st ->
-            k $ \txh -> do
-              mv <- HT.lookup ht (toKey txh)
-              pure $ do
-                w <- mv
-                (ringIdx, off) <- valLoc w
-                srcEb <- Map.lookup ringIdx (hsLocRing st)
-                Just (MkTxLocation srcEb off)
       }
 
 {-------------------------------------------------------------------------------

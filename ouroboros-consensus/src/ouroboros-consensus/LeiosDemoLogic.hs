@@ -198,7 +198,7 @@ recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
   -- accumulator and a no-op snoc.
   mbSummary <-
     fmap (fmap @Maybe (\(x, ()) -> x)) $
-      insertBody txCache point.pointEbHash (Leios.serializeEbBody eb) () (\() _ _ _ -> ())
+      insertBody txCache point.pointEbHash (Leios.serializeEbBody eb) () (\() _ _ _ _ -> ())
   -- A forged body holds its whole closure locally: every tx not already in the
   -- cache came from our own mempool (that is where the forge selected them). There
   -- is no actual mempool-pull stage, so attribute those txs -- @txsInEb - acquired@
@@ -934,21 +934,29 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
         -- fetch set -- all in-memory, no disk IO under the lock. Persistence and
         -- the mempool-tx copy happen after this lock (forked for received bodies;
         -- see 'persistAndIngest' below).
-        mbTxCacheMissesFromBody <-
+        -- The body-insert pass also hands back, per referenced tx, where its
+        -- bytes durably live if some recent EB holds them ('locatedTxs') -- the
+        -- cross-EB fill sources, read in the same locked pass that bumps the
+        -- refcounts rather than in a second consultation.
+        mbInsertBody <-
           insertBody
             txCache
             ebHash
             (Leios.serializeEbBody eb)
-            IntMap.empty
-            (\acc i missingTxh sz -> IntMap.insert i (missingTxh, sz) acc)
+            []
+            ( \acc off _txh _sz -> \case
+                Just loc -> (off, loc) : acc
+                Nothing -> acc
+            )
+        let locatedTxs = maybe [] snd mbInsertBody
         (bodyClass, mbBodyTxCacheSummary) <- case source of
           -- A forge holds its whole closure, so nothing is missing. Its txs are
           -- inserted (applied) by the subsequent 'processLeiosBlockTxs' call; the
           -- 'insertBody' above only served to register the cache entries.
           ForgedBlock{} -> pure (fetchArrivalGood ebBytesSize', Nothing)
-          ReceivedBlockFrom{} -> case mbTxCacheMissesFromBody of
+          ReceivedBlockFrom{} -> case mbInsertBody of
             -- 'BodyNotYetInserted': the announcement was present and we filled it.
-            Just (txCacheSummary, _ms) -> pure (fetchArrivalGood ebBytesSize', Just txCacheSummary)
+            Just (txCacheSummary, _located) -> pure (fetchArrivalGood ebBytesSize', Just txCacheSummary)
             -- Announcement absent (assumed present once, since evicted): the
             -- cache insert was a no-op, and there is no cache summary, so no
             -- 'TraceLeiosBodyHits'.
@@ -978,19 +986,12 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
           traceWith ktracer $
             TraceLeiosBodyHits point txCacheSummary (Map.size mempoolHits) (IntMap.size missedBoth)
         -- Misses whose bytes some recent EB durably holds: the body write
-        -- copies them locally ('cross-EB fill') instead of fetching them
-        -- again. Optimistic -- a source swept in the meantime fills nothing --
-        -- so the fetch set is decided at settle time from what actually
-        -- filled, not promised here.
-        fills <- withLookupTxLocations txCache $ \lookLoc ->
-          foldM
-            ( \acc (off, (txh, _sz)) ->
-                lookLoc txh <&> \case
-                  Just loc -> (off, loc) : acc
-                  Nothing -> acc
-            )
-            []
-            (IntMap.toDescList missedBoth)
+        -- copies them locally ('cross-EB fill') instead of fetching them again.
+        -- 'locatedTxs' came from the body-insert pass above; keep only the ones
+        -- the mempool cannot supply. Optimistic -- a source swept in the meantime
+        -- fills nothing -- so the fetch set is decided at settle time from what
+        -- actually filled, not promised here.
+        let fills = [ol | ol@(off, _loc) <- locatedTxs, off `IntMap.member` missedBoth]
         let !outstanding' = Leios.insertAcquiredEbBody ebHash outstandingCleaned
         pure (outstanding', (True, bodyClass, mempoolIngest, missedBoth, fills))
   void $ MVar.tryPutMVar readyVar ()

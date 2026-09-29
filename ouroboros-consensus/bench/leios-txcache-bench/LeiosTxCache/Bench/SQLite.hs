@@ -133,7 +133,6 @@ newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
               batchLookup stmt hashes
               pure r
           , setTxLocations = \_ebh _offTxs -> pure ()
-          , withLookupTxLocations = \k -> k (\_txh -> pure Nothing)
           }
   pure (handle, reopen)
 
@@ -173,5 +172,4 @@ newSQLiteLeiosTxCacheWith pragmas path = do
       , withLockedInsertAppliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()
       , withLookupTx = \k -> k lookupOne
       , setTxLocations = \_ebh _offTxs -> pure ()
-      , withLookupTxLocations = \k -> k (\_txh -> pure Nothing)
       }
