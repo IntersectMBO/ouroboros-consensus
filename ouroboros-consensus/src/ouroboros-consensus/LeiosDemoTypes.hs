@@ -1669,14 +1669,6 @@ jsonLeiosDb = \case
       [ "kind" .= Aeson.String "LeiosDbWriteJobDone"
       , "job" .= job
       ]
-  TraceLeiosDbCheckpoint took nLog nCkpt busy ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosDbCheckpoint"
-      , "seconds" .= (realToFrac took :: Double)
-      , "logFrames" .= nLog
-      , "checkpointedFrames" .= nCkpt
-      , "heldUpByReader" .= busy
-      ]
   TraceLeiosDbStats LeiosDbStats{volatileEbs, immutableEbs, walBytes} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosDbStats"
@@ -2018,7 +2010,6 @@ data LeiosKernelNS
   | LKNSDbEvicted
   | LKNSDbSweepError
   | LKNSDbCopyError
-  | LKNSDbCheckpoint
   | LKNSDbWriteAbandoned
   | LKNSDbWriteJobDone
   | LKNSCertifiedAndAnnounced
@@ -2056,7 +2047,6 @@ leiosKernelNSOf = \case
   TraceLeiosDb TraceLeiosDbEvicted{} -> LKNSDbEvicted
   TraceLeiosDb TraceLeiosDbGCError{} -> LKNSDbSweepError
   TraceLeiosDb TraceLeiosDbCopyError{} -> LKNSDbCopyError
-  TraceLeiosDb TraceLeiosDbCheckpoint{} -> LKNSDbCheckpoint
   TraceLeiosDb TraceLeiosDbWriteAbandoned{} -> LKNSDbWriteAbandoned
   TraceLeiosDb TraceLeiosDbWriteJobDone{} -> LKNSDbWriteJobDone
   TraceLeiosDb{} -> LKNSDb
@@ -2167,11 +2157,6 @@ leiosKernelNSInfo = \case
       LSWarning
       [("leiosDbWritesAbandoned", "LeiosDb: writes abandoned before being enqueued")]
   LKNSDbWriteJobDone -> LeiosNSInfo ["Db", "WriteJobDone"] LSDebug []
-  LKNSDbCheckpoint ->
-    LeiosNSInfo
-      ["Db", "Checkpoint"]
-      LSDebug
-      [("leiosDbCheckpoints", "LeiosDb: WAL checkpoints run by the writer")]
   LKNSCertifiedAndAnnounced -> LeiosNSInfo ["CertifiedAndAnnounced"] LSInfo []
   LKNSAnnouncementAccepted -> LeiosNSInfo ["AnnouncementAccepted"] LSInfo []
   LKNSFetchDecision -> LeiosNSInfo ["FetchDecision"] LSInfo []
@@ -2274,15 +2259,6 @@ traceLeiosKernelForHuman = \case
     "Leios DB evicted from the volatile partition: ebs=" <> showT evictedEbs
   TraceLeiosDb (TraceLeiosDbGCError reason) ->
     "Leios DB sweep pass failed (will be retried): " <> T.pack reason
-  TraceLeiosDb (TraceLeiosDbCheckpoint took nLog nCkpt busy) ->
-    "Leios DB checkpoint: "
-      <> showT took
-      <> " copied "
-      <> showT nCkpt
-      <> "/"
-      <> showT nLog
-      <> " frames"
-      <> (if busy then " (held up by a reader)" else "")
   TraceLeiosDb (TraceLeiosDbCopyError ebHash reason) ->
     "Leios DB copy failed for "
       <> T.pack ebHash
