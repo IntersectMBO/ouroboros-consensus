@@ -55,6 +55,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   ) where
 
 import Cardano.Ledger.BaseTypes
+import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
@@ -297,6 +298,7 @@ reapplyBlock leiosDb evs cfg b db = do
               readTables = fmap castLedgerTables . read tbs st . castLedgerTables
           res <-
             resolveAndApplyLeiosClosure
+              nullTracer
               leiosDb
               (configLedger (getExtLedgerCfg cfg))
               (pointEbHash announcedPoint)

@@ -55,6 +55,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , applyBlockToForker
   , resolveAndApplyLeiosClosure
   , resolveLeiosBlock
+  , TraceLeiosClosurePhases (..)
   , SuccessForkerAction (..)
   , ValidateArgs (..)
   , ValidateResult (..)
@@ -75,6 +76,7 @@ import Control.Monad.Except
   , runExcept
   , runExceptT
   )
+import Control.Tracer (Tracer (..), emit, nullTracer, traceWith)
 import Data.Bifunctor (first)
 import qualified Data.ByteString as Strict
 import Data.Foldable (Foldable (foldMap'))
@@ -436,6 +438,7 @@ validate evs args = do
 switch ::
   ( ApplyBlock l blk
   , MonadSTM m
+  , MonadMonotonicTime m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
@@ -461,6 +464,7 @@ switch leiosDb withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolv
       applyThenPushMany
         leiosDb
         (trace . StartedPushingBlockToTheLedgerDb start goal)
+        (Tracer . emit $ trace . TraceLeiosClosurePhasesEvent)
         evs
         cfg
         (NE.toList newBlocks)
@@ -509,6 +513,7 @@ applyBlockToForker ::
   forall m l blk.
   ( ApplyBlock l blk
   , MonadSTM m
+  , MonadMonotonicTime m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
@@ -522,7 +527,7 @@ applyBlockToForker ::
   blk ->
   m (Either (AnnLedgerError l blk) (l DiffMK))
 applyBlockToForker leiosDb mode evs cfg fo blk =
-  applyBlock leiosDb evs cfg ap fo noResolution
+  applyBlock nullTracer leiosDb evs cfg ap fo noResolution
  where
   ap = case mode of
     ValidateBlock -> ApplyVal blk
@@ -538,11 +543,13 @@ applyBlock ::
   forall m l blk.
   ( ApplyBlock l blk
   , MonadSTM m
+  , MonadMonotonicTime m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
+  Tracer m TraceLeiosClosurePhases ->
   LeiosDbReader m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -550,7 +557,7 @@ applyBlock ::
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) (l DiffMK))
-applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
+applyBlock phaseTracer leiosDb evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b -> do
     case blockLeiosCert b of
       Nothing ->
@@ -573,6 +580,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
             res <-
               resolveAndApplyLeiosClosure
+                phaseTracer
                 leiosDb
                 (configLedger (getExtLedgerCfg cfg))
                 (pointEbHash announcedPoint)
@@ -651,6 +659,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
           LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} <-
             withExceptT ExtValidationErrorLedger . ExceptT $
               resolveAndApplyLeiosClosure
+                phaseTracer
                 leiosDb
                 (configLedger (getExtLedgerCfg cfg))
                 (pointEbHash announcedPoint)
@@ -664,10 +673,10 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             Right blockDiff -> pure (prependDiffs lcaClosureDiff blockDiff)
   ReapplyRef r -> do
     b <- doResolveBlock r
-    applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
+    applyBlock phaseTracer leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
   ApplyRef r -> do
     b <- doResolveBlock r
-    applyBlock leiosDb evs cfg (ApplyVal b) fo doResolveBlock
+    applyBlock phaseTracer leiosDb evs cfg (ApplyVal b) fo doResolveBlock
  where
   withValues ::
     blk ->
@@ -683,11 +692,13 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
 applyThenPush ::
   ( ApplyBlock l blk
   , MonadSTM m
+  , MonadMonotonicTime m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
+  Tracer m TraceLeiosClosurePhases ->
   LeiosDbReader m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -695,8 +706,8 @@ applyThenPush ::
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) ())
-applyThenPush leiosDb evs cfg ap fo doResolve = do
-  eLerr <- applyBlock leiosDb evs cfg ap fo doResolve
+applyThenPush phaseTracer leiosDb evs cfg ap fo doResolve = do
+  eLerr <- applyBlock phaseTracer leiosDb evs cfg ap fo doResolve
   case eLerr of
     Left err -> pure (Left err)
     Right st -> Right <$> forkerPush fo st
@@ -705,6 +716,7 @@ applyThenPush leiosDb evs cfg ap fo doResolve = do
 applyThenPushMany ::
   ( ApplyBlock l blk
   , MonadSTM m
+  , MonadMonotonicTime m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   , HasLedgerTables (LedgerState blk)
@@ -712,18 +724,19 @@ applyThenPushMany ::
   ) =>
   LeiosDbReader m ->
   (Pushing blk -> m ()) ->
+  Tracer m TraceLeiosClosurePhases ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   [Ap m l blk] ->
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) ())
-applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = pushAndTrace aps
+applyThenPushMany leiosDb trace phaseTracer evs cfg aps fo doResolveBlock = pushAndTrace aps
  where
   pushAndTrace [] = pure $ Right ()
   pushAndTrace (ap : aps') = do
     trace $ Pushing . toRealPoint $ ap
-    res <- applyThenPush leiosDb evs cfg ap fo doResolveBlock
+    res <- applyThenPush phaseTracer leiosDb evs cfg ap fo doResolveBlock
     case res of
       Left err -> pure (Left err)
       Right () -> pushAndTrace aps'
@@ -950,12 +963,34 @@ data LeiosClosureApplied blk = LeiosClosureApplied
 
 -- | Resolve the closure of an EB identified by its 'EbHash' and
 -- apply it onto the given ledger state.
+-- | Per-phase timings for one closure resolve-and-apply, in milliseconds.
+--
+-- Diagnostic only. 'chain-sel-add-block' has no traced children, so a
+-- multi-second add gives no indication which of the four phases holds the
+-- time. Emitted once per closure apply so a slow add always yields a
+-- breakdown.
+data TraceLeiosClosurePhases = TraceLeiosClosurePhases
+  { lcpEbHash :: !EbHash
+  , lcpNumTxs :: !Int
+  , lcpResolveMs :: !Double
+  -- ^ Reading the EB closure from the Leios db.
+  , lcpReadValsMs :: !Double
+  -- ^ Reading the ledger tables for the whole closure key set.
+  , lcpApplyMs :: !Double
+  -- ^ Applying the closure txs to the parent ledger state.
+  , lcpDiffMs :: !Double
+  -- ^ Computing the closure diff.
+  }
+  deriving (Show, Eq, Generic)
+
 resolveAndApplyLeiosClosure ::
   forall m blk.
   ( Monad m
+  , MonadMonotonicTime m
   , ResolveLeiosBlock blk
   , HasLedgerTables (LedgerState blk)
   ) =>
+  Tracer m TraceLeiosClosurePhases ->
   LeiosDbReader m ->
   LedgerCfg (LedgerState blk) ->
   -- | The EB to resolve
@@ -967,28 +1002,47 @@ resolveAndApplyLeiosClosure ::
   -- | The base ledger state to apply the EB on top of.
   LedgerState blk EmptyMK ->
   m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
-resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
+resolveAndApplyLeiosClosure phaseTracer leiosDb lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
+  t0 <- getMonotonicTime
   closureTxs <-
     resolveLeiosClosure leiosDb ebHash <&> \case
       Left err -> error $ "resolveAndApplyLeiosClosure: failed to resolve closure " <> show err
       Right txs -> map snd txs
+  -- Forced before t1 so the read cost lands in this phase, not the next.
+  t1 <- length closureTxs `seq` getMonotonicTime
   -- UTXO-HD of the whole closure
   let !closureKeys = foldMap' leiosClosureTxKeySets closureTxs <> extraKeys
   closureVals <- readValues closureKeys
   let !lsBeforeEB = lsBase `withLedgerTables` closureVals
+  t2 <- getMonotonicTime
   -- apply the closure and return the result in case there was not errors
   let ledgerErrOrState = applyLeiosClosure lcfg closureTxs lsBeforeEB
   case ledgerErrOrState of
     Left !err -> pure $ Left err
     Right !lsAfterEB -> do
+      t3 <- getMonotonicTime
       let !lsDiff = calculateDifference lsBeforeEB lsAfterEB
+      let !diffs = trackingToDiffs lsDiff
+      t4 <- getMonotonicTime
+      traceWith phaseTracer $
+        TraceLeiosClosurePhases
+          { lcpEbHash = ebHash
+          , lcpNumTxs = length closureTxs
+          , lcpResolveMs = millis t1 t0
+          , lcpReadValsMs = millis t2 t1
+          , lcpApplyMs = millis t3 t2
+          , lcpDiffMs = millis t4 t3
+          }
       pure $
         Right $
           LeiosClosureApplied
             { lcaStateAfterEB = lsAfterEB
-            , lcaClosureDiff = trackingToDiffs lsDiff
+            , lcaClosureDiff = diffs
             }
+ where
+  millis :: Time -> Time -> Double
+  millis b a = realToFrac (diffTime b a) * 1000
 
 {-------------------------------------------------------------------------------
   Validation
@@ -1056,6 +1110,8 @@ data TraceValidateEvent blk
       (PushGoal blk)
       -- | Point which block we are about to push
       !(Pushing blk)
+  | -- | Per-phase timing of one Leios closure resolve-and-apply. Diagnostic.
+    TraceLeiosClosurePhasesEvent !TraceLeiosClosurePhases
   deriving (Show, Eq, Generic)
 
 {-------------------------------------------------------------------------------

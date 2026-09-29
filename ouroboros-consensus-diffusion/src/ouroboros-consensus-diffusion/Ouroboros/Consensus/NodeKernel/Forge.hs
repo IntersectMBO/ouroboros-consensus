@@ -758,6 +758,7 @@ partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg
         res <-
           pmTrace'Via (const ()) "resolve-and-apply-leios-closure" (Leios.prettyEbHash announcedPoint) $
             resolveAndApplyLeiosClosure
+              nullTracer
               leiosDbReader
               (configLedger cfg)
               announcedPoint
