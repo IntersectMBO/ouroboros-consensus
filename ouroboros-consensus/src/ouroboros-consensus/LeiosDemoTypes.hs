@@ -692,12 +692,15 @@ summarizeDecisions decs =
  where
   reqs = concatMap toList (Map.elems decs)
 
+-- | A transaction's offset (index) into an EB body.
+type TxOffset = Int
+
 -- | Where a tx's durable bytes live: an EB that references it, and the offset
 -- of its row there. Recorded in the LeiosTxCache on write confirmation, read
 -- back for cross-EB fill: a later EB referencing the same tx copies the bytes
 -- locally instead of re-fetching. Staleness is harmless -- the fill's guards
 -- make a vanished source a no-op and the tx stays in the fetch set.
-data TxLocation = MkTxLocation !EbHash !Int
+data TxLocation = MkTxLocation !EbHash !TxOffset
   deriving (Eq, Show)
 
 -- | Record that the body's bytes are in hand and its write is in flight. The

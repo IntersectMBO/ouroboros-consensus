@@ -986,7 +986,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
           foldM
             ( \acc (off, (txh, _sz)) ->
                 lookLoc txh <&> \case
-                  Just (Leios.MkTxLocation srcEb srcOff) -> (off, srcEb, srcOff) : acc
+                  Just loc -> (off, loc) : acc
                   Nothing -> acc
             )
             []
@@ -1455,23 +1455,16 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
   -- ingest it: the jobPool read and 'completeTxRequest' aren't atomic across
   -- threads. Harmless --- the DB insert is idempotent and the cache buckets each
   -- tx by its prior state in one locked pass, tolerating duplicates.
-  adjust :: (LeiosOutstanding pid -> LeiosOutstanding pid) -> m ()
-  adjust f = MVar.modifyMVar_ outstandingVar (pure . f)
-
-  -- The EB whose rows this call fills; every source names it.
-  ingestPoint :: LeiosPoint
-  ingestPoint = case source of
-    ForgedTxs point _ _ -> point
-    MempoolTxs point _ -> point
-    ReceivedTxsFrom _ (MkLeiosBlockTxsRequest point _) _ -> point
-
+  --
   -- 'onDurable' runs once the txs are in the LeiosDb, 'onLost' if they never get
   -- there; exactly one of them runs.
   ingestAcquiredTxs ::
     RelativeTime ->
     WhetherApplied ->
     [(Int, TxHash, BS.ByteString)] ->
+    -- onDurable
     m () ->
+    -- onLost
     m () ->
     m Leios.FetchArrivalBytes
   ingestAcquiredTxs now applied toIngest onDurable onLost = do
@@ -1504,6 +1497,16 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
       Unapplied ->
         withLockedInsertUnappliedTx txCache $ \w0 step ->
           foldM (\w (_off, txh, bs) -> step w txh (fromIntegral (BS.length bs)) ()) w0 toIngest
+
+  adjust :: (LeiosOutstanding pid -> LeiosOutstanding pid) -> m ()
+  adjust f = MVar.modifyMVar_ outstandingVar (pure . f)
+
+  -- The EB whose rows this call fills; every source names it.
+  ingestPoint :: LeiosPoint
+  ingestPoint = case source of
+    ForgedTxs point _ _ -> point
+    MempoolTxs point _ -> point
+    ReceivedTxsFrom _ (MkLeiosBlockTxsRequest point _) _ -> point
 
 -- | Whether ingested txs are tagged applied (from our forge's validated mempool)
 -- or unapplied (fetched from a peer).

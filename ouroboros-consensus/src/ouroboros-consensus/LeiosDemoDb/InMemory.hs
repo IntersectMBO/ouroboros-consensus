@@ -42,7 +42,9 @@ import LeiosDemoDb.Common
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , LocalFill
   , Promise (..)
+  , TxOffset
   )
 import LeiosDemoException
   ( LeiosDbException (LeiosDbWriteException, submittedFrom, writeFailure, writeJob)
@@ -54,6 +56,7 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
+  , TxLocation (..)
   , encodeLeiosEbSize
   , leiosEbBodyItems
   )
@@ -221,8 +224,8 @@ imInsertEbBody ::
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   LeiosEb ->
-  [(Int, EbHash, Int)] ->
-  m (CompletedEbs, [Int])
+  [LocalFill] ->
+  m (CompletedEbs, [TxOffset])
 imInsertEbBody stateVar notificationChan point eb fills = do
   let items = leiosEbBodyItems eb
       ebBytesSize = encodeLeiosEbSize eb
@@ -263,7 +266,7 @@ imInsertEbBody stateVar notificationChan point eb fills = do
         accepted =
           IntMap.fromList
             [ (dstOff, bytes)
-            | (dstOff, srcEb, srcOff) <- fills
+            | (dstOff, MkTxLocation srcEb srcOff) <- fills
             , Just e <- [IntMap.lookup dstOff declared]
             , not (IntMap.member dstOff held)
             , Just srcE <-
@@ -308,7 +311,7 @@ imInsertTxs ::
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
-  [(Int, ByteString)] ->
+  [(TxOffset, ByteString)] ->
   m CompletedEbs
 imInsertTxs stateVar notificationChan point offBytes = atomically $ do
   let ebHash = pointEbHash point

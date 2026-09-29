@@ -15,6 +15,7 @@ module LeiosDemoDb
   , allocateWriter
   , awaitAll
   , CompletedEbs
+  , LocalFill
   , TraceLeiosDb (..)
 
     -- * In-memory implementation
@@ -49,6 +50,7 @@ import LeiosDemoDb.Common
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , LocalFill
   , Promise (..)
   , allocateHandle
   , allocateReader

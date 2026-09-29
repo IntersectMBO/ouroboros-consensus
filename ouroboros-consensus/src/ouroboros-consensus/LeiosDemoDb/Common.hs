@@ -23,6 +23,8 @@ module LeiosDemoDb.Common
   , withWriter
   , allocateWriter
   , CompletedEbs
+  , TxOffset
+  , LocalFill
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
@@ -38,6 +40,8 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint
   , TxHash
+  , TxLocation
+  , TxOffset
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
@@ -105,7 +109,7 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Record an announced EB's point and expected size.
   , writeEbBody ::
       HasCallStack =>
-      LeiosPoint -> LeiosEb -> [(Int, EbHash, Int)] -> m (Promise m (CompletedEbs, [Int]))
+      LeiosPoint -> LeiosEb -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
   -- ^ Persist an EB body, and fill what it can from local bytes: each
   --   @(offset, source EB, source offset)@ names a row of another EB durably
   --   holding the same tx (the LeiosTxCache's tx locations), copied in the
@@ -114,7 +118,7 @@ data LeiosDbWriter m = LeiosDbWriter
   --   fetchable, decided by the caller from this return.
   , writeTxs ::
       HasCallStack =>
-      LeiosPoint -> [(Int, ByteString)] -> m (Promise m CompletedEbs)
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
   -- ^ Persist tx bodies for one EB, keyed by their offset into its body.
   --
   --   Bytes are owned by the referencing EB (stored per @(ebHash, txOffset)@,
@@ -140,6 +144,10 @@ awaitAll = traverse_ await
 
 -- | EBs whose tx closure became complete as a result of a write.
 type CompletedEbs = [LeiosPoint]
+
+-- | A cross-EB fill: fill the EB's row at 'TxOffset' from the tx's durable
+-- 'TxLocation' in another EB. See 'writeEbBody'.
+type LocalFill = (TxOffset, TxLocation)
 
 data LeiosEbNotification
   = AcquiredEb LeiosPoint BytesSize

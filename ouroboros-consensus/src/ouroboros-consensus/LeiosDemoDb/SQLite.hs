@@ -94,7 +94,9 @@ import LeiosDemoDb.Common
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , LocalFill
   , Promise (..)
+  , TxOffset
   )
 import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..), throwLeiosDbException)
@@ -104,6 +106,7 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
+  , TxLocation (..)
   , encodeLeiosEbSize
   , leiosEbBodyItems
   , leiosEbTxs
@@ -999,8 +1002,8 @@ closeChecked db =
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
   = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
-  | WriteEbBody !LeiosPoint !LeiosEb ![(Int, EbHash, Int)] !(WriteResult (CompletedEbs, [Int]))
-  | WriteTxs !LeiosPoint ![(Int, ByteString)] !(WriteResult CompletedEbs)
+  | WriteEbBody !LeiosPoint !LeiosEb ![LocalFill] !(WriteResult (CompletedEbs, [TxOffset]))
+  | WriteTxs !LeiosPoint ![(TxOffset, ByteString)] !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
@@ -1485,8 +1488,8 @@ sqlInsertEbBody ::
   (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
   LeiosEb ->
-  [(Int, EbHash, Int)] ->
-  IO (CompletedEbs, [Int])
+  [LocalFill] ->
+  IO (CompletedEbs, [TxOffset])
 sqlInsertEbBody tracer conn notify point eb fills = do
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
@@ -1511,7 +1514,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     -- vanished source changes nothing and the offset stays missing.
     filledOffs <-
       foldM
-        ( \acc (dstOff, MkEbHash srcHash, srcOff) -> do
+        ( \acc (dstOff, MkTxLocation (MkEbHash srcHash) srcOff) -> do
             useStmt stFillFromLocal $ do
               dbBindBlob stFillFromLocal 1 point.pointEbHash.ebHashBytes
               dbBindInt64 stFillFromLocal 2 (fromIntegral dstOff)
@@ -1575,7 +1578,7 @@ sqlInsertTxs ::
   Conn ->
   (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
-  [(Int, ByteString)] ->
+  [(TxOffset, ByteString)] ->
   IO CompletedEbs
 sqlInsertTxs _tracer conn notify point offBytes = do
   completed <- dbWithWriteTransaction conn $ do
