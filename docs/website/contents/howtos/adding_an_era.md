@@ -89,7 +89,16 @@ be adding is the Alonzo era, which comes after the Mary era.
   add the extra arguments needed for `protocolInfoCardano` to the
   `ProtocolCardano` constructor. Update `protocolInfo` accordingly.
 
-* In `Cardano.Node.Types`, add a field for the new era into the `NodeHardForkProtocolConfiguration` record.
+* In `cardano-config`, add a `Test<Era>HardForkAtEpoch` field for the new era to
+  the `TestingConfiguration` record, and in `Cardano.Tools.Config`, map it onto
+  the new era's trigger in `mkHardForkTriggers`.
+
+  The testing keys live under `Configuration.TestingConfig` in the current
+  configuration format. `TestEnableDevelopmentHardForkEras` is gone: its
+  replacement is `ExperimentalHardForksEnabled`, which also requires a
+  `DijkstraGenesisFile` and a `DijkstraGenesisHash` when it is true. A
+  configuration that still sets the old key gets an "unrecognised key" warning,
+  and the experimental era stays off.
 
 ### CDDLs
 
