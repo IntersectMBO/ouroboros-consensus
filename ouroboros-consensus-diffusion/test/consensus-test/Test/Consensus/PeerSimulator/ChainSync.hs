@@ -117,6 +117,7 @@ basicChainSyncClient
           CSClient.historicityCheck = HistoricityCheck.noCheck
         , CSClient.getDiffusionPipeliningSupport = DiffusionPipeliningOn
         , CSClient.leiosMsgRollForwardCallback = \_ _ _ -> pure ()
+        , CSClient.leiosJumpAcceptedCallback = \_ -> pure ()
         }
       CSClient.DynamicEnv
         { CSClient.version = maxBound

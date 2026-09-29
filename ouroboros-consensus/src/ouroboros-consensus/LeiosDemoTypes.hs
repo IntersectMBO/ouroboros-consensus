@@ -70,7 +70,7 @@ import Cardano.Ledger.Dijkstra.PParams
   , ppLeiosVotePeriodLengthL
   )
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
-import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
+import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (Origin), withOrigin)
 import Cardano.Slotting.Time (RelativeTime, SlotLength, slotLengthToMillisec)
 import Codec.Serialise (decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
@@ -481,6 +481,15 @@ data LeiosPeerVars m = MkLeiosPeerVars
   -- A second, different claim for one election is misbehaviour and costs the
   -- peer its connection; see 'LeiosDemoLogic.noteCertificationClaim'. Pruned
   -- with the immutable tip, like the rest of the per-election state.
+  , maxAcceptedJumpSlot :: !(StrictTVar m (WithOrigin SlotNo))
+  -- ^ The newest slot this peer has accepted a ChainSync jump through.
+  --
+  -- Each jump carries the dynamo's whole candidate fragment rather than the
+  -- part since the previous jump, so this is what lets a reader skip the
+  -- overlap. It only advances while one peer holds the dynamo role, since a
+  -- dynamo may not roll back before the last jump it requested.
+  --
+  -- Maintaining a jumper's Leios offers is what motivates recording it.
   , requestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
   -- ^ written to by the fetch logic and the LeiosFetch client
   --
@@ -502,8 +511,16 @@ newLeiosPeerVars :: IOLike m => IsBigLedgerPeer -> m (LeiosPeerVars m)
 newLeiosPeerVars whetherBigLedgerPeer = do
   offerings <- MVar.newMVar Map.empty
   certificationClaims <- MVar.newMVar Map.empty
+  maxAcceptedJumpSlot <- StrictSTM.newTVarIO Origin
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
-  pure MkLeiosPeerVars{whetherBigLedgerPeer, offerings, certificationClaims, requestsToSend}
+  pure
+    MkLeiosPeerVars
+      { whetherBigLedgerPeer
+      , offerings
+      , certificationClaims
+      , maxAcceptedJumpSlot
+      , requestsToSend
+      }
 
 -- | Main data structure used in the Leios fetching logic.
 --

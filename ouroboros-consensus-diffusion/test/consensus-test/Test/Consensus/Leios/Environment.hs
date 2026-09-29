@@ -25,6 +25,7 @@
 -- say --- that it never delivers.
 module Test.Consensus.Leios.Environment
   ( PeerEnv (..)
+  , WhetherToAwaitAtTip (..)
   , announceEb
   , connectPeer
   , heardBodyOffers
@@ -34,6 +35,7 @@ module Test.Consensus.Leios.Environment
   , heardOffers
   , heardUnannouncedOffers
   , newPeerEnv
+  , setAwaitAtTip
   , offerEb
   , offerEbTxs
   , plantEb
@@ -89,17 +91,22 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.Block (Tip)
 import Ouroboros.Network.Channel (createConnectedChannels)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Context (ResponderContext (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Driver.Simple (runPeer, runPipelinedPeer)
-import Ouroboros.Network.Mock.Chain (Chain)
+import Ouroboros.Network.Mock.Chain (Chain, ChainUpdate (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import Ouroboros.Network.Mock.ProducerState
   ( ChainProducerState (..)
+  , findFirstPoint
+  , followerInstruction
   , initChainProducerState
+  , initFollower
   , switchFork
+  , updateFollower
   )
 import Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
 import Ouroboros.Network.Protocol.BlockFetch.Server
@@ -109,10 +116,13 @@ import Ouroboros.Network.Protocol.BlockFetch.Server
   , blockFetchServerPeer
   )
 import Ouroboros.Network.Protocol.BlockFetch.Type (ChainRange (..))
-import Ouroboros.Network.Protocol.ChainSync.Examples
-  ( chainSyncServerExample
+import Ouroboros.Network.Protocol.ChainSync.Server
+  ( ChainSyncServer (..)
+  , ServerStIdle (..)
+  , ServerStIntersect (..)
+  , ServerStNext (..)
+  , chainSyncServerPeer
   )
-import Ouroboros.Network.Protocol.ChainSync.Server (chainSyncServerPeer)
 import Ouroboros.Network.Protocol.KeepAlive.Server
   ( KeepAliveServer (..)
   , keepAliveServerPeer
@@ -132,6 +142,9 @@ data PeerEnv m = PeerEnv
   , peServeThrough :: StrictTVar m (Point Blk)
   -- ^ The last block of 'peChain' this peer hands over; see
   -- 'serveChainThrough'.
+  , peAwaitAtTip :: PlainSTM.StrictTVar m WhetherToAwaitAtTip
+  -- ^ What this peer does once the node holds every header it has; see
+  -- 'setAwaitAtTip'.
   , peEbs :: StrictTVar m (Map EbHash (LeiosEb, Map TxHash BS.ByteString))
   , peNotifications :: PlainSTM.StrictTVar m [LeiosNotification]
   -- ^ What this peer has yet to say over LeiosNotify, in order.
@@ -150,10 +163,20 @@ data PeerEnv m = PeerEnv
 type LeiosNotification =
   Notify.Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle
 
+-- | See 'setAwaitAtTip'.
+data WhetherToAwaitAtTip
+  = -- | Send @MsgAwaitReply@, as a real peer does.
+    AwaitAtTip
+  | -- | Say nothing, leaving the node's request unanswered until this peer's
+    -- chain grows.
+    StayQuietAtTip
+  deriving (Eq, Show)
+
 newPeerEnv :: IOSim s (PeerEnv (IOSim s))
 newPeerEnv = do
   peChain <- PlainSTM.newTVarIO (initChainProducerState Chain.Genesis)
   peServeThrough <- newTVarIO GenesisPoint
+  peAwaitAtTip <- PlainSTM.newTVarIO AwaitAtTip
   peEbs <- newTVarIO Map.empty
   peNotifications <- PlainSTM.newTVarIO []
   peHeard <- PlainSTM.newTVarIO []
@@ -162,6 +185,7 @@ newPeerEnv = do
     PeerEnv
       { peChain
       , peServeThrough
+      , peAwaitAtTip
       , peEbs
       , peNotifications
       , peHeard
@@ -207,6 +231,15 @@ serveChainThrough PeerEnv{peChain, peServeThrough} through chain =
   atomically $ do
     PlainSTM.modifyTVar peChain $ switchFork chain
     writeTVar peServeThrough through
+
+-- | Choose what this peer does once the node holds every header it has.
+--
+-- ChainSync jumping disengages a peer that says it has no more headers, and
+-- every peer here runs out almost at once, so a test that needs CSJ to
+-- still be steering the node when something else happens sets
+-- 'StayQuietAtTip'.
+setAwaitAtTip :: PeerEnv (IOSim s) -> WhetherToAwaitAtTip -> IOSim s ()
+setAwaitAtTip PeerEnv{peAwaitAtTip} = atomically . PlainSTM.writeTVar peAwaitAtTip
 
 -- | Have this peer announce, over LeiosNotify, the endorser block this header
 -- announces.
@@ -372,7 +405,7 @@ connectPeer nut registry addr penv = do
     void $
       runPeer (sayTracer ("cs " <> show addr)) (NTN.cChainSyncCodec codecs) csServer $
         chainSyncServerPeer $
-          chainSyncServerExample () (peChain penv) getHeader
+          chainSyncServerOf penv
 
   fork ("BlockFetch client " <> show addr) $
     void $
@@ -507,6 +540,82 @@ blockFetchServerOf penv = go
 
   holds p = any ((== p) . blockPoint)
 
+-- | Serves this peer's chain, as @chainSyncServerExample@ does, except that
+-- reaching the tip need not be announced; see 'setAwaitAtTip'.
+chainSyncServerOf ::
+  PeerEnv (IOSim s) ->
+  ChainSyncServer (Header Blk) (Point Blk) (Tip Blk) (IOSim s) ()
+chainSyncServerOf PeerEnv{peChain, peAwaitAtTip} =
+  ChainSyncServer $ idle <$> newFollower
+ where
+  idle r =
+    ServerStIdle
+      { recvMsgRequestNext = handleRequestNext r
+      , recvMsgFindIntersect = handleFindIntersect r
+      , recvMsgDoneClient = pure ()
+      }
+
+  idle' = ChainSyncServer . pure . idle
+
+  -- The @Right@ is what puts @MsgAwaitReply@ on the wire. Blocking first and
+  -- answering @Left@ sends the roll-forward alone, whenever it comes.
+  handleRequestNext r = do
+    tryReadChainUpdate r >>= \case
+      Just update -> pure $ Left $ sendNext r update
+      Nothing -> do
+        -- This blocks on the flag as well as on the chain, so telling a peer
+        -- that is already waiting here to announce its tip wakes it.
+        mbUpdate <- atomically $ do
+          PlainSTM.readTVar peAwaitAtTip >>= \case
+            AwaitAtTip -> pure Nothing
+            StayQuietAtTip -> Just <$> awaitInstruction r
+        pure $ case mbUpdate of
+          Just update -> Left $ sendNext r update
+          Nothing -> Right $ sendNext r <$> readChainUpdate r
+
+  sendNext r (tip, update) = case update of
+    AddBlock blk -> SendMsgRollForward (getHeader blk) tip (idle' r)
+    RollBack point -> SendMsgRollBackward point tip (idle' r)
+
+  handleFindIntersect r points = do
+    (mbPoint, tip) <- atomically $ do
+      cps <- PlainSTM.readTVar peChain
+      case findFirstPoint points cps of
+        Nothing -> pure (Nothing, tipOf cps)
+        Just point -> do
+          let cps' = updateFollower r point cps
+          PlainSTM.writeTVar peChain cps'
+          pure (Just point, tipOf cps')
+    pure $ case mbPoint of
+      Just point -> SendMsgIntersectFound point tip (idle' r)
+      Nothing -> SendMsgIntersectNotFound tip (idle' r)
+
+  newFollower = atomically $ do
+    cps <- PlainSTM.readTVar peChain
+    let (cps', r) = initFollower GenesisPoint cps
+    PlainSTM.writeTVar peChain cps'
+    pure r
+
+  tryReadChainUpdate r = atomically $ do
+    cps <- PlainSTM.readTVar peChain
+    case followerInstruction r cps of
+      Nothing -> pure Nothing
+      Just (update, cps') -> do
+        PlainSTM.writeTVar peChain cps'
+        pure $ Just (tipOf cps', update)
+
+  readChainUpdate = atomically . awaitInstruction
+
+  awaitInstruction r = do
+    cps <- PlainSTM.readTVar peChain
+    case followerInstruction r cps of
+      Nothing -> retry
+      Just (update, cps') -> do
+        PlainSTM.writeTVar peChain cps'
+        pure (tipOf cps', update)
+
+  tipOf = Chain.headTip . chainState
+
 -- | Answers a request for an endorser block, or for its closure's
 -- transactions, blocking until this peer holds it.
 leiosFetchHandlerOf ::
@@ -596,7 +705,7 @@ peerApps nut =
     NTN.noByteLimits
     (\_ -> ProtocolTimeLimitsWithRnd $ \_state -> (waitForever,))
     CSClient.ChainSyncLoPBucketDisabled
-    CSClient.CSJDisabled
+    (nutCsjConfig nut)
     nullMetric
     (nutHandlers nut)
 
