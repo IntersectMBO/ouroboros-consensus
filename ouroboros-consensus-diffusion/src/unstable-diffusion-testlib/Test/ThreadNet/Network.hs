@@ -1427,7 +1427,10 @@ directedEdgeInner
                       "ChainSync"
                       (\_s _ -> RestartChainSyncTerminated)
                       (\_s () -> RestartChainSyncTerminated)
-                      -- TODO: ThreadNet currently doesn't start up certificate object diffusion, so we pass PerasUnsupported to avoid waiting indefinitely.
+                      -- TODO: ThreadNet currently doesn't start up certificate
+                      -- object diffusion, so we pass PerasUnsupported to avoid
+                      -- waiting indefinitely.
+                      -- See https://github.com/tweag/cardano-peras/issues/303.
                       (\a v e c -> NTN.aChainSyncClient a PerasUnsupported v e c)
                       NTN.aChainSyncServer
                       chainSyncMiddle
