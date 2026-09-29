@@ -9,6 +9,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -32,10 +33,12 @@ import Cardano.Ledger.Api.Scripts (AnyEraScript)
 import Cardano.Ledger.Babbage.Rules (BabbageUtxoPredFailure, BabbageUtxowPredFailure)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes (Mismatch (..), activeSlotLog, strictMaybeToMaybe)
+import Cardano.Ledger.Binary (serialize')
 import Cardano.Ledger.Chain
 import Cardano.Ledger.Conway.Governance (govActionIdToText)
 import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Core as Ledger
+import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Hashes as Hashes
 import Cardano.Ledger.Shelley.API
@@ -67,7 +70,6 @@ import qualified Data.Set.NonEmpty as NonEmptySet
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text.Encoding
-import Ouroboros.Consensus.Ledger.SupportsMempool (txId)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import qualified Ouroboros.Consensus.Protocol.Praos.Common as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraosCannotForge (..))
@@ -88,8 +90,6 @@ import Ouroboros.Consensus.Tracing.Render (renderTxId)
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Network.Block (SlotNo (..), blockHash, blockNo, blockSlot)
 import Ouroboros.Network.Point (WithOrigin, withOriginToMaybe)
-
-{- HLINT ignore "Use :" -}
 
 textShow :: Show a => a -> Text
 textShow = Text.pack . show
@@ -118,10 +118,13 @@ instance
   ) =>
   LogFormatting (GenTx (ShelleyBlock protocol era))
   where
-  forMachine dtal tx =
+  forMachine dtal (Ouroboros.Consensus.Shelley.Ledger.ShelleyTx txid tx) =
     mconcat $
-      ("txid" .= (Text.take 8 . renderTxId $ txId tx))
-        : ["tx" .= condense tx | dtal == DDetailed]
+      ("txid" .= (Text.take 8 $ renderTxId @(ShelleyBlock protocol era) $ ShelleyTxId txid))
+        -- We want to emit only the CBOR hex of the tx, not the decoded tx itself.
+        : [ "tx" .= Text.Encoding.decodeLatin1 (B16.encode (serialize' (SL.eraProtVerLow @era) tx))
+          | dtal == DDetailed
+          ]
 
 kesPeriodValue :: KESPeriod -> Value
 kesPeriodValue (KESPeriod period) = toJSON period

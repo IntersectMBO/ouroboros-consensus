@@ -16,20 +16,24 @@ import Cardano.Chain.Block
   , delegationCertificate
   )
 import Cardano.Chain.Byron.API (ApplyMempoolPayloadErr (..))
+import qualified Cardano.Chain.Byron.API as CC
 import Cardano.Chain.Delegation (delegateVK)
 import Cardano.Crypto.Signing (VerificationKey)
 import Cardano.Logging
 import Data.Aeson (Value (String), (.=))
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Base16 as B16
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text.Encoding
 import Ouroboros.Consensus.Block (Header)
 import Ouroboros.Consensus.Block.EBB (fromIsEBB)
 import Ouroboros.Consensus.Byron.Ledger
   ( ByronBlock (..)
   , ByronOtherHeaderEnvelopeError (..)
   , byronHeaderRaw
+  , toMempoolPayload
   )
 import Ouroboros.Consensus.Byron.Ledger.Inspect
   ( ByronLedgerUpdate (..)
@@ -41,8 +45,6 @@ import Ouroboros.Consensus.Protocol.PBFT (PBftTiebreakerView (..))
 import Ouroboros.Consensus.Tracing.Render (renderTxId)
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Network.Block (blockHash, blockNo, blockSlot)
-
-{- HLINT ignore "Use :" -}
 
 textShow :: Show a => a -> Text
 textShow = Text.pack . show
@@ -127,7 +129,11 @@ instance LogFormatting (GenTx ByronBlock) where
   forMachine dtal tx =
     mconcat $
       ("txid" .= (Text.take 8 . renderTxId $ txId tx))
-        : ["tx" .= condense tx | dtal == DDetailed]
+        -- We want to emit only the CBOR hex of the tx, not the decoded tx itself.
+        : [ "tx"
+              .= Text.Encoding.decodeLatin1 (B16.encode (CC.mempoolPayloadRecoverBytes (toMempoolPayload tx)))
+          | dtal == DDetailed
+          ]
 
 instance LogFormatting ChainValidationError where
   forMachine _dtal ChainValidationBoundaryTooLarge =
