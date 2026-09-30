@@ -28,10 +28,18 @@ import Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
 import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isJust)
+import qualified Data.Set.NonEmpty as NESet
+import Data.Word (Word64)
 import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint (..)
   , blockRealPoint
+  )
+import Ouroboros.Consensus.Block.SupportsPeras
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
@@ -44,7 +52,9 @@ import Ouroboros.Consensus.Storage.Common
   ( StreamFrom (..)
   , StreamTo (..)
   )
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB as PerasImmutableCertDB
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint, genesisPoint)
@@ -110,6 +120,26 @@ tests =
         , testGroup
             "Empty slot, returns block at next filled slot"
             [testCase "system" $ runSystemIO waitForImmutableBlock_emptySlot]
+        ]
+    , testGroup
+        "PerasImmutableCertDB handoff"
+        [ testCase "canonical certificate is archived" $
+            runSystemIO perasCanonicalCertArchived
+        , testCase "all certificates for one immutable block are archived" $
+            runSystemIO perasAllCertsForBlockArchived
+        , testCase "certificate for a losing fork is not archived" $
+            runSystemIO perasLosingForkCertNotArchived
+        , testCase "persist-and-GC retains the historical certificate" $
+            runSystemIO perasPersistThenGCRetainsCert
+        , testCase "certificate older than the immutable tip is ignored" $
+            runSystemIO perasLateCertIgnored
+        ]
+    , testGroup
+        "Peras chain selection"
+        [ testCase "late certificate causes a density-reducing rollback" $
+            runSystemIOWithK
+              (SecurityParam $ knownNonZeroBounded @20)
+              perasBoostInducedDensityReduction
         ]
     , testGroup
         "Interaction of ImmutableDB, wiping the VolatileDB and ledger state snapshots"
@@ -356,6 +386,214 @@ updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot = do
  where
   fork0 = TestBody 1 True Nothing
 
+-- | A certificate known while its target is volatile is copied once that
+-- target becomes part of the canonical immutable chain.
+perasCanonicalCertArchived :: SystemM TestBlock IO ()
+perasCanonicalCertArchived = do
+  b1 <- addBlock $ firstBlock 0 (body 0)
+  b2 <- addBlock $ mkNextBlock b1 1 (body 0)
+  let cert = mkHistoricalCert 1 b1 1
+  void $ addTestPerasCert cert
+  _b3 <- addBlock $ mkNextBlock b2 2 (body 0)
+
+  before <- getHistoricalCertsAfter (PerasRoundNo 0) 10
+  assertEqual [] before "Certificate was archived before the block was copied"
+
+  persistBlks
+
+  after <- getHistoricalCertsAfter (PerasRoundNo 0) 10
+  assertEqual [cert] after "Certificate was not archived with its immutable block"
+ where
+  body forkNo = TestBody forkNo True Nothing
+
+-- | Certificates from distinct rounds can boost the same block; all of them
+-- must survive the handoff.
+perasAllCertsForBlockArchived :: SystemM TestBlock IO ()
+perasAllCertsForBlockArchived = do
+  b1 <- addBlock $ firstBlock 0 (body 0)
+  let cert1 = mkHistoricalCert 1 b1 1
+      cert2 = mkHistoricalCert 2 b1 1
+  void $ addTestPerasCert cert1
+  void $ addTestPerasCert cert2
+  b2 <- addBlock $ mkNextBlock b1 1 (body 0)
+  _b3 <- addBlock $ mkNextBlock b2 2 (body 0)
+
+  persistBlks
+
+  archived <- getHistoricalCertsAfter (PerasRoundNo 0) 10
+  assertEqual [cert1, cert2] archived "Not all certificates for the block were archived"
+ where
+  body forkNo = TestBody forkNo True Nothing
+
+-- | A certificate for a block on a losing fork must not be copied merely
+-- because some other block became immutable.
+perasLosingForkCertNotArchived :: SystemM TestBlock IO ()
+perasLosingForkCertNotArchived = do
+  p <- addBlock $ firstBlock 0 (body 0)
+  losing <- addBlock $ mkNextBlock p 1 (body 1)
+  void $ addTestPerasCert (mkHistoricalCert 1 losing 1)
+
+  h1 <- addBlock $ mkNextBlock p 2 (body 2)
+  h2 <- addBlock $ mkNextBlock h1 3 (body 2)
+  h3 <- addBlock $ mkNextBlock h2 4 (body 2)
+  _h4 <- addBlock $ mkNextBlock h3 5 (body 2)
+
+  persistBlks
+
+  archived <- getHistoricalCertsAfter (PerasRoundNo 0) 10
+  assertEqual [] archived "A certificate for the losing fork was archived"
+ where
+  body forkNo = TestBody forkNo True Nothing
+
+-- | Garbage collection may discard the volatile copy, but not the historical
+-- copy made during persistence.
+perasPersistThenGCRetainsCert :: SystemM TestBlock IO ()
+perasPersistThenGCRetainsCert = do
+  b1 <- addBlock $ firstBlock 0 (body 0)
+  b2 <- addBlock $ mkNextBlock b1 1 (body 0)
+  let cert = mkHistoricalCert 1 b1 1
+  void $ addTestPerasCert cert
+  _b3 <- addBlock $ mkNextBlock b2 2 (body 0)
+
+  persistBlksThenGC
+
+  archived <- getHistoricalCertsAfter (PerasRoundNo 0) 10
+  assertEqual [cert] archived "Historical certificate was lost after garbage collection"
+ where
+  body forkNo = TestBody forkNo True Nothing
+
+-- | A certificate first received after its target is strictly older than the
+-- immutable tip could not have influenced this node's chain selection.
+perasLateCertIgnored :: SystemM TestBlock IO ()
+perasLateCertIgnored = do
+  b1 <- addBlock $ firstBlock 0 (body 0)
+  b2 <- addBlock $ mkNextBlock b1 1 (body 0)
+  b3 <- addBlock $ mkNextBlock b2 2 (body 0)
+  _b4 <- addBlock $ mkNextBlock b3 3 (body 0)
+  persistBlks
+
+  outcome <- addTestPerasCert (mkHistoricalCert 1 b1 1)
+  assertEqual
+    API.PerasCertIgnoredTooOld
+    outcome
+    "Certificate older than the immutable tip was accepted"
+
+  archived <- getHistoricalCertsAfter (PerasRoundNo 0) 10
+  assertEqual [] archived "Late certificate was added to historical storage"
+ where
+  body forkNo = TestBody forkNo True Nothing
+
+addTestPerasCert ::
+  ValidatedPerasCert TestBlock ->
+  SystemM TestBlock IO API.AddPerasCertChainSelOutcome
+addTestPerasCert cert =
+  runCmd
+    ( SM.AddPerasCert
+        (WithArrivalTime (RelativeTime 0) cert)
+        (SM.Persistent [])
+    )
+    >>= \case
+      SM.PerasCertRes outcome -> pure outcome
+      _ -> failWith "addTestPerasCert: unexpected response constructor"
+
+getHistoricalCertsAfter ::
+  PerasRoundNo ->
+  Word64 ->
+  SystemM TestBlock IO [ValidatedPerasCert TestBlock]
+getHistoricalCertsAfter roundNo maxCerts = do
+  env <- ask
+  SystemM $ lift $ lift $ do
+    db <-
+      PerasImmutableCertDB.openDB $
+        cdbPerasImmutableCertDbArgs (args env)
+    PerasImmutableCertDB.getCertsAfter db roundNo maxCerts
+
+mkHistoricalCert ::
+  Word64 ->
+  TestBlock ->
+  Word64 ->
+  ValidatedPerasCert TestBlock
+mkHistoricalCert roundNo target boost =
+  ValidatedPerasCert
+    { vpcCert =
+        MockPerasCert
+          { mockCertRound = PerasRoundNo roundNo
+          , mockCertBlock = blockPoint target
+          , mockCertVoters =
+              NESet.fromList (PerasSeatIndex 0 :| [])
+          }
+    , vpcCertBoost = PerasWeight boost
+    }
+
+-- | Exhibit the state needed by the boost-induced density-reduction attack:
+-- one block tree is ordered differently depending only on whether the node
+-- knows the certificate.
+--
+--                 h1 -- h2 -- h3 -- h4    four blocks, no boost
+--                /
+-- common --------+
+--                \a1* -- a2              two blocks, boost three
+--
+-- The block-only view selects h4. Releasing the certificate for a1 makes the
+-- shorter fork heavier, so ChainDB rolls back to the less dense branch.
+perasBoostInducedDensityReduction :: SystemM TestBlock IO ()
+perasBoostInducedDensityReduction = do
+  common <- addBlock $ firstBlock 0 (body 0)
+
+  h1 <- addBlock $ mkNextBlock common 10 (body 1)
+  h2 <- addBlock $ mkNextBlock h1 30 (body 1)
+  h3 <- addBlock $ mkNextBlock h2 50 (body 1)
+  h4 <- addBlock $ mkNextBlock h3 80 (body 1)
+
+  a1 <- addBlock $ mkNextBlock common 10 (body 2)
+  a2 <- addBlock $ mkNextBlock a1 20 (body 2)
+
+  getSelectedTip
+    >>= \tip ->
+      assertEqual
+        (blockPoint h4)
+        tip
+        "Without the certificate, the denser fork should be selected"
+
+  let cert = mkHistoricalCert 1 a1 3
+  void $ addTestPerasCert cert
+
+  getSelectedTip
+    >>= \tip ->
+      assertEqual
+        (blockPoint a2)
+        tip
+        "The certificate should make the shorter fork heavier"
+
+  -- Reopening reconstructs the same block tree from the VolatileDB, but the
+  -- volatile certificate DB is empty. This models an observer that has the
+  -- blocks but not the off-chain certificate.
+  void $ runCmd SM.Close
+  void $ runCmd SM.Reopen
+
+  getSelectedTip
+    >>= \tip ->
+      assertEqual
+        (blockPoint h4)
+        tip
+        "Without certificate history, reopening should select the denser fork"
+
+  void $ addTestPerasCert cert
+  getSelectedTip
+    >>= \tip ->
+      assertEqual
+        (blockPoint a2)
+        tip
+        "Replaying the certificate should restore the weighted selection"
+ where
+  body forkNo = TestBody forkNo True Nothing
+
+getSelectedTip :: SystemM TestBlock IO (Point TestBlock)
+getSelectedTip =
+  runCmd SM.GetTipPoint >>= \case
+    SM.Point point -> pure point
+    _ -> failWith "getSelectedTip: unexpected response constructor"
+
 {-------------------------------------------------------------------------------
   Helpers and testing infrastructure
 -------------------------------------------------------------------------------}
@@ -385,11 +623,24 @@ runModelIO loe expr = toAssertion (runModel newModel topLevelConfig expr)
 -- | Helper function to run the test against the actual chain database and
 -- translate to something that HUnit likes.
 runSystemIO :: SystemM TestBlock IO a -> IO ()
-runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
+runSystemIO =
+  runSystemIOWithK $
+    SecurityParam (knownNonZeroBounded @2)
+
+runSystemIOWithK ::
+  SecurityParam ->
+  SystemM TestBlock IO a ->
+  IO ()
+runSystemIOWithK k expr =
+  runSystem withChainDbEnv expr >>= toAssertion
  where
   chunkInfo = ImmutableDB.simpleChunkInfo 100
-  k = SecurityParam (knownNonZeroBounded @2)
   topLevelConfig = mkTestCfg k chunkInfo
+
+  withChainDbEnv ::
+    forall b.
+    (ChainDBEnv IO TestBlock -> IO [TraceEvent TestBlock] -> IO b) ->
+    IO b
   withChainDbEnv =
     withTestChainDbEnv topLevelConfig chunkInfo $
       convertMapKind (testInitExtLedger (topLevelConfigLedger topLevelConfig))
