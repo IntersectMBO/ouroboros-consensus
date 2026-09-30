@@ -2,7 +2,9 @@ module Test.LeiosDemoTypes (tests) where
 
 import Cardano.Binary (serialize')
 import qualified Codec.CBOR.Encoding as CBOR
+import Codec.CBOR.Read (deserialiseFromBytes)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List ((\\))
@@ -13,6 +15,8 @@ import LeiosDemoTypes
   ( BytesSize
   , LeiosEb (..)
   , TxHash (..)
+  , decodeEbHash
+  , decodeLeiosEb
   , encodeLeiosEb
   , encodeLeiosEbItemSize
   , encodeLeiosEbMaxFramingSize
@@ -39,6 +43,7 @@ import Test.QuickCheck
   , frequency
   , genericShrink
   , listOf
+  , once
   , property
   , shrinkIntegral
   , vectorOf
@@ -61,6 +66,7 @@ tests =
     , testProperty
         "selectCommitteeByStake orders by stake and bounds by committee size"
         prop_selectCommitteeByStake
+    , testProperty "decoders reject hashes that are not 32 bytes" prop_decodersRejectWrongHashLength
     ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'encodeLeiosEbSize'.
@@ -232,3 +238,27 @@ prop_selectCommitteeByStake =
     let excluded = rawStakes \\ weights
      in null weights || null excluded || minimum weights >= maximum excluded
           & counterexample ("an excluded pool outweighs a selected one: " <> show excluded)
+
+-- | A peer controls the length of every hash it sends. 'decodeLeiosEb' and
+-- 'decodeEbHash' must accept exactly 32 bytes and reject every other length.
+prop_decodersRejectWrongHashLength :: Property
+prop_decodersRejectWrongHashLength =
+  once $
+    conjoin
+      [ counterexample ("hash length " <> show len) $
+          conjoin
+            [ counterexample "decodeLeiosEb" $
+                accepts (deserialiseFromBytes decodeLeiosEb (bytes ebWithHashOfLength)) === (len == 32)
+            , counterexample "decodeEbHash" $
+                accepts (deserialiseFromBytes decodeEbHash (bytes hashOfLength)) === (len == 32)
+            ]
+      | len <- [0, 1, 31, 32, 33, 64, 100000]
+      , let hashBytes = BS.replicate len 0xab
+            hashOfLength = CBOR.encodeBytes hashBytes
+            ebWithHashOfLength =
+              CBOR.encodeMapLen 1 <> CBOR.encodeBytes hashBytes <> CBOR.encodeWord32 100
+      ]
+ where
+  bytes = BSL.fromStrict . serialize'
+  -- Accepted means decoded with no bytes left over.
+  accepts = either (const False) (BSL.null . fst)
