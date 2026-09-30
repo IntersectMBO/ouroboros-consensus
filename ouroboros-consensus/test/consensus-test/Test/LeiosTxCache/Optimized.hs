@@ -17,15 +17,18 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM)
 import qualified Data.ByteString as BS
 import qualified Data.List as List
+import Data.Maybe (fromJust)
 import Data.Set (Set)
 import Data.Word (Word64, Word8)
 import LeiosDemoTypes
   ( BytesSize
-  , EbHash (..)
+  , EbHash
   , FetchArrivalBytes
   , RbHash (..)
-  , TxHash (..)
+  , TxHash
   , TxLocation
+  , ebHashFromBytes
+  , txHashFromBytes
   )
 import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..), newPureLeiosTxCache)
 import LeiosTxCache.Optimized (newHashTableLeiosTxCache)
@@ -71,12 +74,11 @@ instance ReferencesTxsByHash TestBody where
    where
     dummySize = 0
 
--- A 32-byte tx hash (the mutable table reads exactly 32 bytes).
 txhOf :: Word8 -> TxHash
-txhOf n = MkTxHash (BS.pack (n : replicate 31 0))
+txhOf n = fromJust $ txHashFromBytes $ BS.pack (n : replicate 31 0)
 
 ebhOf :: Word8 -> EbHash
-ebhOf n = MkEbHash (BS.pack [n])
+ebhOf n = fromJust $ ebHashFromBytes $ BS.pack (n : replicate 31 0)
 
 rbhOf :: Word8 -> RbHash
 rbhOf n = MkRbHash (BS.pack [n])

@@ -33,12 +33,20 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (isPrefixOf, partition, sort, stripPrefix, transpose)
+import Data.Maybe (fromJust)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
 import Foreign.C.Types (CInt (..))
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats
-import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
+import LeiosDemoTypes
+  ( EbHash
+  , RbHash (..)
+  , TxHash
+  , ebHashFromBytes
+  , txHashBytes
+  , txHashFromBytes
+  )
 import LeiosTxCache
 import LeiosTxCache.Bench.SQLite
   ( newSQLiteLeiosTxCacheForPopulation
@@ -95,7 +103,7 @@ instance ReferencesTxsByHash BenchBody where
       | i >= n = acc
       | otherwise =
           go
-            (f acc (MkTxHash (BS.copy (BS.take 32 (BS.drop (i * 32) bs)))) dummySize)
+            (f acc (fromJust (txHashFromBytes (BS.take 32 (BS.drop (i * 32) bs)))) dummySize)
             (i + 1)
     dummySize = 0
 
@@ -271,7 +279,7 @@ runBench (BenchTarget name popCache queryCache syncAfterPop coolBatch) = do
   ebData <-
     forM [0 .. numEbs - 1] $ \e -> do
       let !txhs = force $ V.generate txsPerEb (\i -> mkTxHash (e * txsPerEb + i))
-          !bs = BS.concat [b | MkTxHash b <- V.toList txhs]
+          !bs = BS.concat (map txHashBytes (V.toList txhs))
       pure (mkEbHash e, mkRbHash e, SlotNo (fromIntegral e), txhs, bs)
   _ <- evaluate (length ebData)
   putStrLn "done"
@@ -393,10 +401,10 @@ bytes32 k =
      in z2 `Bits.xor` (z2 `Bits.shiftR` 31)
 
 mkTxHash :: Int -> TxHash
-mkTxHash = MkTxHash . bytes32 . fromIntegral
+mkTxHash = fromJust . txHashFromBytes . bytes32 . fromIntegral
 
 mkEbHash :: Int -> EbHash
-mkEbHash = MkEbHash . bytes32 . fromIntegral
+mkEbHash = fromJust . ebHashFromBytes . bytes32 . fromIntegral
 
 mkRbHash :: Int -> RbHash
 mkRbHash = MkRbHash . bytes32 . fromIntegral

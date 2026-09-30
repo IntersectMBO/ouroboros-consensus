@@ -107,9 +107,13 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , TxHash (..)
   , TxLocation (..)
+  , ebHashBytes
+  , ebHashFromBytes
   , encodeLeiosEbSize
   , leiosEbBodyItems
   , leiosEbTxs
+  , txHashBytes
+  , txHashFromBytes
   )
 import LeiosUtils.CallTrace
   ( CallCtx
@@ -508,7 +512,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       -- Still check if it is, as a defensive programming measure, as it's very cheap.
       (bodyCount, closureCount) <-
         useStmt ccCompleteness $ do
-          dbBindBlob ccCompleteness 1 ebHash.ebHashBytes
+          dbBindBlob ccCompleteness 1 (ebHashBytes ebHash)
           -- step the first time, expecting a single result row
           dbStepSafe ccCompleteness >>= \case
             DB.Done ->
@@ -536,16 +540,16 @@ copyEbToImmutable tracer statsVar conn ebHash =
           --
           -- copy the EB
           useStmt ccInsertEb $ do
-            dbBindBlob ccInsertEb 1 ebHash.ebHashBytes
+            dbBindBlob ccInsertEb 1 (ebHashBytes ebHash)
             dbStep1Safe ccInsertEb
           -- copy the eb-to-transactions mapping
           useStmt ccInsertEbTxs $ do
-            dbBindBlob ccInsertEbTxs 1 ebHash.ebHashBytes
+            dbBindBlob ccInsertEbTxs 1 (ebHashBytes ebHash)
             dbStep1Safe ccInsertEbTxs
           nTxs <- DB.changes ccDb
           -- copy the transactions
           useStmt ccInsertEbTxBytes $ do
-            dbBindBlob ccInsertEbTxBytes 1 ebHash.ebHashBytes
+            dbBindBlob ccInsertEbTxBytes 1 (ebHashBytes ebHash)
             dbStep1Safe ccInsertEbTxBytes
           pure (Just nTxs)
 
@@ -588,7 +592,7 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
                 dbStepSafe nextPinnedStmt >>= \case
                   DB.Done -> pure (reverse acc)
                   DB.Row -> do
-                    h <- MkEbHash <$> DB.columnBlob nextPinnedStmt 0
+                    h <- ebHashFromBytes =<< DB.columnBlob nextPinnedStmt 0
                     rows (h : acc)
            in rows []
 
@@ -1221,7 +1225,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
             dbWithWriteTransactionRaw volDb $
               forM_ ebHashes $ \ebHash ->
                 useStmt pinStmt $ do
-                  dbBindBlob pinStmt 1 ebHash.ebHashBytes
+                  dbBindBlob pinStmt 1 (ebHashBytes ebHash)
                   dbStep1Safe pinStmt
           pure False
         MarkCopied ebHashes resultVar -> do
@@ -1232,7 +1236,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
             dbWithWriteTransactionRaw volDb $
               forM_ ebHashes $ \ebHash ->
                 useStmt markCopiedStmt $ do
-                  dbBindBlob markCopiedStmt 1 ebHash.ebHashBytes
+                  dbBindBlob markCopiedStmt 1 (ebHashBytes ebHash)
                   dbStep1Safe markCopiedStmt
           pure False
         GcMark slot resultVar -> do
@@ -1379,7 +1383,7 @@ sqlScanEbPoints conn =
       DB.Done -> pure (reverse acc)
       DB.Row -> do
         slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-        hash <- MkEbHash <$> DB.columnBlob stmt 1
+        hash <- ebHashFromBytes =<< DB.columnBlob stmt 1
         loop ((slot, hash) : acc)
 
 sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
@@ -1420,7 +1424,7 @@ pointLoop stmt acc =
     DB.Done -> pure (reverse acc)
     DB.Row -> do
       slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-      hash <- MkEbHash <$> DB.columnBlob stmt 1
+      hash <- ebHashFromBytes =<< DB.columnBlob stmt 1
       pointLoop stmt (MkLeiosPoint slot hash : acc)
 
 -- | Which of the given EB hashes the immutable partition holds.
@@ -1442,7 +1446,7 @@ sqlLookupEbBody :: Conn -> EbHash -> IO [(TxHash, BytesSize)]
 sqlLookupEbBody conn ebHash = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
-      dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+      dbBindBlob stmt 1 (ebHashBytes ebHash)
       bodyLoop stmt []
   -- Bodies insert atomically, so the empty list is a complete miss: the EB
   -- may have been copied to the immutable partition and evicted.
@@ -1454,7 +1458,7 @@ sqlLookupEbBody conn ebHash = do
 immLookupEbBody :: Conn -> EbHash -> IO [(TxHash, BytesSize)]
 immLookupEbBody conn ebHash =
   useStmt stmt $ do
-    dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+    dbBindBlob stmt 1 (ebHashBytes ebHash)
     bodyLoop stmt []
  where
   Conn{connImmStmts = ImmStmts{immStLookupEbBody = stmt}} = conn
@@ -1464,7 +1468,7 @@ bodyLoop stmt acc =
   dbStep stmt >>= \case
     DB.Done -> pure (reverse acc)
     DB.Row -> do
-      txHash <- MkTxHash <$> DB.columnBlob stmt 0
+      txHash <- txHashFromBytes =<< DB.columnBlob stmt 0
       size <- fromIntegral <$> DB.columnInt64 stmt 1
       bodyLoop stmt ((txHash, size) : acc)
 
@@ -1472,7 +1476,7 @@ sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint conn point ebBytesSize = do
   inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-    dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
+    dbBindBlob stmt 2 (ebHashBytes point.pointEbHash)
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
     dbStep1 stmt
     DB.changes db
@@ -1495,9 +1499,9 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   (completedNow, filledOffs) <- dbWithWriteTransaction conn $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
-      dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
+      dbBindBlob stInsertEbTxsRow 1 (ebHashBytes point.pointEbHash)
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
-      dbBindBlob stInsertEbTxsRow 3 (let MkTxHash bytes = txHash in bytes)
+      dbBindBlob stInsertEbTxsRow 3 (txHashBytes txHash)
       dbBindInt64 stInsertEbTxsRow 4 (fromIntegral txBytesSize)
       dbStepInsertOrTrace
         tracer
@@ -1507,18 +1511,18 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     -- Allocate the closure's rows in one offset-ordered pass; see
     -- 'sql_prealloc_ebTxBytes'.
     useStmt stPreallocEbTxBytes $ do
-      dbBindBlob stPreallocEbTxBytes 1 point.pointEbHash.ebHashBytes
+      dbBindBlob stPreallocEbTxBytes 1 (ebHashBytes point.pointEbHash)
       dbStep1 stPreallocEbTxBytes
     -- Cross-EB fills: copy locally-held bytes into the freshly-allocated
     -- rows, in this transaction, so the count below already sees them. A
     -- vanished source changes nothing and the offset stays missing.
     filledOffs <-
       foldM
-        ( \acc (dstOff, MkTxLocation (MkEbHash srcHash) srcOff) -> do
+        ( \acc (dstOff, MkTxLocation srcEbHash srcOff) -> do
             useStmt stFillFromLocal $ do
-              dbBindBlob stFillFromLocal 1 point.pointEbHash.ebHashBytes
+              dbBindBlob stFillFromLocal 1 (ebHashBytes point.pointEbHash)
               dbBindInt64 stFillFromLocal 2 (fromIntegral dstOff)
-              dbBindBlob stFillFromLocal 3 srcHash
+              dbBindBlob stFillFromLocal 3 (ebHashBytes srcEbHash)
               dbBindInt64 stFillFromLocal 4 (fromIntegral srcOff)
               dbStep1Safe stFillFromLocal
             changed <- DB.changes (conVolDb conn)
@@ -1530,8 +1534,8 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     -- via @RETURNING missingTxCount@. In this transaction, so an arrival can
     -- never see the rows without the count.
     missingCount <- useStmt stInitMissingCount $ do
-      dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
-      dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
+      dbBindBlob stInitMissingCount 1 (ebHashBytes point.pointEbHash)
+      dbBindBlob stInitMissingCount 2 (ebHashBytes point.pointEbHash)
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       readReturningInt64 stInitMissingCount
     completed <-
@@ -1539,7 +1543,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
         then do
           useStmt stMarkPointNotified $ do
             dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-            dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+            dbBindBlob stMarkPointNotified 2 (ebHashBytes point.pointEbHash)
             dbStep1 stMarkPointNotified
           pure [point]
         else pure []
@@ -1590,7 +1594,7 @@ sqlInsertTxs _tracer conn notify point offBytes = do
       foldM
         ( \acc (txOffset, txBytes) -> do
             useStmt stFillEbTxBytes $ do
-              dbBindBlob stFillEbTxBytes 1 point.pointEbHash.ebHashBytes
+              dbBindBlob stFillEbTxBytes 1 (ebHashBytes point.pointEbHash)
               dbBindInt64 stFillEbTxBytes 2 (fromIntegral txOffset)
               dbBindBlob stFillEbTxBytes 3 txBytes
               dbStep1 stFillEbTxBytes
@@ -1605,7 +1609,7 @@ sqlInsertTxs _tracer conn notify point offBytes = do
         -- Decrement every announcement of this content hash and collect the
         -- ones this batch completed.
         completedSlots <- useStmt stDecrMissingCount $ do
-          dbBindBlob stDecrMissingCount 1 point.pointEbHash.ebHashBytes
+          dbBindBlob stDecrMissingCount 1 (ebHashBytes point.pointEbHash)
           dbBindInt64 stDecrMissingCount 2 n
           let loop acc =
                 dbStep stDecrMissingCount >>= \case
@@ -1618,7 +1622,7 @@ sqlInsertTxs _tracer conn notify point offBytes = do
         -- Mark them notified so they are not completed twice.
         forM_ completedSlots $ \slot -> useStmt stMarkPointNotified $ do
           dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo slot)
-          dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+          dbBindBlob stMarkPointNotified 2 (ebHashBytes point.pointEbHash)
           dbStep1 stMarkPointNotified
         pure [MkLeiosPoint slot point.pointEbHash | slot <- completedSlots]
   -- Emit a closure-completion notification for each completed EB
@@ -1646,7 +1650,7 @@ sqlBatchRetrieveTxs ::
 sqlBatchRetrieveTxs conn ebHash offsets = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
-      dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+      dbBindBlob stmt 1 (ebHashBytes ebHash)
       dbBindUtf8 stmt 2 (jsonIntArray offsets)
       retrieveLoop stmt []
   -- Zero rows means the EB's body is absent from the volatile partition
@@ -1663,7 +1667,7 @@ immBatchRetrieveTxs ::
   Conn -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]
 immBatchRetrieveTxs conn ebHash offsets =
   useStmt stmt $ do
-    dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+    dbBindBlob stmt 1 (ebHashBytes ebHash)
     dbBindUtf8 stmt 2 (jsonIntArray offsets)
     retrieveLoop stmt []
  where
@@ -1678,7 +1682,7 @@ retrieveLoop stmt acc =
     DB.Done -> pure (reverse acc)
     DB.Row -> do
       offset <- fromIntegral <$> DB.columnInt64 stmt 0
-      txHash <- MkTxHash <$> DB.columnBlob stmt 1
+      txHash <- txHashFromBytes =<< DB.columnBlob stmt 1
       -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
       txBytes <- DB.columnBlob stmt 2
       let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
@@ -1813,7 +1817,7 @@ closureLoop stmt acc =
       -- No rows means the EB body hasn't been downloaded yet
       if null acc then pure Nothing else pure $ Just (reverse acc)
     DB.Row -> do
-      txHash <- MkTxHash <$> DB.columnBlob stmt 0
+      txHash <- txHashFromBytes =<< DB.columnBlob stmt 0
       txBytes :: ByteString <- DB.columnBlob stmt 1
       if txBytes == mempty
         then return Nothing
