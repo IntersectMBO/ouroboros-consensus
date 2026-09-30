@@ -47,7 +47,7 @@ import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
-import Data.Measure (Measure)
+import Data.Measure (Measure, zero)
 import qualified Data.Measure as M
 import Data.Text (Text)
 import Data.Word (Word32)
@@ -380,6 +380,11 @@ class
   , NoThunks (TxMeasurePhase2 blk)
   , TxMeasurePhase2Metrics (TxMeasurePhase2 blk)
   , Show (TxMeasurePhase2 blk)
+  , -- \* Endorser block
+    Measure (TxEbMeasure blk)
+  , NoThunks (TxEbMeasure blk)
+  , Eq (TxEbMeasure blk)
+  , Show (TxEbMeasure blk)
   ) =>
   TxLimits blk
   where
@@ -452,6 +457,41 @@ class
     -- | at least for symmetry with 'txMeasurePhase1'
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
+    TxMeasure blk
+
+  -- | The (possibly multi-dimensional) size of a transaction in a Leios
+  -- endorser block: what it costs of 'ebCapacityTxMeasure'. It is 'TxMeasure'
+  -- for @blk@s without endorser blocks.
+  type TxEbMeasure blk
+
+  -- | The size of a transaction in a Leios endorser block, derived from its
+  -- 'TxMeasure'.
+  --
+  -- INVARIANT the result must never be zero. A zero measure fits a zero
+  -- 'ebCapacityTxMeasure', so one endorser-block fill takes the whole mempool
+  -- instead of nothing.
+  txEbMeasure ::
+    proxy blk ->
+    TxMeasure blk ->
+    TxEbMeasure blk
+
+  -- | What is the allowed capacity for the txs in a Leios endorser block?
+  --
+  -- Zero for blocks without endorser blocks: an endorser-block fill against a
+  -- zero capacity takes no transactions, so none are forged.
+  ebCapacityTxMeasure ::
+    LedgerConfig blk ->
+    TickedLedgerState blk mk ->
+    TxEbMeasure blk
+
+  -- | Convert an endorser-block measure to a 'TxMeasure', keeping only the
+  -- parts the mempool counts, so that the mempool can reserve room for
+  -- endorser blocks.
+  --
+  -- The identity for blocks without endorser blocks.
+  mempoolEbReservation ::
+    proxy blk ->
+    TxEbMeasure blk ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@

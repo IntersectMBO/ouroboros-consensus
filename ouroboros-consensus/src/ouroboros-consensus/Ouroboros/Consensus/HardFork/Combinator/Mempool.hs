@@ -29,7 +29,6 @@ import Data.ByteString.Short (ShortByteString)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Identity
 import Data.Functor.Product
-import qualified Data.Measure as Measure
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import qualified Data.SOP.InPairs as InPairs
@@ -308,6 +307,9 @@ instance
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasurePhase1 (HardForkBlock xs) = HardForkTxMeasurePhase1 xs
   type TxMeasurePhase2 (HardForkBlock xs) = HardForkTxMeasurePhase2 xs
+  type TxEbMeasure (HardForkBlock xs) = HardForkTxEbMeasure xs
+
+  txEbMeasure _ (TxMeasure p1 p2) = hardForkTxEbMeasure (Proxy @xs) p1 p2
 
   txWireSize =
     \tx ->
@@ -357,7 +359,7 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
     (TickedHardForkLedgerState transition hardForkState)
     tx =
       case matchTx (unwrapTx tx) hardForkState of
-        Left{} -> pure Measure.zero -- safe b/c the tx will be found invalid
+        Left mismatch -> throwError $ HardForkApplyTxErrWrongEra mismatch -- safe b/c the tx will be found invalid
         Right pair -> hcollapse $ hcizipWith proxySingle aux cfgs pair
      where
       pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
@@ -397,7 +399,7 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
     (TickedHardForkLedgerState transition hardForkState)
     tx =
       case matchTx (unwrapTx tx) hardForkState of
-        Left{} -> pure Measure.zero -- safe b/c the tx will be found invalid
+        Left mismatch -> throwError $ HardForkApplyTxErrWrongEra mismatch -- safe b/c the tx will be found invalid
         Right pair -> hcollapse $ hcizipWith proxySingle aux cfgs pair
      where
       pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
@@ -431,6 +433,36 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
             (unwrapLedgerConfig cfg)
             (getFlipTickedLedgerState st')
             tx'
+
+  ebCapacityTxMeasure
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState) =
+      hcollapse $
+        hcizipWith proxySingle aux pcfgs hardForkState
+     where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkLedgerConfigShape
+          transition
+          hardForkState
+
+      aux ::
+        SingleEraBlock blk =>
+        Index xs blk ->
+        WrapPartialLedgerConfig blk ->
+        FlipTickedLedgerState mk blk ->
+        K (HardForkTxEbMeasure xs) blk
+      aux idx pcfg st' =
+        K $
+          hardForkInjTxEbMeasure . injectNS idx . WrapTxEbMeasure $
+            ebCapacityTxMeasure
+              (completeLedgerConfig' ei pcfg)
+              (getFlipTickedLedgerState st')
+
+  mempoolEbReservation _ eb =
+    let (p1, p2) = hardForkMempoolEbReservation (Proxy @xs) eb
+     in TxMeasure p1 p2
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs blk = ApplyResult

@@ -729,6 +729,7 @@ library unstable-mock-block
     containers,
     deepseq,
     hashable,
+    measures,
     mempack,
     mtl,
     nothunks,
@@ -795,6 +796,7 @@ test-suite consensus-test
     Test.Consensus.HeaderValidation
     Test.Consensus.Ledger.Tables.Diff
     Test.Consensus.Mempool
+    Test.Consensus.Mempool.Capacity
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
     Test.Consensus.Mempool.StateMachine
@@ -1010,6 +1012,7 @@ benchmark mempool-bench
     containers,
     contra-tracer,
     deepseq,
+    measures,
     mempack,
     nothunks,
     ouroboros-consensus,
@@ -1049,6 +1052,7 @@ benchmark mempool-state-bench
     contra-tracer,
     deepseq,
     io-classes:si-timers,
+    measures,
     mempack,
     nothunks,
     optparse-applicative,
@@ -1489,6 +1493,7 @@ test-suite consensus-diffusion-test
     hashable,
     io-classes:{io-classes, si-timers, strict-stm},
     io-sim,
+    measures,
     mempack,
     monoidal-containers ^>=0.6,
     mtl,
@@ -1663,6 +1668,7 @@ library unstable-byronspec
     cborg,
     containers,
     deepseq,
+    measures,
     mtl,
     nothunks,
     ouroboros-consensus,
@@ -1892,6 +1898,7 @@ test-suite cardano-test
   hs-source-dirs: ouroboros-consensus-cardano/test/cardano-test
   main-is: Main.hs
   other-modules:
+    Test.Consensus.Cardano.Capacity
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden
@@ -1921,7 +1928,7 @@ test-suite cardano-test
     cardano-ledger-byron:{cardano-ledger-byron, testlib},
     cardano-ledger-conway:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
-    cardano-ledger-dijkstra:testlib,
+    cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-mary:testlib,
     cardano-ledger-shelley:{cardano-ledger-shelley, testlib},
     cardano-protocol-tpraos,
@@ -1934,6 +1941,7 @@ test-suite cardano-test
     filepath,
     fs-api,
     fs-sim,
+    measures,
     microlens,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
     ouroboros-network:{api, protocols, protocols-tests-lib},
