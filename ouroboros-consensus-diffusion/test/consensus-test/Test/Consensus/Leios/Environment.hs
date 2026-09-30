@@ -450,7 +450,7 @@ connectPeer nut registry addr penv = do
       runPipelinedPeer (sayTracer ("ln-down " <> show addr)) (NTN.cLeiosNotifyCodec codecs) lnDownClient $
         Notify.toLeiosNotifyClientPeerPipelined $
           Notify.leiosNotifyClientPeerPipelined
-            (pure (Right NTN.leiosNotifyPipelineDepth) :: IOSim s (Either () Int))
+            (pure (Right NTN.leiosNotifyPipelineDepth) :: STM (IOSim s) (Either () Int))
             (pure record)
 
   fork ("LeiosFetch client " <> show addr) $
