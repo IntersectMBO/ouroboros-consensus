@@ -174,6 +174,16 @@ An attack on a blockchain (or any other peer-to-peer network) system in which ma
 
 A cryptographic proof that the [Ouroboros](#ouroboros) protocol did indeed assign the [block](#block)'s issuer to lead the block's [slot](#slot).
 
+## ;Endorser block, ;EB
+
+A Linear Leios block that lists transactions by reference.
+Each entry of an EB is the hash and the size of one transaction, not the transaction itself.
+A [ranking block](#ranking-block-rb) announces an EB.
+When a later ranking block carries a certificate for the EB, the transactions of the EB go on the chain.
+The node stores EBs and their transactions in the [LeiosDB](#leiosdb).
+
+NOTE: this entry will be expanded as more Linear Leios features are merged. In particular, we intentionally omit EB certification.
+
 ## ;Epoch
 
 The sequence of slots is partitioned into a sequence of epochs, each of which is a contiguous run of a fixed number of slots.
@@ -392,6 +402,14 @@ The genesis block is not actually a block; it's the first ledger state.
 The small part of the ledger state actually required for header validation.
 It's the same part whether or not the validation is done via forecasting.
 
+## ;LeiosDB
+
+The storage for Leios [endorser blocks](#endorser-block-eb) (EBs) and their transactions.
+It has two partitions, which mirror the split of the [ChainDB](#chaindb).
+The volatile partition stores the EBs and transactions that the node downloads or forges.
+The immutable partition stores the complete EBs that a certificate on the [immutable chain](#immutable-chain) refers to.
+See [LeiosDB](../explanations/leiosdb.md) for its design and database schema.
+
 ## ;Limit on Eagerness (LoE)
 
 Do not select more than `k` blocks past the intersection of all candidate fragments.
@@ -562,6 +580,14 @@ Permissive BFT, Transitional Praos (aka. TPraos), Praos.
 ## ;Public root peers
 
 Peers coming from trusted public information (IOG relays, Cardano foundation also hosts similar nodes).
+
+## ;Ranking block, ;RB
+
+A Ranking Block is a slightly modified [Praos](#ouroboros-praos) [block](#block) in Linear Leios.
+A ranking block can announce an [endorser block](#endorser-block-eb) or carry a certificate for one.
+A ranking block that carries a certificate (a cert-RB) has an empty body.
+
+NOTE: this entry will be expanded as more Linear Leios features are merged. In particular, we intentionally omit EB certification.
 
 ## ;Real point
 
