@@ -87,3 +87,5 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
 
 instance Crypto c => LeiosEraBlockHeader (Header c) DijkstraEra where
   prevNonceBlockHeaderL = error "Not implemented. Peras placeholder"
+  versionInfoBlockHeaderL = error "Not implemented. Peras placeholder"
+  ebReferencesAnnouncementBlockHeaderL = error "Not implemented. Peras placeholder"
