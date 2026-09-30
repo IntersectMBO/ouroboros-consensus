@@ -14,24 +14,56 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2026-09-02T14:05:07Z
+  , hackage.haskell.org 2026-09-30T08:47:51Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-09-02T08:49:12Z
+  , cardano-haskell-packages 2026-09-30T12:46:04Z
+
+packages: .
+
+-- We want to always build the test-suites and benchmarks
+tests: True
+benchmarks: True
+
+multi-repl: True
+
+import: cabal/asserts.cabal
+import: cabal/newer-ghcs.cabal
+
+package ouroboros-network
+  -- Certain ThreadNet tests rely on transactions to be submitted promptly after
+  -- a node (re)start. Therefore, we disable this flag (see
+  -- https://github.com/IntersectMBO/ouroboros-network/issues/4927 for context).
+  flags: -txsubmission-delay
+
+-- We need to disable bitvec's SIMD for now, as it breaks during cross compilation.
+if os (windows)
+  constraints:
+    bitvec -simd
+
+constraints:
+  tasty <1.5.4,
 
 source-repository-package
   type: git
-  location: https://github.com/input-output-hk/kes-agent
-  tag: 4625f3cf543566517d08882e659c97932d106d86
-  --sha256: sha256-CSHWndpeJFqCEFNT6ysfyN6x+O4vZ9TtYOOsZKcLnIA=
+  location: https://github.com/IntersectMBO/cardano-config.git
+  tag: 24587c1a0e367d26ecbb07969da4b9fe39e4f6cb
+  --sha256: sha256-03ruM7EKUH60fseS1sLCC2n1DereDcJ9PuwKk9GUfRU=
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network.git
+  tag: 09495ae9e6a063929ac9f2a8a80d210735c3a66e
+  --sha256: sha256-/m3CUFKSnTw8YpyIMhcpdVbHWu6FEqjiQFiPORWLFFI=
   subdir:
-    kes-agent
-    kes-agent-crypto
+    ouroboros-network
+    cardano-diffusion
+    network-mux
 
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: fb723848a28256fe372ea9ba692eccded6a12a53
-  --sha256: sha256-iL61RTn4OPRNzzPn/2YcVJNMJYolXghaQ9cDG/DOOWM=
+  tag: 834b0998f94247ffad57379850d56f3ad2c914d7
+  --sha256: sha256-aFbNlu5xcXFJAQVnRaX3NZxGyaENXec4kpHrVuZ5IRI=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -61,50 +93,3 @@ source-repository-package
   --sha256: sha256-WUBluY6UqvBkS5cNsJnKMOaW+1dTfL3mg8iq/kVPV0o=
   tag: d92e2e3841eaad354c5e1ef77b458b347f471271
   subdir: cardano-crypto-leios
-
-packages: .
-
-
--- Temp: pin ouroboros-network to main, where NodeToClientV_23 is the only
--- NodeToClient version. Drop once these packages are released to CHaP.
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/ouroboros-network.git
-  tag: 09495ae9e6a063929ac9f2a8a80d210735c3a66e
-  --sha256: sha256-/m3CUFKSnTw8YpyIMhcpdVbHWu6FEqjiQFiPORWLFFI=
-  subdir:
-    ouroboros-network
-    cardano-diffusion
-    network-mux
-
--- We want to always build the test-suites and benchmarks
-tests: true
-benchmarks: true
-
-multi-repl: True
-
--- The tools read the node configuration with cardano-config. Its main branch
--- rather than the CHaP release, because the tools rely on changes not released
--- yet; replace this with the CHaP release that carries them.
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/cardano-config.git
-  tag: d6340b13b9c789441905f27d90984a6018bbe503
-  --sha256: sha256-diV4bf/cU0u0VNC6dMMe4Y/pPFI0s+MqxCIpzd9c+E8=
-
-import: cabal/asserts.cabal
-import: cabal/newer-ghcs.cabal
-
-package ouroboros-network
-  -- Certain ThreadNet tests rely on transactions to be submitted promptly after
-  -- a node (re)start. Therefore, we disable this flag (see
-  -- https://github.com/IntersectMBO/ouroboros-network/issues/4927 for context).
-  flags: -txsubmission-delay
-
--- We need to disable bitvec's SIMD for now, as it breaks during cross compilation.
-if os (windows)
-  constraints:
-    bitvec -simd
-
-constraints:
-  tasty <1.5.4,
