@@ -37,6 +37,8 @@ import Ouroboros.Consensus.Block.Abstract
   ( ConvertRawHash
   , Point
   , StandardHash
+  , decodeRawHash
+  , encodeRawHash
   )
 import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Cert.Class (IsPerasCert (..))
@@ -45,7 +47,12 @@ import Ouroboros.Consensus.Peras.Types
   , PerasRoundNo
   , PerasSeatIndex
   )
+import Ouroboros.Consensus.Storage.Serialisation
+  ( DecodeDisk (..)
+  , EncodeDisk (..)
+  )
 import Ouroboros.Consensus.Util (ShowProxy)
+import Ouroboros.Network.Block (decodePoint, encodePoint)
 import Ouroboros.Network.Util (ShowProxy (..))
 
 -- | Mocked Peras certificates without crypto.
@@ -114,6 +121,48 @@ instance
         <> toCBOR mockCertRound
         <> toCBOR mockCertBlock
         <> toCBOR (NonEmpty.toList (NESet.toList mockCertVoters))
+
+instance
+  ConvertRawHash blk =>
+  EncodeDisk blk (MockPerasCert blk)
+  where
+  encodeDisk
+    _ccfg
+    MockPerasCert
+      { mockCertRound
+      , mockCertBlock
+      , mockCertVoters
+      } =
+      encodeListLen 3
+        <> toCBOR mockCertRound
+        <> encodePoint
+          (encodeRawHash (Proxy @blk))
+          mockCertBlock
+        <> toCBOR
+          (NonEmpty.toList (NESet.toList mockCertVoters))
+
+instance
+  ConvertRawHash blk =>
+  DecodeDisk blk (MockPerasCert blk)
+  where
+  decodeDisk _ccfg = do
+    decodeListLenOf 3
+    mockCertRound <- fromCBOR
+    mockCertBlock <-
+      decodePoint (decodeRawHash (Proxy @blk))
+    mockCertVoters <- decodeNonEmptySet
+    pure
+      MockPerasCert
+        { mockCertRound
+        , mockCertBlock
+        , mockCertVoters
+        }
+   where
+    decodeNonEmptySet = do
+      xs <- fromCBOR
+      case NonEmpty.nonEmpty xs of
+        Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
+        Just neSet -> pure (NESet.fromList neSet)
 
 instance
   ConvertRawHash blk =>
