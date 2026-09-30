@@ -297,7 +297,13 @@ implGetCertsAfter env roundNo maxCerts = do
   -- or may not show up in this snapshot.
   rounds <- atomically $ readSVarSTM (picdbKnownRounds env)
   let roundsAfter = snd $ Set.split roundNo rounds
-      candidates = take (fromIntegral maxCerts) (Set.toAscList roundsAfter)
+      -- 'take' uses an 'Int', while the public API uses 'Word64'. Saturate
+      -- instead of allowing a large limit (notably 'maxBound') to wrap to a
+      -- negative 'Int' and produce an empty result.
+      maxCertsAsInt =
+        fromIntegral $
+          min maxCerts (fromIntegral (maxBound :: Int))
+      candidates = take maxCertsAsInt (Set.toAscList roundsAfter)
   -- Read each certificate on demand. A certificate whose file is unreadable or
   -- corrupt is quarantined (traced and dropped from the index) rather than
   -- failing the whole request, so that the remaining certificates stay
