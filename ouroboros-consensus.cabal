@@ -827,6 +827,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.PerasCertDB
+    Test.Ouroboros.Storage.PerasImmutableCertDB
     Test.Ouroboros.Storage.PerasCertDB.Model
     Test.Ouroboros.Storage.PerasCertDB.StateMachine
     Test.Ouroboros.Storage.PerasVoteDB
