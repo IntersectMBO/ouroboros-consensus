@@ -42,6 +42,7 @@ import Cardano.Ledger.BaseTypes
   , boundRational
   , unsafeNonZero
   )
+import Cardano.Ledger.Coin (Coin (..), CoinPerByte (..), CompactForm (..))
 import Cardano.Ledger.Core (MaxPledgeLeverage (..))
 import Cardano.Ledger.Dijkstra.PParams
 import Cardano.Ledger.Plutus
@@ -51,7 +52,7 @@ import Cardano.Ledger.Plutus
   , costModelInitParamCount
   , mkCostModel
   )
-import Cardano.Slotting.Slot (EpochNo (..))
+import Cardano.Slotting.Slot (EpochNo (..), SlotInterval (..))
 import Control.Exception (Exception (..), handle, throwIO, try)
 import Data.Either (fromRight)
 import Data.Functor.Identity (Identity, runIdentity)
@@ -199,8 +200,8 @@ experimentalErasEnabled =
   runIdentity . Cfg.experimentalHardForksEnabled . Cfg.testingConfiguration
 
 -- | Inherited from cardano-node's @Cardano.Node.Protocol.Dijkstra@, by way of
--- the copy of that module these tools used to vendor, plus the two fields a
--- later @cardano-ledger@ added.
+-- the copy of that module these tools used to vendor, plus the Peras and
+-- ref-inputs-cost fields later @cardano-ledger@ commits added.
 defaultDijkstraGenesis :: SL.DijkstraGenesis
 defaultDijkstraGenesis =
   let upgradePParamsDef =
@@ -223,6 +224,14 @@ defaultDijkstraGenesis =
           , udppMaxEndorserBlockTxsSize = 12 * 1024 * 1024
           , udppMaxEndorserBlockExUnits = OrdExUnits $ ExUnits 7_000_000_000 2_000_000_000_000
           , udppMaxRefScriptSizePerEndorserBlock = 12 * 1024 * 1024
+          , udppPerasMinCandidateBlockAge = SlotInterval 90
+          , udppPerasHealingFactor = fromMaybe (error "impossible") $ boundRational 0.5
+          , udppPerasCertBoost = 15
+          , udppPerasTargetCommitteeSize = 800
+          , udppPerasBootstrapRound = SJust 0
+          , udppPerasQuorumThresholdSafetyMargin = fromMaybe (error "impossible") $ boundRational 0.05
+          , udppRefInputsCostPerMultiAssetPolicy = Coin 0
+          , udppRefInputsCostPerDatumByte = CoinPerByte (CompactCoin 0)
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 
