@@ -19,9 +19,11 @@ import Cardano.Slotting.Slot
   , WithOrigin (At, Origin)
   )
 import qualified Data.ByteString as BS
+import Data.Maybe (fromJust)
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
-  , EbHash (MkEbHash)
+  , EbHash
+  , ebHashFromBytes
   )
 import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
@@ -36,7 +38,7 @@ import Test.Crypto.KES ()
 import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
 
 instance Arbitrary EbHash where
-  arbitrary = MkEbHash . BS.pack <$> vectorOfWord8 32
+  arbitrary = fromJust . ebHashFromBytes . BS.pack <$> vectorOfWord8 32
    where
     vectorOfWord8 n = sequence (replicate n arbitrary)
 

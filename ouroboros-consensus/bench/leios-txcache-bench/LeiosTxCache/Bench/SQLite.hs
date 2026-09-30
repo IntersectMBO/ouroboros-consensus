@@ -33,7 +33,7 @@ import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Database.SQLite3 as DB
-import LeiosDemoTypes (TxHash (..))
+import LeiosDemoTypes (txHashBytes)
 import LeiosTxCache.API
   ( LeiosTxCache (..)
   , ReferencesTxsByHash (..)
@@ -112,7 +112,7 @@ newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
         writeIORef connRef =<< openConn
       batchLookup stmt hashes = do
         zipWithM_
-          (\i (MkTxHash bs) -> DB.bindBlob stmt (fromIntegral (i :: Int)) bs)
+          (\i txHash -> DB.bindBlob stmt (fromIntegral (i :: Int)) (txHashBytes txHash))
           [1 ..]
           hashes
         _ <- DB.step stmt
@@ -146,12 +146,12 @@ newSQLiteLeiosTxCacheWith pragmas path = do
   mapM_ (DB.exec db) pragmas
   insertStmt <- DB.prepare db "INSERT OR IGNORE INTO txs (txHashBytes) VALUES (?);"
   lookupStmt <- DB.prepare db "SELECT 1 FROM txs WHERE txHashBytes = ? LIMIT 1;"
-  let insertOne (MkTxHash bs) = do
-        DB.bindBlob insertStmt 1 bs
+  let insertOne txHash = do
+        DB.bindBlob insertStmt 1 (txHashBytes txHash)
         _ <- DB.step insertStmt
         DB.reset insertStmt
-      lookupOne (MkTxHash bs) = do
-        DB.bindBlob lookupStmt 1 bs
+      lookupOne txHash = do
+        DB.bindBlob lookupStmt 1 (txHashBytes txHash)
         r <- DB.step lookupStmt
         DB.reset lookupStmt
         pure $ case r of

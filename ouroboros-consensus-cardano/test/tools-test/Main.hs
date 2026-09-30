@@ -9,6 +9,7 @@ import Cardano.Tools.DBSynthesizer.Types
 import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
 import Cardano.Tools.LeiosDb (LeiosDbSource (..))
+import Data.Maybe (fromJust)
 import Data.String (fromString)
 import LeiosDemoDb
   ( LeiosDbReader (scanEbPoints)
@@ -18,7 +19,7 @@ import LeiosDemoDb
   , withReader
   , withWriter
   )
-import LeiosDemoTypes (EbHash (..), LeiosPoint (..))
+import LeiosDemoTypes (LeiosPoint (..), ebHashFromBytes)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
 import qualified Test.Cardano.Tools.Headers
@@ -192,7 +193,7 @@ blockCountTest logStep = do
  where
   genTxs _ _ _ _ _ = pure ([], [], pure ())
 
-  mkEbHash c = MkEbHash (fromString (replicate 32 c))
+  mkEbHash c = fromJust $ ebHashFromBytes (fromString (replicate 32 c))
 
 tests :: TestTree
 tests =

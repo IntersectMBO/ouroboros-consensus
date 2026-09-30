@@ -6,6 +6,7 @@ import qualified Data.ByteString as BS
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List ((\\))
+import Data.Maybe (fromJust)
 import Data.Ratio ((%))
 import qualified Data.Vector.Strict as V
 import LeiosDemoTypes
@@ -19,6 +20,8 @@ import LeiosDemoTypes
   , leiosReferencesCapacity
   , maxTxsPerEb
   , selectCommitteeByStake
+  , txHashBytes
+  , txHashFromBytes
   )
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Test.QuickCheck
@@ -70,7 +73,7 @@ maxTxBytesSize = 2 ^ (14 :: Int)
 
 -- | Generate a random TxHash (32 random bytes).
 genTxHash :: Gen TxHash
-genTxHash = MkTxHash . BS.pack <$> vectorOf 32 (fromIntegral <$> chooseInt (0, 255))
+genTxHash = fromJust . txHashFromBytes . BS.pack <$> vectorOf 32 (fromIntegral <$> chooseInt (0, 255))
 
 -- | Generate a tx size with good coverage of CBOR encoding boundaries.
 -- Values 0-23 encode in 1 byte, 24-255 in 2 bytes, 256-65535 in 3 bytes.
@@ -125,8 +128,8 @@ prop_ebBytesSizeConsistent =
 -- actually writes for that item.
 prop_ebItemSizeConsistent :: Property
 prop_ebItemSizeConsistent =
-  forAll ((,) <$> genTxHash <*> genTxBytesSize) $ \(txHash@(MkTxHash bytes), txSize) ->
-    let encoded = serialize' $ CBOR.encodeBytes bytes <> CBOR.encodeWord32 txSize
+  forAll ((,) <$> genTxHash <*> genTxBytesSize) $ \(txHash, txSize) ->
+    let encoded = serialize' $ CBOR.encodeBytes (txHashBytes txHash) <> CBOR.encodeWord32 txSize
         ByteSize32 estimatedSize = encodeLeiosEbItemSize (ByteSize32 txSize)
      in counterexample
           ("item: " <> show (txHash, txSize))

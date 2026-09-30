@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -21,6 +22,7 @@
 module LeiosDemoTypes.LeiosJobs (module LeiosDemoTypes.LeiosJobs) where
 
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
 import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -38,7 +40,10 @@ import NoThunks.Class (NoThunks)
 import System.Random (StdGen, uniformR)
 
 -- | Hash of a Leios transaction (the 'Cardano.Crypto.Leios.HASH' of its bytes).
-newtype TxHash = MkTxHash ByteString
+--
+-- The fixed length makes decoding reject a peer-supplied hash of any other
+-- length, and lets the tx cache read the four key words directly.
+newtype TxHash = MkTxHash (PackedBytes 32)
   deriving stock (Eq, Ord, Generic)
   deriving anyclass (NFData, NoThunks)
 
@@ -46,7 +51,14 @@ instance Show TxHash where
   show = prettyTxHash
 
 prettyTxHash :: TxHash -> String
-prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
+prettyTxHash = BS8.unpack . BS16.encode . txHashBytes
+
+txHashBytes :: TxHash -> ByteString
+txHashBytes (MkTxHash bytes) = unpackPinnedBytes bytes
+
+-- | Fails unless the input is exactly 32 bytes.
+txHashFromBytes :: MonadFail m => ByteString -> m TxHash
+txHashFromBytes = fmap MkTxHash . packByteString
 
 -- | A job's commitment to which txs it covers: the Blake2b-256 hash of the
 -- concatenated tx hashes (in ascending offset order), via
@@ -63,7 +75,7 @@ jobRootHashOfTxHashes =
     . Hash.hashToBytes
     . Hash.hashWith @Hash.Blake2b_256 id
     . BS.concat
-    . map (\(MkTxHash bs) -> bs)
+    . map txHashBytes
 
 -- | A unit of tx-fetch work: the EB-body offsets fetched by one
 -- @MsgLeiosBlockTxsRequest@ (a bitfield over the body's tx vector), the total

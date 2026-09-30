@@ -24,6 +24,7 @@ import qualified Data.ByteString as BS
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromJust)
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
@@ -40,6 +41,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , PeerId (..)
   , demoLeiosFetchStaticEnv
+  , ebHashFromBytes
   , emptyLeiosOutstanding
   , markBodyImminent
   , mergeOffer
@@ -318,4 +320,4 @@ point slot c = MkLeiosPoint (SlotNo (fromIntegral slot)) (eb c)
 
 -- | Distinct EB hash from a Char.
 eb :: Char -> EbHash
-eb c = MkEbHash $ BS.pack $ replicate 32 (fromIntegral (fromEnum c))
+eb c = fromJust $ ebHashFromBytes $ BS.pack $ replicate 32 (fromIntegral (fromEnum c))

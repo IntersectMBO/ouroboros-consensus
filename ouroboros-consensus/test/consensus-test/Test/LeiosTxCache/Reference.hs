@@ -13,9 +13,10 @@ import Data.Foldable (toList)
 import qualified Data.List as List
 import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromJust)
 import qualified Data.Set as Set
 import Data.Word (Word64, Word8)
-import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
+import LeiosDemoTypes (EbHash, RbHash (..), TxHash, ebHashFromBytes, txHashFromBytes)
 import LeiosTxCache.API (defaultLeiosTxCacheShift)
 import LeiosTxCache.Reference
 import Test.Tasty (TestTree, adjustOption, testGroup)
@@ -104,10 +105,10 @@ empty :: Idx
 empty = emptyLeiosTxCacheIndex
 
 mkTxHash :: Word8 -> TxHash
-mkTxHash w = MkTxHash (BS.pack [w])
+mkTxHash w = fromJust $ txHashFromBytes $ BS.pack (w : replicate 31 0)
 
 mkEbHash :: Word8 -> EbHash
-mkEbHash w = MkEbHash (BS.pack [w])
+mkEbHash w = fromJust $ ebHashFromBytes $ BS.pack (w : replicate 31 0)
 
 mkRbHash :: Word8 -> RbHash
 mkRbHash w = MkRbHash (BS.pack [w])
