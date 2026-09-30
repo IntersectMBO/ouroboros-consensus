@@ -16,9 +16,18 @@ module Ouroboros.Consensus.Shelley.HFEras
   , StandardShelleyBlock
   ) where
 
-import Cardano.Ledger.Dijkstra.Era (DijkstraEraBlockHeader (..))
+import Cardano.Ledger.BaseTypes (ProtVer (..))
+import Cardano.Ledger.Binary (getVersion32, mkVersion32)
+import Cardano.Ledger.Block
+  ( BlockHeaderVersionInfo (..)
+  , LeiosEraBlockHeader (..)
+  , PraosEraBlockHeader (..)
+  )
 import Cardano.Protocol.Crypto
 import Cardano.Protocol.Praos.BlockHeader (Header)
+import Data.Maybe (fromMaybe)
+import Data.Maybe.Strict (StrictMaybe (SNothing))
+import Lens.Micro (lens)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -85,5 +94,27 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
 
-instance Crypto c => DijkstraEraBlockHeader (Header c) DijkstraEra where
-  prevNonceBlockHeaderL = error "Not implemented. Peras placeholder"
+-- | The ledger expects Dijkstra blocks to carry a Leios block header, but
+-- consensus still uses the Praos header for the Dijkstra era, so this instance
+-- adapts the Praos header to the Leios interface:
+--
+-- * The version info is the header's protocol version, which has the same wire
+--   format: the major version is the highest supported major version and the
+--   minor version is the self-reported software tag. A major version that is
+--   not a valid 'Version' is clamped to 'maxBound' when set.
+--
+-- * A Praos header never announces Endorser Block references, so the
+--   announcement always reads as 'SNothing' and setting it has no effect.
+--
+-- * The previous nonce uses the class default ('NeutralNonce'), which the
+--   ledger itself describes as a stub until Peras is implemented.
+--
+-- TODO @js: use the Leios block header from @cardano-protocol@ for the Dijkstra
+-- era and remove this instance.
+instance Crypto c => LeiosEraBlockHeader (Header c) DijkstraEra where
+  versionInfoBlockHeaderL =
+    protVerBlockHeaderL
+      . lens
+        (\(ProtVer major minor) -> BlockHeaderVersionInfo (getVersion32 major) minor)
+        (\_ (BlockHeaderVersionInfo major tag) -> ProtVer (fromMaybe maxBound (mkVersion32 major)) tag)
+  ebReferencesAnnouncementBlockHeaderL = lens (const SNothing) const
