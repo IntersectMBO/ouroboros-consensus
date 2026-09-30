@@ -93,7 +93,7 @@ be adding is the Alonzo era, which comes after the Mary era.
   the `TestingConfiguration` record, and in `Cardano.Tools.Config`, map it onto
   the new era's trigger in `mkHardForkTriggers`.
 
-  The testing keys live under `Configuration.TestingConfig` in the current
+  The testing keys live under `Configuration.Testing` in the current
   configuration format. `TestEnableDevelopmentHardForkEras` is gone: its
   replacement is `ExperimentalHardForksEnabled`, which also requires a
   `DijkstraGenesisFile` and a `DijkstraGenesisHash` when it is true. A

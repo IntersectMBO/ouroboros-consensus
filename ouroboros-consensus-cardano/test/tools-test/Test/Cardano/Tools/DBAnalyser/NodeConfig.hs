@@ -103,9 +103,9 @@ tests =
 
 -- | The sections of the @Configuration@ envelope that these tests patch.
 protocolSection, storageSection, testingSection :: [Aeson.Key]
-protocolSection = ["Configuration", "ProtocolConfig"]
-storageSection = ["Configuration", "StorageConfig"]
-testingSection = ["Configuration", "TestingConfig"]
+protocolSection = ["Configuration", "Protocol"]
+storageSection = ["Configuration", "Storage"]
+testingSection = ["Configuration", "Testing"]
 
 -- | Run an action on a copy of 'configFile' in which the section at the given
 -- path has been extended with (or, for a 'Nothing' value, stripped of) the given

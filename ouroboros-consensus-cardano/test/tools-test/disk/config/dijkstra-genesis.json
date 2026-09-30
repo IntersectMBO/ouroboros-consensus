@@ -16,5 +16,16 @@
     "memory": 7000000000,
     "steps": 2000000000000
   },
-  "maxRefScriptSizePerEndorserBlock": 12582912
+  "maxRefScriptSizePerEndorserBlock": 12582912,
+  "perasMinCandidateBlockAge": 90,
+  "perasHealingFactor": {
+    "numerator": 1,
+    "denominator": 2
+  },
+  "perasCertBoost": 15,
+  "perasTargetCommitteeSize": 800,
+  "perasBootstrapRound": 0,
+  "perasQuorumThresholdSafetyMargin": 0.05,
+  "refInputsCostPerMultiAssetPolicy": 0,
+  "refInputsCostPerDatumByte": 0
 }
