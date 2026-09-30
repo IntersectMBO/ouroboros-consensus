@@ -603,6 +603,7 @@ mkHandlers
                               traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
                             Nothing -> pure ()
                         _ -> pure ()
+                  LeiosDemoOnlyTestNotify.MsgCanceled -> throwIO Leios.LeiosNotifyUnexpectedMsgCancel
               )
       , hLeiosNotifyServer = \_version peer -> do
           chan <- subscribeEbNotifications leiosDB
@@ -641,6 +642,7 @@ mkHandlers
                   TVar.Unchecked.writeTVar credits $! n + 1
                   pure LeiosDemoOnlyTestNotify.NotExcessiveRequests
             next = atomically $ do
+              -- Note that this is in STM.
               q <- TVar.Unchecked.readTVar queue
               case Seq.viewl q of
                 Seq.EmptyL -> LazySTM.retry
@@ -682,7 +684,8 @@ mkHandlers
                               pure . Announcements.deletePeerCentral peer
                           )
 
-          pure (leiosNotifyServerPeerLookahead incr next, pump)
+          server <- leiosNotifyServerPeerLookahead incr next
+          pure (server, pump)
       , hLeiosFetchClient = \writer _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           pure $
