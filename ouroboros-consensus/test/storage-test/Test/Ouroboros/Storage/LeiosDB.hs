@@ -869,7 +869,8 @@ test_truncateImmutablePartition volDbPath immDbPath = do
 -- | Names of the tables and indexes in a database file.
 schemaObjects :: FilePath -> IO [String]
 schemaObjects path =
-  bracket (SQL.open (T.pack path)) SQL.close $ \db ->
+  bracket (SQL.open (T.pack path)) SQL.close $ \db -> do
+    SQL.exec db (T.pack "pragma busy_timeout = 1000;")
     bracket
       (SQL.prepare db (T.pack "SELECT name FROM sqlite_master WHERE type IN ('table', 'index')"))
       SQL.finalize
