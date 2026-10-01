@@ -12,18 +12,21 @@ module Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   ) where
 
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
-import Control.Monad.IOSim (runSimStrictShutdown)
-import Control.ResourceRegistry (forkLinkedThread, waitAnyThread, withRegistry)
-import Control.Tracer (Tracer, nullTracer, traceWith)
+import Control.Monad.Class.MonadTimer.SI (timeout)
+import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
+import Control.ResourceRegistry (forkLinkedThread, withRegistry)
+import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Data.Data (Typeable)
 import Data.Functor.Contravariant (contramap)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Network.TypedProtocol.Channel (Channel, createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
-  ( objectDiffusionInbound
+  ( TraceObjectDiffusionInbound (TraceObjectDiffusionInboundServerIdle)
+  , objectDiffusionInbound
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
@@ -70,6 +73,12 @@ tests =
     [ testProperty
         "ObjectDiffusion smoke test with mock objects"
         prop_smoke
+    , testProperty
+        "ObjectDiffusion delivers an object after an idle response"
+        prop_object_after_idle
+    , testProperty
+        "ObjectDiffusion reports idle only after committing prior objects"
+        prop_idle_after_commit
     ]
 
 {-------------------------------------------------------------------------------
@@ -195,6 +204,200 @@ prop_smoke =
       (objectDiffusionInboundPeerPipelined inbound)
       >> pure ()
 
+-- | Exercise the important distinction from client-side polling: once the
+-- server has returned an idle response, the client immediately starts another
+-- blocking request. An object added between idle responses must wake that
+-- request immediately rather than waiting for another client-side delay.
+prop_object_after_idle :: Property
+prop_object_after_idle =
+  case runSimStrictShutdown simulation of
+    Right (mIdle, mDelivered, mTerminated, inboundObjects) ->
+      counterexample "the server did not return client agency while idle" (isJust mIdle)
+        .&&. counterexample "object added after idle was not delivered promptly" (isJust mDelivered)
+        .&&. counterexample "peers did not terminate after delivery" (isJust mTerminated)
+        .&&. inboundObjects === [object]
+    Left err -> counterexample (show err) $ property False
+ where
+  object = SmokeObject (SmokeObjectId 42)
+
+  simulation :: forall s. IOSim s (Maybe (), Maybe (), Maybe (), [SmokeObject])
+  simulation = do
+    let maxFifoSize = NumObjectsUnacknowledged 5
+        maxIdsToReq = NumObjectIdsReq 3
+        maxObjectsToReq = NumObjectsReq 2
+
+    outboundPool@(SmokeObjectPool outboundObjectsVar) <- newObjectPool []
+    inboundPool@(SmokeObjectPool inboundObjectsVar) <- newObjectPool []
+    controlMessage <- uncheckedNewTVarM Continue
+    idleSeen <- uncheckedNewTVarM False
+
+    let inboundTracer = mkTracer $ \event -> case event of
+          TraceObjectDiffusionInboundServerIdle ->
+            atomically $ writeTVar idleSeen True
+          _ -> pure ()
+        inbound =
+          objectDiffusionInbound
+            inboundTracer
+            (maxFifoSize, maxIdsToReq, maxObjectsToReq)
+            (makeObjectPoolWriter inboundPool)
+            nodeToNodeVersion
+            (readTVar controlMessage)
+        outbound =
+          objectDiffusionOutbound
+            nullTracer
+            maxFifoSize
+            1
+            (makeObjectPoolReader outboundPool)
+            nodeToNodeVersion
+
+    withRegistry $ \reg -> do
+      (outboundChannel, inboundChannel) <- createConnectedChannels
+      peersDone <- uncheckedNewTVarM (0 :: Int)
+      let trackDone action = do
+            _ <- action
+            atomically $ modifyTVar peersDone (+ 1)
+
+      _outboundThread <-
+        forkLinkedThread reg "ObjectDiffusion post-idle outbound peer" $
+          trackDone $
+            runPeer
+              nullTracer
+              codecObjectDiffusionId
+              outboundChannel
+              (objectDiffusionOutboundPeer outbound)
+      _inboundThread <-
+        forkLinkedThread reg "ObjectDiffusion post-idle inbound peer" $
+          trackDone $
+            runPipelinedPeer
+              nullTracer
+              codecObjectDiffusionId
+              inboundChannel
+              (objectDiffusionInboundPeerPipelined inbound)
+
+      mIdle <- timeout 1.25 $ atomically $ readTVar idleSeen >>= check
+
+      -- Add an object after the idle response. A polling client that slept for
+      -- another idle interval would miss the deliberately shorter deadline;
+      -- the immediately reissued blocking request is woken at once.
+      atomically $ modifyTVar outboundObjectsVar (++ [object])
+
+      mDelivered <- timeout 0.25 $ atomically $ do
+        inboundObjects <- readTVar inboundObjectsVar
+        check (inboundObjects == [object])
+
+      atomically $ writeTVar controlMessage Terminate
+      mTerminated <- timeout 3 $ atomically $ do
+        n <- readTVar peersDone
+        check (n == 2)
+
+      inboundObjects <- atomically $ readTVar inboundObjectsVar
+      pure (mIdle, mDelivered, mTerminated, inboundObjects)
+
+-- | Receiving 'MsgServerIdle' is a synchronization point for the inbound
+-- peer: every object advertised before it must already have been committed to
+-- the local pool. Hold a commit open and verify that no idle event can overtake
+-- it.
+prop_idle_after_commit :: Property
+prop_idle_after_commit =
+  case runSimStrictShutdown simulation of
+    Right (mCommitStarted, mEarlyIdle, mCommitted, mIdle, mTerminated, inboundObjects) ->
+      counterexample "the inbound peer never started committing the object" (isJust mCommitStarted)
+        .&&. counterexample
+          "the inbound peer reported idle before the object commit completed"
+          (not $ isJust mEarlyIdle)
+        .&&. counterexample "the inbound peer did not commit the object" (isJust mCommitted)
+        .&&. counterexample "the server did not report idle after the commit" (isJust mIdle)
+        .&&. counterexample "peers did not terminate after the idle response" (isJust mTerminated)
+        .&&. inboundObjects === [object]
+    Left err -> counterexample (show err) $ property False
+ where
+  object = SmokeObject (SmokeObjectId 42)
+
+  simulation :: forall s. IOSim s (Maybe (), Maybe (), Maybe (), Maybe (), Maybe (), [SmokeObject])
+  simulation = do
+    let maxFifoSize = NumObjectsUnacknowledged 5
+        maxIdsToReq = NumObjectIdsReq 3
+        maxObjectsToReq = NumObjectsReq 2
+
+    outboundPool <- newObjectPool [object]
+    SmokeObjectPool inboundObjectsVar <- newObjectPool []
+    controlMessage <- uncheckedNewTVarM Continue
+    commitStarted <- uncheckedNewTVarM False
+    allowCommit <- uncheckedNewTVarM False
+    idleSeen <- uncheckedNewTVarM False
+
+    let inboundTracer = mkTracer $ \event -> case event of
+          TraceObjectDiffusionInboundServerIdle ->
+            atomically $ writeTVar idleSeen True
+          _ -> pure ()
+        inboundWriter =
+          ObjectPoolWriter
+            { opwObjectId = getSmokeObjectId
+            , opwAddObjects = \objects -> do
+                atomically $ writeTVar commitStarted True
+                atomically $ readTVar allowCommit >>= check
+                atomically $ modifyTVar inboundObjectsVar (++ objects)
+            , opwHasObject = do
+                inboundObjects <- readTVar inboundObjectsVar
+                pure $ \objectId ->
+                  any ((== objectId) . getSmokeObjectId) inboundObjects
+            }
+        inbound =
+          objectDiffusionInbound
+            inboundTracer
+            (maxFifoSize, maxIdsToReq, maxObjectsToReq)
+            inboundWriter
+            nodeToNodeVersion
+            (readTVar controlMessage)
+        outbound =
+          objectDiffusionOutbound
+            nullTracer
+            maxFifoSize
+            1
+            (makeObjectPoolReader outboundPool)
+            nodeToNodeVersion
+
+    withRegistry $ \reg -> do
+      (outboundChannel, inboundChannel) <- createConnectedChannels
+      peersDone <- uncheckedNewTVarM (0 :: Int)
+      let trackDone action = do
+            _ <- action
+            atomically $ modifyTVar peersDone (+ 1)
+
+      _outboundThread <-
+        forkLinkedThread reg "ObjectDiffusion commit-order outbound peer" $
+          trackDone $
+            runPeer
+              nullTracer
+              codecObjectDiffusionId
+              outboundChannel
+              (objectDiffusionOutboundPeer outbound)
+      _inboundThread <-
+        forkLinkedThread reg "ObjectDiffusion commit-order inbound peer" $
+          trackDone $
+            runPipelinedPeer
+              nullTracer
+              codecObjectDiffusionId
+              inboundChannel
+              (objectDiffusionInboundPeerPipelined inbound)
+
+      mCommitStarted <- timeout 1 $ atomically $ readTVar commitStarted >>= check
+      mEarlyIdle <- timeout 1.25 $ atomically $ readTVar idleSeen >>= check
+
+      atomically $ writeTVar allowCommit True
+      mCommitted <- timeout 0.25 $ atomically $ do
+        inboundObjects <- readTVar inboundObjectsVar
+        check (inboundObjects == [object])
+      mIdle <- timeout 1.25 $ atomically $ readTVar idleSeen >>= check
+
+      atomically $ writeTVar controlMessage Terminate
+      mTerminated <- timeout 3 $ atomically $ do
+        n <- readTVar peersDone
+        check (n == 2)
+
+      inboundObjects <- atomically $ readTVar inboundObjectsVar
+      pure (mCommitStarted, mEarlyIdle, mCommitted, mIdle, mTerminated, inboundObjects)
+
 --- The core logic of the smoke test is shared between the generic smoke tests for ObjectDiffusion, and the ones specialised to PerasCert/PerasVote diffusion
 prop_smoke_object_diffusion ::
   ( Eq object
@@ -263,43 +466,35 @@ prop_smoke_object_diffusion
             objectDiffusionOutbound
               tracer
               maxFifoSize
+              1
               outboundPoolReader
               nodeToNodeVersion
 
-        withRegistry $ \reg -> do
+        mTerminated <- withRegistry $ \reg -> do
           (outboundChannel, inboundChannel) <- createConnectedChannels
-          outboundThread <-
+          peersDone <- uncheckedNewTVarM (0 :: Int)
+          let trackDone action = do
+                _ <- action
+                atomically $ modifyTVar peersDone (+ 1)
+          _outboundThread <-
             forkLinkedThread reg "ObjectDiffusion Outbound peer thread" $
-              runOutboundPeer outbound outboundChannel tracer
-          inboundThread <-
+              trackDone $
+                runOutboundPeer outbound outboundChannel tracer
+          _inboundThread <-
             forkLinkedThread reg "ObjectDiffusion Inbound peer thread" $
-              runInboundPeer inbound inboundChannel tracer
-          controlMessageThread <- forkLinkedThread reg "ObjectDiffusion Control thread" $ do
-            threadDelay 1000 -- give a head start to the other threads
+              trackDone $
+                runInboundPeer inbound inboundChannel tracer
+          _controlMessageThread <- forkLinkedThread reg "ObjectDiffusion Control thread" $ do
+            threadDelay 1 -- give the peers time to transfer all initial objects
             atomically $ writeTVar controlMessage Terminate
-            threadDelay 1000 -- wait for the other threads to finish
 
-          -- 'outboundThread' and 'inputThread' will run indefinitely, at least
-          -- until we send the 'Terminate' control message through the
-          -- 'controlMessageThread'.
-          -- \* If 'inputThread' supports graceful termination, it will react to
-          -- the 'Terminate' message in a timely manner, send 'MsgDone' to the
-          -- 'outboundThread', and both threads should terminate shortly after
-          -- (before the expiration of the second 'threadDelay' in
-          -- 'controlMessageThread').
-          -- \* If 'inputThread' does not support graceful termination (which is
-          -- the case in the initial Peras implementation), it will probably be
-          -- stuck waiting for a response to a blocking `ReqIds` request when no
-          -- new data is available on the 'outboundThread' side. So the
-          -- 'Terminate' message will have no effect, and 'controlMessageThread'
-          -- will actually be the first thread to finish (with the expiration of
-          -- the second 'threadDelay') after which we will finish the test by
-          -- comparing received data.
-          -- But this isn't really an issue, because the 'inputThread' blocks on
-          -- `ReqIds` only when it is caught-up, i.e. when all possible data has
-          -- already been transferred from the 'outboundThread'. So even without
-          -- graceful termination, the test should still work as intended.
-          waitAnyThread [outboundThread, inboundThread, controlMessageThread]
+          -- Once caught up, the server returns agency at least once per idle
+          -- interval. The client must then observe 'Terminate', send 'MsgDone',
+          -- and let both peer threads finish. The timeout covers the one-second
+          -- head start plus one one-second idle interval and scheduling margin.
+          timeout 3 $ atomically $ do
+            n <- readTVar peersDone
+            check (n == 2)
 
         traceWith tracer "========== [ ObjectDiffusion smoke test finished ] =========="
         poolContent <- getAllInboundPoolContent
@@ -307,8 +502,12 @@ prop_smoke_object_diffusion
         traceWith tracer "inboundPoolContent:"
         traceWith tracer (show poolContent)
         traceWith tracer "========== ======================================= =========="
-        pure poolContent
+        pure (mTerminated, poolContent)
      in
       case simulationResult of
-        Right inboundPoolContent -> inboundPoolContent === objects
+        Right (mTerminated, inboundPoolContent) ->
+          counterexample
+            "peers did not terminate after the Terminate control message"
+            (isJust mTerminated)
+            .&&. inboundPoolContent === objects
         Left msg -> counterexample (show msg) $ property False
