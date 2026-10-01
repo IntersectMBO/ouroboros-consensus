@@ -22,6 +22,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , newBroadcastTChan
   , newTVarIO
   , readTVar
+  , readTVarIO
   , writeTChan
   )
 import Data.ByteString (ByteString)
@@ -241,6 +242,10 @@ imInsertEbBody stateVar notificationChan point eb = do
       ebBytesSize = encodeLeiosEbSize eb
   when (null items) $
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
+  -- As on SQLite: the point MUST already be present.
+  known <- Map.member point . imEbPoints <$> readTVarIO stateVar
+  when (not known) $
+    throwLeiosDbException "writeEbBody: point not registered (programmer error)"
   atomically $ do
     let entries =
           IntMap.fromList
