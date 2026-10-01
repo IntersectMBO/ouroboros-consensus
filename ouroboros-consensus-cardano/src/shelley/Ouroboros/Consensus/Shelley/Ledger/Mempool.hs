@@ -95,7 +95,6 @@ import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)
-import qualified Codec.CBOR.Encoding as CBOR
 import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
@@ -831,7 +830,7 @@ txEbMeasureDijkstra (TxMeasure alonzo refScripts) =
   DijkstraEbMeasure
     { ebClosureMeasure = TxMeasure alonzo refScripts
     , txReferencesSize =
-        IgnoringOverflow . Leios.encodedReferenceSize (Proxy @DijkstraEra) $
+        IgnoringOverflow . Leios.encodedReferenceSize $
           txMeasureByteSize alonzo
     }
 
@@ -860,33 +859,11 @@ leiosEndorserBlockCapacity st =
       -- Nothing checks that an endorser block of this size fits one LeiosFetch
       -- message. That check must come with the LeiosFetch protocol.
       txReferencesSize =
-        IgnoringOverflow . ByteSize32 . Leios.referencesCapacity (Proxy @DijkstraEra) $
+        IgnoringOverflow . ByteSize32 . Leios.referencesCapacity $
           pparams ^. ppMaxEndorserBlockReferencesSizeL
     }
  where
   pparams = getPParams $ tickedShelleyLedgerState st
-
--- | A Dijkstra endorser block is a CBOR map from each transaction hash to the
--- size of that transaction.
-instance Leios.EndorserBlockFormat DijkstraEra where
-  encodeEndorserBlock _ (Leios.MkEndorserBlock references) =
-    foldl
-      ( \acc (Leios.MkTxHash bytes, txBytesSize) ->
-          acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
-      )
-      (CBOR.encodeMapLen $ fromIntegral $ length references)
-      references
-
-  -- The hash and the size.
-  encodedReferenceSize _ (ByteSize32 txSize) =
-    ByteSize32 $ cborBytesSize 32 + Leios.cborIntBytesSize txSize
-   where
-    cborBytesSize len = Leios.cborIntBytesSize len + len
-
-  -- The map header. CBOR map headers have the same widths as
-  -- 'Leios.cborIntBytesSize', and the reference count fits 'Leios.BytesSize'.
-  encodedMaxFramingSize _ =
-    ByteSize32 $ Leios.cborIntBytesSize (maxBound :: Leios.BytesSize)
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance
