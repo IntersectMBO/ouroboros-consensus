@@ -44,11 +44,21 @@ import Cardano.Chain.Slotting (EpochSlots)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
+import Cardano.Ledger.Dijkstra.Rules (maxKeyAgeEpochs)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.LedgerState (NewEpochState, esSnapshotsL, nesEsL)
-import Cardano.Ledger.State (ssStakeGoL, ssStakeMarkL, ssStakeSetL)
+import Cardano.Ledger.State
+  ( SnapShots
+  , mkGoSnapShot
+  , mkSetSnapShot
+  , ssStakeGoL
+  , ssStakeMarkL
+  , ssStakeSetL
+  )
 import Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
+import Cardano.Slotting.EpochInfo (fixedEpochInfo)
+import Cardano.Slotting.Time (mkSlotLength)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -65,7 +75,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Word (Word16, Word64)
-import Lens.Micro ((&), (.~), (^.))
+import Lens.Micro ((%~), (&), (.~), (^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.ByronHFC
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
@@ -377,17 +387,28 @@ toTriggerHardFork = \case
 --   * hard fork at epoch 0   -> go = set = mark
 --   * hard fork at epoch 1   -> set = mark
 --   * hard fork at epoch >=2 -> unchanged
+--
+-- The snapshots are rotated with the ledger's own 'mkSetSnapShot' and
+-- 'mkGoSnapShot', as the SNAP rule does at an epoch boundary. Rotating the mark
+-- into the set position is what seats the Leios committee, which only keeps a
+-- pool's voting key while it is younger than the given maximum key age, so this
+-- must be the maximum key age the ledger would use (see
+-- 'initialLeiosMaxKeyAge'). Before Dijkstra the committee size is zero, so the
+-- committee is empty whatever the maximum key age.
 seedInitialStakeSnapshots ::
+  SL.EpochInterval ->
   TriggerHardFork ->
   NewEpochState era ->
   NewEpochState era
-seedInitialStakeSnapshots trigger nes = case trigger of
-  TriggerHardForkAtEpoch (EpochNo 0) -> nes & setSnap ssStakeSetL & setSnap ssStakeGoL
-  TriggerHardForkAtEpoch (EpochNo 1) -> nes & setSnap ssStakeSetL
+seedInitialStakeSnapshots maxKeyAge trigger nes = case trigger of
+  TriggerHardForkAtEpoch (EpochNo 0) -> nes & snapshotsL %~ seedGo . seedSet
+  TriggerHardForkAtEpoch (EpochNo 1) -> nes & snapshotsL %~ seedSet
   _ -> nes
  where
-  mark = nes ^. nesEsL . esSnapshotsL . ssStakeMarkL
-  setSnap l = (nesEsL . esSnapshotsL . l) .~ mark
+  snapshotsL = nesEsL . esSnapshotsL
+  seedSet, seedGo :: SnapShots era -> SnapShots era
+  seedSet ss = ss & ssStakeSetL .~ mkSetSnapShot (ss ^. ssStakeMarkL) maxKeyAge
+  seedGo ss = ss & ssStakeGoL .~ mkGoSnapShot (ss ^. ssStakeSetL)
 
 newtype CardanoHardForkTriggers = CardanoHardForkTriggers
   { getCardanoHardForkTriggers ::
@@ -528,6 +549,21 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
     } = paramsCardano
 
   genesisShelley = cardanoLedgerTransitionConfig ^. L.tcShelleyGenesisL
+
+  -- The maximum age of a Leios voting key that the ledger's SNAP rule would
+  -- use when rotating the initial snapshots (see 'seedInitialStakeSnapshots').
+  -- It only depends on the epoch length and the KES parameters, which the
+  -- Shelley genesis fixes for the early-bootstrap networks that seed their
+  -- snapshots, so the 'Globals' are built from the genesis alone.
+  initialLeiosMaxKeyAge :: SL.EpochInterval
+  initialLeiosMaxKeyAge =
+    maxKeyAgeEpochs
+      ( SL.mkShelleyGlobals genesisShelley $
+          fixedEpochInfo
+            (SL.sgEpochLength genesisShelley)
+            (mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesisShelley)
+      )
+      (EpochNo 0)
 
   ProtocolParamsByron
     { byronGenesis = genesisByron
@@ -907,7 +943,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       pure . Flip . unstowLedgerTables $
         stowed
           { Shelley.shelleyLedgerState =
-              seedInitialStakeSnapshots trigger newNES
+              seedInitialStakeSnapshots initialLeiosMaxKeyAge trigger newNES
           }
 
     shelleyTcfgs :: NP WrapTransitionConfig (CardanoShelleyEras c)

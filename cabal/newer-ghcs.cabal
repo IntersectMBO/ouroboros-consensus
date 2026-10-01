@@ -9,7 +9,6 @@ if impl(ghc >=9.14)
     , dependent-map:containers
     , dictionary-sharing:containers
     , latex-svg-image:base
-    , ordered-containers:containers
     , safe-wild-cards:template-haskell
     , serdoc-core:template-haskell
     , serialise:base
