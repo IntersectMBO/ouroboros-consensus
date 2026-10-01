@@ -67,6 +67,7 @@ import Test.Util.Serialisation.Examples
   ( Examples (Examples)
   , Labelled
   , labelled
+  , topLevelQueries
   , unlabelled
   )
 import qualified Test.Util.Serialisation.Examples as Examples
@@ -136,6 +137,7 @@ examples =
     , exampleGenTxId = unlabelled exampleGenTxId
     , exampleApplyTxErr = unlabelled exampleApplyTxErr
     , exampleQuery = unlabelled exampleQuery
+    , exampleTopLevelQuery = topLevelQueries
     , exampleResult = unlabelled exampleResult
     , exampleAnnTip = unlabelled exampleAnnTip
     , exampleLedgerConfig = unlabelled ledgerConfig
