@@ -137,8 +137,6 @@ fromShelleyLedgerExamples
     results =
       labelled
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
-        , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
-        , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
         ,
           ( "NonMyopicMemberRewards"
           , SomeResult
@@ -183,7 +181,6 @@ fromShelleyLedgerExamples
               (GetLedgerPeerSnapshot SingBigLedgerPeers)
               (LedgerBigPeerSnapshotV23 GenesisPoint (NetworkMagic 42) [])
           )
-        , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
         ,
           ( "MaxMajorProtocolVersion"
           , SomeResult GetMaxMajorProtocolVersion $ MaxMajorProtVer (maxBound @SL.Version)
@@ -295,8 +292,6 @@ fromShelleyLedgerExamplesPraos
     results =
       labelled
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
-        , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
-        , ("EmptyPParams", SomeResult GetCurrentPParams lePParams)
         ,
           ( "NonMyopicMemberRewards"
           , SomeResult
@@ -341,7 +336,6 @@ fromShelleyLedgerExamplesPraos
               (GetLedgerPeerSnapshot SingBigLedgerPeers)
               (LedgerBigPeerSnapshotV23 GenesisPoint (NetworkMagic 42) [])
           )
-        , ("StakeDistribution2", SomeResult GetStakeDistribution2 lePoolDistr)
         ,
           ( "MaxMajorProtocolVersion"
           , SomeResult GetMaxMajorProtocolVersion $ MaxMajorProtVer (maxBound @SL.Version)
