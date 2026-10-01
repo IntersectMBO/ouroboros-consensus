@@ -157,7 +157,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ The node's mempool
   , getTopLevelConfig :: TopLevelConfig blk
   -- ^ The node's top-level static configuration
-  , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+  , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk blk m
   -- ^ The fetch client registry, used for the block fetch clients.
   , getKeepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
   -- ^ The keep alive registry, used for the block fetch clients.
@@ -444,8 +444,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , btime :: BlockchainTime m
   , chainDB :: ChainDB m blk
   , blockFetchInterface ::
-      BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
-  , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+      BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk blk m
+  , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk blk m
   , keepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
   , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
   , varGsmState :: StrictTVar m GSM.GsmState
@@ -508,7 +508,7 @@ initInternalState
             getUseBootstrapPeers
             (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
         blockFetchInterface ::
-          BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+          BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk blk m
         blockFetchInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
             (dbfTracer tracers)

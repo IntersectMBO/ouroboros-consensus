@@ -73,6 +73,7 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( PraosFetchMode (..)
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
+import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
@@ -319,7 +320,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
   mkTestBlockFetchConsensusInterface ::
     STM m (Map PeerId (AnchoredFragment (HeaderWithTime TestBlock))) ->
     BlockFetchClientInterface.ChainDbView m TestBlock ->
-    BlockFetchConsensusInterface PeerId (HeaderWithTime TestBlock) TestBlock m
+    BlockFetchConsensusInterface PeerId (HeaderWithTime TestBlock) TestBlock TestBlock m
   mkTestBlockFetchConsensusInterface getCandidates chainDbView =
     ( BlockFetchClientInterface.mkBlockFetchConsensusInterface @m @PeerId
         nullTracer
@@ -417,7 +418,7 @@ instance Arbitrary BlockFetchClientTestSetup where
         bfcDecisionLoopIntervalGenesis = 0
         bfcDecisionLoopIntervalPraos = 0
       bfcMaxRequestsInflight <- chooseEnum (2, 10)
-      bfcSalt <- arbitrary
+      bfcSalt <- mkUnsafeSalt <$> arbitrary
       gbfcGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
       let bfcGenesisBFConfig = GenesisBlockFetchConfiguration{..}
       pure BlockFetchConfiguration{..}

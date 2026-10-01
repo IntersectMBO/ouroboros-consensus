@@ -183,7 +183,7 @@ import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
 import System.FilePath ((</>))
-import System.Random (StdGen, newStdGen, randomIO, splitGen)
+import System.Random (StdGen, newStdGen, splitGen)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -291,7 +291,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
       NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
       NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
   -- ^ Customise the 'NodeArgs'
-  , llrnBfcSalt :: Int
+  , llrnBfcSalt :: Diffusion.Salt
   -- ^ Ie 'bfcSalt'
   , llrnRng :: StdGen
   -- ^ StdGen for various applications, e.g. keep-alive, chain-sync, gsm anti
@@ -882,7 +882,7 @@ mkNodeKernelArgs ::
   forall m addrNTN addrNTC blk.
   (RunNode blk, IOLike m) =>
   ResourceRegistry m ->
-  Int ->
+  Diffusion.Salt ->
   StdGen ->
   StdGen ->
   TopLevelConfig blk ->
@@ -1003,8 +1003,8 @@ stdMkChainDbHasFS ::
 stdMkChainDbHasFS rootPath (ChainDB.RelativeMountPoint relPath) =
   SomeHasFS $ ioHasFS $ MountPoint $ rootPath </> relPath
 
-stdBfcSaltIO :: IO Int
-stdBfcSaltIO = randomIO
+stdBfcSaltIO :: IO Diffusion.Salt
+stdBfcSaltIO = Diffusion.mkSaltIO
 
 stdVersionDataNTN ::
   NetworkMagic ->
