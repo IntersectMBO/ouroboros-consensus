@@ -20,7 +20,11 @@
 module Test.LeiosDemoLogic (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import Control.Exception (try)
+import Control.Monad (void)
+import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
@@ -29,21 +33,40 @@ import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
-import LeiosDemoLogic (fetchPriorityTiers, leiosFetchLogicIteration)
+import qualified Data.Vector.Strict as V
+import LeiosDemoDb
+  ( LeiosDbWriter (..)
+  , Promise (..)
+  , newLeiosDBInMemory
+  , withReader
+  , withWriter
+  )
+import LeiosDemoException (LeiosDbException)
+import LeiosDemoLogic
+  ( fetchPriorityTiers
+  , leiosFetchLogicIteration
+  , msgLeiosBlockRequest
+  , newLeiosFetchContext
+  )
 import LeiosDemoTypes
   ( AlsoOfferedTxsClosure (..)
   , BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
+  , LeiosEb (..)
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv (..)
   , LeiosOutstanding (..)
   , LeiosPoint (..)
+  , LeiosTx (..)
   , PeerId (..)
   , demoLeiosFetchStaticEnv
   , ebHashFromBytes
   , emptyLeiosOutstanding
+  , hashLeiosEb
+  , hashLeiosTx
   , markBodyImminent
+  , maxTxsPerEb
   , mergeOffer
   , recordMaxAnnouncementSlot
   )
@@ -77,6 +100,13 @@ tests =
         "fetch priority"
         [ testCase "freshest window oldest-first, then rest freshest-first" $
             test_fetchPriorityOrder
+        ]
+    , testGroup
+        "msgLeiosBlockRequest"
+        [ testCase "serves a stored body of maxTxsPerEb entries" $
+            test_serveBodyAtLimit
+        , testCase "refuses a stored body of more than maxTxsPerEb entries" $
+            test_refuseBodyOverLimit
         ]
     ]
 
@@ -321,3 +351,31 @@ point slot c = MkLeiosPoint (SlotNo (fromIntegral slot)) (eb c)
 -- | Distinct EB hash from a Char.
 eb :: Char -> EbHash
 eb c = fromJust $ ebHashFromBytes $ BS.pack $ replicate 32 (fromIntegral (fromEnum c))
+
+-- | A body of exactly 'maxTxsPerEb' entries fits the server buffer.
+test_serveBodyAtLimit :: IO ()
+test_serveBodyAtLimit = do
+  served <- serveStoredBody maxTxsPerEb
+  V.length (leiosEbTxs served) @?= maxTxsPerEb
+
+-- | A database written by an older build can hold more rows than the server
+-- buffer has room for. The server must refuse with a 'LeiosDbException'.
+test_refuseBodyOverLimit :: IO ()
+test_refuseBodyOverLimit = do
+  result <- try (serveStoredBody (maxTxsPerEb + 1))
+  case result of
+    Left (_ :: LeiosDbException) -> pure ()
+    Right _ -> assertFailure "served a body with more entries than maxTxsPerEb"
+
+-- | Store a body of @n@ distinct entries in an in-memory LeiosDb, then request
+-- it from the Fetch server. The in-memory writer does not check the entry
+-- count, so it can stand for rows that an older build wrote.
+serveStoredBody :: Int -> IO LeiosEb
+serveStoredBody n = do
+  db <- newLeiosDBInMemory
+  let body = MkLeiosEb $ V.generate n $ \i -> (hashLeiosTx (MkLeiosTx (BS8.pack (show i))), 100)
+      bodyPoint = MkLeiosPoint (SlotNo 0) (hashLeiosEb body)
+  withWriter db $ \w -> void . await =<< writeEbBody w bodyPoint body
+  withReader db $ \r -> do
+    ctx <- newLeiosFetchContext r
+    msgLeiosBlockRequest nullTracer ctx bodyPoint
