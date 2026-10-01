@@ -144,7 +144,7 @@ mkBlockFetchConsensusInterface ::
   -- | See 'readFetchMode'.
   STM m FetchMode ->
   DiffusionPipeliningSupport ->
-  BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
+  BlockFetchConsensusInterface peer (HeaderWithTime blk) blk blk m
 mkBlockFetchConsensusInterface
   csjTracer
   bcfg
@@ -158,8 +158,9 @@ mkBlockFetchConsensusInterface
     getCandidates :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     getCandidates = CSClient.viewChainSyncState (CSClient.cschcMap csHandlesCol) CSClient.csCandidate
 
-    blockMatchesHeader :: HeaderWithTime blk -> blk -> Bool
-    blockMatchesHeader hwt b = Block.blockMatchesHeader (hwtHeader hwt) b
+    blockMatchesHeader :: HeaderWithTime blk -> blk -> Maybe blk
+    blockMatchesHeader hwt b =
+      if Block.blockMatchesHeader (hwtHeader hwt) b then Just b else Nothing
 
     readCandidateChains :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     readCandidateChains = getCandidates
