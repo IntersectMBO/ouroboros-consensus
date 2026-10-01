@@ -183,7 +183,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
         TraceLeiosBlockForged
           { slot = fbCurrentSlotNo
           , eb = forgedEb.body
-          , ebMeasure = ByteSize32 ebSize
-          , mempoolRestMeasure = ByteSize32 0
+          , ebMeasure = ByteSize32 ebSize -- FIXME: this should be the closure size, return it from partitionMempool and put it here
+          , mempoolRestMeasure = ByteSize32 0 -- FIXME: use a real number
           }
       pure (Just (forgedEb, ebAnn))
