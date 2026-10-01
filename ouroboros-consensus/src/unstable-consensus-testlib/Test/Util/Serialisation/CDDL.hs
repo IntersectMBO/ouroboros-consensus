@@ -81,7 +81,10 @@ cddlTest cborM cddl rule =
 -- | A collection of CDDL spec and the relevant rule to use
 data CDDLsForNodeToNode = CDDLsForNodeToNode
   { blockCDDL :: (FilePath, T.Text)
+  -- ^ Also describes @Serialised blk@: a block we never decoded has to go on
+  -- the wire as the very same bytes as one we did.
   , headerCDDL :: (FilePath, T.Text)
+  -- ^ Also describes @SerialisedHeader blk@, for the same reason.
   , txCDDL :: (FilePath, T.Text)
   , txIdCDDL :: (FilePath, T.Text)
   }

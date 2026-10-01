@@ -219,7 +219,7 @@ goldenTests testName examples enc goldenFolder mCDDL
                 Nothing -> testName
                 Just label -> testName <> "_" <> label
         , -- TODO(dijkstra_serialisation)
-        testName' /= "Block_Dijkstra"
+        testName' `notElem` ["Block_Dijkstra", "SerialisedBlock_Dijkstra"]
         ]
  where
   labels :: [Maybe String]
@@ -337,8 +337,8 @@ goldenTest_SerialiseNodeToNode codecConfig goldenDir mCDDLs Examples{..} =
       (toGoldenDirectory version)
       [ test "Block" exampleBlock $ fmap blockCDDL mCDDLs
       , test "Header" exampleHeader $ fmap headerCDDL mCDDLs
-      , test "SerialisedBlock" exampleSerialisedBlock Nothing
-      , test "SerialisedHeader" exampleSerialisedHeader Nothing
+      , test "SerialisedBlock" exampleSerialisedBlock $ fmap blockCDDL mCDDLs
+      , test "SerialisedHeader" exampleSerialisedHeader $ fmap headerCDDL mCDDLs
       , test "GenTx" exampleGenTx $ fmap txCDDL mCDDLs
       , test "GenTxId" exampleGenTxId $ fmap txIdCDDL mCDDLs
       ]
