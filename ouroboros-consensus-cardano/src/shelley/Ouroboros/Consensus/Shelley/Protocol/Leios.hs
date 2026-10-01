@@ -121,8 +121,8 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Leios c) where
           , Leios.hbBodyHash = bbHash
           , Leios.hbOCert = praosToSignOCert
           , Leios.hbVersionInfo = versionInfo
-          , Leios.hbBlockBodyContainsLeiosCert = False
-          , Leios.hbEbReferencesAnnouncement = SNothing
+          , Leios.hbBlockBodyContainsLeiosCert = False -- FIXME: Fill this in when forging
+          , Leios.hbEbReferencesAnnouncement = SNothing  -- FIXME: Fill this in when forging
           }
 
     versionInfo =

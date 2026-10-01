@@ -6,6 +6,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | Leios: an overlay on Praos.
 --
@@ -38,13 +39,29 @@
 module Ouroboros.Consensus.Protocol.Leios
   ( Leios
   , LeiosCrypto
+  , AnnouncedBy (..)
+  , LeiosState (..)
   , ConsensusConfig (..)
+  , Ticked (..)
   , LeiosValidateView
   ) where
 
+import Cardano.Binary (Decoder, FromCBOR (..), ToCBOR (..), enforceSize)
 import qualified Cardano.Crypto.KES as KES
+import Cardano.Ledger.BaseTypes
+  ( StrictMaybe (SNothing)
+  , maybeToStrictMaybe
+  , strictMaybeToMaybe
+  )
+import Cardano.Ledger.Block (EbReferencesAnnouncement)
+import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
+import Cardano.Ledger.Keys (KeyHash, hashKey)
+import qualified Cardano.Ledger.Shelley.API as SL
+import Cardano.Ledger.Shelley (ShelleyEra)
 import Cardano.Protocol.Crypto (KES, StandardCrypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
+import qualified Codec.CBOR.Encoding as CBOR
+import Codec.Serialise (Serialise (decode, encode))
 import Data.Proxy (Proxy (Proxy))
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -70,6 +87,11 @@ import Ouroboros.Consensus.Protocol.Praos.Common
   )
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
+import Ouroboros.Consensus.Util.Versioned
+  ( VersionDecoder (Decode)
+  , decodeVersion
+  , encodeVersion
+  )
 
 -- | Praos extended with Leios.
 data Leios c
@@ -104,13 +126,92 @@ instance LeiosCrypto c => NoThunks (ConsensusConfig (Leios c))
 instance HasMaxMajorProtVer (Leios c) where
   protoMaxMajorPV = protoMaxMajorPV . leiosPraosConfig
 
+-- | An endorser-block announcement, and who announced it.
+--
+-- The issuer and the announcing header's slot ('praosStateLastSlot') together
+-- give the election, which is what lets a certificate name what it certifies.
+data AnnouncedBy = AnnouncedBy
+  { announcedByIssuer :: !(KeyHash SL.BlockIssuer)
+  , announcedEbReferences :: !EbReferencesAnnouncement
+  }
+  deriving (Generic, Show, Eq)
+
+instance NoThunks AnnouncedBy
+
+-- | 'PraosState' and the announcement a certificate is validated against.
+data LeiosState = LeiosState
+  { leiosStatePraos :: !PraosState
+  , leiosStateAnnouncement :: !(StrictMaybe AnnouncedBy)
+  -- ^ What the most recently applied header announced. Overwritten by every
+  -- header, so one that announces nothing clears it: only the immediately
+  -- preceding announcement can be certified.
+  }
+  deriving (Generic, Show, Eq)
+
+instance NoThunks LeiosState
+
+instance ToCBOR LeiosState where
+  toCBOR = encode
+
+instance FromCBOR LeiosState where
+  fromCBOR = decode
+
+-- | A format of its own, which merely also starts counting: nothing relates it
+-- to 'PraosState'\'s versions, whose encoding it nests unchanged.
+instance Serialise LeiosState where
+  encode (LeiosState praos ann) =
+    encodeVersion 0 $
+      mconcat
+        [ CBOR.encodeListLen 2
+        , encode praos
+        , toCBOR (strictMaybeToMaybe ann)
+        ]
+
+  decode = decodeVersion [(0, Decode dec)]
+   where
+    dec :: forall s. Decoder s LeiosState
+    dec = do
+      enforceSize "LeiosState" 2
+      LeiosState <$> decode <*> (maybeToStrictMaybe <$> fromCBOR)
+
+-- | The era only picks a serialisation version, and neither field's encoding
+-- varies by one.
+instance ToCBOR AnnouncedBy where
+  toCBOR (AnnouncedBy issuer ann) =
+    CBOR.encodeListLen 2 <> toCBOR issuer <> toEraCBOR @ShelleyEra ann
+
+instance FromCBOR AnnouncedBy where
+  fromCBOR = do
+    enforceSize "AnnouncedBy" 2
+    AnnouncedBy <$> fromCBOR <*> fromEraCBOR @ShelleyEra
+
+data instance Ticked LeiosState = TickedLeiosState
+  { tickedLeiosStateChainDepState :: LeiosState
+  , tickedLeiosStateLedgerView :: Views.PraosLedgerView
+  }
+
+instance ChainDepStateSupportsPeras LeiosState where
+  getEpochNonce = getEpochNonce . leiosStatePraos
+
+instance ChainDepStateSupportsPeras (Ticked LeiosState) where
+  getEpochNonce = getEpochNonce . tickedLeiosStateChainDepState
+
+-- | The base protocol's ticked state, as it sits inside this one's.
+--
+-- What lets 'Leios' hand its state to a 'Praos' method.
+basePraosTicked :: Ticked LeiosState -> Ticked PraosState
+basePraosTicked tcs =
+  TickedPraosState
+    { tickedPraosStateChainDepState =
+        leiosStatePraos (tickedLeiosStateChainDepState tcs)
+    , tickedPraosStateLedgerView = tickedLeiosStateLedgerView tcs
+    }
+
 -- | What the protocol reads off a Leios header.
 type LeiosValidateView c = Views.LeiosHeaderView c
 
 instance LeiosCrypto c => ConsensusProtocol (Leios c) where
-  -- TODO Track the announcement a certificate is validated against, which
-  -- 'PraosState' does not carry.
-  type ChainDepState (Leios c) = PraosState
+  type ChainDepState (Leios c) = LeiosState
   type IsLeader (Leios c) = PraosIsLeader c
   type CanBeLeader (Leios c) = PraosCanBeLeader c
   type TiebreakerView (Leios c) = PraosTiebreakerView c
@@ -118,11 +219,27 @@ instance LeiosCrypto c => ConsensusProtocol (Leios c) where
   type ValidationErr (Leios c) = PraosValidationErr c
   type ValidateView (Leios c) = LeiosValidateView c
 
-  -- These read nothing from the header, and this protocol's chain-dep state and
-  -- ledger view are Praos's, so the base protocol's methods apply unchanged.
+  -- These read nothing from the header, so the base protocol's methods apply;
+  -- they are handed the 'PraosState' this one carries.
   protocolSecurityParam = protocolSecurityParam @(Praos c) . leiosPraosConfig
-  checkIsLeader = checkIsLeader @(Praos c) . leiosPraosConfig
-  tickChainDepState = tickChainDepState @(Praos c) . leiosPraosConfig
+
+  checkIsLeader cfg cbl slot tcs =
+    checkIsLeader @(Praos c) (leiosPraosConfig cfg) cbl slot (basePraosTicked tcs)
+
+  tickChainDepState cfg lv slot st =
+    TickedLeiosState
+      { tickedLeiosStateChainDepState =
+          st
+            { leiosStatePraos =
+                tickedPraosStateChainDepState $
+                  tickChainDepState @(Praos c)
+                    (leiosPraosConfig cfg)
+                    lv
+                    slot
+                    (leiosStatePraos st)
+            }
+      , tickedLeiosStateLedgerView = lv
+      }
 
   -- These take the 'ValidateView', so they cannot delegate: a Leios header
   -- signs the Leios body. Both checks are indifferent to which body that is,
@@ -134,29 +251,42 @@ instance LeiosCrypto c => ConsensusProtocol (Leios c) where
     pure $ reupdateChainDepState cfg b slot tcs
    where
     praosCfg@(PraosConfig PraosParams{praosLeaderF} _) = leiosPraosConfig cfg
-    lv = tickedPraosStateLedgerView tcs
-    cs = tickedPraosStateChainDepState tcs
+    lv = tickedLeiosStateLedgerView tcs
+    cs = leiosStatePraos (tickedLeiosStateChainDepState tcs)
 
   reupdateChainDepState cfg b slot tcs =
-    reupdatePraosState
-      (leiosPraosConfig cfg)
-      b
-      slot
-      (tickedPraosStateChainDepState tcs)
+    LeiosState
+      { leiosStatePraos =
+          reupdatePraosState
+            (leiosPraosConfig cfg)
+            b
+            slot
+            (leiosStatePraos (tickedLeiosStateChainDepState tcs))
+      , leiosStateAnnouncement =
+          AnnouncedBy (hashKey (Views.hvVK b))
+            <$> Leios.hbEbReferencesAnnouncement (Views.hvSigned b)
+      }
 
 instance LeiosCrypto c => PraosProtocolSupportsNode (Leios c) where
   type PraosProtocolSupportsNodeCrypto (Leios c) = c
-  getPraosNonces _prx = getPraosNonces (Proxy @(Praos c))
-  getOpCertCounters _prx = getOpCertCounters (Proxy @(Praos c))
+  getPraosNonces _prx = getPraosNonces (Proxy @(Praos c)) . leiosStatePraos
+  getOpCertCounters _prx = getOpCertCounters (Proxy @(Praos c)) . leiosStatePraos
 
--- | Crossing into Leios carries everything over: the chain-dep state and the
--- ledger view are the very same types.
+-- | Crossing into Leios carries the Praos state over whole; the announcement
+-- starts empty, since no header of the protocol being left could have carried
+-- one.
 instance TranslateProto (Praos c) (Leios c) where
   translateLedgerView _ = id
-  translateChainDepState _ = id
+  translateChainDepState _ praos =
+    LeiosState{leiosStatePraos = praos, leiosStateAnnouncement = SNothing}
 
 -- | Composed out of the two translations either side of it, rather than
 -- repeating the projections.
 instance TranslateProto (TPraos c) (Leios c) where
-  translateLedgerView _ = translateLedgerView (Proxy @(TPraos c, Praos c))
-  translateChainDepState _ = translateChainDepState (Proxy @(TPraos c, Praos c))
+  translateLedgerView _ =
+    translateLedgerView (Proxy @(Praos c, Leios c))
+      . translateLedgerView (Proxy @(TPraos c, Praos c))
+
+  translateChainDepState _ =
+    translateChainDepState (Proxy @(Praos c, Leios c))
+      . translateChainDepState (Proxy @(TPraos c, Praos c))
