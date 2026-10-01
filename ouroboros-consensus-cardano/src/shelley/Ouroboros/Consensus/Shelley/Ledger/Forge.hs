@@ -58,7 +58,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Integrity
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
-  , ProtocolHeaderSupportsKES (ProtoHasLeios, configSlotsPerKESPeriod)
+  , ProtocolHeaderSupportsKES (ProtoExtension, configSlotsPerKESPeriod)
   , mkHeader
   )
 
@@ -71,7 +71,7 @@ forgeShelleyBlock ::
   (ShelleyCompatible proto era, Monad m) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
-  StrictMaybeLeios (ProtoHasLeios proto) () ->
+  StrictMaybeLeios (ProtoExtension proto) () ->
   ForgeBlockArgs m (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
 forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
@@ -83,7 +83,7 @@ forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
   --  * Announce: forge and store a new EB from 'fbEbTxs' and announce it on this RB's header.
   --    When we are also certifying, 'fbEbTxs' contains transactions from the mempool that has already
   --    been rebased onto the post-certificate ledger state.
-  -- Matching the token refines 'ProtoHasLeios', which is what lets the Leios
+  -- Matching the token refines 'ProtoExtension', which is what lets the Leios
   -- branch build the header fields below.
   (mayEbAnn :: Maybe (ForgedLeiosEb, EbAnnouncement), leiosFields) <-
     case leiosToken of

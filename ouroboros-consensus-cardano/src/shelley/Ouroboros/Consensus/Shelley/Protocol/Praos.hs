@@ -31,14 +31,12 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.Block (BlockNo)
 import Data.Either (isRight)
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.Proxy (Proxy (Proxy))
 import Data.Word (Word32)
 import LeiosDemoTypes (EbAnnouncement)
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( KnownPraosExtension (singPraosExtension)
   , MaxMajorProtVer (MaxMajorProtVer)
-  , PraosExtensionHasLeios
   , SingPraosExtension (..)
   , StrictMaybeLeios (..)
   , fromCodecEbAnnouncement
@@ -220,7 +218,7 @@ instance
   ) =>
   ProtocolHeaderSupportsKES (BasePraos pext c)
   where
-  type ProtoHasLeios (BasePraos pext c) = PraosExtensionHasLeios pext
+  type ProtoExtension (BasePraos pext c) = pext
 
   configSlotsPerKESPeriod cfg = praosSlotsPerKESPeriod $ praosParams cfg
 
@@ -234,7 +232,7 @@ instance
     -- Each branch refines @pext@, so the body type reduces to one 'PraosCrypto'
     -- covers; it cannot be discharged for an abstract @pext@.
     withSignableDict :: (KES.Signable (KES c) (BaseHeaderBody pext c) => r) -> r
-    withSignableDict k = case singPraosExtension (Proxy @pext) of
+    withSignableDict k = case singPraosExtension @pext of
       SingPextNone -> k
       SingPextLeios -> k
 
@@ -256,7 +254,7 @@ instance
   mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer leios =
     -- Each branch refines @pext@, so the body type is concrete: both the KES
     -- 'Signable' dictionary and the header constructor are then available.
-    case singPraosExtension (Proxy @pext) of
+    case singPraosExtension @pext of
       SingPextNone -> do
         PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il praosBody
         -- The annotations here and below are load-bearing: 'PraosCodec.Header'

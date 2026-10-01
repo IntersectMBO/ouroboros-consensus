@@ -145,7 +145,7 @@ translateTPraosHeader ::
   SL.BHeader c ->
   Gen (ShelleyProtocolHeader (BasePraos pext c))
 translateTPraosHeader (SL.BHeader bhBody bhSig) =
-  case singPraosExtension (Proxy @pext) of
+  case singPraosExtension @pext of
     SingPextNone -> pure $ Praos.Header hBody (coerce bhSig)
     SingPextLeios ->
       flip Leios.Header (coerce bhSig)

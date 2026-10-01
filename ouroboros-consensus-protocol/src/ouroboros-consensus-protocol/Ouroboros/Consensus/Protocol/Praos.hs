@@ -323,7 +323,7 @@ data BasePraosState pext = PraosState
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
   , praosStateLeiosAnnouncement ::
-      !(StrictMaybeLeios (PraosExtensionHasLeios pext) (StrictMaybe AnnouncedBy))
+      !(StrictMaybeLeios pext (StrictMaybe AnnouncedBy))
   -- ^ The Leios 'EbAnnouncement' from the most recently applied header on
   -- this chain — overwritten on every header tick (so a header with no
   -- announcement clears the field). The 'ResolveLeiosBlock' instance for
@@ -372,9 +372,9 @@ countOfFieldsInPraosState _ =
   praos + leios
  where
   praos = 8
-  leios = case praosExtensionHasLeios (Proxy @pext) of
-    PextDoesNotHaveLeiosDecided -> 0
-    PextHasLeiosDecided -> 1
+  leios = case singPraosExtension @pext of
+    SingPextNone -> 0
+    SingPextLeios -> 1
 
 -- | @pext@ selects the codec, so each extension's version numbers are their own
 -- namespace: these two are unrelated formats that merely both start counting.
@@ -386,9 +386,9 @@ countOfFieldsInPraosState _ =
 -- decode the chain-dep state in the snapshots it has on disk.
 versionOfPraosState ::
   forall pext proxy. KnownPraosExtension pext => proxy pext -> VersionNumber
-versionOfPraosState _ = case praosExtensionHasLeios (Proxy @pext) of
-  PextDoesNotHaveLeiosDecided -> 0
-  PextHasLeiosDecided -> 1
+versionOfPraosState _ = case singPraosExtension @pext of
+  SingPextNone -> 0
+  SingPextLeios -> 1
 
 instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
   encode
@@ -436,9 +436,9 @@ instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
         <*> fromEraCBOR @ShelleyEra
         <*> traverse
           (\() -> decodeNullStrictMaybe decodeAnnouncedBy)
-          ( case praosExtensionHasLeios (Proxy @pext) of
-              PextDoesNotHaveLeiosDecided -> SNothingLeios
-              PextHasLeiosDecided -> SJustLeios ()
+          ( case singPraosExtension @pext of
+              SingPextNone -> SNothingLeios
+              SingPextLeios -> SJustLeios ()
           )
 
 data instance Ticked (BasePraosState pext) = TickedPraosState
@@ -448,7 +448,11 @@ data instance Ticked (BasePraosState pext) = TickedPraosState
 
 -----
 
+type BasePraosValidationErr :: PraosExtension -> Type -> Type
+
 -- | Errors which we might encounter
+-- @pext@ is phantom here: it only keeps the error type of each extension
+-- distinct, so that 'ValidationErr' stays injective in the protocol.
 data BasePraosValidationErr pext c
   = VRFKeyUnknown
       !(KeyHash SL.StakePool) -- unknown VRF keyhash (not registered)
@@ -487,13 +491,13 @@ data BasePraosValidationErr pext c
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash SL.BlockIssuer) -- stake pool key hash
-  | LeiosHeaderErr !(HasLeiosProof (PraosExtensionHasLeios pext)) Leios.LeiosHeaderErr
+  | LeiosHeaderErr !Leios.LeiosHeaderErr
   deriving Generic
 
--- | The one Leios constructor (the embedder) of 'BasePraosValidationErr'
--- carries a 'HasLeiosProof', so at 'PextNone' --- which is mainnet's /before/
--- Leios\/Dijkstra --- none of them can be constructed and the inhabited set is
--- exactly what it was before Leios.
+-- | 'LeiosHeaderErr' is reachable only from 'leiosHeaderChecks', which runs
+-- only under 'SingPextLeios', so at 'PextNone' --- mainnet's, /before/
+-- Leios\/Dijkstra --- nothing constructs it. The type does not say so; see the
+-- note on 'leiosHeaderChecks' for why that was not thought worth paying for.
 type PraosValidationErr c = BasePraosValidationErr PextNone c
 
 deriving instance (PraosCrypto c, KnownPraosExtension pext) => Eq (BasePraosValidationErr pext c)
@@ -628,7 +632,7 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
         , praosStateOCertCounters =
             Map.insert hk n $ praosStateOCertCounters cs
         , praosStateLeiosAnnouncement =
-            case singPraosExtension (Proxy @pext) of
+            case singPraosExtension @pext of
               SingPextNone -> SNothingLeios
               SingPextLeios ->
                 SJustLeios $
@@ -719,6 +723,14 @@ doValidateVRFSignature eta0 pd f b = do
   slot = Views.hvSlotNo b
 
 -- | The Leios-specific checks on a header, called by 'updateChainDepState'
+--
+-- The 'SingPextLeios' match is what makes the three 'SJustLeios' patterns below
+-- total: refining @pext@ refines every type indexed by it at once. It is also
+-- the only route to 'LeiosHeaderErr', which is why that constructor needs no
+-- evidence of its own --- an earlier version gave it a @pext :~: PextLeios@ so
+-- that the error type was uninhabited at 'PextNone', at the cost of a newtype,
+-- a @deriving via@ to dodge a 'NoThunks' orphan, and a witness threaded through
+-- every construction site. Nothing read the evidence.
 leiosHeaderChecks ::
   forall pext c.
   KnownPraosExtension pext =>
@@ -729,9 +741,9 @@ leiosHeaderChecks ::
   BasePraosState pext ->
   Except (BasePraosValidationErr pext c) ()
 leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
-  case praosExtensionHasLeios (Proxy @pext) of
-    PextDoesNotHaveLeiosDecided -> pure ()
-    PextHasLeiosDecided -> do
+  case singPraosExtension @pext of
+    SingPextNone -> pure ()
+    SingPextLeios -> do
       let SJustLeios (containsCert, mbAnn) = Views.hvLeios b
           SJustLeios llv = Views.plvLeios lv
           SJustLeios announcedByPredecessor = praosStateLeiosAnnouncement cs
@@ -753,13 +765,13 @@ leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
                     announcingSlot
             when (slot < earliestAllowed) $
               throwError $
-                LeiosHeaderErr mkHasLeiosProof $
+                LeiosHeaderErr $
                   Leios.LeiosCertTooYoung announcingSlot slot earliestAllowed
           -- A state that announced an EB has necessarily applied a header, so
           -- 'Origin' is the same situation as announcing nothing.
           _ ->
             throwError $
-              LeiosHeaderErr mkHasLeiosProof Leios.LeiosCertWithoutAnnouncement
+              LeiosHeaderErr Leios.LeiosCertWithoutAnnouncement
 
       case mbAnn of
         SNothing -> pure ()
@@ -768,7 +780,7 @@ leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
               maximum' = Views.llvMaxEbBodySize llv
           when (announced > maximum') $
             throwError $
-              LeiosHeaderErr mkHasLeiosProof $
+              LeiosHeaderErr $
                 Leios.LeiosEbTooBig announced maximum'
 
 validateKESSignature ::
@@ -876,7 +888,7 @@ doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKES
       Except (BasePraosValidationErr pext c) ()
     ) ->
     Except (BasePraosValidationErr pext c) ()
-  withSignableDict k = case singPraosExtension (Proxy @pext) of
+  withSignableDict k = case singPraosExtension @pext of
     SingPextNone -> k
     SingPextLeios -> k
 
@@ -977,9 +989,9 @@ instance KnownPraosExtension pext => TranslateProto (TPraos c) (BasePraos pext c
       , Views.plvMaxHeaderSize = SL.ccMaxBHSize tplvChainChecks
       , Views.plvMaxBodySize = SL.ccMaxBBSize tplvChainChecks
       , Views.plvProtocolVersion = SL.ccProtocolVersion tplvChainChecks
-      , Views.plvLeios = case praosExtensionHasLeios (Proxy @pext) of
-          PextDoesNotHaveLeiosDecided -> SNothingLeios
-          PextHasLeiosDecided -> SJustLeios Views.initialLeiosLedgerView
+      , Views.plvLeios = case singPraosExtension @pext of
+          SingPextNone -> SNothingLeios
+          SingPextLeios -> SJustLeios Views.initialLeiosLedgerView
       }
 
   translateChainDepState _ tpState =
@@ -992,9 +1004,9 @@ instance KnownPraosExtension pext => TranslateProto (TPraos c) (BasePraos pext c
       , praosStatePreviousEpochNonce = epochNonce -- same as current epoch nonce
       , praosStateLabNonce = csLabNonce
       , praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
-      , praosStateLeiosAnnouncement = case praosExtensionHasLeios (Proxy @pext) of
-          PextDoesNotHaveLeiosDecided -> SNothingLeios
-          PextHasLeiosDecided -> SJustLeios SNothing
+      , praosStateLeiosAnnouncement = case singPraosExtension @pext of
+          SingPextNone -> SNothingLeios
+          SingPextLeios -> SJustLeios SNothing
       }
    where
     SL.ChainDepState{SL.csProtocol, SL.csTickn, SL.csLabNonce} =

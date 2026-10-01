@@ -35,7 +35,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node.Common
   ( ShelleyLeaderCredentials (..)
   )
-import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoHasLeios)
+import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoExtension)
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
@@ -73,7 +73,7 @@ basePraosSharedBlockForging ::
   ( ShelleyCompatible (BasePraos pext c) era
   , IOLike m
   ) =>
-  StrictMaybeLeios (ProtoHasLeios (BasePraos pext c)) () ->
+  StrictMaybeLeios (ProtoExtension (BasePraos pext c)) () ->
   HotKey.HotKey c m ->
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->

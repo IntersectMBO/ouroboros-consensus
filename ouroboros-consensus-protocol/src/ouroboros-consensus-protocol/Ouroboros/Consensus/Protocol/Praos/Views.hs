@@ -106,11 +106,7 @@ data BaseHeaderView pext crypto = HeaderView
   -- ^ operational certificate
   , hvSlotNo :: !SlotNo
   -- ^ Slot
-  , hvLeios ::
-      !( StrictMaybeLeios
-           (PraosExtensionHasLeios pext)
-           (Bool, StrictMaybe EbAnnouncement)
-       )
+  , hvLeios :: !(StrictMaybeLeios pext (Bool, StrictMaybe EbAnnouncement))
   -- ^ The Leios payload: whether this block's body carries a certificate (ie
   -- whether it is a CertRB), and the endorser block this header announces.
   --
@@ -138,7 +134,7 @@ data BasePraosLedgerView pext = PraosLedgerView
   -- ^ Maximum block body size
   , plvProtocolVersion :: !ProtVer
   -- ^ Current protocol version
-  , plvLeios :: !(StrictMaybeLeios (PraosExtensionHasLeios pext) LeiosLedgerView)
+  , plvLeios :: !(StrictMaybeLeios pext LeiosLedgerView)
   }
 
 deriving instance Show (BasePraosLedgerView pext)
@@ -196,7 +192,7 @@ class ForecastsLeios pext era where
   forecastToLeiosPart ::
     proxy pext ->
     SL.Forecast t era ->
-    StrictMaybeLeios (PraosExtensionHasLeios pext) LeiosLedgerView
+    StrictMaybeLeios pext LeiosLedgerView
 
 instance ForecastsLeios PextNone era where
   forecastToLeiosPart _ _ = SNothingLeios

@@ -26,7 +26,6 @@ import Cardano.Slotting.Slot
   , WithOrigin (At, Origin)
   )
 import qualified Data.ByteString as BS
-import Data.Proxy (Proxy (Proxy))
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , EbHash (MkEbHash)
@@ -37,12 +36,9 @@ import Ouroboros.Consensus.Protocol.Praos
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
-  ( KnownPraosExtension (praosExtensionHasLeios)
+  ( KnownPraosExtension (singPraosExtension)
+  , SingPraosExtension (SingPextLeios, SingPextNone)
   , StrictMaybeLeios (SJustLeios, SNothingLeios)
-  , WhetherHasLeiosDecided
-    ( PextDoesNotHaveLeiosDecided
-    , PextHasLeiosDecided
-    )
   , toCodecEbAnnouncement
   )
 import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
@@ -131,7 +127,7 @@ instance KnownPraosExtension pext => Arbitrary (BasePraosState pext) where
       <*> arbitrary
       <*> traverse
         (\() -> arbitrary)
-        ( case praosExtensionHasLeios (Proxy @pext) of
-            PextDoesNotHaveLeiosDecided -> SNothingLeios
-            PextHasLeiosDecided -> SJustLeios ()
+        ( case singPraosExtension @pext of
+            SingPextNone -> SNothingLeios
+            SingPextLeios -> SJustLeios ()
         )
