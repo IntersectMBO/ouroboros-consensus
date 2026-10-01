@@ -1175,6 +1175,7 @@ library protocol
   exposed-modules:
     Ouroboros.Consensus.Protocol.Ledger.HotKey
     Ouroboros.Consensus.Protocol.Ledger.Util
+    Ouroboros.Consensus.Protocol.Leios
     Ouroboros.Consensus.Protocol.Praos
     Ouroboros.Consensus.Protocol.Praos.AgentClient
     Ouroboros.Consensus.Protocol.Praos.Common
@@ -1585,6 +1586,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Node.TPraos
     Ouroboros.Consensus.Shelley.Protocol.Abstract
     Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
+    Ouroboros.Consensus.Shelley.Protocol.Leios
     Ouroboros.Consensus.Shelley.Protocol.Praos
     Ouroboros.Consensus.Shelley.Protocol.TPraos
     Ouroboros.Consensus.Shelley.ShelleyHFC
