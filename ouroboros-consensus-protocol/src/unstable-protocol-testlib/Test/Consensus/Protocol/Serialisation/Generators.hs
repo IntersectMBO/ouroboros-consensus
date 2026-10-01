@@ -21,6 +21,12 @@ import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
+import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
+import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
+import Ouroboros.Consensus.Protocol.Leios
+  ( AnnouncedBy (AnnouncedBy)
+  , LeiosState (LeiosState)
+  )
 import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
@@ -80,3 +86,15 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
+
+instance Arbitrary AnnouncedBy where
+  arbitrary =
+    AnnouncedBy
+      <$> arbitrary
+      <*> ( EbReferencesAnnouncement
+              <$> (unsafeMakeSafeHash <$> arbitrary)
+              <*> arbitrary
+          )
+
+instance Arbitrary LeiosState where
+  arbitrary = LeiosState <$> arbitrary <*> arbitrary

@@ -98,6 +98,8 @@ import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Protocol.Leios (Leios)
+import qualified Ouroboros.Consensus.Shelley.Node.Leios as Leios
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -423,7 +425,7 @@ pattern CardanoHardForkTriggers' ::
   CardanoHardForkTrigger (ShelleyBlock (TPraos c) AlonzoEra) ->
   CardanoHardForkTrigger (ShelleyBlock (Praos c) BabbageEra) ->
   CardanoHardForkTrigger (ShelleyBlock (Praos c) ConwayEra) ->
-  CardanoHardForkTrigger (ShelleyBlock (Praos c) DijkstraEra) ->
+  CardanoHardForkTrigger (ShelleyBlock (Leios c) DijkstraEra) ->
   CardanoHardForkTriggers
 pattern CardanoHardForkTriggers'
   { triggerHardForkShelley
@@ -769,7 +771,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
 
   -- Dijkstra
 
-  blockConfigDijkstra :: BlockConfig (ShelleyBlock (Praos c) DijkstraEra)
+  blockConfigDijkstra :: BlockConfig (ShelleyBlock (Leios c) DijkstraEra)
   blockConfigDijkstra =
     Shelley.mkShelleyBlockConfig
       cardanoProtocolVersion
@@ -777,10 +779,10 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
   partialConsensusConfigDijkstra ::
-    PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) DijkstraEra))
+    PartialConsensusConfig (BlockProtocol (ShelleyBlock (Leios c) DijkstraEra))
   partialConsensusConfigDijkstra = praosParams
 
-  partialLedgerConfigDijkstra :: PartialLedgerConfig (ShelleyBlock (Praos c) DijkstraEra)
+  partialLedgerConfigDijkstra :: PartialLedgerConfig (ShelleyBlock (Leios c) DijkstraEra)
   partialLedgerConfigDijkstra =
     partialLedgerConfigForLastKnownEra
       transitionConfigDijkstra
@@ -1039,6 +1041,13 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
         praos =
           Praos.praosSharedBlockForging hotKey slotToPeriod credentials
 
+    let leios ::
+          forall era.
+          Shelley.ShelleyCompatible (Leios c) era =>
+          BlockForging m (ShelleyBlock (Leios c) era)
+        leios =
+          Leios.leiosSharedBlockForging hotKey slotToPeriod credentials
+
     pure $
       OptSkip $ -- Byron
         OptNP.fromNonEmptyNP $
@@ -1048,7 +1057,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
             :* tpraos
             :* praos
             :* praos
-            :* praos
+            :* leios
             :* Nil
 
 protocolClientInfoCardano ::

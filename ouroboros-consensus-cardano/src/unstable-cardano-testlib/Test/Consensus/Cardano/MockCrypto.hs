@@ -7,6 +7,7 @@ module Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron) where
 import Cardano.Crypto.KES (MockKES)
 import Cardano.Crypto.VRF (MockVRF)
 import Cardano.Protocol.Crypto (Crypto (..))
+import qualified Ouroboros.Consensus.Protocol.Leios as Leios
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 
@@ -37,3 +38,5 @@ instance Crypto MockCryptoCompatByron where
 instance TPraos.PraosCrypto MockCryptoCompatByron
 
 instance Praos.PraosCrypto MockCryptoCompatByron
+
+instance Leios.LeiosCrypto MockCryptoCompatByron

@@ -108,14 +108,14 @@ instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) TPra
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) PraosState where
   encodeDisk _ = encode
 
+-- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
+instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) PraosState where
+  decodeDisk _ = decode
+
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) LeiosState where
   encodeDisk _ = encode
 
 instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) LeiosState where
-  decodeDisk _ = decode
-
--- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) PraosState where
   decodeDisk _ = decode
 
 instance

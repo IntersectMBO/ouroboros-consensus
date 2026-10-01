@@ -1581,6 +1581,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Node.Common
     Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
     Ouroboros.Consensus.Shelley.Node.Peras
+    Ouroboros.Consensus.Shelley.Node.Leios
     Ouroboros.Consensus.Shelley.Node.Praos
     Ouroboros.Consensus.Shelley.Node.Serialisation
     Ouroboros.Consensus.Shelley.Node.TPraos
