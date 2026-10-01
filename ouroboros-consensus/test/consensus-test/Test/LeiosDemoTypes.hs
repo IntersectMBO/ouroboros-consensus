@@ -1,32 +1,50 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE NamedFieldPuns #-}
+
 module Test.LeiosDemoTypes (tests) where
 
 import Cardano.Binary (serialize')
+import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Codec.CBOR.Encoding as CBOR
-import Codec.CBOR.Read (deserialiseFromBytes)
+import Codec.CBOR.Read (DeserialiseFailure (..), deserialiseFromBytes)
+import Codec.CBOR.Write (toLazyByteString)
+import Data.Bits (bit)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Function ((&))
 import Data.Functor ((<&>))
-import Data.List ((\\))
+import Data.List (isInfixOf, (\\))
 import Data.Maybe (fromJust)
 import Data.Ratio ((%))
 import qualified Data.Vector.Strict as V
+import Data.Word (Word16, Word64)
+import LeiosDemoOnlyTestFetch (LeiosFetch, SingLeiosFetch (..), codecLeiosFetch)
 import LeiosDemoTypes
   ( BytesSize
   , LeiosEb (..)
+  , LeiosPoint (..)
+  , LeiosTx (..)
   , TxHash (..)
   , decodeEbHash
   , decodeLeiosEb
+  , decodeLeiosPoint
+  , decodeLeiosTx
+  , ebHashFromBytes
   , encodeLeiosEb
   , encodeLeiosEbItemSize
   , encodeLeiosEbMaxFramingSize
   , encodeLeiosEbSize
+  , encodeLeiosPoint
+  , encodeLeiosTx
   , leiosReferencesCapacity
   , maxTxsPerEb
   , selectCommitteeByStake
   , txHashBytes
   , txHashFromBytes
   )
+import Network.TypedProtocol.Codec (ActiveState, CodecF (..), StateToken, runDecoder)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Test.QuickCheck
   ( Gen
@@ -42,6 +60,7 @@ import Test.QuickCheck
   , forAllShrink
   , frequency
   , genericShrink
+  , ioProperty
   , listOf
   , once
   , property
@@ -70,6 +89,12 @@ tests =
     , testProperty
         "decodeLeiosEb rejects item counts outside [1, maxTxsPerEb]"
         prop_decodeLeiosEbBoundsItemCount
+    , testProperty
+        "MsgLeiosBlockTxs decoder rejects a wrong or too large tx count"
+        prop_decodeBlockTxsChecksCount
+    , testProperty
+        "LeiosFetch decoder bounds the number of bitmap entries"
+        prop_decodeBitmapsBoundsEntries
     ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'encodeLeiosEbSize'.
@@ -283,3 +308,98 @@ prop_decodeLeiosEbBoundsItemCount =
   bytes = BSL.fromStrict . serialize'
   -- Accepted means decoded with no bytes left over.
   accepts = either (const False) (BSL.null . fst)
+
+-- | The reply carries its own bitmaps, so the decoder can check the tx count
+-- against them before it decodes any tx.
+prop_decodeBlockTxsChecksCount :: Property
+prop_decodeBlockTxsChecksCount =
+  once $
+    ioProperty $
+      conjoin
+        <$> sequence
+          [ check "matching count" Nothing (firstTxs 1) 1 1
+          , check "one tx too many" (Just "does not match") (firstTxs 1) 2 2
+          , check "one tx too few" (Just "does not match") (firstTxs 2) 1 1
+          , -- No tx follows the header.
+            check "huge declared count" (Just "exceeds") (firstTxs 1) (2 ^ (40 :: Int)) 0
+          , -- The bitmaps set bits past the last offset an EB can have, so
+            -- they request more txs than an EB can hold. The count matches.
+            check "count over maxTxsPerEb" (Just "exceeds") overLimit overLimitCount overLimitCount
+          ]
+ where
+  -- The bitmaps request the first @n@ txs.
+  firstTxs n = [(0, sum [bit (63 - i) | i <- [0 .. n - 1]])]
+  overLimit = [(fromIntegral i, maxBound) | i <- [0 .. (maxTxsPerEb + 63) `div` 64 - 1]]
+  overLimitCount = 64 * length overLimit
+  -- The reply declares @declared@ txs and carries @nTxs@ of them.
+  check :: String -> Maybe String -> [(Word16, Word64)] -> Int -> Int -> IO Property
+  check label expected bitmaps declared nTxs = do
+    let msg =
+          CBOR.encodeListLen 4
+            <> CBOR.encodeWord 3
+            <> encodeLeiosPoint testPoint
+            <> encodeBitmapEntries bitmaps
+            <> CBOR.encodeListLen (fromIntegral declared)
+            <> mconcat (replicate nTxs (encodeLeiosTx (MkLeiosTx BS.empty)))
+    failure <- decodeFailure SingBlockTxs msg
+    pure $ counterexample label $ failsWith expected failure
+
+prop_decodeBitmapsBoundsEntries :: Property
+prop_decodeBitmapsBoundsEntries =
+  once $
+    ioProperty $
+      conjoin
+        <$> sequence
+          [ check maxEntries Nothing
+          , check (maxEntries + 1) (Just "more than")
+          ]
+ where
+  maxEntries = (maxTxsPerEb + 63) `div` 64
+  check :: Int -> Maybe String -> IO Property
+  check n expected = do
+    let msg =
+          CBOR.encodeListLen 3
+            <> CBOR.encodeWord 2
+            <> encodeLeiosPoint testPoint
+            <> encodeBitmapEntries [(fromIntegral i, 1) | i <- [0 .. n - 1]]
+    failure <- decodeFailure SingIdle msg
+    pure $ counterexample ("entries " <> show n) $ failsWith expected failure
+
+testPoint :: LeiosPoint
+testPoint = MkLeiosPoint (SlotNo 0) (fromJust $ ebHashFromBytes $ BS.replicate 32 0xab)
+
+encodeBitmapEntries :: [(Word16, Word64)] -> CBOR.Encoding
+encodeBitmapEntries entries =
+  CBOR.encodeMapLenIndef
+    <> foldMap (\(i, b) -> CBOR.encodeWord16 i <> CBOR.encodeWord64 b) entries
+    <> CBOR.encodeBreak
+
+-- | @failsWith Nothing@ expects the decoder to accept. @failsWith (Just s)@
+-- expects it to reject with a message that contains @s@, so that a case
+-- rejected for another reason fails.
+failsWith :: Maybe String -> Maybe String -> Property
+failsWith expected failure =
+  counterexample ("decoder failure: " <> show failure) $
+    case (expected, failure) of
+      (Nothing, Nothing) -> property True
+      (Just s, Just msg) -> property (s `isInfixOf` msg)
+      _ -> property False
+
+-- | The failure message of the production LeiosFetch codec on the bytes in
+-- the given state, or 'Nothing' if it decodes them.
+decodeFailure ::
+  ActiveState (st :: LeiosFetch LeiosPoint LeiosEb LeiosTx) =>
+  StateToken st -> CBOR.Encoding -> IO (Maybe String)
+decodeFailure stok msg = do
+  let Codec{decode} =
+        codecLeiosFetch
+          maxTxsPerEb
+          encodeLeiosPoint
+          decodeLeiosPoint
+          encodeLeiosEb
+          decodeLeiosEb
+          encodeLeiosTx
+          decodeLeiosTx
+  step <- decode stok
+  either (\(DeserialiseFailure _ reason) -> Just reason) (const Nothing)
+    <$> runDecoder [toLazyByteString msg] step

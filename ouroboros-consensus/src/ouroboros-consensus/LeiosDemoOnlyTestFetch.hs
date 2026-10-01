@@ -36,8 +36,10 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
+import Control.Monad (when)
 import Control.Monad.Class.MonadST (MonadST)
 import Control.Monad.Primitive (PrimMonad, PrimState)
+import Data.Bits (popCount)
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor ((<&>))
 import Data.Kind (Type)
@@ -218,6 +220,9 @@ timeLimitsLeiosFetch = ProtocolTimeLimits $ \case
 codecLeiosFetch ::
   forall (point :: Type) (eb :: Type) (tx :: Type) m.
   MonadST m =>
+  -- | The most txs an EB can hold. The decoder rejects a larger count before
+  -- it allocates.
+  Int ->
   (point -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s point) ->
   (eb -> CBOR.Encoding) ->
@@ -225,7 +230,7 @@ codecLeiosFetch ::
   (tx -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s tx) ->
   Codec (LeiosFetch point eb tx) CBOR.DeserialiseFailure m ByteString
-codecLeiosFetch encodeP decodeP encodeEb decodeEb encodeTx decodeTx =
+codecLeiosFetch maxTxs encodeP decodeP encodeEb decodeEb encodeTx decodeTx =
   mkCodecCborLazyBS
     (encodeLeiosFetch encodeP encodeEb encodeTx)
     decode
@@ -239,7 +244,7 @@ codecLeiosFetch encodeP decodeP encodeEb decodeEb encodeTx decodeTx =
   decode stok = do
     len <- CBOR.decodeListLen
     key <- CBOR.decodeWord
-    decodeLeiosFetch decodeP decodeEb decodeTx stok len key
+    decodeLeiosFetch maxTxs decodeP decodeEb decodeTx stok len key
 
 encodeLeiosFetch ::
   forall
@@ -292,6 +297,7 @@ decodeLeiosFetch ::
     (st :: LeiosFetch point eb tx)
     s.
   ActiveState st =>
+  Int ->
   (forall s'. CBOR.Decoder s' point) ->
   (forall s'. CBOR.Decoder s' eb) ->
   (forall s'. CBOR.Decoder s' tx) ->
@@ -299,7 +305,7 @@ decodeLeiosFetch ::
   Int ->
   Word ->
   CBOR.Decoder s (SomeMessage st)
-decodeLeiosFetch decodeP decodeEb decodeTx = decode
+decodeLeiosFetch maxTxs decodeP decodeEb decodeTx = decode
  where
   decode ::
     forall (st' :: LeiosFetch point eb tx).
@@ -318,12 +324,25 @@ decodeLeiosFetch decodeP decodeEb decodeTx = decode
         return $ SomeMessage $ MsgLeiosBlock x
       (SingIdle, 3, 2) -> do
         p <- decodeP
-        bitmaps <- decodeBitmaps
+        bitmaps <- decodeBitmaps maxTxs
         return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
       (SingBlockTxs, 4, 3) -> do
         p <- decodeP
-        bitmaps <- decodeBitmaps
+        bitmaps <- decodeBitmaps maxTxs
         n <- CBOR.decodeListLen
+        -- The count comes from the peer. Reject a wrong count before we
+        -- decode any tx.
+        when (n > maxTxs) $
+          fail $
+            "MsgLeiosBlockTxs: tx count " <> show n <> " exceeds " <> show maxTxs
+        let requested = sum $ map (popCount . snd) bitmaps
+        when (n /= requested) $
+          fail $
+            "MsgLeiosBlockTxs: tx count "
+              <> show n
+              <> " does not match the "
+              <> show requested
+              <> " txs in the bitmaps"
         -- TODO does V.generateM allocate exacly one buffer, via the hint?
         --
         -- If not, we could do so manually by relying on the fact that
@@ -403,14 +422,20 @@ encodeBitmaps bitmaps =
       CBOR.encodeBreak
       bitmaps
 
-decodeBitmaps :: CBOR.Decoder s TxBitmaps
-decodeBitmaps =
-  CBOR.decodeMapLenIndef
-    *> CBOR.decodeSequenceLenIndef
-      (flip (:))
-      []
-      reverse
-      ((,) <$> CBOR.decodeWord16 <*> CBOR.decodeWord64)
+-- | Decode at most enough bitmaps to cover @maxTxs@ txs.
+decodeBitmaps :: Int -> CBOR.Decoder s TxBitmaps
+decodeBitmaps maxTxs = CBOR.decodeMapLenIndef *> go 0 []
+ where
+  maxEntries = (maxTxs + 63) `div` 64
+  go !k acc =
+    CBOR.decodeBreakOr >>= \case
+      True -> pure (reverse acc)
+      False
+        | k >= maxEntries ->
+            fail $ "TxBitmaps: more than " <> show maxEntries <> " entries"
+        | otherwise -> do
+            entry <- (,) <$> CBOR.decodeWord16 <*> CBOR.decodeWord64
+            go (k + 1 :: Int) (entry : acc)
 
 -----
 
