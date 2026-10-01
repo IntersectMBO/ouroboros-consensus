@@ -19,7 +19,6 @@ import Cardano.Slotting.Slot (unSlotNo)
 import Data.Either (isRight)
 import Data.Word (Word32)
 import Numeric.Natural (Natural)
-import Ouroboros.Consensus.Protocol.Praos.Common (PraosExtension (..))
 import Ouroboros.Consensus.Protocol.Signed
   ( Signed
   , SignedHeader (headerSigned)
@@ -83,7 +82,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
     MaxMajorProtVer maxPV = tpraosMaxMajorPV (tpraosParams cfg)
 
 instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
-  type ProtoExtension (TPraos c) = PextNone
+  type HeaderExtras (TPraos c) = ()
 
   configSlotsPerKESPeriod cfg = tpraosSlotsPerKESPeriod $ tpraosParams cfg
   verifyHeaderIntegrity slotsPerKESPeriod hdr =
@@ -105,7 +104,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
       | otherwise =
           0
 
-  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mLeios = do
+  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer () = do
     TPraosFields{tpraosSignature, tpraosToSign} <-
       forgeTPraosFields hotKey canBeLeader isLeader mkBhBody
     pure $ SL.BHeader tpraosToSign tpraosSignature

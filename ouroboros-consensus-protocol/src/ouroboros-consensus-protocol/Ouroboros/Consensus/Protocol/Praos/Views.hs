@@ -1,22 +1,20 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Protocol.Praos.Views
-  ( BaseHeaderBody
-  , BaseHeaderView (..)
-  , BasePraosLedgerView (..)
-  , ForecastsLeios (..)
+  ( HeaderView (..)
+  , PraosHeaderView
+  , LeiosHeaderView (..)
+  , PraosLedgerView (..)
+  , PraosWithLeiosLedgerView (..)
   , LeiosLedgerView (..)
-  , PraosLedgerView
   , initialLeiosLedgerView
-  , forecastToBasePraosLedgerView
+  , forecastToPraosLedgerView
+  , forecastToPraosWithLeiosLedgerView
   , extendHeaderBodyWithLeios
   ) where
 
@@ -40,27 +38,13 @@ import Cardano.Protocol.Praos.VRF (InputVRF)
 import Cardano.Protocol.TPraos.BlockHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Slot (SlotNo)
-import Data.Kind (Constraint, Type)
-import Data.Proxy (Proxy (Proxy))
 import Data.Word (Word16, Word32)
 import LeiosDemoTypes (EbAnnouncement)
 import Lens.Micro ((^.))
-import Ouroboros.Consensus.Protocol.Praos.Common
 
 {-------------------------------------------------------------------------------
-  The upstream header types, per extension
+  The upstream header types
 -------------------------------------------------------------------------------}
-
--- | The upstream @cardano-protocol@ header body this extension uses.
---
--- Its owners define one per protocol, wholly separately, and future extensions
--- of Praos (eg Ouroboros Phalanx) will presumably each bring another. This is
--- the KES-signed object, which is why it appears in 'BaseHeaderView' as-is
--- rather than being projected field by field.
-type BaseHeaderBody :: PraosExtension -> Type -> Type
-type family BaseHeaderBody pext :: Type -> Type where
-  BaseHeaderBody PextNone = PraosCodec.HeaderBody
-  BaseHeaderBody PextLeios = LeiosCodec.HeaderBody
 
 -- | The Leios header body is the Praos one plus the two Leios fields, so
 -- whoever builds one builds the Praos body first and hands it here.
@@ -90,42 +74,55 @@ extendHeaderBodyWithLeios pb containsCert ann =
   Header view
 -------------------------------------------------------------------------------}
 
-type BaseHeaderView :: PraosExtension -> Type -> Type
-
 -- | View of the block header required by the Praos protocol.
-data BaseHeaderView pext crypto = HeaderView
+--
+-- Parameterised by the KES-signed body, because that is the only thing the
+-- Praos extensions actually disagree about: every field below is a projection
+-- each extension's header offers, and @body@ is the object the signature
+-- covers. Carrying it as an ordinary type parameter is what lets the shared
+-- signature checks ask for a @Signable (KES c) body@ dictionary in the normal
+-- way.
+data HeaderView body c = HeaderView
   { hvPrevHash :: !PrevHash
   -- ^ Hash of the previous block
   , hvVK :: !(VKey BlockIssuer)
   -- ^ verification key of block issuer
-  , hvVrfVK :: !(VerKeyVRF (VRF crypto))
+  , hvVrfVK :: !(VerKeyVRF (VRF c))
   -- ^ VRF verification key for block issuer
-  , hvVrfRes :: !(CertifiedVRF (VRF crypto) InputVRF)
+  , hvVrfRes :: !(CertifiedVRF (VRF c) InputVRF)
   -- ^ VRF result
-  , hvOCert :: !(OCert crypto)
+  , hvOCert :: !(OCert c)
   -- ^ operational certificate
   , hvSlotNo :: !SlotNo
   -- ^ Slot
-  , hvLeios :: !(StrictMaybeLeios pext (Bool, StrictMaybe EbAnnouncement))
-  -- ^ The Leios payload: whether this block's body carries a certificate (ie
-  -- whether it is a CertRB), and the endorser block this header announces.
-  --
-  -- Statically absent unless the extension has Leios, since the header checks
-  -- that read it only exist there.
-  , hvSigned :: !(BaseHeaderBody pext crypto)
-  -- ^ Header which must be signed
-  , hvSignature :: !(SignedKES (KES crypto) (BaseHeaderBody pext crypto))
-  -- ^ KES Signature of the header
+  , hvSigned :: !body
+  -- ^ Header body which must be signed
+  , hvSignature :: !(SignedKES (KES c) body)
+  -- ^ KES signature of the header body
+  }
+
+type PraosHeaderView c = HeaderView (PraosCodec.HeaderBody c) c
+
+-- | A 'HeaderView' over the Leios header body, plus the two Leios fields.
+--
+-- The Leios fields are plain rather than optional: this view exists only for
+-- 'Ouroboros.Consensus.Protocol.Praos.PraosWithLeios', whose headers always
+-- carry them.
+data LeiosHeaderView c = LeiosHeaderView
+  { lhvBase :: !(HeaderView (LeiosCodec.HeaderBody c) c)
+  , lhvContainsCert :: !Bool
+  -- ^ Whether this block's body carries a certificate (ie whether it is a
+  -- CertRB)
+  , lhvAnnouncement :: !(StrictMaybe EbAnnouncement)
+  -- ^ The endorser block this header announces
   }
 
 {-------------------------------------------------------------------------------
   Ledger view
 -------------------------------------------------------------------------------}
 
-type BasePraosLedgerView :: PraosExtension -> Type
-
 -- | View of the ledger required by the Praos protocol.
-data BasePraosLedgerView pext = PraosLedgerView
+data PraosLedgerView = PraosLedgerView
   { plvPoolDistr :: SL.PoolDistr
   -- ^ Stake distribution
   , plvMaxHeaderSize :: !Word16
@@ -134,14 +131,18 @@ data BasePraosLedgerView pext = PraosLedgerView
   -- ^ Maximum block body size
   , plvProtocolVersion :: !ProtVer
   -- ^ Current protocol version
-  , plvLeios :: !(StrictMaybeLeios pext LeiosLedgerView)
   }
+  deriving Show
 
-deriving instance Show (BasePraosLedgerView pext)
+-- | View of the ledger required by Praos with Leios: the Praos one plus the
+-- Leios one, since the Leios header checks need both.
+data PraosWithLeiosLedgerView = PraosWithLeiosLedgerView
+  { pwlvBase :: !PraosLedgerView
+  , pwlvLeios :: !LeiosLedgerView
+  }
+  deriving Show
 
-type PraosLedgerView = BasePraosLedgerView PextNone
-
--- | The Leios part of 'BasePraosLedgerView'.
+-- | The Leios part of 'PraosWithLeiosLedgerView'.
 --
 -- Only what the protocol itself checks. The other Leios parameters bound an
 -- endorser block's contents, which is validated with a real ledger state in
@@ -180,41 +181,34 @@ initialLeiosLedgerView =
     , llvMaxEbBodySize = 0
     }
 
-type ForecastsLeios :: PraosExtension -> Type -> Constraint
-
--- | The Leios part of an era's forecast, as this extension sees it.
---
--- Reading that part needs 'Dijkstra.DijkstraEraForecast', which the extensions
--- without Leios must not demand of their eras. 'KnownPraosExtension' cannot
--- serve here: refining @pext@ says nothing about @era@, and it is an @era@
--- dictionary that is missing.
-class ForecastsLeios pext era where
-  forecastToLeiosPart ::
-    proxy pext ->
-    SL.Forecast t era ->
-    StrictMaybeLeios pext LeiosLedgerView
-
-instance ForecastsLeios PextNone era where
-  forecastToLeiosPart _ _ = SNothingLeios
-
-instance Dijkstra.DijkstraEraForecast era => ForecastsLeios PextLeios era where
-  forecastToLeiosPart _ = SJustLeios . forecastToLeiosLedgerView
-
-forecastToBasePraosLedgerView ::
-  forall pext t era.
-  (ForecastsLeios pext era, SL.EraForecast era) =>
+forecastToPraosLedgerView ::
+  forall t era.
+  SL.EraForecast era =>
   SL.Forecast t era ->
-  BasePraosLedgerView pext
-forecastToBasePraosLedgerView f =
+  PraosLedgerView
+forecastToPraosLedgerView f =
   PraosLedgerView
     { plvPoolDistr = f ^. SL.poolDistrForecastL @era @t
     , plvMaxHeaderSize = ccMaxBHSize cc
     , plvMaxBodySize = ccMaxBBSize cc
     , plvProtocolVersion = ccProtocolVersion cc
-    , plvLeios = forecastToLeiosPart (Proxy @pext) f
     }
  where
   cc = SL.forecastChainChecks @t @era f
+
+-- | Unlike 'forecastToPraosLedgerView' this needs
+-- 'Dijkstra.DijkstraEraForecast', which is the whole reason it is a separate
+-- function: the extensions without Leios must not demand that of their eras.
+forecastToPraosWithLeiosLedgerView ::
+  forall t era.
+  Dijkstra.DijkstraEraForecast era =>
+  SL.Forecast t era ->
+  PraosWithLeiosLedgerView
+forecastToPraosWithLeiosLedgerView f =
+  PraosWithLeiosLedgerView
+    { pwlvBase = forecastToPraosLedgerView @t @era f
+    , pwlvLeios = forecastToLeiosLedgerView @t @era f
+    }
 
 forecastToLeiosLedgerView ::
   forall t era.

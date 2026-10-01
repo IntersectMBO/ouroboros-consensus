@@ -63,11 +63,7 @@ import Ouroboros.Consensus.Protocol.Abstract
   , ValidateView
   )
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Common
-  ( HasMaxMajorProtVer
-  , StrictMaybeLeios
-  , PraosExtension
-  )
+import Ouroboros.Consensus.Protocol.Praos.Common (HasMaxMajorProtVer)
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -165,13 +161,9 @@ default_pHeaderLeiosEbAnnouncement = const SNothing
 --    header (made specific to KES-using protocols through the need to handle
 --    the hot key).
 class ProtocolHeaderSupportsKES proto where
-  -- | Which Praos extension this protocol's header is built for, and so
-  -- whether it carries the Leios fields.
-  --
-  -- Unlike 'ShelleyProtocolHeader' this is not injective — every protocol
-  -- without Leios maps to 'PextNone' — but it only ever indexes a
-  -- 'StrictMaybeLeios', so nothing needs to invert it.
-  type ProtoExtension proto :: PraosExtension
+  -- | Whatever this protocol's header carries beyond the Praos fields that
+  -- 'mkHeader' takes one by one: @()@ for the protocols that carry nothing.
+  type HeaderExtras proto :: Type
 
   -- | Extract the "slots per KES period" value from the protocol config.
   --
@@ -204,9 +196,8 @@ class ProtocolHeaderSupportsKES proto where
     Int ->
     -- | Protocol version
     ProtVer ->
-    -- | Optional fields for Leios: whether the body carries a certificate, and
-    -- this header's announcement, if any
-    StrictMaybeLeios (ProtoExtension proto) (Bool, StrictMaybe EbAnnouncement) ->
+    -- | This protocol's extra header fields; see 'HeaderExtras'
+    HeaderExtras proto ->
     m (ShelleyProtocolHeader proto)
 
   -- | Extract the most recently announced (and not yet certified) Leios EB

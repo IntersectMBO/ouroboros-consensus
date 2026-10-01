@@ -8,7 +8,10 @@
 -- FIXME: resolve 'Validated' deprecations
 {-# OPTIONS_GHC -Wno-deprecations #-}
 
-module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
+module Ouroboros.Consensus.Shelley.Ledger.Forge
+  ( LeiosForge (..)
+  , forgeShelleyBlock
+  ) where
 
 import Cardano.Crypto.Leios (LeiosCert)
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
@@ -28,7 +31,7 @@ import Control.Monad (when)
 import Control.Tracer (traceWith)
 import Data.ByteString.Short (fromShort)
 import Data.Maybe (isJust)
-import Data.Maybe.Strict (maybeToStrictMaybe)
+import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoTypes
@@ -48,7 +51,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -58,7 +60,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Integrity
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
-  , ProtocolHeaderSupportsKES (ProtoExtension, configSlotsPerKESPeriod)
+  , ProtocolHeaderSupportsKES (HeaderExtras, configSlotsPerKESPeriod)
   , mkHeader
   )
 
@@ -66,15 +68,31 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   Forging
 -------------------------------------------------------------------------------}
 
+-- | Whether this protocol's forge takes part in Leios.
+--
+-- The two cases coincide with the two things that vary: whether an endorser
+-- block is forged at all, and what the header's extra fields are. A protocol
+-- without Leios forges none and supplies its (empty) extras directly.
+data LeiosForge proto
+  = NoLeiosForge (HeaderExtras proto)
+  | LeiosForge
+      ( -- \| Whether the block body carries a certificate
+        Bool ->
+        -- \| The endorser block this header announces, if any
+        StrictMaybe EbAnnouncement ->
+        HeaderExtras proto
+      )
+
 forgeShelleyBlock ::
   forall m era proto.
   (ShelleyCompatible proto era, Monad m) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
-  StrictMaybeLeios (ProtoExtension proto) () ->
+  -- | How this protocol takes part in Leios; see 'LeiosForge'.
+  LeiosForge proto ->
   ForgeBlockArgs m (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
-forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
+forgeShelleyBlock hotKey cbl leiosForge ForgeBlockArgs{..} = do
   -- Forge an RB and attempt to announce an EB and/or certify a previously announced one:
   --
   --  * Certify: if the forge loop decided to certify a previously-announced
@@ -83,16 +101,14 @@ forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
   --  * Announce: forge and store a new EB from 'fbEbTxs' and announce it on this RB's header.
   --    When we are also certifying, 'fbEbTxs' contains transactions from the mempool that has already
   --    been rebased onto the post-certificate ledger state.
-  -- Matching the token refines 'ProtoExtension', which is what lets the Leios
-  -- branch build the header fields below.
   (mayEbAnn :: Maybe (ForgedLeiosEb, EbAnnouncement), leiosFields) <-
-    case leiosToken of
-      SNothingLeios -> pure (Nothing, SNothingLeios)
-      SJustLeios () -> do
+    case leiosForge of
+      NoLeiosForge extras -> pure (Nothing, extras)
+      LeiosForge mkExtras -> do
         ann <- mkEb
         pure
           ( ann
-          , SJustLeios (isJust fbMayLeiosCert, maybeToStrictMaybe (snd <$> ann))
+          , mkExtras (isJust fbMayLeiosCert) (maybeToStrictMaybe (snd <$> ann))
           )
   let rbBody = mkBody fbMayLeiosCert
       actualRbBodySize = SL.blockBodySize protocolVersion rbBody

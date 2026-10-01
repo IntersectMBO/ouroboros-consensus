@@ -1171,7 +1171,6 @@ library protocol
     cborg,
     containers,
     contra-tracer,
-    deepseq,
     io-classes,
     io-sim,
     kes-agent ^>=1.3,

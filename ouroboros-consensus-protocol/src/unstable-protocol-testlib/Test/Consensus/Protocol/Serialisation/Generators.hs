@@ -32,15 +32,11 @@ import LeiosDemoTypes
   )
 import Ouroboros.Consensus.Protocol.Praos
   ( AnnouncedBy (MkAnnouncedBy)
-  , BasePraosState (PraosState)
+  , PraosState (PraosState)
+  , PraosWithLeiosState (PraosWithLeiosState)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Common
-  ( KnownPraosExtension (singPraosExtension)
-  , SingPraosExtension (SingPextLeios, SingPextNone)
-  , StrictMaybeLeios (SJustLeios, SNothingLeios)
-  , toCodecEbAnnouncement
-  )
+import Ouroboros.Consensus.Protocol.Praos.Common (toCodecEbAnnouncement)
 import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Cardano.StrictContainers.Instances ()
@@ -111,7 +107,7 @@ instance Praos.PraosCrypto c => Arbitrary (Leios.Header c) where
     let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Leios.Header hBody hSig
 
-instance KnownPraosExtension pext => Arbitrary (BasePraosState pext) where
+instance Arbitrary PraosState where
   arbitrary =
     PraosState
       <$> oneof
@@ -125,9 +121,6 @@ instance KnownPraosExtension pext => Arbitrary (BasePraosState pext) where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> traverse
-        (\() -> arbitrary)
-        ( case singPraosExtension @pext of
-            SingPextNone -> SNothingLeios
-            SingPextLeios -> SJustLeios ()
-        )
+
+instance Arbitrary PraosWithLeiosState where
+  arbitrary = PraosWithLeiosState <$> arbitrary <*> arbitrary

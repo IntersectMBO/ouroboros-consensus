@@ -18,21 +18,19 @@
 
 module Ouroboros.Consensus.Protocol.Praos
   ( AnnouncedBy (..)
-  , BasePraos
-  , BasePraosState (..)
-  , BasePraosValidationErr (..)
   , ConsensusConfig (..)
   , Praos
-  , PraosExtension (..)
   , PraosCannotForge (..)
   , PraosCrypto
   , PraosFields (..)
   , PraosIsLeader (..)
   , PraosParams (..)
-  , PraosState
+  , PraosState (..)
   , PraosToSign (..)
-  , PraosValidationErr
+  , PraosValidationErr (..)
+  , PraosWithLeiosValidationErr (..)
   , PraosWithLeios
+  , PraosWithLeiosState (..)
   , Ticked (..)
   , forgePraosFields
   , praosCheckCanForge
@@ -110,10 +108,9 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (decode, encode))
 import Control.Exception (throw)
 import Control.Monad (unless, when)
-import Control.Monad.Except (Except, runExcept, throwError)
+import Control.Monad.Except (Except, runExcept, throwError, withExcept)
 import Data.Coerce (coerce)
 import Data.Functor.Identity (runIdentity)
-import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
@@ -149,17 +146,23 @@ import Ouroboros.Consensus.Util.CBOR
   )
 import Ouroboros.Consensus.Util.Versioned
   ( VersionDecoder (Decode)
-  , VersionNumber
   , decodeVersion
   , encodeVersion
   )
 
-type BasePraos :: PraosExtension -> Type -> Type
-data BasePraos pext c
+-- | The base Praos protocol.
+data Praos c
 
-type Praos = BasePraos PextNone
-
-type PraosWithLeios = BasePraos PextLeios
+-- | Praos with the Leios extension.
+--
+-- A separate type rather than an index on 'Praos'. The two share their
+-- configuration, their nonce handling, their leader check and both signature
+-- checks --- as ordinary functions, the way 'TPraos' and 'Praos' already share
+-- code. What they do not share is the chain-dep state's extra field, the header
+-- body that gets signed, and the Leios header checks; a single definition
+-- covering both needed a singleton to case on and two dictionary-summoning
+-- helpers before GHC would accept it.
+data PraosWithLeios c
 
 class
   ( Crypto c
@@ -282,7 +285,7 @@ newtype PraosIsLeader c = PraosIsLeader
 instance PraosCrypto c => NoThunks (PraosIsLeader c)
 
 -- | Static configuration
-data instance ConsensusConfig (BasePraos ext c) = PraosConfig
+data instance ConsensusConfig (Praos c) = PraosConfig
   { praosParams :: !PraosParams
   , praosEpochInfo :: !(EpochInfo (Except History.PastHorizonException))
   -- it's useful for this record to be EpochInfo and one other thing,
@@ -291,10 +294,22 @@ data instance ConsensusConfig (BasePraos ext c) = PraosConfig
   }
   deriving Generic
 
-instance PraosCrypto c => NoThunks (ConsensusConfig (BasePraos ext c))
+-- | The Leios extension configures nothing of its own, so it reuses Praos's
+-- configuration whole.
+newtype instance ConsensusConfig (PraosWithLeios c) = PraosWithLeiosConfig
+  { praosConfigOfLeios :: ConsensusConfig (Praos c)
+  }
+  deriving Generic
 
-instance HasMaxMajorProtVer (BasePraos c ext) where
+instance PraosCrypto c => NoThunks (ConsensusConfig (Praos c))
+
+instance PraosCrypto c => NoThunks (ConsensusConfig (PraosWithLeios c))
+
+instance HasMaxMajorProtVer (Praos c) where
   protoMaxMajorPV = praosMaxMajorPV . praosParams
+
+instance HasMaxMajorProtVer (PraosWithLeios c) where
+  protoMaxMajorPV = protoMaxMajorPV . praosConfigOfLeios
 
 {-------------------------------------------------------------------------------
   ConsensusProtocol
@@ -305,7 +320,7 @@ instance HasMaxMajorProtVer (BasePraos c ext) where
 -- We track the last slot and the counters for operational certificates, as well
 -- as a series of nonces which get updated in different ways over the course of
 -- an epoch.
-data BasePraosState pext = PraosState
+data PraosState = PraosState
   { praosStateLastSlot :: !(WithOrigin SlotNo)
   , praosStateOCertCounters :: !(Map (KeyHash SL.BlockIssuer) Word64)
   -- ^ Operation Certificate counters
@@ -322,8 +337,13 @@ data BasePraosState pext = PraosState
   , praosStateLastEpochBlockNonce :: !Nonce
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
-  , praosStateLeiosAnnouncement ::
-      !(StrictMaybeLeios pext (StrictMaybe AnnouncedBy))
+  }
+  deriving (Generic, Show, Eq)
+
+-- | 'PraosState' plus what the Leios extension tracks.
+data PraosWithLeiosState = PraosWithLeiosState
+  { pwlsPraos :: !PraosState
+  , pwlsLeiosAnnouncement :: !(StrictMaybe AnnouncedBy)
   -- ^ The Leios 'EbAnnouncement' from the most recently applied header on
   -- this chain — overwritten on every header tick (so a header with no
   -- announcement clears the field). The 'ResolveLeiosBlock' instance for
@@ -356,104 +376,106 @@ decodeAnnouncedBy = do
   enforceSize "AnnouncedBy" 2
   MkAnnouncedBy <$> fromCBOR <*> decodeEbAnnouncement
 
-type PraosState = BasePraosState PextNone
+instance NoThunks PraosState
 
-instance KnownPraosExtension pext => NoThunks (BasePraosState pext)
+instance NoThunks PraosWithLeiosState
 
-instance KnownPraosExtension pext => ToCBOR (BasePraosState pext) where
+instance ToCBOR PraosState where
   toCBOR = encode
 
-instance KnownPraosExtension pext => FromCBOR (BasePraosState pext) where
+instance FromCBOR PraosState where
   fromCBOR = decode
 
-countOfFieldsInPraosState ::
-  forall pext proxy a. (KnownPraosExtension pext, Num a) => proxy pext -> a
-countOfFieldsInPraosState _ =
-  praos + leios
- where
-  praos = 8
-  leios = case singPraosExtension @pext of
-    SingPextNone -> 0
-    SingPextLeios -> 1
+instance ToCBOR PraosWithLeiosState where
+  toCBOR = encode
 
--- | @pext@ selects the codec, so each extension's version numbers are their own
--- namespace: these two are unrelated formats that merely both start counting.
+instance FromCBOR PraosWithLeiosState where
+  fromCBOR = decode
+
+-- | The eight fields of 'PraosState', in order.
 --
--- 'PextNone' is mainnet's, and so keeps the version mainnet writes. 'PextLeios'
--- starts at 1, which is what the code before 'BasePraos' wrote for Dijkstra --
--- back when Dijkstra was paired with 'Praos' -- with the same fields in the
--- same order. A node already running the Leios prototype can therefore still
--- decode the chain-dep state in the snapshots it has on disk.
-versionOfPraosState ::
-  forall pext proxy. KnownPraosExtension pext => proxy pext -> VersionNumber
-versionOfPraosState _ = case singPraosExtension @pext of
-  SingPextNone -> 0
-  SingPextLeios -> 1
+-- 'PraosWithLeiosState' writes these and then its own, which is the whole of
+-- how the two formats relate.
+encodePraosStateFields :: PraosState -> [CBOR.Encoding]
+encodePraosStateFields
+  PraosState
+    { praosStateLastSlot
+    , praosStateOCertCounters
+    , praosStateEvolvingNonce
+    , praosStateCandidateNonce
+    , praosStateEpochNonce
+    , praosStatePreviousEpochNonce
+    , praosStateLabNonce
+    , praosStateLastEpochBlockNonce
+    } =
+    [ toCBOR praosStateLastSlot
+    , toCBOR praosStateOCertCounters
+    , toEraCBOR @ShelleyEra praosStateEvolvingNonce
+    , toEraCBOR @ShelleyEra praosStateCandidateNonce
+    , toEraCBOR @ShelleyEra praosStateEpochNonce
+    , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
+    , toEraCBOR @ShelleyEra praosStateLabNonce
+    , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
+    ]
 
-instance KnownPraosExtension pext => Serialise (BasePraosState pext) where
-  encode
-    PraosState
-      { praosStateLastSlot
-      , praosStateOCertCounters
-      , praosStateEvolvingNonce
-      , praosStateCandidateNonce
-      , praosStateEpochNonce
-      , praosStatePreviousEpochNonce
-      , praosStateLabNonce
-      , praosStateLastEpochBlockNonce
-      , praosStateLeiosAnnouncement
-      } =
-      encodeVersion (versionOfPraosState (Proxy @pext)) $
-        mconcat
-          [ CBOR.encodeListLen (countOfFieldsInPraosState (Proxy @pext))
-          , toCBOR praosStateLastSlot
-          , toCBOR praosStateOCertCounters
-          , toEraCBOR @ShelleyEra praosStateEvolvingNonce
-          , toEraCBOR @ShelleyEra praosStateCandidateNonce
-          , toEraCBOR @ShelleyEra praosStateEpochNonce
-          , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
-          , toEraCBOR @ShelleyEra praosStateLabNonce
-          , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
-          , foldMap (encodeNullStrictMaybe encodeAnnouncedBy) praosStateLeiosAnnouncement
-          ]
+decodePraosStateFields :: Decoder s PraosState
+decodePraosStateFields =
+  PraosState
+    <$> fromCBOR
+    <*> fromCBOR
+    <*> fromEraCBOR @ShelleyEra
+    <*> fromEraCBOR @ShelleyEra
+    <*> fromEraCBOR @ShelleyEra
+    <*> fromEraCBOR @ShelleyEra
+    <*> fromEraCBOR @ShelleyEra
+    <*> fromEraCBOR @ShelleyEra
 
-  decode =
-    decodeVersion
-      [ (versionOfPraosState (Proxy @pext), Decode decodePraosState)
-      ]
+-- | Mainnet's format, unchanged: version 0, eight fields.
+instance Serialise PraosState where
+  encode st =
+    encodeVersion 0 $ mconcat $ CBOR.encodeListLen 8 : encodePraosStateFields st
+
+  decode = decodeVersion [(0, Decode dec)]
    where
-    decodePraosState :: forall s. Decoder s (BasePraosState pext)
-    decodePraosState = do
-      enforceSize "PraosState" (countOfFieldsInPraosState (Proxy @pext))
-      PraosState
-        <$> fromCBOR
-        <*> fromCBOR
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> traverse
-          (\() -> decodeNullStrictMaybe decodeAnnouncedBy)
-          ( case singPraosExtension @pext of
-              SingPextNone -> SNothingLeios
-              SingPextLeios -> SJustLeios ()
-          )
+    dec :: forall s. Decoder s PraosState
+    dec = enforceSize "PraosState" 8 >> decodePraosStateFields
 
-data instance Ticked (BasePraosState pext) = TickedPraosState
-  { tickedPraosStateChainDepState :: BasePraosState pext
-  , tickedPraosStateLedgerView :: Views.BasePraosLedgerView pext
+-- | A format of its own, which merely also starts counting: version 1 is what
+-- the code before this split wrote for Dijkstra -- back when Dijkstra was
+-- paired with 'Praos' -- with the same fields in the same order. A node already
+-- running the Leios prototype can therefore still decode the chain-dep state in
+-- the snapshots it has on disk.
+instance Serialise PraosWithLeiosState where
+  encode (PraosWithLeiosState base ann) =
+    encodeVersion 1 $
+      mconcat $
+        CBOR.encodeListLen 9
+          : encodePraosStateFields base
+            <> [encodeNullStrictMaybe encodeAnnouncedBy ann]
+
+  decode = decodeVersion [(1, Decode dec)]
+   where
+    dec :: forall s. Decoder s PraosWithLeiosState
+    dec = do
+      enforceSize "PraosWithLeiosState" 9
+      PraosWithLeiosState
+        <$> decodePraosStateFields
+        <*> decodeNullStrictMaybe decodeAnnouncedBy
+
+data instance Ticked PraosState = TickedPraosState
+  { tickedPraosStateChainDepState :: PraosState
+  , tickedPraosStateLedgerView :: Views.PraosLedgerView
+  }
+
+data instance Ticked PraosWithLeiosState = TickedPraosWithLeiosState
+  { tickedPraosWithLeiosStateChainDepState :: PraosWithLeiosState
+  , tickedPraosWithLeiosStateLedgerView :: Views.PraosWithLeiosLedgerView
   }
 
 -----
 
-type BasePraosValidationErr :: PraosExtension -> Type -> Type
-
 -- | Errors which we might encounter
--- @pext@ is phantom here: it only keeps the error type of each extension
--- distinct, so that 'ValidationErr' stays injective in the protocol.
-data BasePraosValidationErr pext c
+data PraosValidationErr c
   = VRFKeyUnknown
       !(KeyHash SL.StakePool) -- unknown VRF keyhash (not registered)
   | VRFKeyWrongVRFKey
@@ -491,30 +513,103 @@ data BasePraosValidationErr pext c
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash SL.BlockIssuer) -- stake pool key hash
-  | LeiosHeaderErr !Leios.LeiosHeaderErr
   deriving Generic
 
--- | 'LeiosHeaderErr' is reachable only from 'leiosHeaderChecks', which runs
--- only under 'SingPextLeios', so at 'PextNone' --- mainnet's, /before/
--- Leios\/Dijkstra --- nothing constructs it. The type does not say so; see the
--- note on 'leiosHeaderChecks' for why that was not thought worth paying for.
-type PraosValidationErr c = BasePraosValidationErr PextNone c
+deriving instance PraosCrypto c => Eq (PraosValidationErr c)
 
-deriving instance (PraosCrypto c, KnownPraosExtension pext) => Eq (BasePraosValidationErr pext c)
+deriving instance PraosCrypto c => NoThunks (PraosValidationErr c)
 
-deriving instance
-  (PraosCrypto c, KnownPraosExtension pext) => NoThunks (BasePraosValidationErr pext c)
+deriving instance PraosCrypto c => Show (PraosValidationErr c)
 
-deriving instance (PraosCrypto c, KnownPraosExtension pext) => Show (BasePraosValidationErr pext c)
+-- | A header fails either the base protocol's checks or Leios's own, and
+-- nothing checks both at once, so this is a sum rather than one flat type with
+-- a Leios constructor the base protocol could never throw.
+data PraosWithLeiosValidationErr c
+  = PraosErr !(PraosValidationErr c)
+  | LeiosErr !Leios.LeiosHeaderErr
+  deriving Generic
 
-instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePraos pext c) where
-  type ChainDepState (BasePraos pext c) = BasePraosState pext
-  type IsLeader (BasePraos pext c) = PraosIsLeader c
-  type CanBeLeader (BasePraos pext c) = PraosCanBeLeader c
-  type TiebreakerView (BasePraos pext c) = PraosTiebreakerView c
-  type LedgerView (BasePraos pext c) = Views.BasePraosLedgerView pext
-  type ValidationErr (BasePraos pext c) = BasePraosValidationErr pext c
-  type ValidateView (BasePraos pext c) = Views.BaseHeaderView pext c
+deriving instance PraosCrypto c => Eq (PraosWithLeiosValidationErr c)
+
+deriving instance PraosCrypto c => NoThunks (PraosWithLeiosValidationErr c)
+
+deriving instance PraosCrypto c => Show (PraosWithLeiosValidationErr c)
+
+{-------------------------------------------------------------------------------
+  The one part both protocols share
+
+  Everything else 'PraosWithLeios' needs from 'Praos' it gets by calling the
+  'Praos' method; only the methods that take a 'ValidateView' cannot delegate,
+  because the two protocols sign different header bodies. This is the body of
+  'reupdateChainDepState', lifted out for exactly that reason.
+-------------------------------------------------------------------------------}
+
+-- | The six chain-dep-state fields a header updates.
+--
+-- @body@ is whatever the protocol signs; nothing here reads it.
+reupdatePraosState ::
+  forall body c.
+  PraosParams ->
+  EpochInfo (Except History.PastHorizonException) ->
+  Views.HeaderView body c ->
+  SlotNo ->
+  PraosState ->
+  PraosState
+reupdatePraosState
+  PraosParams{praosRandomnessStabilisationWindow}
+  ei
+  b
+  slot
+  cs =
+    cs
+      { praosStateLastSlot = NotOrigin slot
+      , praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b)
+      , praosStateEvolvingNonce = newEvolvingNonce
+      , praosStateCandidateNonce =
+          if slot +* Duration praosRandomnessStabilisationWindow < firstSlotNextEpoch
+            then newEvolvingNonce
+            else praosStateCandidateNonce cs
+      , praosStateOCertCounters =
+          Map.insert hk n $ praosStateOCertCounters cs
+      }
+   where
+    epochInfoWithErr =
+      hoistEpochInfo
+        (either throw pure . runExcept)
+        ei
+    firstSlotNextEpoch = runIdentity $ do
+      EpochNo currentEpochNo <- epochInfoEpoch epochInfoWithErr slot
+      let nextEpoch = EpochNo $ currentEpochNo + 1
+      epochInfoFirst epochInfoWithErr nextEpoch
+    eta = vrfNonceValue (Proxy @c) $ Views.hvVrfRes b
+    newEvolvingNonce = praosStateEvolvingNonce cs ⭒ eta
+    OCert _ n _ _ = Views.hvOCert b
+    hk = hashKey $ Views.hvVK b
+
+-- | The base protocol's ticked state, as it sits inside this one's.
+--
+-- What lets 'PraosWithLeios' hand its state to a 'Praos' method.
+basePraosTicked :: Ticked PraosWithLeiosState -> Ticked PraosState
+basePraosTicked tcs =
+  TickedPraosState
+    { tickedPraosStateChainDepState =
+        pwlsPraos (tickedPraosWithLeiosStateChainDepState tcs)
+    , tickedPraosStateLedgerView =
+        Views.pwlvBase (tickedPraosWithLeiosStateLedgerView tcs)
+    }
+
+{-------------------------------------------------------------------------------
+  The two instances
+-------------------------------------------------------------------------------}
+
+instance PraosCrypto c => ConsensusProtocol (Praos c) where
+  type ChainDepState (Praos c) = PraosState
+  type IsLeader (Praos c) = PraosIsLeader c
+  type CanBeLeader (Praos c) = PraosCanBeLeader c
+  type TiebreakerView (Praos c) = PraosTiebreakerView c
+  type LedgerView (Praos c) = Views.PraosLedgerView
+  type ValidationErr (Praos c) = PraosValidationErr c
+  type ValidateView (Praos c) = Views.PraosHeaderView c
 
   protocolSecurityParam = praosSecurityParam . praosParams
 
@@ -583,6 +678,12 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
 
   -- Validate and update the chain dependent state as a result of processing a
   -- new header.
+  --
+  -- This consists of:
+  -- - Validate the VRF checks
+  -- - Validate the KES checks
+  -- - Call 'reupdateChainDepState'
+  --
   updateChainDepState
     cfg@( PraosConfig
             PraosParams{praosLeaderF}
@@ -591,15 +692,6 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
     b
     slot
     tcs = do
-      -- The Leios header checks. Cheap, so they run before the signature
-      -- checks.
-      --
-      -- NB cert/txs exclusivity is not among these: it is a property of the
-      -- body, and 'blockMatchesHeader' already enforces it where the body is
-      -- in hand. Nor is the EB closure's size: the announcement carries only
-      -- one size, and it is the body's.
-      leiosHeaderChecks cfg lv b slot cs
-
       -- First, we check the KES signature, which validates that the issuer is
       -- in fact who they say they are.
       validateKESSignature cfg lv (praosStateOCertCounters cs) b
@@ -613,52 +705,100 @@ instance (PraosCrypto c, KnownPraosExtension pext) => ConsensusProtocol (BasePra
       cs = tickedPraosStateChainDepState tcs
 
   -- Re-update the chain dependent state as a result of processing a header.
-  reupdateChainDepState
-    _cfg@( PraosConfig
-             PraosParams{praosRandomnessStabilisationWindow}
-             ei
-           )
-    b
-    slot
-    tcs =
-      cs
-        { praosStateLastSlot = NotOrigin slot
-        , praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b)
-        , praosStateEvolvingNonce = newEvolvingNonce
-        , praosStateCandidateNonce =
-            if slot +* Duration praosRandomnessStabilisationWindow < firstSlotNextEpoch
-              then newEvolvingNonce
-              else praosStateCandidateNonce cs
-        , praosStateOCertCounters =
-            Map.insert hk n $ praosStateOCertCounters cs
-        , praosStateLeiosAnnouncement =
-            case singPraosExtension @pext of
-              SingPextNone -> SNothingLeios
-              SingPextLeios ->
-                SJustLeios $
-                  MkAnnouncedBy hk . fromCodecEbAnnouncement
-                    <$> LeiosCodec.hbEbAnnouncement (Views.hvSigned b)
-        }
-     where
-      epochInfoWithErr =
-        hoistEpochInfo
-          (either throw pure . runExcept)
-          ei
-      firstSlotNextEpoch = runIdentity $ do
-        EpochNo currentEpochNo <- epochInfoEpoch epochInfoWithErr slot
-        let nextEpoch = EpochNo $ currentEpochNo + 1
-        epochInfoFirst epochInfoWithErr nextEpoch
-      cs = tickedPraosStateChainDepState tcs
-      eta = vrfNonceValue (Proxy @c) $ Views.hvVrfRes b
-      newEvolvingNonce = praosStateEvolvingNonce cs ⭒ eta
-      OCert _ n _ _ = Views.hvOCert b
-      hk = hashKey $ Views.hvVK b
+  --
+  -- This consists of:
+  -- - Update the last applied block hash.
+  -- - Update the evolving and (potentially) candidate nonces based on the
+  --   position in the epoch.
+  -- - Update the operational certificate counter.
+  reupdateChainDepState PraosConfig{praosParams, praosEpochInfo} b slot tcs =
+    reupdatePraosState
+      praosParams
+      praosEpochInfo
+      b
+      slot
+      (tickedPraosStateChainDepState tcs)
+
+-- | Praos with Leios reuses the base protocol wherever the method does not
+-- take a 'ValidateView': those it simply calls, handing over the base state it
+-- carries. 'updateChainDepState' and 'reupdateChainDepState' cannot, because
+-- the two protocols sign different header bodies, so they call the shared
+-- checks directly.
+instance PraosCrypto c => ConsensusProtocol (PraosWithLeios c) where
+  type ChainDepState (PraosWithLeios c) = PraosWithLeiosState
+  type IsLeader (PraosWithLeios c) = PraosIsLeader c
+  type CanBeLeader (PraosWithLeios c) = PraosCanBeLeader c
+  type TiebreakerView (PraosWithLeios c) = PraosTiebreakerView c
+  type LedgerView (PraosWithLeios c) = Views.PraosWithLeiosLedgerView
+  type ValidationErr (PraosWithLeios c) = PraosWithLeiosValidationErr c
+  type ValidateView (PraosWithLeios c) = Views.LeiosHeaderView c
+
+  protocolSecurityParam = protocolSecurityParam @(Praos c) . praosConfigOfLeios
+
+  checkIsLeader cfg cbl slot tcs =
+    checkIsLeader @(Praos c) (praosConfigOfLeios cfg) cbl slot (basePraosTicked tcs)
+
+  tickChainDepState cfg lv slot st =
+    TickedPraosWithLeiosState
+      { tickedPraosWithLeiosStateChainDepState =
+          st
+            { pwlsPraos =
+                tickedPraosStateChainDepState $
+                  tickChainDepState @(Praos c)
+                    (praosConfigOfLeios cfg)
+                    (Views.pwlvBase lv)
+                    slot
+                    (pwlsPraos st)
+            }
+      , tickedPraosWithLeiosStateLedgerView = lv
+      }
+
+  updateChainDepState cfg b slot tcs = do
+    -- The Leios header checks. Cheap, so they run before the signature
+    -- checks.
+    --
+    -- NB cert/txs exclusivity is not among these: it is a property of the
+    -- body, and 'blockMatchesHeader' already enforces it where the body is
+    -- in hand. Nor is the EB closure's size: the announcement carries only
+    -- one size, and it is the body's.
+    withExcept LeiosErr $
+      leiosHeaderChecks baseCfg (Views.pwlvLeios lv) b slot cs
+    withExcept PraosErr $ do
+      validateKESSignature baseCfg baseLv (praosStateOCertCounters baseCs) baseB
+      validateVRFSignature (praosStateEpochNonce baseCs) baseLv praosLeaderF baseB
+    pure $ reupdateChainDepState cfg b slot tcs
+   where
+    baseCfg@(PraosConfig PraosParams{praosLeaderF} _) = praosConfigOfLeios cfg
+    lv = tickedPraosWithLeiosStateLedgerView tcs
+    baseLv = Views.pwlvBase lv
+    cs = tickedPraosWithLeiosStateChainDepState tcs
+    baseCs = pwlsPraos cs
+    baseB = Views.lhvBase b
+
+  reupdateChainDepState cfg b slot tcs =
+    PraosWithLeiosState
+      { pwlsPraos =
+          reupdatePraosState
+            praosParams
+            praosEpochInfo
+            (Views.lhvBase b)
+            slot
+            (pwlsPraos cs)
+      , -- Overwritten on every header, so a header with no announcement
+        -- clears the field.
+        pwlsLeiosAnnouncement =
+          MkAnnouncedBy (hashKey (Views.hvVK (Views.lhvBase b)))
+            <$> Views.lhvAnnouncement b
+      }
+   where
+    PraosConfig{praosParams, praosEpochInfo} = praosConfigOfLeios cfg
+    cs = tickedPraosWithLeiosStateChainDepState tcs
 
 -- | Check whether this node meets the leader threshold to issue a block.
 meetsLeaderThreshold ::
-  forall pext c.
-  ConsensusConfig (BasePraos pext c) ->
-  LedgerView (BasePraos pext c) ->
+  forall c.
+  ConsensusConfig (Praos c) ->
+  LedgerView (Praos c) ->
   SL.KeyHash SL.StakePool ->
   VRF.CertifiedVRF (VRF c) InputVRF ->
   Bool
@@ -678,26 +818,26 @@ meetsLeaderThreshold
         Map.lookup keyHash poolDistr
 
 validateVRFSignature ::
-  forall pext c.
+  forall body c.
   PraosCrypto c =>
   Nonce ->
-  Views.BasePraosLedgerView pext ->
+  Views.PraosLedgerView ->
   ActiveSlotCoeff ->
-  Views.BaseHeaderView pext c ->
-  Except (BasePraosValidationErr pext c) ()
+  Views.HeaderView body c ->
+  Except (PraosValidationErr c) ()
 validateVRFSignature eta0 (Views.plvPoolDistr -> SL.PoolDistr pd _) =
   doValidateVRFSignature eta0 pd
 
 -- NOTE: this function is much easier to test than 'validateVRFSignature' because we don't need
 -- to construct a 'PraosConfig' nor 'LedgerView' to test it.
 doValidateVRFSignature ::
-  forall pext c.
+  forall body c.
   PraosCrypto c =>
   Nonce ->
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   ActiveSlotCoeff ->
-  Views.BaseHeaderView pext c ->
-  Except (BasePraosValidationErr pext c) ()
+  Views.HeaderView body c ->
+  Except (PraosValidationErr c) ()
 doValidateVRFSignature eta0 pd f b = do
   case Map.lookup hk pd of
     Nothing -> throwError $ VRFKeyUnknown hk
@@ -724,72 +864,56 @@ doValidateVRFSignature eta0 pd f b = do
 
 -- | The Leios-specific checks on a header, called by 'updateChainDepState'
 --
--- The 'SingPextLeios' match is what makes the three 'SJustLeios' patterns below
--- total: refining @pext@ refines every type indexed by it at once. It is also
--- the only route to 'LeiosHeaderErr', which is why that constructor needs no
--- evidence of its own --- an earlier version gave it a @pext :~: PextLeios@ so
--- that the error type was uninhabited at 'PextNone', at the cost of a newtype,
--- a @deriving via@ to dodge a 'NoThunks' orphan, and a witness threaded through
--- every construction site. Nothing read the evidence.
+-- No dispatch: this runs only for 'PraosWithLeios', so the Leios fields of the
+-- header view, the ledger view and the chain-dep state are simply there.
 leiosHeaderChecks ::
-  forall pext c.
-  KnownPraosExtension pext =>
-  ConsensusConfig (BasePraos pext c) ->
-  Views.BasePraosLedgerView pext ->
-  Views.BaseHeaderView pext c ->
+  forall c.
+  ConsensusConfig (Praos c) ->
+  Views.LeiosLedgerView ->
+  Views.LeiosHeaderView c ->
   SlotNo ->
-  BasePraosState pext ->
-  Except (BasePraosValidationErr pext c) ()
-leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
-  case singPraosExtension @pext of
-    SingPextNone -> pure ()
-    SingPextLeios -> do
-      let SJustLeios (containsCert, mbAnn) = Views.hvLeios b
-          SJustLeios llv = Views.plvLeios lv
-          SJustLeios announcedByPredecessor = praosStateLeiosAnnouncement cs
+  PraosWithLeiosState ->
+  -- | Only the Leios errors; the caller tags them
+  Except Leios.LeiosHeaderErr ()
+leiosHeaderChecks PraosConfig{praosEpochInfo} llv b slot cs = do
+  -- Note that the genesis state doesn't announce an EB.
+  when (Views.lhvContainsCert b) $
+    case (pwlsLeiosAnnouncement cs, praosStateLastSlot (pwlsPraos cs)) of
+      (SJust{}, NotOrigin announcingSlot) -> do
+        let earliestAllowed =
+              minCertificationSlot
+                ( runIdentity $
+                    epochInfoSlotLength
+                      (History.toPureEpochInfo praosEpochInfo)
+                      slot
+                )
+                (Views.llvAnnouncementPeriodLength llv)
+                (Views.llvVotePeriodLength llv)
+                (Views.llvDiffusionPeriodLength llv)
+                announcingSlot
+        when (slot < earliestAllowed) $
+          throwError $
+            Leios.LeiosCertTooYoung announcingSlot slot earliestAllowed
+      -- A state that announced an EB has necessarily applied a header, so
+      -- 'Origin' is the same situation as announcing nothing.
+      _ -> throwError Leios.LeiosCertWithoutAnnouncement
 
-      -- Note that the genesis state doesn't announce an EB.
-      when containsCert $
-        case (announcedByPredecessor, praosStateLastSlot cs) of
-          (SJust{}, NotOrigin announcingSlot) -> do
-            let earliestAllowed =
-                  minCertificationSlot
-                    ( runIdentity $
-                        epochInfoSlotLength
-                          (History.toPureEpochInfo praosEpochInfo)
-                          slot
-                    )
-                    (Views.llvAnnouncementPeriodLength llv)
-                    (Views.llvVotePeriodLength llv)
-                    (Views.llvDiffusionPeriodLength llv)
-                    announcingSlot
-            when (slot < earliestAllowed) $
-              throwError $
-                LeiosHeaderErr $
-                  Leios.LeiosCertTooYoung announcingSlot slot earliestAllowed
-          -- A state that announced an EB has necessarily applied a header, so
-          -- 'Origin' is the same situation as announcing nothing.
-          _ ->
-            throwError $
-              LeiosHeaderErr Leios.LeiosCertWithoutAnnouncement
-
-      case mbAnn of
-        SNothing -> pure ()
-        SJust ann -> do
-          let announced = ebAnnouncementSize ann
-              maximum' = Views.llvMaxEbBodySize llv
-          when (announced > maximum') $
-            throwError $
-              LeiosHeaderErr $
-                Leios.LeiosEbTooBig announced maximum'
+  case Views.lhvAnnouncement b of
+    SNothing -> pure ()
+    SJust ann -> do
+      let announced = ebAnnouncementSize ann
+          maximum' = Views.llvMaxEbBodySize llv
+      when (announced > maximum') $
+        throwError $
+          Leios.LeiosEbTooBig announced maximum'
 
 validateKESSignature ::
-  (KnownPraosExtension pext, PraosCrypto c) =>
-  ConsensusConfig (BasePraos pext c) ->
-  LedgerView (BasePraos pext c) ->
+  (PraosCrypto c, KES.Signable (KES c) body) =>
+  ConsensusConfig (Praos c) ->
+  LedgerView (Praos c) ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
-  Views.BaseHeaderView pext c ->
-  Except (BasePraosValidationErr pext c) ()
+  Views.HeaderView body c ->
+  Except (PraosValidationErr c) ()
 validateKESSignature
   _cfg@( PraosConfig
            PraosParams{praosMaxKESEvo, praosSlotsPerKESPeriod}
@@ -816,27 +940,27 @@ data WhetherToUpperBoundOCERT
 -- NOTE: This function is much easier to test than 'validateKESSignature' because we don't need to
 -- construct a 'PraosConfig' nor 'LedgerView' to test it.
 doValidateKESSignature ::
-  (PraosCrypto c, KnownPraosExtension pext) =>
+  (PraosCrypto c, KES.Signable (KES c) body) =>
   Word64 ->
   Word64 ->
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
-  Views.BaseHeaderView pext c ->
-  Except (BasePraosValidationErr pext c) ()
+  Views.HeaderView body c ->
+  Except (PraosValidationErr c) ()
 doValidateKESSignature = doValidateKESSignatureWorker UpperBoundOCERT
 
 -- | The worker underlying 'doValidateKESSignature', parameterized by whether to
 -- enforce the OCERT counter's upper bound (see 'WhetherToUpperBoundOCERT').
 doValidateKESSignatureWorker ::
-  forall pext c.
-  (KnownPraosExtension pext, PraosCrypto c) =>
+  forall body c.
+  (PraosCrypto c, KES.Signable (KES c) body) =>
   WhetherToUpperBoundOCERT ->
   Word64 ->
   Word64 ->
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
-  Views.BaseHeaderView pext c ->
-  Except (BasePraosValidationErr pext c) ()
+  Views.HeaderView body c ->
+  Except (PraosValidationErr c) ()
 doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
   do
     c0 <= kp ?! KESBeforeStartOCERT c0 kp
@@ -848,9 +972,8 @@ doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKES
 
     DSIGN.verifySignedDSIGN () vkcold (OCert.ocertToSignable oc) tau
       ?!: InvalidSignatureOCERT n c0
-    withSignableDict $
-      KES.verifySignedKES () vk_hot t (Views.hvSigned b) (Views.hvSignature b)
-        ?!: InvalidKesSignatureOCERT kp_ c0_ t praosMaxKESEvo
+    KES.verifySignedKES () vk_hot t (Views.hvSigned b) (Views.hvSignature b)
+      ?!: InvalidKesSignatureOCERT kp_ c0_ t praosMaxKESEvo
 
     case currentIssueNo of
       Nothing -> do
@@ -879,19 +1002,6 @@ doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKES
     | otherwise =
         Nothing
 
-  -- The result type is fixed rather than polymorphic in @r@: inside the
-  -- implication this constraint introduces, an @r@ would be untouchable, so
-  -- GHC could not solve it against the caller's type (it manages on 9.12 but
-  -- not on 9.6 or 9.10).
-  withSignableDict ::
-    ( KES.Signable (KES c) (Views.BaseHeaderBody pext c) =>
-      Except (BasePraosValidationErr pext c) ()
-    ) ->
-    Except (BasePraosValidationErr pext c) ()
-  withSignableDict k = case singPraosExtension @pext of
-    SingPextNone -> k
-    SingPextLeios -> k
-
 {-------------------------------------------------------------------------------
   CannotForge
 -------------------------------------------------------------------------------}
@@ -917,12 +1027,13 @@ data PraosCannotForge c
 deriving instance PraosCrypto c => Show (PraosCannotForge c)
 
 praosCheckCanForge ::
-  ConsensusConfig (BasePraos pext c) ->
+  -- | Slots per KES period; see 'configSlotsPerKESPeriod'
+  Word64 ->
   SlotNo ->
   HotKey.KESInfo ->
   Either (PraosCannotForge c) ()
 praosCheckCanForge
-  PraosConfig{praosParams}
+  slotsPerKESPeriod
   curSlot
   kesInfo
     | let startPeriod = HotKey.kesStartPeriod kesInfo
@@ -936,17 +1047,14 @@ praosCheckCanForge
     wallclockPeriod =
       OCert.KESPeriod $
         fromIntegral $
-          unSlotNo curSlot `div` praosSlotsPerKESPeriod praosParams
+          unSlotNo curSlot `div` slotsPerKESPeriod
 
 {-------------------------------------------------------------------------------
   PraosProtocolSupportsNode
 -------------------------------------------------------------------------------}
 
-instance
-  (PraosCrypto c, KnownPraosExtension pext) =>
-  PraosProtocolSupportsNode (BasePraos pext c)
-  where
-  type PraosProtocolSupportsNodeCrypto (BasePraos pext c) = c
+instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
+  type PraosProtocolSupportsNodeCrypto (Praos c) = c
 
   getPraosNonces _prx cdst =
     PraosNonces
@@ -972,6 +1080,13 @@ instance
       { praosStateOCertCounters
       } = cdst
 
+instance PraosCrypto c => PraosProtocolSupportsNode (PraosWithLeios c) where
+  type PraosProtocolSupportsNodeCrypto (PraosWithLeios c) = c
+
+  getPraosNonces _prx = getPraosNonces (Proxy @(Praos c)) . pwlsPraos
+
+  getOpCertCounters _prx = getOpCertCounters (Proxy @(Praos c)) . pwlsPraos
+
 {-------------------------------------------------------------------------------
   Translation from transitional Praos
 -------------------------------------------------------------------------------}
@@ -982,16 +1097,13 @@ instance
 -- - They share the same ADDRHASH algorithm
 -- - They share the same DSIGN verification keys
 -- - They share the same VRF verification keys
-instance KnownPraosExtension pext => TranslateProto (TPraos c) (BasePraos pext c) where
+instance TranslateProto (TPraos c) (Praos c) where
   translateLedgerView _ SL.TPraosLedgerView{SL.tplvPoolDistr, SL.tplvChainChecks} =
     Views.PraosLedgerView
       { Views.plvPoolDistr = tplvPoolDistr
       , Views.plvMaxHeaderSize = SL.ccMaxBHSize tplvChainChecks
       , Views.plvMaxBodySize = SL.ccMaxBBSize tplvChainChecks
       , Views.plvProtocolVersion = SL.ccProtocolVersion tplvChainChecks
-      , Views.plvLeios = case singPraosExtension @pext of
-          SingPextNone -> SNothingLeios
-          SingPextLeios -> SJustLeios Views.initialLeiosLedgerView
       }
 
   translateChainDepState _ tpState =
@@ -1004,9 +1116,6 @@ instance KnownPraosExtension pext => TranslateProto (TPraos c) (BasePraos pext c
       , praosStatePreviousEpochNonce = epochNonce -- same as current epoch nonce
       , praosStateLabNonce = csLabNonce
       , praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
-      , praosStateLeiosAnnouncement = case singPraosExtension @pext of
-          SingPextNone -> SNothingLeios
-          SingPextLeios -> SJustLeios SNothing
       }
    where
     SL.ChainDepState{SL.csProtocol, SL.csTickn, SL.csLabNonce} =
@@ -1014,6 +1123,17 @@ instance KnownPraosExtension pext => TranslateProto (TPraos c) (BasePraos pext c
     SL.PrtclState certCounters evolvingNonce candidateNonce =
       csProtocol
     epochNonce = SL.ticknStateEpochNonce csTickn
+
+-- | Composed out of the two translations either side of it, rather than
+-- repeating the projections.
+instance TranslateProto (TPraos c) (PraosWithLeios c) where
+  translateLedgerView _ =
+    translateLedgerView (Proxy @(Praos c, PraosWithLeios c))
+      . translateLedgerView (Proxy @(TPraos c, Praos c))
+
+  translateChainDepState _ =
+    translateChainDepState (Proxy @(Praos c, PraosWithLeios c))
+      . translateChainDepState (Proxy @(TPraos c, Praos c))
 
 {-------------------------------------------------------------------------------
   Util
@@ -1036,27 +1156,20 @@ infix 1 ?!:
 -- Everything carries over unchanged; only the Leios announcement has to be
 -- introduced, and it starts empty, since no header of the extension we are
 -- leaving could have carried one.
-instance TranslateProto (BasePraos PextNone c) (BasePraos PextLeios c) where
+instance TranslateProto (Praos c) (PraosWithLeios c) where
   -- The Leios data has to be conjured from a state that has none; see
-  -- 'Views.initialLeiosLedgerView'.
+  -- 'Views.initialLeiosLedgerView'. Everything else carries over by being the
+  -- very same record.
   translateLedgerView _ lv =
-    Views.PraosLedgerView
-      { Views.plvPoolDistr = Views.plvPoolDistr lv
-      , Views.plvMaxHeaderSize = Views.plvMaxHeaderSize lv
-      , Views.plvMaxBodySize = Views.plvMaxBodySize lv
-      , Views.plvProtocolVersion = Views.plvProtocolVersion lv
-      , Views.plvLeios = SJustLeios Views.initialLeiosLedgerView
+    Views.PraosWithLeiosLedgerView
+      { Views.pwlvBase = lv
+      , Views.pwlvLeios = Views.initialLeiosLedgerView
       }
 
+  -- The announcement starts empty, since no header of the protocol we are
+  -- leaving could have carried one.
   translateChainDepState _ st =
-    PraosState
-      { praosStateLastSlot = praosStateLastSlot st
-      , praosStateOCertCounters = praosStateOCertCounters st
-      , praosStateEvolvingNonce = praosStateEvolvingNonce st
-      , praosStateCandidateNonce = praosStateCandidateNonce st
-      , praosStateEpochNonce = praosStateEpochNonce st
-      , praosStatePreviousEpochNonce = praosStatePreviousEpochNonce st
-      , praosStateLabNonce = praosStateLabNonce st
-      , praosStateLastEpochBlockNonce = praosStateLastEpochBlockNonce st
-      , praosStateLeiosAnnouncement = SJustLeios SNothing
+    PraosWithLeiosState
+      { pwlsPraos = st
+      , pwlsLeiosAnnouncement = SNothing
       }

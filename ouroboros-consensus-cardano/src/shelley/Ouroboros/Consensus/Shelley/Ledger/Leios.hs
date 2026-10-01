@@ -31,7 +31,7 @@ import Cardano.Ledger.Shelley.Rules (ledgerPpL)
 import qualified Cardano.Ledger.Shelley.UTxO as SL
 import Cardano.Slotting.Slot (SlotNo (..), fromWithOrigin)
 import Control.Monad (foldM, forM)
-import Control.Monad.Except (catchError, throwError)
+import Control.Monad.Except (catchError, throwError, withExcept)
 import qualified Control.State.Transition as STS
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as BL
@@ -58,7 +58,9 @@ import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos
   ( AnnouncedBy (..)
-  , BasePraosState (..)
+  , PraosWithLeiosValidationErr (..)
+  , PraosState (..)
+  , PraosWithLeiosState (..)
   , ConsensusConfig (..)
   , Praos
   , PraosCrypto
@@ -68,8 +70,7 @@ import Ouroboros.Consensus.Protocol.Praos
   , WhetherToUpperBoundOCERT (..)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as PP
-import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
-import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
+import Ouroboros.Consensus.Protocol.Praos.Views (lhvBase, plvPoolDistr, pwlvBase)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -248,13 +249,15 @@ instance
   -- (KES + opcert) are still checked in full; any other failure is a genuine
   -- rejection. See 'LeiosDemoLogic.Announcements.Validate.validateAnnouncementHeader'
   -- for why accepting-but-not-propagating a 'StaleOCIN' announcement is safe.
-  validateAnnouncementChainDepState cfg hv _slot tcs = do
+  -- Only the base protocol's checks run here, so the whole thing is tagged
+  -- 'PraosErr' once at the boundary and the patterns below stay untagged.
+  validateAnnouncementChainDepState cfg hv _slot tcs = withExcept PraosErr $ do
     -- validate the claimed election
     PP.doValidateVRFSignature
       (praosStateEpochNonce cs)
       pd
       (praosLeaderF prms)
-      hv
+      (lhvBase hv)
     -- authenticate the message; the OCIN counter checks report staleness rather
     -- than reject
     (FreshOCIN <$ authenticate) `catchError` \err -> case err of
@@ -262,9 +265,10 @@ instance
       PP.NoCounterForKeyHashOCERT{} -> pure StaleOCIN
       _ -> throwError err
    where
-    prms = praosParams cfg
-    cs = tickedPraosStateChainDepState tcs
-    SL.PoolDistr pd _ = plvPoolDistr (tickedPraosStateLedgerView tcs)
+    prms = praosParams (praosConfigOfLeios cfg)
+    cs = pwlsPraos (tickedPraosWithLeiosStateChainDepState tcs)
+    SL.PoolDistr pd _ =
+      plvPoolDistr (pwlvBase (tickedPraosWithLeiosStateLedgerView tcs))
     authenticate =
       PP.doValidateKESSignatureWorker
         DoNotUpperBoundOCERT
@@ -272,17 +276,15 @@ instance
         (praosSlotsPerKESPeriod prms)
         pd
         (praosStateOCertCounters cs)
-        hv
+        (lhvBase hv)
 
   protocolStateLeiosAnnouncement st = do
-    -- 'SNothingLeios' is unreachable at this extension, so this is total.
-    MkAnnouncedBy issuer ann <- case praosStateLeiosAnnouncement st of
-      SJustLeios mbAnn -> strictMaybeToMaybe mbAnn
+    MkAnnouncedBy issuer ann <- strictMaybeToMaybe (pwlsLeiosAnnouncement st)
     pure
       MkAnnouncementFields
         { announcementElection =
             MkElId
-              (fromWithOrigin (SlotNo 0) st.praosStateLastSlot)
+              (fromWithOrigin (SlotNo 0) (praosStateLastSlot (pwlsPraos st)))
               (Crypto.hashToBytesShort $ unKeyHash issuer)
         , announcementEbHash = ann.ebAnnouncementHash
         , announcementEbBodySize = ann.ebAnnouncementSize

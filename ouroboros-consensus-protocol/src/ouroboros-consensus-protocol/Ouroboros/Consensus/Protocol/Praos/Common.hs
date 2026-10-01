@@ -32,10 +32,6 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , instantiatePraosCredentials
 
     -- * Leios
-  , PraosExtension (..)
-  , KnownPraosExtension (..)
-  , SingPraosExtension (..)
-  , StrictMaybeLeios (..)
   , fromCodecEbAnnouncement
   , toCodecEbAnnouncement
   ) where
@@ -61,18 +57,14 @@ import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
-import Control.DeepSeq (NFData (..))
 import qualified Control.Tracer as Tracer
 import qualified Data.ByteString as BS
 import Data.Function (on)
-import Data.Kind (Constraint, Type)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
 import Data.Proxy (Proxy (Proxy))
-import Data.Typeable (Typeable, typeRep)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import GHC.Show (showSpace)
 import LeiosDemoTypes (EbAnnouncement (..), EbHash (MkEbHash))
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
@@ -390,102 +382,6 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
   getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash BlockIssuer) Word64
 
 -----
-
--- | Which optional extensions to the base Praos protocol are enabled.
---
--- We define them here, as part of Praos, because we want exactly one single
--- source of truth (this subtree of the module hierarchy) to explicitly
--- determine how the base protocol and whichever of its extensions are enabled
--- simultaneously to interact /as a @ConsensusProtocol@/.
---
--- We define one constructor per each subset extensions that are known to be
--- simultaneously compatible and worthwhile. (For now it's just Leios, but more
--- extensions are planned, such as Phalanx.)
-data PraosExtension = PextNone | PextLeios
-
--- | Which extension @pext@ is, as a value.
---
--- Matching on it refines @pext@ itself, and so also every type indexed by it:
--- 'StrictMaybeLeios' here, and @BaseHeaderBody@ over in
--- "Ouroboros.Consensus.Protocol.Praos". One witness serves all of them, which
--- is why there is only one.
-type SingPraosExtension :: PraosExtension -> Type
-data SingPraosExtension pext where
-  SingPextNone :: SingPraosExtension PextNone
-  SingPextLeios :: SingPraosExtension PextLeios
-
-type KnownPraosExtension :: PraosExtension -> Constraint
-class Typeable pext => KnownPraosExtension pext where
-  singPraosExtension :: SingPraosExtension pext
-
-instance KnownPraosExtension PextNone where
-  singPraosExtension = SingPextNone
-
-instance KnownPraosExtension PextLeios where
-  singPraosExtension = SingPextLeios
-
------
-
-type StrictMaybeLeios :: PraosExtension -> Type -> Type
-
--- | Like 'StrictMaybe', but it's @SJust@ if and only if @pext@ has Leios
-data StrictMaybeLeios pext a where
-  -- | Encoding and decoding this is a complete noop.
-  SNothingLeios :: StrictMaybeLeios PextNone a
-  -- | Encoding and decoding this has no extra wrapper.
-  SJustLeios :: !a -> StrictMaybeLeios PextLeios a
-
-instance Functor (StrictMaybeLeios pext) where
-  fmap f = \case
-    SNothingLeios -> SNothingLeios
-    SJustLeios x -> SJustLeios $ f x
-
-instance Applicative (StrictMaybeLeios PextNone) where
-  pure = const SNothingLeios
-  SNothingLeios <*> SNothingLeios = SNothingLeios
-
-instance Applicative (StrictMaybeLeios PextLeios) where
-  pure = SJustLeios
-  SJustLeios f <*> SJustLeios x = SJustLeios $ f x
-
-instance Foldable (StrictMaybeLeios pext) where
-  foldMap f = \case
-    SNothingLeios -> mempty
-    SJustLeios x -> f x
-
-instance Traversable (StrictMaybeLeios pext) where
-  traverse f = \case
-    SNothingLeios -> pure SNothingLeios
-    SJustLeios x -> SJustLeios <$> f x
-
-instance Eq a => Eq (StrictMaybeLeios pext a) where
-  SNothingLeios == SNothingLeios = True
-  SJustLeios x == SJustLeios y = x == y
-
-instance Ord a => Ord (StrictMaybeLeios pext a) where
-  compare SNothingLeios SNothingLeios = EQ
-  compare (SJustLeios x) (SJustLeios y) = compare x y
-
-instance Show a => Show (StrictMaybeLeios pext a) where
-  showsPrec p = \case
-    SNothingLeios -> showString "SNothingLeios"
-    SJustLeios x -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows x
-
-instance NFData a => NFData (StrictMaybeLeios pext a) where
-  rnf = \case
-    SNothingLeios -> ()
-    SJustLeios x -> rnf x
-
-instance (Typeable pext, NoThunks a) => NoThunks (StrictMaybeLeios pext a) where
-  showTypeOf _ =
-    unwords
-      [ "StrictMaybeLeios"
-      , "(" ++ show (typeRep (Proxy @pext)) ++ ")"
-      , "(" ++ showTypeOf (Proxy @a) ++ ")"
-      ]
-  wNoThunks ctxt = \case
-    SNothingLeios -> wNoThunks ctxt ()
-    SJustLeios x -> wNoThunks ctxt x
 
 -----
 

@@ -104,10 +104,7 @@ import Data.Ratio ((%))
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Protocol.Praos
-  ( BasePraosValidationErr (..)
-  , PraosValidationErr
-  )
+import Ouroboros.Consensus.Protocol.Praos (PraosValidationErr (..))
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 import Test.QuickCheck
   ( Gen

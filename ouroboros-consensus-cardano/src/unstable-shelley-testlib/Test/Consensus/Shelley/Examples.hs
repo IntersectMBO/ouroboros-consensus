@@ -48,8 +48,11 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
-import Ouroboros.Consensus.Protocol.Praos (BasePraos, Praos, PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Abstract
+  ( TranslateProto
+  , translateChainDepState
+  )
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Ouroboros.Consensus.Protocol.TPraos
@@ -238,14 +241,14 @@ fromShelleyLedgerExamples
 
 -- | TODO Factor this out into something nicer.
 fromShelleyLedgerExamplesBasePraos ::
-  forall pext era.
-  ( ShelleyCompatible (BasePraos pext StandardCrypto) era
-  , KnownPraosExtension pext
+  forall proto era.
+  ( ShelleyCompatible proto era
+  , TranslateProto (TPraos StandardCrypto) proto
   ) =>
-  -- | Rebuild the example's TPraos header as this extension's header
-  (SL.BHeader StandardCrypto -> ShelleyProtocolHeader (BasePraos pext StandardCrypto)) ->
+  -- | Rebuild the example's TPraos header as this protocol's header
+  (SL.BHeader StandardCrypto -> ShelleyProtocolHeader proto) ->
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
-  Examples (ShelleyBlock (BasePraos pext StandardCrypto) era)
+  Examples (ShelleyBlock proto era)
 fromShelleyLedgerExamplesBasePraos
   translateHeader
   ProtocolLedgerExamples
@@ -355,7 +358,7 @@ fromShelleyLedgerExamplesBasePraos
         }
     chainDepState =
       translateChainDepState
-        (Proxy @(TPraos StandardCrypto, BasePraos pext StandardCrypto))
+        (Proxy @(TPraos StandardCrypto, proto))
         $ TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
       ExtLedgerState
