@@ -76,6 +76,7 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Exception (displayException)
+import Control.Monad (when)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
@@ -1172,10 +1173,11 @@ cborIntBytesSize n
 decodeLeiosEb :: Decoder s LeiosEb
 decodeLeiosEb = do
   n <- CBOR.decodeMapLen
-  -- TODO does V.generateM allocate exacly one buffer, via the hint?
-  --
-  -- If not, we could do so manually by relying on the fact that Decoder is
-  -- ultimate in ST.
+  -- The count comes from the peer. Reject a count outside the bounds before
+  -- we decode any item.
+  when (n < 1 || n > maxTxsPerEb) $
+    fail $
+      "LeiosEb: item count " <> show n <> " not in [1, " <> show maxTxsPerEb <> "]"
   fmap MkLeiosEb $ V.generateM n $ \_i -> do
     (,) <$> (fmap MkTxHash decodeFixedSized) <*> CBOR.decodeWord32
 

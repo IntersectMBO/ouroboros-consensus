@@ -67,6 +67,9 @@ tests =
         "selectCommitteeByStake orders by stake and bounds by committee size"
         prop_selectCommitteeByStake
     , testProperty "decoders reject hashes that are not 32 bytes" prop_decodersRejectWrongHashLength
+    , testProperty
+        "decodeLeiosEb rejects item counts outside [1, maxTxsPerEb]"
+        prop_decodeLeiosEbBoundsItemCount
     ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'encodeLeiosEbSize'.
@@ -259,6 +262,24 @@ prop_decodersRejectWrongHashLength =
               CBOR.encodeMapLen 1 <> CBOR.encodeBytes hashBytes <> CBOR.encodeWord32 100
       ]
  where
+  bytes = BSL.fromStrict . serialize'
+  -- Accepted means decoded with no bytes left over.
+  accepts = either (const False) (BSL.null . fst)
+
+-- | A peer controls the item count that an EB declares. 'decodeLeiosEb' must
+-- accept counts from 1 to 'maxTxsPerEb' and reject 0 and anything larger.
+prop_decodeLeiosEbBoundsItemCount :: Property
+prop_decodeLeiosEbBoundsItemCount =
+  once $
+    conjoin
+      [ counterexample ("item count " <> show count) $
+          accepts (deserialiseFromBytes decodeLeiosEb (bytes (encodeLeiosEb (ebOfCount count))))
+            === (count >= 1 && count <= maxTxsPerEb)
+      | count <- [0, 1, maxTxsPerEb, maxTxsPerEb + 1]
+      ]
+ where
+  ebOfCount count = MkLeiosEb $ V.replicate count (txHash, 100)
+  txHash = fromJust $ txHashFromBytes $ BS.replicate 32 0xab
   bytes = BSL.fromStrict . serialize'
   -- Accepted means decoded with no bytes left over.
   accepts = either (const False) (BSL.null . fst)

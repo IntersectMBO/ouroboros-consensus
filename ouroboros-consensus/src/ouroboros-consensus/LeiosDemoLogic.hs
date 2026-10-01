@@ -56,6 +56,7 @@ import LeiosDemoDb
   , batchRetrieveTxs
   , lookupEbBody
   )
+import LeiosDemoException (throwLeiosDbException)
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -269,6 +270,17 @@ msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
   n <- traceException tracer TraceLeiosPeerDbException $ do
     -- get the EB items using new db
     items <- lookupEbBody leiosDbReader pointEbHash
+    -- A database written by an older build can hold a body with more rows
+    -- than the buffer has room for.
+    let rowCount = length items
+    when (rowCount > maxTxsPerEb) $
+      throwLeiosDbException $
+        "EB "
+          <> Leios.prettyEbHash pointEbHash
+          <> " has "
+          <> show rowCount
+          <> " rows, more than maxTxsPerEb = "
+          <> show maxTxsPerEb
     let loop !i [] = pure i
         loop !i ((txHash, txBytesSize) : rest) = do
           MV.write buf i (txHash, txBytesSize)
