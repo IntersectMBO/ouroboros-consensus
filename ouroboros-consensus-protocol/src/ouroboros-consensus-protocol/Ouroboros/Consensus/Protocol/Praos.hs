@@ -26,6 +26,12 @@ module Ouroboros.Consensus.Protocol.Praos
   , forgePraosFields
   , praosCheckCanForge
 
+    -- * Shared with the Praos extensions
+  , praosVerifyHeaderIntegrity
+  , reupdatePraosState
+  , validateKESSignature
+  , validateVRFSignature
+
     -- * For testing purposes
   , doValidateKESSignature
   , doValidateVRFSignature
@@ -92,6 +98,7 @@ import Control.Exception (throw)
 import Control.Monad (unless)
 import Control.Monad.Except (Except, runExcept, throwError)
 import Data.Coerce (coerce)
+import Data.Either (isRight)
 import Data.Functor.Identity (runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -503,39 +510,85 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   -- - Update the evolving and (potentially) candidate nonces based on the
   --   position in the epoch.
   -- - Update the operational certificate counter.
-  reupdateChainDepState
-    _cfg@( PraosConfig
-             PraosParams{praosRandomnessStabilisationWindow}
-             ei
-           )
-    b
-    slot
-    tcs =
-      cs
-        { praosStateLastSlot = NotOrigin slot
-        , praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b)
-        , praosStateEvolvingNonce = newEvolvingNonce
-        , praosStateCandidateNonce =
-            if slot +* Duration praosRandomnessStabilisationWindow < firstSlotNextEpoch
-              then newEvolvingNonce
-              else praosStateCandidateNonce cs
-        , praosStateOCertCounters =
-            Map.insert hk n $ praosStateOCertCounters cs
-        }
-     where
-      epochInfoWithErr =
-        hoistEpochInfo
-          (either throw pure . runExcept)
-          ei
-      firstSlotNextEpoch = runIdentity $ do
-        EpochNo currentEpochNo <- epochInfoEpoch epochInfoWithErr slot
-        let nextEpoch = EpochNo $ currentEpochNo + 1
-        epochInfoFirst epochInfoWithErr nextEpoch
-      cs = tickedPraosStateChainDepState tcs
-      eta = vrfNonceValue (Proxy @c) $ Views.hvVrfRes b
-      newEvolvingNonce = praosStateEvolvingNonce cs ⭒ eta
-      OCert _ n _ _ = Views.hvOCert b
-      hk = hashKey $ Views.hvVK b
+  reupdateChainDepState cfg b slot tcs =
+    reupdatePraosState cfg b slot (tickedPraosStateChainDepState tcs)
+
+-- | The body of 'reupdateChainDepState'.
+--
+-- Lifted out of the instance because the Leios overlay
+-- ("Ouroboros.Consensus.Protocol.Leios") needs it too and cannot delegate:
+-- 'reupdateChainDepState' takes the 'ValidateView', and the two protocols sign
+-- different header bodies. Nothing here reads the body, which is why @body@ is
+-- free.
+reupdatePraosState ::
+  forall body c.
+  ConsensusConfig (Praos c) ->
+  Views.HeaderView' body c ->
+  SlotNo ->
+  PraosState ->
+  PraosState
+reupdatePraosState
+  _cfg@( PraosConfig
+           PraosParams{praosRandomnessStabilisationWindow}
+           ei
+         )
+  b
+  slot
+  cs =
+    cs
+      { praosStateLastSlot = NotOrigin slot
+      , praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b)
+      , praosStateEvolvingNonce = newEvolvingNonce
+      , praosStateCandidateNonce =
+          if slot +* Duration praosRandomnessStabilisationWindow < firstSlotNextEpoch
+            then newEvolvingNonce
+            else praosStateCandidateNonce cs
+      , praosStateOCertCounters =
+          Map.insert hk n $ praosStateOCertCounters cs
+      }
+   where
+    epochInfoWithErr =
+      hoistEpochInfo
+        (either throw pure . runExcept)
+        ei
+    firstSlotNextEpoch = runIdentity $ do
+      EpochNo currentEpochNo <- epochInfoEpoch epochInfoWithErr slot
+      let nextEpoch = EpochNo $ currentEpochNo + 1
+      epochInfoFirst epochInfoWithErr nextEpoch
+    eta = vrfNonceValue (Proxy @c) $ Views.hvVrfRes b
+    newEvolvingNonce = praosStateEvolvingNonce cs ⭒ eta
+    OCert _ n _ _ = Views.hvOCert b
+    hk = hashKey $ Views.hvVK b
+
+-- | Whether the KES signature over a header's body checks out.
+--
+-- Cheaper than 'validateKESSignature', which also wants a ledger view and the
+-- OCert counters: this one is also run against a @StorageConfig@, to check
+-- what is already on disk.
+praosVerifyHeaderIntegrity ::
+  (PraosCrypto c, KES.Signable (KES c) body) =>
+  -- | Slots per KES period
+  Word64 ->
+  Views.HeaderView' body c ->
+  Bool
+praosVerifyHeaderIntegrity slotsPerKESPeriod hv =
+  isRight $
+    KES.verifySignedKES () ocertVkHot t (Views.hvSigned hv) (Views.hvSignature hv)
+ where
+  OCert.OCert
+    { OCert.ocertVkHot
+    , OCert.ocertKESPeriod = KESPeriod startOfKesPeriod
+    } = Views.hvOCert hv
+
+  currentKesPeriod =
+    fromIntegral $
+      unSlotNo (Views.hvSlotNo hv) `div` slotsPerKESPeriod
+
+  t
+    | currentKesPeriod >= startOfKesPeriod =
+        currentKesPeriod - startOfKesPeriod
+    | otherwise =
+        0
 
 -- | Check whether this node meets the leader threshold to issue a block.
 meetsLeaderThreshold ::
@@ -561,12 +614,12 @@ meetsLeaderThreshold
         Map.lookup keyHash poolDistr
 
 validateVRFSignature ::
-  forall c.
+  forall body c.
   PraosCrypto c =>
   Nonce ->
   Views.PraosLedgerView ->
   ActiveSlotCoeff ->
-  Views.HeaderView c ->
+  Views.HeaderView' body c ->
   Except (PraosValidationErr c) ()
 validateVRFSignature eta0 (Views.plvPoolDistr -> SL.PoolDistr pd _) =
   doValidateVRFSignature eta0 pd
@@ -574,12 +627,12 @@ validateVRFSignature eta0 (Views.plvPoolDistr -> SL.PoolDistr pd _) =
 -- NOTE: this function is much easier to test than 'validateVRFSignature' because we don't need
 -- to construct a 'PraosConfig' nor 'LedgerView' to test it.
 doValidateVRFSignature ::
-  forall c.
+  forall body c.
   PraosCrypto c =>
   Nonce ->
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   ActiveSlotCoeff ->
-  Views.HeaderView c ->
+  Views.HeaderView' body c ->
   Except (PraosValidationErr c) ()
 doValidateVRFSignature eta0 pd f b = do
   case Map.lookup hk pd of
@@ -606,11 +659,11 @@ doValidateVRFSignature eta0 pd f b = do
   slot = Views.hvSlotNo b
 
 validateKESSignature ::
-  PraosCrypto c =>
+  (PraosCrypto c, KES.Signable (KES c) body) =>
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
-  Views.HeaderView c ->
+  Views.HeaderView' body c ->
   Except (PraosValidationErr c) ()
 validateKESSignature
   _cfg@( PraosConfig
@@ -624,12 +677,12 @@ validateKESSignature
 -- NOTE: This function is much easier to test than 'validateKESSignature' because we don't need to
 -- construct a 'PraosConfig' nor 'LedgerView' to test it.
 doValidateKESSignature ::
-  PraosCrypto c =>
+  (PraosCrypto c, KES.Signable (KES c) body) =>
   Word64 ->
   Word64 ->
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
-  Views.HeaderView c ->
+  Views.HeaderView' body c ->
   Except (PraosValidationErr c) ()
 doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
   do

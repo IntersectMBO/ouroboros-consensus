@@ -6,15 +6,18 @@ module Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError (..)
   , EnvelopeHeaderView (..)
   , envelopeCheck
+  , praosEnvelopeCheck
   ) where
 
-import Cardano.Ledger.BaseTypes (Version)
-import Cardano.Ledger.Chain (ChainChecksPParams (ccMaxBBSize, ccMaxBHSize))
+import Cardano.Ledger.BaseTypes (ProtVer (ProtVer), Version)
+import Cardano.Ledger.Chain (ChainChecksPParams (..))
 import Control.Monad (unless)
 import Control.Monad.Except (Except, throwError)
 import Data.Word (Word16, Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Protocol.Praos.Common (MaxMajorProtVer (MaxMajorProtVer))
+import Ouroboros.Consensus.Protocol.Praos.Views (PraosLedgerView (..))
 
 data EnvelopeError
   = -- | This is a subtle case.
@@ -89,3 +92,34 @@ envelopeCheck maxpv ccd EnvelopeHeaderView{ehvProtVer, ehvHeaderSize, ehvBodySiz
   unless (ehvBodySize <= ccMaxBBSize ccd) $
     throwError $
       BlockSizeTooLarge ehvBodySize (ccMaxBBSize ccd)
+
+-- | 'envelopeCheck' as the Praos family runs it.
+--
+-- The chain checks come from the ledger view, and so does the protocol
+-- version, which is what distinguishes this from TPraos: TPraos takes the
+-- version the header declares, and its ledger view carries the chain checks
+-- ready-made. See 'ObsoleteNode' for why the ledger view's version is the one
+-- that matters here.
+praosEnvelopeCheck ::
+  MaxMajorProtVer ->
+  PraosLedgerView ->
+  -- | Header size, over the bytes it was decoded from
+  Int ->
+  -- | Block body size, as the header declares it
+  Word32 ->
+  Except EnvelopeError ()
+praosEnvelopeCheck (MaxMajorProtVer maxpv) lv headerSize bodySize =
+  envelopeCheck maxpv ccd $
+    EnvelopeHeaderView
+      { ehvProtVer = m
+      , ehvHeaderSize = headerSize
+      , ehvBodySize = bodySize
+      }
+ where
+  ProtVer m _ = plvProtocolVersion lv
+  ccd =
+    ChainChecksPParams
+      { ccMaxBHSize = plvMaxHeaderSize lv
+      , ccMaxBBSize = plvMaxBodySize lv
+      , ccProtocolVersion = plvProtocolVersion lv
+      }

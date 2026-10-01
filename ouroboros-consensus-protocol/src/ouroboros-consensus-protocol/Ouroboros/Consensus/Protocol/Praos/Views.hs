@@ -3,7 +3,8 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Protocol.Praos.Views
-  ( HeaderView (..)
+  ( HeaderView' (..)
+  , HeaderView
   , PraosLedgerView (..)
   , forecastToPraosLedgerView
   ) where
@@ -23,8 +24,12 @@ import Cardano.Slotting.Slot (SlotNo)
 import Data.Word (Word16, Word32)
 import Lens.Micro ((^.))
 
--- | View of the block header required by the Praos protocol.
-data HeaderView crypto = HeaderView
+-- | The 'HeaderView'' of Praos, which signs the Praos header body.
+type HeaderView crypto = HeaderView' (HeaderBody crypto) crypto
+
+-- | View of the block header required by the Praos protocol, parameterised by
+-- the body its signature covers.
+data HeaderView' body crypto = HeaderView'
   { hvPrevHash :: !PrevHash
   -- ^ Hash of the previous block
   , hvVK :: !(VKey BlockIssuer)
@@ -37,9 +42,9 @@ data HeaderView crypto = HeaderView
   -- ^ operational certificate
   , hvSlotNo :: !SlotNo
   -- ^ Slot
-  , hvSigned :: !(HeaderBody crypto)
+  , hvSigned :: !body
   -- ^ Header which must be signed
-  , hvSignature :: !(SignedKES (KES crypto) (HeaderBody crypto))
+  , hvSignature :: !(SignedKES (KES crypto) body)
   -- ^ KES Signature of the header
   }
 

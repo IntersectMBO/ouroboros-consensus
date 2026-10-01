@@ -4,26 +4,17 @@
 
 module Ouroboros.Consensus.Shelley.Protocol.Praos () where
 
-import qualified Cardano.Crypto.KES as KES
 import Cardano.Crypto.VRF (certifiedOutput)
-import Cardano.Ledger.BaseTypes (ProtVer (ProtVer))
-import Cardano.Ledger.Chain (ChainChecksPParams (..))
-import Cardano.Ledger.Slot (SlotNo (unSlotNo))
+import Cardano.Protocol.Crypto (Crypto)
 import Cardano.Protocol.Praos.BlockHeader
   ( Header (..)
   , HeaderBody (..)
   , headerHash
   , headerSize
   )
-import Cardano.Protocol.TPraos.OCert
-  ( OCert (ocertKESPeriod, ocertVkHot)
-  )
 import qualified Cardano.Protocol.TPraos.OCert as SL
-import Data.Either (isRight)
 import Ouroboros.Consensus.Protocol.Praos
-import Ouroboros.Consensus.Protocol.Praos.Common
-  ( MaxMajorProtVer (MaxMajorProtVer)
-  )
+import Ouroboros.Consensus.Protocol.Praos.Common (protoMaxMajorPV)
 import Ouroboros.Consensus.Protocol.Praos.Views
 import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -37,8 +28,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   )
 import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError
-  , EnvelopeHeaderView (..)
-  , envelopeCheck
+  , praosEnvelopeCheck
   )
 
 type instance ProtoCrypto (Praos c) = c
@@ -57,43 +47,32 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
   type EnvelopeCheckError _ = EnvelopeError
 
   envelopeChecks cfg lv hdr =
-    envelopeCheck maxpv ccd $
-      EnvelopeHeaderView
-        { ehvProtVer = m
-        , ehvHeaderSize = headerSize hdr
-        , ehvBodySize = hbBodySize body
-        }
+    praosEnvelopeCheck
+      (protoMaxMajorPV cfg)
+      lv
+      (headerSize hdr)
+      (hbBodySize body)
    where
     Header body _ = hdr
-    MaxMajorProtVer maxpv = praosMaxMajorPV (praosParams cfg)
-    ProtVer m _ = plvProtocolVersion lv
-    ccd =
-      ChainChecksPParams
-        { ccMaxBHSize = plvMaxHeaderSize lv
-        , ccMaxBBSize = plvMaxBodySize lv
-        , ccProtocolVersion = plvProtocolVersion lv
-        }
+
+-- | What the protocol reads off a Praos header.
+praosHeaderToView :: Crypto c => Header c -> HeaderView c
+praosHeaderToView Header{headerBody, headerSig} =
+  HeaderView'
+    { hvPrevHash = hbPrev headerBody
+    , hvVK = hbVk headerBody
+    , hvVrfVK = hbVrfVk headerBody
+    , hvVrfRes = hbVrfRes headerBody
+    , hvOCert = hbOCert headerBody
+    , hvSlotNo = hbSlotNo headerBody
+    , hvSigned = headerBody
+    , hvSignature = headerSig
+    }
 
 instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
   configSlotsPerKESPeriod cfg = praosSlotsPerKESPeriod $ praosParams cfg
-  verifyHeaderIntegrity slotsPerKESPeriod header =
-    isRight $ KES.verifySignedKES () ocertVkHot t headerBody headerSig
-   where
-    Header{headerBody, headerSig} = header
-    SL.OCert
-      { ocertVkHot
-      , ocertKESPeriod = SL.KESPeriod startOfKesPeriod
-      } = hbOCert headerBody
-
-    currentKesPeriod =
-      fromIntegral $
-        unSlotNo (hbSlotNo headerBody) `div` slotsPerKESPeriod
-
-    t
-      | currentKesPeriod >= startOfKesPeriod =
-          currentKesPeriod - startOfKesPeriod
-      | otherwise =
-          0
+  verifyHeaderIntegrity slotsPerKESPeriod =
+    praosVerifyHeaderIntegrity slotsPerKESPeriod . praosHeaderToView
   mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer = do
     PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il mkBhBodyBytes
     pure $ Header praosToSign praosSignature
@@ -120,17 +99,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
 
 instance PraosCrypto c => ProtocolHeaderSupportsProtocol (Praos c) where
   type CannotForgeError (Praos c) = PraosCannotForge c
-  protocolHeaderView Header{headerBody, headerSig} =
-    HeaderView
-      { hvPrevHash = hbPrev headerBody
-      , hvVK = hbVk headerBody
-      , hvVrfVK = hbVrfVk headerBody
-      , hvVrfRes = hbVrfRes headerBody
-      , hvOCert = hbOCert headerBody
-      , hvSlotNo = hbSlotNo headerBody
-      , hvSigned = headerBody
-      , hvSignature = headerSig
-      }
+  protocolHeaderView = praosHeaderToView
   pHeaderIssuer = hbVk . headerBody
   pHeaderIssueNo = SL.ocertN . hbOCert . headerBody
 
