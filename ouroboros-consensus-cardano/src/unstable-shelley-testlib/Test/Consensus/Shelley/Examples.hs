@@ -65,7 +65,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
-import Ouroboros.Network.Block (Serialised (..))
+import Ouroboros.Network.Block (mkSerialised)
 import Ouroboros.Network.Magic (NetworkMagic (..))
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import Ouroboros.Network.PeerSelection.RelayAccessPoint
@@ -185,6 +185,7 @@ conwayQueries poolIds =
          ]
 
 fromShelleyLedgerExamples ::
+  forall era.
   ShelleyCompatible (TPraos StandardCrypto) era =>
   EraQueries (TPraos StandardCrypto) era ->
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
@@ -215,14 +216,16 @@ fromShelleyLedgerExamples
       , exampleLedgerConfig = unlabelled ledgerConfig
       }
    where
+    ccfg :: CodecConfig (ShelleyBlock (TPraos StandardCrypto) era)
+    ccfg = ShelleyCodecConfig
     emptyTx = mkBasicTx mkBasicTxBody
     blk = mkShelleyBlock pleBlock
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
-    serialisedBlock = Serialised "<BLOCK>"
+    serialisedBlock = mkSerialised (encodeDisk ccfg) blk
     tx = mkShelleyTx emptyTx
     slotNo = SlotNo 42
     serialisedHeader =
-      SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
+      SerialisedHeaderFromDepPair $ encodeDepPair ccfg (unnest (getHeader blk))
     queries =
       eraIndependentQueries leRewardsCredentials
         <> eraQueries (Map.keys (unPoolDistr lePoolDistr))
@@ -348,6 +351,8 @@ fromShelleyLedgerExamplesPolyPraos
       , exampleLedgerConfig = unlabelled ledgerConfig
       }
    where
+    ccfg :: CodecConfig (ShelleyBlock proto era)
+    ccfg = ShelleyCodecConfig
     emptyTx = mkBasicTx mkBasicTxBody
     blk =
       mkShelleyBlock $
@@ -355,11 +360,11 @@ fromShelleyLedgerExamplesPolyPraos
          in SL.Block (translateHeader hdr1) bdy
 
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
-    serialisedBlock = Serialised "<BLOCK>"
+    serialisedBlock = mkSerialised (encodeDisk ccfg) blk
     tx = mkShelleyTx emptyTx
     slotNo = SlotNo 42
     serialisedHeader =
-      SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
+      SerialisedHeaderFromDepPair $ encodeDepPair ccfg (unnest (getHeader blk))
     queries =
       eraIndependentQueries leRewardsCredentials
         <> eraQueries (Map.keys (unPoolDistr lePoolDistr))
