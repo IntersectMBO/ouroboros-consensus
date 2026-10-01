@@ -31,8 +31,11 @@ module Ouroboros.Consensus.Leios.Types
   , BytesSize
   , LeiosEb (..)
   , leiosEbBodyItems
+  , encodeLeiosEb
   , encodeLeiosEbItemSize
+  , encodeLeiosEbMaxFramingSize
   , encodeLeiosEbSize
+  , leiosReferencesCapacity
   ) where
 
 import Cardano.Crypto.Util (SignableRepresentation (..))
@@ -168,6 +171,46 @@ encodeLeiosEbItemSize (ByteSize32 txSize) =
   ByteSize32 $ cborBytesSize 32 + cborIntBytesSize txSize
  where
   cborBytesSize len = cborIntBytesSize len + len
+
+-- | Encode a 'LeiosEb' as a CBOR map from each transaction hash to the size
+-- of that transaction. Must not add more overhead than
+-- 'encodeLeiosEbMaxFramingSize', and the encoding of each reference must match
+-- 'encodeLeiosEbItemSize'.
+--
+-- The mempool charges each transaction 'encodeLeiosEbItemSize', and the
+-- endorser-block capacity subtracts 'encodeLeiosEbMaxFramingSize'. If the
+-- encoding changes, both sizes must change with it.
+--
+-- Endorser blocks are on chain, so peers on every node-to-node version must
+-- write the same bytes. This encoding has no version yet. When an era after
+-- Dijkstra changes it, the @ProtVer@ of that era will select the encoding.
+encodeLeiosEb :: LeiosEb -> Encoding
+encodeLeiosEb (MkLeiosEb references) =
+  foldl
+    ( \acc (MkTxHash bytes, txBytesSize) ->
+        acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
+    )
+    (CBOR.encodeMapLen $ fromIntegral $ length references)
+    references
+
+-- | The widest the framing 'encodeLeiosEb' writes around the references can
+-- get: the map header. CBOR map headers have the same widths as
+-- 'cborIntBytesSize', and the reference count fits 'BytesSize'.
+--
+-- A capacity expressed in references ('encodeLeiosEbItemSize' each)
+-- subtracts this once at the block level; no single transaction can be
+-- charged for it.
+encodeLeiosEbMaxFramingSize :: ByteSize32
+encodeLeiosEbMaxFramingSize = ByteSize32 $ cborIntBytesSize (maxBound :: BytesSize)
+
+-- | The references capacity a @maxEndorserBlockReferencesSize@ parameter
+-- yields: the parameter minus the framing 'encodeLeiosEb' writes ahead of the
+-- references. A parameter smaller than the framing exhausts the capacity, so
+-- no reference fits, rather than wrapping around to \"no limit\".
+leiosReferencesCapacity :: BytesSize -> BytesSize
+leiosReferencesCapacity paramLimit = paramLimit - min paramLimit framing
+ where
+  ByteSize32 framing = encodeLeiosEbMaxFramingSize
 
 -- | Compute the size of a 'LeiosEb' in its CBOR encoding.
 encodeLeiosEbSize :: LeiosEb -> BytesSize

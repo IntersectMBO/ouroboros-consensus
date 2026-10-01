@@ -115,7 +115,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import qualified Ouroboros.Consensus.Leios.EndorserBlock as Leios
+import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -824,13 +824,13 @@ data DijkstraEbMeasure = DijkstraEbMeasure
 
 -- | The cost of one transaction in an endorser block: its closure cost is the
 -- transaction's 'TxMeasure', and its reference costs the bytes
--- 'Leios.encodeEndorserBlock' writes for it.
+-- 'Leios.encodeLeiosEb' writes for it.
 txEbMeasureDijkstra :: TxMeasure (ShelleyBlock p DijkstraEra) -> DijkstraEbMeasure
 txEbMeasureDijkstra (TxMeasure alonzo refScripts) =
   DijkstraEbMeasure
     { ebClosureMeasure = TxMeasure alonzo refScripts
     , txReferencesSize =
-        IgnoringOverflow . Leios.encodedReferenceSize $
+        IgnoringOverflow . Leios.encodeLeiosEbItemSize $
           txMeasureByteSize alonzo
     }
 
@@ -852,14 +852,14 @@ leiosEndorserBlockCapacity st =
               IgnoringOverflow $
                 ByteSize32 (pparams ^. ppMaxRefScriptSizePerEndorserBlockL)
           )
-    , -- Transactions are charged 'Leios.encodedReferenceSize' for their
-      -- reference and nothing else, so the framing 'Leios.encodeEndorserBlock' writes
+    , -- Transactions are charged 'Leios.encodeLeiosEbItemSize' for their
+      -- reference and nothing else, so the framing 'Leios.encodeLeiosEb' writes
       -- ahead of them comes off the capacity here.
       --
       -- Nothing checks that an endorser block of this size fits one LeiosFetch
       -- message. That check must come with the LeiosFetch protocol.
       txReferencesSize =
-        IgnoringOverflow . ByteSize32 . Leios.referencesCapacity $
+        IgnoringOverflow . ByteSize32 . Leios.leiosReferencesCapacity $
           pparams ^. ppMaxEndorserBlockReferencesSizeL
     }
  where
