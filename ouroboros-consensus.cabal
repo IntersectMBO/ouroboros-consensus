@@ -1771,6 +1771,7 @@ library unstable-shelley-testlib
     cardano-crypto-class,
     cardano-data,
     cardano-ledger-allegra:cardano-ledger-allegra,
+    cardano-ledger-api:testlib,
     cardano-ledger-babbage:testlib,
     cardano-ledger-conway:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
