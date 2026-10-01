@@ -48,6 +48,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasure (..)
   )
 import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Protocol.Leios (Leios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
@@ -77,6 +78,7 @@ import Test.Consensus.Byron.Generators
 import Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
 import Test.Consensus.Shelley.Generators ()
 import Test.Tasty
+import Test.Util.QuickCheck (withNumTests)
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.QuickCheck
 
@@ -145,7 +147,7 @@ prop_shelleyBased genTranslationContext st =
 -- Few runs: setting the parameters forces the whole arbitrary ledger state,
 -- which is slow to generate, and the result depends only on the parameters.
 prop_dijkstra ::
-  LedgerState (ShelleyBlock (Praos Crypto) DijkstraEra) EmptyMK ->
+  LedgerState (ShelleyBlock (Leios Crypto) DijkstraEra) EmptyMK ->
   Property
 prop_dijkstra st =
   withNumTests 10 $
@@ -162,7 +164,7 @@ prop_dijkstra st =
                     , txReferencesSize = IgnoringOverflow (ByteSize32 5000)
                     }
             , counterexample "mempool reservation for an endorser block" $
-                mempoolEbReservation (Proxy @(ShelleyBlock (Praos Crypto) DijkstraEra)) capacity
+                mempoolEbReservation (Proxy @(ShelleyBlock (Leios Crypto) DijkstraEra)) capacity
                   === TxMeasure closureAlonzo closureRefScripts
             ]
  where
@@ -192,7 +194,7 @@ prop_dijkstra st =
 -- reading the wrong field fails.
 test_dijkstraTxEbMeasure :: Assertion
 test_dijkstraTxEbMeasure =
-  txEbMeasure (Proxy @(ShelleyBlock (Praos Crypto) DijkstraEra)) (TxMeasure alonzo refScripts)
+  txEbMeasure (Proxy @(ShelleyBlock (Leios Crypto) DijkstraEra)) (TxMeasure alonzo refScripts)
     @?= DijkstraEbMeasure
       { ebClosureMeasure = TxMeasure alonzo refScripts
       , -- 34 bytes for the hash, 3 bytes for a size of 300
