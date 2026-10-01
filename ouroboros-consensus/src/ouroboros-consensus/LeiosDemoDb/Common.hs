@@ -21,6 +21,7 @@ module LeiosDemoDb.Common
   , Promise (..)
   , awaitAll
   , withWriter
+  , withReaderAndWriter
   , allocateWriter
   , CompletedEbs
   ) where
@@ -140,6 +141,10 @@ withReader db = bracket (openReader db) (.close)
 
 withWriter :: MonadThrow m => LeiosDbHandle m -> (LeiosDbWriter m -> m a) -> m a
 withWriter db = bracket (openWriter db) (.close)
+
+withReaderAndWriter ::
+  MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> LeiosDbWriter m -> m a) -> m a
+withReaderAndWriter db k = withReader db $ \reader -> withWriter db $ \writer -> k reader writer
 
 allocateReader :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbReader m)
 allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) (.close)

@@ -15,25 +15,24 @@ import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
 import Cardano.Tools.LeiosDb (LeiosDbSource (..), requireLeiosDbFile)
-import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), emit, nullTracer)
-import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import LeiosDemoDb
-  ( allocateHandle
+  ( LeiosDbArgs (..)
+  , allocateHandle
   , newLeiosDBInMemory
   , newLeiosDBSQLite
   , withReader
   )
+import LeiosDemoDb.Common (LeiosDbHandle)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Basics
-import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
   ( HasTxs
@@ -47,14 +46,10 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
@@ -81,49 +76,23 @@ openLedgerDB ::
   , LedgerDB.ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
+  LeiosDbHandle IO ->
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args =
+openLedgerDB leiosDb args =
   runWithTempRegistry $
     (,()) <$> do
-      (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
-        LedgerDB.LedgerDbBackendArgsV1 bss -> do
-          let snapManager = LedgerDB.V1.snapshotManager args
-          initDb <-
-            lift $
-              LedgerDB.V1.mkInitDb
-                args
-                bss
-                (\_ -> pure (error "no stream"))
-                snapManager
-                (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
-        LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
-          res <-
-            LedgerDB.V2.mkResources
-              (Proxy @blk)
-              (LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 >$< LedgerDB.lgrTracer args)
-              bArgs
-              (LedgerDB.lgrHasFS args)
-          let snapManager =
-                LedgerDB.V2.snapshotManager
-                  (Proxy @blk)
-                  res
-                  (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
-                  (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
-                  (LedgerDB.lgrHasFS args)
-          initDb <-
-            lift $
-              LedgerDB.V2.mkInitDb
-                args
-                (\_ -> pure (error "no stream"))
-                snapManager
-                (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-                res
-          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+      (ldb, _, od) <-
+        LedgerDB.openDB
+          leiosDb
+          args
+          emptyStream
+          genesisPoint
+          (\_ -> pure (error "no stream"))
+          (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
       pure (ldb, od)
 
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
@@ -194,7 +163,7 @@ analyse dbaConfig args =
             shfs
             shfs
             flavargs
-            leiosDbHandle
+            (LeiosDbArgs{ldbOpen = openLeiosDb})
             (\_ -> pure ()) -- no LeiosTxCache in this tool
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
@@ -228,7 +197,7 @@ analyse dbaConfig args =
                 Just hash -> pure $ BlockPoint slot hash
                 Nothing -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
         SStartFromLedgerState -> do
-          (ledgerDB, intLedgerDB) <- openLedgerDB ldbArgs
+          (ledgerDB, intLedgerDB) <- openLedgerDB leiosDbHandle ldbArgs
           -- This marker divides the "loading" phase of the program, where the
           -- system is principally occupied with reading snapshot data from
           -- disk, from the "processing" phase, where we are streaming blocks

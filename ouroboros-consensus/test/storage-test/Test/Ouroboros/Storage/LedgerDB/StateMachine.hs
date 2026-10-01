@@ -592,7 +592,6 @@ openLedgerDB flavArgs env cfg fs = do
           flavArgs
           DefaultQueryBatchSize
           Nothing
-          leiosDbHandle
   (ldb, _, od) <-
     runWithTempRegistry $
       (\x -> (x, ())) <$> case lgrBackendArgs args of
@@ -606,6 +605,7 @@ openLedgerDB flavArgs env cfg fs = do
                 getBlock
                 snapManager
                 (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+                leiosDbHandle
           lift $ openDBInternal args initDb snapManager stream replayGoal
         LedgerDbBackendArgsV2 (V2.SomeBackendArgs bArgs) -> do
           res <-
@@ -623,7 +623,13 @@ openLedgerDB flavArgs env cfg fs = do
                   (lgrHasFS args)
           initDb <-
             lift $
-              V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
+              V2.mkInitDb
+                args
+                getBlock
+                snapManager
+                (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+                res
+                leiosDbHandle
           lift $ openDBInternal args initDb snapManager stream replayGoal
   case NE.nonEmpty volBlocks of
     Nothing -> pure ()

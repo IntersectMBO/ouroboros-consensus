@@ -32,8 +32,7 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (withReader)
-import LeiosDemoDb.Common (LeiosDbHandle (..), LeiosDbReader (..))
+import LeiosDemoDb (LeiosDbHandle (..), LeiosDbReader (..), withReader)
 import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -84,9 +83,11 @@ mkInitDb ::
   SnapshotManagerV2 m blk ->
   GetVolatileSuffix m blk ->
   Resources m backend ->
+  -- | Leios demo DB handle. Opened once by 'ChainDB.openDBInternal';
+  -- passed here so that ChainDB and LedgerDB share a single handle.
+  LeiosDbHandle m ->
   m (InitDB (LedgerSeq' m blk) m blk)
-mkInitDb args getBlock snapManager getVolatileSuffix res = do
-  let ldbLeiosDb = lgrLeiosDb
+mkInitDb args getBlock snapManager getVolatileSuffix res ldbLeiosDb = do
   pure $
     InitDB
       { initFromGenesis = do
@@ -112,7 +113,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
           prevApplied <- newTVarIO Set.empty
           lock <- RAWLock.new ()
           nextForkerKey <- newTVarIO (ForkerKey 0)
-          ldbLeiosDbReader <- openReader lgrLeiosDb
+          ldbLeiosDbReader <- openReader ldbLeiosDb
           let env =
                 LedgerDBEnv
                   { ldbSeq = varDB
@@ -139,7 +140,6 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
     , lgrHasFS
     , lgrSnapshotPolicyArgs
     , lgrQueryBatchSize
-    , lgrLeiosDb
     } = args
 
   v2Tracer :: Tracer m LedgerDBV2Trace
@@ -392,7 +392,7 @@ implCloseDB (LDBHandle varState) = do
         LedgerDBClosed -> pure Nothing
         LedgerDBOpen env -> do
           writeTVar varState LedgerDBClosed
-          pure (Just $ (ldbSeq env, ldbBackendResources env, ldbLeiosDbReader env))
+          pure (Just (ldbSeq env, ldbBackendResources env, ldbLeiosDbReader env))
   whenJust
     res
     ( \(s, SomeResources res', leiosDbReader) -> do

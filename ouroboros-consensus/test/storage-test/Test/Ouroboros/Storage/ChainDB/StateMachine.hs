@@ -2154,7 +2154,6 @@ mkArgs ::
   LoE (StrictTVar m (AnchoredFragment (HeaderWithTime Blk))) ->
   m (ChainDbArgs Identity m Blk)
 mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment = do
-  mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
   let args =
         fromMinimalChainDbArgs
           MinimalChainDbArgs
@@ -2163,7 +2162,7 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment = do
             , mcdbInitLedger = initLedger
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDBs
-            , mcdbLeiosDb
+            , mcdbLeiosDb = LeiosDb.leiosDbInMemory
             }
   pure $
     ChainDB.updateTracer tracer $

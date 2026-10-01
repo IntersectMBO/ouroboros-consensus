@@ -182,8 +182,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
           mcdbInitLedger = testInitExtLedger
           mcdbRegistry = registry
       mcdbNodeDBs <- emptyNodeDBs
-      mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
-      let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{..}
+      let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{mcdbLeiosDb = LeiosDb.leiosDbInMemory, ..}
       pure $ ChainDB.updateTracer cdbTracer cdbArgs
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
       allocate

@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -28,7 +29,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbHandle, withReader)
+import LeiosDemoDb (LeiosDbHandle (..), withReader)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -86,16 +87,18 @@ mkInitDb ::
   ResolveBlock m blk ->
   SnapshotManagerV1 m blk ->
   GetVolatileSuffix m blk ->
+  -- | Leios demo DB handle. Opened once by 'ChainDB.openDBInternal';
+  -- passed here so that ChainDB and LedgerDB share a single handle.
+  LeiosDbHandle m ->
   m (InitDB (DbChangelog' blk, BackingStore' m blk) m blk)
-mkInitDb args bss getBlock snapManager getVolatileSuffix = do
-  -- 'lgrLeiosDb' is a 'LeiosDbHandle' — a factory for per-thread
+mkInitDb args bss getBlock snapManager getVolatileSuffix ldbLeiosDb = do
+  -- 'ldbLeiosDb' is a 'LeiosDbHandle' — a factory for per-thread
   -- 'LeiosDbReader's. We do NOT open a connection here to share
   -- across threads: 'direct-sqlite' handles are single-thread and
   -- were segfaulting when the shared connection was used from a
   -- different worker (see the thread-check safety net in
   -- LeiosDemoDb.SQLite). Every consumer opens its own via
   -- 'withReader' on its own thread instead.
-  let ldbLeiosDb = lgrLeiosDb
   pure $
     InitDB
       { initFromGenesis = do
@@ -165,7 +168,6 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix = do
     , lgrConfig
     , lgrGenesis
     , lgrQueryBatchSize
-    , lgrLeiosDb
     } = args
 
   lgrHasFS' = SnapshotsFS lgrHasFS
@@ -392,7 +394,8 @@ implCloseDB (LDBHandle varState) = do
           return $ Just env
 
   -- Only when the LedgerDB was open
-  whenJust mbOpenEnv $ void . bsClose . ldbBackingStore
+  whenJust mbOpenEnv $ \env -> do
+    void $ bsClose (ldbBackingStore env)
 
 mkInternals ::
   ( IOLike m

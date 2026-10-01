@@ -14,7 +14,7 @@ module Test.Util.ChainDB
 import Control.Concurrent.Class.MonadSTM.Strict hiding (StrictTVar)
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
-import LeiosDemoDb (LeiosDbHandle)
+import LeiosDemoDb (LeiosDbArgs)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
   , configCodec
@@ -78,10 +78,9 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs
   , mcdbNodeDBs :: NodeDBs (StrictTMVar m MockFS)
   -- ^ File systems underlying the immutable, volatile and ledger databases.
   -- Would be useful to default this to StrictTMVar's containing empty MockFS's.
-  , mcdbLeiosDb :: LeiosDbHandle m
-  -- ^ Caller-supplied Leios demo DB handle. Downstream consumers (LedgerDB,
-  -- ChainDB) each 'open' their own per-thread connection from this handle,
-  -- so it is safe to share across threads.
+  , mcdbLeiosDb :: LeiosDbArgs m
+  -- ^ How to open the Leios demo DB. 'ChainDB.openDBInternal' calls 'ldbOpen'
+  -- exactly once; use 'leiosDbInMemory' for in-memory tests.
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
@@ -139,7 +138,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
-          , lgrLeiosDb = mcdbLeiosDb
           }
     , cdbPerasCertDbArgs =
         PerasCertDbArgs
@@ -155,7 +153,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTracer = nullTracer
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
-          , cdbsLeiosDb = mcdbLeiosDb
           , cdbsLeiosEvictTxCache = \_slot -> pure ()
+          , cdbsLeiosDb = mcdbLeiosDb
           }
     }

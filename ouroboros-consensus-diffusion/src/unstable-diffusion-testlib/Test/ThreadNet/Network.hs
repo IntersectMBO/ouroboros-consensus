@@ -770,8 +770,7 @@ runThreadNetwork
       LeiosState (MonadSTMStrict.StrictTVar m) ->
       CoreNodeId ->
       m
-        ( LeiosDemoDb.LeiosDbHandle m
-        , LeiosTxCache m () () LeiosDemoTypes.SerializedEbBody
+        ( LeiosTxCache m () () LeiosDemoTypes.SerializedEbBody
         , ChainDbArgs Identity m blk
         )
     mkArgs
@@ -786,7 +785,6 @@ runThreadNetwork
       nodeDBs
       leiosState
       _coreNodeId = do
-        leiosDbHandle <- LeiosDemoDb.newLeiosDBInMemoryWith (lsLeiosDb leiosState)
         leiosTxCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
         let args =
               fromMinimalChainDbArgs
@@ -796,11 +794,14 @@ runThreadNetwork
                   , mcdbInitLedger = initLedger
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
-                  , mcdbLeiosDb = leiosDbHandle
+                  , mcdbLeiosDb =
+                      LeiosDemoDb.LeiosDbArgs
+                        { ldbOpen = LeiosDemoDb.newLeiosDBInMemoryWith (lsLeiosDb leiosState)
+                        }
                   }
         let tr = instrumentationTracer <> nullTracer
         pure $
-          (,,) leiosDbHandle leiosTxCache $
+          (,) leiosTxCache $
             args
               { cdbImmDbArgs =
                   (cdbImmDbArgs args)
@@ -899,7 +900,7 @@ runThreadNetwork
           selTracer = wrapTracer $ nodeEventsSelects nodeInfoEvents
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
-      (leiosDbHandle, leiosTxCache, chainDbArgs) <-
+      (leiosTxCache, chainDbArgs) <-
         mkArgs
           registry
           pInfoConfig
@@ -1152,7 +1153,6 @@ runThreadNetwork
                     }
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
               , txSubmissionInitDelay = NoTxSubmissionInitDelay
-              , leiosDB = leiosDbHandle
               , leiosTxCache
               , leiosFetchRng = lfRng
               }

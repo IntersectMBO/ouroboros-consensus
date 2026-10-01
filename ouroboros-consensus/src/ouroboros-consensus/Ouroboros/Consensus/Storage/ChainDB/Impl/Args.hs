@@ -24,7 +24,7 @@ import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Function ((&))
 import Data.Kind
 import Data.Time.Clock (secondsToDiffTime)
-import qualified LeiosDemoDb.Common
+import LeiosDemoDb (LeiosDbArgs (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -93,9 +93,6 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
     cdbsLoE :: GetLoEFragment m blk
   -- ^ If this is 'LoEEnabled', it contains an action that returns the
   -- current LoE fragment.
-  , cdbsLeiosDb :: HKD f (LeiosDemoDb.Common.LeiosDbHandle m)
-  -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
-  -- its own per-thread 'LeiosDbReader' from this handle.
   , cdbsLeiosEvictTxCache :: HKD f (SlotNo -> m ())
   -- ^ Prune the LeiosTxCache to the given slot. Invoked immediately BEFORE
   -- 'LeiosDemoDb.Common.leiosDbGarbageCollect' at the same slot (see
@@ -104,6 +101,11 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- keeps it from ever reporting a hit for a tx the LeiosDb has already dropped.
   -- Mandatory (no default): the node wires it to the cache's 'evictOlderThan';
   -- callers without a cache pass an explicit no-op.
+  , cdbsLeiosDb :: HKD f (LeiosDbArgs m)
+  -- ^ How to open the Leios demo DB. 'openDBInternal' calls 'ldbOpen' exactly
+  -- once; the resulting handle is stored in the ChainDB env and shared with
+  -- LedgerDB (which only holds a per-thread reader). Closed when the ChainDB
+  -- registry is released.
   }
 
 -- | Default arguments
@@ -138,8 +140,8 @@ defaultSpecificArgs =
     , cdbsHasFSGsmDB = noDefault
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
-    , cdbsLeiosDb = noDefault
     , cdbsLeiosEvictTxCache = noDefault
+    , cdbsLeiosDb = noDefault
     }
 
 -- | Default arguments
@@ -193,8 +195,9 @@ completeChainDbArgs ::
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
   LedgerDbBackendArgs m blk ->
-  -- | Leios demo DB handle
-  LeiosDemoDb.Common.LeiosDbHandle m ->
+  -- | How to open the Leios demo DB. 'openDBInternal' calls 'ldbOpen' exactly
+  -- once and shares the handle between the ChainDB env and the LedgerDB.
+  LeiosDbArgs m ->
   -- | Prune the LeiosTxCache to a slot; run before 'leiosDbGarbageCollect' at the
   -- same slot (the "LeiosTxCache" ordering contract).
   (SlotNo -> m ()) ->
@@ -210,7 +213,7 @@ completeChainDbArgs
   mkImmFS
   mkVolFS
   flavorArgs
-  leiosDb
+  leiosDbArgs
   leiosEvictTxCache
   defArgs =
     defArgs
@@ -237,7 +240,6 @@ completeChainDbArgs
                   cdbsTopLevelConfig
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
             , LedgerDB.lgrBackendArgs = flavorArgs
-            , LedgerDB.lgrLeiosDb = leiosDb
             }
       , cdbPerasCertDbArgs =
           PerasCertDB.PerasCertDbArgs
@@ -248,8 +250,8 @@ completeChainDbArgs
             { cdbsRegistry = registry
             , cdbsTopLevelConfig
             , cdbsHasFSGsmDB = mkVolFS $ RelativeMountPoint "gsm"
-            , cdbsLeiosDb = leiosDb
             , cdbsLeiosEvictTxCache = leiosEvictTxCache
+            , cdbsLeiosDb = leiosDbArgs
             }
       }
 
