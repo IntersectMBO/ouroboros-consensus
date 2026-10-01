@@ -343,10 +343,6 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx = decode
               <> " does not match the "
               <> show requested
               <> " txs in the bitmaps"
-        -- TODO does V.generateM allocate exacly one buffer, via the hint?
-        --
-        -- If not, we could do so manually by relying on the fact that
-        -- Decoder is ultimate in ST.
         txs <- V.generateM n $ \_i -> decodeTx
         return $ SomeMessage $ MsgLeiosBlockTxs p bitmaps txs
       -- MsgLeiosVotesRequest
