@@ -196,8 +196,7 @@ ouroboros_network_4183 =
 -- hence, may not yet have happened when the next item in the iterator is
 -- requested.
 ouroboros_network_3999 ::
-  ( Mock.HasHeader (Block m)
-  , Block m ~ TestBlock
+  ( Block m ~ TestBlock
   , SupportsUnitTest m
   , MonadError TestFailure m
   ) =>

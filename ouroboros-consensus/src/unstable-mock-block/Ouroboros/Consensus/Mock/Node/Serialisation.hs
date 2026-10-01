@@ -124,7 +124,6 @@ instance
   ( Serialise ext
   , Typeable ext
   , Serialise (MockLedgerConfig SimpleMockCrypto ext)
-  , MockProtocolSpecific SimpleMockCrypto ext
   ) =>
   SerialiseNodeToClientConstraints (MockBlock ext)
 

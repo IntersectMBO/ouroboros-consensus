@@ -497,13 +497,11 @@ data PerasVoteCollection blk
 deriving instance
   ( StandardHash blk
   , Show (PerasVote blk)
-  , Show (PerasCert blk)
   ) =>
   Show (PerasVoteCollection blk)
 deriving instance
   ( StandardHash blk
   , Eq (PerasVote blk)
-  , Eq (PerasCert blk)
   ) =>
   Eq (PerasVoteCollection blk)
 deriving instance
@@ -600,13 +598,11 @@ newtype PerasVoteCollectionWithQuorum blk
 deriving newtype instance
   ( StandardHash blk
   , Show (PerasVote blk)
-  , Show (PerasCert blk)
   ) =>
   Show (PerasVoteCollectionWithQuorum blk)
 deriving newtype instance
   ( StandardHash blk
   , Eq (PerasVote blk)
-  , Eq (PerasCert blk)
   ) =>
   Eq (PerasVoteCollectionWithQuorum blk)
 deriving newtype instance

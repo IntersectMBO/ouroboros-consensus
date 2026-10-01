@@ -1192,7 +1192,7 @@ addedHdrsNewChain fro to_ =
 --------------------------------------------------------------------------------
 
 instance
-  (ConvertRawHash blk, StandardHash blk) =>
+  StandardHash blk =>
   LogFormatting (ChainDB.TraceFollowerEvent blk)
   where
   forHuman ChainDB.NewFollower = "A new Follower was created"
@@ -2254,10 +2254,7 @@ instance
       , "tip" .= showT tip'
       ]
 
-instance
-  (StandardHash blk, ConvertRawHash blk) =>
-  LogFormatting (LedgerDB.TraceReplayProgressEvent blk)
-  where
+instance LogFormatting (LedgerDB.TraceReplayProgressEvent blk) where
   forHuman
     ( LedgerDB.ReplayedBlock
         pt

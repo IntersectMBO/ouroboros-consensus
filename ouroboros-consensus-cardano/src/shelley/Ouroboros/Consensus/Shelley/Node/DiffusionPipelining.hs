@@ -21,7 +21,6 @@ import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -62,8 +61,8 @@ data ShelleyTentativeHeaderState proto
 data ShelleyTentativeHeaderView proto
   = ShelleyTentativeHeaderView BlockNo (HotIdentity (ProtoCrypto proto))
 
-deriving stock instance ConsensusProtocol proto => Show (ShelleyTentativeHeaderView proto)
-deriving stock instance ConsensusProtocol proto => Eq (ShelleyTentativeHeaderView proto)
+deriving stock instance Show (ShelleyTentativeHeaderView proto)
+deriving stock instance Eq (ShelleyTentativeHeaderView proto)
 
 -- | A header can be pipelined iff no trap header with the same block number and
 -- by the same issuer was pipelined before. See 'HotIdentity' for what exactly

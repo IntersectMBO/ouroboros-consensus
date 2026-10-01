@@ -161,7 +161,6 @@ addVote ::
   , Ord (PerasVote blk)
   , PerasCert blk ~ MockPerasCert blk
   , IsPerasVote (PerasVote blk) blk
-  , IsPerasCert (PerasCert blk) blk
   ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   Model blk ->

@@ -141,7 +141,7 @@ class
   ) =>
   ShelleyCompatible proto era
 
-instance StandardHash (ShelleyBlock proto era) => ConvertRawHash (ShelleyBlock proto era) where
+instance ConvertRawHash (ShelleyBlock proto era) where
   -- 'HASH' is currently 'Blake2b_256', whose digest is 256 bits, i.e. 32 bytes,
   -- so this resolves to 32.
   type HashSize (ShelleyBlock proto era) = Crypto.HashSize HASH

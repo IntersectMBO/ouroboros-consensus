@@ -796,9 +796,7 @@ smUnused cfg initialState capacity ma gTxs =
 
 prop_mempoolSequential ::
   forall blk.
-  ( HasTxId (GenTx blk)
-  , blk ~ TestBlock
-  ) =>
+  blk ~ TestBlock =>
   LedgerConfig blk ->
   TxMeasure blk ->
   -- | Initial state
@@ -839,9 +837,7 @@ prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothi
       "[" <> show l <> "-" <> show (l + n) <> ")"
 
 prop_mempoolParallel ::
-  ( HasTxId (GenTx blk)
-  , blk ~ TestBlock
-  ) =>
+  blk ~ TestBlock =>
   LedgerConfig blk ->
   TxMeasure blk ->
   LedgerState blk ValuesMK ->
@@ -1052,8 +1048,7 @@ instance NoThunks (Mempool IO TestBlock) where
   wNoThunks _ _ = return Nothing
 
 instance
-  ( ToExpr (TxId (GenTx blk))
-  , ToExpr (GenTx blk)
+  ( ToExpr (GenTx blk)
   , ToExpr (LedgerState blk ValuesMK)
   , ToExpr (TickedLedgerState blk ValuesMK)
   , LedgerSupportsMempool blk
@@ -1072,8 +1067,7 @@ instance
         ]
 
 instance
-  ( ToExpr (TxId (GenTx blk))
-  , ToExpr (GenTx blk)
+  ( ToExpr (GenTx blk)
   , ToExpr (TickedLedgerState blk ValuesMK)
   , ToExpr (LedgerState blk ValuesMK)
   , LedgerSupportsMempool blk

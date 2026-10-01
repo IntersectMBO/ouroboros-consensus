@@ -412,7 +412,7 @@ newtype RunMonad m a = RunMonad {runMonad :: ReaderT (SystemStateVars m) m a}
 instance MonadTrans RunMonad where
   lift = RunMonad . lift
 
-instance (IOLike m, Reflection.Given StaticParams) => QD.RunModel Model (RunMonad m) where
+instance IOLike m => QD.RunModel Model (RunMonad m) where
   perform _ action _ = do
     SystemStateVars{varSelection, varStates, varGsmState, varMarker, varEvents} <- ask
     let

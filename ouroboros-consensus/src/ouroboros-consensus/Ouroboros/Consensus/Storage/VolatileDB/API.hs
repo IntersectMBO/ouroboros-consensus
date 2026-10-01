@@ -172,7 +172,7 @@ data VolatileDBError blk
   | -- | An unexpected failure thrown because something went wrong.
     UnexpectedFailure (UnexpectedFailure blk)
 
-deriving instance (StandardHash blk, Typeable blk) => Show (VolatileDBError blk)
+deriving instance StandardHash blk => Show (VolatileDBError blk)
 
 instance (StandardHash blk, Typeable blk) => Exception (VolatileDBError blk) where
   displayException = \case
@@ -215,7 +215,7 @@ data UnexpectedFailure blk
     -- it was added.
     CorruptBlockError (HeaderHash blk)
 
-deriving instance (Typeable blk, StandardHash blk) => Show (UnexpectedFailure blk)
+deriving instance StandardHash blk => Show (UnexpectedFailure blk)
 
 {-------------------------------------------------------------------------------
   Derived functionality

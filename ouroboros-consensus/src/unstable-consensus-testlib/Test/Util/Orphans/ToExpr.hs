@@ -158,10 +158,7 @@ instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)
 
 instance ToExpr (PerasVotingCommitteeError blk) => ToExpr (MockPerasError blk)
 
-instance
-  Show (PerasVotingCommittee blk) =>
-  ToExpr (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
-  where
+instance ToExpr (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk)) where
   toExpr = defaultExprViaShow
 
 instance

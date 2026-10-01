@@ -245,8 +245,7 @@ data TraceEvent blk
       Int64
 
 instance
-  ( HasAnalysis blk
-  , LedgerSupportsProtocol blk
+  ( LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
   ) =>
   Show (TraceEvent blk)

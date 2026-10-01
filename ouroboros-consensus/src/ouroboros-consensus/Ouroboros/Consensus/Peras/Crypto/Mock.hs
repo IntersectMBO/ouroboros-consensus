@@ -122,8 +122,7 @@ newtype instance VotingCommittee crypto (MockPerasVotingCommitteeScheme blk)
   }
 
 instance
-  ( Ord (ElectionId crypto)
-  , ElectionId crypto ~ PerasRoundNo
+  ( ElectionId crypto ~ PerasRoundNo
   , VoteCandidate crypto ~ Point blk
   , CryptoSupportsAggregateVoteSigning crypto
   ) =>

@@ -365,9 +365,9 @@ data Instruction blk
     JumpInstruction !(JumpInstruction blk)
   deriving Generic
 
-deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
+deriving instance (Typeable blk, HasHeader (Header blk)) => Eq (Instruction blk)
 deriving instance
-  (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk)
+  (Typeable blk, HasHeader (Header blk)) => Show (Instruction blk)
 deriving anyclass instance
   ( HasHeader blk
   , LedgerSupportsProtocol blk
@@ -384,8 +384,8 @@ data JumpInstruction blk
   deriving Generic
 
 deriving instance
-  (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (JumpInstruction blk)
-instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (JumpInstruction blk) where
+  (Typeable blk, HasHeader (Header blk)) => Eq (JumpInstruction blk)
+instance (Typeable blk, HasHeader (Header blk)) => Show (JumpInstruction blk) where
   showsPrec p = \case
     JumpTo jumpInfo ->
       showParen (p > 10) $ showString "JumpTo " . shows (AF.headPoint $ jTheirFragment jumpInfo)
@@ -405,8 +405,8 @@ data JumpResult blk
   | RejectedJump !(JumpInstruction blk)
   deriving Generic
 
-deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (JumpResult blk)
-deriving instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (JumpResult blk)
+deriving instance (Typeable blk, HasHeader (Header blk)) => Eq (JumpResult blk)
+deriving instance (Typeable blk, HasHeader (Header blk)) => Show (JumpResult blk)
 
 deriving anyclass instance
   ( HasHeader blk

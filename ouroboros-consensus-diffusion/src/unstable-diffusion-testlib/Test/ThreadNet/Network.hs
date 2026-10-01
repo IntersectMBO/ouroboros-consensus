@@ -1760,6 +1760,7 @@ type TracingConstraints blk =
   , Show (CannotForge blk)
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
+  , Show (TxEbMeasure blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , Show (PerasVote blk)
   , Show (PerasCert blk)

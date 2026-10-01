@@ -155,7 +155,6 @@ data Violation peer blk = Violation !String !(View peer blk)
 instance
   ( Typeable blk
   , StandardHash blk
-  , Eq peer
   , Show peer
   , Typeable peer
   ) =>
@@ -167,7 +166,6 @@ instance
 watcher ::
   ( MonadSTM m
   , MonadThrow m
-  , Eq peer
   , Show peer
   , Typeable peer
   , Typeable blk

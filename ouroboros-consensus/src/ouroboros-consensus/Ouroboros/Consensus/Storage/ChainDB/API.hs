@@ -889,10 +889,10 @@ data IteratorResult blk b
   deriving (Functor, Foldable, Traversable)
 
 deriving instance
-  (Eq blk, Eq b, StandardHash blk) =>
+  (Eq b, StandardHash blk) =>
   Eq (IteratorResult blk b)
 deriving instance
-  (Show blk, Show b, StandardHash blk) =>
+  (Show b, StandardHash blk) =>
   Show (IteratorResult blk b)
 
 data UnknownRange blk
@@ -1103,7 +1103,7 @@ data ChainDbError blk
     --   upper bound, or the lower bound starts from genesis, /inclusive/.
     InvalidIteratorRange (StreamFrom blk) (StreamTo blk)
 
-deriving instance (Typeable blk, StandardHash blk) => Show (ChainDbError blk)
+deriving instance StandardHash blk => Show (ChainDbError blk)
 
 instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
   displayException = \case

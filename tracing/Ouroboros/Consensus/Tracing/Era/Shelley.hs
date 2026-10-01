@@ -20,7 +20,6 @@ import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.VRF.Class as Crypto
 import Cardano.Ledger.Allegra.Rules (AllegraUtxoPredFailure)
 import qualified Cardano.Ledger.Allegra.Rules as Allegra
-import qualified Cardano.Ledger.Allegra.Scripts as Allegra
 import qualified Cardano.Ledger.Alonzo.Plutus.Evaluate as Alonzo
 import Cardano.Ledger.Alonzo.Rules
   ( AlonzoBbodyPredFailure
@@ -77,7 +76,6 @@ import Ouroboros.Consensus.Shelley.Ledger hiding (TxId)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Consensus
 import Ouroboros.Consensus.Shelley.Ledger.Inspect
 import qualified Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks as Praos (EnvelopeError (..))
-import Ouroboros.Consensus.Tracing.ConvertTxId (ConvertTxId)
 import Ouroboros.Consensus.Tracing.Era.Shelley.Render
   ( renderIncompleteWithdrawals
   , renderMissingRedeemers
@@ -113,9 +111,7 @@ jsonNonEmptyMap = toJSON . NonEmptyMap.toMap
 --
 -- NOTE: this list is sorted in roughly topological order.
 instance
-  ( ConvertTxId (ShelleyBlock protocol era)
-  , ShelleyBasedEra era
-  ) =>
+  ShelleyBasedEra era =>
   LogFormatting (GenTx (ShelleyBlock protocol era))
   where
   forMachine dtal (Ouroboros.Consensus.Shelley.Ledger.ShelleyTx txid tx) =
@@ -255,9 +251,6 @@ instance
 
 instance
   ( Consensus.ShelleyBasedEra era
-  , LogFormatting (PredicateFailure (UTXO era))
-  , LogFormatting (PredicateFailure (UTXOW era))
-  , LogFormatting (PredicateFailure (Ledger.EraRule "LEDGER" era))
   , ToJSON (ApplyTxError era)
   ) =>
   LogFormatting (ApplyTxError era)
@@ -287,8 +280,6 @@ instance
 
 instance
   ( Consensus.ShelleyBasedEra era
-  , LogFormatting (PredicateFailure (UTXO era))
-  , LogFormatting (PredicateFailure (UTXOW era))
   , LogFormatting (PredicateFailure (Ledger.EraRule "BBODY" era))
   , NFData (PredicateFailure (Ledger.EraRule "BBODY" era))
   ) =>
@@ -301,9 +292,7 @@ instance
       ]
 
 instance
-  ( Consensus.ShelleyBasedEra era
-  , ToJSON (Ledger.PParamsUpdate era)
-  ) =>
+  Consensus.ShelleyBasedEra era =>
   LogFormatting (ShelleyLedgerUpdate era)
   where
   forMachine _dtal (ShelleyUpdatedPParams updates epochNo) =
@@ -375,9 +364,6 @@ instance LogFormatting PrtlSeqFailure where
 
 instance
   ( Consensus.ShelleyBasedEra era
-  , LogFormatting (PredicateFailure (UTXO era))
-  , LogFormatting (PredicateFailure (UTXOW era))
-  , LogFormatting (PredicateFailure (Ledger.EraRule "LEDGER" era))
   , LogFormatting (PredicateFailure (Ledger.EraRule "LEDGERS" era))
   ) =>
   LogFormatting (ShelleyBbodyPredFailure era)
@@ -412,8 +398,6 @@ instance
 
 instance
   ( Consensus.ShelleyBasedEra era
-  , LogFormatting (PredicateFailure (UTXO era))
-  , LogFormatting (PredicateFailure (UTXOW era))
   , LogFormatting (PredicateFailure (Ledger.EraRule "LEDGER" era))
   ) =>
   LogFormatting (ShelleyLedgersPredFailure era)
@@ -433,8 +417,6 @@ instance LogFormatting Withdrawals where
 
 instance
   ( Consensus.ShelleyBasedEra era
-  , LogFormatting (PredicateFailure (UTXO era))
-  , LogFormatting (PredicateFailure (UTXOW era))
   , LogFormatting (PredicateFailure (Ledger.EraRule "DELEGS" era))
   , LogFormatting (PredicateFailure (Ledger.EraRule "UTXOW" era))
   ) =>
@@ -453,7 +435,6 @@ instance
 instance
   ( AnyEraScript ledgerera
   , Consensus.ShelleyBasedEra ledgerera
-  , LogFormatting (Ledger.EraRuleFailure "PPUP" ledgerera)
   , LogFormatting (PredicateFailure (Ledger.EraRule "UTXO" ledgerera))
   ) =>
   LogFormatting (AlonzoUtxowPredFailure ledgerera)
@@ -513,7 +494,6 @@ formatAsHex (Just bs) = show bs
 
 instance
   ( Consensus.ShelleyBasedEra era
-  , LogFormatting (PredicateFailure (UTXO era))
   , LogFormatting (PredicateFailure (Ledger.EraRule "UTXO" era))
   ) =>
   LogFormatting (ShelleyUtxowPredFailure era)
@@ -666,7 +646,6 @@ instance
 
 instance
   ( Consensus.ShelleyBasedEra era
-  , ToJSON Allegra.ValidityInterval
   , LogFormatting (Ledger.EraRuleFailure "PPUP" era)
   ) =>
   LogFormatting (AllegraUtxoPredFailure era)
@@ -1300,8 +1279,6 @@ instance
   ( AnyEraScript ledgerera
   , Ledger.Era ledgerera
   , ShelleyBasedEra ledgerera
-  , LogFormatting (Ledger.EraRuleFailure "PPUP" ledgerera)
-  , LogFormatting (ShelleyUtxowPredFailure ledgerera)
   , LogFormatting (PredicateFailure (Ledger.EraRule "UTXO" ledgerera))
   ) =>
   LogFormatting (BabbageUtxowPredFailure ledgerera)
@@ -1502,43 +1479,22 @@ instance
   forMachine dtal (Conway.CertFailure certFailure) =
     forMachine dtal certFailure
 
-instance
-  ( LogFormatting (PredicateFailure (Ledger.EraRule "CERTS" ledgerera))
-  , LogFormatting (PredicateFailure (Ledger.EraRule "UTXOW" ledgerera))
-  , LogFormatting (PredicateFailure (Ledger.EraRule "GOV" ledgerera))
-  ) =>
-  LogFormatting (Dijkstra.DijkstraLedgerPredFailure ledgerera)
-  where
+instance LogFormatting (Dijkstra.DijkstraLedgerPredFailure ledgerera) where
   forMachine _ = error "Dijkstra era is not active yet"
 
-instance
-  LogFormatting (PredicateFailure (Ledger.EraRule "CERTS" ledgerera)) =>
-  LogFormatting (Dijkstra.DijkstraGovCertPredFailure ledgerera)
-  where
+instance LogFormatting (Dijkstra.DijkstraGovCertPredFailure ledgerera) where
   forMachine _ = error "Dijkstra era is not active yet"
 
-instance
-  LogFormatting (PredicateFailure (Ledger.EraRule "CERTS" ledgerera)) =>
-  LogFormatting (Dijkstra.DijkstraGovPredFailure ledgerera)
-  where
+instance LogFormatting (Dijkstra.DijkstraGovPredFailure ledgerera) where
   forMachine _ = error "Dijkstra era is not active yet"
 
-instance
-  LogFormatting (PredicateFailure (Ledger.EraRule "UTXOW" ledgerera)) =>
-  LogFormatting (Dijkstra.DijkstraUtxowPredFailure ledgerera)
-  where
+instance LogFormatting (Dijkstra.DijkstraUtxowPredFailure ledgerera) where
   forMachine _ = error "Dijkstra era is not active yet"
 
-instance
-  LogFormatting (PredicateFailure (Ledger.EraRule "CERTS" ledgerera)) =>
-  LogFormatting (Dijkstra.DijkstraBbodyPredFailure ledgerera)
-  where
+instance LogFormatting (Dijkstra.DijkstraBbodyPredFailure ledgerera) where
   forMachine _ = error "Dijkstra era is not active yet"
 
-instance
-  LogFormatting (PredicateFailure (Ledger.EraRule "CERTS" ledgerera)) =>
-  LogFormatting (Dijkstra.DijkstraUtxoPredFailure ledgerera)
-  where
+instance LogFormatting (Dijkstra.DijkstraUtxoPredFailure ledgerera) where
   forMachine _ = error "Dijkstra era is not active yet"
 
 instance

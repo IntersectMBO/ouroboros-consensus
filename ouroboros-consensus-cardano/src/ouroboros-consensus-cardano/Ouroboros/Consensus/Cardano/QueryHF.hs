@@ -15,11 +15,9 @@ module Ouroboros.Consensus.Cardano.QueryHF () where
 import Data.Coerce
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
-import Data.SOP.Constraint
 import Data.SOP.Index
 import Data.SOP.Strict
 import Data.Singletons
-import NoThunks.Class
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
@@ -34,7 +32,6 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.TypeFamilyWrappers
 
 -- | Just to have the @x@ as the last type variable
 newtype FlipBlockQuery footprint result x
@@ -44,7 +41,6 @@ answerCardanoQueryHF ::
   forall x xs c footprint result m.
   ( xs ~ CardanoEras c
   , CardanoHardForkConstraints c
-  , All (Compose NoThunks WrapTxOut) xs
   , SingI footprint
   ) =>
   ( forall blk.
