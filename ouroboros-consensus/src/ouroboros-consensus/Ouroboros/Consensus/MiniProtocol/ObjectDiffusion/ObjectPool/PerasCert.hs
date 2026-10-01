@@ -28,11 +28,13 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-  ( ObjectPoolReader (..)
+  ( ObjectIdRequestability (..)
+  , ObjectPoolReader (..)
   , ObjectPoolWriter (..)
   )
 import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolverHandle
+  ( PerasEpochContextResolverHandle (..)
+  , perasEpochContextResolverBounds
   , verifyPerasCertWithHandle
   )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -129,6 +131,7 @@ makeTestPerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
     , opwHasObject = do
         certIds <- PerasCertDB.getCertIds perasCertDB
         pure $ \roundNo -> Set.member roundNo certIds
+    , opwClassifyObjectId = perasCertRequestability resolverHandle
     }
 
 -- | Create a pool writer from the 'ChainDB'. This properly handles any needed
@@ -148,8 +151,14 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
             now <- systemTimeCurrent systemTime
             validatedCerts <- atomically $ do
               alreadyInDb <- ChainDB.getPerasCertIds chainDB
-              let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
-              traverse (verifyPerasCertWithHandle resolverHandle) certsNotAlreadyInDb
+              classifyRound <- perasCertRequestability resolverHandle
+              -- The context may have advanced since these certificates were
+              -- requested. Certificates that became too old need no validation
+              -- or insertion, and receiving them must not penalize the peer.
+              let needsProcessing cert =
+                    let roundNo = getPerasCertRound cert
+                     in Set.notMember roundNo alreadyInDb && classifyRound roundNo /= ObjectIdTooOld
+              traverse (verifyPerasCertWithHandle resolverHandle) (filter needsProcessing certs)
             -- Some certs are invalid => reject the whole batch
             --
             -- NOTE: we could combine the two 'traverse' operations into one in
@@ -159,4 +168,27 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
         , opwHasObject = do
             certIds <- ChainDB.getPerasCertIds chainDB
             pure $ \roundNo -> Set.member roundNo certIds
+        , opwClassifyObjectId = perasCertRequestability resolverHandle
         }
+
+-- | Classify certificate IDs against the epoch-context window. Certificates
+-- within the window can be requested, while certificates ahead of the window
+-- must wait until the ledger catches up.
+--
+-- Certificates below the lower bound are obsolete locally. The inbound client
+-- skips and acknowledges them without penalizing the peer, whose validation
+-- window need not coincide with ours.
+perasCertRequestability ::
+  MonadSTM m =>
+  PerasEpochContextResolverHandle m blk ->
+  STM m (PerasRoundNo -> ObjectIdRequestability)
+perasCertRequestability resolverHandle = do
+  resolver <- getPerasEpochContextResolver resolverHandle
+  let (lowerBound, upperBound) = perasEpochContextResolverBounds resolver
+  pure $ \roundNo ->
+    if roundNo < lowerBound
+      then ObjectIdTooOld
+      else
+        if roundNo < upperBound
+          then ObjectIdRequestable
+          else ObjectIdTooNew

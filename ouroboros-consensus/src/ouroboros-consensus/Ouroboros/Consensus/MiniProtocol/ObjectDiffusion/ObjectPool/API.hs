@@ -15,10 +15,11 @@
 -- number for the first request.
 --
 -- 'ObjectPoolWriter' is used on the inbound side of the protocol. It allows
--- checking whether an object is already present (to avoid re-requesting it) and
--- appending new objects. Ticket numbers are not part of the inbound interface,
--- but are used internally: newly added objects always receive a ticket number
--- strictly greater than those of older ones.
+-- checking whether an object is already present (to avoid re-requesting it),
+-- choosing which advertised objects can currently be requested, and appending
+-- new objects. Ticket numbers are not part of the inbound interface, but are
+-- used internally: newly added objects always receive a ticket number strictly
+-- greater than those of older ones.
 --
 -- This API design is inspired by 'MempoolSnapshot' from the TX-submission
 -- miniprotocol, see:
@@ -26,6 +27,7 @@
 module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
   , ObjectPoolWriter (..)
+  , ObjectIdRequestability (..)
 
     -- * Invariants
   , prop_objectsAfterAreGreaterThanTicket
@@ -36,6 +38,14 @@ import Control.Concurrent.Class.MonadSTM.Strict (MonadSTM (..), STM)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Word (Word64)
+
+-- | Whether an advertised object ID can be requested at the client's current
+-- validation horizon.
+data ObjectIdRequestability
+  = ObjectIdTooOld
+  | ObjectIdRequestable
+  | ObjectIdTooNew
+  deriving (Eq, Show)
 
 -- | Interface used by the outbound side of object diffusion as its source of
 -- objects to give to the remote side.
@@ -69,6 +79,12 @@ data ObjectPoolWriter objectId object m
   -- ^ Add a batch of objects to the objectPool.
   , opwHasObject :: STM m (objectId -> Bool)
   -- ^ Check if the object pool contains an object with the given id
+  , opwClassifyObjectId :: STM m (objectId -> ObjectIdRequestability)
+  -- ^ Classify advertised object IDs using a consistent snapshot of the local
+  -- validation state. The inbound client requests IDs classified as
+  -- 'ObjectIdRequestable', waits at the first 'ObjectIdTooNew', and skips IDs
+  -- classified as 'ObjectIdTooOld', acknowledging them in FIFO order without
+  -- penalizing the peer.
   }
 
 -- * Invariants

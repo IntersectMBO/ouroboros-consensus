@@ -28,7 +28,8 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-  ( ObjectPoolReader (..)
+  ( ObjectIdRequestability (ObjectIdRequestable)
+  , ObjectPoolReader (..)
   , ObjectPoolWriter (..)
   )
 import Ouroboros.Consensus.Peras.Context
@@ -130,6 +131,7 @@ makeTestPerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
     , opwHasObject = do
         voteIds <- PerasVoteDB.getVoteIds perasVoteDB
         pure $ \voteId -> Set.member voteId voteIds
+    , opwClassifyObjectId = pure $ const ObjectIdRequestable
     }
 
 -- | Create a pool writer from the 'ChainDB'.
@@ -161,4 +163,5 @@ makePerasVotePoolWriterFromChainDB systemTime chainDB =
         , opwHasObject = do
             voteIds <- ChainDB.getPerasVoteIds chainDB
             pure $ \voteId -> Set.member voteId voteIds
+        , opwClassifyObjectId = pure $ const ObjectIdRequestable
         }
