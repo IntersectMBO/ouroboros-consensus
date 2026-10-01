@@ -34,7 +34,6 @@ import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Time (mkSlotLength)
 import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
@@ -137,12 +136,6 @@ fromShelleyLedgerExamples
     results =
       labelled
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
-        ,
-          ( "NonMyopicMemberRewards"
-          , SomeResult
-              (GetNonMyopicMemberRewards Set.empty)
-              (NonMyopicMemberRewards $ leNonMyopicRewards)
-          )
         , ("GenesisConfig", SomeResult GetGenesisConfig (compactGenesis leShelleyGenesis))
         ,
           ( "GetBigLedgerPeerSnapshot"
@@ -292,12 +285,6 @@ fromShelleyLedgerExamplesPraos
     results =
       labelled
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
-        ,
-          ( "NonMyopicMemberRewards"
-          , SomeResult
-              (GetNonMyopicMemberRewards Set.empty)
-              (NonMyopicMemberRewards $ leNonMyopicRewards)
-          )
         , ("GenesisConfig", SomeResult GetGenesisConfig (compactGenesis leShelleyGenesis))
         ,
           ( "GetBigLedgerPeerSnapshot"
