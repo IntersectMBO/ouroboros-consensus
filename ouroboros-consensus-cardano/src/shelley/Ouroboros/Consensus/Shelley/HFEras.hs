@@ -28,6 +28,7 @@ import Cardano.Protocol.Praos.BlockHeader (Header)
 import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Lens.Micro (lens)
+import qualified Ouroboros.Consensus.Protocol.Leios as Leios
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -46,6 +47,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   , ShelleyCompatible
   )
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
+import Ouroboros.Consensus.Shelley.Protocol.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()
@@ -93,6 +95,8 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) BabbageEra
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
+
+instance Leios.LeiosCrypto c => ShelleyCompatible (Leios.Leios c) DijkstraEra
 
 -- | The ledger expects Dijkstra blocks to carry a Leios block header, but
 -- consensus still uses the Praos header for the Dijkstra era, so this instance

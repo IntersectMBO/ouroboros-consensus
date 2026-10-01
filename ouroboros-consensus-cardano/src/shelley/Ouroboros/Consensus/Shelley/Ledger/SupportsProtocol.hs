@@ -25,6 +25,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (..)
   )
+import Ouroboros.Consensus.Protocol.Leios (Leios, LeiosCrypto)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos (PraosCrypto)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
@@ -76,6 +77,62 @@ instance
     maxFor :: SlotNo
     maxFor = addSlots swindow $ succWithOrigin at
 
+-- | 'protocolLedgerView' for any protocol whose ledger view is Praos's.
+praosProtocolLedgerView ::
+  forall proto era mk.
+  ShelleyCompatible proto era =>
+  Ticked LedgerState (ShelleyBlock proto era) mk ->
+  Praos.PraosLedgerView
+praosProtocolLedgerView st =
+  let nes = tickedShelleyLedgerState st
+
+      SL.NewEpochState{nesPd} = nes
+
+      pparam :: forall a. Lens.Micro.Lens' (LedgerCore.PParams era) a -> a
+      pparam lens = getPParams nes Lens.Micro.^. lens
+   in Praos.PraosLedgerView
+        { Praos.plvPoolDistr = nesPd
+        , Praos.plvMaxBodySize = pparam LedgerCore.ppMaxBBSizeL
+        , Praos.plvMaxHeaderSize = pparam LedgerCore.ppMaxBHSizeL
+        , Praos.plvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
+        }
+
+-- | 'ledgerViewForecastAt' for any protocol whose ledger view is Praos's.
+--
+-- 'SL.currentForecast' is a projection of the state with no TICKF, and
+-- 'SL.futureForecast' is TICKF and then that same projection, which is what
+-- makes this agree with 'praosProtocolLedgerView' by construction.
+praosLedgerViewForecastAt ::
+  forall proto era mk.
+  ShelleyCompatible proto era =>
+  LedgerConfig (ShelleyBlock proto era) ->
+  LedgerState (ShelleyBlock proto era) mk ->
+  Forecast Praos.PraosLedgerView
+praosLedgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
+  if
+    | NotOrigin for == at ->
+        return $
+          Praos.forecastToPraosLedgerView (SL.currentForecast shelleyLedgerState)
+    | for < maxFor ->
+        return $
+          Praos.forecastToPraosLedgerView $
+            SL.futureForecast globals for shelleyLedgerState
+    | otherwise ->
+        throwError $
+          OutsideForecastRange
+            { outsideForecastAt = at
+            , outsideForecastMaxFor = maxFor
+            , outsideForecastFor = for
+            }
+ where
+  ShelleyLedgerState{shelleyLedgerState} = ledgerState
+  globals = shelleyLedgerGlobals cfg
+  at = ledgerTipSlot ledgerState
+
+  -- Exclusive upper bound
+  maxFor :: SlotNo
+  maxFor = addSlots (SL.stabilityWindow globals) $ succWithOrigin at
+
 instance
   ( ShelleyCompatible (Praos crypto) era
   , SL.EraForecast era
@@ -83,45 +140,15 @@ instance
   ) =>
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
   where
-  protocolLedgerView _cfg st =
-    let nes = tickedShelleyLedgerState st
+  protocolLedgerView _cfg = praosProtocolLedgerView
+  ledgerViewForecastAt = praosLedgerViewForecastAt
 
-        SL.NewEpochState{nesPd} = nes
-
-        pparam :: forall a. Lens.Micro.Lens' (LedgerCore.PParams era) a -> a
-        pparam lens = getPParams nes Lens.Micro.^. lens
-     in Praos.PraosLedgerView
-          { Praos.plvPoolDistr = nesPd
-          , Praos.plvMaxBodySize = pparam LedgerCore.ppMaxBBSizeL
-          , Praos.plvMaxHeaderSize = pparam LedgerCore.ppMaxBHSizeL
-          , Praos.plvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
-          }
-
-  ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
-    if
-      | NotOrigin for == at ->
-          return $
-            Praos.forecastToPraosLedgerView (SL.currentForecast shelleyLedgerState)
-      | for < maxFor ->
-          return $ futureLedgerView for
-      | otherwise ->
-          throwError $
-            OutsideForecastRange
-              { outsideForecastAt = at
-              , outsideForecastMaxFor = maxFor
-              , outsideForecastFor = for
-              }
-   where
-    ShelleyLedgerState{shelleyLedgerState} = ledgerState
-    globals = shelleyLedgerGlobals cfg
-    swindow = SL.stabilityWindow globals
-    at = ledgerTipSlot ledgerState
-
-    futureLedgerView :: SlotNo -> Praos.PraosLedgerView
-    futureLedgerView for =
-      Praos.forecastToPraosLedgerView $
-        SL.futureForecast globals for shelleyLedgerState
-
-    -- Exclusive upper bound
-    maxFor :: SlotNo
-    maxFor = addSlots swindow $ succWithOrigin at
+instance
+  ( ShelleyCompatible (Leios crypto) era
+  , SL.EraForecast era
+  , LeiosCrypto crypto
+  ) =>
+  LedgerSupportsProtocol (ShelleyBlock (Leios crypto) era)
+  where
+  protocolLedgerView _cfg = praosProtocolLedgerView
+  ledgerViewForecastAt = praosLedgerViewForecastAt
