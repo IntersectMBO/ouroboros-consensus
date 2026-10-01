@@ -96,7 +96,7 @@ instance
   arbitrary = getHeader <$> arbitrary
 
 instance
-  (HashAlgorithm (SimpleHash c), Arbitrary ext, Serialise ext) =>
+  HashAlgorithm (SimpleHash c) =>
   Arbitrary (SimpleStdHeader c ext)
   where
   arbitrary =
@@ -119,18 +119,12 @@ instance Arbitrary (SomeBlockQuery (BlockQuery (SimpleBlock c ext))) where
 instance (SimpleCrypto c, Typeable ext) => Arbitrary (SomeResult (SimpleBlock c ext)) where
   arbitrary = SomeResult QueryLedgerTip <$> arbitrary
 
-instance
-  (SimpleCrypto c, Typeable ext) =>
-  Arbitrary (LedgerState (SimpleBlock c ext) EmptyMK)
-  where
+instance Arbitrary (LedgerState (SimpleBlock c ext) EmptyMK) where
   arbitrary =
     forgetLedgerTables
       <$> arbitrary @(LedgerState (SimpleBlock c ext) ValuesMK)
 
-instance
-  (SimpleCrypto c, Typeable ext) =>
-  Arbitrary (LedgerState (SimpleBlock c ext) ValuesMK)
-  where
+instance Arbitrary (LedgerState (SimpleBlock c ext) ValuesMK) where
   arbitrary =
     unstowLedgerTables
       . flip SimpleLedgerState emptyLedgerTables

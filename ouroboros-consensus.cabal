@@ -43,9 +43,7 @@ flag expensive-invariants
 
 common ghc-9.14
   if impl(ghc >=9.14)
-    ghc-options:
-      -Wno-redundant-constraints
-      -Wno-pattern-namespace-specifier
+    ghc-options: -Wno-pattern-namespace-specifier
 
 common common-lib
   import: ghc-9.14

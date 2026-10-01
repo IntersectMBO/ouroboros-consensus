@@ -94,7 +94,7 @@ data DBModel blk = DBModel
   }
   deriving Generic
 
-deriving instance (Show (CodecConfig blk), StandardHash blk, Show blk) => Show (DBModel blk)
+deriving instance (Show (CodecConfig blk), Show blk) => Show (DBModel blk)
 
 initDBModel :: ChunkInfo -> CodecConfig blk -> DBModel blk
 initDBModel chunkInfo codecConfig =

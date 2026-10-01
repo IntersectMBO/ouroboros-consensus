@@ -53,7 +53,6 @@ import Ouroboros.Consensus.Ledger.Inspect (LedgerEvent (..), LedgerUpdate, Ledge
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , ByteSize32 (..)
-  , GenTxId
   , HasTxId
   , LedgerSupportsMempool
   , TxMeasurePhase1Metrics (..)
@@ -983,7 +982,6 @@ calculateServedBlockLatest ServedBlock{..} _lc (TraceLabelPeer _ (TraceBlockFetc
 
 instance
   ( LogFormatting peer
-  , HasHeader blk
   , HasHeader (Header blk)
   , ConvertRawHash (Header blk)
   ) =>
@@ -1052,8 +1050,7 @@ instance MetaTrace (TraceGDDEvent peer blk) where
   allNamespaces = [Namespace [] ["TraceGDDEvent"]]
 
 instance
-  ( HasHeader blk
-  , HasHeader (Header blk)
+  ( HasHeader (Header blk)
   , ConvertRawHash (Header blk)
   ) =>
   LogFormatting (DensityBounds blk)
@@ -1178,7 +1175,6 @@ impliesMempoolTimeoutSoft = \case
 instance
   ( LogFormatting (ApplyTxErr blk)
   , LogFormatting (GenTx blk)
-  , Show (GenTxId blk)
   , ConvertTxId blk
   , LedgerSupportsMempool blk
   , ConvertRawHash blk
@@ -2215,7 +2211,6 @@ instance MetaTrace (TraceGsmEvent selection) where
 
 instance
   ( LogFormatting peer
-  , Show peer
   , ConvertRawHash blk
   ) =>
   LogFormatting (Jumping.TraceEventCsj peer blk)

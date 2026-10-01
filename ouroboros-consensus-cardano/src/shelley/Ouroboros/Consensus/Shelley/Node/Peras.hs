@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Shelley.Node.Peras () where
 
 import Cardano.Ledger.Api
 import Data.Typeable (Typeable)
-import Ouroboros.Consensus.Block.Abstract (ConvertRawHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , VoidPerasCert
@@ -225,9 +224,7 @@ instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto ConwayEra) whe
   getPerasCertInBlock _ = Right Nothing
 
 instance
-  ( Typeable proto
-  , ConvertRawHash (ShelleyBlock proto DijkstraEra)
-  ) =>
+  Typeable proto =>
   BlockSupportsPeras (ShelleyBlock proto DijkstraEra)
   where
   type PerasVote (ShelleyBlock proto DijkstraEra) = V1.PerasVote (ShelleyBlock proto DijkstraEra)

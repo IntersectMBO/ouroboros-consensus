@@ -479,10 +479,7 @@ deriving anyclass instance
   ) =>
   NoThunks (Ticked LedgerState (SimpleBlock c ext) TrackingMK)
 deriving instance
-  ( SimpleCrypto c
-  , Typeable ext
-  , Show (LedgerState (SimpleBlock c ext) mk)
-  ) =>
+  Show (LedgerState (SimpleBlock c ext) mk) =>
   Show (Ticked LedgerState (SimpleBlock c ext) mk)
 
 instance MockProtocolSpecific c ext => UpdateLedger (SimpleBlock c ext)

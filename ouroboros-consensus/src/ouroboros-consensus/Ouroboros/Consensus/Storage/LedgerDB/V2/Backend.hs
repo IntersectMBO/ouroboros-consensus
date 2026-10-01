@@ -123,4 +123,4 @@ data LedgerDBV2Trace
   | TraceLedgerTablesHandlePush EnclosingTimed
   | BackendTrace SomeBackendTrace
 
-deriving instance Show SomeBackendTrace => Show LedgerDBV2Trace
+deriving instance Show LedgerDBV2Trace

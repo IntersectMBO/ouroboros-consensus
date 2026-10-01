@@ -304,7 +304,6 @@ fromTrivial TrivialTxMeasurePhase2 = mempty
 
 translateHeaderHashByronToShelley ::
   forall c.
-  ShelleyCompatible (TPraos c) ShelleyEra =>
   Proxy c ->
   HeaderHash ByronBlock ->
   HeaderHash (ShelleyBlock (TPraos c) ShelleyEra)
@@ -323,7 +322,6 @@ translateHeaderHashByronToShelley _ h =
 
 translatePointByronToShelley ::
   forall c.
-  ShelleyCompatible (TPraos c) ShelleyEra =>
   Point ByronBlock ->
   WithOrigin BlockNo ->
   WithOrigin (ShelleyTip (TPraos c) ShelleyEra)
@@ -342,7 +340,6 @@ translatePointByronToShelley point bNo =
       error "translatePointByronToShelley: invalid Byron state"
 
 translateLedgerStateByronToShelleyWrapper ::
-  ShelleyCompatible (TPraos c) ShelleyEra =>
   RequiringBoth
     WrapLedgerConfig
     TranslateLedgerState

@@ -118,10 +118,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
-import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolver
-  , StateSupportsPerasEpochContext
-  )
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -203,7 +200,6 @@ deriving instance
 deriving instance
   ( LedgerSupportsProtocol blk
   , BlockSupportsPeras blk
-  , Show (PerasEpochContextResolver blk)
   , Show blk
   ) =>
   Show (Model blk)

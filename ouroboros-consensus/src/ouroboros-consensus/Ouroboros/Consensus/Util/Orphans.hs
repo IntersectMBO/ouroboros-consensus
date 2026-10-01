@@ -89,7 +89,6 @@ instance NoThunks (NoGenesis era) where
 instance
   ( NoThunks p
   , NoThunks v
-  , Ord p
   ) =>
   NoThunks (IntPSQ p v)
   where
