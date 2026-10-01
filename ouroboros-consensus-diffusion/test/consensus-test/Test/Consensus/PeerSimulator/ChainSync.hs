@@ -10,7 +10,10 @@ module Test.Consensus.PeerSimulator.ChainSync
   , runChainSyncServer
   ) where
 
-import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
+import Cardano.Network.NodeToNode.Version
+  ( NodeToNodeVersion (NodeToNodeV_16)
+  , PerasSupport (PerasSupported, PerasUnsupported)
+  )
 import Control.Exception (SomeException)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Tracer
@@ -197,6 +200,7 @@ runChainSyncClient
       (pure Syncing)
       peerId
       (maxBound :: NodeToNodeVersion)
+      (if maxBound >= NodeToNodeV_16 then PerasSupported else PerasUnsupported)
       lopBucketConfig
       csjConfig
       DiffusionPipeliningOn
