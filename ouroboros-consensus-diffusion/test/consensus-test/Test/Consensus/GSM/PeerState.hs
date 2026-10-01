@@ -7,7 +7,7 @@ import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
-import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State hiding (CaughtUp)
 import Ouroboros.Consensus.MiniProtocol.Util.Idling
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.GSM.PeerState
@@ -35,6 +35,8 @@ tests =
     "GSM.PeerState"
     [ testCase "certificate registration, idling, activity and removal" $
         runSimOrThrow lifecycle @?= [False, False, True, False, True, False, True, False]
+    , testCase "certificate progress is the source of its idling indication" $
+        runSimOrThrow progressIdling @?= [False, False, True, False, True, False]
     , testCase "certificate-first registration and connection-key isolation" $
         runSimOrThrow certificateFirst @?= [False, False, True, False]
     , testCase "ChainSync alone is sufficient only without negotiated Peras" $
@@ -107,6 +109,26 @@ lifecycle = do
     pure [registered, idle, active, idleAgain, chainActive, bothIdle]
   removed <- allIdle cs cert
   pure (missing : during ++ [removed])
+
+-- Both uninitialized clients and clients with an outstanding round prevent
+-- the peer from being idle, even when ChainSync is idle.
+progressIdling :: IOSim s [Bool]
+progressIdling = do
+  (cs, cert) <- newHandles
+  _ <- addChainSync cs 0 PerasSupported True
+  bracketObjectDiffusionInbound cert 0 $ \view -> do
+    initial <- allIdle cs cert
+    odisvSetNextOutstandingObjectId view 3
+    outstanding <- allIdle cs cert
+    idlingStart (odisvIdling view)
+    idle <- allIdle cs cert
+    odisvSetNextOutstandingObjectId view 5
+    active <- allIdle cs cert
+    idlingStart (odisvIdling view)
+    idleAgain <- allIdle cs cert
+    idlingStop (odisvIdling view)
+    uninitialized <- allIdle cs cert
+    pure [initial, outstanding, idle, active, idleAgain, uninitialized]
 
 certificateFirst :: IOSim s [Bool]
 certificateFirst = do

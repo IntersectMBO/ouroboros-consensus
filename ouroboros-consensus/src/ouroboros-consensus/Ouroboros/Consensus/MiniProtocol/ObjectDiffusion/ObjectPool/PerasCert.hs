@@ -43,7 +43,7 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
-import Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (..))
+import Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (..), throwIO)
 
 -- | TODO: replace by `Data.Map.take` as soon as we move to GHC 9.8
 takeAscMap :: Int -> Map k v -> Map k v
@@ -164,7 +164,19 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
             -- NOTE: we could combine the two 'traverse' operations into one in
             -- which case any validated cert would be immediately added no
             -- matter what is the validity of the other certs in the batch.
-            traverse_ (ChainDB.addPerasCertAsync chainDB . WithArrivalTime now) validatedCerts
+            -- Publication of the next outstanding round must not get ahead
+            -- of the certificates' effects in ChainDB. Enqueue the whole batch
+            -- before waiting, preserving batching in the chain-selection queue.
+            promises <- traverse (ChainDB.addPerasCertAsync chainDB . WithArrivalTime now) validatedCerts
+            traverse_
+              ( \promise -> do
+                  outcome <- ChainDB.waitPerasCertProcessed promise
+                  case outcome of
+                    ChainDB.PerasCertNotProcessedClosing ->
+                      throwIO (userError "ChainDB closed before certificate diffusion finished processing its batch")
+                    _ -> pure ()
+              )
+              promises
         , opwHasObject = do
             certIds <- ChainDB.getPerasCertIds chainDB
             pure $ \roundNo -> Set.member roundNo certIds

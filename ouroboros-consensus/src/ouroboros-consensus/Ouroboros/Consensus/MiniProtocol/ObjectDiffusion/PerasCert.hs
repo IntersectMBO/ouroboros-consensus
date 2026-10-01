@@ -9,14 +9,17 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
   , PerasCertDiffusionOutbound
   , PerasCertDiffusion
   , PerasCertDiffusionInboundState
+  , NextOutstandingRoundNumber (..)
+  , nextOutstandingRoundNumber
   , PerasCertDiffusionInboundHandleCollection
   ) where
 
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
-  ( ObjectDiffusionInboundHandleCollection
-  , ObjectDiffusionInboundState
+  ( NextOutstandingRoundNumber (..)
+  , ObjectDiffusionInboundHandleCollection
+  , ObjectDiffusionInboundState (nextOutstandingRoundNumber)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound

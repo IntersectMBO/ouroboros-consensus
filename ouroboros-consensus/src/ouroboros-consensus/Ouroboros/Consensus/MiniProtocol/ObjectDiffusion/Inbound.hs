@@ -41,7 +41,7 @@ import GHC.Generics (Generic)
 import Network.TypedProtocol.Core (N (Z), Nat (..), natToInt)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
-  ( ObjectDiffusionInboundStateView (odisvIdling)
+  ( ObjectDiffusionInboundStateView (odisvIdling, odisvSetNextOutstandingObjectId)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.Util.Idling qualified as Idling
@@ -172,7 +172,7 @@ objectDiffusionInbound ::
   ObjectPoolWriter objectId object m ->
   NodeToNodeVersion ->
   ControlMessageSTM m ->
-  ObjectDiffusionInboundStateView m ->
+  ObjectDiffusionInboundStateView objectId m ->
   ObjectDiffusionInboundPipelined objectId object m ()
 objectDiffusionInbound
   tracer
@@ -184,6 +184,13 @@ objectDiffusionInbound
     ObjectDiffusionInboundPipelined $!
       checkState initialInboundSt & go Zero
    where
+    -- Keep the previous round when there is no known next ID. Only the
+    -- server's await response establishes that its front has been reached.
+    publishOutstanding :: StrictSeq objectId -> m ()
+    publishOutstanding fifo = case fifo of
+      objectId Seq.:<| _ -> odisvSetNextOutstandingObjectId stateView objectId
+      Seq.Empty -> pure ()
+
     selectObjectsToRequest ::
       InboundSt objectId object ->
       STM m (RequestSelection objectId)
@@ -303,6 +310,7 @@ objectDiffusionInbound
       InboundSt objectId object ->
       InboundStIdle n objectId object m ()
     go n !st = WithEffect $ do
+      publishOutstanding (outstandingFifo st)
       -- Check whether we should continue engaging in the protocol.
       ctrlMsg <- atomically controlMessageSTM
       traceWith tracer $
@@ -438,6 +446,10 @@ objectDiffusionInbound
             ( ProtocolErrorObjectIdsAlreadyKnown @objectId @object $
                 Set.fromList (toList alreadyKnownIds)
             )
+
+        -- Publish received IDs before checking the pool: even if all of them
+        -- are already present, an empty FIFO is not proof of the server front.
+        publishOutstanding (outstandingFifo st <> Seq.fromList collectedIds)
 
         -- We extend our outstanding FIFO with the newly received objectIds by
         -- calling 'preAcknowledge' which will also pre-emptively acknowledge the

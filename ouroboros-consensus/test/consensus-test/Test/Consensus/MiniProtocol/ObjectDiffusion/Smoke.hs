@@ -13,6 +13,7 @@ module Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   ) where
 
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
+import Control.Monad (when)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import Control.ResourceRegistry (forkLinkedThread, withRegistry)
@@ -34,12 +35,14 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
   , objectDiffusionInbound
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound.State
-  ( ObjectDiffusionInboundHandle (..)
+  ( NextOutstandingRoundNumber (..)
+  , ObjectDiffusionInboundHandle (..)
   , ObjectDiffusionInboundHandleCollection (..)
   , ObjectDiffusionInboundState (..)
   , ObjectDiffusionInboundStateView
     ( ObjectDiffusionInboundStateView
     , odisvIdling
+    , odisvSetNextOutstandingObjectId
     )
   , bracketObjectDiffusionInbound
   , newObjectDiffusionInboundHandleCollection
@@ -110,6 +113,9 @@ tests =
     , testProperty
         "ObjectDiffusion skips and acknowledges obsolete IDs without penalizing the peer"
         prop_skip_too_old_object_ids
+    , testProperty
+        "certificate progress follows processing, validation and the server front"
+        prop_certificate_progress
     ]
 
 {-------------------------------------------------------------------------------
@@ -250,8 +256,7 @@ prop_object_after_await =
       counterexample "the server did not promptly report that it was awaiting objects" (isJust mAwait)
         .&&. counterexample "object added after await was not delivered promptly" (isJust mDelivered)
         .&&. counterexample "peers did not terminate after delivery" (isJust mTerminated)
-        .&&. inboundObjects
-        === [object]
+        .&&. inboundObjects === [object]
         .&&. counterexample
           "await must start idling and subsequent IDs must stop it"
           (take 2 idlingUpdates === [True, False])
@@ -287,6 +292,7 @@ prop_object_after_await =
             (readTVar controlMessage)
             ObjectDiffusionInboundStateView
               { odisvIdling = idling
+              , odisvSetNextOutstandingObjectId = \_ -> pure ()
               }
         outbound =
           objectDiffusionOutbound
@@ -353,8 +359,7 @@ prop_await_after_commit =
         .&&. counterexample "the inbound peer did not commit the object" (isJust mCommitted)
         .&&. counterexample "the server did not report caught up after the commit" (isJust mAwait)
         .&&. counterexample "peers did not terminate after the caught-up response" (isJust mTerminated)
-        .&&. inboundObjects
-        === [object]
+        .&&. inboundObjects === [object]
     Left err -> counterexample (show err) $ property False
  where
   object = SmokeObject (SmokeObjectId 42)
@@ -399,6 +404,7 @@ prop_await_after_commit =
             (readTVar controlMessage)
             ObjectDiffusionInboundStateView
               { odisvIdling = idling
+              , odisvSetNextOutstandingObjectId = \_ -> pure ()
               }
         outbound =
           objectDiffusionOutbound
@@ -501,6 +507,7 @@ prop_server_idle_after_stale_reads =
             (readTVar controlMessage)
             ObjectDiffusionInboundStateView
               { odisvIdling = idling
+              , odisvSetNextOutstandingObjectId = \_ -> pure ()
               }
         outbound =
           objectDiffusionOutbound
@@ -559,6 +566,7 @@ prop_request_eligible_prefix =
         , mDelivered
         , mTerminated
         , inboundObjects
+        , progressUpdates
         ) ->
         counterexample "the inbound peer did not block at the first ineligible object" (isJust mBlocked)
           .&&. counterexample "the inbound peer bypassed the blocked FIFO entry" (not $ isJust mBypassed)
@@ -568,8 +576,10 @@ prop_request_eligible_prefix =
           .&&. counterexample "the inbound peer did not resume when eligibility advanced" (isJust mUnblocked)
           .&&. counterexample "the remaining FIFO suffix was not delivered" (isJust mDelivered)
           .&&. counterexample "peers did not terminate after delivery" (isJust mTerminated)
-          .&&. inboundObjects
-          === objects
+          .&&. inboundObjects === objects
+          .&&. counterexample
+            "the published FIFO head did not advance to the blocked object"
+            (SmokeObjectId 3 `elem` progressUpdates)
     Left err -> counterexample (show err) $ property False
  where
   objects = SmokeObject . SmokeObjectId <$> [1, 3, 2]
@@ -585,6 +595,7 @@ prop_request_eligible_prefix =
       , Maybe ()
       , Maybe ()
       , [SmokeObject]
+      , [SmokeObjectId]
       )
   simulation = do
     let maxFifoSize = NumObjectsUnacknowledged 5
@@ -598,6 +609,7 @@ prop_request_eligible_prefix =
     blockedSeen <- uncheckedNewTVarM False
     unblockedSeen <- uncheckedNewTVarM False
     awaitSeen <- uncheckedNewTVarM False
+    progressUpdates <- uncheckedNewTVarM []
 
     let inboundTracer = mkTracer $ \event -> case event of
           TraceObjectDiffusionInboundBlocked (SmokeObjectId 3) ->
@@ -628,6 +640,8 @@ prop_request_eligible_prefix =
             (readTVar controlMessage)
             ObjectDiffusionInboundStateView
               { odisvIdling = idling
+              , odisvSetNextOutstandingObjectId =
+                  \objectId -> atomically $ modifyTVar progressUpdates (++ [objectId])
               }
         outbound =
           objectDiffusionOutbound
@@ -679,6 +693,7 @@ prop_request_eligible_prefix =
         check (n == 2)
 
       inboundObjects <- atomically $ readTVar inboundObjectsVar
+      progressUpdatesRead <- atomically $ readTVar progressUpdates
       pure
         ( mBlocked
         , mBypassed
@@ -687,27 +702,181 @@ prop_request_eligible_prefix =
         , mDelivered
         , mTerminated
         , inboundObjects
+        , progressUpdatesRead
         )
 
--- | Exercise the real certificate handle's idling state with a generic mock
--- pool, including registration and cleanup.
-withCertificateIdling ::
+-- | Exercise the real certificate state and handle lifecycle with a generic
+-- mock pool. The IDs represent round numbers, without needing real certificates
+-- to test the protocol's progress reporting.
+withCertificateProgress ::
   forall m a.
   IOLike m =>
-  (ObjectDiffusionInboundStateView m -> STM m Bool -> m a) ->
+  ( ObjectDiffusionInboundStateView SmokeObjectId m ->
+    STM m NextOutstandingRoundNumber ->
+    m a
+  ) ->
   m a
-withCertificateIdling body = do
+withCertificateProgress body = do
   handles <-
     atomically
       ( newObjectDiffusionInboundHandleCollection ::
           STM m (ObjectDiffusionInboundHandleCollection Int m TestBlock)
       )
   bracketObjectDiffusionInbound handles 0 $ \view -> do
-    let readIdling = do
+    let smokeView =
+          ObjectDiffusionInboundStateView
+            { odisvIdling = odisvIdling view
+            , odisvSetNextOutstandingObjectId = \(SmokeObjectId n) ->
+                odisvSetNextOutstandingObjectId view (fromIntegral n)
+            }
+        readProgress = do
           registered <- odihcMap handles
           state <- readTVar (odihState (registered Map.! 0))
-          pure (odIdling state)
-    body view readIdling
+          pure (nextOutstandingRoundNumber state)
+    body smokeView readProgress
+
+prop_certificate_progress :: Property
+prop_certificate_progress =
+  once $ case runSimStrictShutdown simulation of
+    Right (snapshots, terminated, inboundObjects) ->
+      snapshots
+        === map
+          Just
+          [ Uninitialized
+          , CaughtUp
+          , NextOutstandingRoundNumber 3
+          , NextOutstandingRoundNumber 5
+          , NextOutstandingRoundNumber 5
+          , CaughtUp
+          , CaughtUp
+          , NextOutstandingRoundNumber 7
+          , CaughtUp
+          , NextOutstandingRoundNumber 9
+          ]
+        .&&. counterexample "progress client did not terminate while blocked" (isJust terminated)
+        .&&. inboundObjects === (SmokeObject . SmokeObjectId <$> [1, 3, 5, 7])
+    Left err -> counterexample (show err) $ property False
+ where
+  simulation ::
+    forall s.
+    IOSim s ([Maybe NextOutstandingRoundNumber], Maybe (), [SmokeObject])
+  simulation = withCertificateProgress $ \stateView readProgress -> do
+    initial <- atomically readProgress
+    outboundPool@(SmokeObjectPool outboundVar) <- newObjectPool []
+    inboundPool@(SmokeObjectPool inboundVar) <- newObjectPool [SmokeObject (SmokeObjectId 1)]
+    controlMessage <- uncheckedNewTVarM Continue
+    upperBound <- uncheckedNewTVarM (5 :: Int)
+    processingStarted <- uncheckedNewTVarM False
+    allowProcessing <- uncheckedNewTVarM False
+    allowServerFront <- uncheckedNewTVarM True
+    blockedAt <- uncheckedNewTVarM Nothing
+    serverIdle <- uncheckedNewTVarM False
+    peersDone <- uncheckedNewTVarM (0 :: Int)
+
+    let poolReader = makeObjectPoolReader outboundPool
+        reader =
+          poolReader
+            { oprObjectsAfter = \cursor limit -> do
+                objects <- oprObjectsAfter poolReader cursor limit
+                case objects of
+                  Nothing -> readTVar allowServerFront >>= check
+                  Just _ -> pure ()
+                pure objects
+            }
+        poolWriter = makeObjectPoolWriter inboundPool
+        writer =
+          poolWriter
+            { opwAddObjects = \objects -> do
+                when (SmokeObject (SmokeObjectId 3) `elem` objects) $ do
+                  atomically $ writeTVar processingStarted True
+                  atomically $ readTVar allowProcessing >>= check
+                opwAddObjects poolWriter objects
+            , opwClassifyObjectId = do
+                upper <- readTVar upperBound
+                pure $ \(SmokeObjectId n) ->
+                  if n < upper then ObjectIdRequestable else ObjectIdTooNew
+            }
+        tracer = mkTracer $ \event -> case event of
+          TraceObjectDiffusionInboundBlocked objectId ->
+            atomically $ writeTVar blockedAt (Just objectId)
+          TraceObjectDiffusionInboundServerIdle ->
+            atomically $ writeTVar serverIdle True
+          _ -> pure ()
+        inbound =
+          objectDiffusionInbound tracer (5, 3, 1) writer nodeToNodeVersion (readTVar controlMessage) stateView
+        outbound = objectDiffusionOutbound nullTracer 5 1 reader nodeToNodeVersion
+        observe condition = timeout 3 $ atomically $ condition >> readProgress
+        caughtUp = observe $ do
+          progress <- readProgress
+          check (progress == CaughtUp)
+        trackDone action = action >> atomically (modifyTVar peersDone (+ 1))
+
+    withRegistry $ \reg -> do
+      (outboundChannel, inboundChannel) <- createConnectedChannels
+      _ <-
+        forkLinkedThread reg "certificate progress outbound" $
+          trackDone $
+            runPeer nullTracer codecObjectDiffusionId outboundChannel (objectDiffusionOutboundPeer outbound)
+      _ <-
+        forkLinkedThread reg "certificate progress inbound" $
+          trackDone $
+            runPipelinedPeer
+              nullTracer
+              codecObjectDiffusionId
+              inboundChannel
+              (objectDiffusionInboundPeerPipelined inbound)
+
+      initialAwait <- caughtUp
+      atomically $ do
+        writeTVar allowServerFront False
+        writeTVar outboundVar (SmokeObject . SmokeObjectId <$> [1, 3, 5])
+      processing <- observe $ readTVar processingStarted >>= check
+      atomically $ writeTVar allowProcessing True
+      blocked <- observe $ readTVar blockedAt >>= check . (== Just (SmokeObjectId 5))
+      atomically $ writeTVar upperBound 6
+      -- All objects are now processed, but the server has not established its
+      -- front. The conservative frontier must remain 5, rather than CaughtUp.
+      emptied <- observe $ do
+        objects <- readTVar inboundVar
+        check (objects == (SmokeObject . SmokeObjectId <$> [1, 3, 5]))
+      atomically $ do
+        writeTVar serverIdle False
+        writeTVar allowServerFront True
+      awaited <- caughtUp
+      timedOut <- observe $ readTVar serverIdle >>= check
+
+      -- Even an entirely already-present ID batch invalidates CaughtUp until
+      -- the peer confirms its front again. No object download is needed here.
+      atomically $ do
+        writeTVar allowServerFront False
+        modifyTVar inboundVar (++ [SmokeObject (SmokeObjectId 7)])
+        modifyTVar outboundVar (++ [SmokeObject (SmokeObjectId 7)])
+      alreadyPresent <- observe $ do
+        progress <- readProgress
+        check (progress == NextOutstandingRoundNumber 7)
+      atomically $ writeTVar allowServerFront True
+      awaitedAgain <- caughtUp
+
+      atomically $ modifyTVar outboundVar (++ [SmokeObject (SmokeObjectId 9)])
+      blockedAgain <- observe $ readTVar blockedAt >>= check . (== Just (SmokeObjectId 9))
+      atomically $ writeTVar controlMessage Terminate
+      terminated <- timeout 3 $ atomically $ readTVar peersDone >>= check . (== 2)
+      objects <- atomically $ readTVar inboundVar
+      pure
+        ( Just initial
+            : [ initialAwait
+              , processing
+              , blocked
+              , emptied
+              , awaited
+              , timedOut
+              , alreadyPresent
+              , awaitedAgain
+              , blockedAgain
+              ]
+        , terminated
+        , objects
+        )
 
 -- | Waiting for local validation state must not delay graceful termination.
 prop_terminate_while_blocked :: Property
@@ -716,8 +885,7 @@ prop_terminate_while_blocked =
     Right (mBlocked, mTerminated, inboundObjects) ->
       counterexample "the inbound peer did not enter the locally blocked state" (isJust mBlocked)
         .&&. counterexample "peers did not terminate from the locally blocked state" (isJust mTerminated)
-        .&&. inboundObjects
-        === []
+        .&&. inboundObjects === []
     Left err -> counterexample (show err) $ property False
  where
   object = SmokeObject (SmokeObjectId 3)
@@ -750,6 +918,7 @@ prop_terminate_while_blocked =
             (readTVar controlMessage)
             ObjectDiffusionInboundStateView
               { odisvIdling = Idling.noIdling
+              , odisvSetNextOutstandingObjectId = \_ -> pure ()
               }
         outbound =
           objectDiffusionOutbound
@@ -809,8 +978,7 @@ prop_skip_too_old_object_ids =
       counterexample "the client did not reach the initially blocked ID" (isJust blocked)
         .&&. counterexample "obsolete IDs prevented reaching the server front" (isJust caughtUp)
         .&&. counterexample "the peers failed to terminate normally" (isJust terminated)
-        .&&. inboundObjects
-        === (SmokeObject . SmokeObjectId <$> filter (>= 3) objectIds)
+        .&&. inboundObjects === (SmokeObject . SmokeObjectId <$> filter (>= 3) objectIds)
     Left err -> counterexample (show err) $ property False
 
   simulation ::
@@ -818,7 +986,7 @@ prop_skip_too_old_object_ids =
     Bool ->
     [Int] ->
     IOSim s (Maybe (), Maybe (), Maybe (), [SmokeObject])
-  simulation initiallyBlocked objectIds = withCertificateIdling $ \stateView readIdling -> do
+  simulation initiallyBlocked objectIds = withCertificateProgress $ \stateView readProgress -> do
     outboundPool <- newObjectPool (SmokeObject . SmokeObjectId <$> objectIds)
     inboundPool@(SmokeObjectPool inboundObjectsVar) <- newObjectPool []
     controlMessage <- uncheckedNewTVarM Continue
@@ -866,7 +1034,8 @@ prop_skip_too_old_object_ids =
           else pure (Just ())
       atomically $ writeTVar contextAdvanced True
       caughtUp <- timeout 1 $ atomically $ do
-        readIdling >>= check
+        progress <- readProgress
+        check (progress == CaughtUp)
       atomically $ writeTVar controlMessage Terminate
       terminated <- timeout 3 $ atomically $ readTVar peersDone >>= check . (== 2)
       inboundObjects <- atomically $ readTVar inboundObjectsVar
@@ -936,6 +1105,7 @@ prop_smoke_object_diffusion
               (readTVar controlMessage)
               ObjectDiffusionInboundStateView
                 { odisvIdling = Idling.noIdling
+                , odisvSetNextOutstandingObjectId = \_ -> pure ()
                 }
 
           outbound =
