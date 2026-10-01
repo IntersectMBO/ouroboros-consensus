@@ -1,23 +1,88 @@
-module DBSynthesizer.Parsers (parseCommandLine) where
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+
+module DBSynthesizer.Parsers
+  ( TxGenSource (..)
+  , parseCommandLine
+  ) where
 
 import Cardano.Tools.DBSynthesizer.Types
 import Data.Word (Word64)
 import Options.Applicative as Opt
 import Ouroboros.Consensus.Block.Abstract (SlotNo (..))
+import System.Exit (die)
 
-parseCommandLine :: IO (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
-parseCommandLine =
-  Opt.customExecParser p opts
+parseCommandLine ::
+  IO (NodeFilePaths, NodeCredentials, DBSynthesizerOptions, TxGenSource)
+parseCommandLine = do
+  (paths, creds, opts, flags) <- Opt.customExecParser p info'
+  (,,,) paths creds opts <$> resolveTxGen flags
  where
   p = Opt.prefs Opt.showHelpOnEmpty
-  opts = Opt.info parserCommandLine mempty
+  info' = Opt.info parserCommandLine mempty
 
-parserCommandLine :: Parser (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
+parserCommandLine ::
+  Parser (NodeFilePaths, NodeCredentials, DBSynthesizerOptions, TxGenFlags)
 parserCommandLine =
-  (,,)
+  (,,,)
     <$> parseNodeFilePaths
     <*> parseNodeCredentials
     <*> parseDBSynthesizerOptions
+    <*> parseTxGenFlags
+
+-- | Which generator to run, carrying what that generator needs.
+--
+-- @--tx-generator file@ without @--tx-file@ does not survive
+-- 'parseCommandLine', so every value of this type names a generator that can
+-- actually run and the caller has nothing left to check.
+data TxGenSource
+  = -- | 'Cardano.Tools.DBSynthesizer.TxGen.Respend.mkRespendTxGen': a chain of
+    -- 1-in\/1-out transactions, each spending the output the one before it
+    -- made. It takes its payment key from @--payment-signing-key@, and forges
+    -- empty blocks without one.
+    FromRespend
+  | -- | 'Cardano.Tools.DBSynthesizer.TxGen.File.mkFileTxGen': replays the
+    -- stream of transactions this file holds. The file has to be complete
+    -- before the run starts, and if the chain it is replayed onto announces
+    -- endorser blocks, the forger's votes have to certify them.
+    FromFile !FilePath
+
+-- | The flags as given, before 'resolveTxGen' rules out the combination that
+-- names no runnable generator.
+data TxGenFlags = TxGenFlags
+  { tgfGenerator :: !TxGenName
+  , tgfTxFile :: !(Maybe FilePath)
+  }
+
+-- | The name @--tx-generator@ takes.
+data TxGenName = NameRespend | NameFile
+
+parseTxGenFlags :: Parser TxGenFlags
+parseTxGenFlags =
+  TxGenFlags
+    <$> parseTxGenName
+    <*> optional parseTxFile
+
+resolveTxGen :: TxGenFlags -> IO TxGenSource
+resolveTxGen TxGenFlags{tgfGenerator, tgfTxFile} =
+  case tgfGenerator of
+    NameRespend -> pure FromRespend
+    NameFile -> case tgfTxFile of
+      Just path -> pure (FromFile path)
+      Nothing ->
+        die
+          "db-synthesizer: --tx-generator file needs --tx-file, the transaction \
+          \file to replay."
+
+parseTxFile :: Parser FilePath
+parseTxFile =
+  strOption
+    ( long "tx-file"
+        <> metavar "FILE"
+        <> help
+          "Path of the transaction file that --tx-generator file replays. Ignored by the other generators."
+        <> completer (bashCompleter "file")
+    )
 
 parseNodeFilePaths :: Parser NodeFilePaths
 parseNodeFilePaths =
@@ -124,6 +189,27 @@ parseBulkFilePath =
           "Path to the bulk credentials file (a JSON file containing an array of arrays containing 3 TextEnvelope objects for the opcert, VRF Signing key, KES signing key)"
         <> completer (bashCompleter "file")
     )
+
+parseTxGenName :: Parser TxGenName
+parseTxGenName =
+  option
+    (eitherReader reader)
+    ( long "tx-generator"
+        <> metavar "NAME"
+        <> value NameRespend
+        <> showDefaultWith name
+        <> help
+          "Which transaction generator fills the blocks. \"respend\" chains 1-in/1-out transactions off a single output, so each one spends what the one before it made; it needs --payment-signing-key. \"file\" replays the transactions in --tx-file, which is written ahead of time so that no transaction spends an output of its own block; it needs a Shelley genesis whose initialFunds set up enough outputs to fill a block and a --shelley-bls-key that certifies the endorser blocks it announces, but no payment key."
+    )
+ where
+  reader = \case
+    "respend" -> Right NameRespend
+    "file" -> Right NameFile
+    other ->
+      Left $ "expected \"respend\" or \"file\", not " ++ show other
+  name = \case
+    NameRespend -> "respend"
+    NameFile -> "file"
 
 parseSlotLimit :: Parser SlotNo
 parseSlotLimit =

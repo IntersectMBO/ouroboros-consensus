@@ -5,10 +5,14 @@ import qualified Cardano.Tools.DBAnalyser.Run as DBAnalyser
 import Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
+import Cardano.Tools.DBSynthesizer.Test.QueueFixture (writeQueueFixture)
+import Cardano.Tools.DBSynthesizer.Test.QueueTxFile (writeQueueTxs)
+import Cardano.Tools.DBSynthesizer.TxGen.File (mkFileTxGen)
 import Cardano.Tools.DBSynthesizer.Types
 import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
 import Cardano.Tools.LeiosDb (LeiosDbSource (..))
+import Control.Tracer (nullTracer)
 import Data.String (fromString)
 import LeiosDemoDb
   ( LeiosDbReader (scanEbPoints)
@@ -21,6 +25,8 @@ import LeiosDemoDb
 import LeiosDemoTypes (EbHash (..), LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
+import System.FilePath (takeDirectory, (</>))
+import System.IO.Temp (withSystemTempDirectory)
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -194,11 +200,76 @@ blockCountTest logStep = do
 
   mkEbHash c = MkEbHash (fromString (replicate 32 c))
 
+-- | Replay a stream of transactions from a file and certify what it announces.
+--
+-- Everything is built here rather than committed: 'writeQueueFixture' derives a
+-- genesis with enough outputs to fill a block from the one the test above uses,
+-- and both keys it writes come from fixed seeds, so the fixture is the same on
+-- every run. Committing it would mean committing a signing key and two thousand
+-- lines of genesis for the sake of a file this makes in a moment.
+--
+-- The assertion that matters is the last one. A run that announces endorser
+-- blocks and certifies none still forges blocks and still exits zero -- that is
+-- what a reader of 'resultForged' alone would call a pass -- so the test asks
+-- the LeiosDb what is actually in it.
+fileTxGenTest :: (String -> IO ()) -> Assertion
+fileTxGenTest logStep =
+  withSystemTempDirectory "queue" $ \tmp -> do
+    let fixture = tmp </> "config"
+        stream = tmp </> "txs.cbor"
+        db = tmp </> "chaindb"
+
+    logStep "building the fixture"
+    writeQueueFixture (takeDirectory nodeConfig) fixture 1200
+
+    logStep "writing the transaction stream"
+    -- Ten blocks alternate to five that announce an endorser block, and each of
+    -- those takes a block's worth for the ranking block and another for the
+    -- endorser block. At the 246 of this fixture's blocks that is ~2460; the
+    -- rest is margin, since running the stream dry is a hard failure.
+    writeQueueTxs (fixture </> "shelley-genesis.json") (fixture </> "payment.skey") stream 4000
+
+    logStep "replaying it"
+    genTxs <-
+      either assertFailure pure =<< mkFileTxGen stream
+    (options, protocol) <-
+      either assertFailure pure
+        =<< DBSynthesizer.initialize
+          NodeFilePaths
+            { nfpConfig = fixture </> "config.json"
+            , nfpChainDB = db
+            , nfpPaymentKey = Nothing
+            }
+          NodeCredentials
+            { credCertFile = Nothing
+            , credVRFFile = Nothing
+            , credKESFile = Nothing
+            , credBulkFile = Just (fixture </> "bulk-creds-k2.json")
+            , credBlsFile = Just (fixture </> "bls.skey")
+            }
+          DBSynthesizerOptions
+            { synthLimit = ForgeLimitBlock 10
+            , synthOpenMode = OpenCreateForce
+            }
+    result <- DBSynthesizer.synthesize genTxs options protocol
+    resultForged result > 0 @? "no blocks were forged from the stream"
+
+    logStep "checking the endorser blocks were certified"
+    ebs <-
+      withLeiosDBSQLite
+        nullTracer
+        (db </> "leios.vol.db")
+        (db </> "leios.imm.db")
+        (\h -> withReader h scanEbPoints)
+    not (null ebs)
+      @? "the stream was replayed but no endorser block reached the LeiosDb"
+
 tests :: TestTree
 tests =
   testGroup
     "cardano-tools"
     [ testCaseSteps "synthesize, analyse and truncate\n" blockCountTest
+    , testCaseSteps "replay a transaction stream from a file\n" fileTxGenTest
     , Test.Cardano.Tools.Headers.tests
     ]
 

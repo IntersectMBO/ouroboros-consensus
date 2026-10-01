@@ -1970,7 +1970,11 @@ library unstable-cardano-tools
     Cardano.Tools.DBSynthesizer.Forging
     Cardano.Tools.DBSynthesizer.Orphans
     Cardano.Tools.DBSynthesizer.Run
+    Cardano.Tools.DBSynthesizer.Test.QueueFixture
+    Cardano.Tools.DBSynthesizer.Test.QueueTxFile
     Cardano.Tools.DBSynthesizer.TxGen
+    Cardano.Tools.DBSynthesizer.TxGen.File
+    Cardano.Tools.DBSynthesizer.TxGen.Respend
     Cardano.Tools.DBSynthesizer.Types
     Cardano.Tools.DBTruncater.Run
     Cardano.Tools.DBTruncater.Types
@@ -2001,6 +2005,7 @@ library unstable-cardano-tools
   build-depends:
     QuickCheck,
     aeson,
+    aeson-pretty,
     base >=4.14 && <4.23,
     base16-bytestring,
     bytestring,
@@ -2008,6 +2013,7 @@ library unstable-cardano-tools
     cardano-crypto-class,
     cardano-crypto-leios,
     cardano-crypto-wrapper,
+    cardano-data,
     cardano-diffusion:cardano-diffusion,
     cardano-git-rev ^>=0.2.1,
     cardano-ledger-allegra,
@@ -2239,10 +2245,13 @@ test-suite tools-test
     QuickCheck,
     aeson,
     base >=4.14 && <4.23,
+    contra-tracer,
+    filepath,
     ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
     tasty,
     tasty-hunit,
     tasty-quickcheck,
+    temporary,
     text,
     unstable-cardano-tools,
 
