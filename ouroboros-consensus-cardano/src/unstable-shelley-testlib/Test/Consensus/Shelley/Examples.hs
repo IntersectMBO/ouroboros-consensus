@@ -137,6 +137,7 @@ fromShelleyLedgerExamples
         , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
+        , ("GetCBOR", SomeBlockQuery (GetCBOR GetLedgerTip))
         ]
     results =
       labelled
@@ -279,6 +280,7 @@ fromShelleyLedgerExamplesPolyPraos
         , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
+        , ("GetCBOR", SomeBlockQuery (GetCBOR GetLedgerTip))
         ]
     results =
       labelled
