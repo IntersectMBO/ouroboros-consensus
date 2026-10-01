@@ -469,11 +469,17 @@ assignPeer env mbCurrentSlot isBig peerId offers acc =
 
   classify point offerKind (acc1, dec1, drops) =
     case Map.lookup ebHash (Leios.ebState acc1) of
-      Nothing ->
-        -- We are no longer tracking this EB (pruned off below the
-        -- imm-tip). This is an ephemeral state, mid prune, but go ahead and
-        -- prune it now.
-        pruneThisOffer
+      Nothing
+        | point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot acc1 ->
+            -- We are no longer tracking this EB (pruned off below the
+            -- imm-tip). This is an ephemeral state, mid prune, but go ahead and
+            -- prune it now.
+            pruneThisOffer
+        | otherwise ->
+            -- Not announced yet: an offer alone never makes an EB fetchable
+            -- (see 'recordEbBodyOffer'). Keep the offer, so this peer is asked
+            -- once the announcement arrives.
+            (acc1, dec1, drops)
       Just (Leios.MkEbState slot _onset fetchState) -> case (fetchState, offerKind) of
         (Leios.BodyImminent, _) ->
           -- Our forge is producing this EB, so we hold the whole datum (even
@@ -798,8 +804,7 @@ data LeiosBlockTxsSource pid
 
 -- | The age of an EB on arrival: the wall-clock elapsed from its recorded oldest
 -- announcement-slot onset (see 'Leios.ebStateOnset') to @now@, or 'Nothing' if
--- the EB was never heralded by an announcement (an offer-only or self-forged
--- body).
+-- the EB has no known announcement onset (e.g. a self-forged body).
 ebPointAge :: RelativeTime -> Map EbHash Leios.EbState -> LeiosPoint -> Maybe NominalDiffTime
 ebPointAge now ebStates p = do
   st <- Map.lookup p.pointEbHash ebStates
@@ -847,13 +852,6 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
     -- ever reachable for a locally-forged EB).
     ForgedBlock{} -> pure ()
     ReceivedBlockFrom{} -> do
-      -- FIXME: 'ebBytesSize' here is the size we recorded from the peer
-      -- offer at 'MsgLeiosBlockOffer' time (carried through the request),
-      -- not the chain-authoritative 'encodeLeiosEbSize' from the parent
-      -- RB's 'headerLeiosAnnouncement'. EB announcements are not yet
-      -- implemented; once they are, validate against the announced size
-      -- so that a peer cannot poison this check by sending a bad-size
-      -- offer first.
       when (ebBytesSize' /= ebBytesSize) $ do
         invalidReply $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
       let ebHash' = hashLeiosEb eb
@@ -992,20 +990,14 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   -- Last: ingest the txs we found in our own mempool (they were removed from the
   -- fetch job set above)
-  when shouldPersist $
-    traceException tracer TraceLeiosPeerDbException $ do
-      -- FIXME: once EB announcements are wired in the point MUST already
-      -- be present (announcement handling inserts it); until then insert
-      -- it idempotently as a stop-gap and trace a warning.
-      traceWith ktracer $ TraceLeiosBlockPointMissing point
-      pointWritten <- writeEbPoint writer point ebBytesSize
+  traceException tracer TraceLeiosPeerDbException $ do
+    when shouldPersist $ do
       bodyWritten <- writeEbBody writer point eb
       -- Wait for the writes to complete (and trace) synchronously when we are
       -- forging: need to ensure the data is written before advertising it.
       -- TODO: do we really? Can we just optimistically continue and risk a peer
       -- disconnect if we can't serve what we offer "in time"?
       let traceAcquired = do
-            await pointWritten
             completedByBody <- await bodyWritten
             st <- Leios.ebState <$> MVar.readMVar outstandingVar
             traceWith ktracer $ TraceLeiosBlockAcquired point (ebPointAge now st point)
@@ -1398,62 +1390,25 @@ data WhetherApplied = Applied | Unapplied
 
 -----
 
--- | Record an offered EB body: mark it as something to fetch and mark the peer
--- as a serving candidate, then wake the fetch logic. Shared by the explicit
--- 'MsgLeiosBlockOffer' handler and by the CertRB roll-forward path in
--- 'checkMsgRollForwardForLeiosOffers'.
+-- | Record an offered EB body: mark the peer as a serving candidate, then wake
+-- the fetch logic. Shared by the explicit 'MsgLeiosBlockOffer' handler and by
+-- the CertRB roll-forward path in 'checkMsgRollForwardForLeiosOffers'.
 --
--- The body is /not/ added to 'missingEbBodies' if it is: too old (older than has already been pruned), already held (per
--- 'ebStateHasBody' — the only "do we have it" test now, read in-lock with no
--- cache lookup), already listed under this content hash, or zero-sized. Unless it
--- is too old or zero-sized, the offer slot is folded into 'ebState' regardless.
--- The offered size is not chain-authoritative (there are no EB announcements
--- yet), so refusing to overwrite an existing same-hash entry makes the first-seen
--- (slot, size) win, and a zero-sized offer — which no honest forger produces — is
--- dropped. The per-peer offerings are updated regardless, so the peer stays a
--- serving candidate.
+-- An offer only says who can serve a body, never what to fetch: only
+-- announcements (and actual data received) may change the LeiosDb, and a body
+-- can only be written for a point an announcement registered. So an offer
+-- neither lists the body in 'missingEbBodies' nor touches 'ebState' (whose
+-- greatest slot names the point we request). The fetch logic keeps an offer for
+-- a not-yet-announced EB until its announcement makes it fetchable.
 recordEbBodyOffer ::
   IOLike m =>
-  ( MVar m (LeiosOutstanding pid)
-  , MVar m ()
-  ) ->
+  MVar m () ->
   LeiosPeerVars m ->
   AlsoOfferedTxsClosure ->
-  -- | The offered EB: its point and on-the-wire body size.
-  (LeiosPoint, BytesSize) ->
+  -- | The offered EB's point.
+  LeiosPoint ->
   m ()
-recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebBytesSize) = do
-  let MkLeiosPoint ebSlot ebHash = point
-  MVar.modifyMVar_ outstandingVar $ \outstanding ->
-    pure $!
-      let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
-          malformed = ebBytesSize == 0 -- malformed offer
-          -- Offers are currently trusted, so this is evidence that the EB is
-          -- announced in this slot; fold it into 'ebState' regardless of whether
-          -- we go on to list the body for fetching.
-          --
-          -- TODO stop that, once offers are no longer trusted
-          outstanding'
-            | tooOld || malformed = outstanding
-            | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
-          skip =
-            tooOld
-              || malformed
-              || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
-              || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
-       in if skip
-            then outstanding'
-            else
-              outstanding'
-                { Leios.missingEbBodies =
-                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
-                , Leios.reverseSlotIndexByEbHash =
-                    Map.insertWith
-                      NESet.union
-                      ebHash
-                      (NESet.singleton ebSlot)
-                      (Leios.reverseSlotIndexByEbHash outstanding')
-                }
+recordEbBodyOffer readyVar peerVars offeredClosure point = do
   MVar.modifyMVar_ (Leios.offerings peerVars) $ \offers ->
     -- store the offer as-is; 'mergeOffer' keeps the closure if either offer had it
     pure $! Map.insertWith Leios.mergeOffer point offeredClosure offers
@@ -1469,19 +1424,17 @@ recordEbBodyOffer (outstandingVar, readyVar) peerVars offeredClosure (point, ebB
 -- would overwrite. A no-op otherwise. The announcement-side handling of the same
 -- header is separate; see the ChainSync client's 'leiosMsgRollForwardCallback'.
 checkMsgRollForwardForLeiosOffers ::
-  forall blk pid m.
+  forall blk m.
   (IOLike m, ResolveLeiosBlock blk) =>
-  ( MVar m (LeiosOutstanding pid)
-  , MVar m ()
-  ) ->
+  MVar m () ->
   LeiosPeerVars m ->
   Header blk ->
   ChainDepState (BlockProtocol blk) ->
   m ()
-checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
+checkMsgRollForwardForLeiosOffers readyVar peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
-    forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
-      recordEbBodyOffer kernelVars peerVars TxsClosureAlsoOffered announcement
+    forM_ (protocolStateLeiosAnnouncement @blk cds) $ \(point, _ebBytesSize) ->
+      recordEbBodyOffer readyVar peerVars TxsClosureAlsoOffered point
 
 -----
 
@@ -1541,6 +1494,7 @@ processAnnouncementCentrally ::
   MVar m (Announcements.CentralState m peer (AnnouncingHeader blk)) ->
   (MVar m (LeiosOutstanding pid), MVar m ()) ->
   LeiosTxCache m () () SerializedEbBody ->
+  LeiosDbWriter m ->
   Maybe peer ->
   AnnouncementSource ->
   ShouldRelay ->
@@ -1558,6 +1512,7 @@ processAnnouncementCentrally
   centralVar
   kernelVars
   txCache
+  writer
   source
   provenance
   shouldRelay
@@ -1590,10 +1545,20 @@ processAnnouncementCentrally
     -- The announced EB's slot is the announcing header's own slot (see
     -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
     point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
-    recordAnnounced = recordAnnouncedEb kernelVars onset (point, Leios.announcementEbBodySize fields)
-    markForged =
+    recordAnnounced =
+      recordAnnouncedEb
+        kernelTracer
+        writer
+        kernelVars
+        onset
+        age
+        (point, Leios.announcementEbBodySize fields)
+    markForged = do
       MVar.modifyMVar_ (fst kernelVars) $
         pure . Leios.markBodyImminent point.pointEbHash point.pointSlotNo
+      -- Awaited on a linked thread, as 'recordAnnouncedEb' does.
+      pointWritten <- writeEbPoint writer point (Leios.announcementEbBodySize fields)
+      link =<< async (void (await pointWritten))
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
@@ -1713,32 +1678,52 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
               Right (FreshOCIN, v) -> VerdictProcess (shouldRelay, onset, age, v)
 
 -- | Record a validated, newly-announced EB body as missing, unless its already
--- pruned\/tracked\/acquired
+-- pruned\/tracked\/acquired; and, unless pruned, register its point in the
+-- LeiosDb
+--
+-- Traces 'TraceLeiosBlockTxsAcquired' if that registration completed the point
+-- (its body already held under another point sharing its EbHash, so it is never
+-- fetched). Awaited on a thread linked to the caller's, as the caller may hold
+-- a lock (see 'processAnnouncementCentrally'), so a failed write ends the
+-- caller.
 recordAnnouncedEb ::
   IOLike m =>
+  Tracer m TraceLeiosKernel ->
+  LeiosDbWriter m ->
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
   -- | This announcement slot's wall-clock onset, if known.
   StrictMaybe RelativeTime ->
+  -- | How late the announcement was, if known.
+  Maybe NominalDiffTime ->
   (LeiosPoint, BytesSize) ->
   m ()
-recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
-  changed <- MVar.modifyMVar outstandingVar (pure . upd)
+recordAnnouncedEb ktracer writer (outstandingVar, readyVar) onset age (point, ebBytesSize) = do
+  (changed, shouldRegister) <- MVar.modifyMVar outstandingVar (pure . upd)
+  when shouldRegister $ do
+    pointWritten <- writeEbPoint writer point ebBytesSize
+    let traceAcquired = do
+          completed <- await pointWritten
+          when completed $ traceWith ktracer $ TraceLeiosBlockTxsAcquired point age
+    link =<< async traceAcquired
   when changed $ void $ MVar.tryPutMVar readyVar ()
  where
   MkLeiosPoint ebSlot ebHash = point
 
-  -- The same in-lock guard as 'recordEbBodyOffer' (too old / already held /
-  -- already listed). No cache lookup: 'ebState' is authoritative here.
+  -- The in-lock guard (too old / already held / already listed). No cache
+  -- lookup: 'ebState' is authoritative here.
   upd outstanding =
     let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
         !outstanding'
           | tooOld = outstanding
           | otherwise = Leios.recordMaxAnnouncementSlot ebHash ebSlot onset outstanding
+        alreadyHeld =
+          not tooOld
+            && maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
         skip =
           tooOld
-            || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
+            || alreadyHeld
             || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
         !outstanding''
           | skip = outstanding'
@@ -1753,7 +1738,7 @@ recordAnnouncedEb (outstandingVar, readyVar) onset (point, ebBytesSize) = do
                       (NESet.singleton ebSlot)
                       (Leios.reverseSlotIndexByEbHash outstanding')
                 }
-     in (outstanding'', not skip)
+     in (outstanding'', (not skip, not tooOld))
 
 prunePeerStateToImmTip ::
   LedgerSupportsProtocol blk =>
@@ -1860,6 +1845,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedE
     centralVar
     kv
     txCache
+    writer
     Nothing
     ForgedLocally
     Announcements.DoRelay
