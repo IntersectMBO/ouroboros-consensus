@@ -62,8 +62,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: 01492bb9d2078fc94b237a125b751c7769ae9a03
-  --sha256: sha256-ZOzDDmxrRyXdwOmh8mLTTPgq7mHnMWowqv6Jz/L+Fik=
+  tag: 8203c5180a74e6508a25f35247475f243588999a
+  --sha256: sha256-j+S87ETVxRUkWMuLv8nOVIR7on/7ML+qIEeWYDH6IJY=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -86,10 +86,3 @@ source-repository-package
     libs/non-integral
     libs/small-steps
     libs/vector-map
-
-source-repository-package
-  type: git
-  location: https://github.com/intersectmbo/cardano-base.git
-  --sha256: sha256-WUBluY6UqvBkS5cNsJnKMOaW+1dTfL3mg8iq/kVPV0o=
-  tag: d92e2e3841eaad354c5e1ef77b458b347f471271
-  subdir: cardano-crypto-leios
