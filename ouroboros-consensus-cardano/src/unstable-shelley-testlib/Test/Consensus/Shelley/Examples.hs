@@ -23,9 +23,12 @@ module Test.Consensus.Shelley.Examples
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Block as SL
+import qualified Cardano.Ledger.Conway.Governance as CG
+import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Core
 import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL
+import Cardano.Ledger.State (EraGov, unPoolDistr)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import Cardano.Protocol.Praos.BlockHeader
@@ -37,6 +40,9 @@ import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Time (mkSlotLength)
 import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
@@ -78,7 +84,9 @@ import Test.Cardano.Protocol.TPraos.Examples
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Examples
   ( Examples (..)
+  , Labelled
   , labelled
+  , topLevelQueries
   , unlabelled
   )
 import Test.Util.Serialisation.SomeResult (SomeResult (..))
@@ -90,11 +98,99 @@ import Test.Util.Serialisation.SomeResult (SomeResult (..))
 codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
+{-------------------------------------------------------------------------------
+  Queries
+
+  We list every constructor of 'BlockQuery', because the CBOR tag of each one is
+  ours and a golden file is the only thing that catches a tag being reordered or
+  reassigned. The arguments are mostly empty: the tag and the shape of the
+  argument are what we want to pin, and the example ledger state does not give
+  us interesting addresses or transaction inputs.
+-------------------------------------------------------------------------------}
+
+-- | The queries an era adds to 'eraIndependentQueries'.
+--
+-- The argument is the pool ids that the example ledger state knows about, for
+-- the queries that take one.
+type EraQueries proto era =
+  [SL.KeyHash SL.StakePool] ->
+  Labelled (SomeBlockQuery (BlockQuery (ShelleyBlock proto era)))
+
+-- | For the eras before Conway, which add no queries of their own.
+noEraQueries :: EraQueries proto era
+noEraQueries _ = mempty
+
+-- | The queries that every Shelley-based era supports.
+eraIndependentQueries ::
+  EraGov era =>
+  -- | Credentials to ask the non-myopic member rewards for
+  Set (Either SL.Coin (SL.Credential SL.Staking)) ->
+  Labelled (SomeBlockQuery (BlockQuery (ShelleyBlock proto era)))
+eraIndependentQueries rewardsCredentials =
+  labelled
+    [ ("GetLedgerTip", SomeBlockQuery GetLedgerTip)
+    , ("GetEpochNo", SomeBlockQuery GetEpochNo)
+    , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards rewardsCredentials)
+    , ("GetCurrentPParams", SomeBlockQuery GetCurrentPParams)
+    , ("GetUTxOByAddress", SomeBlockQuery $ GetUTxOByAddress Set.empty)
+    , ("GetUTxOWhole", SomeBlockQuery GetUTxOWhole)
+    , ("DebugEpochState", SomeBlockQuery DebugEpochState)
+    , ("GetCBOR", SomeBlockQuery (GetCBOR GetLedgerTip))
+    ,
+      ( "GetFilteredDelegationsAndRewardAccounts"
+      , SomeBlockQuery $ GetFilteredDelegationsAndRewardAccounts Set.empty
+      )
+    , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
+    , ("DebugNewEpochState", SomeBlockQuery DebugNewEpochState)
+    , ("DebugChainDepState", SomeBlockQuery DebugChainDepState)
+    , ("GetRewardProvenance", SomeBlockQuery GetRewardProvenance)
+    , ("GetUTxOByTxIn", SomeBlockQuery $ GetUTxOByTxIn Set.empty)
+    , ("GetStakePools", SomeBlockQuery GetStakePools)
+    , ("GetStakePoolParams", SomeBlockQuery $ GetStakePoolParams Set.empty)
+    , ("GetRewardInfoPools", SomeBlockQuery GetRewardInfoPools)
+    , ("GetPoolState", SomeBlockQuery $ GetPoolState Nothing)
+    , ("GetStakeSnapshots", SomeBlockQuery $ GetStakeSnapshots Nothing)
+    , ("GetStakeDelegDeposits", SomeBlockQuery $ GetStakeDelegDeposits Set.empty)
+    , ("GetGovState", SomeBlockQuery GetGovState)
+    , ("GetAccountState", SomeBlockQuery GetAccountState)
+    , ("GetFuturePParams", SomeBlockQuery GetFuturePParams)
+    , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
+    , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
+    , ("GetPoolDistr2", SomeBlockQuery $ GetPoolDistr2 Nothing)
+    , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
+    , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
+    ]
+
+-- | The queries that Conway introduced, which the later eras also support.
+conwayQueries ::
+  (CG.ConwayEraGov era, CG.ConwayEraCertState era) =>
+  EraQueries proto era
+conwayQueries poolIds =
+  labelled $
+    [ ("GetConstitution", SomeBlockQuery GetConstitution)
+    , ("GetDRepState", SomeBlockQuery $ GetDRepState Set.empty)
+    , ("GetDRepStakeDistr", SomeBlockQuery $ GetDRepStakeDistr Set.empty)
+    ,
+      ( "GetCommitteeMembersState"
+      , SomeBlockQuery $ GetCommitteeMembersState Set.empty Set.empty Set.empty
+      )
+    , ("GetFilteredVoteDelegatees", SomeBlockQuery $ GetFilteredVoteDelegatees Set.empty)
+    , ("GetSPOStakeDistr", SomeBlockQuery $ GetSPOStakeDistr Set.empty)
+    , ("GetProposals", SomeBlockQuery $ GetProposals Set.empty)
+    , ("GetRatifyState", SomeBlockQuery GetRatifyState)
+    , ("GetDRepDelegations", SomeBlockQuery $ GetDRepDelegations Set.empty)
+    ]
+      ++ [ ("QueryStakePoolDefaultVote", SomeBlockQuery $ QueryStakePoolDefaultVote poolId)
+         | poolId <- take 1 poolIds
+         ]
+
 fromShelleyLedgerExamples ::
   ShelleyCompatible (TPraos StandardCrypto) era =>
+  EraQueries (TPraos StandardCrypto) era ->
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
   Examples (ShelleyBlock (TPraos StandardCrypto) era)
 fromShelleyLedgerExamples
+  eraQueries
   ProtocolLedgerExamples
     { pleLedgerExamples = Shelley.LedgerExamples{..}
     , ..
@@ -109,6 +205,7 @@ fromShelleyLedgerExamples
       , exampleGenTxId = unlabelled $ txId tx
       , exampleApplyTxErr = unlabelled leApplyTxError
       , exampleQuery = queries
+      , exampleTopLevelQuery = topLevelQueries
       , exampleResult = results
       , exampleAnnTip = unlabelled annTip
       , exampleLedgerState = unlabelled ledgerState
@@ -127,18 +224,8 @@ fromShelleyLedgerExamples
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
     queries =
-      labelled
-        [ ("GetLedgerTip", SomeBlockQuery GetLedgerTip)
-        , ("GetEpochNo", SomeBlockQuery GetEpochNo)
-        , ("GetCurrentPParams", SomeBlockQuery GetCurrentPParams)
-        , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
-        , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
-        , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
-        , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
-        , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
-        , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
-        , ("GetCBOR", SomeBlockQuery (GetCBOR GetLedgerTip))
-        ]
+      eraIndependentQueries leRewardsCredentials
+        <> eraQueries (Map.keys (unPoolDistr lePoolDistr))
     results =
       labelled
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
@@ -218,6 +305,7 @@ fromShelleyLedgerExamples
 
 fromShelleyLedgerExamplesPraos ::
   ShelleyCompatible (Praos StandardCrypto) era =>
+  EraQueries (Praos StandardCrypto) era ->
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
   Examples (ShelleyBlock (Praos StandardCrypto) era)
 fromShelleyLedgerExamplesPraos = fromShelleyLedgerExamplesPolyPraos translatePraosHeader
@@ -230,10 +318,12 @@ fromShelleyLedgerExamplesPolyPraos ::
   ) =>
   -- | Rebuild the example's TPraos header as this protocol's header
   (SL.BHeader StandardCrypto -> ShelleyProtocolHeader proto) ->
+  EraQueries proto era ->
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
   Examples (ShelleyBlock proto era)
 fromShelleyLedgerExamplesPolyPraos
   translateHeader
+  eraQueries
   ProtocolLedgerExamples
     { pleLedgerExamples = Shelley.LedgerExamples{..}
     , ..
@@ -248,6 +338,7 @@ fromShelleyLedgerExamplesPolyPraos
       , exampleGenTxId = unlabelled $ txId tx
       , exampleApplyTxErr = unlabelled leApplyTxError
       , exampleQuery = queries
+      , exampleTopLevelQuery = topLevelQueries
       , exampleResult = results
       , exampleAnnTip = unlabelled annTip
       , exampleLedgerState = unlabelled ledgerState
@@ -270,18 +361,8 @@ fromShelleyLedgerExamplesPolyPraos
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
     queries =
-      labelled
-        [ ("GetLedgerTip", SomeBlockQuery GetLedgerTip)
-        , ("GetEpochNo", SomeBlockQuery GetEpochNo)
-        , ("GetCurrentPParams", SomeBlockQuery GetCurrentPParams)
-        , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards leRewardsCredentials)
-        , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
-        , ("GetBigLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers))
-        , ("GetAllLedgerPeerSnapshot", SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers))
-        , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
-        , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
-        , ("GetCBOR", SomeBlockQuery (GetCBOR GetLedgerTip))
-        ]
+      eraIndependentQueries leRewardsCredentials
+        <> eraQueries (Map.keys (unPoolDistr lePoolDistr))
     results =
       labelled
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
@@ -383,6 +464,7 @@ praosHeaderBodyFromTPraos bhBody =
 
 fromShelleyLedgerExamplesPraos2 ::
   ShelleyCompatible (Praos2 StandardCrypto) era =>
+  EraQueries (Praos2 StandardCrypto) era ->
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
   Examples (ShelleyBlock (Praos2 StandardCrypto) era)
 fromShelleyLedgerExamplesPraos2 =
@@ -420,26 +502,26 @@ translateLeiosHeader (SL.BHeader bhBody bhSig) =
         }
 
 examplesShelley :: Examples StandardShelleyBlock
-examplesShelley = fromShelleyLedgerExamples ledgerExamplesShelley
+examplesShelley = fromShelleyLedgerExamples noEraQueries ledgerExamplesShelley
 
 examplesAllegra :: Examples StandardAllegraBlock
-examplesAllegra = fromShelleyLedgerExamples ledgerExamplesAllegra
+examplesAllegra = fromShelleyLedgerExamples noEraQueries ledgerExamplesAllegra
 
 examplesMary :: Examples StandardMaryBlock
-examplesMary = fromShelleyLedgerExamples ledgerExamplesMary
+examplesMary = fromShelleyLedgerExamples noEraQueries ledgerExamplesMary
 
 examplesAlonzo :: Examples StandardAlonzoBlock
-examplesAlonzo = fromShelleyLedgerExamples ledgerExamplesAlonzo
+examplesAlonzo = fromShelleyLedgerExamples noEraQueries ledgerExamplesAlonzo
 
 examplesBabbage :: Examples StandardBabbageBlock
-examplesBabbage = fromShelleyLedgerExamplesPraos (ledgerExamplesTPraos Babbage.ledgerExamples)
+examplesBabbage = fromShelleyLedgerExamplesPraos noEraQueries (ledgerExamplesTPraos Babbage.ledgerExamples)
 
 examplesConway :: Examples StandardConwayBlock
-examplesConway = fromShelleyLedgerExamplesPraos (ledgerExamplesTPraos Conway.ledgerExamples)
+examplesConway = fromShelleyLedgerExamplesPraos conwayQueries (ledgerExamplesTPraos Conway.ledgerExamples)
 
 examplesDijkstra :: Examples StandardDijkstraBlock
 examplesDijkstra =
-  fromShelleyLedgerExamplesPraos2 (ledgerExamplesTPraos Dijkstra.ledgerExamples)
+  fromShelleyLedgerExamplesPraos2 conwayQueries (ledgerExamplesTPraos Dijkstra.ledgerExamples)
 
 exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
 exampleShelleyLedgerConfig translationContext =

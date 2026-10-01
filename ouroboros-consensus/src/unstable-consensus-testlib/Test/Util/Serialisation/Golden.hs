@@ -54,6 +54,8 @@ import Ouroboros.Consensus.Ledger.Query
   , SomeBlockQuery (..)
   , blockQueryIsSupportedOnVersion
   , nodeToClientVersionToQueryVersion
+  , queryEncodeNodeToClient
+  , queryIsSupportedOnVersion
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( HasNetworkProtocolVersion (..)
@@ -70,6 +72,7 @@ import Ouroboros.Consensus.Node.Serialisation
   , SerialiseNodeToNode (..)
   )
 import Ouroboros.Consensus.Storage.Serialisation (EncodeDisk (..))
+import Ouroboros.Consensus.Util (SomeSecond (..))
 import Ouroboros.Consensus.Util.CBOR (decodeAsFlatTerm)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import System.Directory (createDirectoryIfMissing)
@@ -372,7 +375,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
     ]
  where
   testVersion :: (QueryVersion, BlockNodeToClientVersion blk) -> TestTree
-  testVersion versions@(_, blockVersion) =
+  testVersion versions@(queryVersion, blockVersion) =
     testGroup
       (toGoldenDirectory versions)
       [ test "Block" exampleBlock enc'
@@ -383,6 +386,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
       , test "SlotNo" exampleSlotNo enc'
       , test "LedgerConfig" exampleLedgerConfig enc'
       , testQuery "Query" exampleQuery enc'
+      , testTopLevelQuery "TopLevelQuery" exampleTopLevelQuery
       , testResult "Result" exampleResult encRes
       ]
    where
@@ -403,6 +407,15 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
 
     testQuery name values =
       test name (filter (\(_, SomeBlockQuery q) -> blockQueryIsSupportedOnVersion q blockVersion) values)
+
+    -- \| Unlike the block queries, these are gated by the 'QueryVersion' as
+    -- well, and the encoder throws when given a query the versions do not
+    -- support, hence the filter.
+    testTopLevelQuery name values =
+      test
+        name
+        (filter (\(_, SomeSecond q) -> queryIsSupportedOnVersion q queryVersion blockVersion) values)
+        (queryEncodeNodeToClient codecConfig queryVersion blockVersion)
 
     testResult name values =
       test name (filter (\(_, SomeResult q _) -> blockQueryIsSupportedOnVersion q blockVersion) values)

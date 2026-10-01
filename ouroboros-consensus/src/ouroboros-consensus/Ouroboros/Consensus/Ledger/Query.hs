@@ -34,6 +34,7 @@ module Ouroboros.Consensus.Ledger.Query
   , queryDecodeNodeToClient
   , queryEncodeNodeToClient
   , queryIsSupportedOnNodeToClientVersion
+  , queryIsSupportedOnVersion
   , querySupportedVersions
 
     -- * Footprints
