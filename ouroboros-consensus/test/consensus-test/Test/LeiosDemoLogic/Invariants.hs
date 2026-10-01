@@ -45,7 +45,7 @@ import Control.Monad.Class.MonadThrow (SomeException, try)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (Tracer, nullTracer)
 import qualified Data.ByteString as BS
-import Data.Foldable (toList)
+import Data.Foldable (forM_, toList)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
@@ -421,7 +421,9 @@ data Cmd
   | -- | Disarmed: the EbTxs side is being rewritten from scratch, so tx delivery
     -- has no command for now (uninhabited).
     ArriveTx Void
-  | -- | @leiosFetchLogicIteration@ at this current slot.
+  | -- | @leiosFetchLogicIteration@ at this current slot, against the peer's
+    -- real 'Leios.offerings' (as recorded by 'Offer'); the offers it drops are
+    -- pruned from them, as the NodeKernel's fetch loop does.
     Decide Word
   | -- | The forge produces this EB: drives 'processLeiosBlock'/'processLeiosBlockTxs'
     -- with 'ForgedBlock'/'ForgedTxs' (as 'onForgedLeiosEb' does), reconciling the
@@ -472,40 +474,58 @@ pointOf ids slot = MkLeiosPoint (fromIntegral slot) (hashLeiosEb (ebOf ids))
 runCmds :: [Cmd] -> Either String ()
 runCmds = (() <$) . runCmdsReFetchViolations
 
--- | Like 'runCmds', but on success also return the EB bodies that the fetch
--- logic requested despite already holding them (i.e. despite 'ebStateHasBody'),
--- gathered across all 'Decide's. That list is the
--- re-fetch-storm regression signal: it must be empty. See
--- 'prop_neverRefetchesHeldBody'.
-runCmdsReFetchViolations :: [Cmd] -> Either String [EbHash]
-runCmdsReFetchViolations cmds = runSimOrThrow $ do
+-- | What the 'Decide's of a sequence observed, gathered across all of them.
+data Observed = MkObserved
+  { reFetchViolations :: [EbHash]
+  -- ^ The EB bodies the fetch logic requested despite already holding them
+  -- (i.e. despite 'ebStateHasBody'). That list is the re-fetch-storm regression
+  -- signal: it must be empty. See 'prop_neverRefetchesHeldBody'.
+  , heldBodyOffered :: [Bool]
+  -- ^ One entry per 'Decide': whether the peer offered it an EB whose body we
+  -- already hold -- the only situation in which it could re-fetch a held body,
+  -- hence what keeps 'prop_neverRefetchesHeldBody' from being vacuous.
+  }
+
+instance Semigroup Observed where
+  MkObserved v1 h1 <> MkObserved v2 h2 = MkObserved (v1 <> v2) (h1 <> h2)
+
+instance Monoid Observed where
+  mempty = MkObserved [] []
+
+-- | Like 'runCmds', but on success also return what the sequence 'Observed'.
+runCmdsObserved :: [Cmd] -> Either String Observed
+runCmdsObserved cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
-  runCmdsReFetchViolationsWithDb nullTracer dbHandle cmds
+  runCmdsWithDb nullTracer dbHandle cmds
+
+-- | Like 'runCmds', but on success also return the 'reFetchViolations'.
+runCmdsReFetchViolations :: [Cmd] -> Either String [EbHash]
+runCmdsReFetchViolations = fmap reFetchViolations . runCmdsObserved
 
 -- | Like 'runCmds', but on success also return every @(slot, hash)@ point
 -- registered in the LeiosDb by the end of the sequence.
 runCmdsAndScanEbPoints :: [Cmd] -> Either String [(SlotNo, EbHash)]
 runCmdsAndScanEbPoints cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
-  result <- runCmdsReFetchViolationsWithDb nullTracer dbHandle cmds
+  result <- runCmdsWithDb nullTracer dbHandle cmds
   case result of
     Left msg -> pure (Left msg)
-    Right _violations -> Right <$> withReader dbHandle LeiosDb.scanEbPoints
+    Right _ -> Right <$> withReader dbHandle LeiosDb.scanEbPoints
 
--- | Like 'runCmdsReFetchViolations', but against an already-open
+-- | Like 'runCmdsObserved', but against an already-open
 -- 'LeiosDb.LeiosDbHandle' (the writer inside it is already closed on
 -- return, flushing anything still in flight, so a caller can read the DB
 -- back afterwards, e.g. via 'withReader') -- so a caller can also
 -- 'LeiosDb.subscribeEbNotifications' on it before any command runs. Also
 -- takes the 'TraceLeiosKernel' tracer, so a caller can observe what
 -- 'ArriveBody'/'Forge' trace (e.g. via 'recordingTracerTVar').
-runCmdsReFetchViolationsWithDb ::
+runCmdsWithDb ::
   forall s.
   Tracer (IOSim s) Leios.TraceLeiosKernel ->
   LeiosDb.LeiosDbHandle (IOSim s) ->
   [Cmd] ->
-  IOSim s (Either String [EbHash])
-runCmdsReFetchViolationsWithDb ktracer dbHandle cs0 = withWriter dbHandle $ \conn -> do
+  IOSim s (Either String Observed)
+runCmdsWithDb ktracer dbHandle cs0 = withWriter dbHandle $ \conn -> do
   outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
   readyVar <- newEmptyMVar
   peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
@@ -516,15 +536,15 @@ runCmdsReFetchViolationsWithDb ktracer dbHandle cs0 = withWriter dbHandle $ \con
       loop acc (c : cs) = do
         r <-
           try (applyCmd ktracer conn txCache kv peerVars peerId c) ::
-            IOSim s (Either SomeException [EbHash])
+            IOSim s (Either SomeException Observed)
         case r of
           Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
-          Right violations -> do
+          Right observed -> do
             outstanding <- readMVar outstandingVar
             case checkInvariant outstanding of
               Left msg -> pure (Left (msg <> " (after " <> show c <> ")"))
-              Right () -> loop (acc <> violations) cs
-  loop [] cs0
+              Right () -> loop (acc <> observed) cs
+  loop mempty cs0
 
 -- | Like 'runCmds', but subscribes to the LeiosDb's notifications /before/
 -- any command runs, then on success drains the channel and returns every
@@ -537,10 +557,10 @@ runCmdsAndCollectAcquiredTxPoints :: [Cmd] -> Either String [LeiosPoint]
 runCmdsAndCollectAcquiredTxPoints cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
   chan <- LeiosDb.subscribeEbNotifications dbHandle
-  result <- runCmdsReFetchViolationsWithDb nullTracer dbHandle cmds
+  result <- runCmdsWithDb nullTracer dbHandle cmds
   case result of
     Left msg -> pure (Left msg)
-    Right _violations -> do
+    Right _ -> do
       notifications <- drainChan chan
       pure $ Right [p | LeiosDb.AcquiredEbTxs p <- notifications]
  where
@@ -562,16 +582,15 @@ runCmdsAndCollectAcquiredTxTraces :: [Cmd] -> Either String [LeiosPoint]
 runCmdsAndCollectAcquiredTxTraces cmds = runSimOrThrow $ do
   dbHandle <- LeiosDb.newLeiosDBInMemory
   (ktracer, getTraces) <- recordingTracerTVar
-  result <- runCmdsReFetchViolationsWithDb ktracer dbHandle cmds
+  result <- runCmdsWithDb ktracer dbHandle cmds
   case result of
     Left msg -> pure (Left msg)
-    Right _violations -> do
+    Right _ -> do
       traces <- getTraces
       pure $ Right [p | Leios.TraceLeiosBlockTxsAcquired p _age <- traces]
 
--- | Apply a command, returning any EB bodies it requested that are already held
--- (per 'ebStateHasBody') — the re-fetch-storm violation. Empty for everything
--- but a misbehaving 'Decide'.
+-- | Apply a command, returning what it 'Observed'. Empty for everything but a
+-- 'Decide'.
 applyCmd ::
   forall s.
   Tracer (IOSim s) Leios.TraceLeiosKernel ->
@@ -581,20 +600,20 @@ applyCmd ::
   LeiosPeerVars (IOSim s) ->
   PeerId Int ->
   Cmd ->
-  IOSim s [EbHash]
+  IOSim s Observed
 applyCmd ktracer conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
     recordAnnouncedEb conn kv SNothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
-    pure []
+    pure mempty
   Offer ids slot -> do
     recordEbBodyOffer
       kv
       peerVars
       TxsClosureNotAlsoOffered
       (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
-    pure []
+    pure mempty
   ArriveBody ids slot -> do
     let eb = ebOf ids
         req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
@@ -608,7 +627,7 @@ applyCmd ktracer conn txCache kv peerVars peerId = \case
       noMempoolPull
       (ReceivedBlockFrom peerId req)
       eb
-    pure []
+    pure mempty
   ArriveTx v -> absurd v
   Forge ids slot -> do
     let eb = ebOf ids
@@ -645,13 +664,14 @@ applyCmd ktracer conn txCache kv peerVars peerId = \case
       conn
       dummySystemTime
       (ForgedTxs point eb $ V.fromList $ map leiosTxOf ids)
-    pure []
+    pure mempty
   Decide slot -> do
     outstanding <- readMVar (fst kv)
-    let offerings = Map.singleton peerId (referencedOffers outstanding)
+    offers <- readMVar (Leios.offerings peerVars)
+    let offerings = Map.singleton peerId offers
         -- The generated peer is not a big-ledger peer; the aggressive-fetch path
         -- has its own dedicated test below.
-        (out', decs, _drops) =
+        (out', decs, drops) =
           leiosFetchLogicIteration
             demoLeiosFetchStaticEnv
             (Just (fromIntegral slot))
@@ -664,10 +684,17 @@ applyCmd ktracer conn txCache kv peerVars peerId = \case
     _ <- evaluate out'
     _ <- evaluate (forceDecisions decs)
     modifyMVar_ (fst kv) (\_ -> pure out')
+    forM_ (Map.lookup peerId drops) $ \dropped ->
+      modifyMVar_ (Leios.offerings peerVars) (pure . (`Map.withoutKeys` NESet.toSet dropped))
     -- Regression: the fetch logic must not request a body we already hold.
-    -- Return any it did (empty when well-behaved).
+    -- Return any it did (empty when well-behaved), and whether it even had the
+    -- opportunity to.
     let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
-    pure (filter (\h -> Set.member h held) (ebBodyRequestHashes decs))
+    pure
+      MkObserved
+        { reFetchViolations = filter (\h -> Set.member h held) (ebBodyRequestHashes decs)
+        , heldBodyOffered = [any (\p -> Set.member p.pointEbHash held) (Map.keys offers)]
+        }
 
 -- | Offer every EB the outstanding state tracks, at its 'ebStateMaxSlot' and as
 -- 'TxsClosureAlsoOffered' (which implies the body too) -- an all-offering peer, so
@@ -848,14 +875,17 @@ prop_invariants =
 -- re-list/re-request endlessly; the 'ebStateHasBody' check is cache-independent.)
 prop_neverRefetchesHeldBody :: Property
 prop_neverRefetchesHeldBody =
-  forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
-    coverage cmds $
-      case runCmdsReFetchViolations cmds of
-        Left msg -> counterexample msg (property False)
-        Right violations ->
-          counterexample
-            ("fetch requested already-held EB bodies: " ++ show violations)
-            (null violations)
+  checkCoverage $
+    forAllShrink (listOf genCmd) (shrinkList (const [])) $ \cmds ->
+      coverage cmds $
+        case runCmdsObserved cmds of
+          Left msg -> counterexample msg (property False)
+          Right observed ->
+            tabulate "Decide offered a held body" (map show observed.heldBodyOffered) $
+              cover 15 (or observed.heldBodyOffered) "a Decide was offered a held body" $
+                counterexample
+                  ("fetch requested already-held EB bodies: " ++ show observed.reFetchViolations)
+                  (null observed.reFetchViolations)
 
 ------------------------------------------------------------
 -- Concurrent (IOSimPOR) regression
