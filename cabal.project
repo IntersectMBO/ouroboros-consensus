@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2026-09-30T08:47:51Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-10-01T20:54:24Z
+  , cardano-haskell-packages 2026-10-02T10:22:46Z
 
 packages: .
 
@@ -42,9 +42,3 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
-
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/cardano-config.git
-  tag: d26b702375c5737f661685b455cf79152f27d758
-  --sha256: sha256-s791jxNYBDkTgtPC9RhpoXXncXRJURPRFetK04VYHLU=
