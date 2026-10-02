@@ -111,10 +111,10 @@ data LeiosDbWriter m = LeiosDbWriter
       HasCallStack =>
       LeiosPoint -> LeiosEb -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
   -- ^ Persist an EB body, and fill what it can from local bytes: each
-  --   @(offset, source EB, source offset)@ names a row of another EB durably
-  --   holding the same tx (the LeiosTxCache's tx locations), copied in the
-  --   same transaction. Returns the points this completed and the offsets that
-  --   actually filled -- a vanished source fills nothing and the tx stays
+  --   'LocalFill' pairs an offset in this body with the 'TxLocation' of another
+  --   EB durably holding the same tx (the LeiosTxCache's tx locations), copied
+  --   in the same transaction. Returns the points this completed and the offsets
+  --   that actually filled -- a vanished source fills nothing and the tx stays
   --   fetchable, decided by the caller from this return.
   , writeTxs ::
       HasCallStack =>
@@ -125,7 +125,7 @@ data LeiosDbWriter m = LeiosDbWriter
   --   duplicated when EBs share a tx), so writes are sequential within the EB
   --   rather than scattered by hash, and eviction is a range delete. Returns
   --   the points this completed: the given EB's, plus any other point
-  --   announcing the same content hash.
+  --   announcing the same content hash, merely at a different slot.
   }
 
 -- | The result of a submitted write.

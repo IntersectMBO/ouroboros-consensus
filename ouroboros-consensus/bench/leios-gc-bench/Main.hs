@@ -629,7 +629,7 @@ medianTime ts = List.sort ts !! (length ts `div` 2)
 -- an EB's tx bytes die with its rows.
 sqlSweepBacklog :: T.Text
 sqlSweepBacklog =
-  "SELECT (SELECT COUNT(*) FROM ebs WHERE status = 3)"
+  "SELECT COUNT(*) FROM ebs WHERE status = 3"
 
 -- | Same as 'sqlSweepBacklog': there is no initialisation scan anymore.
 sqlInitialBacklog :: T.Text
