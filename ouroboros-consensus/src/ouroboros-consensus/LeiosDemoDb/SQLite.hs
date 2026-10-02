@@ -593,7 +593,7 @@ startCopier tracer statsVar copyPending writeQueue volPath immPath = do
                 dbStepSafe nextPinnedStmt >>= \case
                   DB.Done -> pure (reverse acc)
                   DB.Row -> do
-                    h <- ebHashFromBytes =<< DB.columnBlob nextPinnedStmt 0
+                    h <- ebHashFromBlob =<< DB.columnBlob nextPinnedStmt 0
                     rows (h : acc)
            in rows []
 
@@ -1384,7 +1384,7 @@ sqlScanEbPoints conn =
       DB.Done -> pure (reverse acc)
       DB.Row -> do
         slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-        hash <- ebHashFromBytes =<< DB.columnBlob stmt 1
+        hash <- ebHashFromBlob =<< DB.columnBlob stmt 1
         loop ((slot, hash) : acc)
 
 sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
@@ -1425,7 +1425,7 @@ pointLoop stmt acc =
     DB.Done -> pure (reverse acc)
     DB.Row -> do
       slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-      hash <- ebHashFromBytes =<< DB.columnBlob stmt 1
+      hash <- ebHashFromBlob =<< DB.columnBlob stmt 1
       pointLoop stmt (MkLeiosPoint slot hash : acc)
 
 -- | Which of the given EB hashes the immutable partition holds.
@@ -1437,7 +1437,7 @@ immFilterPresent conn hashes =
           dbStep stmt >>= \case
             DB.Done -> pure (reverse acc)
             DB.Row -> do
-              hash <- ebHashFromBytes =<< DB.columnBlob stmt 0
+              hash <- ebHashFromBlob =<< DB.columnBlob stmt 0
               loop (hash : acc)
     loop []
  where
@@ -1475,6 +1475,16 @@ txHashFromBlob bs =
     )
     pure
     (txHashFromBytes bs)
+
+-- | Decode a stored EB hash. See 'txHashFromBlob'.
+ebHashFromBlob :: ByteString -> IO EbHash
+ebHashFromBlob bs =
+  maybe
+    ( throwLeiosDbException $
+        "stored EbHash has " <> show (BS.length bs) <> " bytes, expected 32"
+    )
+    pure
+    (ebHashFromBytes bs)
 
 bodyLoop :: DB.Statement -> [(TxHash, BytesSize)] -> IO [(TxHash, BytesSize)]
 bodyLoop stmt acc =
