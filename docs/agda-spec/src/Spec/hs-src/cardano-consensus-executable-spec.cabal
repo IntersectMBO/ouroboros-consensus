@@ -27,6 +27,8 @@ test-suite test
     hs-source-dirs: test
     main-is: Spec.hs
     other-modules:
+        Base
+        SpecHook
         TickNonceSpec
         UpdateNonceSpec
         OperationalCertificateSpec
@@ -35,9 +37,16 @@ test-suite test
         ChainHeadSpec
     build-depends:
         cardano-consensus-executable-spec,
+        cardano-crypto-class,
+        cardano-crypto-praos >= 2.2.1.0,
+        cardano-protocol-tpraos ^>=1.4,
+        cardano-ledger-core,
+        ouroboros-consensus-protocol,
         hspec,
         HUnit,
-        text
+        text,
+        bytestring,
+        io-classes >=1.4.0,
     build-tool-depends: hspec-discover:hspec-discover
     type: exitcode-stdio-1.0
     ghc-options:
