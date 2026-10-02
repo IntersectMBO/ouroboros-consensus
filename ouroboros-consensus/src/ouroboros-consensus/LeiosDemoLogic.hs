@@ -1699,8 +1699,9 @@ deriving instance Show ExnInvalidLeiosAnnouncement
 instance Exception ExnInvalidLeiosAnnouncement
 
 -- | Thrown when a peer offers an endorser block over LeiosNotify that it never
--- announced, that it has already offered, or that is too old to check; the
--- ensuing thread death disconnects it.
+-- announced, that it has already offered, that is bigger than any endorser
+-- block may be, or that is too old to check; the ensuing thread death
+-- disconnects it.
 --
 -- Without this requirement, peers could send bogus offers, and there are
 -- infinitely many of those.
@@ -1708,6 +1709,9 @@ data ExnLeiosInvalidOffer
   = -- | A body offer of an endorser block this peer never announced, with the
     -- size it claimed.
     ExnLeiosBlockOfferWithoutAnnouncement !LeiosPoint !BytesSize
+  | -- | A body offer claiming more bytes than any endorser block may have:
+    -- the offered point, the size it claimed, and the bound it exceeded.
+    ExnLeiosBlockOfferTooBig !LeiosPoint !BytesSize !BytesSize
   | -- | A closure offer for an endorser block this peer never announced.
     ExnLeiosClosureOfferWithoutAnnouncement !LeiosPoint
   | -- | A second offer of the body, or of the closure, this peer has already
@@ -2028,6 +2032,16 @@ checkLeiosBlockOffer point claimed peerSt
   | ebSlot < lnpsPruneSlot peerSt =
       Left $ ExnLeiosOfferTooOld point (lnpsPruneSlot peerSt)
   | SJust{} <- Leios.poOfferedBody seen = Left $ ExnLeiosRepeatedOffer point OfferedBody
+  | claimed > Leios.maxLeiosEbBytesSize =
+      -- No endorser block may exceed this in any slot: it is the bound the
+      -- guardrails script imposes, so the ledger parameter that actually
+      -- applies can only be smaller.
+      --
+      -- TODO enforce that parameter instead of its ceiling. The announcement
+      -- this offer rides on (see 'announcedIt') was validated against the
+      -- ledger view of its own slot, so retaining that view's maximum endorser
+      -- block size alongside the announcement would give the exact value here.
+      Left $ ExnLeiosBlockOfferTooBig point claimed Leios.maxLeiosEbBytesSize
   | not (announcedIt point peerSt) =
       Left $ ExnLeiosBlockOfferWithoutAnnouncement point claimed
   | otherwise =
