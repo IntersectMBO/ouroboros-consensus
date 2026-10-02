@@ -31,6 +31,7 @@ import LeiosDemoTypes
   , decodeLeiosEb
   , decodeLeiosPoint
   , decodeLeiosTx
+  , decodeRbHash
   , ebHashFromBytes
   , encodeLeiosEb
   , encodeLeiosEbItemSize
@@ -282,6 +283,8 @@ prop_decodersRejectWrongHashLength =
                 accepts (deserialiseFromBytes decodeLeiosEb (bytes ebWithHashOfLength)) === (len == 32)
             , counterexample "decodeEbHash" $
                 accepts (deserialiseFromBytes decodeEbHash (bytes hashOfLength)) === (len == 32)
+            , counterexample "decodeRbHash" $
+                accepts (deserialiseFromBytes decodeRbHash (bytes hashOfLength)) === (len == 32)
             ]
       | len <- [0, 1, 31, 32, 33, 64, 100000]
       , let hashBytes = BS.replicate len 0xab

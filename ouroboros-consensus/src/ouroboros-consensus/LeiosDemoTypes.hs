@@ -198,8 +198,14 @@ instance Show RbHash where
 encodeRbHash :: RbHash -> Encoding
 encodeRbHash (MkRbHash bytes) = CBOR.encodeBytes bytes
 
+-- | Fails unless the hash is exactly 32 bytes.
 decodeRbHash :: Decoder s RbHash
-decodeRbHash = MkRbHash <$> CBOR.decodeBytes
+decodeRbHash = do
+  bytes <- CBOR.decodeBytes
+  when (BS.length bytes /= 32) $
+    fail $
+      "RbHash: " <> show (BS.length bytes) <> " bytes, expected 32"
+  pure $ MkRbHash bytes
 
 prettyRbHash :: RbHash -> String
 prettyRbHash (MkRbHash bytes) = BS8.unpack (BS16.encode bytes)
