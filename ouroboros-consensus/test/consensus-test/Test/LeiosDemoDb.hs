@@ -38,6 +38,7 @@ import qualified Data.ByteString as BS
 import Data.Function ((&))
 import Data.List (isInfixOf, isPrefixOf)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromJust)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
@@ -64,8 +65,10 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , RbHash (..)
   , TxHash (..)
+  , ebHashFromBytes
   , encodeLeiosEbSize
   , leiosEbTxs
+  , txHashFromBytes
   )
 import System.Directory (removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
@@ -240,7 +243,7 @@ mkTestGroups impl =
 -- | Generate a random EbHash (32 random bytes).
 -- With 256 bits of randomness, collisions are practically impossible.
 genEbHash :: Gen EbHash
-genEbHash = MkEbHash . BS.pack <$> vector 32
+genEbHash = fromJust . ebHashFromBytes . BS.pack <$> vector 32
 
 -- | Generate a random RbHash (32 random bytes).
 -- With 256 bits of randomness, collisions are practically impossible.
@@ -249,7 +252,7 @@ genRbHash = MkRbHash . BS.pack <$> vector 32
 
 -- | Generate a random TxHash (32 random bytes).
 genTxHash :: Gen TxHash
-genTxHash = MkTxHash . BS.pack <$> vector 32
+genTxHash = fromJust . txHashFromBytes . BS.pack <$> vector 32
 
 -- | Generate a random SlotNo.
 genSlotNo :: Gen SlotNo
@@ -284,11 +287,11 @@ maxTxBytesZero = BS.replicate 16_384 0
 
 -- | Create a simple test EbHash from a seed byte.
 mkTestEbHash :: Word -> EbHash
-mkTestEbHash seed = MkEbHash $ BS.pack $ replicate 32 (fromIntegral seed)
+mkTestEbHash seed = fromJust $ ebHashFromBytes $ BS.pack $ replicate 32 (fromIntegral seed)
 
 -- | Create a simple test TxHash from a seed byte.
 mkTestTxHash :: Word -> TxHash
-mkTestTxHash seed = MkTxHash $ BS.pack $ replicate 32 (fromIntegral seed)
+mkTestTxHash seed = fromJust $ txHashFromBytes $ BS.pack $ replicate 32 (fromIntegral seed)
 
 -- | Create a test LeiosPoint.
 mkTestPoint :: SlotNo -> Word -> LeiosPoint

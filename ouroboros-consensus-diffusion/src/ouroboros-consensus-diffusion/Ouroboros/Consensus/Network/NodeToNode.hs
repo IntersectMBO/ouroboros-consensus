@@ -812,6 +812,7 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
           Leios.decodeLeiosVote
     , cLeiosFetchCodec =
         codecLeiosFetch
+          Leios.maxTxsPerEb
           Leios.encodeLeiosPoint
           Leios.decodeLeiosPoint
           Leios.encodeLeiosEb
