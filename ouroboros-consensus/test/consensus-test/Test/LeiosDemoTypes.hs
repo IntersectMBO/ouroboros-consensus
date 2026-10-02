@@ -95,6 +95,9 @@ tests =
     , testProperty
         "LeiosFetch decoder bounds the number of bitmap entries"
         prop_decodeBitmapsBoundsEntries
+    , testProperty
+        "LeiosFetch decoder rejects zero, too large or unordered bitmap entries"
+        prop_decodeBitmapsChecksEntries
     ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'encodeLeiosEbSize'.
@@ -364,6 +367,30 @@ prop_decodeBitmapsBoundsEntries =
             <> encodeBitmapEntries [(fromIntegral i, 1) | i <- [0 .. n - 1]]
     failure <- decodeFailure SingIdle msg
     pure $ counterexample ("entries " <> show n) $ failsWith expected failure
+
+prop_decodeBitmapsChecksEntries :: Property
+prop_decodeBitmapsChecksEntries =
+  once $
+    ioProperty $
+      conjoin
+        <$> sequence
+          [ check "valid" Nothing [(0, 1), (fromIntegral lastIndex, 1)]
+          , check "zero bitmap" (Just "is zero") [(0, 0)]
+          , check "index too large" (Just "is not below") [(fromIntegral lastIndex + 1, 1)]
+          , check "repeated index" (Just "strictly ascending") [(3, 1), (3, 1)]
+          , check "descending index" (Just "strictly ascending") [(3, 1), (2, 1)]
+          ]
+ where
+  lastIndex = (maxTxsPerEb + 63) `div` 64 - 1
+  check :: String -> Maybe String -> [(Word16, Word64)] -> IO Property
+  check label expected entries = do
+    let msg =
+          CBOR.encodeListLen 3
+            <> CBOR.encodeWord 2
+            <> encodeLeiosPoint testPoint
+            <> encodeBitmapEntries entries
+    failure <- decodeFailure SingIdle msg
+    pure $ counterexample label $ failsWith expected failure
 
 testPoint :: LeiosPoint
 testPoint = MkLeiosPoint (SlotNo 0) (fromJust $ ebHashFromBytes $ BS.replicate 32 0xab)

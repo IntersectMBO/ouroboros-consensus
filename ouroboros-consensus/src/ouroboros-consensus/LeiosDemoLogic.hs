@@ -298,15 +298,6 @@ msgLeiosBlockTxsRequest ::
   m (V.Vector LeiosTx)
 msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
   let MkLeiosFetchContext{leiosDbReader, leiosEbTxsBuffer = buf} = leiosContext
-  do
-    let idxs = map fst bitmaps
-    let idxLimit = maxTxsPerEb `div` 64
-    when (any (== 0) $ map snd bitmaps) $ do
-      error "A bitmap is zero"
-    when (flip any idxs (> fromIntegral idxLimit)) $ do
-      error $ "An offset exceeds the theoretical limit " <> show idxLimit
-    when (not $ and $ zipWith (<) idxs (drop 1 idxs)) $ do
-      error "Offsets not strictly ascending"
   let txOffsets = bitmapOffsets bitmaps
   n <- do
     -- Use new db to batch retrieve transactions
