@@ -24,7 +24,6 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Bits (unsafeShiftL, unsafeShiftR, (.&.), (.|.))
-import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
@@ -40,7 +39,6 @@ import LeiosDemoTypes
   , RbHash
   , TxHash (..)
   , TxLocation (..)
-  , txHashBytes
   )
 import LeiosTxCache.API
   ( BodyState (..)
@@ -500,13 +498,6 @@ lookupOne ht txh = do
 toKey :: TxHash -> HT.Key
 toKey (MkTxHash pb) = case pb of
   PackedBytes32 w0 w1 w2 w3 -> HT.Key w0 w1 w2 w3
-  -- Every @PackedBytes 32@ that cardano-crypto-class builds is 'PackedBytes32',
-  -- so this arm is unreachable and pays a copy only if it ever runs.
-  _ -> HT.Key (rd 0) (rd 8) (rd 16) (rd 24)
-   where
-    bs = txHashBytes (MkTxHash pb)
-    rd off = go 0 off (off + 8)
-    go !acc o end
-      | o >= end = acc
-      | otherwise =
-          go ((acc `unsafeShiftL` 8) .|. fromIntegral (BS.index bs o)) (o + 1) end
+  _ ->
+    error
+      "toKey: expected the PackedBytes32 constructor, which cardano-crypto-class uses for every PackedBytes 32"
