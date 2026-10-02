@@ -1512,7 +1512,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   (completedNow, filledOffs) <- dbWithWriteTransaction conn $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
-      dbBindBlob stInsertEbTxsRow 1 (ebHashBytes point.pointEbHash)
+      dbBindBlob stInsertEbTxsRow 1 ebHashRaw
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
       dbBindBlob stInsertEbTxsRow 3 (txHashBytes txHash)
       dbBindInt64 stInsertEbTxsRow 4 (fromIntegral txBytesSize)
@@ -1524,7 +1524,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     -- Allocate the closure's rows in one offset-ordered pass; see
     -- 'sql_prealloc_ebTxBytes'.
     useStmt stPreallocEbTxBytes $ do
-      dbBindBlob stPreallocEbTxBytes 1 (ebHashBytes point.pointEbHash)
+      dbBindBlob stPreallocEbTxBytes 1 ebHashRaw
       dbStep1 stPreallocEbTxBytes
     -- Cross-EB fills: copy locally-held bytes into the freshly-allocated
     -- rows, in this transaction, so the count below already sees them. A
@@ -1533,7 +1533,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
       foldM
         ( \acc (dstOff, MkTxLocation srcEbHash srcOff) -> do
             useStmt stFillFromLocal $ do
-              dbBindBlob stFillFromLocal 1 (ebHashBytes point.pointEbHash)
+              dbBindBlob stFillFromLocal 1 ebHashRaw
               dbBindInt64 stFillFromLocal 2 (fromIntegral dstOff)
               dbBindBlob stFillFromLocal 3 (ebHashBytes srcEbHash)
               dbBindInt64 stFillFromLocal 4 (fromIntegral srcOff)
@@ -1547,8 +1547,8 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     -- via @RETURNING missingTxCount@. In this transaction, so an arrival can
     -- never see the rows without the count.
     missingCount <- useStmt stInitMissingCount $ do
-      dbBindBlob stInitMissingCount 1 (ebHashBytes point.pointEbHash)
-      dbBindBlob stInitMissingCount 2 (ebHashBytes point.pointEbHash)
+      dbBindBlob stInitMissingCount 1 ebHashRaw
+      dbBindBlob stInitMissingCount 2 ebHashRaw
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       readReturningInt64 stInitMissingCount
     completed <-
@@ -1556,7 +1556,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
         then do
           useStmt stMarkPointNotified $ do
             dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-            dbBindBlob stMarkPointNotified 2 (ebHashBytes point.pointEbHash)
+            dbBindBlob stMarkPointNotified 2 ebHashRaw
             dbStep1 stMarkPointNotified
           pure [point]
         else pure []
@@ -1565,6 +1565,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
   forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
   pure (completedNow, filledOffs)
  where
+  ebHashRaw = ebHashBytes point.pointEbHash
   items = leiosEbBodyItems eb
   ebBytesSize = encodeLeiosEbSize eb
   Conn{connVolStmts} = conn
