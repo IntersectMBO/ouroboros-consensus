@@ -418,20 +418,32 @@ encodeBitmaps bitmaps =
       CBOR.encodeBreak
       bitmaps
 
--- | Decode at most enough bitmaps to cover @maxTxs@ txs.
+-- | Decode at most enough bitmaps to cover @maxTxs@ txs. Each bitmap must be
+-- non-zero. The indices must be strictly ascending, and each must be below
+-- @maxTxs / 64@ rounded up.
 decodeBitmaps :: Int -> CBOR.Decoder s TxBitmaps
-decodeBitmaps maxTxs = CBOR.decodeMapLenIndef *> go 0 []
+decodeBitmaps maxTxs = CBOR.decodeMapLenIndef *> go 0 Nothing []
  where
   maxEntries = (maxTxs + 63) `div` 64
-  go !k acc =
+  go !k mbPrevIndex acc =
     CBOR.decodeBreakOr >>= \case
       True -> pure (reverse acc)
       False
         | k >= maxEntries ->
             fail $ "TxBitmaps: more than " <> show maxEntries <> " entries"
         | otherwise -> do
-            entry <- (,) <$> CBOR.decodeWord16 <*> CBOR.decodeWord64
-            go (k + 1 :: Int) (entry : acc)
+            index <- CBOR.decodeWord16
+            bitmap <- CBOR.decodeWord64
+            when (bitmap == 0) $
+              fail $
+                "TxBitmaps: bitmap at index " <> show index <> " is zero"
+            when (fromIntegral index >= maxEntries) $
+              fail $
+                "TxBitmaps: index " <> show index <> " is not below " <> show maxEntries
+            when (maybe False (index <=) mbPrevIndex) $
+              fail $
+                "TxBitmaps: index " <> show index <> " is not strictly ascending"
+            go (k + 1 :: Int) (Just index) ((index, bitmap) : acc)
 
 -----
 
