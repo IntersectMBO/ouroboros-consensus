@@ -1580,12 +1580,24 @@ immLookupEbBody conn ebHash =
  where
   Conn{connImmStmts = ImmStmts{immStLookupEbBody = stmt}} = conn
 
+-- | Decode a stored tx hash. A database that an older build wrote can hold
+-- hashes of other lengths, so a bad length throws a 'LeiosDbException' that
+-- the callers trace.
+txHashFromBlob :: ByteString -> IO TxHash
+txHashFromBlob bs =
+  maybe
+    ( throwLeiosDbException $
+        "stored TxHash has " <> show (BS.length bs) <> " bytes, expected 32"
+    )
+    pure
+    (txHashFromBytes bs)
+
 bodyLoop :: DB.Statement -> [(TxHash, BytesSize)] -> IO [(TxHash, BytesSize)]
 bodyLoop stmt acc =
   dbStep stmt >>= \case
     DB.Done -> pure (reverse acc)
     DB.Row -> do
-      txHash <- txHashFromBytes =<< DB.columnBlob stmt 0
+      txHash <- txHashFromBlob =<< DB.columnBlob stmt 0
       size <- fromIntegral <$> DB.columnInt64 stmt 1
       bodyLoop stmt ((txHash, size) : acc)
 
@@ -1779,7 +1791,7 @@ retrieveLoop stmt acc =
     DB.Done -> pure (reverse acc)
     DB.Row -> do
       offset <- fromIntegral <$> DB.columnInt64 stmt 0
-      txHash <- txHashFromBytes =<< DB.columnBlob stmt 1
+      txHash <- txHashFromBlob =<< DB.columnBlob stmt 1
       -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
       txBytes <- DB.columnBlob stmt 2
       let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
@@ -1800,7 +1812,7 @@ sqlFilterMissingTxs conn txHashes =
     dbStep stmt >>= \case
       DB.Done -> pure (reverse acc)
       DB.Row -> do
-        txHash <- txHashFromBytes =<< DB.columnBlob stmt 0
+        txHash <- txHashFromBlob =<< DB.columnBlob stmt 0
         loop (txHash : acc)
 
 -- | Delete the EBs announced after the given slot.
@@ -1932,11 +1944,12 @@ closureLoop stmt acc =
       -- No rows means the EB body hasn't been downloaded yet
       if null acc then pure Nothing else pure $ Just (reverse acc)
     DB.Row -> do
-      txHash <- txHashFromBytes =<< DB.columnBlob stmt 0
       txBytes :: ByteString <- DB.columnBlob stmt 1
       if txBytes == mempty
         then return Nothing
-        else closureLoop stmt ((txHash, txBytes) : acc)
+        else do
+          txHash <- txHashFromBlob =<< DB.columnBlob stmt 0
+          closureLoop stmt ((txHash, txBytes) : acc)
 
 -- * SQL strings
 
