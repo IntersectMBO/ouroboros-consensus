@@ -4,39 +4,26 @@
 -- | The forging credentials, as the consensus layer wants them.
 --
 -- Which files a tool was pointed at comes from @cardano-config@, as ordinary
--- node command-line options. Decoding them is done with the key types vendored
--- from @cardano-api@ under "Cardano.Api", and what is left for here is mapping
--- the key material onto 'ByronLeaderCredentials' and
--- 'ShelleyLeaderCredentials'.
+-- node command-line options, and decoding them is @cardano-keys@'s job. Left
+-- for here is the step that produces consensus types: mapping the key material
+-- onto 'ByronLeaderCredentials' and 'ShelleyLeaderCredentials'.
 module Cardano.Tools.Credentials
   ( LeaderCredentials (..)
   , readLeaderCredentials
   ) where
 
-import qualified Cardano.Api.Any as Api
-import qualified Cardano.Api.Key as Api
-import qualified Cardano.Api.KeysByron as Api
-import qualified Cardano.Api.KeysPraos as Api
-import qualified Cardano.Api.OperationalCertificate as Api
-import qualified Cardano.Api.SerialiseTextEnvelope as Api
 import qualified Cardano.Chain.Delegation as Byron.Delegation
 import qualified Cardano.Chain.Genesis as Byron.Genesis
 import qualified Cardano.Configuration.CliArgs as CLI
-import Cardano.Crypto.KES (UnsoundPureSignKeyKES)
 import qualified Cardano.Crypto.Signing as Byron.Crypto
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.Keys as Keys
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Ledger.Keys (KeyRole (StakePool), VKey, coerceKeyRole)
-import Cardano.Prelude (canonicalDecodePretty)
-import Cardano.Protocol.Crypto (KES, StandardCrypto, VRF)
+import Cardano.Protocol.Crypto (StandardCrypto, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
-import Control.Exception (IOException, try)
 import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
-import qualified Data.Aeson as Aeson
 import Data.Bifunctor (first)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as Text
 import Ouroboros.Consensus.Byron.Node
   ( ByronLeaderCredentials
   , mkByronLeaderCredentials
@@ -46,6 +33,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
   , PraosCredentialsSource (..)
   )
 import Ouroboros.Consensus.Shelley.Node (ShelleyLeaderCredentials (..))
+import Prettyprinter (Doc, pretty)
 
 -- | The credentials a Cardano protocol forges with: at most one Byron-era set,
 -- and any number of Shelley-based ones.
@@ -120,17 +108,18 @@ readShelley creds =
     (_, _, SNothing) ->
       throwE $ missingOption "shelley-kes-key or --shelley-kes-agent-socket"
     (SJust certFile, SJust vrfFile, SJust kesSource) -> do
-      opCert <- readTextEnvelope Api.AsOperationalCertificate certFile
-      Api.VrfSigningKey vrfSignKey <-
-        readTextEnvelope (Api.AsSigningKey Api.AsVrfKey) vrfFile
+      opCert <- readTextEnvelope certFile
+      Keys.VrfSigningKey vrfSignKey <- readTextEnvelope vrfFile
       credentialsSource <- case kesSource of
         -- The unsound variant: the KES signing key sits in a file on disk
         -- instead of never leaving a KES agent's memory.
         CLI.KESKeyFilePath kesFile -> do
-          kesSignKey <-
-            readTextEnvelope (Api.AsSigningKey Api.AsUnsoundPureKesKey) kesFile
+          kesSignKey <- readTextEnvelope kesFile
           checkOpCertKesKey (certFile <> " with " <> kesFile) opCert kesSignKey
-          pure $ PraosCredentialsUnsound (opCertOf opCert) (kesSignKeyOf kesSignKey)
+          pure $
+            PraosCredentialsUnsound
+              (opCertOf opCert)
+              (Keys.unsoundPureKesSigningKey kesSignKey)
         CLI.KESAgentSocketPath socketPath ->
           pure $ PraosCredentialsAgent socketPath
       pure [mkShelleyCredentials (coldVerKeyOf opCert) vrfSignKey credentialsSource]
@@ -143,24 +132,24 @@ readShelleyBulk ::
 readShelleyBulk creds = case CLI.bulkCredentialsFile creds of
   SNothing -> pure []
   SJust file -> do
-    entries <- readBulkCredentialsFile file
+    entries <-
+      ExceptT $
+        first (renderKeyFileError Keys.renderTextEnvelopeError)
+          <$> Keys.readBulkCredentialsFile file
     traverse (fromBulkEntry file) (zip [0 :: Int ..] entries)
  where
-  fromBulkEntry file (index, (teCert, teVrf, teKes)) = do
+  fromBulkEntry file (index, (opCert, Keys.VrfSigningKey vrfSignKey, kesSignKey)) = do
     -- Which entry of the file it was, because that is all that distinguishes
     -- one pair in a bulk file from the next.
-    let source = file <> ", entry " <> show index
-    opCert <- decodeTextEnvelope source Api.AsOperationalCertificate teCert
-    Api.VrfSigningKey vrfSignKey <-
-      decodeTextEnvelope source (Api.AsSigningKey Api.AsVrfKey) teVrf
-    kesSignKey <-
-      decodeTextEnvelope source (Api.AsSigningKey Api.AsUnsoundPureKesKey) teKes
-    checkOpCertKesKey source opCert kesSignKey
+    checkOpCertKesKey (file <> ", entry " <> show index) opCert kesSignKey
     pure $
       mkShelleyCredentials
         (coldVerKeyOf opCert)
         vrfSignKey
-        (PraosCredentialsUnsound (opCertOf opCert) (kesSignKeyOf kesSignKey))
+        ( PraosCredentialsUnsound
+            (opCertOf opCert)
+            (Keys.unsoundPureKesSigningKey kesSignKey)
+        )
 
 mkShelleyCredentials ::
   VKey StakePool ->
@@ -184,102 +173,71 @@ mkShelleyCredentials coldVerKey vrfSignKey credentialsSource =
 --
 
 -- | Read a text envelope: the operational certificate and the VRF and KES
--- signing keys are all stored as one.
-readTextEnvelope ::
-  Api.HasTextEnvelope a => Api.AsType a -> FilePath -> ExceptT String IO a
-readTextEnvelope asType path =
-  ExceptT $ first Api.displayError <$> Api.readFileTextEnvelope asType path
-
--- | Decode a text envelope that was read as part of a larger file.
-decodeTextEnvelope ::
-  Api.HasTextEnvelope a =>
-  -- | Where the envelope came from, for the error message.
-  String ->
-  Api.AsType a ->
-  Api.TextEnvelope ->
-  ExceptT String IO a
-decodeTextEnvelope source asType =
-  except
-    . first (Api.displayError . Api.FileError source)
-    . Api.deserialiseFromTextEnvelope asType
-
--- | The bulk credentials file: a JSON list of triples of text envelopes, each
--- holding an operational certificate, a VRF signing key and a KES signing key,
--- in that order.
-readBulkCredentialsFile ::
-  FilePath ->
-  ExceptT String IO [(Api.TextEnvelope, Api.TextEnvelope, Api.TextEnvelope)]
-readBulkCredentialsFile path = do
-  content <- readFileBytes path
-  except . first (\err -> path <> ": " <> err) $ Aeson.eitherDecodeStrict' content
+-- signing keys are all stored as one. Which type the file has to hold follows
+-- from the type the caller wants back.
+readTextEnvelope :: Keys.HasTextEnvelope a => FilePath -> ExceptT String IO a
+readTextEnvelope path =
+  ExceptT $
+    first (renderKeyFileError Keys.renderTextEnvelopeError)
+      <$> Keys.readFileTextEnvelope path
 
 -- | The Byron signing key, which is not a text envelope: the file is the raw
 -- CBOR of a legacy Byron @XPrv@.
 readByronSigningKey :: FilePath -> ExceptT String IO Byron.Crypto.SigningKey
 readByronSigningKey path = do
-  content <- readFileBytes path
-  case Api.deserialiseFromRawBytes (Api.AsSigningKey Api.AsByronKey) content of
-    Nothing -> throwE $ "Byron signing key deserialisation error in: " <> path
-    Just (Api.ByronSigningKey signingKey) -> pure signingKey
+  Keys.ByronSigningKey signingKey <-
+    ExceptT $
+      first (renderKeyFileError Keys.renderSerialiseAsRawBytesError)
+        <$> Keys.readByronSigningKeyFile path
+  pure signingKey
 
 -- | The Byron delegation certificate, which is neither a text envelope nor
 -- CBOR: the file is canonical JSON, like the Byron genesis itself.
 readByronDelegationCertificate ::
   FilePath -> ExceptT String IO Byron.Delegation.Certificate
-readByronDelegationCertificate path = do
-  content <- readFileBytes path
-  except . first renderError $ canonicalDecodePretty (LBS.fromStrict content)
- where
-  renderError err = "Canonical decode failure in " <> path <> ": " <> Text.unpack err
-
-readFileBytes :: FilePath -> ExceptT String IO BS.ByteString
-readFileBytes path =
-  ExceptT $ first renderError <$> try (BS.readFile path)
- where
-  renderError :: IOException -> String
-  renderError err = "Error reading " <> path <> ": " <> show err
+readByronDelegationCertificate path =
+  ExceptT $
+    first (renderKeyFileError pretty)
+      <$> Keys.readByronDelegationCertificateFile path
 
 -- | Check that an operational certificate authorises the KES key it was handed
 -- alongside.
 --
--- It matters: a certificate paired with a KES key it does not name forges
--- blocks the certificate does not authorise, which the network rejects while
--- the tool reports nothing.
+-- @cardano-keys@ leaves this to the caller. It matters: a certificate paired
+-- with a KES key it does not name forges blocks the certificate does not
+-- authorise, which the network rejects while the tool reports nothing.
 checkOpCertKesKey ::
   -- | Where the two came from, for the error message.
   String ->
-  Api.OperationalCertificate ->
-  Api.SigningKey Api.UnsoundPureKesKey ->
+  Keys.OperationalCertificate ->
+  Keys.SigningKey Keys.KesKey ->
   ExceptT String IO ()
-checkOpCertKesKey source opCert kesSignKey
-  | suppliedKesKeyHash == certifiedKesKeyHash = pure ()
-  | otherwise =
-      throwE $
-        source
-          <> ": the KES key does not match the one named by the operational certificate"
+checkOpCertKesKey source opCert kesSignKey =
+  except . first renderMismatch $ Keys.checkKesKeyMatchesOpCert opCert kesSignKey
  where
-  certifiedKesKeyHash = Api.verificationKeyHash (Api.getHotKey opCert)
-  suppliedKesKeyHash = Api.verificationKeyHash (Api.getVerificationKey kesSignKey)
+  renderMismatch mismatch =
+    source <> ": " <> Keys.docToString (Keys.renderKesKeyMismatch mismatch)
+
+-- | Report one of @cardano-keys@' file errors as a message. It renders errors
+-- as @prettyprinter@ documents and hands out the payload renderer separately,
+-- hence the argument.
+renderKeyFileError :: (e -> Doc ann) -> Keys.FileError e -> String
+renderKeyFileError renderPayload =
+  Keys.docToString . Keys.renderFileError renderPayload
 
 --
 -- Mapping onto the consensus types
 --
 
--- | The consensus operational certificate a vendored one wraps.
-opCertOf :: Api.OperationalCertificate -> OCert.OCert StandardCrypto
-opCertOf (Api.OperationalCertificate opCert _) = opCert
+-- | The consensus operational certificate a @cardano-keys@ one wraps.
+opCertOf :: Keys.OperationalCertificate -> OCert.OCert StandardCrypto
+opCertOf (Keys.OperationalCertificate opCert _) = opCert
 
 -- | The stake pool cold verification key an operational certificate names,
 -- which the file carries alongside the certificate itself.
-coldVerKeyOf :: Api.OperationalCertificate -> VKey StakePool
-coldVerKeyOf (Api.OperationalCertificate _ (Api.StakePoolVerificationKey coldVerKey)) =
+coldVerKeyOf :: Keys.OperationalCertificate -> VKey StakePool
+coldVerKeyOf (Keys.OperationalCertificate _ (Keys.StakePoolVerificationKey coldVerKey)) =
   coldVerKey
-
--- | The consensus KES signing key a vendored one wraps.
-kesSignKeyOf ::
-  Api.SigningKey Api.UnsoundPureKesKey ->
-  UnsoundPureSignKeyKES (KES StandardCrypto)
-kesSignKeyOf (Api.KesSigningKey kesSignKey) = kesSignKey
 
 --
 -- Errors

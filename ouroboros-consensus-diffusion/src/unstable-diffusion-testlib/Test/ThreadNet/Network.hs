@@ -130,6 +130,7 @@ import Ouroboros.Network.BlockFetch
   )
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
+import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.Mock.Chain (Chain (Genesis))
 import Ouroboros.Network.PeerSelection.Governor
   ( makePublicPeerSelectionStateVar
@@ -1065,7 +1066,7 @@ runThreadNetwork
                     , bfcDecisionLoopIntervalPraos = 0.0 -- Mock testsuite can use sub-second slot
                     , bfcDecisionLoopIntervalGenesis = 0.0 -- interval which doesn't play nice with
                     -- blockfetch descision interval.
-                    , bfcSalt = 0
+                    , bfcSalt = mkUnsafeSalt 0
                     , bfcGenesisBFConfig = gcBlockFetchConfig enableGenesisConfigDefault
                     }
               , gsmArgs =
