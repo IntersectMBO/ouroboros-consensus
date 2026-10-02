@@ -175,7 +175,7 @@ ebHashFromBytes :: MonadFail m => ByteString -> m EbHash
 ebHashFromBytes = fmap MkEbHash . packByteString
 
 encodeEbHash :: EbHash -> Encoding
-encodeEbHash = CBOR.encodeBytes . ebHashBytes
+encodeEbHash (MkEbHash bytes) = toCBOR bytes
 
 decodeEbHash :: Decoder s EbHash
 decodeEbHash = MkEbHash <$> decodeFixedSized
@@ -1074,8 +1074,8 @@ hashLeiosEb =
 encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb v) =
   foldl
-    ( \acc (txHash, txBytesSize) ->
-        acc <> CBOR.encodeBytes (txHashBytes txHash) <> CBOR.encodeWord32 txBytesSize
+    ( \acc (MkTxHash txHash, txBytesSize) ->
+        acc <> toCBOR txHash <> CBOR.encodeWord32 txBytesSize
     )
     (CBOR.encodeMapLen $ fromIntegral $ length v)
     v
