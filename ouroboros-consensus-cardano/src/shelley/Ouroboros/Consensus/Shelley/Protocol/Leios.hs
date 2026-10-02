@@ -33,7 +33,6 @@ import Ouroboros.Consensus.Protocol.Leios
 import Ouroboros.Consensus.Protocol.Praos
   ( PraosCannotForge
   , PraosFields (..)
-  , PraosParams (..)
   , PraosToSign (..)
   , forgePraosFields
   , praosVerifyHeaderIntegrity
@@ -54,6 +53,8 @@ import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError
   , praosEnvelopeCheck
   )
+-- The overlay delegates to the Praos instances, which are orphans.
+import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 
 type instance ProtoCrypto (Leios c) = c
 
@@ -95,7 +96,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsEnvelope (Leios c) where
       (Leios.hbBodySize (Leios.headerBody hdr))
 
 instance LeiosCrypto c => ProtocolHeaderSupportsKES (Leios c) where
-  configSlotsPerKESPeriod = praosSlotsPerKESPeriod . praosParams . leiosPraosConfig
+  configSlotsPerKESPeriod = configSlotsPerKESPeriod . leiosPraosConfig
 
   verifyHeaderIntegrity slotsPerKESPeriod =
     praosVerifyHeaderIntegrity slotsPerKESPeriod . leiosHeaderToView
@@ -140,9 +141,6 @@ instance LeiosCrypto c => ProtocolHeaderSupportsProtocol (Leios c) where
 
   pHeaderIssuer = Leios.hbVk . Leios.headerBody
   pHeaderIssueNo = SL.ocertN . Leios.hbOCert . Leios.headerBody
-
-  -- This is the "unified" VRF value, prior to range extension which yields e.g.
-  -- the leader VRF value used for slot election.
   pTieBreakVRFValue = certifiedOutput . Leios.hbVrfRes . Leios.headerBody
 
 type instance Signed (Leios.Header c) = Leios.HeaderBody c
