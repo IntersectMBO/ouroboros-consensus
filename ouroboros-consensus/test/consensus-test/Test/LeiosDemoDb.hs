@@ -716,7 +716,7 @@ test_crossEbFill db = do
     filled @?= [0, 1]
     completed @?= [pointB]
     -- and the closure reads back with A's bytes
-    closure <- rwLookupEbClosure con (pointEbHash pointB)
+    closure <- rwLookupTrustedEbClosure con (pointEbHash pointB)
     fmap (map snd) closure @?= Just [txBytesFor ebA 0, txBytesFor ebA 1]
     -- C declares a DIFFERENT tx hash of the same size as A's offset 0: a
     -- stale location resolving to the wrong EB must fill nothing even when
@@ -929,7 +929,7 @@ prop_completedEbComplete impl =
         let ebTxList = V.toList (leiosEbTxs eb)
             txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
         _ <- rwInsertTxs con point txsToInsert
-        (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+        (result, queryTime) <- timed $ rwLookupTrustedEbClosure con (pointEbHash point)
         let expectedHashes = map fst ebTxList
             check = case result of
               Nothing ->
@@ -979,7 +979,7 @@ prop_completedEbPartialTxs impl =
             partialTxs = take (numTxs `div` 2) ebTxList
             txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] partialTxs]
         _ <- rwInsertTxs con point txsToInsert
-        (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+        (result, queryTime) <- timed $ rwLookupTrustedEbClosure con (pointEbHash point)
         pure $
           result === Nothing
             & counterexample

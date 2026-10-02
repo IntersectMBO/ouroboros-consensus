@@ -303,6 +303,21 @@ data instance Header LeiosTestBlock = LeiosTestHeader
 hashLeiosTestBody :: LeiosTestBody -> Word64
 hashLeiosTestBody = djb2 . serialise
 
+-- WARNING: a header's hash is its position in the block tree and nothing else.
+--
+-- A real header hash covers the header's contents, so two headers differing in
+-- their Leios announcement --- or their issuer, their certificate flag, or
+-- their body hash --- necessarily differ in their hash. Here they do not.
+-- 'announcing', 'certifying', 'issuedBy' and 'withTxs' each rewrite a header in
+-- place and leave 'lthHash' alone, which is what lets a test build a plain
+-- chain and decorate its blocks afterwards without breaking the links.
+--
+-- That is deliberate, and convenient, but it means this block type cannot
+-- exhibit anything that turns on a header's contents being bound to its hash.
+-- Two headers a test needs to be genuinely distinct must sit at different
+-- positions in the tree ('forkLeiosBlock'); giving them different contents is
+-- not enough. In particular, equivocation here is a fact about the tree, not
+-- about what the headers say.
 type instance HeaderHash LeiosTestBlock = TestHash
 
 instance StandardHash LeiosTestBlock

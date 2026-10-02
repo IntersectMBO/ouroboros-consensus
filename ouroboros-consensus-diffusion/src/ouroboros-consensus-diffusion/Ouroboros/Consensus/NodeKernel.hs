@@ -819,7 +819,7 @@ initInternalState
     fetchClientRegistry <- newFetchClientRegistry
 
     leiosPeersVars <- LazySTM.newTVarIO Map.empty
-    -- Seed 'acquiredEbBodiesPrunedSlot' from the immutable tip: everything at or
+    -- Seed 'outstandingPrunedSlot' from the immutable tip: everything at or
     -- below it is already final, so an EB that old must read as 'tooOld' from the
     -- outset -- not only once the first 'pruneOutstandingToImmTip' fires.
     immTip <- getTipSlot . ledgerState <$> atomically (ChainDB.getImmutableLedger chainDB)

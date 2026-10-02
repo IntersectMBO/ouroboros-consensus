@@ -541,14 +541,15 @@ assignPeer env mbCurrentSlot isBig peerId offers acc =
 
     pruneThisOffer = (acc1, dec1, Set.insert point drops)
 
--- | Request the EB body from this peer, if the peer offered the body and
--- offered it at the size we are pursuing.
+-- | Request the EB body from this peer, at the size the peer offered it at.
 --
--- A peer that offered some other size holds a different endorser block than
--- the one we are after --- at most one size for a hash is the truth --- so
--- asking it would only earn us a body that fails 'processLeiosBlock''s size
--- check. Its offer is left in place rather than dropped, since a later focus
--- change could make it the one we want.
+-- The offered size is the only size with any say here; an announcement's has
+-- none, since at most one announcement naming a hash is honest and nothing
+-- tells us which. So we ask whoever says they have it, for as many bytes as
+-- they say. The offer was bounded by 'Leios.maxLeiosEbBytesSize' when it
+-- arrived ('checkLeiosBlockOffer'), and what the bytes really are is settled on
+-- arrival by hashing them ('processLeiosBlock'): a peer that misrepresented
+-- either the block or its length loses the connection then.
 assignBody ::
   Ord pid =>
   PeerId pid ->
@@ -561,23 +562,18 @@ assignBody peerId ebHash slot offer st@(acc, dec)
   | peerId `Set.member` Map.findWithDefault Set.empty ebHash (Leios.requestedEbPeers acc) =
       -- unless we've already requested it from them
       st
-  | otherwise =
-      case bodySize acc ebHash of
-        Nothing ->
-          -- another ephemeral case where 'ebState' has been pruned before the
-          -- offers have
-          st
-        Just size
-          | Leios.poOfferedBody offer /= SJust size -> st
-          | otherwise ->
-              let acc' =
-                    acc
-                      { Leios.requestedEbPeers =
-                          Map.insertWith Set.union ebHash (Set.singleton peerId) (Leios.requestedEbPeers acc)
-                      , Leios.requestedBytesSizePerPeer =
-                          Map.insertWith (+) peerId size (Leios.requestedBytesSizePerPeer acc)
-                      }
-               in (acc', dec Seq.|> LeiosBlockRequest (MkLeiosBlockRequest (MkLeiosPoint slot ebHash) size))
+  | otherwise = case Leios.poOfferedBody offer of
+      -- the peer offered the closure but not the body
+      SNothing -> st
+      SJust size ->
+        let acc' =
+              acc
+                { Leios.requestedEbPeers =
+                    Map.insertWith Set.union ebHash (Set.singleton peerId) (Leios.requestedEbPeers acc)
+                , Leios.requestedBytesSizePerPeer =
+                    Map.insertWith (+) peerId size (Leios.requestedBytesSizePerPeer acc)
+                }
+         in (acc', dec Seq.|> LeiosBlockRequest (MkLeiosBlockRequest (MkLeiosPoint slot ebHash) size))
 
 -- | Flag indicating whether all jobs matching a peer's offers are already
 -- inflight
@@ -642,13 +638,6 @@ assignClosure env isBig peerId ebHash st@(acc, dec) =
                     }
                 reqs = batchTxsRequests env (MkLeiosPoint slot ebHash) nePicked
              in (acc', dec <> Seq.fromList reqs)
-
--- | The announced body size of an EB we are still missing. All points of a hash
--- share the size, so any one still listed in 'missingEbBodies' serves.
-bodySize :: LeiosOutstanding pid -> EbHash -> Maybe BytesSize
-bodySize acc ebHash = do
-  slots <- Map.lookup ebHash (Leios.reverseSlotIndexByEbHash acc)
-  Map.lookup (MkLeiosPoint (NESet.findMin slots) ebHash) (Leios.missingEbBodies acc)
 
 -- | Take least-requested-available jobs until the budget is spent or
 -- there are no more jobs that aren't already assigned to this peer. Also
@@ -883,23 +872,41 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   let MkLeiosPoint _ebSlot ebHash = point
   let ebBytesSize' = encodeLeiosEbSize eb
   -- A failed-validation body: attribute the whole body to 'fabInvalid'.
+  --
+  -- TODO throw a proper exception type rather than 'error', which this module
+  -- otherwise keeps for what cannot happen --- a peer earning a disconnect is
+  -- routine and should not read as a bug in this node. The mirror of
+  -- 'ExnLeiosInvalidRequest' is what is missing. 'processLeiosBlockTxs' has the
+  -- same helper, with the same gap.
   let invalidReply reason =
         traceWith ktracer (TraceLeiosFetchBodyArrival (fetchArrivalInvalid ebBytesSize'))
           >> error reason
+  -- Whether the peer sent a different number of bytes than its offer promised.
+  --
+  -- That costs it the connection, but only once we have taken the body: the
+  -- hash is what says these are the right bytes, and if they are, throwing them
+  -- away would let a peer deny us an endorser block just by lowballing its own
+  -- offer. So this is settled at the very end of this function.
+  --
+  -- An honest peer cannot be caught by this, because the voting logic checks
+  -- sizes (TODO it doesn't yet; see the related @FIXME@ in
+  -- 'LeiosVoting.runLeiosVoting'): only our interpretation of CertRB
+  -- roll-forward as an EB body offer interprets the issuer's claimed size as
+  -- the peer's claimed size. When that peer isn't also the issuer, they'd lose
+  -- their connection to us if the issuer lied about the size. However, an
+  -- honest peer only sends that CertRB after validating the (or an equivalent)
+  -- certificate. So, there is actually no such risk, because Leios committee is
+  -- assumed to be honest.
+  let wrongLength = case source of
+        ForgedBlock{} -> False
+        ReceivedBlockFrom{} -> ebBytesSize' /= ebBytesSize
   case source of
     -- A forge's body is self-produced; never validate it (so no 'error' path is
     -- ever reachable for a locally-forged EB).
     ForgedBlock{} -> pure ()
     ReceivedBlockFrom{} -> do
-      -- FIXME: 'ebBytesSize' here is the size we recorded from the peer
-      -- offer at 'MsgLeiosBlockOffer' time (carried through the request),
-      -- not the chain-authoritative 'encodeLeiosEbSize' from the parent
-      -- RB's 'headerLeiosAnnouncement'. EB announcements are not yet
-      -- implemented; once they are, validate against the announced size
-      -- so that a peer cannot poison this check by sending a bad-size
-      -- offer first.
-      when (ebBytesSize' /= ebBytesSize) $ do
-        invalidReply $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
+      -- The hash is the whole of it: these bytes either are the endorser block
+      -- we asked for or they are not, and no announcement gets a say.
       let ebHash' = hashLeiosEb eb
       when (ebHash' /= ebHash) $ do
         invalidReply $ "MsgLeiosBlock hash mismatch: " <> show (ebHash', ebHash)
@@ -918,20 +925,19 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- body cannot both write it (the second sees 'novel = False'), so we neither
   -- re-pay the ~16k-row write nor emit a storm of 'LeiosDbInsertCollision's.
   (shouldPersist, bodyClass, mempoolIngest, missedBoth, fills) <- MVar.modifyMVar outstandingVar $ \outstanding -> do
-    let tooOld = point.pointSlotNo < Leios.acquiredEbBodiesPrunedSlot outstanding
+    let tooOld = point.pointSlotNo < Leios.outstandingPrunedSlot outstanding
         novel = not $ maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding))
         -- Always: this request is no longer in flight and we now have the body,
         -- so drop the body-fetch bookkeeping ('refundEbRequest' reverses the
         -- per-request accounting -- skipped if a disconnect already cancelled it
-        -- in bulk -- and we delete every point listing this body from
-        -- 'missingEbBodies'); and unless the EB is too old to matter, remember we
-        -- have it so we neither re-fetch nor re-offer it.
+        -- in bulk); and unless the EB is too old to matter, remember we have it
+        -- so we neither re-fetch nor re-offer it.
         !outstandingCleaned =
           ( case mbPeer of
               Just peerId -> refundEbRequest peerId ebHash ebBytesSize
               Nothing -> id
           )
-            $ Leios.unlistMissingEbBody ebHash outstanding
+            outstanding
     -- Persist and classify only a genuinely novel, still-relevant body. A
     -- duplicate (already held) or a too-old arrival (its slot is below pruned
     -- watermark, so 'novel' can't be trusted) is left at the bookkeeping above
@@ -1041,7 +1047,10 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       --
       -- A failed write is fatal: the single writer rethrows and is 'link'ed to the
       -- node, so there is no lost-write case to recover from here.
-      pointWritten <- writeEbPoint writer point ebBytesSize
+      --
+      -- The size written is the actual size of the received body, regardless of
+      -- announcements' or offers' claims.
+      pointWritten <- writeEbPoint writer point ebBytesSize'
       bodyWritten <- writeEbBody writer point eb fills
       let settle = do
             await pointWritten
@@ -1089,6 +1098,11 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       writer
       systemTime
       (MempoolTxs point mempoolIngest)
+  -- The body is in hand and ingested; only now does the peer answer for having
+  -- promised a different number of bytes than it sent.
+  when wrongLength $
+    throwIO $
+      ExnLeiosBlockWrongSize point ebBytesSize ebBytesSize'
 
 -- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
 -- mempool (the forge, which already holds the whole closure, and tests): keep
@@ -1619,12 +1633,11 @@ checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
 -- equivocation proofs can spread, and nothing asks a peer to show us two
 -- certificates.
 --
--- Without this, the offer path is a second door into 'ebState' and
--- 'missingEbBodies' that the announcement cap does not guard: a pool can
--- equivocate its own won slots into arbitrarily many announcing blocks, put a
--- cert-claiming header on each --- the certificate is in the body, which we
--- need never fetch --- and roll them all forward, arbitrarily increasing the
--- node's memory usage.
+-- Without this, rolling CertRBs forward is a door into this peer's 'offerings'
+-- that the announcement cap does not guard: a pool can equivocate its own won
+-- slots into arbitrarily many announcing blocks, put a cert-claiming header on
+-- each --- the certificate is in the body, which we need never fetch --- and
+-- roll them all forward, arbitrarily increasing the node's memory usage.
 noteCertificationClaim :: IOLike m => LeiosPeerVars m -> ElId -> EbHash -> m ()
 noteCertificationClaim peerVars elId ebHash =
   MVar.modifyMVar (Leios.certificationClaims peerVars) $ \claimed ->
@@ -1861,6 +1874,20 @@ data ExnLeiosInvalidRequest
 
 instance Exception ExnLeiosInvalidRequest
 
+-- | Thrown when a peer's 'MsgLeiosBlock' is not the number of bytes it offered
+-- that endorser block at: the point, the size it offered, and the size it sent.
+-- The ensuing thread death disconnects it.
+--
+-- Unlike the other invalid replies, the body itself is good --- it hashes to
+-- the endorser block we asked for --- so it is ingested before this is thrown
+-- and its bytes are accounted as the arrival they were. That is why this does
+-- not go through @invalidReply@, which writes the whole body off as waste.
+data ExnLeiosBlockWrongSize
+  = ExnLeiosBlockWrongSize !LeiosPoint !BytesSize !BytesSize
+  deriving Show
+
+instance Exception ExnLeiosBlockWrongSize
+
 -- | Which of a point's two independent offers a LeiosNotify message makes.
 data OfferedBodyOrClosure = OfferedBody | OfferedClosure
   deriving (Eq, Show)
@@ -1983,36 +2010,35 @@ recordAnnouncedEb (outstandingVar, readyVar) onset fields = do
   changed <- MVar.modifyMVar outstandingVar (pure . upd)
   when changed $ void $ MVar.tryPutMVar readyVar ()
  where
-  MkAnnouncementFields elId ebHash ebBytesSize = fields
+  -- The announced size is deliberately unused by fetching; nothing about
+  -- fetching turns on it (see 'assignBody').
+  MkAnnouncementFields elId ebHash _ebBytesSize = fields
   -- The announced EB's slot is its election's slot (see
   -- 'headerLeiosAnnouncement').
   MkElId ebSlot _poolId = elId
-  point = MkLeiosPoint ebSlot ebHash
 
-  -- The same in-lock guard as 'recordEbBodyOffer' (too old / already held /
-  -- already listed). No cache lookup: 'ebState' is authoritative here.
+  -- The same in-lock guard as 'recordEbBodyOffer' (too old / already held). No
+  -- cache lookup: 'ebState' is authoritative here.
   upd outstanding =
-    let tooOld = ebSlot < Leios.acquiredEbBodiesPrunedSlot outstanding -- too old to fetch
+    let tooOld = ebSlot < Leios.outstandingPrunedSlot outstanding -- too old to fetch
+    -- One entry per election: the announcement that takes the election's
+    -- focus. A second announcement for an already-focused election is an
+    -- equivocation, and tracking its endorser block too would let a pool
+    -- double what its won slots cost us. If that one turns out to be the
+    -- certified one, 'trackCertifiedEb' gives it an entry then.
+        introducedFocus = not $ Map.member elId (Leios.elFocus outstanding)
         !outstanding'
-          | tooOld = outstanding
+          | tooOld || not introducedFocus = outstanding
           | otherwise =
               Leios.focusElectionIfUnfocused elId ebHash $
                 Leios.recordMaxAnnouncementSlot ebHash ebSlot onset outstanding
-        -- Only the announcement that takes the election's focus lists a body:
-        -- one candidate per election, which is what bounds 'missingEbBodies'.
-        -- A later announcement for an already-focused election is recorded but
-        -- not pursued, and a certificate that moves the focus lists its own
-        -- through 'checkMsgRollForwardForLeiosOffers'.
-        tookFocus = not $ Map.member elId (Leios.elFocus outstanding)
+        -- Whether this gives the fetch logic anything new to do, and so is
+        -- worth waking it for.
         skip =
           tooOld
-            || not tookFocus
+            || not introducedFocus
             || maybe False Leios.ebStateHasBody (Map.lookup ebHash (Leios.ebState outstanding)) -- already have it
-            || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
-        !outstanding''
-          | skip = outstanding'
-          | otherwise = Leios.listMissingEbBody point ebBytesSize outstanding'
-     in (outstanding'', not skip)
+     in (outstanding', not skip)
 
 -- | What one LeiosNotify client remembers about its upstream peer.
 --
@@ -2090,10 +2116,12 @@ checkLeiosBlockOffer point claimed peerSt
   | ebSlot < lnpsPruneSlot peerSt =
       Left $ ExnLeiosOfferTooOld point (lnpsPruneSlot peerSt)
   | SJust{} <- Leios.poOfferedBody seen = Left $ ExnLeiosRepeatedOffer point OfferedBody
-  | claimed > Leios.maxLeiosEbBytesSize =
-      -- No endorser block may exceed this in any slot: it is the bound the
-      -- guardrails script imposes, so the ledger parameter that actually
-      -- applies can only be smaller.
+  | claimed == 0 || claimed > Leios.maxLeiosEbBytesSize =
+      -- An endorser block has at least one byte, and no endorser block may
+      -- exceed this in any slot: that is the bound the guardrails script
+      -- imposes, so the ledger parameter that actually applies can only be
+      -- smaller. Since the offered size is what we go on to request (see
+      -- 'assignBody'), this is the only thing bounding it.
       --
       -- TODO enforce that parameter instead of its ceiling. The announcement
       -- this offer rides on (see 'announcedIt') was validated against the
