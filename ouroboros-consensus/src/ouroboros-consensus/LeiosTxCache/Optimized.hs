@@ -149,7 +149,16 @@ newHashTableLeiosTxCache nshift k0 k1 = do
           MVar.withMVar stateVar $ \_ -> k (lookupOne ht)
       , setTxLocations = \ebh offTxs ->
           MVar.modifyMVar stateVar $ \st -> do
-            let slot = UnsafeEbRingIndex (hsLocNext st `mod` maxAnnouncementCount)
+            -- An EB's closure arrives over one or more batches, each a separate
+            -- call; all must land in the single slot the EB holds. Claim a new
+            -- slot only the first time an EB is seen (while it still occupies the
+            -- ring); claiming one per batch would wrap the ring every
+            -- 'maxAnnouncementCount' /batches/ rather than EBs, overwriting slots
+            -- still referenced by recent EBs.
+            let (slot, locNext') = case ringSlotOf ebh st of
+                  Just s -> (s, hsLocNext st)
+                  Nothing ->
+                    (UnsafeEbRingIndex (hsLocNext st `mod` maxAnnouncementCount), hsLocNext st + 1)
             F.for_ offTxs $ \(off, txh) -> do
               let key = toKey txh
               mv <- HT.lookup ht key
@@ -160,7 +169,7 @@ newHashTableLeiosTxCache nshift k0 k1 = do
             pure
               ( st
                   { hsLocRing = Map.insert slot ebh (hsLocRing st)
-                  , hsLocNext = hsLocNext st + 1
+                  , hsLocNext = locNext'
                   }
               , ()
               )
@@ -169,6 +178,11 @@ newHashTableLeiosTxCache nshift k0 k1 = do
 {-------------------------------------------------------------------------------
   Announcement \/ body state (mirrors LeiosTxCacheIndex, txs excepted)
 -------------------------------------------------------------------------------}
+
+-- | The ring slot an EB currently occupies, if it still does. Scans the ring,
+-- at most 'maxAnnouncementCount' entries.
+ringSlotOf :: EbHash -> HtState b -> Maybe EbRingIndex
+ringSlotOf ebh = fmap fst . F.find ((== ebh) . snd) . Map.toList . hsLocRing
 
 announcementPresent :: SlotNo -> RbHash -> HtState b -> Bool
 announcementPresent slot rbh st =

@@ -59,7 +59,7 @@ module LeiosTxCache.Reference
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Data.List (foldl')
+import Data.List (find, foldl')
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
@@ -110,7 +110,11 @@ data LeiosTxCacheIndex a v b = MkLeiosTxCacheIndex
   -- non-decreasing; 'SlotNo' @0@ until the first prune)
   , txLocState :: !(Map TxHash (EbRingIndex, TxOffset))
   -- ^ Where a tracked tx's durable bytes live: a 'locRing' slot and an offset
-  -- into that EB. INVARIANT: keys are a subset of 'txState''s.
+  -- into that EB. INVARIANT: keys are a subset of 'txState''s. In practice only
+  -- of its 'TxAlreadyInserted' keys: 'setTxLocations' runs just after bytes
+  -- become durable, never for a 'TxNotYetInserted' tx, which has no bytes to
+  -- point at. Eviction then prunes this map by 'txState' refcount, so the subset
+  -- claim is what holds in general.
   , locRing :: !(Map EbRingIndex EbHash)
   -- ^ The EBs recent tx locations point into, keyed by ring slot
   -- (@'locNext' \`mod\` 'maxAnnouncementCount'@ at claim time). Slot reuse
@@ -439,22 +443,35 @@ lookupBody ebh idx = case Map.lookup ebh (bodyState idx) of
   Just (BodyAlreadyInserted _ b) -> Just b
   _ -> Nothing
 
--- | Record where each tx's durable bytes now live: claim the next ring slot for
--- the source EB and point each /tracked/ tx at it. The latest location wins --
--- the newest source EB outlives older ones in both the ring and the db.
+-- | Record where each tx's durable bytes now live: point each /tracked/ tx at
+-- the source EB's ring slot. The latest location wins -- the newest source EB
+-- outlives older ones in both the ring and the db.
+--
+-- An EB's closure arrives over one or more batches, each a separate call here;
+-- all of them must land in the single slot the EB holds. So a new slot is
+-- claimed only the first time an EB is seen (while it still occupies the ring);
+-- claiming one per batch would wrap the ring every 'maxAnnouncementCount'
+-- /batches/ rather than EBs, overwriting slots still referenced by recent EBs.
 setTxLocations ::
   EbHash -> [(TxOffset, TxHash)] -> LeiosTxCacheIndex a v b -> LeiosTxCacheIndex a v b
 setTxLocations ebh offTxs idx =
   idx
     { locRing = Map.insert slot ebh (locRing idx)
-    , locNext = locNext idx + 1
+    , locNext = locNext'
     , txLocState = foldl' upd (txLocState idx) offTxs
     }
  where
-  slot = UnsafeEbRingIndex (locNext idx `mod` maxAnnouncementCount)
+  (slot, locNext') = case ringSlotOf ebh idx of
+    Just s -> (s, locNext idx)
+    Nothing -> (UnsafeEbRingIndex (locNext idx `mod` maxAnnouncementCount), locNext idx + 1)
   upd m (off, txh)
     | Map.member txh (txState idx) = Map.insert txh (slot, off) m
     | otherwise = m
+
+-- | The ring slot an EB currently occupies, if it still does. Scans the ring,
+-- at most 'maxAnnouncementCount' entries.
+ringSlotOf :: EbHash -> LeiosTxCacheIndex a v b -> Maybe EbRingIndex
+ringSlotOf ebh = fmap fst . find ((== ebh) . snd) . Map.toList . locRing
 
 -- | Where this tx's durable bytes live, if a tracked tx has a recorded location
 -- whose ring slot is still populated. Possibly stale (see 'locRing').
