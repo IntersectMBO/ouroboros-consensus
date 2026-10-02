@@ -18,6 +18,9 @@ module LeiosUtils.CallTrace
   , CallName
   , ThreadName
   , ChildThreadId
+  , ThreadId
+  , ThreadInfo (..)
+  , ThreadStack
   , CallCtx (..)
   , CallTrace (..)
   , CallEvent (..)
@@ -42,6 +45,8 @@ import Control.Monad (foldM, void, when)
 import Control.Monad.Class.MonadTime.SI (MonadMonotonicTime (getMonotonicTime), diffTime)
 import Control.Monad.Class.MonadTimer.SI (DiffTime)
 import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (isJust)
@@ -55,37 +60,48 @@ type CallName = String
 type ThreadName = String
 type ChildThreadId = Word64
 
+-- | Globally unique thread identifier: the path of child thread IDs from the
+-- root thread down to this thread.  Built incrementally in 'newCallCtx' so no
+-- traversal is needed at trace time.
+type ThreadId = [ChildThreadId]
+
+-- | Name and globally unique ID of one thread level in the ancestry stack.
+data ThreadInfo = ThreadInfo
+  { tiName :: ThreadName
+  , tiId :: ThreadId
+  }
+  deriving stock (Show, Eq)
+
+-- | The full thread ancestry of a call: the current thread at the head,
+-- the root thread at the tail.  Grows by one entry per 'newCallCtx' call.
+type ThreadStack = NonEmpty ThreadInfo
+
 -- | `CallInfo` holds a thread/name/local id of a call and its parents' CallInfo.
 data CallInfo = CallInfo
   { ciChildCallId :: ChildCallId
-  -- ^ Call child/local identifier, unique amongst all `sibling` calls
-  -- `callId` forms a globally unique identifier
+  -- ^ Call child/local identifier, unique amongst all `sibling` calls;
+  -- 'callId' forms a globally unique identifier.
   , ciCallParent :: Maybe CallInfo
   -- ^ Parent call info
   , ciCallName :: CallName
   -- ^ Logical call name, should be unique amongst names (ie. like a fully qualified name)
-  , ciThreadName :: ThreadName
-  -- ^ Logical thread name (ie. like "Forge")
-  , ciChildThreadId :: ChildThreadId
-  -- ^ Unique identifier for the thread instance; distinguishes concurrent
-  -- threads that share the same 'ciThreadName'
+  , ciThreadStack :: ThreadStack
+  -- ^ Full thread ancestry, current thread at head.  All calls within the
+  -- same thread share the same stack; 'newCallCtx' pushes a new entry.
   }
   deriving stock (Show, Eq)
 
 -- | Call context parameterised by the thread-arg type @t@.
 data CallCtx t m = CallCtx
   { ccCallInfo :: CallInfo
-  , ccThreadName :: ThreadName
-  -- ^ Execution thread inherited by child calls. Separate from 'ciThread' in
-  -- 'ccCallInfo', which records the thread this call itself ran on and must
-  -- not be mutated (it is embedded as 'ciCallParent' in every child forever).
-  , ccChildThreadId :: ChildThreadId
+  -- ^ Call info for the current context; carries the 'ThreadStack' via
+  -- 'ciThreadStack'.  Child calls use this as their 'ciCallParent'.
   , ccThreadArg :: t
   -- ^ Caller-supplied semantic context for the thread instance (e.g. peer
-  -- address, credential label). Carried in the context; not embedded in 'CallInfo'.
+  -- address, credential label).  Not embedded in 'CallInfo'.
   , ccNextChildCallId :: StrictTVar m ChildCallId
   , ccNextChildThreadId :: StrictTVar m ChildThreadId
-  -- ^ Shared counter for minting unique thread IDs within this hierarchy.
+  -- ^ Counter for minting unique child thread IDs for direct child threads.
   }
 
 -- | `CallTrace` denotes events that describe a Call's life, with its Argument of type `a` and a result of type `r`.
@@ -187,28 +203,13 @@ childCallCtx pctx cn = do
           { ciChildCallId = cid
           , ciCallParent = Just $ ccCallInfo pctx
           , ciCallName = cn
-          , ciThreadName = ccThreadName pctx
-          , ciChildThreadId = ccChildThreadId pctx
+          , ciThreadStack = ciThreadStack (ccCallInfo pctx)
           }
   return $
-    CallCtx
+    pctx
       { ccCallInfo = ci
-      , ccThreadName = ccThreadName pctx
-      , ccChildThreadId = ccChildThreadId pctx
-      , ccThreadArg = ccThreadArg pctx
       , ccNextChildCallId = nextChildCallIdVar
-      , ccNextChildThreadId = ccNextChildThreadId pctx
       }
-
-rootCallInfo :: ThreadName -> CallInfo
-rootCallInfo thread =
-  CallInfo
-    { ciChildCallId = 0
-    , ciCallParent = Nothing
-    , ciCallName = ""
-    , ciThreadName = thread
-    , ciChildThreadId = 0
-    }
 
 -- | Fresh top-level context to pass to the outermost 'callTrace' call.
 -- Supply the thread argument @t@ (use @()@ when no argument is needed).
@@ -218,31 +219,41 @@ rootCallCtx thread arg = do
     c <- newTVar 0
     t <- newTVar 0
     pure (c, t)
+  let rootCallInfo =
+        CallInfo
+          { ciChildCallId = 0
+          , ciCallParent = Nothing
+          , ciCallName = ""
+          , ciThreadStack = ThreadInfo{tiName = thread, tiId = [0]} :| []
+          }
   return $
     CallCtx
-      { ccCallInfo = rootCallInfo thread
-      , ccThreadName = thread
-      , ccChildThreadId = 0
+      { ccCallInfo = rootCallInfo
       , ccThreadArg = arg
       , ccNextChildCallId = nextChildCallIdVar
       , ccNextChildThreadId = nextChildThreadIdVar
       }
 
--- | Branch a context onto a new thread, minting a fresh 'ChildThreadId' from
--- the shared counter. The new context is a child of 'pctx' in the call tree
--- but carries a distinct thread name, ID, and argument.
+-- | Branch a context onto a new thread, minting a fresh child thread ID from
+-- the shared counter and prepending it to the parent's 'ThreadId' path.
+-- The new context is a child of 'pctx' in the call tree but carries a
+-- distinct thread name, ID path, and argument.
 -- Use @()@ for the argument when no thread argument is needed.
 newCallCtx :: MonadSTM m => CallCtx t m -> ThreadName -> s -> m (CallCtx s m)
 newCallCtx pctx thisThreadName thisThreadArg = do
-  (thisThreadId, nextChildThreadIdVar) <- atomically $ do
-    n <- readTVar (ccNextChildThreadId pctx)
-    writeTVar (ccNextChildThreadId pctx) (n + 1)
+  (thisChildThreadId, nextChildThreadIdVar) <- atomically $ do
+    thisChildThreadId <- readTVar (ccNextChildThreadId pctx)
+    writeTVar (ccNextChildThreadId pctx) (thisChildThreadId + 1)
     nextChildThreadIdVar <- newTVar 0
-    pure (n, nextChildThreadIdVar)
+    pure (thisChildThreadId, nextChildThreadIdVar)
+  let parentThreadStack = ciThreadStack (ccCallInfo pctx)
+      parentThread = NE.head parentThreadStack
+      parentThreadId = tiId parentThread
+      thisThreadInfo = ThreadInfo{tiName = thisThreadName, tiId = parentThreadId ++ [thisChildThreadId]}
+      thisThreadStack = thisThreadInfo NE.<| parentThreadStack
   return $
     pctx
-      { ccThreadName = thisThreadName
-      , ccChildThreadId = thisThreadId
+      { ccCallInfo = (ccCallInfo pctx){ciThreadStack = thisThreadStack}
       , ccThreadArg = thisThreadArg
       , ccNextChildThreadId = nextChildThreadIdVar
       }
@@ -257,18 +268,10 @@ callStack ci = case ciCallParent ci of
 callId :: CallInfo -> CallId
 callId = reverse . fmap ciChildCallId . callStack
 
--- | The thread-ID path from root to the current call: consecutive equal IDs
--- are collapsed, so each entry marks a thread boundary. Analogous to 'callId'.
-callThreadId :: CallInfo -> [ChildThreadId]
-callThreadId = go []
- where
-  go acc ci =
-    let acc' = case acc of
-          (x : _) | x == ciChildThreadId ci -> acc
-          _ -> ciChildThreadId ci : acc
-     in case ciCallParent ci of
-          Nothing -> acc'
-          Just par -> go acc' par
+-- | The globally unique thread-ID path of the current thread, as stored in
+-- the 'CallInfo'.  No traversal — reads the precomputed path directly.
+callThreadId :: CallInfo -> ThreadId
+callThreadId = tiId . NE.head . ciThreadStack
 
 -- | Allocation measurements machinery
 class Monad m => MonadAllocationCounter m where
@@ -320,9 +323,7 @@ foldCallTrace = flip (foldM foldFn)
               }
         CallEnd _res cm -> do
           startCi <- Map.lookup cid csActiveCalls `errN` "Ending a Call that is not active"
-          ( ciThreadName startCi /= ciThreadName ctCallInfo
-              || ciChildThreadId startCi /= ciChildThreadId ctCallInfo
-            )
+          (ciThreadStack startCi /= ciThreadStack ctCallInfo)
             `errB` "Call ended on a different thread than it started"
           return
             st

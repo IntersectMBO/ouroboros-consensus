@@ -32,8 +32,11 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Aeson (KeyValue ((.=)))
 import qualified Data.Aeson as Aeson
 import Data.List (intercalate)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import LeiosUtils.CallTrace
   ( CallName
+  , ThreadInfo (..)
   , ThreadName
   , callId
   , callStack
@@ -115,7 +118,7 @@ callTraceToObject (CallTrace ct) =
    in
     mconcat $
       [ "kind" .= Aeson.String "Call"
-      , "thread" .= CT.ciThreadName ci
+      , "thread" .= tiName (NE.head (CT.ciThreadStack ci))
       , "thread_id" .= formatThreadIdPath ci
       , "thread_argument" .= Aeson.toJSON (CT.ctThreadArgument ct)
       , "name" .= CT.ciCallName ci
