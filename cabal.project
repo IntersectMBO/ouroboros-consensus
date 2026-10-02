@@ -43,12 +43,8 @@ if os (windows)
 constraints:
   tasty <1.5.4,
 
-allow-newer:
-  kes-agent:network-mux,
-  kes-agent:ouroboros-network
-
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-config.git
-  tag: 245cb1c5821f85a31aef084bb65507bd14ce7596
-  --sha256: sha256-FIFd6Id0NnhpjJ5dwgOEkdjaGtLTa+teeLkChVChDsE=
+  tag: d26b702375c5737f661685b455cf79152f27d758
+  --sha256: sha256-s791jxNYBDkTgtPC9RhpoXXncXRJURPRFetK04VYHLU=
