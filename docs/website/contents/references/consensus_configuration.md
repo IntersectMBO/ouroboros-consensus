@@ -239,7 +239,7 @@ snapshotted. The policy is configured by `SnapshotPolicyArgs`
 | `sfaInterval` | **`DefaultSnapshotInterval` = `40·k` slots** (86,400 on mainnet ≈ one day of slots) | Snapshots are taken for the most recent immutable state before each slot in `offset, offset + interval, offset + 2·interval, …`. Nodes with the same interval/offset therefore snapshot *the same slots*, which matters for tools like Mithril that compare snapshots across nodes. Smaller interval = less replay on restart, more snapshot I/O. A `RequestedSnapshotInterval` gives an explicit number of slots instead; either way the interval is turned into slots by `resolveSnapshotInterval`, using the `SecurityParam` of the LedgerDB configuration. |
 | `sfaOffset` | **0** | Shifts the grid of snapshot slots, see above. |
 | `sfaRateLimit` | **10 minutes** | Skip a snapshot if less than this much time passed since the previous one finished. Mainly relevant while syncing, when eligible slots stream past quickly. Non-positive values disable the limit. Should be well below the wall-clock duration of the interval, or snapshots get skipped even when caught up. |
-| `sfaDelaySnapshotRange` | **5–10 minutes** | Once a snapshot is due, the node waits a random delay drawn from this range before writing it, so that the network's nodes don't all hit the disk (and slow down) simultaneously. |
+| `sfaDelaySnapshotRange` | **5 minutes – 6 hours** (6 hours is `10·k` seconds on mainnet) | Once a snapshot is due, the node waits a random delay drawn from this range before writing it, so that the network's nodes don't all hit the disk (and slow down) simultaneously. The state that is written is the one due at the snapshot slot, so the delay moves the write, not the snapshotted state. |
 
 Additional points:
 
@@ -251,7 +251,8 @@ Additional points:
   epoch boundary (86,400 divides both 432,000 and the 4,492,800-slot start of
   Shelley). The epoch boundary itself is not made busier by this: only
   immutable states are snapshotted, so the write happens once the state is `k`
-  blocks deep, and `sfaDelaySnapshotRange` defers it by a further 5–10 minutes.
+  blocks deep, and `sfaDelaySnapshotRange` defers it by a further 5 minutes to
+  6 hours.
 - Snapshots whose directory name carries a suffix (e.g. `4492799_last_Byron`)
   are **never deleted** by the retention policy — useful for pinning a state.
 - `sanityCheckSnapshotPolicyArgs` runs at startup and traces a warning for

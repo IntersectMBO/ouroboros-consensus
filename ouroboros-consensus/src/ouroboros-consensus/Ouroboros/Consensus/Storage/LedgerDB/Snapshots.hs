@@ -659,8 +659,10 @@ defaultSnapshotPolicyArgs = mithrilSnapshotPolicyArgs
 --   * We want to take a snapshot a day, so that is 40*k.
 --
 -- Note that we will take a snapshot at the beginning of each epoch too, but we
--- won't write it immediately, instead we will write it 5 - 10 minutes later, so
--- we don't risk imposing more work on the epoch boundary.
+-- will not write it immediately. Instead we will write it between 5 minutes and
+-- 6 hours later, so that we do not risk imposing more work on the epoch
+-- boundary, and so that the writes of all the nodes in the network are spread
+-- out. On mainnet, 6 hours is 10*k seconds.
 mithrilSnapshotPolicyArgs :: SnapshotPolicyArgs
 mithrilSnapshotPolicyArgs =
   SnapshotPolicyArgs
@@ -670,7 +672,7 @@ mithrilSnapshotPolicyArgs =
             { sfaInterval = DefaultSnapshotInterval
             , sfaOffset = 0
             , sfaRateLimit = secondsToDiffTime $ 10 * 60
-            , sfaDelaySnapshotRange = SnapshotDelayRange fiveMinutes tenMinutes
+            , sfaDelaySnapshotRange = SnapshotDelayRange fiveMinutes sixHours
             }
     , spaNum = NumOfDiskSnapshots 2
     }
@@ -678,8 +680,8 @@ mithrilSnapshotPolicyArgs =
   fiveMinutes :: DiffTime
   fiveMinutes = 5 * 60
 
-  tenMinutes :: DiffTime
-  tenMinutes = 10 * 60
+  sixHours :: DiffTime
+  sixHours = 6 * 60 * 60
 
 -- | Default on-disk policy suitable to use with cardano-node
 defaultSnapshotPolicy ::
