@@ -765,7 +765,15 @@ leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
         SNothing -> pure ()
         SJust ann -> do
           let announced = ebAnnouncementSize ann
-              maximum' = Views.llvMaxEbBodySize llv
+              -- TEMPORARY KLUDGE -- DO NOT MERGE.
+              --
+              -- The deployed testnet has historical announcements above the
+              -- 'maxEndorserBlockReferencesSize' its own Dijkstra genesis sets
+              -- (e.g. 102429 against 100000 at slot 709083), so enforcing the
+              -- ledger's value stalls the sync there. Exception granted here
+              -- and here only: every other use of the limit, and the genesis
+              -- file itself, are untouched.
+              maximum' = max 200000 (Views.llvMaxEbBodySize llv)
           when (announced > maximum') $
             throwError $
               LeiosHeaderErr mkHasLeiosProof $
