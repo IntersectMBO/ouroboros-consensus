@@ -1521,16 +1521,16 @@ sqlScanCompleteEbPointsSince conn sinceSlot = do
   -- insert). Presence in the immutable partition is proof of completeness:
   -- copies are atomic and only complete EBs are copied. Without this probe, a
   -- cert-RB parked across a restart would stay parked forever.
-  let volCompleteSet = Set.fromList [ebHashBytes p.pointEbHash | p <- volComplete]
-      unknown = [p | p <- recent, ebHashBytes p.pointEbHash `Set.notMember` volCompleteSet]
+  let volCompleteSet = Set.fromList [p.pointEbHash | p <- volComplete]
+      unknown = [p | p <- recent, p.pointEbHash `Set.notMember` volCompleteSet]
   if null unknown
     then pure volComplete
     else do
-      present <- immFilterPresent conn [ebHashBytes p.pointEbHash | p <- unknown]
+      present <- immFilterPresent conn [p.pointEbHash | p <- unknown]
       let presentSet = Set.fromList present
       pure $
         volComplete
-          <> [p | p <- unknown, ebHashBytes p.pointEbHash `Set.member` presentSet]
+          <> [p | p <- unknown, p.pointEbHash `Set.member` presentSet]
  where
   slot = fromIntegral $ unSlotNo sinceSlot
   Conn{conVolDb = db, connVolStmts = VolStmts{stScanCompleteEbsSince = stmt}} = conn
@@ -1545,16 +1545,16 @@ pointLoop stmt acc =
       pointLoop stmt (MkLeiosPoint slot hash : acc)
 
 -- | Which of the given EB hashes the immutable partition holds.
-immFilterPresent :: Conn -> [ByteString] -> IO [ByteString]
+immFilterPresent :: Conn -> [EbHash] -> IO [EbHash]
 immFilterPresent conn hashes =
   useStmt stmt $ do
-    dbBindUtf8 stmt 1 (jsonHexArray hashes)
+    dbBindUtf8 stmt 1 (jsonHexArray (map ebHashBytes hashes))
     let loop acc =
           dbStep stmt >>= \case
             DB.Done -> pure (reverse acc)
             DB.Row -> do
-              hashBytes <- DB.columnBlob stmt 0
-              loop (hashBytes : acc)
+              hash <- ebHashFromBytes =<< DB.columnBlob stmt 0
+              loop (hash : acc)
     loop []
  where
   Conn{connImmStmts = ImmStmts{immStFilterPresent = stmt}} = conn
