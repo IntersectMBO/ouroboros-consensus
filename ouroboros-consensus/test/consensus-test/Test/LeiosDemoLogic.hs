@@ -29,7 +29,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
-import qualified Data.Set.NonEmpty as NESet
 import LeiosDemoLogic (fetchPriorityTiers, leiosFetchLogicIteration)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
@@ -177,6 +176,18 @@ test_forgedEbOfferIgnored =
 data Scenario pid = Scenario
   { scEnv :: !LeiosFetchStaticEnv
   , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint WhetherTxsClosureOffered))
+  , scOfferedSizes :: !(Map.Map LeiosPoint BytesSize)
+  -- ^ The size each point is offered at.
+  --
+  -- NOTE a peculiarity of this harness: every peer offering a point offers it
+  -- at the same size, the one 'withMissingBody' named. The protocol does not
+  -- work that way --- each offer carries its own size, and 'assignBody' asks
+  -- for whatever the peer it is asking claimed --- so no scenario here can have
+  -- two peers disagree about a size. Nothing these tests cover turns on that.
+  --
+  -- It is a field of its own because the size is the offering peer's claim
+  -- rather than anything the outstanding state holds, so the fixture must
+  -- supply it.
   , scOutstanding :: !(LeiosOutstanding pid)
   }
 
@@ -185,26 +196,25 @@ empty =
   Scenario
     { scEnv = demoLeiosFetchStaticEnv
     , scOfferings = Map.empty
+    , scOfferedSizes = Map.empty
     , scOutstanding = emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
     }
 
 -- | Outstanding-work combinators -----------------------------------------
+
+-- | The body of this point is still to fetch, and every peer that offers it
+-- offers it at this size.
 withMissingBody :: LeiosPoint -> BytesSize -> Scenario pid -> Scenario pid
-withMissingBody p@(MkLeiosPoint slot ebHash) size =
-  onOutstanding $ \o ->
-    -- Seed everything the announce path would: the missing-body point and its
-    -- reverse index, (via 'recordMaxAnnouncementSlot') the 'ebState' NoBody
-    -- entry that the fetch loop now drives bodies off of, and the election that
-    -- is fetching it, without which the loop asks no one for it. Only a
-    -- certificate overrules an election that is already fetching something,
-    -- so this seeds it the way an announcement would.
-    focusElectionIfUnfocused (MkElId slot fixtureIssuer) ebHash $
-      recordMaxAnnouncementSlot ebHash slot SNothing $
-        o
-          { missingEbBodies = Map.insert p size (missingEbBodies o)
-          , reverseSlotIndexByEbHash =
-              Map.insertWith NESet.union ebHash (NESet.singleton slot) (reverseSlotIndexByEbHash o)
-          }
+withMissingBody p@(MkLeiosPoint slot ebHash) size sc =
+  onOutstanding seed sc{scOfferedSizes = Map.insert p size (scOfferedSizes sc)}
+ where
+  -- Seed what the announce path would: the 'ebState' NoBody entry the fetch
+  -- loop drives bodies off of, and the election that is fetching it, without
+  -- which the loop asks no one for it. Only a certificate overrules an election
+  -- already fetching something, so this seeds it the way an announcement would.
+  seed =
+    focusElectionIfUnfocused (MkElId slot fixtureIssuer) ebHash
+      . recordMaxAnnouncementSlot ebHash slot SNothing
 
 -- | The one pool a scenario here pretends announced everything, since these
 -- have no headers to take an issuer from. An endorser block's election is
@@ -290,18 +300,19 @@ runIteration sc =
         leiosFetchLogicIteration
           sc.scEnv
           (Just minBound)
-          (Map.map (Map.mapWithKey (resolveOfferSize sc.scOutstanding)) sc.scOfferings)
+          (Map.map (Map.mapWithKey (resolveOfferSize sc.scOfferedSizes)) sc.scOfferings)
           Map.empty
           sc.scOutstanding
    in reqs
 
--- | Give a fixture's offer the size the scenario is pursuing for that point,
--- which is what 'assignBody' matches a peer's offer against. A peer offering a
--- point with no listed body offers no size, which is the closure-only case.
+-- | Give a fixture's offer the size 'withMissingBody' said peers offer that
+-- point at, which is the size 'assignBody' then requests. A point no
+-- 'withMissingBody' named is offered with no size, which is the closure-only
+-- case.
 resolveOfferSize ::
-  LeiosOutstanding pid -> LeiosPoint -> WhetherTxsClosureOffered -> PeerOffer
-resolveOfferSize o p closure =
-  MkPeerOffer (maybe SNothing SJust (Map.lookup p (missingEbBodies o))) closure
+  Map.Map LeiosPoint BytesSize -> LeiosPoint -> WhetherTxsClosureOffered -> PeerOffer
+resolveOfferSize sizes p closure =
+  MkPeerOffer (maybe SNothing SJust (Map.lookup p sizes)) closure
 
 ------------------------------------------------------------
 -- Assertions

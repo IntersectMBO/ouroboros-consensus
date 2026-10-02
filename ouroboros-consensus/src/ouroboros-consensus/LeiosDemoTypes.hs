@@ -544,21 +544,18 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   -- this is what filters a peer's offers before either is considered. A body
   -- we already hold stays held and its job pool stays as it is, so an election
   -- that focuses it later resumes rather than restarts.
-  , acquiredEbBodiesPrunedSlot :: !SlotNo
-  -- ^ The slot 'ebState' has most recently been pruned up to (see
-  -- 'pruneOutstandingToImmTip').
+  , outstandingPrunedSlot :: !SlotNo
+  -- ^ The slot this whole 'LeiosOutstanding' has most recently been pruned up
+  -- to: 'pruneOutstandingToImmTip' moves it in the same record it prunes
+  -- 'ebState' and 'elFocus' in, so it says how far both of them have got.
   --
   -- Used to robustly prevent re-inserting what has already been pruned out.
-  , missingEbBodies :: !(Map LeiosPoint BytesSize)
-  -- ^ EB bodies still needed to be fetched (indexed by point and size)
-  , reverseSlotIndexByEbHash :: !(Map EbHash (NESet SlotNo))
-  -- ^ Inverse of 'missingEbBodies' grouped by content hash: for each EbHash
-  -- listed there, the slots of the 'LeiosPoint's listing it. An EbHash is not
-  -- 1-to-1 with slots, so one body can be listed at several points; on acquiring
-  -- the body (keyed by hash) 'processLeiosBlock' must clear every such point, and
-  -- this index makes that a direct lookup rather than a scan of 'missingEbBodies'
-  -- (it likewise backs the "already listed?" check on the offer/announcement
-  -- paths). Kept in step with 'missingEbBodies' at every insert and delete.
+  , numMissingBodies :: !Int
+  -- ^ How many 'ebState' entries have no body and are not being forged: the
+  -- body-fetch backlog, maintained as 'ebState' changes rather than counted,
+  -- so reading it stays O(1) however often the fetch loop runs. 'wantsBody' is
+  -- the per-entry contribution; 'Test.LeiosDemoLogic.Invariants.checkInvariant'
+  -- is what says it has not drifted.
   , -- Request tracking
     requestedEbPeers :: !(Map EbHash (Set (PeerId pid)))
   -- ^ Which peers we've requested each EB from
@@ -582,7 +579,7 @@ data LeiosOutstanding pid = MkLeiosOutstanding
 -- | The empty outstanding state, given the slot it has already been pruned up
 -- to. The caller supplies the immutable-tip slot at startup so that a body at
 -- or below it reads as too old from the outset (see
--- 'acquiredEbBodiesPrunedSlot' / 'pruneOutstandingToImmTip'), and the seed for
+-- 'outstandingPrunedSlot' / 'pruneOutstandingToImmTip'), and the seed for
 -- the decision loop's PRNG (see 'leiosFetchPrng').
 emptyLeiosOutstanding :: StdGen -> SlotNo -> LeiosOutstanding pid
 emptyLeiosOutstanding prng prunedSlot =
@@ -591,9 +588,8 @@ emptyLeiosOutstanding prng prunedSlot =
     , ebsPerMaxAnnouncementSlot = Map.empty
     , elFocus = Map.empty
     , focusedEbs = MultiSet.empty
-    , acquiredEbBodiesPrunedSlot = prunedSlot
-    , missingEbBodies = Map.empty
-    , reverseSlotIndexByEbHash = Map.empty
+    , outstandingPrunedSlot = prunedSlot
+    , numMissingBodies = 0
     , requestedEbPeers = Map.empty
     , requestedBytesSizePerPeer = Map.empty
     , requestedJobsPerPeer = Map.empty
@@ -666,8 +662,8 @@ data LeiosOutstandingStats = MkLeiosOutstandingStats
   -- ^ Total EBs in 'ebState' (should stay bounded by the pruning window; a
   -- persistent climb signals a pruning leak).
   , losMissingBodies :: !Int
-  -- ^ Size of 'missingEbBodies' (EB body points still to fetch) -- the body-fetch
-  -- backlog.
+  -- ^ Of those, how many we have no body for and are not forging -- the
+  -- body-fetch backlog. Read straight off 'numMissingBodies', so O(1).
   , losPeersInflight :: !Int
   -- ^ Peers tracked in the outstanding-request byte map.
   , losInflightBytesDesc :: !(Vector Int)
@@ -689,7 +685,7 @@ leiosOutstandingStats :: Int -> [Int] -> LeiosOutstanding pid -> LeiosOutstandin
 leiosOutstandingStats numOfferingPeers offerSizes o =
   MkLeiosOutstandingStats
     { losTracked = Map.size (ebState o)
-    , losMissingBodies = Map.size (missingEbBodies o)
+    , losMissingBodies = numMissingBodies o
     , losPeersInflight = Map.size inflightMap
     , losInflightBytesDesc = inflightDesc
     , losOffersDesc = offersDesc
@@ -945,106 +941,24 @@ focusElectionIfUnfocused elId ebHash outstanding
 focusCertifiedEb :: AnnouncementFields -> LeiosOutstanding pid -> LeiosOutstanding pid
 focusCertifiedEb fields =
   focusElection (announcementElection fields) (announcementEbHash fields)
-    . relistCertifiedEbBody (announcementLeiosPoint fields) (announcementEbBodySize fields)
+    . trackCertifiedEb (announcementLeiosPoint fields)
 
--- | List this endorser block body as one to fetch, at the given size, and
--- correct to that size every other point already listing it.
+-- | Start tracking a certified endorser block, unless it is too old.
 --
--- One hash is one body is one size, so a size that applies to this point
--- applies to every point listing the same hash --- which is the invariant
--- 'LeiosDemoLogic.bodySize' reads the size back under. The other points are
--- kept, since each is a slot some election needs this body at, and that is what
--- decides when 'pruneOutstandingToImmTip' drops the listing.
+-- An 'ebState' entry is what makes a body fetchable at all: the decision logic
+-- skips any offer of an endorser block it has no entry for. The announcement
+-- that took the election's focus made one, but this endorser block's
+-- announcement may have lost that race, or may never have reached us, so this
+-- is where a certificate makes one of its own.
 --
--- Keeps 'reverseSlotIndexByEbHash' --- the exact inverse of 'missingEbBodies'
--- --- in step. Says nothing about whether the body is worth listing; that is
--- the caller's to decide.
-listMissingEbBody :: LeiosPoint -> BytesSize -> LeiosOutstanding pid -> LeiosOutstanding pid
-listMissingEbBody point ebBytesSize outstanding =
-  case Map.alterF addSlot ebHash (reverseSlotIndexByEbHash outstanding) of
-    (slots, reverseSlotIndexByEbHash') ->
-      outstanding
-        { missingEbBodies =
-            foldr
-              (\slot -> Map.insert (MkLeiosPoint slot ebHash) ebBytesSize)
-              (missingEbBodies outstanding)
-              slots
-        , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
-        }
+-- Already holding the body is not a special case: 'recordMaxAnnouncementSlot'
+-- leaves the fetch state alone, so nothing is re-fetched.
+trackCertifiedEb :: LeiosPoint -> LeiosOutstanding pid -> LeiosOutstanding pid
+trackCertifiedEb point outstanding
+  | ebSlot < outstandingPrunedSlot outstanding = outstanding
+  | otherwise = recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
  where
   MkLeiosPoint ebSlot ebHash = point
-  addSlot mbListed = (slots, Just slots)
-   where
-    slots = maybe (NESet.singleton ebSlot) (NESet.insert ebSlot) mbListed
-
--- | Stop fetching this endorser block body: drop every point listing it, at
--- whatever size, keeping 'reverseSlotIndexByEbHash' in step.
---
--- By hash, not by point, because one body can be listed at several points and
--- the body answers for all of them at once.
-unlistMissingEbBody :: EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
-unlistMissingEbBody ebHash outstanding =
-  case Map.alterF dropSlots ebHash (reverseSlotIndexByEbHash outstanding) of
-    (mbListed, reverseSlotIndexByEbHash') ->
-      outstanding
-        { missingEbBodies = case mbListed of
-            Nothing -> missingEbBodies outstanding
-            Just slots ->
-              foldr
-                (\slot -> Map.delete (MkLeiosPoint slot ebHash))
-                (missingEbBodies outstanding)
-                slots
-        , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
-        }
- where
-  dropSlots mbListed = (mbListed, Nothing)
-
--- | List a certified endorser block's body as one to fetch at the size its
--- certificate attests, correcting the size any listing of that hash
--- already had --- unless it is too old, malformed or already held.
---
--- REQUIREMENT: the size must come from an announcement whose certificate this
--- node has verified. 'focusCertifiedEb' is the only caller, and the only thing
--- that calls /it/ is the @leiosFocus@ loop in @NodeKernel@, off
--- @getLeiosValidClaims@.
---
--- That requirement is the whole of why overriding the size is safe. Two
--- announcements can name one hash at different sizes, at most one of which is
--- the truth, and the first one we saw is the one we are pursuing (see
--- 'recordAnnouncedEb') --- so if that was the lie, no honest peer offers that
--- size and we cannot fetch that endorser block at all. Recovering from that is
--- what the correction is for. Were an unattested size able to displace one we
--- are already pursuing, the lie could simply arrive second instead and nothing
--- would be gained.
---
--- Two announcements of one hash need not equivocate, though: only a second one
--- within a single election does that, and any two elections may name the same
--- endorser block. So in general there is nothing for us to relay that would
--- warn an unstuck node off voting, and nothing ends the stuck window but a
--- certificate. An endorser block that stays uncertified because we never
--- fetched it stays missed --- which is what an adversary able to anticipate
--- honest EbHashes could aim for.
---
--- TODO a certificate does not yet actually attest the size. A voter holds the
--- body, so it knows the true size, but it never compares that to the size
--- given by the announcement it votes for (see the @FIXME@ in
--- 'LeiosVoting.runLeiosVoting'), so an announcement naming another election's
--- endorser block at a wrong size can still be certified. Until that check
--- exists, this unsticks an honest race but not an adversary who can get a
--- mis-sized announcement certified.
-relistCertifiedEbBody ::
-  LeiosPoint -> BytesSize -> LeiosOutstanding pid -> LeiosOutstanding pid
-relistCertifiedEbBody point ebBytesSize outstanding
-  | tooOld || malformed = outstanding
-  | alreadyHeld = outstanding1
-  | otherwise = outstanding2
- where
-  MkLeiosPoint ebSlot ebHash = point
-  tooOld = ebSlot < acquiredEbBodiesPrunedSlot outstanding
-  malformed = ebBytesSize == 0
-  alreadyHeld = maybe False ebStateHasBody (Map.lookup ebHash (ebState outstanding))
-  outstanding1 = recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
-  outstanding2 = listMissingEbBody point ebBytesSize outstanding1
 
 focusElection :: ElId -> EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
 focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstanding) of
@@ -1061,6 +975,14 @@ focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstandin
 isFocusedEb :: EbHash -> LeiosOutstanding pid -> Bool
 isFocusedEb ebHash = MultiSet.member ebHash . focusedEbs
 
+-- | Whether this EB's body is one we are still trying to fetch: the per-entry
+-- contribution to 'numMissingBodies'.
+wantsBody :: EbState -> Int
+wantsBody (MkEbState _slot _onset fetchState) = case fetchState of
+  NoBody -> 1
+  BodyImminent -> 0 -- our own forge is producing it
+  BodyAcquired{} -> 0
+
 -- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
 -- whenever the entry's max slot moves. The supplied function must be
 -- slot-monotonic (never lower the greatest slot), which both callers are.
@@ -1073,9 +995,10 @@ alterEbState ::
 alterEbState ebHash f outstanding =
   case Map.alterF upsert1 ebHash (ebState outstanding) of
     (Nothing, _) -> outstanding
-    (Just (mbOldSlot, newSlot), ebState') ->
+    (Just (mbOldSlot, newSlot, deltaMissing), ebState') ->
       outstanding
         { ebState = ebState'
+        , numMissingBodies = numMissingBodies outstanding + deltaMissing
         , ebsPerMaxAnnouncementSlot =
             if mbOldSlot == Just newSlot
               then ebsPerMaxAnnouncementSlot outstanding -- max slot unchanged
@@ -1092,10 +1015,17 @@ alterEbState ebHash f outstanding =
  where
   -- One traversal of 'ebState': the pair functor carries whether the entry
   -- changed at all and, if so, the prior and new greatest slots for the
-  -- reverse-index update.
+  -- reverse-index update and this entry's contribution to 'numMissingBodies'.
   upsert1 mbOld = case f mbOld of
     Nothing -> (Nothing, mbOld)
-    Just new -> (Just (ebStateMaxSlot <$> mbOld, ebStateMaxSlot new), Just new)
+    Just new ->
+      ( Just
+          ( ebStateMaxSlot <$> mbOld
+          , ebStateMaxSlot new
+          , wantsBody new - maybe 0 wantsBody mbOld
+          )
+      , Just new
+      )
 
 -- | Prune 'Outstanding' to the immutable tip, returning the EB hashes it dropped
 -- (so the caller can drop those same hashes from the peers' offers).
@@ -1112,9 +1042,8 @@ pruneOutstandingToImmTip immTipSlot outstanding =
       , ebsPerMaxAnnouncementSlot = atOrAbove
       , elFocus = elFocusAtOrAbove
       , focusedEbs = focusedEbs'
-      , acquiredEbBodiesPrunedSlot = max (acquiredEbBodiesPrunedSlot outstanding) immTipSlot
-      , missingEbBodies = missingEbBodiesAtOrAbove
-      , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
+      , outstandingPrunedSlot = max (outstandingPrunedSlot outstanding) immTipSlot
+      , numMissingBodies = numMissingBodies outstanding - prunedMissing
       }
   )
  where
@@ -1129,21 +1058,14 @@ pruneOutstandingToImmTip immTipSlot outstanding =
     Map.spanAntitone
       (\(MkElId elSlot _poolId) -> elSlot < immTipSlot)
       (elFocus outstanding)
+  -- O(pruned), which pruning already is.
+  prunedMissing =
+    F.foldl'
+      (\n h -> n + maybe 0 wantsBody (Map.lookup h (ebState outstanding)))
+      0
+      prunedHashes
   focusedEbs' =
     F.foldl' (flip MultiSet.delete) (focusedEbs outstanding) (Map.elems staleFocus)
-
-  -- 'LeiosPoint' orders slot-first, so the below-tip points are a prefix.
-  (belowBodies, missingEbBodiesAtOrAbove) =
-    Map.spanAntitone
-      (\(MkLeiosPoint slot _ebHash) -> slot < immTipSlot)
-      (missingEbBodies outstanding)
-  -- Remove each dropped point's slot from its hash's reverse-index entry (which
-  -- exists, since the index is the exact inverse of 'missingEbBodies').
-  reverseSlotIndexByEbHash' =
-    foldr
-      (\(MkLeiosPoint slot ebHash) -> Map.update (NESet.nonEmptySet . NESet.delete slot) ebHash)
-      (reverseSlotIndexByEbHash outstanding)
-      (Map.keys belowBodies)
 
 -- | Pretty-print the per-peer 'offerings' map: for each peer, its offered points
 -- freshest-first, each tagged with the strongest kind offered. Hashes truncated.
@@ -1178,8 +1100,6 @@ prettyLeiosOutstanding x =
   unlines $
     map ("    [leios] " ++) $
       [ "ebState = " ++ show (Map.size ebState)
-      , "missingEbBodies = " ++ show (Map.size missingEbBodies)
-      , "reverseSlotIndexByEbHash = " ++ show (Map.size reverseSlotIndexByEbHash)
       , "requestedEbPeers = " ++ unwords (map prettyEbHash (Map.keys requestedEbPeers))
       , "requestedBytesSizePerPeer = " ++ show (Map.elems requestedBytesSizePerPeer)
       , ""
@@ -1187,8 +1107,6 @@ prettyLeiosOutstanding x =
  where
   MkLeiosOutstanding
     { ebState
-    , missingEbBodies
-    , reverseSlotIndexByEbHash
     , requestedEbPeers
     , requestedBytesSizePerPeer
     } = x

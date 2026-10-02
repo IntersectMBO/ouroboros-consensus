@@ -57,7 +57,6 @@ import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
   ( LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
-  , bodySize
   , leiosFetchLogicIteration
   , noMempoolPull
   , processLeiosBlock
@@ -192,14 +191,12 @@ tests =
           -- so every seeded EB reports as held ...
           all Leios.ebStateHasBody (Map.elems (Leios.ebState o)) @?= True
           -- ... nothing is listed for fetch (empty pools, no missing bodies) ...
-          Leios.missingEbBodies o @?= Map.empty
-          Leios.reverseSlotIndexByEbHash o @?= Map.empty
           -- ... no requests are outstanding (there are no connections at start-up) ...
           Leios.requestedBytesSizePerPeer o @?= Map.empty
           Leios.requestedEbPeers o @?= Map.empty
           Leios.requestedJobsPerPeer o @?= Map.empty
           -- ... and the pruning watermark is seeded from the immutable tip
-          Leios.acquiredEbBodiesPrunedSlot o @?= immTipSlot
+          Leios.outstandingPrunedSlot o @?= immTipSlot
       , testCase "start-up seeding: a peer's offer of a seeded EB is not re-fetched" $ do
           let ebA = [0, 1] :: TestEb
               ebB = [2, 3] :: TestEb
@@ -298,86 +295,57 @@ tests =
             "least-requested bucket wins: job 0 (multiplicity 1) is not drawn"
             (not (0 `Set.member` drawnFromPool1))
           assertBool "still shuffles among the least-requested jobs" (Set.size drawnFromPool1 > 1)
-      , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
-          let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
-              hB = hashLeiosEb (ebOf [2, 3]) -- to be listed at slot 3 only
-              pointAt slot h = MkLeiosPoint (SlotNo slot) h
-              o0 :: LeiosOutstanding Int
-              o0 =
-                (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
-                  { Leios.missingEbBodies =
-                      Map.fromList [(pointAt 3 hA, 10), (pointAt 10 hA, 10), (pointAt 3 hB, 20)]
-                  , Leios.reverseSlotIndexByEbHash =
-                      Map.fromList
-                        [ (hA, NESet.insert (SlotNo 3) (NESet.singleton (SlotNo 10)))
-                        , (hB, NESet.singleton (SlotNo 3))
-                        ]
-                  }
-              o = snd (Leios.pruneOutstandingToImmTip (SlotNo 5) o0)
-          -- hA's slot-3 point is dropped, its slot-10 point kept
-          Map.lookup (pointAt 3 hA) (Leios.missingEbBodies o) @?= Nothing
-          Map.lookup (pointAt 10 hA) (Leios.missingEbBodies o) @?= Just 10
-          -- hB was listed only at slot 3, so it drops out entirely
-          Map.lookup (pointAt 3 hB) (Leios.missingEbBodies o) @?= Nothing
-          Map.size (Leios.missingEbBodies o) @?= 1
-          -- the reverse index stays the exact inverse: hA at slot 10 only, hB gone
-          Map.lookup hA (Leios.reverseSlotIndexByEbHash o) @?= Just (NESet.singleton (SlotNo 10))
-          Map.lookup hB (Leios.reverseSlotIndexByEbHash o) @?= Nothing
-      , testCase "a certificate relists the body at its own size" $ do
+      , testCase "only the announcement that takes an election's focus is tracked" $ do
+          -- The announcement path contributes at most one 'ebState' entry per
+          -- election: the one that takes the election's focus. A second
+          -- announcement for an already-focused election is an equivocation,
+          -- and tracking its endorser block too would let a pool double what
+          -- its won slots cost us. Should that one turn out to be the certified
+          -- one, 'trackCertifiedEb' gives it an entry then --- which this says
+          -- nothing about, and is the other way an election can reach
+          -- 'ebState'.
+          let hFocused = hashLeiosEb (ebOf [0, 1])
+              hRival = hashLeiosEb (ebOf [2, 3])
+              elId = MkElId (SlotNo 5) (SBS.pack [1])
+              announcing h = Leios.MkAnnouncementFields elId h 99
+              o = runSimOrThrow $ do
+                outstandingVar <-
+                  newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                readyVar <- newEmptyMVar
+                recordAnnouncedEb (outstandingVar, readyVar) SNothing (announcing hFocused)
+                recordAnnouncedEb (outstandingVar, readyVar) SNothing (announcing hRival)
+                readMVar outstandingVar
+          Map.member hFocused (Leios.ebState o) @?= True
+          Map.member hRival (Leios.ebState o) @?= False
+          Map.lookup elId (Leios.elFocus o) @?= Just hFocused
+      , testCase "a certificate tracks an endorser block no announcement did" $ do
+          -- A certificate can reach us for an announcement we never processed:
+          -- if the announcing block has been on our selection since initial
+          -- chain selection, ChainSync intersects at or after it, so its header
+          -- never rolls forward and nothing announces it to us. Then only the
+          -- certificate gives that endorser block an 'ebState' entry, without
+          -- which the decision logic skips every offer of it.
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
-              trueSize = encodeLeiosEbSize eb
-              lie = trueSize + 1
-              elLie = MkElId (SlotNo 5) (SBS.pack [1])
-              elTrue = MkElId (SlotNo 7) (SBS.pack [2])
-              -- What 'recordAnnouncedEb' does for the first announcement of an
-              -- election: take the focus and list the body at the announced size.
-              announced elId size o =
-                Leios.focusElectionIfUnfocused elId h $
-                  (Leios.recordMaxAnnouncementSlot h slot SNothing o)
-                    { Leios.missingEbBodies =
-                        Map.insert (MkLeiosPoint slot h) size (Leios.missingEbBodies o)
-                    , Leios.reverseSlotIndexByEbHash =
-                        Map.insertWith
-                          NESet.union
-                          h
-                          (NESet.singleton slot)
-                          (Leios.reverseSlotIndexByEbHash o)
-                    }
-               where
-                MkElId slot _poolId = elId
-              o0 =
-                announced elLie lie $
-                  (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
-              o1 = Leios.focusCertifiedEb (Leios.MkAnnouncementFields elTrue h trueSize) o0
-          -- The lying announcement got there first, so it is the size we were
-          -- pursuing -- and no honest peer ever offers it.
-          Map.toList (Leios.missingEbBodies o0) @?= [(MkLeiosPoint (SlotNo 5) h, lie)]
-          bodySize o0 h @?= Just lie
-          -- The certificate corrects the size at every point listing the hash,
-          -- the slot-5 one included. That is the point 'bodySize' reads the
-          -- size back through, and what it returns is what 'assignBody'
-          -- matches a peer's offer against.
-          Map.toList (Leios.missingEbBodies o1)
-            @?= [ (MkLeiosPoint (SlotNo 5) h, trueSize)
-                , (MkLeiosPoint (SlotNo 7) h, trueSize)
-                ]
-          Map.lookup h (Leios.reverseSlotIndexByEbHash o1)
-            @?= Just (NESet.insert (SlotNo 5) (NESet.singleton (SlotNo 7)))
-          bodySize o1 h @?= Just trueSize
-      , testCase "a certificate does not relist a body we already hold" $ do
-          let eb = ebOf [0, 1]
-              h = hashLeiosEb eb
-              elTrue = MkElId (SlotNo 7) (SBS.pack [2])
+              elCertified = MkElId (SlotNo 7) (SBS.pack [2])
               o =
-                Leios.focusCertifiedEb (Leios.MkAnnouncementFields elTrue h (encodeLeiosEbSize eb)) $
+                Leios.focusCertifiedEb (Leios.MkAnnouncementFields elCertified h 99) $
+                  (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+          Map.lookup h (Leios.ebState o)
+            @?= Just (Leios.MkEbState (SlotNo 7) SNothing Leios.NoBody)
+          Map.lookup elCertified (Leios.elFocus o) @?= Just h
+      , testCase "a certificate leaves a body we already hold held" $ do
+          let eb = ebOf [0, 1]
+              h = hashLeiosEb eb
+              elCertified = MkElId (SlotNo 7) (SBS.pack [2])
+              o =
+                Leios.focusCertifiedEb (Leios.MkAnnouncementFields elCertified h 99) $
                   Leios.insertAcquiredEbBody h (Jobs.mkLeiosJobPool 1000 10 mempty) $
                     -- the announcement that got us the body in the first place;
                     -- without it 'insertAcquiredEbBody' has no entry to update
                     Leios.recordMaxAnnouncementSlot h (SlotNo 7) SNothing $
                       (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
-          Leios.missingEbBodies o @?= Map.empty
-          Leios.reverseSlotIndexByEbHash o @?= Map.empty
+          maybe False Leios.ebStateHasBody (Map.lookup h (Leios.ebState o)) @?= True
       , testProperty
           "ebState stays in sync with ebsPerMaxAnnouncementSlot across arbitrary sequences"
           prop_invariants
@@ -385,7 +353,7 @@ tests =
           "the fetch logic never requests an already-held EB body"
           prop_neverRefetchesHeldBody
       , testProperty
-          "a concurrent offer and body arrival never leave a held EB body listed (IOSimPOR)"
+          "a concurrent offer, announcement and body arrival keep the reverse index in sync (IOSimPOR)"
           prop_neverRefetchesHeldBodyConcurrent
       ]
 
@@ -594,23 +562,20 @@ applyCmd conn txCache kv peerVars peerId = \case
 -- offering both its body and its closure -- an all-offering peer, so the fetch
 -- logic can act on whichever of the two each EB still needs.
 --
--- The two are independent offers, so the body offer is stated explicitly, by
--- the size the outstanding state is pursuing.
+-- Offering unconditionally is the point: declining to fetch must be the fetch
+-- logic's own doing, not something this fixture arranged by withholding the
+-- offer. One byte for the same reason: the size a peer claims is what its
+-- request spends against the per-peer byte budget, so the smallest claim is
+-- the one least likely to end an iteration before it has assigned everything
+-- it would.
 referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.PeerOffer
 referencedOffers o =
   Map.fromList
     [ ( Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h
-      , Leios.MkPeerOffer (sizeOf h) Leios.TxsClosureOffered
+      , Leios.MkPeerOffer (SJust 1) Leios.TxsClosureOffered
       )
     | (h, s) <- Map.toList (Leios.ebState o)
     ]
- where
-  -- The size this outstanding state is pursuing for that endorser block, which
-  -- is what 'assignBody' matches a peer's offer against.
-  sizeOf h =
-    case [sz | (Leios.MkLeiosPoint _ h', sz) <- Map.toList (Leios.missingEbBodies o), h' == h] of
-      [] -> SNothing
-      sz : _ -> SJust sz
 
 -- | Force the requests to a scalar, so any @impossible!@ hidden in a thunk
 -- surfaces when the caller 'evaluate's it. Touches each tx request's covered
@@ -652,18 +617,24 @@ requestedOffsets m =
 ------------------------------------------------------------
 
 -- | 'ebsPerMaxAnnouncementSlot' must be the exact inverse of the greatest-slot
--- field of 'ebState' (the reverse index 'pruneOutstandingToImmTip' prunes by).
+-- field of 'ebState' (the reverse index 'pruneOutstandingToImmTip' prunes by),
+-- and 'numMissingBodies' must be the count 'ebState' would give if we walked
+-- it (which nothing does at run time, which is why this checks it).
 --
 -- (The old missing-tx \/ reverse-index invariant is gone with the EbTxs rewrite.)
 checkInvariant :: LeiosOutstanding Int -> Either String ()
-checkInvariant o =
-  if Leios.ebsPerMaxAnnouncementSlot o == inverseOfMax
-    then Right ()
-    else
+checkInvariant o
+  | Leios.ebsPerMaxAnnouncementSlot o /= inverseOfMax =
       Left
         ( "ebsPerMaxAnnouncementSlot desynced from ebState: "
             <> show (Leios.ebsPerMaxAnnouncementSlot o, inverseOfMax)
         )
+  | Leios.numMissingBodies o /= countedMissing =
+      Left
+        ( "numMissingBodies desynced from ebState: "
+            <> show (Leios.numMissingBodies o, countedMissing)
+        )
+  | otherwise = Right ()
  where
   inverseOfMax =
     Map.fromListWith
@@ -671,16 +642,15 @@ checkInvariant o =
       [ (Leios.ebStateMaxSlot s, NESet.singleton h)
       | (h, s) <- Map.toList (Leios.ebState o)
       ]
+  countedMissing = sum (map Leios.wantsBody (Map.elems (Leios.ebState o)))
 
 ------------------------------------------------------------
 -- Curated repros
 ------------------------------------------------------------
 
 -- | A peer offers an EB body; we forge the same EB before the offered body
--- arrives. Forging must purge the offered body from 'missingEbBodies' (its
--- 'ebState' now reads 'BodyAcquired'), so the fetch logic never re-requests a body
--- we already hold. Pre-fix the forge recorded the body as acquired without purging,
--- so the 'Decide' re-fetched it.
+-- arrives. Forging must leave that endorser block's 'ebState' reading
+-- 'BodyAcquired', so the fetch logic never re-requests a body we already hold.
 reproForgeAfterOffer :: [Cmd]
 reproForgeAfterOffer =
   [ Offer [0, 1] 10
@@ -815,17 +785,14 @@ prop_neverRefetchesHeldBody =
 -- explore every interleaving.
 --
 -- An 'EbHash' is not 1-to-1 with slots, so this is exactly the shape that armed
--- the storm: whichever listing wins is recorded at its own slot, and the arrival
--- (at yet another slot) must clear it /by hash/, not by point. In every
--- interleaving the state invariant "a held EB body is never still listed for
--- fetching" must hold, which is what stops a later decision from re-requesting
--- it.
+-- the storm the fetch bookkeeping used to be vulnerable to: three handlers
+-- writing about one endorser block at three slots at once. What they write now
+-- is 'ebState', keyed by hash, and 'ebsPerMaxAnnouncementSlot', its reverse
+-- index --- so what is left to violate is 'checkInvariant'.
 --
--- With the shipped fix each handler's "held?"/"listed?" test and its state update
--- are one 'outstandingVar' critical section, and acquisition purges every point
--- sharing the hash via 'reverseSlotIndexByEbHash', so no interleaving can violate
--- this; the test guards against regressing either half (moving a check back out
--- of the lock, or reverting to a delete-by-point that misses the other slots).
+-- Each handler's read and its state update are one 'outstandingVar' critical
+-- section, so no interleaving can desync the two; this guards against moving a
+-- check back out of the lock.
 prop_neverRefetchesHeldBodyConcurrent :: Property
 prop_neverRefetchesHeldBodyConcurrent =
   exploreSimTrace id (exploreRaces *> raceSameHashMultiSlot) $ \_ tr ->
@@ -872,14 +839,12 @@ raceSameHashMultiSlot = do
           )
       )
     outstanding <- readMVar outstandingVar
-    let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
-        listed =
-          Set.fromList (map (.pointEbHash) (Map.keys (Leios.missingEbBodies outstanding)))
-        heldAndListed = Set.toList (Set.intersection held listed)
-    pure $
-      counterexample
-        ("held EB body still listed for fetching: " <> show heldAndListed)
-        (null heldAndListed)
+    -- Three handlers wrote about one endorser block at three slots at once; the
+    -- reverse index must still be the exact inverse of 'ebState', whichever
+    -- order they ran in.
+    pure $ case checkInvariant outstanding of
+      Right () -> counterexample "" True
+      Left why -> counterexample why False
 
 -- | An announcement of this endorser block, in an election of its own.
 --
