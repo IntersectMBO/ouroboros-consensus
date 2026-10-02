@@ -20,7 +20,7 @@
 module Test.Consensus.Leios.RecoveryPath (tests) where
 
 import Cardano.Crypto.DSIGN (signDSIGN)
-import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Monad (unless)
@@ -55,11 +55,12 @@ import LeiosDemoTypes
   , Weight
   , aggregateLeiosCert
   , offerings
+  , outstandingPrunedSlot
   )
 import LeiosValidClaims (isCertifiedEb, memberValidClaim, sizeValidClaims)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.Config (SecurityParam (..))
+import Ouroboros.Consensus.Config (SecurityParam (..), maxRollbacks)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
@@ -92,8 +93,14 @@ tests =
         "a certified endorser block is fetched though a rival took the focus first"
         test_certifiedRivalIsFetched
     , testCase
-        "a certified endorser block is fetched though an announcement lied about its size"
+        "one endorser block named by two announcements at two sizes is still fetched"
         test_mistatedSizeIsCorrected
+    , testCase
+        "an endorser block is fetched from a peer offering its true size, though every announcement lied"
+        test_offeredSizeBeatsAnnouncedSize
+    , testCase
+        "an endorser block a later election still needs outlives the earlier point being pruned"
+        test_laterAnnouncementOutlivesPruning
     , testCase
         "a peer claiming two certified endorser blocks for one election is dropped"
         test_twoCertificationClaimsIsDropped
@@ -255,21 +262,85 @@ decoyCertRB =
 decoyChain :: [Blk]
 decoyChain = [decoyAnnouncer, decoyCertRB]
 
+-- | The point the mistating announcement names: 'endorserBlock', in that
+-- announcement's own election slot.
+mistatedPoint :: LeiosPoint
+mistatedPoint = leiosTestEbPoint 2 endorserBlock
+
+-- | The size it claims for that point, which is not the size 'endorserBlock'
+-- has.
+mistatedSize :: BytesSize
+mistatedSize = endorserSize + 1
+
 -- | Announces 'endorserBlock' at a size it does not have. The peer serving it
--- never holds that endorser block, and nothing ever certifies this.
+-- need not hold that endorser block, and nothing ever certifies this.
 --
 -- Not an equivocation: this is an election of its own, in a slot of its own,
 -- and any election may name any endorser block. So nothing about the header is
 -- detectably wrong, and there is no proof for anyone to relay.
 mistatingAnnouncer :: Blk
 mistatingAnnouncer =
-  announcing (leiosTestEbPoint 2 endorserBlock) (endorserSize + 1) $
+  announcing mistatedPoint mistatedSize $
     successorLeiosBlock (firstLeiosBlock 7)
 
 -- | The chain the mistating announcement is on. It only has to outrank what
 -- the node has selected so far, so that the announcement is counted at all.
 mistatingChain :: [Blk]
 mistatingChain = [firstLeiosBlock 7, mistatingAnnouncer]
+
+-- | One endorser block announced by two elections, on a chain long enough that
+-- selecting it leaves the earlier announcement below the immutable tip and the
+-- later one clear of it. See 'twiceAnnounced'.
+data TwiceAnnounced = TwiceAnnounced
+  { taChain :: ![Blk]
+  -- ^ Slots 1 through 'taTip''s, one block each.
+  , taTip :: !Blk
+  , taEarly :: !Blk
+  -- ^ Announces 'taEarlyPoint'; pruned out once the chain is selected.
+  , taEarlyPoint :: !LeiosPoint
+  , taLate :: !Blk
+  -- ^ Announces 'taLatePoint', the same endorser block in a later election.
+  , taLatePoint :: !LeiosPoint
+  }
+
+-- | Lay that chain out for a given security parameter.
+--
+-- One block per slot from slot 1, so the block in slot @s@ is the @s@th and a
+-- selected chain of @n@ blocks puts the immutable tip at slot @n - k@. Pick
+-- where that tip should land, and the rest follows: the chain must be @k@
+-- blocks longer, the early announcement goes a margin below it and the late
+-- one a margin above, so neither sits on the boundary.
+twiceAnnounced :: SecurityParam -> TwiceAnnounced
+twiceAnnounced k =
+  TwiceAnnounced
+    { taChain = blocks
+    , taTip = blockAt tipSlot
+    , taEarly = blockAt earlySlot
+    , taEarlyPoint = pointAt earlySlot
+    , taLate = blockAt lateSlot
+    , taLatePoint = pointAt lateSlot
+    }
+ where
+  -- The first slot the prune keeps: a point in it survives, one in the slot
+  -- below it does not. The two announcements sit either side of that line, so
+  -- an off-by-one in the prune shows up here as a failure.
+  immTipSlot = 2
+  earlySlot = immTipSlot - 1
+  lateSlot = immTipSlot
+  tipSlot = immTipSlot + fromIntegral (unNonZero (maxRollbacks k))
+
+  pointAt slot = leiosTestEbPoint (fromIntegral slot) endorserBlock
+
+  -- Decorating a plain chain after the fact leaves its links intact; see the
+  -- warning on @LeiosTestBlock@'s 'HeaderHash' instance.
+  blocks =
+    [ if slot `elem` [earlySlot, lateSlot]
+        then announcing (pointAt slot) endorserSize blk
+        else blk
+    | (slot, blk) <- zip [1 ..] (take tipSlot (iterate successorLeiosBlock (firstLeiosBlock 8)))
+    ]
+
+  blockAt slot = blocks !! (slot - 1)
 
 -- | An endorser block announced in slot 2 rather than slot 1. Since nothing
 -- in these tests becomes immutable, that is the difference between being
@@ -901,20 +972,20 @@ test_certifiedRivalIsFetched = do
         awaitWith getTraces "the certified chain is selected" $
           tipIsSTM nut (last afterCertRB)
 
--- | An endorser block listed at a size it does not have must still end up
--- fetched, once a certificate says what its size really is.
+-- | One endorser block, named by two announcements at two different sizes, is
+-- still fetched and its CertRB still selected.
 --
--- 'mistatingAnnouncer' names 'endorserBlock' at the wrong size, and the node
--- hears that before anyone names it at the right one, so that is the size it
--- pursues. The peer that actually holds the endorser block offers it at its
--- true size, and every such offer reads as being for some other endorser block
--- and is passed over. Nothing in the announcements can break the tie --- at
--- most one of the two is honest and nothing says which --- so until the
--- certificate settles the size, the node cannot fetch the endorser block and
--- the CertRB stays parked.
+-- 'mistatingAnnouncer' names 'endorserBlock' at the wrong size and the node
+-- hears that first, before the announcement that names it correctly and the
+-- certificate for that one. Nothing in the announcements can break the tie:
+-- at most one of the two is honest and nothing says which.
 --
--- Unlike 'test_certifiedRivalIsFetched', the focus is never in doubt here: one
--- endorser block, named by both announcements, at two different sizes.
+-- Unlike 'test_certifiedRivalIsFetched', the focus is never in doubt here ---
+-- one endorser block, two announcements --- and unlike
+-- 'test_offeredSizeBeatsAnnouncedSize' a certificate does arrive. It is kept
+-- as a regression test: this exact message sequence is one that earlier
+-- attempts at the size problem got wrong, and the node must come through it
+-- whatever the fetch logic does with sizes.
 test_mistatedSizeIsCorrected :: Assertion
 test_mistatedSizeIsCorrected = do
   assertBool
@@ -956,6 +1027,134 @@ test_mistatedSizeIsCorrected = do
         serveChain holder $ chainOf ([announcer, certRB] <> afterCertRB)
         awaitWith getTraces "the certified chain is selected" $
           tipIsSTM nut (last afterCertRB)
+
+-- | A peer offering an endorser block at its true size must be asked for it,
+-- even though every announcement the node ever saw named a different size.
+--
+-- Gating on the announced size is one way to mount threat T22 --- withholding
+-- data from most honest nodes so that an endorser block certifies but does not
+-- propagate --- and a cheap one, needing neither network position nor an @L_hdr@
+-- violation nor any honest issuer. An adversary that wins more than one
+-- election in a window announces its own endorser block at its true size to
+-- just enough committee members to get it certified, and names that same hash
+-- at a wrong size in its other, contemporary elections, which is what the rest
+-- of the network hears. Those nodes pursue a size nobody will ever offer, so
+-- the endorser block does not reach them during @L_diff@ at all --- which is
+-- what @L_diff@ exists to prevent, and which sizing @L_diff@ cannot fix.
+--
+-- So nothing an announcement says about a size may decide whom we ask. The
+-- node here never hears the true size from anyone: the peer that holds the
+-- body relays the very same wrong-size announcement --- which is all that
+-- entitles it to offer at all --- and then offers the body at the size it
+-- really is.
+test_offeredSizeBeatsAnnouncedSize :: Assertion
+test_offeredSizeBeatsAnnouncedSize = do
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Right () -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the endorser block to be fetched, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    liar <- newPeerEnv
+    holder <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest nodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        connectPeer nut registry (PeerAddr 0) liar
+        connectPeer nut registry (PeerAddr 1) holder
+
+        plantEb holder endorserBlock endorserClosure
+
+        -- The announcing header sits in a slot this simulation starts before,
+        -- and a header from the future is rejected as such.
+        threadDelay 6
+
+        -- The only thing the node is ever told about this endorser block's
+        -- size, and it is wrong.
+        announceEb liar (getHeader mistatingAnnouncer)
+        announceEb holder (getHeader mistatingAnnouncer)
+
+        -- The one peer that actually has it says how big it is by offering it.
+        offerEb holder mistatedPoint endorserSize
+
+        awaitPollingWith getTraces "the endorser block body is in the LeiosDb" $
+          LeiosDb.withReader leiosDb $ \r ->
+            not . null <$> LeiosDb.lookupEbBody r (pointEbHash mistatedPoint)
+
+-- | An endorser block two elections announced is still fetched after the
+-- earlier announcement's point has been pruned away.
+--
+-- 'twiceAnnounced' lays out a chain naming one endorser block twice, far
+-- enough apart that selecting it puts the earlier announcement below the
+-- immutable tip and leaves the later one clear of it. Nothing offers the body
+-- until that has happened, so the only point left to fetch it under is the
+-- later one.
+--
+-- The node used to list a body at one point per hash --- whichever election
+-- named it first --- so the later announcement added nothing and pruning the
+-- earlier point left the fetch logic with no size to match an offer against.
+-- The endorser block then became unfetchable despite an election still needing
+-- it, and the only way back was a certificate.
+test_laterAnnouncementOutlivesPruning :: Assertion
+test_laterAnnouncementOutlivesPruning = do
+  assertBool
+    "the two announcements are for different elections"
+    (headerElId (getHeader (taEarly ta)) /= headerElId (getHeader (taLate ta)))
+  assertBool
+    "the two announcements name one endorser block"
+    (pointEbHash (taEarlyPoint ta) == pointEbHash (taLatePoint ta))
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Right () -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the endorser block to be fetched, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  ta = twiceAnnounced securityParam
+
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    holder <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest nodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        connectPeer nut registry (PeerAddr 0) holder
+
+        -- Both announcements, and nothing offering the body behind them.
+        serveChain holder $ chainOf (taChain ta)
+        awaitWith getTraces "the whole chain is selected" $
+          tipIsSTM nut (taTip ta)
+
+        -- Selecting it put the earlier announcement below the immutable tip.
+        -- Waiting on how far the node has pruned is the same act as asserting
+        -- that it pruned.
+        awaitPollingWith getTraces "the earlier announcement has been pruned out" $
+          (> pointSlotNo (taEarlyPoint ta)) . outstandingPrunedSlot
+            <$> MVar.readMVar (getLeiosOutstanding (nutKernel nut))
+
+        -- Only now is the body obtainable, and only under the later point.
+        plantEb holder endorserBlock endorserClosure
+        announceEb holder (getHeader (taLate ta))
+        offerEb holder (taLatePoint ta) endorserSize
+
+        awaitPollingWith getTraces "the endorser block body is in the LeiosDb" $
+          LeiosDb.withReader leiosDb $ \r ->
+            not . null <$> LeiosDb.lookupEbBody r (pointEbHash (taLatePoint ta))
 
 -- | A peer may claim a certificate for at most one endorser block per
 -- election, and the second claim costs it the connection.
