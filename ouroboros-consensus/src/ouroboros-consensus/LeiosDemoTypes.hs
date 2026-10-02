@@ -732,6 +732,9 @@ confirmBodyPersisted ebHash jobPool =
     Nothing -> Nothing
     Just (MkEbState slot onset fetchState) -> case fetchState of
       BodyPersisting -> Just $ MkEbState slot onset (BodyAcquired jobPool)
+      -- Only a body still mid-persist can be confirmed. Any other state means
+      -- the persist was already resolved -- abandoned on a lost write, or
+      -- superseded by a local forge -- so this confirmation is stale and no-ops.
       _ -> Nothing
 
 -- | The write did not land -- the writer failed, or the thread carrying it was
@@ -745,6 +748,9 @@ abandonBodyPersist ebHash =
     Nothing -> Nothing
     Just (MkEbState slot onset fetchState) -> case fetchState of
       BodyPersisting -> Just $ MkEbState slot onset NoBody
+      -- As in 'confirmBodyPersisted': only a body still mid-persist can be
+      -- abandoned. From any other state the persist was already resolved, so
+      -- this late failure no-ops rather than clobbering a newer state.
       _ -> Nothing
 
 -- | Record that our own forge is producing this EB
@@ -1454,8 +1460,9 @@ data TraceLeiosKernel
     -- Carries how old the EB was on arrival, if it was preceded by an
     -- announcement and not forged locally.
     TraceLeiosBlockAcquired LeiosPoint (Maybe NominalDiffTime)
-  | -- | The body's LeiosDb write did not land, so the claim that we hold it was
-    -- withdrawn and the body is fetchable again. See 'BodyPersisting'.
+  | -- | The body's LeiosDb write did not land. We had not yet claimed to hold
+    -- it -- that is the point of 'BodyPersisting' -- so nothing is withdrawn:
+    -- the body simply returns to fetchable. See 'BodyPersisting'.
     TraceLeiosBlockAbandoned LeiosPoint
   | -- | The EB body was received but the point was not in the database. This is
     -- unexpected as the point should have been inserted during announcement handling.

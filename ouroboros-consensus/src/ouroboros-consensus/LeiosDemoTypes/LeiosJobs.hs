@@ -214,7 +214,8 @@ pickLeastRequestedJobExcept prng excluded pool =
     (Just job, Just (MkLeiosJobState job (MkLeiosJobMultiplicity (m + 1))))
 
 -- | Record one fewer in-flight request for a job (on disconnect). A no-op if the
--- job is no longer in the pool.
+-- job is no longer in the pool: a peer disconnecting after its response already
+-- arrived and 'completeJob' removed the job hits the @Nothing@ branch below.
 unpickJob :: LeiosJobId -> LeiosJobPool -> LeiosJobPool
 unpickJob (MkLeiosJobId jid) pool =
   case IntMap.alterF decrement1 jid (jobs pool) of
@@ -222,7 +223,11 @@ unpickJob (MkLeiosJobId jid) pool =
     (Just (m, m'), jobs') ->
       MkLeiosJobPool
         { jobs = jobs'
-        , jobsByMultiplicity =
+        , -- Move the job from its old bucket to the decremented one. When the
+          -- count was already floored at 0, @m' == m@ and this deletes then
+          -- re-inserts into the same bucket -- a net no-op, not special-cased
+          -- because the floor is reached only on a surplus disconnect.
+          jobsByMultiplicity =
             bucketInsert m' jid (bucketDelete m jid (jobsByMultiplicity pool))
         }
  where
