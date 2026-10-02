@@ -57,6 +57,7 @@ import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
   ( LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
+  , bodySize
   , leiosFetchLogicIteration
   , noMempoolPull
   , processLeiosBlock
@@ -322,6 +323,61 @@ tests =
           -- the reverse index stays the exact inverse: hA at slot 10 only, hB gone
           Map.lookup hA (Leios.reverseSlotIndexByEbHash o) @?= Just (NESet.singleton (SlotNo 10))
           Map.lookup hB (Leios.reverseSlotIndexByEbHash o) @?= Nothing
+      , testCase "a certificate relists the body at its own size" $ do
+          let eb = ebOf [0, 1]
+              h = hashLeiosEb eb
+              trueSize = encodeLeiosEbSize eb
+              lie = trueSize + 1
+              elLie = MkElId (SlotNo 5) (SBS.pack [1])
+              elTrue = MkElId (SlotNo 7) (SBS.pack [2])
+              -- What 'recordAnnouncedEb' does for the first announcement of an
+              -- election: take the focus and list the body at the announced size.
+              announced elId size o =
+                Leios.focusElectionIfUnfocused elId h $
+                  (Leios.recordMaxAnnouncementSlot h slot SNothing o)
+                    { Leios.missingEbBodies =
+                        Map.insert (MkLeiosPoint slot h) size (Leios.missingEbBodies o)
+                    , Leios.reverseSlotIndexByEbHash =
+                        Map.insertWith
+                          NESet.union
+                          h
+                          (NESet.singleton slot)
+                          (Leios.reverseSlotIndexByEbHash o)
+                    }
+               where
+                MkElId slot _poolId = elId
+              o0 =
+                announced elLie lie $
+                  (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+              o1 = Leios.focusCertifiedEb (Leios.MkAnnouncementFields elTrue h trueSize) o0
+          -- The lying announcement got there first, so it is the size we were
+          -- pursuing -- and no honest peer ever offers it.
+          Map.toList (Leios.missingEbBodies o0) @?= [(MkLeiosPoint (SlotNo 5) h, lie)]
+          bodySize o0 h @?= Just lie
+          -- The certificate corrects the size at every point listing the hash,
+          -- the slot-5 one included. That is the point 'bodySize' reads the
+          -- size back through, and what it returns is what 'assignBody'
+          -- matches a peer's offer against.
+          Map.toList (Leios.missingEbBodies o1)
+            @?= [ (MkLeiosPoint (SlotNo 5) h, trueSize)
+                , (MkLeiosPoint (SlotNo 7) h, trueSize)
+                ]
+          Map.lookup h (Leios.reverseSlotIndexByEbHash o1)
+            @?= Just (NESet.insert (SlotNo 5) (NESet.singleton (SlotNo 7)))
+          bodySize o1 h @?= Just trueSize
+      , testCase "a certificate does not relist a body we already hold" $ do
+          let eb = ebOf [0, 1]
+              h = hashLeiosEb eb
+              elTrue = MkElId (SlotNo 7) (SBS.pack [2])
+              o =
+                Leios.focusCertifiedEb (Leios.MkAnnouncementFields elTrue h (encodeLeiosEbSize eb)) $
+                  Leios.insertAcquiredEbBody h (Jobs.mkLeiosJobPool 1000 10 mempty) $
+                    -- the announcement that got us the body in the first place;
+                    -- without it 'insertAcquiredEbBody' has no entry to update
+                    Leios.recordMaxAnnouncementSlot h (SlotNo 7) SNothing $
+                      (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+          Leios.missingEbBodies o @?= Map.empty
+          Leios.reverseSlotIndexByEbHash o @?= Map.empty
       , testProperty
           "ebState stays in sync with ebsPerMaxAnnouncementSlot across arbitrary sequences"
           prop_invariants

@@ -94,6 +94,9 @@ tests =
         "a certified endorser block is fetched though a rival took the focus first"
         test_certifiedRivalIsFetched
     , testCase
+        "a certified endorser block is fetched though an announcement lied about its size"
+        test_mistatedSizeIsCorrected
+    , testCase
         "a peer claiming two certified endorser blocks for one election is dropped"
         test_twoCertificationClaimsIsDropped
     , testCase
@@ -259,6 +262,22 @@ decoyCertRB =
 -- serves nothing past 'decoyAnnouncer'.
 decoyChain :: [Blk]
 decoyChain = [decoyAnnouncer, decoyCertRB]
+
+-- | Announces 'endorserBlock' at a size it does not have. The peer serving it
+-- never holds that endorser block, and nothing ever certifies this.
+--
+-- Not an equivocation: this is an election of its own, in a slot of its own,
+-- and any election may name any endorser block. So nothing about the header is
+-- detectably wrong, and there is no proof for anyone to relay.
+mistatingAnnouncer :: Blk
+mistatingAnnouncer =
+  announcing (leiosTestEbPoint 2 endorserBlock) (endorserSize + 1) $
+    successorLeiosBlock (firstLeiosBlock 7)
+
+-- | The chain the mistating announcement is on. It only has to outrank what
+-- the node has selected so far, so that the announcement is counted at all.
+mistatingChain :: [Blk]
+mistatingChain = [firstLeiosBlock 7, mistatingAnnouncer]
 
 -- | An endorser block announced in slot 2 rather than slot 1. Since nothing
 -- in these tests becomes immutable, that is the difference between being
@@ -985,6 +1004,62 @@ test_certifiedRivalIsFetched = do
           tipIsSTM nut decoyAnnouncer
 
         -- Only then the chain that announces and certifies the other one.
+        plantEb holder endorserBlock endorserClosure
+        serveChain holder $ chainOf ([announcer, certRB] <> afterCertRB)
+        awaitWith getTraces "the certified chain is selected" $
+          tipIsSTM nut (last afterCertRB)
+
+-- | An endorser block listed at a size it does not have must still end up
+-- fetched, once a certificate says what its size really is.
+--
+-- 'mistatingAnnouncer' names 'endorserBlock' at the wrong size, and the node
+-- hears that before anyone names it at the right one, so that is the size it
+-- pursues. The peer that actually holds the endorser block offers it at its
+-- true size, and every such offer reads as being for some other endorser block
+-- and is passed over. Nothing in the announcements can break the tie --- at
+-- most one of the two is honest and nothing says which --- so until the
+-- certificate settles the size, the node cannot fetch the endorser block and
+-- the CertRB stays parked.
+--
+-- Unlike 'test_certifiedRivalIsFetched', the focus is never in doubt here: one
+-- endorser block, named by both announcements, at two different sizes.
+test_mistatedSizeIsCorrected :: Assertion
+test_mistatedSizeIsCorrected = do
+  assertBool
+    "the two announcements name one endorser block"
+    (pointEbHash (leiosTestEbPoint 2 endorserBlock) == pointEbHash endorserPoint)
+  assertBool
+    "the mistating announcement is for an election of its own"
+    (headerElId (getHeader mistatingAnnouncer) /= theElection)
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Right () -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the certified chain to be selected, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    holder <- newPeerEnv
+    liar <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest nodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        connectPeer nut registry (PeerAddr 0) holder
+        connectPeer nut registry (PeerAddr 1) liar
+
+        -- The wrong size, heard first, is the size the node pursues.
+        serveChain liar $ chainOf mistatingChain
+        awaitWith getTraces "the mistating announcement is selected" $
+          tipIsSTM nut mistatingAnnouncer
+
+        -- Only then the chain that announces the true size and certifies it.
         plantEb holder endorserBlock endorserClosure
         serveChain holder $ chainOf ([announcer, certRB] <> afterCertRB)
         awaitWith getTraces "the certified chain is selected" $

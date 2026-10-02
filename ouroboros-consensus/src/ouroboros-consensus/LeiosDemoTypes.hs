@@ -945,48 +945,106 @@ focusElectionIfUnfocused elId ebHash outstanding
 focusCertifiedEb :: AnnouncementFields -> LeiosOutstanding pid -> LeiosOutstanding pid
 focusCertifiedEb fields =
   focusElection (announcementElection fields) (announcementEbHash fields)
-    . listEbBodyToFetch (announcementLeiosPoint fields) (announcementEbBodySize fields)
+    . relistCertifiedEbBody (announcementLeiosPoint fields) (announcementEbBodySize fields)
 
--- | List an endorser block's body as one to fetch, at the given size, unless
--- it is too old, malformed, already held or already listed.
+-- | List this endorser block body as one to fetch, at the given size, and
+-- correct to that size every other point already listing it.
 --
--- "Already listed" is by endorser block hash, so the first size listed for a
--- hash is the only one ever pursued. Two announcements can name one hash at
--- different sizes, at most one of which is the truth, so a lying announcement
--- that arrives first leaves us unable to fetch that endorser block at all.
+-- One hash is one body is one size, so a size that applies to this point
+-- applies to every point listing the same hash --- which is the invariant
+-- 'LeiosDemoLogic.bodySize' reads the size back under. The other points are
+-- kept, since each is a slot some election needs this body at, and that is what
+-- decides when 'pruneOutstandingToImmTip' drops the listing.
 --
--- That is deliberate, and is what @lHdrWait@ is for. Being stuck this way
--- means we saw the equivocation early, and we relay the announcement we saw,
--- so nodes that were not stuck have the proof in hand before their vote window
--- opens and withhold their votes. No certificate forms, and an endorser block
--- that is never certified is one it costs us nothing to have missed. Should
--- that fail, the Recovery Path gets us the endorser block eventually.
-listEbBodyToFetch ::
+-- Keeps 'reverseSlotIndexByEbHash' --- the exact inverse of 'missingEbBodies'
+-- --- in step. Says nothing about whether the body is worth listing; that is
+-- the caller's to decide.
+listMissingEbBody :: LeiosPoint -> BytesSize -> LeiosOutstanding pid -> LeiosOutstanding pid
+listMissingEbBody point ebBytesSize outstanding =
+  case Map.alterF addSlot ebHash (reverseSlotIndexByEbHash outstanding) of
+    (slots, reverseSlotIndexByEbHash') ->
+      outstanding
+        { missingEbBodies =
+            foldr
+              (\slot -> Map.insert (MkLeiosPoint slot ebHash) ebBytesSize)
+              (missingEbBodies outstanding)
+              slots
+        , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
+        }
+ where
+  MkLeiosPoint ebSlot ebHash = point
+  addSlot mbListed = (slots, Just slots)
+   where
+    slots = maybe (NESet.singleton ebSlot) (NESet.insert ebSlot) mbListed
+
+-- | Stop fetching this endorser block body: drop every point listing it, at
+-- whatever size, keeping 'reverseSlotIndexByEbHash' in step.
+--
+-- By hash, not by point, because one body can be listed at several points and
+-- the body answers for all of them at once.
+unlistMissingEbBody :: EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+unlistMissingEbBody ebHash outstanding =
+  case Map.alterF dropSlots ebHash (reverseSlotIndexByEbHash outstanding) of
+    (mbListed, reverseSlotIndexByEbHash') ->
+      outstanding
+        { missingEbBodies = case mbListed of
+            Nothing -> missingEbBodies outstanding
+            Just slots ->
+              foldr
+                (\slot -> Map.delete (MkLeiosPoint slot ebHash))
+                (missingEbBodies outstanding)
+                slots
+        , reverseSlotIndexByEbHash = reverseSlotIndexByEbHash'
+        }
+ where
+  dropSlots mbListed = (mbListed, Nothing)
+
+-- | List a certified endorser block's body as one to fetch at the size its
+-- certificate attests, correcting the size any listing of that hash
+-- already had --- unless it is too old, malformed or already held.
+--
+-- REQUIREMENT: the size must come from an announcement whose certificate this
+-- node has verified. 'focusCertifiedEb' is the only caller, and the only thing
+-- that calls /it/ is the @leiosFocus@ loop in @NodeKernel@, off
+-- @getLeiosValidClaims@.
+--
+-- That requirement is the whole of why overriding the size is safe. Two
+-- announcements can name one hash at different sizes, at most one of which is
+-- the truth, and the first one we saw is the one we are pursuing (see
+-- 'recordAnnouncedEb') --- so if that was the lie, no honest peer offers that
+-- size and we cannot fetch that endorser block at all. Recovering from that is
+-- what the correction is for. Were an unattested size able to displace one we
+-- are already pursuing, the lie could simply arrive second instead and nothing
+-- would be gained.
+--
+-- Two announcements of one hash need not equivocate, though: only a second one
+-- within a single election does that, and any two elections may name the same
+-- endorser block. So in general there is nothing for us to relay that would
+-- warn an unstuck node off voting, and nothing ends the stuck window but a
+-- certificate. An endorser block that stays uncertified because we never
+-- fetched it stays missed --- which is what an adversary able to anticipate
+-- honest EbHashes could aim for.
+--
+-- TODO a certificate does not yet actually attest the size. A voter holds the
+-- body, so it knows the true size, but it never compares that to the size
+-- given by the announcement it votes for (see the @FIXME@ in
+-- 'LeiosVoting.runLeiosVoting'), so an announcement naming another election's
+-- endorser block at a wrong size can still be certified. Until that check
+-- exists, this unsticks an honest race but not an adversary who can get a
+-- mis-sized announcement certified.
+relistCertifiedEbBody ::
   LeiosPoint -> BytesSize -> LeiosOutstanding pid -> LeiosOutstanding pid
-listEbBodyToFetch point ebBytesSize outstanding =
-  let MkLeiosPoint ebSlot ebHash = point
-      tooOld = ebSlot < acquiredEbBodiesPrunedSlot outstanding
-      malformed = ebBytesSize == 0
-      outstanding'
-        | tooOld || malformed = outstanding
-        | otherwise = recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
-      skip =
-        tooOld
-          || malformed
-          || maybe False ebStateHasBody (Map.lookup ebHash (ebState outstanding))
-          || Map.member ebHash (reverseSlotIndexByEbHash outstanding)
-   in if skip
-        then outstanding'
-        else
-          outstanding'
-            { missingEbBodies = Map.insert point ebBytesSize (missingEbBodies outstanding')
-            , reverseSlotIndexByEbHash =
-                Map.insertWith
-                  NESet.union
-                  ebHash
-                  (NESet.singleton ebSlot)
-                  (reverseSlotIndexByEbHash outstanding')
-            }
+relistCertifiedEbBody point ebBytesSize outstanding
+  | tooOld || malformed = outstanding
+  | alreadyHeld = outstanding1
+  | otherwise = outstanding2
+ where
+  MkLeiosPoint ebSlot ebHash = point
+  tooOld = ebSlot < acquiredEbBodiesPrunedSlot outstanding
+  malformed = ebBytesSize == 0
+  alreadyHeld = maybe False ebStateHasBody (Map.lookup ebHash (ebState outstanding))
+  outstanding1 = recordMaxAnnouncementSlot ebHash ebSlot SNothing outstanding
+  outstanding2 = listMissingEbBody point ebBytesSize outstanding1
 
 focusElection :: ElId -> EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
 focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstanding) of

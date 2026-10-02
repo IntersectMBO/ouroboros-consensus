@@ -923,18 +923,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
               Just peerId -> refundEbRequest peerId ebHash ebBytesSize
               Nothing -> id
           )
-            $ outstanding
-              { Leios.missingEbBodies =
-                  case Map.lookup ebHash (Leios.reverseSlotIndexByEbHash outstanding) of
-                    Nothing -> Leios.missingEbBodies outstanding
-                    Just slots ->
-                      foldr
-                        (\slot -> Map.delete (MkLeiosPoint slot ebHash))
-                        (Leios.missingEbBodies outstanding)
-                        slots
-              , Leios.reverseSlotIndexByEbHash =
-                  Map.delete ebHash (Leios.reverseSlotIndexByEbHash outstanding)
-              }
+            $ Leios.unlistMissingEbBody ebHash outstanding
     -- Persist and classify only a genuinely novel, still-relevant body. A
     -- duplicate (already held) or a too-old arrival (its slot is below pruned
     -- watermark, so 'novel' can't be trusted) is left at the bookkeeping above
@@ -1943,17 +1932,7 @@ recordAnnouncedEb (outstandingVar, readyVar) onset fields = do
             || Map.member ebHash (Leios.reverseSlotIndexByEbHash outstanding) -- already listed
         !outstanding''
           | skip = outstanding'
-          | otherwise =
-              outstanding'
-                { Leios.missingEbBodies =
-                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding')
-                , Leios.reverseSlotIndexByEbHash =
-                    Map.insertWith
-                      NESet.union
-                      ebHash
-                      (NESet.singleton ebSlot)
-                      (Leios.reverseSlotIndexByEbHash outstanding')
-                }
+          | otherwise = Leios.listMissingEbBody point ebBytesSize outstanding'
      in (outstanding'', not skip)
 
 -- | What one LeiosNotify client remembers about its upstream peer.
