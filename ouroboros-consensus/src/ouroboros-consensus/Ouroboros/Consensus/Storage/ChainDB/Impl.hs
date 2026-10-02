@@ -86,6 +86,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB as PerasImmutableCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust)
@@ -208,6 +209,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     let resolverHandle = mkPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
+    perasImmutableCertDB <- PerasImmutableCertDB.createDB argsPerasImmutableCertDB
     perasCertDB <- PerasCertDB.createDB argsPerasCertDB
     perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB resolverHandle
 
@@ -282,6 +284,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
+            , cdbPerasImmutableCertDB = perasImmutableCertDB
             , cdbPerasVoteDB = perasVoteDB
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             }
@@ -390,6 +393,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     argsLgrDb
     argsPerasCertDB
     argsPerasVoteDB
+    argsPerasImmutableCertDB
     cdbSpecificArgs = args
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')

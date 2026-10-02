@@ -172,6 +172,7 @@ createDB args = do
     PerasCertDB
       { addCert = implAddCert env
       , getCertIds = implGetCertIds env
+      , getCertsBoosting = implGetCertsBoosting env
       , getCertsAfter = implGetCertsAfter env
       , getWeightSnapshot = implGetWeightSnapshot env
       , getLatestCertSeen = implGetLatestCertSeen env
@@ -228,6 +229,23 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
   pure $ do
     traceWith pcdbTracer (AddCert roundNo cert addPerasCertRes)
     pure addPerasCertRes
+
+implGetCertsBoosting ::
+  ( IOLike m
+  , StandardHash blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDbEnv m blk ->
+  Point blk ->
+  STM m [ValidatedPerasCert blk]
+implGetCertsBoosting PerasCertDbEnv{pcdbState} pt = do
+  PerasCertDbState{pcdsCertsByTicket} <-
+    forgetFingerprint <$> readTVar pcdbState
+  pure
+    [ forgetArrivalTime cert
+    | cert <- Map.elems pcdsCertsByTicket
+    , getPerasCertPoint cert == pt
+    ]
 
 implGetWeightSnapshot ::
   ( IOLike m
