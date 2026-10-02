@@ -53,9 +53,15 @@ record PParams : Type where
 \end{code}
 \emph{Network group}
 \begin{code}
-    maxHeaderSize : ℕ
-    maxBlockSize  : ℕ
-    pv            : ProtVer
+    maxHeaderSize        : ℕ
+    maxBlockSize         : ℕ
+    pv                   : ProtVer
+\end{code}
+\emph{Network group (Leios)}
+\begin{code}
+    leiosHeaderPeriod    : Milliseconds
+    leiosVotingPeriod    : Milliseconds
+    leiosDiffusionPeriod : Milliseconds
 \end{code}
 \end{AgdaMultiCode}
 \caption{Protocol parameter definitions}
@@ -99,6 +105,15 @@ to the general purpose that each parameter serves.
 \begin{itemize}
   \item \NetworkGroup: parameters related to the network settings;
 \end{itemize}
+
+The Leios parameters governing the timing of endorser block announcement, voting
+and diffusion belong to the \NetworkGroup. They are wall-clock durations rather
+than slot counts, so that they remain meaningful across a change of slot length;
+where they must be compared against a slot, their sum is converted to a number of
+slots by \slotsFromDuration.
+
+They are deliberately absent from \positivePParams: zero values are the
+protocol's disabled state, and governance must be able to reach it.
 
 Figure~\ref{fig:protocol-parameter-declarations} also defines the
 function \paramsWellFormed. It performs some sanity checks on protocol
