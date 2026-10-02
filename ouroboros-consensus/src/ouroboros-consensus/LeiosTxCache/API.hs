@@ -112,7 +112,15 @@ data LeiosTxCache m a v b = LeiosTxCache
   -- ^ Advertise where these txs' DURABLE bytes live -- the given EB's rows at
   -- the given offsets -- for cross-EB fill. Call this on write confirmation
   -- only: a location must never name bytes that could still be lost. A tx the
-  -- cache no longer tracks is skipped, never resurrected. First location wins.
+  -- cache no longer tracks is skipped, never resurrected. Latest location wins:
+  -- a tx held by several EBs points at the most recently advertised one (evicted
+  -- last).
+  --
+  -- MAY be called repeatedly for one EB: its closure arrives over many
+  -- 'MsgLeiosBlockTxs', and each batch confirms a slice. The EB claims a single
+  -- ring slot the first time it is seen and every later call reuses it, so one
+  -- EB costs one slot however many batches deliver it -- claiming a slot per call
+  -- would wrap the ring every @maxAnnouncementCount@ batches rather than EBs.
   --
   -- The read side is 'insertBody': the next body to reference a tx observes its
   -- location in the same pass it bumps refcounts. A location so observed may be
