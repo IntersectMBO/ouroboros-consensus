@@ -311,6 +311,16 @@ msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
   n <- do
     -- Use new db to batch retrieve transactions
     results <- batchRetrieveTxs leiosDbReader point.pointEbHash txOffsets
+    -- See the same check in 'msgLeiosBlockRequest'.
+    let rowCount = length results
+    when (rowCount > maxTxsPerEb) $
+      throwLeiosDbException $
+        "EB "
+          <> Leios.prettyEbHash point.pointEbHash
+          <> " has "
+          <> show rowCount
+          <> " requested rows, more than maxTxsPerEb = "
+          <> show maxTxsPerEb
     -- Process results and write to buffer
     -- REVIEW: why a mutable vector?
     let loop !i [] = pure i
