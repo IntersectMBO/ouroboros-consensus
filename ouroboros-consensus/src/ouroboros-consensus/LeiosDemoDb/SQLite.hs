@@ -1627,7 +1627,7 @@ sqlInsertEbBody tracer conn notify point eb = do
     throwLeiosDbException "writeEbBody: empty EB body (programmer error)"
   completedNow <- dbWithWriteTransaction conn $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
-      dbBindBlob stInsertEbTxsRow 1 (ebHashBytes point.pointEbHash)
+      dbBindBlob stInsertEbTxsRow 1 ebHashRaw
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
       dbBindBlob stInsertEbTxsRow 3 (txHashBytes txHash)
       dbBindInt64 stInsertEbTxsRow 4 (fromIntegral txBytesSize)
@@ -1640,21 +1640,21 @@ sqlInsertEbBody tracer conn notify point eb = do
     -- this transaction, so an arrival can never see the rows without the count
     -- or the other way round.
     useStmt stInsertMissingTxs $ do
-      dbBindBlob stInsertMissingTxs 1 (ebHashBytes point.pointEbHash)
+      dbBindBlob stInsertMissingTxs 1 ebHashRaw
       dbStep1 stInsertMissingTxs
     -- Initialize missingTxCount and read the resulting value via
     -- @RETURNING missingTxCount@. Only /this/ point's row can have
     -- transitioned to 0 as a consequence of the insert above.
     missingCount <- useStmt stInitMissingCount $ do
-      dbBindBlob stInitMissingCount 1 (ebHashBytes point.pointEbHash)
-      dbBindBlob stInitMissingCount 2 (ebHashBytes point.pointEbHash)
+      dbBindBlob stInitMissingCount 1 ebHashRaw
+      dbBindBlob stInitMissingCount 2 ebHashRaw
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       readReturningInt64 stInitMissingCount
     if missingCount == 0
       then do
         useStmt stMarkPointNotified $ do
           dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-          dbBindBlob stMarkPointNotified 2 (ebHashBytes point.pointEbHash)
+          dbBindBlob stMarkPointNotified 2 ebHashRaw
           dbStep1 stMarkPointNotified
         pure [point]
       else pure []
@@ -1662,6 +1662,7 @@ sqlInsertEbBody tracer conn notify point eb = do
   forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
   pure completedNow
  where
+  ebHashRaw = ebHashBytes point.pointEbHash
   items = leiosEbBodyItems eb
   ebBytesSize = encodeLeiosEbSize eb
   Conn{connVolStmts} = conn
