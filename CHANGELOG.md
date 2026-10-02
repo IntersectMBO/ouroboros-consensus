@@ -6,6 +6,330 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.0.0.0'></a>
+## 5.0.0.0 -- 2026-10-02
+
+- Seed initial stake snapshots in experimental hard forks in epochs 0 or 1 (CardanoTriggerHardForkAtEpoch). This is useful for integration and end-to-end tests that otherwise need to wait for at least the third epoch, before the initial stake distribution comes into effect.
+
+### Breaking
+
+- Added `hardForkEqGenTxId` and `hardForkCompareGenTxId` to the `CanHardFork`
+  class. The `Eq` and `Ord` instances for `OneEraGenTxId` (and hence for
+  `TxId (GenTx (HardForkBlock xs))`) now delegate to them, so each hard fork
+  chooses how to compare its transaction ids. The methods have no default, so
+  existing `CanHardFork` instances must supply them; the exported `rawHashNS`
+  is the raw-hash implementation the non-optimizing instances reuse.
+- Delete `hardForkInjectTxs` from `CanHardFork`.
+- Delete `TranslateEra` instances for `(GenTx :.: ShelleyBlock proto)` and `(WrapValidatedGenTx :.: ShelleyBlock proto)`.
+- Require `From|ToCBOR (GenTx blk)` in `SingleEraBlock`.
+- Delete contents of `InjectTxs.hs` to keep only `matchTx` and `rematchValidatedTxs`.
+- `TraceMempoolRemoveTxs` and `TraceMempoolManuallyRemovedTxs` now carry a `GenTx blk` instead of a `Validated (GenTx blk)`.
+- Add phantom `blk` type parameter to V1 `PerasVote` and `PerasCert`.
+- Add phantom `blk` type parameter to `PerasParams`.
+- Extract `PerasRoundLength` from the Peras parameter bundle.
+- Rename "stake" to "weight" terminology in:
+  - `PerasQuorumStakeThreshold` → `PerasQuorumWeightThreshold`, and
+  - `PerasQuorumStakeThresholdSafetyMargin` → `PerasQuorumWeightThresholdSafetyMargin`.
+- Rename `mkPerasParameters` into `defaultPerasParameters`.
+- Replace the optional `boundPerasRound` field of `Bound` with a mandatory `boundNextPerasRound`, changing its CBOR encoding.
+- Add a new method `getShelleyEraPerasRoundLength` method to the `ShelleyBasedEra` class to resolve the Peras round length of the corresponding era. Defaults to `NoPerasEnabled`.
+- Tweak `shelleyEraParams` to take `Proxy era` argument (under a new `ShelleyBasedEra era` constraint) to avoid always hardcoding `NoPerasEnabled` when building a new `EraParams`.
+- `PerasVoteId` now uses a `SeatIndex`-based voter ID and no longer has a phantom `blk` index.
+- The Mithril snapshot policy (which is also the default policy) now takes a
+  snapshot every `40 * k` slots with no offset, instead of every 432,000 slots
+  with an offset of 388,800. On mainnet this is one snapshot a day, one of every
+  five landing on a Shelley epoch boundary.
+- `sfaInterval` is now a `SnapshotInterval`, which is either
+  `DefaultSnapshotInterval` (`40 * k` slots, resolved via
+  `resolveSnapshotInterval` once the `SecurityParam` is known) or an explicit
+  `RequestedSnapshotInterval`.
+- `defaultSnapshotPolicy` and `sanityCheckSnapshotPolicyArgs` now take a
+  `SecurityParam`.
+- Remove `PerasCfg` associated type of `BlockSupportsPeras` in favor of using `PerasParams` directly.
+- Remove `HasPerasCert*` and `HasPerasVote*` type classes in favor or `IsPerasCert` and `IsPerasVote`.
+- Remove `PerasValidationErr` and `PerasForgeErr` in favor of `PerasError`.
+- Remove `PerasVoteStake` in favor of `VoteWeight`.
+- Remove `ValidatedPerasVotesWithQuorum` in favor of `PerasVoteCollection` and `PerasVoteCollectionWithQuorum`.
+- Refine the Peras voting API to track the candidate block.
+- Refine the Peras certificate inclusion API to require the latest seen certificate when constructing an inclusion view.
+- Replaced `ChainDB.getLatestPerasCertRound` with temporary `Nothing` placeholder.
+- Removed unused `LedgerSupportsPeras` type-class.
+- Removed `shelleyLedgerLatestPerasCertRound` from the Shelley ledger state.
+- `LedgerDB.tryTakeSnapshot` no longer writes any snapshot itself: it only
+  enqueues a `SnapshotRequest` on the new `LedgerDB.snapshotRequestQueue`, which
+  the ChainDB serves in a dedicated background thread. Accordingly, it lost its
+  "copy blocks" and "random delay" arguments, which are now supplied by that
+  thread.
+- `ChainDB.Internal.intTryTakeSnapshot` lost its arguments for the same reason;
+  it now enqueues a request and serves it synchronously, without copying blocks
+  to the ImmutableDB or delaying.
+- Add `perasState` field of type `PerasState` to `ExtLedgerState` (decoder remains backwards compatible).
+- `LedgerDbSerialiseConstraints` now require `Typeable` evidence for Peras types plus `ToCBOR`/`FromCBOR` for the Peras voting committee.
+- Ticking the `ExtLedgerState` now requires `StateSupportsPerasEpochContext` as a superclass constraint in several places (notably `IsLedger` and `ApplyBlock`). The actual ticking is temporarily disabled to avoid forcing new Peras-related epoch-length constraints on the next node release.
+- Refactored `BlockSupportsPeras` to use `PerasEpochContext` when forging and verifying Peras votes and certificates.
+- Replaced the degenerate `BlockSupportsPeras` instance with explicit block- and era-specific instances.
+- Extended `BlockForging.forgeBlock` with an optional `PerasCert` argument.
+- Removed `NodeToClientV_16` and `NodeToClientV_17` from
+  `supportedNodeToClientVersions`. These were introduced by `cardano-node`
+  9.0.0 and 9.2.0 respectively, both long superseded on mainnet.
+- Removed `ShelleyNodeToClientVersion8` and `ShelleyNodeToClientVersion9`, and
+  the `CardanoNodeToClientVersion12` and `CardanoNodeToClientVersion13` pattern
+  synonyms.
+- `supportedNodeToClientVersions` now offers `NodeToClientV_23` only. The
+  versions introduced by `cardano-node` 10.x (`NodeToClientV_18` through
+  `NodeToClientV_22`) were removed. `NodeToClientV_23` first shipped in
+  `cardano-node` 10.7.0.
+- `ShelleyNodeToClientVersion` has a single constructor,
+  `ShelleyNodeToClientVersion15`, and only `CardanoNodeToClientVersion19`
+  remains.
+- Removed the queries that were unreachable once the versions above went away:
+  `GetProposedPParamsUpdates`, `GetStakeDistribution` (use
+  `GetStakeDistribution2`) and `GetPoolDistr` (use `GetPoolDistr2`). Their CBOR
+  tags 4, 5 and 21 are now rejected.
+- `GetLedgerPeerSnapshot'` and its `GetLedgerPeerSnapshot` pattern synonym were
+  merged back into a plain `GetLedgerPeerSnapshot` constructor without the
+  version-discriminating `Bool`. The pre-`ShelleyNodeToClientVersion15`
+  encoding of tag 34 (a 1-element list) is no longer decoded.
+- This narrows `NodeToClientV_23` itself: a peer that sent CBOR tag 4, 5 or 21,
+  or the one-element form of tag 34, previously got an answer, because the
+  supported-version check runs only in the client-side encoder and the decoder
+  never sees the negotiated version. The decoder now rejects all four.
+  No shipped client emits any of them. Our encoder already refused tags 4, 5 and
+  21 at `ShelleyNodeToClientVersion15`, so only a client with its own codec could
+  send those. The one-element form of tag 34 came from the deprecated
+  `GetLedgerPeerSnapshot'` applied to `False`. Every in-org client uses the
+  `GetLedgerPeerSnapshot` pattern synonym instead, which is that constructor
+  applied to `True`, so it sends the two-element form.
+  A peer that sends one of these anyway gets a decode failure, which terminates
+  the whole node-to-client connection rather than that one query, as the
+  mini-protocol has no per-query error message.
+- Removed `Ouroboros.Consensus.Shelley.Ledger.Query.Types` and
+  `Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams`, which only existed
+  to serve the removed queries and the pre-`ShelleyNodeToClientVersion13`
+  `PParams` encoding. `ShelleyCompatible` no longer carries the
+  `ToCBOR`/`FromCBOR (LegacyPParams era)` constraints.
+- The module `Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis`
+  remains, but no longer exports `LegacyShelleyGenesis`,
+  `encodeLegacyShelleyGenesis` or `decodeLegacyShelleyGenesis`. They encoded
+  `ShelleyGenesis` as a 15-field record using the pre-node-10.5 `LegacyPParams`
+  encoding, only reachable from `GetGenesisConfig` on the removed versions.
+- `nodeToClientVersionToQueryVersion` now maps only `NodeToClientV_23`, since
+  `ouroboros-network` removed `NodeToClientV_16` through `NodeToClientV_22`.
+- Removed `ledgerPeerSnapshotSupportsSRV` from
+  `Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion`, which remains as
+  a module. `ouroboros-network` dropped `LedgerPeerSnapshotSRVSupport` along
+  with the `LedgerPeerSnapshotV2` snapshot encoding, so
+  `encodeLedgerPeerSnapshot` no longer takes an SRV-support argument. Only
+  `ShelleyNodeToClientVersion11` through `14` produced that encoding, so what
+  `ShelleyNodeToClientVersion15` puts on the wire is unchanged.
+- Removed `QueryVersion1` and `QueryVersion2`, leaving `QueryVersion3` as the
+  only constructor of `QueryVersion`; nothing mapped to them once
+  `nodeToClientVersionToQueryVersion` was down to `NodeToClientV_23`. The bounds
+  in `queryIsSupportedOnVersion` and the checks in `queryDecodeNodeToClient` now
+  all refer to `QueryVersion3`.
+- Replace the positional arguments of `Ouroboros.Consensus.Block.Forging.forgeBlock`
+  with a `ForgeBlockArgs blk` record.
+- Add `TraceMempoolCapacityChanged` to `TraceEventMempool`.
+  The mempool emits it when a sync with the ledger changes the capacity.
+  The `Eq` and `Show` instances of `TraceEventMempool` now also require `Eq (TxMeasure blk)` and `Show (TxMeasure blk)`.
+- Added `TxEbMeasure`, `txEbMeasure`, `ebCapacityTxMeasure` and `mempoolEbReservation` to the `TxLimits` class.
+  They state the size a transaction takes in a Leios endorser block, the endorser-block capacity a ledger state allows, and the `TxMeasure` of the transactions an endorser block holds.
+  They have no defaults, so every `TxLimits` instance must supply them.
+  In every Cardano era before Dijkstra, the endorser-block measure of a transaction is its `TxMeasure`, `mempoolEbReservation` is the identity, and the endorser-block capacity is zero.
+  In Dijkstra, the endorser-block measure is `DijkstraEbMeasure`.
+  It holds the `TxMeasure` of the transactions an endorser block holds, and the size of their references in the endorser block.
+  A Dijkstra transaction costs its `TxMeasure`, and `encodeLeiosEbItemSize` of its byte size for its reference.
+  The Dijkstra endorser-block capacity reads `maxEndorserBlockTxsSize`, `maxEndorserBlockExUnits`, `maxRefScriptSizePerEndorserBlock` and `maxEndorserBlockReferencesSize` from the protocol parameters.
+  The references capacity is `maxEndorserBlockReferencesSize` minus `encodeLeiosEbMaxFramingSize`, the largest header that `encodeLeiosEb` writes before the references.
+  The Dijkstra `mempoolEbReservation` returns the `TxMeasure` part of a `DijkstraEbMeasure`.
+- `computeMempoolCapacity` adds one endorser block to each block it counts.
+  The default mempool capacity is now 2 × (block capacity + `mempoolEbReservation` of `ebCapacityTxMeasure`).
+  Only the Dijkstra mempool capacity changes, because every other era has a zero endorser-block capacity.
+- Added `HardForkTxEbMeasure`, `hardForkInjTxEbMeasure`, `hardForkTxEbMeasure` and `hardForkMempoolEbReservation` to the `CanHardFork` class.
+  They let the combinator carry the endorser-block measure across eras.
+  For the Cardano eras, `HardForkTxEbMeasure` is `DijkstraEbMeasure`, and a transaction from an era before Dijkstra costs nothing for its reference.
+  They have no defaults, so existing `CanHardFork` instances must supply them.
+- Replaced `snapshotTake` in `MempoolSnapshot` with `snapshotPartition`.
+  It takes a block capacity and an endorser-block capacity.
+  It returns the greatest prefix whose `TxMeasure` fits the block capacity, then the greatest run of the following transactions whose `TxEbMeasure` fits the endorser-block capacity, each with its total size.
+  The forge passes a zero endorser-block capacity, so it selects the same transactions as before.
+- Replaced `TxMeasureWithDiffTime` and `forgetTxMeasureWithDiffTime` with the `MempoolMeasure` record.
+  Its fields are `mmTxMeasure`, `mmTxEbMeasure` and `mmDiffTime`.
+  `TraceForgedBlock` now carries a `MempoolMeasure`.
+- Added `splitAfterTxSizeOn` to `Ouroboros.Consensus.Mempool.TxSeq`.
+  It bounds only a projection of the summed measure.
+
+### Non-Breaking
+
+- Introduce `EraIndexed` wrapper to annotate types with the era a query resolves in.
+- Introduce `runQueryEraIndexed` as a generalization of `runQuery`.
+- Move the `VotingCommittee` data family out of the `CryptoSupportsVotingCommittee` class
+- Move the `voteTarget` and `compareVotesById` helpers into the `CryptoSupportsVotingCommittee` class.
+- Change `VoteWeight` to represent the relative (normalised) voting power of a voter w.r.t. the rest of the committee.
+- Derive `FromCBOR`, `ToCBOR`, `NoThunks`, `Generic` and `Exception` for the voting committee types, keys and errors.
+- Implement orphan `FromCBOR`/`ToCBOR` instances for `Nonce`, as well as `NoThunks` for `Array`.
+- Introduce `IsPerasVote` and `IsPerasCert` type projection clases.
+- When injecting transactions from other eras into the current era in the HFC
+  mempool, encode the transaction in the origin era and decode it in the target
+  era instead of wastefully translate the transaction through all intermediate eras.
+- Introduce `IsPerasError` type class and `V1.PerasError` type.
+- Add auxiliary `ChainDepStateSupportsPeras` typeclass to extract epoch nonce from either ticked or unticked chain dependent states.
+- Add new `TargetCommitteeSize` Peras parameter.
+- Add auxiliary `LedgerStateSupportsPeras` typeclass to extract `PoolDistr` and `PerasParams` from either ticked or unticked ledger states.
+- Add `eraEndToBound` and `summaryPerasBounds` to the summary API.
+- Add `slotToPerasRoundNo'`, `perasRoundNoToPerasRoundLength`, and `epochToPerasRoundInfo` queries, together with the `EpochToPerasRoundInfo` type.
+- Expose `LSM.DiskCachePolicy` as a parameter of the `LSM` ledger DB backend (`LSMArgs`), allowing callers to control whether UTxO table reads/writes go through the OS page cache.
+- Introduce the `Ouroboros.Consensus.Peras.Context` module, providing the machinery to resolve Peras round numbers into their epoch-dependent context (voting committee and Peras parameters).
+- Add `BoundedPerasEpochContext`, `PerasEpochContextResolver` (a two-epoch sliding window), and their `PerasEpochContextResolverHandle`, together with `initPerasEpochContextResolver`, `tickPerasEpochContextResolver`, `resolveRoundNo` and `withResolvedRoundNo`.
+- Add the `StateSupportsPerasEpochContext` typeclass and `mkBoundedPerasEpochContextWith` to extract epoch contexts from the node state.
+- Add `TimeResolutionContext` and the `runQueryWithContext`/`runQueryEraIndexedWithContext` helpers to run hard fork history queries against the ledger state.
+- Add the `PerasEpochContext` type and the `PerasCrypto`, `PerasVotingCommitteeScheme` and `PerasError` associated types to `BlockSupportsPeras`, in anticipation of an upcoming refactor of the type class.
+- Introduce Peras type family wrappers (`WrapPerasVote`, `WrapPerasCert`, `WrapPerasError`, `WrapPerasCrypto`, `WrapPerasVotingCommitteeScheme`, `WrapPerasPrivateKey` and `WrapPerasVotingCommittee`) for the HFC.
+- Add Void-based Peras types and associated type class instances (`VoidPerasVote`, `VoidPerasCert`, `VoidPerasError`, `VoidPerasCrypto`, and `VoidPerasVotingCommitteeScheme`).
+- Introduce the `OneEraPeras` HFC wrapper types (`OneEraPerasVote`, `OneEraPerasCert`, `OneEraPerasError`, `OneEraPerasCrypto`, `OneEraPerasVotingCommitteeScheme`)
+- Introduce `PerEraPerasPrivateKey` type.
+- Introduce `HardForkPerasError` type.
+- Move n-ary sum serialisers `encodeNS`/`decodeNS` from `Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common` to `Ouroboros.Consensus.HardFork.Combinator.AcrossEras` (still re-exported from `Common`).
+- Added `snapshotFromIS`, which builds a `MempoolSnapshot` from the mempool's
+  internal state in constant time by reusing the transaction sequence
+  (`isTxs`) and the cached transaction ids (`isTxIds`) it already maintains.
+- Remove old KeyHash-based `PerasVoterId` (all call sites were already updated to use `PerasSeatIndex`).
+- Add `PerasVotingViewHandle` wrapper to compute Peras voting views over STM.
+- Add `PerasCertInclusionViewHandle` wrapper to compute Peras certificate inclusion views over STM.
+- Add tracer for Peras vote forging events `TracePerasVoteForgingEvent`.
+- Add tracer for Peras certificate inclusion events `TracePerasCertInclusionEvent`.
+- Define `PerasState` type containing a `PerasEpochContextResolver` and the round number of the latest certificate on chain.
+- Add `distribHardForkPoint` and `injectHardForkPoint` helpers to transform between HFC and single-era points.
+- Add empty `StateSupportsPerasEpochContext` instances for Byron, Shelley and the HFC blocks.
+- Decoupled mempool snapshot readers and adders from ledger revalidation. On a
+  tip change, `implSyncWithLedger` now revalidates the mempool off the state
+  lock against a `readTMVar` snapshot and holds the lock only for a bounded
+  residual reapply before committing, instead of revalidating the whole mempool
+  under the lock. The committed state is byte-identical to a full revalidation;
+  the sync retries under the lock if the tip moved or a transaction was
+  force-removed while it worked off the lock. This bounds `getSnapshot` latency
+  independently of mempool occupancy (seconds down to tens of milliseconds at
+  high occupancy) at no ingestion cost.
+- Add default `BlockSupportsPeras` helpers to be used after the upcoming refactor:
+  - defaultForgePerasVoteIfEligible
+  - defaultVerifyPerasVote
+  - defaultForgePerasCert
+  - defaultVerifyPerasCert
+- Update cardano-ledger: replace deprecated `Validated` type with `ValidatedTx`,
+  update `GetPoolDistr2` result type to `QueryResultPoolDistr`, remove
+  `EncCBORGroup` constraint from `ShelleyCompatible`, and fix
+  `UpgradeDijkstraPParams` and `StakePoolParams` with new protocol parameter
+  fields.
+- Add `mkPerasEpochContextResolverHandle` helper to construct a `PerasEpochContextResolverHandle` from the extended ledger state.
+- Extended `ChainDB` with `getPerasEpochContextResolverHandle` for Peras vote validation and certificate forging.
+- Added ChainDB handles for Peras voting, certificate-inclusion, and time-resolution queries.
+- Added `encodeShelleyGenesisNoExtraConfig` and `decodeShelleyGenesisNoExtraConfig`
+  to `Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis`. They encode
+  and decode `ShelleyGenesis` with 15 fields.
+- Added a new public sublibrary `ouroboros-consensus:tracing`, holding the
+  `LogFormatting` and `MetaTrace` instances for Consensus types. These were in
+  `cardano-node`, and now live next to the types they describe, so that a change
+  to a traced type and the change to its rendering land in the same commit.
+  The sublibrary also exports `Ouroboros.Consensus.Tracing.HasIssuer`, the
+  `HasIssuer` class and its instances, and `Ouroboros.Consensus.Tracing.KESInfo`,
+  moved over from `cardano-node` for the same reason.
+  Compared to the instances in `cardano-node`:
+  - At `DDetailed`, the `tx` field of a transaction is now the hex-encoded CBOR
+    of the transaction instead of its `Show` rendering. For Shelley-based eras
+    this is the ledger `Tx` serialised at the era's protocol version, which
+    reproduces the received bytes of the body, witnesses and auxiliary data. For
+    Byron it is the annotated bytes of the mempool payload, which are its
+    canonical encoding. This affects every mempool trace that carries a
+    transaction.
+  - `TraceMempoolRejectedTx` now includes `errdetails`, the source of the
+    rejection, at every detail level, not only at `DDetailed`.
+  - `Point` and `RealPoint` now have a `forHuman` rendering, "<hash> at slot
+    <slot>".
+  - `Ouroboros.Consensus.Tracing.Render` no longer exports `renderTip`,
+    `renderTipForDetails` or `renderSlotNo`, which no instance used, nor
+    re-exports `showT`, which is available from `Cardano.Logging`.
+  - Fixed `MetaTrace` delegation to nested namespaces. The LSM backend
+    namespaces under `LedgerEvent.Flavor.V2.BackendTrace` are now documented,
+    and the privacy and detail level of `AddBlockEvent.AddBlockValidation`,
+    `ImmDbEvent.ChunkValidation` and `ImmDbEvent.CacheEvent` namespaces are now
+    taken from the nested tracer instead of the default.
+- Add `publicKeyFromLedgerBlsKey`/`rawPublicKey` conversions between Ledger and Consensus committee BLS keys.
+- Add `mkProofOfPossession`/`rawProofOfPossession` conversions between Ledger and Consensus committee PoPs.
+- Add `PerasVotingCommitteeScheme` alias for `WFALS`.
+- Add `V1.mkVotingCommitteeInput` implementation for `WFALS`.
+- Rewire `DijkstraEra` to use V1 (production) Peras types and WFALS.
+- Add module `Ouroboros.Consensus.NodeKernel.Forge` extracting the block-forging
+  logic from `Ouroboros.Consensus.NodeKernel`.
+- `Ouroboros.Consensus.Byron.Node` now exports `defaultByronProtocolVersion` and
+  `defaultByronSoftwareVersion`, the values to announce in forged Byron blocks
+  when nothing else specifies them.
+  These used to come from the `LastKnownBlockVersion-Major`, `-Minor`, `-Alt`
+  and `ApplicationVersion` keys. `cardano-config` retired all four as obsolete,
+  stripping them from a configuration it migrates, on the grounds that the
+  values are consensus defaults, so this is where they now live.
+  Only a block producer reads them: they reach `headerProtocolVersion` and
+  `headerSoftwareVersion` of the blocks it forges, and nothing validates against
+  them.
+- Added `WrapTxEbMeasure` to `Ouroboros.Consensus.TypeFamilyWrappers`.
+- Added `Ouroboros.Consensus.Leios.Types` (EB, RB and tx hashes, `LeiosPoint`,
+  `LeiosEb`).
+- Added `Ouroboros.Consensus.Storage.LeiosDB`, the Leios endorser-block store:
+  a SQLite implementation split into a volatile and an immutable partition file
+  with mark-and-sweep garbage collection, and an in-memory implementation for
+  tests and tools.
+- `db-truncater` now truncates the `leios.vol.db` and `leios.imm.db` files under `--db`.
+- Added `encodeLeiosEb`, `encodeLeiosEbMaxFramingSize` and `leiosReferencesCapacity` to `Ouroboros.Consensus.Leios.Types`.
+  The mempool charges each transaction `encodeLeiosEbItemSize`, and the endorser-block capacity subtracts `encodeLeiosEbMaxFramingSize`.
+- The tools that take a node configuration file now read it through
+  `cardano-config`, which changes how they treat a configuration that worked
+  before:
+  - Every genesis file must come with its hash. A configuration naming
+    `ShelleyGenesisFile` without `ShelleyGenesisHash` no longer resolves, and
+    the same holds for Byron, Alonzo and Conway, whose hashes used to be
+    optional or ignored. This includes stub configurations.
+  - `TestEnableDevelopmentHardForkEras` is gone. It is reported as an
+    unrecognised key and ignored, so the experimental era is off. Its
+    replacement, `ExperimentalHardForksEnabled`, also needs a
+    `DijkstraGenesisFile` and a `DijkstraGenesisHash` when it is true.
+  - With `ExperimentalHardForksEnabled` off, a named `DijkstraGenesisFile` is
+    ignored and the default Dijkstra genesis is used, as cardano-node does.
+  - With `ExperimentalHardForksEnabled` off, the greatest protocol version is
+    that of the era before the experimental one, as cardano-node does. The tools
+    used to announce the experimental era regardless, so db-synthesizer could
+    forge in an era a node reading the same configuration would not.
+- db-synthesizer now decodes its forging credential files with `cardano-keys`,
+  instead of a copy of `cardano-api`'s key types vendored into
+  `unstable-cardano-tools`, which is removed. The files it accepts are the same
+  (text envelopes for the operational certificate and the VRF and KES keys, the
+  bulk credentials file, and the Byron signing key and delegation certificate),
+  but the errors it reports for a file it cannot decode are now
+  `cardano-keys`' own.
+
+### Patch
+
+- Made those `Eq`/`Ord` comparisons allocation-free for the Cardano eras, on
+  every comparison rather than only same-era ones. The Cardano instance reads
+  the transaction id hash as four machine words and compares them in registers,
+  instead of serialising both ids to their raw hash. The ordering is unchanged.
+- Enable Dijkstra HardFork trigger.
+- Bump `resource-registry` dependency to 0.4.0.0.
+- The associated types in `BlockSupportsPeras` (`PerasCert`, `PerasVote`, and the new `PerasError`) are now injective type families.
+- `getSnapshot` and the fast path of `getSnapshotFor` no longer rebuild the
+  mempool contents on every call. This was quadratic in the size of the mempool.
+- Simplify Peras vote aggregation state to use `PerasVoteCollection` and `PerasVoteCollectionWithQuorum` directly.
+- Decouple LedgerDB garbage collection from (randomly delayed) snapshotting.
+- Fixed the `GetGenesisConfig` node-to-client query. `cardano-ledger-shelley`
+  1.19.0.0 added the `sgExtraConfig` field to `ShelleyGenesis` and grew the CBOR
+  record from 15 fields to 16, under a fixed node-to-client version. The node now
+  encodes and decodes 15 fields again. `compactGenesis`
+  erases `sgExtraConfig`, so the reply carries no less data than before.
+- Added strict fields across Peras epoch/state, WFA stake distribution, mock votes/certificates, ledger, and error types.
+- Replaced lazy `Either` with strict `Either` in the Peras vote aggregator.
+- Changed the `PerasCertDB` internal latest certificate storage to `StrictMaybe`.
+- Changed mock committee weight distributions from `NonEmpty` to strict `Map`.
+- Add missing `NoThunks` and `Generic` instances for the new strict types.
+- Fix a bug on `slotToPerasRoundNo'` that would prevent the query from traversing beyond the first Non-PerasEnabled era.
+
 <a id='changelog-4.0.0.0'></a>
 ## 4.0.0.0 -- 2026-07-30
 
