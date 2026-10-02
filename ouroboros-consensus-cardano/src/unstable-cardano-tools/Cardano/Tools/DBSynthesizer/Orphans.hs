@@ -11,6 +11,7 @@ import Cardano.Node.Types
   , NodeHardForkProtocolConfiguration (..)
   )
 import Cardano.Tools.DBSynthesizer.Types
+import Control.Applicative ((<|>))
 import Control.Monad (when)
 import Data.Aeson as Aeson
   ( FromJSON (..)
@@ -59,8 +60,12 @@ instance AdjustFilePaths NodeCredentials where
 instance FromJSON NodeHardForkProtocolConfiguration where
   parseJSON = withObject "NodeHardForkProtocolConfiguration" $ \v ->
     NodeHardForkProtocolConfiguration
-      <$> v
-        .:? "TestEnableDevelopmentHardForkEras"
+      -- "ExperimentalHardForksEnabled" is the name cardano-node uses for this
+      -- flag nowadays; "TestEnableDevelopmentHardForkEras" is its legacy name.
+      <$> ( (<|>)
+              <$> v .:? "ExperimentalHardForksEnabled"
+              <*> v .:? "TestEnableDevelopmentHardForkEras"
+          )
         .!= False
       <*> v .:? "TestShelleyHardForkAtEpoch"
       <*> v .:? "TestAllegraHardForkAtEpoch"
