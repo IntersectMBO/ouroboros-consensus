@@ -90,6 +90,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , pHeaderBlock
   , pHeaderBodyHash
   , pHeaderHash
+  , pHeaderLeiosContainsCert
   , pHeaderSlot
   )
 import Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
@@ -219,6 +220,8 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
     -- Compute the hash the body of the block (the transactions) and compare
     -- that against the hash of the body stored in the header.
     SL.hashBlockBody blockBody == pHeaderBodyHash shelleyHdr
+      -- The body hash does not cover this claim, so it is checked separately.
+      && pHeaderLeiosContainsCert shelleyHdr == blockBodyContainsLeiosCert blockBody
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
     ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk

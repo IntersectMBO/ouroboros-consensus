@@ -82,6 +82,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsEnvelope (Leios c) where
   pHeaderBlock = Leios.hbBlockNo . Leios.headerBody
   pHeaderSize = fromIntegral . Leios.headerSize
   pHeaderBlockSize = fromIntegral . Leios.hbBodySize . Leios.headerBody
+  pHeaderLeiosContainsCert = Leios.hbBlockBodyContainsLeiosCert . Leios.headerBody
 
   type EnvelopeCheckError _ = EnvelopeError
 
@@ -122,7 +123,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Leios c) where
           , Leios.hbOCert = praosToSignOCert
           , Leios.hbVersionInfo = versionInfo
           , Leios.hbBlockBodyContainsLeiosCert = False -- FIXME: Fill this in when forging
-          , Leios.hbEbReferencesAnnouncement = SNothing  -- FIXME: Fill this in when forging
+          , Leios.hbEbReferencesAnnouncement = SNothing -- FIXME: Fill this in when forging
           }
 
     versionInfo =

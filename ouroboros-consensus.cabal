@@ -1803,6 +1803,7 @@ test-suite shelley-test
     Test.Consensus.Shelley.Coherence
     Test.Consensus.Shelley.EndorserBlock
     Test.Consensus.Shelley.Golden
+    Test.Consensus.Shelley.Integrity
     Test.Consensus.Shelley.LedgerTables
     Test.Consensus.Shelley.Serialisation
     Test.Consensus.Shelley.SupportedNetworkProtocolVersion
@@ -1816,9 +1817,9 @@ test-suite shelley-test
     cardano-ledger-babbage:testlib,
     cardano-ledger-conway:testlib,
     cardano-ledger-core,
-    cardano-ledger-dijkstra:testlib,
+    cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-shelley,
-    cardano-protocol-tpraos,
+    cardano-protocol,
     cardano-slotting,
     cborg,
     constraints,

@@ -114,6 +114,12 @@ class
   pHeaderSize :: ShelleyProtocolHeader proto -> Natural
   pHeaderBlockSize :: ShelleyProtocolHeader proto -> Natural
 
+  -- | Whether the header claims its block body carries a Leios certificate.
+  --
+  -- Defaults to 'False' for protocols whose headers cannot make the claim.
+  pHeaderLeiosContainsCert :: ShelleyProtocolHeader proto -> Bool
+  pHeaderLeiosContainsCert _ = False
+
   type EnvelopeCheckError proto :: Type
 
   -- | Carry out any protocol-specific envelope checks. For example, this might

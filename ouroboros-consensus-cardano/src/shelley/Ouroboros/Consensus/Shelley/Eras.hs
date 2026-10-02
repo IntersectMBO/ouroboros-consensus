@@ -47,6 +47,7 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   )
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
+import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
@@ -144,6 +145,12 @@ class
   getShelleyEraPerasRoundLength :: proxy era -> PerasEnabled PerasRoundLength
   getShelleyEraPerasRoundLength _ = NoPerasEnabled
 
+  -- | Whether this block body carries a Leios certificate.
+  --
+  -- Defaults to 'False' for eras whose bodies cannot carry one.
+  blockBodyContainsLeiosCert :: Core.BlockBody era -> Bool
+  blockBodyContainsLeiosCert _ = False
+
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
 
@@ -221,6 +228,8 @@ instance ShelleyBasedEra ConwayEra where
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
+
+  blockBodyContainsLeiosCert bb = isSJust (bb ^. leiosCertBlockBodyL)
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
