@@ -1,0 +1,9 @@
+perasState =
+  [perasEpochContextResolver, latestPerasCertOnChainRound]
+
+; TODO this should be provided after their definitions are more stable.
+perasEpochContextResolver = any
+
+latestPerasCertOnChainRound = maybe<word64>
+
+;# import maybe, word64 from base
