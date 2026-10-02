@@ -44,6 +44,7 @@ import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.Cardano.Ledger ()
+import Ouroboros.Consensus.Cardano.Node ()
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
@@ -59,7 +60,7 @@ import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Network.Block (Serialised (..))
+import Ouroboros.Network.Block (Serialised (..), mkSerialised)
 import qualified Test.Consensus.Byron.Examples as Byron
 import qualified Test.Consensus.Shelley.Examples as Shelley
 import Test.Util.Serialisation.Examples
@@ -67,6 +68,7 @@ import Test.Util.Serialisation.Examples
   , Labelled
   , labelled
   , prefixExamples
+  , topLevelQueries
   )
 import Test.Util.Serialisation.SomeResult (SomeResult (..))
 
@@ -91,15 +93,24 @@ combineEras ::
   Examples (CardanoBlock Crypto)
 combineEras perEraExamples =
   Examples
-    { exampleBlock = coerce $ viaInject @I (coerce exampleBlock)
-    , exampleSerialisedBlock = viaInject exampleSerialisedBlock
-    , exampleHeader = viaInject exampleHeader
-    , exampleSerialisedHeader = viaInject exampleSerialisedHeader
+    { exampleBlock = blocks
+    , -- The serialised forms are the bytes of the blocks and headers above, so
+      -- we encode those instead of injecting the per-era examples, which would
+      -- lose the era tag that the payload carries.
+      exampleSerialisedBlock = fmap (fmap (mkSerialised (encodeDisk codecConfig))) blocks
+    , exampleHeader = headers
+    , exampleSerialisedHeader =
+        fmap
+          (fmap (SerialisedHeaderFromDepPair . encodeDepPair codecConfig . unnest))
+          headers
     , exampleHeaderHash = coerce $ viaInject @WrapHeaderHash (coerce exampleHeaderHash)
     , exampleGenTx = viaInject exampleGenTx
     , exampleGenTxId = coerce $ viaInject @WrapGenTxId (coerce exampleGenTxId)
     , exampleApplyTxErr = coerce $ viaInject @WrapApplyTxErr (coerce exampleApplyTxErr)
     , exampleQuery = fmap (second unComp) $ viaInject (fmap (second Comp) . exampleQuery)
+    , -- These are the same for every block, so we take them as they are instead
+      -- of injecting the ones of each era, which would only repeat them.
+      exampleTopLevelQuery = topLevelQueries
     , exampleResult = viaInject exampleResult
     , exampleAnnTip = viaInject exampleAnnTip
     , exampleLedgerState =
@@ -111,6 +122,12 @@ combineEras perEraExamples =
     , exampleLedgerConfig = exampleLedgerConfigCardano
     }
  where
+  blocks :: Labelled (CardanoBlock Crypto)
+  blocks = coerce $ viaInject @I (coerce exampleBlock)
+
+  headers :: Labelled (Header (CardanoBlock Crypto))
+  headers = viaInject exampleHeader
+
   viaInject ::
     forall f.
     Inject f =>
@@ -207,6 +224,7 @@ instance Inject Examples where
       , exampleGenTxId = inj (Proxy @WrapGenTxId) exampleGenTxId
       , exampleApplyTxErr = inj (Proxy @WrapApplyTxErr) exampleApplyTxErr
       , exampleQuery = inj (Proxy @(SomeBlockQuery :.: BlockQuery)) exampleQuery
+      , exampleTopLevelQuery = topLevelQueries
       , exampleResult = inj (Proxy @SomeResult) exampleResult
       , exampleAnnTip = inj (Proxy @AnnTip) exampleAnnTip
       , exampleLedgerState = inj (Proxy @(Flip LedgerState EmptyMK)) exampleLedgerState

@@ -1,5 +1,6 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -45,15 +46,19 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import Data.TreeDiff
+import Data.Typeable (Typeable)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block (CodecConfig)
 import Ouroboros.Consensus.Ledger.Extended (encodeDiskExtLedgerState)
 import Ouroboros.Consensus.Ledger.Query
-  ( BlockSupportsLedgerQuery
+  ( BlockQuery
+  , BlockSupportsLedgerQuery
   , QueryVersion
   , SomeBlockQuery (..)
   , blockQueryIsSupportedOnVersion
   , nodeToClientVersionToQueryVersion
+  , queryEncodeNodeToClient
+  , queryIsSupportedOnVersion
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( HasNetworkProtocolVersion (..)
@@ -70,6 +75,7 @@ import Ouroboros.Consensus.Node.Serialisation
   , SerialiseNodeToNode (..)
   )
 import Ouroboros.Consensus.Storage.Serialisation (EncodeDisk (..))
+import Ouroboros.Consensus.Util (SomeSecond (..))
 import Ouroboros.Consensus.Util.CBOR (decodeAsFlatTerm)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import System.Directory (createDirectoryIfMissing)
@@ -216,7 +222,7 @@ goldenTests testName examples enc goldenFolder mCDDL
                 Nothing -> testName
                 Just label -> testName <> "_" <> label
         , -- TODO(dijkstra_serialisation)
-        testName' /= "Block_Dijkstra"
+        testName' `notElem` ["Block_Dijkstra", "SerialisedBlock_Dijkstra"]
         ]
  where
   labels :: [Maybe String]
@@ -256,6 +262,8 @@ goldenTest_all ::
   , BlockSupportsLedgerQuery blk
   , ToGoldenDirectory (BlockNodeToNodeVersion blk)
   , ToGoldenDirectory (QueryVersion, BlockNodeToClientVersion blk)
+  , forall footprint result. Show (BlockQuery blk footprint result)
+  , Typeable blk
   , HasCallStack
   ) =>
   CodecConfig blk ->
@@ -333,8 +341,8 @@ goldenTest_SerialiseNodeToNode codecConfig goldenDir mCDDLs Examples{..} =
       (toGoldenDirectory version)
       [ test "Block" exampleBlock $ fmap blockCDDL mCDDLs
       , test "Header" exampleHeader $ fmap headerCDDL mCDDLs
-      , test "SerialisedBlock" exampleSerialisedBlock Nothing
-      , test "SerialisedHeader" exampleSerialisedHeader Nothing
+      , test "SerialisedBlock" exampleSerialisedBlock $ fmap blockCDDL mCDDLs
+      , test "SerialisedHeader" exampleSerialisedHeader $ fmap headerCDDL mCDDLs
       , test "GenTx" exampleGenTx $ fmap txCDDL mCDDLs
       , test "GenTxId" exampleGenTxId $ fmap txIdCDDL mCDDLs
       ]
@@ -355,6 +363,8 @@ goldenTest_SerialiseNodeToClient ::
   , SupportedNetworkProtocolVersion blk
   , BlockSupportsLedgerQuery blk
   , ToGoldenDirectory (QueryVersion, BlockNodeToClientVersion blk)
+  , forall footprint result. Show (BlockQuery blk footprint result)
+  , Typeable blk
   , HasCallStack
   ) =>
   CodecConfig blk ->
@@ -371,7 +381,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
     ]
  where
   testVersion :: (QueryVersion, BlockNodeToClientVersion blk) -> TestTree
-  testVersion versions@(_, blockVersion) =
+  testVersion versions@(queryVersion, blockVersion) =
     testGroup
       (toGoldenDirectory versions)
       [ test "Block" exampleBlock enc'
@@ -382,6 +392,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
       , test "SlotNo" exampleSlotNo enc'
       , test "LedgerConfig" exampleLedgerConfig enc'
       , testQuery "Query" exampleQuery enc'
+      , testTopLevelQuery "TopLevelQuery" exampleTopLevelQuery
       , testResult "Result" exampleResult encRes
       ]
    where
@@ -402,6 +413,15 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
 
     testQuery name values =
       test name (filter (\(_, SomeBlockQuery q) -> blockQueryIsSupportedOnVersion q blockVersion) values)
+
+    -- \| Unlike the block queries, these are gated by the 'QueryVersion' as
+    -- well, and the encoder throws when given a query the versions do not
+    -- support, hence the filter.
+    testTopLevelQuery name values =
+      test
+        name
+        (filter (\(_, SomeSecond q) -> queryIsSupportedOnVersion q queryVersion blockVersion) values)
+        (queryEncodeNodeToClient codecConfig queryVersion blockVersion)
 
     testResult name values =
       test name (filter (\(_, SomeResult q _) -> blockQueryIsSupportedOnVersion q blockVersion) values)

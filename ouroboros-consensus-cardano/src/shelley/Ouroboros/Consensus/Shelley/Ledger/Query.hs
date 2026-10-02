@@ -22,7 +22,6 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Query
   ( BlockQuery (..)
-  , NonMyopicMemberRewards (..)
 
     -- * Serialisation
   , decodeShelleyQuery
@@ -107,27 +106,14 @@ import Ouroboros.Network.Point (Block (..))
   BlockSupportsLedgerQuery
 -------------------------------------------------------------------------------}
 
-newtype NonMyopicMemberRewards = NonMyopicMemberRewards
-  { unNonMyopicMemberRewards ::
-      Map
-        (Either SL.Coin (SL.Credential SL.Staking))
-        (Map (SL.KeyHash SL.StakePool) SL.Coin)
-  }
-  deriving stock Show
-  deriving newtype (Eq, ToCBOR, FromCBOR)
-
-type Delegations = Map (SL.Credential SL.Staking) (SL.KeyHash SL.StakePool)
-
-type VoteDelegatees = Map (SL.Credential SL.Staking) SL.DRep
-
 data instance BlockQuery (ShelleyBlock proto era) fp result where
   GetLedgerTip :: BlockQuery (ShelleyBlock proto era) QFNoTables (Point (ShelleyBlock proto era))
   GetEpochNo :: BlockQuery (ShelleyBlock proto era) QFNoTables EpochNo
   -- | Calculate the Non-Myopic Pool Member Rewards for a set of
-  -- credentials. See 'SL.getNonMyopicMemberRewards'
+  -- credentials. See 'SL.queryNonMyopicMemberRewards'
   GetNonMyopicMemberRewards ::
     Set (Either SL.Coin (SL.Credential SL.Staking)) ->
-    BlockQuery (ShelleyBlock proto era) QFNoTables NonMyopicMemberRewards
+    BlockQuery (ShelleyBlock proto era) QFNoTables SL.QueryResultNonMyopicMemberRewards
   GetCurrentPParams ::
     BlockQuery (ShelleyBlock proto era) QFNoTables (LC.PParams era)
   -- | Get a subset of the UTxO, filtered by address. Although this will
@@ -167,7 +153,9 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     BlockQuery
       (ShelleyBlock proto era)
       QFNoTables
-      (Delegations, Map (SL.Credential SL.Staking) Coin)
+      ( Map (SL.Credential SL.Staking) (SL.KeyHash SL.StakePool)
+      , Map (SL.Credential SL.Staking) Coin
+      )
   GetGenesisConfig ::
     BlockQuery (ShelleyBlock proto era) QFNoTables CompactGenesis
   -- | Only for debugging purposes, we make no effort to ensure binary
@@ -275,7 +263,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   GetFilteredVoteDelegatees ::
     CG.ConwayEraGov era =>
     Set (SL.Credential SL.Staking) ->
-    BlockQuery (ShelleyBlock proto era) QFNoTables VoteDelegatees
+    BlockQuery (ShelleyBlock proto era) QFNoTables (Map (SL.Credential SL.Staking) SL.DRep)
   GetAccountState ::
     BlockQuery (ShelleyBlock proto era) QFNoTables SL.ChainAccountState
   -- | Query the SPO voting stake distribution.
@@ -365,8 +353,7 @@ instance
       GetEpochNo ->
         SL.nesEL st
       GetNonMyopicMemberRewards creds ->
-        NonMyopicMemberRewards $
-          SL.getNonMyopicMemberRewards globals st creds
+        SL.queryNonMyopicMemberRewards globals st creds
       GetCurrentPParams ->
         getPParams st
       DebugEpochState ->
@@ -898,7 +885,7 @@ encodeShelleyResult ::
 encodeShelleyResult v query = case query of
   GetLedgerTip -> encodePoint encode
   GetEpochNo -> toCBOR
-  GetNonMyopicMemberRewards{} -> toCBOR
+  GetNonMyopicMemberRewards{} -> LC.toEraCBOR @era
   GetCurrentPParams -> toCBOR
   GetUTxOByAddress{} -> toCBOR
   GetUTxOWhole -> toCBOR
@@ -944,7 +931,7 @@ decodeShelleyResult ::
 decodeShelleyResult v query = case query of
   GetLedgerTip -> decodePoint decode
   GetEpochNo -> fromCBOR
-  GetNonMyopicMemberRewards{} -> fromCBOR
+  GetNonMyopicMemberRewards{} -> LC.fromEraCBOR @era
   GetCurrentPParams -> fromCBOR
   GetUTxOByAddress{} -> fromCBOR
   GetUTxOWhole -> fromCBOR
