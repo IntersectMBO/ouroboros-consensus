@@ -67,7 +67,7 @@ module Ouroboros.Consensus.HeaderValidation
 
     -- * Header with time
   , HeaderWithTime (..)
-  , mkHeaderWithTime
+  , forgetValidation
   ) where
 
 import Cardano.Binary (enforceSize)
@@ -90,20 +90,16 @@ import Data.Typeable (Typeable)
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import NoThunks.Class (NoThunks)
+import NoThunks.Class (NoThunks (..), allNoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
-  ( HasHardForkHistory (hardForkSummary)
-  )
-import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
-import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Assert
 import qualified Ouroboros.Consensus.Util.CBOR as Util.CBOR
+import qualified Ouroboros.Network.AnchoredFragment as AF
 
 {-------------------------------------------------------------------------------
   Preliminary: annotated tip
@@ -597,27 +593,91 @@ deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
   Header with time
 -------------------------------------------------------------------------------}
 
--- | A header paired with the time of the slot that it inhabits.
+-- | A header paired with what the chain it arrived on says about it.
 --
--- Note that the header's slot was translated to this time (in the ChainSync
--- client) according to the header's chain. This clarification may be helpful,
--- since it's possible that some other chain would translate that same slot to
--- a different time.
+-- Note that the header's slot was translated to 'hwtSlotRelativeTime' (in the
+-- ChainSync client) according to the header's chain. This clarification may be
+-- helpful, since it's possible that some other chain would translate that same
+-- slot to a different time.
+--
+-- TODO rename this type, eg to @ValidatedHeader@, and the @hwt@ prefix on its
+-- fields to match: it no longer merely adds a time. \"Validated\" rather than
+-- \"enriched\" because that names where these can come from -- every field
+-- beyond the header itself is a by-product of validating it, so the only
+-- places able to build one are the two that validate.
 data HeaderWithTime blk = HeaderWithTime
   { hwtHeader :: !(Header blk)
   , hwtSlotRelativeTime :: !RelativeTime
+  , hwtPredecessorSlot :: !(WithOrigin SlotNo)
+  -- ^ The slot of the header's predecessor on the chain it arrived on.
+  --
+  -- The header commits only to its predecessor's hash, so this is knowledge
+  -- of that chain rather than of the header. It is nonetheless unambiguous,
+  -- since every chain carrying this header carries the same predecessor.
+  , hwtLedgerViewOfPredecessor :: !(LedgerView (BlockProtocol blk))
+  -- ^ The ledger view at 'hwtPredecessorSlot'.
+  --
+  -- Only a CertRB needs it, and only to identify the Leios committee that was
+  -- relevant to its /predecessor/'s slot, since that's the announcement the
+  -- cert is carries certify.
+  --
+  -- Always present, because the only way to build a 'HeaderWithTime' is to
+  -- validate the header: the ChainSync client does so against a forecast and
+  -- keeps the view in its 'HeaderStateHistory', and ChainSel does so by
+  -- applying the block.
   }
   deriving Generic
 
-deriving stock instance
-  Eq (Header blk) =>
-  Eq (HeaderWithTime blk)
-deriving stock instance
-  Show (Header blk) =>
-  Show (HeaderWithTime blk)
-deriving anyclass instance
-  NoThunks (Header blk) =>
-  NoThunks (HeaderWithTime blk)
+-- The 'LedgerView' is excluded from all three of these instances. It is a
+-- cache of something derivable, so it says nothing about header identity, and
+-- it has no 'Eq' or 'NoThunks' instance of its own; 'Eq' in particular would
+-- drag a stake-distribution comparison into every header comparison.
+
+instance Eq (Header blk) => Eq (HeaderWithTime blk) where
+  hwt1 == hwt2 =
+    hwtHeader hwt1 == hwtHeader hwt2
+      && hwtSlotRelativeTime hwt1 == hwtSlotRelativeTime hwt2
+      && hwtPredecessorSlot hwt1 == hwtPredecessorSlot hwt2
+   where
+    -- Positional on purpose: adding a field to 'HeaderWithTime' breaks this
+    -- binding, which is the prompt to decide whether the new field belongs in
+    -- this method. 'hwtLedgerViewOfPredecessor' deliberately does not; see the
+    -- note above these instances.
+    HeaderWithTime _dummy _ _ _ = hwt1
+
+instance Show (Header blk) => Show (HeaderWithTime blk) where
+  showsPrec p hwt =
+    showParen (p > 10) $
+      showString "HeaderWithTime "
+        . showsPrec 11 (hwtHeader hwt)
+        . showString " "
+        . showsPrec 11 (hwtSlotRelativeTime hwt)
+        . showString " "
+        . showsPrec 11 (hwtPredecessorSlot hwt)
+        . showString " <ledger view>"
+   where
+    -- Positional on purpose: adding a field to 'HeaderWithTime' breaks this
+    -- binding, which is the prompt to decide whether the new field belongs in
+    -- this method. 'hwtLedgerViewOfPredecessor' deliberately does not; see the
+    -- note above these instances.
+    HeaderWithTime _dummy _ _ _ = hwt
+
+instance NoThunks (Header blk) => NoThunks (HeaderWithTime blk) where
+  showTypeOf _ = "HeaderWithTime"
+  wNoThunks ctxt hwt =
+    allNoThunks
+      [ noThunks ctxt' (hwtHeader hwt)
+      , noThunks ctxt' (hwtSlotRelativeTime hwt)
+      , noThunks ctxt' (hwtPredecessorSlot hwt)
+      ]
+   where
+    ctxt' = "HeaderWithTime" : ctxt
+
+    -- Positional on purpose: adding a field to 'HeaderWithTime' breaks this
+    -- binding, which is the prompt to decide whether the new field belongs in
+    -- this method. 'hwtLedgerViewOfPredecessor' deliberately does not; see the
+    -- note above these instances.
+    HeaderWithTime _dummy _ _ _ = hwt
 
 type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
 
@@ -646,30 +706,14 @@ instance
 instance GetHeader1 HeaderWithTime where
   getHeader1 = hwtHeader
 
--- | Convert 'Header' to 'HeaderWithTime'
---
--- PREREQ: The given ledger must be able to translate the slot of the given
--- header.
---
--- This is INLINEed since the summary can usually be reused.
-mkHeaderWithTime ::
-  ( HasHardForkHistory blk
-  , HasHeader (Header blk)
-  ) =>
-  LedgerConfig blk ->
-  LedgerState blk mk ->
-  Header blk ->
-  HeaderWithTime blk
-{-# INLINE mkHeaderWithTime #-}
-mkHeaderWithTime cfg lst = \hdr ->
-  let summary = hardForkSummary cfg lst
-      slot = realPointSlot $ headerRealPoint hdr
-      qry = Qry.slotToWallclock slot
-      (slotTime, _) = Qry.runQueryPure qry summary
-   in HeaderWithTime
-        { hwtHeader = hdr
-        , hwtSlotRelativeTime = slotTime
-        }
+-- | Discard what validating the headers revealed
+forgetValidation ::
+  HasHeader (Header blk) =>
+  AF.AnchoredFragment (HeaderWithTime blk) ->
+  AF.AnchoredFragment (Header blk)
+forgetValidation frag =
+  AF.fromOldestFirst (AF.castAnchor (AF.anchor frag)) $
+    map hwtHeader (AF.toOldestFirst frag)
 
 {-------------------------------------------------------------------------------
   Serialisation

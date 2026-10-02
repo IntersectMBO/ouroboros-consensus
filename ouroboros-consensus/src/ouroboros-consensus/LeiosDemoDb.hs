@@ -8,6 +8,8 @@ module LeiosDemoDb
   , LeiosDbReader (..)
   , LeiosDbWriter (..)
   , Promise (..)
+  , RelayDecision (..)
+  , alwaysRelay
   , withReader
   , withWriter
   , allocateHandle
@@ -49,9 +51,11 @@ import LeiosDemoDb.Common
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  , RelayDecision (..)
   , allocateHandle
   , allocateReader
   , allocateWriter
+  , alwaysRelay
   , awaitAll
   , withReader
   , withWriter

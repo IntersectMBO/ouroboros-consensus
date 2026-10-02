@@ -88,6 +88,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos
+import Ouroboros.Consensus.Protocol.Praos.Common (KnownPraosExtension)
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
@@ -271,8 +272,13 @@ instance
       { singleEraName = T.pack (L.eraName @era)
       }
 
-instance Ouroboros.Consensus.Protocol.Praos.PraosCrypto c => HasPartialConsensusConfig (Praos c) where
-  type PartialConsensusConfig (Praos c) = PraosParams
+instance
+  ( Ouroboros.Consensus.Protocol.Praos.PraosCrypto c
+  , KnownPraosExtension pext
+  ) =>
+  HasPartialConsensusConfig (BasePraos pext c)
+  where
+  type PartialConsensusConfig (BasePraos pext c) = PraosParams
 
   completeConsensusConfig _ praosEpochInfo praosParams = PraosConfig{..}
 

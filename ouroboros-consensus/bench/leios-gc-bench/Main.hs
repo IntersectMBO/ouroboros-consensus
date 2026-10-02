@@ -113,6 +113,7 @@ import LeiosDemoDb
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , TraceLeiosDb (..)
+  , alwaysRelay
   , awaitAll
   , newLeiosDBSQLite
   , newLeiosDBSQLiteWithGcBatchSize
@@ -419,7 +420,7 @@ validateOpts opts = do
 -- slots, and return the (slot, hash) schedule ascending in slot.
 populateDb :: Opts -> LeiosDbHandle IO -> IO [(Word64, BS.ByteString)]
 populateDb opts db =
-  withWriter db $ \writer ->
+  withWriter db alwaysRelay $ \writer ->
     forM [0 .. populationEbs - 1] $ \ebIdx -> do
       let slot = fromIntegral (ebIdx * slotsPerEb) :: Word64
           MkEbHash hashBytes = genEbHash ebIdx
@@ -517,7 +518,7 @@ runPhases ::
   Int ->
   IO [PhaseResult]
 runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
-  withWriter db $ \writer -> do
+  withWriter db alwaysRelay $ \writer -> do
     remainingRef <- newIORef schedule
     promotedRef <- newIORef (0 :: Int)
     freshRef <- newIORef (0 :: Int)

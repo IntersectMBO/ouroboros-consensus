@@ -9,7 +9,9 @@ module LeiosDemoDb.Common
     LeiosDbHandle (..)
   , LeiosDbStats (..)
   , LeiosEbNotification (..)
+  , RelayDecision (..)
   , allocateHandle
+  , alwaysRelay
 
     -- * Reading
   , LeiosDbReader (..)
@@ -32,6 +34,7 @@ import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Trace (LeiosDbStats (..))
+import LeiosDemoLogic.Announcements (ShouldRelay (..))
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -39,7 +42,27 @@ import LeiosDemoTypes
   , LeiosPoint
   , TxHash
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , MonadThrow
+  , NoThunks (..)
+  , STM
+  , bracket
+  )
+
+-- | Whether an endorser block of this slot is fresh enough to offer to our
+-- peers.
+--
+-- Supplied by whoever opens a writer, consulted afresh for each notification
+-- that writer causes, and copied verbatim into it: the database itself has no
+-- opinion about relaying. The node derives it from its immutable tip, which
+-- moves, so the same slot can answer differently over time.
+newtype RelayDecision m = MkRelayDecision (SlotNo -> STM m ShouldRelay)
+
+-- | Offer everything. For writers that are not part of a diffusing node: the
+-- database tools, the benchmarks and most of the tests.
+alwaysRelay :: IOLike m => RelayDecision m
+alwaysRelay = MkRelayDecision $ \_slot -> pure DoRelay
 
 -- | The Leios database. Hands out readers, writers and subscriptions.
 data LeiosDbHandle m = LeiosDbHandle
@@ -49,8 +72,13 @@ data LeiosDbHandle m = LeiosDbHandle
   -- out earlier are not usable afterwards.
   , openReader :: HasCallStack => m (LeiosDbReader m)
   -- ^ Get a new reader. No interaction between readers or writers.
-  , openWriter :: HasCallStack => m (LeiosDbWriter m)
-  -- ^ Get a new writer. All writes of all writers are serialised.
+  , openWriter :: HasCallStack => RelayDecision m -> m (LeiosDbWriter m)
+  -- ^ Get a new writer. All writes of all writers are serialised. The
+  -- 'RelayDecision' tags the notifications this writer's writes emit.
+  --
+  -- TODO if LeiosFetch logic were responsible for emitting AcquiredEbTxs
+  -- notifications instead of the LeiosDB insertion logic doing that, then this
+  -- 'RelayDecision' argument wouldn't be necessary at the LeiosDb layer
   , subscribeEbNotifications :: HasCallStack => m (StrictTChan m LeiosEbNotification)
   -- ^ New EBs and EB closures as they are stored, from the moment of
   -- subscription.
@@ -76,13 +104,34 @@ data LeiosDbReader m = LeiosDbReader
   { close :: m ()
   , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
   -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
-  , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
+  , lookupTrustedEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
   -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
   -- not complete.
+  --
+  -- PREREQ: the caller has established that this endorser block is
+  -- trustworthy, which is why this read carries no byte budget --- unlike
+  -- 'batchRetrieveTxs', whose offsets come from a peer. Two things establish
+  -- it: a certificate, for ChainSel applying a cert-RB and for the forge; and
+  -- the LeiosDb having called the closure complete, for voting. Calling it on
+  -- anything else reads an unbounded number of bytes chosen by whoever made
+  -- the endorser block.
   , batchRetrieveTxs ::
       HasCallStack =>
-      EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-  -- ^ Tx bytes for a batch of offsets into one EB.
+      EbHash -> BytesSize -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  -- ^ Tx bytes for a batch of offsets into one EB, totalling at most the given
+  -- budget.
+  --
+  -- Throws as soon as the rows read pass the budget, instead of reading the
+  -- rest. The offsets alone do not say how many bytes they name, so this is
+  -- the first point at which the answer is known --- and the last at which the
+  -- work can still be cut off.
+  --
+  -- Throwing is only tolerable because the node's sole caller is the
+  -- LeiosFetch server, which runs one thread per peer: the exception kills
+  -- that peer's mini-protocol and nothing else, which is the right answer to a
+  -- peer requesting more than any honest one would. A central thread calling
+  -- this would instead take the node down, so any future one must pass a
+  -- budget its own callers cannot breach.
   , scanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
   -- ^ Every announced EB point. No node path wants this; it is how the tests
   -- observe point writes and truncation.
@@ -131,21 +180,32 @@ awaitAll = traverse_ await
 -- | EBs whose tx closure became complete as a result of a write.
 type CompletedEbs = [LeiosPoint]
 
+-- | What we have just stored, and whether we may offer it to our peers.
+--
+-- The 'ShouldRelay' is whatever the writing thread's 'RelayDecision' said.
+-- Only the LeiosNotify servers honour it; the consumers that keep the node's
+-- own state right --- @leiosAcquiredEbsRunner@, which un-parks CertRBs, and
+-- the voting loop --- must act on every notification regardless.
 data LeiosEbNotification
-  = AcquiredEb LeiosPoint BytesSize
-  | AcquiredEbTxs LeiosPoint
+  = AcquiredEb LeiosPoint BytesSize ShouldRelay
+  | AcquiredEbTxs LeiosPoint ShouldRelay
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) (.close)
 
-withWriter :: MonadThrow m => LeiosDbHandle m -> (LeiosDbWriter m -> m a) -> m a
-withWriter db = bracket (openWriter db) (.close)
+withWriter ::
+  MonadThrow m =>
+  LeiosDbHandle m -> RelayDecision m -> (LeiosDbWriter m -> m a) -> m a
+withWriter db relayDecision = bracket (openWriter db relayDecision) (.close)
 
 allocateReader :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbReader m)
 allocateReader registry db = snd <$> allocate registry (\_ -> openReader db) (.close)
 
-allocateWriter :: IOLike m => ResourceRegistry m -> LeiosDbHandle m -> m (LeiosDbWriter m)
-allocateWriter registry db = snd <$> allocate registry (\_ -> openWriter db) (.close)
+allocateWriter ::
+  IOLike m =>
+  ResourceRegistry m -> LeiosDbHandle m -> RelayDecision m -> m (LeiosDbWriter m)
+allocateWriter registry db relayDecision =
+  snd <$> allocate registry (\_ -> openWriter db relayDecision) (.close)
 
 allocateHandle :: IOLike m => ResourceRegistry m -> m (LeiosDbHandle m) -> m (LeiosDbHandle m)
 allocateHandle registry open = snd <$> allocate registry (\_ -> open) (.close)

@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -95,9 +96,11 @@ import LeiosDemoDb.Common
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  , RelayDecision (..)
   )
 import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..), throwLeiosDbException)
+import LeiosDemoLogic.Announcements (ShouldRelay)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
@@ -162,7 +165,11 @@ newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
 --
 -- Note that orphan transaction batch size is set by the 'gcOrphanTxBatchSize' constant.
 newLeiosDBSQLiteWithGcBatchSize ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  FilePath ->
+  Int64 ->
+  IO (LeiosDbHandle IO)
 newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   -- The database opens before whoever owns these directories creates them.
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
@@ -247,17 +254,18 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
         , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
         , lookupEbBody = sqlLookupEbBody conn
         , batchRetrieveTxs = sqlBatchRetrieveTxs conn
-        , lookupEbClosure = sqlLookupEbClosure conn
+        , lookupTrustedEbClosure = sqlLookupTrustedEbClosure conn
         }
 
-  openWriter writeQueue =
+  openWriter writeQueue relayDecision =
     pure
       LeiosDbWriter
         { -- Not a teardown -- the write connection outlives every writer.
           close = void . await =<< submitJob writeQueue Flush
         , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
-        , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
-        , writeTxs = \txs -> submitJob writeQueue (WriteTxs txs)
+        , writeEbBody = \point eb ->
+            submitJob writeQueue (WriteEbBody relayDecision point eb)
+        , writeTxs = \txs -> submitJob writeQueue (WriteTxs relayDecision txs)
         }
 
 -- | 'newLeiosDBSQLite' bracketed with its 'close': on release every pending
@@ -960,7 +968,7 @@ data VolStmts = VolStmts
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stFilterMissingTxs :: !DB.Statement
-  , stLookupEbClosure :: !DB.Statement
+  , stLookupTrustedEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
   }
 
@@ -986,7 +994,7 @@ data Conn = Conn
 -- before their connection.
 data ImmStmts = ImmStmts
   { immStLookupEbBody :: !DB.Statement
-  , immStLookupEbClosure :: !DB.Statement
+  , immStLookupTrustedEbClosure :: !DB.Statement
   , immStBatchRetrieveTxs :: !DB.Statement
   , immStFilterPresent :: !DB.Statement
   }
@@ -994,7 +1002,7 @@ data ImmStmts = ImmStmts
 prepareImmStmts :: HasCallStack => DB.Database -> IO ImmStmts
 prepareImmStmts db = do
   immStLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
-  immStLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
+  immStLookupTrustedEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   immStBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
   immStFilterPresent <- dbPrepare db (fromString sql_imm_filter_present)
   pure ImmStmts{..}
@@ -1003,7 +1011,7 @@ prepareImmStmts db = do
 finalizeImmStmts :: ImmStmts -> IO ()
 finalizeImmStmts ImmStmts{..} = do
   dbFinalize immStLookupEbBody
-  dbFinalize immStLookupEbClosure
+  dbFinalize immStLookupTrustedEbClosure
   dbFinalize immStBatchRetrieveTxs
   dbFinalize immStFilterPresent
 
@@ -1024,7 +1032,7 @@ prepareVolStmts db = do
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
   stFilterMissingTxs <- dbPrepare db (fromString sql_filter_missing_txs_json)
-  stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
+  stLookupTrustedEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
   pure VolStmts{..}
 
@@ -1046,7 +1054,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
   dbFinalize stFilterMissingTxs
-  dbFinalize stLookupEbClosure
+  dbFinalize stLookupTrustedEbClosure
   dbFinalize stScanCompleteEbsSince
 
 -- | Run an action on a pre-prepared statement and always @sqlite3_reset@
@@ -1109,8 +1117,8 @@ closeChecked db =
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
   = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
-  | WriteEbBody !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
-  | WriteTxs ![(TxHash, ByteString)] !(WriteResult CompletedEbs)
+  | WriteEbBody !(RelayDecision IO) !LeiosPoint !LeiosEb !(WriteResult CompletedEbs)
+  | WriteTxs !(RelayDecision IO) ![(TxHash, ByteString)] !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
     -- write submitted before it has landed.
     Flush !(WriteResult ())
@@ -1196,8 +1204,8 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
-  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
-  WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
+  WriteEbBody _ point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
+  WriteTxs _ txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
   MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
@@ -1209,8 +1217,8 @@ describeJob = \case
 failJob :: SomeException -> WriteJob -> IO ()
 failJob cause = \case
   WriteEbPoint _ _ rv -> put rv
-  WriteEbBody _ _ rv -> put rv
-  WriteTxs _ rv -> put rv
+  WriteEbBody _ _ _ rv -> put rv
+  WriteTxs _ _ rv -> put rv
   Flush rv -> put rv
   PinEb _ rv -> put rv
   MarkCopied _ rv -> put rv
@@ -1290,7 +1298,11 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
   sweepStateVar <- newTVarIO SweepIdle
   gcReinitDoneVar <- newTVarIO False
   jobsServedVar <- newTVarIO (0 :: Int)
-  let notify = atomically . writeTChan notificationChan
+  let notify ::
+        RelayDecision IO -> LeiosPoint -> (ShouldRelay -> LeiosEbNotification) -> IO ()
+      notify (MkRelayDecision shouldRelay) point mk =
+        atomically $
+          shouldRelay point.pointSlotNo >>= writeTChan notificationChan . mk
 
       -- Statements before connections; an open statement holds the close off.
       closeConnections = do
@@ -1309,10 +1321,12 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
           pure True
         WriteEbPoint point size resultVar ->
           publish resultVar (sqlInsertEbPoint conn point size) >> pure False
-        WriteEbBody point eb resultVar ->
-          publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure False
-        WriteTxs txs resultVar ->
-          publish resultVar (sqlInsertTxs tracer conn notify txs) >> pure False
+        WriteEbBody relayDecision point eb resultVar ->
+          publish resultVar (sqlInsertEbBody tracer conn (notify relayDecision) point eb)
+            >> pure False
+        WriteTxs relayDecision txs resultVar ->
+          publish resultVar (sqlInsertTxs tracer conn (notify relayDecision) txs)
+            >> pure False
         Flush resultVar ->
           publish resultVar (pure ()) >> pure False
         PinEb ebHashes resultVar -> do
@@ -1599,10 +1613,27 @@ sqlInsertEbPoint conn point ebBytesSize = do
 
 -- | Persist an EB body. The point MUST already be present (inserted
 -- via 'sqlInsertEbPoint' on the announcement path).
+--
+-- TODO Nothing here says an endorser block was caught misstating a
+-- transaction's size, though this is where it is first detectable: the size
+-- predicate in 'sql_insert_missing_txs' leaves such a body waiting on a
+-- transaction we already hold, so its @missingTxCount@ stays positive for
+-- good. A trace would want to fire once per offending endorser block rather
+-- than once per transaction, which needs state neither this function nor
+-- 'sqlInsertTxs' keeps, and there is no action to take on it either way ---
+-- the issuer is not a peer we are connected to, and the peer that relayed the
+-- body may be perfectly honest. Until that is worth building, an old endorser
+-- block stuck at a positive @missingTxCount@ is the signal, and this names
+-- them:
+--
+-- > SELECT e.ebHashBytes, COUNT(*) FROM ebTxs e
+-- > JOIN txs t ON e.txHashBytes = t.txHashBytes
+-- > WHERE t.txBytesSize <> e.txBytesSize
+-- > GROUP BY e.ebHashBytes
 sqlInsertEbBody ::
   Tracer IO TraceLeiosDb ->
   Conn ->
-  (LeiosEbNotification -> IO ()) ->
+  (LeiosPoint -> (ShouldRelay -> LeiosEbNotification) -> IO ()) ->
   LeiosPoint ->
   LeiosEb ->
   IO CompletedEbs
@@ -1642,8 +1673,8 @@ sqlInsertEbBody tracer conn notify point eb = do
           dbStep1 stMarkPointNotified
         pure [point]
       else pure []
-  notify $ AcquiredEb point ebBytesSize
-  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
+  notify point (AcquiredEb point ebBytesSize)
+  forM_ completedNow $ \p -> notify p (AcquiredEbTxs p)
   pure completedNow
  where
   items = leiosEbBodyItems eb
@@ -1670,10 +1701,15 @@ readReturningInt64 stmt =
         DB.Done -> pure n
         DB.Row -> throwLeiosDbException "readReturningInt64: expected exactly one row from RETURNING"
 
+-- | Persist arriving transactions, completing the closure of every endorser
+-- block that was waiting on them.
+--
+-- TODO As 'sqlInsertEbBody': an endorser block left waiting here because it
+-- misstated this transaction's size goes unremarked, and for the same reasons.
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
   Conn ->
-  (LeiosEbNotification -> IO ()) ->
+  (LeiosPoint -> (ShouldRelay -> LeiosEbNotification) -> IO ()) ->
   [(TxHash, ByteString)] ->
   IO CompletedEbs
 sqlInsertTxs _tracer conn notify txs = do
@@ -1716,7 +1752,7 @@ sqlInsertTxs _tracer conn notify txs = do
     useStmt stMarkNotifiedEbs $ dbStep1 stMarkNotifiedEbs
     pure completed
   -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ \point -> notify (AcquiredEbTxs point)
+  forM_ completed $ \point -> notify point (AcquiredEbTxs point)
   pure completed
  where
   Conn{connVolStmts} = conn
@@ -1738,18 +1774,23 @@ sqlInsertTxs _tracer conn notify txs = do
 sqlBatchRetrieveTxs ::
   Conn ->
   EbHash ->
+  BytesSize ->
   [Int] ->
   IO [(Int, TxHash, Maybe ByteString)]
-sqlBatchRetrieveTxs conn ebHash offsets = do
+sqlBatchRetrieveTxs conn ebHash budget offsets = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
       dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
       dbBindUtf8 stmt 2 (jsonIntArray offsets)
-      retrieveLoop stmt []
+      retrieveLoop budget stmt []
   -- Zero rows means the EB's body is absent from the volatile partition
   -- entirely (a present body joins every requested offset): copied+evicted.
+  --
+  -- An over-budget read throws rather than returning early, which is what
+  -- keeps it out of this test: abandoning the walk must not read as an absent
+  -- body and send us to read the immutable partition too.
   if null vol && not (null offsets)
-    then immBatchRetrieveTxs conn ebHash offsets
+    then immBatchRetrieveTxs conn ebHash budget offsets
     else pure vol
  where
   Conn{conVolDb = db, connVolStmts = VolStmts{stBatchRetrieveTxs = stmt}} = conn
@@ -1757,29 +1798,49 @@ sqlBatchRetrieveTxs conn ebHash offsets = do
 -- | Immutable-partition fallback of 'sqlBatchRetrieveTxs'. Closures land
 -- there whole, so the joined tx bytes are never NULL.
 immBatchRetrieveTxs ::
-  Conn -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]
-immBatchRetrieveTxs conn ebHash offsets =
+  Conn -> EbHash -> BytesSize -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]
+immBatchRetrieveTxs conn ebHash budget offsets =
   useStmt stmt $ do
     dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
     dbBindUtf8 stmt 2 (jsonIntArray offsets)
-    retrieveLoop stmt []
+    retrieveLoop budget stmt []
  where
   Conn{connImmStmts = ImmStmts{immStBatchRetrieveTxs = stmt}} = conn
 
+-- | Walk the joined rows until the budget is spent, the way 'closureLoop'
+-- walks them until a tx is missing.
+--
+-- The size comes from @txs@ rather than @ebTxs@. The @ebTxs@ column is the
+-- announcing EB's claim about the tx, and two EBs naming the same tx need not
+-- claim the same size for it, whereas the @txs@ column is the length of the
+-- bytes we would actually send.
+--
+-- Reading that size before the bytes is what makes the refusal cheap: SQLite
+-- pulls a blob's overflow pages only once the column is asked for, so
+-- abandoning here costs the row's header rather than its payload.
 retrieveLoop ::
+  BytesSize ->
   DB.Statement ->
   [(Int, TxHash, Maybe ByteString)] ->
   IO [(Int, TxHash, Maybe ByteString)]
-retrieveLoop stmt acc =
+retrieveLoop !remaining stmt acc =
   dbStep stmt >>= \case
     DB.Done -> pure (reverse acc)
     DB.Row -> do
       offset <- fromIntegral <$> DB.columnInt64 stmt 0
       txHash <- MkTxHash <$> DB.columnBlob stmt 1
-      -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
+      -- Columns 2 and 3 are from LEFT JOIN, NULL if tx not in txs table. A NULL
+      -- size reads as zero, which is what an absent tx does cost us.
+      txBytesSize <- fromIntegral <$> DB.columnInt64 stmt 3
+      when (txBytesSize > remaining) $
+        throwLeiosDbException $
+          "batchRetrieveTxs: the requested txs exceed the "
+            <> show remaining
+            <> " bytes still budgeted, at offset "
+            <> show (offset :: Int)
       txBytes <- DB.columnBlob stmt 2
       let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
-      retrieveLoop stmt ((offset, txHash, mbTxBytes) : acc)
+      retrieveLoop (remaining - txBytesSize) stmt ((offset, txHash, mbTxBytes) : acc)
 
 -- | Batch-filter tx hashes against @txs@: passes txHashes as a JSON array
 -- of hex strings; SQL decodes with @unhex()@ so index lookups on
@@ -1894,8 +1955,8 @@ jsonIntArray xs =
   intersperseB _ [x] = [x]
   intersperseB s (x : rest) = x : s : intersperseB s rest
 
-sqlLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
-sqlLookupEbClosure conn ebHash = do
+sqlLookupTrustedEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlLookupTrustedEbClosure conn ebHash = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
       dbBindBlob stmt 1 (ebHashBytes ebHash)
@@ -1906,19 +1967,19 @@ sqlLookupEbClosure conn ebHash = do
   -- answer for it, or replaying its cert-RB fails.
   case vol of
     Just rows -> pure (Just rows)
-    Nothing -> immLookupEbClosure conn ebHash
+    Nothing -> immLookupTrustedEbClosure conn ebHash
  where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stLookupEbClosure = stmt}} = conn
+  Conn{conVolDb = db, connVolStmts = VolStmts{stLookupTrustedEbClosure = stmt}} = conn
 
--- | Immutable-partition fallback of 'sqlLookupEbClosure'. Closures land there
+-- | Immutable-partition fallback of 'sqlLookupTrustedEbClosure'. Closures land there
 -- atomically and whole, so any rows are all the rows.
-immLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
-immLookupEbClosure conn ebHash =
+immLookupTrustedEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+immLookupTrustedEbClosure conn ebHash =
   useStmt stmt $ do
     dbBindBlob stmt 1 (ebHashBytes ebHash)
     closureLoop stmt []
  where
-  Conn{connImmStmts = ImmStmts{immStLookupEbClosure = stmt}} = conn
+  Conn{connImmStmts = ImmStmts{immStLookupTrustedEbClosure = stmt}} = conn
 
 closureLoop ::
   DB.Statement -> [(TxHash, ByteString)] -> IO (Maybe [(TxHash, ByteString)])
@@ -2070,10 +2131,17 @@ sql_mark_notified_ebs :: String
 sql_mark_notified_ebs =
   "UPDATE ebs SET missingTxCount = -1 WHERE missingTxCount = 0 AND status = 0"
 
--- | Decrement missingTxCount for every EB still /waiting/ on the given txHash.
+-- | Decrement missingTxCount for every EB still /waiting/ on the given txHash
+-- that states this transaction's true size.
 --
 -- Uses 'ebsMissingTxs' rather than 'ebTxs', which makes this more efficient
--- than a full scan of 'ebTxs' in the average case.
+-- than a full scan of 'ebTxs' in the average case; the join back to 'ebTxs' is
+-- what reads the size the waiting body claimed.
+--
+-- An EB that claimed another size is left undecremented on purpose. It is
+-- never satisfiable --- the hash fixes the bytes, so no other transaction can
+-- arrive under it --- so its count stays positive and its closure is never
+-- completed, which is what keeps us from voting for it or offering it onward.
 --
 -- Must be paired with 'sql_delete_missing_txs' in the same transaction.
 --
@@ -2081,7 +2149,12 @@ sql_mark_notified_ebs =
 sql_decrement_missing_tx_count :: String
 sql_decrement_missing_tx_count =
   "UPDATE ebs SET missingTxCount = missingTxCount - 1\n\
-  \WHERE ebHashBytes IN (SELECT ebHashBytes FROM ebsMissingTxs WHERE txHashBytes = ?)\n\
+  \WHERE ebHashBytes IN (\n\
+  \    SELECT m.ebHashBytes FROM ebsMissingTxs m\n\
+  \    JOIN ebTxs e\n\
+  \      ON e.ebHashBytes = m.ebHashBytes AND e.txHashBytes = m.txHashBytes\n\
+  \    JOIN txs t ON t.txHashBytes = m.txHashBytes\n\
+  \    WHERE m.txHashBytes = ? AND t.txBytesSize = e.txBytesSize)\n\
   \  AND status = 0\n\
   \"
 
@@ -2105,7 +2178,8 @@ sql_insert_missing_txs =
   "INSERT OR IGNORE INTO ebsMissingTxs (txHashBytes, ebHashBytes)\n\
   \SELECT e.txHashBytes, e.ebHashBytes FROM ebTxs e\n\
   \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
-  \WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
+  \WHERE e.ebHashBytes = ?\n\
+  \  AND (t.txHashBytes IS NULL OR t.txBytesSize <> e.txBytesSize)\n\
   \"
 
 -- | Initialize missingTxCount after EB body is inserted, returning the
@@ -2139,7 +2213,7 @@ sql_mark_point_notified =
 -- @(ebHashBytes, txOffset)@, so index lookups still fire.
 sql_retrieve_from_ebTxs_json :: String
 sql_retrieve_from_ebTxs_json =
-  "SELECT je.value, e.txHashBytes, t.txBytes\n\
+  "SELECT je.value, e.txHashBytes, t.txBytes, t.txBytesSize\n\
   \FROM json_each(?2) je\n\
   \JOIN ebTxs e ON e.ebHashBytes = ?1 AND e.txOffset = je.value\n\
   \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\

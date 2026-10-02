@@ -14,7 +14,7 @@
 --   the pre-populated EBs.
 --
 -- * __Chain-sel reader__ (1 thread): mimics the block-apply path via
---   'lookupEbClosure' — the same read that 'resolveLeiosClosure'
+--   'lookupTrustedEbClosure' — the same read that 'resolveLeiosClosure'
 --   issues per Dijkstra-era CertRB.
 --
 -- * __GC ticker__ (1 thread): periodic 'leiosDbGarbageCollect' calls (a
@@ -45,11 +45,12 @@ import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosDbWriter (..)
+  , alwaysRelay
   , awaitAll
   , batchRetrieveTxs
   , leiosDbGarbageCollect
   , lookupEbBody
-  , lookupEbClosure
+  , lookupTrustedEbClosure
   , newLeiosDBSQLite
   , withReader
   , withWriter
@@ -61,6 +62,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , TxHash (..)
   , encodeLeiosEbSize
+  , maxLeiosTxsRequestBytesSize
   )
 import System.IO (hFlush, stdout)
 import System.IO.Temp (withSystemTempDirectory)
@@ -79,7 +81,7 @@ main = do
       , "Concurrent workload per iteration:"
       , "  Fetch clients   (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
       , "  Fetch servers   (×" <> show numFetchServers <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
-      , "  Chain-sel reader(×1): " <> show numChainSelReads <> " lookupEbClosure calls"
+      , "  Chain-sel reader(×1): " <> show numChainSelReads <> " lookupTrustedEbClosure calls"
       , "  GC ticker       (×1): " <> show numGcTicks <> " garbageCollect calls"
       , ""
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
@@ -146,16 +148,16 @@ benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerId
 -- | Mirrors a fetch client: inserts fresh EBs with full TX payloads.
 fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
 fetchClient db range =
-  withWriter db $ \w ->
+  withWriter db alwaysRelay $ \w ->
     forM_ range (insertOneEb w)
 
 -- | Mirrors chain-selection's block-apply path: repeated
--- 'lookupEbClosure' for the tx closure of each certified EB.
+-- 'lookupTrustedEbClosure' for the tx closure of each certified EB.
 chainSelReader :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
 chainSelReader db points =
   withReader db $ \r ->
     forM_ (take numChainSelReads (cycle points)) $ \p ->
-      lookupEbClosure r p.pointEbHash
+      lookupTrustedEbClosure r p.pointEbHash
 
 -- | Fires periodic garbage-collect calls. Handle-level operation; touches
 -- every table when implemented (currently a no-op backend-side, but the
@@ -170,7 +172,8 @@ fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()
 fetchServer db points i =
   withReader db $ \r -> do
     forM_ ebPoints $ \p -> lookupEbBody r p.pointEbHash
-    forM_ txPoints $ \p -> batchRetrieveTxs r p.pointEbHash sampleOffsets
+    forM_ txPoints $ \p ->
+      batchRetrieveTxs r p.pointEbHash maxLeiosTxsRequestBytesSize sampleOffsets
  where
   sampleOffsets = [0, 10 .. txsPerEb - 1]
   ebPoints = take 30 $ drop (i * 30) (cycle points)
@@ -195,7 +198,7 @@ setupBenchEnv tmpDir = do
     newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.vol.db") (tmpDir <> "/bench.imm.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
-    withWriter db (`insertOneEb` i)
+    withWriter db alwaysRelay (`insertOneEb` i)
     when (i `mod` (numPrePopulatedEbs `div` 10) == numPrePopulatedEbs `div` 10 - 1) $
       putStr (show (i + 1) <> " ") >> hFlush stdout
   putStrLn "done"

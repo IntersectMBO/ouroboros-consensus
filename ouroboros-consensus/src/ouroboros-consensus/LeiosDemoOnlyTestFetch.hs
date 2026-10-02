@@ -18,6 +18,8 @@ module LeiosDemoOnlyTestFetch
   , SingLeiosFetch (..)
   , leiosFetchMiniProtocolNum
   , byteLimitsLeiosFetch
+  , maxLeiosTxsRequestBytesSize
+  , maxLeiosEbBytesSize
   , codecLeiosFetch
   , codecLeiosFetchId
   , timeLimitsLeiosFetch
@@ -32,6 +34,7 @@ module LeiosDemoOnlyTestFetch
   , toLeiosFetchClientPeerPipelined
   ) where
 
+import Cardano.Network.NodeToNode (addSafetyMargin)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
@@ -45,7 +48,7 @@ import Data.Primitive.MutVar (MutVar)
 import qualified Data.Primitive.MutVar as Prim
 import Data.Proxy (Proxy (..))
 import qualified Data.Vector.Strict as V
-import Data.Word (Word16, Word64)
+import Data.Word (Word16, Word32, Word64)
 import qualified Network.Mux.Types as Mux
 import Network.TypedProtocol.Codec.CBOR
   ( ActiveState
@@ -69,6 +72,7 @@ import Network.TypedProtocol.Core
   , Protocol (..)
   , ReflRelativeAgency (..)
   , StateAgency
+  , natToInt
   )
 import Network.TypedProtocol.Peer
   ( Peer (..)
@@ -78,7 +82,6 @@ import Network.TypedProtocol.Peer
 import Ouroboros.Network.Protocol.Limits
   ( ProtocolSizeLimits (..)
   , ProtocolTimeLimits (..)
-  , largeByteLimit
   , longWait
   , smallByteLimit
   , waitForever
@@ -197,13 +200,54 @@ deriving instance
 
 -----
 
+-- | The design ceiling on an endorser block
+--
+-- This is the bound the logic enforces --- what it will forge, serve and size
+-- its buffers for. The codec tolerates slightly more (see
+-- 'byteLimitsLeiosFetch'), but that slack pays for framing and nothing may
+-- spend it as capacity.
+--
+-- TODO Two things wrong with this number. It should be 500 KiB; it is 512 KiB
+-- only because @exampleDijkstraGenesis@ in the ledger's testlib sets
+-- @maxEndorserBlockReferencesSize@ to that (I think that's simply a typo), and
+-- @guardLeiosWireLimit@ refuses to run with a protocol parameter above this
+-- ceiling.
+--
+-- And it should not be a constant wherever the ledger is in reach: this is the
+-- constitution's bound on what @maxEndorserBlockReferencesSize@ may be, not
+-- the value in force, which is whatever the current ledger state says. The
+-- buffers sized from it are allocated before any ledger state can be read,
+-- which is why at least those cannot do better.
+maxLeiosEbBytesSize :: Word32
+maxLeiosEbBytesSize = 512 * 1024
+
+-- | The design ceiling on the transactions one @MsgLeiosBlockTxs@ carries, so
+-- on what a /single request/ may fetch.
+--
+-- Not a ceiling on an endorser block's whole closure, which is unbounded by
+-- this and ordinarily far larger: a closure is fetched over as many requests
+-- as it takes. Nor is it related to 'maxLeiosEbBytesSize', which bounds a list
+-- of references rather than the transactions those references name.
+--
+-- What ties it to the protocol is that the client batches to exactly this, so
+-- the client-side 'maxRequestBytesSize' is defined as it and the server can
+-- refuse anything above it without ever refusing an honest peer.
+maxLeiosTxsRequestBytesSize :: Word32
+maxLeiosTxsRequestBytesSize = 500 * 1000
+
 byteLimitsLeiosFetch ::
   ProtocolSizeLimits (LeiosFetch point eb tx) bytes
 byteLimitsLeiosFetch = ProtocolSizeLimits $ \case
   SingIdle -> smallByteLimit
-  SingBlock -> largeByteLimit
-  SingBlockTxs -> largeByteLimit
+  SingBlock -> withMargin maxLeiosEbBytesSize
+  SingBlockTxs -> withMargin maxLeiosTxsRequestBytesSize
   st@SingDone -> notActiveState st
+ where
+  -- The decoder must not reject a message the logic was right to send, so each
+  -- state allows for what its message writes around the payload: the reference
+  -- list's header, and, on @MsgLeiosBlockTxs@, the echoed request.
+  withMargin :: Word32 -> Word
+  withMargin = fromIntegral . addSafetyMargin . fromIntegral
 
 timeLimitsLeiosFetch ::
   ProtocolTimeLimits (LeiosFetch point eb tx)
@@ -510,6 +554,8 @@ data WhetherDraining = AlreadyDraining | NotYetDraining
 leiosFetchClientPeerPipelined ::
   forall m point eb tx a.
   PrimMonad m =>
+  -- | the most requests to leave outstanding at once
+  Int ->
   -- | either the return value or the next job, or a blocking request for those two
   m
     ( Either
@@ -517,7 +563,7 @@ leiosFetchClientPeerPipelined ::
         (Either a (SomeLeiosFetchJob point eb tx m))
     ) ->
   Peer (LeiosFetch point eb tx) AsClient (Pipelined Z C) StIdle m a
-leiosFetchClientPeerPipelined tryNext =
+leiosFetchClientPeerPipelined depth tryNext =
   Effect $ do
     stop <- Prim.newMutVar NotYetDraining
     pure $ go1 stop Zero
@@ -549,10 +595,16 @@ leiosFetchClientPeerPipelined tryNext =
     Right job ->
       case n of
         Zero -> send stop n job
-        Succ m ->
-          Collect
-            (Just $ send stop n job)
-            (\MkC -> send stop m job)
+        Succ m
+          -- At the limit, wait for a response rather than adding to the pipe.
+          -- Sending anyway is what an unbounded client does, and a server that
+          -- bounds what it will accept outstanding would drop the connection
+          -- over it.
+          | natToInt n >= depth -> Collect Nothing (\MkC -> send stop m job)
+          | otherwise ->
+              Collect
+                (Just $ send stop n job)
+                (\MkC -> send stop m job)
 
   send ::
     MutVar (PrimState m) WhetherDraining ->

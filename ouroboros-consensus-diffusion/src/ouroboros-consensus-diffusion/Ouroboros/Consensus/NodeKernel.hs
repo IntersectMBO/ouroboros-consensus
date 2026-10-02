@@ -67,6 +67,7 @@ import LeiosDemoDb
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( LeiosOutstanding
   , LeiosPeerVars
@@ -79,6 +80,7 @@ import LeiosUtils.CallTrace
   , callTraceSameThread
   , rootCallCtx
   )
+import qualified LeiosValidClaims
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import LeiosVoting (HasLeiosVoting (..), runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -188,7 +190,13 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ The node's mempool
   , getTopLevelConfig :: TopLevelConfig blk
   -- ^ The node's top-level static configuration
-  , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+  , getFetchClientRegistry ::
+      FetchClientRegistry
+        (ConnectionId addrNTN)
+        (HeaderWithTime blk)
+        blk
+        (BlockFetchClientInterface.MatchedBlock blk)
+        m
   -- ^ The fetch client registry, used for the block fetch clients.
   , getKeepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
   -- ^ The keep-alive registry, used by block-fetch decision logic to read
@@ -227,7 +235,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
     --
     -- See 'LeiosPeerVars' for the write patterns.
-    getLeiosDB :: LeiosDbHandle m
+    getLeiosMinOfferLead :: Leios.LeiosMinOfferLead
+  , getLeiosDB :: LeiosDbHandle m
   -- ^ Factory for opening per-thread readers and writers of the Leios demo DB
   -- and subscribing to EB-notification events.
   , getLeiosVoteState :: LeiosVoteState m
@@ -300,6 +309,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- ^ Seeds the LeiosFetch decision loop's PRNG (see 'Leios.leiosFetchPrng'),
   -- which shuffles job assignment to peers. An independent split of the node
   -- generator, like 'keepAliveRng' / 'peerSharingRng'.
+  , leiosMinOfferLead :: Leios.LeiosMinOfferLead
   }
 
 initNodeKernel ::
@@ -331,6 +341,7 @@ initNodeKernel
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
     , leiosDB
+    , leiosMinOfferLead
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -610,7 +621,46 @@ initNodeKernel
                 forM_ peersVars $ \vars ->
                   MVar.modifyMVar_ (Leios.offerings vars) $
                     pure . Map.dropWhileAntitone ((< immTipSlot) . Leios.pointSlotNo)
+                -- Same for what each peer has claimed is certified: 'ElId'
+                -- orders slot-first, so the below-tip elections are a prefix.
+                forM_ peersVars $ \vars ->
+                  MVar.modifyMVar_ (Leios.certificationClaims vars) $
+                    pure . Map.dropWhileAntitone (\(MkElId elSlot _poolId) -> elSlot < immTipSlot)
           }
+
+    -- The Recovery Path: a certificate moves its election's focus onto the
+    -- endorser block it certifies, which is how a node that only ever saw some
+    -- other announcement for that election --- or none, because the announcing
+    -- block has been on its selection since before it started --- comes to
+    -- fetch the right one.
+    --
+    -- Each iteration compares the certified announcements against the ones it
+    -- last saw, so a claim that arrives after the offer did still moves the
+    -- focus, which nothing else would do in that order.
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFocus" $
+        let loop lastFp lastCertified = do
+              (claims, fp) <-
+                atomically $
+                  blockUntilChanged
+                    getFingerprint
+                    lastFp
+                    (ChainDB.getLeiosValidClaims chainDB)
+              let certified = LeiosValidClaims.certifiedEbs (forgetFingerprint claims)
+                  arrived =
+                    Map.differenceWith
+                      (\new old -> if new == old then Nothing else Just new)
+                      certified
+                      lastCertified
+              MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
+                pure $!
+                  Map.foldlWithKey'
+                    (\acc _elId fields -> Leios.focusCertifiedEb fields acc)
+                    outstanding
+                    arrived
+              void $ MVar.tryPutMVar getLeiosReady ()
+              loop fp certified
+         in loop (Fingerprint 0) Map.empty
 
     return
       NodeKernel
@@ -634,6 +684,7 @@ initNodeKernel
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getLeiosMinOfferLead = leiosMinOfferLead
         , getLeiosDB = leiosDB
         , getLeiosVoteState = leiosVoteState
         , getLeiosPeersVars = getLeiosPeersVars
@@ -682,8 +733,19 @@ data InternalState m addrNTN addrNTC blk = IS
   , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
   , blockFetchInterface ::
-      BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
-  , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+      BlockFetchConsensusInterface
+        (ConnectionId addrNTN)
+        (HeaderWithTime blk)
+        blk
+        (BlockFetchClientInterface.MatchedBlock blk)
+        m
+  , fetchClientRegistry ::
+      FetchClientRegistry
+        (ConnectionId addrNTN)
+        (HeaderWithTime blk)
+        blk
+        (BlockFetchClientInterface.MatchedBlock blk)
+        m
   , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
@@ -702,6 +764,7 @@ data InternalState m addrNTN addrNTC blk = IS
   -- ^ Accumulator for Leios votes; assembles certificates once a
   -- point's tally crosses 'minCertificationThreshold'. Source of
   -- 'fbLeiosVoteState' threaded into 'ForgeBlockArgs'.
+  , leiosMinOfferLead :: Leios.LeiosMinOfferLead
   }
 
 initInternalState ::
@@ -732,6 +795,7 @@ initInternalState
     , leiosDB
     , leiosTxCache
     , leiosFetchRng
+    , leiosMinOfferLead
     } = do
     varGsmState <- do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -755,7 +819,7 @@ initInternalState
     fetchClientRegistry <- newFetchClientRegistry
 
     leiosPeersVars <- LazySTM.newTVarIO Map.empty
-    -- Seed 'acquiredEbBodiesPrunedSlot' from the immutable tip: everything at or
+    -- Seed 'outstandingPrunedSlot' from the immutable tip: everything at or
     -- below it is already final, so an EB that old must read as 'tooOld' from the
     -- outset -- not only once the first 'pruneOutstandingToImmTip' fires.
     immTip <- getTipSlot . ledgerState <$> atomically (ChainDB.getImmutableLedger chainDB)
@@ -781,7 +845,12 @@ initInternalState
         chainDbView =
           BlockFetchClientInterface.defaultChainDbView chainDB
         blockFetchInterface ::
-          BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+          BlockFetchConsensusInterface
+            (ConnectionId addrNTN)
+            (HeaderWithTime blk)
+            blk
+            (BlockFetchClientInterface.MatchedBlock blk)
+            m
         blockFetchInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
             (dbfTracer tracers)
@@ -869,7 +938,11 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     leiosDbReader <- LeiosDb.openReader leiosDB
-    leiosDbWriter <- LeiosDb.openWriter leiosDB
+    leiosDbWriter <-
+      LeiosDb.openWriter leiosDB $
+        Leios.leiosOfferRelayDecision
+          leiosMinOfferLead
+          (getTipSlot <$> ChainDB.getImmutableLedger chainDB)
     rootCCtx <- rootCallCtx "Forge"
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 

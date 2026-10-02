@@ -239,7 +239,18 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
               , Block.fbLeiosTracer = leiosTracer
               , Block.fbLeiosVoteState = leiosVoteState
               }
-          , ledgerTipPoint (ledgerState unticked)
+          , ForgingOnTopOf
+              { forgingOnTopOfPoint = ledgerTipPoint (ledgerState unticked)
+              , -- 'unticked' is the state at 'bcPrevPoint', ie at the block we
+                -- are extending, so its view is the one at that block's slot.
+                forgingOnTopOfPredecessor =
+                  case pointSlot bcPrevPoint of
+                    Origin -> ChainDB.NoPredecessor
+                    NotOrigin slot ->
+                      ChainDB.Predecessor
+                        slot
+                        (ledgerViewOfTip (configLedger cfg) (ledgerState unticked))
+              }
           , snapshotMempoolSize mempoolSnapshot
           , rbTxsSize
           )
@@ -256,7 +267,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
   trace $
     TraceForgedBlock
       currentSlot
-      forgingOnTopOf
+      (forgingOnTopOfPoint forgingOnTopOf)
       newBlock
       snapSize
       rbTxsSize
@@ -281,6 +292,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       chainDB
       mempool
       currentSlot
+      (forgingOnTopOfPredecessor forgingOnTopOf)
       (Block.fbRbTxs forgeBlockArgs)
       (Block.fbEbTxs forgeBlockArgs)
       newBlock
@@ -316,16 +328,16 @@ decideLeiosCertify ::
   ExtLedgerState blk EmptyMK ->
   m (Maybe (LeiosCert, Leios.EbHash))
 decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState =
-  case (,) <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs) <*> mMinGap of
+  case (,) <$> announcedPoint <*> mMinGap of
     Nothing -> pure Nothing
-    Just ((ebPoint, _ebSize), minGap)
+    Just (ebPoint, minGap)
       | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= unSlotNo minGap ->
           pure Nothing
       | otherwise -> do
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
           -- detect it the other way around: if we have a cert, but not
           -- downloaded it ourselves -> warning!
-          mClosure <- lookupEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
+          mClosure <- lookupTrustedEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
           case mClosure of
             Nothing -> do
               traceWith tracer $
@@ -360,6 +372,12 @@ decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState
   -- The gap comes from the era's protocol parameters, so only the era knows it;
   -- 'Nothing' means this era does not do Leios and nothing is certifiable.
   mMinGap = Leios.getMinCertificationGap ledgerCfg (ledgerState extState)
+
+  -- What the parent announced, if anything: the endorser block a certificate
+  -- here would be for.
+  announcedPoint =
+    Leios.announcementLeiosPoint
+      <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
 
   hs = headerState extState
 
@@ -486,6 +504,13 @@ mkCurrentBlockContext currentSlot c = case c of
           -- block no and same predecessor.
           else BlockContext (blockNo hdr) $ castPoint $ AF.headPoint c'
 
+-- | The block a forge is extending
+data ForgingOnTopOf blk = ForgingOnTopOf
+  { forgingOnTopOfPoint :: !(Point blk)
+  , forgingOnTopOfPredecessor :: !(ChainDB.Predecessor blk)
+  -- ^ What the ChainDB needs to know about it when the forged block is added.
+  }
+
 -- | Add a forged block to the ChainDB, tracing whether it was adopted, and
 -- removing its transactions from the mempool if it turned out to be invalid.
 addBlockToChainDB ::
@@ -494,11 +519,14 @@ addBlockToChainDB ::
   ChainDB m blk ->
   Mempool m blk ->
   SlotNo ->
+  -- | The block we are extending, from the 'BlockContext' this block was
+  -- forged against.
+  ChainDB.Predecessor blk ->
   [Validated (GenTx blk)] ->
   [Validated (GenTx blk)] ->
   blk ->
   WithEarlyExit m ()
-addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
+addBlockToChainDB trace chainDB mempool currentSlot predecessor rbTxs ebTxs newBlock = do
   let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
   -- Make sure that if an async exception is thrown while a block is
   -- added to the chain db, we will remove txs from the mempool.
@@ -508,7 +536,7 @@ addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
   -- 'uninterruptibleMask_' to make sure that async exceptions do not
   -- interrupt it.
   uninterruptibleMask_ $ do
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+    result <- lift $ ChainDB.addBlockAsync chainDB noPunish predecessor newBlock
     -- Block until we have processed the block
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 

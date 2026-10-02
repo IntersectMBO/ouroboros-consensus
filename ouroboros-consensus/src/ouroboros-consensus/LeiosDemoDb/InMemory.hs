@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -42,6 +43,7 @@ import LeiosDemoDb.Common
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  , RelayDecision (..)
   )
 import LeiosDemoException
   ( LeiosDbException (LeiosDbWriteException, submittedFrom, writeFailure, writeJob)
@@ -96,6 +98,20 @@ data InMemoryLeiosDb = InMemoryLeiosDb
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
 emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
 
+-- | Whether we hold this reference's transaction /at the size the body states
+-- for it/.
+--
+-- A transaction hash covers its bytes, so there is exactly one true size per
+-- hash. A body claiming another is wrong, and its closure must not be declared
+-- complete on the strength of a transaction we happen to hold: nothing else
+-- would ever compare the two, since a transaction we hold is one we never
+-- fetch. Mirrors the size predicates in the SQL backend's
+-- @sql_insert_missing_txs@ and @sql_decrement_missing_tx_count@.
+entrySatisfiedBy :: Map TxHash (ByteString, BytesSize) -> EbTxEntry -> Bool
+entrySatisfiedBy held entry = case Map.lookup (eteTxHash entry) held of
+  Nothing -> False
+  Just (_bytes, size) -> size == eteTxBytesSize entry
+
 -- | EB transaction entry (references txs by hash, no bytes stored here)
 data EbTxEntry = EbTxEntry
   { eteTxHash :: !TxHash
@@ -127,7 +143,8 @@ newLeiosDBInMemoryWith stateVar = do
       , -- The in-memory implementation does not track stats.
         leiosDbSampleStats = pure (LeiosDbStats 0 0 0)
       , openReader = openInMemoryReader stateVar
-      , openWriter = openInMemoryWriter stateVar notificationChan
+      , openWriter = \relayDecision ->
+          openInMemoryWriter relayDecision stateVar notificationChan
       }
 
 -- | Reads off the 'StrictTVar'. Nothing to open or close.
@@ -137,7 +154,7 @@ openInMemoryReader stateVar =
     LeiosDbReader
       { close = pure ()
       , lookupEbBody = imLookupEbBody stateVar
-      , lookupEbClosure = imLookupEbClosure stateVar
+      , lookupTrustedEbClosure = imLookupTrustedEbClosure stateVar
       , batchRetrieveTxs = imBatchRetrieveTxs stateVar
       , scanEbPoints = imScanEbPoints stateVar
       , -- ThreadNet persists 'stateVar' across simulated restarts, so on
@@ -152,19 +169,24 @@ openInMemoryReader stateVar =
 openInMemoryWriter ::
   forall m.
   IOLike m =>
+  RelayDecision m ->
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
   m (LeiosDbWriter m)
-openInMemoryWriter stateVar notificationChan =
+openInMemoryWriter relayDecision stateVar notificationChan =
   pure
     LeiosDbWriter
       { close = pure ()
       , writeEbPoint = \point ebBytesSize ->
           resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
       , writeEbBody = \point eb ->
-          resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb)
+          resolved
+            ("WriteEbBody " <> show point)
+            (imInsertEbBody relayDecision stateVar notificationChan point eb)
       , writeTxs = \txs ->
-          resolved ("WriteTxs (" <> show (length txs) <> " txs)") (imInsertTxs stateVar notificationChan txs)
+          resolved
+            ("WriteTxs (" <> show (length txs) <> " txs)")
+            (imInsertTxs relayDecision stateVar notificationChan txs)
       }
  where
   resolved :: HasCallStack => String -> m a -> m (Promise m a)
@@ -210,12 +232,13 @@ imLookupEbBody stateVar ebHash = atomically $ do
 
 imInsertEbBody ::
   IOLike m =>
+  RelayDecision m ->
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   LeiosEb ->
   m CompletedEbs
-imInsertEbBody stateVar notificationChan point eb = do
+imInsertEbBody (MkRelayDecision shouldRelay) stateVar notificationChan point eb = do
   let items = leiosEbBodyItems eb
       ebBytesSize = encodeLeiosEbSize eb
   when (null items) $
@@ -243,7 +266,8 @@ imInsertEbBody stateVar notificationChan point eb = do
           imEbBodiesDownloaded =
             Set.insert point (imEbBodiesDownloaded s)
         }
-    writeTChan notificationChan $ AcquiredEb point ebBytesSize
+    shouldRelay (pointSlotNo point)
+      >>= writeTChan notificationChan . AcquiredEb point ebBytesSize
     -- If every tx referenced by this body is already present, the closure
     -- is complete the moment the body lands — no subsequent
     -- 'writeTxs' will fire for this point, so we must notify here.
@@ -252,23 +276,25 @@ imInsertEbBody stateVar notificationChan point eb = do
     -- tx of an already-downloaded body arrives.
     state <- readTVar stateVar
     let allTxsPresent =
-          all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
+          all (entrySatisfiedBy (imTxs state)) (IntMap.elems entries)
         alreadyNotified = Set.member point (imCompletedEbs state)
     if allTxsPresent && not alreadyNotified
       then do
         modifyTVar stateVar $ \s ->
           s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-        writeTChan notificationChan (AcquiredEbTxs point)
+        shouldRelay (pointSlotNo point)
+          >>= writeTChan notificationChan . AcquiredEbTxs point
         pure [point]
       else pure []
 
 imInsertTxs ::
   IOLike m =>
+  RelayDecision m ->
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
   [(TxHash, ByteString)] ->
   m CompletedEbs
-imInsertTxs stateVar notificationChan txs = atomically $ do
+imInsertTxs (MkRelayDecision shouldRelay) stateVar notificationChan txs = atomically $ do
   let insertedTxHashes = [txHash | (txHash, _) <- txs]
   forM_ txs $ \(txHash, txBytes) -> do
     let txBytesSize = fromIntegral $ BS.length txBytes
@@ -292,7 +318,7 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
       hashComplete h = case Map.lookup h (imEbBodies state) of
         Nothing -> False
         Just entries ->
-          all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
+          all (entrySatisfiedBy (imTxs state)) (IntMap.elems entries)
       candidates =
         [ point
         | point <- Set.toList (imEbBodiesDownloaded state)
@@ -311,7 +337,8 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
   -- Emit a closure-completion notification for each newly-complete EB. The
   -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
   forM_ completed $ \point ->
-    writeTChan notificationChan (AcquiredEbTxs point)
+    shouldRelay (pointSlotNo point)
+      >>= writeTChan notificationChan . AcquiredEbTxs point
   pure completed
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
@@ -331,22 +358,43 @@ imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
     , pointSlotNo p >= sinceSlot
     ]
 
+-- | The budget buys nothing here --- the bytes are already in the map --- but
+-- the two backends must refuse the same requests, or which peers a node
+-- disconnects would depend on which one it was built with.
 imBatchRetrieveTxs ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
-imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
-  state <- readTVar stateVar
-  case Map.lookup ebHash (imEbBodies state) of
-    Nothing -> pure []
-    Just offsetMap ->
-      pure
-        [ (offset, eteTxHash entry, fst <$> Map.lookup (eteTxHash entry) (imTxs state))
-        | offset <- offsets
-        , Just entry <- [IntMap.lookup offset offsetMap]
-        ]
+  IOLike m =>
+  StrictTVar m InMemoryLeiosDb ->
+  EbHash ->
+  BytesSize ->
+  [Int] ->
+  m [(Int, TxHash, Maybe ByteString)]
+imBatchRetrieveTxs stateVar ebHash budget offsets = do
+  rows <- atomically $ do
+    state <- readTVar stateVar
+    case Map.lookup ebHash (imEbBodies state) of
+      Nothing -> pure []
+      Just offsetMap ->
+        pure
+          [ (offset, eteTxHash entry, Map.lookup (eteTxHash entry) (imTxs state))
+          | offset <- offsets
+          , Just entry <- [IntMap.lookup offset offsetMap]
+          ]
+  spend budget rows
+ where
+  spend !_ [] = pure []
+  spend !remaining ((offset, txHash, mbTx) : rest) = do
+    let txBytesSize = maybe 0 snd mbTx
+    when (txBytesSize > remaining) $
+      throwLeiosDbException $
+        "batchRetrieveTxs: the requested txs exceed the "
+          <> show remaining
+          <> " bytes still budgeted, at offset "
+          <> show offset
+    ((offset, txHash, fst <$> mbTx) :) <$> spend (remaining - txBytesSize) rest
 
-imLookupEbClosure ::
+imLookupTrustedEbClosure ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
-imLookupEbClosure stateVar ebHash = atomically $ do
+imLookupTrustedEbClosure stateVar ebHash = atomically $ do
   state <- readTVar stateVar
   case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure Nothing

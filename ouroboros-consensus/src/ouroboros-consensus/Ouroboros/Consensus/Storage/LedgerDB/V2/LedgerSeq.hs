@@ -59,7 +59,7 @@ import Data.Function (on)
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbReader)
-import LeiosDemoTypes (LeiosPoint (..))
+import LeiosDemoTypes (LeiosPoint (..), announcementLeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configLedger)
@@ -292,8 +292,9 @@ reapplyBlock leiosDb evs cfg b db = do
     Just{} ->
       case protocolStateLeiosAnnouncement @blk cds of
         Nothing -> error "V2.LedgerSeq.reapplyBlock: nothing announced!?"
-        Just (announcedPoint, _) -> do
-          let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
+        Just fields -> do
+          let announcedPoint = announcementLeiosPoint fields
+              bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
               readTables = fmap castLedgerTables . read tbs st . castLedgerTables
           res <-
             resolveAndApplyLeiosClosure

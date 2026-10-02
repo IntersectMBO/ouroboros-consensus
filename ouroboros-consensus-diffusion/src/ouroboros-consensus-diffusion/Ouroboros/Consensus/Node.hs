@@ -110,6 +110,7 @@ import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import LeiosDemoDb (LeiosDbHandle)
+import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes (SerializedEbBody)
 import LeiosTxCache
   ( LeiosTxCache
@@ -407,6 +408,14 @@ data StdRunNodeArgs m blk
   -- ^ Determine whether to use the system default mempool capacity or explicitly set
   -- capacity of the mempool.
   , srnChainSyncIdleTimeout :: ChainSyncIdleTimeout
+  , srnLeiosMinOfferLead :: Maybe Leios.LeiosMinOfferLead
+  -- ^ Overrides 'Leios.defaultLeiosMinOfferLead', how much younger than this
+  -- node's immutable tip an endorser block must be for the node to offer it
+  -- onward.
+  --
+  -- A network whose immutable tip trails its selection by less than the lead
+  -- offers nothing at all, so a test network or a devnet has to set its own,
+  -- smaller value; see 'Leios.defaultLeiosMinOfferLead'.
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
@@ -1015,6 +1024,7 @@ mkNodeKernelArgs
           , leiosDB
           , leiosTxCache
           , leiosFetchRng = lfRng
+          , leiosMinOfferLead = Leios.defaultLeiosMinOfferLead
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
@@ -1187,6 +1197,7 @@ stdLowLevelRunNodeArgsIO
     llrnCustomiseNodeKernelArgs =
       overBlockFetchConfiguration modifyBlockFetchConfiguration
         . modifyMempoolCapacityOverride
+        . modifyLeiosMinOfferLead
      where
       modifyBlockFetchConfiguration =
         maybe
@@ -1202,6 +1213,11 @@ stdLowLevelRunNodeArgsIO
           id
           (\mc nka -> nka{mempoolCapacityOverride = mc})
           srnMaybeMempoolCapacityOverride
+      modifyLeiosMinOfferLead =
+        maybe
+          id
+          (\lead nka -> nka{leiosMinOfferLead = lead})
+          srnLeiosMinOfferLead
 
     -- Limit the node version unless srnEnableInDevelopmentVersions is set
     limitToLatestReleasedVersion ::

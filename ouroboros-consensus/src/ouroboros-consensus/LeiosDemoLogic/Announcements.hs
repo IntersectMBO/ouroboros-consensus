@@ -87,6 +87,26 @@ secondAnnouncement = \case
   OneAnnouncement _x -> Nothing
   TwoAnnouncements _x1 x2 -> Just x2
 
+-- | Both of this election's announcements, first one first.
+elStateAnnouncements :: ElState anc -> [anc]
+elStateAnnouncements = \case
+  OneAnnouncement x -> [x]
+  TwoAnnouncements x1 x2 -> [x1, x2]
+
+-- | Everything this peer has announced for elections in the given slot.
+--
+-- 'ElId' orders slot-first, so those elections are a contiguous range. An
+-- endorser block's own slot is its election's slot, so this is what an offer
+-- of that endorser block has to be backed by.
+announcementsInSlot :: SlotNo -> PeerState anc -> [anc]
+announcementsInSlot slot st =
+  concatMap elStateAnnouncements (Map.elems atSlot)
+ where
+  (_below, atOrAbove) =
+    Map.spanAntitone (\(MkElId elSlot _poolId) -> elSlot < slot) (live st)
+  (atSlot, _above) =
+    Map.spanAntitone (\(MkElId elSlot _poolId) -> elSlot <= slot) atOrAbove
+
 -- | Called whenever the ChainDB's immutable tip advances to a new slot
 --
 -- NOTE this pruning should happen ~60 s after the immutable tip
@@ -228,6 +248,16 @@ data CentralState m peer anc
   -- election
   --
   -- We only send equivocation proofs to them.
+  --
+  -- TODO collapse this into the per-peer record the LeiosNotify server keeps
+  -- of what it has enqueued to that peer (@olnAnnounced@), which exists
+  -- because an offer may not precede its announcement to that same peer. One
+  -- record instead of two, written by the same pure step that enqueues, and it
+  -- dies with the connection rather than needing 'deletePeerCentral'; the
+  -- 'ElBimap' type then has no users left. It needs that record to hold the
+  -- 'ElId' as well as the point, since neither determines the other, and it
+  -- needs 'QueueAnnouncementView' to expose a second function so 'send' can
+  -- ask a peer's queue whether an election has already gone out to it.
   --
   -- We don't need to track whether or not we've sent them an
   -- equivocation.

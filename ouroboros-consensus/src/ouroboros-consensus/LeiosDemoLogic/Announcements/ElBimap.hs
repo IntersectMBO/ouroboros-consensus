@@ -1,3 +1,7 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+
 -- | A bidirectional map, both halves kept strict, relating each
 -- `ElId` to a set of `a` and back.
 module LeiosDemoLogic.Announcements.ElBimap (module LeiosDemoLogic.Announcements.ElBimap) where
@@ -13,6 +17,8 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 
 -- | The slot number and pool id of an election
 data ElId
@@ -20,7 +26,8 @@ data ElId
     --
     -- TODO should it be the hash, or just the key itself?
     MkElId !SlotNo !ShortByteString
-  deriving Eq
+  deriving stock (Eq, Generic)
+  deriving anyclass NoThunks
 
 -- | Renders the pool id as hex rather than as a raw byte string.
 instance Show ElId where

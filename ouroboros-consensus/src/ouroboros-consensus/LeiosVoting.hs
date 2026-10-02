@@ -49,6 +49,7 @@ import LeiosDemoTypes
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
+  , announcementLeiosPoint
   , getLeiosSeatId
   , prettyLeiosPoint
   , signLeiosVote
@@ -283,7 +284,9 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
       let takeEbNotification =
             readTChan chan >>= \case
               AcquiredEb{} -> pure Nothing
-              AcquiredEbTxs point -> pure (Just point)
+              -- Regardless of the notification's 'ShouldRelay': that only
+              -- governs what we offer our peers.
+              AcquiredEbTxs point _shouldRelay -> pure (Just point)
 
       VoteTimers{scheduleVoteTime, waitNextVoteTime} <-
         newVoteTimers tracer lcfg chainDB systemTime
@@ -439,6 +442,11 @@ data EbClosureVerdict blk
 -- Each tx is validated in full, except where the LeiosTxCache reports it
 -- already validated: then only the state-dependent checks re-run
 -- ('LedgerSupportsMempool.reapplyTx' rather than 'applyTx').
+--
+-- TODO Issue https://github.com/input-output-hk/ouroboros-leios/issues/1115.
+-- Waiting on @AcquiredEbTxs@ is enough today, since that is where an endorser
+-- block misstating a transaction's size will be caught. Voting logic that
+-- does not wait that long would have to check the sizes itself.
 validateEbClosure ::
   forall m blk.
   ( IOLike m
@@ -545,7 +553,8 @@ tipAnnouncerFor ::
   LeiosPoint ->
   Maybe RbHash
 tipAnnouncerFor hs point = do
-  (announcedPoint, _) <- protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
+  announcedPoint <-
+    announcementLeiosPoint <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
   NotOrigin tip <- Just (headerStateTip hs)
   -- 'protocolStateLeiosAnnouncement' returns the pending announcement
   -- keyed by the tip's slot; equality with the acquired point (which

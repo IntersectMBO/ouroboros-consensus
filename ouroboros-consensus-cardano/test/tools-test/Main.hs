@@ -14,6 +14,7 @@ import LeiosDemoDb
   ( LeiosDbReader (scanEbPoints)
   , LeiosDbWriter (writeEbPoint)
   , Promise (await)
+  , alwaysRelay
   , withLeiosDBSQLite
   , withReader
   , withWriter
@@ -162,7 +163,7 @@ blockCountTest logStep = do
       keptEb = MkLeiosPoint 0 (mkEbHash '1')
       droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
   withLeiosDBSQLite mempty leiosVolDb leiosImmDb $ \leiosDb ->
-    withWriter leiosDb $ \con ->
+    withWriter leiosDb alwaysRelay $ \con ->
       mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
 
   logStep "running truncation"

@@ -63,10 +63,7 @@ import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
   ( ChainSyncClientPipelined
   , chainSyncClientPeerPipelined
   )
-import Ouroboros.Network.Protocol.ChainSync.Codec
-  ( byteLimitsChainSync
-  , codecChainSyncId
-  )
+import Ouroboros.Network.Protocol.ChainSync.Codec (codecChainSyncId)
 import Ouroboros.Network.Protocol.ChainSync.PipelineDecision
   ( pipelineDecisionLowHighMark
   )
@@ -120,6 +117,7 @@ basicChainSyncClient
           CSClient.historicityCheck = HistoricityCheck.noCheck
         , CSClient.getDiffusionPipeliningSupport = DiffusionPipeliningOn
         , CSClient.leiosMsgRollForwardCallback = \_ _ _ -> pure ()
+        , CSClient.leiosJumpAcceptedCallback = \_ -> pure ()
         }
       CSClient.DynamicEnv
         { CSClient.version = maxBound
@@ -236,8 +234,9 @@ runChainSyncClient
           traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceTerminatedByLoP
         _ -> pure ()
 
+-- See the NOTE on 'Ouroboros.Consensus.Network.NodeToNode.noByteLimits'.
 chainSyncNoSizeLimits :: ProtocolSizeLimits (ChainSync header point tip) bytes
-chainSyncNoSizeLimits = byteLimitsChainSync
+chainSyncNoSizeLimits = ProtocolSizeLimits{sizeLimitForState = const maxBound}
 
 chainSyncNoTimeouts :: ChainSyncTimeout
 chainSyncNoTimeouts =

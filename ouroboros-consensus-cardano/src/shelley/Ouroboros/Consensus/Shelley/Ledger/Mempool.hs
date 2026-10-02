@@ -847,7 +847,7 @@ guardLeiosWireLimit st a
           <> show wireLimit
           <> ")"
  where
-  wireLimit = Leios.maxMsgLeiosBlockBytesSize - Leios.msgLeiosBlockFramingSize
+  wireLimit = Leios.maxLeiosEbBytesSize
   paramLimit = getPParams (tickedShelleyLedgerState st) ^. ppMaxEndorserBlockReferencesSizeL
 
 -- | What an endorser block's closure may amount to, in block-measure terms:
