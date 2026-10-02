@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ShelleyHash (..)
   , ShelleyProtocol
   , ShelleyProtocolHeader
+  , defaultHeaderContainsLeiosCert
   ) where
 
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
@@ -114,6 +115,11 @@ class
   pHeaderSize :: ShelleyProtocolHeader proto -> Natural
   pHeaderBlockSize :: ShelleyProtocolHeader proto -> Natural
 
+  -- | Whether the header says its block body carries a Leios certificate.
+  -- Protocols that don't support Leios define this as
+  -- 'defaultHeaderContainsLeiosCert'.
+  pHeaderContainsLeiosCert :: ShelleyProtocolHeader proto -> Bool
+
   type EnvelopeCheckError proto :: Type
 
   -- | Carry out any protocol-specific envelope checks. For example, this might
@@ -123,6 +129,9 @@ class
     LedgerView proto ->
     ShelleyProtocolHeader proto ->
     Except (EnvelopeCheckError proto) ()
+
+defaultHeaderContainsLeiosCert :: ShelleyProtocolHeader proto -> Bool
+defaultHeaderContainsLeiosCert = const False
 
 -- | `ProtocolHeaderSupportsKES` describes functionality common to protocols
 --    using key evolving signature schemes. This includes verifying the header
