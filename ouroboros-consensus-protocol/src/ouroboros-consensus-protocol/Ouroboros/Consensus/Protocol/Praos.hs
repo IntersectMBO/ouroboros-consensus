@@ -35,6 +35,7 @@ module Ouroboros.Consensus.Protocol.Praos
   , PraosWithLeios
   , Ticked (..)
   , forgePraosFields
+  , leiosContextFreeHeaderChecks
   , praosCheckCanForge
 
     -- * For testing purposes
@@ -718,7 +719,53 @@ doValidateVRFSignature eta0 pd f b = do
   vrfLeaderVal = vrfLeaderValue (Proxy @c) vrfCert
   slot = Views.hvSlotNo b
 
--- | The Leios-specific checks on a header, called by 'updateChainDepState'
+-- | The Leios header checks that read only the header and the ledger view.
+--
+-- Sound out of context, which is what lets both header paths run them:
+-- 'updateChainDepState', from the header's own predecessor, and
+-- 'validateAnnouncementChainDepState', from the immutable tip. The bound they
+-- check is forecast for the header's own slot
+-- ('Dijkstra.maxEndorserBlockReferencesSizeForecastL'), so both paths read the
+-- same value: a forecast either yields the view that slot will have or refuses
+-- as 'OutsideHorizon'. The staleness the announcement path does have to live
+-- with is in the chain-dep state --- the opcert counters --- and none of these
+-- checks reads it.
+leiosContextFreeHeaderChecks ::
+  forall pext c.
+  KnownPraosExtension pext =>
+  Views.BasePraosLedgerView pext ->
+  Views.BaseHeaderView pext c ->
+  Except (BasePraosValidationErr pext c) ()
+leiosContextFreeHeaderChecks lv b =
+  case praosExtensionHasLeios (Proxy @pext) of
+    PextDoesNotHaveLeiosDecided -> pure ()
+    PextHasLeiosDecided -> do
+      let SJustLeios (_containsCert, mbAnn) = Views.hvLeios b
+          SJustLeios llv = Views.plvLeios lv
+      case mbAnn of
+        SNothing -> pure ()
+        SJust ann -> do
+          let announced = ebAnnouncementSize ann
+              -- TEMPORARY KLUDGE -- DO NOT MERGE.
+              --
+              -- The deployed testnet has historical announcements above the
+              -- 'maxEndorserBlockReferencesSize' its own Dijkstra genesis sets
+              -- (e.g. 102429 against 100000 at slot 709083), so enforcing the
+              -- ledger's value stalls the sync there. Exception granted here
+              -- and here only: every other use of the limit, and the genesis
+              -- file itself, are untouched.
+              maximum' = max 200000 (Views.llvMaxEbBodySize llv)
+          when (announced > maximum') $
+            throwError $
+              LeiosHeaderErr mkHasLeiosProof $
+                Leios.LeiosEbTooBig announced maximum'
+
+-- | The Leios-specific checks on a header, called by 'updateChainDepState'.
+--
+-- 'leiosContextFreeHeaderChecks' plus the one check that needs the header's
+-- immediate predecessor: a CertRB may not certify an announcement younger than
+-- the certification gap, and only the predecessor's state says which
+-- announcement that is.
 leiosHeaderChecks ::
   forall pext c.
   KnownPraosExtension pext =>
@@ -728,11 +775,12 @@ leiosHeaderChecks ::
   SlotNo ->
   BasePraosState pext ->
   Except (BasePraosValidationErr pext c) ()
-leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
+leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs = do
+  leiosContextFreeHeaderChecks lv b
   case praosExtensionHasLeios (Proxy @pext) of
     PextDoesNotHaveLeiosDecided -> pure ()
     PextHasLeiosDecided -> do
-      let SJustLeios (containsCert, mbAnn) = Views.hvLeios b
+      let SJustLeios (containsCert, _mbAnn) = Views.hvLeios b
           SJustLeios llv = Views.plvLeios lv
           SJustLeios announcedByPredecessor = praosStateLeiosAnnouncement cs
 
@@ -760,24 +808,6 @@ leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs =
           _ ->
             throwError $
               LeiosHeaderErr mkHasLeiosProof Leios.LeiosCertWithoutAnnouncement
-
-      case mbAnn of
-        SNothing -> pure ()
-        SJust ann -> do
-          let announced = ebAnnouncementSize ann
-              -- TEMPORARY KLUDGE -- DO NOT MERGE.
-              --
-              -- The deployed testnet has historical announcements above the
-              -- 'maxEndorserBlockReferencesSize' its own Dijkstra genesis sets
-              -- (e.g. 102429 against 100000 at slot 709083), so enforcing the
-              -- ledger's value stalls the sync there. Exception granted here
-              -- and here only: every other use of the limit, and the genesis
-              -- file itself, are untouched.
-              maximum' = max 200000 (Views.llvMaxEbBodySize llv)
-          when (announced > maximum') $
-            throwError $
-              LeiosHeaderErr mkHasLeiosProof $
-                Leios.LeiosEbTooBig announced maximum'
 
 validateKESSignature ::
   (KnownPraosExtension pext, PraosCrypto c) =>
