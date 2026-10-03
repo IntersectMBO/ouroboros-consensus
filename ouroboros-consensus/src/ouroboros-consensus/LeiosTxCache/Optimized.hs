@@ -260,13 +260,21 @@ evictOldest ht st = do
         Nothing -> Map.delete slotMin (hsAnnouncements st)
         Just nem' -> Map.insert slotMin nem' (hsAnnouncements st)
   (bodies', evEbs, evTxs) <- decBody ht ebhEvicted (hsBodies st)
+  -- Mirror 'LeiosTxCache.Reference.evictOldest': a body eviction prunes the EB's
+  -- rows, so free its ring slot. Txs held only by the evicted EB then resolve to
+  -- no location (and are fetched) rather than to a pruned/stale source.
+  let hsLocRing'
+        | Set.member ebhEvicted evEbs
+        , Just evSlot <- ringSlotOf ebhEvicted st =
+            Map.delete evSlot (hsLocRing st)
+        | otherwise = hsLocRing st
   pure
     ( HtState
         { hsAnnouncements = announcements'
         , hsCount = hsCount st - 1
         , hsBodies = bodies'
         , hsPrunedSlot = hsPrunedSlot st
-        , hsLocRing = hsLocRing st
+        , hsLocRing = hsLocRing'
         , hsLocNext = hsLocNext st
         }
     , evEbs

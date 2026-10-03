@@ -285,7 +285,7 @@ evictOldest idx =
       , txState = txState'
       , prunedSlot = prunedSlot idx
       , txLocState = txLocState idx `Map.withoutKeys` evTxs
-      , locRing = locRing idx
+      , locRing = locRing'
       , locNext = locNext idx
       }
   , evEbs
@@ -301,6 +301,19 @@ evictOldest idx =
 
   (bodyState', txState', evEbs, evTxs) =
     decBody ebhEvicted (bodyState idx) (txState idx)
+
+  -- Evicting a body prunes the EB's LeiosDb rows, so its ring slot no longer
+  -- names a durable fill source: free it. A tx still held by a younger EB keeps
+  -- that EB's location (set by 'setTxLocations' when the younger body landed); a
+  -- tx that lived only in the evicted EB now resolves to /no/ location and is
+  -- fetched, rather than to a pruned source (or, once 'locNext' reuses the slot,
+  -- a different EB). Only a genuine body eviction frees the slot; dropping one of
+  -- several announcements of a still-held EB leaves it in place.
+  locRing'
+    | Set.member ebhEvicted evEbs
+    , Just evSlot <- ringSlotOf ebhEvicted idx =
+        Map.delete evSlot (locRing idx)
+    | otherwise = locRing idx
 
 -- | Decrement a body's refcount; if it reaches zero, remove it and (if it had
 -- been inserted) decrement each of its referenced txs.
