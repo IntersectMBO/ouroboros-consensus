@@ -336,12 +336,20 @@ imInsertTxs stateVar notificationChan point offBytes = atomically $ do
   -- Candidates: every point of THIS content hash whose body has been
   -- downloaded and whose closure is now complete. Bytes are per-EB, so no
   -- other hash can have been affected.
-  let candidates =
-        [ p
-        | p <- Set.toList (imEbBodiesDownloaded state)
-        , pointEbHash p == ebHash
-        , hashCompleteIn state ebHash
-        ]
+  --
+  -- 'hashCompleteIn' does not depend on the point, so judge the closure once
+  -- rather than once per downloaded point. A batch that does not complete the
+  -- closure -- the common case while a multi-batch fetch is in flight -- then
+  -- scans nothing, which keeps a catching-up node's per-write cost off the
+  -- unboundedly-growing 'imEbBodiesDownloaded' set (otherwise every tx write is
+  -- O(downloaded EBs), quadratic over a sync).
+  let candidates
+        | hashCompleteIn state ebHash =
+            [ p
+            | p <- Set.toList (imEbBodiesDownloaded state)
+            , pointEbHash p == ebHash
+            ]
+        | otherwise = []
       completed =
         filter
           (\p -> not (Set.member p (imCompletedEbs state)))
