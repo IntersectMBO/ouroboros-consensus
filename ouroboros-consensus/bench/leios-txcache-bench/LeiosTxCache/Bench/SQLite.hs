@@ -132,6 +132,11 @@ newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
               hashes <- readIORef buf
               batchLookup stmt hashes
               pure r
+          , -- A no-op: this handle benchmarks the by-hash membership store
+            -- (inserts and lookups) only. Cross-EB fill is never exercised here,
+            -- so its output would never be read -- recording locations would just
+            -- add writes the workload does not measure.
+            setTxLocations = \_ebh _offTxs -> pure ()
           }
   pure (handle, reopen)
 
@@ -170,4 +175,8 @@ newSQLiteLeiosTxCacheWith pragmas path = do
       , withLockedInsertUnappliedTx = \k -> do _ <- k () (\w _txh _sz _ -> pure w); pure mempty
       , withLockedInsertAppliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()
       , withLookupTx = \k -> k lookupOne
+      , -- A no-op, as in the handle above: only the by-hash membership store is
+        -- benchmarked, so recording fill locations the workload never reads back
+        -- would not change what is measured.
+        setTxLocations = \_ebh _offTxs -> pure ()
       }

@@ -23,6 +23,8 @@ module LeiosDemoDb.Common
   , withWriter
   , allocateWriter
   , CompletedEbs
+  , TxOffset
+  , LocalFill
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
@@ -38,6 +40,8 @@ import LeiosDemoTypes
   , LeiosEb
   , LeiosPoint
   , TxHash
+  , TxLocation
+  , TxOffset
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
 
@@ -103,15 +107,25 @@ data LeiosDbWriter m = LeiosDbWriter
   -- ^ Close writer and flush all remaining writes.
   , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
   -- ^ Record an announced EB's point and expected size.
-  , writeEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m (Promise m CompletedEbs)
-  -- ^ Persist an EB body. Returns any EBs whose closure this completed.
-  --
-  -- XXX: return type only used for tracing and too broad: it can actually only
-  -- be this same EB which got completed
+  , writeEbBody ::
+      HasCallStack =>
+      LeiosPoint -> LeiosEb -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
+  -- ^ Persist an EB body, and fill what it can from local bytes: each
+  --   'LocalFill' pairs an offset in this body with the 'TxLocation' of another
+  --   EB durably holding the same tx (the LeiosTxCache's tx locations), copied
+  --   in the same transaction. Returns the points this completed and the offsets
+  --   that actually filled -- a vanished source fills nothing and the tx stays
+  --   fetchable, decided by the caller from this return.
   , writeTxs ::
       HasCallStack =>
-      [(TxHash, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies. Returns the EBs whose closure this completed.
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
+  -- ^ Persist tx bodies for one EB, keyed by their offset into its body.
+  --
+  --   Bytes are owned by the referencing EB (stored per @(ebHash, txOffset)@,
+  --   duplicated when EBs share a tx), so writes are sequential within the EB
+  --   rather than scattered by hash, and eviction is a range delete. Returns
+  --   the points this completed: the given EB's, plus any other point
+  --   announcing the same content hash, merely at a different slot.
   }
 
 -- | The result of a submitted write.
@@ -130,6 +144,10 @@ awaitAll = traverse_ await
 
 -- | EBs whose tx closure became complete as a result of a write.
 type CompletedEbs = [LeiosPoint]
+
+-- | A cross-EB fill: fill the EB's row at 'TxOffset' from the tx's durable
+-- 'TxLocation' in another EB. See 'writeEbBody'.
+type LocalFill = (TxOffset, TxLocation)
 
 data LeiosEbNotification
   = AcquiredEb LeiosPoint BytesSize

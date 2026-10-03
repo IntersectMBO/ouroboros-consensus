@@ -214,8 +214,14 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   storeEb :: ForgedLeiosEb -> IO ()
   storeEb forgedEb = do
     pointWritten <- writeEbPoint leiosDbWriter forgedEb.point (encodeLeiosEbSize forgedEb.body)
-    bodyWritten <- writeEbBody leiosDbWriter forgedEb.point forgedEb.body
-    txsWritten <- writeTxs leiosDbWriter forgedEb.txClosure
+    -- No cross-EB fills: this tool forges every tx fresh, so no other EB
+    -- durably holds them.
+    bodyWritten <- writeEbBody leiosDbWriter forgedEb.point forgedEb.body []
+    txsWritten <-
+      writeTxs
+        leiosDbWriter
+        forgedEb.point
+        [(off, bs) | (off, (_txh, bs)) <- zip [0 ..] forgedEb.txClosure]
     awaitAll [pointWritten, void bodyWritten, void txsWritten]
     traceWith leiosTracer $
       TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}

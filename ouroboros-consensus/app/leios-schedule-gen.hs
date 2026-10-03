@@ -172,7 +172,19 @@ generateDb prng0 db ebRecipes = do
   withDieMsg $ DB.exec db (fromString LeiosDemoDb.sql_schema)
   stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_eb)
   stmt_write_ebBody <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebBody)
-  stmt_write_tx <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_tx)
+  -- Clustered schema: bytes are owned per (ebHashBytes, txOffset). The
+  -- generator holds the bytes at insert time, so it writes the row directly
+  -- as filled, skipping the node's prealloc-then-fill two-step.
+  stmt_write_tx <-
+    withDieJust $
+      DB.prepare
+        db
+        (fromString "INSERT INTO ebTxBytes (ebHashBytes, txOffset, filled, txBytes) VALUES (?, ?, 1, ?)")
+  -- Nothing is missing by construction; the completeness scan demands an
+  -- explicit zero ('sql_scan_complete_ebs_since').
+  stmt_complete_eb <-
+    withDieJust $
+      DB.prepare db (fromString "UPDATE ebs SET missingTxCount = 0 WHERE ebHashBytes = ?")
   -- loop over EBs (one SQL transaction each, to be gentle)
   (_dynEnv', sigma, revSchedule) <- (\f -> foldM f (emptyLeiosFetchDynEnv, Map.empty, []) ebRecipes) $ \(dynEnv, sigma, revSchedule) ebRecipe -> do
     -- generate txs, so we have their hashes
@@ -229,13 +241,16 @@ generateDb prng0 db ebRecipes = do
       withDie $ DB.bindInt64 stmt_write_ebBody 4 (fromIntegral (BS.length txBytes))
       withDieDone $ DB.stepNoCB stmt_write_ebBody
       withDie $ DB.reset stmt_write_ebBody
-      -- INSERT INTO txs
-      withDie $ DB.bindBlob stmt_write_tx 1 txHashBytes
-      withDie $ DB.bindBlob stmt_write_tx 2 txBytes
-      withDie $ DB.bindInt64 stmt_write_tx 3 (fromIntegral (BS.length txBytes))
+      -- INSERT INTO ebTxBytes
+      withDie $ DB.bindBlob stmt_write_tx 1 (Hash.hashToBytes ebHash)
+      withDie $ DB.bindInt64 stmt_write_tx 2 (fromIntegral txOffset)
+      withDie $ DB.bindBlob stmt_write_tx 3 txBytes
       withDieDone $ DB.stepNoCB stmt_write_tx
       withDie $ DB.reset stmt_write_tx
     -- finalize each EB
+    withDie $ DB.bindBlob stmt_complete_eb 1 (Hash.hashToBytes ebHash)
+    withDieDone $ DB.stepNoCB stmt_complete_eb
+    withDie $ DB.reset stmt_complete_eb
     withDieMsg $ DB.exec db (fromString "COMMIT")
     pure
       ( fromMaybe dynEnv mbDynEnv'

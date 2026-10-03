@@ -533,6 +533,19 @@ data EbFetchState
     -- EbFetchState\/EbState\/LeiosOutstanding and a monadic body-acquire;
     -- deferred.
     BodyAcquired !Jobs.LeiosJobPool
+  | -- | The body's bytes are in hand and its LeiosDb write is in flight, but not
+    -- yet durable.
+    --
+    -- Distinct from 'BodyAcquired' because that one asserts the LeiosDb holds the
+    -- body, and the fetch logic retires a peer's offer for good on the strength of
+    -- it. A write that never lands would strand the EB permanently. This state
+    -- suppresses re-fetching the body (no redundant body write) while KEEPING
+    -- closure offers unassigned: it carries no job pool, because none may exist
+    -- yet -- the body write fills what it can from local bytes
+    -- (via the LeiosTxCache's tx locations), and only the settled write knows what is still
+    -- missing. 'confirmBodyPersisted' installs the pool built from that; any
+    -- other exit restores 'NoBody'.
+    BodyPersisting
   deriving (Eq, Show)
 
 ebStateMaxSlot :: EbState -> SlotNo
@@ -550,6 +563,9 @@ ebStateHasBody (MkEbState _slot _onset fetchState) = case fetchState of
   NoBody -> False
   BodyImminent -> False
   BodyAcquired{} -> True
+  -- The bytes are in hand, so re-fetching would be redundant; this is also the
+  -- exclusion that stops a second deliverer re-paying the body write.
+  BodyPersisting -> True
 
 -- | A size summary of the LeiosFetch decision loop's working set
 --
@@ -676,9 +692,23 @@ summarizeDecisions decs =
  where
   reqs = concatMap toList (Map.elems decs)
 
+-- | A transaction's offset (index) into an EB body.
+type TxOffset = Int
+
+-- | Where a tx's durable bytes live: an EB that references it, and the offset
+-- of its row there. Recorded in the LeiosTxCache on write confirmation, read
+-- back for cross-EB fill: a later EB referencing the same tx copies the bytes
+-- locally instead of re-fetching. Staleness is harmless -- the fill's guards
+-- make a vanished source a no-op and the tx stays in the fetch set.
+data TxLocation = MkTxLocation !EbHash !TxOffset
+  deriving (Eq, Show)
+
+-- | Record that the body's bytes are in hand and its write is in flight. The
+-- write's own thread must then either 'confirmBodyPersisted' it or
+-- 'abandonBodyPersist' it; see 'BodyPersisting'.
 insertAcquiredEbBody ::
-  EbHash -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
-insertAcquiredEbBody ebHash jobPool =
+  EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+insertAcquiredEbBody ebHash =
   alterEbState ebHash $ \case
     Nothing ->
       -- The state must have been pruned before the MsgLeiosBlock
@@ -689,10 +719,39 @@ insertAcquiredEbBody ebHash jobPool =
       Nothing
     Just (MkEbState slot onset fetchState) -> case fetchState of
       BodyAcquired{} -> Nothing
-      NoBody -> Just $ MkEbState slot onset (BodyAcquired jobPool)
-      BodyImminent ->
-        -- note that we ignore the given jobPool here
-        Just $ MkEbState slot onset (BodyAcquired Jobs.emptyLeiosJobPool)
+      BodyPersisting -> Nothing
+      NoBody -> Just $ MkEbState slot onset BodyPersisting
+      BodyImminent -> Just $ MkEbState slot onset BodyPersisting
+
+-- | The body's write is durable: the LeiosDb holds it, so the claim
+-- 'BodyAcquired' makes is now true.
+confirmBodyPersisted ::
+  EbHash -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
+confirmBodyPersisted ebHash jobPool =
+  alterEbState ebHash $ \case
+    Nothing -> Nothing
+    Just (MkEbState slot onset fetchState) -> case fetchState of
+      BodyPersisting -> Just $ MkEbState slot onset (BodyAcquired jobPool)
+      -- Only a body still mid-persist can be confirmed. Any other state means
+      -- the persist was already resolved -- abandoned on a lost write, or
+      -- superseded by a local forge -- so this confirmation is stale and no-ops.
+      _ -> Nothing
+
+-- | The write did not land -- the writer failed, or the thread carrying it was
+-- killed. Back to 'NoBody', so the next offer is acted on rather than retired
+-- against a body the LeiosDb does not have.
+abandonBodyPersist :: EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+abandonBodyPersist ebHash =
+  -- No job records to clean: 'BodyPersisting' carries no pool, so nothing was
+  -- ever assignable while the write was in flight.
+  alterEbState ebHash $ \case
+    Nothing -> Nothing
+    Just (MkEbState slot onset fetchState) -> case fetchState of
+      BodyPersisting -> Just $ MkEbState slot onset NoBody
+      -- As in 'confirmBodyPersisted': only a body still mid-persist can be
+      -- abandoned. From any other state the persist was already resolved, so
+      -- this late failure no-ops rather than clobbering a newer state.
+      _ -> Nothing
 
 -- | Record that our own forge is producing this EB
 markBodyImminent ::
@@ -706,6 +765,8 @@ markBodyImminent ebHash slot =
       NoBody -> Just $ MkEbState oldSlot onset BodyImminent
       BodyImminent -> Nothing
       BodyAcquired{} -> Just $ MkEbState oldSlot onset (BodyAcquired Jobs.emptyLeiosJobPool)
+      -- The in-flight write still owns the promotion, so stay transient.
+      BodyPersisting -> Just $ MkEbState oldSlot onset BodyPersisting
 
 -- | Record that the EB with this hash is referenced (announced or offered) at this
 -- slot, along with that slot's wall-clock onset if known.
@@ -777,8 +838,12 @@ initializeLeiosOutstanding :: StdGen -> [LeiosPoint] -> SlotNo -> LeiosOutstandi
 initializeLeiosOutstanding prng points immTipSlot =
   F.foldl' (flip seed1) (emptyLeiosOutstanding prng immTipSlot) points
  where
+  -- These points were read back out of the LeiosDb, so the body is durable
+  -- already: settle it at once. Together with a confirmed write, this is the only
+  -- other way 'BodyAcquired' is reached -- both derived from the database.
   seed1 (MkLeiosPoint slot ebHash) =
-    insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool
+    confirmBodyPersisted ebHash Jobs.emptyLeiosJobPool
+      . insertAcquiredEbBody ebHash
       . recordMaxAnnouncementSlot ebHash slot SNothing
 
 -- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
@@ -1395,12 +1460,19 @@ data TraceLeiosKernel
     -- Carries how old the EB was on arrival, if it was preceded by an
     -- announcement and not forged locally.
     TraceLeiosBlockAcquired LeiosPoint (Maybe NominalDiffTime)
+  | -- | The body's LeiosDb write did not land. We had not yet claimed to hold
+    -- it -- that is the point of 'BodyPersisting' -- so nothing is withdrawn:
+    -- the body simply returns to fetchable. See 'BodyPersisting'.
+    TraceLeiosBlockAbandoned LeiosPoint
   | -- | The EB body was received but the point was not in the database. This is
     -- unexpected as the point should have been inserted during announcement handling.
     TraceLeiosBlockPointMissing LeiosPoint
   | -- | An EB's tx closure was first completed. Carries the EB's age on arrival,
     -- as for 'TraceLeiosBlockAcquired'.
     TraceLeiosBlockTxsAcquired LeiosPoint (Maybe NominalDiffTime)
+  | -- | A delivered tx batch's LeiosDb write did not land, so its jobs were
+    -- handed back rather than retired and the txs are fetchable again.
+    TraceLeiosBlockTxsAbandoned LeiosPoint
   | -- | An EB body was inserted into the LeiosTxCache
     --
     -- Carries the LeiosTxCache summary (cache hits), how many of its txs we found
@@ -1692,6 +1764,12 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosKernelMsg"
       , "msg" .= s
       ]
+  TraceLeiosBlockAbandoned (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockAbandoned"
+      , "ebSlot" .= ebSlot
+      , "ebHash" .= prettyEbHash ebHash
+      ]
   TraceLeiosBlockAcquired (MkLeiosPoint (SlotNo ebSlot) ebHash) mbAge ->
     mconcat $
       [ "kind" .= Aeson.String "LeiosBlockAcquired"
@@ -1702,6 +1780,12 @@ traceLeiosKernelToObject = \case
   TraceLeiosBlockPointMissing (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockPointMissing"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      ]
+  TraceLeiosBlockTxsAbandoned (MkLeiosPoint (SlotNo ebSlot) ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockTxsAbandoned"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
@@ -1912,8 +1996,10 @@ data LeiosNSInfo = LeiosNSInfo
 data LeiosKernelNS
   = LKNSMsg
   | LKNSBlockAcquired
+  | LKNSBlockAbandoned
   | LKNSBlockPointMissing
   | LKNSBlockTxsAcquired
+  | LKNSBlockTxsAbandoned
   | LKNSFetchBodyArrival
   | LKNSFetchTxsArrival
   | LKNSBodyHits
@@ -1945,8 +2031,10 @@ leiosKernelNSOf :: TraceLeiosKernel -> LeiosKernelNS
 leiosKernelNSOf = \case
   MkTraceLeiosKernel{} -> LKNSMsg
   TraceLeiosBlockAcquired{} -> LKNSBlockAcquired
+  TraceLeiosBlockAbandoned{} -> LKNSBlockAbandoned
   TraceLeiosBlockPointMissing{} -> LKNSBlockPointMissing
   TraceLeiosBlockTxsAcquired{} -> LKNSBlockTxsAcquired
+  TraceLeiosBlockTxsAbandoned{} -> LKNSBlockTxsAbandoned
   TraceLeiosFetchBodyArrival{} -> LKNSFetchBodyArrival
   TraceLeiosFetchTxsArrival{} -> LKNSFetchTxsArrival
   TraceLeiosBodyHits{} -> LKNSBodyHits
@@ -1980,8 +2068,18 @@ leiosKernelNSInfo :: LeiosKernelNS -> LeiosNSInfo
 leiosKernelNSInfo = \case
   LKNSMsg -> LeiosNSInfo ["Msg"] LSInfo []
   LKNSBlockAcquired -> LeiosNSInfo ["BlockAcquired"] LSInfo []
+  LKNSBlockAbandoned ->
+    LeiosNSInfo
+      ["BlockAbandoned"]
+      LSWarning
+      [("leiosBodiesAbandoned", "LeiosFetch: bodies whose LeiosDb write did not land")]
   LKNSBlockPointMissing -> LeiosNSInfo ["BlockPointMissing"] LSWarning []
   LKNSBlockTxsAcquired -> LeiosNSInfo ["BlockTxsAcquired"] LSInfo []
+  LKNSBlockTxsAbandoned ->
+    LeiosNSInfo
+      ["BlockTxsAbandoned"]
+      LSWarning
+      [("leiosBlockTxsAbandoned", "LeiosFetch: tx batches whose LeiosDb write did not land")]
   LKNSFetchBodyArrival ->
     LeiosNSInfo
       ["FetchBodyArrival"]
@@ -2086,8 +2184,12 @@ traceLeiosKernelForHuman :: TraceLeiosKernel -> Text
 traceLeiosKernelForHuman = \case
   MkTraceLeiosKernel msg -> "LeiosKernel: " <> T.pack msg
   TraceLeiosBlockAcquired pt age -> "EB body acquired: " <> T.pack (show pt) <> " age=" <> showT age
+  TraceLeiosBlockAbandoned pt ->
+    "EB body write did not land, body fetchable again: " <> T.pack (show pt)
   TraceLeiosBlockPointMissing pt -> "EB point missing on body acquisition: " <> T.pack (show pt)
   TraceLeiosBlockTxsAcquired pt age -> "EB txs acquired: " <> T.pack (show pt) <> " age=" <> showT age
+  TraceLeiosBlockTxsAbandoned pt ->
+    "EB txs write did not land, txs fetchable again: " <> T.pack (show pt)
   TraceLeiosFetchBodyArrival fab ->
     "LeiosFetch EB body arrival (bytes): invalid="
       <> showT (fabInvalid fab)

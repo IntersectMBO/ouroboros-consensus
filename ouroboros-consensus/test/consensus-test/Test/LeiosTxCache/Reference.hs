@@ -124,7 +124,7 @@ body e ts idx =
         (mkEbHash e)
         (TestBody (map mkTxHash ts))
         ()
-        (\() _ _ _ -> ())
+        (\() _ _ _ _ -> ())
         idx
     )
 

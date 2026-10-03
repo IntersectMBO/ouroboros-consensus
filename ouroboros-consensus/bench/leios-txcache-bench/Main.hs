@@ -284,7 +284,7 @@ runBench (BenchTarget name popCache queryCache syncAfterPop coolBatch) = do
     timedNs $
       forM_ ebData $ \(ebh, rbh, slot, txhs, bs) -> do
         _ <- insertAnnouncement popCache slot rbh ebh
-        _ <- insertBody popCache ebh (BenchBody bs) () (\() _ _ _ -> ())
+        _ <- insertBody popCache ebh (BenchBody bs) () (\() _ _ _ _ -> ())
         withLockedInsertUnappliedTx popCache $ \z step ->
           foldM (\ !acc txh -> step acc txh 0 ()) z txhs
   allocAfter <- bytesAllocated

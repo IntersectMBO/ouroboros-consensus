@@ -1,5 +1,6 @@
 -- | Observational-equivalence test for the mutable 'LeiosTxCache' handle: run
--- the same random op sequence (announcements, bodies, tx inserts) through both
+-- the same random op sequence (announcements, bodies, tx inserts, tx
+-- locations) through both
 -- 'newPureLeiosTxCache' and 'newHashTableLeiosTxCache' and require that they
 -- return the same eviction sets from every announcement and agree on a final
 -- full-domain lookup sweep. Op ranges make the ~128-announcement eviction
@@ -18,7 +19,14 @@ import qualified Data.ByteString as BS
 import qualified Data.List as List
 import Data.Set (Set)
 import Data.Word (Word64, Word8)
-import LeiosDemoTypes (BytesSize, EbHash (..), FetchArrivalBytes, RbHash (..), TxHash (..))
+import LeiosDemoTypes
+  ( BytesSize
+  , EbHash (..)
+  , FetchArrivalBytes
+  , RbHash (..)
+  , TxHash (..)
+  , TxLocation
+  )
 import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..), newPureLeiosTxCache)
 import LeiosTxCache.Optimized (newHashTableLeiosTxCache)
 import Test.LeiosTxCache.Optimized.MutableHashTable (Config (..), genConfig, salt0, salt1)
@@ -79,6 +87,7 @@ data Op
   | OpUnapplied ![Word8]
   | OpApplied ![Word8]
   | OpEvict !Word64
+  | OpSetLocs !Word8 ![(Int, Word8)]
   deriving Show
 
 -- | Apply an op, returning its observable output: the eviction sets for an
@@ -89,12 +98,15 @@ applyOp h op = case op of
   OpAnnounce s r e -> evicted <$> insertAnnouncement h (SlotNo s) (rbhOf r) (ebhOf e)
   OpEvict boundary -> evicted <$> evictOlderThan h (SlotNo boundary)
   OpBody e ts ->
-    insertBody h (ebhOf e) (TestBody (map txhOf ts)) () (\() _ _ _ -> ()) >> pure (Nothing, Nothing)
+    insertBody h (ebhOf e) (TestBody (map txhOf ts)) () (\() _ _ _ _ -> ()) >> pure (Nothing, Nothing)
   OpUnapplied ts ->
     arrival
       <$> withLockedInsertUnappliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) (szOf t) ()) z ts)
   OpApplied ts ->
     withLockedInsertAppliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) ()) z ts)
+      >> pure (Nothing, Nothing)
+  OpSetLocs e offTxs ->
+    setTxLocations h (ebhOf e) [(off, txhOf t) | (off, t) <- offTxs]
       >> pure (Nothing, Nothing)
  where
   evicted x = (Just x, Nothing)
@@ -110,6 +122,28 @@ sweepLookup h txs = withLookupTx h (\look -> mapM (look . txhOf) txs)
 
 sweepBody :: H -> [Word8] -> IO [Maybe TestBody]
 sweepBody h ebs = mapM (lookupBody h . ebhOf) ebs
+
+-- | Observe each tx's durable location the way production now does -- through a
+-- body insert's per-tx callback, the sole location oracle. Announce a throwaway
+-- probe EB over the txs and insert it, collecting the locations it reports. Run
+-- after the op sequence, so the probe's own state churn is unobservable, and
+-- driven identically on both handles so any location disagreement still shows.
+probeEb :: Word8
+probeEb = 255
+
+sweepLoc :: H -> [Word8] -> IO [Maybe TxLocation]
+sweepLoc h txs = do
+  _ <- insertAnnouncement h (SlotNo maxBound) (rbhOf probeEb) (ebhOf probeEb)
+  mb <-
+    insertBody
+      h
+      (ebhOf probeEb)
+      (TestBody (map txhOf txs))
+      []
+      (\acc _off _txh _sz mbLoc -> mbLoc : acc)
+  pure $ case mb of
+    Just (_summary, locs) -> reverse locs
+    Nothing -> map (const Nothing) txs
 
 -- | The EB-hash domain the generators draw from (see 'genOps'): announcements
 -- and bodies use ebs @1..20@.
@@ -127,6 +161,7 @@ genOps txDomain = do
       , (2, OpBody <$> gen 1 20 <*> listOf genTx)
       , (2, OpUnapplied <$> listOf genTx)
       , (2, OpApplied <$> listOf genTx)
+      , (3, OpSetLocs <$> gen 1 20 <*> listOf ((,) <$> chooseInt (0, 50) <*> genTx))
       ]
   genTx :: Gen Word8
   genTx = fromIntegral <$> chooseInt (0, txDomain - 1)
@@ -145,7 +180,14 @@ prop_equiv =
       sweepM <- sweepLookup hm (allTxs (cfgDomain cfg))
       sweepBodyP <- sweepBody hp ebDomain
       sweepBodyM <- sweepBody hm ebDomain
-      pure (resP === resM .&&. sweepP === sweepM .&&. sweepBodyP === sweepBodyM)
+      sweepLocP <- sweepLoc hp (allTxs (cfgDomain cfg))
+      sweepLocM <- sweepLoc hm (allTxs (cfgDomain cfg))
+      pure
+        ( resP === resM
+            .&&. sweepP === sweepM
+            .&&. sweepBodyP === sweepBodyM
+            .&&. sweepLocP === sweepLocM
+        )
  where
   allTxs txDomain = [0 .. fromIntegral (txDomain - 1)]
 
@@ -164,7 +206,14 @@ prop_equivEvict =
     sweepM <- sweepLookup hm allTxs
     sweepBodyP <- sweepBody hp ebDomain
     sweepBodyM <- sweepBody hm ebDomain
-    pure (resP === resM .&&. sweepP === sweepM .&&. sweepBodyP === sweepBodyM)
+    sweepLocP <- sweepLoc hp allTxs
+    sweepLocM <- sweepLoc hm allTxs
+    pure
+      ( resP === resM
+          .&&. sweepP === sweepM
+          .&&. sweepBodyP === sweepBodyM
+          .&&. sweepLocP === sweepLocM
+      )
  where
   tableShift = 8 :: Int -- 256 slots; load factor is deliberately not the point here
   txDomain = 40 :: Int -- << 256, so the table never fills
