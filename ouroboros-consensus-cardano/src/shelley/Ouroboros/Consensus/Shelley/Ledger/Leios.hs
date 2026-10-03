@@ -249,6 +249,10 @@ instance
   -- rejection. See 'LeiosDemoLogic.Announcements.Validate.validateAnnouncementHeader'
   -- for why accepting-but-not-propagating a 'StaleOCIN' announcement is safe.
   validateAnnouncementChainDepState cfg hv _slot tcs = do
+    -- The Leios checks that do not need the header's predecessor. The gap
+    -- between a CertRB and the announcement it certifies does need it, so it
+    -- is left to 'updateChainDepState'; an announcement is not a CertRB.
+    PP.leiosContextFreeHeaderChecks (tickedPraosStateLedgerView tcs) hv
     -- validate the claimed election
     PP.doValidateVRFSignature
       (praosStateEpochNonce cs)
