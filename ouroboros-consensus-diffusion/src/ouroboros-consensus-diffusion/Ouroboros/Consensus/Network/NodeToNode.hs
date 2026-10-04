@@ -501,17 +501,18 @@ mkHandlers
           peerStateVar <- Prim.newMutVar (SlotNo 0, Announcements.emptyPeerState)
           pure $
             leiosNotifyClientPeerPipelined
-              ( atomically $
-                  controlMessageSTM >>= \case
-                    Terminate -> pure (Left ())
-                    _ -> do
-                      -- Gate on the immutable tip being able to forecast to the
-                      -- current wall clock.
-                      Leios.awaitImmTipCanForecastNow
-                        getTopLevelConfig
-                        (ChainDB.getImmutableLedger getChainDB)
-                        (getCurrentSlot getBlockchainTime)
-                      pure $ Right leiosNotifyPipelineDepth
+              -- In STM: the client retries this until either the governor asks
+              -- us to stop or the immutable tip can forecast to now.
+              ( controlMessageSTM >>= \case
+                  Terminate -> pure (Left ())
+                  _ -> do
+                    -- Gate on the immutable tip being able to forecast to the
+                    -- current wall clock.
+                    Leios.awaitImmTipCanForecastNow
+                      getTopLevelConfig
+                      (ChainDB.getImmutableLedger getChainDB)
+                      (getCurrentSlot getBlockchainTime)
+                    pure $ Right leiosNotifyPipelineDepth
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
@@ -641,8 +642,9 @@ mkHandlers
                 else do
                   TVar.Unchecked.writeTVar credits $! n + 1
                   pure LeiosDemoOnlyTestNotify.NotExcessiveRequests
-            next = atomically $ do
-              -- Note that this is in STM.
+            -- Note that this is in STM: 'leiosNotifyServerPeerLookahead' needs
+            -- to compose the retry with its own, so it must not be run here.
+            next = do
               q <- TVar.Unchecked.readTVar queue
               case Seq.viewl q of
                 Seq.EmptyL -> LazySTM.retry
