@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# OPTIONS_GHC -O2 #-}
 
@@ -18,11 +19,11 @@ module LeiosTxCache.Optimized
   ( newHashTableLeiosTxCache
   ) where
 
+import Cardano.Crypto.Hash.Class (PackedBytes (PackedBytes32))
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Bits (unsafeShiftL, unsafeShiftR, (.&.), (.|.))
-import qualified Data.ByteString.Unsafe as BSU
 import qualified Data.Foldable as F
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
@@ -31,7 +32,14 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoTypes (BytesSize, EbHash, FetchArrivalBytes, RbHash, TxHash (..), TxLocation (..))
+import LeiosDemoTypes
+  ( BytesSize
+  , EbHash
+  , FetchArrivalBytes
+  , RbHash
+  , TxHash (..)
+  , TxLocation (..)
+  )
 import LeiosTxCache.API
   ( BodyState (..)
   , EbRingIndex (UnsafeEbRingIndex)
@@ -487,12 +495,9 @@ lookupOne ht txh = do
       | otherwise -> Nothing -- NotYetInserted: referenced but not held
 
 -- | The 32-byte hash as the table's four-word 'HT.Key' (big-endian words).
--- TODO: direct once 'TxHash' is @PackedBytes 32@ rather than a 'ByteString'.
 toKey :: TxHash -> HT.Key
-toKey (MkTxHash bs) = HT.Key (rd 0) (rd 8) (rd 16) (rd 24)
- where
-  rd off = go 0 off (off + 8)
-  go !acc o end
-    | o >= end = acc
-    | otherwise =
-        go ((acc `unsafeShiftL` 8) .|. fromIntegral (BSU.unsafeIndex bs o)) (o + 1) end
+toKey (MkTxHash pb) = case pb of
+  PackedBytes32 w0 w1 w2 w3 -> HT.Key w0 w1 w2 w3
+  _ ->
+    error
+      "toKey: expected the PackedBytes32 constructor, which cardano-crypto-class uses for every PackedBytes 32"

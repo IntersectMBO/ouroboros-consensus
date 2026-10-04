@@ -57,6 +57,7 @@ import Cardano.Crypto.Leios
   , resolveLeiosSeat
   , verifyLeiosCert
   )
+import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Ledger.Core (EraTx, PParams, Tx, TxLevel (TopTx))
@@ -69,12 +70,13 @@ import Cardano.Ledger.Dijkstra.PParams
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
 import Cardano.Slotting.Time (RelativeTime, SlotLength, slotLengthToMillisec)
-import Codec.Serialise (Serialise, decode, encode)
+import Codec.Serialise (decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Exception (displayException)
+import Control.Monad (when)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
@@ -115,7 +117,12 @@ import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
-import LeiosDemoTypes.LeiosJobs as TxHashReexports (TxHash (..), prettyTxHash)
+import LeiosDemoTypes.LeiosJobs as TxHashReexports
+  ( TxHash (..)
+  , mkTxHash
+  , prettyTxHash
+  , txHashBytes
+  )
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
 import Lens.Micro ((^.))
@@ -146,21 +153,31 @@ newtype PeerId a = MkPeerId a
 type HASH = Hash.Blake2b_256
 
 -- | Hash of an Endorser Block
-newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
-  deriving newtype (Eq, Ord, NoThunks, Serialise)
+--
+-- The fixed length makes decoding reject a peer-supplied hash of any other
+-- length.
+newtype EbHash = MkEbHash (PackedBytes 32)
+  deriving newtype (Eq, Ord, NoThunks)
   deriving stock Generic
 
 instance Show EbHash where
   show = prettyEbHash
 
+ebHashBytes :: EbHash -> ByteString
+ebHashBytes (MkEbHash bytes) = unpackPinnedBytes bytes
+
+-- | Fails unless the input is exactly 32 bytes.
+mkEbHash :: MonadFail m => ByteString -> m EbHash
+mkEbHash = fmap MkEbHash . packByteString
+
 encodeEbHash :: EbHash -> Encoding
-encodeEbHash (MkEbHash bytes) = CBOR.encodeBytes bytes
+encodeEbHash (MkEbHash bytes) = encodeFixedSized bytes
 
 decodeEbHash :: Decoder s EbHash
-decodeEbHash = MkEbHash <$> CBOR.decodeBytes
+decodeEbHash = MkEbHash <$> decodeFixedSized
 
 prettyEbHash :: EbHash -> String
-prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
+prettyEbHash = BS8.unpack . BS16.encode . ebHashBytes
 
 -- | Hash of a Ranking Block
 --
@@ -177,8 +194,14 @@ instance Show RbHash where
 encodeRbHash :: RbHash -> Encoding
 encodeRbHash (MkRbHash bytes) = CBOR.encodeBytes bytes
 
+-- | Fails unless the hash is exactly 32 bytes.
 decodeRbHash :: Decoder s RbHash
-decodeRbHash = MkRbHash <$> CBOR.decodeBytes
+decodeRbHash = do
+  bytes <- CBOR.decodeBytes
+  when (BS.length bytes /= 32) $
+    fail $
+      "RbHash: " <> show (BS.length bytes) <> " bytes, expected 32"
+  pure $ MkRbHash bytes
 
 prettyRbHash :: RbHash -> String
 prettyRbHash (MkRbHash bytes) = BS8.unpack (BS16.encode bytes)
@@ -208,8 +231,8 @@ instance SignableRepresentation LeiosPoint where
         <> encodeEbHash point.pointEbHash
 
 prettyLeiosPoint :: LeiosPoint -> String
-prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
-  "(" ++ show slotNo ++ ", " ++ BS8.unpack (BS16.encode bytes) ++ ")"
+prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) ebHash) =
+  "(" ++ show slotNo ++ ", " ++ prettyEbHash ebHash ++ ")"
 
 encodeLeiosPoint :: LeiosPoint -> Encoding
 encodeLeiosPoint (MkLeiosPoint ebSlot ebHash) =
@@ -307,13 +330,13 @@ data EbAnnouncement = EbAnnouncement
 encodeEbAnnouncement :: EbAnnouncement -> Encoding
 encodeEbAnnouncement ebAnn =
   CBOR.encodeListLen 2
-    <> encode (ebAnnouncementHash ebAnn)
+    <> encodeEbHash (ebAnnouncementHash ebAnn)
     <> encode (ebAnnouncementSize ebAnn)
 
 decodeEbAnnouncement :: Decoder s EbAnnouncement
 decodeEbAnnouncement = do
   enforceSize "EbAnnouncement" 2
-  EbAnnouncement <$> decode <*> decode
+  EbAnnouncement <$> decodeEbHash <*> decode
 
 -- * Fetch logic types
 
@@ -1028,7 +1051,7 @@ decodeLeiosTx =
 
 hashLeiosTx :: LeiosTx -> TxHash
 hashLeiosTx =
-  MkTxHash . Hash.hashToBytes . Hash.hashWith @HASH cbor
+  MkTxHash . Hash.hashToPackedBytes . Hash.hashWith @HASH cbor
 
 -- * Endorser Block
 
@@ -1070,7 +1093,7 @@ forgeLeiosEb slot txs =
       & toList
 
   hashTx =
-    MkTxHash . Hash.hashToBytes . Hash.hashWithSerialiser @HASH toCBOR
+    MkTxHash . Hash.hashToPackedBytes . Hash.hashWithSerialiser @HASH toCBOR
 
   serializedTxs =
     [ (hashTx tx, byteSize, bytes)
@@ -1089,7 +1112,7 @@ leiosEbBodyItems eb =
 
 hashLeiosEb :: LeiosEb -> EbHash
 hashLeiosEb =
-  MkEbHash . Hash.hashToBytes . Hash.hashWith @HASH id . serialize' . encodeLeiosEb
+  MkEbHash . Hash.hashToPackedBytes . Hash.hashWith @HASH id . serialize' . encodeLeiosEb
 
 -- | Encode a 'LeiosEb' with all its items. Must not add more overhead than
 -- 'encodeLeiosEbMaxFramingSize' and individual item encodings must match
@@ -1097,8 +1120,8 @@ hashLeiosEb =
 encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb v) =
   foldl
-    ( \acc (MkTxHash bytes, txBytesSize) ->
-        acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
+    ( \acc (MkTxHash txHash, txBytesSize) ->
+        acc <> encodeFixedSized txHash <> CBOR.encodeWord32 txBytesSize
     )
     (CBOR.encodeMapLen $ fromIntegral $ length v)
     v
@@ -1152,12 +1175,13 @@ cborIntBytesSize n
 decodeLeiosEb :: Decoder s LeiosEb
 decodeLeiosEb = do
   n <- CBOR.decodeMapLen
-  -- TODO does V.generateM allocate exacly one buffer, via the hint?
-  --
-  -- If not, we could do so manually by relying on the fact that Decoder is
-  -- ultimate in ST.
+  -- The count comes from the peer. Reject a count outside the bounds before
+  -- we decode any item.
+  when (n < 1 || n > maxTxsPerEb) $
+    fail $
+      "LeiosEb: item count " <> show n <> " not in [1, " <> show maxTxsPerEb <> "]"
   fmap MkLeiosEb $ V.generateM n $ \_i -> do
-    (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
+    (,) <$> (fmap MkTxHash decodeFixedSized) <*> CBOR.decodeWord32
 
 -- | An EB body as its canonical CBOR bytes: the @b@ stored in the
 -- 'LeiosTxCache' index. Its 'LeiosTxCache.API.ReferencesTxsByHash' instance

@@ -38,7 +38,12 @@ import Data.Word (Word64)
 import Foreign.C.Types (CInt (..))
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats
-import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
+import LeiosDemoTypes
+  ( EbHash
+  , RbHash (..)
+  , TxHash
+  , txHashBytes
+  )
 import LeiosTxCache
 import LeiosTxCache.Bench.SQLite
   ( newSQLiteLeiosTxCacheForPopulation
@@ -52,6 +57,7 @@ import System.IO (IOMode (ReadMode, ReadWriteMode), hFlush, openFile, stdout)
 import System.Mem (performMajorGC)
 import System.Posix.IO (closeFd, handleToFd)
 import System.Posix.Types (COff (..))
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
 -- * Configuration
 
@@ -95,7 +101,7 @@ instance ReferencesTxsByHash BenchBody where
       | i >= n = acc
       | otherwise =
           go
-            (f acc (MkTxHash (BS.copy (BS.take 32 (BS.drop (i * 32) bs)))) dummySize)
+            (f acc (unsafeTxHashFromBytes (BS.take 32 (BS.drop (i * 32) bs))) dummySize)
             (i + 1)
     dummySize = 0
 
@@ -270,9 +276,9 @@ runBench (BenchTarget name popCache queryCache syncAfterPop coolBatch) = do
   putStr "\ngenerating data... " >> hFlush stdout
   ebData <-
     forM [0 .. numEbs - 1] $ \e -> do
-      let !txhs = force $ V.generate txsPerEb (\i -> mkTxHash (e * txsPerEb + i))
-          !bs = BS.concat [b | MkTxHash b <- V.toList txhs]
-      pure (mkEbHash e, mkRbHash e, SlotNo (fromIntegral e), txhs, bs)
+      let !txhs = force $ V.generate txsPerEb (\i -> txhOf (e * txsPerEb + i))
+          !bs = BS.concat (map txHashBytes (V.toList txhs))
+      pure (ebhOf e, rbhOf e, SlotNo (fromIntegral e), txhs, bs)
   _ <- evaluate (length ebData)
   putStrLn "done"
 
@@ -392,14 +398,14 @@ bytes32 k =
         z2 = (z1 `Bits.xor` (z1 `Bits.shiftR` 27)) * 0x94d049bb133111eb
      in z2 `Bits.xor` (z2 `Bits.shiftR` 31)
 
-mkTxHash :: Int -> TxHash
-mkTxHash = MkTxHash . bytes32 . fromIntegral
+txhOf :: Int -> TxHash
+txhOf = unsafeTxHashFromBytes . bytes32 . fromIntegral
 
-mkEbHash :: Int -> EbHash
-mkEbHash = MkEbHash . bytes32 . fromIntegral
+ebhOf :: Int -> EbHash
+ebhOf = unsafeEbHashFromBytes . bytes32 . fromIntegral
 
-mkRbHash :: Int -> RbHash
-mkRbHash = MkRbHash . bytes32 . fromIntegral
+rbhOf :: Int -> RbHash
+rbhOf = MkRbHash . bytes32 . fromIntegral
 
 -- | The resident EB whose txs serve as the "hit" probe hashes.
 probeEb :: Int
@@ -411,8 +417,8 @@ mkProbe :: Int -> V.Vector TxHash
 mkProbe pct =
   V.generate txsPerEb $ \i ->
     if i `mod` 5 < pct `div` 20
-      then mkTxHash (probeEb * txsPerEb + i) -- resident: a hit
-      else mkTxHash (numEbs * txsPerEb + i) -- never inserted: a miss
+      then txhOf (probeEb * txsPerEb + i) -- resident: a hit
+      else txhOf (numEbs * txsPerEb + i) -- never inserted: a miss
 
 -- * Helpers
 

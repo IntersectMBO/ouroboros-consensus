@@ -56,6 +56,7 @@ import LeiosDemoDb
   , batchRetrieveTxs
   , lookupEbBody
   )
+import LeiosDemoException (throwLeiosDbException)
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -269,6 +270,17 @@ msgLeiosBlockRequest tracer leiosContext MkLeiosPoint{pointEbHash} = do
   n <- traceException tracer TraceLeiosPeerDbException $ do
     -- get the EB items using new db
     items <- lookupEbBody leiosDbReader pointEbHash
+    -- A database written by an older build can hold a body with more rows
+    -- than the buffer has room for.
+    let rowCount = length items
+    when (rowCount > maxTxsPerEb) $
+      throwLeiosDbException $
+        "EB "
+          <> Leios.prettyEbHash pointEbHash
+          <> " has "
+          <> show rowCount
+          <> " rows, more than maxTxsPerEb = "
+          <> show maxTxsPerEb
     let loop !i [] = pure i
         loop !i ((txHash, txBytesSize) : rest) = do
           MV.write buf i (txHash, txBytesSize)
@@ -286,19 +298,20 @@ msgLeiosBlockTxsRequest ::
   m (V.Vector LeiosTx)
 msgLeiosBlockTxsRequest _tracer leiosContext point bitmaps = do
   let MkLeiosFetchContext{leiosDbReader, leiosEbTxsBuffer = buf} = leiosContext
-  do
-    let idxs = map fst bitmaps
-    let idxLimit = maxTxsPerEb `div` 64
-    when (any (== 0) $ map snd bitmaps) $ do
-      error "A bitmap is zero"
-    when (flip any idxs (> fromIntegral idxLimit)) $ do
-      error $ "An offset exceeds the theoretical limit " <> show idxLimit
-    when (not $ and $ zipWith (<) idxs (drop 1 idxs)) $ do
-      error "Offsets not strictly ascending"
   let txOffsets = bitmapOffsets bitmaps
   n <- do
     -- Use new db to batch retrieve transactions
     results <- batchRetrieveTxs leiosDbReader point.pointEbHash txOffsets
+    -- See the same check in 'msgLeiosBlockRequest'.
+    let rowCount = length results
+    when (rowCount > maxTxsPerEb) $
+      throwLeiosDbException $
+        "EB "
+          <> Leios.prettyEbHash point.pointEbHash
+          <> " has "
+          <> show rowCount
+          <> " requested rows, more than maxTxsPerEb = "
+          <> show maxTxsPerEb
     -- Process results and write to buffer
     -- REVIEW: why a mutable vector?
     let loop !i [] = pure i

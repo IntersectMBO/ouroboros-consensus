@@ -124,7 +124,9 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , LeiosPoint (..)
   , TxHash (..)
+  , ebHashBytes
   , encodeLeiosEbSize
+  , txHashBytes
   )
 import Options.Applicative hiding (action)
 import System.Directory (copyFile, doesFileExist)
@@ -138,6 +140,7 @@ import System.IO
   , stdout
   )
 import System.IO.Temp (withSystemTempDirectory)
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 import Text.Printf (printf)
 
 main :: IO ()
@@ -422,8 +425,9 @@ populateDb opts db =
   withWriter db $ \writer ->
     forM [0 .. populationEbs - 1] $ \ebIdx -> do
       let slot = fromIntegral (ebIdx * slotsPerEb) :: Word64
-          MkEbHash hashBytes = genEbHash ebIdx
-          point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
+          ebHash = genEbHash ebIdx
+          hashBytes = ebHashBytes ebHash
+          point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
           txs = [(off, genTx opts h) | (off, h) <- zip [0 ..] (ebTxHashesFor opts ebIdx)]
       pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
@@ -445,7 +449,7 @@ dropTxIndex path = do
 
 -- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
 genEbHash :: Int -> EbHash
-genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genEbHash i = unsafeEbHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
@@ -473,19 +477,21 @@ genEb opts ebIdx =
 
 -- | Unique 'TxHash': \"txHash:<ebIdx>:<txIdx>\" padded to 32 bytes with zeros.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx txIdx = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
 -- | Shared-pool 'TxHash': \"sharedTx:<poolIdx>\" padded to 32 bytes with zeros.
 genSharedTxHash :: Int -> TxHash
-genSharedTxHash j = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genSharedTxHash j = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("sharedTx:" <> show j)
 
 -- | Generate a TX payload: the TX hash bytes padded with zeros to 'optTxBytes'.
 genTx :: Opts -> TxHash -> BS.ByteString
-genTx opts (MkTxHash h) = h <> BS.replicate (optTxBytes opts - BS.length h) 0
+genTx opts txHash = h <> BS.replicate (optTxBytes opts - BS.length h) 0
+ where
+  h = txHashBytes txHash
 
 -- * Measurement phases
 
@@ -573,7 +579,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
             timed $
               leiosDbPromoteToImmutable
                 db
-                [MkLeiosPoint (SlotNo s) (MkEbHash h) | (s, h) <- take nPromote due]
+                [MkLeiosPoint (SlotNo s) (unsafeEbHashFromBytes h) | (s, h) <- take nPromote due]
           promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain

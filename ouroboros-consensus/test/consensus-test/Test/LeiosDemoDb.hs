@@ -91,6 +91,7 @@ import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
 tests :: TestTree
 tests =
@@ -243,7 +244,7 @@ mkTestGroups impl =
 -- | Generate a random EbHash (32 random bytes).
 -- With 256 bits of randomness, collisions are practically impossible.
 genEbHash :: Gen EbHash
-genEbHash = MkEbHash . BS.pack <$> vector 32
+genEbHash = unsafeEbHashFromBytes . BS.pack <$> vector 32
 
 -- | Generate a random RbHash (32 random bytes).
 -- With 256 bits of randomness, collisions are practically impossible.
@@ -252,7 +253,7 @@ genRbHash = MkRbHash . BS.pack <$> vector 32
 
 -- | Generate a random TxHash (32 random bytes).
 genTxHash :: Gen TxHash
-genTxHash = MkTxHash . BS.pack <$> vector 32
+genTxHash = unsafeTxHashFromBytes . BS.pack <$> vector 32
 
 -- | Generate a random SlotNo.
 genSlotNo :: Gen SlotNo
@@ -289,11 +290,11 @@ txBytesFor eb off = BS.replicate (fromIntegral sz) (fromIntegral off)
 
 -- | Create a simple test EbHash from a seed byte.
 mkTestEbHash :: Word -> EbHash
-mkTestEbHash seed = MkEbHash $ BS.pack $ replicate 32 (fromIntegral seed)
+mkTestEbHash seed = unsafeEbHashFromBytes $ BS.pack $ replicate 32 (fromIntegral seed)
 
 -- | Create a simple test TxHash from a seed byte.
 mkTestTxHash :: Word -> TxHash
-mkTestTxHash seed = MkTxHash $ BS.pack $ replicate 32 (fromIntegral seed)
+mkTestTxHash seed = unsafeTxHashFromBytes $ BS.pack $ replicate 32 (fromIntegral seed)
 
 -- | Create a test LeiosPoint.
 mkTestPoint :: SlotNo -> Word -> LeiosPoint

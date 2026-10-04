@@ -21,10 +21,10 @@ import Data.Set (Set)
 import Data.Word (Word64, Word8)
 import LeiosDemoTypes
   ( BytesSize
-  , EbHash (..)
+  , EbHash
   , FetchArrivalBytes
   , RbHash (..)
-  , TxHash (..)
+  , TxHash
   , TxLocation
   )
 import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..), newPureLeiosTxCache)
@@ -48,6 +48,7 @@ import Test.Tasty.QuickCheck
   , (.&&.)
   , (===)
   )
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
 tests :: TestTree
 tests =
@@ -71,12 +72,11 @@ instance ReferencesTxsByHash TestBody where
    where
     dummySize = 0
 
--- A 32-byte tx hash (the mutable table reads exactly 32 bytes).
 txhOf :: Word8 -> TxHash
-txhOf n = MkTxHash (BS.pack (n : replicate 31 0))
+txhOf n = unsafeTxHashFromBytes $ BS.pack (n : replicate 31 0)
 
 ebhOf :: Word8 -> EbHash
-ebhOf n = MkEbHash (BS.pack [n])
+ebhOf n = unsafeEbHashFromBytes $ BS.pack (n : replicate 31 0)
 
 rbhOf :: Word8 -> RbHash
 rbhOf n = MkRbHash (BS.pack [n])

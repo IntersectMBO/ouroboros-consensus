@@ -15,7 +15,11 @@ import qualified Data.Map.NonEmpty as NEMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Word (Word64, Word8)
-import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
+import LeiosDemoTypes
+  ( EbHash
+  , RbHash (..)
+  , TxHash
+  )
 import LeiosTxCache.API (defaultLeiosTxCacheShift)
 import LeiosTxCache.Reference
 import Test.Tasty (TestTree, adjustOption, testGroup)
@@ -37,6 +41,7 @@ import Test.Tasty.QuickCheck
   , vectorOf
   , (===)
   )
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
 tests :: TestTree
 tests =
@@ -103,26 +108,26 @@ instance ReferencesTxsByHash TestBody where
 empty :: Idx
 empty = emptyLeiosTxCacheIndex
 
-mkTxHash :: Word8 -> TxHash
-mkTxHash w = MkTxHash (BS.pack [w])
+txhOf :: Word8 -> TxHash
+txhOf w = unsafeTxHashFromBytes $ BS.pack (w : replicate 31 0)
 
-mkEbHash :: Word8 -> EbHash
-mkEbHash w = MkEbHash (BS.pack [w])
+ebhOf :: Word8 -> EbHash
+ebhOf w = unsafeEbHashFromBytes $ BS.pack (w : replicate 31 0)
 
-mkRbHash :: Word8 -> RbHash
-mkRbHash w = MkRbHash (BS.pack [w])
+rbhOf :: Word8 -> RbHash
+rbhOf w = MkRbHash (BS.pack [w])
 
 -- | Insert an announcement, discarding the evicted sets.
 ann :: Word64 -> Word8 -> Word8 -> Idx -> Idx
-ann s r e idx = let (idx', _, _) = insertAnnouncement (SlotNo s) (mkRbHash r) (mkEbHash e) idx in idx'
+ann s r e idx = let (idx', _, _) = insertAnnouncement (SlotNo s) (rbhOf r) (ebhOf e) idx in idx'
 
 body :: Word8 -> [Word8] -> Idx -> Idx
 body e ts idx =
   fst
     ( insertBody
         (2 ^ defaultLeiosTxCacheShift)
-        (mkEbHash e)
-        (TestBody (map mkTxHash ts))
+        (ebhOf e)
+        (TestBody (map txhOf ts))
         ()
         (\() _ _ _ _ -> ())
         idx
@@ -134,13 +139,13 @@ annN n idx0 =
   List.foldl' (\idx i -> ann (fromIntegral i) (fromIntegral i) (fromIntegral i) idx) idx0 [1 .. n]
 
 bodyRC :: Word8 -> Idx -> Maybe RefCount
-bodyRC e idx = rc <$> Map.lookup (mkEbHash e) (bodyState idx)
+bodyRC e idx = rc <$> Map.lookup (ebhOf e) (bodyState idx)
  where
   rc (BodyNotYetInserted r) = r
   rc (BodyAlreadyInserted r _) = r
 
 txRC :: Word8 -> Idx -> Maybe RefCount
-txRC t idx = rc <$> Map.lookup (mkTxHash t) (txState idx)
+txRC t idx = rc <$> Map.lookup (txhOf t) (txState idx)
  where
   rc (TxNotYetInserted r) = r
   rc (TxAlreadyInserted r _) = r
@@ -155,8 +160,8 @@ test_annOne = bodyRC 1 (ann 1 1 1 empty) @?= Just (MkRefCount 1)
 
 test_annDup :: Assertion
 test_annDup = do
-  let (idx1, _, _) = insertAnnouncement (SlotNo 1) (mkRbHash 1) (mkEbHash 1) empty
-      (idx2, evEbs, evTxs) = insertAnnouncement (SlotNo 1) (mkRbHash 1) (mkEbHash 1) idx1
+  let (idx1, _, _) = insertAnnouncement (SlotNo 1) (rbhOf 1) (ebhOf 1) empty
+      (idx2, evEbs, evTxs) = insertAnnouncement (SlotNo 1) (rbhOf 1) (ebhOf 1) idx1
   (bodyRC 1 idx2, evEbs, evTxs) @?= (Just (MkRefCount 1), Set.empty, Set.empty)
 
 test_annTwo :: Assertion
@@ -169,7 +174,7 @@ test_annTwo = bodyRC 1 (ann 2 2 1 (ann 1 1 1 empty)) @?= Just (MkRefCount 2)
 test_body :: Assertion
 test_body = do
   let idx = body 1 [10, 11] (ann 1 1 1 empty)
-  (txRC 10 idx, txRC 11 idx, lookupTx (mkTxHash 10) idx)
+  (txRC 10 idx, txRC 11 idx, lookupTx (txhOf 10) idx)
     @?= (Just (MkRefCount 1), Just (MkRefCount 1), Nothing)
 
 test_bodyUnannounced :: Assertion
@@ -179,23 +184,23 @@ test_bodyIdempotent :: Assertion
 test_bodyIdempotent = txRC 10 (body 1 [10] (body 1 [10] (ann 1 1 1 empty))) @?= Just (MkRefCount 1)
 
 test_lookupBodyUntracked :: Assertion
-test_lookupBodyUntracked = lookupBody (mkEbHash 1) empty @?= Nothing
+test_lookupBodyUntracked = lookupBody (ebhOf 1) empty @?= Nothing
 
 -- | Announced but body not inserted ('BodyNotYetInserted') reads as 'Nothing'.
 test_lookupBodyAnnouncedOnly :: Assertion
-test_lookupBodyAnnouncedOnly = lookupBody (mkEbHash 1) (ann 1 1 1 empty) @?= Nothing
+test_lookupBodyAnnouncedOnly = lookupBody (ebhOf 1) (ann 1 1 1 empty) @?= Nothing
 
 test_lookupBodyInserted :: Assertion
 test_lookupBodyInserted =
-  lookupBody (mkEbHash 1) (body 1 [10, 11] (ann 1 1 1 empty))
-    @?= Just (TestBody [mkTxHash 10, mkTxHash 11])
+  lookupBody (ebhOf 1) (body 1 [10, 11] (ann 1 1 1 empty))
+    @?= Just (TestBody [txhOf 10, txhOf 11])
 
 -- | Evicting the EB (its slot falls below the boundary) drops its body too.
 test_lookupBodyEvicted :: Assertion
 test_lookupBodyEvicted = do
   let base = body 1 [10] (ann 1 1 1 empty)
       (idx', _, _) = evictOlderThan (SlotNo 2) base
-  lookupBody (mkEbHash 1) idx' @?= Nothing
+  lookupBody (ebhOf 1) idx' @?= Nothing
 
 {-------------------------------------------------------------------------------
   Txs
@@ -203,23 +208,23 @@ test_lookupBodyEvicted = do
 
 test_unapplied :: Assertion
 test_unapplied =
-  lookupTx (mkTxHash 10) (fst (insertUnappliedTx (mkTxHash 10) 7 (body 1 [10] (ann 1 1 1 empty))))
+  lookupTx (txhOf 10) (fst (insertUnappliedTx (txhOf 10) 7 (body 1 [10] (ann 1 1 1 empty))))
     @?= Just (Left 7)
 
 test_applied :: Assertion
 test_applied =
-  lookupTx (mkTxHash 10) (insertAppliedTx (mkTxHash 10) 9 (body 1 [10] (ann 1 1 1 empty)))
+  lookupTx (txhOf 10) (insertAppliedTx (txhOf 10) 9 (body 1 [10] (ann 1 1 1 empty)))
     @?= Just (Right 9)
 
 test_txUnreferenced :: Assertion
 test_txUnreferenced =
-  lookupTx (mkTxHash 10) (fst (insertUnappliedTx (mkTxHash 10) 7 empty)) @?= Nothing
+  lookupTx (txhOf 10) (fst (insertUnappliedTx (txhOf 10) 7 empty)) @?= Nothing
 
 test_preserveRc :: Assertion
 test_preserveRc = do
   let idx0 = body 2 [10] (body 1 [10] (ann 2 2 2 (ann 1 1 1 empty)))
-      idx = fst (insertUnappliedTx (mkTxHash 10) 7 idx0)
-  (txRC 10 idx, lookupTx (mkTxHash 10) idx) @?= (Just (MkRefCount 2), Just (Left 7))
+      idx = fst (insertUnappliedTx (txhOf 10) 7 idx0)
+  (txRC 10 idx, lookupTx (txhOf 10) idx) @?= (Just (MkRefCount 2), Just (Left 7))
 
 {-------------------------------------------------------------------------------
   Eviction (at maxAnnouncementCount = 128)
@@ -229,23 +234,23 @@ test_evict :: Assertion
 test_evict = do
   let base = body 1 [200] (annN maxAnnouncementCount empty)
       (idx', evEbs, evTxs) =
-        insertAnnouncement (SlotNo 129) (mkRbHash 129) (mkEbHash 129) base
+        insertAnnouncement (SlotNo 129) (rbhOf 129) (ebhOf 129) base
   (evEbs, evTxs, bodyRC 1 idx', txRC 200 idx')
-    @?= (Set.singleton (mkEbHash 1), Set.singleton (mkTxHash 200), Nothing, Nothing)
+    @?= (Set.singleton (ebhOf 1), Set.singleton (txhOf 200), Nothing, Nothing)
 
 test_evictBodyless :: Assertion
 test_evictBodyless = do
   let (_, evEbs, evTxs) =
-        insertAnnouncement (SlotNo 129) (mkRbHash 129) (mkEbHash 129) (annN maxAnnouncementCount empty)
-  (evEbs, evTxs) @?= (Set.singleton (mkEbHash 1), Set.empty)
+        insertAnnouncement (SlotNo 129) (rbhOf 129) (ebhOf 129) (annN maxAnnouncementCount empty)
+  (evEbs, evTxs) @?= (Set.singleton (ebhOf 1), Set.empty)
 
 test_evictShared :: Assertion
 test_evictShared = do
   let base = body 2 [200] (body 1 [200] (annN maxAnnouncementCount empty))
       (idx', evEbs, evTxs) =
-        insertAnnouncement (SlotNo 129) (mkRbHash 129) (mkEbHash 129) base
+        insertAnnouncement (SlotNo 129) (rbhOf 129) (ebhOf 129) base
   (evEbs, evTxs, txRC 200 idx')
-    @?= (Set.singleton (mkEbHash 1), Set.empty, Just (MkRefCount 1))
+    @?= (Set.singleton (ebhOf 1), Set.empty, Just (MkRefCount 1))
 
 -- | EBs 1\/2\/3 at slots 1\/2\/3, each with a body; 'evictOlderThan' 3 drops the
 -- two below slot 3, cascading their txs, and keeps the one at slot 3.
@@ -260,8 +265,8 @@ test_evictOlderThan = do
     , txRC 10 idx'
     , txRC 30 idx'
     )
-    @?= ( Set.fromList [mkEbHash 1, mkEbHash 2]
-        , Set.fromList [mkTxHash 10, mkTxHash 20]
+    @?= ( Set.fromList [ebhOf 1, ebhOf 2]
+        , Set.fromList [txhOf 10, txhOf 20]
         , Nothing
         , Just (MkRefCount 1)
         , Nothing
@@ -273,7 +278,7 @@ test_evictOlderThanExclusive :: Assertion
 test_evictOlderThanExclusive = do
   let base = body 3 [30] (body 2 [20] (body 1 [10] (annN 3 empty)))
       (_, evEbs, evTxs) = evictOlderThan (SlotNo 2) base
-  (evEbs, evTxs) @?= (Set.singleton (mkEbHash 1), Set.singleton (mkTxHash 10))
+  (evEbs, evTxs) @?= (Set.singleton (ebhOf 1), Set.singleton (txhOf 10))
 
 -- | A boundary at or below the oldest slot evicts nothing.
 test_evictOlderThanNone :: Assertion
@@ -288,14 +293,14 @@ test_evictOlderThanWholeSlot :: Assertion
 test_evictOlderThanWholeSlot = do
   let base = ann 2 3 3 (ann 1 2 2 (ann 1 1 1 empty))
       (idx', evEbs, _) = evictOlderThan (SlotNo 2) base
-  (evEbs, bodyRC 3 idx') @?= (Set.fromList [mkEbHash 1, mkEbHash 2], Just (MkRefCount 1))
+  (evEbs, bodyRC 3 idx') @?= (Set.fromList [ebhOf 1, ebhOf 2], Just (MkRefCount 1))
 
 -- | 'evictOlderThan' records the boundary; a later announcement strictly below it
 -- is silently ignored (the cache has already been pruned past that slot).
 test_prunedIgnoresOlderInsert :: Assertion
 test_prunedIgnoresOlderInsert = do
   let (pruned, _, _) = evictOlderThan (SlotNo 5) (annN 10 empty)
-      (idx', evEbs, evTxs) = insertAnnouncement (SlotNo 4) (mkRbHash 40) (mkEbHash 40) pruned
+      (idx', evEbs, evTxs) = insertAnnouncement (SlotNo 4) (rbhOf 40) (ebhOf 40) pruned
   (announcementCount idx', bodyRC 40 idx', evEbs, evTxs)
     @?= (announcementCount pruned, Nothing, Set.empty, Set.empty)
 
@@ -304,7 +309,7 @@ test_prunedIgnoresOlderInsert = do
 test_prunedAllowsBoundaryInsert :: Assertion
 test_prunedAllowsBoundaryInsert = do
   let (pruned, _, _) = evictOlderThan (SlotNo 5) (annN 10 empty)
-      (idx', _, _) = insertAnnouncement (SlotNo 5) (mkRbHash 55) (mkEbHash 55) pruned
+      (idx', _, _) = insertAnnouncement (SlotNo 5) (rbhOf 55) (ebhOf 55) pruned
   bodyRC 55 idx' @?= Just (MkRefCount 1)
 
 -- | The pruned slot is monotone: a later, lower 'evictOlderThan' boundary does not
@@ -313,7 +318,7 @@ test_prunedSlotMonotone :: Assertion
 test_prunedSlotMonotone = do
   let (p1, _, _) = evictOlderThan (SlotNo 5) (annN 10 empty)
       (p2, _, _) = evictOlderThan (SlotNo 3) p1
-      (idx', evEbs, evTxs) = insertAnnouncement (SlotNo 4) (mkRbHash 40) (mkEbHash 40) p2
+      (idx', evEbs, evTxs) = insertAnnouncement (SlotNo 4) (rbhOf 40) (ebhOf 40) p2
   (announcementCount idx', bodyRC 40 idx', evEbs, evTxs)
     @?= (announcementCount p2, Nothing, Set.empty, Set.empty)
 
@@ -347,8 +352,8 @@ applyOp :: Op -> Idx -> Idx
 applyOp op = case op of
   OpAnn s r e -> ann s r e
   OpBody e ts -> body e ts
-  OpUnappliedTx t -> fst . insertUnappliedTx (mkTxHash t) 0
-  OpAppliedTx t -> insertAppliedTx (mkTxHash t) 0
+  OpUnappliedTx t -> fst . insertUnappliedTx (txhOf t) 0
+  OpAppliedTx t -> insertAppliedTx (txhOf t) 0
 
 genW :: Num a => Int -> Int -> Gen a
 genW lo hi = fromIntegral <$> chooseInt (lo, hi)

@@ -30,14 +30,24 @@ module LeiosDemoOnlyTestFetch
   , leiosFetchClientPeerPipelined
   , leiosFetchServerPeer
   , toLeiosFetchClientPeerPipelined
+
+    -- * Bitmaps
+
+    -- | Exposed so the wire validation can be tested without going through a
+    -- whole 'Message'. The entry cap stays private: a test that reuses it
+    -- cannot catch it being wrong.
+  , decodeBitmaps
+  , encodeBitmaps
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
+import Control.Monad (when)
 import Control.Monad.Class.MonadST (MonadST)
 import Control.Monad.Primitive (PrimMonad, PrimState)
+import Data.Bits (popCount)
 import Data.ByteString.Lazy (ByteString)
 import Data.Functor ((<&>))
 import Data.Kind (Type)
@@ -218,6 +228,9 @@ timeLimitsLeiosFetch = ProtocolTimeLimits $ \case
 codecLeiosFetch ::
   forall (point :: Type) (eb :: Type) (tx :: Type) m.
   MonadST m =>
+  -- | The most txs an EB can hold. The decoder rejects a larger count before
+  -- it allocates.
+  Int ->
   (point -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s point) ->
   (eb -> CBOR.Encoding) ->
@@ -225,7 +238,7 @@ codecLeiosFetch ::
   (tx -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s tx) ->
   Codec (LeiosFetch point eb tx) CBOR.DeserialiseFailure m ByteString
-codecLeiosFetch encodeP decodeP encodeEb decodeEb encodeTx decodeTx =
+codecLeiosFetch maxTxs encodeP decodeP encodeEb decodeEb encodeTx decodeTx =
   mkCodecCborLazyBS
     (encodeLeiosFetch encodeP encodeEb encodeTx)
     decode
@@ -239,7 +252,7 @@ codecLeiosFetch encodeP decodeP encodeEb decodeEb encodeTx decodeTx =
   decode stok = do
     len <- CBOR.decodeListLen
     key <- CBOR.decodeWord
-    decodeLeiosFetch decodeP decodeEb decodeTx stok len key
+    decodeLeiosFetch maxTxs decodeP decodeEb decodeTx stok len key
 
 encodeLeiosFetch ::
   forall
@@ -292,6 +305,7 @@ decodeLeiosFetch ::
     (st :: LeiosFetch point eb tx)
     s.
   ActiveState st =>
+  Int ->
   (forall s'. CBOR.Decoder s' point) ->
   (forall s'. CBOR.Decoder s' eb) ->
   (forall s'. CBOR.Decoder s' tx) ->
@@ -299,7 +313,7 @@ decodeLeiosFetch ::
   Int ->
   Word ->
   CBOR.Decoder s (SomeMessage st)
-decodeLeiosFetch decodeP decodeEb decodeTx = decode
+decodeLeiosFetch maxTxs decodeP decodeEb decodeTx = decode
  where
   decode ::
     forall (st' :: LeiosFetch point eb tx).
@@ -318,16 +332,25 @@ decodeLeiosFetch decodeP decodeEb decodeTx = decode
         return $ SomeMessage $ MsgLeiosBlock x
       (SingIdle, 3, 2) -> do
         p <- decodeP
-        bitmaps <- decodeBitmaps
+        bitmaps <- decodeBitmaps maxTxs
         return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
       (SingBlockTxs, 4, 3) -> do
         p <- decodeP
-        bitmaps <- decodeBitmaps
+        bitmaps <- decodeBitmaps maxTxs
         n <- CBOR.decodeListLen
-        -- TODO does V.generateM allocate exacly one buffer, via the hint?
-        --
-        -- If not, we could do so manually by relying on the fact that
-        -- Decoder is ultimate in ST.
+        -- The count comes from the peer. Reject a wrong count before we
+        -- decode any tx.
+        when (n > maxTxs) $
+          fail $
+            "MsgLeiosBlockTxs: tx count " <> show n <> " exceeds " <> show maxTxs
+        let requested = sum $ map (popCount . snd) bitmaps
+        when (n /= requested) $
+          fail $
+            "MsgLeiosBlockTxs: tx count "
+              <> show n
+              <> " does not match the "
+              <> show requested
+              <> " txs in the bitmaps"
         txs <- V.generateM n $ \_i -> decodeTx
         return $ SomeMessage $ MsgLeiosBlockTxs p bitmaps txs
       -- MsgLeiosVotesRequest
@@ -403,14 +426,47 @@ encodeBitmaps bitmaps =
       CBOR.encodeBreak
       bitmaps
 
-decodeBitmaps :: CBOR.Decoder s TxBitmaps
-decodeBitmaps =
-  CBOR.decodeMapLenIndef
-    *> CBOR.decodeSequenceLenIndef
-      (flip (:))
-      []
-      reverse
-      ((,) <$> CBOR.decodeWord16 <*> CBOR.decodeWord64)
+-- | The most bitmap entries it takes to cover @maxTxs@ txs, 64 txs to an entry.
+maxBitmapEntries :: Int -> Int
+maxBitmapEntries maxTxs = (maxTxs + 63) `div` 64
+
+-- | Decode at most enough bitmaps to cover @maxTxs@ txs. Each bitmap must be
+-- non-zero. The indices must be strictly ascending, and each must be below
+-- 'maxBitmapEntries'.
+--
+-- Accepts either CBOR map encoding. We write the indefinite one, but a decoder
+-- that rejects the definite one would reject a peer that is within spec. A
+-- declared length is checked before the loop, so neither form reads more
+-- entries than the cap.
+decodeBitmaps :: Int -> CBOR.Decoder s TxBitmaps
+decodeBitmaps maxTxs =
+  CBOR.decodeMapLenOrIndef >>= \case
+    Nothing -> go (const CBOR.decodeBreakOr) 0 Nothing []
+    Just n
+      | n > maxEntries -> fail tooManyEntries
+      | otherwise -> go (\k -> pure (k >= n)) 0 Nothing []
+ where
+  maxEntries = maxBitmapEntries maxTxs
+  tooManyEntries = "TxBitmaps: more than " <> show maxEntries <> " entries"
+  -- 'done' is how the two encodings differ: a break byte, or the declared count.
+  go done !k mbPrevIndex acc =
+    done k >>= \case
+      True -> pure (reverse acc)
+      False
+        | k >= maxEntries -> fail tooManyEntries
+        | otherwise -> do
+            index <- CBOR.decodeWord16
+            bitmap <- CBOR.decodeWord64
+            when (bitmap == 0) $
+              fail $
+                "TxBitmaps: bitmap at index " <> show index <> " is zero"
+            when (fromIntegral index >= maxEntries) $
+              fail $
+                "TxBitmaps: index " <> show index <> " is not below " <> show maxEntries
+            when (maybe False (index <=) mbPrevIndex) $
+              fail $
+                "TxBitmaps: index " <> show index <> " is not strictly ascending"
+            go done (k + 1 :: Int) (Just index) ((index, bitmap) : acc)
 
 -----
 

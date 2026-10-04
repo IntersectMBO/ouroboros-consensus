@@ -195,6 +195,10 @@ leiosScheduler getSlotDelay leiosContext =
     ebHash <-
       case BS16.decode (T.encodeUtf8 ebHashText) of
         Left err -> die $ "bad hash in Leios schedule! " ++ T.unpack ebHashText ++ " " ++ err
-        Right z -> pure z
-    let !rp = Leios.MkLeiosPoint (SlotNo ebSlot) (Leios.MkEbHash ebHash)
+        Right z ->
+          maybe
+            (die $ "bad hash length in Leios schedule! " ++ T.unpack ebHashText)
+            pure
+            (Leios.mkEbHash z)
+    let !rp = Leios.MkLeiosPoint (SlotNo ebSlot) ebHash
     pure (rp, mbEbBytesSize)
