@@ -117,7 +117,7 @@ tests =
           , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
               runCmdsReFetchViolations reproForgeThenOffer @?= Right []
           ]
-      , testCase "a body whose write has not landed is never claimed as acquired" $ do
+      , testCase "a body is claimed acquired only by a settled write" $ do
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
               jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
@@ -126,21 +126,17 @@ tests =
               announced =
                 Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
                   (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
-              -- the bytes arrive: transient, because the write is still in flight
-              persisting = Leios.insertAcquiredEbBody h announced
-          fetchStateOf persisting @?= Just Leios.BodyPersisting
-          -- it still counts as held, so no second peer re-pays the body write
-          Map.lookup h (Leios.ebState persisting)
-            @?= Just (Leios.MkEbState (SlotNo 5) SNothing Leios.BodyPersisting)
-          -- the write lands: only now may the state claim the LeiosDb has it,
-          -- and only the settled write knows the pool (what is still missing)
-          fetchStateOf (Leios.confirmBodyPersisted h jobPool persisting)
+          -- Only an announcement so far: the body is not held, so a fetch is due.
+          -- There is no in-flight state; the body write is enqueued before any
+          -- claim, and the claim ('BodyAcquired') is made only once it is durable.
+          fetchStateOf announced @?= Just Leios.NoBody
+          -- The write landed: claim 'BodyAcquired' with the settled write's pool,
+          -- keeping the recorded max slot.
+          Map.lookup h (Leios.ebState (Leios.acquireEbBody h jobPool announced))
+            @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
+          -- Idempotent: a concurrent redundant delivery does not re-claim it.
+          fetchStateOf (Leios.acquireEbBody h jobPool (Leios.acquireEbBody h jobPool announced))
             @?= Just (Leios.BodyAcquired jobPool)
-          -- the write is lost: back to unheld, so the next offer is acted on
-          fetchStateOf (Leios.abandonBodyPersist h persisting) @?= Just Leios.NoBody
-          -- neither transition touches a settled body
-          let settled = Leios.confirmBodyPersisted h jobPool persisting
-          fetchStateOf (Leios.abandonBodyPersist h settled) @?= Just (Leios.BodyAcquired jobPool)
       , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
@@ -148,11 +144,10 @@ tests =
               jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
               -- announce at slot 5, then again at the smaller slot 3, and acquire
               o =
-                Leios.confirmBodyPersisted h jobPool $
-                  Leios.insertAcquiredEbBody h $
-                    Leios.recordMaxAnnouncementSlot h (SlotNo 3) SNothing $
-                      Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
-                        (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                Leios.acquireEbBody h jobPool $
+                  Leios.recordMaxAnnouncementSlot h (SlotNo 3) SNothing $
+                    Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
+                      (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
           -- the greater slot is retained, not the last-recorded one
           Map.lookup h (Leios.ebState o)
             @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
@@ -258,10 +253,9 @@ tests =
               run bigLedgerPeers used =
                 let outstanding =
                       (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
-                        Leios.confirmBodyPersisted h jobPool $
-                          Leios.insertAcquiredEbBody h $
-                            Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
-                              (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                        Leios.acquireEbBody h jobPool $
+                          Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
+                            (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                     (_o, reqs, _d) =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
@@ -646,8 +640,8 @@ checkInvariant dbBodies o
         )
   -- 'BodyAcquired' asserts the LeiosDb holds the body, and the fetch logic
   -- retires a peer's offer for good on the strength of it. So the state may only
-  -- ever be reached through a confirmed write: anything else strands the EB.
-  -- 'BodyPersisting' is the state for a write still in flight.
+  -- ever be reached through a durable write ('acquireEbBody'): anything else
+  -- strands the EB.
   | not (null stranded) =
       Left ("BodyAcquired but absent from the LeiosDb: " <> show stranded)
   | otherwise = Right ()
