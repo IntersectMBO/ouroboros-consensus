@@ -40,7 +40,6 @@ import Control.Tracer (debugTracer, (>$<))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
-import Data.Maybe (fromJust)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
@@ -61,13 +60,12 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , LeiosPoint (..)
   , TxHash (..)
-  , ebHashFromBytes
   , encodeLeiosEbSize
   , txHashBytes
-  , txHashFromBytes
   )
 import System.IO (hFlush, stdout)
 import System.IO.Temp (withSystemTempDirectory)
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
 main :: IO ()
 main = do
@@ -264,7 +262,7 @@ genPoint i = MkLeiosPoint (SlotNo $ fromIntegral i) (genEbHash i)
 
 -- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
 genEbHash :: Int -> EbHash
-genEbHash i = fromJust $ ebHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
+genEbHash i = unsafeEbHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
@@ -281,7 +279,7 @@ genEb ebIdx =
 -- NOTE: This is taking an EB index as it always generates the worst case of
 -- fully disjunct transaction closures between EBs.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx = fromJust $ txHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx txIdx = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 

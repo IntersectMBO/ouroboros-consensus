@@ -102,7 +102,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List as List (foldl', group, intercalate, isSuffixOf, nub, sort)
-import Data.Maybe (catMaybes, fromJust)
+import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
@@ -125,10 +125,8 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , TxHash (..)
   , ebHashBytes
-  , ebHashFromBytes
   , encodeLeiosEbSize
   , txHashBytes
-  , txHashFromBytes
   )
 import Options.Applicative hiding (action)
 import System.Directory (copyFile, doesFileExist)
@@ -142,6 +140,7 @@ import System.IO
   , stdout
   )
 import System.IO.Temp (withSystemTempDirectory)
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 import Text.Printf (printf)
 
 main :: IO ()
@@ -450,7 +449,7 @@ dropTxIndex path = do
 
 -- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
 genEbHash :: Int -> EbHash
-genEbHash i = fromJust $ ebHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
+genEbHash i = unsafeEbHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
@@ -478,13 +477,13 @@ genEb opts ebIdx =
 
 -- | Unique 'TxHash': \"txHash:<ebIdx>:<txIdx>\" padded to 32 bytes with zeros.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx = fromJust $ txHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx txIdx = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
 -- | Shared-pool 'TxHash': \"sharedTx:<poolIdx>\" padded to 32 bytes with zeros.
 genSharedTxHash :: Int -> TxHash
-genSharedTxHash j = fromJust $ txHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
+genSharedTxHash j = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("sharedTx:" <> show j)
 
@@ -580,7 +579,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
             timed $
               leiosDbPromoteToImmutable
                 db
-                [MkLeiosPoint (SlotNo s) (fromJust (ebHashFromBytes h)) | (s, h) <- take nPromote due]
+                [MkLeiosPoint (SlotNo s) (unsafeEbHashFromBytes h) | (s, h) <- take nPromote due]
           promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain

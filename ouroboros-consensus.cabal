@@ -527,6 +527,7 @@ library unstable-consensus-testlib
     Test.Util.Header
     Test.Util.InvertedMap
     Test.Util.LedgerStateOnlyTables
+    Test.Util.LeiosHash
     Test.Util.LogicalClock
     Test.Util.MockChain
     Test.Util.Orphans.Arbitrary
@@ -1078,6 +1079,7 @@ benchmark leios-db-bench
     contra-tracer,
     io-classes:si-timers,
     ouroboros-consensus,
+    ouroboros-consensus:unstable-consensus-testlib,
     temporary,
     time,
     vector,
@@ -1099,6 +1101,7 @@ benchmark leios-gc-bench
     io-classes:si-timers,
     optparse-applicative,
     ouroboros-consensus,
+    ouroboros-consensus:unstable-consensus-testlib,
     temporary,
     text,
     time,
@@ -1123,6 +1126,7 @@ benchmark leios-txcache-bench
     direct-sqlite,
     directory,
     ouroboros-consensus,
+    ouroboros-consensus:unstable-consensus-testlib,
     text,
     unix,
     vector,
@@ -1206,7 +1210,7 @@ library unstable-protocol-testlib
     cardano-strict-containers:{cardano-strict-containers, testlib},
     containers,
     ouroboros-consensus,
-    ouroboros-consensus:protocol,
+    ouroboros-consensus:{protocol, unstable-consensus-testlib},
     text,
 
 test-suite protocol-test

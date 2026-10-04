@@ -17,7 +17,6 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM)
 import qualified Data.ByteString as BS
 import qualified Data.List as List
-import Data.Maybe (fromJust)
 import Data.Set (Set)
 import Data.Word (Word64, Word8)
 import LeiosDemoTypes
@@ -27,8 +26,6 @@ import LeiosDemoTypes
   , RbHash (..)
   , TxHash
   , TxLocation
-  , ebHashFromBytes
-  , txHashFromBytes
   )
 import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..), newPureLeiosTxCache)
 import LeiosTxCache.Optimized (newHashTableLeiosTxCache)
@@ -51,6 +48,7 @@ import Test.Tasty.QuickCheck
   , (.&&.)
   , (===)
   )
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
 tests :: TestTree
 tests =
@@ -75,10 +73,10 @@ instance ReferencesTxsByHash TestBody where
     dummySize = 0
 
 txhOf :: Word8 -> TxHash
-txhOf n = fromJust $ txHashFromBytes $ BS.pack (n : replicate 31 0)
+txhOf n = unsafeTxHashFromBytes $ BS.pack (n : replicate 31 0)
 
 ebhOf :: Word8 -> EbHash
-ebhOf n = fromJust $ ebHashFromBytes $ BS.pack (n : replicate 31 0)
+ebhOf n = unsafeEbHashFromBytes $ BS.pack (n : replicate 31 0)
 
 rbhOf :: Word8 -> RbHash
 rbhOf n = MkRbHash (BS.pack [n])

@@ -9,7 +9,6 @@ import Cardano.Tools.DBSynthesizer.Types
 import qualified Cardano.Tools.DBTruncater.Run as DBTruncater
 import qualified Cardano.Tools.DBTruncater.Types as DBTruncater
 import Cardano.Tools.LeiosDb (LeiosDbSource (..))
-import Data.Maybe (fromJust)
 import Data.String (fromString)
 import LeiosDemoDb
   ( LeiosDbReader (scanEbPoints)
@@ -19,12 +18,13 @@ import LeiosDemoDb
   , withReader
   , withWriter
   )
-import LeiosDemoTypes (LeiosPoint (..), ebHashFromBytes)
+import LeiosDemoTypes (LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Util.LeiosHash (unsafeEbHashFromBytes)
 import Test.Util.TestEnv
 
 nodeConfig, chainDB :: FilePath
@@ -160,8 +160,8 @@ blockCountTest logStep = do
   -- truncation slot, and the dropped one above every block the synthesis forged.
   let leiosVolDb = chainDB <> "/leios.vol.db"
       leiosImmDb = chainDB <> "/leios.imm.db"
-      keptEb = MkLeiosPoint 0 (mkEbHash '1')
-      droppedEb = MkLeiosPoint 500000 (mkEbHash '2')
+      keptEb = MkLeiosPoint 0 (ebhOf '1')
+      droppedEb = MkLeiosPoint 500000 (ebhOf '2')
   withLeiosDBSQLite mempty leiosVolDb leiosImmDb $ \leiosDb ->
     withWriter leiosDb $ \con ->
       mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
@@ -193,7 +193,7 @@ blockCountTest logStep = do
  where
   genTxs _ _ _ _ _ = pure ([], [], pure ())
 
-  mkEbHash c = fromJust $ ebHashFromBytes (fromString (replicate 32 c))
+  ebhOf c = unsafeEbHashFromBytes (fromString (replicate 32 c))
 
 tests :: TestTree
 tests =

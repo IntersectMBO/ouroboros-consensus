@@ -70,7 +70,7 @@ import Cardano.Ledger.Dijkstra.PParams
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
 import Cardano.Slotting.Time (RelativeTime, SlotLength, slotLengthToMillisec)
-import Codec.Serialise (Serialise, decode, encode)
+import Codec.Serialise (decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
@@ -119,9 +119,9 @@ import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import LeiosDemoTypes.LeiosJobs as TxHashReexports
   ( TxHash (..)
+  , mkTxHash
   , prettyTxHash
   , txHashBytes
-  , txHashFromBytes
   )
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
@@ -163,19 +163,15 @@ newtype EbHash = MkEbHash (PackedBytes 32)
 instance Show EbHash where
   show = prettyEbHash
 
-instance Serialise EbHash where
-  encode = encodeEbHash
-  decode = decodeEbHash
-
 ebHashBytes :: EbHash -> ByteString
 ebHashBytes (MkEbHash bytes) = unpackPinnedBytes bytes
 
 -- | Fails unless the input is exactly 32 bytes.
-ebHashFromBytes :: MonadFail m => ByteString -> m EbHash
-ebHashFromBytes = fmap MkEbHash . packByteString
+mkEbHash :: MonadFail m => ByteString -> m EbHash
+mkEbHash = fmap MkEbHash . packByteString
 
 encodeEbHash :: EbHash -> Encoding
-encodeEbHash (MkEbHash bytes) = toCBOR bytes
+encodeEbHash (MkEbHash bytes) = encodeFixedSized bytes
 
 decodeEbHash :: Decoder s EbHash
 decodeEbHash = MkEbHash <$> decodeFixedSized
@@ -334,13 +330,13 @@ data EbAnnouncement = EbAnnouncement
 encodeEbAnnouncement :: EbAnnouncement -> Encoding
 encodeEbAnnouncement ebAnn =
   CBOR.encodeListLen 2
-    <> encode (ebAnnouncementHash ebAnn)
+    <> encodeEbHash (ebAnnouncementHash ebAnn)
     <> encode (ebAnnouncementSize ebAnn)
 
 decodeEbAnnouncement :: Decoder s EbAnnouncement
 decodeEbAnnouncement = do
   enforceSize "EbAnnouncement" 2
-  EbAnnouncement <$> decode <*> decode
+  EbAnnouncement <$> decodeEbHash <*> decode
 
 -- * Fetch logic types
 
@@ -1125,7 +1121,7 @@ encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb v) =
   foldl
     ( \acc (MkTxHash txHash, txBytesSize) ->
-        acc <> toCBOR txHash <> CBOR.encodeWord32 txBytesSize
+        acc <> encodeFixedSized txHash <> CBOR.encodeWord32 txBytesSize
     )
     (CBOR.encodeMapLen $ fromIntegral $ length v)
     v

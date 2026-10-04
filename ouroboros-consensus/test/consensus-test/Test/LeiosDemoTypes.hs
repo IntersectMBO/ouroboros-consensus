@@ -16,7 +16,6 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List (isInfixOf, (\\))
-import Data.Maybe (fromJust)
 import Data.Ratio ((%))
 import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word64)
@@ -32,7 +31,6 @@ import LeiosDemoTypes
   , decodeLeiosPoint
   , decodeLeiosTx
   , decodeRbHash
-  , ebHashFromBytes
   , encodeLeiosEb
   , encodeLeiosEbItemSize
   , encodeLeiosEbMaxFramingSize
@@ -43,7 +41,6 @@ import LeiosDemoTypes
   , maxTxsPerEb
   , selectCommitteeByStake
   , txHashBytes
-  , txHashFromBytes
   )
 import Network.TypedProtocol.Codec (ActiveState, CodecF (..), StateToken, runDecoder)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
@@ -72,6 +69,7 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
 tests :: TestTree
 tests =
@@ -111,7 +109,7 @@ maxTxBytesSize = 2 ^ (14 :: Int)
 
 -- | Generate a random TxHash (32 random bytes).
 genTxHash :: Gen TxHash
-genTxHash = fromJust . txHashFromBytes . BS.pack <$> vectorOf 32 (fromIntegral <$> chooseInt (0, 255))
+genTxHash = unsafeTxHashFromBytes . BS.pack <$> vectorOf 32 (fromIntegral <$> chooseInt (0, 255))
 
 -- | Generate a tx size with good coverage of CBOR encoding boundaries.
 -- Values 0-23 encode in 1 byte, 24-255 in 2 bytes, 256-65535 in 3 bytes.
@@ -310,7 +308,7 @@ prop_decodeLeiosEbBoundsItemCount =
       ]
  where
   ebOfCount count = MkLeiosEb $ V.replicate count (txHash, 100)
-  txHash = fromJust $ txHashFromBytes $ BS.replicate 32 0xab
+  txHash = unsafeTxHashFromBytes $ BS.replicate 32 0xab
   bytes = BSL.fromStrict . serialize'
   -- Accepted means decoded with no bytes left over.
   accepts = either (const False) (BSL.null . fst)
@@ -396,7 +394,7 @@ prop_decodeBitmapsChecksEntries =
     pure $ counterexample label $ failsWith expected failure
 
 testPoint :: LeiosPoint
-testPoint = MkLeiosPoint (SlotNo 0) (fromJust $ ebHashFromBytes $ BS.replicate 32 0xab)
+testPoint = MkLeiosPoint (SlotNo 0) (unsafeEbHashFromBytes $ BS.replicate 32 0xab)
 
 encodeBitmapEntries :: [(Word16, Word64)] -> CBOR.Encoding
 encodeBitmapEntries entries =

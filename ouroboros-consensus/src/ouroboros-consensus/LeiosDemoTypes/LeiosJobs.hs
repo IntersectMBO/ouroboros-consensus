@@ -57,8 +57,8 @@ txHashBytes :: TxHash -> ByteString
 txHashBytes (MkTxHash bytes) = unpackPinnedBytes bytes
 
 -- | Fails unless the input is exactly 32 bytes.
-txHashFromBytes :: MonadFail m => ByteString -> m TxHash
-txHashFromBytes = fmap MkTxHash . packByteString
+mkTxHash :: MonadFail m => ByteString -> m TxHash
+mkTxHash = fmap MkTxHash . packByteString
 
 -- | A job's commitment to which txs it covers: the Blake2b-256 hash of the
 -- concatenated tx hashes (in ascending offset order), via

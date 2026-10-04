@@ -109,12 +109,12 @@ import LeiosDemoTypes
   , TxHash (..)
   , TxLocation (..)
   , ebHashBytes
-  , ebHashFromBytes
   , encodeLeiosEbSize
   , leiosEbBodyItems
   , leiosEbTxs
+  , mkEbHash
+  , mkTxHash
   , txHashBytes
-  , txHashFromBytes
   )
 import LeiosUtils.CallTrace
   ( CallCtx
@@ -1474,7 +1474,7 @@ txHashFromBlob bs =
         "stored TxHash has " <> show (BS.length bs) <> " bytes, expected 32"
     )
     pure
-    (txHashFromBytes bs)
+    (mkTxHash bs)
 
 -- | Decode a stored EB hash. See 'txHashFromBlob'.
 ebHashFromBlob :: ByteString -> IO EbHash
@@ -1484,7 +1484,7 @@ ebHashFromBlob bs =
         "stored EbHash has " <> show (BS.length bs) <> " bytes, expected 32"
     )
     pure
-    (ebHashFromBytes bs)
+    (mkEbHash bs)
 
 bodyLoop :: DB.Statement -> [(TxHash, BytesSize)] -> IO [(TxHash, BytesSize)]
 bodyLoop stmt acc =

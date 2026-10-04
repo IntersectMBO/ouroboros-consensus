@@ -28,7 +28,6 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust)
 import Data.Maybe.Strict (StrictMaybe (SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
@@ -61,7 +60,6 @@ import LeiosDemoTypes
   , LeiosTx (..)
   , PeerId (..)
   , demoLeiosFetchStaticEnv
-  , ebHashFromBytes
   , emptyLeiosOutstanding
   , hashLeiosEb
   , hashLeiosTx
@@ -73,6 +71,7 @@ import LeiosDemoTypes
 import System.Random (mkStdGen)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
+import Test.Util.LeiosHash (unsafeEbHashFromBytes)
 
 tests :: TestTree
 tests =
@@ -350,7 +349,7 @@ point slot c = MkLeiosPoint (SlotNo (fromIntegral slot)) (eb c)
 
 -- | Distinct EB hash from a Char.
 eb :: Char -> EbHash
-eb c = fromJust $ ebHashFromBytes $ BS.pack $ replicate 32 (fromIntegral (fromEnum c))
+eb c = unsafeEbHashFromBytes $ BS.pack $ replicate 32 (fromIntegral (fromEnum c))
 
 -- | A body of exactly 'maxTxsPerEb' entries fits the server buffer.
 test_serveBodyAtLimit :: IO ()
