@@ -58,7 +58,14 @@ import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import Control.DeepSeq (force)
-import Control.Exception (SomeException, evaluate, try)
+import Control.Exception
+  ( SomeAsyncException
+  , SomeException
+  , evaluate
+  , fromException
+  , throwIO
+  , try
+  )
 import Control.Monad (foldM, replicateM)
 import Control.Monad.IOSim (Time, runSimOrThrow)
 import qualified Control.Tracer as Tracer
@@ -68,7 +75,7 @@ import Data.Functor.Identity (runIdentity)
 import Data.List (isInfixOf, sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing, mapMaybe)
+import Data.Maybe (isJust, isNothing, mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
@@ -162,7 +169,7 @@ import Test.QuickCheck
   , (.||.)
   , (===)
   )
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree, localOption, mkTimeout, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.ThreadNet.General
   ( TestConfig (..)
@@ -207,8 +214,11 @@ tests =
     "Leios ThreadNet"
     [ adjustQuickCheckTests (`div` 10) $
         testProperty "basic functionality" prop_leios
-    , adjustQuickCheckTests (`div` 10) $
-        testProperty "late join" prop_leios_late_join
+    , -- Fail fast rather than letting a slow seed run out CI's 6h budget. The
+      -- property must not swallow this; see 'prop_leios_late_join'.
+      localOption (mkTimeout 600_000_000) $
+        adjustQuickCheckTests (`div` 10) $
+          testProperty "late join" prop_leios_late_join
     , adjustQuickCheckTests (`div` 10) $
         testProperty "invalid endorsed tx is not certified" prop_leios_invalid_eb
     ]
@@ -657,15 +667,16 @@ prop_leios_late_join seed =
       -- propagate.
       ioProperty $ do
         r <- try @SomeException $ evaluate testOutput
-        pure $ case r of
+        case r of
+          -- Tasty's timeout arrives as an async exception. Catching it here
+          -- and returning a 'Property' makes 'System.Timeout.timeout' see a
+          -- success, silently defeating the bound on this test, so rethrow.
+          Left e | isJust (fromException @SomeAsyncException e) -> throwIO e
           Left e ->
-            -- DEBUG: try to grab traces too. If forcing the traces
-            -- also throws (because they share the failing chunk of
-            -- IOSim output), wrap in another 'try' and degrade
-            -- gracefully.
-            counterexample ("late join slot: " <> show lateJoinSlot) $
-              counterexample ("threw: " <> show e) False
-          Right _ -> property True
+            pure $
+              counterexample ("late join slot: " <> show lateJoinSlot) $
+                counterexample ("threw: " <> show e) False
+          Right _ -> pure $ property True
  where
   numSlots = 200 :: Word64
 
