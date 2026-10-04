@@ -64,6 +64,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , RbHash (..)
   , TxHash (..)
+  , TxLocation (..)
   , encodeLeiosEbSize
   , leiosEbTxs
   )
@@ -139,10 +140,10 @@ rwInsertEbPoint :: RW -> LeiosPoint -> BytesSize -> IO ()
 rwInsertEbPoint rw point sz = void $ await =<< writeEbPoint (rwWriter rw) point sz
 
 rwInsertEbBody :: RW -> LeiosPoint -> LeiosEb -> IO CompletedEbs
-rwInsertEbBody rw point eb = await =<< writeEbBody (rwWriter rw) point eb
+rwInsertEbBody rw point eb = fst <$> (await =<< writeEbBody (rwWriter rw) point eb [])
 
-rwInsertTxs :: RW -> [(TxHash, BS.ByteString)] -> IO CompletedEbs
-rwInsertTxs rw txs = await =<< writeTxs (rwWriter rw) txs
+rwInsertTxs :: RW -> LeiosPoint -> [(Int, BS.ByteString)] -> IO CompletedEbs
+rwInsertTxs rw point offBytes = await =<< writeTxs (rwWriter rw) point offBytes
 
 rwScanEbPoints :: RW -> IO [(SlotNo, EbHash)]
 rwScanEbPoints = scanEbPoints . rwReader
@@ -220,6 +221,8 @@ mkTestGroups impl =
       , testCase "offerBlockTxs on last update" $ withFreshDb impl test_offerBlockTxs
       , testCase "offerBlockTxs when body arrives after all txs" $
           withFreshDb impl test_offerBlockTxsWhenBodyArrivesAfterTxs
+      , testCase "cross-EB fill copies local bytes and can complete at body time" $
+          withFreshDb impl test_crossEbFill
       , testCase "no re-notification of completed EBs" $ withFreshDb impl test_noReNotifyCompletedEbs
       , testCase "no re-notification when re-inserting an EB's own tx" $
           withFreshDb impl test_noReNotifyOnRelatedTxReinsert
@@ -273,13 +276,15 @@ genPointAndEb :: Int -> Gen (LeiosPoint, LeiosEb)
 genPointAndEb numTxs = (,) <$> genPoint <*> genEb numTxs
 
 -- | Generate random max sized tx (16k).
-genTxBytes :: Gen BS.ByteString
-genTxBytes = BS.pack <$> vector 16_384
+-- | Bytes of exactly the size the body declares for this offset: the write
+-- path rejects anything else ('sql_fill_ebTxBytes' pins the size the row was
+-- allocated with).
+txBytesFor :: LeiosEb -> Int -> BS.ByteString
+txBytesFor eb off = BS.replicate (fromIntegral sz) (fromIntegral off)
+ where
+  (_h, sz) = leiosEbTxs eb V.! off
 
 -- | Max sized tx (16k) with all zeros.
-maxTxBytesZero :: BS.ByteString
-maxTxBytesZero = BS.replicate 16_384 0
-
 -- * Test fixtures for unit tests
 
 -- | Create a simple test EbHash from a seed byte.
@@ -430,23 +435,18 @@ prop_txsInsertThenRetrieve impl =
           rwInsertEbPoint con point (encodeLeiosEbSize eb)
           void $ rwInsertEbBody con point eb
           -- Get the txHashes from the EB for the offsets we want to insert
-          let ebTxList = V.toList (leiosEbTxs eb)
-              !txsToInsert =
+          let !txsToInsert =
                 force $
-                  [ (txHash, txBytes)
-                  | off <- offsetsToInsert
-                  , let (txHash, _size) = ebTxList !! off
-                  , let txBytes = BS.pack [fromIntegral off, 1, 2, 3] -- deterministic test bytes
-                  ]
-          -- Insert txs into global txs table
-          insertTime <- snd <$> timed (rwInsertTxs con txsToInsert)
+                  [(off, txBytesFor eb off) | off <- offsetsToInsert]
+          -- Insert the tx bytes for this EB
+          insertTime <- snd <$> timed (rwInsertTxs con point txsToInsert)
           -- Retrieve all offsets
           let allOffsets = [0 .. numTxs - 1]
           (results, retrieveTime) <- timed $ rwBatchRetrieveTxs con point.pointEbHash allOffsets
           -- Check that inserted txs have bytes, others don't
           let checkResult (off, _txHash, mBytes) =
                 if off `elem` offsetsToInsert
-                  then mBytes == Just (BS.pack [fromIntegral off, 1, 2, 3])
+                  then mBytes == Just (txBytesFor eb off)
                   else mBytes == Nothing
           pure $
             conjoin
@@ -590,11 +590,8 @@ test_noOfferBlockTxsBeforeComplete db = do
     -- Consume the LeiosOfferBlock notification
     _ <- atomically $ readTChan chan
     -- Insert only 2 of 3 txs (by txHash)
-    let txsToInsert =
-          [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
-          | (i, (txHash, _size)) <- zip [0 :: Int, 1] ebTxList
-          ]
-    _ <- rwInsertTxs con txsToInsert
+    let txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int, 1] ebTxList]
+    _ <- rwInsertTxs con point txsToInsert
     -- No LeiosOfferBlockTxs notification should be available
     maybeNotif <- atomically $ tryReadTChan chan
     case maybeNotif of
@@ -615,50 +612,95 @@ test_offerBlockTxs db = do
     void $ rwInsertEbBody con point eb
     -- Consume the LeiosOfferBlock notification
     _ <- atomically $ readTChan chan
-    -- Insert all txs (by txHash)
-    let txsToInsert =
-          [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
-          | (i, (txHash, _size)) <- zip [0 :: Int ..] ebTxList
-          ]
-    _ <- rwInsertTxs con txsToInsert
+    -- Insert all txs (by offset)
+    let txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
+    _ <- rwInsertTxs con point txsToInsert
     -- FIXME: blocks forever if impl not working
     notification <- atomically $ readTChan chan
     assertOfferBlockTxs point notification
 
--- | An EB whose txs were already inserted becomes complete the moment its body
--- arrives — no tx-insert batch will ever touch it again. 'rwInsertEbBody'
--- must therefore detect this and emit 'AcquiredEbTxs' itself, otherwise
--- downstream consumers (voting, ChainDB closure tracking, LeiosBlockTxsOffer
--- relay) never learn the EB is complete. Regression test for a bug seen in the
--- Leios ThreadNet where an EB forged near the end of the run stayed silent on
--- receiving nodes.
+-- | A body write naming fill sources copies their durable bytes in the same
+-- transaction: an EB whose closure another EB already holds completes at body
+-- time, without fetching anything. A vanished source fills nothing and the
+-- offset stays missing.
+test_crossEbFill :: LeiosDbHandle IO -> IO ()
+test_crossEbFill db = do
+  chan <- subscribeEbNotifications db
+  let pointA = mkTestPoint (SlotNo 1) 1
+      ebA = mkTestEb 3
+      hashA = pointEbHash pointA
+      -- B references the same first two txs (same declared sizes), so A's rows
+      -- are valid fill sources for B's offsets 0 and 1.
+      pointB = mkTestPoint (SlotNo 2) 2
+      ebB = mkTestEb 2
+  withRW db $ \con -> do
+    -- A: full closure, the durable source.
+    rwInsertEbPoint con pointA (encodeLeiosEbSize ebA)
+    void $ rwInsertEbBody con pointA ebA
+    _ <- rwInsertTxs con pointA [(i, txBytesFor ebA i) | i <- [0 .. 2]]
+    _ <- atomically $ tryReadTChan chan -- AcquiredEb A
+    _ <- atomically $ tryReadTChan chan -- AcquiredEbTxs A
+    -- B: body write with fills from A, plus one from a source that does not
+    -- exist -- the vanished-source case must fill nothing for that offset.
+    rwInsertEbPoint con pointB (encodeLeiosEbSize ebB)
+    (completed, filled) <-
+      await
+        =<< writeEbBody
+          (rwWriter con)
+          pointB
+          ebB
+          [ (0, MkTxLocation hashA 0)
+          , (1, MkTxLocation hashA 1)
+          , (1, MkTxLocation (mkTestEbHash 99) 0) -- redundant AND vanished: must be a no-op
+          ]
+    filled @?= [0, 1]
+    completed @?= [pointB]
+    -- and the closure reads back with A's bytes
+    closure <- rwLookupEbClosure con (pointEbHash pointB)
+    fmap (map snd) closure @?= Just [txBytesFor ebA 0, txBytesFor ebA 1]
+    -- C declares a DIFFERENT tx hash of the same size as A's offset 0: a
+    -- stale location resolving to the wrong EB must fill nothing even when
+    -- the lengths agree.
+    let pointC = mkTestPoint (SlotNo 3) 3
+        ebC = MkLeiosEb $ V.fromList [(mkTestTxHash 77, 100)]
+    rwInsertEbPoint con pointC (encodeLeiosEbSize ebC)
+    (completedC, filledC) <-
+      await =<< writeEbBody (rwWriter con) pointC ebC [(0, MkTxLocation hashA 0)]
+    filledC @?= []
+    completedC @?= []
+
+-- | Rows are pre-allocated by the body write, so bytes arriving before the
+-- body are dropped: there is no row to fill, and nothing may count towards
+-- completion. Once the body has allocated the rows, the same fills land and
+-- complete the closure. (Production cannot deliver bytes before the body --
+-- the writer queue is FIFO and tx writes follow their body write -- so the
+-- dropped fills only assert the guard.)
 test_offerBlockTxsWhenBodyArrivesAfterTxs :: LeiosDbHandle IO -> IO ()
 test_offerBlockTxsWhenBodyArrivesAfterTxs db = do
   chan <- subscribeEbNotifications db
   let point = mkTestPoint (SlotNo 1) 1
       eb = mkTestEb 3
       ebTxList = V.toList (leiosEbTxs eb)
+      txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
   withRW db $ \con -> do
-    -- Insert all of the EB's txs BEFORE any point/body — as if they had
-    -- reached this node via mempool diffusion. No completion notification
-    -- can fire yet: the DB has no body to associate them with.
-    let txsToInsert =
-          [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
-          | (i, (txHash, _size)) <- zip [0 :: Int ..] ebTxList
-          ]
-    _ <- rwInsertTxs con txsToInsert
+    -- Bytes before the body: dropped, no notification.
+    _ <- rwInsertTxs con point txsToInsert
     noEarlyNotif <- atomically $ tryReadTChan chan
     case noEarlyNotif of
       Nothing -> pure ()
       Just _ -> assertFailure "must not notify before any EB body is inserted"
-    -- Now insert the EB (point then body). The closure is immediately
-    -- complete, so we expect BOTH notifications in sequence. Use a
-    -- timeout on the reads: without the fix the second read would block
-    -- forever, so we surface the failure explicitly instead of hanging.
+    -- The body allocates the rows; the closure is NOT complete (the early
+    -- fills were dropped), so only AcquiredEb fires.
     rwInsertEbPoint con point (encodeLeiosEbSize eb)
     void $ rwInsertEbBody con point eb
     acquiredEb <- readTChanWithin 100_000_000 chan "AcquiredEb"
     assertOfferBlock point acquiredEb
+    noTxsYet <- atomically $ tryReadTChan chan
+    case noTxsYet of
+      Nothing -> pure ()
+      Just _ -> assertFailure "pre-body fills must not complete the closure"
+    -- The same fills now land on the allocated rows and complete it.
+    _ <- rwInsertTxs con point txsToInsert
     acquiredTxs <- readTChanWithin 100_000_000 chan "AcquiredEbTxs"
     assertOfferBlockTxs point acquiredTxs
 
@@ -679,15 +721,16 @@ test_noReNotifyCompletedEbs db = do
     case acquiredEb of
       Just (AcquiredEb{}) -> pure ()
       _ -> assertFailure "expected AcquiredEb notification"
-    let txsToInsert = [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
-    _ <- rwInsertTxs con txsToInsert
+    let txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
+    _ <- rwInsertTxs con point txsToInsert
     -- Consume the AcquiredEbTxs notification
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
       Just (AcquiredEbTxs p) -> p @?= point
       _ -> assertFailure "expected AcquiredEbTxs notification"
-    -- Insert an unrelated tx
-    _ <- rwInsertTxs con [(mkTestTxHash 99, maxTxBytesZero)]
+    -- Fill an unrelated EB's offset (no body row: the write is dropped, which
+    -- is the point -- nothing may be re-notified either way)
+    _ <- rwInsertTxs con (mkTestPoint (SlotNo 9) 9) [(0, txBytesFor eb 0)]
     -- No re-notification should occur for the already-completed EB
     maybeNotif <- atomically $ tryReadTChan chan
     case maybeNotif of
@@ -717,8 +760,8 @@ test_noReNotifyOnRelatedTxReinsert db = do
       Just (AcquiredEb{}) -> pure ()
       _ -> assertFailure "expected AcquiredEb notification"
     -- Insert all EB-referenced txs → EB completes, one AcquiredEbTxs.
-    let txsToInsert = [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
-    _ <- rwInsertTxs con txsToInsert
+    let txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
+    _ <- rwInsertTxs con point txsToInsert
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
       Just (AcquiredEbTxs p) -> p @?= point
@@ -727,8 +770,8 @@ test_noReNotifyOnRelatedTxReinsert db = do
     -- level — it's already present). The completed EB must NOT be
     -- re-notified.
     case ebTxList of
-      ((txHash, _) : _) -> do
-        _ <- rwInsertTxs con [(txHash, maxTxBytesZero)]
+      (_ : _) -> do
+        _ <- rwInsertTxs con point [(0, txBytesFor eb 0)]
         maybeNotif <- atomically $ tryReadTChan chan
         case maybeNotif of
           Nothing -> pure ()
@@ -771,7 +814,8 @@ test_multipleSlotsSameHash db = do
     _ <-
       rwInsertTxs
         con
-        [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
+        point1
+        [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
     -- Both rows must notify completion, once each.
     completionNotifs <- drainNotifications
     let completionPoints =
@@ -819,31 +863,33 @@ prop_completedEbComplete :: DbImpl -> Property
 prop_completedEbComplete impl =
   forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
-      forAllBlind genTxBytes $ \txBytes ->
-        ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-          rwInsertEbPoint con point (encodeLeiosEbSize eb)
-          void $ rwInsertEbBody con point eb
-          let ebTxList = V.toList (leiosEbTxs eb)
-              txsToInsert = [(txHash, txBytes) | (txHash, _size) <- ebTxList]
-          _ <- rwInsertTxs con txsToInsert
-          (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
-          let expectedHashes = map fst txsToInsert
-              check = case result of
-                Nothing ->
-                  False & counterexample "Expected Just, got Nothing"
-                Just txData ->
-                  conjoin
-                    [ length txData === numTxs
-                        & counterexample "Wrong number of txs"
-                    , all (`elem` map fst txData) expectedHashes
-                        & counterexample "Missing expected tx hashes"
-                    , all (== txBytes) (map snd txData)
-                        & counterexample "Wrong tx bytes"
-                    ]
-          pure $
-            check
-              & tabulate "lookupEbClosure (complete)" [timeBucket queryTime]
-              & tabulate "numTxs" [magnitudeBucket numTxs]
+      ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
+        rwInsertEbPoint con point (encodeLeiosEbSize eb)
+        void $ rwInsertEbBody con point eb
+        let ebTxList = V.toList (leiosEbTxs eb)
+            txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
+        _ <- rwInsertTxs con point txsToInsert
+        (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+        let expectedHashes = map fst ebTxList
+            check = case result of
+              Nothing ->
+                False & counterexample "Expected Just, got Nothing"
+              Just txData ->
+                conjoin
+                  [ length txData === numTxs
+                      & counterexample "Wrong number of txs"
+                  , all (`elem` map fst txData) expectedHashes
+                      & counterexample "Missing expected tx hashes"
+                  , and
+                      [ bytes == txBytesFor eb off
+                      | (off, (_h, bytes)) <- zip [0 ..] txData
+                      ]
+                      & counterexample "Wrong tx bytes"
+                  ]
+        pure $
+          check
+            & tabulate "lookupEbClosure (complete)" [timeBucket queryTime]
+            & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- | Property: EB with body but no txs returns Nothing.
 prop_completedEbMissingTxs :: DbImpl -> Property
@@ -865,27 +911,26 @@ prop_completedEbPartialTxs :: DbImpl -> Property
 prop_completedEbPartialTxs impl =
   forAllShrinkShow (chooseInt (2, 20)) shrink show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
-      forAllBlind genTxBytes $ \txBytes ->
-        ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
-          rwInsertEbPoint con point (encodeLeiosEbSize eb)
-          void $ rwInsertEbBody con point eb
-          -- Insert only the first half of txs, leaving at least one missing
-          let ebTxList = V.toList (leiosEbTxs eb)
-              partialTxs = take (numTxs `div` 2) ebTxList
-              txsToInsert = [(txHash, txBytes) | (txHash, _size) <- partialTxs]
-          _ <- rwInsertTxs con txsToInsert
-          (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
-          pure $
-            result === Nothing
-              & counterexample
-                ( "Expected Nothing with "
-                    ++ show (length txsToInsert)
-                    ++ "/"
-                    ++ show numTxs
-                    ++ " txs present"
-                )
-              & tabulate "lookupEbClosure (partial txs)" [timeBucket queryTime]
-              & tabulate "numTxs" [magnitudeBucket numTxs]
+      ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
+        rwInsertEbPoint con point (encodeLeiosEbSize eb)
+        void $ rwInsertEbBody con point eb
+        -- Insert only the first half of txs, leaving at least one missing
+        let ebTxList = V.toList (leiosEbTxs eb)
+            partialTxs = take (numTxs `div` 2) ebTxList
+            txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] partialTxs]
+        _ <- rwInsertTxs con point txsToInsert
+        (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+        pure $
+          result === Nothing
+            & counterexample
+              ( "Expected Nothing with "
+                  ++ show (length txsToInsert)
+                  ++ "/"
+                  ++ show numTxs
+                  ++ " txs present"
+              )
+            & tabulate "lookupEbClosure (partial txs)" [timeBucket queryTime]
+            & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- | Property: EB with only a point announced (no body) returns Nothing.
 prop_completedEbNoBody :: DbImpl -> Property
@@ -967,8 +1012,8 @@ test_awaiterHearsAFailedJob = do
             -- recorded, and the budget below reports that the awaiter was
             -- never told rather than counting a refused submission as a
             -- report.
-            promise <- writeEbBody w point eb
-            outcome <- try (await promise) :: IO (Either SomeException CompletedEbs)
+            promise <- writeEbBody w point eb []
+            outcome <- try (await promise) :: IO (Either SomeException (CompletedEbs, [Int]))
             void $ tryPutMVar outcomeVar outcome
         -- This thread creates the handle, so this is where the worker's
         -- parting exception lands. It does nothing else.
@@ -976,7 +1021,7 @@ test_awaiterHearsAFailedJob = do
           withLeiosDBSQLite tracer volDbPath immDbPath $ \db ->
             withWriter db $ \w -> do
               void $ await =<< writeEbPoint w point (encodeLeiosEbSize eb)
-              void $ await =<< writeEbBody w point eb
+              void $ await =<< writeEbBody w point eb []
               -- The same body again collides on the primary key of ebTxs, so
               -- this second write is the job whose action throws.
               forkAwaiter w
@@ -1066,13 +1111,15 @@ test_deleteDanglingTxs volDbPath _immDbPath db = do
   let eb = mkTestEb 2
       ebHash = mkTestEbHash 1
       danglingTx = mkTestTxHash 9
-      txBytes = BS.replicate 10 0
   withRW db $ \con -> do
     rwInsertEbPoint con (MkLeiosPoint 5 ebHash) (encodeLeiosEbSize eb)
     void $ rwInsertEbBody con (MkLeiosPoint 5 ebHash) eb
+    -- The out-of-range offset is dropped by the guarded fill; the in-range
+    -- ones land.
     void $
-      rwInsertTxs con $
-        (danglingTx, txBytes) : [(txHash, txBytes) | (txHash, _) <- V.toList (leiosEbTxs eb)]
+      rwInsertTxs con (MkLeiosPoint 5 ebHash) $
+        (V.length (leiosEbTxs eb), txBytesFor eb 0)
+          : [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] (V.toList (leiosEbTxs eb))]
 
   deleteDanglingTxs volDbPath
 

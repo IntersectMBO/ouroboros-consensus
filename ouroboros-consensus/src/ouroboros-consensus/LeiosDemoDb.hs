@@ -15,6 +15,7 @@ module LeiosDemoDb
   , allocateWriter
   , awaitAll
   , CompletedEbs
+  , LocalFill
   , TraceLeiosDb (..)
 
     -- * In-memory implementation
@@ -38,7 +39,8 @@ module LeiosDemoDb
   , sql_schema
   , sql_insert_eb
   , sql_insert_ebBody
-  , sql_insert_tx
+  , sql_fill_ebTxBytes
+  , sql_prealloc_ebTxBytes
   ) where
 
 import LeiosDemoDb.Common
@@ -48,6 +50,7 @@ import LeiosDemoDb.Common
   , LeiosDbStats (..)
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
+  , LocalFill
   , Promise (..)
   , allocateHandle
   , allocateReader
@@ -67,9 +70,10 @@ import LeiosDemoDb.SQLite
   , newLeiosDBSQLite
   , newLeiosDBSQLiteFromEnv
   , newLeiosDBSQLiteWithGcBatchSize
+  , sql_fill_ebTxBytes
   , sql_insert_eb
   , sql_insert_ebBody
-  , sql_insert_tx
+  , sql_prealloc_ebTxBytes
   , sql_schema
   , truncateLeiosDbAfterSlot
   , vacuumLeiosDb

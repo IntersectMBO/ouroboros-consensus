@@ -35,9 +35,11 @@ import Control.Concurrent.Class.MonadMVar
   , newMVar
   , readMVar
   )
+import Control.Monad (forever)
 import Control.Monad.Class.MonadAsync (concurrently_)
 import Control.Monad.Class.MonadTest (exploreRaces)
 import Control.Monad.Class.MonadThrow (SomeException, try)
+import Control.Monad.Class.MonadTimer (threadDelay)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
@@ -62,6 +64,7 @@ import LeiosDemoLogic
   , processLeiosBlockTxs
   , recordAnnouncedEb
   , recordEbBodyOffer
+  , removePeerFromOutstanding
   )
 import LeiosDemoTypes
   ( AlsoOfferedTxsClosure (..)
@@ -114,6 +117,26 @@ tests =
           , testCase "an offer of a self-forged EB is not re-fetched (forged first)" $
               runCmdsReFetchViolations reproForgeThenOffer @?= Right []
           ]
+      , testCase "a body is claimed acquired only by a settled write" $ do
+          let eb = ebOf [0, 1]
+              h = hashLeiosEb eb
+              jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
+              fetchStateOf o =
+                (\(Leios.MkEbState _ _ fs) -> fs) <$> Map.lookup h (Leios.ebState o)
+              announced =
+                Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
+                  (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+          -- Only an announcement so far: the body is not held, so a fetch is due.
+          -- There is no in-flight state; the body write is enqueued before any
+          -- claim, and the claim ('BodyAcquired') is made only once it is durable.
+          fetchStateOf announced @?= Just Leios.NoBody
+          -- The write landed: claim 'BodyAcquired' with the settled write's pool,
+          -- keeping the recorded max slot.
+          Map.lookup h (Leios.ebState (Leios.acquireEbBody h jobPool announced))
+            @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired jobPool))
+          -- Idempotent: a concurrent redundant delivery does not re-claim it.
+          fetchStateOf (Leios.acquireEbBody h jobPool (Leios.acquireEbBody h jobPool announced))
+            @?= Just (Leios.BodyAcquired jobPool)
       , testCase "acquired EB kept until its greatest slot is below the immutable tip" $ do
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
@@ -121,7 +144,7 @@ tests =
               jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
               -- announce at slot 5, then again at the smaller slot 3, and acquire
               o =
-                Leios.insertAcquiredEbBody h jobPool $
+                Leios.acquireEbBody h jobPool $
                   Leios.recordMaxAnnouncementSlot h (SlotNo 3) SNothing $
                     Leios.recordMaxAnnouncementSlot h (SlotNo 5) SNothing $
                       (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
@@ -230,7 +253,7 @@ tests =
               run bigLedgerPeers used =
                 let outstanding =
                       (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
-                        Leios.insertAcquiredEbBody h jobPool $
+                        Leios.acquireEbBody h jobPool $
                           Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
                             (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                     (_o, reqs, _d) =
@@ -304,7 +327,7 @@ tests =
           Map.lookup hA (Leios.reverseSlotIndexByEbHash o) @?= Just (NESet.singleton (SlotNo 10))
           Map.lookup hB (Leios.reverseSlotIndexByEbHash o) @?= Nothing
       , testProperty
-          "ebState stays in sync with ebsPerMaxAnnouncementSlot across arbitrary sequences"
+          "outstanding-state invariants hold across arbitrary sequences"
           prop_invariants
       , testProperty
           "the fetch logic never requests an already-held EB body"
@@ -335,6 +358,13 @@ data Cmd
     ArriveTx Void
   | -- | @leiosFetchLogicIteration@ at this current slot.
     Decide Word
+  | -- | The peer disconnects: @removePeerFromOutstanding@. Subsequent commands
+    -- reuse the same peer id, so this also covers reconnection.
+    Disconnect
+  | -- | The EB body arrives, but its LeiosDb body write never lands -- what a
+    -- peer killed while parked on a full writer queue leaves behind: the point
+    -- row written, the body not. The state still reads 'BodyAcquired'.
+    ArriveBodyLostWrite TestEb Word
   | -- | The forge produces this EB: drives 'processLeiosBlock'/'processLeiosBlockTxs'
     -- with 'ForgedBlock'/'ForgedTxs' (as 'onForgedLeiosEb' does), reconciling the
     -- outstanding state exactly as a remote acquisition would.
@@ -411,7 +441,14 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
               Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
               Right violations -> do
                 outstanding <- readMVar outstandingVar
-                case checkInvariant outstanding of
+                -- Which bodies the LeiosDb really holds, for the no-absorbing-
+                -- 'BodyAcquired' half of the invariant.
+                dbBodies <-
+                  LeiosDb.withReader dbHandle $ \rdr ->
+                    fmap (Set.fromList . map fst . filter (not . null . snd)) $
+                      mapM (\h -> (,) h <$> LeiosDb.lookupEbBody rdr h) $
+                        Map.keys (Leios.ebState outstanding)
+                case checkInvariant dbBodies outstanding of
                   Left msg -> pure (Left (msg <> " (after " <> show c <> ")"))
                   Right () -> loop (acc <> violations) cs
       loop [] cs0
@@ -456,6 +493,26 @@ applyCmd conn txCache kv peerVars peerId = \case
       eb
     pure []
   ArriveTx v -> absurd v
+  Disconnect -> do
+    modifyMVar_ (fst kv) (pure . removePeerFromOutstanding peerId)
+    pure []
+  ArriveBodyLostWrite ids slot -> do
+    let eb = ebOf ids
+        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
+        -- The body write is never enqueued, so its promise never resolves and
+        -- the acquisition is never confirmed.
+        lostConn = conn{LeiosDb.writeEbBody = \_ _ _ -> pure (LeiosDb.Promise (forever (threadDelay 1000000)))}
+    processLeiosBlock
+      nullTracer
+      nullTracer
+      kv
+      txCache
+      lostConn
+      dummySystemTime
+      noMempoolPull
+      (ReceivedBlockFrom peerId req)
+      eb
+    pure []
   Forge ids slot -> do
     let eb = ebOf ids
         point = pointOf ids slot
@@ -564,20 +621,37 @@ requestedOffsets m =
 -- The invariant
 ------------------------------------------------------------
 
--- | 'ebsPerMaxAnnouncementSlot' must be the exact inverse of the greatest-slot
--- field of 'ebState' (the reverse index 'pruneOutstandingToImmTip' prunes by).
+-- | Two invariants:
+--
+-- * 'ebsPerMaxAnnouncementSlot' must be the exact inverse of the greatest-slot
+--   field of 'ebState' (the reverse index 'pruneOutstandingToImmTip' prunes by).
+--
+-- * No absorbing 'BodyAcquired': see below.
 --
 -- (The old missing-tx \/ reverse-index invariant is gone with the EbTxs rewrite.)
-checkInvariant :: LeiosOutstanding Int -> Either String ()
-checkInvariant o =
-  if Leios.ebsPerMaxAnnouncementSlot o == inverseOfMax
-    then Right ()
-    else
+-- | @dbBodies@: the EBs the LeiosDb actually holds a body for. Passed in because
+-- the central invariant is a claim about the database, not about the state alone.
+checkInvariant :: Set.Set EbHash -> LeiosOutstanding Int -> Either String ()
+checkInvariant dbBodies o
+  | Leios.ebsPerMaxAnnouncementSlot o /= inverseOfMax =
       Left
         ( "ebsPerMaxAnnouncementSlot desynced from ebState: "
             <> show (Leios.ebsPerMaxAnnouncementSlot o, inverseOfMax)
         )
+  -- 'BodyAcquired' asserts the LeiosDb holds the body, and the fetch logic
+  -- retires a peer's offer for good on the strength of it. So the state may only
+  -- ever be reached through a durable write ('acquireEbBody'): anything else
+  -- strands the EB.
+  | not (null stranded) =
+      Left ("BodyAcquired but absent from the LeiosDb: " <> show stranded)
+  | otherwise = Right ()
  where
+  acquired =
+    Map.keysSet $
+      flip Map.filter (Leios.ebState o) $ \(Leios.MkEbState _ _ fs) -> case fs of
+        Leios.BodyAcquired{} -> True
+        _ -> False
+  stranded = Set.toList (acquired `Set.difference` dbBodies)
   inverseOfMax =
     Map.fromListWith
       NESet.union
@@ -633,6 +707,8 @@ genCmd = do
     , pure (ArriveBody ids slot)
     , pure (Forge ids slot)
     , Decide <$> elements worldSlots
+    , pure Disconnect
+    , pure (ArriveBodyLostWrite ids slot)
     ]
 
 ------------------------------------------------------------
@@ -651,6 +727,8 @@ cmdName = \case
   ArriveTx{} -> "ArriveTx"
   Forge{} -> "Forge"
   Decide{} -> "Decide"
+  Disconnect -> "Disconnect"
+  ArriveBodyLostWrite{} -> "ArriveBodyLostWrite"
 
 -- | An EB made known (offer \/ announce \/ body arrival) and later forged: the
 -- body forge hazard, where forging must purge the earlier listing.

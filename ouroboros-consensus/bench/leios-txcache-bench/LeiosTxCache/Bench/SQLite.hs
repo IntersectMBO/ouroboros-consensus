@@ -132,6 +132,7 @@ newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
               hashes <- readIORef buf
               batchLookup stmt hashes
               pure r
+          , setTxLocations = \_ebh _offTxs -> error "not used by benchmark"
           }
   pure (handle, reopen)
 
@@ -170,4 +171,5 @@ newSQLiteLeiosTxCacheWith pragmas path = do
       , withLockedInsertUnappliedTx = \k -> do _ <- k () (\w _txh _sz _ -> pure w); pure mempty
       , withLockedInsertAppliedTx = \k -> do _ <- k () (\w _txh _ -> pure w); pure ()
       , withLookupTx = \k -> k lookupOne
+      , setTxLocations = \_ebh _offTxs -> error "not used by benchmark"
       }

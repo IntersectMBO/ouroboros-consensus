@@ -676,23 +676,64 @@ summarizeDecisions decs =
  where
   reqs = concatMap toList (Map.elems decs)
 
-insertAcquiredEbBody ::
+-- | A transaction's offset (index) into an EB body.
+type TxOffset = Int
+
+-- | Where a tx's durable bytes live: an EB that references it, and the offset
+-- of its row there. Recorded in the LeiosTxCache on write confirmation, read
+-- back for cross-EB fill: a later EB referencing the same tx copies the bytes
+-- locally instead of re-fetching. Staleness is harmless -- the fill's guards
+-- make a vanished source a no-op and the tx stays in the fetch set.
+data TxLocation = MkTxLocation !EbHash !TxOffset
+  deriving (Eq, Show)
+
+-- | The body's LeiosDb write is durable, so claim 'BodyAcquired' with the pool
+-- of jobs the settled write still leaves to fetch.
+--
+-- There is no intermediate "write in flight" state. During the (brief, async)
+-- write window the EB reads as not-held ('ebStateHasBody' is 'False'), so a
+-- concurrent offer may redundantly re-fetch the body -- cheaper than tracking an
+-- in-flight state and reverting it on a lost write, which with the single writer
+-- cannot happen without bringing the node down anyway. The body write is only
+-- enqueued before this is reached, and the enqueue only parks on a free queue
+-- slot, so a cancellation there leaves no claim to strand.
+acquireEbBody ::
   EbHash -> Jobs.LeiosJobPool -> LeiosOutstanding pid -> LeiosOutstanding pid
-insertAcquiredEbBody ebHash jobPool =
-  alterEbState ebHash $ \case
-    Nothing ->
-      -- The state must have been pruned before the MsgLeiosBlock
-      -- arrived. (Because we couldn't have sent a MsgLeiosBlockRequest if no
-      -- announcement had arrived.)
-      --
-      -- Because it was previously pruned, it should simply be ignored now.
-      Nothing
-    Just (MkEbState slot onset fetchState) -> case fetchState of
-      BodyAcquired{} -> Nothing
-      NoBody -> Just $ MkEbState slot onset (BodyAcquired jobPool)
-      BodyImminent ->
-        -- note that we ignore the given jobPool here
-        Just $ MkEbState slot onset (BodyAcquired Jobs.emptyLeiosJobPool)
+acquireEbBody ebHash jobPool =
+  -- De-list the body: we now hold it, so it must not be left in the fetch set.
+  -- A concurrent offer may have (re-)listed it during the write window, when it
+  -- read as not-held; without this de-list that listing would survive the claim
+  -- and the decision loop would keep re-requesting a held body.
+  delistEbBody ebHash
+    . alterEbState
+      ebHash
+      ( \case
+          -- Pruned before the write landed (we could not have requested it
+          -- without an announcement, and that was since evicted): ignore.
+          Nothing -> Nothing
+          Just (MkEbState slot onset fetchState) -> case fetchState of
+            NoBody -> Just $ MkEbState slot onset (BodyAcquired jobPool)
+            BodyImminent -> Just $ MkEbState slot onset (BodyAcquired jobPool)
+            -- Already acquired -- e.g. a concurrent redundant delivery landed
+            -- first; keep the existing pool rather than clobbering it.
+            BodyAcquired{} -> Nothing
+      )
+
+-- | Drop an EB's body points from the fetch set and its reverse-slot index,
+-- because we now hold the body. Idempotent: a no-op if nothing is listed.
+delistEbBody :: EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
+delistEbBody ebHash o =
+  o
+    { missingEbBodies =
+        case Map.lookup ebHash (reverseSlotIndexByEbHash o) of
+          Nothing -> missingEbBodies o
+          Just slots ->
+            foldr
+              (\slot -> Map.delete (MkLeiosPoint slot ebHash))
+              (missingEbBodies o)
+              slots
+    , reverseSlotIndexByEbHash = Map.delete ebHash (reverseSlotIndexByEbHash o)
+    }
 
 -- | Record that our own forge is producing this EB
 markBodyImminent ::
@@ -777,8 +818,11 @@ initializeLeiosOutstanding :: StdGen -> [LeiosPoint] -> SlotNo -> LeiosOutstandi
 initializeLeiosOutstanding prng points immTipSlot =
   F.foldl' (flip seed1) (emptyLeiosOutstanding prng immTipSlot) points
  where
+  -- These points were read back out of the LeiosDb, so the body is durable
+  -- already: settle it at once. Together with a confirmed write, this is the only
+  -- other way 'BodyAcquired' is reached -- both derived from the database.
   seed1 (MkLeiosPoint slot ebHash) =
-    insertAcquiredEbBody ebHash Jobs.emptyLeiosJobPool
+    acquireEbBody ebHash Jobs.emptyLeiosJobPool
       . recordMaxAnnouncementSlot ebHash slot SNothing
 
 -- | Upsert an EB's 'ebState' entry, keeping 'ebsPerMaxAnnouncementSlot' in step
