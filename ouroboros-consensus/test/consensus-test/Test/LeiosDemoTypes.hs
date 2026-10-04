@@ -16,10 +16,17 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List (isInfixOf, (\\))
+import qualified Data.List as List
 import Data.Ratio ((%))
 import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word64)
-import LeiosDemoOnlyTestFetch (LeiosFetch, SingLeiosFetch (..), codecLeiosFetch)
+import LeiosDemoOnlyTestFetch
+  ( LeiosFetch
+  , SingLeiosFetch (..)
+  , codecLeiosFetch
+  , decodeBitmaps
+  , encodeBitmaps
+  )
 import LeiosDemoTypes
   ( BytesSize
   , LeiosEb (..)
@@ -63,11 +70,14 @@ import Test.QuickCheck
   , once
   , property
   , shrinkIntegral
+  , shrinkList
+  , shuffle
   , vectorOf
   , (.||.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
@@ -92,11 +102,11 @@ tests =
         "MsgLeiosBlockTxs decoder rejects a wrong or too large tx count"
         prop_decodeBlockTxsChecksCount
     , testProperty
-        "LeiosFetch decoder bounds the number of bitmap entries"
-        prop_decodeBitmapsBoundsEntries
-    , testProperty
-        "LeiosFetch decoder rejects zero, too large or unordered bitmap entries"
-        prop_decodeBitmapsChecksEntries
+        "decodeBitmaps accepts exactly the valid entry lists"
+        prop_decodeBitmapsAcceptsExactlyValid
+    , testCase
+        "decodeBitmaps covers every offset of a full EB, and nothing past them"
+        test_decodeBitmapsBoundaries
     ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'encodeLeiosEbSize'.
@@ -348,50 +358,78 @@ prop_decodeBlockTxsChecksCount =
     failure <- decodeFailure SingBlockTxs msg
     pure $ counterexample label $ failsWith expected failure
 
-prop_decodeBitmapsBoundsEntries :: Property
-prop_decodeBitmapsBoundsEntries =
-  once $
-    ioProperty $
-      conjoin
-        <$> sequence
-          [ check maxEntries Nothing
-          , check (maxEntries + 1) (Just "more than")
-          ]
+-- | 'decodeBitmaps' accepts exactly the entry lists the protocol allows.
+--
+-- The expectation is stated in the terms the protocol cares about -- which tx
+-- offsets a peer may ask for -- and derived from 'maxTxsPerEb' and the wire's
+-- 64-offsets-per-entry alone. It deliberately does /not/ reuse (or restate)
+-- the decoder's entry cap: a test that shares that arithmetic moves with it,
+-- and so can never catch it being wrong.
+--
+-- Note there is no separate count bound here. Strictly ascending indices that
+-- each address a real offset are already at most as many as there are entries,
+-- so the decoder's count check is an early guard, not a further rule.
+prop_decodeBitmapsAcceptsExactlyValid :: Property
+prop_decodeBitmapsAcceptsExactlyValid =
+  forAllShrink genEntries shrinkEntries $ \entries ->
+    let wellFormed =
+          all ((/= 0) . snd) entries
+            && all (addressesARealOffset . fst) entries
+            && strictlyAscending (map fst entries)
+     in -- A generator that drifted to only-valid (or only-invalid) lists would
+        -- still pass the equality below, so require both sides to show up.
+        checkCoverage $
+          cover 15 wellFormed "accepted" $
+            cover 15 (not wellFormed) "rejected" $
+              counterexample ("entries " <> show entries) $
+                counterexample ("expected " <> show wellFormed) $
+                  accepts entries === wellFormed
  where
-  maxEntries = (maxTxsPerEb + 63) `div` 64
-  check :: Int -> Maybe String -> IO Property
-  check n expected = do
-    let msg =
-          CBOR.encodeListLen 3
-            <> CBOR.encodeWord 2
-            <> encodeLeiosPoint testPoint
-            <> encodeBitmapEntries [(fromIntegral i, 1) | i <- [0 .. n - 1]]
-    failure <- decodeFailure SingIdle msg
-    pure $ counterexample ("entries " <> show n) $ failsWith expected failure
+  -- Entry @i@ covers offsets @[64i .. 64i+63]@, and an EB holds at most
+  -- 'maxTxsPerEb' txs, so an entry is meaningful iff its first offset exists.
+  addressesARealOffset i = 64 * fromIntegral i < maxTxsPerEb
+  strictlyAscending xs = and (zipWith (<) xs (drop 1 xs))
+  accepts entries =
+    case deserialiseFromBytes
+      (decodeBitmaps maxTxsPerEb)
+      (BSL.fromStrict . serialize' $ encodeBitmaps entries) of
+      Left _ -> False
+      Right (rest, decoded) -> BSL.null rest && decoded == entries
+  -- Mostly-valid lists, with each rule broken often enough to matter: a zero
+  -- bitmap, an out-of-range index, and a shuffle that breaks the ordering.
+  genEntries = do
+    n <- chooseInt (0, 6)
+    -- One past the entry holding the EB's last offset, so out-of-range indices
+    -- are drawn without naming the decoder's cap.
+    ixs <- vectorOf n (chooseInt (0, (maxTxsPerEb - 1) `div` 64 + 1))
+    bitmaps <- vectorOf n (frequency [(1, pure 0), (9, chooseInt (1, maxBound))])
+    ordered <- frequency [(3, pure (List.sort (List.nub ixs))), (1, shuffle ixs)]
+    pure
+      [ (fromIntegral i, fromIntegral b)
+      | (i, b) <- zip ordered (bitmaps <> repeat 1)
+      ]
+  shrinkEntries = shrinkList (const [])
 
-prop_decodeBitmapsChecksEntries :: Property
-prop_decodeBitmapsChecksEntries =
-  once $
-    ioProperty $
-      conjoin
-        <$> sequence
-          [ check "valid" Nothing [(0, 1), (fromIntegral lastIndex, 1)]
-          , check "zero bitmap" (Just "is zero") [(0, 0)]
-          , check "index too large" (Just "is not below") [(fromIntegral lastIndex + 1, 1)]
-          , check "repeated index" (Just "strictly ascending") [(3, 1), (3, 1)]
-          , check "descending index" (Just "strictly ascending") [(3, 1), (2, 1)]
-          ]
+-- | The boundary, as a unit test: single inputs with single expected answers,
+-- so stating them as a 'Property' would be dressing.
+--
+-- Phrased as the contract rather than as the cap: every offset a full EB can
+-- have must be requestable, and nothing past them.
+test_decodeBitmapsBoundaries :: Assertion
+test_decodeBitmapsBoundaries = do
+  decodes (entriesUpTo lastEntry) @?= True
+  decodes (entriesUpTo (lastEntry + 1)) @?= False
  where
-  lastIndex = (maxTxsPerEb + 63) `div` 64 - 1
-  check :: String -> Maybe String -> [(Word16, Word64)] -> IO Property
-  check label expected entries = do
-    let msg =
-          CBOR.encodeListLen 3
-            <> CBOR.encodeWord 2
-            <> encodeLeiosPoint testPoint
-            <> encodeBitmapEntries entries
-    failure <- decodeFailure SingIdle msg
-    pure $ counterexample label $ failsWith expected failure
+  -- The entry holding the last offset an EB can have. Note 'maxTxsPerEb' need
+  -- not be a multiple of 64, so this is not @maxTxsPerEb `div` 64@.
+  lastEntry = (maxTxsPerEb - 1) `div` 64
+  entriesUpTo i = [(fromIntegral j, 1) | j <- [0 .. i]]
+  decodes entries =
+    case deserialiseFromBytes
+      (decodeBitmaps maxTxsPerEb)
+      (BSL.fromStrict . serialize' $ encodeBitmaps entries) of
+      Left _ -> False
+      Right (rest, _) -> BSL.null rest
 
 testPoint :: LeiosPoint
 testPoint = MkLeiosPoint (SlotNo 0) (unsafeEbHashFromBytes $ BS.replicate 32 0xab)

@@ -30,6 +30,14 @@ module LeiosDemoOnlyTestFetch
   , leiosFetchClientPeerPipelined
   , leiosFetchServerPeer
   , toLeiosFetchClientPeerPipelined
+
+    -- * Bitmaps
+
+    -- | Exposed so the wire validation can be tested without going through a
+    -- whole 'Message'. The entry cap stays private: a test that reuses it
+    -- cannot catch it being wrong.
+  , decodeBitmaps
+  , encodeBitmaps
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -418,19 +426,34 @@ encodeBitmaps bitmaps =
       CBOR.encodeBreak
       bitmaps
 
+-- | The most bitmap entries it takes to cover @maxTxs@ txs, 64 txs to an entry.
+maxBitmapEntries :: Int -> Int
+maxBitmapEntries maxTxs = (maxTxs + 63) `div` 64
+
 -- | Decode at most enough bitmaps to cover @maxTxs@ txs. Each bitmap must be
 -- non-zero. The indices must be strictly ascending, and each must be below
--- @maxTxs / 64@ rounded up.
+-- 'maxBitmapEntries'.
+--
+-- Accepts either CBOR map encoding. We write the indefinite one, but a decoder
+-- that rejects the definite one would reject a peer that is within spec. A
+-- declared length is checked before the loop, so neither form reads more
+-- entries than the cap.
 decodeBitmaps :: Int -> CBOR.Decoder s TxBitmaps
-decodeBitmaps maxTxs = CBOR.decodeMapLenIndef *> go 0 Nothing []
+decodeBitmaps maxTxs =
+  CBOR.decodeMapLenOrIndef >>= \case
+    Nothing -> go (const CBOR.decodeBreakOr) 0 Nothing []
+    Just n
+      | n > maxEntries -> fail tooManyEntries
+      | otherwise -> go (\k -> pure (k >= n)) 0 Nothing []
  where
-  maxEntries = (maxTxs + 63) `div` 64
-  go !k mbPrevIndex acc =
-    CBOR.decodeBreakOr >>= \case
+  maxEntries = maxBitmapEntries maxTxs
+  tooManyEntries = "TxBitmaps: more than " <> show maxEntries <> " entries"
+  -- 'done' is how the two encodings differ: a break byte, or the declared count.
+  go done !k mbPrevIndex acc =
+    done k >>= \case
       True -> pure (reverse acc)
       False
-        | k >= maxEntries ->
-            fail $ "TxBitmaps: more than " <> show maxEntries <> " entries"
+        | k >= maxEntries -> fail tooManyEntries
         | otherwise -> do
             index <- CBOR.decodeWord16
             bitmap <- CBOR.decodeWord64
@@ -443,7 +466,7 @@ decodeBitmaps maxTxs = CBOR.decodeMapLenIndef *> go 0 Nothing []
             when (maybe False (index <=) mbPrevIndex) $
               fail $
                 "TxBitmaps: index " <> show index <> " is not strictly ascending"
-            go (k + 1 :: Int) (Just index) ((index, bitmap) : acc)
+            go done (k + 1 :: Int) (Just index) ((index, bitmap) : acc)
 
 -----
 
