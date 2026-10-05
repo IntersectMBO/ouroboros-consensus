@@ -2,9 +2,33 @@
 
 let
   inherit (pkgs) lib;
+
+  # Must be built with the same GHC as used in hsPkgs, hence built from the
+  # project rather than taken from `nix/tools.nix`.
+  haskell-language-server = hsPkgs.tool "haskell-language-server" {
+    src = inputs.hls;
+    configureArgs = "--disable-benchmarks --disable-tests";
+    cabalProjectLocal = ''
+      allow-newer: haddock-library:base
+    '';
+  };
+
+  # Editors launch `haskell-language-server-wrapper`, whose sole job is to pick
+  # the HLS binary matching the project's GHC. Here that choice is already made,
+  # but the wrapper executable is not part of the tool output above -- so without
+  # this shim the editor silently falls through to whatever HLS is installed
+  # system-wide and drives the cradle with a foreign GHC and cabal.
+  haskell-language-server-wrapper =
+    pkgs.runCommand "haskell-language-server-wrapper" { } ''
+      mkdir -p $out/bin
+      ln -s ${haskell-language-server}/bin/haskell-language-server \
+        $out/bin/haskell-language-server-wrapper
+    '';
 in
 hsPkgs.shellFor {
   nativeBuildInputs = [
+    haskell-language-server
+    haskell-language-server-wrapper
     pkgs.cabal
     pkgs.cabal-docspec
     pkgs.fd
@@ -29,18 +53,6 @@ hsPkgs.shellFor {
     (pkgs.scriv.overridePythonAttrs (old: { doCheck = false; }))
     (pkgs.python3.withPackages (p: [ p.beautifulsoup4 p.html5lib p.matplotlib p.pandas ]))
   ];
-
-  # This is the place for tools that are required to be built with the same GHC
-  # version as used in hsPkgs.
-  tools = {
-    haskell-language-server = {
-      src = inputs.hls;
-      configureArgs = "--disable-benchmarks --disable-tests";
-      cabalProjectLocal = ''
-        allow-newer: haddock-library:base
-      '';
-    };
-  };
 
   shellHook = ''
     export LANG="en_US.UTF-8"
