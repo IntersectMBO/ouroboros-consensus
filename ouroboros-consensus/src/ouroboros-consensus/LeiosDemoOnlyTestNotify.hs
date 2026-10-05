@@ -284,39 +284,39 @@ encodeLeiosNotify encodeP encodeA encodeV = encode
     Message (LeiosNotify point announcement vote) st0 st1 ->
     CBOR.Encoding
   encode = \case
-    MsgLeiosNotificationRequestNext ->
+    MsgDone ->
       CBOR.encodeListLen 1
         <> CBOR.encodeWord 0
+    MsgQuit ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 1
+    MsgCanceled ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 2
+    MsgLeiosNotificationRequestNext ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 3
     MsgLeiosBlockAnnouncement x ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 1
+        <> CBOR.encodeWord 4
         <> encodeA x
     MsgLeiosBlockOffer p sz ->
       CBOR.encodeListLen 3
-        <> CBOR.encodeWord 2
+        <> CBOR.encodeWord 5
         <> encodeP p
         <> CBOR.encodeWord32 sz
     MsgLeiosBlockTxsOffer p ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 3
+        <> CBOR.encodeWord 6
         <> encodeP p
     MsgLeiosVotes vs ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 4
+        <> CBOR.encodeWord 7
         <> encodeVotes
      where
       encodeVotes =
         CBOR.encodeListLen (fromIntegral $ length vs)
           <> foldMap encodeV vs
-    MsgDone ->
-      CBOR.encodeListLen 1
-        <> CBOR.encodeWord 5
-    MsgQuit ->
-      CBOR.encodeListLen 1
-        <> CBOR.encodeWord 6
-    MsgCanceled ->
-      CBOR.encodeListLen 1
-        <> CBOR.encodeWord 7
 
 decodeLeiosNotify ::
   forall
@@ -344,31 +344,31 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
     CBOR.Decoder s (SomeMessage st')
   decode stok len key = do
     case (stok, len, key) of
-      (SingIdle, 1, 0) ->
+      (SingQuit, 1, 0) ->
+        return $ SomeMessage MsgDone
+      (SingIdle, 1, 1) ->
+        return $ SomeMessage MsgQuit
+      (SingBusy, 1, 2) ->
+        return $ SomeMessage MsgCanceled
+      (SingIdle, 1, 3) ->
         return $ SomeMessage MsgLeiosNotificationRequestNext
-      (SingBusy, 2, 1) -> do
+      (SingBusy, 2, 4) -> do
         x <- decodeA
         return $ SomeMessage $ MsgLeiosBlockAnnouncement x
-      (SingBusy, 3, 2) -> do
+      (SingBusy, 3, 5) -> do
         p <- decodeP
         sz <- CBOR.decodeWord32
         return $ SomeMessage $ MsgLeiosBlockOffer p sz
-      (SingBusy, 2, 3) -> do
+      (SingBusy, 2, 6) -> do
         p <- decodeP
         return $ SomeMessage $ MsgLeiosBlockTxsOffer p
-      (SingBusy, 2, 4) -> do
+      (SingBusy, 2, 7) -> do
         vs <- decodeVotes
         return $ SomeMessage $ MsgLeiosVotes vs
        where
         decodeVotes = do
           n <- CBOR.decodeListLen
           replicateM n decodeV
-      (SingQuit, 1, 5) ->
-        return $ SomeMessage MsgDone
-      (SingIdle, 1, 6) ->
-        return $ SomeMessage MsgQuit
-      (SingBusy, 1, 7) ->
-        return $ SomeMessage MsgCanceled
       (SingDone, _, _) -> notActiveState stok
       -- failures per protocol state
       (SingIdle, _, _) ->
