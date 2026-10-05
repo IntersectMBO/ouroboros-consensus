@@ -261,6 +261,7 @@ instance NUS.ShowProxy () where
 
 data Handlers m addr blk = Handlers
   { hChainSyncClient ::
+      LeiosDbWriter m ->
       ConnectionId addr ->
       IsBigLedgerPeer ->
       CsClient.DynamicEnv m blk ->
@@ -331,6 +332,7 @@ data Handlers m addr blk = Handlers
       ConnectionId addr ->
       PeerSharingServer addr m
   , hLeiosNotifyClient ::
+      LeiosDbWriter m ->
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
@@ -395,7 +397,7 @@ mkHandlers
     }
   txSubmissionLogicVersion =
     Handlers
-      { hChainSyncClient = \peer _isBigLedgerpeer dynEnv peerVars ->
+      { hChainSyncClient = \writer peer _isBigLedgerpeer dynEnv peerVars ->
           CsClient.chainSyncClient
             CsClient.ConfigEnv
               { CsClient.cfg = getTopLevelConfig
@@ -423,19 +425,18 @@ mkHandlers
                   -- onset (its ChainSync arrival latency).
                   whenJust (Leios.mkAnnouncingHeader hdr) $ \ancHdr -> do
                     now <- systemTimeCurrent systemTime
-                    withWriter (getLeiosDB nodeKernel) $ \writer ->
-                      Leios.processAnnouncementCentrally
-                        (Node.leiosKernelTracer tracers)
-                        getLeiosCentralState
-                        (getLeiosOutstanding, getLeiosReady)
-                        getLeiosTxCache
-                        writer
-                        (Just peer)
-                        Leios.ReceivedViaChainSync
-                        Announcements.DoRelay
-                        (SJust hdrSlotTime)
-                        (Just (diffRelTime now hdrSlotTime))
-                        ancHdr
+                    Leios.processAnnouncementCentrally
+                      (Node.leiosKernelTracer tracers)
+                      getLeiosCentralState
+                      (getLeiosOutstanding, getLeiosReady)
+                      getLeiosTxCache
+                      writer
+                      (Just peer)
+                      Leios.ReceivedViaChainSync
+                      Announcements.DoRelay
+                      (SJust hdrSlotTime)
+                      (Just (diffRelTime now hdrSlotTime))
+                      ancHdr
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -493,7 +494,7 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM peer peerVars -> toLeiosNotifyClientPeerPipelined $ Effect $ do
+      , hLeiosNotifyClient = \writer _version controlMessageSTM peer peerVars -> toLeiosNotifyClientPeerPipelined $ Effect $ do
           let tracer = leiosPeerTracer peer
               kernelTracer = Node.leiosKernelTracer tracers
               LeiosVoteState{addVote} = leiosVoteState
@@ -542,19 +543,18 @@ mkHandlers
                               traceWith tracer $
                                 MkTraceLeiosPeer $
                                   "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
-                              withWriter (getLeiosDB nodeKernel) $ \writer ->
-                                Leios.processAnnouncementCentrally
-                                  kernelTracer
-                                  getLeiosCentralState
-                                  (getLeiosOutstanding, getLeiosReady)
-                                  getLeiosTxCache
-                                  writer
-                                  (Just peer)
-                                  Leios.ReceivedViaLeiosNotify
-                                  shouldRelay
-                                  (SJust onset)
-                                  (Just age)
-                                  ancHdr
+                              Leios.processAnnouncementCentrally
+                                kernelTracer
+                                getLeiosCentralState
+                                (getLeiosOutstanding, getLeiosReady)
+                                getLeiosTxCache
+                                writer
+                                (Just peer)
+                                Leios.ReceivedViaLeiosNotify
+                                shouldRelay
+                                (SJust onset)
+                                (Just age)
+                                ancHdr
                           )
                           peerSt0
                           anc
@@ -1142,31 +1142,33 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
           csjConfig
           getDiffusionPipeliningSupport
         $ \csState ->
-          bracketLeiosPeer them isBigLedgerPeer $ \peerVars -> do
-            (r, trailing) <-
-              runPipelinedPeerWithLimitsRnd
-                (contramap (TraceLabelPeer them) tChainSyncTracer)
-                chainSyncRng
-                (cChainSyncCodec (mkCodecs version))
-                blChainSync
-                (chainSyncTimeouts peerTrustable)
-                channel
-                $ chainSyncClientPeerPipelined
-                $ hChainSyncClient
-                  them
-                  isBigLedgerPeer
-                  CsClient.DynamicEnv
-                    { CsClient.version
-                    , CsClient.controlMessageSTM
-                    , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
-                    , CsClient.setCandidate = csvSetCandidate csState
-                    , CsClient.idling = csvIdling csState
-                    , CsClient.loPBucket = csvLoPBucket csState
-                    , CsClient.setLatestSlot = csvSetLatestSlot csState
-                    , CsClient.jumping = csvJumping csState
-                    }
-                  peerVars
-            return (ChainSyncInitiatorResult r, trailing)
+          bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
+            withWriter leiosDB $ \writer -> do
+              (r, trailing) <-
+                runPipelinedPeerWithLimitsRnd
+                  (contramap (TraceLabelPeer them) tChainSyncTracer)
+                  chainSyncRng
+                  (cChainSyncCodec (mkCodecs version))
+                  blChainSync
+                  (chainSyncTimeouts peerTrustable)
+                  channel
+                  $ chainSyncClientPeerPipelined
+                  $ hChainSyncClient
+                    writer
+                    them
+                    isBigLedgerPeer
+                    CsClient.DynamicEnv
+                      { CsClient.version
+                      , CsClient.controlMessageSTM
+                      , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
+                      , CsClient.setCandidate = csvSetCandidate csState
+                      , CsClient.idling = csvIdling csState
+                      , CsClient.loPBucket = csvLoPBucket csState
+                      , CsClient.setLatestSlot = csvSetLatestSlot csState
+                      , CsClient.jumping = csvJumping csState
+                      }
+                    peerVars
+              return (ChainSyncInitiatorResult r, trailing)
 
   aChainSyncServer ::
     NodeToNodeVersion ->
@@ -1453,16 +1455,17 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
       }
     channel = do
       labelThisThread "LeiosNotifyClient"
-      bracketLeiosPeer them isBigLedgerPeer $ \peerVars -> do
-        ((), trailing) <-
-          runPipelinedPeerWithLimits
-            (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
-            (cLeiosNotifyCodec (mkCodecs version))
-            blLeiosNotify
-            timeLimitsLeiosNotify
-            channel
-            $ hLeiosNotifyClient version controlMessageSTM them peerVars
-        pure (NoInitiatorResult, trailing)
+      bracketLeiosPeer them isBigLedgerPeer $ \peerVars ->
+        withWriter leiosDB $ \writer -> do
+          ((), trailing) <-
+            runPipelinedPeerWithLimits
+              (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
+              (cLeiosNotifyCodec (mkCodecs version))
+              blLeiosNotify
+              timeLimitsLeiosNotify
+              channel
+              $ hLeiosNotifyClient writer version controlMessageSTM them peerVars
+          pure (NoInitiatorResult, trailing)
 
   aLeiosNotifyServer ::
     NodeToNodeVersion ->
