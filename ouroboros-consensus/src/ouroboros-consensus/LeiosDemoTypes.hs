@@ -424,25 +424,27 @@ instance Monoid WhetherTxsClosureOffered where
 -- first, or alone. A CertRB roll-forward makes both at once.
 --
 -- The body offer carries a size and the closure offer does not, and that
--- asymmetry is not an oversight. A body request is per /candidate/, and a
--- point can have more than one --- two announcements can name one endorser
--- block at different sizes, and only one of them is the truth --- so the size
--- is what says which candidate this peer can serve. Closure jobs are per
--- endorser block: 'assignClosure' only ever runs once we hold the body, by
--- which point the true size is known and the losing candidates are gone.
+-- asymmetry is not an oversight. We hold nothing to size a body request by, so
+-- the peer's claim is both what the request asks for and what it spends
+-- against that peer's byte budget. Closure jobs carry their own byte counts,
+-- taken from the body we already hold by the time 'assignClosure' runs, so
+-- there is nothing there for a peer to claim.
 data PeerOffer = MkPeerOffer
   { poOfferedBody :: !(StrictMaybe BytesSize)
   -- ^ The size this peer offered the body at, if it has offered the body.
   --
-  -- Every offer of one endorser block from one peer names the same size, or
-  -- that peer is lying: an offer says it holds the body, it can only have
-  -- acquired that body at the size announced --- 'processLeiosBlock' refuses
-  -- one of any other size --- and so it knows the one true size. Which is why
-  -- nothing here arbitrates between two of them.
+  -- The peer's own claim, and the only size that decides anything: no
+  -- announcement gets a say (see 'LeiosDemoLogic.assignBody'), and what the
+  -- endorser block really weighs is settled by hashing the bytes that arrive.
+  --
+  -- Offering one point twice costs the peer its connection
+  -- ('LeiosDemoLogic.ExnLeiosRepeatedOffer'), but one hash at two /points/ does
+  -- not: those are separate entries, each needing its own announcement, and
+  -- nothing here arbitrates between the sizes they name.
   --
   -- TODO disconnect a peer that ever offers one 'EbHash' at two sizes,
   -- whichever messages the two arrived on. That is proof it is lying, and
-  -- today we merely keep one of the two and carry on.
+  -- today we keep both and carry on.
   , poClosure :: !WhetherTxsClosureOffered
   }
   deriving (Eq, Show)
@@ -535,18 +537,23 @@ newLeiosPeerVars whetherBigLedgerPeer = do
 data LeiosOutstanding pid = MkLeiosOutstanding
   { -- EB-level tracking
     ebState :: !(Map EbHash EbState)
-  -- ^ Per-EB state for every EB we have seen announced (or offered)
+  -- ^ Per-EB state for every EB this node is tracking. Three things add an
+  -- entry: the announcement that takes an election's focus, a verified
+  -- certificate ('trackCertifiedEb'), and the start-up seeding
+  -- ('initializeLeiosOutstanding'), which restores what the LeiosDb already
+  -- holds. An offer never does, and is only ever acted on for an endorser
+  -- block already here.
   --
-  -- TODO once offers are only valid if preceded by an announcement, then
-  -- 'ebState' and the @selfPeer@ field of
-  -- 'LeiosDemoLogic.Announcements.CentralState' are partially redundant
+  -- TODO 'ebState' and the @selfPeer@ field of
+  -- 'LeiosDemoLogic.Announcements.CentralState' is at least partially redundant
+  -- now that a peer's offers must be preceded by matching announcements
   , ebsPerMaxAnnouncementSlot :: !(Map SlotNo (NESet EbHash))
   -- ^ Slot-keyed reverse index of 'ebStateMaxSlot' on 'ebState'
   --
   -- Used to accelerate pruning.
   --
-  -- TODO will also be redundant with by 'CentralState.selfPeer.live' once
-  -- offers are no longer trusted.
+  -- TODO might also be redundant with 'CentralState.selfPeer.live', now that a
+  -- peer's offers must be preceded by matching announcements
   , elFocus :: !(Map ElId EbHash)
   -- ^ The endorser block each election is fetching: the first announcement we
   -- processed for that election, until a certificate names one, which wins.
@@ -621,11 +628,16 @@ emptyLeiosOutstanding prng prunedSlot =
 
 -- | Per-EB state tracked in 'ebState'
 data EbState
-  = -- | The greatest slot at which the EB has been announced (TODO or, for now,
-    -- offered); the wall-clock onset of its /oldest/ announcement slot (kept as the
-    -- minimum, so the body\/closure arrival handlers can report how old the EB was
-    -- when we first held it; 'SNothing' for an unheralded offer-only or self-forged
-    -- EB); and the current progress of fetching it.
+  = -- | The greatest slot at which the EB has been announced, the wall-clock
+    -- onset of its earliest announcement slot, and the current progress of
+    -- fetching it.
+    --
+    -- 'LeiosDemoLogic.ebPointAge' subtracts that onset from the arrival time,
+    -- so the acquisition traces say how long after this EB was first announced
+    -- we got it. It is 'SNothing' when nothing supplied an onset, as for a
+    -- verified certificate or the start-up seeding. See
+    -- 'recordMaxAnnouncementSlot' for why the slot is the greatest of them and
+    -- the onset the earliest.
     MkEbState !SlotNo !(StrictMaybe RelativeTime) !EbFetchState
   deriving (Eq, Show)
 
@@ -849,8 +861,9 @@ markBodyImminent ebHash slot =
       BodyImminent -> Nothing
       BodyAcquired{} -> Just $ MkEbState oldSlot onset (BodyAcquired Jobs.emptyLeiosJobPool)
 
--- | Record that the EB with this hash is referenced (announced or offered) at this
--- slot, along with that slot's wall-clock onset if known.
+-- | Record that the EB with this hash is referenced --- announced, or named by
+-- a verified certificate --- at this slot, along with that slot's wall-clock
+-- onset if known.
 --
 -- The same EB (hash) can be referenced by several points; we keep the
 -- /greatest/ such slot, so the EB's state isn't pruned prematurely. The onset,
@@ -990,9 +1003,11 @@ focusCertifiedEb fields =
 --
 -- An 'ebState' entry is what makes a body fetchable at all: the decision logic
 -- skips any offer of an endorser block it has no entry for. The announcement
--- that took the election's focus made one, but this endorser block's
--- announcement may have lost that race, or may never have reached us, so this
--- is where a certificate makes one of its own.
+-- this certificate names may have no entry, in two ways. Its announcing block
+-- may have been on our selection since start-up, so its header never rolled
+-- forward and nothing announced it to us. Or it may have been a second
+-- announcement for an election already focused elsewhere, which
+-- 'LeiosDemoLogic.recordAnnouncedEb' deliberately does not track.
 --
 -- Already holding the body is not a special case: 'recordMaxAnnouncementSlot'
 -- leaves the fetch state alone, so nothing is re-fetched.
@@ -2779,14 +2794,6 @@ leiosExtValidationErrorForHuman = \case
       <> ")"
 
 -- * Protocol parameters
-
---
--- The node-to-node limits below are constants, but no longer a policy of their
--- own: they restate the LeiosFetch codec's message limit, so the buffers sized
--- from them hold anything a peer can deliver. Governance raising
--- @maxEndorserBlockReferencesSize@ past the message limit yields a capped EB
--- rather than an undiffusable one ('leiosEndorserBlockMeasure') -- silently,
--- today; a trace when that cap bites would be worth adding.
 
 -- | The most transactions an endorser block may name. Sizes the fetch buffers
 -- and bounds the wire bitmaps.
