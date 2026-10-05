@@ -109,3 +109,7 @@ cabal.project.local~
 .ghc.environment.*
 
 **/.yarn
+
+# Build directory of the GHC boot library check, see cabal.project.ghc-pin
+dist-newstyle-*/
+/cabal.project.*.local

@@ -103,6 +103,9 @@ jobs:
     - name: Configure Cabal
       run: |
         cp .github/workflows/cabal.project.${{ matrix.variant }}.local ./cabal.project.local
+        # Same configuration for the GHC boot library check below, which uses
+        # its own project file and therefore its own local file.
+        cp .github/workflows/cabal.project.${{ matrix.variant }}.local ./cabal.project.ghc-pin.local
 
     - name: Update Cabal (Hackage and CHaP)
       run: |
@@ -228,6 +231,22 @@ jobs:
         name: haddocks
         path: haddocks.tgz
         retention-days: 1
+
+    # Downstream consumers, such as cardano-node, also depend on the `ghc`
+    # package. The installed `ghc` package pins every boot library to the version
+    # that the compiler shipped with, so a plan that works here can still fail
+    # downstream. This step resolves a plan under that same restriction. See
+    # cabal.project.ghc-pin.
+    #
+    # It runs last, so that a conflict does not hide the build and test results.
+    # It needs its own build directory, so that it does not overwrite the plan of
+    # the normal build.
+    - name: Check the build plan against GHC's boot libraries
+      run: |
+        cabal build all --dry-run \
+          --project-file=cabal.project.ghc-pin \
+          --builddir=dist-newstyle-ghc-pin \
+          --minimize-conflict-set
 
   benchmarks:
     name: Run benchmarks
