@@ -1033,9 +1033,11 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- fetch job set above)
   when shouldPersist $
     traceException tracer TraceLeiosPeerDbException $ do
-      -- FIXME: once EB announcements are wired in the point MUST already
-      -- be present (announcement handling inserts it); until then insert
-      -- it idempotently as a stop-gap and trace a warning.
+      -- FIXME the announcement path does not write the point: 'writeEbPoint'
+      -- has no caller but this one, so the arriving body is still what first
+      -- records the point. Were an announcement to record it, this insert
+      -- would be redundant and the trace below would mean something is wrong;
+      -- today it fires for every body, so it means nothing.
       traceWith ktracer $ TraceLeiosBlockPointMissing point
       -- Enqueue the write first, then claim the body. 'writeEbBody' only parks
       -- on a free writer-queue slot (bounded backpressure), so a cancellation
