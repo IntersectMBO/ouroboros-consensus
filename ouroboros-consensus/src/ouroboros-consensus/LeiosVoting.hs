@@ -58,7 +58,7 @@ import LeiosDemoTypes
   , signLeiosVote
   )
 import LeiosTxCache (LeiosTxCache (..))
-import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx)
 import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..), VoteTally (..))
 import Ouroboros.Consensus.Block
   ( ConvertRawHash (..)
@@ -111,7 +111,6 @@ import Ouroboros.Consensus.Util.IOLike
   , STM
   , atomically
   , bracket
-  , labelThisThread
   )
 import Ouroboros.Consensus.Util.Time (nominalDelay)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
@@ -263,6 +262,7 @@ runLeiosVoting ::
   , HasHardForkHistory blk
   , MonadTimer m
   ) =>
+  CallCtx m ->
   Tracer m TraceLeiosKernel ->
   LedgerConfig blk ->
   ChainDB m blk ->
@@ -272,9 +272,7 @@ runLeiosVoting ::
   LeiosVoteState m ->
   [LeiosSigningKey] ->
   m ()
-runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
-  labelThisThread "LeiosVoting"
-  cctx <- rootCallCtx "LeiosVoting"
+runLeiosVoting cctx tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
   case sks of
     [] ->
       traceWith tracer $
@@ -303,7 +301,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
             >>= \case
               Left mPoint -> mapM_ scheduleVoteTime mPoint
               Right (point, deadline) ->
-                goVote cctx leiosReader point deadline >>= \case
+                goVote leiosReader point deadline >>= \case
                   Left reason -> traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason}
                   Right () -> pure ()
  where
@@ -321,14 +319,13 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState sks = do
   -- reads when we are ready to sign. The cheap checks come first either way, so
   -- an EB we would not vote for is never validated.
   goVote ::
-    CallCtx m ->
     LeiosDbReader m ->
     -- \| The leios point of the EB to vote on.
     LeiosPoint ->
     -- \| The moment after which a vote is too late.
     RelativeTime ->
     m (Either LeiosNotVotedReason ())
-  goVote cctx reader point deadline = do
+  goVote reader point deadline = do
     -- Before opening a forker, let alone validating: the window may already
     -- have shut before this timer was ever armed.
     expired <- (> deadline) <$> systemTimeCurrent systemTime

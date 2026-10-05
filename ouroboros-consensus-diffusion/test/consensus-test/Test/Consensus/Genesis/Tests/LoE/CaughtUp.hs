@@ -41,7 +41,7 @@ import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
 import LeiosDemoDb (newLeiosDBInMemory)
-import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, newCallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
@@ -274,7 +274,9 @@ openChainDB cctx registry getLoEFragment = do
       registry
       (\_ -> ChainDB.Impl.openDBInternal cctx chainDbArgs False)
       (ChainDB.closeDB . fst)
-  _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
+  _ <- forkLinkedThread registry "AddBlockRunner" $ do
+    chainSelCctx <- newCallCtx cctx "ChainSel"
+    intAddBlockRunner chainSelCctx
   pure chainDB
 
 mkGsmEntryPoints ::

@@ -22,7 +22,7 @@ import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes (HasLeiosVoting)
-import LeiosUtils.CallTrace.Json (rootCallCtx)
+import LeiosUtils.CallTrace.Json (newCallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
@@ -184,7 +184,9 @@ mkChainDb resources = do
       (\_ -> ChainDB.openDBInternal cctx chainDbArgs False)
       (ChainDB.closeDB . fst)
   let ChainDB.Internal{intCopyToImmutableDB, intAddBlockRunner} = internal
-  void $ forkLinkedThread lrRegistry "AddBlockRunner" (void intAddBlockRunner)
+  void $ forkLinkedThread lrRegistry "AddBlockRunner" $ do
+    chainSelCctx <- newCallCtx cctx "ChainSel"
+    void $ intAddBlockRunner chainSelCctx
   pure (chainDB, intCopyToImmutableDB)
  where
   LiveResources{lrRegistry, lrTracer, lrConfig, lrCdb, lrLoEVar, lrChunkInfo, lrInitLedger} = resources

@@ -67,7 +67,7 @@ import LeiosDemoDb.WithCallTrace
   )
 import LeiosDemoTypes (LeiosPoint, pointEbHash)
 import qualified LeiosDemoTypes
-import LeiosUtils.CallTrace.Json (CallCtx, callTrace, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, callTrace, newCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -106,41 +106,41 @@ launchBgTasks ::
   , HasHardForkHistory blk
   ) =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   -- | Number of immutable blocks replayed on ledger DB startup
   Word64 ->
   m ()
-launchBgTasks cdb@CDB{..} replayed = do
+launchBgTasks cdb@CDB{..} nodeCctx replayed = do
   !addBlockThread <-
-    launch "ChainDB.addBlockRunner" $
-      addBlockRunner cdbChainSelFuse cdb
+    launch "ChainDB.addBlockRunner" $ do
+      cctx <- newCallCtx nodeCctx "ChainSel"
+      addBlockRunner cdbChainSelFuse cdb cctx
 
   ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
   !ledgerDbMaintenaceThread <-
     forkLinkedWatcherAllocate
       cdbRegistry
       "ChainDB.ledgerDbTaskWatcher"
-      ( do
-          labelThisThread "LedgerDbMaintenance"
-          rootCallCtx "LedgerDbMaintenance"
-      )
+      (newCallCtx nodeCctx "LedgerDbMaintenance")
       (\_ -> pure ())
       (\cctx -> ledgerDbTaskWatcher cctx cdb ledgerDbTasksTrigger)
 
   gcSchedule <- newGcSchedule
   !gcThread <-
     launch "ChainDB.gcBlocksScheduleRunner" $ do
-      labelThisThread "ChainDBGC"
-      cctx <- rootCallCtx "ChainDBGC"
+      cctx <- newCallCtx nodeCctx "ChainDBGC"
       gcScheduleRunner gcSchedule $
         garbageCollectBlocks cctx cdb
 
   !copyToImmutableDBThread <-
-    launch "ChainDB.copyToImmutableDBRunner" $
-      copyToImmutableDBRunner cdb ledgerDbTasksTrigger gcSchedule
+    launch "ChainDB.copyToImmutableDBRunner" $ do
+      cctx <- newCallCtx nodeCctx "ChainDBCopy"
+      copyToImmutableDBRunner cdb cctx ledgerDbTasksTrigger gcSchedule
 
   !leiosAcquiredThread <-
-    launch "ChainDB.leiosAcquiredEbsRunner" $
-      leiosAcquiredEbsRunner cdb
+    launch "ChainDB.leiosAcquiredEbsRunner" $ do
+      cctx <- newCallCtx nodeCctx "LeiosEbClosureWatcher"
+      leiosAcquiredEbsRunner cdb cctx
 
   atomically $
     writeTVar cdbKillBgThreads $
@@ -171,10 +171,9 @@ launchBgTasks cdb@CDB{..} replayed = do
 leiosAcquiredEbsRunner ::
   IOLike m =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   m Void
-leiosAcquiredEbsRunner CDB{..} = do
-  labelThisThread "LeiosEbClosureWatcher"
-  cctx <- rootCallCtx "LeiosEbClosureWatcher"
+leiosAcquiredEbsRunner CDB{..} cctx = do
   chan <- subscribeEbNotifications cdbLeiosDb cctx
   forever $
     atomically (readTChan chan) >>= \case
@@ -347,12 +346,11 @@ copyToImmutableDBRunner ::
   , LedgerSupportsProtocol blk
   ) =>
   ChainDbEnv m blk ->
+  CallCtx m ->
   LedgerDbTasksTrigger m ->
   GcSchedule m ->
   m Void
-copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
-  labelThisThread "ChainDBCopy"
-  cctx <- rootCallCtx "ChainDBCopy"
+copyToImmutableDBRunner cdb@CDB{..} cctx ledgerDbTasksTrigger gcSchedule = do
   -- this first flush will persist the differences that come from the initial
   -- chain selection.
   LedgerDB.tryFlush cdbLedgerDB
@@ -739,11 +737,9 @@ addBlockRunner ::
   ) =>
   Fuse m ->
   ChainDbEnv m blk ->
+  CallCtx m ->
   m Void
-addBlockRunner fuse cdb@CDB{..} = do
-  labelThisThread "ChainSel"
-  rootCCtx <- rootCallCtx "ChainSel"
-
+addBlockRunner fuse cdb@CDB{..} cctx = do
   let
     trace = traceWith cdbTracer . TraceAddBlockEvent
     callTracer = (TraceAddBlockEvent . TraceAddBlockCall) >$< cdbTracer
@@ -752,7 +748,7 @@ addBlockRunner fuse cdb@CDB{..} = do
     -- TODO(bladyjoker): This CallTrace will not emit an End event in the case of an error/exception.
     callTrace
       callTracer
-      rootCCtx
+      cctx
       "process-chain-sel-message"
       ()
       ( \pcsCCtx -> do

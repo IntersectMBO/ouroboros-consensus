@@ -31,7 +31,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
 import qualified LeiosDemoDb as LeiosDb
-import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, newCallCtx, rootCallCtx)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -193,7 +193,9 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
         registry
         (\_ -> ChainDBImpl.openDBInternal cctx chainDbArgs False)
         (ChainDB.closeDB . fst)
-    _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
+    _ <- forkLinkedThread registry "AddBlockRunner" $ do
+      chainSelCctx <- newCallCtx cctx "ChainSel"
+      intAddBlockRunner chainSelCctx
     pure chainDB
 
   withTime = contramapM \ev -> (,ev) <$> getMonotonicTime

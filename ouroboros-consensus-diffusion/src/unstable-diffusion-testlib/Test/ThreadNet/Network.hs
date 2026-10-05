@@ -1159,7 +1159,7 @@ runThreadNetwork
               , leiosFetchRng = lfRng
               }
 
-      nodeKernel <- initNodeKernel nodeKernelArgs
+      nodeKernel <- initNodeKernel cctx nodeKernelArgs
 
       mkBlockForgings <- mkBlockForging
       let mkBlockForgings' =

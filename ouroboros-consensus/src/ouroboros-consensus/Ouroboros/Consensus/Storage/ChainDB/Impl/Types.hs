@@ -98,7 +98,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import LeiosDemoDb.WithCallTrace (LeiosDbHandle)
 import LeiosDemoTypes (AcquiredLeiosEbs, EbHash)
-import LeiosUtils.CallTrace.Json (CallTrace)
+import LeiosUtils.CallTrace.Json (CallCtx, CallTrace)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -437,7 +437,7 @@ data Internal m blk = Internal
   -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
   , intTryTakeSnapshot :: m ()
   -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s).
-  , intAddBlockRunner :: m Void
+  , intAddBlockRunner :: CallCtx m -> m Void
   -- ^ Start the loop that adds blocks to the ChainDB retrieved from the
   -- queue populated by 'ChainDB.addBlock'. Execute this loop in a separate
   -- thread.

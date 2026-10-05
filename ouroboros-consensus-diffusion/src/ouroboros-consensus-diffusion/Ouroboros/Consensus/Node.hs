@@ -636,7 +636,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} = do
                   rnTxSubmissionInitDelay
                   rnLeiosDb
                   leiosTxCache
-            nodeKernel <- initNodeKernel nodeKernelArgs
+            nodeKernel <- initNodeKernel cctx nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO (ChurnMode (PraosFetchMode FetchModeDeadline))
             churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration

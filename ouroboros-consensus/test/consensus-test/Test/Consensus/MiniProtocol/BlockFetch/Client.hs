@@ -38,7 +38,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Traversable (for)
 import qualified LeiosDemoDb as LeiosDb
-import LeiosUtils.CallTrace.Json (CallCtx, rootCallCtx)
+import LeiosUtils.CallTrace.Json (CallCtx, newCallCtx, rootCallCtx)
 import Network.TypedProtocol.Channel (createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage (..))
 import Network.TypedProtocol.Core (PeerRole (..))
@@ -304,7 +304,9 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
         registry
         (\_ -> ChainDBImpl.openDBInternal cctx chainDbArgs False)
         (ChainDB.closeDB . fst)
-    _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
+    _ <- forkLinkedThread registry "AddBlockRunner" $ do
+      chainSelCctx <- newCallCtx cctx "ChainSel"
+      intAddBlockRunner chainSelCctx
 
     let
       -- Always return the empty chain such that the BlockFetch logic

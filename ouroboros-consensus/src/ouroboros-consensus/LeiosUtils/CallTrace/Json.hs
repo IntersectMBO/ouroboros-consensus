@@ -13,6 +13,7 @@ module LeiosUtils.CallTrace.Json
   , rootCallCtx
   , rootCallCtxWith
   , newCallCtx
+  , newCallCtxWith
 
     -- * Tracing
   , CallTrace (..)
@@ -74,6 +75,10 @@ rootCallCtxWith t arg = CallCtx <$> CT.rootCallCtx t arg
 -- | Branch onto a new child thread with no thread argument (@()@).
 newCallCtx :: MonadSTM m => CallCtx m -> ThreadName -> m (CallCtx m)
 newCallCtx (CallCtx ctx) t = CallCtx <$> CT.newCallCtx ctx t ()
+
+-- | Like 'newCallCtx', but records an explicit thread argument.
+newCallCtxWith :: (MonadSTM m, Aeson.ToJSON t) => CallCtx m -> ThreadName -> t -> m (CallCtx m)
+newCallCtxWith (CallCtx ctx) t arg = CallCtx <$> CT.newCallCtx ctx t arg
 
 -- | Like 'callTrace', but records @f r@ in the 'CallEnd' instead of @r@.
 callTraceVia ::

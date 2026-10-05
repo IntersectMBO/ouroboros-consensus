@@ -59,7 +59,6 @@ import qualified Data.Sequence.NonEmpty as NESeq
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
-import qualified Data.Text as Text
 import Data.Void (Void)
 import LeiosDemoDb
   ( LeiosDbHandle
@@ -81,7 +80,7 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import LeiosTxCache (LeiosTxCache)
-import LeiosUtils.CallTrace.Json (callTrace, rootCallCtxWith)
+import LeiosUtils.CallTrace.Json (CallCtx, callTrace, newCallCtx, newCallCtxWith)
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import LeiosVoting (HasLeiosVoting (..), runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -315,9 +314,11 @@ initNodeKernel ::
   , Show addrNTN
   , Typeable addrNTN
   ) =>
+  CallCtx m ->
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (NodeKernel m addrNTN addrNTC blk)
 initNodeKernel
+  nodeCctx
   args@NodeKernelArgs
     { registry
     , cfg
@@ -445,7 +446,7 @@ initNodeKernel
 
     void $
       forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st (LazySTM.takeTMVar blockForgingVar)
+        blockForgingController st nodeCctx (LazySTM.takeTMVar blockForgingVar)
 
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
@@ -582,8 +583,10 @@ initNodeKernel
     -- TODO: Also re-spawn voting thread upon SIGHUP similar to how the
     -- blockForgingController does it for block forging
     void $
-      forkLinkedThread registry "NodeKernel.leiosVoting" $
+      forkLinkedThread registry "NodeKernel.leiosVoting" $ do
+        cctx <- newCallCtx nodeCctx "LeiosVoting"
         runLeiosVoting
+          cctx
           (leiosKernelTracer tracers)
           (configLedger cfg)
           chainDB
@@ -649,15 +652,16 @@ initNodeKernel
     blockForgingController ::
       Ord remotePeer =>
       InternalState m remotePeer localPeer blk ->
+      CallCtx m ->
       STM m [MkBlockForging m blk] ->
       m Void
-    blockForgingController st getBlockForging = go []
+    blockForgingController st cctx getBlockForging = go []
      where
       go :: [Thread m Void] -> m Void
       go !forgingThreads = do
         blockForging <- atomically getBlockForging
         traverse_ cancelThread forgingThreads
-        blockForging' <- traverse (forkBlockForging st) blockForging
+        blockForging' <- traverse (forkBlockForging st cctx) blockForging
         go blockForging'
 
 castTraceFetchDecision ::
@@ -816,29 +820,30 @@ forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk, Ord addrNTN) =>
   InternalState m addrNTN addrNTC blk ->
+  CallCtx m ->
   MkBlockForging m blk ->
   m (Thread m Void)
-forkBlockForging IS{..} (MkBlockForging blockForgingM) =
+forkBlockForging IS{..} nodeCctx (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate
     registry
     label
     allocateForging
     finalizeForging
-    ( \(bf, leiosDbReader, leiosDbWriter, rootCCtx) -> do
+    ( \(bf, leiosDbReader, leiosDbWriter, forgeCCtx) -> do
         knownSlotWatcher btime $
           \currentSlot ->
             callTrace
               (TraceLabelCreds (forgeLabel bf) . TraceCall >$< forgeTracer tracers)
-              rootCCtx
+              forgeCCtx
               "forge"
               currentSlot
-              $ \forgeCCtx ->
+              $ \cctx ->
                 withEarlyExit_ $
                   forge
                     (forgeTracer tracers)
                     (forgeStateInfoTracer tracers)
                     (leiosKernelTracer tracers)
-                    forgeCCtx
+                    cctx
                     cfg
                     chainDB
                     mempool
@@ -867,19 +872,18 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
   allocateForging = do
     bf <- blockForgingM
-    labelThisThread $ Text.unpack $ forgeLabel bf
-    rootCCtx <- rootCallCtxWith "Forge" (forgeLabel bf)
+    forgeCCtx <- newCallCtxWith nodeCctx "Forge" (forgeLabel bf)
     let leiosDbHandle =
           withCallTraceHandle
             ((TraceLeiosDb . LeiosDb.TraceLeiosDbCall) >$< leiosKernelTracer tracers)
             leiosDB
-    leiosDbReader <- leiosDbHandle.openReader rootCCtx
-    leiosDbWriter <- leiosDbHandle.openWriter rootCCtx
-    pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
+    leiosDbReader <- leiosDbHandle.openReader forgeCCtx
+    leiosDbWriter <- leiosDbHandle.openWriter forgeCCtx
+    pure (bf, leiosDbReader, leiosDbWriter, forgeCCtx)
 
-  finalizeForging (bf, leiosDbReader, leiosDbWriter, rootCCtx) =
-    leiosDbWriter.closeWriter rootCCtx
-      >> leiosDbReader.closeReader rootCCtx
+  finalizeForging (bf, leiosDbReader, leiosDbWriter, forgeCCtx) =
+    leiosDbWriter.closeWriter forgeCCtx
+      >> leiosDbReader.closeReader forgeCCtx
       >> finalize bf
 
 {-------------------------------------------------------------------------------

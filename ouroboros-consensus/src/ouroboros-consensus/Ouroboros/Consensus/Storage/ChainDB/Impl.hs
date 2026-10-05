@@ -360,7 +360,7 @@ openDBInternal cctx args launchBgTasks = runWithTempRegistry $ do
                     (void $ Background.copyToImmutableDB cctx env')
                     Nothing
                     maxBound
-            , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
+            , intAddBlockRunner = \cctx -> getEnv h (\e -> Background.addBlockRunner addBlockTestFuse e cctx)
             , intKillBgThreads = varKillBgThreads
             }
 
@@ -370,7 +370,7 @@ openDBInternal cctx args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env replayed
+    when launchBgTasks $ Background.launchBgTasks env cctx replayed
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually
