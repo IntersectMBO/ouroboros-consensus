@@ -1,0 +1,16 @@
+-- Build plan that pins GHC's boot libraries to the installed versions.
+--
+-- This project is the main one plus the @ghc-pin@ package, which depends on the
+-- @ghc@ package. That dependency forces the solver to use the boot libraries
+-- that the compiler shipped with, which is what downstream consumers get. See
+-- scripts/ci/ghc-pin/ghc-pin.cabal for the full explanation.
+--
+-- Use a separate build directory, because a plan for this project is not the
+-- plan the normal build uses:
+--
+--   cabal build all --dry-run --project-file=cabal.project.ghc-pin \
+--     --builddir=dist-newstyle-ghc-pin
+
+import: cabal.project
+
+packages: scripts/ci/ghc-pin
