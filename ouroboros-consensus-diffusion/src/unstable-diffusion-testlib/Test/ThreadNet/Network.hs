@@ -1119,7 +1119,11 @@ runThreadNetwork
                     , chainSyncPipeliningLowMark = 2
                     , blockFetchPipeliningMax = 10
                     , txDecisionPolicy =
-                        defaultTxDecisionPolicy{maxUnacknowledgedTxIds = 1000} -- TODO ?
+                        -- Same as the default window. A larger one lets the V1
+                        -- inbound state grow, and with +checktvarinvariants its
+                        -- NoThunks check walks the whole state at every step,
+                        -- which makes the run quadratic.
+                        defaultTxDecisionPolicy{maxUnacknowledgedTxIds = 10}
                     }
               , blockFetchConfiguration =
                   BlockFetchConfiguration
