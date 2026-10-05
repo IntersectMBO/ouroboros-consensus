@@ -2,13 +2,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- | The Shelley block layer's view of a Leios header.
---
--- The counterpart to "Ouroboros.Consensus.Shelley.Protocol.Praos". Since Leios
--- is an overlay on Praos (see "Ouroboros.Consensus.Protocol.Leios"), every
--- instance here is the Praos one reading a Leios header instead: the two header
--- types carry the same Praos fields, so the projections differ only in which
--- accessors they call.
+-- | The Shelley block layer's view of a Leios header, the counterpart to
+-- "Ouroboros.Consensus.Shelley.Protocol.Praos".
 module Ouroboros.Consensus.Shelley.Protocol.Leios () where
 
 import Cardano.Crypto.VRF (certifiedOutput)
