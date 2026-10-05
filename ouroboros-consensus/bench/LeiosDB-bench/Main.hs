@@ -35,7 +35,7 @@ import Control.Concurrent.Async (async, mapConcurrently_, wait)
 import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.ResourceRegistry (ResourceRegistry, withRegistry)
-import Control.Tracer (debugTracer, (>$<))
+import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
@@ -191,7 +191,7 @@ setupBenchEnv registry tmpDir = do
   db <-
     newLeiosDBSQLite
       registry
-      (show >$< debugTracer)
+      nullTracer
       (tmpDir <> "/bench.vol.db")
       (tmpDir <> "/bench.imm.db")
   putStr "Inserting EBs: " >> hFlush stdout
