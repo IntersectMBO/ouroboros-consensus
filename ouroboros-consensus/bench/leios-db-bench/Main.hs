@@ -36,7 +36,7 @@ import Control.Concurrent.Async (async, mapConcurrently_, wait)
 import Control.Exception (bracket)
 import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
-import Control.Tracer (debugTracer, (>$<))
+import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
@@ -194,7 +194,7 @@ data BenchEnv = BenchEnv
 setupBenchEnv :: FilePath -> IO BenchEnv
 setupBenchEnv tmpDir = do
   db <-
-    newLeiosDBSQLite (show >$< debugTracer) (tmpDir <> "/bench.vol.db") (tmpDir <> "/bench.imm.db")
+    newLeiosDBSQLite nullTracer (tmpDir <> "/bench.vol.db") (tmpDir <> "/bench.imm.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
     withWriter db (`insertOneEb` i)
