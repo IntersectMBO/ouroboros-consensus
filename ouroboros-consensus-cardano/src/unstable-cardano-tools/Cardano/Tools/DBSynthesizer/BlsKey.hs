@@ -8,7 +8,8 @@
 
 -- | The BLS signing key that the forger votes with.
 module Cardano.Tools.DBSynthesizer.BlsKey
-  ( readBlsSigningKey
+  ( BlsSigningKey (..)
+  , readBlsSigningKey
   ) where
 
 import Cardano.Api.Any

@@ -4,7 +4,8 @@
 --                       [--shelley-operational-certificate FILE]
 --                       [--shelley-vrf-key FILE] [--shelley-kes-key FILE]
 --                       [--bulk-credentials-file FILE]
---                       [--shelley-bls-key FILE]
+--                       [--shelley-bls-key FILE] [--tx-generator NAME]
+--                       [--tx-file FILE]
 --                       ((-s|--slots NUMBER) | (-b|--blocks NUMBER) |
 --                         (-e|--epochs NUMBER)) [-f | -a]
 --
@@ -20,6 +21,9 @@
 --   --bulk-credentials-file FILE
 --                            Path to the bulk credentials file
 --   --shelley-bls-key FILE   Path to the pool's BLS signing key
+--   --tx-generator NAME      Which transaction generator fills the blocks:
+--                            "respend" (default) or "file"
+--   --tx-file FILE           Transaction file that --tx-generator file replays
 --   -s,--slots NUMBER        Amount of slots to process
 --   -b,--blocks NUMBER       Amount of blocks to forge
 --   -e,--epochs NUMBER       Amount of epochs to process
@@ -29,16 +33,21 @@ module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
 import Cardano.Tools.DBSynthesizer.Run
-import Cardano.Tools.DBSynthesizer.TxGen (mkRespendTxGen)
+import Cardano.Tools.DBSynthesizer.TxGen.File (mkFileTxGen)
+import Cardano.Tools.DBSynthesizer.TxGen.Respend (mkRespendTxGen)
 import Cardano.Tools.DBSynthesizer.Types (NodeFilePaths (nfpPaymentKey))
-import DBSynthesizer.Parsers
+import DBSynthesizer.Parsers (TxGenSource (FromFile, FromRespend), parseCommandLine)
 import Main.Utf8 (withStdTerminalHandles)
 import System.Exit
 
 main :: IO ()
 main = withStdTerminalHandles $ do
   cryptoInit
-  (paths, creds, forgeOpts) <- parseCommandLine
-  genTxs <- either die pure =<< mkRespendTxGen (nfpPaymentKey paths)
+  (paths, creds, forgeOpts, txGen) <- parseCommandLine
+  genTxs <-
+    either die pure =<< case txGen of
+      FromRespend -> mkRespendTxGen (nfpPaymentKey paths)
+      -- The file already holds the transactions, so no payment key is needed.
+      FromFile path -> mkFileTxGen path
   result <- initialize paths creds forgeOpts >>= either die (uncurry (synthesize genTxs))
   putStrLn $ "--> done; result: " ++ show result
