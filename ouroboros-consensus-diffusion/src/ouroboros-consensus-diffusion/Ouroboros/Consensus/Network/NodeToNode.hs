@@ -1678,7 +1678,7 @@ perasUnsupportedInitiatorResponder =
     (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
 
 leiosNotifyPipelineDepth :: Int
-leiosNotifyPipelineDepth = 100 -- TODO magic number
+leiosNotifyPipelineDepth = 1000 -- TODO magic number
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits =
