@@ -244,6 +244,11 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosDB :: LeiosDbHandle m
   -- ^ Factory for opening per-thread readers and writers of the Leios demo DB
   -- and subscribing to EB-notification events.
+  , getLeiosCentralWriter :: LeiosDb.LeiosDbWriter m
+  -- ^ The writer the central announcement handling uses, open for the life of
+  -- the node. A writer is a facade over the shared write queue rather than a
+  -- connection, and closing one only flushes, so the announcement paths share
+  -- this one instead of bracketing their own per announcement.
   , getLeiosVoteState :: LeiosVoteState m
   -- ^ Aggregated vote state across all peers. Empty in S4; populated
   -- by the voting thread in S5.
@@ -350,6 +355,7 @@ initNodeKernel
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
+    leiosCentralWriter <- LeiosDb.openWriter leiosDB
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
     st <- initInternalState args
@@ -701,6 +707,7 @@ initNodeKernel
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
         , getLeiosMinOfferLead = leiosMinOfferLead
         , getLeiosDB = leiosDB
+        , getLeiosCentralWriter = leiosCentralWriter
         , getLeiosVoteState = leiosVoteState
         , getLeiosPeersVars = getLeiosPeersVars
         , getLeiosOutstanding = getLeiosOutstanding

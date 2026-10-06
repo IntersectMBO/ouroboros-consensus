@@ -32,8 +32,6 @@ import Control.Monad.IOSim
   , selectTraceEventsSay'
   , traceResult
   )
-import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Control.ResourceRegistry (withRegistry)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.IntMap.Strict as IntMap
@@ -64,6 +62,8 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..), maxRollbacks)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB

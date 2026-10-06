@@ -111,8 +111,27 @@ data LeiosDbReader m = LeiosDbReader
 data LeiosDbWriter m = LeiosDbWriter
   { close :: m ()
   -- ^ Close writer and flush all remaining writes.
-  , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m ())
-  -- ^ Record an announced EB's point and expected size.
+  , writeEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m (Promise m CompletedEbs)
+  -- ^ Record an announced EB's point and the size it was announced at.
+  -- Idempotent: a second insert at the same point changes nothing.
+  --
+  -- A point novel for a hash whose body is already stored has reached, on
+  -- arrival, every milestone that body reached when it landed, so it repeats
+  -- their notifications at this point: 'AcquiredEb' at the stored body's size,
+  -- and 'AcquiredEbTxs' if the closure is already complete. Returns any EBs
+  -- whose closure this completed, which is this one in that last case. A
+  -- closure still being fetched completes at this point too, alongside the
+  -- points already tracking it.
+  --
+  -- TODO drop the size argument. Nothing here needs the size an endorser block
+  -- was announced at --- that is a peer's claim, not something the database
+  -- needs to know --- and the only size it should hold is the one its stored
+  -- body really is, which 'writeEbBody' supplies. Note that a 'LeiosPoint'
+  -- could not key an announced size even in principle: multiple elections (so:
+  -- /no equivocation/) in one slot could announce a different size for the same
+  -- EB. Dropping it leaves a point with no size until its body lands, so the
+  -- SQL schema's @ebBytesSize INTEGER NOT NULL@ has to be relaxed at the same
+  -- time.
   , writeEbBody ::
       HasCallStack =>
       LeiosPoint -> LeiosEb -> [LocalFill] -> m (Promise m (CompletedEbs, [TxOffset]))
