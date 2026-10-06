@@ -14,7 +14,9 @@ module Ouroboros.Consensus.Tracing.ChainDB
   , fragmentChainDensity
   ) where
 
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Cardano.Logging
+import Cardano.Slotting.Time (getSlotLength)
 import Data.Aeson (Object, ToJSON, Value (Object, String), object, toJSON, (.=))
 import qualified Data.ByteString.Base16 as B16
 import Data.Int (Int64)
@@ -23,11 +25,16 @@ import Data.SOP (All, K (..), hcmap, hcollapse)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
+import Data.Time.Clock (NominalDiffTime)
 import Data.Typeable (Typeable, cast)
 import Data.Void (absurd)
 import Data.Word (Word64)
 import Numeric (showFFloat)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SecurityParam
+  ( SecurityParam
+  , maxRollbacks
+  )
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.Info
@@ -2087,12 +2094,22 @@ instance MetaTrace (LedgerDB.TraceEvent blk) where
         (nsPrependInner "Flavor")
         (allNamespaces :: [Namespace LedgerDB.FlavorImplSpecificTrace])
 
+-- | The number of blocks that can be rolled back.
+instance ToJSON SecurityParam where
+  toJSON = toJSON . unNonZero . maxRollbacks
+
+-- | The name of the mismatch, so that a consumer can match on it.
+instance ToJSON LedgerDB.SnapshotPolicyMismatch where
+  toJSON LedgerDB.WriteDelayExceedsInterval = String "WriteDelayExceedsInterval"
+  toJSON LedgerDB.RateLimitExceedsInterval = String "RateLimitExceedsInterval"
+
 instance
   ( StandardHash blk
   , ConvertRawHash blk
   ) =>
   LogFormatting (LedgerDB.TraceSnapshotEvent blk)
   where
+  forHuman (LedgerDB.ConfiguredSnapshotPolicy info) = renderSnapshotPolicy info
   forHuman (LedgerDB.SnapshotRequestDelayed _snapshotRequestTime delayBeforeSnapshotting slots) =
     Text.unwords
       [ "Scheduling to take ledger state snapshots at slots "
@@ -2142,6 +2159,30 @@ instance
           " Snapshot was created for a different backend. Convert it with `snapshot-converter`."
       _ -> ""
 
+  forMachine _dtals (LedgerDB.ConfiguredSnapshotPolicy info) =
+    mconcat $
+      [ "kind" .= String "ConfiguredSnapshotPolicy"
+      , "mismatches" .= LedgerDB.snapshotPolicyMismatches info
+      , "securityParam" .= LedgerDB.spiSecurityParam info
+      , "slotLengthSeconds" .= asSeconds (getSlotLength (LedgerDB.spiSlotLengthAtTip info))
+      , "numOfDiskSnapshots"
+          .= LedgerDB.getNumOfDiskSnapshots (LedgerDB.spaNum (LedgerDB.spiArgs info))
+      ]
+        <> case ( LedgerDB.spaFrequency (LedgerDB.spiArgs info)
+                , LedgerDB.spiIntervalSlots info
+                ) of
+          (LedgerDB.SnapshotFrequency fargs, Just intervalSlots) ->
+            [ "intervalSlots" .= unNonZero intervalSlots
+            , "intervalSeconds"
+                .= toJSON (asSeconds <$> LedgerDB.snapshotPolicyIntervalTime info)
+            , "offsetSlots" .= unSlotNo (LedgerDB.sfaOffset fargs)
+            , "rateLimitSeconds" .= asSeconds (LedgerDB.sfaRateLimit fargs)
+            , "writeDelayMinSeconds"
+                .= asSeconds (LedgerDB.minimumDelay (LedgerDB.sfaDelaySnapshotRange fargs))
+            , "writeDelayMaxSeconds"
+                .= asSeconds (LedgerDB.maximumDelay (LedgerDB.sfaDelaySnapshotRange fargs))
+            ]
+          _ -> ["snapshotsDisabled" .= True]
   forMachine _dtals (LedgerDB.SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting slots) =
     mconcat
       [ "kind" .= String "SnapshotRequestDelayed"
@@ -2173,12 +2214,20 @@ instance
       ]
 
 instance MetaTrace (LedgerDB.TraceSnapshotEvent blk) where
+  namespaceFor (LedgerDB.ConfiguredSnapshotPolicy info)
+    -- The severity belongs to the namespace, not to the value, so a policy that
+    -- does not hang together on this network is reported under its own one.
+    | null (LedgerDB.snapshotPolicyMismatches info) =
+        Namespace [] ["ConfiguredSnapshotPolicy"]
+    | otherwise = Namespace [] ["ImplausibleSnapshotPolicy"]
   namespaceFor LedgerDB.SnapshotRequestDelayed{} = Namespace [] ["SnapshotRequestDelayed"]
   namespaceFor LedgerDB.SnapshotRequestCompleted{} = Namespace [] ["SnapshotRequestCompleted"]
   namespaceFor LedgerDB.TookSnapshot{} = Namespace [] ["TookSnapshot"]
   namespaceFor LedgerDB.DeletedSnapshot{} = Namespace [] ["DeletedSnapshot"]
   namespaceFor LedgerDB.InvalidSnapshot{} = Namespace [] ["InvalidSnapshot"]
 
+  severityFor (Namespace _ ["ConfiguredSnapshotPolicy"]) _ = Just Info
+  severityFor (Namespace _ ["ImplausibleSnapshotPolicy"]) _ = Just Warning
   severityFor (Namespace _ ["SnapshotRequestDelayed"]) _ = Just Debug
   severityFor (Namespace _ ["SnapshotRequestCompleted"]) _ = Just Debug
   severityFor (Namespace _ ["TookSnapshot"]) _ = Just Info
@@ -2203,6 +2252,27 @@ instance MetaTrace (LedgerDB.TraceSnapshotEvent blk) where
         , " seems to be from an old node or different backend, it will"
         , " be deleted"
         ]
+  documentFor (Namespace _ ["ConfiguredSnapshotPolicy"]) =
+    Just $
+      mconcat
+        [ "The snapshot policy the ledger database was opened with."
+        , " The interval is configured in slots while the write delay"
+        , " and the rate limit are in seconds, so the interval is also reported as"
+        , " wall-clock time, using the slot length of the era the tip is in. On a"
+        , " network with short slots, a delay window carried over from mainnet can"
+        , " be a large part of the interval, or longer than it."
+        ]
+  documentFor (Namespace _ ["ImplausibleSnapshotPolicy"]) =
+    Just $
+      mconcat
+        [ "The snapshot policy the ledger database was opened with, where the"
+        , " write delay or the rate limit is at least as long as the interval"
+        , " between snapshots. The usual cause is a network whose slots are"
+        , " shorter than mainnet's, left on settings that were written for"
+        , " mainnet: the interval is counted in slots, so the time it stands for"
+        , " falls with the slot length, while the delay and the rate limit are in"
+        , " seconds and do not move."
+        ]
   documentFor (Namespace _ ["SnapshotRequestDelayed"]) =
     Just
       "A delayed snapshot request was issued. The snapshot will be initiated at the specified timestamp, with the specified delay and for the specified slots"
@@ -2212,12 +2282,103 @@ instance MetaTrace (LedgerDB.TraceSnapshotEvent blk) where
   documentFor _ = Nothing
 
   allNamespaces =
-    [ Namespace [] ["TookSnapshot"]
+    [ Namespace [] ["ConfiguredSnapshotPolicy"]
+    , Namespace [] ["ImplausibleSnapshotPolicy"]
+    , Namespace [] ["TookSnapshot"]
     , Namespace [] ["DeletedSnapshot"]
     , Namespace [] ["InvalidSnapshot"]
     , Namespace [] ["SnapshotRequestDelayed"]
     , Namespace [] ["SnapshotRequestCompleted"]
     ]
+
+-- | The snapshot policy, in terms an operator can act on.
+--
+-- The interval is configured in slots while the write delay and the rate limit
+-- are in seconds, so the wall-clock interval is spelled out. The same settings
+-- mean one thing on mainnet and quite another on a network whose slots are
+-- shorter, which is how a testnet ends up running mainnet's cadence: a node
+-- started from a configuration file always receives a concrete interval, 86400
+-- slots unless that file says otherwise, and never the @k@-scaled default (see
+-- IntersectMBO/ouroboros-consensus#2355).
+renderSnapshotPolicy :: LedgerDB.SnapshotPolicyInfo -> Text
+renderSnapshotPolicy info = policy <> mismatches
+ where
+  args = LedgerDB.spiArgs info
+  slotLength = LedgerDB.spiSlotLengthAtTip info
+  numSnapshots = LedgerDB.getNumOfDiskSnapshots (LedgerDB.spaNum args)
+
+  policy =
+    case (LedgerDB.spaFrequency args, LedgerDB.spiIntervalSlots info) of
+      (LedgerDB.SnapshotFrequency fargs, Just intervalSlots) ->
+        Text.concat
+          [ "Snapshot policy: a ledger snapshot every "
+          , showT (unNonZero intervalSlots)
+          , " slots, which is "
+          , maybe "unknown" renderDuration (LedgerDB.snapshotPolicyIntervalTime info)
+          , " at the current slot length of "
+          , renderDuration (getSlotLength slotLength)
+          , ". Each write is delayed by "
+          , renderDuration (realToFrac (LedgerDB.minimumDelay delayRange))
+          , " to "
+          , renderDuration (realToFrac (LedgerDB.maximumDelay delayRange))
+          , ", "
+          , renderRateLimit (LedgerDB.sfaRateLimit fargs)
+          , ". Keeping "
+          , showT numSnapshots
+          , " snapshots on disk."
+          ]
+       where
+        delayRange = LedgerDB.sfaDelaySnapshotRange fargs
+      _ ->
+        Text.concat
+          [ "Snapshot policy: writing snapshots is disabled. Keeping "
+          , showT numSnapshots
+          , " snapshots on disk."
+          ]
+
+  -- What the numbers mean for this network, when they do not fit together. This
+  -- is what an operator sees after starting a node on a testnet with the
+  -- snapshot settings left unset.
+  mismatches = case LedgerDB.snapshotPolicyMismatches info of
+    [] -> ""
+    ms ->
+      Text.concat
+        [ " These settings do not fit this network: "
+        , Text.intercalate "; " (map renderMismatch ms)
+        , ". Set the snapshot interval, the write delay range and the rate limit"
+        , " for this network instead of leaving them at the defaults, which are"
+        , " the mainnet ones."
+        ]
+
+  renderMismatch LedgerDB.WriteDelayExceedsInterval =
+    "the longest write delay is at least as long as the interval, so a write can\
+    \ still be pending when the next snapshot is already due"
+  renderMismatch LedgerDB.RateLimitExceedsInterval =
+    "the rate limit is at least as long as the interval, so most of the writes\
+    \ the interval asks for will be skipped"
+
+  renderRateLimit rateLimit
+    | rateLimit <= 0 = "with no rate limit"
+    | otherwise = "at most one write every " <> renderDuration (realToFrac rateLimit)
+
+asSeconds :: Real a => a -> Double
+asSeconds = realToFrac
+
+-- | A duration in the largest unit that leaves a number above one, to one
+-- decimal place. Snapshot intervals range from minutes on a short-slot testnet
+-- to a day on mainnet, and raw seconds are hard to compare at that spread.
+renderDuration :: NominalDiffTime -> Text
+renderDuration t
+  | t >= day = render (t / day) "d"
+  | t >= hour = render (t / hour) "h"
+  | t >= minute = render (t / minute) "min"
+  | otherwise = render t "s"
+ where
+  minute = 60
+  hour = 60 * minute
+  day = 24 * hour
+
+  render x unit = Text.pack (showFFloat (Just 1) (realToFrac x :: Double) "") <> unit
 
 --------------------------------------------------------------------------------
 -- LedgerDB TraceReplayEvent
