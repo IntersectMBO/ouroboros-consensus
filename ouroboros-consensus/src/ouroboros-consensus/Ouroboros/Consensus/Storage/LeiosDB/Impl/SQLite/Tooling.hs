@@ -26,37 +26,27 @@ import Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
 
 -- | Delete the EBs announced after the given slot.
 --
--- For internal tooling.
---
--- Note: this function works for both the volatile and the immutable partition
---       files. The immutable one has no 'ebsMissingTxs' table (see
---       'Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Schema.sql_schema_imm'),
---       so the rows there are deleted only if the table exists.
+-- For internal tooling. Works for both the volatile and the immutable
+-- partition files.
 truncateLeiosDbAfterSlot :: HasCallStack => FilePath -> SlotNo -> IO ()
 truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
   withExistingLeiosDbFile dbPath $ \db ->
     -- One transaction, so a crash cannot leave an EB that is still announced
     -- but has no body.
-    dbWithTransactionAs "BEGIN IMMEDIATE" db $ do
-      hasMissingTxs <-
-        (/= 0)
-          <$> queryInt64
-            db
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ebsMissingTxs'"
-      dbExec db (fromString (deletes hasMissingTxs))
+    dbWithTransactionAs "BEGIN IMMEDIATE" db $
+      dbExec db (fromString deletes)
  where
-  deletes hasMissingTxs =
-    unlines $
-      ["DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"]
-        <> [ "DELETE FROM ebsMissingTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
-           | hasMissingTxs
-           ]
-        <> ["DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"]
+  deletes =
+    unlines
+      [ "DELETE FROM ebTxBytes WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      , "DELETE FROM ebTxs WHERE ebHashBytes IN (" <> droppedHashes <> ");"
+      , "DELETE FROM ebs WHERE ebSlot > " <> show slot <> ";"
+      ]
 
   -- The EBs whose bodies the truncation drops.
   --
   -- 'ebs' holds one row per announcement, so the same EB hash can appear at
-  -- several slots. 'ebTxs' and 'ebsMissingTxs' hold one copy per hash and carry
+  -- several slots. 'ebTxs' and 'ebTxBytes' hold one copy per hash and carry
   -- no slot. So an EB announced at slot 5 and again at slot 15 keeps its body
   -- when the cut is at slot 10. That is what the EXCEPT does: take the hashes
   -- announced after the cut, then remove the ones also announced at or before
@@ -67,14 +57,12 @@ truncateLeiosDbAfterSlot dbPath (SlotNo slot) =
       <> " EXCEPT SELECT ebHashBytes FROM ebs WHERE ebSlot <= "
       <> show slot
 
--- | Delete the transactions that no EB references.
---
--- Used in tests.
+-- | Delete the tx bytes of EBs that are no longer announced.
 deleteDanglingTxs :: HasCallStack => FilePath -> IO ()
 deleteDanglingTxs dbPath =
   withExistingLeiosDbFile dbPath $ \db ->
     dbExec db . fromString $
-      "DELETE FROM txs WHERE txHashBytes NOT IN (SELECT txHashBytes FROM ebTxs)"
+      "DELETE FROM ebTxBytes WHERE ebHashBytes NOT IN (SELECT ebHashBytes FROM ebs)"
 
 -- | Shrink a LeiosDb file to the space its rows need.
 --

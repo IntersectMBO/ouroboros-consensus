@@ -188,7 +188,7 @@ holdHeldEb :: NodeUnderTest (IOSim s) -> IOSim s ()
 holdHeldEb nut = withWriter (getLeiosDB (nutKernel nut)) $ \writer -> do
   await =<< writeEbPoint writer heldPoint (encodeLeiosEbSize heldEb)
   _ <- await =<< writeEbBody writer heldPoint heldEb
-  _ <- await =<< writeTxs writer [(heldTxHash i, heldTxBytes i) | i <- [0 .. 68]]
+  _ <- await =<< writeTxs writer heldPoint [(i, heldTxBytes i) | i <- [0 .. 68]]
   pure ()
 
 {-------------------------------------------------------------------------------
