@@ -2243,8 +2243,8 @@ instance MetaTrace (LedgerDB.TraceSnapshotEvent blk) where
   documentFor (Namespace _ ["ConfiguredSnapshotPolicy"]) =
     Just $
       mconcat
-        [ "The snapshot policy the ledger database was opened with, traced once"
-        , " at startup. The interval is configured in slots while the write delay"
+        [ "The snapshot policy the ledger database was opened with."
+        , " The interval is configured in slots while the write delay"
         , " and the rate limit are in seconds, so the interval is also reported as"
         , " wall-clock time, using the slot length of the era the tip is in. On a"
         , " network with short slots, a delay window carried over from mainnet can"
