@@ -6,6 +6,35 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.1.0.0'></a>
+## 5.1.0.0 -- 2026-10-06
+
+### Breaking
+
+- `TraceSnapshotEvent` has a new constructor, `ConfiguredSnapshotPolicy`, traced
+  once when the ledger database is opened. It carries a `SnapshotPolicyInfo`,
+  built by the new `snapshotPolicyInfo`: the security parameter, the policy as
+  configured, the interval resolved into slots, and the slot length of the era
+  the tip is in.
+
+### Non-Breaking
+
+- New `SnapshotPolicyMismatch` and `snapshotPolicyMismatches`, which say whether
+  the write delay or the rate limit is at least as long as the interval, once
+  the interval is converted to wall-clock time by the new
+  `snapshotPolicyIntervalTime`. The interval is counted in slots while the delay
+  and the rate limit are in seconds, so settings that suit mainnet can be wrong
+  on a network with shorter slots, with no value having been changed. A node
+  started from a configuration file always receives a concrete interval, 86400
+  slots unless that file says otherwise (see #2355), so this is what a testnet
+  gets when its snapshot settings are left unset.
+- The `tracing` library reports the policy at startup, with the interval in
+  slots and in wall-clock time at the slot length of the era at the tip. A
+  policy with a mismatch is traced under its own namespace,
+  `ImplausibleSnapshotPolicy`, at `Warning`, and names the settings to put right,
+  so the consequence reaches the operator rather than waiting to be noticed in
+  the snapshot timings.
+
 <a id='changelog-5.0.0.0'></a>
 ## 5.0.0.0 -- 2026-10-02
 
