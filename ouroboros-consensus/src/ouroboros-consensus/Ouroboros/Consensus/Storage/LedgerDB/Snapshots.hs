@@ -82,6 +82,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , SnapshotInterval (..)
   , resolveSnapshotInterval
   , defaultSnapshotPolicy
+  , SnapshotPolicyInfo (..)
+  , snapshotPolicyInfo
+  , SnapshotPolicyMismatch (..)
+  , snapshotPolicyMismatches
+  , snapshotPolicyIntervalTime
   , mithrilEpochSize
   , sanityCheckSnapshotPolicyArgs
   , pattern DoDiskSnapshotChecksum
@@ -111,6 +116,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ) where
 
 import Cardano.Ledger.BaseTypes
+import Cardano.Slotting.Time (SlotLength, getSlotLength)
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import qualified Codec.CBOR.Write as CBOR
@@ -683,6 +689,105 @@ mithrilSnapshotPolicyArgs =
   sixHours :: DiffTime
   sixHours = 6 * 60 * 60
 
+-- | The snapshot policy as it came out, for the trace emitted when the LedgerDB
+-- is opened (see 'ConfiguredSnapshotPolicy').
+--
+-- These values are worth reporting together because they are stated in
+-- different units. The interval is a number of SLOTS, while the rate limit and
+-- the delay range are in SECONDS, so whether a policy is sensible depends on the
+-- slot length of the network it runs on. A policy carried over from mainnet,
+-- where a slot is a second, means something quite different on a testnet with
+-- short slots: the same delay range can be a large fraction of the interval, or
+-- longer than it. The slot length of the era at the tip is reported so that the
+-- interval can be read as wall-clock time without the reader having to know
+-- which network this is.
+--
+-- The whole of 'SnapshotPolicyArgs' is carried, since the offset, the rate
+-- limit, the delay range and the number of snapshots kept are all part of what
+-- the policy does, along with the interval as a number of slots. A node started
+-- from a configuration file is given a concrete interval and the two agree; they
+-- differ only for a caller that builds the arguments in Haskell and asks for
+-- 'DefaultSnapshotInterval' (see IntersectMBO/ouroboros-consensus#2355).
+data SnapshotPolicyInfo = SnapshotPolicyInfo
+  { spiSecurityParam :: !SecurityParam
+  , spiArgs :: !SnapshotPolicyArgs
+  -- ^ The policy as configured.
+  , spiIntervalSlots :: !(Maybe (NonZero Word64))
+  -- ^ 'sfaInterval' put through 'resolveSnapshotInterval', which is the number
+  -- it already holds when one was configured, and @40k@ when it was not.
+  -- 'Nothing' when snapshots are disabled.
+  , spiSlotLengthAtTip :: !SlotLength
+  -- ^ The slot length of the era the tip is in when the LedgerDB is opened,
+  -- which is the one the interval converts through for now. It changes at a
+  -- hard fork, and on a node that is still syncing an early era it is not the
+  -- slot length the node will end up running at.
+  }
+  deriving (Generic, Eq, Show)
+
+-- | Describe a policy for 'ConfiguredSnapshotPolicy'.
+snapshotPolicyInfo ::
+  SecurityParam ->
+  SnapshotPolicyArgs ->
+  -- | The slot length of the era at the tip.
+  SlotLength ->
+  SnapshotPolicyInfo
+snapshotPolicyInfo k args slotLengthAtTip =
+  SnapshotPolicyInfo
+    { spiSecurityParam = k
+    , spiArgs = args
+    , spiIntervalSlots = case spaFrequency args of
+        DisableSnapshots -> Nothing
+        SnapshotFrequency SnapshotFrequencyArgs{sfaInterval} ->
+          Just $ resolveSnapshotInterval k sfaInterval
+    , spiSlotLengthAtTip = slotLengthAtTip
+    }
+
+-- | A way in which a snapshot policy does not hang together on the network it
+-- is about to run on.
+--
+-- Each of these compares a value configured in SECONDS against the interval,
+-- which is configured in SLOTS. The two only line up at a given slot length, so
+-- a policy that is right for one network can be wrong on another with no value
+-- having changed. That is what happens to a node started on a short-slot
+-- testnet with the snapshot settings left unset: the interval stays at the same
+-- number of slots, so the time it stands for falls with the slot length, while
+-- the delay and the rate limit are absolute and stay where they are.
+data SnapshotPolicyMismatch
+  = -- | The longest write delay is at least as long as the interval, so a write
+    -- can still be pending when the next snapshot is already due.
+    WriteDelayExceedsInterval
+  | -- | The rate limit is at least as long as the interval, so it will suppress
+    -- most of the writes the interval asks for.
+    RateLimitExceedsInterval
+  deriving (Generic, Eq, Show)
+
+-- | The wall-clock time between snapshots, at the slot length in
+-- 'spiSlotLengthAtTip'. 'Nothing' when snapshots are disabled.
+snapshotPolicyIntervalTime :: SnapshotPolicyInfo -> Maybe NominalDiffTime
+snapshotPolicyIntervalTime info =
+  toTime <$> spiIntervalSlots info
+ where
+  toTime slots =
+    fromIntegral (unNonZero slots) * getSlotLength (spiSlotLengthAtTip info)
+
+-- | The ways, if any, in which a policy does not hang together at the slot
+-- length it is about to run at. An empty list does not mean the policy is a good
+-- one, only that these two relations hold.
+snapshotPolicyMismatches :: SnapshotPolicyInfo -> [SnapshotPolicyMismatch]
+snapshotPolicyMismatches info =
+  case (spaFrequency (spiArgs info), snapshotPolicyIntervalTime info) of
+    (SnapshotFrequency fargs, Just intervalTime) ->
+      catMaybes
+        [ WriteDelayExceedsInterval
+            <$ guard (asTime (maximumDelay (sfaDelaySnapshotRange fargs)) >= intervalTime)
+        , RateLimitExceedsInterval
+            <$ guard (asTime (sfaRateLimit fargs) >= intervalTime)
+        ]
+    _ -> []
+ where
+  asTime :: DiffTime -> NominalDiffTime
+  asTime = realToFrac
+
 -- | Default on-disk policy suitable to use with cardano-node
 defaultSnapshotPolicy ::
   SecurityParam ->
@@ -911,7 +1016,10 @@ tryWithSnapshotRequest (SnapshotRequestQueue _ var) f =
 -------------------------------------------------------------------------------}
 
 data TraceSnapshotEvent blk
-  = -- | An on disk snapshot was skipped because it was invalid.
+  = -- | The snapshot policy the LedgerDB was opened with, traced once, when it
+    -- is opened. See 'SnapshotPolicyInfo'.
+    ConfiguredSnapshotPolicy SnapshotPolicyInfo
+  | -- | An on disk snapshot was skipped because it was invalid.
     InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
   | -- | A delayed snapshot requested was issued at a timestamp,
     --   with a delay and for ledger states at the specified slot numbers
