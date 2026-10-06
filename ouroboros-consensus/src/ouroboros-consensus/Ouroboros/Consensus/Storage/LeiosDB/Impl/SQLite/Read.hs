@@ -130,7 +130,7 @@ bodyLoop stmt acc =
 
 -- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
 -- the offsets list as a JSON int array bound to a single parameter;
--- SQLite's 'json_each' virtual table joins it against 'ebTxs' + 'txs'.
+-- SQLite's 'json_each' virtual table joins it against 'ebTxs' + 'ebTxBytes'.
 --
 -- No temp tables, no attached databases, no per-item INSERT round-trips.
 -- Works on strictly read-only connections.
@@ -175,7 +175,7 @@ retrieveLoop stmt acc =
     DB.Row -> do
       offset <- fromIntegral <$> DB.columnInt64 stmt 0
       txHash <- MkTxHash <$> DB.columnBlob stmt 1
-      -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
+      -- Column 2 is from LEFT JOIN, NULL if the tx's row is not filled yet
       txBytes <- DB.columnBlob stmt 2
       let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
       retrieveLoop stmt ((offset, txHash, mbTxBytes) : acc)

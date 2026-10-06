@@ -25,16 +25,6 @@ sql_schema_vol =
           "  status INTEGER NOT NULL DEFAULT 0,"
         ]
         <> sharedTables
-        <> [ -- This index speeds up tx -> EB lookups, which is necessary for GCing orphaned transactions
-             -- after their EB was GCed.
-             "CREATE INDEX IF NOT EXISTS idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);"
-           , "CREATE TABLE IF NOT EXISTS ebsMissingTxs ("
-           , "  txHashBytes BLOB NOT NULL,"
-           , "  ebHashBytes BLOB NOT NULL,"
-           , "  PRIMARY KEY (txHashBytes, ebHashBytes)"
-           , ");"
-           , "CREATE INDEX IF NOT EXISTS idx_ebsMissingTxs_ebHashBytes ON ebsMissingTxs(ebHashBytes);"
-           ]
     )
     <> sql_schema_gc
 
@@ -42,11 +32,7 @@ sql_schema_vol =
 sql_schema_gc :: String
 sql_schema_gc =
   unlines
-    [ -- Persistent orphan-tx hints: txs of GC-marked EBs, deleted only once
-      -- provably unreferenced ('sql_sweep_orphan_txs'). Survives restarts
-      -- together with the status = 3 marks.
-      "CREATE TABLE IF NOT EXISTS gcTxCandidates (txHashBytes BLOB NOT NULL PRIMARY KEY);"
-    , -- What the mark scan reads; marking removes the row from it, so
+    [ -- What the mark scan reads; marking removes the row from it, so
       -- each row is marked at most once.
       "CREATE INDEX IF NOT EXISTS idx_ebs_sweepable ON ebs(ebSlot) WHERE status IN (0, 2);"
     , -- What the sweeper's batch pick reads.
@@ -63,9 +49,8 @@ sql_schema_gc =
 -- over ATTACH.
 --
 -- Left out, since EBs land here complete and are never collected:
--- @ebs.missingTxCount@, @ebs.status@, @ebsMissingTxs@, the GC tables and
--- indexes, and @idx_ebTxs_txHashBytes@. Files created before the split still
--- have some of them; nothing reads them.
+-- @ebs.missingTxCount@, @ebs.status@ and the GC indexes. Files created
+-- before the split still have some of them; nothing reads them.
 sql_schema_imm :: String
 sql_schema_imm = unlines $ ebsTable [] <> sharedTables
 
@@ -90,6 +75,13 @@ ebsTable extraColumns =
        ]
 
 -- | The tables that are identical in both partitions.
+--
+-- Tx bytes are owned by the referencing EB: 'ebTxBytes' shares the
+-- @(ebHashBytes, txOffset)@ key with 'ebTxs', so writing and evicting an EB's
+-- closure touches one contiguous key range, and a tx shared by two EBs is
+-- stored twice, deliberately. A row is allocated as a @zeroblob@ of the
+-- declared size when the body arrives and filled in place when the tx does
+-- (@filled = 1@); it never changes size, so pages never split.
 sharedTables :: [String]
 sharedTables =
   [ "CREATE TABLE IF NOT EXISTS ebTxs ("
@@ -99,9 +91,12 @@ sharedTables =
   , "  txBytesSize INTEGER NOT NULL,"
   , "  PRIMARY KEY (ebHashBytes, txOffset)"
   , ");"
-  , "CREATE TABLE IF NOT EXISTS txs ("
-  , "  txHashBytes BLOB NOT NULL PRIMARY KEY,"
+  , "CREATE TABLE IF NOT EXISTS ebTxBytes ("
+  , "  ebHashBytes BLOB NOT NULL,"
+  , "  txOffset INTEGER NOT NULL,"
+  , -- Before the blob, so probing it never touches overflow pages.
+    "  filled INTEGER NOT NULL DEFAULT 0,"
   , "  txBytes BLOB NOT NULL,"
-  , "  txBytesSize INTEGER NOT NULL"
+  , "  PRIMARY KEY (ebHashBytes, txOffset)"
   , ");"
   ]

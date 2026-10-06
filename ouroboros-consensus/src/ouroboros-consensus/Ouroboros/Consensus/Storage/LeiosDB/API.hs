@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.API
   , withWriter
   , allocateWriter
   , CompletedEbs
+  , TxOffset
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
@@ -36,6 +37,7 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosEb
   , LeiosPoint
   , TxHash
+  , TxOffset
   )
 import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow, NoThunks (..), bracket)
@@ -113,8 +115,17 @@ data LeiosDbWriter m = LeiosDbWriter
   -- be this same EB which got completed.
   , writeTxs ::
       HasCallStack =>
-      [(TxHash, ByteString)] -> m (Promise m CompletedEbs)
-  -- ^ Persist tx bodies. Returns the EBs whose closure this completed.
+      LeiosPoint -> [(TxOffset, ByteString)] -> m (Promise m CompletedEbs)
+  -- ^ Persist tx bodies for the EB identified by 'LeiosPoint'.
+  --
+  -- The transactions the given with bytes and an offset into the EB body.
+  --
+  -- ASSUMPTION: the EB body must already be written, otherwise the txs are dropped.
+  --
+  -- A transaction may be dropped by the implementation if:
+  -- - is not in the body,
+  -- - or it is already stored,
+  -- - or its size is not the declared one.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 

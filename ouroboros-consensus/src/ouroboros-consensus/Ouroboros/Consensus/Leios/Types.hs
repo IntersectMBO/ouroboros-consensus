@@ -30,6 +30,7 @@ module Ouroboros.Consensus.Leios.Types
     -- * Endorser blocks
   , BytesSize
   , LeiosEb (..)
+  , TxOffset
   , leiosEbBodyItems
   , encodeLeiosEb
   , encodeLeiosEbItemSize
@@ -154,7 +155,10 @@ data LeiosEb = MkLeiosEb
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
-leiosEbBodyItems :: LeiosEb -> [(Int, TxHash, BytesSize)]
+-- | The position of a transaction in its EB's body.
+type TxOffset = Int
+
+leiosEbBodyItems :: LeiosEb -> [(TxOffset, TxHash, BytesSize)]
 leiosEbBodyItems eb =
   leiosEbTxs eb
     & V.imap (\ix (txh, size) -> (ix, txh, size))

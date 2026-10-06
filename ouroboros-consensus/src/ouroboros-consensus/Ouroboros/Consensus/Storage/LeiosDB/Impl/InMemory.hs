@@ -26,6 +26,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
+import qualified Data.IntSet as IntSet
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -38,6 +39,7 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
+  , TxOffset
   , encodeLeiosEbSize
   , leiosEbBodyItems
   )
@@ -66,8 +68,10 @@ import Ouroboros.Consensus.Util.IOLike
 
 -- | In-memory database state.
 data InMemoryLeiosDb = InMemoryLeiosDb
-  { imTxs :: !(Map TxHash (ByteString, BytesSize))
-  -- ^ Global transaction storage.
+  { imEbTxBytes :: !(Map EbHash (IntMap {- txOffset -} ByteString))
+  -- ^ Tx bytes owned by the referencing EB, keyed by offset -- mirrors the
+  -- SQLite backend's @ebTxBytes@ table. A tx shared by two EBs is stored
+  -- twice, deliberately.
   , imEbPoints :: !(Map LeiosPoint BytesSize)
   -- ^ Inserted EB points with their expected sizes. The same EB
   -- content can be inserted at multiple slots; each
@@ -95,7 +99,7 @@ data InMemoryLeiosDb = InMemoryLeiosDb
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
 emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
 
--- | EB transaction entry (references txs by hash, no bytes stored here)
+-- | EB transaction entry (no bytes stored here, see 'imEbTxBytes')
 data EbTxEntry = EbTxEntry
   { eteTxHash :: !TxHash
   , eteTxBytesSize :: !BytesSize
@@ -162,8 +166,10 @@ openInMemoryWriter stateVar notificationChan =
           resolved ("WriteEbPoint " <> show point) (imInsertEbPoint stateVar point ebBytesSize)
       , writeEbBody = \point eb ->
           resolved ("WriteEbBody " <> show point) (imInsertEbBody stateVar notificationChan point eb)
-      , writeTxs = \txs ->
-          resolved ("WriteTxs (" <> show (length txs) <> " txs)") (imInsertTxs stateVar notificationChan txs)
+      , writeTxs = \point txs ->
+          resolved
+            ("WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)")
+            (imInsertTxs stateVar notificationChan point txs)
       }
  where
   resolved :: HasCallStack => String -> m a -> m (Promise m a)
@@ -251,8 +257,7 @@ imInsertEbBody stateVar notificationChan point eb = do
     -- guard). This mirrors what 'imInsertTxs' does when the last missing
     -- tx of an already-downloaded body arrives.
     state <- readTVar stateVar
-    let allTxsPresent =
-          all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
+    let allTxsPresent = hashCompleteIn state (pointEbHash point)
         alreadyNotified = Set.member point (imCompletedEbs state)
     if allTxsPresent && not alreadyNotified
       then do
@@ -262,43 +267,58 @@ imInsertEbBody stateVar notificationChan point eb = do
         pure [point]
       else pure []
 
+-- | Whether every offset of this content hash's body has its bytes.
+hashCompleteIn :: InMemoryLeiosDb -> EbHash -> Bool
+hashCompleteIn state h = case Map.lookup h (imEbBodies state) of
+  Nothing -> False
+  Just entries ->
+    let bytes = Map.findWithDefault IntMap.empty h (imEbTxBytes state)
+     in IntMap.keysSet entries `IntSet.isSubsetOf` IntMap.keysSet bytes
+
 imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
-  [(TxHash, ByteString)] ->
+  LeiosPoint ->
+  [(TxOffset, ByteString)] ->
   m CompletedEbs
-imInsertTxs stateVar notificationChan txs = atomically $ do
-  let insertedTxHashes = [txHash | (txHash, _) <- txs]
-  forM_ txs $ \(txHash, txBytes) -> do
-    let txBytesSize = fromIntegral $ BS.length txBytes
-    modifyTVar stateVar $ \s ->
-      if Map.member txHash (imTxs s)
-        then s
-        else s{imTxs = Map.insert txHash (txBytes, txBytesSize) (imTxs s)}
+imInsertTxs stateVar notificationChan point offBytes = atomically $ do
+  let ebHash = pointEbHash point
+  -- Mirrors the SQLite backend's guarded in-place fill: a fill only lands on a
+  -- pre-allocated row, i.e. an offset the body declared, once, at the declared
+  -- size. Anything else changes nothing -- in particular, bytes arriving
+  -- before the body are dropped.
+  modifyTVar stateVar $ \s ->
+    let declared = Map.findWithDefault IntMap.empty ebHash (imEbBodies s)
+        held = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes s)
+        accepted =
+          IntMap.fromList
+            [ (off, bytes)
+            | (off, bytes) <- offBytes
+            , Just e <- [IntMap.lookup off declared]
+            , fromIntegral (BS.length bytes) == eteTxBytesSize e
+            , not (IntMap.member off held)
+            ]
+     in if IntMap.null accepted
+          then s
+          else s{imEbTxBytes = Map.insertWith IntMap.union ebHash accepted (imEbTxBytes s)}
   state <- readTVar stateVar
-  -- Candidates: every point whose body has been downloaded, whose
-  -- hash is touched by this batch, and whose closure is now complete.
-  -- A point not in 'imEbBodiesDownloaded' is skipped — its body
-  -- hasn't been inserted, so it can't be complete. Two points
-  -- referencing the same EB hash both light up if both have had
-  -- their body inserted.
-  let touchedByBatch =
-        Set.fromList
-          [ ebHash
-          | (ebHash, entries) <- Map.toList (imEbBodies state)
-          , any (\e -> eteTxHash e `elem` insertedTxHashes) (IntMap.elems entries)
-          ]
-      hashComplete h = case Map.lookup h (imEbBodies state) of
-        Nothing -> False
-        Just entries ->
-          all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
-      candidates =
-        [ point
-        | point <- Set.toList (imEbBodiesDownloaded state)
-        , Set.member (pointEbHash point) touchedByBatch
-        , hashComplete (pointEbHash point)
-        ]
+  -- Candidates: every point of THIS content hash whose body has been
+  -- downloaded and whose closure is now complete. Bytes are per-EB, so no
+  -- other hash can have been affected.
+  --
+  -- 'hashCompleteIn' does not depend on the point, so judge the closure once
+  -- rather than once per downloaded point. A batch that does not complete the
+  -- closure -- the common case while a multi-batch fetch is in flight -- then
+  -- scans nothing, which keeps the per-write cost off the growing
+  -- 'imEbBodiesDownloaded' set.
+  let candidates
+        | hashCompleteIn state ebHash =
+            [ p
+            | p <- Set.toList (imEbBodiesDownloaded state)
+            , pointEbHash p == ebHash
+            ]
+        | otherwise = []
       completed =
         filter
           (\p -> not (Set.member p (imCompletedEbs state)))
@@ -310,8 +330,8 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
       }
   -- Emit a closure-completion notification for each newly-complete EB. The
   -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
-  forM_ completed $ \point ->
-    writeTChan notificationChan (AcquiredEbTxs point)
+  forM_ completed $ \p ->
+    writeTChan notificationChan (AcquiredEbTxs p)
   pure completed
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
@@ -339,10 +359,12 @@ imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
     Nothing -> pure []
     Just offsetMap ->
       pure
-        [ (offset, eteTxHash entry, fst <$> Map.lookup (eteTxHash entry) (imTxs state))
+        [ (offset, eteTxHash entry, IntMap.lookup offset bytes)
         | offset <- offsets
         , Just entry <- [IntMap.lookup offset offsetMap]
         ]
+     where
+      bytes = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes state)
 
 imLookupEbClosure ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
@@ -351,12 +373,12 @@ imLookupEbClosure stateVar ebHash = atomically $ do
   case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure Nothing
     Just entries ->
-      let ebTxHashes = [eteTxHash e | e <- IntMap.elems entries]
+      let bytes = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes state)
           txClosure =
-            [ (ebTxHash, tx)
-            | ebTxHash <- ebTxHashes
-            , (tx, _txSize) <- maybeToList (Map.lookup ebTxHash (imTxs state))
+            [ (eteTxHash e, tx)
+            | (off, e) <- IntMap.toAscList entries
+            , tx <- maybeToList (IntMap.lookup off bytes)
             ]
-       in if length ebTxHashes == length txClosure
+       in if IntMap.size entries == length txClosure
             then pure (Just txClosure)
             else pure Nothing
