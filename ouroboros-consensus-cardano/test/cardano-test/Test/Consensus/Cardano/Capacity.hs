@@ -24,6 +24,7 @@ import Cardano.Ledger.Shelley.Translation
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import qualified Data.Measure as Measure
 import Data.Proxy (Proxy (..))
+import Data.Word (Word32)
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( slotLengthFromSec
@@ -102,6 +103,9 @@ tests =
         prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
     , testProperty "Dijkstra" prop_dijkstra
     , testCase "Dijkstra transaction" test_dijkstraTxEbMeasure
+    , testProperty
+        "Dijkstra: an endorser-block measure fits only if each of its dimensions fits"
+        prop_dijkstraEbMeasureFitsPerDimension
     ]
 
 -- | Both endorser-block measures are zero.
@@ -205,6 +209,34 @@ test_dijkstraTxEbMeasure =
       , exUnits = fromExUnits (ExUnits 1 2)
       }
   refScripts = RefScriptSize (IgnoringOverflow (ByteSize32 10))
+
+-- | '<=' on 'DijkstraEbMeasure' holds only if each of its five dimensions is at
+-- most the matching dimension on the right. So 'snapshotPartition' stops the
+-- endorser-block part at the first transaction that overflows any
+-- endorser-block parameter.
+prop_dijkstraEbMeasureFitsPerDimension :: Property
+prop_dijkstraEbMeasureFitsPerDimension =
+  forAll genNumbers $ \xs ->
+    forAll genNumbers $ \ys ->
+      (ebMeasure xs Measure.<= ebMeasure ys) === and (zipWith (<=) xs ys)
+ where
+  -- Small numbers, so that a pair of numbers is often equal, smaller or larger.
+  genNumbers = vectorOf 5 (choose (0, 2 :: Word32))
+
+  -- The closure bytes, memory, steps and reference-script bytes, then the
+  -- references size.
+  ebMeasure [bytes, mem, steps, refScripts, refs] =
+    DijkstraEbMeasure
+      { ebClosureMeasure =
+          TxMeasure
+            AlonzoMeasure
+              { byteSize = IgnoringOverflow (ByteSize32 bytes)
+              , exUnits = fromExUnits (ExUnits (fromIntegral mem) (fromIntegral steps))
+              }
+            (RefScriptSize (IgnoringOverflow (ByteSize32 refScripts)))
+      , txReferencesSize = IgnoringOverflow (ByteSize32 refs)
+      }
+  ebMeasure _ = error "ebMeasure: expected five numbers"
 
 {-------------------------------------------------------------------------------
   Fixtures
