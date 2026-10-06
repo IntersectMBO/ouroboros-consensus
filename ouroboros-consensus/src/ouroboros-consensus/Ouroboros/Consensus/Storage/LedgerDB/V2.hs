@@ -14,6 +14,7 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
+import Cardano.Slotting.Time (SlotLength)
 import qualified Control.Monad as Monad (forM, join, unless, void)
 import Control.Monad.Except
 import Control.RAWLock
@@ -38,6 +39,8 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.HardFork.History.EraParams (eraSlotLength)
+import Ouroboros.Consensus.HardFork.History.Summary (EraSummary (..), summaryInit)
 import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   , mkHeaderStateWithTimeFromSummary
@@ -109,10 +112,12 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
         lock <- RAWLock.new ()
         nextForkerKey <- newTVarIO (ForkerKey 0)
         ldbLastSuccessfulSnapshotRequestedAt <- newTVarIO Nothing
-        let snapshotPolicy =
-              defaultSnapshotPolicy
-                (ledgerDbCfgSecParam lgrConfig)
-                lgrSnapshotPolicyArgs
+        let k = ledgerDbCfgSecParam lgrConfig
+            snapshotPolicy = defaultSnapshotPolicy k lgrSnapshotPolicyArgs
+        traceWith tr
+          . LedgerDBSnapshotEvent
+          . ConfiguredSnapshotPolicy
+          $ snapshotPolicyInfo k lgrSnapshotPolicyArgs (slotLengthAtTip lseq)
         snapshotQueue <- newSnapshotRequestQueue (onDiskSnapshotDelayRange snapshotPolicy)
         let env =
               LedgerDBEnv
@@ -141,6 +146,19 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
     , lgrSnapshotPolicyArgs
     , lgrQueryBatchSize
     } = args
+
+  -- The slot length of the era the given tip is in. The hard-fork summary is
+  -- derived from the ledger state itself, so this is the length in force at the
+  -- tip the LedgerDB opened at, not a network-wide constant.
+  slotLengthAtTip :: LedgerSeq' m blk -> SlotLength
+  slotLengthAtTip =
+    eraSlotLength
+      . eraParams
+      . snd
+      . summaryInit
+      . hardForkSummary (configLedger . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
+      . ledgerState
+      . current
 
   v2Tracer :: Tracer m LedgerDBV2Trace
   !v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< tr

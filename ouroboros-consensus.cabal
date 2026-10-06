@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus
-version: 5.0.0.0
+version: 5.1.0.0
 synopsis: Consensus layer for the Ouroboros blockchain protocol
 description: Consensus layer for the Ouroboros blockchain protocol.
 license: Apache-2.0
@@ -1995,7 +1995,7 @@ library unstable-cardano-tools
     aeson,
     base,
     bytestring,
-    cardano-config ^>=2.1,
+    cardano-config >=2.1 && <2.3,
     cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-diffusion:cardano-diffusion,
@@ -2189,7 +2189,7 @@ test-suite tools-test
     aeson,
     base,
     bytestring,
-    cardano-config ^>=2.1,
+    cardano-config >=2.1 && <2.3,
     cardano-crypto-class,
     cardano-ledger-api,
     cardano-ledger-core,
