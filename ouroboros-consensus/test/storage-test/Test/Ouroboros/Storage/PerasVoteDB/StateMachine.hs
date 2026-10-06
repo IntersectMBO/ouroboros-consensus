@@ -392,11 +392,11 @@ perasVoteDBErrorTag err =
 addVoteResultTag :: AddPerasVoteResult TestBlock -> String
 addVoteResultTag res =
   case res of
-    PerasVoteAlreadyInDB ->
+    PerasVoteAlreadyInDB{} ->
       "PerasVoteAlreadyInDB"
     AddedPerasVoteAndGeneratedNewCert{} ->
       "AddedPerasVoteAndGeneratedNewCert"
-    AddedPerasVoteButDidntGenerateNewCert ->
+    AddedPerasVoteButDidntGenerateNewCert{} ->
       "AddedPerasVoteButDidntGenerateNewCert"
 
 votesToReachQuorum ::

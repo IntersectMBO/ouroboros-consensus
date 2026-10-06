@@ -242,7 +242,11 @@ implAddVote resolverHandle PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
     -- New vote => try to add it to the DB
     | otherwise = tryAddVote pvds voteId
 
-  voteAlreadyInDB pvds = pure (PerasVoteAlreadyInDB, pvds)
+  voteAlreadyInDB pvds =
+    pure
+      ( PerasVoteAlreadyInDB (forgetArrivalTime vote)
+      , pvds
+      )
 
   tryAddVote pvds voteId = do
     let pvsVoteIds' = Set.insert voteId (pvdsVoteIds pvds)
@@ -253,13 +257,19 @@ implAddVote resolverHandle PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
       updatePerasRoundVoteStates vote resolverHandle (pvdsRoundVoteStates pvds) >>= \case
         -- Added vote and reached a quorum, forging a new certificate
         Right (VoteGeneratedNewCert cert, pvsRoundVoteStates') ->
-          pure (AddedPerasVoteAndGeneratedNewCert cert, pvsRoundVoteStates')
+          pure
+            ( AddedPerasVoteAndGeneratedNewCert (forgetArrivalTime vote) cert
+            , pvsRoundVoteStates'
+            )
         -- Added vote but did not generate a new certificate, either
         -- because quorum was not reached yet, or because this vote was
         -- cast upon a target that had already won so a certificate was
         -- forged in a previous step.
         Right (VoteDidntGenerateNewCert, pvsRoundVoteStates') ->
-          pure (AddedPerasVoteButDidntGenerateNewCert, pvsRoundVoteStates')
+          pure
+            ( AddedPerasVoteButDidntGenerateNewCert (forgetArrivalTime vote)
+            , pvsRoundVoteStates'
+            )
         -- Adding the vote led to more than one winner => internal error
         Left (RoundVoteStateLoserAboveQuorum winnerState loserState) ->
           throwSTM $
