@@ -35,6 +35,7 @@ import Control.Concurrent.Class.MonadMVar
   , newMVar
   , readMVar
   )
+import Control.Concurrent.Class.MonadSTM.Strict (atomically, tryReadTChan)
 import Control.Monad (forever)
 import Control.Monad.Class.MonadAsync (concurrently_)
 import Control.Monad.Class.MonadTest (exploreRaces)
@@ -45,6 +46,7 @@ import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
+import Data.List (sort)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
@@ -58,21 +60,33 @@ import Data.Word (Word64)
 import LeiosDemoDb (withWriter)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
-  ( ExnLeiosWellHashedBodyRejected (..)
+  ( AnnouncingHeader
+  , ExnLeiosWellHashedBodyRejected (..)
   , LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
   , leiosFetchLogicIteration
+  , mkAnnouncingHeader
   , noMempoolPull
+  , processAnnouncementCentrally
   , processLeiosBlock
   , processLeiosBlockTxs
   , recordAnnouncedEb
   , recordEbBodyOffer
   , removePeerFromOutstanding
   )
+import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
+import Test.Util.LeiosTestBlock
+  ( LeiosTestBlock
+  , announcing
+  , firstLeiosBlock
+  , issuedBy
+  , successorLeiosBlock
+  )
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import LeiosDemoTypes
-  ( BytesSize
+  ( AnnouncementSource (..)
+  , BytesSize
   , EbHash
   , LeiosBlockRequest (..)
   , LeiosEb (..)
@@ -93,6 +107,7 @@ import LeiosDemoTypes
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, newPureLeiosTxCache, nullLeiosTxCache)
+import Ouroboros.Consensus.Block (getHeader)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
@@ -331,17 +346,43 @@ tests =
           let hFocused = hashLeiosEb (ebOf [0, 1])
               hRival = hashLeiosEb (ebOf [2, 3])
               elId = MkElId (SlotNo 5) (SBS.pack [1])
-              announcing h = Leios.MkAnnouncementFields elId h 99
+              fieldsFor h = Leios.MkAnnouncementFields elId h 99
               o = runSimOrThrow $ do
                 outstandingVar <-
                   newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                 readyVar <- newEmptyMVar
-                recordAnnouncedEb (outstandingVar, readyVar) SNothing (announcing hFocused)
-                recordAnnouncedEb (outstandingVar, readyVar) SNothing (announcing hRival)
+                recordAnnouncedEb (outstandingVar, readyVar) SNothing (fieldsFor hFocused)
+                recordAnnouncedEb (outstandingVar, readyVar) SNothing (fieldsFor hRival)
                 readMVar outstandingVar
           Map.member hFocused (Leios.ebState o) @?= True
           Map.member hRival (Leios.ebState o) @?= False
           Map.lookup elId (Leios.elFocus o) @?= Just hFocused
+      , testGroup
+          "EB-hash collision (ported from #2309)"
+          -- 'announcementOf' derives the election from (slot, hash), so the same
+          -- EB at two slots is two elections. Only 'Forge' completes a closure
+          -- here (no tx-delivery command, no mempool pull), so notifications are
+          -- only asserted in the 'Forge' scenarios.
+          [ testCase "forged, then the same EB announced at a new slot: both points registered and notified" $ do
+              let (points, notified) = runCmdsCollision [Forge collisionEb 5, Announce collisionEb 8]
+              points @?= [(SlotNo 5, collisionHash), (SlotNo 8, collisionHash)]
+              notified @?= [pointOf collisionEb 5, pointOf collisionEb 8]
+          , testCase "body held, then the same EB announced at a new slot: both points registered" $ do
+              let (points, _) =
+                    runCmdsCollision
+                      [Announce collisionEb 5, Decide 5, ArriveBody collisionEb 5, Announce collisionEb 8]
+              points @?= [(SlotNo 5, collisionHash), (SlotNo 8, collisionHash)]
+          , testCase "both announced before the fetch: both points registered" $ do
+              let (points, _) =
+                    runCmdsCollision
+                      [Announce collisionEb 5, Announce collisionEb 8, Decide 8, ArriveBody collisionEb 8]
+              points @?= [(SlotNo 5, collisionHash), (SlotNo 8, collisionHash)]
+          , testCase "forged, then the same EB merely offered at a new slot: the offer registers nothing" $ do
+              -- An offer is an unverified claim (#2309's 9c8e5d9aa).
+              let (points, notified) = runCmdsCollision [Forge collisionEb 5, Offer collisionEb 8]
+              points @?= [(SlotNo 5, collisionHash)]
+              notified @?= [pointOf collisionEb 5]
+          ]
       , testCase "a certificate tracks an endorser block no announcement did" $ do
           -- A certificate can reach us for an announcement we never processed:
           -- if the announcing block has been on our selection since initial
@@ -524,6 +565,25 @@ ebOf ids = MkLeiosEb (V.fromList [(txHashOf i, txSizeOf i) | i <- ids])
 pointOf :: TestEb -> Word -> LeiosPoint
 pointOf ids slot = MkLeiosPoint (fromIntegral slot) (hashLeiosEb (ebOf ids))
 
+-- | The announcing header a 'Announce' stands for: a block in that slot, by
+-- 'issuerOf', announcing that EB.
+announcingHeaderOf :: TestEb -> Word -> AnnouncingHeader LeiosTestBlock
+announcingHeaderOf ids slot =
+  case mkAnnouncingHeader (getHeader blk) of
+    Nothing -> error "announcingHeaderOf: header announces nothing"
+    Just anc -> anc
+ where
+  blk =
+    announcing (pointOf ids slot) (encodeLeiosEbSize (ebOf ids)) $
+      issuedBy (issuerOf ids) $
+        iterate successorLeiosBlock (firstLeiosBlock 9) !! (fromIntegral slot - 1)
+
+-- | A distinct issuer per 'TestEb', so that two endorser blocks announced in
+-- one slot are two elections rather than one pool equivocating. 'headerElId'
+-- keeps only the low byte, and the four 'worldEbs' map to 9, 17, 1 and 180.
+issuerOf :: TestEb -> Word64
+issuerOf = fromIntegral . foldl' (\acc i -> (acc * 7 + i + 1) `mod` 256) 0
+
 ------------------------------------------------------------
 -- Harness
 ------------------------------------------------------------
@@ -532,6 +592,43 @@ pointOf ids slot = MkLeiosPoint (fromIntegral slot) (hashLeiosEb (ebOf ids))
 -- the invariant after each command. 'Left' names the first failing command.
 runCmds :: [Cmd] -> Either String ()
 runCmds = (() <$) . runCmdsReFetchViolations
+
+collisionEb :: TestEb
+collisionEb = [0, 1]
+
+collisionHash :: EbHash
+collisionHash = hashLeiosEb (ebOf collisionEb)
+
+-- | Run a command sequence against a fresh in-memory LeiosDb, then report the
+-- EB points it has registered (sorted) and every 'AcquiredEbTxs' it emitted, in
+-- order (duplicates kept, so "exactly once" is checkable).
+--
+-- The in-memory writer performs each write at submission, so everything the
+-- commands wrote has landed by the time 'withWriter' returns.
+runCmdsCollision :: [Cmd] -> ([(SlotNo, EbHash)], [LeiosPoint])
+runCmdsCollision cmds = runSimOrThrow go
+ where
+  go :: forall s. IOSim s ([(SlotNo, EbHash)], [LeiosPoint])
+  go = do
+    dbHandle <- LeiosDb.newLeiosDBInMemory
+    chan <- LeiosDb.subscribeEbNotifications dbHandle
+    withWriter dbHandle $ \conn -> do
+      outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+      readyVar <- newEmptyMVar
+      peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
+      let kv = (outstandingVar, readyVar)
+      centralVar <- newMVar Announcements.emptyCentralState
+      mapM_
+        (applyCmd centralVar conn nullLeiosTxCache kv peerVars (MkPeerId (0 :: Int)))
+        cmds
+    -- The plain selector: record dot cannot select a 'HasCallStack =>' field.
+    points <- LeiosDb.withReader dbHandle LeiosDb.scanEbPoints
+    let drain acc =
+          atomically (tryReadTChan chan) >>= \case
+            Nothing -> pure (reverse acc)
+            Just n -> drain (n : acc)
+    notifs <- drain []
+    pure (sort points, [p | LeiosDb.AcquiredEbTxs p <- notifs])
 
 -- | Like 'runCmds', but on success also return the EB bodies that the fetch
 -- logic requested despite already holding them (i.e. despite 'ebStateHasBody'),
@@ -548,13 +645,14 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
       outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
       readyVar <- newEmptyMVar
       peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
+      centralVar <- newMVar Announcements.emptyCentralState
       let kv = (outstandingVar, readyVar)
           txCache = nullLeiosTxCache
           peerId = MkPeerId (0 :: Int)
           loop acc [] = pure (Right acc)
           loop acc (c : cs) = do
             r <-
-              try (applyCmd conn txCache kv peerVars peerId c) ::
+              try (applyCmd centralVar conn txCache kv peerVars peerId c) ::
                 IOSim s (Either SomeException [EbHash])
             case r of
               Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
@@ -577,6 +675,9 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
 -- but a misbehaving 'Decide'.
 applyCmd ::
   forall s.
+  MVar
+    (IOSim s)
+    (Announcements.CentralState (IOSim s) (PeerId Int) (AnnouncingHeader LeiosTestBlock)) ->
   LeiosDb.LeiosDbWriter (IOSim s) ->
   LeiosTxCache (IOSim s) () () Leios.SerializedEbBody ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
@@ -584,12 +685,27 @@ applyCmd ::
   PeerId Int ->
   Cmd ->
   IOSim s [EbHash]
-applyCmd conn txCache kv peerVars peerId = \case
+applyCmd centralVar conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
+    -- Through the same entry point the node uses, so that whatever a validated
+    -- announcement is defined to do --- today that includes registering the
+    -- point with the LeiosDb --- these commands do too, without this harness
+    -- having to know what that is.
+    --
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
-    recordAnnouncedEb kv SNothing $
-      announcementOf (pointOf ids slot) (encodeLeiosEbSize (ebOf ids))
+    processAnnouncementCentrally
+      nullTracer
+      centralVar
+      kv
+      txCache
+      conn
+      (Just peerId)
+      ReceivedViaLeiosNotify
+      Announcements.DoRelay
+      SNothing
+      Nothing
+      (announcingHeaderOf ids slot)
     pure []
   Offer ids slot -> do
     recordEbBodyOffer
