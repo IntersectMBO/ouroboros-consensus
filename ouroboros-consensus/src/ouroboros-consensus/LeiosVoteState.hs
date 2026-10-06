@@ -17,6 +17,9 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Sequence.Strict (StrictSeq, (|>))
+import qualified Data.Sequence.Strict as Seq
+import Data.Set (Set)
 import qualified Data.Set as Set
 import LeiosDemoTypes
   ( LeiosCert
@@ -30,8 +33,12 @@ import LeiosDemoTypes
   , aggregateLeiosCert
   , validateLeiosVote
   )
+import LeiosTxCache.API (maxAnnouncementCount)
 
--- FIXME: Garbage collection of vote state
+-- | FIXME: UNSAFE bound on growth: only the most recently first-seen
+-- 'maxAnnouncementCount' points are kept, and a vote for anything older is
+-- treated as new. Enough to take load readings without the state growing
+-- without end; not enough to stand up to anyone trying. See 'boundPoints'.
 data LeiosVoteState m = LeiosVoteState
   { addVote :: LeiosVote -> m AddVoteResult
   -- ^ Add a new vote to the LeiosVoteState. Adding the same vote multiple
@@ -80,7 +87,11 @@ data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m Leios
 -- Holds the contributing voters plus a memoised certificate once the
 -- threshold is crossed.
 data PointState = PointState
-  { psVoters :: !(Map LeiosSeatId (Weight, LeiosSignature))
+  { psSeen :: !(Set LeiosVote)
+  -- ^ Every vote counted for this point, so that a duplicate is recognised.
+  -- Held per point rather than in one set across all points so that dropping
+  -- a point drops its votes with it; a global set would have to be filtered.
+  , psVoters :: !(Map LeiosSeatId (Weight, LeiosSignature))
   , psTotal :: !Weight
   -- ^ Running sum of 'psVoters' weights, maintained incrementally. Kept in the
   -- state rather than recomputed per vote: summing the map is linear in the
@@ -93,7 +104,40 @@ data PointState = PointState
   }
 
 emptyPointState :: PointState
-emptyPointState = PointState Map.empty 0 Nothing
+emptyPointState = PointState Set.empty Map.empty 0 Nothing
+
+-- | Whether this exact vote has already been counted for its point.
+seenIn :: LeiosVote -> Map RbHash PointState -> Bool
+seenIn vote =
+  maybe False (Set.member vote . psSeen) . Map.lookup vote.announcingRbHash
+
+-- | Retain only the most recently first-seen 'maxAnnouncementCount' points,
+-- evicting the oldest to make room.
+--
+-- FIXME: UNSAFE, and only here to bound memory for load testing. Recency is
+-- /first-seen order/, not chain order, because a vote carries no slot: its
+-- 'RbHash' cannot be placed in time without the announcing header, which the
+-- vote state does not have. An adversary can therefore mint votes on fabricated
+-- 'RbHash'es and walk every honest point out of the window, costing it nothing
+-- and costing us every tally in progress.
+--
+-- The real fix is to stop the flood rather than to survive it, which wants a
+-- slot in the vote: with one, a vote too far from the current tip can be
+-- rejected before it occupies anything, and eviction can follow the chain
+-- instead of arrival.
+boundPoints ::
+  RbHash ->
+  (Map RbHash PointState, StrictSeq RbHash) ->
+  (Map RbHash PointState, StrictSeq RbHash)
+boundPoints rbHash (states, order)
+  | Map.member rbHash states = (states, order)
+  | otherwise = case Seq.lookup 0 order' of
+      Just oldest
+        | Seq.length order' > maxAnnouncementCount ->
+            (Map.delete oldest states, Seq.drop 1 order')
+      _ -> (states, order')
+ where
+  order' = order |> rbHash
 
 -- | Create a new empty 'LeiosVoteState'.
 newLeiosVoteState ::
@@ -103,15 +147,15 @@ newLeiosVoteState ::
   m (LeiosVoteState m)
 newLeiosVoteState getCommittee = do
   votesChan <- atomically newBroadcastTChan
-  seenVotes <- atomically $ newTVar Set.empty
   pointStates <- atomically $ newTVar (Map.empty :: Map RbHash PointState)
+  pointOrder <- atomically $ newTVar (Seq.empty :: StrictSeq RbHash)
   pure
     LeiosVoteState
       { addVote = \vote -> do
           -- Validate outside the transaction: the BLS pairing is ms-scale, and
           -- inside 'atomically' every conflicting commit re-ran it. Worst case
           -- now is one redundant verification per concurrently-received duplicate.
-          alreadySeen <- atomically $ Set.member vote <$> readTVar seenVotes
+          alreadySeen <- atomically $ seenIn vote <$> readTVar pointStates
           if alreadySeen
             then pure AlreadyKnown
             else do
@@ -123,11 +167,10 @@ newLeiosVoteState getCommittee = do
                   case validateLeiosVote committee vote of
                     Left reason -> pure $ VoteInvalid reason
                     Right weight -> atomically $ do
-                      seen <- readTVar seenVotes
-                      if Set.member vote seen
+                      states0 <- readTVar pointStates
+                      if seenIn vote states0
                         then pure AlreadyKnown
                         else do
-                          writeTVar seenVotes $! Set.insert vote seen
                           writeTChan votesChan vote
 
                           -- FIXME: This code is not only ugly, but we need to also
@@ -139,8 +182,11 @@ newLeiosVoteState getCommittee = do
                           -- Update the per-point tally, assembling (and
                           -- caching) the certificate the first time the
                           -- threshold is crossed.
-                          states <- readTVar pointStates
-                          let pst = Map.findWithDefault emptyPointState vote.announcingRbHash states
+                          -- Make room before inserting, so the window holds
+                          -- this point rather than evicting it immediately.
+                          order0 <- readTVar pointOrder
+                          let (states, order) = boundPoints vote.announcingRbHash (states0, order0)
+                              pst = Map.findWithDefault emptyPointState vote.announcingRbHash states
                               -- 'Map.insert' replaces any entry this seat already
                               -- had, so the running total must drop the old weight
                               -- rather than simply adding the new one.
@@ -151,7 +197,12 @@ newLeiosVoteState getCommittee = do
                                   (weight, vote.voteSignature)
                                   pst.psVoters
                               totalW = pst.psTotal + weight - maybe 0 fst mOld
-                              pst' = pst{psVoters = voters', psTotal = totalW}
+                              pst' =
+                                pst
+                                  { psSeen = Set.insert vote pst.psSeen
+                                  , psVoters = voters'
+                                  , psTotal = totalW
+                                  }
                               pst'' = case pst.psCert of
                                 Just _ -> pst'
                                 Nothing
@@ -169,6 +220,7 @@ newLeiosVoteState getCommittee = do
                                         Right cert -> pst'{psCert = Just cert}
                                   | otherwise -> pst'
                           writeTVar pointStates $! Map.insert vote.announcingRbHash pst'' states
+                          writeTVar pointOrder $! order
                           pure $
                             Added
                               VoteTally
