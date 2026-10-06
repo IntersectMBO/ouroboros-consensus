@@ -324,7 +324,7 @@ addPerasVoteWithAsyncCertHandling ::
 addPerasVoteWithAsyncCertHandling cdb@CDB{cdbPerasVoteDB} vote = do
   addVoteRes <- join . atomically . addVote cdbPerasVoteDB $ vote
   case addVoteRes of
-    AddedPerasVoteAndGeneratedNewCert cert -> do
+    AddedPerasVoteAndGeneratedNewCert _ cert -> do
       let certTime = getArrivalTime vote
       promise <- addPerasCertAsync cdb (WithArrivalTime (certTime) cert)
       pure (addVoteRes, Just promise)

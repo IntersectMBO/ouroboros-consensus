@@ -61,9 +61,9 @@ newVoteDB resolverHandle votes = do
     ( \vote -> do
         result <- join $ atomically $ PerasVoteDB.addVote db vote
         case result of
-          PerasVoteAlreadyInDB -> throwIO (userError "Expected AddedPerasVote..., but vote was already in DB")
-          AddedPerasVoteButDidntGenerateNewCert -> pure ()
-          AddedPerasVoteAndGeneratedNewCert _ -> pure ()
+          PerasVoteAlreadyInDB{} -> throwIO (userError "Expected AddedPerasVote..., but vote was already in DB")
+          AddedPerasVoteButDidntGenerateNewCert{} -> pure ()
+          AddedPerasVoteAndGeneratedNewCert{} -> pure ()
     )
     votes
   pure db
