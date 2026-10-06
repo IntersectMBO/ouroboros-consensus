@@ -102,6 +102,9 @@ tests =
     , testProperty "Conway" $
         prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
     , testProperty "Dijkstra" prop_dijkstra
+    , testProperty
+        "Dijkstra has no endorser block when the four endorser-block parameters are zero"
+        prop_dijkstraDormant
     , testCase "Dijkstra transaction" test_dijkstraTxEbMeasure
     , testProperty
         "Dijkstra: an endorser-block measure fits only if each of its dimensions fits"
@@ -157,7 +160,7 @@ prop_dijkstra st =
       let capacity =
             ebCapacityTxMeasure
               (fixedShelleyLedgerConfig translationContext)
-              (withEndorserBlockParams (tickShelley st))
+              (withEndorserBlockParams 1001 (ExUnits 2002 3003) 4004 5005 (tickShelley st))
        in conjoin
             [ counterexample "endorser-block capacity" $
                 capacity
@@ -177,18 +180,17 @@ prop_dijkstra st =
       }
   closureRefScripts = RefScriptSize (IgnoringOverflow (ByteSize32 4004))
 
-  withEndorserBlockParams (TickedShelleyLedgerState tip transition nes ledgerTables) =
-    TickedShelleyLedgerState
-      tip
-      transition
-      ( nes
-          & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockTxsSizeL .~ 1001
-          & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockExUnitsL
-            .~ OrdExUnits (ExUnits 2002 3003)
-          & nesEsL . curPParamsEpochStateL . ppMaxRefScriptSizePerEndorserBlockL .~ 4004
-          & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockReferencesSizeL .~ 5005
-      )
-      ledgerTables
+-- | With the four endorser-block parameters at zero, Dijkstra has no endorser
+-- block, as in Byron to Conway.
+prop_dijkstraDormant ::
+  LedgerState (ShelleyBlock (Praos Crypto) DijkstraEra) EmptyMK ->
+  Property
+prop_dijkstraDormant st =
+  withNumTests 10 $
+    forAllBlind arbitrary $ \translationContext ->
+      prop_capacityHasNoEndorserBlock @(ShelleyBlock (Praos Crypto) DijkstraEra)
+        (fixedShelleyLedgerConfig translationContext)
+        (withEndorserBlockParams 0 (ExUnits 0 0) 0 0 (tickShelley st))
 
 -- | A Dijkstra transaction costs its block measure in the closure, and the
 -- reference 'Ouroboros.Consensus.Leios.Types.encodeLeiosEb' writes for its
@@ -262,3 +264,29 @@ tickShelley ::
   TickedLedgerState (ShelleyBlock proto era) EmptyMK
 tickShelley (ShelleyLedgerState tip state transition ledgerTables) =
   TickedShelleyLedgerState tip transition state ledgerTables
+
+-- | Set the endorser-block txs size, ExUnits, reference-script size and
+-- references size, in that order.
+withEndorserBlockParams ::
+  Word32 ->
+  ExUnits ->
+  Word32 ->
+  Word32 ->
+  TickedLedgerState (ShelleyBlock proto DijkstraEra) mk ->
+  TickedLedgerState (ShelleyBlock proto DijkstraEra) mk
+withEndorserBlockParams
+  txsSize
+  exUnits
+  refScriptSize
+  referencesSize
+  (TickedShelleyLedgerState tip transition nes ledgerTables) =
+    TickedShelleyLedgerState
+      tip
+      transition
+      ( nes
+          & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockTxsSizeL .~ txsSize
+          & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockExUnitsL .~ OrdExUnits exUnits
+          & nesEsL . curPParamsEpochStateL . ppMaxRefScriptSizePerEndorserBlockL .~ refScriptSize
+          & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockReferencesSizeL .~ referencesSize
+      )
+      ledgerTables
