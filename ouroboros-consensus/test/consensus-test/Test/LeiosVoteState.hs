@@ -16,7 +16,7 @@ import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
 import Data.Function (on)
-import Data.List (nubBy)
+import Data.List (nub, nubBy)
 import Data.Maybe (fromJust, isJust, isNothing)
 import Data.Ratio ((%))
 import LeiosDemoTypes
@@ -31,6 +31,7 @@ import LeiosDemoTypes
   , signLeiosVote
   , validateLeiosVote
   )
+import LeiosTxCache.API (maxAnnouncementCount)
 import LeiosVoteState
   ( AddVoteResult (..)
   , VoteTally (..)
@@ -52,8 +53,10 @@ import Test.QuickCheck
   , property
   , sublistOf
   , suchThat
+  , vectorOf
   , (.&&.)
   , (===)
+  , (==>)
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
@@ -72,7 +75,35 @@ tests =
     , testProperty "vote signed with key not on committee is rejected" prop_signerNotInCommittee
     , testProperty "certification follows the threshold parameter" prop_certificationFollowsThreshold
     , testProperty "reported tally accumulates the reported weights" prop_tallyAccumulates
+    , testProperty
+        "the oldest point is forgotten once the window is full"
+        prop_pointWindowEvictsOldest
     ]
+
+-- | Past 'maxAnnouncementCount' distinct points, the first one seen is dropped:
+-- its vote is accepted again rather than reported as already known, while a
+-- point still inside the window keeps rejecting its duplicate.
+--
+-- This is the bound being load-bearing, not a property anyone should want --
+-- see 'boundPoints' on why first-seen order is the wrong order.
+prop_pointWindowEvictsOldest :: Property
+prop_pointWindowEvictsOldest =
+  forAll genCommittee $ \testCommittee ->
+    forAll (vectorOf (maxAnnouncementCount + 1) genRbHash) $ \rbHashes ->
+      -- 32 random bytes apiece; a collision would only weaken the test.
+      length (nub rbHashes) == length rbHashes ==>
+        property $
+          runSimOrThrow $ do
+            st <- newLeiosVoteState (pure (Just (testCommittee.committee, testQuorumThreshold)))
+            let key = head testCommittee.allKeys
+                vid = fromJust $ getLeiosSeatId (deriveVerKeyDSIGN key) testCommittee.committee
+                votes = [signLeiosVote key vid h | h <- rbHashes]
+            mapM_ (addVote st) votes
+            evicted <- addVote st (head votes)
+            retained <- addVote st (last votes)
+            pure $
+              counterexample "oldest point should have been evicted" (isAdded evicted)
+                .&&. counterexample "newest point should still be known" (retained === AlreadyKnown)
 
 -- | A 'VotingKey' that is *not* a member of the given committee.
 genKeyNotIn :: TestCommittee -> Gen LeiosSigningKey
