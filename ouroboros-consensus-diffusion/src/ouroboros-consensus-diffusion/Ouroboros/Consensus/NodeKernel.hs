@@ -499,7 +499,12 @@ perasVoteForgingController
     (mbPerasVote, traceEvents) <-
       lift $ atomically $ runWriterT $ runMaybeT $ do
         -- Is this the first slot in the round? If not, we don't forge a vote.
-        when (slotInRound /= 0) $ do
+        --
+        -- HACK: we leave some time to allow for /some/ block to be applied in
+        -- this round before invoking the epoch context resolver. Otherwise, it
+        -- can fail to resolve the current round info as it might still be stuck
+        -- on the previous epoch.
+        when (slotInRound /= 45) $ do
           tell [TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound]
           hoistMaybe Nothing
         -- Do the voting rules state that we should vote? And if so, for which block?
