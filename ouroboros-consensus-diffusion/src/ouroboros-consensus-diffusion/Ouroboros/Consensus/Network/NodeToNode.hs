@@ -465,6 +465,7 @@ mkHandlers
                       getLeiosCentralState
                       (getLeiosOutstanding, getLeiosReady)
                       getLeiosTxCache
+                      leiosCentralWriter
                       (Just peer)
                       Leios.ReceivedViaChainSync
                       Announcements.DoRelay
@@ -620,6 +621,7 @@ mkHandlers
                                 getLeiosCentralState
                                 (getLeiosOutstanding, getLeiosReady)
                                 getLeiosTxCache
+                                leiosCentralWriter
                                 (Just peer)
                                 Leios.ReceivedViaLeiosNotify
                                 shouldRelay
@@ -865,6 +867,7 @@ mkHandlers
    where
     NodeKernel
       { getLeiosDB = leiosDB
+      , getLeiosCentralWriter = leiosCentralWriter
       , getLeiosVoteState = leiosVoteState
       , getLeiosOutstanding
       , getLeiosReady

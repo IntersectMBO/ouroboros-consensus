@@ -1088,11 +1088,16 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
   -- fetch job set above)
   when shouldPersist $
     traceException tracer TraceLeiosPeerDbException $ do
-      -- FIXME the announcement path does not write the point: 'writeEbPoint'
-      -- has no caller but this one, so the arriving body is still what first
-      -- records the point. Were an announcement to record it, this insert
-      -- would be redundant and the trace below would mean something is wrong;
-      -- today it fires for every body, so it means nothing.
+      -- TODO remove the 'writeEbPoint' call below once no important node's
+      -- VolatileDB still holds an announcing RB that it fetched without this
+      -- patch. 'processAnnouncementCentrally' records the point now, and that
+      -- write is persistent, so the only endorser blocks still reaching here
+      -- without one are those announced by an RB this node selected before it
+      -- ran this code.
+      --
+      -- The trace below is unconditional, so it fires for every body and means
+      -- nothing. Conditioning it on the point being absent would make it
+      -- report exactly the endorser blocks described above.
       traceWith ktracer $ TraceLeiosBlockPointMissing point
       -- Enqueue the write first, then claim the body. 'writeEbBody' only parks
       -- on a free writer-queue slot (bounded backpressure), so a cancellation
@@ -1110,7 +1115,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       pointWritten <- writeEbPoint writer point ebBytesSize'
       bodyWritten <- writeEbBody writer point eb fills
       let settle = do
-            await pointWritten
+            completedByPoint <- await pointWritten
             (completedByBody, filledOffs) <- await bodyWritten
             -- The fetch set is what the settled write still misses: the fills
             -- that landed are durable rows, everything else -- fills whose source
@@ -1134,7 +1139,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
             void $ MVar.tryPutMVar readyVar ()
             st <- Leios.ebState <$> MVar.readMVar outstandingVar
             traceWith ktracer $ TraceLeiosBlockAcquired point (ebPointAge now st point)
-            forM_ completedByBody $ \p ->
+            forM_ (completedByPoint <> completedByBody) $ \p ->
               traceWith ktracer $ TraceLeiosBlockTxsAcquired p (ebPointAge now st p)
       case source of
         -- The forge must not advertise what it has not stored, so it waits.
@@ -1779,6 +1784,7 @@ processAnnouncementCentrally ::
   MVar m (Announcements.CentralState m peer (AnnouncingHeader blk)) ->
   (MVar m (LeiosOutstanding pid), MVar m ()) ->
   LeiosTxCache m () () SerializedEbBody ->
+  LeiosDbWriter m ->
   Maybe peer ->
   AnnouncementSource ->
   ShouldRelay ->
@@ -1796,6 +1802,7 @@ processAnnouncementCentrally
   centralVar
   kernelVars
   txCache
+  writer
   source
   provenance
   shouldRelay
@@ -1817,6 +1824,12 @@ processAnnouncementCentrally
               ReceivedViaChainSync -> recordAnnounced
               ReceivedViaLeiosNotify -> recordAnnounced
             recordAnnouncementInTxCache txCache announcerRbHash point
+            -- If this new point's EB body and/or closure is already in the
+            -- LeiosDb, it should also emit the corresponding events for this
+            -- point. One crucial consequence is 'cdbAcquiredLeiosEbs' being
+            -- informed that the EB won't be pruned until the new (often
+            -- /younger/) point becomes immutable.
+            void $ writeEbPoint writer point (announcementEbBodySize fields)
         )
         cst
         source
@@ -2405,6 +2418,7 @@ onForgedLeiosEb kernelTracer centralVar kv txCache writer systemTime anc forgedE
     centralVar
     kv
     txCache
+    writer
     Nothing
     ForgedLocally
     Announcements.DoRelay
