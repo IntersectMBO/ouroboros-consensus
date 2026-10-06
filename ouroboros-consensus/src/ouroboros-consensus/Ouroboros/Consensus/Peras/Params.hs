@@ -53,7 +53,6 @@ import Cardano.Binary
 import Control.Monad (ap, liftM)
 import Control.Monad.Trans.Class
 import Data.Coerce (coerce)
-import Data.Semigroup (Sum (..))
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -117,8 +116,19 @@ newtype PerasWeight
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
-deriving via Sum Word64 instance Semigroup PerasWeight
-deriving via Sum Word64 instance Monoid PerasWeight
+-- Weight participates directly in chain ordering. Plain 'Word64' addition
+-- would allow an additional positive certificate to wrap a very large weight
+-- back to a small value and thereby make a chain less preferable. Saturating
+-- addition preserves the monotonicity expected of certificate boosts.
+instance Semigroup PerasWeight where
+  PerasWeight a <> PerasWeight b =
+    PerasWeight $
+      if maxBound - a < b
+        then maxBound
+        else a + b
+
+instance Monoid PerasWeight where
+  mempty = PerasWeight 0
 
 -- | Total vote weight needed to forge a Peras certificate.
 newtype PerasQuorumWeightThreshold

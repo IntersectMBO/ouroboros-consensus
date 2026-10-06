@@ -518,13 +518,18 @@ addPerasCert ::
   Model blk ->
   (AddPerasCertChainSelOutcome, Model blk)
 addPerasCert cfg cert m
-  | pointSlot (getPerasCertPoint cert) < Chain.headSlot (immutableChain secParam m) =
+  | certTooOld =
       (PerasCertIgnoredTooOld, m)
   | otherwise =
       let (certRes, perasCertModel') = PerasCertDBModel.addCert (perasCertModel m) cert
        in (PerasCertProcessed certRes, chainSelection cfg m{perasCertModel = perasCertModel'})
  where
   secParam = configSecurityParam cfg
+  certPoint = getPerasCertPoint cert
+  immutableTipPoint = Chain.headPoint (immutableChain secParam m)
+  certTooOld =
+    certPoint /= immutableTipPoint
+      && pointSlot certPoint <= pointSlot immutableTipPoint
 
 addPerasVote ::
   forall blk.

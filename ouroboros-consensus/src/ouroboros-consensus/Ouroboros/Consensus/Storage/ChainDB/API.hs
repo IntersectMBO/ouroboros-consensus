@@ -638,8 +638,9 @@ triggerChainSelection chainDB =
 
 -- | The outcome of processing a Peras certificate w.r.t. chain selection.
 data AddPerasCertChainSelOutcome
-  = -- | The certificate was too old to influence chain selection (the boosted
-    -- block is already immutable), so it was ignored entirely.
+  = -- | The certificate target cannot occur on any selectable chain: it is
+    -- before the immutable tip, or is another point at the immutable tip's
+    -- slot. The certificate was therefore ignored entirely.
     PerasCertIgnoredTooOld
   | -- | The certificate was not processed because the ChainDB was closing.
     PerasCertNotProcessedClosing

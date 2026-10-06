@@ -137,14 +137,14 @@ where
 
 import Cardano.Binary
 import qualified Codec.CBOR.Read as CBOR
-import Control.Monad (foldM, forM, forM_, guard, unless, void, when)
+import Control.Monad (foldM, forM_, guard, unless, void, when)
 import Control.Monad.State.Strict (StateT, get, lift, put)
 import Control.ResourceRegistry (WithTempRegistry, allocateTemp, modifyWithTempRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (stripPrefix)
-import Data.Maybe (catMaybes, mapMaybe)
+import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (pack)
@@ -322,6 +322,7 @@ dropStaleQuarantineMarkers hasFS (knownRounds, quarantinedRounds) = do
 validateAllCertsOnOpen ::
   ( IOLike m
   , DecodeDisk blk (PerasCert blk)
+  , IsPerasCert (PerasCert blk) blk
   ) =>
   Tracer m (TraceEvent blk) ->
   CodecConfig blk ->
@@ -332,7 +333,7 @@ validateAllCertsOnOpen tracer ccfg hasFS st =
   foldM validateCert st (cdsKnownRounds st)
  where
   validateCert st' roundNo =
-    readCertFileAt ccfg hasFS (fsPathCertFile roundNo) >>= \case
+    readCertFileAt ccfg hasFS roundNo (fsPathCertFile roundNo) >>= \case
       Right _ -> pure st'
       Left err -> do
         st'' <- quarantineCert hasFS roundNo st'
@@ -460,6 +461,7 @@ implGetCertsAfter ::
   forall m blk.
   ( IOLike m
   , DecodeDisk blk (PerasCert blk)
+  , IsPerasCert (PerasCert blk) blk
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
@@ -470,20 +472,20 @@ implGetCertsAfter env roundNo maxCerts = do
   -- or may not show up in this snapshot.
   rounds <- cdsKnownRounds <$> atomically (readSVarSTM (picdbState env))
   let roundsAfter = snd $ Set.split roundNo rounds
-      -- 'take' uses an 'Int', while the public API uses 'Word64'. Saturate
-      -- instead of allowing a large limit (notably 'maxBound') to wrap to a
-      -- negative 'Int' and produce an empty result.
-      maxCertsAsInt =
-        fromIntegral $
-          min maxCerts (fromIntegral (maxBound :: Int))
-      candidates = take maxCertsAsInt (Set.toAscList roundsAfter)
-  -- Read each certificate on demand. A certificate whose file is unreadable or
-  -- corrupt is quarantined rather than failing the whole request, so that the
-  -- remaining certificates stay available to syncing nodes.
-  fmap catMaybes $ forM candidates $ \r ->
-    readCertFile env r >>= \case
+  collect [] maxCerts (Set.toAscList roundsAfter)
+ where
+  -- The Word64 limit counts certificates returned, not indexed file names
+  -- inspected. A corrupt candidate must not truncate the page before later
+  -- intact certificates can be served.
+  collect acc 0 _ = pure (reverse acc)
+  collect acc _ [] = pure (reverse acc)
+  collect acc remaining (r : rs) = do
+    mCert <- readCertFile env r >>= \case
       Right cert -> pure (Just cert)
       Left _ -> quarantineCertIfBroken env r
+    case mCert of
+      Just cert -> collect (cert : acc) (remaining - 1) rs
+      Nothing -> collect acc remaining rs
 
 {-------------------------------------------------------------------------------
   Quarantine
@@ -500,6 +502,7 @@ implGetCertsAfter env roundNo maxCerts = do
 quarantineCertIfBroken ::
   ( IOLike m
   , DecodeDisk blk (PerasCert blk)
+  , IsPerasCert (PerasCert blk) blk
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
@@ -658,28 +661,36 @@ readCertFile ::
   forall m blk.
   ( IOLike m
   , DecodeDisk blk (PerasCert blk)
+  , IsPerasCert (PerasCert blk) blk
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
   m (Either CertFileError (ValidatedPerasCert blk))
 readCertFile env roundNo =
   withHasFS env $ \hasFS ->
-    readCertFileAt (picdbCodecConfig env) hasFS (fsPathCertFile roundNo)
+    readCertFileAt (picdbCodecConfig env) hasFS roundNo (fsPathCertFile roundNo)
 
 readCertFileAt ::
   forall m h blk.
   ( IOLike m
   , DecodeDisk blk (PerasCert blk)
+  , IsPerasCert (PerasCert blk) blk
   ) =>
   CodecConfig blk ->
   HasFS m h ->
+  PerasRoundNo ->
   FsPath ->
   m (Either CertFileError (ValidatedPerasCert blk))
-readCertFileAt ccfg hasFS path = do
+readCertFileAt ccfg hasFS fileRound path = do
   readResult <- try $ withFile hasFS path ReadMode (hGetAll hasFS)
   pure $ case readResult of
     Left (err :: FsError) -> Left (CertFileReadError err)
-    Right bytes -> decodeCertFile ccfg bytes
+    Right bytes -> do
+      cert <- decodeCertFile ccfg bytes
+      let payloadRound = getPerasCertRound cert
+      if payloadRound == fileRound
+        then Right cert
+        else Left (CertFileRoundMismatch fileRound payloadRound)
 
 writeCertFile ::
   ( IOLike m
@@ -744,8 +755,9 @@ tmpSuffix = ".tmp"
 
 -- | The name of the file storing the certificate of the given round number.
 --
--- The round number is encoded in the file name (and nowhere else), so that it
--- can be recovered without reading the file, see 'certRoundFromFileName'.
+-- The file name duplicates the round encoded in the certificate payload so
+-- the index can be rebuilt without reading every file. They are checked for
+-- agreement when the file is read.
 -- E.g. @42.cert@ for round 42.
 certFileName :: PerasRoundNo -> String
 certFileName roundNo = show (unPerasRoundNo roundNo) <> certFileExtension
@@ -836,6 +848,8 @@ data CertFileError
   | -- | The payload's CRC does not match the one stored in the file,
     -- i.e. the file is corrupt (bit rot, a partial write, etc).
     CertFileChecksumMismatch
+  | -- | The round encoded in the payload disagrees with its indexed file name.
+    CertFileRoundMismatch PerasRoundNo PerasRoundNo
   | -- | Only a temporary file was found for the certificate: writing it was
     -- interrupted before it was committed (see 'writeCertFile').
     CertFileIncompleteWrite
@@ -847,6 +861,11 @@ displayCertFileError = \case
   CertFileReadError err -> "Read error: " <> show err
   CertFileMalformed err -> "Malformed: " <> show err
   CertFileChecksumMismatch -> "CRC mismatch"
+  CertFileRoundMismatch fileRound payloadRound ->
+    "Round mismatch: filename says "
+      <> show fileRound
+      <> ", payload says "
+      <> show payloadRound
   CertFileIncompleteWrite -> "Incomplete write"
 
 {-------------------------------------------------------------------------------

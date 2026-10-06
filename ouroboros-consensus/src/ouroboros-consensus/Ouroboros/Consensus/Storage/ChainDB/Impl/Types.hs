@@ -1146,8 +1146,8 @@ data TraceAddPerasCertEvent blk
     -- popped from the queue.
     PoppedPerasCertFromQueue PerasRoundNo (Point blk)
   | -- | The Peras certificate from the given round boosting the given block was
-    -- too old, ie its slot was older than the current immutable slot (the third
-    -- argument).
+    -- too old: its target is before the immutable tip, or is another point at
+    -- the immutable tip's slot. The third argument is the immutable tip.
     IgnorePerasCertTooOld PerasRoundNo (Point blk) (Anchor blk)
   | -- | The Peras certificate from the given round boosts a block on the
     -- current selection.
