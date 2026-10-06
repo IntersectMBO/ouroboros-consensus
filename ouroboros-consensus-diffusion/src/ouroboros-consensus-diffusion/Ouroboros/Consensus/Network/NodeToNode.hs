@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Intended for qualified import
@@ -173,7 +174,7 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
-import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState, LedgerView)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
@@ -445,11 +446,12 @@ mkHandlers
               , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
-              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime cds -> do
+              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime predLedgerView cds -> do
                   Leios.checkMsgRollForwardForLeiosOffers
                     (getLeiosOutstanding, getLeiosReady)
                     peerVars
                     hdr
+                    predLedgerView
                     cds
                   -- Feed any EB this header announces into the central
                   -- announcement state (relay + dedup + txCache), central-only:
@@ -473,11 +475,12 @@ mkHandlers
                   let varMax = Leios.maxAcceptedJumpSlot peerVars
                   acceptedThrough <- TVar.Unchecked.readTVarIO varMax
                   forM_ (headersWithPredecessorStates acceptedThrough jumpInfo) $
-                    \(hdr, cds) ->
+                    \(hdr, predLedgerView, cds) ->
                       Leios.checkMsgRollForwardForLeiosOffers
                         (getLeiosOutstanding, getLeiosReady)
                         peerVars
                         hdr
+                        predLedgerView
                         cds
                   atomically $
                     TVar.Unchecked.modifyTVar varMax $
@@ -1868,13 +1871,12 @@ headersWithPredecessorStates ::
   (HasHeader (Header blk), Typeable blk) =>
   WithOrigin SlotNo ->
   JumpInfo blk ->
-  [(Header blk, ChainDepState (BlockProtocol blk))]
+  [(Header blk, LedgerView (BlockProtocol blk), ChainDepState (BlockProtocol blk))]
 headersWithPredecessorStates acceptedThrough jumpInfo =
-  zip
+  zipWith
+    (\hdr hsWt -> (hdr, hswtLedgerView hsWt, headerStateChainDep (hswtHeaderState hsWt)))
     (hwtHeader <$> AF.toOldestFirst fragment)
-    ( headerStateChainDep . hswtHeaderState
-        <$> (AS.anchor history : AS.toOldestFirst history)
-    )
+    (AS.anchor history : AS.toOldestFirst history)
  where
   past ::
     AS.Anchorable (WithOrigin SlotNo) a b =>

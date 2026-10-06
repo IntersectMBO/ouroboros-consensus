@@ -361,14 +361,16 @@ data LeiosFetchRequest
   = LeiosBlockRequest LeiosBlockRequest
   | LeiosBlockTxsRequest LeiosBlockTxsRequest
 
-data LeiosBlockRequest
-  = -- |
-    --
-    -- The size isn't sent to the peer, but it's used to validate the reponse
-    -- when it arrives.
-    MkLeiosBlockRequest
-      !LeiosPoint
-      !BytesSize
+-- | A request for an endorser block's body.
+data LeiosBlockRequest = MkLeiosBlockRequest
+  { lbrPoint :: !LeiosPoint
+  , lbrOfferedSize :: !BytesSize
+  -- ^ The size the peer offered this endorser block at; not sent, but used by
+  -- the reply handler. See 'LeiosDemoLogic.ExnLeiosBlockWrongSize'.
+  , lbrMaxEbTxsSize :: !BytesSize
+  -- ^ The maximum allowed closure size for this block; not sent, but used by
+  -- the reply handler. See 'LeiosDemoLogic.ExnLeiosClosureTooBig'.
+  }
 
 data LeiosBlockTxsRequest
   = -- | A request for some of an EB's txs: its point and the 'Jobs.LeiosJob's it
@@ -430,7 +432,14 @@ instance Monoid WhetherTxsClosureOffered where
 -- taken from the body we already hold by the time 'assignClosure' runs, so
 -- there is nothing there for a peer to claim.
 data PeerOffer = MkPeerOffer
-  { poOfferedBody :: !(StrictMaybe BytesSize)
+  { poMaxEbTxsSize :: !(StrictMaybe BytesSize)
+  -- ^ The maximum closure size allowed for this offered EB. It's 'Nothing' if
+  -- the offer arrived via LeiosNotify, and 'Just' if it arrived via ChainSync.
+  --
+  -- The LeiosFetch decision logic uses forecasting in the 'Nothing' case. We
+  -- avoid forecasting in the ChainSync case so that the Leios Recovery Path can
+  -- handle sparse chains.
+  , poOfferedBody :: !(StrictMaybe BytesSize)
   -- ^ The size this peer offered the body at, if it has offered the body.
   --
   -- The peer's own claim, and the only size that decides anything: no
@@ -452,14 +461,18 @@ data PeerOffer = MkPeerOffer
 -- | Each field on its own terms: the leftmost size wins, which for
 -- 'Map.insertWith' is the newer offer's, and a peer that makes that choice
 -- matter has already lost our trust (see 'poOfferedBody').
+--
+-- The bound is not a claim of the peer's but a value we computed, so the two
+-- sides agree whenever both have one and either will do.
 instance Semigroup PeerOffer where
-  MkPeerOffer sz1 c1 <> MkPeerOffer sz2 c2 = MkPeerOffer (pickSize sz1 sz2) (c1 <> c2)
+  MkPeerOffer b1 sz1 c1 <> MkPeerOffer b2 sz2 c2 =
+    MkPeerOffer (pickSize b1 b2) (pickSize sz1 sz2) (c1 <> c2)
    where
     pickSize SNothing y = y
     pickSize x _ = x
 
 instance Monoid PeerOffer where
-  mempty = MkPeerOffer SNothing mempty
+  mempty = MkPeerOffer SNothing SNothing mempty
 
 data LeiosPeerVars m = MkLeiosPeerVars
   { whetherBigLedgerPeer :: !IsBigLedgerPeer
@@ -802,7 +815,7 @@ summarizeDecisions decs =
     , ldsRequests = length reqs
     , ldsBodyRequests = length [() | LeiosBlockRequest{} <- reqs]
     , ldsJobs = sum [NEIntMap.size jobs | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) <- reqs]
-    , ldsBodyBytes = sum [fromIntegral sz | LeiosBlockRequest (MkLeiosBlockRequest _ sz) <- reqs]
+    , ldsBodyBytes = sum [fromIntegral (lbrOfferedSize r) | LeiosBlockRequest r <- reqs]
     , ldsTxBytes =
         sum
           [ fromIntegral b
@@ -1144,7 +1157,7 @@ prettyOfferings m =
           | (MkLeiosPoint slot h, k) <- points
           ]
         ++ "}"
-  kindTag (MkPeerOffer mbSize closure) = body ++ txs
+  kindTag (MkPeerOffer _bound mbSize closure) = body ++ txs
    where
     body = case mbSize of
       SNothing -> ""

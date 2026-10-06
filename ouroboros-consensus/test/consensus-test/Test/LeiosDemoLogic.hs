@@ -71,6 +71,7 @@ import LeiosDemoTypes
   , maxTxsPerEb
   , recordMaxAnnouncementSlot
   )
+import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import System.Random (mkStdGen)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -330,6 +331,7 @@ runIteration sc =
         -- exercised in "Test.LeiosDemoLogic.Invariants").
         leiosFetchLogicIteration
           sc.scEnv
+          anyClosureSize
           (Just minBound)
           (Map.map (Map.mapWithKey (resolveOfferSize sc.scOfferedSizes)) sc.scOfferings)
           Map.empty
@@ -343,7 +345,7 @@ runIteration sc =
 resolveOfferSize ::
   Map.Map LeiosPoint BytesSize -> LeiosPoint -> WhetherTxsClosureOffered -> PeerOffer
 resolveOfferSize sizes p closure =
-  MkPeerOffer (maybe SNothing SJust (Map.lookup p sizes)) closure
+  MkPeerOffer SNothing (maybe SNothing SJust (Map.lookup p sizes)) closure
 
 ------------------------------------------------------------
 -- Assertions
@@ -361,7 +363,7 @@ assertBodyRequest pid p size m =
     Nothing -> assertFailure $ "no request for peer " <> show pid
     Just reqs ->
       [ (pt.pointEbHash, sz)
-      | LeiosBlockRequest (MkLeiosBlockRequest pt sz) <- toList reqs
+      | LeiosBlockRequest (MkLeiosBlockRequest pt sz _) <- toList reqs
       ]
         @?= [(p.pointEbHash, size)]
 
@@ -420,3 +422,9 @@ serveStoredBody n = do
   withReader db $ \r -> do
     ctx <- newLeiosFetchContext r
     msgLeiosBlockRequest nullTracer ctx bodyPoint
+
+-- | The closure bound these scenarios forecast: large enough that nothing here
+-- trips it. 'Test.Consensus.Leios.RecoveryPath' is where the bound itself is
+-- exercised, against a real node.
+anyClosureSize :: SlotNo -> Either OutsideForecastRange BytesSize
+anyClosureSize _slot = Right maxBound

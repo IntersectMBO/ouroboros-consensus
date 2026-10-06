@@ -38,6 +38,7 @@ import Data.List (unfoldr)
 import Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
@@ -134,7 +135,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , systemTimeCurrent
   )
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
-import Ouroboros.Consensus.Forecast (forecastFor)
+import Ouroboros.Consensus.Forecast (OutsideForecastRange, forecastFor)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
@@ -143,7 +144,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   , ledgerViewForecastAt
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState, LedgerView)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
@@ -374,6 +375,13 @@ leiosFetchLogicIteration ::
   forall pid.
   Ord pid =>
   LeiosFetchStaticEnv ->
+  -- | The maximum EB closure size forecast from the immutable tip to a slot.
+  --
+  -- Only an offer that brought no bound of its own needs this, and for those it
+  -- cannot fail: the announcement backing such an offer was accepted by
+  -- forecasting from the immutable tip to that same slot. See
+  -- 'Leios.poMaxEbTxsSize'.
+  (SlotNo -> Either OutsideForecastRange BytesSize) ->
   -- | The current slot, or 'Nothing' when it is not yet known (i.e. we are
   -- syncing), in which case we fetch freshest-last instead of freshest-first.
   Maybe SlotNo ->
@@ -387,7 +395,7 @@ leiosFetchLogicIteration ::
   , Map (PeerId pid) (NESeq LeiosFetchRequest)
   , Map (PeerId pid) (NESet.NESet LeiosPoint)
   )
-leiosFetchLogicIteration env mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
+leiosFetchLogicIteration env forecastMaxEbTxsSize mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
   -- One pass per peer. Bodies and tx-closure jobs compete on equal footing,
   -- ranked by each EB's slot in 'ebState' (its greatest announcement slot), so
   -- the freshest EBs are fetched first whether it is the body or the closure
@@ -398,7 +406,7 @@ leiosFetchLogicIteration env mbCurrentSlot offerings bigLedgerPeers = \acc0 ->
     ( \(acc, reqs, drops) peerId offers ->
         let isBig = Map.findWithDefault IsNotBigLedgerPeer peerId bigLedgerPeers
             (acc', peerReqs, peerDrops) =
-              assignPeer env mbCurrentSlot isBig peerId offers acc
+              assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peerId offers acc
          in ( acc'
             , case NESeq.nonEmptySeq peerReqs of
                 Nothing -> reqs
@@ -471,13 +479,14 @@ fetchPriorityTiers mbCurrentSlot l offers =
 assignPeer ::
   Ord pid =>
   LeiosFetchStaticEnv ->
+  (SlotNo -> Either OutsideForecastRange BytesSize) ->
   Maybe SlotNo ->
   IsBigLedgerPeer ->
   PeerId pid ->
   Map LeiosPoint Leios.PeerOffer ->
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest, Set LeiosPoint)
-assignPeer env mbCurrentSlot isBig peerId offers acc =
+assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peerId offers acc =
   -- Walk the high-priority tier, then the low, threading the accumulator; the
   -- second walk immediately short-circuits if the first already saturated the
   -- peer.
@@ -515,12 +524,12 @@ assignPeer env mbCurrentSlot isBig peerId offers acc =
         (Leios.NoBody, TxsClosureNotOffered) ->
           -- Body-only offer: request the body. If that's all that was
           -- offered, prune it.
-          let (acc2, dec2) = assignBody peerId ebHash slot offerKind (acc1, dec1)
+          let (acc2, dec2) = assignBody forecastMaxEbTxsSize peerId ebHash slot offerKind (acc1, dec1)
            in (acc2, dec2, Set.insert point drops)
         (Leios.NoBody, TxsClosureOffered) ->
           -- Request the body now, but keep the offer: we will request the
           -- closure from this peer once we hold the body.
-          let (acc2, dec2) = assignBody peerId ebHash slot offerKind (acc1, dec1)
+          let (acc2, dec2) = assignBody forecastMaxEbTxsSize peerId ebHash slot offerKind (acc1, dec1)
            in (acc2, dec2, drops)
         (Leios.BodyAcquired _jobPool, TxsClosureNotOffered) ->
           -- We hold the body and the peer never offered the closure, so it can
@@ -528,7 +537,9 @@ assignPeer env mbCurrentSlot isBig peerId offers acc =
           pruneThisOffer
         (Leios.BodyAcquired jobPool, TxsClosureOffered)
           | Jobs.nullLeiosJobPool jobPool ->
-              -- whole datum in hand: the closure offer is useless now too
+              -- Nothing left to fetch --- the whole datum is in hand, or we
+              -- rejected the endorser block on arrival --- so the closure offer
+              -- is useless now too.
               pruneThisOffer
           | otherwise ->
               -- Still need the txs, and the peer offered the closure. If we just
@@ -552,20 +563,27 @@ assignPeer env mbCurrentSlot isBig peerId offers acc =
 -- either the block or its length loses the connection then.
 assignBody ::
   Ord pid =>
+  -- | The maximum EB closure size forecast for a slot. See
+  -- 'Leios.poMaxEbTxsSize'.
+  (SlotNo -> Either OutsideForecastRange BytesSize) ->
   PeerId pid ->
   EbHash ->
   SlotNo ->
   Leios.PeerOffer ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest) ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest)
-assignBody peerId ebHash slot offer st@(acc, dec)
+assignBody forecastMaxEbTxsSize peerId ebHash slot offer st@(acc, dec)
   | peerId `Set.member` Map.findWithDefault Set.empty ebHash (Leios.requestedEbPeers acc) =
       -- unless we've already requested it from them
       st
-  | otherwise = case Leios.poOfferedBody offer of
+  | otherwise = case (eMaxEbTxsSize, Leios.poOfferedBody offer) of
+      -- Beyond our horizon and the offer brought no bound of its own, so we
+      -- have nothing to hold the body to. Ignoring it this iteration costs
+      -- nothing: a later one forecasts again, from a tip that has moved.
+      (Left _outsideRange, _) -> st
       -- the peer offered the closure but not the body
-      SNothing -> st
-      SJust size ->
+      (_, SNothing) -> st
+      (Right maxEbTxsSize, SJust size) ->
         let acc' =
               acc
                 { Leios.requestedEbPeers =
@@ -573,7 +591,20 @@ assignBody peerId ebHash slot offer st@(acc, dec)
                 , Leios.requestedBytesSizePerPeer =
                     Map.insertWith (+) peerId size (Leios.requestedBytesSizePerPeer acc)
                 }
-         in (acc', dec Seq.|> LeiosBlockRequest (MkLeiosBlockRequest (MkLeiosPoint slot ebHash) size))
+         in ( acc'
+            , dec
+                Seq.|> LeiosBlockRequest
+                  MkLeiosBlockRequest
+                    { lbrPoint = MkLeiosPoint slot ebHash
+                    , lbrOfferedSize = size
+                    , lbrMaxEbTxsSize = maxEbTxsSize
+                    }
+            )
+ where
+  -- What the offer brought, else what we can forecast for its slot.
+  eMaxEbTxsSize = case Leios.poMaxEbTxsSize offer of
+    SJust x -> Right x
+    SNothing -> forecastMaxEbTxsSize slot
 
 -- | Flag indicating whether all jobs matching a peer's offers are already
 -- inflight
@@ -770,9 +801,9 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer sys
   -- everything they touch (the 'LeiosDbWriter' submission point, the locked
   -- tx cache, the kernel MVars) is thread-safe.
   g = \case
-    LeiosBlockRequest req@(MkLeiosBlockRequest p _ebBytesSize) ->
+    LeiosBlockRequest req ->
       LF.MkSomeLeiosFetchJob
-        (LF.MsgLeiosBlockRequest p)
+        (LF.MsgLeiosBlockRequest (lbrPoint req))
         ( pure $ \(LF.MsgLeiosBlock eb) ->
             processLeiosBlock
               ktracer
@@ -865,12 +896,20 @@ processLeiosBlock ::
 processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer systemTime pullFromMempool source eb = do
   now <- systemTimeCurrent systemTime
   -- validate it
-  let (mbPeer, point, ebBytesSize) = case source of
-        ReceivedBlockFrom peerId (MkLeiosBlockRequest p sz) -> (Just peerId, p, sz)
-        ForgedBlock p -> (Nothing, p, encodeLeiosEbSize eb)
+  let (mbPeer, point, ebBytesSize, mbMaxEbTxsSize) = case source of
+        ReceivedBlockFrom peerId req ->
+          (Just peerId, lbrPoint req, lbrOfferedSize req, Just (lbrMaxEbTxsSize req))
+        ForgedBlock p -> (Nothing, p, encodeLeiosEbSize eb, Nothing)
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   let MkLeiosPoint _ebSlot ebHash = point
   let ebBytesSize' = encodeLeiosEbSize eb
+  let closureBytesSize :: Word64
+      closureBytesSize =
+        V.foldl' (\acc (_txh, sz) -> acc + fromIntegral sz) 0 (Leios.leiosEbTxs eb)
+      mbTooBig = case mbMaxEbTxsSize of
+        Just maxEbTxsSize
+          | closureBytesSize > fromIntegral maxEbTxsSize -> Just maxEbTxsSize
+        _ -> Nothing
   -- A failed-validation body: attribute the whole body to 'fabInvalid'.
   --
   -- TODO throw a proper exception type rather than 'error', which this module
@@ -942,14 +981,30 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
     -- duplicate (already held) or a too-old arrival (its slot is below pruned
     -- watermark, so 'novel' can't be trusted) is left at the bookkeeping above
     -- -- in particular no second 'writeEbBody', hence no duplicate
-    -- 'AcquiredEb'/re-offer.
-    if tooOld || not novel
+    -- 'AcquiredEb'/re-offer. So is one over its closure bound, which is
+    -- additionally recorded as held-with-nothing-to-fetch, so that neither its
+    -- closure nor a re-send of the same bytes costs us anything more. The peer
+    -- answers for that one below, once the lock is released --- throwing here
+    -- would roll the record back.
+    --
+    -- TODO the LeiosDb has no way to record that we are done with an endorser
+    -- block whose closure we never fetched. Writing the body would say the
+    -- wrong thing --- 'writeEbBody' notifies 'AcquiredEb', and we must never
+    -- offer this one onward --- so the verdict lives only in 'ebState' and a
+    -- restart within the pruning window forfeits it, costing one more body
+    -- fetch from the next peer to serve it.
+    if tooOld || not novel || isJust mbTooBig
       then
         pure
-          ( outstandingCleaned
+          ( if isJust mbTooBig
+              then Leios.acquireEbBody ebHash Jobs.emptyLeiosJobPool outstandingCleaned
+              else outstandingCleaned
           ,
             ( False
-            , (if tooOld then fetchArrivalEvicted else fetchArrivalExtra) $ ebBytesSize'
+            , case (tooOld, mbTooBig) of
+                (True, _) -> fetchArrivalEvicted ebBytesSize'
+                (_, Just{}) -> fetchArrivalInvalid ebBytesSize'
+                _ -> fetchArrivalExtra ebBytesSize'
             , IntMap.empty
             , IntMap.empty
             , []
@@ -1100,11 +1155,14 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
       writer
       systemTime
       (MempoolTxs point mempoolIngest)
-  -- The body is in hand and ingested; only now does the peer answer for having
-  -- promised a different number of bytes than it sent.
+  -- The correctly-hashed EB body has been processed by this point. So now we
+  -- can punish the peer if it the EB isn't what it offered or should not have
+  -- been offered.
   when wrongLength $
     throwIO $
       ExnLeiosBlockWrongSize point ebBytesSize ebBytesSize'
+  forM_ mbTooBig $ \maxEbTxsSize ->
+    throwIO $ ExnLeiosClosureTooBig point closureBytesSize maxEbTxsSize
 
 -- | The 'processLeiosBlock' mempool-pull for paths that never pull from the
 -- mempool (the forge, which already holds the whole closure, and tests): keep
@@ -1537,7 +1595,7 @@ recordEbBodyOffer ::
   m ()
 recordEbBodyOffer readyVar peerVars (point, ebBytesSize) =
   recordOffer readyVar peerVars point $
-    Leios.MkPeerOffer (SJust ebBytesSize) TxsClosureNotOffered
+    Leios.MkPeerOffer SNothing (SJust ebBytesSize) TxsClosureNotOffered
 
 -- | Record this peer's 'MsgLeiosBlockTxsOffer': it can serve this endorser
 -- block's tx closure.
@@ -1549,7 +1607,7 @@ recordEbClosureOffer ::
   IOLike m => MVar m () -> LeiosPeerVars m -> LeiosPoint -> m ()
 recordEbClosureOffer readyVar peerVars point =
   recordOffer readyVar peerVars point $
-    Leios.MkPeerOffer SNothing TxsClosureOffered
+    Leios.MkPeerOffer SNothing SNothing TxsClosureOffered
 
 -- | Record a CertRB roll-forward as an offer of both the body and the
 -- closure.
@@ -1567,10 +1625,13 @@ recordCertRbOffer ::
   LeiosPeerVars m ->
   -- | The offered EB: its point and on-the-wire body size.
   (LeiosPoint, BytesSize) ->
+  -- | The maximum EB closure size, from the announcment's slot. See
+  -- 'Leios.poMaxEbTxsSize'.
+  BytesSize ->
   m ()
-recordCertRbOffer readyVar peerVars (point, ebBytesSize) =
+recordCertRbOffer readyVar peerVars (point, ebBytesSize) maxEbTxsSize =
   recordOffer readyVar peerVars point $
-    Leios.MkPeerOffer (SJust ebBytesSize) TxsClosureOffered
+    Leios.MkPeerOffer (SJust maxEbTxsSize) (SJust ebBytesSize) TxsClosureOffered
 
 recordOffer ::
   IOLike m => MVar m () -> LeiosPeerVars m -> LeiosPoint -> Leios.PeerOffer -> m ()
@@ -1606,9 +1667,11 @@ checkMsgRollForwardForLeiosOffers ::
   ) ->
   LeiosPeerVars m ->
   Header blk ->
+  -- | The ledger view at this header's predecessor's slot
+  LedgerView (BlockProtocol blk) ->
   ChainDepState (BlockProtocol blk) ->
   m ()
-checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
+checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr predLedgerView cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \fields -> do
       noteCertificationClaim
@@ -1619,6 +1682,7 @@ checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
         (snd kernelVars)
         peerVars
         (announcementLeiosPoint fields, announcementEbBodySize fields)
+        (getLeiosMaxEbTxsSizeFromView (Proxy @blk) predLedgerView)
 
 -- | Count this peer's claim that an endorser block is certified for an
 -- election, disconnecting if it contradicts a prior claim by this peer
@@ -1876,19 +1940,33 @@ data ExnLeiosInvalidRequest
 
 instance Exception ExnLeiosInvalidRequest
 
--- | Thrown when a peer's 'MsgLeiosBlock' is not the number of bytes it offered
--- that endorser block at: the point, the size it offered, and the size it sent.
--- The ensuing thread death disconnects it.
+-- | Thrown when a peer's 'MsgLeiosBlock' hashes to the endorser block we asked
+-- for and is still not one we can accept; the ensuing thread death disconnects
+-- it.
 --
--- Unlike the other invalid replies, the body itself is good --- it hashes to
--- the endorser block we asked for --- so it is ingested before this is thrown
--- and its bytes are accounted as the arrival they were. That is why this does
--- not go through @invalidReply@, which writes the whole body off as waste.
-data ExnLeiosBlockWrongSize
-  = ExnLeiosBlockWrongSize !LeiosPoint !BytesSize !BytesSize
+-- Unlike the other invalid replies, the bytes are the endorser block we asked
+-- for, so 'processLeiosBlock' settles what it owes the rest of the node before
+-- throwing: the arrival is accounted for what it was, and 'ebState' records the
+-- verdict so the next peer to serve the same bytes does not cost us the work
+-- again. That is why neither of these goes through @invalidReply@, which writes
+-- the whole body off as waste, and why both are thrown only once the
+-- 'LeiosOutstanding' lock has been let go --- throwing under it would roll the
+-- record back.
+data ExnLeiosWellHashedBodyRejected
+  = -- | Not the number of bytes it offered that endorser block at: the point,
+    -- the size it offered, and the size it sent.
+    ExnLeiosBlockWrongSize !LeiosPoint !BytesSize !BytesSize
+  | -- | References more transaction bytes than the protocol allows the closure
+    -- to amount to: the point, what it referenced, and the bound it broke.
+    --
+    -- No honest peer sends this. Such an endorser block can never be certified
+    -- --- an honest committee member applies the same bound --- so an honest
+    -- peer that fetched it rejected it here too and never stored or offered it.
+    -- Only a peer that skipped the check can serve one.
+    ExnLeiosClosureTooBig !LeiosPoint !Word64 !BytesSize
   deriving Show
 
-instance Exception ExnLeiosBlockWrongSize
+instance Exception ExnLeiosWellHashedBodyRejected
 
 -- | Which of a point's two independent offers a LeiosNotify message makes.
 data OfferedBodyOrClosure = OfferedBody | OfferedClosure

@@ -10,6 +10,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.NodeKernel
@@ -44,6 +45,7 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
 import Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
+import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
@@ -86,12 +88,14 @@ import LeiosVoting (HasLeiosVoting (..), runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Forecast (forecastFor)
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsProtocol (ledgerViewForecastAt)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -124,6 +128,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (getLeiosMaxEbTxsSizeFromView)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -523,10 +528,20 @@ initNodeKernel
             let mbCurrentSlot = case currentSlot of
                   CurrentSlot s -> Just s
                   CurrentSlotUnknown -> Nothing
+            -- One forecast anchor for the whole pass: the immutable tip, which
+            -- is also what the announcement validation a LeiosNotify offer rides
+            -- on forecast from, so it reaches every slot such an offer names.
+            immLedger <- atomically $ ChainDB.getImmutableLedger chainDB
+            let forecast =
+                  ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger)
+                forecastMaxEbTxsSize slot =
+                  getLeiosMaxEbTxsSizeFromView (Proxy @blk)
+                    <$> runExcept (forecastFor forecast slot)
             let bigLedgerPeers = Map.map Leios.whetherBigLedgerPeer stillLivePeers
             let (!outstanding', requests, offerDrops) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
+                    forecastMaxEbTxsSize
                     mbCurrentSlot
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
                     bigLedgerPeers

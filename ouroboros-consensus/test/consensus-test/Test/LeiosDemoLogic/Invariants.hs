@@ -54,10 +54,12 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
+import Data.Word (Word64)
 import LeiosDemoDb (withWriter)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
-  ( LeiosBlockSource (..)
+  ( ExnLeiosWellHashedBodyRejected (..)
+  , LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
   , leiosFetchLogicIteration
   , noMempoolPull
@@ -68,6 +70,7 @@ import LeiosDemoLogic
   , removePeerFromOutstanding
   )
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
+import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -101,7 +104,7 @@ import Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import System.Random (mkStdGen)
 import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertBool, testCase, (@?=))
+import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestEnv (adjustQuickCheckTests)
@@ -231,6 +234,7 @@ tests =
               (_out', decs, _drops) =
                 leiosFetchLogicIteration
                   demoLeiosFetchStaticEnv
+                  anyClosureSize
                   (Just (SlotNo 10))
                   offerings
                   Map.empty
@@ -254,7 +258,7 @@ tests =
               -- size; only its closure half is consulted.
               offers =
                 Map.singleton peerId $
-                  Map.singleton point (Leios.MkPeerOffer SNothing TxsClosureOffered)
+                  Map.singleton point (Leios.MkPeerOffer SNothing SNothing TxsClosureOffered)
               ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
               bigLedgerCap = Leios.maxRequestedBytesSizePerBigLedgerPeer demoLeiosFetchStaticEnv
               -- hold the body (so the pool is live), with the peer's in-flight bytes
@@ -272,6 +276,7 @@ tests =
                     (_o, reqs, _d) =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
+                        anyClosureSize
                         (Just (SlotNo 11))
                         offers
                         bigLedgerPeers
@@ -353,6 +358,81 @@ tests =
           Map.lookup h (Leios.ebState o)
             @?= Just (Leios.MkEbState (SlotNo 7) SNothing Leios.NoBody)
           Map.lookup elCertified (Leios.elFocus o) @?= Just h
+      , testCase "an endorser block that references too many tx bytes is dropped, not fetched" $ do
+          -- The references are what the closure costs, and bounding the encoded
+          -- body does not bound them: a reference is charged the CBOR digits of
+          -- the size it claims. So the arriving body is weighed against the
+          -- bound its request carried, before any closure job exists.
+          let ids = [0 .. 3]
+              eb = ebOf ids
+              point = pointOf ids 5
+              h = Leios.pointEbHash point
+              referenced = sum (map (fromIntegral . txSizeOf) ids) :: Word64
+              -- One byte under what this endorser block references.
+              bound = fromIntegral referenced - 1
+              run = runSimOrThrow $ do
+                dbHandle <- LeiosDb.newLeiosDBInMemory
+                withWriter dbHandle $ \conn -> do
+                  outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+                  readyVar <- newEmptyMVar
+                  let kv = (outstandingVar, readyVar)
+                  recordAnnouncedEb kv SNothing $
+                    announcementOf point (encodeLeiosEbSize eb)
+                  r <-
+                    try $
+                      processLeiosBlock
+                        nullTracer
+                        nullTracer
+                        kv
+                        nullLeiosTxCache
+                        conn
+                        dummySystemTime
+                        noMempoolPull
+                        (ReceivedBlockFrom (MkPeerId (0 :: Int)) (MkLeiosBlockRequest point (encodeLeiosEbSize eb) bound))
+                        eb
+                  outstanding <- readMVar outstandingVar
+                  pure (r :: Either ExnLeiosWellHashedBodyRejected (), outstanding)
+              (thrown, o) = run
+          -- The peer answers for it.
+          case thrown of
+            Left (ExnLeiosClosureTooBig p referenced' bound') ->
+              (p, referenced', bound') @?= (point, referenced, bound)
+            other -> assertFailure ("expected ExnLeiosClosureTooBig, got " <> show other)
+          -- Recorded with an empty job pool: no closure to fetch, and the next
+          -- peer to serve the same bytes does not cost us the work again.
+          Map.lookup h (Leios.ebState o)
+            @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
+          Leios.numMissingBodies o @?= 0
+      , testCase "an endorser block at exactly its bound is fetched" $ do
+          let ids = [0 .. 3]
+              eb = ebOf ids
+              point = pointOf ids 5
+              h = Leios.pointEbHash point
+              bound = sum (map txSizeOf ids)
+              o = runSimOrThrow $ do
+                dbHandle <- LeiosDb.newLeiosDBInMemory
+                withWriter dbHandle $ \conn -> do
+                  outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+                  readyVar <- newEmptyMVar
+                  let kv = (outstandingVar, readyVar)
+                  recordAnnouncedEb kv SNothing $
+                    announcementOf point (encodeLeiosEbSize eb)
+                  processLeiosBlock
+                    nullTracer
+                    nullTracer
+                    kv
+                    nullLeiosTxCache
+                    conn
+                    dummySystemTime
+                    noMempoolPull
+                    (ReceivedBlockFrom (MkPeerId (0 :: Int)) (MkLeiosBlockRequest point (encodeLeiosEbSize eb) bound))
+                    eb
+                  readMVar outstandingVar
+          -- Accepted, so its closure became jobs rather than an empty pool.
+          case Map.lookup h (Leios.ebState o) of
+            Just (Leios.MkEbState _ _ (Leios.BodyAcquired jobPool)) ->
+              assertBool "expected a non-empty job pool" (jobPool /= Jobs.emptyLeiosJobPool)
+            other -> assertFailure ("expected BodyAcquired, got " <> show other)
       , testCase "a certificate leaves a body we already hold held" $ do
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
@@ -519,7 +599,7 @@ applyCmd conn txCache kv peerVars peerId = \case
     pure []
   ArriveBody ids slot -> do
     let eb = ebOf ids
-        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
+        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb) maxBound
     processLeiosBlock
       nullTracer
       nullTracer
@@ -537,7 +617,7 @@ applyCmd conn txCache kv peerVars peerId = \case
     pure []
   ArriveBodyLostWrite ids slot -> do
     let eb = ebOf ids
-        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
+        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb) maxBound
         -- The body write is never enqueued, so its promise never resolves and
         -- the acquisition is never confirmed.
         lostConn = conn{LeiosDb.writeEbBody = \_ _ _ -> pure (LeiosDb.Promise (forever (threadDelay 1000000)))}
@@ -596,6 +676,7 @@ applyCmd conn txCache kv peerVars peerId = \case
         (out', decs, _drops) =
           leiosFetchLogicIteration
             demoLeiosFetchStaticEnv
+            anyClosureSize
             (Just (fromIntegral slot))
             offerings
             Map.empty
@@ -625,7 +706,7 @@ referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.PeerO
 referencedOffers o =
   Map.fromList
     [ ( Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h
-      , Leios.MkPeerOffer (SJust 1) Leios.TxsClosureOffered
+      , Leios.MkPeerOffer SNothing (SJust 1) Leios.TxsClosureOffered
       )
     | (h, s) <- Map.toList (Leios.ebState o)
     ]
@@ -638,7 +719,7 @@ forceDecisions m =
   sum [reqScore req | reqs <- Map.elems m, req <- toList reqs]
  where
   reqScore = \case
-    Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest _p sz) -> fromIntegral sz
+    Leios.LeiosBlockRequest r -> fromIntegral (Leios.lbrOfferedSize r)
     Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p jobs) ->
       sum
         [ off
@@ -652,7 +733,7 @@ ebBodyRequestHashes :: Map.Map peer (NESeq Leios.LeiosFetchRequest) -> [EbHash]
 ebBodyRequestHashes m =
   [ p.pointEbHash
   | reqs <- Map.elems m
-  , Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest p _sz) <- toList reqs
+  , Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest p _sz _) <- toList reqs
   ]
 
 -- | The union of every tx offset the requests fetch, across all peers.
@@ -668,6 +749,12 @@ requestedOffsets m =
 ------------------------------------------------------------
 -- The invariant
 ------------------------------------------------------------
+
+-- | The closure bound these tests forecast: large enough that nothing here
+-- trips it. 'Test.Consensus.Leios.RecoveryPath' is where the bound itself is
+-- exercised, against a real node.
+anyClosureSize :: SlotNo -> Either OutsideForecastRange Leios.BytesSize
+anyClosureSize _slot = Right maxBound
 
 -- | Three invariants:
 --
@@ -911,7 +998,7 @@ raceSameHashMultiSlot = do
               conn
               dummySystemTime
               noMempoolPull
-              (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize))
+              (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize maxBound))
               eb
           )
       )

@@ -785,10 +785,18 @@ data ConfigEnv m blk = ConfigEnv
   , leiosMsgRollForwardCallback ::
       Header blk ->
       RelativeTime ->
+      LedgerView (BlockProtocol blk) ->
       ChainDepState (BlockProtocol blk) ->
       m ()
   -- ^ Invoked on each accepted 'MsgRollForward' with the just-arrived header,
-  -- its slot's wall-clock onset, and the chain-dep state as of its predecessor.
+  -- its slot's wall-clock onset, and the ledger view and chain-dep state as of
+  -- its predecessor.
+  --
+  -- For a CertRB the predecessor is the block that announced the endorser block
+  -- it certifies, so that view is forecast for the announced slot --- and the
+  -- ChainSync client reaches further than our immutable tip, which is why the
+  -- fetch logic retains this rather than forecasting it later (see
+  -- 'LeiosDemoTypes.poMaxEbTxsSize').
   -- For Leios the wiring uses this to both register any EB the header
   -- /certifies/ as an offer from this peer, and feed any EB the header
   -- /announces/ into the central announcement state — dating that announcement
@@ -1565,10 +1573,13 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
           -- Pass the predecessor's chain-dep state (the pre-validation state,
           -- whose history tip is still the predecessor); see
           -- 'leiosMsgRollForwardCallback'.
-          leiosMsgRollForwardCallback cfgEnv hdr hdrSlotTime $
-            headerStateChainDep $
-              hswtHeaderState $
-                HeaderStateHistory.current (theirHeaderStateHistory kis')
+          let predHeaderState = HeaderStateHistory.current (theirHeaderStateHistory kis')
+          leiosMsgRollForwardCallback
+            cfgEnv
+            hdr
+            hdrSlotTime
+            (hswtLedgerView predHeaderState)
+            (headerStateChainDep (hswtHeaderState predHeaderState))
 
           continueWithState kis''' $
             nextStep mkPipelineDecision n theirTip
