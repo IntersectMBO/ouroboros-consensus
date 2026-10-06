@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 -- | Property tests for the mempool.
@@ -45,6 +46,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import qualified Data.Measure as Measure
+import Data.Proxy (Proxy (..))
 import Data.Semigroup (stimes)
 import qualified Data.Set as Set
 import Data.Word
@@ -87,8 +89,11 @@ tests =
             "snapshotPartition: zero endorser-block capacity takes nothing"
             prop_Mempool_snapshotPartition_zeroEbCapacity
         , testProperty
-            "snapshotPartition: block part is the greatest prefix within capacity"
-            prop_Mempool_snapshotPartition_blockPrefix
+            "snapshotPartition: ranking-block part is the longest prefix within capacity"
+            prop_Mempool_snapshotPartition_rankingBlockPrefix
+        , testProperty
+            "snapshotPartition: endorser-block part is the longest prefix after the ranking-block part within capacity"
+            prop_Mempool_snapshotPartition_ebPrefix
         , testProperty "valid added txs == getTxs" prop_Mempool_addTxs_getTxs
         , testProperty "addTxs [..] == forM [..] addTxs" prop_Mempool_semigroup_addTxs
         , testProperty "result of addTxs" prop_Mempool_addTxs_result
@@ -131,25 +136,19 @@ prop_Mempool_snapshotPartition_zeroEbCapacity setup =
       counterexample ("endorser-block part not empty: " <> condense (map txForgetValidated ebTxs)) $
         null ebTxs
 
--- | With a zero endorser-block capacity, the block part of 'snapshotPartition'
--- is the greatest prefix of 'snapshotTxs' whose summed measure fits the block
--- capacity, and its size is that sum. This is what the forge selects.
-prop_Mempool_snapshotPartition_blockPrefix :: TestSetupWithTxs -> Property
-prop_Mempool_snapshotPartition_blockPrefix setup =
+-- | With a zero endorser-block capacity, the ranking-block part of
+-- 'snapshotPartition' is the longest prefix of 'snapshotTxs' whose summed
+-- measure fits the block capacity, and its size is that sum. This is what the
+-- forge selects.
+prop_Mempool_snapshotPartition_rankingBlockPrefix :: TestSetupWithTxs -> Property
+prop_Mempool_snapshotPartition_rankingBlockPrefix setup =
   forAll (choose (0, 120 :: Word32)) $ \percent ->
     withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
       _ <- addTxs mempool (allTxs setup)
       MempoolSnapshot{snapshotTxs, snapshotPartition} <- atomically $ getSnapshot mempool
       let measures = [m | (_, _, m) <- snapshotTxs]
-          TxMeasure (IgnoringOverflow (ByteSize32 totalBytes)) _ = List.foldl' Measure.plus Measure.zero measures
-          capacity =
-            TxMeasure
-              ( IgnoringOverflow
-                  (ByteSize32 (fromIntegral (fromIntegral totalBytes * fromIntegral percent `div` (100 :: Word64))))
-              )
-              TrivialTxMeasurePhase2
-          prefixLength =
-            length $ takeWhile (Measure.<= capacity) $ drop 1 $ scanl Measure.plus Measure.zero measures
+          capacity = percentOf percent measures
+          prefixLength = fittingPrefixLength capacity measures
           expectedTxs = map (txForgetValidated . prjTx) (take prefixLength snapshotTxs)
           expectedSize = List.foldl' Measure.plus Measure.zero (take prefixLength measures)
           (blockTxs, blockSize, ebTxs, _ebSize) = snapshotPartition capacity Measure.zero
@@ -158,6 +157,53 @@ prop_Mempool_snapshotPartition_blockPrefix setup =
           map txForgetValidated blockTxs === expectedTxs
             .&&. mmTxMeasure blockSize === expectedSize
             .&&. null ebTxs
+
+-- | The endorser-block part of 'snapshotPartition' is the longest prefix of
+-- the transactions after the ranking-block part whose summed 'TxEbMeasure'
+-- fits the endorser-block capacity, and its size is that sum. The prefix stops
+-- at the first transaction that does not fit, even if a later one would fit.
+prop_Mempool_snapshotPartition_ebPrefix :: TestSetupWithTxs -> Property
+prop_Mempool_snapshotPartition_ebPrefix setup =
+  forAll (choose (0, 100 :: Word32)) $ \blockCapacityPercent ->
+    forAll (choose (0, 120 :: Word32)) $ \ebCapacityPercent ->
+      withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
+        _ <- addTxs mempool (allTxs setup)
+        MempoolSnapshot{snapshotTxs, snapshotPartition} <- atomically $ getSnapshot mempool
+        let measures = [m | (_, _, m) <- snapshotTxs]
+            blockCapacity = percentOf blockCapacityPercent measures
+            afterBlock = drop (fittingPrefixLength blockCapacity measures) snapshotTxs
+            ebMeasures = [txEbMeasure (Proxy @TestBlock) m | (_, _, m) <- afterBlock]
+            ebCapacity = percentOf ebCapacityPercent ebMeasures
+            ebLength = fittingPrefixLength ebCapacity ebMeasures
+            expectedTxs = map (txForgetValidated . prjTx) (take ebLength afterBlock)
+            expectedSize = List.foldl' Measure.plus Measure.zero (take ebLength ebMeasures)
+            (_blockTxs, _blockSize, ebTxs, ebSize) = snapshotPartition blockCapacity ebCapacity
+        return
+          $ cover
+            30
+            (0 < ebLength && ebLength < length afterBlock)
+            "endorser-block part stops before the last transaction"
+          $ counterexample ("capacities: " <> show (blockCapacity, ebCapacity))
+          $ map txForgetValidated ebTxs === expectedTxs
+            .&&. mmTxEbMeasure ebSize === expectedSize
+
+-- | @percent@ per cent of the summed measures, rounded down.
+percentOf :: Word32 -> [TxMeasure TestBlock] -> TxMeasure TestBlock
+percentOf percent measures =
+  TxMeasure
+    ( IgnoringOverflow
+        (ByteSize32 (fromIntegral (fromIntegral totalBytes * fromIntegral percent `div` (100 :: Word64))))
+    )
+    TrivialTxMeasurePhase2
+ where
+  TxMeasure (IgnoringOverflow (ByteSize32 totalBytes)) _ = List.foldl' Measure.plus Measure.zero measures
+
+-- | The length of the longest prefix whose summed measure fits the capacity.
+-- No measure is negative, so this prefix stops at the first measure that does
+-- not fit.
+fittingPrefixLength :: Measure.Measure m => m -> [m] -> Int
+fittingPrefixLength capacity =
+  length . takeWhile (Measure.<= capacity) . drop 1 . scanl Measure.plus Measure.zero
 
 -- | Test that all valid transactions added to a 'Mempool' can be retrieved
 -- afterward.
