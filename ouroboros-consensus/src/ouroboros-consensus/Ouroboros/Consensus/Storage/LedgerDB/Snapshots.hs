@@ -1016,8 +1016,7 @@ tryWithSnapshotRequest (SnapshotRequestQueue _ var) f =
 -------------------------------------------------------------------------------}
 
 data TraceSnapshotEvent blk
-  = -- | The snapshot policy the LedgerDB was opened with, traced once, when it
-    -- is opened. See 'SnapshotPolicyInfo'.
+  = -- | The snapshot policy the LedgerDB was opened with. See 'SnapshotPolicyInfo'.
     ConfiguredSnapshotPolicy SnapshotPolicyInfo
   | -- | An on disk snapshot was skipped because it was invalid.
     InvalidSnapshot DiskSnapshot (SnapshotFailure blk)

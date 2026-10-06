@@ -31,7 +31,10 @@ import Data.Void (absurd)
 import Data.Word (Word64)
 import Numeric (showFFloat)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config.SecurityParam (maxRollbacks)
+import Ouroboros.Consensus.Config.SecurityParam
+  ( SecurityParam
+  , maxRollbacks
+  )
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.Info
@@ -2091,6 +2094,15 @@ instance MetaTrace (LedgerDB.TraceEvent blk) where
         (nsPrependInner "Flavor")
         (allNamespaces :: [Namespace LedgerDB.FlavorImplSpecificTrace])
 
+-- | The number of blocks that can be rolled back.
+instance ToJSON SecurityParam where
+  toJSON = toJSON . unNonZero . maxRollbacks
+
+-- | The name of the mismatch, so that a consumer can match on it.
+instance ToJSON LedgerDB.SnapshotPolicyMismatch where
+  toJSON LedgerDB.WriteDelayExceedsInterval = String "WriteDelayExceedsInterval"
+  toJSON LedgerDB.RateLimitExceedsInterval = String "RateLimitExceedsInterval"
+
 instance
   ( StandardHash blk
   , ConvertRawHash blk
@@ -2150,8 +2162,8 @@ instance
   forMachine _dtals (LedgerDB.ConfiguredSnapshotPolicy info) =
     mconcat $
       [ "kind" .= String "ConfiguredSnapshotPolicy"
-      , "mismatches" .= toJSON (map show (LedgerDB.snapshotPolicyMismatches info))
-      , "securityParam" .= unNonZero (maxRollbacks (LedgerDB.spiSecurityParam info))
+      , "mismatches" .= LedgerDB.snapshotPolicyMismatches info
+      , "securityParam" .= LedgerDB.spiSecurityParam info
       , "slotLengthSeconds" .= asSeconds (getSlotLength (LedgerDB.spiSlotLengthAtTip info))
       , "numOfDiskSnapshots"
           .= LedgerDB.getNumOfDiskSnapshots (LedgerDB.spaNum (LedgerDB.spiArgs info))
@@ -2243,8 +2255,8 @@ instance MetaTrace (LedgerDB.TraceSnapshotEvent blk) where
   documentFor (Namespace _ ["ConfiguredSnapshotPolicy"]) =
     Just $
       mconcat
-        [ "The snapshot policy the ledger database was opened with, traced once"
-        , " at startup. The interval is configured in slots while the write delay"
+        [ "The snapshot policy the ledger database was opened with."
+        , " The interval is configured in slots while the write delay"
         , " and the rate limit are in seconds, so the interval is also reported as"
         , " wall-clock time, using the slot length of the era the tip is in. On a"
         , " network with short slots, a delay window carried over from mainnet can"
