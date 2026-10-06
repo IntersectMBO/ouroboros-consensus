@@ -5,7 +5,7 @@ open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
 open import Ledger.Crypto
 open import Ledger.Types.Epoch
-open import Data.Rational.Ext
+open import stdlib.Data.Rational.Ext
 
 module Spec.ChainHead.Properties
   (crypto : _) (open Crypto crypto)
@@ -17,7 +17,7 @@ module Spec.ChainHead.Properties
   (rs     : _) (open RationalExtStructure rs)
   where
 
-open import Tactic.GenError
+open import stdlib-meta.Tactic.GenError
 open import Ledger.Prelude
 open import Ledger.PParams using (PParams; ProtVer)
 open import Spec.TickForecast crypto es li

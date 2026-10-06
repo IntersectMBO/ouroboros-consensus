@@ -110,7 +110,7 @@ instance
     ; serHashToNonce  = id
     }
 
-open import Data.Rational.Ext using (RationalExtStructure)
+open import stdlib.Data.Rational.Ext using (RationalExtStructure)
 
 instance
   HSRationalExtStructure : RationalExtStructure
