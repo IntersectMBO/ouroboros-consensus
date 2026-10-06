@@ -76,6 +76,7 @@ import Data.Semigroup (Sum (..))
 import Data.Typeable (Typeable)
 import Data.Word (Word16, Word32, Word64)
 import GHC.Generics (Generic)
+import GHC.IO.Unsafe (unsafePerformIO)
 import qualified Ouroboros.Consensus.Committee.Types as Committee
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView (..))
@@ -83,6 +84,8 @@ import Ouroboros.Consensus.Peras.Types (PerasCertSize (..))
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike (NoThunks)
 import Quiet (Quiet (..))
+import System.Environment (lookupEnv)
+import Text.Read (readMaybe)
 
 -- * Protocol parameters
 
@@ -242,35 +245,45 @@ mkPerasParams ::
 mkPerasParams securityParam activeSlotCoeff plv =
   PerasParams
     { perasIgnoranceRounds =
-        PerasIgnoranceRounds
+        PerasIgnoranceRounds $
           ignoranceRounds
+            `orUnsafeEnv` "PERAS_IGNORANCE_ROUNDS"
     , perasCooldownRounds =
-        PerasCooldownRounds
+        PerasCooldownRounds $
           cooldownRounds
+            `orUnsafeEnv` "PERAS_COOLDOWN_ROUNDS"
     , perasBlockMinSlots =
-        PerasBlockMinSlots
+        PerasBlockMinSlots $
           blockMinSlots
+            `orUnsafeEnv` "PERAS_BLOCK_MIN_SLOTS"
     , perasCertMaxRounds =
-        PerasCertMaxRounds
+        PerasCertMaxRounds $
           certMaxRounds
+            `orUnsafeEnv` "PERAS_CERT_MAX_ROUNDS"
     , perasCertArrivalThreshold =
-        PerasCertArrivalThreshold
+        PerasCertArrivalThreshold $
           certArrivalThreshold
+            `orUnsafeEnv` "PERAS_CERT_ARRIVAL_THRESHOLD"
     , perasWeight =
-        PerasWeight
+        PerasWeight $
           weight
+            `orUnsafeEnv` "PERAS_WEIGHT"
     , perasQuorumWeightThreshold =
-        PerasQuorumWeightThreshold
+        PerasQuorumWeightThreshold $
           quorumWeightThreshold
+            `orUnsafeEnv` "PERAS_QUORUM_WEIGHT_THRESHOLD"
     , perasQuorumWeightThresholdSafetyMargin =
-        PerasQuorumWeightThresholdSafetyMargin
+        PerasQuorumWeightThresholdSafetyMargin $
           quorumWeightThresholdSafetyMargin
+            `orUnsafeEnv` "PERAS_QUORUM_WEIGHT_THRESHOLD_SAFETY_MARGIN"
     , perasTargetCommitteeSize =
-        Committee.TargetCommitteeSize
+        Committee.TargetCommitteeSize $
           targetCommitteeSize
+            `orUnsafeEnv` "PERAS_TARGET_COMMITTEE_SIZE"
     , perasBootstrapRound =
         PerasBootstrapRound
           <$> bootstrapRound
+            `orUnsafeEnv` "PERAS_BOOTSTRAP_ROUND"
     }
  where
   k :: Word64
@@ -325,6 +338,18 @@ mkPerasParams securityParam activeSlotCoeff plv =
 
   bootstrapRound :: StrictMaybe Word64
   bootstrapRound = fromIntegral @Word32 @Word64 <$> plvBootstrapRound plv
+
+-- | Temporary hack to allow overriding default Peras parameters via env vars.
+orUnsafeEnv :: Read a => a -> String -> a
+orUnsafeEnv def var =
+  unsafePerformIO $
+    lookupEnv var >>= \case
+      Nothing -> pure def
+      Just str ->
+        case readMaybe str of
+          Nothing -> pure def
+          Just x -> pure x
+{-# NOINLINE orUnsafeEnv #-}
 
 -- | Instantiate default Peras protocol parameters.
 --
