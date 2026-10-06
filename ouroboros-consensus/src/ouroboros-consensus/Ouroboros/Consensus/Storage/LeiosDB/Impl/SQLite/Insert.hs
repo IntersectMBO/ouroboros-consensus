@@ -12,11 +12,10 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Insert
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Monad (forM_, when)
+import Control.Monad (foldM, forM_, when)
 import Control.Tracer (Tracer)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.Set as Set
+import Data.Int (Int64)
 import qualified Database.SQLite3.Direct as DB
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
@@ -24,6 +23,7 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosEb
   , LeiosPoint (..)
   , TxHash (..)
+  , TxOffset
   , encodeLeiosEbSize
   , leiosEbBodyItems
   )
@@ -76,15 +76,16 @@ sqlInsertEbBody tracer conn notify point eb = do
         "ebTxs"
         (show (pointEbHash point) <> "@" <> show txOffset)
         stInsertEbTxsRow
-    -- Record which of this body's txs we still lack, then count them. Both in
-    -- this transaction, so an arrival can never see the rows without the count
+    -- Allocate this body's tx-bytes rows, then count the unfilled ones. Both
+    -- in this transaction, so a fill can never see the rows without the count
     -- or the other way round.
-    useStmt stInsertMissingTxs $ do
-      dbBindBlob stInsertMissingTxs 1 (ebHashBytes (pointEbHash point))
-      dbStep1 stInsertMissingTxs
+    useStmt stPreallocEbTxBytes $ do
+      dbBindBlob stPreallocEbTxBytes 1 (ebHashBytes (pointEbHash point))
+      dbStep1 stPreallocEbTxBytes
     -- Initialize missingTxCount and read the resulting value via
     -- @RETURNING missingTxCount@. Only /this/ point's row can have
-    -- transitioned to 0 as a consequence of the insert above.
+    -- transitioned to 0 as a consequence of the insert above: a body
+    -- redelivered at a second point finds the first point's fills.
     missingCount <- useStmt stInitMissingCount $ do
       dbBindBlob stInitMissingCount 1 (ebHashBytes (pointEbHash point))
       dbBindBlob stInitMissingCount 2 (ebHashBytes (pointEbHash point))
@@ -107,84 +108,75 @@ sqlInsertEbBody tracer conn notify point eb = do
   Conn{connVolStmts} = conn
   VolStmts
     { stInsertEbTxsRow
-    , stInsertMissingTxs
+    , stPreallocEbTxBytes
     , stInitMissingCount
     , stMarkPointNotified
     } = connVolStmts
 
+-- | Persist tx bytes for one EB by filling the rows 'sqlInsertEbBody'
+-- pre-allocated.
+--
+-- A transaction is dropped if:
+--
+-- * its offset is not in the body;
+-- * its offset is already filled (@filled = 1@);
+-- * or its size is not the declared one.
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
   Conn ->
   (LeiosEbNotification -> IO ()) ->
-  [(TxHash, ByteString)] ->
+  -- | The EB the txs belong to
+  LeiosPoint ->
+  -- | Tx bytes by offset into the EB's body
+  [(TxOffset, ByteString)] ->
   IO CompletedEbs
-sqlInsertTxs _tracer conn notify txs = do
-  -- Skip txs already persisted in 'txs'. Under mempool backlog,
-  -- successive forges (or overlapping peer EBs) re-present the same tx
-  -- hashes; attempting the INSERT and catching a constraint violation
-  -- still pays the bind + PK-lookup + reset cost per row.
-  missing <- Set.fromList <$> sqlFilterMissingTxs conn (map fst txs)
+sqlInsertTxs _tracer conn notify point txBytesWithOffsets = do
   completed <- dbWithWriteTransaction conn $ do
-    -- 'dbStepInsert' still handles the rare race where a concurrent
-    -- writer inserted the same hash between the filter above and the
-    -- INSERT below.
-    forM_ (novel missing) $ \(txHash, txBytes) -> do
-      let txBytesSize = fromIntegral $ BS.length txBytes
-          txHashBytes = let MkTxHash bytes = txHash in bytes
-      inserted <- useStmt stInsertTx $ do
-        dbBindBlob stInsertTx 1 txHashBytes
-        dbBindBlob stInsertTx 2 txBytes
-        dbBindInt64 stInsertTx 3 txBytesSize
-        dbStepInsert stInsertTx
-      when inserted $ do
-        useStmt stDecrMissingCount $ do
-          dbBindBlob stDecrMissingCount 1 txHashBytes
-          dbStep1 stDecrMissingCount
-        -- Strictly after the decrement, which reads these rows.
-        useStmt stDeleteMissingTxs $ do
-          dbBindBlob stDeleteMissingTxs 1 txHashBytes
-          dbStep1 stDeleteMissingTxs
-    -- Find newly-complete EBs (missingTxCount reached 0)
-    completed <- useStmt stFindCompleteEbs $ do
-      let loop acc =
-            dbStep stFindCompleteEbs >>= \case
-              DB.Done -> pure (reverse acc)
-              DB.Row -> do
-                ebHash <- MkEbHash <$> DB.columnBlob stFindCompleteEbs 0
-                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stFindCompleteEbs 1
-                loop (MkLeiosPoint slot ebHash : acc)
-      loop []
-    -- Mark them as notified so they are not found again
-    useStmt stMarkNotifiedEbs $ dbStep1 stMarkNotifiedEbs
-    pure completed
+    -- Fill the pre-allocated rows of the ebTxBytes table.
+    -- Count how many tx bytes were successfully filled (i.e. not dropped).
+    nFilled <-
+      foldM
+        ( \acc (txOffset, txBytes) -> do
+            useStmt stFillEbTxBytes $ do
+              dbBindBlob stFillEbTxBytes 1 ebHash
+              dbBindInt64 stFillEbTxBytes 2 (fromIntegral txOffset)
+              dbBindBlob stFillEbTxBytes 3 txBytes
+              dbStep1 stFillEbTxBytes
+            changed <- DB.changes db
+            pure (acc + fromIntegral changed)
+        )
+        (0 :: Int64)
+        txBytesWithOffsets
+    if nFilled == 0
+      then pure []
+      else do
+        -- Decrement every announcement of this content hash and collect the
+        -- ones this batch completed.
+        completedSlots <- useStmt stDecrMissingCount $ do
+          dbBindBlob stDecrMissingCount 1 ebHash
+          dbBindInt64 stDecrMissingCount 2 nFilled
+          let loop acc =
+                dbStep stDecrMissingCount >>= \case
+                  DB.Done -> pure (reverse acc)
+                  DB.Row -> do
+                    slot <- SlotNo . fromIntegral <$> DB.columnInt64 stDecrMissingCount 0
+                    left <- DB.columnInt64 stDecrMissingCount 1
+                    loop (if left == 0 then slot : acc else acc)
+          loop []
+        -- Mark them notified so they are not completed twice.
+        forM_ completedSlots $ \slot -> useStmt stMarkPointNotified $ do
+          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo slot)
+          dbBindBlob stMarkPointNotified 2 ebHash
+          dbStep1 stMarkPointNotified
+        pure [MkLeiosPoint slot (pointEbHash point) | slot <- completedSlots]
   -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ \point -> notify (AcquiredEbTxs point)
+  forM_ completed $ \p -> notify (AcquiredEbTxs p)
   pure completed
  where
-  Conn{connVolStmts} = conn
+  ebHash = ebHashBytes (pointEbHash point)
+  Conn{conVolDb = db, connVolStmts} = conn
   VolStmts
-    { stInsertTx
+    { stFillEbTxBytes
     , stDecrMissingCount
-    , stDeleteMissingTxs
-    , stFindCompleteEbs
-    , stMarkNotifiedEbs
+    , stMarkPointNotified
     } = connVolStmts
-  novel missing = filter (\(h, _) -> h `Set.member` missing) txs
-
--- | Batch-filter tx hashes against @txs@: passes txHashes as a JSON array
--- of hex strings; SQL decodes with @unhex()@ so index lookups on
--- @txs.txHashBytes@ still fire. Used internally by 'sqlInsertTxs' to skip
--- already-persisted txs.
-sqlFilterMissingTxs :: Conn -> [TxHash] -> IO [TxHash]
-sqlFilterMissingTxs conn txHashes =
-  dbWithTransaction db $ useStmt stmt $ do
-    dbBindUtf8 stmt 1 (jsonHexArray [b | MkTxHash b <- txHashes])
-    loop []
- where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stFilterMissingTxs = stmt}} = conn
-  loop acc =
-    dbStep stmt >>= \case
-      DB.Done -> pure (reverse acc)
-      DB.Row -> do
-        txHash <- MkTxHash <$> DB.columnBlob stmt 0
-        loop (txHash : acc)
