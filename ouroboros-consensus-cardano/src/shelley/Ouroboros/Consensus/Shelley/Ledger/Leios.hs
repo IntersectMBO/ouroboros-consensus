@@ -70,6 +70,7 @@ import Ouroboros.Consensus.Protocol.Praos
 import qualified Ouroboros.Consensus.Protocol.Praos as PP
 import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
 import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
+import qualified Ouroboros.Consensus.Protocol.Praos.Views as PP
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -130,6 +131,10 @@ instance
   -- lists, so the body-arrival mempool pull can find them.
   leiosTxBytesOfGenTx (ShelleyTx _ tx) = Just (serialize' tx)
   leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serialize' tx)))
+
+  getLeiosMaxEbTxsSizeFromView _ lv =
+    case PP.plvLeios lv of
+      SJustLeios llv -> PP.llvMaxEbTxsSize llv
 
   resolveLeiosClosure leiosDb ebHash = do
     lookupTrustedEbClosure leiosDb ebHash >>= \case

@@ -147,9 +147,10 @@ type PraosLedgerView = BasePraosLedgerView PextNone
 
 -- | The Leios part of 'BasePraosLedgerView'.
 --
--- Only what the protocol itself checks. The other Leios parameters bound an
--- endorser block's contents, which is validated with a real ledger state in
--- hand, so doesn't need to be forecasted.
+-- The Leios values that have to be read before the block they bear on is
+-- applied: header validation reads the periods and 'llvMaxEbBodySize',
+-- ChainSel's certificate check reads the committee and the quorum, and the
+-- fetch logic reads 'llvMaxEbTxsSize' when an endorser block's body arrives.
 data LeiosLedgerView = LeiosLedgerView
   { llvCommittee :: !LeiosCommittee
   -- ^ Who may vote this epoch, and with what weight
@@ -163,6 +164,9 @@ data LeiosLedgerView = LeiosLedgerView
   -- count of slots needs the slot length, which only the consensus config has.
   , llvMaxEbBodySize :: !Word32
   -- ^ Maximum total size of an endorser block itself (/not/ the closure)
+  , llvMaxEbTxsSize :: !Word32
+  -- ^ Maximum total size of the transactions an endorser block references (the
+  -- closure)
   }
   deriving (Eq, Show)
 
@@ -182,6 +186,7 @@ initialLeiosLedgerView =
     , llvVotePeriodLength = Milliseconds32 0
     , llvDiffusionPeriodLength = Milliseconds32 1000000000
     , llvMaxEbBodySize = 0
+    , llvMaxEbTxsSize = 0
     }
 
 type ForecastsLeios :: PraosExtension -> Type -> Constraint
@@ -233,4 +238,5 @@ forecastToLeiosLedgerView f =
     , llvVotePeriodLength = f ^. Dijkstra.leiosVotePeriodLengthForecastL @era @t
     , llvDiffusionPeriodLength = f ^. Dijkstra.leiosDiffusionPeriodLengthForecastL @era @t
     , llvMaxEbBodySize = f ^. Dijkstra.maxEndorserBlockReferencesSizeForecastL @era @t
+    , llvMaxEbTxsSize = f ^. Dijkstra.maxEndorserBlockTxsSizeForecastL @era @t
     }

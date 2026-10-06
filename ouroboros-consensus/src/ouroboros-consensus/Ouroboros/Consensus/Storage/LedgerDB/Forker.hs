@@ -128,6 +128,7 @@ import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepState
   , ConsensusConfig
   , ConsensusProtocol
+  , LedgerView
   , ValidateView
   , ValidationErr
   , updateChainDepState
@@ -955,6 +956,20 @@ class ResolveLeiosBlock blk where
     Except (ValidationErr (BlockProtocol blk)) OCINStaleness
   validateAnnouncementChainDepState cfg vv slot tcs =
     FreshOCIN <$ updateChainDepState cfg vv slot tcs
+
+  -- | The maximum closure size in this slot
+  --
+  -- Read from a forecast view rather than an applied ledger state because
+  -- nothing has applied the endorser block --- or the block that announced it
+  -- --- by the time this decides whether its closure is worth fetching.
+  --
+  -- An era without the parameter answers 0, which is sentinel but an accurate
+  -- one.
+  getLeiosMaxEbTxsSizeFromView ::
+    proxy blk ->
+    LedgerView (BlockProtocol blk) ->
+    BytesSize
+  getLeiosMaxEbTxsSizeFromView _ _ = 0
 
   -- | The most recent EB announcement in the 'HeaderState', if any: the
   -- election that made it, the endorser block's hash, and its body size.

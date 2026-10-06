@@ -466,6 +466,8 @@ invalidate blk = blk{ltbHeader = (ltbHeader blk){lthValidity = Invalid}}
 instance ResolveLeiosBlock LeiosTestBlock where
   blockLeiosCert = ltbCert . ltbBody
 
+  getLeiosMaxEbTxsSizeFromView _ = ltvMaxEbTxsSize
+
   announcingRbHash blk = case blockPrevHash blk of
     GenesisHash -> Nothing
     BlockHash h -> Just $ MkRbHash $ toRawHash (Proxy @LeiosTestBlock) h
@@ -541,18 +543,26 @@ newtype instance Ticked LeiosTestChainDepState
 data LeiosTestProtocol
 
 -- | What Leios needs of the ledger view, and nothing else.
-newtype LeiosTestView = LeiosTestView
+data LeiosTestView = LeiosTestView
   { ltvCommittee :: Maybe (LeiosCommittee, Weight)
+  , ltvMaxEbTxsSize :: !BytesSize
+  -- ^ What an endorser block announced in this view's slot may reference, in
+  -- total. 'leiosTestLedgerConfig' fixes it for the whole chain, since no test
+  -- needs it to change mid-run.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 instance Show LeiosTestView where
-  show (LeiosTestView mbCommittee) = case mbCommittee of
-    Nothing -> "LeiosTestView{no committee}"
+  show (LeiosTestView mbCommittee maxEbTxsSize) = case mbCommittee of
+    Nothing -> "LeiosTestView{no committee, maxEbTxsSize = " <> show maxEbTxsSize <> "}"
     Just (_committee, threshold) ->
       -- The committee's own 'Show' would dwarf every counterexample it appears in.
-      "LeiosTestView{committee = <elided>, threshold = " <> show threshold <> "}"
+      "LeiosTestView{committee = <elided>, threshold = "
+        <> show threshold
+        <> ", maxEbTxsSize = "
+        <> show maxEbTxsSize
+        <> "}"
 
 data instance ConsensusConfig LeiosTestProtocol = LeiosTestProtocolConfig
   { ltpcSecurityParam :: !SecurityParam
@@ -628,6 +638,7 @@ data LeiosTestLedgerConfig = LeiosTestLedgerConfig
   { ltlcHardForkParams :: !HardFork.EraParams
   , ltlcForecastRange :: !SlotNo
   , ltlcCommittees :: EpochNo -> Maybe (LeiosCommittee, Weight)
+  , ltlcMaxEbTxsSize :: !BytesSize
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosTestLedgerConfig" LeiosTestLedgerConfig
 
@@ -639,12 +650,15 @@ instance Show LeiosTestLedgerConfig where
       <> show ltlcForecastRange
       <> " <committees>"
 
+-- | The closure bound defaults to 'maxBound', so a test that does not care
+-- about it never trips it. 'ltlcMaxEbTxsSize' is how one that does says so.
 leiosTestLedgerConfig ::
   HardFork.EraParams ->
   SlotNo ->
   (EpochNo -> Maybe (LeiosCommittee, Weight)) ->
   LeiosTestLedgerConfig
-leiosTestLedgerConfig = LeiosTestLedgerConfig
+leiosTestLedgerConfig eraParams forecastRange committees =
+  LeiosTestLedgerConfig eraParams forecastRange committees maxBound
 
 type instance LedgerCfg (LedgerState LeiosTestBlock) = LeiosTestLedgerConfig
 
@@ -759,8 +773,10 @@ instance ValidateEnvelope LeiosTestBlock
 instance LedgerSupportsPeras LeiosTestBlock
 
 instance LedgerSupportsProtocol LeiosTestBlock where
-  protocolLedgerView _cfg =
-    LeiosTestView . ltlsCommittee . getTickedLeiosTestLedger
+  protocolLedgerView cfg =
+    flip LeiosTestView (ltlcMaxEbTxsSize cfg)
+      . ltlsCommittee
+      . getTickedLeiosTestLedger
 
   ledgerViewForecastAt cfg st =
     Forecast
@@ -782,7 +798,7 @@ instance LedgerSupportsProtocol LeiosTestBlock where
 
 -- | The committee the schedule seats for the epoch that contains this slot.
 viewAt :: LeiosTestLedgerConfig -> SlotNo -> LeiosTestView
-viewAt cfg = LeiosTestView . committeeAt cfg
+viewAt cfg slot = LeiosTestView (committeeAt cfg slot) (ltlcMaxEbTxsSize cfg)
 
 committeeAt :: LeiosTestLedgerConfig -> SlotNo -> Maybe (LeiosCommittee, Weight)
 committeeAt cfg slot = ltlcCommittees cfg epoch

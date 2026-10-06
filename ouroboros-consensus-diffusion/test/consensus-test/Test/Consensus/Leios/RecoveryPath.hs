@@ -102,6 +102,12 @@ tests =
         "an endorser block a later election still needs outlives the earlier point being pruned"
         test_laterAnnouncementOutlivesPruning
     , testCase
+        "an endorser block referencing more tx bytes than the slot allows costs its server the connection"
+        test_oversizedClosureIsRejected
+    , testCase
+        "an endorser block referencing exactly what the slot allows is fetched"
+        test_closureAtTheBoundIsFetched
+    , testCase
         "a peer claiming two certified endorser blocks for one election is dropped"
         test_twoCertificationClaimsIsDropped
     , testCase
@@ -1089,6 +1095,152 @@ test_offeredSizeBeatsAnnouncedSize = do
         awaitPollingWith getTraces "the endorser block body is in the LeiosDb" $
           LeiosDb.withReader leiosDb $ \r ->
             not . null <$> LeiosDb.lookupEbBody r (pointEbHash mistatedPoint)
+
+{-------------------------------------------------------------------------------
+  The closure bound
+-------------------------------------------------------------------------------}
+
+-- | What 'oversizedNodeConfig' lets an endorser block reference, in total.
+--
+-- The two endorser blocks below claim sizes relative to this rather than
+-- deriving them from 'endorsedTx', so which side of the bound each falls on
+-- does not move if that transaction's encoding changes. The value only has to
+-- leave room for an encoded body well under it, which is what makes the
+-- contrast between a small body and a huge closure real.
+theClosureBound :: BytesSize
+theClosureBound = 1000
+
+-- | As 'nodeConfig', but with a closure bound small enough to trip.
+oversizedNodeConfig :: NodeUnderTestConfig
+oversizedNodeConfig =
+  defaultNodeUnderTestConfig
+    ((nutcLedgerConfig nodeConfig){ltlcMaxEbTxsSize = theClosureBound})
+    securityParam
+
+-- | An endorser block whose one reference claims one byte more than
+-- 'theClosureBound', while the transaction behind it is the same small one
+-- every other test uses.
+--
+-- That gap is the point: the body is well within 'maxLeiosEbBytesSize' --- a
+-- reference costs the CBOR digits of the size it claims, not that size --- so
+-- nothing short of summing the references catches it.
+oversizedEb :: LeiosEb
+oversizedClosure :: [(TxHash, BS8.ByteString)]
+oversizedSize :: BytesSize
+(oversizedEb, oversizedClosure, oversizedSize) =
+  mkLeiosTestEbClaiming [(endorsedTx, theClosureBound + 1)]
+
+oversizedPoint :: LeiosPoint
+oversizedPoint = leiosTestEbPoint 1 oversizedEb
+
+oversizedAnnouncer :: Blk
+oversizedAnnouncer = announcing oversizedPoint oversizedSize (firstLeiosBlock 0)
+
+-- | An endorser block whose one reference claims exactly 'theClosureBound',
+-- which is the largest the protocol allows and so must still be fetched.
+boundaryEb :: LeiosEb
+boundaryClosure :: [(TxHash, BS8.ByteString)]
+boundarySize :: BytesSize
+(boundaryEb, boundaryClosure, boundarySize) =
+  mkLeiosTestEbClaiming [(endorsedTx, theClosureBound)]
+
+boundaryPoint :: LeiosPoint
+boundaryPoint = leiosTestEbPoint 1 boundaryEb
+
+boundaryAnnouncer :: Blk
+boundaryAnnouncer = announcing boundaryPoint boundarySize (firstLeiosBlock 0)
+
+-- | A peer that serves an endorser block referencing more transaction bytes
+-- than its slot allows loses the connection.
+--
+-- The bytes hash to what we asked for, so nothing before this point objects:
+-- the announcement is valid, the offer is backed by it, and the body is the
+-- endorser block named. Only summing what it references catches it, and the
+-- node must do that before committing to fetch the closure --- which is the
+-- whole attack, since a 512 KiB body can name hundreds of megabytes.
+test_oversizedClosureIsRejected :: Assertion
+test_oversizedClosureIsRejected = do
+  assertBool
+    "its body is a fraction of a legal one, so only summing the references catches it"
+    (oversizedSize < theClosureBound)
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Left (FailureException e) | isClosureTooBig e -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the serving peer to be dropped, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  isClosureTooBig :: SomeException -> Bool
+  isClosureTooBig e
+    | Just (ExceptionInLinkedThread _ inner) <- fromException e = isClosureTooBig inner
+    | Just Leios.ExnLeiosClosureTooBig{} <- fromException e = True
+    | otherwise = False
+
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    holder <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest oversizedNodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        connectPeer nut registry (PeerAddr 0) holder
+
+        plantEb holder oversizedEb oversizedClosure
+
+        threadDelay 6
+
+        announceEb holder (getHeader oversizedAnnouncer)
+        offerEb holder oversizedPoint oversizedSize
+
+        -- The peer's thread dies before this ever comes true; the assertion
+        -- above is on the exception that kills it.
+        awaitPollingWith getTraces "the endorser block body is in the LeiosDb" $
+          LeiosDb.withReader leiosDb $ \r ->
+            not . null <$> LeiosDb.lookupEbBody r (pointEbHash oversizedPoint)
+
+-- | An endorser block referencing exactly what its slot allows is fetched.
+--
+-- The companion to 'test_oversizedClosureIsRejected': without it, a check
+-- written with the comparison the wrong way round would pass that test and
+-- silently reject every legal endorser block too.
+test_closureAtTheBoundIsFetched :: Assertion
+test_closureAtTheBoundIsFetched = do
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Right () -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the endorser block to be fetched, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    holder <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest oversizedNodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        connectPeer nut registry (PeerAddr 0) holder
+
+        plantEb holder boundaryEb boundaryClosure
+
+        threadDelay 6
+
+        announceEb holder (getHeader boundaryAnnouncer)
+        offerEb holder boundaryPoint boundarySize
+
+        awaitPollingWith getTraces "the endorser block body is in the LeiosDb" $
+          LeiosDb.withReader leiosDb $ \r ->
+            not . null <$> LeiosDb.lookupEbBody r (pointEbHash boundaryPoint)
 
 -- | An endorser block two elections announced is still fetched after the
 -- earlier announcement's point has been pruned away.

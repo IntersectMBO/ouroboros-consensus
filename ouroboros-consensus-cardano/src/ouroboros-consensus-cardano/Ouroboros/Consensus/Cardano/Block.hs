@@ -1618,6 +1618,18 @@ instance
   headerElId (HardForkHeader (OneEraHeader ns)) =
     hcollapse $ hcmap (Proxy @ResolveLeiosBlock) (K . headerElId) ns
 
+  -- As above, but dispatching on the per-era ledger /view/ the protocol layer
+  -- carries rather than on a header.
+  getLeiosMaxEbTxsSizeFromView _ (HardForkLedgerView _transition hfState) =
+    hcollapse $
+      hcmap
+        (Proxy @ResolveLeiosBlock)
+        (\wlv -> K (getLeiosMaxEbTxsSizeFromView (eraProxy wlv) (unwrapLedgerView wlv)))
+        (State.tip hfState)
+   where
+    eraProxy :: WrapLedgerView blk -> Proxy blk
+    eraProxy _ = Proxy
+
   validateAnnouncementChainDepState = update @(CardanoEras c)
 
   headerContainsLeiosCert hdr = case hdr of

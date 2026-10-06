@@ -191,7 +191,7 @@ addWithCommittee node predecessor blk =
     node
     ( Predecessor
         (blockSlot predecessor)
-        (LeiosTestView (Just (testCommittee.committee, wholeCommittee)))
+        (LeiosTestView (Just (testCommittee.committee, wholeCommittee)) maxBound)
     )
     blk
 
@@ -272,7 +272,7 @@ test_noCommittee = do
           addAtGenesis node announcer
           addBlockWith
             node
-            (Predecessor (blockSlot announcer) (LeiosTestView Nothing))
+            (Predecessor (blockSlot announcer) (LeiosTestView Nothing maxBound))
             certRB
           (,) <$> claimCount node <*> tipPoint node
   assertEqual "no claim is established" 0 claims
