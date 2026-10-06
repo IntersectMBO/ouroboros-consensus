@@ -23,7 +23,7 @@ import Cardano.Crypto.DSIGN (signDSIGN)
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
-import Control.Monad (unless)
+import Control.Monad (forM_, unless)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim
   ( Failure (FailureException)
@@ -32,6 +32,8 @@ import Control.Monad.IOSim
   , selectTraceEventsSay'
   , traceResult
   )
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Control.ResourceRegistry (withRegistry)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.IntMap.Strict as IntMap
@@ -107,6 +109,15 @@ tests =
     , testCase
         "an endorser block referencing exactly what the slot allows is fetched"
         test_closureAtTheBoundIsFetched
+    , testCase
+        "an endorser block announced, acquired and announced again still certifies"
+        test_reannouncedNothingPruned
+    , testCase
+        "an endorser block announced, acquired, pruned and announced again still certifies"
+        test_reannouncedPruneThenReannounce
+    , testCase
+        "an endorser block announced, acquired, announced again and pruned still certifies"
+        test_reannouncedReannounceThenPrune
     , testCase
         "a peer claiming two certified endorser blocks for one election is dropped"
         test_twoCertificationClaimsIsDropped
@@ -1241,6 +1252,207 @@ test_closureAtTheBoundIsFetched = do
         awaitPollingWith getTraces "the endorser block body is in the LeiosDb" $
           LeiosDb.withReader leiosDb $ \r ->
             not . null <$> LeiosDb.lookupEbBody r (pointEbHash boundaryPoint)
+
+-- | One endorser block, announced twice, certified under the second
+-- announcement.
+--
+-- The whole test vector, in order. 'raWhen' orders the two halves of step 3;
+-- every other step is the same in all three parameterizations.
+--
+-- 1. The peer holds the endorser block and its closure, and no chain has been
+--    served, so the node has selected nothing.
+--
+-- 2. The peer announces the endorser block over LeiosNotify at slot 1 and
+--    offers both the body and the closure. The node fetches the closure. Two
+--    records now hold the endorser block, both aged by slot 1: the ChainDB's
+--    acquired-closure set, which gates CertRBs ('isUnacquiredCertRB'), and the
+--    fetch logic's 'ebState', which gates fetching.
+--
+-- 3. In either order, as 'raWhen' chooses:
+--
+--    [3prune]: The peer serves 'raPrefix' as its whole chain. Selecting it
+--    carries the immutable tip past slot 1, and both records prune: the
+--    acquired-closure set drops the endorser block, and so does 'ebState' ---
+--    unless 3announce has already raised its entry to the second
+--    announcement's slot.
+--
+--    [3announce]: The peer announces the same endorser block again over
+--    LeiosNotify, at 'raSecondPoint'.
+--
+-- 4. The peer serves all of 'raChain'. Its second-to-last block repeats the
+--    second announcement and its last block certifies that announcement.
+--
+-- 5. The node is expected to select that CertRB. It can only do so once the
+--    acquired-closure set holds the endorser block again, which takes a
+--    re-fetch, which takes an 'ebState' entry that still wants the body.
+data Reannounced = Reannounced
+  { raFirstAnnouncer :: !Blk
+  -- ^ Step 2. The first block of 'raChain' with the announcement added; the
+  -- hash ignores that field, so step 4 serves the same block without it.
+  , raFirstPoint :: !LeiosPoint
+  -- ^ What step 2 announces.
+  , raChain :: ![Blk]
+  -- ^ Step 4. One block per slot from 1.
+  , raSecondAnnouncer :: !Blk
+  -- ^ What 3announce announces, and the second-to-last block of step 4.
+  , raSecondPoint :: !LeiosPoint
+  -- ^ What 'raSecondAnnouncer' announces.
+  , raWhen :: !WhenReannounced
+  , raPrefix :: !(Maybe [Blk])
+  -- ^ 3prune's chain, or 'Nothing' to skip step 3 entirely.
+  --
+  -- A prefix of 'raChain' stopping short of 'raSecondAnnouncer': a peer serves
+  -- every header of whatever chain it has, so a chain reaching that block
+  -- would announce it, whatever blocks are withheld.
+  }
+
+-- | How 'Reannounced' orders step 3.
+data WhenReannounced
+  = -- | Neither half runs: the chain is only @k@ blocks, so the immutable tip
+    -- never leaves Origin, and step 4 alone carries the second announcement.
+    NothingPruned
+  | -- | 3prune, then 3announce.
+    PruneThenReannounce
+  | -- | 3announce, then 3prune.
+    ReannounceThenPrune
+  deriving Show
+
+-- | Lay the steps out, putting the CertRB far enough along that 3prune can
+-- reach past slot 1.
+reannounced :: WhenReannounced -> Reannounced
+reannounced when_ =
+  Reannounced
+    { raFirstAnnouncer = announcing firstPoint endorserSize (firstLeiosBlock 9)
+    , raFirstPoint = firstPoint
+    , raChain = chain
+    , raSecondAnnouncer = chain !! (secondSlot - 1)
+    , raSecondPoint = secondPoint
+    , raWhen = when_
+    , raPrefix = (`take` chain) <$> mbPrefixSlot
+    }
+ where
+  k = fromIntegral (unNonZero (maxRollbacks securityParam))
+
+  mbPrefixSlot = case when_ of
+    NothingPruned -> Nothing
+    PruneThenReannounce -> Just (4 + k)
+    ReannounceThenPrune -> Just (4 + k)
+
+  certSlot = maybe k (+ 4) mbPrefixSlot
+
+  firstSlot = 1 :: Int
+  secondSlot = certSlot - 1
+
+  firstPoint = leiosTestEbPoint (fromIntegral firstSlot) endorserBlock
+  secondPoint = leiosTestEbPoint (fromIntegral secondSlot) endorserBlock
+
+  chain =
+    [ decorate slot blk
+    | (slot, blk) <-
+        zip [1 ..] (take certSlot (iterate successorLeiosBlock (firstLeiosBlock 9)))
+    ]
+
+  decorate slot blk
+    | slot == secondSlot = announcing secondPoint endorserSize blk
+    | slot == certSlot = certifying (mkCert testCommittee claim) blk
+    | otherwise = blk
+
+  claim = MkRbHash $ toRawHash (Proxy @Blk) (blockHash (chain !! (secondSlot - 1)))
+
+-- | Run the steps of 'Reannounced' in order.
+runReannounced :: Reannounced -> Assertion
+runReannounced ra = do
+  assertBool
+    "the two announcements name one endorser block"
+    (pointEbHash (raFirstPoint ra) == pointEbHash (raSecondPoint ra))
+  assertBool
+    "the two announcements are for different elections"
+    ( headerElId (getHeader (raFirstAnnouncer ra))
+        /= headerElId (getHeader (raSecondAnnouncer ra))
+    )
+  let simTrace = runSimTrace scenario
+  case traceResult False simTrace of
+    Right () -> pure ()
+    outcome ->
+      assertFailure $
+        unlines $
+          ("expected the CertRB's chain to be selected, but: " <> show outcome)
+            : lastN 40 (selectTraceEventsSay' simTrace)
+ where
+  scenario :: forall s. IOSim s ()
+  scenario = do
+    nodeDBs <- emptyNodeDBs
+    leiosDb <- LeiosDb.newLeiosDBInMemory
+    holder <- newPeerEnv
+
+    (chainDBTracer, getTraces) <- recordingTracerTVar
+
+    withNodeUnderTest nodeConfig nodeDBs leiosDb chainDBTracer $ \nut ->
+      withRegistry $ \registry -> do
+        connectPeer nut registry (PeerAddr 0) holder
+        plantEb holder endorserBlock endorserClosure
+
+        -- Every announcing header these relay is in a slot this simulation
+        -- starts before, and a header from the future is rejected as such, so
+        -- wait until the clock is past the latest of them.
+        threadDelay (fromIntegral (unSlotNo (pointSlotNo (raSecondPoint ra))) + 4)
+
+        announceEb holder (getHeader (raFirstAnnouncer ra))
+        offerEb holder (raFirstPoint ra) endorserSize
+        offerEbTxs holder (raFirstPoint ra)
+
+        awaitPollingWith getTraces "the endorser block's closure is complete" $
+          LeiosDb.withReader leiosDb $ \r ->
+            isJust <$> LeiosDb.lookupTrustedEbClosure r (pointEbHash (raFirstPoint ra))
+
+        -- No offer is needed alongside: the CertRB's own MsgRollForward
+        -- registers this peer as offering the endorser block its predecessor
+        -- announced ('recordCertRbOffer').
+        let reannounce = announceEb holder (getHeader (raSecondAnnouncer ra))
+            prune = forM_ (raPrefix ra) $ \prefix -> do
+              serveChain holder $ chainOf prefix
+              -- Two separate pruners watch the immutable tip, and this has to
+              -- wait for both: the ChainDB's acquired-closure set, which has
+              -- no observable of its own, and the fetch logic's, which does.
+              awaitPollingWith getTraces "the immutable tip passed the first announcement" $
+                atomically $ do
+                  immLedger <- ChainDB.getImmutableLedger (nutChainDB nut)
+                  pure $
+                    getTipSlot (ledgerState immLedger)
+                      > NotOrigin (pointSlotNo (raFirstPoint ra))
+              awaitPollingWith getTraces "the fetch logic pruned the first announcement" $
+                (> pointSlotNo (raFirstPoint ra)) . outstandingPrunedSlot
+                  <$> MVar.readMVar (getLeiosOutstanding (nutKernel nut))
+
+        case raWhen ra of
+          NothingPruned -> pure ()
+          PruneThenReannounce -> prune >> reannounce
+          ReannounceThenPrune -> reannounce >> prune
+
+        serveChain holder $ chainOf (raChain ra)
+
+        awaitWith getTraces "the CertRB's chain is selected" $
+          tipIsSTM nut (last (raChain ra))
+
+-- | No prune, so both records still hold the endorser block at step 5.
+test_reannouncedNothingPruned :: Assertion
+test_reannouncedNothingPruned = runReannounced (reannounced NothingPruned)
+
+-- | Self-healing: 3prune takes the 'ebState' entry too, so 3announce finds
+-- nothing and starts the endorser block over, and the re-acquired closure puts
+-- it back in the acquired-closure set in time for step 5.
+test_reannouncedPruneThenReannounce :: Assertion
+test_reannouncedPruneThenReannounce =
+  runReannounced (reannounced PruneThenReannounce)
+
+-- | Not self-healing: 3announce raises the 'ebState' entry above the immutable
+-- tip, so it survives 3prune as 'BodyAcquired' and nothing re-fetches. The
+-- acquired-closure set is still aged by slot 1, so the same prune drops the
+-- endorser block from it, and step 5 never happens: the CertRB stays hidden by
+-- 'isUnacquiredCertRB' with nothing left that could restore it.
+test_reannouncedReannounceThenPrune :: Assertion
+test_reannouncedReannounceThenPrune =
+  runReannounced (reannounced ReannounceThenPrune)
 
 -- | An endorser block two elections announced is still fetched after the
 -- earlier announcement's point has been pruned away.
