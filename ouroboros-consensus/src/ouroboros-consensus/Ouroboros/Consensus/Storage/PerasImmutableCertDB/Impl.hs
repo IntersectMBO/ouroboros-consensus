@@ -161,89 +161,6 @@ import System.FS.CRC (CRC (..), computeCRC)
 import Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------
-  Database state
--------------------------------------------------------------------------------}
-
-data PerasImmutableCertDbEnv m blk = PerasImmutableCertDbEnv
-  { picdbHasFS :: !(SomeHasFS m)
-  , picdbCodecConfig :: !(CodecConfig blk)
-  , picdbTracer :: !(Tracer m (TraceEvent blk))
-  , picdbState :: !(StrictSVar m CertDbState)
-  -- ^ The in-memory index of the database. This is the only bit of
-  -- information about the certificates kept in memory; the certificates
-  -- themselves are read back from disk on demand.
-  }
-  deriving
-    NoThunks
-    via OnlyCheckWhnfNamed "PerasImmutableCertDbEnv" (PerasImmutableCertDbEnv m blk)
-
--- | The in-memory index of the database. The two sets are disjoint.
-data CertDbState = CertDbState
-  { cdsKnownRounds :: !(Set PerasRoundNo)
-  -- ^ The round numbers of all certificates stored in the database directory
-  -- and not (yet) found to be unreadable or corrupt.
-  , cdsQuarantinedRounds :: !(Set PerasRoundNo)
-  -- ^ The round numbers of all certificates found to be unreadable or corrupt.
-  }
-  deriving stock Generic
-  deriving anyclass NoThunks
-
--- | Shorthand for the monad in which 'implAddCert' safely modifies
--- 'picdbState': allocated resources (here, a single certificate file)
--- are automatically cleaned up if they don't end up part of the on-disk state.
-type ModifyCertDbState m = StateT CertDbState (WithTempRegistry CertDbState m)
-
-{-------------------------------------------------------------------------------
-  Errors
--------------------------------------------------------------------------------}
-
--- | Reason why a certificate file on disk could not be read back into a
--- 'ValidatedPerasCert'.
---
--- These are never thrown: a certificate whose file is unreadable is
--- /quarantined/ (renamed to its quarantined name and traced) rather than
--- bringing down the whole database, so the remaining certificates stay
--- available to syncing nodes.
-data CertFileError
-  = -- | The file could not be opened or read (e.g. it is missing).
-    CertFileReadError FsError
-  | -- | The leading CRC or the certificate payload could not be decoded.
-    CertFileMalformed DecoderError
-  | -- | The payload's CRC does not match the one stored in the file,
-    -- i.e. the file is corrupt (bit rot, a partial write, etc).
-    CertFileChecksumMismatch
-  | -- | Only a temporary file was found for the certificate: writing it was
-    -- interrupted before it was committed (see 'writeCertFile').
-    CertFileIncompleteWrite
-  deriving stock Show
-
--- | A short human-readable description of a 'CertFileError', for tracing.
-displayCertFileError :: CertFileError -> String
-displayCertFileError = \case
-  CertFileReadError err -> "Read error: " <> show err
-  CertFileMalformed err -> "Malformed: " <> show err
-  CertFileChecksumMismatch -> "CRC mismatch"
-  CertFileIncompleteWrite -> "Incomplete write"
-
-{-------------------------------------------------------------------------------
-  Trace types
--------------------------------------------------------------------------------}
-
-data TraceEvent blk
-  = -- | Number of certificates and of quarantined certificates found on disk
-    -- when opening.
-    OpenedDB
-      Int
-      Int
-  | -- | The result of attempting to add a certificate for the given round.
-    AddedCert PerasRoundNo AddPerasImmutableCertResult
-  | -- | A certificate file was found to be unreadable or corrupt and was moved
-    -- to quarantine. The 'String' describes the reason (see
-    -- 'displayCertFileError').
-    QuarantinedCert PerasRoundNo String
-  deriving stock (Eq, Show, Generic)
-
-{-------------------------------------------------------------------------------
   Creating the database
 -------------------------------------------------------------------------------}
 
@@ -303,18 +220,7 @@ openDB
     -- Index the certificate files present on disk by recovering their round
     -- numbers from their file names; the certificates themselves are read back
     -- from disk on demand.
-    (knownRounds, quarantinedRounds) <- indexCertRounds hasFS
-    -- A round that is both stored and quarantined is left behind by a crash
-    -- while adding a replacement for a quarantined certificate (see
-    -- 'implAddCert'). The stored file takes precedence: should it be broken,
-    -- it will be quarantined again.
-    let staleQuarantinedRounds = Set.intersection knownRounds quarantinedRounds
-    forM_ staleQuarantinedRounds $ removeFile hasFS . fsPathQuarantinedCertFile
-    let initialState =
-          CertDbState
-            { cdsKnownRounds = knownRounds
-            , cdsQuarantinedRounds = Set.difference quarantinedRounds staleQuarantinedRounds
-            }
+    initialState <- indexCertRounds hasFS >>= dropStaleQuarantineMarkers hasFS
     st <- case picdbaValidationPolicy of
       ValidateOnRead -> pure initialState
       ValidateAllOnOpen ->
@@ -336,8 +242,151 @@ openDB
         }
 
 {-------------------------------------------------------------------------------
+  Opening: recovery and indexing
+-------------------------------------------------------------------------------}
+
+-- | Deal with the leftover temporary certificate files in the database
+-- directory (see 'writeCertFile'). Called once when opening, before indexing.
+--
+-- Such a file means that storing a certificate was interrupted. If no
+-- certificate file for its round was committed (nor quarantined), that
+-- certificate is missing from the database, so the temporary file is renamed
+-- to its quarantined name: this makes the round known as quarantined, so that
+-- a replacement can be requested for it. Otherwise, the temporary file is just
+-- removed. For example, @42.cert.tmp@ is renamed to @42.cert.quarantined@ if
+-- neither @42.cert@ nor @42.cert.quarantined@ exist, and removed otherwise.
+--
+-- Entries that are not well-formed temporary certificate file names (such as
+-- @foo.tmp@) are left alone, like any other unrecognised entry.
+recoverTempCertFiles ::
+  IOLike m =>
+  Tracer m (TraceEvent blk) ->
+  HasFS m h ->
+  m ()
+recoverTempCertFiles tracer hasFS = do
+  names <- listDirectory hasFS (mkFsPath rootDir)
+  forM_ (mapMaybe certRoundFromTmpFileName (Set.toList names)) $ \roundNo ->
+    if Set.member (certFileName roundNo) names
+      || Set.member (certFileName roundNo <> quarantinedSuffix) names
+      then removeFile hasFS (fsPathTmpCertFile roundNo)
+      else do
+        renameFile hasFS (fsPathTmpCertFile roundNo) (fsPathQuarantinedCertFile roundNo)
+        traceQuarantinedCert tracer roundNo CertFileIncompleteWrite
+
+-- | Index the round numbers of all certificate files in the database
+-- directory, returning the known and the quarantined rounds, in that order.
+--
+-- The round number of each certificate is recovered from its file name (see
+-- 'certFileName' and 'fsPathQuarantinedCertFile'), so the certificates
+-- themselves are not read or decoded here; that happens on demand in
+-- 'readCertFile'. Directory entries that are not well-formed certificate file
+-- names are ignored.
+indexCertRounds ::
+  IOLike m =>
+  HasFS m h ->
+  m (Set PerasRoundNo, Set PerasRoundNo)
+indexCertRounds hasFS = do
+  names <- Set.toList <$> listDirectory hasFS (mkFsPath rootDir)
+  pure
+    ( Set.fromList $ mapMaybe certRoundFromFileName names
+    , Set.fromList $ mapMaybe certRoundFromQuarantinedFileName names
+    )
+
+-- | Build the initial index from the known and the quarantined rounds found
+-- by 'indexCertRounds', removing the quarantine marker of every round that is
+-- both stored and quarantined.
+--
+-- Such a round is left behind by a crash while adding a replacement for a
+-- quarantined certificate (see 'implAddCert'). The stored file takes
+-- precedence: should it be broken, it will be quarantined again.
+dropStaleQuarantineMarkers ::
+  IOLike m =>
+  HasFS m h ->
+  (Set PerasRoundNo, Set PerasRoundNo) ->
+  m CertDbState
+dropStaleQuarantineMarkers hasFS (knownRounds, quarantinedRounds) = do
+  forM_ staleQuarantinedRounds $ removeFile hasFS . fsPathQuarantinedCertFile
+  pure
+    CertDbState
+      { cdsKnownRounds = knownRounds
+      , cdsQuarantinedRounds = Set.difference quarantinedRounds staleQuarantinedRounds
+      }
+ where
+  staleQuarantinedRounds = Set.intersection knownRounds quarantinedRounds
+
+-- | Eagerly read and integrity-check every known certificate, moving any
+-- unreadable or corrupt one to quarantine (tracing it via 'QuarantinedCert'),
+-- so that it is never advertised to clients. Used by the 'ValidateAllOnOpen'
+-- policy.
+validateAllCertsOnOpen ::
+  ( IOLike m
+  , DecodeDisk blk (PerasCert blk)
+  ) =>
+  Tracer m (TraceEvent blk) ->
+  CodecConfig blk ->
+  HasFS m h ->
+  CertDbState ->
+  m CertDbState
+validateAllCertsOnOpen tracer ccfg hasFS st =
+  foldM validateCert st (cdsKnownRounds st)
+ where
+  validateCert st' roundNo =
+    readCertFileAt ccfg hasFS (fsPathCertFile roundNo) >>= \case
+      Right _ -> pure st'
+      Left err -> do
+        st'' <- quarantineCert hasFS roundNo st'
+        traceQuarantinedCert tracer roundNo err
+        pure st''
+
+{-------------------------------------------------------------------------------
+  Database state
+-------------------------------------------------------------------------------}
+
+data PerasImmutableCertDbEnv m blk = PerasImmutableCertDbEnv
+  { picdbHasFS :: !(SomeHasFS m)
+  , picdbCodecConfig :: !(CodecConfig blk)
+  , picdbTracer :: !(Tracer m (TraceEvent blk))
+  , picdbState :: !(StrictSVar m CertDbState)
+  -- ^ The in-memory index of the database. This is the only bit of
+  -- information about the certificates kept in memory; the certificates
+  -- themselves are read back from disk on demand.
+  }
+  deriving
+    NoThunks
+    via OnlyCheckWhnfNamed "PerasImmutableCertDbEnv" (PerasImmutableCertDbEnv m blk)
+
+-- | Run a continuation with the (existentially hidden) 'HasFS' of the
+-- database.
+withHasFS :: PerasImmutableCertDbEnv m blk -> (forall h. HasFS m h -> a) -> a
+withHasFS env k = case picdbHasFS env of SomeHasFS hasFS -> k hasFS
+
+-- | The in-memory index of the database. The two sets are disjoint.
+data CertDbState = CertDbState
+  { cdsKnownRounds :: !(Set PerasRoundNo)
+  -- ^ The round numbers of all certificates stored in the database directory
+  -- and not (yet) found to be unreadable or corrupt.
+  , cdsQuarantinedRounds :: !(Set PerasRoundNo)
+  -- ^ The round numbers of all certificates found to be unreadable or corrupt.
+  }
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+-- | Move a round from the known to the quarantined rounds.
+quarantineRound :: PerasRoundNo -> CertDbState -> CertDbState
+quarantineRound roundNo CertDbState{cdsKnownRounds, cdsQuarantinedRounds} =
+  CertDbState
+    { cdsKnownRounds = Set.delete roundNo cdsKnownRounds
+    , cdsQuarantinedRounds = Set.insert roundNo cdsQuarantinedRounds
+    }
+
+{-------------------------------------------------------------------------------
   API implementation
 -------------------------------------------------------------------------------}
+
+-- | Shorthand for the monad in which 'implAddCert' safely modifies
+-- 'picdbState': allocated resources (here, a single certificate file)
+-- are automatically cleaned up if they don't end up part of the on-disk state.
+type ModifyCertDbState m = StateT CertDbState (WithTempRegistry CertDbState m)
 
 implAddCert ::
   forall m blk.
@@ -429,6 +478,10 @@ implGetCertsAfter env roundNo maxCerts = do
       Right cert -> pure (Just cert)
       Left _ -> quarantineCertIfBroken env r
 
+{-------------------------------------------------------------------------------
+  Quarantine
+-------------------------------------------------------------------------------}
+
 -- | Move a certificate to quarantine and trace why, if its file is still
 -- unreadable or corrupt (see 'CertFileError') once the 'StrictSVar' is held.
 -- Returns the certificate if it turns out to be intact after all.
@@ -451,106 +504,69 @@ quarantineCertIfBroken env roundNo = do
       else
         readCertFile env roundNo >>= \case
           Right cert -> pure (st, (Just cert, Nothing))
-          Left err -> case picdbHasFS env of
-            SomeHasFS hasFS -> do
-              quarantineCertFile hasFS roundNo
-              pure (quarantineRound roundNo st, (Nothing, Just err))
-  forM_ mErr $ \err ->
-    traceWith (picdbTracer env) (QuarantinedCert roundNo (displayCertFileError err))
+          Left err -> withHasFS env $ \hasFS -> do
+            st' <- quarantineCert hasFS roundNo st
+            pure (st', (Nothing, Just err))
+  forM_ mErr $ traceQuarantinedCert (picdbTracer env) roundNo
   pure mCert
 
--- | Move a round from the known to the quarantined rounds.
-quarantineRound :: PerasRoundNo -> CertDbState -> CertDbState
-quarantineRound roundNo CertDbState{cdsKnownRounds, cdsQuarantinedRounds} =
-  CertDbState
-    { cdsKnownRounds = Set.delete roundNo cdsKnownRounds
-    , cdsQuarantinedRounds = Set.insert roundNo cdsQuarantinedRounds
-    }
+-- | Quarantine the certificate of the given round: both its file (see
+-- 'quarantineCertFile') and its round in the in-memory index (see
+-- 'quarantineRound').
+quarantineCert ::
+  IOLike m =>
+  HasFS m h ->
+  PerasRoundNo ->
+  CertDbState ->
+  m CertDbState
+quarantineCert hasFS roundNo st = do
+  quarantineCertFile hasFS roundNo
+  pure (quarantineRound roundNo st)
+
+-- | Trace that the certificate of the given round was quarantined, and why.
+traceQuarantinedCert ::
+  Monad m =>
+  Tracer m (TraceEvent blk) ->
+  PerasRoundNo ->
+  CertFileError ->
+  m ()
+traceQuarantinedCert tracer roundNo err =
+  traceWith tracer (QuarantinedCert roundNo (displayCertFileError err))
+
+-- | Quarantine the file of a certificate by atomically renaming it to its
+-- quarantined name (see 'fsPathQuarantinedCertFile'). If the file is missing,
+-- an empty file is created under the quarantined name instead, so that the
+-- round is still known to be quarantined after a restart.
+--
+-- Since 'renameFile' is atomic, a crash leaves the round either stored or
+-- quarantined, never both.
+quarantineCertFile ::
+  IOLike m =>
+  HasFS m h ->
+  PerasRoundNo ->
+  m ()
+quarantineCertFile hasFS roundNo = do
+  exists <- doesFileExist hasFS path
+  if exists
+    then renameFile hasFS path quarantinedPath
+    else withFile hasFS quarantinedPath (WriteMode AllowExisting) $ \_ -> pure ()
+ where
+  path = fsPathCertFile roundNo
+  quarantinedPath = fsPathQuarantinedCertFile roundNo
+
+-- | Remove the quarantined file of a certificate, once a new certificate for
+-- its round was stored.
+removeQuarantinedCertFile ::
+  IOLike m =>
+  PerasImmutableCertDbEnv m blk ->
+  PerasRoundNo ->
+  m ()
+removeQuarantinedCertFile env roundNo =
+  withHasFS env $ \hasFS -> removeFileIfExists hasFS (fsPathQuarantinedCertFile roundNo)
 
 {-------------------------------------------------------------------------------
   On-disk serialisation
 -------------------------------------------------------------------------------}
-
--- | The extension shared by all certificate files. A directory entry without
--- this extension is not a certificate file and is ignored when indexing.
-certFileExtension :: String
-certFileExtension = ".cert"
-
--- | The name of the file storing the certificate of the given round number.
---
--- The round number is encoded in the file name (and nowhere else), so that it
--- can be recovered without reading the file, see 'certRoundFromFileName'.
--- E.g. @42.cert@ for round 42.
-certFileName :: PerasRoundNo -> String
-certFileName roundNo = show (unPerasRoundNo roundNo) <> certFileExtension
-
--- | The file storing the certificate of the given round, e.g. @42.cert@ for
--- round 42.
-fsPathCertFile :: PerasRoundNo -> FsPath
-fsPathCertFile roundNo = mkFsPath (rootDir <> [certFileName roundNo])
-
--- | The database directory, relative to the database's 'HasFS', as a list of
--- path components.
-rootDir :: [String]
-rootDir = []
-
--- | The suffix appended to the name of a certificate file when it is
--- quarantined (see 'quarantineCertFile'). Keeping quarantined files in the
--- database directory lets them be quarantined with an atomic 'renameFile'.
-quarantinedSuffix :: String
-quarantinedSuffix = ".quarantined"
-
--- | The quarantined counterpart of 'fsPathCertFile', e.g.
--- @42.cert.quarantined@ for round 42. Only the name of this file matters:
--- its contents (the corrupt bytes, if any) are never read.
-fsPathQuarantinedCertFile :: PerasRoundNo -> FsPath
-fsPathQuarantinedCertFile roundNo =
-  mkFsPath (rootDir <> [certFileName roundNo <> quarantinedSuffix])
-
--- | The suffix appended to a certificate file name while it is being written,
--- before it is atomically renamed into place. See 'writeCertFile'.
-certFileTmpSuffix :: String
-certFileTmpSuffix = ".tmp"
-
--- | The temporary file a certificate is written to before being renamed into
--- place, e.g. @42.cert.tmp@ for round 42.
-fsPathCertFileTmp :: PerasRoundNo -> FsPath
-fsPathCertFileTmp roundNo = mkFsPath (rootDir <> [certFileName roundNo <> certFileTmpSuffix])
-
--- | Recover the round number of a certificate from its file name, or 'Nothing'
--- if the name is not a well-formed certificate file name. Inverse of
--- 'certFileName': e.g. @42.cert@ gives round 42.
-certRoundFromFileName :: String -> Maybe PerasRoundNo
-certRoundFromFileName name = do
-  digits <- stripSuffix certFileExtension name
-  roundNo <- PerasRoundNo <$> readMaybe digits
-  -- Only the canonical name of a round is accepted, as only that name is ever
-  -- looked up (see 'fsPathCertFile'). 'readMaybe' alone would also accept, say,
-  -- @042.cert@, @ 42.cert@ or @(42).cert@ (and wrap @-1.cert@ around to
-  -- 'maxBound'), each of which would index a round whose canonical file does
-  -- not exist.
-  guard (certFileName roundNo == name)
-  pure roundNo
-
--- | Recover the round number of a certificate from the name of its temporary
--- file, or 'Nothing' if the name is not a well-formed temporary certificate
--- file name. Inverse of the naming in 'fsPathCertFileTmp': e.g. @42.cert.tmp@
--- gives round 42, but @foo.tmp@ and @42.cert.quarantined.tmp@ give 'Nothing'.
-certRoundFromTmpFileName :: String -> Maybe PerasRoundNo
-certRoundFromTmpFileName name =
-  stripSuffix certFileTmpSuffix name >>= certRoundFromFileName
-
--- | Recover the round number of a certificate from the name of its
--- quarantined file, or 'Nothing' if the name is not a well-formed quarantined
--- certificate file name. Inverse of the naming in 'fsPathQuarantinedCertFile':
--- e.g. @42.cert.quarantined@ gives round 42, but @42.cert.tmp.quarantined@
--- gives 'Nothing' (note that no such name is ever created).
-certRoundFromQuarantinedFileName :: String -> Maybe PerasRoundNo
-certRoundFromQuarantinedFileName name =
-  stripSuffix quarantinedSuffix name >>= certRoundFromFileName
-
-stripSuffix :: String -> String -> Maybe String
-stripSuffix suffix s = reverse <$> stripPrefix (reverse suffix) (reverse s)
 
 encodeCert ::
   EncodeDisk blk (PerasCert blk) =>
@@ -624,43 +640,9 @@ decodeCertFile ccfg fileBytes = do
   asDeserialiseFailure =
     DecoderErrorDeserialiseFailure (pack "Immutable Peras Certificate file")
 
-writeCertFile ::
-  ( IOLike m
-  , EncodeDisk blk (PerasCert blk)
-  ) =>
-  PerasImmutableCertDbEnv m blk ->
-  PerasRoundNo ->
-  ValidatedPerasCert blk ->
-  m ()
-writeCertFile env roundNo cert =
-  case picdbHasFS env of
-    SomeHasFS hasFS -> do
-      -- Write to a temporary file first, then rename it into place.
-      -- This ensures that a crash mid-write can never leave a partial
-      -- file under the committed name: any @<round>.cert@ that exists is
-      -- guaranteed to be complete. Leftover @<round>.cert.tmp@ files are
-      -- dealt with on the next open; see 'recoverTempCertFiles'. One may also
-      -- be left behind by an earlier failed attempt, so remove it first.
-      removeFileIfExists hasFS tmpPath
-      withFile hasFS tmpPath (WriteMode MustBeNew) $ \h ->
-        void $ hPutAll hasFS h bytes
-      renameFile hasFS tmpPath path
- where
-  tmpPath = fsPathCertFileTmp roundNo
-  path = fsPathCertFile roundNo
-  bytes = encodeCertFileBytes (picdbCodecConfig env) cert
-
--- | Remove the file of a certificate.
---
--- Only used to clean up a certificate file that was written by 'addCert' but
--- never made it into 'picdbState' because of an exception.
-removeCertFile ::
-  PerasImmutableCertDbEnv m blk ->
-  PerasRoundNo ->
-  m ()
-removeCertFile env roundNo =
-  case picdbHasFS env of
-    SomeHasFS hasFS -> removeFile hasFS (fsPathCertFile roundNo)
+{-------------------------------------------------------------------------------
+  Certificate file I/O
+-------------------------------------------------------------------------------}
 
 -- | Read, integrity-check and decode the certificate of the given round
 -- number, returning a 'CertFileError' if the file is missing, unreadable or
@@ -674,8 +656,8 @@ readCertFile ::
   PerasRoundNo ->
   m (Either CertFileError (ValidatedPerasCert blk))
 readCertFile env roundNo =
-  case picdbHasFS env of
-    SomeHasFS hasFS -> readCertFileAt (picdbCodecConfig env) hasFS (fsPathCertFile roundNo)
+  withHasFS env $ \hasFS ->
+    readCertFileAt (picdbCodecConfig env) hasFS (fsPathCertFile roundNo)
 
 readCertFileAt ::
   forall m h blk.
@@ -692,85 +674,177 @@ readCertFileAt ccfg hasFS path = do
     Left (err :: FsError) -> Left (CertFileReadError err)
     Right bytes -> decodeCertFile ccfg bytes
 
--- | Index the round numbers of all certificate files in the database
--- directory, returning the known and the quarantined rounds, in that order.
---
--- The round number of each certificate is recovered from its file name (see
--- 'certFileName' and 'fsPathQuarantinedCertFile'), so the certificates
--- themselves are not read or decoded here; that happens on demand in
--- 'readCertFile'. Directory entries that are not well-formed certificate file
--- names are ignored.
-indexCertRounds ::
-  IOLike m =>
-  HasFS m h ->
-  m (Set PerasRoundNo, Set PerasRoundNo)
-indexCertRounds hasFS = do
-  names <- Set.toList <$> listDirectory hasFS (mkFsPath rootDir)
-  pure
-    ( Set.fromList $ mapMaybe certRoundFromFileName names
-    , Set.fromList $ mapMaybe certRoundFromQuarantinedFileName names
-    )
-
--- | Deal with the leftover temporary certificate files in the database
--- directory (see 'writeCertFile'). Called once when opening, before indexing.
---
--- Such a file means that storing a certificate was interrupted. If no
--- certificate file for its round was committed (nor quarantined), that
--- certificate is missing from the database, so the temporary file is renamed
--- to its quarantined name: this makes the round known as quarantined, so that
--- a replacement can be requested for it. Otherwise, the temporary file is just
--- removed. For example, @42.cert.tmp@ is renamed to @42.cert.quarantined@ if
--- neither @42.cert@ nor @42.cert.quarantined@ exist, and removed otherwise.
---
--- Entries that are not well-formed temporary certificate file names (such as
--- @foo.tmp@) are left alone, like any other unrecognised entry.
-recoverTempCertFiles ::
-  IOLike m =>
-  Tracer m (TraceEvent blk) ->
-  HasFS m h ->
-  m ()
-recoverTempCertFiles tracer hasFS = do
-  names <- listDirectory hasFS (mkFsPath rootDir)
-  forM_ (mapMaybe certRoundFromTmpFileName (Set.toList names)) $ \roundNo ->
-    if Set.member (certFileName roundNo) names
-      || Set.member (certFileName roundNo <> quarantinedSuffix) names
-      then removeFile hasFS (fsPathCertFileTmp roundNo)
-      else do
-        renameFile hasFS (fsPathCertFileTmp roundNo) (fsPathQuarantinedCertFile roundNo)
-        traceWith tracer $
-          QuarantinedCert roundNo (displayCertFileError CertFileIncompleteWrite)
-
--- | Quarantine the file of a certificate by atomically renaming it to its
--- quarantined name (see 'fsPathQuarantinedCertFile'). If the file is missing,
--- an empty file is created under the quarantined name instead, so that the
--- round is still known to be quarantined after a restart.
---
--- Since 'renameFile' is atomic, a crash leaves the round either stored or
--- quarantined, never both.
-quarantineCertFile ::
-  IOLike m =>
-  HasFS m h ->
+writeCertFile ::
+  ( IOLike m
+  , EncodeDisk blk (PerasCert blk)
+  ) =>
+  PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
+  ValidatedPerasCert blk ->
   m ()
-quarantineCertFile hasFS roundNo = do
-  exists <- doesFileExist hasFS path
-  if exists
-    then renameFile hasFS path quarantinedPath
-    else withFile hasFS quarantinedPath (WriteMode AllowExisting) $ \_ -> pure ()
+writeCertFile env roundNo cert =
+  withHasFS env $ \hasFS -> do
+    -- Write to a temporary file first, then rename it into place.
+    -- This ensures that a crash mid-write can never leave a partial
+    -- file under the committed name: any @<round>.cert@ that exists is
+    -- guaranteed to be complete. Leftover @<round>.cert.tmp@ files are
+    -- dealt with on the next open; see 'recoverTempCertFiles'. One may also
+    -- be left behind by an earlier failed attempt, so remove it first.
+    removeFileIfExists hasFS tmpPath
+    withFile hasFS tmpPath (WriteMode MustBeNew) $ \h ->
+      void $ hPutAll hasFS h bytes
+    renameFile hasFS tmpPath path
  where
+  tmpPath = fsPathTmpCertFile roundNo
   path = fsPathCertFile roundNo
-  quarantinedPath = fsPathQuarantinedCertFile roundNo
+  bytes = encodeCertFileBytes (picdbCodecConfig env) cert
 
--- | Remove the quarantined file of a certificate, once a new certificate for
--- its round was stored.
-removeQuarantinedCertFile ::
-  IOLike m =>
+-- | Remove the file of a certificate.
+--
+-- Only used to clean up a certificate file that was written by 'addCert' but
+-- never made it into 'picdbState' because of an exception.
+removeCertFile ::
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
   m ()
-removeQuarantinedCertFile env roundNo =
-  case picdbHasFS env of
-    SomeHasFS hasFS -> removeFileIfExists hasFS (fsPathQuarantinedCertFile roundNo)
+removeCertFile env roundNo =
+  withHasFS env $ \hasFS -> removeFile hasFS (fsPathCertFile roundNo)
+
+{-------------------------------------------------------------------------------
+  Database layout
+-------------------------------------------------------------------------------}
+
+-- | The database directory, relative to the database's 'HasFS', as a list of
+-- path components.
+rootDir :: [String]
+rootDir = []
+
+-- | The extension shared by all certificate files. A directory entry without
+-- this extension is not a certificate file and is ignored when indexing.
+certFileExtension :: String
+certFileExtension = ".cert"
+
+-- | The suffix appended to the name of a certificate file when it is
+-- quarantined (see 'quarantineCertFile'). Keeping quarantined files in the
+-- database directory lets them be quarantined with an atomic 'renameFile'.
+quarantinedSuffix :: String
+quarantinedSuffix = ".quarantined"
+
+-- | The suffix appended to a certificate file name while it is being written,
+-- before it is atomically renamed into place. See 'writeCertFile'.
+tmpSuffix :: String
+tmpSuffix = ".tmp"
+
+-- | The name of the file storing the certificate of the given round number.
+--
+-- The round number is encoded in the file name (and nowhere else), so that it
+-- can be recovered without reading the file, see 'certRoundFromFileName'.
+-- E.g. @42.cert@ for round 42.
+certFileName :: PerasRoundNo -> String
+certFileName roundNo = show (unPerasRoundNo roundNo) <> certFileExtension
+
+-- | The file storing the certificate of the given round, e.g. @42.cert@ for
+-- round 42.
+fsPathCertFile :: PerasRoundNo -> FsPath
+fsPathCertFile roundNo = mkFsPath (rootDir <> [certFileName roundNo])
+
+-- | The quarantined counterpart of 'fsPathCertFile', e.g.
+-- @42.cert.quarantined@ for round 42. Only the name of this file matters:
+-- its contents (the corrupt bytes, if any) are never read.
+fsPathQuarantinedCertFile :: PerasRoundNo -> FsPath
+fsPathQuarantinedCertFile roundNo =
+  mkFsPath (rootDir <> [certFileName roundNo <> quarantinedSuffix])
+
+-- | The temporary file a certificate is written to before being renamed into
+-- place, e.g. @42.cert.tmp@ for round 42.
+fsPathTmpCertFile :: PerasRoundNo -> FsPath
+fsPathTmpCertFile roundNo = mkFsPath (rootDir <> [certFileName roundNo <> tmpSuffix])
+
+-- | Recover the round number of a certificate from its file name, or 'Nothing'
+-- if the name is not a well-formed certificate file name. Inverse of
+-- 'certFileName': e.g. @42.cert@ gives round 42.
+certRoundFromFileName :: String -> Maybe PerasRoundNo
+certRoundFromFileName name = do
+  digits <- stripSuffix certFileExtension name
+  roundNo <- PerasRoundNo <$> readMaybe digits
+  -- Only the canonical name of a round is accepted, as only that name is ever
+  -- looked up (see 'fsPathCertFile'). 'readMaybe' alone would also accept, say,
+  -- @042.cert@, @ 42.cert@ or @(42).cert@ (and wrap @-1.cert@ around to
+  -- 'maxBound'), each of which would index a round whose canonical file does
+  -- not exist.
+  guard (certFileName roundNo == name)
+  pure roundNo
+
+-- | Recover the round number of a certificate from the name of its temporary
+-- file, or 'Nothing' if the name is not a well-formed temporary certificate
+-- file name. Inverse of the naming in 'fsPathTmpCertFile': e.g. @42.cert.tmp@
+-- gives round 42, but @foo.tmp@ and @42.cert.quarantined.tmp@ give 'Nothing'.
+certRoundFromTmpFileName :: String -> Maybe PerasRoundNo
+certRoundFromTmpFileName name =
+  stripSuffix tmpSuffix name >>= certRoundFromFileName
+
+-- | Recover the round number of a certificate from the name of its
+-- quarantined file, or 'Nothing' if the name is not a well-formed quarantined
+-- certificate file name. Inverse of the naming in 'fsPathQuarantinedCertFile':
+-- e.g. @42.cert.quarantined@ gives round 42, but @42.cert.tmp.quarantined@
+-- gives 'Nothing' (note that no such name is ever created).
+certRoundFromQuarantinedFileName :: String -> Maybe PerasRoundNo
+certRoundFromQuarantinedFileName name =
+  stripSuffix quarantinedSuffix name >>= certRoundFromFileName
+
+{-------------------------------------------------------------------------------
+  Trace types
+-------------------------------------------------------------------------------}
+
+data TraceEvent blk
+  = -- | Number of certificates and of quarantined certificates found on disk
+    -- when opening.
+    OpenedDB
+      Int
+      Int
+  | -- | The result of attempting to add a certificate for the given round.
+    AddedCert PerasRoundNo AddPerasImmutableCertResult
+  | -- | A certificate file was found to be unreadable or corrupt and was moved
+    -- to quarantine. The 'String' describes the reason (see
+    -- 'displayCertFileError').
+    QuarantinedCert PerasRoundNo String
+  deriving stock (Eq, Show, Generic)
+
+{-------------------------------------------------------------------------------
+  Errors
+-------------------------------------------------------------------------------}
+
+-- | Reason why a certificate file on disk could not be read back into a
+-- 'ValidatedPerasCert'.
+--
+-- These are never thrown: a certificate whose file is unreadable is
+-- /quarantined/ (renamed to its quarantined name and traced) rather than
+-- bringing down the whole database, so the remaining certificates stay
+-- available to syncing nodes.
+data CertFileError
+  = -- | The file could not be opened or read (e.g. it is missing).
+    CertFileReadError FsError
+  | -- | The leading CRC or the certificate payload could not be decoded.
+    CertFileMalformed DecoderError
+  | -- | The payload's CRC does not match the one stored in the file,
+    -- i.e. the file is corrupt (bit rot, a partial write, etc).
+    CertFileChecksumMismatch
+  | -- | Only a temporary file was found for the certificate: writing it was
+    -- interrupted before it was committed (see 'writeCertFile').
+    CertFileIncompleteWrite
+  deriving stock Show
+
+-- | A short human-readable description of a 'CertFileError', for tracing.
+displayCertFileError :: CertFileError -> String
+displayCertFileError = \case
+  CertFileReadError err -> "Read error: " <> show err
+  CertFileMalformed err -> "Malformed: " <> show err
+  CertFileChecksumMismatch -> "CRC mismatch"
+  CertFileIncompleteWrite -> "Incomplete write"
+
+{-------------------------------------------------------------------------------
+  Utilities
+-------------------------------------------------------------------------------}
 
 removeFileIfExists ::
   IOLike m =>
@@ -781,26 +855,5 @@ removeFileIfExists hasFS path = do
   exists <- doesFileExist hasFS path
   when exists $ removeFile hasFS path
 
--- | Eagerly read and integrity-check every known certificate, moving any
--- unreadable or corrupt one to quarantine (tracing it via 'QuarantinedCert'),
--- so that it is never advertised to clients. Used by the 'ValidateAllOnOpen'
--- policy.
-validateAllCertsOnOpen ::
-  ( IOLike m
-  , DecodeDisk blk (PerasCert blk)
-  ) =>
-  Tracer m (TraceEvent blk) ->
-  CodecConfig blk ->
-  HasFS m h ->
-  CertDbState ->
-  m CertDbState
-validateAllCertsOnOpen tracer ccfg hasFS st =
-  foldM validateCert st (cdsKnownRounds st)
- where
-  validateCert st' roundNo =
-    readCertFileAt ccfg hasFS (fsPathCertFile roundNo) >>= \case
-      Right _ -> pure st'
-      Left err -> do
-        quarantineCertFile hasFS roundNo
-        traceWith tracer (QuarantinedCert roundNo (displayCertFileError err))
-        pure (quarantineRound roundNo st')
+stripSuffix :: String -> String -> Maybe String
+stripSuffix suffix s = reverse <$> stripPrefix (reverse suffix) (reverse s)
