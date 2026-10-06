@@ -112,6 +112,7 @@ instance
   , InspectLedger blk
   , HasIssuer blk
   , LogFormatting (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (PerasVote blk)
   , Show (PerasCert blk)
   , Show (PerasError blk)
   ) =>
@@ -1966,7 +1967,12 @@ instance MetaTrace (PerasVoteDB.TraceEvent blk) where
   documentFor (Namespace _ ["GarbageCollected"]) = Just "GarbageCollected"
   documentFor _ = Nothing
 
-instance Show (PerasCert blk) => LogFormatting (PerasVoteDB.TraceEvent blk) where
+instance
+  ( Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  LogFormatting (PerasVoteDB.TraceEvent blk)
+  where
   forHuman (PerasVoteDB.AddVote voteId _vote result) =
     "Peras vote " <> Text.pack (show voteId) <> ": " <> Text.pack (show result)
   forHuman (PerasVoteDB.GarbageCollected slotNo) =

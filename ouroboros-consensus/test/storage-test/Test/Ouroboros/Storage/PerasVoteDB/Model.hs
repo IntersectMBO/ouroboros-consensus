@@ -178,6 +178,7 @@ addVote vote model
   | voterAlreadyVotedInRound =
       ( Right $
           PerasVoteAlreadyInDB
+            (forgetArrivalTime vote)
       , model
       )
   -- A quorum was reached, but there is another cert already boosting a different
@@ -198,7 +199,9 @@ addVote vote model
       -- must be below the threshold.
       assert (not hadQuorum) $
         ( Right $
-            AddedPerasVoteAndGeneratedNewCert freshCert
+            AddedPerasVoteAndGeneratedNewCert
+              (forgetArrivalTime vote)
+              freshCert
         , model
             { votes =
                 Map.insert voteTarget extendedVotes (votes model)
@@ -212,6 +215,7 @@ addVote vote model
   | otherwise =
       ( Right $
           AddedPerasVoteButDidntGenerateNewCert
+            (forgetArrivalTime vote)
       , model
           { votes =
               Map.insert voteTarget extendedVotes (votes model)

@@ -539,7 +539,7 @@ addPerasVote ::
   ((AddPerasVoteResult blk, Maybe AddPerasCertChainSelOutcome), Model blk)
 addPerasVote cfg vote m =
   case PerasVoteDBModel.addVote vote (perasVoteModel m) of
-    (Right voteRes@(AddedPerasVoteAndGeneratedNewCert freshCert), perasVoteModel') ->
+    (Right voteRes@(AddedPerasVoteAndGeneratedNewCert _ freshCert), perasVoteModel') ->
       let creationTime = getArrivalTime vote
           certWithArrival = WithArrivalTime creationTime freshCert
           (certRes, m') = addPerasCert cfg certWithArrival m{perasVoteModel = perasVoteModel'}
