@@ -89,7 +89,6 @@ import Cardano.Ledger.Core
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
-import Cardano.Ledger.Dijkstra.PParams (ppLeiosQuorumStakeThresholdL)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
@@ -113,7 +112,7 @@ import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (minCertificationGap)
+import LeiosDemoTypes (LeiosCommittee, Weight, minCertificationGap)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -134,7 +133,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos (BasePraos, Praos, PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (SJustLeios))
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -991,6 +990,46 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 
 -- REVIEW: Use 'proto' instead of Praos/TPraos?
 
+-- | The ledger view this state projects at its own tip slot.
+--
+-- 'SL.currentForecast' applies no TICKF, so this reads the state and nothing
+-- more.
+untickedLedgerView ::
+  ( SL.EraForecast era
+  , Views.ForecastsLeios pext era
+  ) =>
+  LedgerState (ShelleyBlock (BasePraos pext crypto) era) mk ->
+  Views.BasePraosLedgerView pext
+untickedLedgerView =
+  Views.forecastToBasePraosLedgerView . SL.currentForecast . shelleyLedgerState
+
+-- | The committee this state seats and the quorum it demands.
+--
+-- The ledger already seats the committee, on the stake snapshot, at the era
+-- boundary; take it from there rather than selecting a second time here.
+--
+-- Re-deriving it in consensus cannot honour voting-key expiry: the pool
+-- distribution carries a bare 'BlsKey' with no registration epoch, whereas
+-- the snapshot's seats were filtered by 'selectLeiosCommittee' against
+-- @bksRegisteredIn + maxKeyAge@ (CIP-0164).
+--
+-- 'ssStakeSet' is the snapshot that governs /this/ epoch: NEWEPOCH sets
+-- @nesPd@ -- the distribution leader election runs on -- from the mark
+-- snapshot of the previous boundary, which is exactly what 'ssStakeSet'
+-- holds after the rotation. Taking the committee from the same snapshot
+-- keeps a pool's voting weight and its block-production weight in step.
+leiosCommitteeAndQuorum ::
+  forall pext crypto era mk.
+  ( SL.EraForecast era
+  , Views.ForecastsLeios pext era
+  , HasLeiosVoting (ShelleyBlock (BasePraos pext crypto) era)
+  ) =>
+  LedgerState (ShelleyBlock (BasePraos pext crypto) era) mk ->
+  Maybe (LeiosCommittee, Weight)
+leiosCommitteeAndQuorum ls =
+  getLeiosCommitteeFromView (Proxy @(ShelleyBlock (BasePraos pext crypto) era)) $
+    untickedLedgerView ls
+
 -- TODO: Ledger-level type class EraCommittee? LedgerState era -> Committee
 
 instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra) where
@@ -1024,26 +1063,9 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra) where
   getMinCertificationGap _ _ = Nothing
 
 instance HasLeiosVoting (ShelleyBlock (PraosWithLeios c) DijkstraEra) where
-  -- The ledger already seats the committee, on the stake snapshot, at the era
-  -- boundary; take it from there rather than selecting a second time here.
-  --
-  -- Re-deriving it in consensus cannot honour voting-key expiry: the pool
-  -- distribution carries a bare 'BlsKey' with no registration epoch, whereas
-  -- the snapshot's seats were filtered by 'selectLeiosCommittee' against
-  -- @bksRegisteredIn + maxKeyAge@ (CIP-0164).
-  --
-  -- 'ssStakeSet' is the snapshot that governs /this/ epoch: NEWEPOCH sets
-  -- @nesPd@ -- the distribution leader election runs on -- from the mark
-  -- snapshot of the previous boundary, which is exactly what 'ssStakeSet'
-  -- holds after the rotation. Taking the committee from the same snapshot
-  -- keeps a pool's voting weight and its block-production weight in step.
-  getLeiosCommittee ls =
-    Just $
-      ls.shelleyLedgerState
-        ^. SL.nesEsL
-          . SL.esSnapshotsL
-          . SL.ssStakeSetL
-          . SL.ssLeiosCommitteeL
+  getLeiosCommittee = fmap fst . leiosCommitteeAndQuorum
+
+  getCurrentThreshold = fmap snd . leiosCommitteeAndQuorum
 
   getMinCertificationGap cfg =
     Just
@@ -1051,18 +1073,6 @@ instance HasLeiosVoting (ShelleyBlock (PraosWithLeios c) DijkstraEra) where
       . getPParams
       . shelleyLedgerState
 
-  getCurrentThreshold ls =
-    Just $
-      getPParams ls.shelleyLedgerState
-        ^. ppLeiosQuorumStakeThresholdL
-        -- TODO: Use UnitInterval further upstream
-        & unboundRational
-
-  -- The forecast counterpart of the two accessors above. Reading them from the
-  -- view rather than the state is what lets ChainSel validate a CertRB's
-  -- certificate before it has applied the block's predecessor.
-  --
-  -- 'SNothingLeios' is unreachable at this extension, so this is total.
   getLeiosCommitteeFromView _ lv =
     case Views.plvLeios lv of
       SJustLeios llv ->
