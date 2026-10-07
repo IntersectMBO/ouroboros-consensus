@@ -22,15 +22,15 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , withReader
   , withWriter
   )
+import System.IO.Temp (withSystemTempDirectory)
 import qualified Test.Cardano.Tools.DBAnalyser.NodeConfig
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Util.TestEnv
 
-nodeConfig, chainDB, bulkCredentials :: FilePath
+nodeConfig, bulkCredentials :: FilePath
 nodeConfig = "ouroboros-consensus-cardano/test/tools-test/disk/config/config.json"
-chainDB = "ouroboros-consensus-cardano/test/tools-test/disk/chaindb"
 bulkCredentials = "ouroboros-consensus-cardano/test/tools-test/disk/config/bulk-creds-k2.json"
 
 -- | A tenth of an epoch, then a further 8192 slots: enough for both steps to
@@ -57,8 +57,8 @@ testCredentials :: CLI.Credentials
 testCredentials =
   CLI.emptyCredentials{CLI.bulkCredentialsFile = SJust bulkCredentials}
 
-testImmutaliserConfig :: DBImmutaliser.Opts
-testImmutaliserConfig =
+testImmutaliserConfig :: FilePath -> DBImmutaliser.Opts
+testImmutaliserConfig chainDB =
   DBImmutaliser.Opts
     { DBImmutaliser.dbDirs =
         DBImmutaliser.DBDirs
@@ -71,8 +71,8 @@ testImmutaliserConfig =
     , DBImmutaliser.dryRun = False
     }
 
-testAnalyserConfig :: DBAnalyserConfig
-testAnalyserConfig =
+testAnalyserConfig :: FilePath -> DBAnalyserConfig
+testAnalyserConfig chainDB =
   DBAnalyserConfig
     { dbDir = chainDB
     , ldbBackend = Just InMemFlag
@@ -89,8 +89,8 @@ testAnalyserConfig =
 truncateAfter :: SlotNo
 truncateAfter = 4096
 
-testTruncaterConfig :: DBTruncater.DBTruncaterConfig
-testTruncaterConfig =
+testTruncaterConfig :: FilePath -> DBTruncater.DBTruncaterConfig
+testTruncaterConfig chainDB =
   DBTruncater.DBTruncaterConfig
     { DBTruncater.dbDir = chainDB
     , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
@@ -132,7 +132,7 @@ expectedForgedAppend = 407
 -- cardano-config parses it and "Cardano.Tools.Credentials" decodes the
 -- credentials into leader credentials.
 blockCountTest :: (String -> IO ()) -> Assertion
-blockCountTest logStep = do
+blockCountTest logStep = withSystemTempDirectory "tools-chain" $ \chainDB -> do
   logStep "building the protocol from the node configuration"
   (shelleyGenesis, protocol) <- DBSynthesizer.initialize nodeConfig testCredentials
 
@@ -147,10 +147,10 @@ blockCountTest logStep = do
   assertForged "append" expectedForgedAppend resultAppend
 
   logStep "copy volatile to immutable DB"
-  DBImmutaliser.run testImmutaliserConfig
+  DBImmutaliser.run (testImmutaliserConfig chainDB)
 
   logStep "running analysis"
-  resultAnalysis <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
+  resultAnalysis <- DBAnalyser.analyse (testAnalyserConfig chainDB) testBlockArgs
 
   let blockCount = expectedForgedCreate + expectedForgedAppend
   resultAnalysis == Just (ResultCountBlock blockCount)
@@ -175,7 +175,7 @@ blockCountTest logStep = do
       mapM_ (\point -> await =<< writeEbPoint con point 500) [keptEb, droppedEb]
 
   logStep "running truncation"
-  DBTruncater.truncate testTruncaterConfig testBlockArgs
+  DBTruncater.truncate (testTruncaterConfig chainDB) testBlockArgs
 
   ebPoints <- withLeiosDBSQLite mempty volLeiosDb immLeiosDb $ \leiosDb ->
     withReader leiosDb testScanEbPoints
@@ -183,7 +183,7 @@ blockCountTest logStep = do
     @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
 
   logStep "running analysis after truncation"
-  resultTruncated <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
+  resultTruncated <- DBAnalyser.analyse (testAnalyserConfig chainDB) testBlockArgs
   -- The leader schedule picks the slots, so the surviving count is not known
   -- here. Check only that the chain shrank and is not empty.
   case resultTruncated of
