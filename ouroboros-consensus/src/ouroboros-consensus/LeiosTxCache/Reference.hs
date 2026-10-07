@@ -59,7 +59,8 @@ module LeiosTxCache.Reference
   ) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Data.List (find, foldl')
+import Data.List (find)
+import qualified Data.List as List
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
@@ -471,7 +472,7 @@ setTxLocations ebh offTxs idx =
   idx
     { locRing = Map.insert slot ebh (locRing idx)
     , locNext = locNext'
-    , txLocState = foldl' upd (txLocState idx) offTxs
+    , txLocState = List.foldl' upd (txLocState idx) offTxs
     }
  where
   (slot, locNext') = case ringSlotOf ebh idx of
