@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol () where
 
 import qualified Cardano.Ledger.Core as LedgerCore
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.LedgerState as SL (nesStakePoolDistrG)
 import qualified Cardano.Protocol.TPraos.API as SL
 import Control.Monad.Except (MonadError (throwError))
 import qualified Lens.Micro
@@ -86,12 +87,10 @@ instance
   protocolLedgerView _cfg st =
     let nes = tickedShelleyLedgerState st
 
-        SL.NewEpochState{nesPd} = nes
-
         pparam :: forall a. Lens.Micro.Lens' (LedgerCore.PParams era) a -> a
         pparam lens = getPParams nes Lens.Micro.^. lens
      in Praos.PraosLedgerView
-          { Praos.plvPoolDistr = nesPd
+          { Praos.plvPoolDistr = nes Lens.Micro.^. SL.nesStakePoolDistrG
           , Praos.plvMaxBodySize = pparam LedgerCore.ppMaxBBSizeL
           , Praos.plvMaxHeaderSize = pparam LedgerCore.ppMaxBHSizeL
           , Praos.plvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
