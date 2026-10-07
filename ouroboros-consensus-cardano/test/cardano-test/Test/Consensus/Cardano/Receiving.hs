@@ -104,7 +104,7 @@ receivingMempool = do
         unstowLedgerTables $ TickedShelleyLedgerState Origin (ShelleyTransitionInfo 0) nes emptyLedgerTables
       missingRecipient = tx & witsTxL . addrTxWitsL %~ Set.filter ((/= asWitness recipient) . witVKeyHash)
       apply candidate = runExcept $ applyTx cfg Intervene slot (mkShelleyTx candidate) initial
-  apply missingRecipient `IC.shouldSatisfy` isLeft
+  isLeft (apply missingRecipient) `IC.shouldBe` True
   (changed, _) <- IC.expectRight $ apply tx
   let actual = tickedShelleyLedgerState $ stowLedgerTables $ applyDiffs initial changed
   _ <- Imp.withNoFixup $ Imp.submitTx tx
