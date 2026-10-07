@@ -814,7 +814,7 @@ data DijkstraEbMeasure = DijkstraEbMeasure
   , txReferencesSize :: !(IgnoringOverflow ByteSize32)
   -- ^ Size of transaction references _excluding_ any framing overhead: of one
   -- transaction's reference, or summed over whatever is measured (an endorser
-  -- block, a run of mempool transactions).
+  -- block, a sequence of mempool transactions).
   }
   deriving stock (Eq, Generic, Show)
   deriving anyclass NoThunks
