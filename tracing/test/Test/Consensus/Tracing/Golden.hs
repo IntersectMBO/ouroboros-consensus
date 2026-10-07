@@ -57,6 +57,7 @@ import qualified Cardano.Ledger.Shelley.Rules as Shelley
 import Cardano.Ledger.TxIn (TxId (..), TxIn (..))
 import Cardano.Logging (DetailLevel (DNormal), LogFormatting (forMachine))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Aeson
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.List.NonEmpty as NonEmpty
@@ -68,7 +69,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Data.Word (Word32)
-import Ouroboros.Consensus.Tracing.Era.Shelley ()
+import Ouroboros.Consensus.Tracing ()
 import Ouroboros.Consensus.Tracing.Era.Shelley.Render
 import System.FilePath ((</>))
 import Test.Tasty
@@ -84,6 +85,17 @@ tests =
         "Era.Shelley.Render"
         ($(getRelPath "golden/tracing") </> "era-shelley-render.golden")
         (pure (report shelleyRender))
+    , testCase "same-hash Receiving redeemers retain both output indexes" $ do
+        let second, third :: (DijkstraPlutusPurpose AsItem DijkstraEra, ScriptHash)
+            second = (DijkstraReceiving (AsItem 2), scriptHash 'f')
+            third = (DijkstraReceiving (AsItem 3), scriptHash 'f')
+            outputIndex index = Aeson.object ["receiving" Aeson..= (index :: Word32)]
+            keyed value = Aeson.object [Aeson.fromText (renderScriptHash (scriptHash 'f')) Aeson..= value]
+        renderMissingRedeemers (second NonEmpty.:| []) @?= keyed (outputIndex 2)
+        renderMissingRedeemers missingReceivingRedeemers
+          @?= keyed (Aeson.toJSON [outputIndex 2, outputIndex 3])
+        renderMissingRedeemers (third NonEmpty.:| [second])
+          @?= keyed (Aeson.toJSON [outputIndex 3, outputIndex 2])
     , testGroup
         "UnsupportedOutputAddresses"
         [ testCase era $ actual @?= expectedUnsupportedOutputAddresses
@@ -191,6 +203,7 @@ shelleyRender =
       ]
     ,
       [ ("renderMissingRedeemers", json (renderMissingRedeemers missingRedeemers))
+      , ("renderMissingRedeemers receiving", json (renderMissingRedeemers missingReceivingRedeemers))
       , ("renderIncompleteWithdrawals", json (renderIncompleteWithdrawals withdrawals))
       ]
     ]
@@ -225,7 +238,7 @@ receivingByIndex :: DijkstraPlutusPurpose AsIx DijkstraEra
 receivingByIndex = DijkstraReceiving (AsIx 7)
 
 receivingByItem :: DijkstraPlutusPurpose AsItem DijkstraEra
-receivingByItem = DijkstraReceiving (AsItem (scriptHash 'f'))
+receivingByItem = DijkstraReceiving (AsItem 7)
 
 txCert :: ConwayTxCert ConwayEra
 txCert = ConwayTxCertDeleg (ConwayRegCert (KeyHashObj (keyHash 'c')) SNothing)
@@ -247,6 +260,12 @@ missingRedeemers :: NonEmpty.NonEmpty (ConwayPlutusPurpose AsItem ConwayEra, Scr
 missingRedeemers =
   (ConwaySpending (AsItem txIn), scriptHash '7')
     NonEmpty.:| [(ConwayMinting (AsItem (PolicyID (scriptHash '8'))), scriptHash '9')]
+
+missingReceivingRedeemers ::
+  NonEmpty.NonEmpty (DijkstraPlutusPurpose AsItem DijkstraEra, ScriptHash)
+missingReceivingRedeemers =
+  (DijkstraReceiving (AsItem 2), scriptHash 'f')
+    NonEmpty.:| [(DijkstraReceiving (AsItem 3), scriptHash 'f')]
 
 withdrawals :: NonEmptyMap AccountAddress (Mismatch RelEQ Int)
 withdrawals =

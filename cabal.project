@@ -44,8 +44,8 @@ constraints:
 source-repository-package
   type: git
   location: https://github.com/colll78/cardano-ledger.git
-  tag: 38843e82ee6d172c5ac28504850cb23e5fae735a
-  --sha256: sha256-Z9p5IzOD1M3yXyzTJaDv4U/VfHhF8YYSTBp2GDsWtDU=
+  tag: 03b9b682157b96eecc3e5c057599b18d0b376b65
+  --sha256: sha256-B1sHHR2Lmm4C6WUhuBA7cM6HlpJxOt3k8ItVUCkwvEA=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
@@ -69,8 +69,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/colll78/plutus.git
-  tag: 14d7686b4bcb51dbf35c24269ec2cc999824cb3e
-  --sha256: sha256-tedjxDJ5l4lomxRCMFgiHjt2rBOMzEmhHTu/Fk7Fp+Y=
+  tag: dcbb7e3232c3322557410fe341ec84f3cd78dc04
+  --sha256: sha256-6n+edByIhXRu9+ZfeMhIKLlfkcj/7aRJ1mrH29mn4nE=
   subdir: plutus-ledger-api
 
 source-repository-package

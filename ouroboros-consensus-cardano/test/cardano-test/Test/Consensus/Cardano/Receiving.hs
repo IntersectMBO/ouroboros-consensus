@@ -12,6 +12,7 @@ import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Core
 import Cardano.Ledger.Credential (Credential (..), StakeReference (..))
 import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.Dijkstra.TxBody (receivingScriptTargets)
 import Cardano.Ledger.Keys (asWitness, witVKeyHash)
 import Cardano.Ledger.Shelley.API (ShelleyGenesis (..))
 import Cardano.Ledger.Shelley.Scripts (pattern RequireAllOf)
@@ -67,11 +68,16 @@ receivingMempool = do
   nativeHash <- Imp.impAddNativeScript (RequireAllOf mempty :: NativeScript DijkstraEra)
   let keyAddr = AddrProtected Testnet (KeyHashObj recipient) (StakeRefBase (KeyHashObj stake))
       scriptAddr = AddrProtected Testnet (ScriptHashObj nativeHash) StakeRefNull
+      ordinaryAddr = Addr Testnet (ScriptHashObj nativeHash) StakeRefNull
       body =
         mkBasicTxBody @DijkstraEra @TopTx
           & outputsTxBodyL
             .~ SSeq.fromList
-              [mkCoinTxOut keyAddr (Coin 2000000), mkCoinTxOut scriptAddr (Coin 2000000)]
+              [ mkCoinTxOut ordinaryAddr (Coin 2000000)
+              , mkCoinTxOut keyAddr (Coin 2000000)
+              , mkCoinTxOut scriptAddr (Coin 2000000)
+              , mkCoinTxOut scriptAddr (Coin 2000000)
+              ]
   fixed <- Imp.fixupTx (mkBasicTx body)
   tx <-
     IC.expectRight $
@@ -80,12 +86,13 @@ receivingMempool = do
         "Receiving transaction"
         decCBOR
         (serialize (eraProtVerLow @DijkstraEra) fixed)
+  receivingScriptTargets (tx ^. bodyTxL) `IC.shouldBe` [(2, nativeHash), (3, nativeHash)]
   nes <- gets (^. Imp.impNESL)
   globals <- gets (^. Imp.impGlobalsL)
   slot <- Imp.getCurSlotNo
   translationContext <- IC.arbitrary
   let cfg =
-        ( mkShelleyLedgerConfig
+        ( mkShelleyLedgerConfig @DijkstraEra
             testShelleyGenesis
             translationContext
             (fixedEpochInfo (sgEpochLength testShelleyGenesis) (slotLengthFromSec 2))
