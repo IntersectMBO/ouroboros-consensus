@@ -1,4 +1,11 @@
-module OperationalCertificateSpec (spec) where
+{-# LANGUAGE OverloadedRecordDot #-}
+
+module OperationalCertificateSpec (
+  spec
+, bh
+, bhb
+, hk
+) where
 
 import Data.Text
 
@@ -6,9 +13,36 @@ import Test.Hspec ( Spec, describe, it )
 import Test.HUnit ( (@?=) )
 
 import Lib
+import Base (
+    externalFunctions
+  , sampleSKeyDSIGN
+  , deriveVkeyDSIGFromSkeyDSIG
+  , sampleSKeyKES
+  , deriveVkeyKESFromSkeyKES)
 
 (.->) :: a -> b -> (a, b)
 (.->) = (,)
+
+coldSk :: Integer
+coldSk = sampleSKeyDSIGN
+
+coldVk :: Integer
+coldVk = deriveVkeyDSIGFromSkeyDSIG coldSk
+
+hotSk :: Integer
+hotSk = sampleSKeyKES
+
+hotVk :: Integer
+hotVk = deriveVkeyKESFromSkeyKES hotSk
+
+-- Since kp = kesPeriod bhbSlot = kesPeriod 0 = 0 / SlotsPerKESPeriodᶜ = 0 / 5 = 0,
+-- then period = kp -ᵏ ocC₀ = 0 - 0 = 0.
+period :: Integer
+period = 0
+
+skf :: Integer -> Integer
+skf 0 = hotSk -- for period 0
+skf _ = succ hotSk
 
 stpools :: OCertEnv
 stpools = MkHSSet []
@@ -27,16 +61,19 @@ cs' = MkHSMap
 
 oc :: OCert
 oc = MkOCert
-  { ocVkₕ = 123
+  { ocVkₕ = hotVk
   , ocN   = 234
   , ocC₀  = 0
-  , ocΣ   = 345
+  , ocΣ   = ocΣ'
   }
+  where
+    encodedOc = 0 -- since encode (ocVkₕ , ocN , ocC₀) = 0 due to mock serialization
+    ocΣ'      = externalFunctions.extSignDSIG coldSk encodedOc
 
 bhb :: BHBody
 bhb = MkBHBody
   { bhbPrevHeader = Nothing
-  , bhbIssuerVk   = 456
+  , bhbIssuerVk   = coldVk
   , bhbVrfVk      = 567
   , bhbBlockNo    = 1
   , bhbSlot       = 0
@@ -51,18 +88,18 @@ bhb = MkBHBody
 bh :: BHeader
 bh = MkBHeader
   { bhBody = bhb
-  , bhSig  = 901
+  , bhSig  = bhSig'
   }
+  where
+    encodedBhb = 0 -- since encode bhb = 0 due to mock serialization
+    bhSig'     = externalFunctions.extSignKES skf period encodedBhb
 
 hk :: KeyHashS
 hk = succ (bhbIssuerVk bhb) -- i.e., hash (bhbIssuerVk bhb)
 
-externalFunctions :: ExternalFunctions
-externalFunctions = dummyExternalFunctions { extIsSignedDSIG = \ _ _ sig -> sig > 0 }
-
 -- NOTE: Why should this test succeed? Here's the explanation:
 --
--- hk = hash bhbIssuerVk = hash 456 = 457
+-- hk = hash bhbIssuerVk = succ bhbIssuerVk (due to mock hashing)
 -- kp = kesPeriod bhbSlot = kesPeriod 0 = 0 / SlotsPerKESPeriodᶜ = 0 / 5 = 0
 -- t = kp -ᵏ ocC₀ = 0 - 0 = 0
 --
@@ -70,12 +107,12 @@ externalFunctions = dummyExternalFunctions { extIsSignedDSIG = \ _ _ sig -> sig 
 -- ∙ kp < ocC₀ +ᵏ MaxKESEvo <=> 0 < 0 + 30 <=> 0 < 30 <=> true
 -- ∙ just 233 ≡ currentIssueNo stpools cs hk × (234 ≡ 233 ⊎ 234 ≡ suc 233))
 -- ∙ isSignedˢ bhbIssuerVk (encode (ocVkₕ , ocN , ocC₀)) ocΣ
---    <=> isSignedˢ 456 (encode (123 , 234 , 0)) 345
---    <=> isSignedˢ 456 0 345
+--    <=> isSignedˢ bhbIssuerVk (encode (ocVkₕ , 234 , 0)) ocΣ
+--    <=> isSignedˢ bhbIssuerVk 0 ocΣ
 --    <=> true
--- ∙ isSignedᵏ ocVkₕ t (encode bhb) 901
---    <=> isSignedᵏ 123 0 (encode bhb) 901
---    <=> isSignedᵏ 123 0 0 901
+-- ∙ isSignedᵏ ocVkₕ t (encode bhb) bhSig
+--    <=> isSignedᵏ ocVkₕ 0 (encode bhb) bhSig
+--    <=> isSignedᵏ ocVkₕ 0 0 bhSig
 --    <=> true
 
 spec :: Spec
@@ -84,5 +121,5 @@ spec = do
     it "ocertStep results in the expected state" $
       ocertStep externalFunctions stpools cs bh @?= Success cs'
 -- NOTE: Uncomment to run the debug version.
---  describe (unpack $ ocertDebug dummyExternalFunctions stpools cs bh) $ do
+--  describe (unpack $ ocertDebug externalFunctions stpools cs bh) $ do
 --    it "shows its argument" True
