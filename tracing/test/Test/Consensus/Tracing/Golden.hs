@@ -113,18 +113,20 @@ shelleyRender =
       [ ("renderScriptIndex " <> label, json (renderScriptIndex purpose))
       | (label, purpose) <- purposesByIndex
       ]
-    , -- Note the asymmetry: spending, rewarding and guarding render their item
+    , -- Note the asymmetry: spending, rewarding, guarding and receiving render items
       -- directly, the other four wrap it in {"item": ...} via
       -- ToJSON (AsItem ix it). That is what cardano-api did.
       [ ("renderScriptPurpose " <> label, json (renderScriptPurpose purpose))
       | (label, purpose) <- purposesByItem
       ]
-    , -- Guarding only exists from Dijkstra on, so it needs its own era. Going
+    , -- Guarding and receiving only exist from Dijkstra on. Going
       -- through DijkstraPlutusPurpose also exercises the other AnyEraScript
       -- instance, rather than only Conway's.
 
       [ ("renderScriptIndex guarding", json (renderScriptIndex guardingByIndex))
       , ("renderScriptPurpose guarding", json (renderScriptPurpose guardingByItem))
+      , ("renderScriptIndex receiving", json (renderScriptIndex receivingByIndex))
+      , ("renderScriptPurpose receiving", json (renderScriptPurpose receivingByItem))
       ]
     ,
       [ ("renderMissingRedeemers", json (renderMissingRedeemers missingRedeemers))
@@ -157,6 +159,12 @@ guardingByIndex = DijkstraGuarding (AsIx 6)
 
 guardingByItem :: DijkstraPlutusPurpose AsItem DijkstraEra
 guardingByItem = DijkstraGuarding (AsItem (scriptHash 'f'))
+
+receivingByIndex :: DijkstraPlutusPurpose AsIx DijkstraEra
+receivingByIndex = DijkstraReceiving (AsIx 7)
+
+receivingByItem :: DijkstraPlutusPurpose AsItem DijkstraEra
+receivingByItem = DijkstraReceiving (AsItem (scriptHash 'f'))
 
 txCert :: ConwayTxCert ConwayEra
 txCert = ConwayTxCertDeleg (ConwayRegCert (KeyHashObj (keyHash 'c')) SNothing)

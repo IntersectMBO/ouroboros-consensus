@@ -31,7 +31,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , WhetherToIntervene (..)
   )
 import Ouroboros.Consensus.Ledger.Tables
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, emptyLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
