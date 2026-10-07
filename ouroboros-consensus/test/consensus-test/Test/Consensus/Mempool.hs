@@ -87,7 +87,7 @@ tests =
             "snapshotPartition: zero endorser-block capacity takes nothing"
             prop_Mempool_snapshotPartition_zeroEbCapacity
         , testProperty
-            "snapshotPartition: block part is the greatest prefix within capacity"
+            "snapshotPartition: ranking-block part is the longest prefix within capacity"
             prop_Mempool_snapshotPartition_blockPrefix
         , testProperty "valid added txs == getTxs" prop_Mempool_addTxs_getTxs
         , testProperty "addTxs [..] == forM [..] addTxs" prop_Mempool_semigroup_addTxs
@@ -131,9 +131,10 @@ prop_Mempool_snapshotPartition_zeroEbCapacity setup =
       counterexample ("endorser-block part not empty: " <> condense (map txForgetValidated ebTxs)) $
         null ebTxs
 
--- | With a zero endorser-block capacity, the block part of 'snapshotPartition'
--- is the greatest prefix of 'snapshotTxs' whose summed measure fits the block
--- capacity, and its size is that sum. This is what the forge selects.
+-- | With a zero endorser-block capacity, the ranking-block part of
+-- 'snapshotPartition' is the longest prefix of 'snapshotTxs' whose summed
+-- measure fits the block capacity, and its size is that sum. This is what the
+-- forge selects.
 prop_Mempool_snapshotPartition_blockPrefix :: TestSetupWithTxs -> Property
 prop_Mempool_snapshotPartition_blockPrefix setup =
   forAll (choose (0, 120 :: Word32)) $ \percent ->
