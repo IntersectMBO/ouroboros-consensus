@@ -112,6 +112,6 @@ pbftBlockForging canBeLeader =
             canBeLeader
             slot
             tickedPBftState
-    , forgeBlock = return . forgeSimple forgePBftExt
+    , forgeBlock = \args -> return (forgeSimple forgePBftExt args, Nothing)
     , finalize = pure ()
     }

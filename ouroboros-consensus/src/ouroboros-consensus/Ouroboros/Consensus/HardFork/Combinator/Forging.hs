@@ -17,6 +17,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Forging
   ) where
 
 import Control.Monad (void)
+import Data.Bifunctor (first)
 import Data.Functor.Product
 import Data.Maybe (fromMaybe)
 import Data.SOP (Top)
@@ -39,6 +40,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Mempool
 import Ouroboros.Consensus.HardFork.Combinator.Protocol
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb)
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 -- | If we cannot forge, it's because the current era could not forge
@@ -309,10 +311,10 @@ hardForkForgeBlock ::
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
   ForgeBlockArgs (HardForkBlock xs) ->
-  m (HardForkBlock xs)
+  m (HardForkBlock xs, Maybe ForgedLeiosEb)
 hardForkForgeBlock blockForging ForgeBlockArgs{..} =
-  fmap (HardForkBlock . OneEraBlock)
-    $ hsequence
+  fmap hcollapse
+    $ hsequence'
     $ hizipWith3
       forgeBlockOne
       cfgs
@@ -323,7 +325,12 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
     $ Match.mustMatchNS
       "IsLeader"
       (getOneEraIsLeader fbIsLeader)
-    $ injectValidatedTxs ledgerState
+    $ State.tip
+    -- The second call takes the state that the first call returns. As a
+    -- result, both lists go to the same era: the era of the ticked ledger
+    -- state.
+    $ injectValidatedTxs fbEbTxs
+    $ injectValidatedTxs fbTxs ledgerState
  where
   TickedHardForkLedgerState transition ledgerState = fbCurrentTickedLedgerState
   cfgs = distribTopLevelConfig ei fbConfig
@@ -348,10 +355,11 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
   --
   -- Otherwise there is a bug.
   injectValidatedTxs ::
+    [Validated (GenTx (HardForkBlock xs))] ->
     State.HardForkState f xs ->
-    NS (Product f ([] :.: WrapValidatedGenTx)) xs
-  injectValidatedTxs st =
-    case rematchValidatedTxs getHardForkValidatedGenTx st $ map (\x -> (x, (), ())) fbTxs of
+    State.HardForkState (Product f ([] :.: WrapValidatedGenTx)) xs
+  injectValidatedTxs txs st =
+    case rematchValidatedTxs getHardForkValidatedGenTx st $ map (\x -> (x, (), ())) txs of
       ([], hfs) ->
         hmap
           ( \case
@@ -360,7 +368,7 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
                   "Impossible! we have translated the txs to the current era, but they should already be in this era!"
               Pair a (ReapplyTxs b) -> Pair a $ Comp $ map (\(x, (), ()) -> x) b
           )
-          $ State.tip hfs
+          hfs
       (_ : _, _) ->
         error
           "Impossible! some transactions were rejected as untranslatable by rematchValidatedTxs but all of them have been translated and applied just now."
@@ -402,30 +410,36 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
     Product
       WrapIsLeader
       ( Product
-          (FlipTickedLedgerState EmptyMK)
+          ( Product
+              (FlipTickedLedgerState EmptyMK)
+              ([] :.: WrapValidatedGenTx)
+          )
           ([] :.: WrapValidatedGenTx)
       )
       blk ->
-    m blk
+    (m :.: K (HardForkBlock xs, Maybe ForgedLeiosEb)) blk
   forgeBlockOne
     index
     cfg'
     (Comp mBlockForging')
     ( Pair
         (WrapIsLeader isLeader')
-        (Pair (FlipTickedLedgerState ledgerState') (Comp txs'))
+        (Pair (Pair (FlipTickedLedgerState ledgerState') (Comp txs')) (Comp ebTxs'))
       ) =
-      forgeBlock
-        ( fromMaybe
-            (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
-            mBlockForging'
-        )
-        ForgeBlockArgs
-          { fbConfig = cfg'
-          , fbCurrentBlockNo = fbCurrentBlockNo
-          , fbCurrentSlotNo = fbCurrentSlotNo
-          , fbPerasCert = fbPerasCert >>= injectPerasCertIfSameEra index
-          , fbCurrentTickedLedgerState = ledgerState'
-          , fbTxs = map unwrapValidatedGenTx txs'
-          , fbIsLeader = isLeader'
-          }
+      Comp $
+        K . first (HardForkBlock . OneEraBlock . injectNS index . I)
+          <$> forgeBlock
+            ( fromMaybe
+                (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
+                mBlockForging'
+            )
+            ForgeBlockArgs
+              { fbConfig = cfg'
+              , fbCurrentBlockNo = fbCurrentBlockNo
+              , fbCurrentSlotNo = fbCurrentSlotNo
+              , fbPerasCert = fbPerasCert >>= injectPerasCertIfSameEra index
+              , fbCurrentTickedLedgerState = ledgerState'
+              , fbTxs = map unwrapValidatedGenTx txs'
+              , fbEbTxs = map unwrapValidatedGenTx ebTxs'
+              , fbIsLeader = isLeader'
+              }

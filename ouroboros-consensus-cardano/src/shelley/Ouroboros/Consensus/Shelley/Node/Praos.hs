@@ -113,7 +113,7 @@ basePraosSharedBlockForging
           praosCheckCanForge
             (getPraosParams (configConsensus cfg))
             curSlot
-      , forgeBlock = forgeShelleyBlock hotKey canBeLeader
+      , forgeBlock = fmap (\blk -> (blk, Nothing)) . forgeShelleyBlock hotKey canBeLeader
       , finalize = HotKey.finalize hotKey
       }
 

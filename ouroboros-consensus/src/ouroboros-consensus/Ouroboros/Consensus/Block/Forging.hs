@@ -35,6 +35,7 @@ import Ouroboros.Consensus.Block.SupportsPeras (PerasCert)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked
 
@@ -122,8 +123,12 @@ data BlockForging m blk = BlockForging
   -- to see whether we can actually forge a block.
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
-  , forgeBlock :: ForgeBlockArgs blk -> m blk
-  -- ^ Forge a block
+  , forgeBlock :: ForgeBlockArgs blk -> m (blk, Maybe ForgedLeiosEb)
+  -- ^ Forge a block. If the block announces an endorser block, also return
+  -- this endorser block.
+  --
+  -- Only an era that supports Leios builds an endorser block. This era builds
+  -- it from 'fbEbTxs'. Every other era returns 'Nothing'.
   , finalize :: m ()
   -- ^ Clean up any unmanaged resources.
   --
@@ -247,7 +252,7 @@ data ForgeBlockArgs blk = ForgeBlockArgs
   , fbCurrentTickedLedgerState :: !(TickedLedgerState blk EmptyMK)
   -- ^ The current ledger state ticked to 'fbCurrentSlotNo'.
   , fbTxs :: ![Validated (GenTx blk)]
-  -- ^ The transactions to include in the forged block.
+  -- ^ The transactions for the ranking block.
   --
   -- The function is passed the prefix of the mempool that will fit within
   -- a valid block; this is a set of transactions that is guaranteed to be
@@ -262,6 +267,13 @@ data ForgeBlockArgs blk = ForgeBlockArgs
   -- even when used as part of the hard fork combinator.
   --
   -- PRECONDITION: 'checkCanForge' returned @Right ()@.
+  , fbEbTxs :: ![Validated (GenTx blk)]
+  -- ^ The transactions for the endorser block.
+  -- 'Ouroboros.Consensus.Mempool.API.snapshotPartition' selects them after
+  -- 'fbTxs', up to the endorser-block capacity. They are in mempool order.
+  --
+  -- If you apply 'fbTxs' to 'fbCurrentTickedLedgerState', these transactions
+  -- then apply in order without errors.
   , fbIsLeader :: !(IsLeader (BlockProtocol blk))
   -- ^ Proof that the node is the slot leader.
   }

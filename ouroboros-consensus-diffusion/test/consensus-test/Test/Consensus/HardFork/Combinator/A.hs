@@ -37,7 +37,9 @@ module Test.Consensus.HardFork.Combinator.A
   , LedgerTables (..)
   , NestedCtxt_ (..)
   , StorageConfig (..)
+  , Ticked (..)
   , TxId (..)
+  , Validated (..)
   ) where
 
 import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
@@ -393,7 +395,7 @@ blockForgingA =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = return . forgeBlockA
+    , forgeBlock = \args -> return (forgeBlockA args, Nothing)
     , finalize = return ()
     }
 

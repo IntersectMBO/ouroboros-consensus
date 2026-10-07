@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Leios.Types
 
     -- * Header checks
   , minCertificationSlot
+  , ForgedLeiosEb (..)
   ) where
 
 import Cardano.Crypto.Util (SignableRepresentation (..))
@@ -216,6 +217,18 @@ leiosReferencesCapacity :: BytesSize -> BytesSize
 leiosReferencesCapacity paramLimit = paramLimit - min paramLimit framing
  where
   ByteSize32 framing = encodeLeiosEbMaxFramingSize
+
+-- | An endorser block that 'Ouroboros.Consensus.Block.Forging.forgeBlock'
+-- builds from 'Ouroboros.Consensus.Block.Forging.fbEbTxs'. 'forgeBlock'
+-- returns it together with the ranking block that announces it.
+--
+-- This type holds only the body of the endorser block. The point of the
+-- endorser block needs its hash, and the closure needs the bytes of each
+-- transaction. The formats of the hash and of these bytes are not fixed yet.
+data ForgedLeiosEb = ForgedLeiosEb
+  { forgedLeiosEbBody :: !LeiosEb
+  }
+  deriving stock (Show, Eq)
 
 -- | Compute the size of a 'LeiosEb' in its CBOR encoding.
 encodeLeiosEbSize :: LeiosEb -> BytesSize
