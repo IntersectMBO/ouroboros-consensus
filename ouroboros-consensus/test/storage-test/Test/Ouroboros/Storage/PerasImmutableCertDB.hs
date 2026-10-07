@@ -69,13 +69,17 @@ tests =
   testGroup
     "PerasImmutableCertDB"
     [ testCase "query is strict, ascending and bounded" testQuerySemantics
+    , testCase "the initial page can include round zero" testRoundZeroReachable
     , testCase "duplicate round preserves the first certificate" testDuplicateRound
     , testCase "a corrupt stored duplicate is replaced" testCorruptDuplicateReplaced
     , testCase "reopening preserves numeric round order" testReopenOrder
-    , testCase "reopening quarantines an abandoned temporary write" testTempFileCleanup
+    , testCase "conflicting certificates are not ordinary duplicates" testConflictingRoundReported
+    , testCase "concurrently open handles observe committed additions" testOpenHandleCoherence
+    , testCase "reopening removes abandoned temporary files" testTempFileCleanup
     , testCase "non-certificate directory entries are not served" testForeignFilesIgnored
     , testCase "a missing file is quarantined on read" testMissingFileQuarantined
     , testCase "a corrupt file is quarantined on read" testCorruptFileQuarantined
+    , testCase "transient read errors do not quarantine intact certificates" testTransientReadErrorDoesNotQuarantine
     , testCase "corruption does not shorten a page" testCorruptFileDoesNotShortenPage
     , testCase "filename round must match encoded certificate round" testFileNameRoundMismatch
     , testGroup
@@ -137,18 +141,49 @@ testQuerySemantics = withFreshDB $ \_args db -> do
   DB.getCertsAfter db (PerasRoundNo 100) 10
     >>= (@?= [])
 
+-- | Round zero is a valid Peras round, so the first archive page needs a
+-- cursor state that precedes every concrete round number. The current API has
+-- no such cursor; this assertion documents the otherwise unreachable entry.
+testRoundZeroReachable :: IO ()
+testRoundZeroReachable = withFreshDB $ \_args db -> do
+  let cert = mkCertWithBoost 0 1
+
+  DB.addCert db cert
+    >>= (@?= DB.AddedCertToImmutableDB)
+  DB.getCertsAfter db (PerasRoundNo 0) 1
+    >>= (@?= [cert])
+
 testDuplicateRound :: IO ()
 testDuplicateRound = withFreshDB $ \_args db -> do
-  let first = mkCertWithBoost 7 3
-      second = mkCertWithBoost 7 99
+  let cert = mkCertWithBoost 7 3
 
-  DB.addCert db first
+  DB.addCert db cert
     >>= (@?= DB.AddedCertToImmutableDB)
-  DB.addCert db second
+  DB.addCert db cert
     >>= (@?= DB.CertAlreadyInImmutableDB)
 
   DB.getCertsAfter db (PerasRoundNo 6) 1
-    >>= (@?= [first])
+    >>= (@?= [cert])
+
+-- | Two different values for one round violate the one-certificate-per-round
+-- invariant and must not be silently reported as an ordinary idempotent add.
+-- A future implementation may reject the conflict by exception or by a new
+-- result constructor; either is distinguishable from 'CertAlreadyInImmutableDB'.
+testConflictingRoundReported :: IO ()
+testConflictingRoundReported = withFreshDB $ \_args db -> do
+  let first = mkCertWithBoost 7 3
+      conflicting = mkCertWithBoost 7 99
+
+  DB.addCert db first
+    >>= (@?= DB.AddedCertToImmutableDB)
+  outcome <-
+    Exception.try (DB.addCert db conflicting) ::
+      IO (Either Exception.SomeException DB.AddPerasImmutableCertResult)
+  case outcome of
+    Left _ -> pure ()
+    Right DB.CertAlreadyInImmutableDB ->
+      assertFailure "a conflicting certificate was reported as an ordinary duplicate"
+    Right _ -> pure ()
 
 testCorruptDuplicateReplaced :: IO ()
 testCorruptDuplicateReplaced =
@@ -175,6 +210,21 @@ testReopenOrder = withFreshDB $ \args db -> do
   reopened <- DB.openDB args
   roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
     >>= (@?= [PerasRoundNo 2, PerasRoundNo 10])
+
+-- | If multiple open handles are supported, they must share a coherent view of
+-- committed writes. An alternative fix is to reject the second open with an
+-- exclusive database lock and adapt this test to assert that contract.
+testOpenHandleCoherence :: IO ()
+testOpenHandleCoherence =
+  withFreshArgs $ \_fs args -> do
+    first <- DB.openDB args
+    second <- DB.openDB args
+    let cert = mkCertWithBoost 1 1
+
+    DB.addCert first cert
+      >>= (@?= DB.AddedCertToImmutableDB)
+    DB.getCertsAfter second (PerasRoundNo 0) 10
+      >>= (@?= [cert])
 
 testTempFileCleanup :: IO ()
 testTempFileCleanup =
@@ -237,6 +287,35 @@ testCorruptFileQuarantined =
     reopened <- DB.openDB args
     atomically (DB.getQuarantinedRounds reopened)
       >>= (@?= Set.singleton (PerasRoundNo 1))
+
+-- | A temporary inability to open a valid file must not turn into durable
+-- quarantine. Two failures are injected because the current implementation
+-- retries the read while holding its state lock before quarantining.
+testTransientReadErrorDoesNotQuarantine :: IO ()
+testTransientReadErrorDoesNotQuarantine =
+  withFreshErrorDB $ \_fs errorsVar _args db -> do
+    let cert = mkCertWithBoost 1 1
+        transientErrors =
+          emptyErrors
+            { hOpenE =
+                Stream.unsafeMkFinite
+                  [Just FsDeviceFull, Just FsDeviceFull]
+            }
+
+    DB.addCert db cert
+      >>= (@?= DB.AddedCertToImmutableDB)
+    _ <-
+      withErrors errorsVar transientErrors $
+        ( Exception.try (DB.getCertsAfter db (PerasRoundNo 0) 10) ::
+            IO
+              ( Either
+                  FsError
+                  [ValidatedPerasCert TestBlock]
+              )
+        )
+
+    DB.getCertsAfter db (PerasRoundNo 0) 10
+      >>= (@?= [cert])
 
 testCorruptFileDoesNotShortenPage :: IO ()
 testCorruptFileDoesNotShortenPage =
