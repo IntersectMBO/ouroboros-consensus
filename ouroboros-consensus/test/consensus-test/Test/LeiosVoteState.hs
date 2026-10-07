@@ -1,6 +1,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
+{-# OPTIONS_GHC -Wno-x-partial #-}
+
 module Test.LeiosVoteState (tests) where
 
 import Cardano.Crypto.DSIGN
