@@ -44,8 +44,8 @@ constraints:
 source-repository-package
   type: git
   location: https://github.com/colll78/cardano-ledger.git
-  tag: 46f42314cde0d1d6eca82d08802acd9edfffc962
-  --sha256: sha256-3PCdFobQu+3NAyjt8phDbJRjsCIKLVCbr/Nj+R2oNGc=
+  tag: 38843e82ee6d172c5ac28504850cb23e5fae735a
+  --sha256: sha256-Z9p5IzOD1M3yXyzTJaDv4U/VfHhF8YYSTBp2GDsWtDU=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
