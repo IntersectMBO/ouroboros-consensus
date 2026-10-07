@@ -49,6 +49,15 @@ import Ouroboros.Consensus.Protocol.Abstract
 -- | The top-level node configuration
 data TopLevelConfig blk = TopLevelConfig
   { topLevelConfigProtocol :: !(ConsensusConfig (BlockProtocol blk))
+    -- ^ TODO both @topLevelConfigProtocol@ and @ConsensusConfig@ are misnomers,
+    -- which isn't too surprising considering they couldn't even agree :/
+    --
+    -- I think "header" be the best non-exotic classifier for this. It's still
+    -- somewhat confusing, since "chains of blocks" /inherit/ semantics of the
+    -- "chains of headers" that this config /directly/ affects. So any effect
+    -- some value within @topLevelConfigHeader/HeaderConfig@ might have on the
+    -- treatment of blocks could cause confusion. But that's seems preferable to
+    -- the current, extremely nebulous classifers "protocol" and "consensus".
   , topLevelConfigLedger :: !(LedgerConfig blk)
   , topLevelConfigBlock :: !(BlockConfig blk)
   , topLevelConfigCodec :: !(CodecConfig blk)
