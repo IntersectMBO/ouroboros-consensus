@@ -7,16 +7,12 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Protocol.Praos.Views
-  ( BaseHeaderBody
-  , BaseHeaderView (..)
+  ( BasePraosValidateView (..)
   , BasePraosLedgerView (..)
   , ForecastsLeios (..)
-  , LeiosLedgerView (..)
-  , PraosLedgerView
-  , initialLeiosLedgerView
-  , forecastToBasePraosLedgerView
   , extendHeaderBodyWithLeios
   ) where
 
@@ -28,11 +24,9 @@ import Cardano.Ledger.BaseTypes
   , StrictMaybe
   , UnitInterval
   )
-import Cardano.Ledger.Chain (ChainChecksPParams (..))
-import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
 import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Ledger.State (LeiosCommittee, emptyLeiosCommittee)
+import Cardano.Ledger.State (LeiosCommittee)
 import Cardano.Protocol.Crypto (KES, VRF)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.Praos.BlockHeader as PraosCodec
@@ -41,26 +35,14 @@ import Cardano.Protocol.TPraos.BlockHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Slot (SlotNo)
 import Data.Kind (Constraint, Type)
-import Data.Proxy (Proxy (Proxy))
 import Data.Word (Word16, Word32)
 import LeiosDemoTypes (EbAnnouncement)
-import Lens.Micro ((^.))
 import Ouroboros.Consensus.Protocol.Praos.Common
+import Ouroboros.Consensus.Protocol.Signed (Signed)
 
 {-------------------------------------------------------------------------------
-  The upstream header types, per extension
+  The upstream header types, per protocol
 -------------------------------------------------------------------------------}
-
--- | The upstream @cardano-protocol@ header body this extension uses.
---
--- Its owners define one per protocol, wholly separately, and future extensions
--- of Praos (eg Ouroboros Phalanx) will presumably each bring another. This is
--- the KES-signed object, which is why it appears in 'BaseHeaderView' as-is
--- rather than being projected field by field.
-type BaseHeaderBody :: PraosExtension -> Type -> Type
-type family BaseHeaderBody pext :: Type -> Type where
-  BaseHeaderBody PextNone = PraosCodec.HeaderBody
-  BaseHeaderBody PextLeios = LeiosCodec.HeaderBody
 
 -- | The Leios header body is the Praos one plus the two Leios fields, so
 -- whoever builds one builds the Praos body first and hands it here.
@@ -90,10 +72,10 @@ extendHeaderBodyWithLeios pb containsCert ann =
   Header view
 -------------------------------------------------------------------------------}
 
-type BaseHeaderView :: PraosExtension -> Type -> Type
+type BasePraosValidateView :: Type -> Type -> Type
 
 -- | View of the block header required by the Praos protocol.
-data BaseHeaderView pext crypto = HeaderView
+data BasePraosValidateView proto crypto = HeaderView
   { hvPrevHash :: !PrevHash
   -- ^ Hash of the previous block
   , hvVK :: !(VKey BlockIssuer)
@@ -106,19 +88,12 @@ data BaseHeaderView pext crypto = HeaderView
   -- ^ operational certificate
   , hvSlotNo :: !SlotNo
   -- ^ Slot
-  , hvLeios ::
-      !( StrictMaybeLeios
-           (PraosExtensionHasLeios pext)
-           (Bool, StrictMaybe EbAnnouncement)
-       )
+  , hvLeios :: !(EitherLeiosF proto () (Bool, StrictMaybe EbAnnouncement))
   -- ^ The Leios payload: whether this block's body carries a certificate (ie
   -- whether it is a CertRB), and the endorser block this header announces.
-  --
-  -- Statically absent unless the extension has Leios, since the header checks
-  -- that read it only exist there.
-  , hvSigned :: !(BaseHeaderBody pext crypto)
+  , hvSigned :: !(Signed (ShelleyProtocolHeader proto))
   -- ^ Header which must be signed
-  , hvSignature :: !(SignedKES (KES crypto) (BaseHeaderBody pext crypto))
+  , hvSignature :: !(SignedKES (KES crypto) (Signed (ShelleyProtocolHeader proto)))
   -- ^ KES Signature of the header
   }
 
@@ -126,10 +101,10 @@ data BaseHeaderView pext crypto = HeaderView
   Ledger view
 -------------------------------------------------------------------------------}
 
-type BasePraosLedgerView :: PraosExtension -> Type
+type BasePraosLedgerView :: Type -> Type
 
 -- | View of the ledger required by the Praos protocol.
-data BasePraosLedgerView pext = PraosLedgerView
+data BasePraosLedgerView proto = PraosLedgerView
   { plvPoolDistr :: SL.PoolDistr
   -- ^ Stake distribution
   , plvMaxHeaderSize :: !Word16
@@ -138,105 +113,37 @@ data BasePraosLedgerView pext = PraosLedgerView
   -- ^ Maximum block body size
   , plvProtocolVersion :: !ProtVer
   -- ^ Current protocol version
-  , plvLeios :: !(StrictMaybeLeios (PraosExtensionHasLeios pext) LeiosLedgerView)
-  }
-
-deriving instance Show (BasePraosLedgerView pext)
-
-type PraosLedgerView = BasePraosLedgerView PextNone
-
--- | The Leios part of 'BasePraosLedgerView'.
---
--- The Leios values that have to be read before the block they bear on is
--- applied: header validation reads the periods and 'llvMaxEbBodySize',
--- ChainSel's certificate check reads the committee and the quorum, and the
--- fetch logic reads 'llvMaxEbTxsSize' when an endorser block's body arrives.
-data LeiosLedgerView = LeiosLedgerView
-  { llvCommittee :: !LeiosCommittee
+  , plvCommittee :: !(EitherLeiosF proto () LeiosCommittee)
   -- ^ Who may vote this epoch, and with what weight
-  , llvQuorumStakeThreshold :: !UnitInterval
+  , plvQuorumStakeThreshold :: !(EitherLeiosF proto () UnitInterval)
   -- ^ Weight a certificate must accumulate
-  , llvAnnouncementPeriodLength :: !Milliseconds32
-  , llvVotePeriodLength :: !Milliseconds32
-  , llvDiffusionPeriodLength :: !Milliseconds32
+  , plvAnnouncementPeriodLength :: !(EitherLeiosF proto () Milliseconds32)
+  , plvVotePeriodLength :: !(EitherLeiosF proto () Milliseconds32)
+  , plvDiffusionPeriodLength :: !(EitherLeiosF proto () Milliseconds32)
   -- ^ The three periods that determine how long after its announcement an
   -- endorser block may be certified. Kept as durations, since converting to a
   -- count of slots needs the slot length, which only the consensus config has.
-  , llvMaxEbBodySize :: !Word32
+  , plvMaxEbBodySize :: !(EitherLeiosF proto () Word32)
   -- ^ Maximum total size of an endorser block itself (/not/ the closure)
-  , llvMaxEbTxsSize :: !Word32
-  -- ^ Maximum total size of the transactions an endorser block references (the
-  -- closure)
+  , plvMaxEbTxsSize :: !(EitherLeiosF proto () Word32)
+  -- ^ Maximum total size of the transactions an endorser block references
   }
-  deriving (Eq, Show)
 
--- | The Leios view of a ledger state that seats no committee.
+deriving instance
+  ( Show (EitherLeiosF proto () LeiosCommittee)
+  , Show (EitherLeiosF proto () UnitInterval)
+  , Show (EitherLeiosF proto () Milliseconds32)
+  , Show (EitherLeiosF proto () Word32)
+  ) =>
+  Show (BasePraosLedgerView proto)
+
+type ForecastsLeios :: Type -> Type -> Constraint
+
+-- | How a protocol reads an era's forecast.
 --
--- Nothing can be certified against it: the committee is empty and the quorum is
--- the entire weight. This is the truth rather than a placeholder, both before
--- the Leios era and during its first epochs, until a snapshot seated by the new
--- era's rules rotates in. And so the other parameter values don't actually
--- matter.
-initialLeiosLedgerView :: LeiosLedgerView
-initialLeiosLedgerView =
-  LeiosLedgerView
-    { llvCommittee = emptyLeiosCommittee
-    , llvQuorumStakeThreshold = maxBound
-    , llvAnnouncementPeriodLength = Milliseconds32 0
-    , llvVotePeriodLength = Milliseconds32 0
-    , llvDiffusionPeriodLength = Milliseconds32 1000000000
-    , llvMaxEbBodySize = 0
-    , llvMaxEbTxsSize = 0
-    }
-
-type ForecastsLeios :: PraosExtension -> Type -> Constraint
-
--- | The Leios part of an era's forecast, as this extension sees it.
---
--- Reading that part needs 'Dijkstra.DijkstraEraForecast', which the extensions
--- without Leios must not demand of their eras. 'KnownPraosExtension' cannot
--- serve here: refining @pext@ says nothing about @era@, and it is an @era@
--- dictionary that is missing.
-class ForecastsLeios pext era where
-  forecastToLeiosPart ::
-    proxy pext ->
-    SL.Forecast t era ->
-    StrictMaybeLeios (PraosExtensionHasLeios pext) LeiosLedgerView
-
-instance ForecastsLeios PextNone era where
-  forecastToLeiosPart _ _ = SNothingLeios
-
-instance Dijkstra.DijkstraEraForecast era => ForecastsLeios PextLeios era where
-  forecastToLeiosPart _ = SJustLeios . forecastToLeiosLedgerView
-
-forecastToBasePraosLedgerView ::
-  forall pext t era.
-  (ForecastsLeios pext era, SL.EraForecast era) =>
-  SL.Forecast t era ->
-  BasePraosLedgerView pext
-forecastToBasePraosLedgerView f =
-  PraosLedgerView
-    { plvPoolDistr = f ^. SL.poolDistrForecastL @era @t
-    , plvMaxHeaderSize = ccMaxBHSize cc
-    , plvMaxBodySize = ccMaxBBSize cc
-    , plvProtocolVersion = ccProtocolVersion cc
-    , plvLeios = forecastToLeiosPart (Proxy @pext) f
-    }
- where
-  cc = SL.forecastChainChecks @t @era f
-
-forecastToLeiosLedgerView ::
-  forall t era.
-  Dijkstra.DijkstraEraForecast era =>
-  SL.Forecast t era ->
-  LeiosLedgerView
-forecastToLeiosLedgerView f =
-  LeiosLedgerView
-    { llvCommittee = f ^. Dijkstra.leiosCommitteeForecastL @era @t
-    , llvQuorumStakeThreshold = f ^. Dijkstra.leiosQuorumStakeThresholdForecastL @era @t
-    , llvAnnouncementPeriodLength = f ^. Dijkstra.leiosAnnouncementPeriodLengthForecastL @era @t
-    , llvVotePeriodLength = f ^. Dijkstra.leiosVotePeriodLengthForecastL @era @t
-    , llvDiffusionPeriodLength = f ^. Dijkstra.leiosDiffusionPeriodLengthForecastL @era @t
-    , llvMaxEbBodySize = f ^. Dijkstra.maxEndorserBlockReferencesSizeForecastL @era @t
-    , llvMaxEbTxsSize = f ^. Dijkstra.maxEndorserBlockTxsSizeForecastL @era @t
-    }
+-- A method rather than one shared function because only the protocols with
+-- Leios may demand 'Dijkstra.DijkstraEraForecast' of their era, and knowing
+-- @proto@ alone cannot supply that @era@ dictionary.
+class ForecastsLeios proto era where
+  forecastToBasePraosLedgerView ::
+    SL.EraForecast era => SL.Forecast t era -> BasePraosLedgerView proto
