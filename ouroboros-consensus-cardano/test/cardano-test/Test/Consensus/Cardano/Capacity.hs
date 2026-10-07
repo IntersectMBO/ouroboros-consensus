@@ -1,4 +1,6 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -7,7 +9,19 @@
 -- endorser-block capacity from its protocol parameters.
 module Test.Consensus.Cardano.Capacity (tests) where
 
+import qualified Cardano.Crypto.Hash.Class as Hash
+import Cardano.Ledger.Address (Addr (..))
+import Cardano.Ledger.Alonzo.Core (AlonzoEraTxWits (..), AsIx (..), ppMaxTxExUnitsL)
+import Cardano.Ledger.Alonzo.TxWits (unRedeemersL)
+import Cardano.Ledger.BaseTypes (Network (..))
+import Cardano.Ledger.Coin (Coin (..))
 import qualified Cardano.Ledger.Core as Core
+import Cardano.Ledger.Credential (Credential (..), StakeReference (..))
+import Cardano.Ledger.Dijkstra.Core
+  ( DijkstraEraTxBody (..)
+  , pattern GuardingPurpose
+  , pattern ReceivingPurpose
+  )
 import Cardano.Ledger.Dijkstra.PParams
   ( ppMaxEndorserBlockExUnitsL
   , ppMaxEndorserBlockReferencesSizeL
@@ -15,6 +29,8 @@ import Cardano.Ledger.Dijkstra.PParams
   , ppMaxRefScriptSizePerEndorserBlockL
   )
 import qualified Cardano.Ledger.Genesis as Genesis
+import Cardano.Ledger.Hashes (ScriptHash (..))
+import Cardano.Ledger.Plutus.Data (Data (Data))
 import Cardano.Ledger.Plutus.ExUnits (ExUnits (..), OrdExUnits (..))
 import Cardano.Ledger.Shelley.API (ShelleyGenesis (..))
 import Cardano.Ledger.Shelley.LedgerState (curPParamsEpochStateL, nesEsL)
@@ -22,8 +38,15 @@ import Cardano.Ledger.Shelley.Translation
   ( emptyFromByronTranslationContext
   )
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
+import Control.Monad.Except (runExcept)
+import qualified Data.ByteString as BS
+import Data.Either (isLeft)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromJust)
 import qualified Data.Measure as Measure
+import qualified Data.OMap.Strict as OMap
 import Data.Proxy (Proxy (..))
+import qualified Data.Sequence.Strict as SSeq
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( slotLengthFromSec
@@ -66,8 +89,10 @@ import Ouroboros.Consensus.Shelley.Ledger.Mempool
   , DijkstraEbMeasure (..)
   , RefScriptSize (..)
   , fromExUnits
+  , mkShelleyTx
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import qualified PlutusLedgerApi.Common as P
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Cardano.Ledger.Shelley.Examples (testShelleyGenesis)
 import Test.Consensus.Byron.Generators
@@ -101,6 +126,7 @@ tests =
     , testProperty "Conway" $
         prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
     , testProperty "Dijkstra" prop_dijkstra
+    , testProperty "Receiving batch mempool execution-unit limits" prop_dijkstraReceivingMeasure
     , testCase "Dijkstra transaction" test_dijkstraTxEbMeasure
     ]
 
@@ -230,3 +256,59 @@ tickShelley ::
   TickedLedgerState (ShelleyBlock proto era) EmptyMK
 tickShelley (ShelleyLedgerState tip state transition ledgerTables) =
   TickedShelleyLedgerState tip transition state ledgerTables
+
+-- Exercise the consensus phase-1 measurement caller with a top-level Receiving
+-- target and child-local Receiving/Guarding redeemers. These shape fixtures
+-- establish measurement, not transaction admission or Leios block execution.
+prop_dijkstraReceivingMeasure ::
+  LedgerState (ShelleyBlock (Praos Crypto) DijkstraEra) EmptyMK ->
+  Property
+prop_dijkstraReceivingMeasure st = withNumTests 5 $
+  forAllBlind arbitrary $ \translationContext ->
+    let cfg = fixedShelleyLedgerConfig translationContext
+        ticked = tickShelley st
+        withLimits limits = case ticked of
+          TickedShelleyLedgerState tip transition nes tables ->
+            TickedShelleyLedgerState
+              tip
+              transition
+              ( nes
+                  & nesEsL . curPParamsEpochStateL . Core.ppMaxTxSizeL .~ 65536
+                  & nesEsL . curPParamsEpochStateL . ppMaxTxExUnitsL .~ limits
+              )
+              tables
+        sh = ScriptHash (fromJust (Hash.hashFromBytes (BS.replicate 28 1)))
+        out =
+          Core.mkCoinTxOut @DijkstraEra (AddrProtected Testnet (ScriptHashObj sh) StakeRefNull) (Coin 1000000)
+        child =
+          Core.mkBasicTx
+            (Core.mkBasicTxBody @DijkstraEra @Core.SubTx & Core.outputsTxBodyL .~ SSeq.singleton out)
+            & Core.witsTxL . rdmrsTxWitsL . unRedeemersL
+              .~ Map.fromList
+                [ (ReceivingPurpose (AsIx 0), (Data (P.I 0), ExUnits 300 400))
+                , (GuardingPurpose (AsIx 0), (Data (P.I 0), ExUnits 5 10))
+                ]
+        tx =
+          Core.mkBasicTx
+            ( Core.mkBasicTxBody @DijkstraEra @Core.TopTx
+                & Core.outputsTxBodyL .~ SSeq.singleton out
+                & subTransactionsTxBodyL .~ OMap.singleton child
+            )
+            & Core.witsTxL . rdmrsTxWitsL . unRedeemersL
+              .~ Map.singleton
+                (ReceivingPurpose (AsIx 0))
+                (Data (P.I 0), ExUnits 100 200)
+        measure limits = runExcept $ txMeasurePhase1 cfg (withLimits limits) (mkShelleyTx tx)
+     in conjoin
+          [ case measure (ExUnits 500 700) of
+              Left err -> counterexample (show err) False
+              Right measured -> exUnits measured === fromExUnits (ExUnits 405 610)
+          , counterexample "child Receiving memory must count toward the limit" $
+              property $
+                isLeft $
+                  measure (ExUnits 400 700)
+          , counterexample "child Receiving steps must count toward the limit" $
+              property $
+                isLeft $
+                  measure (ExUnits 500 600)
+          ]

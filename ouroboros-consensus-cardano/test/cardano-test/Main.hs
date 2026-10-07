@@ -6,6 +6,7 @@ import qualified Test.Consensus.Cardano.DiffusionPipelining
 import Test.Consensus.Cardano.GenCDDLs
 import qualified Test.Consensus.Cardano.Golden
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
+import qualified Test.Consensus.Cardano.Receiving (tests)
 import qualified Test.Consensus.Cardano.Serialisation (tests)
 import qualified Test.Consensus.Cardano.Show ()
 import qualified Test.Consensus.Cardano.SupportedNetworkProtocolVersion
@@ -32,6 +33,7 @@ tests =
   testGroup
     "cardano"
     [ Test.Consensus.Cardano.Capacity.tests
+    , Test.Consensus.Cardano.Receiving.tests
     , Test.Consensus.Cardano.DiffusionPipelining.tests
     , withCDDLs $
         testGroup
