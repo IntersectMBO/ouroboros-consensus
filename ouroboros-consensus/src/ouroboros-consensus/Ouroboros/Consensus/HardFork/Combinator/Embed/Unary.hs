@@ -501,9 +501,10 @@ instance Functor m => Isomorphic (BlockForging m) where
              , fbPerasCert
              , fbCurrentTickedLedgerState
              , fbTxs
+             , fbEbTxs
              , fbIsLeader
              } ->
-              project' (Proxy @(I blk))
+              first (project' (Proxy @(I blk)))
                 <$> forgeBlock
                   ForgeBlockArgs
                     { fbConfig = inject fbConfig
@@ -513,6 +514,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                     , fbCurrentTickedLedgerState =
                         getFlipTickedLedgerState (inject (FlipTickedLedgerState fbCurrentTickedLedgerState))
                     , fbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
+                    , fbEbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
                     , fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) fbIsLeader
                     }
       }
@@ -563,9 +565,10 @@ instance Functor m => Isomorphic (BlockForging m) where
              , fbPerasCert
              , fbCurrentTickedLedgerState
              , fbTxs
+             , fbEbTxs
              , fbIsLeader
              } ->
-              inject' (Proxy @(I blk))
+              first (inject' (Proxy @(I blk)))
                 <$> forgeBlock
                   ForgeBlockArgs
                     { fbConfig = project fbConfig
@@ -575,6 +578,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                     , fbCurrentTickedLedgerState =
                         getFlipTickedLedgerState (project (FlipTickedLedgerState fbCurrentTickedLedgerState))
                     , fbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
+                    , fbEbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
                     , fbIsLeader = project' (Proxy @(WrapIsLeader blk)) fbIsLeader
                     }
       }

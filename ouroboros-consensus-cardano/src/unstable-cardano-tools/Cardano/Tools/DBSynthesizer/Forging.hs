@@ -160,6 +160,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     -- Forge a block for each credential; a block is adopted when forge returns Just ()
     results <-
       mapM
-        (\bf -> withEarlyExit $ forge nullTracer nullTracer cfg chainDB mempool bf currentSlot)
+        ( \bf -> withEarlyExit $ forge nullTracer nullTracer cfg chainDB mempool bf (\_ _ -> pure ()) currentSlot
+        )
         blockForging
     pure $ any isJust results

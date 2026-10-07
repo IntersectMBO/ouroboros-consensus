@@ -120,7 +120,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           (configConsensus cfg)
           forgingVRFHash
           curSlot
-    , forgeBlock = forgeShelleyBlock hotKey canBeLeader
+    , forgeBlock = fmap (\blk -> (blk, Nothing)) . forgeShelleyBlock hotKey canBeLeader
     , finalize = HotKey.finalize hotKey
     }
  where
