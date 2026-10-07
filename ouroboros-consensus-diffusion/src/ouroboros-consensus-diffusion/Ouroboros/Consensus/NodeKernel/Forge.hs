@@ -33,6 +33,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb)
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (MempoolMeasure)
 import Ouroboros.Consensus.Node.Run
@@ -67,9 +68,13 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
+  -- | 'forge' calls this function after the ChainDB adopts the forged ranking
+  -- block. The arguments are the header of this block and the forged
+  -- endorser block.
+  (Header blk -> ForgedLeiosEb -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging onForgedLeiosEb currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -114,7 +119,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
-        (txs, txssz, snapSize) <- getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker
+        (txs, txssz, ebTxs, snapSize) <-
+          getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker
 
         let fbArgs =
               Block.ForgeBlockArgs
@@ -124,6 +130,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
                 , Block.fbPerasCert = Nothing -- No PerasCert for now
                 , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
                 , Block.fbTxs = txs
+                , Block.fbEbTxs = ebTxs
                 , Block.fbIsLeader = proof
                 }
         pure
@@ -134,7 +141,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
           )
 
   -- Actually produce the block
-  newBlock <- lift $ Block.forgeBlock blockForging fbArgs
+  (newBlock, mForgedEb) <- lift $ Block.forgeBlock blockForging fbArgs
 
   trace $
     TraceForgedBlock
@@ -144,7 +151,10 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
       snapSize
       txssz
 
+  -- If the ChainDB does not adopt the block, 'addBlockToChainDB' exits early.
   addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
+
+  lift $ whenJust mForgedEb (onForgedLeiosEb (getHeader newBlock))
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
@@ -455,8 +465,9 @@ traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
 
   trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
--- | Get a consistent snapshot of the mempool for the given ticked ledger state
--- and select transactions up to block capacity.
+-- | Get a snapshot of the mempool that is consistent with the given ticked
+-- ledger state. Select the transactions for the ranking block and for the
+-- endorser block from this snapshot.
 getTransactionsToForge ::
   (IOLike m, RunNode blk) =>
   TopLevelConfig blk ->
@@ -464,7 +475,13 @@ getTransactionsToForge ::
   SlotNo ->
   Ticked LedgerState blk DiffMK ->
   ReadOnlyForker m l blk ->
-  WithEarlyExit m ([Validated (GenTx blk)], MempoolMeasure blk, MempoolSize)
+  WithEarlyExit
+    m
+    ( [Validated (GenTx blk)]
+    , MempoolMeasure blk
+    , [Validated (GenTx blk)]
+    , MempoolSize
+    )
 getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $ do
   mempoolSnapshot <-
     getSnapshotFor
@@ -474,7 +491,7 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $
       (roforkerReadTables forker)
 
   -- The endorser-block capacity is zero, so the endorser-block part of the
-  -- partition is empty and the block part is the whole selection.
+  -- partition is empty and the ranking-block part is the whole selection.
   let (txs, txssz, ebTxs, _) =
         snapshotPartition
           mempoolSnapshot
@@ -490,4 +507,4 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $
 
   _ <- evaluate (length txs)
 
-  pure (txs, txssz, snapshotMempoolSize mempoolSnapshot)
+  pure (txs, txssz, ebTxs, snapshotMempoolSize mempoolSnapshot)

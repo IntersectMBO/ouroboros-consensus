@@ -236,6 +236,7 @@ forgeDualByronBlock ForgeBlockArgs{..} =
         , fbPerasCert = Nothing -- Doesn't support Peras
         , fbCurrentTickedLedgerState = tickedDualLedgerStateMain fbCurrentTickedLedgerState
         , fbTxs = map vDualGenTxMain fbTxs
+        , fbEbTxs = map vDualGenTxMain fbEbTxs
         , fbIsLeader
         }
 
