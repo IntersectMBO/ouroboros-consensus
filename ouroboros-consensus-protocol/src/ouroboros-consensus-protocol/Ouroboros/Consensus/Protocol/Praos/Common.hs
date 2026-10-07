@@ -12,13 +12,15 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common
-  ( MaxMajorProtVer (..)
+  ( ShelleyProtocolHeader
+  , MaxMajorProtVer (..)
   , HasMaxMajorProtVer (..)
   , PraosCanBeLeader (..)
   , PraosTiebreakerView (..)
@@ -32,14 +34,7 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , instantiatePraosCredentials
 
     -- * Leios
-  , PraosExtension (..)
-  , HasLeiosProof
-  , WhetherHasLeios (..)
-  , WhetherHasLeiosDecided (..)
-  , KnownPraosExtension (..)
-  , SingPraosExtension (..)
-  , StrictMaybeLeios (..)
-  , mkHasLeiosProof
+  , EitherLeiosF
   , fromCodecEbAnnouncement
   , toCodecEbAnnouncement
   ) where
@@ -64,18 +59,13 @@ import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
-import Control.DeepSeq (NFData (..))
 import qualified Control.Tracer as Tracer
 import Data.Function (on)
-import Data.Kind (Constraint, Type)
+import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
-import Data.Proxy (Proxy (Proxy))
-import Data.Type.Equality ((:~:) (Refl))
-import Data.Typeable (Typeable, typeRep)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import GHC.Show (showSpace)
 import LeiosDemoTypes (EbAnnouncement (..), EbHash (MkEbHash))
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
@@ -394,131 +384,34 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
 
 -----
 
--- | Which optional extensions to the base Praos protocol are enabled.
+-- | The header a protocol validates, determined by the protocol.
 --
--- We define them here, as part of Praos, because we want exactly one single
--- source of truth (this subtree of the module hierarchy) to explicitly
--- determine how the base protocol and whichever of its extensions are enabled
--- simultaneously to interact /as a @ConsensusProtocol@/.
---
--- We define one constructor per each subset extensions that are known to be
--- simultaneously compatible and worthwhile. (For now it's just Leios, but more
--- extensions are planned, such as Phalanx.)
-data PraosExtension = PextNone | PextLeios
-
--- | When possible, use 'WhetherHasLeiosDecided' instead
-type SingPraosExtension :: PraosExtension -> Type
-data SingPraosExtension pext where
-  SingPextNone :: SingPraosExtension PextNone
-  SingPextLeios :: SingPraosExtension PextLeios
-
--- | A 'Bool' isomorph for better type errors
-data WhetherHasLeios = PextHasLeios | PextDoesNotHaveLeios
-
-data WhetherHasLeiosDecided pext
-  = PraosExtensionHasLeios pext ~ PextHasLeios => PextHasLeiosDecided
-  | PraosExtensionHasLeios pext ~ PextDoesNotHaveLeios => PextDoesNotHaveLeiosDecided
-
-type KnownPraosExtension :: PraosExtension -> Constraint
-class (Typeable pext, Typeable (PraosExtensionHasLeios pext)) => KnownPraosExtension pext where
-  type PraosExtensionHasLeios pext :: WhetherHasLeios
-  praosExtensionHasLeios :: proxy pext -> WhetherHasLeiosDecided pext
-
-  -- | When possible, use 'praosExtensionHasLeios' instead, since it's less
-  -- informative
-  singPraosExtension :: proxy pext -> SingPraosExtension pext
-
-instance KnownPraosExtension PextNone where
-  type PraosExtensionHasLeios _ = PextDoesNotHaveLeios
-  praosExtensionHasLeios = const PextDoesNotHaveLeiosDecided
-  singPraosExtension = const SingPextNone
-
-instance KnownPraosExtension PextLeios where
-  type PraosExtensionHasLeios _ = PextHasLeios
-  praosExtensionHasLeios = const PextHasLeiosDecided
-  singPraosExtension = const SingPextLeios
+-- TODO two things to fix here, both deferred because each touches every use in
+-- ouroboros-consensus-cardano. The name is not Shelley's --- this is whichever
+-- header the protocol signs, which is why 'HeaderView' and the instances for
+-- 'Praos', 'PraosWithLeios' and 'TPraos' all need it from the protocol package.
+-- And 'Shelley.Protocol.Abstract' currently re-exports this, which the importers
+-- there should stop relying on: they should name this module.
+type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
 
 -----
 
--- | Newtype wrapper to avoid 'NoThunks' orphan
---
--- We're using ':~:' at all merely so we can still use @deriving@ for exception
--- sum types.
-type HasLeiosProof :: WhetherHasLeios -> Type
-newtype HasLeiosProof whether
-  = MkHasLeiosProof (whether :~: PextHasLeios)
-  deriving (Eq, Show)
-
-deriving via
-  OnlyCheckWhnf (HasLeiosProof whether)
-  instance
-    Typeable whether => NoThunks (HasLeiosProof whether)
-
-mkHasLeiosProof :: HasLeiosProof PextHasLeios
-mkHasLeiosProof = MkHasLeiosProof Refl
 
 -----
 
-type StrictMaybeLeios :: WhetherHasLeios -> Type -> Type
+-- | @a@ for the protocols without Leios, and @b@ for the ones with it.
+--
+-- One such family per extension, which is what keeps every type that mentions
+-- one indexed by @proto@ alone. The two uses so far:
+--
+--  * @EitherLeiosF proto Void ()@ gates a constructor, since the protocols
+--    without Leios cannot build it.
+--
+--  * @EitherLeiosF proto () a@ gates a field, which those protocols have but
+--    cannot put anything in.
+type EitherLeiosF :: Type -> Type -> Type -> Type
+data family EitherLeiosF proto a :: Type -> Type
 
--- | Like 'StrictMaybe', but it's @SJust@ if and only if 'PraosExtensionHasLeios'
-data StrictMaybeLeios whether a where
-  -- | Encoding and decoding this is a complete noop.
-  SNothingLeios :: StrictMaybeLeios PextDoesNotHaveLeios a
-  -- | Encoding and decoding this has no extra wrapper.
-  SJustLeios :: !a -> StrictMaybeLeios PextHasLeios a
-
-instance Functor (StrictMaybeLeios whether) where
-  fmap f = \case
-    SNothingLeios -> SNothingLeios
-    SJustLeios x -> SJustLeios $ f x
-
-instance Applicative (StrictMaybeLeios PextDoesNotHaveLeios) where
-  pure = const SNothingLeios
-  SNothingLeios <*> SNothingLeios = SNothingLeios
-
-instance Applicative (StrictMaybeLeios PextHasLeios) where
-  pure = SJustLeios
-  SJustLeios f <*> SJustLeios x = SJustLeios $ f x
-
-instance Foldable (StrictMaybeLeios whether) where
-  foldMap f = \case
-    SNothingLeios -> mempty
-    SJustLeios x -> f x
-
-instance Traversable (StrictMaybeLeios whether) where
-  traverse f = \case
-    SNothingLeios -> pure SNothingLeios
-    SJustLeios x -> SJustLeios <$> f x
-
-instance Eq a => Eq (StrictMaybeLeios whether a) where
-  SNothingLeios == SNothingLeios = True
-  SJustLeios x == SJustLeios y = x == y
-
-instance Ord a => Ord (StrictMaybeLeios whether a) where
-  compare SNothingLeios SNothingLeios = EQ
-  compare (SJustLeios x) (SJustLeios y) = compare x y
-
-instance Show a => Show (StrictMaybeLeios whether a) where
-  showsPrec p = \case
-    SNothingLeios -> showString "SNothingLeios"
-    SJustLeios x -> showParen (p >= 11) $ showString "SJustLeios" <> showSpace <> shows x
-
-instance NFData a => NFData (StrictMaybeLeios whether a) where
-  rnf = \case
-    SNothingLeios -> ()
-    SJustLeios x -> rnf x
-
-instance (Typeable whether, NoThunks a) => NoThunks (StrictMaybeLeios whether a) where
-  showTypeOf _ =
-    unwords
-      [ "StrictMaybeLeios"
-      , "(" ++ show (typeRep (Proxy @whether)) ++ ")"
-      , "(" ++ showTypeOf (Proxy @a) ++ ")"
-      ]
-  wNoThunks ctxt = \case
-    SNothingLeios -> wNoThunks ctxt ()
-    SJustLeios x -> wNoThunks ctxt x
 
 -----
 
