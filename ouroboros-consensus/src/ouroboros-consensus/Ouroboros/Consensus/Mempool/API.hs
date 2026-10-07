@@ -445,11 +445,12 @@ data MempoolSnapshot blk = MempoolSnapshot
       , [Validated (GenTx blk)]
       , MempoolMeasure blk
       )
-  -- ^ Partition the mempool for one forging opportunity. The first part is
-  -- the greatest prefix (oldest to newest) whose 'TxMeasure' respects the
-  -- given block capacity. The second part is the greatest run of the
-  -- /following/ transactions whose 'TxEbMeasure' respects the given
-  -- endorser-block capacity. Each part comes with its total size.
+  -- ^ Partition the mempool for one forging opportunity. The first part, the
+  -- ranking-block part, is the longest prefix (oldest to newest) whose
+  -- 'TxMeasure' fits the given block capacity. The second part, the
+  -- endorser-block part, is the longest prefix of the remaining transactions
+  -- whose 'TxEbMeasure' fits the given endorser-block capacity. Each part
+  -- comes with its total measure.
   , snapshotLookupTx :: TicketNo -> Maybe (Validated (GenTx blk))
   -- ^ Get a specific transaction from the mempool snapshot by its ticket
   -- number, if it exists.
