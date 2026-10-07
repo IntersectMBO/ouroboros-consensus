@@ -147,6 +147,8 @@ tests =
             runSystemIO perasPersistThenGCRetainsCert
         , testCase "certificate older than the immutable tip is ignored" $
             runSystemIO perasLateCertIgnored
+        , testCase "a handoff-boundary certificate is rejected or archived" $
+            runSystemIO perasHandoffBoundaryCertNotLost
         , testCase "certificate for another block at the immutable-tip slot is ignored" $
             runSystemIO perasConflictingCertAtImmutableTipSlotIgnored
         , testCase "certificate received before its target block is archived" $
@@ -523,6 +525,40 @@ perasLateCertIgnored = do
 
   archived <- getHistoricalCertsAfter (PerasRoundNo 0) 10
   assertEqual [] archived "Late certificate was added to historical storage"
+ where
+  body forkNo = TestBody forkNo True Nothing
+
+-- | Model the post-snapshot side of the handoff race deterministically. Once a
+-- block has crossed into the ImmutableDB, a certificate for it must either be
+-- rejected or be copied directly to historical storage. Accepting it only into
+-- the volatile certificate DB loses it permanently because that block will not
+-- be handed off a second time.
+perasHandoffBoundaryCertNotLost :: SystemM TestBlock IO ()
+perasHandoffBoundaryCertNotLost = do
+  b1 <- addBlock $ firstBlock 0 (body 0)
+  b2 <- addBlock $ mkNextBlock b1 1 (body 0)
+  b3 <- addBlock $ mkNextBlock b2 2 (body 0)
+  persistBlks
+
+  let cert = mkHistoricalCert 1 b1 1
+  outcome <- addTestPerasCert cert
+
+  _b4 <- addBlock $ mkNextBlock b3 3 (body 0)
+  persistBlks
+  archived <- getHistoricalCertsAfter (PerasRoundNo 0) 10
+
+  case outcome of
+    API.PerasCertIgnoredTooOld ->
+      assertEqual [] archived "A rejected certificate was nevertheless archived"
+    API.PerasCertProcessed _ ->
+      assertEqual
+        [cert]
+        archived
+        "A certificate accepted after its block handoff was never archived"
+    other ->
+      failWith $
+        "Unexpected result for a certificate at the handoff boundary: "
+          <> show other
  where
   body forkNo = TestBody forkNo True Nothing
 
