@@ -28,6 +28,7 @@ import Cardano.Ledger.Dijkstra.PParams
   , ppMaxEndorserBlockTxsSizeL
   , ppMaxRefScriptSizePerEndorserBlockL
   )
+import Cardano.Ledger.Dijkstra.TxBody (receivingScriptTargets)
 import qualified Cardano.Ledger.Genesis as Genesis
 import Cardano.Ledger.Hashes (ScriptHash (..))
 import Cardano.Ledger.Plutus.Data (Data (Data))
@@ -126,7 +127,7 @@ tests =
     , testProperty "Conway" $
         prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
     , testProperty "Dijkstra" prop_dijkstra
-    , testProperty "Receiving batch mempool execution-unit limits" prop_dijkstraReceivingMeasure
+    , testProperty "per-output Receiving mempool execution-unit limits" prop_dijkstraReceivingMeasure
     , testCase "Dijkstra transaction" test_dijkstraTxEbMeasure
     ]
 
@@ -257,9 +258,10 @@ tickShelley ::
 tickShelley (ShelleyLedgerState tip state transition ledgerTables) =
   TickedShelleyLedgerState tip transition state ledgerTables
 
--- Exercise the consensus phase-1 measurement caller with a top-level Receiving
--- target and child-local Receiving/Guarding redeemers. These shape fixtures
--- establish measurement, not transaction admission or Leios block execution.
+-- Exercise the consensus phase-1 measurement caller with repeated protected
+-- script outputs and distinct raw output indexes in both parent and child bodies.
+-- Ordinary outputs leave gaps; equal hashes still have separate budgets. These
+-- shape fixtures establish measurement, not admission or Leios block execution.
 prop_dijkstraReceivingMeasure ::
   LedgerState (ShelleyBlock (Praos Crypto) DijkstraEra) EmptyMK ->
   Property
@@ -268,7 +270,7 @@ prop_dijkstraReceivingMeasure st = withNumTests 5 $
     let cfg = fixedShelleyLedgerConfig translationContext
         ticked = tickShelley st
         withLimits limits = case ticked of
-          TickedShelleyLedgerState tip transition nes tables ->
+          TickedShelleyLedgerState tip transition nes ledgerTables ->
             TickedShelleyLedgerState
               tip
               transition
@@ -276,39 +278,49 @@ prop_dijkstraReceivingMeasure st = withNumTests 5 $
                   & nesEsL . curPParamsEpochStateL . Core.ppMaxTxSizeL .~ 65536
                   & nesEsL . curPParamsEpochStateL . ppMaxTxExUnitsL .~ limits
               )
-              tables
+              ledgerTables
         sh = ScriptHash (fromJust (Hash.hashFromBytes (BS.replicate 28 1)))
         out =
           Core.mkCoinTxOut @DijkstraEra (AddrProtected Testnet (ScriptHashObj sh) StakeRefNull) (Coin 1000000)
+        ordinary =
+          Core.mkCoinTxOut @DijkstraEra (Addr Testnet (ScriptHashObj sh) StakeRefNull) (Coin 1000000)
+        childBody =
+          Core.mkBasicTxBody @DijkstraEra @Core.SubTx
+            & Core.outputsTxBodyL .~ SSeq.fromList [out, ordinary, out]
         child =
-          Core.mkBasicTx
-            (Core.mkBasicTxBody @DijkstraEra @Core.SubTx & Core.outputsTxBodyL .~ SSeq.singleton out)
+          Core.mkBasicTx childBody
             & Core.witsTxL . rdmrsTxWitsL . unRedeemersL
               .~ Map.fromList
                 [ (ReceivingPurpose (AsIx 0), (Data (P.I 0), ExUnits 300 400))
+                , (ReceivingPurpose (AsIx 2), (Data (P.I 0), ExUnits 310 410))
                 , (GuardingPurpose (AsIx 0), (Data (P.I 0), ExUnits 5 10))
                 ]
+        body =
+          Core.mkBasicTxBody @DijkstraEra @Core.TopTx
+            & Core.outputsTxBodyL .~ SSeq.fromList [ordinary, out, out]
+            & subTransactionsTxBodyL .~ OMap.singleton child
         tx =
-          Core.mkBasicTx
-            ( Core.mkBasicTxBody @DijkstraEra @Core.TopTx
-                & Core.outputsTxBodyL .~ SSeq.singleton out
-                & subTransactionsTxBodyL .~ OMap.singleton child
-            )
+          Core.mkBasicTx body
             & Core.witsTxL . rdmrsTxWitsL . unRedeemersL
-              .~ Map.singleton
-                (ReceivingPurpose (AsIx 0))
-                (Data (P.I 0), ExUnits 100 200)
+              .~ Map.fromList
+                [ (ReceivingPurpose (AsIx 1), (Data (P.I 0), ExUnits 100 200))
+                , (ReceivingPurpose (AsIx 2), (Data (P.I 0), ExUnits 110 210))
+                ]
         measure limits = runExcept $ txMeasurePhase1 cfg (withLimits limits) (mkShelleyTx tx)
      in conjoin
-          [ case measure (ExUnits 500 700) of
+          [ counterexample "parent targets preserve raw indexes and duplicate hashes" $
+              receivingScriptTargets body === [(1, sh), (2, sh)]
+          , counterexample "child targets use child-local raw indexes" $
+              receivingScriptTargets childBody === [(0, sh), (2, sh)]
+          , case measure (ExUnits 900 1300) of
               Left err -> counterexample (show err) False
-              Right measured -> exUnits measured === fromExUnits (ExUnits 405 610)
+              Right measured -> exUnits measured === fromExUnits (ExUnits 825 1230)
           , counterexample "child Receiving memory must count toward the limit" $
               property $
                 isLeft $
-                  measure (ExUnits 400 700)
+                  measure (ExUnits 824 1300)
           , counterexample "child Receiving steps must count toward the limit" $
               property $
                 isLeft $
-                  measure (ExUnits 500 600)
+                  measure (ExUnits 900 1229)
           ]

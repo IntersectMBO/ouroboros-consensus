@@ -57,9 +57,9 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Aeson
 import qualified Data.ByteString.Base16 as B16
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.NonEmpty (NonEmptyMap)
 import qualified Data.Map.NonEmpty as NonEmptyMap
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text.Encoding
@@ -149,8 +149,8 @@ renderScriptPurpose = \case
     Aeson.object ["proposing" .= toJSON proposal]
   AnyEraGuardingPurpose (AsItem sHash) ->
     Aeson.object ["guarding" .= Aeson.String (renderScriptHash sHash)]
-  AnyEraReceivingPurpose (AsItem sHash) ->
-    Aeson.object ["receiving" .= Aeson.String (renderScriptHash sHash)]
+  AnyEraReceivingPurpose (AsItem outputIndex) ->
+    Aeson.object ["receiving" .= toJSON outputIndex]
 
 -- | Render a plutus script purpose given by its index (redeemer pointer),
 -- era-generically.
@@ -183,11 +183,17 @@ renderMissingRedeemers ::
   ) =>
   NonEmpty (PlutusPurpose AsItem era, ScriptHash) ->
   Value
+-- Keep singleton values compatible with existing logs. Several purposes may
+-- share one script hash, so preserve each purpose in source order in an array.
 renderMissingRedeemers scripts =
-  Aeson.object $ NonEmpty.toList $ NonEmpty.map renderTuple scripts
+  Aeson.object $ map renderTuple $ Map.toList $ foldr addPurpose Map.empty scripts
  where
-  renderTuple (scriptPurpose, sHash) =
-    Aeson.fromText (renderScriptHash sHash) .= renderScriptPurpose scriptPurpose
+  addPurpose (scriptPurpose, sHash) =
+    Map.insertWith (++) (renderScriptHash sHash) [renderScriptPurpose scriptPurpose]
+  renderTuple (sHash, purposes) =
+    Aeson.fromText sHash .= case purposes of
+      [purpose] -> purpose
+      _ -> toJSON purposes
 
 renderIncompleteWithdrawals ::
   Show payload =>

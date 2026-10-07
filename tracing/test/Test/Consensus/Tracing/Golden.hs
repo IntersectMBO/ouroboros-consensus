@@ -17,6 +17,10 @@ module Test.Consensus.Tracing.Golden (tests) where
 
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import Cardano.Ledger.Address (AccountAddress (..), AccountId (..))
+import Cardano.Ledger.Allegra (AllegraEra)
+import qualified Cardano.Ledger.Allegra.Rules as Allegra
+import Cardano.Ledger.Alonzo (AlonzoEra)
+import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import Cardano.Ledger.Alonzo.Scripts (AsItem (..), AsIx (..))
 import Cardano.Ledger.BaseTypes
   ( Anchor (..)
@@ -35,6 +39,7 @@ import Cardano.Ledger.Conway.Governance
   , ProposalProcedure (..)
   , Voter (..)
   )
+import qualified Cardano.Ledger.Conway.Rules as Conway
 import Cardano.Ledger.Conway.Scripts (ConwayPlutusPurpose (..))
 import Cardano.Ledger.Conway.TxCert (ConwayDelegCert (..), ConwayTxCert (..))
 import Cardano.Ledger.Credential (Credential (..))
@@ -47,21 +52,29 @@ import Cardano.Ledger.Hashes
   , unsafeMakeSafeHash
   )
 import Cardano.Ledger.Mary.Value (PolicyID (..))
+import Cardano.Ledger.Shelley (ShelleyEra)
+import qualified Cardano.Ledger.Shelley.Rules as Shelley
 import Cardano.Ledger.TxIn (TxId (..), TxIn (..))
+import Cardano.Logging (DetailLevel (DNormal), LogFormatting (forMachine))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Aeson
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.NonEmpty (NonEmptyMap)
 import qualified Data.Map.NonEmpty as NonEmptyMap
 import Data.Maybe (fromMaybe)
+import qualified Data.Set.NonEmpty as NonEmptySet
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
+import Data.Word (Word32)
+import Ouroboros.Consensus.Tracing ()
 import Ouroboros.Consensus.Tracing.Era.Shelley.Render
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.Golden (goldenVsString)
+import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Util.Paths (getRelPath)
 
 tests :: TestTree
@@ -72,6 +85,66 @@ tests =
         "Era.Shelley.Render"
         ($(getRelPath "golden/tracing") </> "era-shelley-render.golden")
         (pure (report shelleyRender))
+    , testCase "same-hash Receiving redeemers retain both output indexes" $ do
+        let second, third :: (DijkstraPlutusPurpose AsItem DijkstraEra, ScriptHash)
+            second = (DijkstraReceiving (AsItem 2), scriptHash 'f')
+            third = (DijkstraReceiving (AsItem 3), scriptHash 'f')
+            outputIndex index = Aeson.object ["receiving" Aeson..= (index :: Word32)]
+            keyed value = Aeson.object [Aeson.fromText (renderScriptHash (scriptHash 'f')) Aeson..= value]
+        renderMissingRedeemers (second NonEmpty.:| []) @?= keyed (outputIndex 2)
+        renderMissingRedeemers missingReceivingRedeemers
+          @?= keyed (Aeson.toJSON [outputIndex 2, outputIndex 3])
+        renderMissingRedeemers (third NonEmpty.:| [second])
+          @?= keyed (Aeson.toJSON [outputIndex 3, outputIndex 2])
+    , testGroup
+        "UnsupportedOutputAddresses"
+        [ testCase era $ actual @?= expectedUnsupportedOutputAddresses
+        | (era, actual) <- unsupportedOutputAddressFailures
+        ]
+    ]
+
+-- Body-local indexes render as a sorted plain JSON array, including zero.
+-- Construct the non-empty set out of order with a duplicate to pin that shape.
+unsupportedOutputAddressFailures :: [(String, Aeson.Value)]
+unsupportedOutputAddressFailures =
+  [
+    ( "Shelley"
+    , Aeson.Object $
+        forMachine
+          DNormal
+          (Shelley.UnsupportedOutputAddresses indexes :: Shelley.ShelleyUtxoPredFailure ShelleyEra)
+    )
+  ,
+    ( "Allegra"
+    , Aeson.Object $
+        forMachine
+          DNormal
+          (Allegra.UnsupportedOutputAddresses indexes :: Allegra.AllegraUtxoPredFailure AllegraEra)
+    )
+  ,
+    ( "Alonzo"
+    , Aeson.Object $
+        forMachine
+          DNormal
+          (Alonzo.UnsupportedOutputAddresses indexes :: Alonzo.AlonzoUtxoPredFailure AlonzoEra)
+    )
+  ,
+    ( "Conway"
+    , Aeson.Object $
+        forMachine
+          DNormal
+          (Conway.UnsupportedOutputAddresses indexes :: Conway.ConwayUtxoPredFailure ConwayEra)
+    )
+  ]
+ where
+  indexes :: NonEmptySet.NonEmptySet Word32
+  indexes = NonEmptySet.singleton 3 <> NonEmptySet.singleton 0 <> NonEmptySet.singleton 3
+
+expectedUnsupportedOutputAddresses :: Aeson.Value
+expectedUnsupportedOutputAddresses =
+  Aeson.object
+    [ "kind" Aeson..= ("UnsupportedOutputAddresses" :: Text)
+    , "outputIndexes" Aeson..= ([0, 3] :: [Word32])
     ]
 
 --
@@ -130,6 +203,7 @@ shelleyRender =
       ]
     ,
       [ ("renderMissingRedeemers", json (renderMissingRedeemers missingRedeemers))
+      , ("renderMissingRedeemers receiving", json (renderMissingRedeemers missingReceivingRedeemers))
       , ("renderIncompleteWithdrawals", json (renderIncompleteWithdrawals withdrawals))
       ]
     ]
@@ -164,7 +238,7 @@ receivingByIndex :: DijkstraPlutusPurpose AsIx DijkstraEra
 receivingByIndex = DijkstraReceiving (AsIx 7)
 
 receivingByItem :: DijkstraPlutusPurpose AsItem DijkstraEra
-receivingByItem = DijkstraReceiving (AsItem (scriptHash 'f'))
+receivingByItem = DijkstraReceiving (AsItem 7)
 
 txCert :: ConwayTxCert ConwayEra
 txCert = ConwayTxCertDeleg (ConwayRegCert (KeyHashObj (keyHash 'c')) SNothing)
@@ -186,6 +260,12 @@ missingRedeemers :: NonEmpty.NonEmpty (ConwayPlutusPurpose AsItem ConwayEra, Scr
 missingRedeemers =
   (ConwaySpending (AsItem txIn), scriptHash '7')
     NonEmpty.:| [(ConwayMinting (AsItem (PolicyID (scriptHash '8'))), scriptHash '9')]
+
+missingReceivingRedeemers ::
+  NonEmpty.NonEmpty (DijkstraPlutusPurpose AsItem DijkstraEra, ScriptHash)
+missingReceivingRedeemers =
+  (DijkstraReceiving (AsItem 2), scriptHash 'f')
+    NonEmpty.:| [(DijkstraReceiving (AsItem 3), scriptHash 'f')]
 
 withdrawals :: NonEmptyMap AccountAddress (Mismatch RelEQ Int)
 withdrawals =

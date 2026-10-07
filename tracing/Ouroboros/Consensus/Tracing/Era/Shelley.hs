@@ -643,6 +643,11 @@ instance
       , "network" .= network
       , "addrs" .= jsonNonEmptySet addrs
       ]
+  forMachine _dtal (UnsupportedOutputAddresses outputIndexes) =
+    mconcat
+      [ "kind" .= String "UnsupportedOutputAddresses"
+      , "outputIndexes" .= jsonNonEmptySet outputIndexes
+      ]
 
 instance
   ( Consensus.ShelleyBasedEra era
@@ -694,6 +699,11 @@ instance
       [ "kind" .= String "WrongNetworkWithdrawal"
       , "network" .= network
       , "addrs" .= jsonNonEmptySet addrs
+      ]
+  forMachine _dtal (Allegra.UnsupportedOutputAddresses outputIndexes) =
+    mconcat
+      [ "kind" .= String "UnsupportedOutputAddresses"
+      , "outputIndexes" .= jsonNonEmptySet outputIndexes
       ]
   -- TODO: Add the minimum allowed UTxO value to OutputTooSmallUTxO
   forMachine _dtal (Allegra.OutputTooSmallUTxO badOutputs) =
@@ -1141,6 +1151,11 @@ instance
       [ "kind" .= String "WrongNetworkWithdrawal"
       , "network" .= network
       , "addrs" .= jsonNonEmptySet addrs
+      ]
+  forMachine _dtal (Alonzo.UnsupportedOutputAddresses outputIndexes) =
+    mconcat
+      [ "kind" .= String "UnsupportedOutputAddresses"
+      , "outputIndexes" .= jsonNonEmptySet outputIndexes
       ]
   forMachine _dtal (Alonzo.OutputTooSmallUTxO badOutputs) =
     mconcat
@@ -1681,6 +1696,11 @@ instance
         [ "kind" .= String "WrongNetworkWithdrawal"
         , "network" .= network
         , "addrs" .= jsonNonEmptySet addrs
+        ]
+    Conway.UnsupportedOutputAddresses outputIndexes ->
+      mconcat
+        [ "kind" .= String "UnsupportedOutputAddresses"
+        , "outputIndexes" .= jsonNonEmptySet outputIndexes
         ]
     Conway.OutputTooSmallUTxO badOutputs ->
       mconcat
