@@ -379,7 +379,7 @@ library
     cardano-binary,
     cardano-crypto-class >=2.6 && <2.7,
     cardano-crypto-leios >=0.3,
-    cardano-diffusion:api,
+    cardano-diffusion:{api, cardano-diffusion},
     cardano-ledger-binary ^>=1.10,
     cardano-ledger-core ^>=1.22,
     cardano-ledger-dijkstra ^>=0.4,

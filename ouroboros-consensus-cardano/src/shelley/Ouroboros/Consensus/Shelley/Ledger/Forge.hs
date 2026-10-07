@@ -39,8 +39,7 @@ import LeiosDemoTypes
   , encodeLeiosEbSize
   , forgeLeiosEb
   , hashLeiosEb
-  , maxMsgLeiosBlockBytesSize
-  , msgLeiosBlockFramingSize
+  , maxLeiosEbBytesSize
   )
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
@@ -176,7 +175,7 @@ forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
           -- and the encoder have drifted apart.
           ebSize =
             assert
-              (encodeLeiosEbSize forgedEb.body <= maxMsgLeiosBlockBytesSize - msgLeiosBlockFramingSize)
+              (encodeLeiosEbSize forgedEb.body <= maxLeiosEbBytesSize)
               (encodeLeiosEbSize forgedEb.body)
           ebAnn =
             EbAnnouncement

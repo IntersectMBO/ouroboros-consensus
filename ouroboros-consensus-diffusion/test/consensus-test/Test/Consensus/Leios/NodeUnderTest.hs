@@ -34,7 +34,7 @@ import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
-import LeiosTxCache (nullLeiosTxCache)
+import LeiosTxCache (defaultLeiosTxCacheShift, newPureLeiosTxCache)
 import Ouroboros.Consensus.BlockchainTime
   ( BackoffDelay (..)
   , BlockchainTime
@@ -192,6 +192,11 @@ mkNodeKernelArgs ::
   IOSim s (NodeKernelArgs (IOSim s) PeerAddr () Blk)
 mkNodeKernelArgs cfg registry chainDB leiosDB btime = do
   publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+  -- The reference index rather than 'nullLeiosTxCache'. An inert cache misses
+  -- every transaction, so the node re-fetches ones it already holds --- which
+  -- no real node does, and which is the sort of difference a test is least
+  -- likely to notice it is relying on.
+  leiosTxCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
   pure
     NodeKernelArgs
       { tracers = nullTracers
@@ -248,7 +253,7 @@ mkNodeKernelArgs cfg registry chainDB leiosDB btime = do
       , genesisArgs = GenesisNodeKernelArgs{gnkaLoEAndGDDArgs = LoEAndGDDDisabled}
       , getDiffusionPipeliningSupport = DiffusionPipeliningOn
       , leiosDB
-      , leiosTxCache = nullLeiosTxCache
+      , leiosTxCache
       , leiosFetchRng = mkStdGen 4
       , leiosMinOfferLead = nutcMinOfferLead cfg
       }

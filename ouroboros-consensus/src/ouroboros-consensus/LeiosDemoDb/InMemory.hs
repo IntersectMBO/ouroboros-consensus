@@ -143,7 +143,7 @@ openInMemoryReader stateVar =
     LeiosDbReader
       { close = pure ()
       , lookupEbBody = imLookupEbBody stateVar
-      , lookupEbClosure = imLookupEbClosure stateVar
+      , lookupTrustedEbClosure = imLookupTrustedEbClosure stateVar
       , batchRetrieveTxs = imBatchRetrieveTxs stateVar
       , scanEbPoints = imScanEbPoints stateVar
       , -- ThreadNet persists 'stateVar' across simulated restarts, so on
@@ -397,9 +397,9 @@ imBatchRetrieveTxs stateVar ebHash offsets = atomically $ do
      where
       bytes = Map.findWithDefault IntMap.empty ebHash (imEbTxBytes state)
 
-imLookupEbClosure ::
+imLookupTrustedEbClosure ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
-imLookupEbClosure stateVar ebHash = atomically $ do
+imLookupTrustedEbClosure stateVar ebHash = atomically $ do
   state <- readTVar stateVar
   case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure Nothing

@@ -80,9 +80,15 @@ data LeiosDbReader m = LeiosDbReader
   { close :: m ()
   , lookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
   -- ^ The EB "body": tx hashes and sizes in order, no tx bytes.
-  , lookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
+  , lookupTrustedEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
   -- ^ The EB "closure": tx hashes /and/ their bytes, or 'Nothing' if the EB is
   -- not complete.
+  --
+  -- PREREQ: the caller has established that this endorser block is
+  -- trustworthy. Two things establish it: a certificate, for ChainSel applying
+  -- a cert-RB and for the forge; and the LeiosDb having called the closure
+  -- complete, for voting. Calling it on anything else reads an unbounded
+  -- number of bytes chosen by whoever made the endorser block.
   , batchRetrieveTxs ::
       HasCallStack =>
       EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]

@@ -42,6 +42,7 @@ module Ouroboros.Consensus.Network.NodeToNode
   , initiatorAndResponder
 
     -- * Leios mini-protocol limits
+  , leiosNotifyPipelineDepth
   , leiosNotifyProtocolLimits
   , leiosFetchProtocolLimits
   ) where
