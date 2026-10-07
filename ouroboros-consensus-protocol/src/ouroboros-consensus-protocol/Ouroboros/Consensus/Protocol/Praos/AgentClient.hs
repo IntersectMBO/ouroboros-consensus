@@ -35,11 +35,10 @@ import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Control.Monad (forever)
 import Control.Monad.Class.MonadAsync
 import Control.Monad.IOSim
+import Control.Tracer
 import Data.Coerce (coerce)
 import Data.Kind
 import Data.Typeable
-import Hermod.Tracing.API.ContraTracer (toContraTracer)
-import Hermod.Tracing.API.Tracer
 import Network.Socket
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.RawBearer
@@ -159,7 +158,7 @@ runKESAgentClient tracer path handleKey handleDropKey = do
                 handleDropKey
                 return Agent.RecvOK
         )
-        (toContraTracer (contramap KESAgentClientTrace tracer))
+        (contramap KESAgentClientTrace tracer)
         `catch` ( \(_e :: AsyncCancelled) ->
                     return ()
                 )

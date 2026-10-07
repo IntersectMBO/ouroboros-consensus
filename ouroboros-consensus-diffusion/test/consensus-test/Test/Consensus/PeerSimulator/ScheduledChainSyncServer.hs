@@ -12,7 +12,7 @@ module Test.Consensus.PeerSimulator.ScheduledChainSyncServer
   , runScheduledChainSyncServer
   ) where
 
-import Hermod.Tracing.API.Tracer (Tracer, mkTracer, traceWith)
+import Control.Tracer (Tracer, mkTracer, traceWith)
 import Ouroboros.Consensus.Block (Header)
 import Ouroboros.Consensus.Block.Abstract (Point (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM))

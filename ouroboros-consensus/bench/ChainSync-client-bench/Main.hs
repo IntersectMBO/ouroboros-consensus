@@ -14,11 +14,10 @@ import Cardano.Crypto.DSIGN.Mock
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Control.Monad (void)
 import Control.ResourceRegistry
+import Control.Tracer (contramap, debugTracer, nullTracer)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import Hermod.Tracing.API.ContraTracer (toContraTracer)
-import Hermod.Tracing.API.Tracer (contramap, debugTracer, nullTracer)
 import Main.Utf8 (withStdTerminalHandles)
 import Network.TypedProtocol.Channel
 import Network.TypedProtocol.Driver.Simple
@@ -102,12 +101,12 @@ oneBenchRun
       (clientChannel, serverChannel) <- createConnectedChannels
       void $
         forkLinkedThread registry "ChainSyncServer" $
-          runPeer (toContraTracer nullTracer) codecChainSyncId serverChannel $
+          runPeer nullTracer codecChainSyncId serverChannel $
             chainSyncServerPeer server
       void $
         forkLinkedThread registry "ChainSyncClient" $
           void $
-            runPipelinedPeer (toContraTracer nullTracer) codecChainSyncId clientChannel $
+            runPipelinedPeer nullTracer codecChainSyncId clientChannel $
               chainSyncClientPeerPipelined client
 
       atomically $ do

@@ -41,6 +41,7 @@ import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import qualified Control.Monad.IOSim as IOSim
 import Control.Monad.Reader
+import Control.Tracer (mkTracer)
 import Data.Functor ((<&>))
 import Data.List ((\\))
 import qualified Data.Map.Strict as Map
@@ -50,7 +51,6 @@ import Data.Time (diffTimeToPicoseconds)
 import qualified Data.TreeDiff as TD
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
-import Hermod.Tracing.API.Tracer (mkTracer)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Test.QuickCheck (elements, shrink)

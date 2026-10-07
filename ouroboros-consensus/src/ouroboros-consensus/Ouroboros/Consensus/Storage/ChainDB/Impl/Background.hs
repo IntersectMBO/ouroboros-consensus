@@ -50,6 +50,7 @@ import Control.Monad (forM_, forever, join, void)
 import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
+import Control.Tracer
 import Data.Bifunctor
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
@@ -59,7 +60,6 @@ import Data.Time.Clock
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect

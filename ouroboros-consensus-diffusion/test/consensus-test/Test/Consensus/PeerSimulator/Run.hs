@@ -14,6 +14,7 @@ import Control.Monad (foldM, forM, void, when)
 import Control.Monad.Class.MonadTime (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
+import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Data.Coerce (coerce)
 import Data.Foldable (for_)
 import Data.List (sort)
@@ -21,7 +22,6 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Typeable
-import Hermod.Tracing.API.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)

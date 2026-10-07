@@ -22,6 +22,12 @@ module Test.Consensus.PeerSimulator.Trace
   , tracerTestBlock
   ) where
 
+import Control.Tracer
+  ( Tracer
+  , contramap
+  , mkTracer
+  , traceWith
+  )
 import Data.Bifunctor (second)
 import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NE
@@ -30,12 +36,6 @@ import Data.Time.Clock
   , diffTimeToPicoseconds
   )
 import Data.Typeable (Typeable)
-import Hermod.Tracing.API.Tracer
-  ( Tracer
-  , contramap
-  , mkTracer
-  , traceWith
-  )
 import Network.TypedProtocol.Codec (AnyMessage (..))
 import Ouroboros.Consensus.Block
   ( GenesisWindow (..)

@@ -40,6 +40,7 @@ import Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except
 import Control.ResourceRegistry
+import Control.Tracer
 import Data.Bifunctor (second)
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)
@@ -54,7 +55,6 @@ import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.Void (Void)
-import Hermod.Tracing.API.Tracer
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.BlockchainTime

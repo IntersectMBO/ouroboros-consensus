@@ -52,6 +52,7 @@ import Control.DeepSeq (NFData)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
+import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Hashable (Hashable)
@@ -59,7 +60,6 @@ import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Data.Void (Void)
-import Hermod.Tracing.API.Tracer
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Ouroboros.Consensus.Block

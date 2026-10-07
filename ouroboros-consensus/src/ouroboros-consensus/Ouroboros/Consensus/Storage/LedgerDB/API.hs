@@ -224,6 +224,7 @@ import Codec.CBOR.Decoding
 import Codec.CBOR.Read
 import Codec.Serialise
 import Control.Monad.Except
+import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
@@ -232,7 +233,6 @@ import Data.Proxy
 import Data.Set (Set)
 import Data.Word
 import GHC.Generics (Generic)
-import Hermod.Tracing.API.Tracer
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

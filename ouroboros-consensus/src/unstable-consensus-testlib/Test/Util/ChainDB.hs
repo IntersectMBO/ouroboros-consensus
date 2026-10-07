@@ -12,7 +12,7 @@ module Test.Util.ChainDB
 
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.ResourceRegistry (ResourceRegistry)
-import Hermod.Tracing.API.Tracer (nullTracer)
+import Control.Tracer (nullTracer)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
   , configCodec

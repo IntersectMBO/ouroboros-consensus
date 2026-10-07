@@ -42,6 +42,7 @@ import Control.ResourceRegistry
   ( WithTempRegistry
   , modifyWithTempRegistry
   )
+import Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.List as List (foldl')
 import Data.Map.Strict (Map)
@@ -51,7 +52,6 @@ import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack
-import Hermod.Tracing.API.Tracer (Tracer, traceWith)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API

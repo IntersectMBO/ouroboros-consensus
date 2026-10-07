@@ -12,10 +12,9 @@ module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke
   ) where
 
 import Control.Monad (join)
+import Control.Tracer (contramap, nullTracer)
 import Data.Functor.Identity (Identity (..))
 import qualified Data.Map as Map
-import Hermod.Tracing.API.ContraTracer (toContraTracer)
-import Hermod.Tracing.API.Tracer (contramap, nullTracer)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -131,14 +130,14 @@ prop_smoke =
  where
   runOutboundPeer outbound outboundChannel tracer =
     runPeer
-      (toContraTracer ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer))
+      ((\x -> "Outbound (Client): " ++ show x) `contramap` tracer)
       codecObjectDiffusionId
       outboundChannel
       (objectDiffusionOutboundPeer outbound)
       >> pure ()
   runInboundPeer inbound inboundChannel tracer =
     runPipelinedPeer
-      (toContraTracer ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer))
+      ((\x -> "Inbound (Server): " ++ show x) `contramap` tracer)
       codecObjectDiffusionId
       inboundChannel
       (objectDiffusionInboundPeerPipelined inbound)

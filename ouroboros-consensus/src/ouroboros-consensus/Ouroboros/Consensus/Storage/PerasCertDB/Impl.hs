@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Storage.PerasCertDB.Impl
 
 import Control.Monad (when)
 import Control.Monad.Except (throwError)
+import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Foldable (for_)
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
@@ -25,7 +26,6 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
-import Hermod.Tracing.API.Tracer (Tracer, nullTracer, traceWith)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))
