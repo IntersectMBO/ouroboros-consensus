@@ -874,10 +874,8 @@ doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKES
 
     DSIGN.verifySignedDSIGN () vkcold (OCert.ocertToSignable oc) tau
       ?!: InvalidSignatureOCERT n c0
-    withSignableDict $
-      KES.verifySignedKES () vk_hot t (Views.hvSigned b) (Views.hvSignature b)
-        ?!: InvalidKesSignatureOCERT kp_ c0_ t praosMaxKESEvo
-
+    withSignableDict (KES.verifySignedKES () vk_hot t (Views.hvSigned b) (Views.hvSignature b))
+      ?!: InvalidKesSignatureOCERT kp_ c0_ t praosMaxKESEvo
     case currentIssueNo of
       Nothing -> do
         throwError $ NoCounterForKeyHashOCERT hk
@@ -905,15 +903,8 @@ doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKES
     | otherwise =
         Nothing
 
-  -- The result type is fixed rather than polymorphic in @r@: inside the
-  -- implication this constraint introduces, an @r@ would be untouchable, so
-  -- GHC could not solve it against the caller's type (it manages on 9.12 but
-  -- not on 9.6 or 9.10).
   withSignableDict ::
-    ( KES.Signable (KES c) (Views.BaseHeaderBody pext c) =>
-      Except (BasePraosValidationErr pext c) ()
-    ) ->
-    Except (BasePraosValidationErr pext c) ()
+    (KES.Signable (KES c) (Views.BaseHeaderBody pext c) => r) -> r
   withSignableDict k = case singPraosExtension (Proxy @pext) of
     SingPextNone -> k
     SingPextLeios -> k

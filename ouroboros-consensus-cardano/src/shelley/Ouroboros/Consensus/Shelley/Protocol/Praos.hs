@@ -231,9 +231,8 @@ instance
    where
     hv = headerToView @pext hdr
 
-    -- Each branch refines @pext@, so the body type reduces to one 'PraosCrypto'
-    -- covers; it cannot be discharged for an abstract @pext@.
-    withSignableDict :: (KES.Signable (KES c) (BaseHeaderBody pext c) => r) -> r
+    withSignableDict ::
+      (KES.Signable (KES c) (BaseHeaderBody pext c) => r) -> r
     withSignableDict k = case singPraosExtension (Proxy @pext) of
       SingPextNone -> k
       SingPextLeios -> k
@@ -259,12 +258,7 @@ instance
     case singPraosExtension (Proxy @pext) of
       SingPextNone -> do
         PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il praosBody
-        -- The annotations here and below are load-bearing: 'PraosCodec.Header'
-        -- and 'LeiosCodec.Header' are pattern synonyms carrying a @Crypto
-        -- crypto@ constraint, so without one GHC has to solve that @crypto@
-        -- inside two implications --- the synonym's and this branch's @pext@
-        -- refinement --- where it is untouchable. 9.12 copes; 9.6 and 9.10 do
-        -- not.
+        -- A type annotation for sake of GHCs older than 9.12.
         pure (PraosCodec.Header praosToSign praosSignature :: PraosCodec.Header c)
       SingPextLeios -> case leios of
         SJustLeios (containsCert, mbAnn) -> do
@@ -276,12 +270,7 @@ instance
                 (toCodecEbAnnouncement <$> mbAnn)
           pure (LeiosCodec.Header praosToSign praosSignature :: LeiosCodec.Header c)
    where
-    -- The signature is load-bearing. Without it 'MonoLocalBinds' still gives
-    -- this a @crypto@ metavariable, but one born out here, which each branch
-    -- below then has to solve inside its @pext@ refinement, where it is
-    -- untouchable. 9.12 copes; 9.6 and 9.10 do not. The annotations on the two
-    -- header constructions are for the same reason: both 'Header's are pattern
-    -- synonyms carrying a @Crypto crypto@ constraint.
+    -- A signature for the sake of GHCs older than 9.12.
     praosBody :: PraosToSign c -> PraosCodec.HeaderBody c
     praosBody
       PraosToSign
