@@ -337,7 +337,7 @@ decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
           -- detect it the other way around: if we have a cert, but not
           -- downloaded it ourselves -> warning!
-          mClosure <- lookupEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
+          mClosure <- lookupTrustedEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
           case mClosure of
             Nothing -> do
               traceWith tracer $

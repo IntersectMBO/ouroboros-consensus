@@ -89,7 +89,14 @@ import Test.QuickCheck
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit
+  ( Assertion
+  , assertBool
+  , assertEqual
+  , assertFailure
+  , testCase
+  , (@?=)
+  )
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
@@ -152,8 +159,8 @@ rwScanEbPoints = scanEbPoints . rwReader
 rwLookupEbBody :: RW -> EbHash -> IO [(TxHash, BytesSize)]
 rwLookupEbBody = lookupEbBody . rwReader
 
-rwLookupEbClosure :: RW -> EbHash -> IO (Maybe [(TxHash, BS.ByteString)])
-rwLookupEbClosure = lookupEbClosure . rwReader
+rwLookupTrustedEbClosure :: RW -> EbHash -> IO (Maybe [(TxHash, BS.ByteString)])
+rwLookupTrustedEbClosure = lookupTrustedEbClosure . rwReader
 
 rwBatchRetrieveTxs :: RW -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe BS.ByteString)]
 rwBatchRetrieveTxs = batchRetrieveTxs . rwReader
@@ -231,13 +238,65 @@ mkTestGroups impl =
           withFreshDb impl test_multipleSlotsSameHash
       ]
   , testGroup
-      "lookupEbClosure"
+      "misstated transaction sizes"
+      [ testCase "a body claiming the wrong size never completes" $
+          withFreshDb impl test_misstatedSizeNeverCompletes
+      ]
+  , testGroup
+      "lookupTrustedEbClosure"
       [ testProperty "complete EB returns Just with tx data" $ prop_completedEbComplete impl
       , testProperty "no txs returns Nothing" $ prop_completedEbMissingTxs impl
       , testProperty "partial txs returns Nothing" $ prop_completedEbPartialTxs impl
       , testProperty "no body returns Nothing" $ prop_completedEbNoBody impl
       ]
   ]
+
+-- | An endorser block stating a size that is not its transaction's own never
+-- has its closure called complete, so no @AcquiredEbTxs@ is emitted for it.
+--
+-- Runs against both backends. The node must not behave differently depending
+-- on which one it was built with, and the two implement this by different
+-- means: the row pre-allocated at the declared size and a @length@ guard on
+-- the fill, against the same check in the in-memory accept filter.
+--
+-- Only the body-first order is covered here. The other order --- holding the
+-- transaction before the body lands --- cannot be posed to a single endorser
+-- block, because the bytes are owned per endorser block and a write before the
+-- body has no row to land on. Posing it needs a second, honest endorser block
+-- to hold the transaction, which is what
+-- 'Test.Consensus.Leios.RecoveryPath' does against a real node.
+test_misstatedSizeNeverCompletes :: LeiosDbHandle IO -> IO ()
+test_misstatedSizeNeverCompletes db = do
+  chan <- subscribeEbNotifications db
+  let point = mkTestPoint (SlotNo 1) 1
+      eb = mkTestEb 1
+  case V.toList (leiosEbTxs eb) of
+    [(_txHash, claimed)] -> withRW db $ \con -> do
+      -- One byte longer than the body says. A transaction hash covers its
+      -- bytes, so this is a claim no honest endorser block makes.
+      let txs = [(0, BS.replicate (fromIntegral claimed + 1) 0)]
+      rwInsertEbPoint con point (encodeLeiosEbSize eb)
+      void $ rwInsertEbBody con point eb
+      void $ rwInsertTxs con point txs
+      -- The body's own arrival is still worth announcing; its closure is not.
+      notifications <- drainChan chan
+      assertBool
+        "expected an AcquiredEb for the body"
+        (not (null [() | AcquiredEb{} <- notifications]))
+      assertEqual
+        "the closure of a body that misstates a size must not be announced"
+        []
+        [p | AcquiredEbTxs p <- notifications]
+    other -> assertFailure $ "expected a one-transaction endorser block: " <> show (length other)
+
+-- | Everything on the channel right now.
+drainChan :: StrictTChan IO LeiosEbNotification -> IO [LeiosEbNotification]
+drainChan chan = go []
+ where
+  go acc =
+    atomically (tryReadTChan chan) >>= \case
+      Nothing -> pure (reverse acc)
+      Just x -> go (x : acc)
 
 -- * QuickCheck generators
 
@@ -857,7 +916,7 @@ assertOfferBlockTxs expectedPoint = \case
   AcquiredEb _ _ ->
     assertFailure "expected AcquiredEbTxs, got AcquiredEb"
 
--- * Property tests for lookupEbClosure
+-- * Property tests for lookupTrustedEbClosure
 
 -- | Property: complete EB (all txs inserted) returns Just with correct tx data.
 prop_completedEbComplete :: DbImpl -> Property
@@ -900,11 +959,11 @@ prop_completedEbMissingTxs impl =
       ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
         rwInsertEbPoint con point (encodeLeiosEbSize eb)
         void $ rwInsertEbBody con point eb
-        (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+        (result, queryTime) <- timed $ rwLookupTrustedEbClosure con (pointEbHash point)
         pure $
           result === Nothing
             & counterexample "Expected Nothing when no txs are present"
-            & tabulate "lookupEbClosure (no txs)" [timeBucket queryTime]
+            & tabulate "lookupTrustedEbClosure (no txs)" [timeBucket queryTime]
             & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- | Property: EB with partial txs (at least one missing) returns Nothing.
@@ -939,11 +998,11 @@ prop_completedEbNoBody impl =
   forAll genPoint $ \point ->
     ioProperty $ withFreshDb impl $ \db -> withRW db $ \con -> do
       rwInsertEbPoint con point 1000
-      (result, queryTime) <- timed $ rwLookupEbClosure con (pointEbHash point)
+      (result, queryTime) <- timed $ rwLookupTrustedEbClosure con (pointEbHash point)
       pure $
         result === Nothing
           & counterexample "Expected Nothing for EB with no body inserted"
-          & tabulate "lookupEbClosure (no body)" [timeBucket queryTime]
+          & tabulate "lookupTrustedEbClosure (no body)" [timeBucket queryTime]
 
 -- * truncateLeiosDbAfterSlot
 
@@ -1125,7 +1184,7 @@ test_deleteDanglingTxs volDbPath _immDbPath db = do
   deleteDanglingTxs volDbPath
 
   withRW db $ \con -> do
-    closure <- rwLookupEbClosure con ebHash
+    closure <- rwLookupTrustedEbClosure con ebHash
     fmap (map fst) closure @?= Just (map fst (V.toList (leiosEbTxs eb)))
     -- A closure resolves only when the db holds every tx the body names. So
     -- this probe resolves only if the delete missed the dangling tx.
@@ -1133,5 +1192,5 @@ test_deleteDanglingTxs volDbPath _immDbPath db = do
         probePoint = MkLeiosPoint 6 (mkTestEbHash 2)
     rwInsertEbPoint con probePoint (encodeLeiosEbSize probeEb)
     void $ rwInsertEbBody con probePoint probeEb
-    probeClosure <- rwLookupEbClosure con probePoint.pointEbHash
+    probeClosure <- rwLookupTrustedEbClosure con probePoint.pointEbHash
     probeClosure @?= Nothing

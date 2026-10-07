@@ -14,7 +14,7 @@
 --   the pre-populated EBs.
 --
 -- * __Chain-sel reader__ (1 thread): mimics the block-apply path via
---   'lookupEbClosure' — the same read that 'resolveLeiosClosure'
+--   'lookupTrustedEbClosure' — the same read that 'resolveLeiosClosure'
 --   issues per Dijkstra-era CertRB.
 --
 -- * __GC ticker__ (1 thread): periodic 'leiosDbGarbageCollect' calls (a
@@ -49,7 +49,7 @@ import LeiosDemoDb
   , batchRetrieveTxs
   , leiosDbGarbageCollect
   , lookupEbBody
-  , lookupEbClosure
+  , lookupTrustedEbClosure
   , newLeiosDBSQLite
   , withReader
   , withWriter
@@ -81,7 +81,7 @@ main = do
       , "Concurrent workload per iteration:"
       , "  Fetch clients   (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
       , "  Fetch servers   (×" <> show numFetchServers <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
-      , "  Chain-sel reader(×1): " <> show numChainSelReads <> " lookupEbClosure calls"
+      , "  Chain-sel reader(×1): " <> show numChainSelReads <> " lookupTrustedEbClosure calls"
       , "  GC ticker       (×1): " <> show numGcTicks <> " garbageCollect calls"
       , ""
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
@@ -152,12 +152,12 @@ fetchClient db range =
     forM_ range (insertOneEb w)
 
 -- | Mirrors chain-selection's block-apply path: repeated
--- 'lookupEbClosure' for the tx closure of each certified EB.
+-- 'lookupTrustedEbClosure' for the tx closure of each certified EB.
 chainSelReader :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
 chainSelReader db points =
   withReader db $ \r ->
     forM_ (take numChainSelReads (cycle points)) $ \p ->
-      lookupEbClosure r p.pointEbHash
+      lookupTrustedEbClosure r p.pointEbHash
 
 -- | Fires periodic garbage-collect calls. Handle-level operation; touches
 -- every table when implemented (currently a no-op backend-side, but the

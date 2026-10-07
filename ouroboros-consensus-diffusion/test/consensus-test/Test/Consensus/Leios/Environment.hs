@@ -27,6 +27,9 @@ module Test.Consensus.Leios.Environment
   ( PeerEnv (..)
   , announceEb
   , connectPeer
+  , heardBodyOffers
+  , heardClosureOffers
+  , requestEbTxs
   , heardOffers
   , heardUnannouncedOffers
   , newPeerEnv
@@ -58,9 +61,13 @@ import Data.ByteString.Lazy (ByteString)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Strict as V
+import Data.Word (Word16, Word64)
+import LeiosDemoLogic (bitmapOffsets)
 import LeiosDemoOnlyTestFetch
   ( LeiosFetchRequestHandler (..)
   , Message (..)
+  , SomeLeiosFetchJob (..)
+  , leiosFetchClientPeer
   , leiosFetchServerPeer
   )
 import LeiosDemoOnlyTestNotify (LeiosNotify (StBusy, StIdle))
@@ -85,7 +92,7 @@ import Ouroboros.Network.Channel (createConnectedChannels)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
 import Ouroboros.Network.Context (ResponderContext (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
-import Ouroboros.Network.Driver.Simple (runPeer)
+import Ouroboros.Network.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import Ouroboros.Network.Mock.ProducerState
@@ -131,6 +138,11 @@ data PeerEnv m = PeerEnv
   -- ^ What the node has said to this peer over LeiosNotify, in order. The
   -- node is the upstream peer on this second LeiosNotify connection, which is
   -- how a test sees what it relays.
+  , peFetchRequests :: PlainSTM.StrictTVar m [SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m]
+  -- ^ What this peer has yet to ask the node for over LeiosFetch, in order.
+  -- The node is the server on that second LeiosFetch connection, so this is
+  -- how a test says what a downstream peer requests of it --- including things
+  -- no honest peer would ask for.
   }
 
 -- | One thing a peer says over LeiosNotify.
@@ -144,7 +156,16 @@ newPeerEnv = do
   peEbs <- newTVarIO Map.empty
   peNotifications <- PlainSTM.newTVarIO []
   peHeard <- PlainSTM.newTVarIO []
-  pure PeerEnv{peChain, peServeThrough, peEbs, peNotifications, peHeard}
+  peFetchRequests <- PlainSTM.newTVarIO []
+  pure
+    PeerEnv
+      { peChain
+      , peServeThrough
+      , peEbs
+      , peNotifications
+      , peHeard
+      , peFetchRequests
+      }
 
 -- | The endorser blocks the node offered this peer without having first
 -- announced them to it.
@@ -228,7 +249,68 @@ heardOffers PeerEnv{peHeard} =
     Notify.MsgLeiosBlockTxsOffer point -> [point]
     _ -> []
 
+-- | The endorser blocks whose /body/ the node has told this peer it holds.
+heardBodyOffers :: PeerEnv (IOSim s) -> IOSim s [LeiosPoint]
+heardBodyOffers PeerEnv{peHeard} =
+  atomically $
+    foldMap offered <$> PlainSTM.readTVar peHeard
+ where
+  offered :: LeiosNotification -> [LeiosPoint]
+  offered = \case
+    Notify.MsgLeiosBlockOffer point _size -> [point]
+    _ -> []
+
+-- | The endorser blocks whose /closure/ the node has told this peer it holds.
+--
+-- Narrower than 'heardOffers' on purpose: offering a body says only that the
+-- node has the reference list, which it checked against the announced size,
+-- whereas offering the closure says it holds every transaction the block names
+-- at the size the block names it at.
+heardClosureOffers :: PeerEnv (IOSim s) -> IOSim s [LeiosPoint]
+heardClosureOffers PeerEnv{peHeard} =
+  atomically $
+    foldMap offered <$> PlainSTM.readTVar peHeard
+ where
+  offered :: LeiosNotification -> [LeiosPoint]
+  offered = \case
+    Notify.MsgLeiosBlockTxsOffer point -> [point]
+    _ -> []
+
+-- | Have this peer ask the node for these offsets of this endorser block's
+-- closure.
+--
+-- The bitmaps are passed through as given, so a test can ask for more than any
+-- honest peer would: the node's own fetch logic batches its requests well
+-- inside the bound the server enforces, and nothing else would produce one
+-- that breaches it.
+requestEbTxs :: PeerEnv (IOSim s) -> LeiosPoint -> [(Word16, Word64)] -> IOSim s ()
+requestEbTxs PeerEnv{peFetchRequests} point bitmaps =
+  atomically $
+    PlainSTM.modifyTVar peFetchRequests (<> [job])
+ where
+  job =
+    MkSomeLeiosFetchJob
+      (MsgLeiosBlockTxsRequest point bitmaps)
+      (pure (\_reply -> pure ()))
+
+-- | The next thing this peer has to ask for, blocking until it has something.
+--
+-- Never finishes: like the LeiosNotify client, this peer simply goes on asking
+-- for as long as the test runs.
+nextFetchRequest ::
+  PeerEnv (IOSim s) ->
+  IOSim s (Either () (SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx (IOSim s)))
+nextFetchRequest PeerEnv{peFetchRequests} = atomically $ do
+  PlainSTM.readTVar peFetchRequests >>= \case
+    [] -> retry
+    job : rest -> do
+      PlainSTM.writeTVar peFetchRequests rest
+      pure (Right job)
+
 -- | Make this endorser block, and its closure, available from this peer.
+--
+-- An empty closure is a peer that has the body and withholds the transactions:
+-- it will answer body requests but stalls on a closure request forever.
 plantEb ::
   PeerEnv (IOSim s) -> LeiosEb -> [(TxHash, BS.ByteString)] -> IOSim s ()
 plantEb PeerEnv{peEbs} eb closure =
@@ -257,6 +339,7 @@ connectPeer nut registry addr penv = do
   (lnClient, lnServer) <- createConnectedChannels
   (lnDownClient, lnDownServer) <- createConnectedChannels
   (lfClient, lfServer) <- createConnectedChannels
+  (lfDownClient, lfDownServer) <- createConnectedChannels
 
   let codecs = peerCodecs nut
       apps = peerApps nut
@@ -313,11 +396,17 @@ connectPeer nut registry addr penv = do
   fork ("LeiosNotify server (node) " <> show addr) $
     void $
       NTN.aLeiosNotifyServer apps version (responderCtx addr) lnDownServer
+  -- Pipelined, to the same depth the node's own client uses. The node drops a
+  -- notification it has no credit to send, by design, so a downstream peer
+  -- that does not keep its requests outstanding silently misses offers --- and
+  -- a test built on one would conclude the node never made them.
   fork ("LeiosNotify client (env) " <> show addr) $
     void $
-      runPeer (sayTracer ("ln-down " <> show addr)) (NTN.cLeiosNotifyCodec codecs) lnDownClient $
-        Notify.leiosNotifyClientPeer
-          (pure (Right record) :: IOSim s (Either () (LeiosNotification -> IOSim s ())))
+      runPipelinedPeer (sayTracer ("ln-down " <> show addr)) (NTN.cLeiosNotifyCodec codecs) lnDownClient $
+        Notify.toLeiosNotifyClientPeerPipelined $
+          Notify.leiosNotifyClientPeerPipelined
+            (pure (Right NTN.leiosNotifyPipelineDepth) :: IOSim s (Either () Int))
+            (pure record)
 
   fork ("LeiosFetch client " <> show addr) $
     void $
@@ -326,6 +415,16 @@ connectPeer nut registry addr penv = do
     void $
       runPeer (sayTracer ("lf " <> show addr)) (NTN.cLeiosFetchCodec codecs) lfServer $
         leiosFetchServerPeer (pure (leiosFetchHandlerOf penv))
+
+  -- The other direction of LeiosFetch: the node is the server, and this
+  -- environment client asks it for whatever 'requestEbTxs' has queued.
+  fork ("LeiosFetch server (node) " <> show addr) $
+    void $
+      NTN.aLeiosFetchServer apps version (responderCtx addr) lfDownServer
+  fork ("LeiosFetch client (env) " <> show addr) $
+    void $
+      runPeer (sayTracer ("lf-down " <> show addr)) (NTN.cLeiosFetchCodec codecs) lfDownClient $
+        leiosFetchClientPeer (nextFetchRequest penv)
 
 {-------------------------------------------------------------------------------
   The servers
@@ -405,14 +504,22 @@ leiosFetchHandlerOf PeerEnv{peEbs} = MkLeiosFetchRequestHandler $ \case
   MsgLeiosBlockRequest point -> do
     (eb, _closure) <- atomically $ awaitEb point
     pure $ MsgLeiosBlock eb
+  -- A peer that holds the body but not (all of) the closure simply does not
+  -- answer, which is the one thing no peer can be caught at. Answering with
+  -- fewer txs than were asked for would instead be a protocol violation, and
+  -- the node would rightly kill the connection over it.
   MsgLeiosBlockTxsRequest point bitmaps -> do
-    (eb, closure) <- atomically $ awaitEb point
-    let txs =
-          V.fromList
-            [ MkLeiosTx bytes
-            | (txHash, _size) <- V.toList (leiosEbTxs eb)
-            , Just bytes <- [Map.lookup txHash closure]
+    txs <- atomically $ do
+      (eb, closure) <- awaitEb point
+      let ebTxs = leiosEbTxs eb
+          asked =
+            [ Map.lookup txHash closure
+            | offset <- bitmapOffsets bitmaps
+            , Just (txHash, _size) <- [ebTxs V.!? offset]
             ]
+      case sequence asked of
+        Nothing -> retry
+        Just bytess -> pure $ V.fromList (map MkLeiosTx bytess)
     pure $ MsgLeiosBlockTxs point bitmaps txs
  where
   awaitEb point = do

@@ -257,7 +257,7 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
         , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
         , lookupEbBody = sqlLookupEbBody conn
         , batchRetrieveTxs = sqlBatchRetrieveTxs conn
-        , lookupEbClosure = sqlLookupEbClosure conn
+        , lookupTrustedEbClosure = sqlLookupTrustedEbClosure conn
         }
 
   openWriter writeQueue =
@@ -868,7 +868,7 @@ data VolStmts = VolStmts
   , stDecrMissingCount :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
-  , stLookupEbClosure :: !DB.Statement
+  , stLookupTrustedEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
   }
 
@@ -894,7 +894,7 @@ data Conn = Conn
 -- before their connection.
 data ImmStmts = ImmStmts
   { immStLookupEbBody :: !DB.Statement
-  , immStLookupEbClosure :: !DB.Statement
+  , immStLookupTrustedEbClosure :: !DB.Statement
   , immStBatchRetrieveTxs :: !DB.Statement
   , immStFilterPresent :: !DB.Statement
   }
@@ -902,7 +902,7 @@ data ImmStmts = ImmStmts
 prepareImmStmts :: HasCallStack => DB.Database -> IO ImmStmts
 prepareImmStmts db = do
   immStLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
-  immStLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
+  immStLookupTrustedEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   immStBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
   immStFilterPresent <- dbPrepare db (fromString sql_imm_filter_present)
   pure ImmStmts{..}
@@ -911,7 +911,7 @@ prepareImmStmts db = do
 finalizeImmStmts :: ImmStmts -> IO ()
 finalizeImmStmts ImmStmts{..} = do
   dbFinalize immStLookupEbBody
-  dbFinalize immStLookupEbClosure
+  dbFinalize immStLookupTrustedEbClosure
   dbFinalize immStBatchRetrieveTxs
   dbFinalize immStFilterPresent
 
@@ -929,7 +929,7 @@ prepareVolStmts db = do
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
-  stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
+  stLookupTrustedEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
   pure VolStmts{..}
 
@@ -948,7 +948,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stDecrMissingCount
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
-  dbFinalize stLookupEbClosure
+  dbFinalize stLookupTrustedEbClosure
   dbFinalize stScanCompleteEbsSince
 
 -- | Run an action on a pre-prepared statement and always @sqlite3_reset@
@@ -1514,6 +1514,23 @@ sqlInsertEbPoint conn point ebBytesSize = do
 
 -- | Persist an EB body. The point MUST already be present (inserted
 -- via 'sqlInsertEbPoint' on the announcement path).
+--
+-- TODO Nothing here says an endorser block was caught misstating a
+-- transaction's size, though this is where it is first detectable: the size
+-- predicate in 'sql_insert_missing_txs' leaves such a body waiting on a
+-- transaction we already hold, so its @missingTxCount@ stays positive for
+-- good. A trace would want to fire once per offending endorser block rather
+-- than once per transaction, which needs state neither this function nor
+-- 'sqlInsertTxs' keeps, and there is no action to take on it either way ---
+-- the issuer is not a peer we are connected to, and the peer that relayed the
+-- body may be perfectly honest. Until that is worth building, an old endorser
+-- block stuck at a positive @missingTxCount@ is the signal, and this names
+-- them:
+--
+-- > SELECT e.ebHashBytes, COUNT(*) FROM ebTxs e
+-- > JOIN txs t ON e.txHashBytes = t.txHashBytes
+-- > WHERE t.txBytesSize <> e.txBytesSize
+-- > GROUP BY e.ebHashBytes
 sqlInsertEbBody ::
   Tracer IO TraceLeiosDb ->
   Conn ->
@@ -1606,6 +1623,11 @@ readReturningInt64 stmt =
         DB.Done -> pure n
         DB.Row -> throwLeiosDbException "readReturningInt64: expected exactly one row from RETURNING"
 
+-- | Persist arriving transactions, completing the closure of every endorser
+-- block that was waiting on them.
+--
+-- TODO As 'sqlInsertEbBody': an endorser block left waiting here because it
+-- misstated this transaction's size goes unremarked, and for the same reasons.
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
   Conn ->
@@ -1702,6 +1724,8 @@ immBatchRetrieveTxs conn ebHash offsets =
  where
   Conn{connImmStmts = ImmStmts{immStBatchRetrieveTxs = stmt}} = conn
 
+-- | Walk the joined rows, the way 'closureLoop' walks them until a tx is
+-- missing.
 retrieveLoop ::
   DB.Statement ->
   [(Int, TxHash, Maybe ByteString)] ->
@@ -1812,8 +1836,8 @@ jsonIntArray xs =
   intersperseB _ [x] = [x]
   intersperseB s (x : rest) = x : s : intersperseB s rest
 
-sqlLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
-sqlLookupEbClosure conn ebHash = do
+sqlLookupTrustedEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlLookupTrustedEbClosure conn ebHash = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
       dbBindBlob stmt 1 (ebHashBytes ebHash)
@@ -1824,19 +1848,19 @@ sqlLookupEbClosure conn ebHash = do
   -- answer for it, or replaying its cert-RB fails.
   case vol of
     Just rows -> pure (Just rows)
-    Nothing -> immLookupEbClosure conn ebHash
+    Nothing -> immLookupTrustedEbClosure conn ebHash
  where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stLookupEbClosure = stmt}} = conn
+  Conn{conVolDb = db, connVolStmts = VolStmts{stLookupTrustedEbClosure = stmt}} = conn
 
--- | Immutable-partition fallback of 'sqlLookupEbClosure'. Closures land there
+-- | Immutable-partition fallback of 'sqlLookupTrustedEbClosure'. Closures land there
 -- atomically and whole, so any rows are all the rows.
-immLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
-immLookupEbClosure conn ebHash =
+immLookupTrustedEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+immLookupTrustedEbClosure conn ebHash =
   useStmt stmt $ do
     dbBindBlob stmt 1 (ebHashBytes ebHash)
     closureLoop stmt []
  where
-  Conn{connImmStmts = ImmStmts{immStLookupEbClosure = stmt}} = conn
+  Conn{connImmStmts = ImmStmts{immStLookupTrustedEbClosure = stmt}} = conn
 
 closureLoop ::
   DB.Statement -> [(TxHash, ByteString)] -> IO (Maybe [(TxHash, ByteString)])

@@ -56,6 +56,7 @@ module Test.Util.LeiosTestBlock
   , leiosTestEbPoint
   , leiosTestTxBytes
   , mkLeiosTestEb
+  , mkLeiosTestEbClaiming
   , maxLeiosTestChainLength
 
     -- * Building chains
@@ -119,7 +120,7 @@ import qualified Data.Vector.Strict as V
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoDb (lookupEbClosure)
+import LeiosDemoDb (lookupTrustedEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( AnnouncementFields (..)
@@ -468,7 +469,7 @@ instance ResolveLeiosBlock LeiosTestBlock where
   -- The closure the LeiosDb holds for this endorser block, decoded back into
   -- transactions. A CertRB is not selectable until this succeeds.
   resolveLeiosClosure leiosDb ebHash =
-    lookupEbClosure leiosDb ebHash >>= \case
+    lookupTrustedEbClosure leiosDb ebHash >>= \case
       Nothing -> pure $ Left $ LeiosClosureMissing ebHash
       Just closure -> pure $ traverse decodeOne closure
    where
@@ -1225,14 +1226,29 @@ leiosTestTxBytes = BL.toStrict . serialise . LeiosTestGenTx
 -- the body on the wire --- which is what a header announces.
 mkLeiosTestEb :: [LeiosTestTx] -> (LeiosEb, [(TxHash, BS.ByteString)], BytesSize)
 mkLeiosTestEb txs =
+  mkLeiosTestEbClaiming
+    [ (tx, fromIntegral $ BS.length $ leiosTestTxBytes tx)
+    | tx <- txs
+    ]
+
+-- | As 'mkLeiosTestEb', but each reference claims the given size rather than
+-- the transaction's actual size.
+--
+-- Only an adversary builds one of these. An endorser block naming a
+-- transaction is asserting how big it is, and a node that already holds that
+-- transaction --- having fetched it for some other endorser block --- never
+-- fetches it again, so it never compares the assertion against the bytes.
+mkLeiosTestEbClaiming ::
+  [(LeiosTestTx, BytesSize)] -> (LeiosEb, [(TxHash, BS.ByteString)], BytesSize)
+mkLeiosTestEbClaiming claims =
   ( eb
   , [(txHash, bytes) | (txHash, _size, bytes) <- entries]
   , fromIntegral $ BS.length $ serialize' shelleyProtVer $ encodeLeiosEb eb
   )
  where
   entries =
-    [ (hashLeiosTx leiosTx, fromIntegral (BS.length bytes), bytes)
-    | tx <- txs
+    [ (hashLeiosTx leiosTx, claimed, bytes)
+    | (tx, claimed) <- claims
     , let bytes = leiosTestTxBytes tx
     , let leiosTx = MkLeiosTx bytes
     ]

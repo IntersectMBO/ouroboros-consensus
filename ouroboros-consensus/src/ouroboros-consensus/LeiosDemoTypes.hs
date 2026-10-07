@@ -18,6 +18,8 @@
 
 module LeiosDemoTypes
   ( module LeiosDemoTypes
+  , maxLeiosTxsRequestBytesSize
+  , maxLeiosEbBytesSize
 
     -- * Re-exports
   , module Cardano.Crypto.Leios
@@ -115,7 +117,12 @@ import GHC.Generics (Generic)
 import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
-import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
+import LeiosDemoOnlyTestFetch
+  ( LeiosFetch
+  , Message (..)
+  , maxLeiosEbBytesSize
+  , maxLeiosTxsRequestBytesSize
+  )
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
@@ -148,7 +155,6 @@ import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
   )
-import Ouroboros.Network.Protocol.Limits (largeByteLimit)
 import System.Random (StdGen)
 import Text.Pretty.Simple (pShow)
 
@@ -1214,7 +1220,7 @@ demoLeiosFetchStaticEnv :: LeiosFetchStaticEnv
 demoLeiosFetchStaticEnv =
   MkLeiosFetchStaticEnv
     { maxRequestedBytesSizePerPeer = 5 * million
-    , maxRequestBytesSize = 500 * thousand
+    , maxRequestBytesSize = maxLeiosTxsRequestBytesSize
     , maxJobBytesSize = 64 * thousandBase2
     , maxJobTxCount = 20000 -- TODO do we want this to be low enough to matter?
     , fetchPriorityWindowSlots = 10 -- TODO read dynamically from ledger state
@@ -1226,8 +1232,6 @@ demoLeiosFetchStaticEnv =
   million = 10 ^ (6 :: Int)
   millionBase2 :: Num a => a
   millionBase2 = 2 ^ (20 :: Int)
-  thousand :: Num a => a
-  thousand = 10 ^ (3 :: Int)
   thousandBase2 :: Num a => a
   thousandBase2 = 2 ^ (10 :: Int)
 
@@ -2815,31 +2819,18 @@ leiosExtValidationErrorForHuman = \case
 -- rather than an undiffusable one ('leiosEndorserBlockMeasure') -- silently,
 -- today; a trace when that cap bites would be worth adding.
 
--- | The largest Leios block message we will send or accept: the LeiosFetch
--- codec's own byte limit for its Block state ('byteLimitsLeiosFetch' returns
--- 'largeByteLimit' there), so everything sized from this holds anything a peer
--- can deliver, by construction.
-maxMsgLeiosBlockBytesSize :: BytesSize
-maxMsgLeiosBlockBytesSize = fromIntegral largeByteLimit
-
--- | The bytes @MsgLeiosBlock@ writes around the EB it carries (its list length
--- and word tag), which the codec's message limit measures alongside the body.
--- An EB body must stay this far under 'maxMsgLeiosBlockBytesSize' to diffuse.
-msgLeiosBlockFramingSize :: BytesSize
-msgLeiosBlockFramingSize = 2
-
--- | The most transactions any EB the codec will accept can name. Sizes the
--- fetch buffers and bounds the wire bitmaps.
+-- | The most transactions an endorser block may name. Sizes the fetch buffers
+-- and bounds the wire bitmaps.
 --
 -- Those buffers are allocated before any ledger state is in reach, which is
--- why this derives from the codec limit and not from the protocol parameter;
--- the mempool in turn plans EBs within the codec limit, so a forged EB always
--- fits the buffers of every honest peer.
+-- why this derives from the design ceiling and not from the protocol
+-- parameter; the mempool in turn plans EBs within that same ceiling, so a
+-- forged EB always fits the buffers of every honest peer.
 maxTxsPerEb :: Int
 maxTxsPerEb =
-  (msgLimit - framing) `div` minItemSize
+  (ebLimit - framing) `div` minItemSize
  where
-  msgLimit = fromIntegral $ maxMsgLeiosBlockBytesSize - msgLeiosBlockFramingSize
+  ebLimit = fromIntegral maxLeiosEbBytesSize
 
   -- The whole reference list less its framing, over the smallest a reference
   -- can be: both come from the encoder, so the buffers track it exactly.
