@@ -220,9 +220,8 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
                 leiosNotifyServerPeer
                   ( MVar.takeMVar (leiosMailbox leiosContext) <&> \case
                       (p, Just sz) -> MsgLeiosBlockOffer p sz
-                      -- offering the bound covers the whole closure without knowing its size
-                      (p, Nothing) ->
-                        MsgLeiosBlockTxsOffer p (Leios.maxEbClosureBytesSize Leios.demoLeiosFetchStaticEnv)
+                      -- [0, maxBound) offers the whole closure without knowing its size
+                      (p, Nothing) -> MsgLeiosBlockTxsOffer p 0 maxBound
                   )
       leiosFetchProt =
         MiniProtocolCb $ \ctx channel ->

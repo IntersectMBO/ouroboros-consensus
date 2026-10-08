@@ -246,7 +246,7 @@ tests =
                   (V.fromList (map txSizeOf ids))
                   misses
               peerId = MkPeerId (0 :: Int)
-              offers = Map.singleton peerId (Map.singleton point (MkClosureOffer maxBound))
+              offers = Map.singleton peerId (Map.singleton point (MkClosureOffer (Map.singleton 0 maxBound)))
               ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
               bigLedgerCap = Leios.maxRequestedBytesSizePerBigLedgerPeer demoLeiosFetchStaticEnv
               -- hold the body (so the pool is live), with the peer's in-flight bytes
@@ -357,14 +357,18 @@ tests =
                    in (requestedOffsets reqs, Map.keys drops)
             -- only the jobs inside the prefix are requested, and with nothing else
             -- it can serve the offer is pruned
-            run (MkClosureOffer prefix) 0 @?= (IntSet.fromList [0, 1, 2], [peerId])
+            run (MkClosureOffer (Map.singleton 0 prefix)) 0 @?= (IntSet.fromList [0, 1, 2], [peerId])
             -- a prefix short of the first tx serves nothing, and so does a body-only offer
-            run (MkClosureOffer (txSizeOf 0 - 1)) 0 @?= (IntSet.empty, [peerId])
-            run (MkClosureOffer 0) 0 @?= (IntSet.empty, [peerId])
+            run (MkClosureOffer (Map.singleton 0 (txSizeOf 0 - 1))) 0 @?= (IntSet.empty, [peerId])
+            run (MkClosureOffer Map.empty) 0 @?= (IntSet.empty, [peerId])
             -- the whole closure serves every job
-            run (MkClosureOffer maxBound) 0 @?= (IntSet.fromList ids, [peerId])
+            run (MkClosureOffer (Map.singleton 0 maxBound)) 0 @?= (IntSet.fromList ids, [peerId])
+            -- a run offered out of order serves exactly the jobs inside it
+            let mid = sum (map txSizeOf (take 2 ids))
+                end5 = sum (map txSizeOf (take 5 ids))
+            run (MkClosureOffer (Map.singleton mid end5)) 0 @?= (IntSet.fromList [2, 3, 4], [peerId])
             -- with budget for a single job the offer still has jobs to give, so it stays
-            let (one, kept) = run (MkClosureOffer prefix) (ordinaryCap - 1)
+            let (one, kept) = run (MkClosureOffer (Map.singleton 0 prefix)) (ordinaryCap - 1)
             IntSet.size one @?= 1
             assertBool "the one job is inside the prefix" (one `IntSet.isSubsetOf` IntSet.fromList [0, 1, 2])
             kept @?= []
@@ -517,7 +521,7 @@ applyCmd conn txCache kv peerVars peerId = \case
     recordEbBodyOffer
       kv
       peerVars
-      (MkClosureOffer 0)
+      (MkClosureOffer Map.empty)
       (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure []
   ArriveBody ids slot -> do
@@ -615,12 +619,12 @@ applyCmd conn txCache kv peerVars peerId = \case
     pure (filter (\h -> Set.member h held) (ebBodyRequestHashes decs))
 
 -- | Offer every EB the outstanding state tracks, at its 'ebStateMaxSlot' and
--- whole ('MkClosureOffer maxBound', which implies the body too) -- an all-offering peer, so
+-- whole ('MkClosureOffer (Map.singleton 0 maxBound)', which implies the body too) -- an all-offering peer, so
 -- the fetch logic can act on whichever half each EB still needs.
 referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.ClosureOffer
 referencedOffers o =
   Map.fromList
-    [ (Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h, MkClosureOffer maxBound)
+    [ (Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h, MkClosureOffer (Map.singleton 0 maxBound))
     | (h, s) <- Map.toList (Leios.ebState o)
     ]
 
@@ -636,7 +640,7 @@ forceDecisions m =
     Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p jobs) ->
       sum
         [ off
-        | Jobs.MkLeiosJob offs _bytes _end _root <- toList jobs
+        | Jobs.MkLeiosJob offs _bytes _start _end _root <- toList jobs
         , off <- IntSet.toList offs
         ]
 
@@ -656,7 +660,7 @@ requestedOffsets m =
     [ offs
     | reqs <- Map.elems m
     , Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p jobs) <- toList reqs
-    , Jobs.MkLeiosJob offs _bytes _end _root <- toList jobs
+    , Jobs.MkLeiosJob offs _bytes _start _end _root <- toList jobs
     ]
 
 ------------------------------------------------------------
@@ -889,7 +893,7 @@ raceSameHashMultiSlot = do
         announcePoint = pointOf ids 11
         arrivalPoint = pointOf ids 12
     concurrently_
-      (recordEbBodyOffer kv peerVars (MkClosureOffer 0) (offerPoint, ebBytesSize))
+      (recordEbBodyOffer kv peerVars (MkClosureOffer Map.empty) (offerPoint, ebBytesSize))
       ( concurrently_
           (recordAnnouncedEb kv SNothing (announcePoint, ebBytesSize))
           ( processLeiosBlock

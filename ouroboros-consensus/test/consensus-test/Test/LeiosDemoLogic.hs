@@ -68,6 +68,7 @@ import LeiosDemoTypes
   , markBodyImminent
   , maxTxsPerEb
   , recordMaxAnnouncementSlot
+  , unionClosureOffer
   )
 import System.Random (mkStdGen)
 import Test.Tasty (TestTree, testGroup)
@@ -121,29 +122,38 @@ tests =
 test_closureOfferAdmission :: IO ()
 test_closureOfferAdmission = do
   let env = demoLeiosFetchStaticEnv{maxEbClosureBytesSize = 1000}
-      minIncrement = 100
+      minLength = 100
       p1 = point 1 'a'
       p2 = point 5 'b'
-      step p offered = admitClosureOffer env minIncrement p offered
+      step p start end = admitClosureOffer env minLength p start end
       admitted r = case r of
-        AdmittedClosureOffer baselines -> pure baselines
+        AdmittedClosureOffer offers -> pure offers
         RejectedClosureOffer -> assertFailure "offer rejected"
       rejected r = case r of
         AdmittedClosureOffer _ -> assertFailure "offer admitted"
         RejectedClosureOffer -> pure ()
-  -- a first offer below the increment spends the allowance; the next such is rejected
-  b1 <- admitted (step p1 50 Map.empty)
-  rejected (step p1 60 b1)
-  -- a full increment over the largest offer so far is always admitted ...
-  b2 <- admitted (step p1 150 b1)
-  -- ... and the allowance stays spent, a repeat included
-  rejected (step p1 160 b2)
-  rejected (step p1 150 b2)
-  -- points are tracked independently
-  b3 <- admitted (step p2 50 b2)
-  rejected (step p2 60 b3)
-  -- an offer past the most a closure can hold is invalid, however it grew
-  rejected (step p2 1001 b3)
+  -- an empty or inverted range is invalid, and so is one shorter than the minimum
+  rejected (step p1 100 100 Map.empty)
+  rejected (step p1 200 100 Map.empty)
+  rejected (step p1 0 99 Map.empty)
+  b1 <- admitted (step p1 0 100 Map.empty)
+  -- overlapping an earlier range is invalid, a repeat included
+  rejected (step p1 50 200 b1)
+  rejected (step p1 0 100 b1)
+  -- adjacent ranges merge
+  b2 <- admitted (step p1 100 250 b1)
+  Map.lookup p1 b2 @?= Just (MkClosureOffer (Map.singleton 0 250))
+  -- a range to the end of the closure is exempt from the minimum ...
+  b3 <- admitted (step p1 300 maxBound b2)
+  -- ... and nothing may overlap it either
+  rejected (step p1 1000 2000 b3)
+  -- points are independent
+  b4 <- admitted (step p2 0 100 b3)
+  rejected (step p2 50 150 b4)
+  -- a range starting at or past the most a closure can hold is invalid, even to the end
+  rejected (step p2 1000 maxBound b4)
+  _ <- admitted (step p2 999 maxBound b4)
+  pure ()
 
 -- | With current slot S=100 and window L=10, EBs at slot >= 90 (the voting
 -- window) are prioritised oldest-first, EBs beyond S trail that first tier, and
@@ -299,12 +309,14 @@ withRequestedBytesPerPeer pid n =
 -- | Peer @p@ offers the body (only) of these points.
 offersBody :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBody pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, MkClosureOffer 0) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, MkClosureOffer Map.empty) | p <- points])
 
 -- | Peer @p@ offers both the body and the tx-closure of these points.
 offersBodyAndClosure :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBodyAndClosure pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, MkClosureOffer maxBound) | p <- points])
+  insertOffering
+    (MkPeerId pid)
+    (Map.fromList [(p, MkClosureOffer (Map.singleton 0 maxBound)) | p <- points])
 
 insertOffering ::
   Ord pid =>
@@ -315,7 +327,11 @@ insertOffering ::
 insertOffering pid offers sc =
   sc
     { scOfferings =
-        Map.insertWith (Map.unionWith max) pid offers (scOfferings sc)
+        Map.insertWith
+          (Map.unionWith unionClosureOffer)
+          pid
+          offers
+          (scOfferings sc)
     }
 
 -- | Internal: lift a function on 'LeiosOutstanding' to one on 'Scenario'.

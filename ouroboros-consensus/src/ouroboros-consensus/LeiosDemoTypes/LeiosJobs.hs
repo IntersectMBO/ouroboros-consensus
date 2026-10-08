@@ -91,9 +91,10 @@ data LeiosJob
       !IntSet
       -- | their sizes, summed
       !Word32
-      -- | the closure byte at which it ends: the sizes of every tx up to its
-      -- last offset, held or not, summed. A peer offering a prefix of the
-      -- closure can serve the jobs ending within it.
+      -- | the closure bytes it spans, as the range @[start, end)@: the sizes of
+      -- every tx before its first offset, held or not, summed, and likewise
+      -- through its last. A peer offering those bytes can serve it.
+      !Word32
       !Word32
       !JobRootHash
   deriving (Eq, Show)
@@ -152,13 +153,19 @@ mkLeiosJobPool maxJobBytes maxJobTxCount sizes misses =
           NEIntSet.nonEmptySet (IntSet.fromList (map fst ijbs))
     }
  where
-  ends = V.scanl1 (+) sizes
+  -- the closure byte each offset starts at, and one past the last
+  starts = V.scanl (+) 0 sizes
   ijbs = zip [0 ..] $ case IntMap.toAscList misses of
     [] -> []
     ((off0, (h0, sz0)) : rest) -> grow (IntSet.singleton off0) sz0 1 [h0] rest
 
   flush !cur !bytes hashesRev =
-    MkLeiosJob cur bytes (ends V.! IntSet.findMax cur) (jobRootHashOfTxHashes (reverse hashesRev))
+    MkLeiosJob
+      cur
+      bytes
+      (starts V.! IntSet.findMin cur)
+      (starts V.! (IntSet.findMax cur + 1))
+      (jobRootHashOfTxHashes (reverse hashesRev))
 
   grow !cur !bytes !_count hashesRev [] = [flush cur bytes hashesRev]
   grow !cur !bytes !count hashesRev ((off, (h, sz)) : rest)
@@ -170,11 +177,13 @@ mkLeiosJobPool maxJobBytes maxJobTxCount sizes misses =
 nullLeiosJobPool :: LeiosJobPool -> Bool
 nullLeiosJobPool = IntMap.null . jobs
 
--- | The unfinished jobs ending past the given closure byte: those a peer
--- offering only that much of the closure cannot serve.
-jobsEndingAfter :: Word32 -> LeiosJobPool -> IntSet
-jobsEndingAfter offered =
-  IntMap.keysSet . IntMap.filter (\(MkLeiosJobState (MkLeiosJob _ _ end _) _) -> end > offered) . jobs
+-- | The unfinished jobs whose closure byte range the predicate rejects: those
+-- a peer cannot serve, given what it has offered.
+jobsOutside :: (Word32 -> Word32 -> Bool) -> LeiosJobPool -> IntSet
+jobsOutside offered =
+  IntMap.keysSet
+    . IntMap.filter (\(MkLeiosJobState (MkLeiosJob _ _ start end _) _) -> not (offered start end))
+    . jobs
 
 -- | The bitfield of an unfinished job, if it is still in the pool.
 lookupJob :: LeiosJobId -> LeiosJobPool -> Maybe LeiosJob

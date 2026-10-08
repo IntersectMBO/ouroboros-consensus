@@ -567,26 +567,31 @@ mkHandlers
                     Leios.recordEbBodyOffer
                       (getLeiosOutstanding, getLeiosReady)
                       peerVars
-                      (Leios.MkClosureOffer 0)
+                      (Leios.MkClosureOffer Map.empty)
                       (point, ebBytesSize)
-                  MsgLeiosBlockTxsOffer p closurePrefixBytesSize -> do
+                  MsgLeiosBlockTxsOffer p start end -> do
                     traceWith tracer $
                       MkTraceLeiosPeer $
-                        "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p <> " " <> show closurePrefixBytesSize
+                        "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p <> " " <> show (start, end)
                     MVar.modifyMVar_ (Leios.closureOfferBaselines peerVars) $ \baselines ->
                       -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
                       case Leios.admitClosureOffer
                         Leios.demoLeiosFetchStaticEnv
-                        (Leios.leiosClosureOfferMinIncrement version)
+                        (Leios.leiosClosureOfferMinLength version)
                         p
-                        closurePrefixBytesSize
+                        start
+                        end
                         baselines of
                         Leios.RejectedClosureOffer ->
-                          throwIO $ Leios.LeiosNotifyClosureOfferTooSmall p closurePrefixBytesSize
+                          throwIO $ Leios.LeiosNotifyInvalidClosureOffer p start end
                         Leios.AdmittedClosureOffer baselines' -> pure baselines'
                     -- A closure offer implies the body too.
                     MVar.modifyMVar_ (Leios.offerings peerVars) $
-                      pure . Map.insertWith max p (Leios.MkClosureOffer closurePrefixBytesSize)
+                      pure
+                        . Map.insertWith
+                          (\_new old -> Leios.addClosureRange start end old)
+                          p
+                          (Leios.MkClosureOffer (Map.singleton start end))
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
                     -- No peer-level trace here: 'TraceLeiosVoteAcquired' below
@@ -678,8 +683,8 @@ mkHandlers
                   AcquiredEb point ebSize ->
                     pure $ MsgLeiosBlockOffer point ebSize
                   AcquiredEbTxs point ->
-                    -- offering the bound covers the whole closure without knowing its size
-                    pure $ MsgLeiosBlockTxsOffer point (Leios.maxEbClosureBytesSize Leios.demoLeiosFetchStaticEnv)
+                    -- [0, maxBound) offers the whole closure without knowing its size
+                    pure $ MsgLeiosBlockTxsOffer point 0 maxBound
               )
                 <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
 

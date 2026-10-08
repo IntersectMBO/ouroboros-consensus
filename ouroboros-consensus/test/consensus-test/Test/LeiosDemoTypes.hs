@@ -379,7 +379,7 @@ prop_decodeBlockTxsChecksCount =
 -- offered prefix size both survive.
 prop_leiosNotifyTxsOfferRoundTrip :: Property
 prop_leiosNotifyTxsOfferRoundTrip =
-  forAll (chooseEnum (minBound, maxBound :: BytesSize)) $ \sz -> ioProperty $ do
+  forAll ((,) <$> chooseEnum (minBound, maxBound :: BytesSize) <*> chooseEnum (minBound, maxBound)) $ \(start, end) -> ioProperty $ do
     let Codec{encode, decode} =
           codecLeiosNotify
             encodeLeiosPoint
@@ -389,9 +389,9 @@ prop_leiosNotifyTxsOfferRoundTrip =
             (\() -> CBOR.encodeNull)
             CBOR.decodeNull
     step <- decode SingBusy
-    runDecoder [encode (MsgLeiosBlockTxsOffer testPoint sz)] step <&> \case
+    runDecoder [encode (MsgLeiosBlockTxsOffer testPoint start end)] step <&> \case
       Left (DeserialiseFailure _ reason) -> counterexample reason False
-      Right (SomeMessage (MsgLeiosBlockTxsOffer p sz')) -> (p, sz') === (testPoint, sz)
+      Right (SomeMessage (MsgLeiosBlockTxsOffer p start' end')) -> (p, start', end') === (testPoint, start, end)
       Right (SomeMessage msg) -> counterexample ("decoded " <> show msg) False
 
 -- | 'decodeBitmaps' accepts exactly the entry lists the protocol allows.

@@ -391,33 +391,52 @@ prettyBitmap (idx, bitmap) =
 -- patterns of access to the "Ouroboros.Consensus.NodeKernel"'s shared state.
 --
 
--- | How much of an EB a peer has offered: the byte prefix of its tx closure it
--- can serve. 0 is the body alone (a bare 'MsgLeiosBlockOffer'); 'maxBound' is
--- all of it (a CertRB certifies the whole EB); a 'MsgLeiosBlockTxsOffer' names
--- its prefix, and implies the body. Ordered by how much is offered, so two
--- offers for one point merge by 'max'.
-newtype ClosureOffer = MkClosureOffer BytesSize
-  deriving (Eq, Ord, Show)
-
--- | The validity baseline of a peer's closure offers for one point: the largest
--- prefix it has offered so far, and whether it has spent its one offer that
--- grows the prefix by less than the minimum increment. See 'admitClosureOffer'.
-data ClosureOfferBaseline = MkClosureOfferBaseline !BytesSize !SmallIncrementAllowance
+-- | The closure byte ranges a peer has offered for a point: disjoint, keyed by
+-- start, adjacent ones merged. Every range is left-closed and right-open,
+-- @[start, end)@. No ranges is the body alone (a bare 'MsgLeiosBlockOffer'); a
+-- range ending at 'maxBound' runs to the end of the closure, so
+-- @[0, maxBound)@ is all of it (a CertRB certifies the whole EB).
+newtype ClosureOffer = MkClosureOffer (Map BytesSize BytesSize)
   deriving (Eq, Show)
 
-data SmallIncrementAllowance = SmallIncrementAvailable | SmallIncrementSpent
-  deriving (Eq, Show)
+-- | Add a range, merging it with every held range it overlaps or touches.
+addClosureRange :: BytesSize -> BytesSize -> ClosureOffer -> ClosureOffer
+addClosureRange start end (MkClosureOffer ranges) =
+  MkClosureOffer $
+    Map.insert start' end' $
+      Map.filterWithKey (\s _ -> s < start' || s > end') ranges
+ where
+  -- the held ranges are disjoint and sorted, so the one starting last at or
+  -- before each end of the new range is the only one that can reach it
+  start' = case Map.lookupLE start ranges of
+    Just (s, e) | e >= start -> s
+    _ -> start
+  end' = case Map.lookupLE end ranges of
+    Just (_, e) | e > end -> e
+    _ -> end
 
--- | The verdict of 'admitClosureOffer': the updated baselines, or a rejection.
+-- | The ranges of both.
+unionClosureOffer :: ClosureOffer -> ClosureOffer -> ClosureOffer
+unionClosureOffer (MkClosureOffer ranges) offer = Map.foldrWithKey addClosureRange offer ranges
+
+-- | Whether the peer has offered the whole range @[start, end)@.
+closureRangeOffered :: BytesSize -> BytesSize -> ClosureOffer -> Bool
+closureRangeOffered start end (MkClosureOffer ranges) =
+  case Map.lookupLE start ranges of
+    Just (_, e) -> end <= e
+    Nothing -> False
+
+-- | The verdict of 'admitClosureOffer': the peer's offers with the new range,
+-- or a rejection.
 data ClosureOfferAdmission
-  = AdmittedClosureOffer !(Map LeiosPoint ClosureOfferBaseline)
+  = AdmittedClosureOffer !(Map LeiosPoint ClosureOffer)
   | RejectedClosureOffer
 
 data LeiosNotifyException
   = LeiosNotifyUnexpectedMsgCancel
-  | -- | A closure offer grew the offered prefix by less than the minimum
-    -- increment after the peer had spent its one such offer for the point
-    LeiosNotifyClosureOfferTooSmall LeiosPoint BytesSize
+  | -- | A closure offer's range was empty, shorter than the minimum, or
+    -- overlapped one the peer had already offered for the point
+    LeiosNotifyInvalidClosureOffer LeiosPoint BytesSize BytesSize
   deriving (Eq, Show)
 
 instance Exception LeiosNotifyException
@@ -431,10 +450,11 @@ data LeiosPeerVars m = MkLeiosPeerVars
   -- order (freshest-first via 'Map.toDescList'), no dedup by EB hash needed
   -- (honest announcements don't reuse a hash, and an adversary defeats such
   -- dedup anyway). Written to only by the LeiosNotify client and eviction.
-  , closureOfferBaselines :: !(MVar m (Map LeiosPoint ClosureOfferBaseline))
-  -- ^ the validity baseline of this peer's closure offers, per point (see
-  -- 'admitClosureOffer'); it outlives the offer itself, which the fetch logic
-  -- prunes once consumed. Written to only by the LeiosNotify client.
+  , closureOfferBaselines :: !(MVar m (Map LeiosPoint ClosureOffer))
+  -- ^ every closure range this peer has offered, per point, which validates
+  -- its next offer (see 'admitClosureOffer'); it outlives the offer itself,
+  -- which the fetch logic prunes once consumed. Written to only by the
+  -- LeiosNotify client.
   --
   -- TODO never pruned: one entry per point ever offered, for the connection's
   -- lifetime.
@@ -717,7 +737,7 @@ summarizeDecisions decs =
         sum
           [ fromIntegral b
           | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) <- reqs
-          , Jobs.MkLeiosJob _ b _ _ <- F.toList jobs
+          , Jobs.MkLeiosJob _ b _ _ _ <- F.toList jobs
           ]
     }
  where
@@ -963,10 +983,9 @@ prettyOfferings m =
           | (MkLeiosPoint slot h, k) <- points
           ]
         ++ "}"
-  kindTag (MkClosureOffer n)
-    | n == 0 = "b"
-    | n == maxBound = "c"
-    | otherwise = "p" ++ show n
+  kindTag (MkClosureOffer ranges)
+    | Map.null ranges = "b"
+    | otherwise = concat ["[" ++ show s ++ "," ++ show e ++ ")" | (s, e) <- Map.toList ranges]
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
@@ -1001,8 +1020,8 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   , maxJobTxCount :: Int
   -- ^ At most this many txs per job
   , maxEbClosureBytesSize :: BytesSize
-  -- ^ At most this many bytes of txs in an EB's closure; bounds what a closure
-  -- offer may claim.
+  -- ^ At most this many bytes of txs in an EB's closure; a closure offer must
+  -- start below it, which bounds how many a peer can send per point.
   --
   -- TODO a Leios protocol parameter that varies with the slot; static stub for
   -- now.
@@ -1417,12 +1436,13 @@ messageLeiosNotifyToObject announcedEb = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebBytesSize" .= ebBytesSize
       ]
-  MsgLeiosBlockTxsOffer (MkLeiosPoint ebSlot ebHash) closurePrefixBytesSize ->
+  MsgLeiosBlockTxsOffer (MkLeiosPoint ebSlot ebHash) start end ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxsOffer"
       , "ebSlot" .= ebSlot
       , "ebHash" .= prettyEbHash ebHash
-      , "closurePrefixBytesSize" .= closurePrefixBytesSize
+      , "closureOfferStart" .= start
+      , "closureOfferEnd" .= end
       ]
   MsgLeiosVotes votes ->
     mconcat
