@@ -212,27 +212,37 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 class TranslateTxMeasure a b where
   translateTxMeasure :: a -> b
 
+  -- | Gives back the measure that 'translateTxMeasure' translated:
+  -- @projectTxMeasure . translateTxMeasure == id@.
+  projectTxMeasure :: b -> a
+
 -- Phase 1 measures
 
 instance TranslateTxMeasure (IgnoringOverflow ByteSize32) (IgnoringOverflow ByteSize32) where
   translateTxMeasure = id
+  projectTxMeasure = id
 
 instance TranslateTxMeasure (IgnoringOverflow ByteSize32) AlonzoMeasure where
   translateTxMeasure x = AlonzoMeasure x mempty
+  projectTxMeasure = byteSize
 
 instance TranslateTxMeasure AlonzoMeasure AlonzoMeasure where
   translateTxMeasure = id
+  projectTxMeasure = id
 
 -- Phase 2 measures
 
 instance TranslateTxMeasure TrivialTxMeasurePhase2 TrivialTxMeasurePhase2 where
   translateTxMeasure = id
+  projectTxMeasure = id
 
 instance TranslateTxMeasure TrivialTxMeasurePhase2 RefScriptSize where
   translateTxMeasure TrivialTxMeasurePhase2 = mempty
+  projectTxMeasure _ = TrivialTxMeasurePhase2
 
 instance TranslateTxMeasure RefScriptSize RefScriptSize where
   translateTxMeasure = id
+  projectTxMeasure = id
 
 instance
   ( TranslateTxMeasure (TxMeasurePhase1 x) (TxMeasurePhase1 y)
@@ -242,6 +252,8 @@ instance
   where
   translateTxMeasure (TxMeasure p1 p2) =
     TxMeasure (translateTxMeasure p1) (translateTxMeasure p2)
+  projectTxMeasure (TxMeasure p1 p2) =
+    TxMeasure (projectTxMeasure p1) (projectTxMeasure p2)
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
@@ -314,6 +326,15 @@ instance
   hardForkInjTxEbMeasure = \case
     (Z (WrapTxEbMeasure x)) -> translateTxMeasure x
     S (Z (WrapTxEbMeasure x)) -> x
+
+  hardForkProjTxMeasurePhase1 x =
+    WrapTxMeasurePhase1 (projectTxMeasure x) :* WrapTxMeasurePhase1 x :* Nil
+
+  hardForkProjTxMeasurePhase2 x =
+    WrapTxMeasurePhase2 (projectTxMeasure x) :* WrapTxMeasurePhase2 x :* Nil
+
+  hardForkProjTxEbMeasure x =
+    WrapTxEbMeasure (projectTxMeasure x) :* WrapTxEbMeasure x :* Nil
 
   hardForkTxEbMeasure _ p1 p2 =
     txEbMeasure (Proxy @(ShelleyBlock proto2 era2)) (TxMeasure p1 p2)

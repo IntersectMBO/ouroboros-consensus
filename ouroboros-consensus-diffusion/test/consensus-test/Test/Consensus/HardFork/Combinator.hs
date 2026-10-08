@@ -487,6 +487,15 @@ instance CanHardFork '[BlockA, BlockB] where
       txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
     S (Z (WrapTxEbMeasure x)) -> x
 
+  hardForkProjTxMeasurePhase1 x = WrapTxMeasurePhase1 x :* WrapTxMeasurePhase1 x :* Nil
+
+  hardForkProjTxMeasurePhase2 x = WrapTxMeasurePhase2 x :* WrapTxMeasurePhase2 x :* Nil
+
+  -- 'txEbMeasure' of 'BlockB' is 'id', so projecting the injection of an era-A
+  -- measure gives back that measure.
+  hardForkProjTxEbMeasure x@(TxMeasure p1 p2) =
+    WrapTxEbMeasure (TxMeasure p1 p2) :* WrapTxEbMeasure x :* Nil
+
   hardForkTxEbMeasure _ p1 p2 = txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
 
   hardForkMempoolEbReservation _ eb =

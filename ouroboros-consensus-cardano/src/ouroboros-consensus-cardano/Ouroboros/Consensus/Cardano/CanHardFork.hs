@@ -274,6 +274,51 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         , txReferencesSize = mempty
         }
 
+  hardForkProjTxMeasurePhase1 m =
+    WrapTxMeasurePhase1 (byteSize m)
+      SOP.:* WrapTxMeasurePhase1 (byteSize m)
+      SOP.:* WrapTxMeasurePhase1 (byteSize m)
+      SOP.:* WrapTxMeasurePhase1 (byteSize m)
+      SOP.:* WrapTxMeasurePhase1 m
+      SOP.:* WrapTxMeasurePhase1 m
+      SOP.:* WrapTxMeasurePhase1 m
+      SOP.:* WrapTxMeasurePhase1 m
+      SOP.:* SOP.Nil
+
+  hardForkProjTxMeasurePhase2 m =
+    WrapTxMeasurePhase2 (toTrivial m)
+      SOP.:* WrapTxMeasurePhase2 (toTrivial m)
+      SOP.:* WrapTxMeasurePhase2 (toTrivial m)
+      SOP.:* WrapTxMeasurePhase2 (toTrivial m)
+      SOP.:* WrapTxMeasurePhase2 (toTrivial m)
+      SOP.:* WrapTxMeasurePhase2 (toTrivial m)
+      SOP.:* WrapTxMeasurePhase2 m
+      SOP.:* WrapTxMeasurePhase2 m
+      SOP.:* SOP.Nil
+
+  -- Before Dijkstra this drops 'txReferencesSize'. That size is not zero for a
+  -- transaction in the mempool, because 'hardForkTxEbMeasure' computes the
+  -- endorser-block measure of every transaction as Dijkstra's. Eras before
+  -- Dijkstra have no endorser blocks, so the size does not apply to them.
+  hardForkProjTxEbMeasure m =
+    WrapTxEbMeasure (proj byteSize toTrivial m)
+      SOP.:* WrapTxEbMeasure (proj byteSize toTrivial m)
+      SOP.:* WrapTxEbMeasure (proj byteSize toTrivial m)
+      SOP.:* WrapTxEbMeasure (proj byteSize toTrivial m)
+      SOP.:* WrapTxEbMeasure (proj id toTrivial m)
+      SOP.:* WrapTxEbMeasure (proj id toTrivial m)
+      SOP.:* WrapTxEbMeasure (proj id id m)
+      SOP.:* WrapTxEbMeasure m
+      SOP.:* SOP.Nil
+   where
+    proj ::
+      (AlonzoMeasure -> TxMeasurePhase1 x) ->
+      (RefScriptSize -> TxMeasurePhase2 x) ->
+      DijkstraEbMeasure ->
+      TxMeasure x
+    proj f g (DijkstraEbMeasure (TxMeasure p1 p2) _references) =
+      TxMeasure (f p1) (g p2)
+
   hardForkTxEbMeasure _ p1 p2 =
     txEbMeasure (Proxy @(ShelleyBlock (Leios c) DijkstraEra)) (TxMeasure p1 p2)
 
@@ -299,6 +344,9 @@ fromByteSize x = AlonzoMeasure x mempty
 
 fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
 fromTrivial TrivialTxMeasurePhase2 = mempty
+
+toTrivial :: RefScriptSize -> TrivialTxMeasurePhase2
+toTrivial _ = TrivialTxMeasurePhase2
 
 {-------------------------------------------------------------------------------
   Translation from Byron to Shelley
