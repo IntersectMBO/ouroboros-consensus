@@ -42,3 +42,32 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+-- Packages released against the previous versions still work with these.
+allow-newer:
+    *:cardano-ledger-conway,
+    *:cardano-ledger-core,
+    *:cardano-ledger-dijkstra,
+    *:cardano-ledger-shelley,
+    *:cardano-protocol
+
+-- TODO: Points to cardano-ledger/main
+-- Needed for: mkHeaderBody
+source-repository-package
+    type: git
+    location: https://github.com/input-output-hk/cardano-ledger.git
+    tag: 5b31cdd1527c715dbf95eaea79e3cba193540733
+    --sha256: sha256-M2ca2QhXTrB6/SRjjo9eoAGhz4RVG6ZNSgv7x44z/+w=
+    subdir:
+        eras/allegra/impl
+        eras/alonzo/impl
+        eras/babbage/impl
+        eras/conway/impl
+        eras/dijkstra/impl
+        eras/mary/impl
+        eras/shelley/impl
+        eras/shelley/test-suite
+        libs/cardano-ledger-api
+        libs/cardano-ledger-core
+        libs/cardano-protocol
+        libs/cardano-protocol-tpraos

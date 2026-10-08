@@ -1,4 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -15,10 +16,11 @@ import Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Block
   ( BlockHeaderVersionInfo (..)
   )
-import Cardano.Ledger.MemoBytes (mkMemoized)
+import Cardano.Protocol.Leios.BlockHeader (mkHeaderBody)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Data.Maybe.Strict (StrictMaybe (SNothing))
+import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Protocol.Leios
   ( ConsensusConfig (..)
   , Leios
@@ -35,6 +37,7 @@ import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (protoMaxMajorPV)
 import Ouroboros.Consensus.Protocol.Praos.Views
 import Ouroboros.Consensus.Protocol.Signed
+import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
@@ -98,9 +101,9 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Leios c) where
 
   mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer = do
     PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il mkLeiosHeaderBody
-    -- TODO: update mkHeader to take a protVer
-    pure $ mkMemoized (pvMajor protVer) $ Leios.HeaderRaw praosToSign praosSignature
+    pure $ Leios.mkHeader era praosToSign praosSignature
    where
+    era = Proxy @DijkstraEra -- FIXME: not hardcode
     mkLeiosHeaderBody
       PraosToSign
         { praosToSignIssuerVK
@@ -108,20 +111,22 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Leios c) where
         , praosToSignVrfRes
         , praosToSignOCert
         } =
-        Leios.HeaderBody
-          { Leios.hbBlockNo = blockNo
-          , Leios.hbSlotNo = slotNo
-          , Leios.hbPrev = prevHash
-          , Leios.hbVk = praosToSignIssuerVK
-          , Leios.hbVrfVk = praosToSignVrfVK
-          , Leios.hbVrfRes = praosToSignVrfRes
-          , Leios.hbBodySize = fromIntegral sz
-          , Leios.hbBodyHash = bbHash
-          , Leios.hbOCert = praosToSignOCert
-          , Leios.hbVersionInfo = versionInfo
-          , Leios.hbBlockBodyContainsLeiosCert = False -- FIXME: Fill this in when forging
-          , Leios.hbEbReferencesAnnouncement = SNothing -- FIXME: Fill this in when forging
-          }
+        mkHeaderBody
+          era
+          Leios.HeaderBodyRaw
+            { Leios.hbrBlockNo = blockNo
+            , Leios.hbrSlotNo = slotNo
+            , Leios.hbrPrev = prevHash
+            , Leios.hbrVk = praosToSignIssuerVK
+            , Leios.hbrVrfVk = praosToSignVrfVK
+            , Leios.hbrVrfRes = praosToSignVrfRes
+            , Leios.hbrBodySize = fromIntegral sz
+            , Leios.hbrBodyHash = bbHash
+            , Leios.hbrOCert = praosToSignOCert
+            , Leios.hbrVersionInfo = versionInfo
+            , Leios.hbrBlockBodyContainsLeiosCert = False -- FIXME: Fill this in when forging
+            , Leios.hbrEbReferencesAnnouncement = SNothing -- FIXME: Fill this in when forging
+            }
 
     versionInfo =
       BlockHeaderVersionInfo

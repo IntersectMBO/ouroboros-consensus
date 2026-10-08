@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -21,20 +22,15 @@ module Test.Consensus.Shelley.Examples
   , examplesShelley
   ) where
 
+import Cardano.Ledger.BaseTypes (getVersion32, pvMajor, pvMinor)
 import qualified Cardano.Ledger.BaseTypes as SL
+import Cardano.Ledger.Block (BlockHeaderVersionInfo (..))
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
-import Cardano.Protocol.Praos.BlockHeader
-  ( HeaderBody (..)
-  )
-import Cardano.Ledger.BaseTypes (getVersion32, pvMajor, pvMinor)
-import Cardano.Ledger.Block (BlockHeaderVersionInfo (..))
-import Cardano.Ledger.MemoBytes (mkMemoized)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
-import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto, ShelleyProtocolHeader)
-import Ouroboros.Consensus.Shelley.Protocol.Leios ()
+import Cardano.Protocol.Praos.BlockHeader (HeaderBody (..))
 import qualified Cardano.Protocol.Praos.BlockHeader as Praos
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
@@ -50,16 +46,20 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState
-  , TranslateProto
+import Ouroboros.Consensus.Protocol.Abstract
+  ( TranslateProto
+  , translateChainDepState
   )
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.TPraos
   ( TPraos
   , TPraosState (TPraosState)
   )
+import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
+import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto, ShelleyProtocolHeader)
+import Ouroboros.Consensus.Shelley.Protocol.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
@@ -403,7 +403,7 @@ examplesConway =
 examplesDijkstra :: Examples StandardDijkstraBlock
 examplesDijkstra =
   fromShelleyLedgerExamplesPraos
-    translateLeiosHeader
+    (translateLeiosHeader @DijkstraEra)
     (ledgerExamplesTPraos Dijkstra.ledgerExamples)
 
 exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
@@ -444,27 +444,29 @@ translatePraosHeader (SL.BHeader bhBody bhSig) =
 
 -- | Rebuild a TPraos example header as a Leios one: the Praos body with the
 -- two Leios fields, which an example never sets.
-translateLeiosHeader :: SL.BHeader StandardCrypto -> Leios.Header StandardCrypto
+translateLeiosHeader ::
+  forall era. Era era => SL.BHeader StandardCrypto -> Leios.Header StandardCrypto
 translateLeiosHeader (SL.BHeader bhBody bhSig) =
-  mkMemoized (pvMajor (SL.bprotver bhBody)) $
-    Leios.HeaderRaw leiosBody (coerce bhSig)
+  Leios.mkHeader (Proxy @era) headerBody (coerce bhSig)
  where
   pb = praosHeaderBodyFromTPraos bhBody
-  leiosBody =
-    Leios.HeaderBody
-      { Leios.hbBlockNo = hbBlockNo pb
-      , Leios.hbSlotNo = hbSlotNo pb
-      , Leios.hbPrev = hbPrev pb
-      , Leios.hbVk = hbVk pb
-      , Leios.hbVrfVk = hbVrfVk pb
-      , Leios.hbVrfRes = hbVrfRes pb
-      , Leios.hbBodySize = hbBodySize pb
-      , Leios.hbBodyHash = hbBodyHash pb
-      , Leios.hbOCert = hbOCert pb
-      , Leios.hbVersionInfo =
-          BlockHeaderVersionInfo
-            (getVersion32 (pvMajor (hbProtVer pb)))
-            (pvMinor (hbProtVer pb))
-      , Leios.hbBlockBodyContainsLeiosCert = False
-      , Leios.hbEbReferencesAnnouncement = SL.SNothing
-      }
+  headerBody =
+    Leios.mkHeaderBody
+      (Proxy @era)
+      Leios.HeaderBodyRaw
+        { Leios.hbrBlockNo = hbBlockNo pb
+        , Leios.hbrSlotNo = hbSlotNo pb
+        , Leios.hbrPrev = hbPrev pb
+        , Leios.hbrVk = hbVk pb
+        , Leios.hbrVrfVk = hbVrfVk pb
+        , Leios.hbrVrfRes = hbVrfRes pb
+        , Leios.hbrBodySize = hbBodySize pb
+        , Leios.hbrBodyHash = hbBodyHash pb
+        , Leios.hbrOCert = hbOCert pb
+        , Leios.hbrVersionInfo =
+            BlockHeaderVersionInfo
+              (getVersion32 (pvMajor (hbProtVer pb)))
+              (pvMinor (hbProtVer pb))
+        , Leios.hbrBlockBodyContainsLeiosCert = False
+        , Leios.hbrEbReferencesAnnouncement = SL.SNothing
+        }

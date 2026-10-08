@@ -5,6 +5,7 @@
 module Test.Consensus.Shelley.Integrity (tests) where
 
 import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.MemoBytes (getMemoRawType)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import Data.Proxy (Proxy (Proxy))
 import Ouroboros.Consensus.Block (blockMatchesHeader, getHeader)
@@ -52,10 +53,12 @@ exampleDijkstraBlocks = snd <$> exampleBlock examplesDijkstra
 claimLeiosCert :: Header StandardDijkstraBlock -> Header StandardDijkstraBlock
 claimLeiosCert hdr =
   mkShelleyHeader $
+    -- TODO: should be able to use lenses, but blockBodyContainsLeiosCert has none yet in ledger
     Leios.mkHeader
-      (Proxy @DijkstraEra)
-      body{Leios.hbBlockBodyContainsLeiosCert = True}
+      era
+      (Leios.mkHeaderBody era rawBody{Leios.hbrBlockBodyContainsLeiosCert = True})
       (Leios.headerSig raw)
  where
+  era = Proxy @DijkstraEra
   raw = shelleyHeaderRaw hdr
-  body = Leios.headerBody raw
+  rawBody = getMemoRawType (Leios.headerBody raw)
