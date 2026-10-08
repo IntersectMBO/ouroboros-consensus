@@ -459,6 +459,10 @@ data CardanoProtocolParams c = CardanoProtocolParams
 --
 -- PRECONDITION: only a single set of Shelley credentials is allowed when used
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
+--
+-- The returned block-forging function takes two tracers: the KES agent
+-- client tracer, and the tracer for the 'Leios.TraceLeiosForge' events
+-- that the Dijkstra forge emits.
 protocolInfoCardano ::
   forall c m.
   ( CardanoHardForkConstraints c
@@ -468,7 +472,9 @@ protocolInfoCardano ::
   CardanoProtocolParams c ->
   m
     ( ProtocolInfo (CardanoBlock c)
-    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
+    , Tracer.Tracer m KESAgentClientTrace ->
+      Tracer.Tracer m (Leios.TraceLeiosForge (ShelleyBlock (Leios c) DijkstraEra)) ->
+      m [MkBlockForging m (CardanoBlock c)]
     )
 protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
@@ -483,7 +489,8 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
               { pInfoConfig = cfg
               , pInfoInitLedger = initExtLedgerStateCardano
               }
-          , pure . mkBlockForgings
+          , \kesAgentTracer leiosForgeTracer ->
+              pure $ mkBlockForgings kesAgentTracer leiosForgeTracer
           )
  where
   CardanoProtocolParams
@@ -892,9 +899,12 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   -- credentials. If there are multiple Shelley credentials, we merge the
   -- Byron credentials with the first Shelley one but still have separate
   -- threads for the remaining Shelley ones.
-  mkBlockForgings :: Tracer.Tracer m KESAgentClientTrace -> [MkBlockForging m (CardanoBlock c)]
-  mkBlockForgings tr = do
-    let shelleyBased = blockForgingShelleyBased tr <$> credssShelleyBased
+  mkBlockForgings ::
+    Tracer.Tracer m KESAgentClientTrace ->
+    Tracer.Tracer m (Leios.TraceLeiosForge (ShelleyBlock (Leios c) DijkstraEra)) ->
+    [MkBlockForging m (CardanoBlock c)]
+  mkBlockForgings tr leiosForgeTracer = do
+    let shelleyBased = blockForgingShelleyBased tr leiosForgeTracer <$> credssShelleyBased
         blockForgings :: [m (NonEmptyOptNP (BlockForging m) (CardanoEras c))]
         blockForgings = case (mBlockForgingByron, shelleyBased) of
           (Nothing, shelleys) -> shelleys
@@ -923,9 +933,10 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
 
   blockForgingShelleyBased ::
     Tracer.Tracer m KESAgentClientTrace ->
+    Tracer.Tracer m (Leios.TraceLeiosForge (ShelleyBlock (Leios c) DijkstraEra)) ->
     ShelleyLeaderCredentials c ->
     m (NonEmptyOptNP (BlockForging m) (CardanoEras c))
-  blockForgingShelleyBased tr credentials = do
+  blockForgingShelleyBased tr leiosForgeTracer credentials = do
     let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
 
     let slotToPeriod :: SlotNo -> Absolute.KESPeriod
@@ -962,14 +973,9 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
         praos =
           Praos.praosSharedBlockForging hotKey slotToPeriod credentials
 
-    let leios ::
-          forall era.
-          ( Shelley.ShelleyCompatible (Leios c) era
-          , TxLimits (ShelleyBlock (Leios c) era)
-          ) =>
-          BlockForging m (ShelleyBlock (Leios c) era)
+    let leios :: BlockForging m (ShelleyBlock (Leios c) DijkstraEra)
         leios =
-          Leios.leiosSharedBlockForging hotKey slotToPeriod credentials
+          Leios.leiosSharedBlockForging leiosForgeTracer hotKey slotToPeriod credentials
 
     pure $
       OptSkip $ -- Byron
