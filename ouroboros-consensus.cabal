@@ -1639,6 +1639,7 @@ library cardano
     text,
     these,
     validation >=1.2,
+    vector,
 
 library unstable-byronspec
   import: common-lib
@@ -1811,13 +1812,14 @@ test-suite shelley-test
   build-depends:
     base,
     bytestring,
+    cardano-crypto-class,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
     cardano-ledger-babbage:testlib,
     cardano-ledger-conway:testlib,
     cardano-ledger-core,
     cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
-    cardano-ledger-shelley,
+    cardano-ledger-shelley:{cardano-ledger-shelley, testlib},
     cardano-protocol,
     cardano-slotting,
     cborg,
