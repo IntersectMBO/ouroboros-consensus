@@ -304,6 +304,24 @@ initNodeKernel
           , varGsmState
           } = st
 
+    -- Back the ChainDB's slot clock with the wall-clock slot, to allow ticking
+    -- the PerasEpochContextResolver to the current wall-clock slot.
+    ChainDB.setChainClock chainDB $
+      -- Supposedly the ChainClock is no longer gonna be needed after we
+      -- implement forecasting for the PerasEpochContextResolver, and anchor it
+      -- to the immutable tip instead of the volatile tip.
+      --
+      -- However, in the event that we still need to back the ChainDB's slot
+      -- clock to tick the resolver on mainnet Peras, we should make sure that
+      -- we don't tick when a node is still syncing.
+      --
+      -- So we could replace the line below by:
+      --
+      -- readTVar varGsmState >>= \case
+      --   GSM.CaughtUp -> getCurrentSlot btime
+      --     _ -> pure CurrentSlotUnknown
+      getCurrentSlot btime
+
     varOutboundConnectionsState <- newTVarIO UntrustedState
 
     do
