@@ -864,7 +864,6 @@ data VolStmts = VolStmts
   , stFillFromLocal :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
-  , stClosureBytesSize :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
@@ -926,7 +925,6 @@ prepareVolStmts db = do
   stFillFromLocal <- dbPrepare db (fromString sql_fill_from_local)
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
-  stClosureBytesSize <- dbPrepare db (fromString sql_closure_bytes_size)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
   stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
@@ -946,7 +944,6 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stFillFromLocal
   dbFinalize stDecrMissingCount
   dbFinalize stMarkPointNotified
-  dbFinalize stClosureBytesSize
   dbFinalize stBatchRetrieveTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince
@@ -1564,6 +1561,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
       dbBindBlob stInitMissingCount 1 ebHashRaw
       dbBindBlob stInitMissingCount 2 ebHashRaw
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
+      dbBindInt64 stInitMissingCount 4 (fromIntegral closureSize)
       readReturningInt64 stInitMissingCount
     completed <-
       if missingCount == 0
@@ -1592,19 +1590,19 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     , stMarkPointNotified
     } = connVolStmts
 
--- | Read a single-column @Int64@ from a statement that produces exactly one
--- row followed by 'DB.Done': a @RETURNING@ clause on a PK-scoped @UPDATE@, or
--- an aggregate @SELECT@. Any other shape is a programmer error.
+-- | Read a single-column @Int64@ from a statement that uses a
+-- @RETURNING@ clause on a PK-scoped @UPDATE@ (i.e. produces exactly one
+-- row followed by 'DB.Done'). Any other shape is a programmer error.
 readReturningInt64 :: DB.Statement -> IO Int64
 readReturningInt64 stmt =
   dbStep stmt >>= \case
     DB.Done ->
-      throwLeiosDbException "readReturningInt64: expected exactly one row, got Done"
+      throwLeiosDbException "readReturningInt64: expected one row from RETURNING, got Done"
     DB.Row -> do
       n <- DB.columnInt64 stmt 0
       dbStep stmt >>= \case
         DB.Done -> pure n
-        DB.Row -> throwLeiosDbException "readReturningInt64: expected exactly one row, got more"
+        DB.Row -> throwLeiosDbException "readReturningInt64: expected exactly one row from RETURNING"
 
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
@@ -1646,25 +1644,18 @@ sqlInsertTxs _tracer conn notify point offBytes = do
                   DB.Row -> do
                     slot <- SlotNo . fromIntegral <$> DB.columnInt64 stDecrMissingCount 0
                     left <- DB.columnInt64 stDecrMissingCount 1
-                    loop (if left == 0 then slot : acc else acc)
+                    closureSize <- fromIntegral <$> DB.columnInt64 stDecrMissingCount 2
+                    loop (if left == 0 then (slot, closureSize) : acc else acc)
           loop []
         -- Mark them notified so they are not completed twice.
-        forM_ completedSlots $ \slot -> useStmt stMarkPointNotified $ do
+        forM_ completedSlots $ \(slot, _) -> useStmt stMarkPointNotified $ do
           dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo slot)
           dbBindBlob stMarkPointNotified 2 (ebHashBytes point.pointEbHash)
           dbStep1 stMarkPointNotified
-        -- The notification carries the closure's size. Every completed row
-        -- shares this content hash, so one sum serves them all.
-        if null completedSlots
-          then pure []
-          else do
-            closureSize <- useStmt stClosureBytesSize $ do
-              dbBindBlob stClosureBytesSize 1 (ebHashBytes point.pointEbHash)
-              readReturningInt64 stClosureBytesSize
-            pure
-              [ (MkLeiosPoint slot point.pointEbHash, fromIntegral closureSize)
-              | slot <- completedSlots
-              ]
+        pure
+          [ (MkLeiosPoint slot point.pointEbHash, closureSize)
+          | (slot, closureSize) <- completedSlots
+          ]
   -- Emit a closure-completion notification for each completed EB
   forM_ completed $ \(p, closureSize) -> notify (AcquiredEbTxs p closureSize)
   pure (map fst completed)
@@ -1674,7 +1665,6 @@ sqlInsertTxs _tracer conn notify point offBytes = do
     { stFillEbTxBytes
     , stDecrMissingCount
     , stMarkPointNotified
-    , stClosureBytesSize
     } = connVolStmts
 
 -- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
@@ -1881,6 +1871,9 @@ sql_schema =
     , "  ebBytesSize INTEGER NOT NULL,"
     , -- NULL = body not downloaded, >0 = txs missing, 0 = just completed, <0 = notified
       "  missingTxCount INTEGER,"
+    , -- NULL = body not downloaded; else the closure's size, which the
+      -- completion notification carries
+      "  closureBytesSize INTEGER,"
     , -- 0 = volatile, 1 = certified/pinned awaiting copy,
       -- 2 = copied to the immutable partition (evictable),
       -- 3 = marked for GC, awaiting the sweeper
@@ -2036,7 +2029,8 @@ sql_fill_ebTxBytes =
 
 -- | Decrement missingTxCount on every announcement of this content hash by
 -- the number of tx-bytes rows a batch actually inserted, returning each
--- touched row so the caller can spot the ones that just completed. Counting
+-- touched row (with the closure's size, for the completion notification) so
+-- the caller can spot the ones that just completed. Counting
 -- replaces the old per-tx 'ebsMissingTxs' bookkeeping: bytes are keyed by
 -- @(ebHash, txOffset)@, so an insert can only ever fill a hole in this EB.
 --
@@ -2045,20 +2039,21 @@ sql_decrement_missing_tx_count :: String
 sql_decrement_missing_tx_count =
   "UPDATE ebs SET missingTxCount = missingTxCount - ?2\n\
   \WHERE ebHashBytes = ?1 AND status = 0 AND missingTxCount IS NOT NULL\n\
-  \RETURNING ebSlot, missingTxCount\n\
+  \RETURNING ebSlot, missingTxCount, closureBytesSize\n\
   \"
 
--- | Initialize missingTxCount after an EB body is inserted: the rows still
--- unfilled (a redelivered body at a second point finds the first point's
--- fills). RETURNING lets the caller detect @missingTxCount = 0@ with a PK
--- lookup on the touched row.
+-- | Initialize missingTxCount and closureBytesSize after an EB body is
+-- inserted: the rows still unfilled (a redelivered body at a second point
+-- finds the first point's fills), and the closure's size. RETURNING lets the
+-- caller detect @missingTxCount = 0@ with a PK lookup on the touched row.
 --
--- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
+-- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot, 4 = closureBytesSize
 sql_init_missing_tx_count :: String
 sql_init_missing_tx_count =
   "UPDATE ebs SET missingTxCount = (\n\
   \    SELECT COUNT(*) FROM ebTxBytes WHERE ebHashBytes = ?1 AND filled = 0\n\
-  \) WHERE ebHashBytes = ?2 AND ebSlot = ?3\n\
+  \), closureBytesSize = ?4\n\
+  \WHERE ebHashBytes = ?2 AND ebSlot = ?3\n\
   \RETURNING missingTxCount\n\
   \"
 
@@ -2070,15 +2065,6 @@ sql_init_missing_tx_count =
 sql_mark_point_notified :: String
 sql_mark_point_notified =
   "UPDATE ebs SET missingTxCount = -1 WHERE ebSlot = ? AND ebHashBytes = ?"
-
--- | The size of a body's whole closure: the declared size of every row,
--- summed. Only run once a completion has been reported for the hash, so its
--- rows exist.
---
--- Parameters: 1 = ebHashBytes
-sql_closure_bytes_size :: String
-sql_closure_bytes_size =
-  "SELECT SUM(txBytesSize) FROM ebTxs WHERE ebHashBytes = ?1"
 
 -- | Batch retrieve of tx bytes for a batch of @(ebHash, offset)@ points.
 -- @?1@ is the ebHash blob (all offsets belong to the same EB); @?2@ is a
