@@ -22,14 +22,14 @@
 -- simpler:
 --
 -- * There is no chunking and there are no on-disk indices. The index is just
---   the in-memory sets of round numbers ('CertDbState'), rebuilt on every
---   open from the certificate file names alone. No file needs to be read, so
---   this is cheap.
+--   two in-memory sets of round numbers corresponding to known and quarantined
+--   certificates ('CertDbState'), build on open by scanning the file names.
 --
 -- * The index is updated like the ImmutableDB's open state, via
---   'modifyWithTempRegistry' on a 'StrictSVar'. Concurrent adds therefore
---   happen one at a time, and a failed add leaves no trace, so the index and
---   the files on disk never disagree (see 'implAddCert').
+--   'modifyWithTempRegistry' on a 'StrictSVar'. Concurrent `addCert`
+--   (insertions) therefore happen one at a time, and a failed insertion
+--   leaves no trace, so the index and the files on disk never disagree
+--   (see 'implAddCert').
 --
 -- A design goal is to never advertise incomplete, unreadable or corrupt
 -- certificates to clients; for this, prevention and handling of on-disk
@@ -52,7 +52,9 @@
 --   name is created if the original was missing), its round is moved from the
 --   known to the quarantined rounds of the in-memory index, and the event is
 --   traced. The remaining certificates stay available to syncing nodes. Only
---   the name of a quarantined file matters here, never its contents.
+--   the name of a quarantined file matters here, never its contents, but
+--   the file is left in place as evidence (for yet unforeseen needs); Quarantined
+--   certificates are expected to be rare, so their footprint is negligible.
 --   Quarantined rounds survive restarts, since they are re-indexed from the
 --   file names on open, and are released from quarantine when a certificate
 --   for them is added again.
@@ -122,7 +124,7 @@
 module Ouroboros.Consensus.Storage.PerasImmutableCertDB.Impl
   ( -- * Opening
     PerasImmutableCertDbArgs (..)
-  , PerasImmutableCertDbValidationPolicy (..)
+  , PerasImmutableCertDbIntegrityCheckPolicy (..)
   , defaultArgs
   , openDB
 
@@ -137,6 +139,7 @@ where
 
 import Cardano.Binary
 import qualified Codec.CBOR.Read as CBOR
+import Control.Applicative ((<|>))
 import Control.Monad (foldM, forM, forM_, guard, unless, void, when)
 import Control.Monad.State.Strict (StateT, get, lift, put)
 import Control.ResourceRegistry (WithTempRegistry, allocateTemp, modifyWithTempRegistry)
@@ -150,12 +153,13 @@ import qualified Data.Set as Set
 import Data.Text (pack)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
-import NoThunks.Class (OnlyCheckWhnfNamed (..))
+import NoThunks.Class (OnlyCheckWhnfNamed (..), unsafeNoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.PerasImmutableCertDB.API
 import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.MonadSTM.StrictSVar (newSVarWithInvariant)
 import System.FS.API.Lazy
 import System.FS.CRC (CRC (..), computeCRC)
 import Text.Read (readMaybe)
@@ -168,7 +172,7 @@ data PerasImmutableCertDbArgs f m blk = PerasImmutableCertDbArgs
   { picdbaCodecConfig :: HKD f (CodecConfig blk)
   , picdbaHasFS :: HKD f (SomeHasFS m)
   , picdbaTracer :: Tracer m (TraceEvent blk)
-  , picdbaValidationPolicy :: PerasImmutableCertDbValidationPolicy
+  , picdbaIntegrityCheckPolicy :: PerasImmutableCertDbIntegrityCheckPolicy
   -- ^ How thoroughly to check the certificate files on disk when opening.
   }
 
@@ -177,14 +181,14 @@ data PerasImmutableCertDbArgs f m blk = PerasImmutableCertDbArgs
 -- Regardless of the policy, corruption is always detected lazily when a
 -- certificate is actually served; the policy only controls whether we
 -- additionally pay for an eager, up-front integrity sweep.
-data PerasImmutableCertDbValidationPolicy
+data PerasImmutableCertDbIntegrityCheckPolicy
   = -- | Trust the certificate file names to build the index and defer all
     -- integrity checks to read time. Opening is cheap. This is the default.
-    ValidateOnRead
+    CheckOnRead
   | -- | Additionally read and verify every certificate file when opening,
     -- quarantining any that are unreadable or corrupt. Opening is @O(n)@ in
     -- disk reads, but a corrupt certificate is never advertised to clients.
-    ValidateAllOnOpen
+    CheckAllOnOpen
   deriving stock (Eq, Show, Generic)
 
 defaultArgs :: Monad m => Incomplete PerasImmutableCertDbArgs m blk
@@ -193,7 +197,7 @@ defaultArgs =
     { picdbaCodecConfig = noDefault
     , picdbaHasFS = noDefault
     , picdbaTracer = nullTracer
-    , picdbaValidationPolicy = ValidateOnRead
+    , picdbaIntegrityCheckPolicy = CheckOnRead
     }
 
 openDB ::
@@ -210,7 +214,7 @@ openDB
     { picdbaCodecConfig
     , picdbaHasFS = someHasFS@(SomeHasFS hasFS)
     , picdbaTracer
-    , picdbaValidationPolicy
+    , picdbaIntegrityCheckPolicy
     } = do
     createDirectoryIfMissing hasFS True (mkFsPath rootDir)
     -- Deal with any leftover temporary files from a certificate write that
@@ -220,12 +224,12 @@ openDB
     -- Index the certificate files present on disk by recovering their round
     -- numbers from their file names; the certificates themselves are read back
     -- from disk on demand.
-    initialState <- indexCertRounds hasFS >>= dropStaleQuarantineMarkers hasFS
-    st <- case picdbaValidationPolicy of
-      ValidateOnRead -> pure initialState
-      ValidateAllOnOpen ->
-        validateAllCertsOnOpen picdbaTracer picdbaCodecConfig hasFS initialState
-    picdbState <- newSVar st
+    initialState <- scanInitialCertDbState hasFS
+    st <- case picdbaIntegrityCheckPolicy of
+      CheckOnRead -> pure initialState
+      CheckAllOnOpen ->
+        scrubCorruptKnownCerts picdbaTracer picdbaCodecConfig hasFS initialState
+    picdbState <- newSVarWithInvariant disjointAndNoThunks st
     let env =
           PerasImmutableCertDbEnv
             { picdbHasFS = someHasFS
@@ -234,12 +238,15 @@ openDB
             , picdbState
             }
     traceWith picdbaTracer $
-      OpenedDB (Set.size (cdsKnownRounds st)) (Set.size (cdsQuarantinedRounds st))
+      OpenedDB
+        (Set.size (getKnownRounds $ cdsKnownRounds st))
+        (Set.size (getQuarantinedRounds $ cdsQuarantinedRounds st))
     pure
       PerasImmutableCertDB
         { addCert = implAddCert env
         , getCertsAfter = implGetCertsAfter env
-        , getQuarantinedRounds = cdsQuarantinedRounds <$> readSVarSTM picdbState
+        , getMissingRounds =
+            (getQuarantinedRounds . cdsQuarantinedRounds) <$> readSVarSTM picdbState
         }
 
 {-------------------------------------------------------------------------------
@@ -274,52 +281,41 @@ recoverTempCertFiles tracer hasFS = do
         renameFile hasFS (fsPathTmpCertFile roundNo) (fsPathQuarantinedCertFile roundNo)
         traceQuarantinedCert tracer roundNo CertFileIncompleteWrite
 
--- | Index the round numbers of all certificate files in the database
--- directory, returning the known and the quarantined rounds, in that order.
+--  Build the initial index from the known and the quarantined rounds found
+-- by scanning the database directory. The resulting state holds the
+-- 'disjointAndNoThunks' invariant.
 --
 -- The round number of each certificate is recovered from its file name (see
 -- 'certFileName' and 'fsPathQuarantinedCertFile'), so the certificates
 -- themselves are not read or decoded here; that happens on demand in
--- 'readCertFile'. Directory entries that are not well-formed certificate file
--- names are ignored.
-indexCertRounds ::
-  IOLike m =>
-  HasFS m h ->
-  m (Set PerasRoundNo, Set PerasRoundNo)
-indexCertRounds hasFS = do
-  names <- Set.toList <$> listDirectory hasFS (mkFsPath rootDir)
-  pure
-    ( Set.fromList $ mapMaybe certRoundFromFileName names
-    , Set.fromList $ mapMaybe certRoundFromQuarantinedFileName names
-    )
-
--- | Build the initial index from the known and the quarantined rounds found
--- by 'indexCertRounds', removing the quarantine marker of every round that is
--- both stored and quarantined.
+-- 'readCertFile' or when using `CheckAllOnOpen`. Directory entries that are
+-- not well-formed certificate file names are ignored.
 --
--- Such a round is left behind by a crash while adding a replacement for a
--- quarantined certificate (see 'implAddCert'). The stored file takes
+-- The quarantine marker of every round that is both stored and quarantined
+-- is removed. Such a round is left behind by a crash while adding a replacement
+-- for a  quarantined certificate (see 'implAddCert'). The stored file takes
 -- precedence: should it be broken, it will be quarantined again.
-dropStaleQuarantineMarkers ::
+scanInitialCertDbState ::
   IOLike m =>
   HasFS m h ->
-  (Set PerasRoundNo, Set PerasRoundNo) ->
   m CertDbState
-dropStaleQuarantineMarkers hasFS (knownRounds, quarantinedRounds) = do
-  forM_ staleQuarantinedRounds $ removeFile hasFS . fsPathQuarantinedCertFile
+scanInitialCertDbState hasFS = do
+  names <- Set.toList <$> listDirectory hasFS (mkFsPath rootDir)
+  let known = Set.fromList $ mapMaybe certRoundFromFileName names
+      quarantined = Set.fromList $ mapMaybe certRoundFromQuarantinedFileName names
+      staleQuarantined = Set.intersection known quarantined
+  forM_ staleQuarantined $ removeFile hasFS . fsPathQuarantinedCertFile
   pure
     CertDbState
-      { cdsKnownRounds = knownRounds
-      , cdsQuarantinedRounds = Set.difference quarantinedRounds staleQuarantinedRounds
+      { cdsKnownRounds = KnownRounds known
+      , cdsQuarantinedRounds = QuarantinedRounds $ Set.difference quarantined staleQuarantined
       }
- where
-  staleQuarantinedRounds = Set.intersection knownRounds quarantinedRounds
 
 -- | Eagerly read and integrity-check every known certificate, moving any
 -- unreadable or corrupt one to quarantine (tracing it via 'QuarantinedCert'),
 -- so that it is never advertised to clients. Used by the 'ValidateAllOnOpen'
 -- policy.
-validateAllCertsOnOpen ::
+scrubCorruptKnownCerts ::
   ( IOLike m
   , DecodeDisk blk (PerasCert blk)
   ) =>
@@ -328,8 +324,8 @@ validateAllCertsOnOpen ::
   HasFS m h ->
   CertDbState ->
   m CertDbState
-validateAllCertsOnOpen tracer ccfg hasFS st =
-  foldM validateCert st (cdsKnownRounds st)
+scrubCorruptKnownCerts tracer ccfg hasFS st =
+  foldM validateCert st (getKnownRounds $ cdsKnownRounds st)
  where
   validateCert st' roundNo =
     readCertFileAt ccfg hasFS (fsPathCertFile roundNo) >>= \case
@@ -363,22 +359,57 @@ withHasFS env k = case picdbHasFS env of SomeHasFS hasFS -> k hasFS
 
 -- | The in-memory index of the database. The two sets are disjoint.
 data CertDbState = CertDbState
-  { cdsKnownRounds :: !(Set PerasRoundNo)
+  { cdsKnownRounds :: !KnownRounds
   -- ^ The round numbers of all certificates stored in the database directory
   -- and not (yet) found to be unreadable or corrupt.
-  , cdsQuarantinedRounds :: !(Set PerasRoundNo)
+  , cdsQuarantinedRounds :: !QuarantinedRounds
   -- ^ The round numbers of all certificates found to be unreadable or corrupt.
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
+newtype KnownRounds = KnownRounds
+  { getKnownRounds :: Set PerasRoundNo
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+newtype QuarantinedRounds = QuarantinedRounds
+  { getQuarantinedRounds :: Set PerasRoundNo
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+-- | The 'CertDbState' invariant: known and quarantined rounds are disjoint sets.
+-- We bundle the 'noThunkcheck' from 'Ouroboros.Consensus.Util.IOLike.newSVar'
+-- to avide by its convention.
+disjointAndNoThunks :: CertDbState -> Maybe String
+disjointAndNoThunks
+  st@CertDbState
+    { cdsKnownRounds = KnownRounds known
+    , cdsQuarantinedRounds = QuarantinedRounds quarantined
+    } =
+    noThunksCheck <|> disjointCheck
+   where
+    noThunksCheck = show <$> unsafeNoThunks st
+    disjointCheck
+      | Set.disjoint known quarantined = Nothing
+      | otherwise = Just "Found a redundant quarantined certificate"
+
 -- | Move a round from the known to the quarantined rounds.
 quarantineRound :: PerasRoundNo -> CertDbState -> CertDbState
-quarantineRound roundNo CertDbState{cdsKnownRounds, cdsQuarantinedRounds} =
+quarantineRound
+  roundNo
   CertDbState
-    { cdsKnownRounds = Set.delete roundNo cdsKnownRounds
-    , cdsQuarantinedRounds = Set.insert roundNo cdsQuarantinedRounds
-    }
+    { cdsKnownRounds = KnownRounds known
+    , cdsQuarantinedRounds = QuarantinedRounds quarantined
+    } =
+    CertDbState
+      { cdsKnownRounds =
+          KnownRounds $ Set.delete roundNo known
+      , cdsQuarantinedRounds =
+          QuarantinedRounds $ Set.insert roundNo quarantined
+      }
 
 {-------------------------------------------------------------------------------
   API implementation
@@ -410,9 +441,9 @@ implAddCert env cert = do
   getSt = takeSVar (picdbState env)
 
   -- Holding the 'StrictSVar' makes the check-then-write in 'modifyState'
-  -- atomic with respect to concurrent adds. On abort or exception we restore
-  -- the previous state, and 'allocateTemp' removes the uncommitted certificate
-  -- file.
+  -- atomic with respect to concurrent insertions. On abort or exception we
+  -- restore the previous state, and 'allocateTemp' removes the uncommitted
+  -- certificate file.
   putSt :: CertDbState -> ExitCase CertDbState -> m ()
   putSt before ec =
     putSVar (picdbState env) $ case ec of
@@ -421,7 +452,11 @@ implAddCert env cert = do
 
   modifyState :: ModifyCertDbState m AddPerasImmutableCertResult
   modifyState = do
-    CertDbState{cdsKnownRounds = known, cdsQuarantinedRounds = quarantined} <- get
+    CertDbState
+      { cdsKnownRounds = KnownRounds known
+      , cdsQuarantinedRounds = QuarantinedRounds quarantined
+      } <-
+      get
     if Set.member roundNo known
       then lift $ lift $ replaceIfBroken
       else do
@@ -429,11 +464,11 @@ implAddCert env cert = do
           allocateTemp
             (writeCertFile env roundNo cert)
             (\() -> removeCertFile env roundNo >> pure True)
-            (\st' () -> Set.member roundNo (cdsKnownRounds st'))
+            (\st' () -> Set.member roundNo (getKnownRounds $ cdsKnownRounds st'))
         put
           CertDbState
-            { cdsKnownRounds = Set.insert roundNo known
-            , cdsQuarantinedRounds = Set.delete roundNo quarantined
+            { cdsKnownRounds = KnownRounds $ Set.insert roundNo known
+            , cdsQuarantinedRounds = QuarantinedRounds $ Set.delete roundNo quarantined
             }
         -- Release the round from quarantine only once the new certificate
         -- file is in place: should this fail, the new file is cleaned up and
@@ -468,7 +503,7 @@ implGetCertsAfter ::
 implGetCertsAfter env roundNo maxCerts = do
   -- A possibly slightly stale read is fine: certificates added concurrently may
   -- or may not show up in this snapshot.
-  rounds <- cdsKnownRounds <$> atomically (readSVarSTM (picdbState env))
+  KnownRounds rounds <- cdsKnownRounds <$> atomically (readSVarSTM (picdbState env))
   let roundsAfter = snd $ Set.split roundNo rounds
       candidates = take (fromIntegral maxCerts) (Set.toAscList roundsAfter)
   -- Read each certificate on demand. A certificate whose file is unreadable or
@@ -477,7 +512,7 @@ implGetCertsAfter env roundNo maxCerts = do
   fmap catMaybes $ forM candidates $ \r ->
     readCertFile env r >>= \case
       Right cert -> pure (Just cert)
-      Left _ -> quarantineCertIfBroken env r
+      Left _ -> quarantineCertIfStillBroken env r
 
 {-------------------------------------------------------------------------------
   Quarantine
@@ -491,23 +526,27 @@ implGetCertsAfter env roundNo maxCerts = do
 -- first found broken, a concurrent 'implAddCert' may have replaced it with an
 -- intact one (see 'replaceIfBroken'), or a concurrent reader may have already
 -- quarantined it.
-quarantineCertIfBroken ::
+quarantineCertIfStillBroken ::
   ( IOLike m
   , DecodeDisk blk (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
   m (Maybe (ValidatedPerasCert blk))
-quarantineCertIfBroken env roundNo = do
-  (mCert, mErr) <- modifySVar (picdbState env) $ \st ->
-    if not (Set.member roundNo (cdsKnownRounds st))
-      then pure (st, (Nothing, Nothing))
-      else
-        readCertFile env roundNo >>= \case
-          Right cert -> pure (st, (Just cert, Nothing))
-          Left err -> withHasFS env $ \hasFS -> do
-            st' <- quarantineCert hasFS roundNo st
-            pure (st', (Nothing, Just err))
+quarantineCertIfStillBroken env roundNo = do
+  (mCert, mErr) <- modifySVar (picdbState env) $
+    \st@CertDbState{cdsKnownRounds = KnownRounds known} ->
+      if not $ Set.member roundNo known
+        -- The cert was quarantined by a concurrent reader.
+        then pure (st, (Nothing, Nothing))
+        else
+          readCertFile env roundNo >>= \case
+            -- The cert was restored after a concurrent writer.
+            Right cert -> pure (st, (Just cert, Nothing))
+            -- Cert is bad indeed.
+            Left err -> withHasFS env $ \hasFS -> do
+              st' <- quarantineCert hasFS roundNo st
+              pure (st', (Nothing, Just err))
   forM_ mErr $ traceQuarantinedCert (picdbTracer env) roundNo
   pure mCert
 
@@ -569,34 +608,9 @@ removeQuarantinedCertFile env roundNo =
   On-disk serialisation
 -------------------------------------------------------------------------------}
 
-encodeCert ::
-  EncodeDisk blk (PerasCert blk) =>
-  CodecConfig blk ->
-  ValidatedPerasCert blk ->
-  Encoding
-encodeCert ccfg (ValidatedPerasCert cert boost) =
-  encodeListLen 2
-    <> encodeDisk ccfg cert
-    <> toCBOR boost
-
-decodeCert ::
-  DecodeDisk blk (PerasCert blk) =>
-  CodecConfig blk ->
-  forall s.
-  Decoder s (ValidatedPerasCert blk)
-decodeCert ccfg = do
-  decodeListLenOf 2
-  cert <- decodeDisk ccfg
-  boost <- fromCBOR
-  pure (ValidatedPerasCert cert boost)
-
 -- | Serialise a certificate into the self-verifying bytes stored on disk: a
 -- CRC32 of the certificate payload followed by the (inline) certificate
--- encoding produced by 'encodeCert'.
---
--- Placing @payload@ /last/ lets us both fold the CRC over it and append it to
--- the already-serialised CRC in a single streaming pass, so the payload is
--- serialised exactly once.
+-- encoding produced by 'encodeDisk'.
 --
 -- The CRC lets 'decodeCertFile' detect corruption (including a partial write
 -- that somehow slipped past the atomic rename in 'writeCertFile') without
@@ -611,10 +625,12 @@ encodeCertFileBytes ::
   ValidatedPerasCert blk ->
   BSL.ByteString
 encodeCertFileBytes ccfg cert =
+  -- We place the @payload@ /last/ so that we get it as the inconsumed suffix
+  -- when decoding the leading CRC.
   crc <> payload
  where
   payload :: BSL.ByteString
-  payload = serialize $ encodeCert ccfg cert
+  payload = serialize $ encodeDisk ccfg cert
   crc :: BSL.ByteString
   crc = serialize $ toCBOR (getCRC (computeCRC payload))
 
@@ -634,7 +650,7 @@ decodeCertFile ccfg fileBytes = do
   unless (getCRC (computeCRC payload) == expectedCRC) $
     Left CertFileChecksumMismatch
   first CertFileMalformed $
-    decodeFullDecoder (pack "Immutable Peras Certificate") (decodeCert ccfg) payload
+    decodeFullDecoder (pack "Immutable Peras Certificate") (decodeDisk ccfg) payload
  where
   decodeCRC :: Decoder s Word32
   decodeCRC = fromCBOR
@@ -699,6 +715,15 @@ writeCertFile env roundNo cert =
   tmpPath = fsPathTmpCertFile roundNo
   path = fsPathCertFile roundNo
   bytes = encodeCertFileBytes (picdbCodecConfig env) cert
+
+removeFileIfExists ::
+  IOLike m =>
+  HasFS m h ->
+  FsPath ->
+  m ()
+removeFileIfExists hasFS path = do
+  exists <- doesFileExist hasFS path
+  when exists $ removeFile hasFS path
 
 -- | Remove the file of a certificate.
 --
@@ -793,15 +818,18 @@ certRoundFromQuarantinedFileName :: String -> Maybe PerasRoundNo
 certRoundFromQuarantinedFileName name =
   stripSuffix quarantinedSuffix name >>= certRoundFromFileName
 
+stripSuffix :: String -> String -> Maybe String
+stripSuffix suffix s = reverse <$> stripPrefix (reverse suffix) (reverse s)
+
 {-------------------------------------------------------------------------------
   Trace types
 -------------------------------------------------------------------------------}
 
 data TraceEvent blk
-  = -- | Number of certificates and of quarantined certificates found on disk
-    -- when opening.
-    OpenedDB
+  = OpenedDB
+      -- | Number of known certificates
       Int
+      -- | Number of missing certificates
       Int
   | -- | The result of attempting to add a certificate for the given round.
     AddedCert PerasRoundNo AddPerasImmutableCertResult
@@ -842,19 +870,3 @@ displayCertFileError = \case
   CertFileMalformed err -> "Malformed: " <> show err
   CertFileChecksumMismatch -> "CRC mismatch"
   CertFileIncompleteWrite -> "Incomplete write"
-
-{-------------------------------------------------------------------------------
-  Utilities
--------------------------------------------------------------------------------}
-
-removeFileIfExists ::
-  IOLike m =>
-  HasFS m h ->
-  FsPath ->
-  m ()
-removeFileIfExists hasFS path = do
-  exists <- doesFileExist hasFS path
-  when exists $ removeFile hasFS path
-
-stripSuffix :: String -> String -> Maybe String
-stripSuffix suffix s = reverse <$> stripPrefix (reverse suffix) (reverse s)

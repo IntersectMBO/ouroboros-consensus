@@ -61,6 +61,7 @@ import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (forgetArrivalTime))
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -212,8 +213,7 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- certificate arriving after its boosted block has already been
       -- copied here is not retried.
       certsBoostingBlk <- atomically $ PerasCertDB.getCertsBoosting cdbPerasCertDB pt
-      forM_ certsBoostingBlk $ \cert ->
-        void $ PerasImmutableCertDB.addCert cdbPerasImmutableCertDB cert
+      forM_ certsBoostingBlk (PerasImmutableCertDB.addCert cdbPerasImmutableCertDB . forgetArrivalTime)
       trace $ CopiedBlockToImmutableDB pt
 
   -- Get the /possibly/ updated tip of the ImmutableDB

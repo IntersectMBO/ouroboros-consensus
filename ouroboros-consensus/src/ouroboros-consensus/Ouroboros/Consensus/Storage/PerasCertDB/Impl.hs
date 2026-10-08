@@ -235,12 +235,12 @@ implGetCertsBoosting ::
   ) =>
   PerasCertDbEnv m blk ->
   Point blk ->
-  STM m [ValidatedPerasCert blk]
+  STM m [WithArrivalTime (ValidatedPerasCert blk)]
 implGetCertsBoosting PerasCertDbEnv{pcdbState} pt = do
   PerasCertDbState{pcdsCertsByTicket} <-
     forgetFingerprint <$> readTVar pcdbState
   pure
-    [ forgetArrivalTime cert
+    [ cert
     | cert <- Map.elems pcdsCertsByTicket
     , getPerasCertPoint cert == pt
     ]
