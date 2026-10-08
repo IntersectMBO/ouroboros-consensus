@@ -14,6 +14,7 @@ import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Data.Text as T
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus)
+import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Leios
   ( ConsensusConfig (leiosPraosConfig)
@@ -42,6 +43,7 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 leiosSharedBlockForging ::
   forall m c era.
   ( ShelleyCompatible (Leios c) era
+  , TxLimits (ShelleyBlock (Leios c) era)
   , IOLike m
   ) =>
   HotKey.HotKey c m ->

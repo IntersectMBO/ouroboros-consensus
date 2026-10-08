@@ -316,7 +316,7 @@ type instance ForgeStateInfo BlockB = ()
 type instance ForgeStateUpdateError BlockB = Void
 
 forgeBlockB :: ForgeBlockArgs BlockB -> ForgedBlock BlockB
-forgeBlockB ForgeBlockArgs{..} =
+forgeBlockB args@ForgeBlockArgs{..} =
   ForgedBlock
     { forgedBlock =
         BlkB
@@ -331,9 +331,11 @@ forgeBlockB ForgeBlockArgs{..} =
                 , hdrB_prev = ledgerTipHash lst
                 }
           }
-    , forgedTxs = fbTxs
+    , forgedTxs = txs
+    , forgedTxsMeasure = txsMeasure
     }
  where
+  (txs, txsMeasure) = selectBlockTxs args
   TickedLedgerStateB lst = fbCurrentTickedLedgerState
 
 blockForgingB :: Monad m => BlockForging m BlockB

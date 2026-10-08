@@ -43,9 +43,11 @@ import Ouroboros.Consensus.HeaderValidation
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
+import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx, HasTxId, LedgerSupportsMempool)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Mempool.Impl.Common (snapshotFromValidTxs)
+import Ouroboros.Consensus.Mempool.TxSeq (TicketNo (..), TxTicket (..))
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepState
   , tickChainDepState
@@ -98,7 +100,10 @@ type GenTxs blk =
 
 runForge ::
   forall blk.
-  LedgerSupportsProtocol blk =>
+  ( LedgerSupportsProtocol blk
+  , LedgerSupportsMempool blk
+  , HasTxId (GenTx blk)
+  ) =>
   EpochSize ->
   SlotNo ->
   ForgeLimit ->
@@ -225,6 +230,15 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
             frk
             tickedLedgerState
 
+    -- 'genTxs' gives the transactions for this block. Each ticket has a zero
+    -- ('mempty') measure, so the ranking-block part of 'snapshotPartition'
+    -- keeps all of them, whatever the block capacity.
+    let mempoolSnapshot =
+          snapshotFromValidTxs
+            [TxTicket tx (TicketNo n) mempty | (n, tx) <- zip [1 ..] txs]
+            bcPrevPoint
+            currentSlot
+
     -- Actually produce the block
     newBlock <-
       lift $
@@ -237,7 +251,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
               , Block.fbCurrentSlotNo = currentSlot
               , Block.fbPerasCert = Nothing -- DBSynthesizer does not include Peras certs in blocks for now
               , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-              , Block.fbTxs = txs
+              , Block.fbMempoolSnapshot = mempoolSnapshot
               , Block.fbIsLeader = proof
               }
 

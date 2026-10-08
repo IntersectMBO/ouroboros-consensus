@@ -82,6 +82,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
+import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -945,21 +946,27 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
 
     let tpraos ::
           forall era.
-          Shelley.ShelleyCompatible (TPraos c) era =>
+          ( Shelley.ShelleyCompatible (TPraos c) era
+          , TxLimits (ShelleyBlock (TPraos c) era)
+          ) =>
           BlockForging m (ShelleyBlock (TPraos c) era)
         tpraos =
           TPraos.shelleySharedBlockForging hotKey slotToPeriod credentials
 
     let praos ::
           forall era.
-          Shelley.ShelleyCompatible (Praos c) era =>
+          ( Shelley.ShelleyCompatible (Praos c) era
+          , TxLimits (ShelleyBlock (Praos c) era)
+          ) =>
           BlockForging m (ShelleyBlock (Praos c) era)
         praos =
           Praos.praosSharedBlockForging hotKey slotToPeriod credentials
 
     let leios ::
           forall era.
-          Shelley.ShelleyCompatible (Leios c) era =>
+          ( Shelley.ShelleyCompatible (Leios c) era
+          , TxLimits (ShelleyBlock (Leios c) era)
+          ) =>
           BlockForging m (ShelleyBlock (Leios c) era)
         leios =
           Leios.leiosSharedBlockForging hotKey slotToPeriod credentials

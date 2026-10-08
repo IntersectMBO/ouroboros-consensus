@@ -125,6 +125,8 @@ class
   -- Then the value at position @idx@ must be that measure, with zero in each
   -- field that the earlier era lacks. After a hard fork, the mempool keeps the
   -- measure that a transaction got in the era in which the mempool added it.
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Forging.projectMempoolSnapshot'
+  -- projects that measure with the projection of the new era.
   --
   -- The result is a strict 'SOP.NP'. A caller that picks one era with
   -- 'Data.SOP.Index.projectNP' still evaluates every position. So every
@@ -140,6 +142,12 @@ class
   -- | Projects a combined endorser-block measure to every era position. The
   -- rules of 'hardForkProjTxMeasurePhase1' hold, with 'hardForkInjTxEbMeasure'
   -- as the injection.
+  --
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Forging.hardForkBlockForging'
+  -- also projects sums of 'hardForkTxEbMeasure' results. Such a sum need not be
+  -- the injection of any era's measure. So the projection keeps the fields that
+  -- the era measures and ignores the rest. It does not check that the rest is
+  -- zero.
   hardForkProjTxEbMeasure :: HardForkTxEbMeasure xs -> SOP.NP WrapTxEbMeasure xs
 
   -- | 'txEbMeasure' for the hard fork block.

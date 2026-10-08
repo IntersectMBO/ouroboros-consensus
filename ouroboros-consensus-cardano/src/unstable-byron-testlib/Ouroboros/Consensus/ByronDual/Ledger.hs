@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -39,6 +38,7 @@ import Ouroboros.Consensus.Byron.Crypto.DSIGN
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.ByronSpec.Ledger
+import Ouroboros.Consensus.Config (configBlock)
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
@@ -213,7 +213,7 @@ forgeDualByronBlock ::
   HasCallStack =>
   ForgeBlockArgs DualByronBlock ->
   ForgedBlock DualByronBlock
-forgeDualByronBlock ForgeBlockArgs{..} =
+forgeDualByronBlock args@ForgeBlockArgs{..} =
   ForgedBlock
     { forgedBlock =
         -- NOTE: We do not /elaborate/ the real Byron block from the spec one,
@@ -226,23 +226,23 @@ forgeDualByronBlock ForgeBlockArgs{..} =
         DualBlock
           { dualBlockMain = main
           , dualBlockAux = Just aux
-          , dualBlockBridge = mconcat $ map vDualGenTxBridge fbTxs
+          , dualBlockBridge = mconcat $ map vDualGenTxBridge txs
           }
-    , forgedTxs = fbTxs
+    , forgedTxs = txs
+    , forgedTxsMeasure = txsMeasure
     }
  where
+  (txs, txsMeasure) = selectBlockTxs args
+
   main :: ByronBlock
   main =
-    forgeRegularBlock $
-      ForgeBlockArgs
-        { fbConfig = dualTopLevelConfigMain fbConfig
-        , fbCurrentBlockNo
-        , fbCurrentSlotNo
-        , fbPerasCert = Nothing -- Doesn't support Peras
-        , fbCurrentTickedLedgerState = tickedDualLedgerStateMain fbCurrentTickedLedgerState
-        , fbTxs = map vDualGenTxMain fbTxs
-        , fbIsLeader
-        }
+    forgeRegularBlock
+      (configBlock (dualTopLevelConfigMain fbConfig))
+      fbCurrentBlockNo
+      fbCurrentSlotNo
+      (tickedDualLedgerStateMain fbCurrentTickedLedgerState)
+      (map vDualGenTxMain txs)
+      fbIsLeader
 
   aux :: ByronSpecBlock
   aux =
@@ -250,7 +250,7 @@ forgeDualByronBlock ForgeBlockArgs{..} =
       fbCurrentBlockNo
       fbCurrentSlotNo
       (tickedDualLedgerStateAux fbCurrentTickedLedgerState)
-      (map vDualGenTxAux fbTxs)
+      (map vDualGenTxAux txs)
       ( bridgeToSpecKey
           (tickedDualLedgerStateBridge fbCurrentTickedLedgerState)
           (hashVerKey . deriveVerKeyDSIGN . pbftIsLeaderSignKey $ fbIsLeader)

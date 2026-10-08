@@ -50,7 +50,7 @@ import Data.Measure (Measure)
 import qualified Data.Measure
 import GHC.Generics (Generic)
 import NoThunks.Class
-import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
+import Ouroboros.Consensus.Block.Abstract (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap

@@ -153,18 +153,13 @@ examples =
 
 exampleBlock :: ByronBlock
 exampleBlock =
-  forgeRegularBlock $
-    ForgeBlockArgs
-      { fbConfig = topLevelConfig
-      , fbCurrentBlockNo = BlockNo 1
-      , fbCurrentSlotNo = SlotNo 1
-      , fbPerasCert = Nothing -- Doesn't support Peras
-      , fbCurrentTickedLedgerState =
-          forgetLedgerTables $
-            applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) (forgetLedgerTables ledgerStateAfterEBB)
-      , fbTxs = [ValidatedByronTx exampleGenTx]
-      , fbIsLeader = fakeMkIsLeader leaderCredentials
-      }
+  forgeRegularBlock
+    blockConfig
+    (BlockNo 1)
+    (SlotNo 1)
+    (applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) (forgetLedgerTables ledgerStateAfterEBB))
+    [ValidatedByronTx exampleGenTx]
+    (fakeMkIsLeader leaderCredentials)
  where
   -- \| Normally, we'd have to use 'checkIsLeader' to produce this proof.
   fakeMkIsLeader (ByronLeaderCredentials signKey dlgCert _ _) =

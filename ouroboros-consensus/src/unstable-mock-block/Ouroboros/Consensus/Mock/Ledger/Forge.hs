@@ -42,7 +42,7 @@ forgeSimple ::
   ForgeExt c ext ->
   ForgeBlockArgs (SimpleBlock c ext) ->
   ForgedBlock (SimpleBlock c ext)
-forgeSimple ForgeExt{forgeExt} ForgeBlockArgs{..} =
+forgeSimple ForgeExt{forgeExt} args@ForgeBlockArgs{..} =
   ForgedBlock
     { forgedBlock =
         forgeExt fbConfig fbIsLeader $
@@ -50,11 +50,14 @@ forgeSimple ForgeExt{forgeExt} ForgeBlockArgs{..} =
             { simpleHeader = mkSimpleHeader encode stdHeader ()
             , simpleBody = body
             }
-    , forgedTxs = fbTxs
+    , forgedTxs = txs
+    , forgedTxsMeasure = txsMeasure
     }
  where
+  (txs, txsMeasure) = selectBlockTxs args
+
   body :: SimpleBody
-  body = SimpleBody{simpleTxs = (simpleGenTx . txForgetValidated) <$> fbTxs}
+  body = SimpleBody{simpleTxs = (simpleGenTx . txForgetValidated) <$> txs}
 
   stdHeader :: SimpleStdHeader c ext
   stdHeader =

@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -40,7 +41,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 
 forgeShelleyBlock ::
   forall m era proto.
-  (ShelleyCompatible proto era, Monad m) =>
+  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), Monad m) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
   ForgeBlockArgs (ShelleyBlock proto era) ->
@@ -48,7 +49,7 @@ forgeShelleyBlock ::
 forgeShelleyBlock
   hotKey
   cbl
-  ForgeBlockArgs{..} =
+  args@ForgeBlockArgs{..} =
     do
       hdr <-
         mkHeader @_ @(ProtoCrypto proto)
@@ -68,15 +69,18 @@ forgeShelleyBlock
           { forgedBlock =
               assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
                 blk
-          , forgedTxs = fbTxs
+          , forgedTxs = txs
+          , forgedTxsMeasure = txsMeasure
           }
    where
     protocolVersion = shelleyProtocolVersion $ configBlock fbConfig
 
+    (txs, txsMeasure) = selectBlockTxs args
+
     body =
       SL.mkBasicBlockBody
         & SL.txSeqBlockBodyL
-          .~ Seq.fromList (fmap extractTx fbTxs)
+          .~ Seq.fromList (fmap extractTx txs)
 
     actualBodySize = SL.blockBodySize protocolVersion body
 

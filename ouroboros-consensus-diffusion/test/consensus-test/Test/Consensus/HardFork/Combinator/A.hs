@@ -368,7 +368,7 @@ type instance ForgeStateInfo BlockA = ()
 type instance ForgeStateUpdateError BlockA = Void
 
 forgeBlockA :: ForgeBlockArgs BlockA -> ForgedBlock BlockA
-forgeBlockA ForgeBlockArgs{..} =
+forgeBlockA args@ForgeBlockArgs{..} =
   ForgedBlock
     { forgedBlock =
         BlkA
@@ -384,9 +384,11 @@ forgeBlockA ForgeBlockArgs{..} =
                 }
           , blkA_body = Map.findWithDefault [] fbCurrentSlotNo (lcfgA_forgeTxs ledgerConfig)
           }
-    , forgedTxs = fbTxs
+    , forgedTxs = txs
+    , forgedTxsMeasure = txsMeasure
     }
  where
+  (txs, txsMeasure) = selectBlockTxs args
   TickedLedgerStateA lst = fbCurrentTickedLedgerState
   ledgerConfig :: PartialLedgerConfig BlockA
   ledgerConfig = snd $ configLedger fbConfig

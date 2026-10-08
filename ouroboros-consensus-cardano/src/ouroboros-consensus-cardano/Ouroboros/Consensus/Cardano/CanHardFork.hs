@@ -263,6 +263,9 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     -- Eras before Dijkstra have no endorser blocks, so their references cost
     -- nothing. The closure keeps the block measure, because
     -- 'txEbMeasure' must never be zero.
+    --
+    -- Eras before Dijkstra have a zero endorser-block capacity, so their
+    -- endorser-block part is always empty.
     inj ::
       (TxMeasurePhase1 x -> AlonzoMeasure) ->
       (TxMeasurePhase2 x -> RefScriptSize) ->
@@ -299,7 +302,9 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   -- Before Dijkstra this drops 'txReferencesSize'. That size is not zero for a
   -- transaction in the mempool, because 'hardForkTxEbMeasure' computes the
   -- endorser-block measure of every transaction as Dijkstra's. Eras before
-  -- Dijkstra have no endorser blocks, so the size does not apply to them.
+  -- Dijkstra build no endorser block. Their 'forgeBlock' calls
+  -- 'selectBlockTxs', which drops the endorser-block part. So no forge in
+  -- those eras needs the size.
   hardForkProjTxEbMeasure m =
     WrapTxEbMeasure (proj byteSize toTrivial m)
       SOP.:* WrapTxEbMeasure (proj byteSize toTrivial m)

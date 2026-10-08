@@ -43,6 +43,7 @@ import Data.Kind (Constraint, Type)
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
+import Data.SOP.Index (Index (IZ))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
@@ -69,6 +70,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Mempool.API (MempoolMeasure (..), MempoolSnapshot (..))
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Protocol.Abstract
@@ -500,13 +502,14 @@ instance Functor m => Isomorphic (BlockForging m) where
              , fbCurrentSlotNo
              , fbPerasCert
              , fbCurrentTickedLedgerState
-             , fbTxs
+             , fbMempoolSnapshot
              , fbIsLeader
              } ->
-              ( \ForgedBlock{forgedBlock, forgedTxs} ->
+              ( \ForgedBlock{forgedBlock, forgedTxs, forgedTxsMeasure} ->
                   ForgedBlock
                     { forgedBlock = project' (Proxy @(I blk)) forgedBlock
                     , forgedTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> forgedTxs
+                    , forgedTxsMeasure = castMempoolMeasure forgedTxsMeasure
                     }
               )
                 <$> forgeBlock
@@ -517,7 +520,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                     , fbPerasCert = injectPerasCert fbPerasCert
                     , fbCurrentTickedLedgerState =
                         getFlipTickedLedgerState (inject (FlipTickedLedgerState fbCurrentTickedLedgerState))
-                    , fbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
+                    , fbMempoolSnapshot = inject fbMempoolSnapshot
                     , fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) fbIsLeader
                     }
       }
@@ -567,15 +570,10 @@ instance Functor m => Isomorphic (BlockForging m) where
              , fbCurrentSlotNo
              , fbPerasCert
              , fbCurrentTickedLedgerState
-             , fbTxs
+             , fbMempoolSnapshot
              , fbIsLeader
              } ->
-              ( \ForgedBlock{forgedBlock, forgedTxs} ->
-                  ForgedBlock
-                    { forgedBlock = inject' (Proxy @(I blk)) forgedBlock
-                    , forgedTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> forgedTxs
-                    }
-              )
+              injectForgedBlock IZ
                 <$> forgeBlock
                   ForgeBlockArgs
                     { fbConfig = project fbConfig
@@ -584,7 +582,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                     , fbPerasCert = projectPerasCert fbPerasCert
                     , fbCurrentTickedLedgerState =
                         getFlipTickedLedgerState (project (FlipTickedLedgerState fbCurrentTickedLedgerState))
-                    , fbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
+                    , fbMempoolSnapshot = project fbMempoolSnapshot
                     , fbIsLeader = project' (Proxy @(WrapIsLeader blk)) fbIsLeader
                     }
       }
@@ -627,6 +625,65 @@ instance Isomorphic ProtocolInfo where
       { pInfoConfig = inject pInfoConfig
       , pInfoInitLedger = unFlip $ inject $ Flip pInfoInitLedger
       }
+
+{-------------------------------------------------------------------------------
+  Mempool snapshot
+-------------------------------------------------------------------------------}
+
+instance Isomorphic MempoolSnapshot where
+  project ::
+    NoHardForks blk =>
+    MempoolSnapshot (HardForkBlock '[blk]) -> MempoolSnapshot blk
+  project = projectMempoolSnapshot IZ
+
+  inject ::
+    forall blk.
+    NoHardForks blk =>
+    MempoolSnapshot blk -> MempoolSnapshot (HardForkBlock '[blk])
+  inject snapshot =
+    MempoolSnapshot
+      { snapshotTxs = map injectTicket (snapshotTxs snapshot)
+      , snapshotTxsAfter = map injectTicket . snapshotTxsAfter snapshot
+      , snapshotPartition = \blockCapacity ebCapacity ->
+          let (rbTxs, rbTxsMeasure, ebTxs, ebTxsMeasure) =
+                snapshotPartition snapshot (castTxMeasure blockCapacity) ebCapacity
+           in ( map injectTx rbTxs
+              , castMempoolMeasure rbTxsMeasure
+              , map injectTx ebTxs
+              , castMempoolMeasure ebTxsMeasure
+              )
+      , snapshotLookupTx = fmap injectTx . snapshotLookupTx snapshot
+      , snapshotHasTx = snapshotHasTx snapshot . project' (Proxy @(WrapGenTxId blk))
+      , snapshotMempoolSize = snapshotMempoolSize snapshot
+      , snapshotSlotNo = snapshotSlotNo snapshot
+      , snapshotStateHash = inject (snapshotStateHash snapshot)
+      , snapshotPoint = injectHardForkPoint (snapshotPoint snapshot)
+      }
+   where
+    injectTx = inject' (Proxy @(WrapValidatedGenTx blk))
+    injectTicket (tx, ticketNo, txMeasure) =
+      (injectTx tx, ticketNo, castTxMeasure txMeasure)
+
+-- | 'coerce' cannot convert a 'TxMeasure', because its field types are type
+-- families of the block type. The unary 'CanHardFork' instance gives
+-- @HardForkBlock '[blk]@ the measure types of @blk@, so the fields convert
+-- unchanged.
+castTxMeasure ::
+  ( TxMeasurePhase1 blk ~ TxMeasurePhase1 blk'
+  , TxMeasurePhase2 blk ~ TxMeasurePhase2 blk'
+  ) =>
+  TxMeasure blk -> TxMeasure blk'
+castTxMeasure (TxMeasure p1 p2) = TxMeasure p1 p2
+
+-- | See 'castTxMeasure'.
+castMempoolMeasure ::
+  ( TxMeasurePhase1 blk ~ TxMeasurePhase1 blk'
+  , TxMeasurePhase2 blk ~ TxMeasurePhase2 blk'
+  , TxEbMeasure blk ~ TxEbMeasure blk'
+  ) =>
+  MempoolMeasure blk -> MempoolMeasure blk'
+castMempoolMeasure (MempoolMeasure txMeasure ebMeasure diffTime) =
+  MempoolMeasure (castTxMeasure txMeasure) ebMeasure diffTime
 
 {-------------------------------------------------------------------------------
   Types that require take advantage of the fact that we have a single era
