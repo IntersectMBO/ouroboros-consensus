@@ -56,6 +56,7 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
+import qualified Codec.CBOR.Write as CBOR.Write
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import Control.DeepSeq (force)
 import Control.Exception
@@ -81,12 +82,15 @@ import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoDb
-  ( LeiosDbReader
+  ( InMemoryLeiosDb
+  , LeiosDbReader
+  , emptyInMemoryLeiosDb
   , newLeiosDBInMemoryWith
   , withReader
   )
 import LeiosDemoTypes
-  ( LeiosNotVotedReason (..)
+  ( LeiosClosureError (..)
+  , LeiosNotVotedReason (..)
   , LeiosPoint (..)
   , LeiosVote (..)
   , RbHash (..)
@@ -97,7 +101,13 @@ import LeiosDemoTypes
   , prettyLeiosPoint
   )
 import Lens.Micro ((%~), (.~), (^.))
-import Ouroboros.Consensus.Block (SlotNo (..), blockSlot, getHeader)
+import Ouroboros.Consensus.Block
+  ( SlotNo (..)
+  , WithOrigin (..)
+  , blockPoint
+  , blockSlot
+  , getHeader
+  )
 import Ouroboros.Consensus.Block.Forging
   ( BlockForging (..)
   , ForgeBlockArgs (..)
@@ -116,7 +126,12 @@ import Ouroboros.Consensus.Cardano.Block
   , pattern LedgerStateDijkstra
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
-import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig, configLedger)
+import Ouroboros.Consensus.Config
+  ( SecurityParam (..)
+  , TopLevelConfig
+  , configCodec
+  , configLedger
+  )
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
   ( ComputeLedgerEvents (OmitLedgerEvents)
@@ -133,6 +148,10 @@ import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx, extractTxs)
 import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK)
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+  ( CertRbClosureUnavailable (..)
+  , serveBlockWithLeiosClosure
+  )
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
@@ -144,6 +163,9 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.Serialisation (EncodeDisk (..))
+import qualified Ouroboros.Consensus.Util.IOLike as IOLike
+import Ouroboros.Network.Block (Serialised (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS
@@ -235,6 +257,9 @@ tests =
 --   chain (resolving certifying blocks via the LeiosDB and summing
 --   'sizeTxF' per transaction — the same data the accumulator sees, but
 --   computed outside of block application).
+-- * Serving the chain as the node-to-client ChainSync server does throws
+--   'CertRbClosureUnavailable' when a CertRB's closure is missing, rather
+--   than sending the CertRB without its EB's transactions.
 prop_leios :: Seed -> Property
 prop_leios seed =
   conjoin
@@ -259,6 +284,8 @@ prop_leios seed =
         & counterexample "[failed] propCertifyAndAnnounce"
     , propClosuresValidate
         & counterexample "[failed] propClosuresValidate"
+    , propServeMissingClosure
+        & counterexample "[failed] propServeMissingClosure"
     ]
  where
   numNodes = 3 :: Int
@@ -587,6 +614,34 @@ prop_leios seed =
                    & counterexample ("independent sum: " <> show expected)
                )
 
+  -- Serve the chain the way the node-to-client ChainSync server does, twice:
+  --
+  -- - From the node's own LeiosDB, which holds every closure, so serving must
+  --   not throw.
+  -- - From an empty LeiosDB, where every closure is missing. Serving must
+  --   throw at the first CertRB, not send it without its EB's transactions.
+  propServeMissingClosure =
+    let chain = Chain.toOldestFirst (nodeOutputFinalChain someNode)
+        ownDb = runIdentity . lsLeiosDb . nodeLeiosState $ someNode
+     in conjoin
+          [ case serveChain pInfoConfig ownDb chain of
+              Left e -> counterexample ("own LeiosDB: " <> show e) False
+              Right _ -> property True
+          , case (certRbEbs chain, serveChain pInfoConfig emptyInMemoryLeiosDb chain) of
+              ([], Right _) -> property True
+              ((certRb, point) : _, Left (CertRbClosureUnavailable slot err)) ->
+                slot === NotOrigin (blockSlot certRb)
+                  .&&. err === LeiosClosureMissing (pointEbHash point)
+              (certRbs, result) ->
+                counterexample
+                  ( "empty LeiosDB, CertRBs at slots "
+                      <> show (map (blockSlot . fst) certRbs)
+                      <> ": "
+                      <> either show (const "served without throwing") result
+                  )
+                  False
+          ]
+
   propConsistentChains =
     ( case Map.elems nodeChains of
         [] -> True
@@ -838,20 +893,55 @@ prop_leios_invalid_eb seed
     VoteRejected{} -> "VoteRejected"
     ClosureUnavailable{} -> "ClosureUnavailable"
 
--- | The EB points certified by a chain's CertRBs. A CertRB carries no
--- announcement of its own for the EB it certifies; the announcement lives on
--- its parent's header, so walk the chain carrying the previous announcement —
--- the same traversal 'sumChainTxBytes' uses to resolve closures.
+-- | The EB points certified by a chain's CertRBs.
 certifiedEbPoints :: [CardanoBlock StandardCrypto] -> Set.Set LeiosPoint
-certifiedEbPoints = go Nothing
+certifiedEbPoints = Set.fromList . map snd . certRbEbs
+
+-- | A chain's CertRBs, oldest first, each with the EB it certifies. A CertRB
+-- carries no announcement of its own for the EB it certifies; the
+-- announcement lives on its parent's header, so walk the chain carrying the
+-- previous announcement — the same traversal 'sumChainTxBytes' uses to
+-- resolve closures.
+certRbEbs ::
+  [CardanoBlock StandardCrypto] ->
+  [(CardanoBlock StandardCrypto, LeiosPoint)]
+certRbEbs = go Nothing
  where
-  go _ [] = Set.empty
+  go _ [] = []
   go prevAnn (blk : rest) =
     here <> go (fst <$> headerLeiosAnnouncement (getHeader blk)) rest
    where
     here = case (blockLeiosCert blk, prevAnn) of
-      (Just _, Just point) -> Set.singleton point
-      _ -> Set.empty
+      (Just _, Just point) -> [(blk, point)]
+      _ -> []
+
+-- | Serve a chain block by block through 'serveBlockWithLeiosClosure', as the
+-- node-to-client ChainSync server does: each block is served with the EB
+-- announced by the block before it. Returns the served blocks, or the
+-- exception the server threw.
+serveChain ::
+  TopLevelConfig (CardanoBlock StandardCrypto) ->
+  InMemoryLeiosDb ->
+  [CardanoBlock StandardCrypto] ->
+  Either CertRbClosureUnavailable [Serialised (CardanoBlock StandardCrypto)]
+serveChain cfg db chain = runSimOrThrow $ do
+  stateVar <- StrictTVar.newTVarIO db
+  leiosDb <- newLeiosDBInMemoryWith stateVar
+  withReader leiosDb $ \leiosConn ->
+    IOLike.try $ go leiosConn Nothing chain
+ where
+  go _ _ [] = pure []
+  go leiosConn prevAnn (blk : rest) = do
+    let hdr = getHeader blk
+    sblk <-
+      serveBlockWithLeiosClosure
+        (configCodec cfg)
+        leiosConn
+        prevAnn
+        (blockPoint blk)
+        hdr
+        (Serialised . CBOR.Write.toLazyByteString $ encodeDisk (configCodec cfg) blk)
+    (sblk :) <$> go leiosConn (fst <$> headerLeiosAnnouncement hdr) rest
 
 -- * Misbehaving nodes
 
