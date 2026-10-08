@@ -284,6 +284,13 @@ initNodeKernel
           , varGsmState
           } = st
 
+    -- Back the ChainDB's slot clock with the wall-clock slot, but only while
+    -- the node is caught up; while syncing, Peras queries skip ticking.
+    ChainDB.setChainClock chainDB $
+      readTVar varGsmState >>= \case
+        GSM.CaughtUp -> getCurrentSlot btime
+        _ -> pure CurrentSlotUnknown
+
     varOutboundConnectionsState <- newTVarIO UntrustedState
 
     do

@@ -97,6 +97,7 @@ import Data.Set (Set)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.API (CurrentSlot)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
@@ -490,7 +491,7 @@ data ChainDB m blk = ChainDB
   , getPerasVoteIds :: STM m (Set PerasVoteId)
   -- ^ Get the set of all Peras vote IDs currently in the database.
   , getPerasEpochContextResolverHandle :: PerasEpochContextResolverHandle m blk
-  -- ^ Returns a handle to obtain the 'PerasEpochContext' for a given 'PerasRoundNo'
+  -- ^ Returns a handle to resolve a 'PerasRoundNo' to its 'PerasEpochContext'
   , getPerasVotingViewHandle :: PerasVotingViewHandle m blk
   -- ^ Returns a handle to obtain a 'PerasVotingView' that is used to decide
   -- when to vote with respect to the Peras voting rules.
@@ -500,6 +501,12 @@ data ChainDB m blk = ChainDB
   , getTimeResolutionContextHandle :: TimeResolutionContextHandle m blk
   -- ^ Returns a handle to obtain a 'TimeResolutionContext' used to run
   -- time-sensitive queries.
+  , setChainClock :: STM m CurrentSlot -> m ()
+  -- ^ Provide the ChainDB with a source for the current wall-clock slot,
+  -- backing the ChainDB's slot clock. The node kernel wires this to an action
+  -- that yields the wall-clock slot only while the node is caught up (and
+  -- 'CurrentSlotUnknown' otherwise). Until it is called, the slot clock reports
+  -- the slot as unknown.
   , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
   -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
   --   - returns the block when it becomes the immutable tip,

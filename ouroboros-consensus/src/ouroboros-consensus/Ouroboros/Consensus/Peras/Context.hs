@@ -1,6 +1,8 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -25,7 +27,7 @@ module Ouroboros.Consensus.Peras.Context
     -- * Peras epoch context resolver and handle
   , PerasEpochContextResolver (..)
   , PerasEpochContextNotFoundForRound (..)
-  , resolveRoundNo
+  , unsafeResolveRoundNo
   , perasEpochContextResolverBounds
   , PerasEpochContextResolverHandle (..)
   , mockPerasEpochContextResolverHandle
@@ -74,6 +76,7 @@ import Data.SOP.Index (himap, injectNS)
 import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
+import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block.Abstract
   ( BlockProtocol
   , EpochNo (..)
@@ -133,12 +136,9 @@ import Ouroboros.Consensus.Storage.Serialisation
   , EncodeDisk (..)
   )
 import Ouroboros.Consensus.Util.IOLike
-  ( IOLike
-  , MonadSTM
+  ( MonadSTM
   , MonadThrow
   , NoThunks (..)
-  , newTVarIO
-  , readTVar
   , throwSTM
   )
 
@@ -379,11 +379,18 @@ advancePerasEpochContextResolver resolver newEpochContext =
 -- Fails with 'PerasEpochContextNotFoundForRound' if the round number is not
 -- within the bounds of either the current or previous epoch context, or if the
 -- resolver is in an error state.
-resolveRoundNo ::
+--
+-- UNSAFE: this resolves against the resolver as-is. A 'PerasEpochContextResolver'
+-- only covers a two-epoch window around the slot it was last ticked to, so it
+-- must already have been ticked to (around) the round's slot; otherwise
+-- resolution may spuriously fail or return a stale context. Prefer
+-- 'Ouroboros.Consensus.Ledger.Extended.tickAndResolveRoundNo',
+-- which ticks before resolving.
+unsafeResolveRoundNo ::
   PerasEpochContextResolver blk ->
   PerasRoundNo ->
   Either PerasEpochContextNotFoundForRound (PerasEpochContext blk)
-resolveRoundNo resolver roundNo = case resolver of
+unsafeResolveRoundNo resolver roundNo = case resolver of
   PerasEpochContextResolverError reason ->
     Left $
       PerasEpochContextNotFoundForRound roundNo reason
@@ -449,29 +456,26 @@ perasEpochContextResolverBounds = \case
     , max (endPerasRoundNo curr) (endPerasRoundNo prev)
     )
 
--- | A handle to a 'PerasEpochContextResolver' that can be used in 'STM' to
--- resolve round numbers into their corresponding 'PerasEpochContext's.
+-- | A handle that resolves a 'PerasRoundNo' into its corresponding
+-- 'PerasEpochContext' (or a 'PerasEpochContextNotFoundForRound' error) in 'STM'.
 newtype PerasEpochContextResolverHandle m blk
   = PerasEpochContextResolverHandle
-  { getPerasEpochContextResolver :: STM m (PerasEpochContextResolver blk)
+  { resolveRoundNo ::
+      PerasRoundNo ->
+      STM m (Either PerasEpochContextNotFoundForRound (PerasEpochContext blk))
   }
+  deriving
+    NoThunks
+    via OnlyCheckWhnfNamed "PerasEpochContextResolverHandle" (PerasEpochContextResolverHandle m blk)
 
 -- | A mocked 'PerasEpochContextResolverHandle' that always succeeds by
 -- resolving every round number to a fixed given (fixed) 'PerasEpochContext'.
 mockPerasEpochContextResolverHandle ::
-  ( IOLike m
-  , NoThunks (PerasEpochContext blk)
-  ) =>
+  MonadSTM m =>
   PerasEpochContext blk ->
-  m (PerasEpochContextResolverHandle m blk)
-mockPerasEpochContextResolverHandle context = do
-  resolverVar <-
-    newTVarIO
-      ( PerasEpochContextResolver
-          (PerasEnabled (BoundedPerasEpochContext minBound maxBound context))
-          NoPerasEnabled
-      )
-  pure $ PerasEpochContextResolverHandle (readTVar resolverVar)
+  PerasEpochContextResolverHandle m blk
+mockPerasEpochContextResolverHandle context =
+  PerasEpochContextResolverHandle $ \_ -> pure (Right context)
 
 -- | Helper to resolve the epoch context for a given round a pass it to a
 -- continuation for further processing.
@@ -487,9 +491,8 @@ withResolvedRoundNo ::
   PerasRoundNo ->
   (PerasEpochContext blk -> Either err a) ->
   STM m a
-withResolvedRoundNo handle roundNo k = do
-  resolver <- getPerasEpochContextResolver handle
-  case resolveRoundNo resolver roundNo of
+withResolvedRoundNo PerasEpochContextResolverHandle{resolveRoundNo} roundNo k =
+  resolveRoundNo roundNo >>= \case
     Left err -> throwSTM err
     Right context ->
       case k context of

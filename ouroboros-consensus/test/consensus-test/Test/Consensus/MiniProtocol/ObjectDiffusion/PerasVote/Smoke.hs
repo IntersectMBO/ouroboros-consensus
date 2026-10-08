@@ -84,7 +84,7 @@ prop_smoke =
                 , m [PerasVote TestBlock]
                 )
             mkPoolInterfaces = do
-              epochContextResolverHandle <- mockPerasEpochContextResolverHandle epochContext
+              let epochContextResolverHandle = mockPerasEpochContextResolverHandle epochContext
 
               outboundPool <- newVoteDB epochContextResolverHandle watValidatedVotes
               inboundPool <- newVoteDB epochContextResolverHandle []
