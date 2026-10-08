@@ -28,6 +28,7 @@ import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
 import Cardano.Ledger.BaseTypes (ProtVer)
+import Cardano.Ledger.Core (Era)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
@@ -153,7 +154,9 @@ class ProtocolHeaderSupportsKES proto where
     Bool
 
   mkHeader ::
-    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto) =>
+    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto, Era era) =>
+    -- | The era the header is forged in, which fixes its serialisation
+    proxy era ->
     HotKey crypto m ->
     CanBeLeader proto ->
     IsLeader proto ->

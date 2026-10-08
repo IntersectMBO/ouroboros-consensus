@@ -75,7 +75,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
   configSlotsPerKESPeriod cfg = praosSlotsPerKESPeriod $ praosParams cfg
   verifyHeaderIntegrity slotsPerKESPeriod =
     praosVerifyHeaderIntegrity slotsPerKESPeriod . praosHeaderToView
-  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer = do
+  mkHeader _ hk cbl il slotNo blockNo prevHash bbHash sz protVer = do
     PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il mkBhBodyBytes
     pure $ Header praosToSign praosSignature
    where

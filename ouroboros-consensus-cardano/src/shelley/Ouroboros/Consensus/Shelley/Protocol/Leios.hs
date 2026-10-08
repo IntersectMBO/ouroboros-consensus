@@ -20,7 +20,6 @@ import Cardano.Protocol.Leios.BlockHeader (mkHeaderBody)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Data.Maybe.Strict (StrictMaybe (SNothing))
-import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Protocol.Leios
   ( ConsensusConfig (..)
   , Leios
@@ -37,7 +36,6 @@ import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (protoMaxMajorPV)
 import Ouroboros.Consensus.Protocol.Praos.Views
 import Ouroboros.Consensus.Protocol.Signed
-import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
@@ -99,11 +97,10 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Leios c) where
   verifyHeaderIntegrity slotsPerKESPeriod =
     praosVerifyHeaderIntegrity slotsPerKESPeriod . leiosHeaderToView
 
-  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer = do
+  mkHeader era hk cbl il slotNo blockNo prevHash bbHash sz protVer = do
     PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il mkLeiosHeaderBody
     pure $ Leios.mkHeader era praosToSign praosSignature
    where
-    era = Proxy @DijkstraEra -- FIXME: not hardcode
     mkLeiosHeaderBody
       PraosToSign
         { praosToSignIssuerVK
