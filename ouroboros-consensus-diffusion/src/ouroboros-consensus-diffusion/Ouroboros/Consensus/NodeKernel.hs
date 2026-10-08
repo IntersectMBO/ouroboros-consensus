@@ -61,9 +61,6 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Text as Text
 import Data.Void (Void)
-import LeiosDemoDb
-  ( LeiosDbHandle (..)
-  )
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
@@ -227,10 +224,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
     -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
     --
     -- See 'LeiosPeerVars' for the write patterns.
-    getLeiosDB :: LeiosDbHandle m
-  -- ^ Factory for opening per-thread readers and writers of the Leios demo DB
-  -- and subscribing to EB-notification events.
-  , getLeiosVoteState :: LeiosVoteState m
+    getLeiosVoteState :: LeiosVoteState m
   -- ^ Aggregated vote state across all peers. Empty in S4; populated
   -- by the voting thread in S5.
   , getLeiosPeersVars ::
@@ -287,11 +281,6 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , genesisArgs :: GenesisNodeKernelArgs m blk
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
-  , leiosDB :: LeiosDbHandle m
-  -- ^ Factory for opening per-thread Leios DB connections. Each consumer
-  -- (forge loop, leios fetch logic, LeiosNotify / LeiosFetch handlers)
-  -- opens its own connection from this handle. 'LeiosDbReader' is
-  -- documented as not thread-safe, so connections must not be shared.
   , leiosTxCache :: LeiosTxCache m () () Leios.SerializedEbBody
   -- ^ The in-memory tx-presence index. Created in "Ouroboros.Consensus.Node"
   -- (before the ChainDB, so the ChainDB GC can prune it just before the LeiosDb)
@@ -330,7 +319,6 @@ initNodeKernel
     , genesisArgs
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
-    , leiosDB
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -585,7 +573,6 @@ initNodeKernel
           (configLedger cfg)
           chainDB
           systemTime
-          leiosDB
           getLeiosTxCache
           leiosVoteState
           (topLevelConfigVotingKeys cfg)
@@ -634,7 +621,6 @@ initNodeKernel
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
-        , getLeiosDB = leiosDB
         , getLeiosVoteState = leiosVoteState
         , getLeiosPeersVars = getLeiosPeersVars
         , getLeiosOutstanding = getLeiosOutstanding
@@ -688,7 +674,6 @@ data InternalState m addrNTN addrNTC blk = IS
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
-  , leiosDB :: LeiosDbHandle m
   , -- Leios fetch-logic state; consumed in 'initNodeKernel'.
     leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , leiosReady :: MVar.MVar m ()
@@ -729,7 +714,6 @@ initInternalState
     , getUseBootstrapPeers
     , getDiffusionPipeliningSupport
     , genesisArgs
-    , leiosDB
     , leiosTxCache
     , leiosFetchRng
     } = do
@@ -764,7 +748,7 @@ initInternalState
           NotOrigin s -> s
     leiosOutstanding <- do
       acquiredClosures <-
-        LeiosDb.withReader leiosDB $ \reader ->
+        LeiosDb.withReader chainDB.leiosDb $ \reader ->
           LeiosDb.scanCompleteEbClosuresNotOlderThanSlot reader immTipSlot
       MVar.newMVar $
         Leios.initializeLeiosOutstanding leiosFetchRng acquiredClosures immTipSlot
@@ -868,8 +852,8 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    leiosDbReader <- LeiosDb.openReader leiosDB
-    leiosDbWriter <- LeiosDb.openWriter leiosDB
+    leiosDbReader <- LeiosDb.openReader chainDB.leiosDb
+    leiosDbWriter <- LeiosDb.openWriter chainDB.leiosDb
     rootCCtx <- rootCallCtx "Forge"
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 

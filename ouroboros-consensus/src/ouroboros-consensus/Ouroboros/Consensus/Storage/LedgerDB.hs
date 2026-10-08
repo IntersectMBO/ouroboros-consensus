@@ -20,6 +20,7 @@ import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
 import Data.Word
+import LeiosDemoDb.Common (LeiosDbHandle)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -60,6 +61,9 @@ openDB ::
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
+  -- | Leios demo DB handle. Opened once by 'ChainDB.openDBInternal'; passed
+  -- here so that ChainDB and LedgerDB share a single handle.
+  LeiosDbHandle m ->
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->
   -- | Stream source for blocks.
@@ -74,13 +78,14 @@ openDB ::
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
   GetVolatileSuffix m blk ->
-  WithTempRegistry st m (LedgerDB' m blk, Word64)
+  WithTempRegistry st m (LedgerDB' m blk, Word64, TestInternals' m blk)
 openDB
+  leiosDb
   args
   stream
   replayGoal
   getBlock
-  getVolatileSuffix =
+  getVolatileSuffix = do
     case lgrBackendArgs args of
       LedgerDbBackendArgsV1 bss -> do
         let snapManager = V1.snapshotManager args
@@ -92,7 +97,8 @@ openDB
               getBlock
               snapManager
               getVolatileSuffix
-        lift $ doOpenDB args initDb snapManager stream replayGoal
+              leiosDb
+        lift $ openDBInternal args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         -- Note this is the only step that cares about the temporary
         -- registry. Note also that the final state is an polymorphic and
@@ -111,8 +117,8 @@ openDB
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                 snapTracer
                 (lgrHasFS args)
-        initDb <- lift $ V2.mkInitDb args getBlock snapManager getVolatileSuffix res
-        lift $ doOpenDB args initDb snapManager stream replayGoal
+        initDb <- lift $ V2.mkInitDb args getBlock snapManager getVolatileSuffix res leiosDb
+        lift $ openDBInternal args initDb snapManager stream replayGoal
        where
         !tr = lgrTracer args
         !snapTracer = LedgerDBSnapshotEvent >$< tr
@@ -120,24 +126,6 @@ openDB
 {-------------------------------------------------------------------------------
   Opening a LedgerDB
 -------------------------------------------------------------------------------}
-
-doOpenDB ::
-  forall m n blk db st.
-  ( IOLike m
-  , LedgerSupportsProtocol blk
-  , InspectLedger blk
-  , HasCallStack
-  ) =>
-  Complete LedgerDbArgs m blk ->
-  InitDB db m blk ->
-  SnapshotManager m n blk st ->
-  StreamAPI m blk blk ->
-  Point blk ->
-  m (LedgerDB' m blk, Word64)
-doOpenDB args initDb snapManager stream replayGoal =
-  f <$> openDBInternal args initDb snapManager stream replayGoal
- where
-  f (ldb, replayCounter, _) = (ldb, replayCounter)
 
 -- | Open the ledger DB and expose internals for testing purposes
 openDBInternal ::

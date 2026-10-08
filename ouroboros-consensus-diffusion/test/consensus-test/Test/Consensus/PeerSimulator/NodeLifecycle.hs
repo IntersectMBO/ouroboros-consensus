@@ -157,7 +157,6 @@ mkChainDb resources = do
     void $ swapTMVar (nodeDBsGsm lrCdb) MockFS.empty
     void $ swapTMVar (nodeDBsLgr lrCdb) MockFS.empty
   chainDbArgs <- do
-    mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
     let args0 =
           fromMinimalChainDbArgs
             MinimalChainDbArgs
@@ -166,7 +165,7 @@ mkChainDb resources = do
               , mcdbInitLedger = lrInitLedger
               , mcdbRegistry = lrRegistry
               , mcdbNodeDBs = lrCdb
-              , mcdbLeiosDb
+              , mcdbLeiosDb = LeiosDb.leiosDbInMemory
               }
     let args = updateTracer (mkTracer (traceWith lrTracer . TraceChainDBEvent)) args0
     pure $

@@ -241,7 +241,7 @@ initLedgerDB ::
   m (LedgerDB' m TestBlock)
 initLedgerDB s c = do
   fs <- newTMVarIO MockFS.empty
-  leiosDbHandle <- newLeiosDBInMemory
+  leiosDb <- newLeiosDBInMemory
   let args =
         LedgerDbArgs
           { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
@@ -252,14 +252,14 @@ initLedgerDB s c = do
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
-          , lgrLeiosDb = leiosDbHandle
           }
   ldb <-
-    fst
+    (\(a, _, _) -> a)
       <$> runWithTempRegistry
         ( do
             db <-
               LedgerDB.openDB
+                leiosDb
                 args
                 streamAPI
                 (Chain.headPoint c)

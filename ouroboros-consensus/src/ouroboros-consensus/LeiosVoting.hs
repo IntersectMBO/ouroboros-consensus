@@ -261,12 +261,11 @@ runLeiosVoting ::
   LedgerConfig blk ->
   ChainDB m blk ->
   SystemTime m ->
-  LeiosDbHandle m ->
   LeiosTxCache m () () SerializedEbBody ->
   LeiosVoteState m ->
   [LeiosSigningKey] ->
   m ()
-runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
+runLeiosVoting tracer lcfg chainDB systemTime txCache voteState = \case
   [] ->
     traceWith tracer $
       MkTraceLeiosKernel
@@ -274,8 +273,8 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
   sks ->
     -- A 'LeiosDbReader' is not thread-safe, so this thread owns one for its
     -- lifetime, the way each forge-credentials thread does.
-    withReader leiosDB $ \reader -> do
-      chan <- subscribeEbNotifications leiosDB
+    withReader (ChainDB.leiosDb chainDB) $ \reader -> do
+      chan <- subscribeEbNotifications (ChainDB.leiosDb chainDB)
       -- One message per transaction, even the ones we do not act on. Looping
       -- here instead would be a read that only sticks if the transaction
       -- commits: a run that ended in 'retry' would put every 'AcquiredEb' it

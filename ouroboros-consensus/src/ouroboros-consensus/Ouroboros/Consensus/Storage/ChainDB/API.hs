@@ -83,6 +83,7 @@ import Control.Monad (void)
 import Control.ResourceRegistry
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
+import LeiosDemoDb.Common (LeiosDbHandle)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.HeaderStateHistory
@@ -445,6 +446,11 @@ data ChainDB m blk = ChainDB
   --
   -- Returns 'Nothing' if the block does not contain a Peras certificate, or
   -- if the block is from an era that does not support Peras certificates.
+  , leiosDb :: LeiosDbHandle m
+  -- ^ The Leios demo DB handle. Opened and closed by the ChainDB itself
+  -- (via 'openDB'/'closeDB'). Exposed here so that other components
+  -- (e.g. the NodeKernel) can share the same handle without opening a
+  -- second connection to the database.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --

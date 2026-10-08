@@ -284,7 +284,6 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
   mkChainDbView registry tracer = do
     chainDbArgs <- do
       nodeDBs <- emptyNodeDBs
-      mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
       let args =
             fromMinimalChainDbArgs $
               MinimalChainDbArgs
@@ -293,7 +292,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
-                , mcdbLeiosDb
+                , mcdbLeiosDb = LeiosDb.leiosDbInMemory
                 }
       pure $ ChainDB.updateTracer cdbTracer args
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
