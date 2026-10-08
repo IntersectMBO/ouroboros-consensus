@@ -491,7 +491,7 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM peer peerVars -> toLeiosNotifyClientPeerPipelined $ Effect $ do
+      , hLeiosNotifyClient = \version controlMessageSTM peer peerVars -> toLeiosNotifyClientPeerPipelined $ Effect $ do
           let tracer = leiosPeerTracer peer
               kernelTracer = Node.leiosKernelTracer tracers
               LeiosVoteState{addVote} = leiosVoteState
@@ -567,18 +567,26 @@ mkHandlers
                     Leios.recordEbBodyOffer
                       (getLeiosOutstanding, getLeiosReady)
                       peerVars
-                      Leios.TxsClosureNotAlsoOffered
+                      (Leios.MkClosureOffer 0)
                       (point, ebBytesSize)
                   MsgLeiosBlockTxsOffer p closurePrefixBytesSize -> do
                     traceWith tracer $
                       MkTraceLeiosPeer $
                         "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p <> " " <> show closurePrefixBytesSize
+                    MVar.modifyMVar_ (Leios.closureOfferBaselines peerVars) $ \baselines ->
+                      -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
+                      case Leios.admitClosureOffer
+                        Leios.demoLeiosFetchStaticEnv
+                        (Leios.leiosClosureOfferMinIncrement version)
+                        p
+                        closurePrefixBytesSize
+                        baselines of
+                        Leios.RejectedClosureOffer ->
+                          throwIO $ Leios.LeiosNotifyClosureOfferTooSmall p closurePrefixBytesSize
+                        Leios.AdmittedClosureOffer baselines' -> pure baselines'
                     -- A closure offer implies the body too.
-                    --
-                    -- TODO the offered prefix size is not yet consulted: every
-                    -- closure offer is taken as an offer of the whole closure.
                     MVar.modifyMVar_ (Leios.offerings peerVars) $
-                      pure . Map.insertWith Leios.mergeOffer p Leios.TxsClosureAlsoOffered
+                      pure . Map.insertWith max p (Leios.MkClosureOffer closurePrefixBytesSize)
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
                     -- No peer-level trace here: 'TraceLeiosVoteAcquired' below

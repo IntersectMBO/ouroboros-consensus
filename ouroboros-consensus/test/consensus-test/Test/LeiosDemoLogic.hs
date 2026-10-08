@@ -42,14 +42,16 @@ import LeiosDemoDb
   )
 import LeiosDemoException (LeiosDbException)
 import LeiosDemoLogic
-  ( fetchPriorityTiers
+  ( admitClosureOffer
+  , fetchPriorityTiers
   , leiosFetchLogicIteration
   , msgLeiosBlockRequest
   , newLeiosFetchContext
   )
 import LeiosDemoTypes
-  ( AlsoOfferedTxsClosure (..)
-  , BytesSize
+  ( BytesSize
+  , ClosureOffer (..)
+  , ClosureOfferAdmission (..)
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosEb (..)
@@ -65,7 +67,6 @@ import LeiosDemoTypes
   , hashLeiosTx
   , markBodyImminent
   , maxTxsPerEb
-  , mergeOffer
   , recordMaxAnnouncementSlot
   )
 import System.Random (mkStdGen)
@@ -107,7 +108,42 @@ tests =
         , testCase "refuses a stored body of more than maxTxsPerEb entries" $
             test_refuseBodyOverLimit
         ]
+    , testGroup
+        "closure offer admission"
+        [ testCase "one sub-increment offer per point, then only full increments" $
+            test_closureOfferAdmission
+        ]
     ]
+
+-- | 'admitClosureOffer': one offer per point may grow the prefix by less than
+-- the increment, a full increment always may, and nothing may exceed the
+-- closure bound.
+test_closureOfferAdmission :: IO ()
+test_closureOfferAdmission = do
+  let env = demoLeiosFetchStaticEnv{maxEbClosureBytesSize = 1000}
+      minIncrement = 100
+      p1 = point 1 'a'
+      p2 = point 5 'b'
+      step p offered = admitClosureOffer env minIncrement p offered
+      admitted r = case r of
+        AdmittedClosureOffer baselines -> pure baselines
+        RejectedClosureOffer -> assertFailure "offer rejected"
+      rejected r = case r of
+        AdmittedClosureOffer _ -> assertFailure "offer admitted"
+        RejectedClosureOffer -> pure ()
+  -- a first offer below the increment spends the allowance; the next such is rejected
+  b1 <- admitted (step p1 50 Map.empty)
+  rejected (step p1 60 b1)
+  -- a full increment over the largest offer so far is always admitted ...
+  b2 <- admitted (step p1 150 b1)
+  -- ... and the allowance stays spent, a repeat included
+  rejected (step p1 160 b2)
+  rejected (step p1 150 b2)
+  -- points are tracked independently
+  b3 <- admitted (step p2 50 b2)
+  rejected (step p2 60 b3)
+  -- an offer past the most a closure can hold is invalid, however it grew
+  rejected (step p2 1001 b3)
 
 -- | With current slot S=100 and window L=10, EBs at slot >= 90 (the voting
 -- window) are prioritised oldest-first, EBs beyond S trail that first tier, and
@@ -203,7 +239,7 @@ test_forgedEbOfferIgnored =
 -- | A test fixture: static env, peer offerings, outstanding work.
 data Scenario pid = Scenario
   { scEnv :: !LeiosFetchStaticEnv
-  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint AlsoOfferedTxsClosure))
+  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint ClosureOffer))
   , scOutstanding :: !(LeiosOutstanding pid)
   }
 
@@ -263,23 +299,23 @@ withRequestedBytesPerPeer pid n =
 -- | Peer @p@ offers the body (only) of these points.
 offersBody :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBody pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotAlsoOffered) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, MkClosureOffer 0) | p <- points])
 
 -- | Peer @p@ offers both the body and the tx-closure of these points.
 offersBodyAndClosure :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBodyAndClosure pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureAlsoOffered) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, MkClosureOffer maxBound) | p <- points])
 
 insertOffering ::
   Ord pid =>
   PeerId pid ->
-  Map.Map LeiosPoint AlsoOfferedTxsClosure ->
+  Map.Map LeiosPoint ClosureOffer ->
   Scenario pid ->
   Scenario pid
 insertOffering pid offers sc =
   sc
     { scOfferings =
-        Map.insertWith (Map.unionWith mergeOffer) pid offers (scOfferings sc)
+        Map.insertWith (Map.unionWith max) pid offers (scOfferings sc)
     }
 
 -- | Internal: lift a function on 'LeiosOutstanding' to one on 'Scenario'.

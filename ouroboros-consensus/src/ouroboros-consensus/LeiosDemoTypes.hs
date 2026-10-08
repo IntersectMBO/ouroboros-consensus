@@ -391,22 +391,33 @@ prettyBitmap (idx, bitmap) =
 -- patterns of access to the "Ouroboros.Consensus.NodeKernel"'s shared state.
 --
 
--- | Whether an EB offer also implies its tx-closure is on offer. A CertRB does
--- (it certifies the whole EB); a bare 'MsgLeiosBlockOffer' does not -- the closure
--- is offered separately, as a 'MsgLeiosBlockTxsOffer'. This is also the value we
--- store per offered point: 'TxsClosureAlsoOffered' means the peer can serve the
--- body /and/ the closure (a closure offer implies the body), while
--- 'TxsClosureNotAlsoOffered' is body-only.
-data AlsoOfferedTxsClosure = TxsClosureAlsoOffered | TxsClosureNotAlsoOffered
+-- | How much of an EB a peer has offered: the byte prefix of its tx closure it
+-- can serve. 0 is the body alone (a bare 'MsgLeiosBlockOffer'); 'maxBound' is
+-- all of it (a CertRB certifies the whole EB); a 'MsgLeiosBlockTxsOffer' names
+-- its prefix, and implies the body. Ordered by how much is offered, so two
+-- offers for one point merge by 'max'.
+newtype ClosureOffer = MkClosureOffer BytesSize
+  deriving (Eq, Ord, Show)
+
+-- | The validity baseline of a peer's closure offers for one point: the largest
+-- prefix it has offered so far, and whether it has spent its one offer that
+-- grows the prefix by less than the minimum increment. See 'admitClosureOffer'.
+data ClosureOfferBaseline = MkClosureOfferBaseline !BytesSize !SmallIncrementAllowance
   deriving (Eq, Show)
 
--- | Merge two offers for one point: the closure is on offer if either says so.
-mergeOffer :: AlsoOfferedTxsClosure -> AlsoOfferedTxsClosure -> AlsoOfferedTxsClosure
-mergeOffer TxsClosureAlsoOffered _ = TxsClosureAlsoOffered
-mergeOffer _ TxsClosureAlsoOffered = TxsClosureAlsoOffered
-mergeOffer _ _ = TxsClosureNotAlsoOffered
+data SmallIncrementAllowance = SmallIncrementAvailable | SmallIncrementSpent
+  deriving (Eq, Show)
 
-data LeiosNotifyException = LeiosNotifyUnexpectedMsgCancel
+-- | The verdict of 'admitClosureOffer': the updated baselines, or a rejection.
+data ClosureOfferAdmission
+  = AdmittedClosureOffer !(Map LeiosPoint ClosureOfferBaseline)
+  | RejectedClosureOffer
+
+data LeiosNotifyException
+  = LeiosNotifyUnexpectedMsgCancel
+  | -- | A closure offer grew the offered prefix by less than the minimum
+    -- increment after the peer had spent its one such offer for the point
+    LeiosNotifyClosureOfferTooSmall LeiosPoint BytesSize
   deriving (Eq, Show)
 
 instance Exception LeiosNotifyException
@@ -415,11 +426,18 @@ data LeiosPeerVars m = MkLeiosPeerVars
   { whetherBigLedgerPeer :: !IsBigLedgerPeer
   -- ^ fixed for the connection's lifetime; the fetch logic fetches more
   -- aggressively from a big-ledger peer (see 'leiosFetchLogicIteration')
-  , offerings :: !(MVar m (Map LeiosPoint AlsoOfferedTxsClosure))
+  , offerings :: !(MVar m (Map LeiosPoint ClosureOffer))
   -- ^ the peer's current offers, keyed by point -- so the map is already in slot
   -- order (freshest-first via 'Map.toDescList'), no dedup by EB hash needed
   -- (honest announcements don't reuse a hash, and an adversary defeats such
   -- dedup anyway). Written to only by the LeiosNotify client and eviction.
+  , closureOfferBaselines :: !(MVar m (Map LeiosPoint ClosureOfferBaseline))
+  -- ^ the validity baseline of this peer's closure offers, per point (see
+  -- 'admitClosureOffer'); it outlives the offer itself, which the fetch logic
+  -- prunes once consumed. Written to only by the LeiosNotify client.
+  --
+  -- TODO never pruned: one entry per point ever offered, for the connection's
+  -- lifetime.
   , requestsToSend :: !(StrictTVar m (Seq LeiosFetchRequest))
   -- ^ written to by the fetch logic and the LeiosFetch client
   --
@@ -440,8 +458,9 @@ data LeiosPeerVars m = MkLeiosPeerVars
 newLeiosPeerVars :: IOLike m => IsBigLedgerPeer -> m (LeiosPeerVars m)
 newLeiosPeerVars whetherBigLedgerPeer = do
   offerings <- MVar.newMVar Map.empty
+  closureOfferBaselines <- MVar.newMVar Map.empty
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
-  pure MkLeiosPeerVars{whetherBigLedgerPeer, offerings, requestsToSend}
+  pure MkLeiosPeerVars{whetherBigLedgerPeer, offerings, closureOfferBaselines, requestsToSend}
 
 -- | Main data structure used in the Leios fetching logic.
 --
@@ -698,7 +717,7 @@ summarizeDecisions decs =
         sum
           [ fromIntegral b
           | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) <- reqs
-          , Jobs.MkLeiosJob _ b _ <- F.toList jobs
+          , Jobs.MkLeiosJob _ b _ _ <- F.toList jobs
           ]
     }
  where
@@ -927,7 +946,7 @@ pruneOutstandingToImmTip immTipSlot outstanding =
 
 -- | Pretty-print the per-peer 'offerings' map: for each peer, its offered points
 -- freshest-first, each tagged with the strongest kind offered. Hashes truncated.
-prettyOfferings :: Show pid => Map (PeerId pid) (Map LeiosPoint AlsoOfferedTxsClosure) -> String
+prettyOfferings :: Show pid => Map (PeerId pid) (Map LeiosPoint ClosureOffer) -> String
 prettyOfferings m =
   unlines $
     map ("    [leios] " ++) $
@@ -944,9 +963,10 @@ prettyOfferings m =
           | (MkLeiosPoint slot h, k) <- points
           ]
         ++ "}"
-  kindTag = \case
-    TxsClosureNotAlsoOffered -> "b"
-    TxsClosureAlsoOffered -> "c"
+  kindTag (MkClosureOffer n)
+    | n == 0 = "b"
+    | n == maxBound = "c"
+    | otherwise = "p" ++ show n
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
@@ -980,6 +1000,12 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   -- ^ At most this many bytes of txs per job
   , maxJobTxCount :: Int
   -- ^ At most this many txs per job
+  , maxEbClosureBytesSize :: BytesSize
+  -- ^ At most this many bytes of txs in an EB's closure; bounds what a closure
+  -- offer may claim.
+  --
+  -- TODO a Leios protocol parameter that varies with the slot; static stub for
+  -- now.
   , fetchPriorityWindowSlots :: Word64
   -- ^ @L = 3*L_hdr + L_vote + L_diff@ (in slots): the window, ending at the
   -- current slot, of EBs still worth voting on. Fetch prioritisation inverts to
@@ -1006,6 +1032,7 @@ demoLeiosFetchStaticEnv =
     , maxRequestBytesSize = 500 * thousand
     , maxJobBytesSize = 64 * thousandBase2
     , maxJobTxCount = 20000 -- TODO do we want this to be low enough to matter?
+    , maxEbClosureBytesSize = 12 * million
     , fetchPriorityWindowSlots = 10 -- TODO read dynamically from ledger state
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
     , maxLeiosFetchIngressQueue = 5 * 12 * millionBase2
