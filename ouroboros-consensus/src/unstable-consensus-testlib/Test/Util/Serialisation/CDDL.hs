@@ -5,6 +5,7 @@ module Test.Util.Serialisation.CDDL
   , cddlTest
   , isCDDLCDisabled
   , CDDLsForNodeToNode (..)
+  , CDDLsForDisk (..)
   ) where
 
 import Control.Monad (join)
@@ -83,4 +84,13 @@ data CDDLsForNodeToNode = CDDLsForNodeToNode
   , headerCDDL :: (FilePath, T.Text)
   , txCDDL :: (FilePath, T.Text)
   , txIdCDDL :: (FilePath, T.Text)
+  }
+
+-- | A collection of CDDL spec and the relevant rule to use for the things we
+-- store in the ledger state snapshot
+data CDDLsForDisk = CDDLsForDisk
+  { ledgerStateCDDL :: (FilePath, T.Text)
+  , annTipCDDL :: (FilePath, T.Text)
+  , chainDepStateCDDL :: (FilePath, T.Text)
+  , extLedgerStateCDDL :: (FilePath, T.Text)
   }

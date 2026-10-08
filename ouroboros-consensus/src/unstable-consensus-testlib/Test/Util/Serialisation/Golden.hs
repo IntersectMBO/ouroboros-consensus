@@ -262,13 +262,14 @@ goldenTest_all ::
   -- | Path relative to the root of the repository that contains the golden
   -- files
   FilePath ->
+  Maybe CDDLsForDisk ->
   Maybe CDDLsForNodeToNode ->
   Examples blk ->
   TestTree
-goldenTest_all codecConfig goldenDir mCDDLs examples =
+goldenTest_all codecConfig goldenDir mDiskCDDLs mCDDLs examples =
   testGroup
     "Golden tests"
-    [ goldenTest_SerialiseDisk codecConfig goldenDir examples
+    [ goldenTest_SerialiseDisk codecConfig goldenDir mDiskCDDLs examples
     , goldenTest_SerialiseNodeToNode codecConfig goldenDir mCDDLs examples
     , goldenTest_SerialiseNodeToClient codecConfig goldenDir examples
     ]
@@ -282,27 +283,27 @@ goldenTest_SerialiseDisk ::
   ) =>
   CodecConfig blk ->
   FilePath ->
+  Maybe CDDLsForDisk ->
   Examples blk ->
   TestTree
-goldenTest_SerialiseDisk codecConfig goldenDir Examples{..} =
+goldenTest_SerialiseDisk codecConfig goldenDir mCDDLs Examples{..} =
   testGroup
     "SerialiseDisk"
-    [ test "Block" exampleBlock (encodeDisk codecConfig)
-    , test "HeaderHash" exampleHeaderHash encode
-    , test "LedgerState" exampleLedgerState (encodeDisk codecConfig)
-    , test "AnnTip" exampleAnnTip (encodeDisk codecConfig)
-    , test "ChainDepState" exampleChainDepState (encodeDisk codecConfig)
-    , test "ExtLedgerState" exampleExtLedgerState encodeExt
+    [ test "Block" exampleBlock (encodeDisk codecConfig) Nothing
+    , test "HeaderHash" exampleHeaderHash encode Nothing
+    , test "LedgerState" exampleLedgerState (encodeDisk codecConfig) $ fmap ledgerStateCDDL mCDDLs
+    , test "AnnTip" exampleAnnTip (encodeDisk codecConfig) $ fmap annTipCDDL mCDDLs
+    , test "ChainDepState" exampleChainDepState (encodeDisk codecConfig) $ fmap chainDepStateCDDL mCDDLs
+    , test "ExtLedgerState" exampleExtLedgerState encodeExt $ fmap extLedgerStateCDDL mCDDLs
     ]
  where
-  test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree
+  test :: TestName -> Labelled a -> (a -> Encoding) -> Maybe (FilePath, T.Text) -> TestTree
   test testName exampleValues enc =
     goldenTests
       testName
       exampleValues
       enc
       (goldenDir </> "disk")
-      Nothing
 
   encodeExt = encodeDiskExtLedgerState codecConfig
 
