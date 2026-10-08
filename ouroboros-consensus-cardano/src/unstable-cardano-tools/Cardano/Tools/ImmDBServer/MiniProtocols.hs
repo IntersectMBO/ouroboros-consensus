@@ -46,6 +46,7 @@ import Data.Typeable (Typeable)
 import Data.Void (Void)
 import Data.Word (Word32)
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbReader, lookupEbBody)
 import qualified LeiosDemoLogic as LeiosLogic
 import LeiosDemoOnlyTestFetch as LF
 import LeiosDemoOnlyTestNotify
@@ -218,9 +219,12 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
             mkLeiosNotifyContext reg >>= \leiosContext ->
               runPeer nullTracer cLeiosNotifyCodec channel $
                 leiosNotifyServerPeer
-                  ( MVar.takeMVar (leiosMailbox leiosContext) <&> \case
-                      (p, Just sz) -> MsgLeiosBlockOffer p sz
-                      (p, Nothing) -> MsgLeiosBlockTxsOffer p
+                  ( MVar.takeMVar (leiosMailbox leiosContext) >>= \case
+                      (p, Just sz) -> pure $ MsgLeiosBlockOffer p sz
+                      (p, Nothing) -> do
+                        -- the closure's size: the sizes the body declares, summed
+                        body <- lookupEbBody (leiosReader leiosContext) (Leios.pointEbHash p)
+                        pure $ MsgLeiosBlockTxsOffer p (sum (map snd body))
                   )
       leiosFetchProt =
         MiniProtocolCb $ \ctx channel ->
@@ -463,4 +467,7 @@ data ImmDBServerException
 
 data LeiosNotifyContext m = MkLeiosNotifyContext
   { leiosMailbox :: !(MVar.MVar m (Leios.LeiosPoint, Maybe Word32))
+  , leiosReader :: !(LeiosDbReader m)
+  -- ^ used only by this protocol instance's server thread; readers are not
+  -- thread-safe
   }

@@ -569,9 +569,14 @@ mkHandlers
                       peerVars
                       Leios.TxsClosureNotAlsoOffered
                       (point, ebBytesSize)
-                  MsgLeiosBlockTxsOffer p -> do
-                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
+                  MsgLeiosBlockTxsOffer p closurePrefixBytesSize -> do
+                    traceWith tracer $
+                      MkTraceLeiosPeer $
+                        "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p <> " " <> show closurePrefixBytesSize
                     -- A closure offer implies the body too.
+                    --
+                    -- TODO the offered prefix size is not yet consulted: every
+                    -- closure offer is taken as an offer of the whole closure.
                     MVar.modifyMVar_ (Leios.offerings peerVars) $
                       pure . Map.insertWith Leios.mergeOffer p Leios.TxsClosureAlsoOffered
                     void $ MVar.tryPutMVar getLeiosReady ()
@@ -664,8 +669,8 @@ mkHandlers
               ( readTChan chan >>= \case
                   AcquiredEb point ebSize ->
                     pure $ MsgLeiosBlockOffer point ebSize
-                  AcquiredEbTxs point ->
-                    pure $ MsgLeiosBlockTxsOffer point
+                  AcquiredEbTxs point closureSize ->
+                    pure $ MsgLeiosBlockTxsOffer point closureSize
               )
                 <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
 

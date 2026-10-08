@@ -181,6 +181,9 @@ instance Protocol (LeiosNotify point announcement vote) where
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockTxsOffer ::
       !point ->
+      -- the byte size of the contiguous prefix of the EB's tx closure that is
+      -- currently on offer; the whole closure once the server holds every tx
+      !Word32 ->
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosVotes ::
       -- TODO: non-empty
@@ -305,10 +308,11 @@ encodeLeiosNotify encodeP encodeA encodeV = encode
         <> CBOR.encodeWord 5
         <> encodeP p
         <> CBOR.encodeWord32 sz
-    MsgLeiosBlockTxsOffer p ->
-      CBOR.encodeListLen 2
+    MsgLeiosBlockTxsOffer p sz ->
+      CBOR.encodeListLen 3
         <> CBOR.encodeWord 6
         <> encodeP p
+        <> CBOR.encodeWord32 sz
     MsgLeiosVotes vs ->
       CBOR.encodeListLen 2
         <> CBOR.encodeWord 7
@@ -359,9 +363,10 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
         p <- decodeP
         sz <- CBOR.decodeWord32
         return $ SomeMessage $ MsgLeiosBlockOffer p sz
-      (SingBusy, 2, 6) -> do
+      (SingBusy, 3, 6) -> do
         p <- decodeP
-        return $ SomeMessage $ MsgLeiosBlockTxsOffer p
+        sz <- CBOR.decodeWord32
+        return $ SomeMessage $ MsgLeiosBlockTxsOffer p sz
       (SingBusy, 2, 7) -> do
         vs <- decodeVotes
         return $ SomeMessage $ MsgLeiosVotes vs

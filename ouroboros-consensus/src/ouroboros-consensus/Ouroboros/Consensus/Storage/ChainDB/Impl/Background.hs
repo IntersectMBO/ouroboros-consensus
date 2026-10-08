@@ -174,7 +174,7 @@ leiosAcquiredEbsRunner CDB{..} = do
   forever $
     atomically (readTChan chan) >>= \case
       AcquiredEb{} -> pure ()
-      AcquiredEbTxs point -> do
+      AcquiredEbTxs point _ -> do
         mNovel <- atomically $ do
           acquired <- readTVar cdbAcquiredLeiosEbs
           case LeiosDemoTypes.insertAcquiredLeiosEb point acquired of

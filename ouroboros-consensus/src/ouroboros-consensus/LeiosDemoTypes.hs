@@ -1168,6 +1168,11 @@ encodeLeiosEbSize (MkLeiosEb items) =
   cborIntBytesSize (length items)
     + sum (fmap (unByteSize32 . encodeLeiosEbItemSize . ByteSize32 . snd) items)
 
+-- | The size of a 'LeiosEb''s tx closure: the declared size of every
+-- referenced transaction, summed.
+leiosEbClosureSize :: LeiosEb -> BytesSize
+leiosEbClosureSize (MkLeiosEb items) = V.foldl' (\acc (_, sz) -> acc + sz) 0 items
+
 -- | Length of a unsigned integer if it were encoded in a "flattened format".
 -- See 'encodeInteger'.
 cborIntBytesSize :: Integral i => i -> BytesSize
@@ -1390,11 +1395,12 @@ messageLeiosNotifyToObject announcedEb = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebBytesSize" .= ebBytesSize
       ]
-  MsgLeiosBlockTxsOffer (MkLeiosPoint ebSlot ebHash) ->
+  MsgLeiosBlockTxsOffer (MkLeiosPoint ebSlot ebHash) closurePrefixBytesSize ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxsOffer"
       , "ebSlot" .= ebSlot
       , "ebHash" .= prettyEbHash ebHash
+      , "closurePrefixBytesSize" .= closurePrefixBytesSize
       ]
   MsgLeiosVotes votes ->
     mconcat
