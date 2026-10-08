@@ -14,16 +14,33 @@ annTip = [slotno,
           blockno]
 
 headerStateChainDep =
-  telescope8<versionedPbftState,
-             versionedTPraosState,
-             versionedTPraosState,
-             versionedTPraosState,
-             versionedTPraosState,
-             versionedPraosState,
-             versionedPraosState,
-             versionedPraosState>
+  telescope8<pbftState,
+             tpraosState,
+             tpraosState,
+             tpraosState,
+             tpraosState,
+             praosState,
+             praosState,
+             praosState>
 
-;# import withOrigin, ns8, telescope8, slotno, hash, blockno from base
-;# import versionedPbftState from pbft
-;# import versionedPraosState from praos
-;# import versionedTPraosState from tpraos
+pbftState = {* keyhash => [* slotno]}
+
+tpraosState = [withOrigin<slotno>, sl.chainDepState]
+
+praosState = [withOrigin<slotno>,
+              {* keyhash => word64},
+              nonce,
+              nonce,
+              nonce,
+              nonce,
+              nonce,
+              nonce]
+
+;; These should belong to the Ledger
+sl.chainDepState = [prtclState, ticknState, nonce]
+
+prtclState = [{* keyhash => word64}, nonce, nonce]
+
+ticknState = [nonce, nonce]
+
+;# import withOrigin, ns8, telescope8, slotno, hash, blockno, keyhash, word64, nonce from base

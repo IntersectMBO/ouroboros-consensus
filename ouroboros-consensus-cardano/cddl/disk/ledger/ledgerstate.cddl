@@ -1,20 +1,26 @@
 ledgerState =
-  telescope8<byron.ledgerstate,
-             versionedShelleyLedgerState<shelley.ledgerstate>,
-             versionedShelleyLedgerState<allegra.ledgerstate>,
-             versionedShelleyLedgerState<mary.ledgerstate>,
-             versionedShelleyLedgerState<alonzo.ledgerstate>,
-             versionedShelleyLedgerState<babbage.ledgerstate>,
-             versionedShelleyLedgerState<conway.ledgerstate>,
-             versionedShelleyLedgerState<dijkstra.ledgerstate>>
+  telescope8<byronLedgerState,
+             shelleyLedgerState<shelley.ledgerstate>,
+             shelleyLedgerState<allegra.ledgerstate>,
+             shelleyLedgerState<mary.ledgerstate>,
+             shelleyLedgerState<alonzo.ledgerstate>,
+             shelleyLedgerState<babbage.ledgerstate>,
+             shelleyLedgerState<conway.ledgerstate>,
+             shelleyLedgerState<dijkstra.ledgerstate>>
 
-versionedShelleyLedgerState<eraSt1> = [ shelleyVersion2, shelleyLedgerState<eraSt1> ]
+byronLedgerState = [byronTip, byron.ledgerstate, byronTransition]
 
-shelleyVersion2 = 2
+byronTip = withOrigin<blockno>
 
-shelleyLedgerState<eraSt2> = [withOrigin<shelleyTip>,
-                              eraSt2,
-                              shelleyTransition]
+byronTransition = 0 .size 1 / [ * [pvMajor, pvMinor, pvAlt, blockno] ]
+
+pvMajor = uint .size 2
+pvMinor = uint .size 2
+pvAlt = uint .size 1
+
+shelleyLedgerState<eraSt> = [withOrigin<shelleyTip>,
+                             eraSt,
+                             shelleyTransition]
 
 shelleyTip = [slotno, blockno, hash]
 
