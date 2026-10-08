@@ -23,7 +23,7 @@ module Ouroboros.Consensus.Protocol.Leios
   , LeiosHeaderView
   ) where
 
-import Cardano.Binary (Decoder, FromCBOR (..), ToCBOR (..), enforceSize)
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
 import qualified Cardano.Crypto.KES as KES
 import Cardano.Ledger.BaseTypes
   ( StrictMaybe (SNothing)
@@ -64,11 +64,6 @@ import Ouroboros.Consensus.Protocol.Praos.Common
   )
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Util.Versioned
-  ( VersionDecoder (Decode)
-  , decodeVersion
-  , encodeVersion
-  )
 
 -- | Praos extended with Leios.
 data Leios c
@@ -120,22 +115,17 @@ instance ToCBOR LeiosState where
 instance FromCBOR LeiosState where
   fromCBOR = decode
 
--- | Versioned independently of the 'PraosState' encoding it nests.
 instance Serialise LeiosState where
   encode (LeiosState praos ann) =
-    encodeVersion 0 $
-      mconcat
-        [ CBOR.encodeListLen 2
-        , encode praos
-        , toCBOR (strictMaybeToMaybe ann)
-        ]
+    mconcat
+      [ CBOR.encodeListLen 2
+      , encode praos
+      , toCBOR (strictMaybeToMaybe ann)
+      ]
 
-  decode = decodeVersion [(0, Decode dec)]
-   where
-    dec :: forall s. Decoder s LeiosState
-    dec = do
-      enforceSize "LeiosState" 2
-      LeiosState <$> decode <*> (maybeToStrictMaybe <$> fromCBOR)
+  decode = do
+    enforceSize "LeiosState" 2
+    LeiosState <$> decode <*> (maybeToStrictMaybe <$> fromCBOR)
 
 -- | Neither field's encoding varies by era.
 instance ToCBOR AnnouncedBy where
