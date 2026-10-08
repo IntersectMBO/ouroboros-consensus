@@ -121,11 +121,7 @@ import Ouroboros.Consensus.Protocol.TPraos
   , TPraosState (tpraosStateChainDepState, tpraosStateLastSlot)
   )
 import Ouroboros.Consensus.Ticked (Ticked)
-import Ouroboros.Consensus.Util.Versioned
-  ( VersionDecoder (Decode)
-  , decodeVersion
-  , encodeVersion
-  )
+import Ouroboros.Consensus.Util.CBOR
 
 data Praos c
 
@@ -314,10 +310,9 @@ instance Serialise PraosState where
       , praosStateLabNonce
       , praosStateLastEpochBlockNonce
       } =
-      encodeVersion 0 $
-        mconcat
+      mconcat
           [ CBOR.encodeListLen 8
-          , toCBOR praosStateLastSlot
+          , encodeWithOrigin toCBOR praosStateLastSlot
           , toCBOR praosStateOCertCounters
           , toEraCBOR @ShelleyEra praosStateEvolvingNonce
           , toEraCBOR @ShelleyEra praosStateCandidateNonce
@@ -327,14 +322,10 @@ instance Serialise PraosState where
           , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
           ]
 
-  decode =
-    decodeVersion
-      [(0, Decode decodePraosState)]
-   where
-    decodePraosState = do
+  decode = do
       enforceSize "PraosState" 8
       PraosState
-        <$> fromCBOR
+        <$> decodeWithOrigin fromCBOR
         <*> fromCBOR
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra

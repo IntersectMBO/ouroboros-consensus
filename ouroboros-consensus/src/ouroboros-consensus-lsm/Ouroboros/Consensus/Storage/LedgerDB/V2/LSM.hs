@@ -52,7 +52,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   , LSM.DiskCachePolicy (..)
   ) where
 
-import Codec.Serialise (decode)
 import Control.Exception (assert)
 import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadThrow.Trans ()
@@ -566,7 +565,7 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session exportSnapshot cachePolicy d
         ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
   (extLedgerSt, checksumAsRead) <-
     withExceptT (InitFailureRead . ReadSnapshotFailed) $
-      readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds)
+      readExtLedgerState fs (decodeDiskExtLedgerState ccfg) (snapshotToStatePath ds)
   msz <- readUTxOSizeFile hfs (snapshotToUTxOSizeFilePath ds)
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwE InitFailureGenesis
