@@ -14,7 +14,7 @@ import Test.Util.Paths
 import Test.Util.Serialisation.Golden
 
 tests :: TestTree
-tests = goldenTest_all codecConfig ($(getGoldenDir) </> "byron") Nothing examples
+tests = goldenTest_all codecConfig ($(getGoldenDir) </> "byron") Nothing Nothing examples
 
 instance ToGoldenDirectory ByronNodeToNodeVersion
 
