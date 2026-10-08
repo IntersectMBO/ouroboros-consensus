@@ -2809,10 +2809,6 @@ forMachineObjectDiffusionOutbound = \case
     mconcat
       [ "kind" .= String "TraceObjectDiffusionOutboundTerminated"
       ]
-  TraceObjectDiffusionOutboundSendMsgAwaitReply ->
-    "kind" .= String "TraceObjectDiffusionOutboundSendMsgAwaitReply"
-  TraceObjectDiffusionOutboundSendMsgServerIdle ->
-    "kind" .= String "TraceObjectDiffusionOutboundSendMsgServerIdle"
 
 asMetricsObjectDiffusionOutbound ::
   Text.Text ->
@@ -2854,10 +2850,6 @@ namespaceForObjectDiffusionOutbound = \case
     Namespace [] ["TraceObjectDiffusionOutboundSendMsgReplyObjects"]
   TraceObjectDiffusionOutboundTerminated ->
     Namespace [] ["TraceObjectDiffusionOutboundTerminated"]
-  TraceObjectDiffusionOutboundSendMsgAwaitReply ->
-    Namespace [] ["TraceObjectDiffusionOutboundSendMsgAwaitReply"]
-  TraceObjectDiffusionOutboundSendMsgServerIdle ->
-    Namespace [] ["TraceObjectDiffusionOutboundSendMsgServerIdle"]
 
 documentForObjectDiffusionOutbound :: Namespace a -> Maybe Text.Text
 documentForObjectDiffusionOutbound = \case
@@ -2869,10 +2861,10 @@ documentForObjectDiffusionOutbound = \case
       "The object ids about to be sent to the peer in reply."
   Namespace _ ["TraceObjectDiffusionOutboundSendMsgAwaitReply"] ->
     Just
-      "No IDs are immediately available, so the server will wait."
+      "The server has no new object IDs and will wait for more to become available."
   Namespace _ ["TraceObjectDiffusionOutboundSendMsgServerIdle"] ->
     Just
-      "No IDs became available before the bounded blocking wait expired."
+      "The server's bounded wait expired without new object IDs, returning agency to the client."
   Namespace _ ["TraceObjectDiffusionOutboundRecvMsgRequestObjects"] ->
     Just
       "The peer asked for the objects with these ids."
@@ -2882,10 +2874,6 @@ documentForObjectDiffusionOutbound = \case
   Namespace _ ["TraceObjectDiffusionOutboundTerminated"] ->
     Just
       "The peer sent MsgDone, ending the object diffusion session."
-  Namespace _ ["TraceObjectDiffusionOutboundSendMsgAwaitReply"] ->
-    Just "The server has no new object IDs and will wait for more to become available."
-  Namespace _ ["TraceObjectDiffusionOutboundSendMsgServerIdle"] ->
-    Just "The server's bounded wait expired without new object IDs, returning agency to the client."
   _ -> Nothing
 
 severityForObjectDiffusionOutbound :: Namespace a -> Maybe SeverityS
@@ -2897,8 +2885,6 @@ severityForObjectDiffusionOutbound = \case
   Namespace _ ["TraceObjectDiffusionOutboundRecvMsgRequestObjects"] -> Just Info
   Namespace _ ["TraceObjectDiffusionOutboundSendMsgReplyObjects"] -> Just Info
   Namespace _ ["TraceObjectDiffusionOutboundTerminated"] -> Just Info
-  Namespace _ ["TraceObjectDiffusionOutboundSendMsgAwaitReply"] -> Just Info
-  Namespace _ ["TraceObjectDiffusionOutboundSendMsgServerIdle"] -> Just Info
   _ -> Nothing
 
 allNamespacesObjectDiffusionOutbound :: [Namespace a]
@@ -2910,8 +2896,6 @@ allNamespacesObjectDiffusionOutbound =
   , Namespace [] ["TraceObjectDiffusionOutboundRecvMsgRequestObjects"]
   , Namespace [] ["TraceObjectDiffusionOutboundSendMsgReplyObjects"]
   , Namespace [] ["TraceObjectDiffusionOutboundTerminated"]
-  , Namespace [] ["TraceObjectDiffusionOutboundSendMsgAwaitReply"]
-  , Namespace [] ["TraceObjectDiffusionOutboundSendMsgServerIdle"]
   ]
 
 -- | Peras certificate diffusion, outbound side.
