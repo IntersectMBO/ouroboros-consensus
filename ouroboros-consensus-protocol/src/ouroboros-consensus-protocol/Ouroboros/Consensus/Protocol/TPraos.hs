@@ -85,7 +85,6 @@ import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.CBOR
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.Versioned
 
 {-------------------------------------------------------------------------------
   Fields required by TPraos in the header
@@ -294,10 +293,6 @@ data TPraosState = TPraosState
 
 instance NoThunks TPraosState
 
--- | Version 0 supported rollback, removed in #2575.
-serialisationFormatVersion1 :: VersionNumber
-serialisationFormatVersion1 = 1
-
 instance ToCBOR TPraosState where
   toCBOR = encode
 
@@ -306,20 +301,15 @@ instance FromCBOR TPraosState where
 
 instance Serialise TPraosState where
   encode (TPraosState slot chainDepState) =
-    encodeVersion serialisationFormatVersion1 $
-      mconcat
-        [ CBOR.encodeListLen 2
-        , encodeWithOrigin toCBOR slot
-        , toCBOR chainDepState
-        ]
+    mconcat
+      [ CBOR.encodeListLen 2
+      , encodeWithOrigin toCBOR slot
+      , toCBOR chainDepState
+      ]
 
-  decode =
-    decodeVersion
-      [(serialisationFormatVersion1, Decode decodeTPraosState1)]
-   where
-    decodeTPraosState1 = do
-      enforceSize "TPraosState" 2
-      TPraosState <$> decodeWithOrigin fromCBOR <*> fromCBOR
+  decode = do
+    enforceSize "TPraosState" 2
+    TPraosState <$> decodeWithOrigin fromCBOR <*> fromCBOR
 
 data instance Ticked TPraosState = TickedChainDepState
   { tickedTPraosStateChainDepState :: SL.ChainDepState

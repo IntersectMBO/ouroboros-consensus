@@ -94,6 +94,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util.CBOR (decodeWithOrigin, encodeWithOrigin)
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -540,7 +541,7 @@ encodeByronLedgerState :: LedgerState ByronBlock mk -> Encoding
 encodeByronLedgerState ByronLedgerState{..} =
   mconcat
     [ encodeListLen 3
-    , encode byronLedgerTipBlockNo
+    , encodeWithOrigin encode byronLedgerTipBlockNo
     , encode byronLedgerState
     , encodeByronTransition byronLedgerTransition
     ]
@@ -549,7 +550,7 @@ decodeByronLedgerState :: Decoder s (LedgerState ByronBlock mk)
 decodeByronLedgerState = do
   enforceSize "ByronLedgerState" 3
   ByronLedgerState
-    <$> decode
+    <$> decodeWithOrigin decode
     <*> decode
     <*> decodeByronTransition
 
