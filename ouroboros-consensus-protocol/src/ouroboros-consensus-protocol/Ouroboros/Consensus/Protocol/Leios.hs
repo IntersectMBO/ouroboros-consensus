@@ -94,15 +94,6 @@ instance LeiosCrypto c => NoThunks (ConsensusConfig (Leios c))
 instance HasMaxMajorProtVer (Leios c) where
   protoMaxMajorPV = protoMaxMajorPV . leiosPraosConfig
 
--- | An endorser-block announcement, and who announced it.
-data AnnouncedBy = AnnouncedBy
-  { announcedByIssuer :: !(KeyHash SL.BlockIssuer)
-  , announcedEbReferences :: !EbReferencesAnnouncement
-  }
-  deriving (Generic, Show, Eq)
-
-instance NoThunks AnnouncedBy
-
 -- | 'PraosState' and the announcement a certificate is validated against.
 data LeiosState = LeiosState
   { leiosStatePraos :: !PraosState
@@ -137,7 +128,20 @@ instance Serialise LeiosState where
       enforceSize "LeiosState" 2
       LeiosState <$> decode <*> (maybeToStrictMaybe <$> fromCBOR)
 
--- | Neither field's encoding varies by era.
+-- | An endorser-block announcement, and who announced it.
+--
+-- The issuer and the announcing header's slot ('praosStateLastSlot') together
+-- give the election, which is what lets a certificate name what it certifies.
+data AnnouncedBy = AnnouncedBy
+  { announcedByIssuer :: !(KeyHash SL.BlockIssuer)
+  , announcedEbReferences :: !EbReferencesAnnouncement
+  }
+  deriving (Generic, Show, Eq)
+
+instance NoThunks AnnouncedBy
+
+-- | The era only supplies a serialisation version, and neither field's encoding
+-- varies by version, so 'ShelleyEra' pins the lowest one, as 'PraosState' does.
 instance ToCBOR AnnouncedBy where
   toCBOR (AnnouncedBy issuer ann) =
     CBOR.encodeListLen 2 <> toCBOR issuer <> toEraCBOR @ShelleyEra ann
@@ -158,15 +162,6 @@ instance ChainDepStateSupportsPeras LeiosState where
 instance ChainDepStateSupportsPeras (Ticked LeiosState) where
   getEpochNonce = getEpochNonce . tickedLeiosStateChainDepState
 
--- | The base protocol's ticked state, as it sits inside this one's.
-basePraosTicked :: Ticked LeiosState -> Ticked PraosState
-basePraosTicked tcs =
-  TickedPraosState
-    { tickedPraosStateChainDepState =
-        leiosStatePraos (tickedLeiosStateChainDepState tcs)
-    , tickedPraosStateLedgerView = tickedLeiosStateLedgerView tcs
-    }
-
 -- | The 'Views.HeaderView'' that signs the Leios header body.
 type LeiosHeaderView crypto = Views.HeaderView' (Leios.HeaderBody crypto) crypto
 
@@ -183,7 +178,11 @@ instance LeiosCrypto c => ConsensusProtocol (Leios c) where
   protocolSecurityParam = protocolSecurityParam @(Praos c) . leiosPraosConfig
 
   checkIsLeader cfg cbl slot tcs =
-    checkIsLeader @(Praos c) (leiosPraosConfig cfg) cbl slot (basePraosTicked tcs)
+    checkIsLeader @(Praos c) (leiosPraosConfig cfg) cbl slot $
+      TickedPraosState
+        { tickedPraosStateChainDepState = leiosStatePraos (tickedLeiosStateChainDepState tcs)
+        , tickedPraosStateLedgerView = tickedLeiosStateLedgerView tcs
+        }
 
   tickChainDepState cfg lv slot st =
     TickedLeiosState
