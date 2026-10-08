@@ -54,10 +54,11 @@ import Data.SOP (All, Top)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.API (CurrentSlot (..))
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState, tickAndResolveRoundNo)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
@@ -211,7 +212,18 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
-    let resolverHandle = mkPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
+    -- NOTE: once we have epoch context forecasting in place and have moved the
+    -- resolver anchor to the immutable chain tip, this initialization of the
+    -- resolver handle will no longer need to depend 'tickAndResolveRoundNo'
+    -- and could directly call 'unsafeResolveRoundNo' directly instead.
+    -- Consequently, we will be able to remove the chain clock as well.
+    varChainClock <- newTVarIO (ChainClock (pure CurrentSlotUnknown))
+    let resolverHandle =
+          PerasEpochContextResolverHandle $
+            tickAndResolveRoundNo
+              (Args.cdbsTopLevelConfig cdbSpecificArgs)
+              (LedgerDB.getVolatileTip lgrDB)
+              (readTVar varChainClock >>= \(ChainClock readCurrentSlot) -> readCurrentSlot)
     perasCertDB <- PerasCertDB.createDB argsPerasCertDB
     perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB resolverHandle
 
@@ -287,8 +299,10 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
             , cdbPerasVoteDB = perasVoteDB
+            , cdbPerasEpochContextResolverHandle = resolverHandle
             , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
+            , cdbGetCurrentSlot = varChainClock
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -329,15 +343,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , addPerasVoteWithAsyncCertHandling = getEnv1 h ChainSel.addPerasVoteWithAsyncCertHandling
             , getPerasVotesAfter = getEnvSTM1 h Query.getPerasVotesAfter
             , getPerasVoteIds = getEnvSTM h Query.getPerasVoteIds
-            , getPerasEpochContextResolverHandle =
-                PerasEpochContextResolverHandle $
-                  getEnvSTM h $
-                    Query.getPerasEpochContextResolver
+            , getPerasEpochContextResolverHandle = resolverHandle
             , getPerasVotingViewHandle =
                 PerasVotingViewHandle $ \roundNo ->
                   getEnvSTM h $
                     Query.getPerasVotingView
-                      (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
                       roundNo
             , getPerasCertInclusionViewHandle =
                 PerasCertInclusionViewHandle $ \roundNo ->
@@ -348,6 +358,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                   getEnvSTM h $
                     Query.getTimeResolutionContext
                       (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
+            , setChainClock = \getSlot ->
+                getEnv h $ \e ->
+                  atomically $ writeTVar (cdbGetCurrentSlot e) (ChainClock getSlot)
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }
