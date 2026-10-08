@@ -21,7 +21,7 @@ headerStateChainDep =
              tpraosState,
              praosState,
              praosState,
-             praosState>
+             praos2State>
 
 pbftState = {* keyhash => [* slotno]}
 
@@ -36,11 +36,25 @@ praosState = [withOrigin<slotno>,
               nonce,
               nonce]
 
-;; These should belong to the Ledger
+; The Praos state, followed by the announcement carried by the most recently
+; applied header, if any.
+praos2State = [withOrigin<slotno>,
+               {* keyhash => word64},
+               nonce,
+               nonce,
+               nonce,
+               nonce,
+               nonce,
+               nonce,
+               maybe<announcedBy>]
+
+; The issuer, followed by the announced endorser block's hash and size.
+announcedBy = [keyhash, hash, word32]
+
 sl.chainDepState = [prtclState, ticknState, nonce]
 
 prtclState = [{* keyhash => word64}, nonce, nonce]
 
 ticknState = [nonce, nonce]
 
-;# import withOrigin, ns8, telescope8, slotno, hash, blockno, keyhash, word64, nonce from base
+;# import withOrigin, ns8, telescope8, slotno, hash, blockno, keyhash, word32, word64, nonce, maybe from base
