@@ -30,7 +30,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getLatestPerasCertOnChainRound
   , getPerasVotingView
   , getPerasCertInclusionView
-  , getPerasEpochContextResolver
   , getTimeResolutionContext
   , getStatistics
   , getTipBlock
@@ -69,15 +68,15 @@ import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionView
   , mkPerasCertInclusionView
   )
 import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolver
+  ( PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext
   , TimeResolutionContext (..)
-  , resolveRoundNo
   )
 import Ouroboros.Consensus.Peras.Voting.View
   ( PerasVotingView
@@ -407,21 +406,12 @@ getLatestPerasCertOnChainRound CDB{..} = do
     . perasState
     <$> LedgerDB.getVolatileTip cdbLedgerDB
 
-getPerasEpochContextResolver ::
-  MonadSTM m =>
-  ChainDbEnv m blk ->
-  STM m (PerasEpochContextResolver blk)
-getPerasEpochContextResolver =
-  fmap (perasEpochContextResolver . perasState) . getCurrentLedger
-
 getPerasVotingView ::
   ( StateSupportsPerasEpochContext blk
   , IOLike m
-  , ConsensusProtocol (BlockProtocol blk)
-  , GetHeader blk
   , BlockSupportsPeras blk
+  , LedgerSupportsProtocol blk
   ) =>
-  LedgerConfig blk ->
   PerasRoundNo ->
   ChainDbEnv m blk ->
   STM
@@ -430,31 +420,31 @@ getPerasVotingView ::
         PerasVotingViewError
         (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
     )
-getPerasVotingView ledgerConfig roundNo env = do
-  resolver <-
-    getPerasEpochContextResolver env
-  case resolveRoundNo resolver roundNo of
-    Left err ->
-      pure $ Left $ PerasVotingViewEpochContextNotFoundForRound err
-    Right epochContext -> do
-      latestCertSeen <-
-        withOriginFromMaybe <$> getLatestPerasCertSeen env
-      latestCertOnChainRoundNo <-
-        withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
-      currentChain <-
-        getCurrentChain env
-      summary <-
-        hardForkSummary ledgerConfig . ledgerState <$> getCurrentLedger env
-      let params = pecParams epochContext
-      let blockMinSlots = perasBlockMinSlots params
-      case ( runPerasQry summary $
-               mkPerasVotingView params roundNo latestCertSeen latestCertOnChainRoundNo
-                 =<< perasChainAtCandidateBlock blockMinSlots roundNo currentChain
-           ) of
-        Left err ->
-          pure $ Left $ PerasVotingViewQryException err
-        Right view ->
-          pure $ Right view
+getPerasVotingView roundNo env = case cdbPerasEpochContextResolverHandle env of
+  PerasEpochContextResolverHandle{resolveRoundNo} ->
+    resolveRoundNo roundNo >>= \case
+      Left err ->
+        pure $ Left $ PerasVotingViewEpochContextNotFoundForRound err
+      Right epochContext -> do
+        latestCertSeen <-
+          withOriginFromMaybe <$> getLatestPerasCertSeen env
+        latestCertOnChainRoundNo <-
+          withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
+        currentChain <-
+          getCurrentChain env
+        summary <-
+          hardForkSummary (topLevelConfigLedger (cdbTopLevelConfig env)) . ledgerState
+            <$> getCurrentLedger env
+        let params = pecParams epochContext
+        let blockMinSlots = perasBlockMinSlots params
+        case ( runPerasQry summary $
+                 mkPerasVotingView params roundNo latestCertSeen latestCertOnChainRoundNo
+                   =<< perasChainAtCandidateBlock blockMinSlots roundNo currentChain
+             ) of
+          Left err ->
+            pure $ Left $ PerasVotingViewQryException err
+          Right view ->
+            pure $ Right view
 
 getPerasCertInclusionView ::
   ( IOLike m
@@ -472,26 +462,25 @@ getPerasCertInclusionView roundNo env =
   getLatestPerasCertSeen env >>= \case
     Nothing ->
       pure $ Right Nothing
-    Just latestCertSeen -> do
-      resolver <-
-        getPerasEpochContextResolver env
-      case resolveRoundNo resolver roundNo of
-        Left err ->
-          pure $ Left (PerasCertInclusionEpochContextNotFoundForRound err)
-        Right epochContext -> do
-          latestCertOnChainRoundNo <-
-            withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
-          certsInChainDB <-
-            getPerasCertIds env
-          pure $
-            Right $
-              Just $
-                mkPerasCertInclusionView
-                  (pecParams epochContext)
-                  roundNo
-                  (forgetBoostedBlockStatus latestCertSeen)
-                  latestCertOnChainRoundNo
-                  certsInChainDB
+    Just latestCertSeen -> case cdbPerasEpochContextResolverHandle env of
+      PerasEpochContextResolverHandle{resolveRoundNo} ->
+        resolveRoundNo roundNo >>= \case
+          Left err ->
+            pure $ Left (PerasCertInclusionEpochContextNotFoundForRound err)
+          Right epochContext -> do
+            latestCertOnChainRoundNo <-
+              withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
+            certsInChainDB <-
+              getPerasCertIds env
+            pure $
+              Right $
+                Just $
+                  mkPerasCertInclusionView
+                    (pecParams epochContext)
+                    roundNo
+                    (forgetBoostedBlockStatus latestCertSeen)
+                    latestCertOnChainRoundNo
+                    certsInChainDB
 
 getTimeResolutionContext ::
   MonadSTM m =>
