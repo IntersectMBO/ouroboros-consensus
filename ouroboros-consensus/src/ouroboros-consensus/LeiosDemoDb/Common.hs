@@ -150,10 +150,8 @@ type CompletedEbs = [LeiosPoint]
 type LocalFill = (TxOffset, TxLocation)
 
 data LeiosEbNotification
-  = -- | The point's EB body is now held; the size is the encoded body's.
-    AcquiredEb LeiosPoint BytesSize
-  | -- | The point's whole tx closure is now held; the size is the closure's.
-    AcquiredEbTxs LeiosPoint BytesSize
+  = AcquiredEb LeiosPoint BytesSize
+  | AcquiredEbTxs LeiosPoint
 
 withReader :: MonadThrow m => LeiosDbHandle m -> (LeiosDbReader m -> m a) -> m a
 withReader db = bracket (openReader db) (.close)

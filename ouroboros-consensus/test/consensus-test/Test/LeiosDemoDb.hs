@@ -490,7 +490,7 @@ test_singleSubscriber db = do
   case notification of
     AcquiredEb notifPoint _ ->
       notifPoint @?= point
-    AcquiredEbTxs _ _ ->
+    AcquiredEbTxs _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Test that multiple subscribers each receive the notification.
@@ -528,7 +528,7 @@ test_correctData db = do
       notifPoint.pointSlotNo @?= point.pointSlotNo
       notifPoint.pointEbHash @?= point.pointEbHash
       notifSize @?= expectedSize
-    AcquiredEbTxs _ _ ->
+    AcquiredEbTxs _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Test that a subscriber who subscribes after an insertion does not receive
@@ -618,7 +618,7 @@ test_offerBlockTxs db = do
     _ <- rwInsertTxs con point txsToInsert
     -- FIXME: blocks forever if impl not working
     notification <- atomically $ readTChan chan
-    assertOfferBlockTxs point (insertedBytes txsToInsert) notification
+    assertOfferBlockTxs point notification
 
 -- | A body write naming fill sources copies their durable bytes in the same
 -- transaction: an EB whose closure another EB already holds completes at body
@@ -656,10 +656,6 @@ test_crossEbFill db = do
           ]
     filled @?= [0, 1]
     completed @?= [pointB]
-    -- and the completion carries the closure's size: A's two txs
-    _ <- atomically $ tryReadTChan chan -- AcquiredEb B
-    acquiredTxsB <- readTChanWithin 100_000_000 chan "AcquiredEbTxs"
-    assertOfferBlockTxs pointB (insertedBytes [(0, txBytesFor ebA 0), (1, txBytesFor ebA 1)]) acquiredTxsB
     -- and the closure reads back with A's bytes
     closure <- rwLookupEbClosure con (pointEbHash pointB)
     fmap (map snd) closure @?= Just [txBytesFor ebA 0, txBytesFor ebA 1]
@@ -707,7 +703,7 @@ test_offerBlockTxsWhenBodyArrivesAfterTxs db = do
     -- The same fills now land on the allocated rows and complete it.
     _ <- rwInsertTxs con point txsToInsert
     acquiredTxs <- readTChanWithin 100_000_000 chan "AcquiredEbTxs"
-    assertOfferBlockTxs point (insertedBytes txsToInsert) acquiredTxs
+    assertOfferBlockTxs point acquiredTxs
 
 -- | Test that completed EBs are not re-notified when subsequent unrelated
 -- transactions are inserted.
@@ -731,7 +727,7 @@ test_noReNotifyCompletedEbs db = do
     -- Consume the AcquiredEbTxs notification
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
-      Just (AcquiredEbTxs p _) -> p @?= point
+      Just (AcquiredEbTxs p) -> p @?= point
       _ -> assertFailure "expected AcquiredEbTxs notification"
     -- Fill an unrelated EB's offset (no body row: the write is dropped, which
     -- is the point -- nothing may be re-notified either way)
@@ -769,7 +765,7 @@ test_noReNotifyOnRelatedTxReinsert db = do
     _ <- rwInsertTxs con point txsToInsert
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
-      Just (AcquiredEbTxs p _) -> p @?= point
+      Just (AcquiredEbTxs p) -> p @?= point
       _ -> assertFailure "expected AcquiredEbTxs notification"
     -- Re-insert one of the EB's own txs (a no-op at the tx storage
     -- level — it's already present). The completed EB must NOT be
@@ -816,15 +812,17 @@ test_multipleSlotsSameHash db = do
           [p | AcquiredEb p _ <- acquiredEbs]
     acquiredEbPoints `setEquals` [point1, point2]
     -- Insert every tx the EB references — closure completes for both rows.
-    let txsToInsert = [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
-    _ <- rwInsertTxs con point1 txsToInsert
-    -- Both rows must notify completion, once each, with the closure's size.
+    _ <-
+      rwInsertTxs
+        con
+        point1
+        [(i, txBytesFor eb i) | (i, _) <- zip [0 :: Int ..] ebTxList]
+    -- Both rows must notify completion, once each.
     completionNotifs <- drainNotifications
     let completionPoints =
-          [p | AcquiredEbTxs p _ <- completionNotifs]
+          [p | AcquiredEbTxs p <- completionNotifs]
     completionPoints `setEquals` [point1, point2]
     length completionNotifs @?= 2
-    [size | AcquiredEbTxs _ size <- completionNotifs] @?= replicate 2 (insertedBytes txsToInsert)
  where
   setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
 
@@ -848,22 +846,16 @@ assertOfferBlock :: LeiosPoint -> LeiosEbNotification -> IO ()
 assertOfferBlock expectedPoint = \case
   AcquiredEb actualPoint _ ->
     actualPoint @?= expectedPoint
-  AcquiredEbTxs _ _ ->
+  AcquiredEbTxs _ ->
     assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
--- | Assert that a notification is AcquiredEbTxs with the expected point and
--- closure size.
-assertOfferBlockTxs :: LeiosPoint -> BytesSize -> LeiosEbNotification -> IO ()
-assertOfferBlockTxs expectedPoint expectedSize = \case
-  AcquiredEbTxs actualPoint actualSize -> do
+-- | Assert that a notification is AcquiredEbTxs with the expected point.
+assertOfferBlockTxs :: LeiosPoint -> LeiosEbNotification -> IO ()
+assertOfferBlockTxs expectedPoint = \case
+  AcquiredEbTxs actualPoint ->
     actualPoint @?= expectedPoint
-    actualSize @?= expectedSize
   AcquiredEb _ _ ->
     assertFailure "expected AcquiredEbTxs, got AcquiredEb"
-
--- | The closure size the inserted bytes amount to.
-insertedBytes :: [(Int, BS.ByteString)] -> BytesSize
-insertedBytes = fromIntegral . sum . map (BS.length . snd)
 
 -- * Property tests for lookupEbClosure
 

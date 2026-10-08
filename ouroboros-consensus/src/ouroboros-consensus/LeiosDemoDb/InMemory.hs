@@ -59,7 +59,6 @@ import LeiosDemoTypes
   , TxLocation (..)
   , encodeLeiosEbSize
   , leiosEbBodyItems
-  , leiosEbClosureSize
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -294,7 +293,7 @@ imInsertEbBody stateVar notificationChan point eb fills = do
         then do
           modifyTVar stateVar $ \s ->
             s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
-          writeTChan notificationChan (AcquiredEbTxs point (leiosEbClosureSize eb))
+          writeTChan notificationChan (AcquiredEbTxs point)
           pure [point]
         else pure []
     pure (completed, IntMap.keys accepted)
@@ -362,13 +361,8 @@ imInsertTxs stateVar notificationChan point offBytes = atomically $ do
       }
   -- Emit a closure-completion notification for each newly-complete EB. The
   -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
-  let closureSize =
-        IntMap.foldl'
-          (\acc e -> acc + eteTxBytesSize e)
-          0
-          (Map.findWithDefault IntMap.empty ebHash (imEbBodies state))
   forM_ completed $ \p ->
-    writeTChan notificationChan (AcquiredEbTxs p closureSize)
+    writeTChan notificationChan (AcquiredEbTxs p)
   pure completed
 
 -- | Implements 'scanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs

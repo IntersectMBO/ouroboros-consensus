@@ -677,8 +677,9 @@ mkHandlers
               ( readTChan chan >>= \case
                   AcquiredEb point ebSize ->
                     pure $ MsgLeiosBlockOffer point ebSize
-                  AcquiredEbTxs point closureSize ->
-                    pure $ MsgLeiosBlockTxsOffer point closureSize
+                  AcquiredEbTxs point ->
+                    -- offering the bound covers the whole closure without knowing its size
+                    pure $ MsgLeiosBlockTxsOffer point (Leios.maxEbClosureBytesSize Leios.demoLeiosFetchStaticEnv)
               )
                 <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
 

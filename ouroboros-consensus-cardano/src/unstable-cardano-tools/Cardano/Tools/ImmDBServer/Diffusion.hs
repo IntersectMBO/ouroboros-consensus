@@ -128,8 +128,7 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
   let mkLeiosNotifyContext registry' = do
         -- each LeiosNotify server calls this when it initializes
         leiosMailbox <- MVar.newEmptyMVar
-        leiosReader <- LeiosDemoDb.allocateReader registry' leiosDb
-        let leiosNotifyContext = MP.MkLeiosNotifyContext{MP.leiosMailbox, MP.leiosReader}
+        let leiosNotifyContext = MP.MkLeiosNotifyContext{MP.leiosMailbox}
         _threadId <-
           forkLinkedThread
             registry'
@@ -175,7 +174,7 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
 -- LeiosNotify mini-protocol.
 --
 -- TODO the third component could be a Bool saying which offer to send, with
--- the EB offer's size looked up just-in-time as the closure's already is.
+-- the EB offer's size looked up just-in-time.
 data LeiosSchedule = MkLeiosSchedule [(Double, (Word64, T.Text, Maybe Word32))]
   deriving Generic
 

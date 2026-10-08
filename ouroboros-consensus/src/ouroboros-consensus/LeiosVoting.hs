@@ -283,7 +283,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
       let takeEbNotification =
             readTChan chan >>= \case
               AcquiredEb{} -> pure Nothing
-              AcquiredEbTxs point _ -> pure (Just point)
+              AcquiredEbTxs point -> pure (Just point)
 
       VoteTimers{scheduleVoteTime, waitNextVoteTime} <-
         newVoteTimers tracer lcfg chainDB systemTime
