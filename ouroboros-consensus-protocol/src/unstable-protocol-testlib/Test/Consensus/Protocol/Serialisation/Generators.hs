@@ -6,6 +6,8 @@ module Test.Consensus.Protocol.Serialisation.Generators () where
 
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
+import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
+import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import Cardano.Protocol.Praos.BlockHeader
   ( Header (Header)
   , HeaderBody (HeaderBody)
@@ -21,8 +23,6 @@ import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
-import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
-import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import Ouroboros.Consensus.Protocol.Leios
   ( AnnouncedBy (AnnouncedBy)
   , LeiosState (LeiosState)

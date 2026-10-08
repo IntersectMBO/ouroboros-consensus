@@ -57,7 +57,7 @@ leiosSharedBlockForging
     } =
     BlockForging
       { forgeLabel = label <> "_" <> T.pack (L.eraName @era)
-      , canBeLeader = canBeLeader
+      , canBeLeader
       , updateForgeState = \_ curSlot _ ->
           forgeStateUpdateInfoFromUpdateInfo
             <$> HotKey.evolve hotKey (slotToPeriod curSlot)
