@@ -34,7 +34,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
 import Ouroboros.Consensus.Storage.PerasImmutableCertDB
   ( PerasImmutableCertDbArgs (..)
-  , PerasImmutableCertDbValidationPolicy (..)
+  , PerasImmutableCertDbIntegrityCheckPolicy (..)
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
@@ -147,7 +147,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           { picdbaCodecConfig = configCodec mcdbTopLevelConfig
           , picdbaHasFS = SomeHasFS $ simHasFS (nodeDBsPerasImmutableCert mcdbNodeDBs)
           , picdbaTracer = nullTracer
-          , picdbaValidationPolicy = ValidateOnRead
+          , picdbaIntegrityCheckPolicy = CheckOnRead
           }
     , cdbPerasVoteDbArgs =
         PerasVoteDbArgs

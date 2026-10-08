@@ -60,7 +60,7 @@ module Ouroboros.Consensus.Storage.Serialisation
   , encodeDepPair
   ) where
 
-import Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeListLenOf, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -139,6 +139,17 @@ instance Typeable blk => EncodeDisk blk (V1.PerasCert blk) where
 
 instance Typeable blk => DecodeDisk blk (V1.PerasCert blk) where
   decodeDisk _ = fromCBOR
+
+instance EncodeDisk blk (PerasCert blk) => EncodeDisk blk (ValidatedPerasCert blk) where
+  encodeDisk ccfg (ValidatedPerasCert cert boost) =
+    CBOR.encodeListLen 2
+      <> encodeDisk ccfg cert
+      <> toCBOR boost
+
+instance DecodeDisk blk (PerasCert blk) => DecodeDisk blk (ValidatedPerasCert blk) where
+  decodeDisk ccfg = do
+    decodeListLenOf 2
+    ValidatedPerasCert <$> decodeDisk ccfg <*> fromCBOR
 
 {-------------------------------------------------------------------------------
   Dependent pairs
