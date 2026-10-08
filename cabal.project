@@ -56,12 +56,12 @@ allow-older:
 constraints:
   , any.crypton < 1.1
 
--- Points to ouroboros-network/leios-prototype
+-- Points to ouroboros-network/leios-prototype + matchBlock commit
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: 4b3ab7664f609a1aee0f0c24dcfcfd0ab899fc42
-  --sha256: sha256-fIqpI2whstetodpiONmUDVgnhTpzXeq1/gmzuHItK5A=
+  tag: a48ea7a88cd8cc0349013c3b9f99fd3444f26c3b
+  --sha256: sha256-VY0/lP3VFMKwQyCTE7PKzZyBjsR1ZSF77ftwEhn2U/U=
   subdir:
     ouroboros-network
     cardano-diffusion
@@ -80,8 +80,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: d93c654699c8f10c883a625168f65dd387abc695
-  --sha256: sha256-iRshuIFnyh6a+NfxXmkfbOzbbMm5YUcezwHyRQwp7dg=
+  tag: f832964ff2d928be03b81db757711226b0ada703
+  --sha256: sha256-M4qjoSjiw3bPsa+N1dBb1DU46//Dl991WzwxisZ4B90=
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api
