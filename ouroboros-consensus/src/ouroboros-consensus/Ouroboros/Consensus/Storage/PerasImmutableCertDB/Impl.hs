@@ -67,6 +67,17 @@
 -- The 'CheckAllOnOpen' policy alternatively reads and integrity-checks every
 -- certificate file on open.
 --
+-- = Opening and closing
+--
+-- As with the block ImmutableDB, the database must not be opened more than
+-- once at a time, since each handle has its own in-memory index (see the
+-- API's documentation). This is not checked here: it relies on the node's
+-- database lock file across processes, and on the ChainDB opening it once and
+-- closing it before reopening within a process. Closing just marks the handle
+-- as closed (no file handles are held open), after which new calls of its
+-- operations throw 'ClosedDBError' (see 'closeDB' for calls in progress), so
+-- a stale handle fails loudly instead of diverging.
+--
 -- = Life cycle of a certificate
 --
 -- For round 42, the database directory may hold:
@@ -161,6 +172,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.PerasImmutableCertDB.API
 import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
 import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.CallStack (HasCallStack, prettyCallStack)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.MonadSTM.StrictSVar (newSVarWithInvariant)
 import System.FS.API.Lazy
@@ -232,7 +244,7 @@ openDB
       CheckOnRead -> pure initialState
       CheckAllOnOpen ->
         scrubCorruptKnownCerts picdbaTracer picdbaCodecConfig hasFS initialState
-    picdbState <- newSVarWithInvariant disjointInvariant st
+    picdbState <- newSVarWithInvariant disjointInvariant (CertDbOpen st)
     let env =
           PerasImmutableCertDbEnv
             { picdbHasFS = someHasFS
@@ -246,10 +258,11 @@ openDB
         (Set.size (getQuarantinedRounds $ cdsQuarantinedRounds st))
     pure
       PerasImmutableCertDB
-        { addCert = implAddCert env
+        { closeDB = implCloseDB env
+        , addCert = implAddCert env
         , getCertsAfter = implGetCertsAfter env
         , getMissingRounds =
-            (getQuarantinedRounds . cdsQuarantinedRounds) <$> readSVarSTM picdbState
+            (getQuarantinedRounds . cdsQuarantinedRounds) <$> readOpenStateSTM env
         }
 
 {-------------------------------------------------------------------------------
@@ -346,10 +359,10 @@ data PerasImmutableCertDbEnv m blk = PerasImmutableCertDbEnv
   { picdbHasFS :: !(SomeHasFS m)
   , picdbCodecConfig :: !(CodecConfig blk)
   , picdbTracer :: !(Tracer m (TraceEvent blk))
-  , picdbState :: !(StrictSVar m CertDbState)
-  -- ^ The in-memory index of the database. This is the only bit of
-  -- information about the certificates kept in memory; the certificates
-  -- themselves are read back from disk on demand.
+  , picdbState :: !(StrictSVar m CertDbInternalState)
+  -- ^ The in-memory index of the database, if it is open. This is the only
+  -- bit of information about the certificates kept in memory; the
+  -- certificates themselves are read back from disk on demand.
   }
   deriving
     NoThunks
@@ -384,20 +397,24 @@ newtype QuarantinedRounds = QuarantinedRounds
   deriving anyclass NoThunks
 
 -- | The 'CertDbState' invariant: known and quarantined rounds are disjoint sets.
-disjointInvariant :: CertDbState -> Maybe String
-disjointInvariant
-  st@CertDbState
-    { cdsKnownRounds = KnownRounds known
-    , cdsQuarantinedRounds = QuarantinedRounds quarantined
-    } =
-    -- The 'noThunksInvariant' helps ensure the state is free
-    -- of unexpected thunks and stays strict. Being an expensive check,
-    -- it is gated behind a flag, so it usually does 'Nothing' here.
-    disjointInvariantCheck <|> noThunksInvariant st
-   where
-    disjointInvariantCheck
-      | Set.disjoint known quarantined = Nothing
-      | otherwise = Just "Found a redundant quarantined certificate"
+disjointInvariant :: CertDbInternalState -> Maybe String
+disjointInvariant =
+  \case
+    CertDbClosed -> Nothing
+    CertDbOpen
+      ( st@CertDbState
+          { cdsKnownRounds = KnownRounds known
+          , cdsQuarantinedRounds = QuarantinedRounds quarantined
+          }
+        ) ->
+        -- The 'noThunksInvariant' helps ensure the state is free
+        -- of unexpected thunks and stays strict. Being an expensive check,
+        -- it is gated behind a flag, so it usually does 'Nothing' here.
+        disjointInvariantCheck <|> noThunksInvariant st
+       where
+        disjointInvariantCheck
+          | Set.disjoint known quarantined = Nothing
+          | otherwise = Just "Found a redundant quarantined certificate"
 
 -- | Move a round from the known to the quarantined rounds.
 quarantineRound :: PerasRoundNo -> CertDbState -> CertDbState
@@ -414,9 +431,49 @@ quarantineRound
           QuarantinedRounds $ Set.insert roundNo quarantined
       }
 
+-- | Whether the database is open, and if so, its in-memory index.
+data CertDbInternalState
+  = CertDbClosed
+  | CertDbOpen !CertDbState
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+throwClosedDBError :: (MonadThrow m, HasCallStack) => m a
+throwClosedDBError = throwIO $ ClosedDBError prettyCallStack
+
+-- | Read the index of the open database, non-blocking, throwing 'ClosedDBError'
+-- if it is closed. The index may be slightly stale if it is being modified
+-- concurrently.
+readOpenStateSTM ::
+  (IOLike m, HasCallStack) =>
+  PerasImmutableCertDbEnv m blk ->
+  STM m CertDbState
+readOpenStateSTM env =
+  readSVarSTM (picdbState env) >>= \case
+    CertDbOpen st -> pure st
+    CertDbClosed -> throwClosedDBError
+
+-- | Like 'modifySVar' on the index of the open database, throwing
+-- 'ClosedDBError' (and leaving it closed) if it is closed.
+modifyOpenState ::
+  (IOLike m, HasCallStack) =>
+  PerasImmutableCertDbEnv m blk ->
+  (CertDbState -> m (CertDbState, a)) ->
+  m a
+modifyOpenState env f =
+  modifySVar (picdbState env) $ \case
+    CertDbClosed -> throwClosedDBError
+    CertDbOpen st -> first CertDbOpen <$> f st
+
 {-------------------------------------------------------------------------------
   API implementation
 -------------------------------------------------------------------------------}
+
+implCloseDB :: IOLike m => PerasImmutableCertDbEnv m blk -> m ()
+implCloseDB env =
+  swapSVar (picdbState env) CertDbClosed >>= \case
+    CertDbClosed -> pure ()
+    CertDbOpen _ -> traceWith (picdbTracer env) ClosedDB
 
 -- | Shorthand for the monad in which 'implAddCert' safely modifies
 -- 'picdbState': allocated resources (here, a single certificate file)
@@ -426,6 +483,7 @@ type ModifyCertDbState m = StateT CertDbState (WithTempRegistry CertDbState m)
 implAddCert ::
   forall m blk.
   ( IOLike m
+  , HasCallStack
   , IsPerasCert (PerasCert blk) blk
   , EncodeDisk blk (PerasCert blk)
   , DecodeDisk blk (PerasCert blk)
@@ -447,18 +505,27 @@ implAddCert env cert = do
   roundNo = getPerasCertRound cert
 
   getSt :: m CertDbState
-  getSt = takeSVar (picdbState env)
+  getSt =
+    -- 'mask_' is a safety net with no effect here:
+    -- 'generalBracket' already masks this acquire step behind the scenes,
+    -- so the 'StrictSVar' can't be left empty.
+    mask_ $
+      takeSVar (picdbState env) >>= \case
+        CertDbOpen st -> pure st
+        CertDbClosed -> do
+          putSVar (picdbState env) CertDbClosed
+          throwClosedDBError
 
   -- Holding the 'StrictSVar' makes the check-then-write in 'modifyState'
-  -- atomic with respect to concurrent insertions. On abort or exception we
-  -- restore the previous state, and 'allocateTemp' removes the uncommitted
-  -- certificate file. Should a broken stored certificate have been quarantined
-  -- in the meantime (see 'modifyState'), that is kept, as it already happened
-  -- on disk.
+  -- atomic with respect to concurrent insertions (and to 'closeDB'). On abort or
+  -- exception we restore the previous state, and 'allocateTemp' removes the
+  -- uncommitted certificate file. Should a broken stored certificate have been
+  -- quarantined in the meantime (see 'modifyState'), that is kept, as it already
+  -- happened on disk.
   putSt :: StrictTVar m Bool -> CertDbState -> ExitCase CertDbState -> m ()
   putSt quarantinedVar before ec = do
     quarantinedBroken <- readTVarIO quarantinedVar
-    putSVar (picdbState env) $ case ec of
+    putSVar (picdbState env) $ CertDbOpen $ case ec of
       ExitCaseSuccess after -> after
       _
         | quarantinedBroken -> quarantineRound roundNo before
@@ -527,6 +594,7 @@ implAddCert env cert = do
 implGetCertsAfter ::
   forall m blk.
   ( IOLike m
+  , HasCallStack
   , DecodeDisk blk (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
@@ -536,7 +604,7 @@ implGetCertsAfter ::
 implGetCertsAfter env roundNo maxCerts = do
   -- A possibly slightly stale read is fine: certificates added concurrently may
   -- or may not show up in this snapshot.
-  KnownRounds rounds <- cdsKnownRounds <$> atomically (readSVarSTM (picdbState env))
+  KnownRounds rounds <- cdsKnownRounds <$> atomically (readOpenStateSTM env)
   let roundsAfter = snd $ Set.split roundNo rounds
       candidates = take (fromIntegral maxCerts) (Set.toAscList roundsAfter)
   -- Read each certificate on demand. A certificate whose file is unreadable or
@@ -563,13 +631,14 @@ implGetCertsAfter env roundNo maxCerts = do
 -- quarantined it.
 quarantineCertIfStillBroken ::
   ( IOLike m
+  , HasCallStack
   , DecodeDisk blk (PerasCert blk)
   ) =>
   PerasImmutableCertDbEnv m blk ->
   PerasRoundNo ->
   m (Maybe (ValidatedPerasCert blk))
 quarantineCertIfStillBroken env roundNo = do
-  (mCert, mErr) <- modifySVar (picdbState env) $
+  (mCert, mErr) <- modifyOpenState env $
     \st@CertDbState{cdsKnownRounds = KnownRounds known} ->
       if not $ Set.member roundNo known
         -- The cert was quarantined by a concurrent reader.
@@ -871,6 +940,8 @@ data TraceEvent blk
     -- to quarantine. The 'String' describes the reason (see
     -- 'displayCertFileError').
     QuarantinedCert PerasRoundNo String
+  | -- | The database was closed.
+    ClosedDB
   deriving stock (Eq, Show, Generic)
 
 {-------------------------------------------------------------------------------

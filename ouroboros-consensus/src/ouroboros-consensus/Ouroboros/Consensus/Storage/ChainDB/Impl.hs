@@ -462,6 +462,7 @@ closeDB (CDBHandle varState) = do
     ImmutableDB.closeDB cdbImmutableDB
     VolatileDB.closeDB cdbVolatileDB
     LedgerDB.closeDB cdbLedgerDB
+    PerasImmutableCertDB.closeDB cdbPerasImmutableCertDB
 
     chain <- atomically $ icWithoutTime <$> readTVar cdbChain
 
