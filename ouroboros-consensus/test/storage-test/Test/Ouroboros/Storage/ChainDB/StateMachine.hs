@@ -1773,6 +1773,8 @@ deriving instance SOP.Generic (VolatileDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (VolatileDB.TraceEvent blk)
 deriving instance SOP.Generic (PerasCertDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (PerasCertDB.TraceEvent blk)
+deriving instance SOP.Generic (PerasImmutableCertDB.TraceEvent blk)
+deriving instance SOP.HasDatatypeInfo (PerasImmutableCertDB.TraceEvent blk)
 deriving instance SOP.Generic (PerasVoteDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (PerasVoteDB.TraceEvent blk)
 deriving anyclass instance SOP.Generic (TraceChainSelStarvationEvent blk)
@@ -2595,11 +2597,7 @@ traceEventName = \case
   TraceImmutableDBEvent ev -> "ImmutableDB." <> constrName ev
   TraceVolatileDBEvent ev -> "VolatileDB." <> constrName ev
   TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
-  TracePerasImmutableCertDbEvent ev ->
-    "PerasImmutableCertDB." <> case ev of
-      PerasImmutableCertDB.OpenedDB _ _ -> "OpenedDB"
-      PerasImmutableCertDB.AddedCert _ _ -> "AddedCert"
-      PerasImmutableCertDB.QuarantinedCert _ _ -> "QuarantinedCert"
+  TracePerasImmutableCertDbEvent ev -> "PerasImmutableCertDB." <> constrName ev
   TracePerasVoteDbEvent ev -> "PerasVoteDB." <> constrName ev
   TraceLastShutdownUnclean -> "LastShutdownUnclean"
   TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev

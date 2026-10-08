@@ -23,11 +23,11 @@ data PerasImmutableCertDB m blk = PerasImmutableCertDB
   -- ^ @'getCertsAfter' roundNo maxCerts@ gets at most @maxCerts@ immutable
   -- certificates with a round number strictly greater than @roundNo@, in
   -- ascending round number order.
-  , getQuarantinedRounds :: STM m (Set PerasRoundNo)
+  , getMissingRounds :: STM m (Set PerasRoundNo)
   -- ^ Get the round numbers of the certificates that were found to be
-  -- unreadable or corrupt on disk and were therefore quarantined. These are no
-  -- longer served by 'getCertsAfter'; adding a certificate for such a round
-  -- (e.g. one fetched anew from a peer) releases it from quarantine.
+  -- unreadable or corrupt on disk. These are no longer served by
+  -- 'getCertsAfter'; adding a certificate for such a round
+  -- (e.g. one fetched anew from a peer) releases it from this set.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasImmutableCertDB" (PerasImmutableCertDB m blk)
 

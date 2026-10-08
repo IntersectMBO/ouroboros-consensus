@@ -209,9 +209,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     let resolverHandle = mkPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
-    perasImmutableCertDB <- PerasImmutableCertDB.openDB argsPerasImmutableCertDB
     perasCertDB <- PerasCertDB.createDB argsPerasCertDB
     perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB resolverHandle
+    perasImmutableCertDB <- PerasImmutableCertDB.openDB argsPerasImmutableCertDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
