@@ -24,6 +24,9 @@ module Ouroboros.Consensus.Block.Forging
 
     -- * 'ForgeBlockArgs'
   , ForgeBlockArgs (..)
+
+    -- * 'ForgedBlock'
+  , ForgedBlock (..)
   ) where
 
 import Control.Tracer (Tracer, traceWith)
@@ -122,7 +125,7 @@ data BlockForging m blk = BlockForging
   -- to see whether we can actually forge a block.
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
-  , forgeBlock :: ForgeBlockArgs blk -> m blk
+  , forgeBlock :: ForgeBlockArgs blk -> m (ForgedBlock blk)
   -- ^ Forge a block
   , finalize :: m ()
   -- ^ Clean up any unmanaged resources.
@@ -264,4 +267,23 @@ data ForgeBlockArgs blk = ForgeBlockArgs
   -- PRECONDITION: 'checkCanForge' returned @Right ()@.
   , fbIsLeader :: !(IsLeader (BlockProtocol blk))
   -- ^ Proof that the node is the slot leader.
+  }
+
+{-------------------------------------------------------------------------------
+  ForgedBlock
+-------------------------------------------------------------------------------}
+
+-- | The result of 'forgeBlock'.
+data ForgedBlock blk = ForgedBlock
+  { forgedBlock :: !blk
+  -- ^ The forged block.
+  , forgedTxs :: ![Validated (GenTx blk)]
+  -- ^ The transactions that 'forgeBlock' selected for 'forgedBlock'.
+  --
+  -- A Byron block holds at most one update proposal, so for Byron this list
+  -- can hold an update proposal that the block leaves out.
+  --
+  -- @Ouroboros.Consensus.NodeKernel.Forge.forge@ removes them from the
+  -- mempool if the ChainDB finds the block invalid. It traces them when the
+  -- ChainDB adopts the block.
   }

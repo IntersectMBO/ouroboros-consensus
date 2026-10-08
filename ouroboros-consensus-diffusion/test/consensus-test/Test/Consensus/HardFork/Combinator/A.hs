@@ -38,6 +38,7 @@ module Test.Consensus.HardFork.Combinator.A
   , NestedCtxt_ (..)
   , StorageConfig (..)
   , TxId (..)
+  , Validated (..)
   ) where
 
 import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
@@ -366,20 +367,24 @@ type instance CannotForge BlockA = Void
 type instance ForgeStateInfo BlockA = ()
 type instance ForgeStateUpdateError BlockA = Void
 
-forgeBlockA :: ForgeBlockArgs BlockA -> BlockA
+forgeBlockA :: ForgeBlockArgs BlockA -> ForgedBlock BlockA
 forgeBlockA ForgeBlockArgs{..} =
-  BlkA
-    { blkA_header =
-        HdrA
-          { hdrA_fields =
-              HeaderFields
-                { headerFieldHash = Lazy.toStrict . B.encode $ unSlotNo fbCurrentSlotNo
-                , headerFieldSlot = fbCurrentSlotNo
-                , headerFieldBlockNo = fbCurrentBlockNo
+  ForgedBlock
+    { forgedBlock =
+        BlkA
+          { blkA_header =
+              HdrA
+                { hdrA_fields =
+                    HeaderFields
+                      { headerFieldHash = Lazy.toStrict . B.encode $ unSlotNo fbCurrentSlotNo
+                      , headerFieldSlot = fbCurrentSlotNo
+                      , headerFieldBlockNo = fbCurrentBlockNo
+                      }
+                , hdrA_prev = ledgerTipHash lst
                 }
-          , hdrA_prev = ledgerTipHash lst
+          , blkA_body = Map.findWithDefault [] fbCurrentSlotNo (lcfgA_forgeTxs ledgerConfig)
           }
-    , blkA_body = Map.findWithDefault [] fbCurrentSlotNo (lcfgA_forgeTxs ledgerConfig)
+    , forgedTxs = fbTxs
     }
  where
   TickedLedgerStateA lst = fbCurrentTickedLedgerState

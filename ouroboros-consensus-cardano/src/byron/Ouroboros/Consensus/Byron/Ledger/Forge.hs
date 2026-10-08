@@ -45,8 +45,12 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Protocol.PBFT
 
-forgeByronBlock :: HasCallStack => ForgeBlockArgs ByronBlock -> ByronBlock
-forgeByronBlock = forgeRegularBlock
+forgeByronBlock :: HasCallStack => ForgeBlockArgs ByronBlock -> ForgedBlock ByronBlock
+forgeByronBlock args =
+  ForgedBlock
+    { forgedBlock = forgeRegularBlock args
+    , forgedTxs = fbTxs args
+    }
 
 forgeEBB ::
   BlockConfig ByronBlock ->

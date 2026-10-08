@@ -134,7 +134,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
           )
 
   -- Actually produce the block
-  newBlock <- lift $ Block.forgeBlock blockForging fbArgs
+  Block.ForgedBlock{Block.forgedBlock = newBlock, Block.forgedTxs} <-
+    lift $ Block.forgeBlock blockForging fbArgs
 
   trace $
     TraceForgedBlock
@@ -144,7 +145,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
       snapSize
       txssz
 
-  addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
+  addBlockToChainDB trace chainDB mempool currentSlot forgedTxs newBlock
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
@@ -310,14 +311,9 @@ addBlockToChainDB trace chainDB mempool currentSlot txs newBlock = do
 
     -- We successfully produced /and/ adopted a block
     --
-    -- NOTE: we are tracing the transactions we retrieved from the Mempool,
-    -- not the transactions actually /in the block/.
-    -- The transactions in the block should be a prefix of the transactions
-    -- in the mempool. If this is not the case, this is a bug.
-    -- Unfortunately, we can't
-    -- assert this here because the ability to extract transactions from a
-    -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
-    -- e.g., @DualBlock@.
+    -- NOTE: we trace the transactions that 'Block.forgeBlock' returns in
+    -- 'Block.forgedTxs'. We cannot check them against the block, because
+    -- not every block can implement @HasTxs@, for example @DualBlock@.
     trace $ TraceAdoptedBlock currentSlot newBlock txs
 
 -- | Obtain the ticked ledger view for 'currentSlot', required in order to

@@ -503,7 +503,12 @@ instance Functor m => Isomorphic (BlockForging m) where
              , fbTxs
              , fbIsLeader
              } ->
-              project' (Proxy @(I blk))
+              ( \ForgedBlock{forgedBlock, forgedTxs} ->
+                  ForgedBlock
+                    { forgedBlock = project' (Proxy @(I blk)) forgedBlock
+                    , forgedTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> forgedTxs
+                    }
+              )
                 <$> forgeBlock
                   ForgeBlockArgs
                     { fbConfig = inject fbConfig
@@ -565,7 +570,12 @@ instance Functor m => Isomorphic (BlockForging m) where
              , fbTxs
              , fbIsLeader
              } ->
-              inject' (Proxy @(I blk))
+              ( \ForgedBlock{forgedBlock, forgedTxs} ->
+                  ForgedBlock
+                    { forgedBlock = inject' (Proxy @(I blk)) forgedBlock
+                    , forgedTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> forgedTxs
+                    }
+              )
                 <$> forgeBlock
                   ForgeBlockArgs
                     { fbConfig = project fbConfig

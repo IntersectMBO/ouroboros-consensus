@@ -212,23 +212,28 @@ bridgeTransactionIds =
 forgeDualByronBlock ::
   HasCallStack =>
   ForgeBlockArgs DualByronBlock ->
-  DualByronBlock
+  ForgedBlock DualByronBlock
 forgeDualByronBlock ForgeBlockArgs{..} =
-  -- NOTE: We do not /elaborate/ the real Byron block from the spec one, but
-  -- instead we /forge/ it. This is important, because we want to test that
-  -- codepath. This does mean that we do not get any kind of "bridge" between
-  -- the two blocks (which we would have gotten if we would have elaborated
-  -- the block instead). Fortunately, this is okay, since the bridge for the
-  -- block can be computed from the bridge information of all of the txs.
-  DualBlock
-    { dualBlockMain = main
-    , dualBlockAux = Just aux
-    , dualBlockBridge = mconcat $ map vDualGenTxBridge fbTxs
+  ForgedBlock
+    { forgedBlock =
+        -- NOTE: We do not /elaborate/ the real Byron block from the spec one,
+        -- but instead we /forge/ it. This is important, because we want to
+        -- test that codepath. This does mean that we do not get any kind of
+        -- "bridge" between the two blocks (which we would have gotten if we
+        -- would have elaborated the block instead). Fortunately, this is okay,
+        -- since the bridge for the block can be computed from the bridge
+        -- information of all of the txs.
+        DualBlock
+          { dualBlockMain = main
+          , dualBlockAux = Just aux
+          , dualBlockBridge = mconcat $ map vDualGenTxBridge fbTxs
+          }
+    , forgedTxs = fbTxs
     }
  where
   main :: ByronBlock
   main =
-    forgeByronBlock $
+    forgeRegularBlock $
       ForgeBlockArgs
         { fbConfig = dualTopLevelConfigMain fbConfig
         , fbCurrentBlockNo

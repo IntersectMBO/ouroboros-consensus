@@ -44,7 +44,7 @@ forgeShelleyBlock ::
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
   ForgeBlockArgs (ShelleyBlock proto era) ->
-  m (ShelleyBlock proto era)
+  m (ForgedBlock (ShelleyBlock proto era))
 forgeShelleyBlock
   hotKey
   cbl
@@ -63,9 +63,13 @@ forgeShelleyBlock
           actualBodySize
           protocolVersion
       let blk = mkShelleyBlock $ SL.Block hdr body
-      return $
-        assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
-          blk
+      return
+        ForgedBlock
+          { forgedBlock =
+              assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
+                blk
+          , forgedTxs = fbTxs
+          }
    where
     protocolVersion = shelleyProtocolVersion $ configBlock fbConfig
 

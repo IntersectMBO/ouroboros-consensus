@@ -309,10 +309,9 @@ hardForkForgeBlock ::
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
   ForgeBlockArgs (HardForkBlock xs) ->
-  m (HardForkBlock xs)
+  m (ForgedBlock (HardForkBlock xs))
 hardForkForgeBlock blockForging ForgeBlockArgs{..} =
-  fmap (HardForkBlock . OneEraBlock)
-    $ hsequence
+  hcollapse
     $ hizipWith3
       forgeBlockOne
       cfgs
@@ -406,7 +405,7 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
           ([] :.: WrapValidatedGenTx)
       )
       blk ->
-    m blk
+    K (m (ForgedBlock (HardForkBlock xs))) blk
   forgeBlockOne
     index
     cfg'
@@ -415,17 +414,29 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
         (WrapIsLeader isLeader')
         (Pair (FlipTickedLedgerState ledgerState') (Comp txs'))
       ) =
-      forgeBlock
-        ( fromMaybe
-            (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
-            mBlockForging'
-        )
-        ForgeBlockArgs
-          { fbConfig = cfg'
-          , fbCurrentBlockNo = fbCurrentBlockNo
-          , fbCurrentSlotNo = fbCurrentSlotNo
-          , fbPerasCert = fbPerasCert >>= injectPerasCertIfSameEra index
-          , fbCurrentTickedLedgerState = ledgerState'
-          , fbTxs = map unwrapValidatedGenTx txs'
-          , fbIsLeader = isLeader'
-          }
+      K $
+        injectForgedBlock index
+          <$> forgeBlock
+            ( fromMaybe
+                (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
+                mBlockForging'
+            )
+            ForgeBlockArgs
+              { fbConfig = cfg'
+              , fbCurrentBlockNo = fbCurrentBlockNo
+              , fbCurrentSlotNo = fbCurrentSlotNo
+              , fbPerasCert = fbPerasCert >>= injectPerasCertIfSameEra index
+              , fbCurrentTickedLedgerState = ledgerState'
+              , fbTxs = map unwrapValidatedGenTx txs'
+              , fbIsLeader = isLeader'
+              }
+
+  injectForgedBlock ::
+    Index xs blk ->
+    ForgedBlock blk ->
+    ForgedBlock (HardForkBlock xs)
+  injectForgedBlock index (ForgedBlock blk txs) =
+    ForgedBlock
+      { forgedBlock = HardForkBlock $ OneEraBlock $ injectNS index (I blk)
+      , forgedTxs = map (injectValidatedGenTx index) txs
+      }

@@ -27,6 +27,7 @@ import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
   , ForgeBlockArgs (..)
+  , ForgedBlock (..)
   , ShouldForge (..)
   , checkShouldForge
   )
@@ -227,17 +228,18 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     -- Actually produce the block
     newBlock <-
       lift $
-        Block.forgeBlock
-          blockForging'
-          Block.ForgeBlockArgs
-            { Block.fbConfig = cfg
-            , Block.fbCurrentBlockNo = bcBlockNo
-            , Block.fbCurrentSlotNo = currentSlot
-            , Block.fbPerasCert = Nothing -- DBSynthesizer does not include Peras certs in blocks for now
-            , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-            , Block.fbTxs = txs
-            , Block.fbIsLeader = proof
-            }
+        Block.forgedBlock
+          <$> Block.forgeBlock
+            blockForging'
+            Block.ForgeBlockArgs
+              { Block.fbConfig = cfg
+              , Block.fbCurrentBlockNo = bcBlockNo
+              , Block.fbCurrentSlotNo = currentSlot
+              , Block.fbPerasCert = Nothing -- DBSynthesizer does not include Peras certs in blocks for now
+              , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
+              , Block.fbTxs = txs
+              , Block.fbIsLeader = proof
+              }
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment

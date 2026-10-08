@@ -16,8 +16,9 @@
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
-import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import Cardano.Ledger.BaseTypes (knownNonZeroBounded, nonZero, unNonZero)
 import Data.Function (on)
+import Data.Functor.Identity (Identity, runIdentity)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.SOP.BasicFunctors
@@ -38,6 +39,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.HardFork.Combinator.AcrossEras (OneEraIsLeader (..))
 import Ouroboros.Consensus.HardFork.Combinator.Condense ()
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
@@ -48,6 +50,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -65,6 +68,7 @@ import Test.Consensus.HardFork.Combinator.A
 import Test.Consensus.HardFork.Combinator.B
 import Test.QuickCheck
 import Test.Tasty
+import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 import Test.ThreadNet.General
 import Test.ThreadNet.Network
@@ -87,6 +91,8 @@ tests =
     "Consensus"
     [ testProperty "simple convergence" $
         prop_simple_hfc_convergence
+    , testCase "forgeBlock returns the forged transactions" $
+        test_forgeBlock_forgedTxs
     ]
 
 data AB a = AB {getA, getB :: a}
@@ -427,6 +433,99 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         . length
         . filter p
         $ Mock.chainToList nodeOutputFinalChain
+
+-- | The hard fork combinator's 'forgeBlock' returns the 'forgedTxs' of the era
+-- at the tip as combined transactions, in the same order.
+--
+-- Era A leaves out the first transaction. So the test fails if the hard fork
+-- combinator returns its own 'fbTxs' instead of the era's 'forgedTxs'.
+test_forgeBlock_forgedTxs :: Assertion
+test_forgeBlock_forgedTxs =
+  forgedTxs forged @?= drop 1 txs
+ where
+  forged :: ForgedBlock TestBlock
+  forged = runIdentity $ do
+    blockForging <-
+      mkBlockForging $
+        hardForkBlockForging (const "Test") $
+          OptCons (MkBlockForging $ pure blockForgingDropFirstA) $
+            OptCons (MkBlockForging $ pure blockForgingB) $
+              OptNil
+    forgeBlock blockForging args
+
+  -- 'blockForgingA', but its 'forgedTxs' leave out the first transaction.
+  blockForgingDropFirstA :: BlockForging Identity BlockA
+  blockForgingDropFirstA =
+    blockForgingA
+      { forgeBlock = \eraArgs ->
+          (\forgedA -> forgedA{forgedTxs = drop 1 (fbTxs eraArgs)})
+            <$> forgeBlock blockForgingA eraArgs
+      }
+
+  txs :: [Validated (GenTx TestBlock)]
+  txs =
+    [ injectValidatedGenTx IZ $ ValidatedGenTxA $ TxA (TxIdA n) InitiateAtoB
+    | n <- [0, 2, 1]
+    ]
+
+  args :: ForgeBlockArgs TestBlock
+  args =
+    ForgeBlockArgs
+      { fbConfig = cfg
+      , fbCurrentBlockNo = BlockNo 0
+      , fbCurrentSlotNo = SlotNo 0
+      , fbPerasCert = Nothing
+      , fbCurrentTickedLedgerState =
+          forgetLedgerTables $
+            applyChainTick
+              OmitLedgerEvents
+              (configLedger cfg)
+              (SlotNo 0)
+              (HardForkLedgerState $ initHardForkState $ Flip $ LgrA GenesisPoint Nothing)
+      , fbTxs = txs
+      , fbIsLeader = OneEraIsLeader $ Z $ WrapIsLeader ()
+      }
+
+  k :: SecurityParam
+  k = SecurityParam $ knownNonZeroBounded @2
+
+  shape :: History.Shape '[BlockA, BlockB]
+  shape =
+    History.Shape $
+      exactlyTwo eraParams eraParams
+   where
+    eraParams = History.defaultEraParams k (slotLengthFromSec 1) History.NoPerasEnabled
+
+  cfg :: TopLevelConfig TestBlock
+  cfg =
+    TopLevelConfig
+      { topLevelConfigProtocol =
+          HardForkConsensusConfig
+            { hardForkConsensusConfigK = k
+            , hardForkConsensusConfigShape = shape
+            , hardForkConsensusConfigPerEra =
+                PerEraConsensusConfig $
+                  WrapPartialConsensusConfig (CfgA k mempty)
+                    :* WrapPartialConsensusConfig (CfgB k mempty)
+                    :* Nil
+            }
+      , topLevelConfigLedger =
+          HardForkLedgerConfig
+            { hardForkLedgerConfigShape = shape
+            , hardForkLedgerConfigPerEra =
+                PerEraLedgerConfig $
+                  WrapPartialLedgerConfig (LCfgA k (SystemStart dawnOfTime) mempty)
+                    :* WrapPartialLedgerConfig ()
+                    :* Nil
+            }
+      , topLevelConfigBlock =
+          HardForkBlockConfig $ PerEraBlockConfig $ BCfgA :* BCfgB :* Nil
+      , topLevelConfigCodec =
+          HardForkCodecConfig $ PerEraCodecConfig $ CCfgA :* CCfgB :* Nil
+      , topLevelConfigStorage =
+          HardForkStorageConfig $ PerEraStorageConfig $ SCfgA :* SCfgB :* Nil
+      , topLevelConfigCheckpoints = emptyCheckpointsMap
+      }
 
 -- We ignore the mempool for these tests
 instance TxGen TestBlock where

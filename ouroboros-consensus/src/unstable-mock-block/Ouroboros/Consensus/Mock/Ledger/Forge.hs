@@ -41,13 +41,17 @@ forgeSimple ::
   MockProtocolSpecific c ext =>
   ForgeExt c ext ->
   ForgeBlockArgs (SimpleBlock c ext) ->
-  SimpleBlock c ext
+  ForgedBlock (SimpleBlock c ext)
 forgeSimple ForgeExt{forgeExt} ForgeBlockArgs{..} =
-  forgeExt fbConfig fbIsLeader $
-    SimpleBlock
-      { simpleHeader = mkSimpleHeader encode stdHeader ()
-      , simpleBody = body
-      }
+  ForgedBlock
+    { forgedBlock =
+        forgeExt fbConfig fbIsLeader $
+          SimpleBlock
+            { simpleHeader = mkSimpleHeader encode stdHeader ()
+            , simpleBody = body
+            }
+    , forgedTxs = fbTxs
+    }
  where
   body :: SimpleBody
   body = SimpleBody{simpleTxs = (simpleGenTx . txForgetValidated) <$> fbTxs}
