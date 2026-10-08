@@ -256,6 +256,10 @@ insertOneEb writer ebIdx = do
 
 -- * Deterministic data generation
 
+-- | Size of every generated TX payload: 16 KiB.
+txBytesSize :: Int
+txBytesSize = 16_384
+
 -- | 'LeiosPoint' from an index (SlotNo = index).
 genPoint :: Int -> LeiosPoint
 genPoint i = MkLeiosPoint (SlotNo $ fromIntegral i) (genEbHash i)
@@ -266,12 +270,17 @@ genEbHash i = unsafeEbHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
--- | 'LeiosEb' with 'txsPerEb' transactions (200 bytes each).
+-- | 'LeiosEb' with 'txsPerEb' transactions of 'txBytesSize' each.
+--
+-- The declared size must be the payload size of 'genTx': a tx write of any
+-- other size is dropped.
 genEb :: Int -> LeiosEb
 genEb ebIdx =
   MkLeiosEb $
     V.fromList
-      [(genTxHash ebIdx txIdx, 200 :: BytesSize) | txIdx <- [0 .. txsPerEb - 1]]
+      [ (genTxHash ebIdx txIdx, fromIntegral txBytesSize :: BytesSize)
+      | txIdx <- [0 .. txsPerEb - 1]
+      ]
 
 -- | 'TxHash' from an EB index + TX offset: \"txHash:<ebIdx>:<txIdx>\" padded
 -- to 32 bytes with zeros.
@@ -283,8 +292,9 @@ genTxHash ebIdx txIdx = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
--- | Generate a TX payload: the TX hash bytes padded with zeros to 16 KiB.
+-- | Generate a TX payload: the TX hash bytes padded with zeros to
+-- 'txBytesSize'.
 genTx :: TxHash -> BS.ByteString
-genTx txHash = h <> BS.replicate (16_384 - BS.length h) 0
+genTx txHash = h <> BS.replicate (txBytesSize - BS.length h) 0
  where
   h = txHashBytes txHash
