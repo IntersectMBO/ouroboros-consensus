@@ -92,7 +92,8 @@ import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..), PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosCanBeLeader (..)

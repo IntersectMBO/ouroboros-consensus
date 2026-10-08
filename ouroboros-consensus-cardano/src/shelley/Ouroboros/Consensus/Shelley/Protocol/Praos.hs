@@ -9,10 +9,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Shelley.Protocol.Praos
-  ( ShelleyHeaderView (..)
-  , HasPraosExtensionHeader (..)
-  ) where
+module Ouroboros.Consensus.Shelley.Protocol.Praos () where
 
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
@@ -21,9 +18,10 @@ import Cardano.Ledger.BaseTypes (ProtVer (ProtVer))
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
 import Cardano.Ledger.Hashes (EraIndependentBlockBody, HASH)
 import Cardano.Ledger.Slot (SlotNo (unSlotNo))
-import Cardano.Protocol.Crypto (Crypto, KES)
+import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.Praos.BlockHeader as PraosCodec
+import Cardano.Protocol.TPraos.BlockHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert
   ( OCert (ocertKESPeriod, ocertVkHot)
   )
@@ -31,16 +29,12 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.Block (BlockNo)
 import Data.Either (isRight)
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.Proxy (Proxy (Proxy))
-import Data.Word (Word32)
-import LeiosDemoTypes (EbAnnouncement)
+import Control.Monad.Except (Except)
+import Data.Word (Word32, Word64)
 import Ouroboros.Consensus.Protocol.Praos
+import Ouroboros.Consensus.Protocol.Leios (ConsensusConfig (..), EitherLeiosF (..), LeiosCrypto, PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos.Common
-  ( KnownPraosExtension (singPraosExtension)
-  , MaxMajorProtVer (MaxMajorProtVer)
-  , PraosExtensionHasLeios
-  , SingPraosExtension (..)
-  , StrictMaybeLeios (..)
+  ( MaxMajorProtVer (MaxMajorProtVer)
   , fromCodecEbAnnouncement
   , toCodecEbAnnouncement
   )
@@ -49,11 +43,12 @@ import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
+  , default_pHeaderLeiosContainsCert
+  , default_pHeaderLeiosEbAnnouncement
   , ProtocolHeaderSupportsKES (..)
   , ProtocolHeaderSupportsProtocol (..)
   , ShelleyHash (ShelleyHash)
   , ShelleyProtocol
-  , ShelleyProtocolHeader
   )
 import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError
@@ -62,275 +57,276 @@ import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   )
 
 {-------------------------------------------------------------------------------
-  The header as the Shelley block layer needs it
+  The header as the protocol reads it
 -------------------------------------------------------------------------------}
 
--- | View of the block header required by the Shelley block layer.
---
--- The counterpart to 'BaseHeaderView', which is what the 'ConsensusProtocol'
--- instance requires: this is what the @ProtocolHeaderSupports*@ classes require,
--- ie the header's identity and the body it claims. Keeping the two separate
--- keeps each narrow, and lets the extension-dependence of the upstream header
--- types be discharged in one place per view.
---
--- Unindexed by @pext@, unlike 'BaseHeaderView': every field here is uniform
--- across the extensions, an extension without Leios simply reporting 'False'
--- and 'SNothing' for the last two.
-data ShelleyHeaderView = ShelleyHeaderView
-  { shvHash :: !ShelleyHash
-  , shvSize :: !Int
-  -- ^ Over the bytes the header was decoded from; see 'headerSize'.
-  , shvBlockNo :: !BlockNo
-  , shvBodyHash :: !(Hash.Hash HASH EraIndependentBlockBody)
-  , shvBodySize :: !Word32
-  , shvProtVer :: !ProtVer
-  , shvLeiosContainsCert :: !Bool
-  -- ^ Whether the block's body carries a Leios certificate, ie whether it is a
-  -- CertRB.
-  , shvLeiosEbAnnouncement :: !(StrictMaybe EbAnnouncement)
-  -- ^ The endorser block this header announces.
-  }
+protocolHeaderView_Praos ::
+  Crypto c =>
+  PraosCodec.Header c -> BasePraosValidateView (Praos c) c
+protocolHeaderView_Praos hdr =
+  HeaderView
+    { hvPrevHash = PraosCodec.hbPrev body
+    , hvVK = PraosCodec.hbVk body
+    , hvVrfVK = PraosCodec.hbVrfVk body
+    , hvVrfRes = PraosCodec.hbVrfRes body
+    , hvOCert = PraosCodec.hbOCert body
+    , hvSlotNo = PraosCodec.hbSlotNo body
+    , hvLeios = PraosLeiosLeft ()
+    , hvSigned = body
+    , hvSignature = PraosCodec.headerSig hdr
+    }
+ where
+  body = PraosCodec.headerBody hdr
 
--- | Project an extension's header into the two views that read it.
---
--- Two projections rather than one because the views want different things:
--- 'BaseHeaderView' carries the signed body itself, and 'ShelleyHeaderView' the
--- block number, body hash and body size, which that one does not.
-class HasPraosExtensionHeader pext where
-  headerToView ::
-    Crypto c => ShelleyProtocolHeader (BasePraos pext c) -> BaseHeaderView pext c
-  headerToShelleyView ::
-    Crypto c => ShelleyProtocolHeader (BasePraos pext c) -> ShelleyHeaderView
+protocolHeaderView_PraosWithLeios ::
+  Crypto c =>
+  LeiosCodec.Header c -> BasePraosValidateView (PraosWithLeios c) c
+protocolHeaderView_PraosWithLeios hdr =
+  HeaderView
+    { hvPrevHash = LeiosCodec.hbPrev body
+    , hvVK = LeiosCodec.hbVk body
+    , hvVrfVK = LeiosCodec.hbVrfVk body
+    , hvVrfRes = LeiosCodec.hbVrfRes body
+    , hvOCert = LeiosCodec.hbOCert body
+    , hvSlotNo = LeiosCodec.hbSlotNo body
+    , hvLeios =
+        LeiosLeiosRight
+          ( LeiosCodec.hbBlockBodyContainsLeiosCert body
+          , fromCodecEbAnnouncement <$> LeiosCodec.hbEbAnnouncement body
+          )
+    , hvSigned = body
+    , hvSignature = LeiosCodec.headerSig hdr
+    }
+ where
+  body = LeiosCodec.headerBody hdr
 
-instance HasPraosExtensionHeader PextNone where
-  headerToView hdr =
-    HeaderView
-      { hvPrevHash = PraosCodec.hbPrev body
-      , hvVK = PraosCodec.hbVk body
-      , hvVrfVK = PraosCodec.hbVrfVk body
-      , hvVrfRes = PraosCodec.hbVrfRes body
-      , hvOCert = PraosCodec.hbOCert body
-      , hvSlotNo = PraosCodec.hbSlotNo body
-      , hvLeios = SNothingLeios
-      , hvSigned = body
-      , hvSignature = PraosCodec.headerSig hdr
-      }
-   where
-    body = PraosCodec.headerBody hdr
-
-  headerToShelleyView hdr =
-    ShelleyHeaderView
-      { shvHash = ShelleyHash $ PraosCodec.headerHash hdr
-      , shvSize = PraosCodec.headerSize hdr
-      , shvBlockNo = PraosCodec.hbBlockNo body
-      , shvBodyHash = PraosCodec.hbBodyHash body
-      , shvBodySize = PraosCodec.hbBodySize body
-      , shvProtVer = PraosCodec.hbProtVer body
-      , shvLeiosContainsCert = False
-      , shvLeiosEbAnnouncement = SNothing
-      }
-   where
-    body = PraosCodec.headerBody hdr
-
-instance HasPraosExtensionHeader PextLeios where
-  headerToView hdr =
-    HeaderView
-      { hvPrevHash = LeiosCodec.hbPrev body
-      , hvVK = LeiosCodec.hbVk body
-      , hvVrfVK = LeiosCodec.hbVrfVk body
-      , hvVrfRes = LeiosCodec.hbVrfRes body
-      , hvOCert = LeiosCodec.hbOCert body
-      , hvSlotNo = LeiosCodec.hbSlotNo body
-      , hvLeios =
-          SJustLeios
-            ( LeiosCodec.hbBlockBodyContainsLeiosCert body
-            , fromCodecEbAnnouncement <$> LeiosCodec.hbEbAnnouncement body
-            )
-      , hvSigned = body
-      , hvSignature = LeiosCodec.headerSig hdr
-      }
-   where
-    body = LeiosCodec.headerBody hdr
-
-  headerToShelleyView hdr =
-    ShelleyHeaderView
-      { shvHash = ShelleyHash $ LeiosCodec.headerHash hdr
-      , shvSize = LeiosCodec.headerSize hdr
-      , shvBlockNo = LeiosCodec.hbBlockNo body
-      , shvBodyHash = LeiosCodec.hbBodyHash body
-      , shvBodySize = LeiosCodec.hbBodySize body
-      , shvProtVer = LeiosCodec.hbProtVer body
-      , shvLeiosContainsCert = LeiosCodec.hbBlockBodyContainsLeiosCert body
-      , shvLeiosEbAnnouncement =
-          fromCodecEbAnnouncement <$> LeiosCodec.hbEbAnnouncement body
-      }
-   where
-    body = LeiosCodec.headerBody hdr
 
 {-------------------------------------------------------------------------------
   Instances
 -------------------------------------------------------------------------------}
+type instance ProtoCrypto (Praos c) = c
 
-type instance ProtoCrypto (BasePraos pext c) = c
+type instance ProtoCrypto (PraosWithLeios c) = c
 
-type instance ShelleyProtocolHeader (BasePraos PextNone c) = PraosCodec.Header c
+-- | 'envelopeChecks' for any Praos; the config and the header type are what differ.
+envelopeChecks_BasePraos ::
+  MaxMajorProtVer ->
+  BasePraosLedgerView proto ->
+  -- | Size of the header, over the bytes it was decoded from
+  Int ->
+  -- | Size of the block body
+  Word32 ->
+  Except EnvelopeError ()
+envelopeChecks_BasePraos (MaxMajorProtVer maxpv) lv headerSize bodySize =
+  envelopeCheck maxpv ccd $
+    EnvelopeHeaderView
+      { ehvProtVer = m
+      , ehvHeaderSize = headerSize
+      , ehvBodySize = bodySize
+      }
+ where
+  ProtVer m _ = plvProtocolVersion lv
+  ccd =
+    ChainChecksPParams
+      { ccMaxBHSize = plvMaxHeaderSize lv
+      , ccMaxBBSize = plvMaxBodySize lv
+      , ccProtocolVersion = plvProtocolVersion lv
+      }
 
-type instance ShelleyProtocolHeader (BasePraos PextLeios c) = LeiosCodec.Header c
+-- | 'verifyHeaderIntegrity' for any Praos.
+verifyHeaderIntegrity_BasePraos ::
+  BasePraosCrypto proto c =>
+  Word64 ->
+  BasePraosValidateView proto c ->
+  Bool
+verifyHeaderIntegrity_BasePraos slotsPerKESPeriod hv =
+  isRight $
+    KES.verifySignedKES () ocertVkHot t (hvSigned hv) (hvSignature hv)
+ where
+  SL.OCert
+    { ocertVkHot
+    , ocertKESPeriod = SL.KESPeriod startOfKesPeriod
+    } = hvOCert hv
 
-instance
-  ( PraosCrypto c
-  , HasPraosExtensionHeader pext
-  ) =>
-  ProtocolHeaderSupportsEnvelope (BasePraos pext c)
-  where
-  pHeaderHash = shvHash . headerToShelleyView @pext
-  pHeaderPrevHash = hvPrevHash . headerToView @pext
-  pHeaderBodyHash = shvBodyHash . headerToShelleyView @pext
-  pHeaderSlot = hvSlotNo . headerToView @pext
-  pHeaderBlock = shvBlockNo . headerToShelleyView @pext
-  pHeaderSize = fromIntegral . shvSize . headerToShelleyView @pext
-  pHeaderBlockSize = fromIntegral . shvBodySize . headerToShelleyView @pext
-  pHeaderLeiosContainsCert = shvLeiosContainsCert . headerToShelleyView @pext
-  pHeaderLeiosEbAnnouncement = shvLeiosEbAnnouncement . headerToShelleyView @pext
+  currentKesPeriod =
+    fromIntegral $
+      unSlotNo (hvSlotNo hv) `div` slotsPerKESPeriod
+
+  t
+    | currentKesPeriod >= startOfKesPeriod =
+        currentKesPeriod - startOfKesPeriod
+    | otherwise =
+        0
+
+-- | The header body to sign, given the fields only forging supplies.
+--
+-- The fields the protocols share are filled in here; the caller says how its own
+-- body extends that, since only it knows the extra fields.
+mkHeader_BasePraos ::
+  SlotNo ->
+  BlockNo ->
+  PrevHash ->
+  Hash.Hash HASH EraIndependentBlockBody ->
+  Int ->
+  ProtVer ->
+  -- | How this protocol's header body extends the shared one
+  (PraosCodec.HeaderBody c -> body) ->
+  PraosToSign c ->
+  body
+mkHeader_BasePraos
+  slotNo
+  blockNo
+  prevHash
+  bbHash
+  sz
+  protVer
+  extend
+  PraosToSign
+    { praosToSignIssuerVK
+    , praosToSignVrfVK
+    , praosToSignVrfRes
+    , praosToSignOCert
+    } =
+    extend $
+      PraosCodec.HeaderBody
+        { PraosCodec.hbBlockNo = blockNo
+        , PraosCodec.hbSlotNo = slotNo
+        , PraosCodec.hbPrev = prevHash
+        , PraosCodec.hbVk = praosToSignIssuerVK
+        , PraosCodec.hbVrfVk = praosToSignVrfVK
+        , PraosCodec.hbVrfRes = praosToSignVrfRes
+        , PraosCodec.hbBodySize = fromIntegral sz
+        , PraosCodec.hbBodyHash = bbHash
+        , PraosCodec.hbOCert = praosToSignOCert
+        , PraosCodec.hbProtVer = protVer
+        }
+
+{-------------------------------------------------------------------------------
+  Praos
+-------------------------------------------------------------------------------}
+
+instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
+  pHeaderHash hdr = ShelleyHash $ PraosCodec.headerHash hdr
+  pHeaderPrevHash (PraosCodec.Header body _) = PraosCodec.hbPrev body
+  pHeaderBodyHash (PraosCodec.Header body _) = PraosCodec.hbBodyHash body
+  pHeaderSlot (PraosCodec.Header body _) = PraosCodec.hbSlotNo body
+  pHeaderBlock (PraosCodec.Header body _) = PraosCodec.hbBlockNo body
+  pHeaderSize hdr = fromIntegral $ PraosCodec.headerSize hdr
+  pHeaderBlockSize (PraosCodec.Header body _) = fromIntegral $ PraosCodec.hbBodySize body
+  pHeaderLeiosContainsCert = default_pHeaderLeiosContainsCert
+  pHeaderLeiosEbAnnouncement = default_pHeaderLeiosEbAnnouncement
 
   type EnvelopeCheckError _ = EnvelopeError
 
-  envelopeChecks cfg lv hdr =
-    envelopeCheck maxpv ccd $
-      EnvelopeHeaderView
-        { ehvProtVer = m
-        , ehvHeaderSize = shvSize shv
-        , ehvBodySize = shvBodySize shv
-        }
-   where
-    shv = headerToShelleyView @pext hdr
-    MaxMajorProtVer maxpv = praosMaxMajorPV (praosParams cfg)
-    ProtVer m _ = plvProtocolVersion lv
-    ccd =
-      ChainChecksPParams
-        { ccMaxBHSize = plvMaxHeaderSize lv
-        , ccMaxBBSize = plvMaxBodySize lv
-        , ccProtocolVersion = plvProtocolVersion lv
-        }
+  envelopeChecks cfg lv hdr@(PraosCodec.Header body _) =
+    envelopeChecks_BasePraos
+      (praosMaxMajorPV (praosParams cfg))
+      lv
+      (PraosCodec.headerSize hdr)
+      (PraosCodec.hbBodySize body)
 
-instance
-  ( PraosCrypto c
-  , KnownPraosExtension pext
-  , HasPraosExtensionHeader pext
-  ) =>
-  ProtocolHeaderSupportsKES (BasePraos pext c)
-  where
-  type ProtoHasLeios (BasePraos pext c) = PraosExtensionHasLeios pext
-
+instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
   configSlotsPerKESPeriod cfg = praosSlotsPerKESPeriod $ praosParams cfg
 
-  verifyHeaderIntegrity slotsPerKESPeriod hdr =
-    withSignableDict $
-      isRight $
-        KES.verifySignedKES () ocertVkHot t (hvSigned hv) (hvSignature hv)
-   where
-    hv = headerToView @pext hdr
+  verifyHeaderIntegrity slotsPerKESPeriod =
+    verifyHeaderIntegrity_BasePraos slotsPerKESPeriod . protocolHeaderView_Praos
 
-    withSignableDict ::
-      (KES.Signable (KES c) (BaseHeaderBody pext c) => r) -> r
-    withSignableDict k = case singPraosExtension (Proxy @pext) of
-      SingPextNone -> k
-      SingPextLeios -> k
+  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer PraosLeiosLeft{} = do
+    PraosFields{praosSignature, praosToSign} <-
+      forgePraosFields hk cbl il (mkHeader_BasePraos slotNo blockNo prevHash bbHash sz protVer id)
+    pure $ PraosCodec.Header praosToSign praosSignature
 
-    SL.OCert
-      { ocertVkHot
-      , ocertKESPeriod = SL.KESPeriod startOfKesPeriod
-      } = hvOCert hv
+  -- Praos announces no endorser blocks.
+  protocolStateLeiosInfo _ _ = Nothing
 
-    currentKesPeriod =
-      fromIntegral $
-        unSlotNo (hvSlotNo hv) `div` slotsPerKESPeriod
+instance PraosCrypto c => ProtocolHeaderSupportsProtocol (Praos c) where
+  type CannotForgeError (Praos c) = PraosCannotForge c
 
-    t
-      | currentKesPeriod >= startOfKesPeriod =
-          currentKesPeriod - startOfKesPeriod
-      | otherwise =
-          0
-
-  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer leios =
-    -- Each branch refines @pext@, so the body type is concrete: both the KES
-    -- 'Signable' dictionary and the header constructor are then available.
-    case singPraosExtension (Proxy @pext) of
-      SingPextNone -> do
-        PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il praosBody
-        -- A type annotation for sake of GHCs older than 9.12.
-        pure (PraosCodec.Header praosToSign praosSignature :: PraosCodec.Header c)
-      SingPextLeios -> case leios of
-        SJustLeios (containsCert, mbAnn) -> do
-          PraosFields{praosSignature, praosToSign} <-
-            forgePraosFields hk cbl il $ \ts ->
-              extendHeaderBodyWithLeios
-                (praosBody ts)
-                containsCert
-                (toCodecEbAnnouncement <$> mbAnn)
-          pure (LeiosCodec.Header praosToSign praosSignature :: LeiosCodec.Header c)
-   where
-    -- A signature for the sake of GHCs older than 9.12.
-    praosBody :: PraosToSign c -> PraosCodec.HeaderBody c
-    praosBody
-      PraosToSign
-        { praosToSignIssuerVK
-        , praosToSignVrfVK
-        , praosToSignVrfRes
-        , praosToSignOCert
-        } =
-        PraosCodec.HeaderBody
-          { PraosCodec.hbBlockNo = blockNo
-          , PraosCodec.hbSlotNo = slotNo
-          , PraosCodec.hbPrev = prevHash
-          , PraosCodec.hbVk = praosToSignIssuerVK
-          , PraosCodec.hbVrfVk = praosToSignVrfVK
-          , PraosCodec.hbVrfRes = praosToSignVrfRes
-          , PraosCodec.hbBodySize = fromIntegral sz
-          , PraosCodec.hbBodyHash = bbHash
-          , PraosCodec.hbOCert = praosToSignOCert
-          , PraosCodec.hbProtVer = protVer
-          }
-
-  protocolStateLeiosInfo _ cs =
-    case praosStateLeiosAnnouncement cs of
-      SNothingLeios -> Nothing
-      SJustLeios SNothing -> Nothing
-      SJustLeios (SJust announced) ->
-        Just (announcedEb announced, praosStateLastSlot cs)
-
-instance
-  ( PraosCrypto c
-  , HasPraosExtensionHeader pext
-  ) =>
-  ProtocolHeaderSupportsProtocol (BasePraos pext c)
-  where
-  type CannotForgeError (BasePraos pext c) = PraosCannotForge c
-
-  protocolHeaderView = headerToView @pext
-  pHeaderIssuer = hvVK . headerToView @pext
-  pHeaderIssueNo = SL.ocertN . hvOCert . headerToView @pext
+  protocolHeaderView = protocolHeaderView_Praos
+  pHeaderIssuer = hvVK . protocolHeaderView_Praos
+  pHeaderIssueNo = SL.ocertN . hvOCert . protocolHeaderView_Praos
 
   -- This is the "unified" VRF value, prior to range extension which yields e.g.
   -- the leader VRF value used for slot election.
   --
   -- In the future, we might want to use a dedicated range-extended VRF value
   -- here instead.
-  pTieBreakVRFValue = certifiedOutput . hvVrfRes . headerToView @pext
+  pTieBreakVRFValue = certifiedOutput . hvVrfRes . protocolHeaderView_Praos
 
-type instance Signed (PraosCodec.Header c) = PraosCodec.HeaderBody c
+{-------------------------------------------------------------------------------
+  PraosWithLeios
+-------------------------------------------------------------------------------}
+
+instance LeiosCrypto c => ProtocolHeaderSupportsEnvelope (PraosWithLeios c) where
+  pHeaderHash hdr = ShelleyHash $ LeiosCodec.headerHash hdr
+  pHeaderPrevHash (LeiosCodec.Header body _) = LeiosCodec.hbPrev body
+  pHeaderBodyHash (LeiosCodec.Header body _) = LeiosCodec.hbBodyHash body
+  pHeaderSlot (LeiosCodec.Header body _) = LeiosCodec.hbSlotNo body
+  pHeaderBlock (LeiosCodec.Header body _) = LeiosCodec.hbBlockNo body
+  pHeaderSize hdr = fromIntegral $ LeiosCodec.headerSize hdr
+  pHeaderBlockSize (LeiosCodec.Header body _) = fromIntegral $ LeiosCodec.hbBodySize body
+  pHeaderLeiosContainsCert (LeiosCodec.Header body _) =
+    LeiosCodec.hbBlockBodyContainsLeiosCert body
+  pHeaderLeiosEbAnnouncement (LeiosCodec.Header body _) =
+    fromCodecEbAnnouncement <$> LeiosCodec.hbEbAnnouncement body
+
+  type EnvelopeCheckError _ = EnvelopeError
+
+  envelopeChecks cfg lv hdr@(LeiosCodec.Header body _) =
+    envelopeChecks_BasePraos
+      (praosMaxMajorPV (praosParams (leiosPraosConfig cfg)))
+      lv
+      (LeiosCodec.headerSize hdr)
+      (LeiosCodec.hbBodySize body)
+
+instance LeiosCrypto c => ProtocolHeaderSupportsKES (PraosWithLeios c) where
+  configSlotsPerKESPeriod cfg =
+    praosSlotsPerKESPeriod $ praosParams $ leiosPraosConfig cfg
+
+  verifyHeaderIntegrity slotsPerKESPeriod =
+    verifyHeaderIntegrity_BasePraos slotsPerKESPeriod . protocolHeaderView_PraosWithLeios
+
+  mkHeader
+    hk
+    cbl
+    il
+    slotNo
+    blockNo
+    prevHash
+    bbHash
+    sz
+    protVer
+    (LeiosLeiosRight (containsCert, mbAnn)) = do
+      PraosFields{praosSignature, praosToSign} <-
+        forgePraosFields hk cbl il $
+          mkHeader_BasePraos slotNo blockNo prevHash bbHash sz protVer $ \pb ->
+            extendHeaderBodyWithLeios pb containsCert (toCodecEbAnnouncement <$> mbAnn)
+      pure $ LeiosCodec.Header praosToSign praosSignature
+
+  protocolStateLeiosInfo _ cs =
+    case praosStateLeiosAnnouncement cs of
+      LeiosLeiosRight SNothing -> Nothing
+      LeiosLeiosRight (SJust announced) ->
+        Just (announcedEb announced, praosStateLastSlot cs)
+
+instance LeiosCrypto c => ProtocolHeaderSupportsProtocol (PraosWithLeios c) where
+  type CannotForgeError (PraosWithLeios c) = PraosCannotForge c
+
+  protocolHeaderView = protocolHeaderView_PraosWithLeios
+  pHeaderIssuer = hvVK . protocolHeaderView_PraosWithLeios
+  pHeaderIssueNo = SL.ocertN . hvOCert . protocolHeaderView_PraosWithLeios
+  pTieBreakVRFValue = certifiedOutput . hvVrfRes . protocolHeaderView_PraosWithLeios
+
+{-------------------------------------------------------------------------------
+  Instances
+-------------------------------------------------------------------------------}
 
 instance PraosCrypto c => SignedHeader (PraosCodec.Header c) where
   headerSigned = PraosCodec.headerBody
 
-type instance Signed (LeiosCodec.Header c) = LeiosCodec.HeaderBody c
-
-instance PraosCrypto c => SignedHeader (LeiosCodec.Header c) where
+instance LeiosCrypto c => SignedHeader (LeiosCodec.Header c) where
   headerSigned = LeiosCodec.headerBody
 
--- Concrete per extension, rather than one instance over @pext@: the
--- superclasses need 'Typeable' and 'SignedHeader' of the header type, which
--- only reduce once the extension is known.
-instance PraosCrypto c => ShelleyProtocol (BasePraos PextNone c)
+instance PraosCrypto c => ShelleyProtocol (Praos c)
 
-instance PraosCrypto c => ShelleyProtocol (BasePraos PextLeios c)
+instance LeiosCrypto c => ShelleyProtocol (PraosWithLeios c)

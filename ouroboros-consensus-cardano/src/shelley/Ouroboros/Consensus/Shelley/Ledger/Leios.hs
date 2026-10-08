@@ -1,3 +1,4 @@
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -56,19 +57,23 @@ import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
+import Ouroboros.Consensus.Protocol.Leios
+  ( ConsensusConfig (..)
+  , EitherLeiosF (..)
+  , LeiosCrypto
+  , PraosWithLeios
+  , leiosContextFreeHeaderChecks
+  )
 import Ouroboros.Consensus.Protocol.Praos
   ( AnnouncedBy (..)
   , BasePraosState (..)
-  , ConsensusConfig (..)
   , Praos
-  , PraosCrypto
   , PraosParams (..)
-  , PraosWithLeios
   , Ticked (..)
   , WhetherToUpperBoundOCERT (..)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as PP
-import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (..))
+
 import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as PP
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -122,7 +127,7 @@ instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)
 
 instance
   forall c.
-  (PraosCrypto c, ShelleyCompatible (PraosWithLeios c) DijkstraEra) =>
+  (LeiosCrypto c, ShelleyCompatible (PraosWithLeios c) DijkstraEra) =>
   ResolveLeiosBlock (ShelleyBlock (PraosWithLeios c) DijkstraEra)
   where
   -- The on-wire bytes and 'TxHash' a forged EB records for each tx (see
@@ -133,8 +138,8 @@ instance
   leiosTxHashOfGenTx (ShelleyTx _ tx) = Just (hashLeiosTx (MkLeiosTx (serialize' tx)))
 
   getLeiosMaxEbTxsSizeFromView _ lv =
-    case PP.plvLeios lv of
-      SJustLeios llv -> PP.llvMaxEbTxsSize llv
+    case PP.plvMaxEbTxsSize lv of
+      LeiosLeiosRight sz -> sz
 
   resolveLeiosClosure leiosDb ebHash = do
     lookupTrustedEbClosure leiosDb ebHash >>= \case
@@ -257,7 +262,7 @@ instance
     -- The Leios checks that do not need the header's predecessor. The gap
     -- between a CertRB and the announcement it certifies does need it, so it
     -- is left to 'updateChainDepState'; an announcement is not a CertRB.
-    PP.leiosContextFreeHeaderChecks (tickedPraosStateLedgerView tcs) hv
+    leiosContextFreeHeaderChecks (tickedPraosStateLedgerView tcs) hv
     -- validate the claimed election
     PP.doValidateVRFSignature
       (praosStateEpochNonce cs)
@@ -271,7 +276,7 @@ instance
       PP.NoCounterForKeyHashOCERT{} -> pure StaleOCIN
       _ -> throwError err
    where
-    prms = praosParams cfg
+    prms = praosParams (leiosPraosConfig cfg)
     cs = tickedPraosStateChainDepState tcs
     SL.PoolDistr pd _ = plvPoolDistr (tickedPraosStateLedgerView tcs)
     authenticate =
@@ -284,9 +289,8 @@ instance
         hv
 
   protocolStateLeiosAnnouncement st = do
-    -- 'SNothingLeios' is unreachable at this extension, so this is total.
     MkAnnouncedBy issuer ann <- case praosStateLeiosAnnouncement st of
-      SJustLeios mbAnn -> strictMaybeToMaybe mbAnn
+      LeiosLeiosRight mbAnn -> strictMaybeToMaybe mbAnn
     pure
       MkAnnouncementFields
         { announcementElection =

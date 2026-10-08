@@ -65,8 +65,8 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( HasMaxMajorProtVer
-  , StrictMaybeLeios
-  , WhetherHasLeios
+  , ShelleyProtocolHeader
+  , EitherLeiosF
   )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -102,9 +102,6 @@ instance Condense ShelleyHash where
 {-------------------------------------------------------------------------------
   Header
 -------------------------------------------------------------------------------}
-
--- | Shelley header, determined by the associated protocol.
-type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
 
 -- | Indicates that the header (determined by the protocol) supports " Envelope
 -- " functionality. Envelope functionality refers to the minimal functionality
@@ -165,13 +162,6 @@ default_pHeaderLeiosEbAnnouncement = const SNothing
 --    header (made specific to KES-using protocols through the need to handle
 --    the hot key).
 class ProtocolHeaderSupportsKES proto where
-  -- | Whether this protocol's header carries the Leios fields.
-  --
-  -- Unlike 'ShelleyProtocolHeader' this is not injective — several protocols
-  -- have no Leios — but it only ever indexes a 'StrictMaybeLeios', so nothing
-  -- needs to invert it.
-  type ProtoHasLeios proto :: WhetherHasLeios
-
   -- | Extract the "slots per KES period" value from the protocol config.
   --
   --   Note that we do not require `ConsensusConfig` in 'verifyHeaderIntegrity'
@@ -205,7 +195,7 @@ class ProtocolHeaderSupportsKES proto where
     ProtVer ->
     -- | Optional fields for Leios: whether the body carries a certificate, and
     -- this header's announcement, if any
-    StrictMaybeLeios (ProtoHasLeios proto) (Bool, StrictMaybe EbAnnouncement) ->
+    EitherLeiosF proto () (Bool, StrictMaybe EbAnnouncement) ->
     m (ShelleyProtocolHeader proto)
 
   -- | Extract the most recently announced (and not yet certified) Leios EB

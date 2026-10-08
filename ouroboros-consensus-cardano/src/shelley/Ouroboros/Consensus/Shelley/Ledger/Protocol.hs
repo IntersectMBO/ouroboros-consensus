@@ -16,8 +16,7 @@ import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config (BlockConfig (..))
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
-  ( ShelleyProtocolHeader
-  , pHeaderIssueNo
+  ( pHeaderIssueNo
   , pHeaderIssuer
   , pTieBreakVRFValue
   , protocolHeaderView

@@ -87,8 +87,12 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.Leios
+  ( ConsensusConfig (..)
+  , LeiosCrypto
+  , PraosWithLeios
+  )
 import Ouroboros.Consensus.Protocol.Praos
-import Ouroboros.Consensus.Protocol.Praos.Common (KnownPraosExtension)
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
@@ -273,16 +277,25 @@ instance
       }
 
 instance
-  ( Ouroboros.Consensus.Protocol.Praos.PraosCrypto c
-  , KnownPraosExtension pext
-  ) =>
-  HasPartialConsensusConfig (BasePraos pext c)
+  Ouroboros.Consensus.Protocol.Praos.PraosCrypto c =>
+  HasPartialConsensusConfig (Praos c)
   where
-  type PartialConsensusConfig (BasePraos pext c) = PraosParams
+  type PartialConsensusConfig (Praos c) = PraosParams
 
   completeConsensusConfig _ praosEpochInfo praosParams = PraosConfig{..}
 
   toPartialConsensusConfig _ = praosParams
+
+instance
+  LeiosCrypto c =>
+  HasPartialConsensusConfig (PraosWithLeios c)
+  where
+  type PartialConsensusConfig (PraosWithLeios c) = PraosParams
+
+  completeConsensusConfig _ praosEpochInfo praosParams =
+    LeiosConfig PraosConfig{..}
+
+  toPartialConsensusConfig _ = praosParams . leiosPraosConfig
 
 instance SL.PraosCrypto c => HasPartialConsensusConfig (TPraos c) where
   type PartialConsensusConfig (TPraos c) = TPraosParams
