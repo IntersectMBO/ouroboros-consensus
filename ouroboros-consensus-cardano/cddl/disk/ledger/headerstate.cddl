@@ -21,7 +21,7 @@ headerStateChainDep =
              tpraosState,
              praosState,
              praosState,
-             praosState>
+             leiosState>
 
 pbftState = {* keyhash => [* slotno]}
 
@@ -36,11 +36,17 @@ praosState = [withOrigin<slotno>,
               nonce,
               nonce]
 
+leiosState = [praosState, maybe<announcedBy>]
+
+announcedBy = [keyhash, ebReferencesAnnouncement]
+
 ;; These should belong to the Ledger
+ebReferencesAnnouncement = [hash, word32]
+
 sl.chainDepState = [prtclState, ticknState, nonce]
 
 prtclState = [{* keyhash => word64}, nonce, nonce]
 
 ticknState = [nonce, nonce]
 
-;# import withOrigin, ns8, telescope8, slotno, hash, blockno, keyhash, word64, nonce from base
+;# import withOrigin, ns8, telescope8, slotno, hash, blockno, keyhash, word32, word64, nonce, maybe from base
