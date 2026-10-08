@@ -16,7 +16,7 @@ byronRegularIdx = [1, base.word32]
 
 serialisedShelleyHeader<era> = #6.24(bytes .cbor era)
 
-dijkstraPraosHeader = conway.header
+dijkstraPraosHeader = dijkstra.header
 
 ;# include byron as byron
 ;# include shelley as shelley
