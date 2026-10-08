@@ -26,7 +26,6 @@ import Cardano.Binary as CBOR
 import Cardano.Slotting.Slot
 import Codec.CBOR.Read
 import qualified Codec.CBOR.Write as CBOR
-import Codec.Serialise (decode)
 import Control.Monad (replicateM_, unless)
 import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadST
@@ -254,7 +253,7 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
   (extLedgerSt, checksumAsRead) <-
     withExceptT
       (InitFailureRead . ReadSnapshotFailed)
-      $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds)
+      $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) (snapshotToStatePath ds)
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwE InitFailureGenesis
     NotOrigin pt -> do

@@ -54,7 +54,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Protocol.PBFT.Crypto
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util (repeatedly)
-import Ouroboros.Consensus.Util.Versioned
 
 {-------------------------------------------------------------------------------
   Types
@@ -279,10 +278,6 @@ fromList signers =
   Serialization
 -------------------------------------------------------------------------------}
 
--- | Version 0 supported rollback, removed in #2575.
-serializationFormatVersion1 :: VersionNumber
-serializationFormatVersion1 = 1
-
 invert :: PBftCrypto c => PBftState c -> Map (PBftVerKeyHash c) [SlotNo]
 invert =
   Foldable.foldl'
@@ -301,20 +296,14 @@ encodePBftState ::
   PBftCrypto c =>
   PBftState c -> Encoding
 encodePBftState st =
-  encodeVersion serializationFormatVersion1 $
-    encode (invert st)
+  encode (invert st)
 
 decodePBftState ::
   forall c.
   PBftCrypto c =>
   forall s.
   Decoder s (PBftState c)
-decodePBftState =
-  decodeVersion
-    [(serializationFormatVersion1, Decode decodePBftState1)]
- where
-  decodePBftState1 :: forall s. Decoder s (PBftState c)
-  decodePBftState1 = uninvert <$> decode
+decodePBftState = uninvert <$> decode
 
 instance Serialise (PBftVerKeyHash c) => Serialise (PBftSigner c) where
   encode = encode . toPair

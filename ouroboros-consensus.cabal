@@ -564,7 +564,6 @@ library lsm
     primitive,
     random,
     resource-registry,
-    serialise,
     streaming,
     text,
     transformers,

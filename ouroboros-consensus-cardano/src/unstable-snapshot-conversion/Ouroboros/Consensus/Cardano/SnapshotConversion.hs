@@ -250,7 +250,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       when interactive $ putStr $ "Reading ledger state from " <> snapshotToDirName ds <> "..."
       when interactive $ hFlush stdout
       runExceptT
-        (readExtLedgerState inSomeHasFS (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds))
+        (readExtLedgerState inSomeHasFS (decodeDiskExtLedgerState ccfg) (snapshotToStatePath ds))
     case eState of
       Left err ->
         throwError . SnapshotError . InitFailureRead @(CardanoBlock StandardCrypto) . ReadSnapshotFailed $
