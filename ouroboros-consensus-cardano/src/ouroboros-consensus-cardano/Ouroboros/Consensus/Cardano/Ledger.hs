@@ -53,7 +53,8 @@ import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ledger.Tables
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger
   ( BigEndianTxIn

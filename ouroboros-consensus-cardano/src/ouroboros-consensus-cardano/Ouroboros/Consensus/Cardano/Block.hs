@@ -242,7 +242,8 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto, PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Leios (LeiosCrypto, PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
@@ -1539,7 +1540,7 @@ pattern ChainDepStateDijkstra st <-
 -- a single case; era mismatches fall through to the no-op default.
 instance
   forall c.
-  ( PraosCrypto c
+  ( LeiosCrypto c
   , ShelleyCompatible (PraosWithLeios c) DijkstraEra
   , HasCanonicalTxIn (CardanoEras c)
   , HasHardForkTxOut (CardanoEras c)

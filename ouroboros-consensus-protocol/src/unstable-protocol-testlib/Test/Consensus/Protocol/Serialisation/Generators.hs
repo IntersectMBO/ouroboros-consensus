@@ -1,14 +1,20 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Generators suitable for serialisation. Note that these are not guaranteed
 -- to be semantically correct at all, only structurally correct.
 module Test.Consensus.Protocol.Serialisation.Generators () where
 
+import qualified Cardano.Crypto.DSIGN as DSIGN
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
+import qualified Cardano.Crypto.VRF as VRF
+import Cardano.Ledger.Keys (DSIGN)
+import Cardano.Protocol.Crypto (Crypto, VRF)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import Cardano.Protocol.Praos.BlockHeader
   ( Header (Header)
@@ -19,6 +25,7 @@ import Cardano.Protocol.TPraos.BlockHeader (HashHeader, PrevHash (..))
 import Cardano.Protocol.TPraos.OCert
   ( KESPeriod (KESPeriod)
   , OCert (OCert)
+  , OCertSignable
   )
 import Cardano.Slotting.Block (BlockNo (BlockNo))
 import Cardano.Slotting.Slot
@@ -26,25 +33,18 @@ import Cardano.Slotting.Slot
   , WithOrigin (At, Origin)
   )
 import qualified Data.ByteString as BS
-import Data.Proxy (Proxy (Proxy))
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , EbHash
   )
+import Ouroboros.Consensus.Protocol.Leios (LeiosCrypto)
 import Ouroboros.Consensus.Protocol.Praos
   ( AnnouncedBy (MkAnnouncedBy)
   , BasePraosState (PraosState)
+  , EitherLeiosF
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Common
-  ( KnownPraosExtension (praosExtensionHasLeios)
-  , StrictMaybeLeios (SJustLeios, SNothingLeios)
-  , WhetherHasLeiosDecided
-    ( PextDoesNotHaveLeiosDecided
-    , PextHasLeiosDecided
-    )
-  , toCodecEbAnnouncement
-  )
+import Ouroboros.Consensus.Protocol.Praos.Common (toCodecEbAnnouncement)
 import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Cardano.StrictContainers.Instances ()
@@ -66,7 +66,13 @@ instance Arbitrary AnnouncedBy where
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
 
-instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
+instance
+  ( Crypto c
+  , DSIGN.Signable DSIGN (OCertSignable c)
+  , VRF.Signable (VRF c) InputVRF
+  ) =>
+  Arbitrary (HeaderBody c)
+  where
   arbitrary =
     let ocert =
           OCert
@@ -105,10 +111,10 @@ instance Praos.PraosCrypto c => Arbitrary (Header c) where
 instance Arbitrary Leios.EbAnnouncement where
   arbitrary = toCodecEbAnnouncement <$> arbitrary
 
-instance Praos.PraosCrypto c => Arbitrary (Leios.HeaderBody c) where
+instance LeiosCrypto c => Arbitrary (Leios.HeaderBody c) where
   arbitrary = extendHeaderBodyWithLeios <$> arbitrary <*> arbitrary <*> arbitrary
 
-instance Praos.PraosCrypto c => Arbitrary (Leios.Header c) where
+instance LeiosCrypto c => Arbitrary (Leios.Header c) where
   arbitrary = do
     hBody <- arbitrary
     period <- arbitrary
@@ -116,7 +122,13 @@ instance Praos.PraosCrypto c => Arbitrary (Leios.Header c) where
     let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Leios.Header hBody hSig
 
-instance KnownPraosExtension pext => Arbitrary (BasePraosState pext) where
+instance
+  forall proto.
+  ( Applicative (EitherLeiosF proto ())
+  , Traversable (EitherLeiosF proto ())
+  ) =>
+  Arbitrary (BasePraosState proto)
+  where
   arbitrary =
     PraosState
       <$> oneof
@@ -130,9 +142,4 @@ instance KnownPraosExtension pext => Arbitrary (BasePraosState pext) where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> traverse
-        (\() -> arbitrary)
-        ( case praosExtensionHasLeios (Proxy @pext) of
-            PextDoesNotHaveLeiosDecided -> SNothingLeios
-            PextHasLeiosDecided -> SJustLeios ()
-        )
+      <*> traverse (\() -> arbitrary) (pure () :: EitherLeiosF proto () ())

@@ -91,7 +91,8 @@ import Ouroboros.Consensus.Protocol.Abstract hiding
   )
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
 import Ouroboros.Consensus.Protocol.TPraos

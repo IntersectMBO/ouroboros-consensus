@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Protocol.Praos
   , Praos
   , PraosCannotForge (..)
   , BasePraosCrypto
+  , EitherLeiosF (..)
   , PraosCrypto
   , PraosFields (..)
   , PraosIsLeader (..)
@@ -40,11 +41,13 @@ module Ouroboros.Consensus.Protocol.Praos
   , PraosValidationErr
   , SerialisePraosState (..)
   , Ticked (..)
+  , checkIsLeader_BasePraos
   , forgePraosFields
+  , getOpCertCounters_BasePraos
+  , getPraosNonces_BasePraos
   , praosCheckCanForge
-  , checkIsLeaderPraos
-  , reupdatePraosState
-  , tickPraosState
+  , reupdateChainDepState_BasePraos
+  , tickChainDepState_BasePraos
   , validateKESSignature
   , validateVRFSignature
 
@@ -130,11 +133,12 @@ import Data.Typeable (Typeable)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
 import Data.Void (Void)
-import Data.Word (Word32, Word64)
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Lens.Micro ((^.))
 import LeiosDemoTypes
   ( EbAnnouncement
+  , LeiosHeaderErr
   , decodeEbAnnouncement
   , encodeEbAnnouncement
   )
@@ -205,7 +209,8 @@ class
 
 instance BasePraosCrypto (Praos StandardCrypto) StandardCrypto
 
-type PraosCrypto c = BasePraosCrypto (Praos c) c
+class (Crypto c, BasePraosCrypto (Praos c) c) => PraosCrypto c
+instance PraosCrypto StandardCrypto
 
 {-------------------------------------------------------------------------------
   Fields required by Praos in the header
@@ -245,13 +250,13 @@ instance Crypto c => NoThunks (PraosToSign c)
 deriving instance Crypto c => Show (PraosToSign c)
 
 forgePraosFields ::
-  ( PraosCrypto c
+  ( Crypto c
   , KES.Signable (KES c) toSign
   , Monad m
   ) =>
   HotKey c m ->
-  CanBeLeader (Praos c) ->
-  IsLeader (Praos c) ->
+  PraosCanBeLeader c ->
+  PraosIsLeader c ->
   (PraosToSign c -> toSign) ->
   m (PraosFields c toSign)
 forgePraosFields
@@ -535,17 +540,9 @@ data BasePraosValidationErr proto c
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash SL.BlockIssuer) -- stake pool key hash
-  | LeiosEbTooBig
+  | LeiosHeaderErr
       !(EitherLeiosF proto Void ())
-      !Word32 -- the announced size
-      !Word32 -- the bound
-  | LeiosCertTooYoung
-      !(EitherLeiosF proto Void ())
-      !SlotNo -- the announcing slot
-      !SlotNo -- the certifying slot
-      !SlotNo -- the earliest the certificate was allowed
-  | LeiosCertWithoutAnnouncement
-      !(EitherLeiosF proto Void ())
+      !LeiosHeaderErr
   deriving Generic
 
 type PraosValidationErr c = BasePraosValidationErr (Praos c) c
@@ -573,7 +570,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
 
   protocolSecurityParam = praosSecurityParam . praosParams
 
-  checkIsLeader cfg = checkIsLeaderPraos (praosParams cfg)
+  checkIsLeader cfg = checkIsLeader_BasePraos (praosParams cfg)
 
   -- Updating the chain dependent state for Praos.
   --
@@ -585,7 +582,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   --   nonce derived from the last block of the previous epoch.
   -- - Update the "last block of previous epoch" nonce to the nonce derived
   --   from the last applied block.
-  tickChainDepState cfg = tickPraosState (praosEpochInfo cfg)
+  tickChainDepState cfg = tickChainDepState_BasePraos (praosEpochInfo cfg)
 
   -- Validate and update the chain dependent state as a result of processing a
   -- new header.
@@ -601,20 +598,20 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       -- right to issue in this slot.
       validateVRFSignature (praosStateEpochNonce cs) lv praosLeaderF b
       -- Finally, we apply the changes from this header to the chain state.
-      pure $ reupdatePraosState prms ei id b slot cs
+      pure $ reupdateChainDepState_BasePraos prms ei id b slot cs
      where
       lv = tickedPraosStateLedgerView tcs
       cs = tickedPraosStateChainDepState tcs
 
   -- Re-update the chain dependent state as a result of processing a header.
   reupdateChainDepState (PraosConfig prms ei) b slot tcs =
-    reupdatePraosState prms ei id b slot (tickedPraosStateChainDepState tcs)
+    reupdateChainDepState_BasePraos prms ei id b slot (tickedPraosStateChainDepState tcs)
 
 -- | The chain-dep state update every protocol performs.
 --
 -- The one field that differs is 'praosStateLeiosAnnouncement', so the caller
 -- says how to update it; 'Praos' passes 'id'.
-reupdatePraosState ::
+reupdateChainDepState_BasePraos ::
   forall proto c.
   PraosParams ->
   EpochInfo (Except History.PastHorizonException) ->
@@ -625,7 +622,7 @@ reupdatePraosState ::
   SlotNo ->
   BasePraosState proto ->
   BasePraosState proto
-reupdatePraosState
+reupdateChainDepState_BasePraos
   PraosParams{praosRandomnessStabilisationWindow}
   ei
   updAnnouncement
@@ -845,12 +842,12 @@ data PraosCannotForge c
 deriving instance Crypto c => Show (PraosCannotForge c)
 
 praosCheckCanForge ::
-  ConsensusConfig (Praos c) ->
+  PraosParams ->
   SlotNo ->
   HotKey.KESInfo ->
   Either (PraosCannotForge c) ()
 praosCheckCanForge
-  PraosConfig{praosParams}
+  praosParams
   curSlot
   kesInfo
     | let startPeriod = HotKey.kesStartPeriod kesInfo
@@ -876,29 +873,38 @@ instance
   where
   type PraosProtocolSupportsNodeCrypto (Praos c) = c
 
-  getPraosNonces _prx cdst =
-    PraosNonces
-      { candidateNonce = praosStateCandidateNonce
-      , epochNonce = praosStateEpochNonce
-      , evolvingNonce = praosStateEvolvingNonce
-      , labNonce = praosStateLabNonce
-      , previousLabNonce = praosStateLastEpochBlockNonce
-      }
-   where
-    PraosState
-      { praosStateCandidateNonce
-      , praosStateEpochNonce
-      , praosStateEvolvingNonce
-      , praosStateLabNonce
-      , praosStateLastEpochBlockNonce
-      } = cdst
+  getPraosNonces _prx = getPraosNonces_BasePraos
 
-  getOpCertCounters _prx cdst =
-    praosStateOCertCounters
-   where
-    PraosState
-      { praosStateOCertCounters
-      } = cdst
+  getOpCertCounters _prx = getOpCertCounters_BasePraos
+
+-- | 'getPraosNonces' for any Praos.
+getPraosNonces_BasePraos :: BasePraosState proto -> PraosNonces
+getPraosNonces_BasePraos cdst =
+  PraosNonces
+    { candidateNonce = praosStateCandidateNonce
+    , epochNonce = praosStateEpochNonce
+    , evolvingNonce = praosStateEvolvingNonce
+    , labNonce = praosStateLabNonce
+    , previousLabNonce = praosStateLastEpochBlockNonce
+    }
+ where
+  PraosState
+    { praosStateCandidateNonce
+    , praosStateEpochNonce
+    , praosStateEvolvingNonce
+    , praosStateLabNonce
+    , praosStateLastEpochBlockNonce
+    } = cdst
+
+-- | 'getOpCertCounters' for any Praos.
+getOpCertCounters_BasePraos ::
+  BasePraosState proto -> Map (KeyHash SL.BlockIssuer) Word64
+getOpCertCounters_BasePraos cdst =
+  praosStateOCertCounters
+ where
+  PraosState
+    { praosStateOCertCounters
+    } = cdst
 
 {-------------------------------------------------------------------------------
   Translation from transitional Praos
@@ -962,8 +968,8 @@ infix 1 ?!
 
 infix 1 ?!:
 
--- | 'checkIsLeader', for any protocol whose state is a 'PraosState'.
-checkIsLeaderPraos ::
+-- | 'checkIsLeader' for any Praos.
+checkIsLeader_BasePraos ::
   forall proto c.
   BasePraosCrypto proto c =>
   PraosParams ->
@@ -971,7 +977,7 @@ checkIsLeaderPraos ::
   SlotNo ->
   Ticked (BasePraosState proto) ->
   Maybe (PraosIsLeader c)
-checkIsLeaderPraos
+checkIsLeader_BasePraos
   prms
   PraosCanBeLeader
     { praosCanBeLeaderSignKeyVRF
@@ -991,20 +997,20 @@ checkIsLeaderPraos
 
     rho = VRF.evalCertified () rho' praosCanBeLeaderSignKeyVRF
 
--- | 'tickChainDepState', for any protocol whose state is a 'PraosState'.
+-- | 'tickChainDepState' for any Praos.
 --
 -- If we are not in a new epoch, nothing happens. If we are, we do three things:
 -- store the existing current epoch nonce as the "previous epoch" nonce; update
 -- the epoch nonce to the combination of the candidate nonce and the nonce
 -- derived from the last block of the previous epoch; and update the "last block
 -- of previous epoch" nonce to the one derived from the last applied block.
-tickPraosState ::
+tickChainDepState_BasePraos ::
   EpochInfo (Except History.PastHorizonException) ->
   Views.BasePraosLedgerView proto ->
   SlotNo ->
   BasePraosState proto ->
   Ticked (BasePraosState proto)
-tickPraosState ei lv slot st =
+tickChainDepState_BasePraos ei lv slot st =
   TickedPraosState
     { tickedPraosStateChainDepState = st'
     , tickedPraosStateLedgerView = lv

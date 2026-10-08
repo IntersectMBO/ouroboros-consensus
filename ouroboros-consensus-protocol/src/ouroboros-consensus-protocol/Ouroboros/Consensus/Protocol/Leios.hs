@@ -18,14 +18,17 @@
 
 -- | Praos with the Leios overlay.
 module Ouroboros.Consensus.Protocol.Leios
-  ( LeiosCrypto
+  ( EitherLeiosF (..)
+  , LeiosCrypto
   , PraosWithLeios
+  , leiosContextFreeHeaderChecks
   , ConsensusConfig (..)
   ) where
 
-import Cardano.Ledger.BaseTypes (StrictMaybe (..))
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), StrictMaybe (..))
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
 import Cardano.Ledger.Keys (hashKey)
+import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (Crypto, StandardCrypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import Cardano.Slotting.EpochInfo (epochInfoSlotLength)
@@ -36,9 +39,11 @@ import Control.Monad (when)
 import Control.Monad.Except (Except, throwError)
 import Data.Functor.Identity (runIdentity)
 import Data.Kind (Type)
+import Data.Proxy (Proxy (Proxy))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import LeiosDemoTypes (ebAnnouncementSize, minCertificationSlot)
+import qualified LeiosDemoTypes as Leios
 import NoThunks.Class (NoThunks)
 import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -46,9 +51,11 @@ import Lens.Micro ((^.))
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos
+import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Protocol.Praos.Common
-  ( EitherLeiosF
+  ( HasMaxMajorProtVer (..)
   , PraosCanBeLeader
+  , PraosProtocolSupportsNode (..)
   , PraosTiebreakerView
   , ShelleyProtocolHeader
   , fromCodecEbAnnouncement
@@ -67,7 +74,8 @@ type instance ShelleyProtocolHeader (PraosWithLeios c) = LeiosCodec.Header c
 
 instance BasePraosCrypto (PraosWithLeios StandardCrypto) StandardCrypto
 
-type LeiosCrypto c = BasePraosCrypto (PraosWithLeios c) c
+class (Crypto c, BasePraosCrypto (PraosWithLeios c) c) => LeiosCrypto c
+instance LeiosCrypto StandardCrypto
 
 {-------------------------------------------------------------------------------
   The fields only this protocol has
@@ -156,7 +164,8 @@ leiosContextFreeHeaderChecks lv b = do
           maximum' = max 200000 maxEbBodySize
       when (announced > maximum') $
         throwError $
-          LeiosEbTooBig (LeiosLeiosRight ()) announced maximum'
+          LeiosHeaderErr (LeiosLeiosRight ()) $
+            Leios.LeiosEbTooBig announced maximum'
 
 -- | The Leios-specific checks on a header, called by 'updateChainDepState'.
 --
@@ -197,10 +206,13 @@ leiosHeaderChecks cfg lv b slot cs = do
                 announcingSlot
         when (slot < earliestAllowed) $
           throwError $
-            LeiosCertTooYoung (LeiosLeiosRight ()) announcingSlot slot earliestAllowed
+            LeiosHeaderErr (LeiosLeiosRight ()) $
+              Leios.LeiosCertTooYoung announcingSlot slot earliestAllowed
       -- A state that announced an EB has necessarily applied a header, so
       -- 'Origin' is the same situation as announcing nothing.
-      _ -> throwError $ LeiosCertWithoutAnnouncement (LeiosLeiosRight ())
+      _ ->
+        throwError $
+          LeiosHeaderErr (LeiosLeiosRight ()) Leios.LeiosCertWithoutAnnouncement
 
 {-------------------------------------------------------------------------------
   ConsensusProtocol
@@ -217,9 +229,9 @@ instance LeiosCrypto c => ConsensusProtocol (PraosWithLeios c) where
 
   protocolSecurityParam = praosSecurityParam . praosParams . leiosPraosConfig
 
-  checkIsLeader cfg = checkIsLeaderPraos (praosParams (leiosPraosConfig cfg))
+  checkIsLeader cfg = checkIsLeader_BasePraos (praosParams (leiosPraosConfig cfg))
 
-  tickChainDepState cfg = tickPraosState (praosEpochInfo (leiosPraosConfig cfg))
+  tickChainDepState cfg = tickChainDepState_BasePraos (praosEpochInfo (leiosPraosConfig cfg))
 
   updateChainDepState cfg b slot tcs = do
     -- The Leios header checks. Cheap, so they run before the signature checks.
@@ -240,7 +252,7 @@ instance LeiosCrypto c => ConsensusProtocol (PraosWithLeios c) where
     cs = tickedPraosStateChainDepState tcs
 
   reupdateChainDepState cfg b slot tcs =
-    reupdatePraosState prms ei upd b slot (tickedPraosStateChainDepState tcs)
+    reupdateChainDepState_BasePraos prms ei upd b slot (tickedPraosStateChainDepState tcs)
    where
     PraosConfig prms ei = leiosPraosConfig cfg
 
@@ -274,3 +286,69 @@ instance Dijkstra.DijkstraEraForecast era => Views.ForecastsLeios (PraosWithLeio
       }
    where
     cc = SL.forecastChainChecks @t @era f
+
+instance HasMaxMajorProtVer (PraosWithLeios c) where
+  protoMaxMajorPV = praosMaxMajorPV . praosParams . leiosPraosConfig
+
+{-------------------------------------------------------------------------------
+  Translation from the protocol without Leios
+-------------------------------------------------------------------------------}
+
+-- | Crossing from Praos into Praos with Leios.
+--
+-- Everything carries over unchanged; the Leios fields merely have to be
+-- introduced. The announcement starts empty, since no header of the protocol we
+-- are leaving could have carried one. And the ledger view seats no committee,
+-- so nothing can be certified against it: the committee is empty and the quorum
+-- is the entire weight. That is the truth rather than a placeholder, both
+-- before the Leios era and during its first epochs, until a snapshot seated by
+-- the new era's rules rotates in. And so the other values don't actually
+-- matter.
+instance TranslateProto (Praos c) (PraosWithLeios c) where
+  translateLedgerView _ lv =
+    Views.PraosLedgerView
+      { Views.plvPoolDistr = Views.plvPoolDistr lv
+      , Views.plvMaxHeaderSize = Views.plvMaxHeaderSize lv
+      , Views.plvMaxBodySize = Views.plvMaxBodySize lv
+      , Views.plvProtocolVersion = Views.plvProtocolVersion lv
+      , Views.plvCommittee = LeiosLeiosRight emptyLeiosCommittee
+      , Views.plvQuorumStakeThreshold = LeiosLeiosRight maxBound
+      , Views.plvAnnouncementPeriodLength = LeiosLeiosRight (Milliseconds32 0)
+      , Views.plvVotePeriodLength = LeiosLeiosRight (Milliseconds32 0)
+      , Views.plvDiffusionPeriodLength = LeiosLeiosRight (Milliseconds32 1000000000)
+      , Views.plvMaxEbBodySize = LeiosLeiosRight 0
+      , Views.plvMaxEbTxsSize = LeiosLeiosRight 0
+      }
+
+  translateChainDepState _ st =
+    PraosState
+      { praosStateLastSlot = praosStateLastSlot st
+      , praosStateOCertCounters = praosStateOCertCounters st
+      , praosStateEvolvingNonce = praosStateEvolvingNonce st
+      , praosStateCandidateNonce = praosStateCandidateNonce st
+      , praosStateEpochNonce = praosStateEpochNonce st
+      , praosStatePreviousEpochNonce = praosStatePreviousEpochNonce st
+      , praosStateLabNonce = praosStateLabNonce st
+      , praosStateLastEpochBlockNonce = praosStateLastEpochBlockNonce st
+      , praosStateLeiosAnnouncement = LeiosLeiosRight SNothing
+      }
+
+{-------------------------------------------------------------------------------
+  PraosProtocolSupportsNode
+-------------------------------------------------------------------------------}
+
+instance LeiosCrypto c => PraosProtocolSupportsNode (PraosWithLeios c) where
+  type PraosProtocolSupportsNodeCrypto (PraosWithLeios c) = c
+
+  getPraosNonces _prx = getPraosNonces_BasePraos
+
+  getOpCertCounters _prx = getOpCertCounters_BasePraos
+
+instance forall c. TranslateProto (TPraos c) (PraosWithLeios c) where
+  translateLedgerView _ =
+    translateLedgerView (Proxy @(Praos c, PraosWithLeios c))
+      . translateLedgerView (Proxy @(TPraos c, Praos c))
+
+  translateChainDepState _ =
+    translateChainDepState (Proxy @(Praos c, PraosWithLeios c))
+      . translateChainDepState (Proxy @(TPraos c, Praos c))

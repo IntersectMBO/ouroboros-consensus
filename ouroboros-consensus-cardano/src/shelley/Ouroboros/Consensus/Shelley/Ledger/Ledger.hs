@@ -133,8 +133,9 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import Ouroboros.Consensus.Protocol.Praos (BasePraos, Praos, PraosWithLeios)
-import Ouroboros.Consensus.Protocol.Praos.Common (StrictMaybeLeios (SJustLeios))
+import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
+import Ouroboros.Consensus.Protocol.Leios (EitherLeiosF (..), PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
@@ -996,10 +997,10 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 -- more.
 untickedLedgerView ::
   ( SL.EraForecast era
-  , Views.ForecastsLeios pext era
+  , Views.ForecastsLeios proto era
   ) =>
-  LedgerState (ShelleyBlock (BasePraos pext crypto) era) mk ->
-  Views.BasePraosLedgerView pext
+  LedgerState (ShelleyBlock proto era) mk ->
+  Views.BasePraosLedgerView proto
 untickedLedgerView =
   Views.forecastToBasePraosLedgerView . SL.currentForecast . shelleyLedgerState
 
@@ -1019,15 +1020,16 @@ untickedLedgerView =
 -- holds after the rotation. Taking the committee from the same snapshot
 -- keeps a pool's voting weight and its block-production weight in step.
 leiosCommitteeAndQuorum ::
-  forall pext crypto era mk.
+  forall proto era mk.
   ( SL.EraForecast era
-  , Views.ForecastsLeios pext era
-  , HasLeiosVoting (ShelleyBlock (BasePraos pext crypto) era)
+  , Views.ForecastsLeios proto era
+  , HasLeiosVoting (ShelleyBlock proto era)
+  , LedgerView proto ~ Views.BasePraosLedgerView proto
   ) =>
-  LedgerState (ShelleyBlock (BasePraos pext crypto) era) mk ->
+  LedgerState (ShelleyBlock proto era) mk ->
   Maybe (LeiosCommittee, Weight)
 leiosCommitteeAndQuorum ls =
-  getLeiosCommitteeFromView (Proxy @(ShelleyBlock (BasePraos pext crypto) era)) $
+  getLeiosCommitteeFromView (Proxy @(ShelleyBlock proto era)) $
     untickedLedgerView ls
 
 -- TODO: Ledger-level type class EraCommittee? LedgerState era -> Committee
@@ -1074,9 +1076,6 @@ instance HasLeiosVoting (ShelleyBlock (PraosWithLeios c) DijkstraEra) where
       . shelleyLedgerState
 
   getLeiosCommitteeFromView _ lv =
-    case Views.plvLeios lv of
-      SJustLeios llv ->
-        Just
-          ( Views.llvCommittee llv
-          , unboundRational (Views.llvQuorumStakeThreshold llv)
-          )
+    case (Views.plvCommittee lv, Views.plvQuorumStakeThreshold lv) of
+      (LeiosLeiosRight cmt, LeiosLeiosRight q) ->
+        Just (cmt, unboundRational q)

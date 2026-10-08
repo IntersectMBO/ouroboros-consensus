@@ -17,7 +17,7 @@ import Cardano.Protocol.Leios.BlockHeader
   )
 import qualified Data.ByteString as BS
 import Lens.Micro ((&), (.~), (^.))
-import Ouroboros.Consensus.Protocol.Praos (PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger

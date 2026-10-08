@@ -65,6 +65,7 @@ import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras

@@ -19,7 +19,6 @@ import Cardano.Slotting.Slot (unSlotNo)
 import Data.Either (isRight)
 import Data.Word (Word32)
 import Numeric.Natural (Natural)
-import Ouroboros.Consensus.Protocol.Praos.Common (WhetherHasLeios (..))
 import Ouroboros.Consensus.Protocol.Signed
   ( Signed
   , SignedHeader (headerSigned)
@@ -83,7 +82,6 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
     MaxMajorProtVer maxPV = tpraosMaxMajorPV (tpraosParams cfg)
 
 instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
-  type ProtoHasLeios (TPraos c) = PextDoesNotHaveLeios
 
   configSlotsPerKESPeriod cfg = tpraosSlotsPerKESPeriod $ tpraosParams cfg
   verifyHeaderIntegrity slotsPerKESPeriod hdr =
