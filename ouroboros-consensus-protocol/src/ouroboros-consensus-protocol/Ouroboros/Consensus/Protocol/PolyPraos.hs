@@ -34,7 +34,7 @@
 -- extensible, since there is, unfortunately, no such thing as an extensible
 -- security proof. Our protocol changes are well studied before implemented, and
 -- have never happened concurrently.
--- 
+--
 -- In other words: it's a very important benefit that there is /one definition/
 -- to look at in order to see everything all of the Praos extensions
 -- /cumulatively/ do. The type-level DSL used to isolate extension components is
