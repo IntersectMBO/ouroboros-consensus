@@ -100,13 +100,12 @@ deriving instance
   ) =>
   Show (PolyPraosLedgerView proto)
 
-type ForecastsLeios :: Type -> Type -> Constraint
-
 -- | How a protocol reads an era's forecast.
 --
 -- A method rather than one shared function because only the protocols with
 -- Leios may demand more of their era than 'SL.EraForecast', and knowing
 -- @proto@ alone cannot supply that @era@ dictionary.
+type ForecastsLeios :: Type -> Type -> Constraint
 class ForecastsLeios proto era where
   forecastToPolyPraosLedgerView ::
     SL.EraForecast era => SL.Forecast t era -> PolyPraosLedgerView proto
