@@ -25,6 +25,10 @@ on:
   push:
     branches:
       - main
+      # Pushes to backport branches save a cabal store cache that PRs targeting
+      # them can restore. See `save-cabal-store`.
+      - ouroboros-consensus-*-backports
+      - cardano-node-*-backports
   schedule:
 
     # every night, at midnight
@@ -32,6 +36,12 @@ on:
 
     # on the first day of each month, at midnight
     - cron: "0 0 1 * *"
+
+env:
+  # Modify this value to "invalidate" the Cabal cache.
+  CABAL_CACHE_VERSION: "2024-07-04"
+
+  CABAL: "3.16.1.0"
 
 jobs:
   # This aggregated job is necessary to make the 'skip-tests' label work consistently
@@ -74,11 +84,6 @@ jobs:
               ${{ (github.event_name == 'schedule' || inputs.nothunks) && 'default' || 'no-thunks' }}
           - test-set:
               ${{ (github.event_name == 'schedule' || inputs.nothunks-safe-only) && 'all' || 'no-thunks-safe' }}
-    env:
-      # Modify this value to "invalidate" the Cabal cache.
-      CABAL_CACHE_VERSION: "2024-07-04"
-
-      CABAL: "3.16.1.0"
 
     steps:
     - uses: actions/checkout@v7
@@ -163,10 +168,21 @@ jobs:
     # rebuilt if any of the later steps fail and the job has to be re-run.
     #
     # See https://github.com/actions/cache/tree/v3/save#always-save-cache.
+    #
+    # Only branch pushes and scheduled runs save. GitHub scopes a cache to the
+    # ref that saved it, and a PR can restore only from its own ref, its base
+    # branch and the default branch. A cache saved by a PR is therefore useless
+    # to every other PR, and it takes space from the shared caches, which
+    # GitHub evicts once the repository goes over its cache size limit. A PR
+    # whose dependencies changed still restores the closest shared cache through
+    # the month-prefixed restore key, and builds only what changed.
     - name: "Save cache for cabal-store"
       uses: actions/cache/save@v6
       id: save-cabal-store
-      if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-store.outputs.cache-hit != 'true'
+      if: >-
+        steps.build-dependencies.outcome == 'success'
+        && steps.restore-cabal-store.outputs.cache-hit != 'true'
+        && (github.event_name == 'push' || github.event_name == 'schedule')
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
         key:  ${{ steps.restore-cabal-store.outputs.cache-primary-key }}
@@ -247,6 +263,78 @@ jobs:
           --project-file=cabal.project.ghc-pin \
           --builddir=dist-newstyle-ghc-pin \
           --minimize-conflict-set
+
+  # Scheduled runs build only the no-thunks variant, so without this job the
+  # default variant's cabal store cache on main is refreshed only by pushes to
+  # main. This matters most on the first day of each month, when the cache key
+  # changes and every PR would otherwise start from an empty store.
+  #
+  # It runs the same steps as `build-test-bench-haddocks` up to saving the
+  # cache, so that it computes the same cache key.
+  warm-cabal-store:
+    name: Warm cabal store cache
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["9.6.7", "9.10.3", "9.12.4", "9.14.1"]
+        variant: [default]
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install base libraries
+      uses: input-output-hk/actions/base@latest
+      with:
+        use-sodium-vrf: false
+
+    - name: Install Haskell
+      uses: input-output-hk/actions/haskell@latest
+      id: setup-haskell
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: $CABAL
+
+    - name: Configure Cabal
+      run: |
+        cp .github/workflows/cabal.project.${{ matrix.variant }}.local ./cabal.project.local
+
+    - name: Update Cabal (Hackage and CHaP)
+      run: |
+        cabal clean
+        cabal update
+
+    - name: Record dependencies to be used as cache keys
+      run: |
+        cabal build all --dry-run --minimize-conflict-set
+        cat dist-newstyle/cache/plan.json \
+        | jq '.["install-plan"][].id' \
+        | sort \
+        | uniq > dependencies.txt
+
+    - name: Store month number as environment variable
+      run:  echo "MONTHNUM=$(/usr/bin/date -u '+%m')" >> $GITHUB_ENV
+
+    - name: "Restore cache for cabal-store"
+      uses: actions/cache/restore@v6
+      id: restore-cabal-store
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.variant }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
+        restore-keys: |
+          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.variant }}-${{ env.MONTHNUM }}-
+
+    - name: Build dependencies
+      if: steps.restore-cabal-store.outputs.cache-hit != 'true'
+      run: cabal build --only-dependencies all -j
+
+    - name: "Save cache for cabal-store"
+      uses: actions/cache/save@v6
+      if: steps.restore-cabal-store.outputs.cache-hit != 'true'
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key:  ${{ steps.restore-cabal-store.outputs.cache-primary-key }}
 
   benchmarks:
     name: Run benchmarks
