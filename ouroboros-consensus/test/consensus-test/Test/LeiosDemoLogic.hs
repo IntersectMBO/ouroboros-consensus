@@ -64,6 +64,7 @@ import LeiosDemoTypes
   , WhetherTxsClosureOffered (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
+  , encodeLeiosEbSize
   , focusElectionIfUnfocused
   , hashLeiosEb
   , hashLeiosTx
@@ -418,7 +419,10 @@ serveStoredBody n = do
   db <- newLeiosDBInMemory
   let body = MkLeiosEb $ V.generate n $ \i -> (hashLeiosTx (MkLeiosTx (BS8.pack (show i))), 100)
       bodyPoint = MkLeiosPoint (SlotNo 0) (hashLeiosEb body)
-  withWriter db $ \w -> void . await =<< writeEbBody w bodyPoint body []
+  -- The point first: a body can only be written for a registered point.
+  withWriter db $ \w -> do
+    void . await =<< writeEbPoint w bodyPoint (encodeLeiosEbSize body)
+    void . await =<< writeEbBody w bodyPoint body []
   withReader db $ \r -> do
     ctx <- newLeiosFetchContext r
     msgLeiosBlockRequest nullTracer ctx bodyPoint
