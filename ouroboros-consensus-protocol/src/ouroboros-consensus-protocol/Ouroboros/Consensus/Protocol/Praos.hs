@@ -577,32 +577,32 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
 
   protocolSecurityParam = praosSecurityParam . praosParams
 
-  checkIsLeader = checkIsLeaderPolyPraos
+  checkIsLeader = checkIsLeaderPolyPraos . praosParams
 
-  tickChainDepState = tickChainDepStatePolyPraos
+  tickChainDepState = tickChainDepStatePolyPraos . praosEpochInfo
 
-  updateChainDepState = updateChainDepStatePolyPraos
+  updateChainDepState (PraosConfig prms ei) = updateChainDepStatePolyPraos prms ei
 
-  reupdateChainDepState = reupdateChainDepStatePolyPraos
+  reupdateChainDepState (PraosConfig prms ei) = reupdateChainDepStatePolyPraos prms ei
 
 -- | 'checkIsLeader' for every Praos.
 checkIsLeaderPolyPraos ::
   forall proto c.
   PolyPraosCrypto proto c =>
-  ConsensusConfig (Praos c) ->
+  PraosParams ->
   PraosCanBeLeader c ->
   SlotNo ->
   Ticked (PolyPraosState proto) ->
   Maybe (PraosIsLeader c)
 checkIsLeaderPolyPraos
-  cfg
+  prms
   PraosCanBeLeader
     { praosCanBeLeaderSignKeyVRF
     , praosCanBeLeaderColdVerKey
     }
   slot
   cs =
-    if meetsLeaderThreshold cfg lv (SL.coerceKeyRole vkhCold) rho
+    if meetsLeaderThreshold (Proxy @c) prms lv (SL.coerceKeyRole vkhCold) rho
       then
         Just
           PraosIsLeader
@@ -631,13 +631,13 @@ checkIsLeaderPolyPraos
 -- - Update the "last block of previous epoch" nonce to the nonce derived
 --   from the last applied block.
 tickChainDepStatePolyPraos ::
-  ConsensusConfig (Praos c) ->
+  EpochInfo (Except History.PastHorizonException) ->
   Views.PolyPraosLedgerView proto ->
   SlotNo ->
   PolyPraosState proto ->
   Ticked (PolyPraosState proto)
 tickChainDepStatePolyPraos
-  PraosConfig{praosEpochInfo}
+  praosEpochInfo
   lv
   slot
   st =
@@ -680,29 +680,28 @@ updateChainDepStatePolyPraos ::
   , Foldable (LeiosOnly proto ())
   , TypeSwitch (LeiosOnly proto)
   ) =>
-  ConsensusConfig (Praos c) ->
+  PraosParams ->
+  EpochInfo (Except History.PastHorizonException) ->
   Views.PolyPraosValidateView proto c ->
   SlotNo ->
   Ticked (PolyPraosState proto) ->
   Except (PolyPraosValidationErr proto c) (PolyPraosState proto)
 updateChainDepStatePolyPraos
-  cfg@( PraosConfig
-          PraosParams{praosLeaderF}
-          _
-        )
+  prms@PraosParams{praosLeaderF}
+  ei
   b
   slot
   tcs = do
     -- The Leios header checks are cheap, so they run first.
-    leiosHeaderChecks cfg lv b slot cs
+    leiosHeaderChecks ei lv b slot cs
     -- First, we check the KES signature, which validates that the issuer is
     -- in fact who they say they are.
-    validateKESSignature cfg lv (praosStateOCertCounters cs) b
+    validateKESSignature prms lv (praosStateOCertCounters cs) b
     -- Then we examing the VRF proof, which confirms that they have the
     -- right to issue in this slot.
     validateVRFSignature (praosStateEpochNonce cs) lv praosLeaderF b
     -- Finally, we apply the changes from this header to the chain state.
-    pure $ reupdateChainDepStatePolyPraos cfg b slot tcs
+    pure $ reupdateChainDepStatePolyPraos prms ei b slot tcs
    where
     lv = tickedPraosStateLedgerView tcs
     cs = tickedPraosStateChainDepState tcs
@@ -720,16 +719,15 @@ updateChainDepStatePolyPraos
 reupdateChainDepStatePolyPraos ::
   forall proto c.
   Functor (LeiosOnly proto ()) =>
-  ConsensusConfig (Praos c) ->
+  PraosParams ->
+  EpochInfo (Except History.PastHorizonException) ->
   Views.PolyPraosValidateView proto c ->
   SlotNo ->
   Ticked (PolyPraosState proto) ->
   PolyPraosState proto
 reupdateChainDepStatePolyPraos
-  _cfg@( PraosConfig
-           PraosParams{praosRandomnessStabilisationWindow}
-           ei
-         )
+  PraosParams{praosRandomnessStabilisationWindow}
+  ei
   b
   slot
   tcs =
@@ -802,13 +800,13 @@ leiosHeaderChecks ::
   , Foldable (LeiosOnly proto ())
   , TypeSwitch (LeiosOnly proto)
   ) =>
-  ConsensusConfig (Praos c) ->
+  EpochInfo (Except History.PastHorizonException) ->
   Views.PolyPraosLedgerView proto ->
   Views.PolyPraosValidateView proto c ->
   SlotNo ->
   PolyPraosState proto ->
   Except (PolyPraosValidationErr proto c) ()
-leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs = do
+leiosHeaderChecks praosEpochInfo lv b slot cs = do
   leiosContextFreeHeaderChecks lv b
   traverse_ check $
     (,,,,,)
@@ -852,14 +850,16 @@ leiosHeaderChecks PraosConfig{praosEpochInfo} lv b slot cs = do
 
 -- | Check whether this node meets the leader threshold to issue a block.
 meetsLeaderThreshold ::
-  forall proto c.
-  ConsensusConfig (Praos c) ->
+  forall proxy proto c.
+  proxy c ->
+  PraosParams ->
   Views.PolyPraosLedgerView proto ->
   SL.KeyHash SL.StakePool ->
   VRF.CertifiedVRF (VRF c) InputVRF ->
   Bool
 meetsLeaderThreshold
-  PraosConfig{praosParams}
+  _prx
+  praosParams
   Views.PraosLedgerView{Views.plvPoolDistr}
   keyHash
   rho =
@@ -920,16 +920,13 @@ doValidateVRFSignature eta0 pd f b = do
 
 validateKESSignature ::
   PolyPraosCrypto proto c =>
-  ConsensusConfig (Praos c) ->
+  PraosParams ->
   Views.PolyPraosLedgerView proto ->
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.PolyPraosValidateView proto c ->
   Except (PolyPraosValidationErr proto c) ()
 validateKESSignature
-  _cfg@( PraosConfig
-           PraosParams{praosMaxKESEvo, praosSlotsPerKESPeriod}
-           _ei
-         )
+  PraosParams{praosMaxKESEvo, praosSlotsPerKESPeriod}
   Views.PraosLedgerView{Views.plvPoolDistr = SL.PoolDistr plvPoolDistr _totalActiveStake}
   ocertCounters =
     doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod plvPoolDistr ocertCounters
@@ -1008,12 +1005,12 @@ data PraosCannotForge c
 deriving instance Crypto c => Show (PraosCannotForge c)
 
 praosCheckCanForge ::
-  ConsensusConfig (Praos c) ->
+  PraosParams ->
   SlotNo ->
   HotKey.KESInfo ->
   Either (PraosCannotForge c) ()
 praosCheckCanForge
-  PraosConfig{praosParams}
+  praosParams
   curSlot
   kesInfo
     | let startPeriod = HotKey.kesStartPeriod kesInfo
