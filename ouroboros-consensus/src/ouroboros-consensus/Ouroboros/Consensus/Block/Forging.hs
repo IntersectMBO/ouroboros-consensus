@@ -24,10 +24,17 @@ module Ouroboros.Consensus.Block.Forging
 
     -- * 'ForgeBlockArgs'
   , ForgeBlockArgs (..)
+
+    -- * 'ForgedBlock'
+  , ForgedBlock (..)
+
+    -- * Selecting transactions
+  , selectBlockTxs
   ) where
 
 import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
+import qualified Data.Measure
 import Data.Text (Text)
 import GHC.Stack
 import Ouroboros.Consensus.Block.Abstract
@@ -35,6 +42,7 @@ import Ouroboros.Consensus.Block.SupportsPeras (PerasCert)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Mempool.API (MempoolMeasure, MempoolSnapshot (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked
 
@@ -122,8 +130,16 @@ data BlockForging m blk = BlockForging
   -- to see whether we can actually forge a block.
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
-  , forgeBlock :: ForgeBlockArgs blk -> m blk
+  , forgeBlock :: ForgeBlockArgs blk -> m (ForgedBlock blk)
   -- ^ Forge a block
+  --
+  -- NOTE: do not refer to the consensus or ledger config in the closure,
+  -- because they might contain an @EpochInfo Identity@, which will be
+  -- incorrect when used as part of the hard fork combinator. Use the
+  -- given 'fbConfig' instead, as it is guaranteed to be correct
+  -- even when used as part of the hard fork combinator.
+  --
+  -- PRECONDITION: 'checkCanForge' returned @Right ()@.
   , finalize :: m ()
   -- ^ Clean up any unmanaged resources.
   --
@@ -246,22 +262,67 @@ data ForgeBlockArgs blk = ForgeBlockArgs
   -- For 'blk' that doesn't support Peras it's always 'Nothing'.
   , fbCurrentTickedLedgerState :: !(TickedLedgerState blk EmptyMK)
   -- ^ The current ledger state ticked to 'fbCurrentSlotNo'.
-  , fbTxs :: ![Validated (GenTx blk)]
-  -- ^ The transactions to include in the forged block.
+  , fbMempoolSnapshot :: !(MempoolSnapshot blk)
+  -- ^ The mempool snapshot for 'fbCurrentTickedLedgerState'.
   --
-  -- The function is passed the prefix of the mempool that will fit within
-  -- a valid block; this is a set of transactions that is guaranteed to be
-  -- consistent with the ledger state 'fbCurrentTickedLedgerState' and
-  -- with each other (when applied in order). All of them should be
-  -- included in the forged block, since the mempool ensures they can fit.
-  --
-  -- NOTE: do not refer to the consensus or ledger config in the closure,
-  -- because they might contain an @EpochInfo Identity@, which will be
-  -- incorrect when used as part of the hard fork combinator. Use the
-  -- given 'fbConfig' instead, as it is guaranteed to be correct
-  -- even when used as part of the hard fork combinator.
-  --
-  -- PRECONDITION: 'checkCanForge' returned @Right ()@.
+  -- Its transactions apply in order to that state. 'forgeBlock' selects the
+  -- transactions for the block and returns them in 'forgedTxs'.
   , fbIsLeader :: !(IsLeader (BlockProtocol blk))
   -- ^ Proof that the node is the slot leader.
   }
+
+{-------------------------------------------------------------------------------
+  ForgedBlock
+-------------------------------------------------------------------------------}
+
+-- | The result of 'forgeBlock'.
+data ForgedBlock blk = ForgedBlock
+  { forgedBlock :: !blk
+  -- ^ The forged block.
+  , forgedTxs :: ![Validated (GenTx blk)]
+  -- ^ The transactions that 'forgeBlock' selected for 'forgedBlock'.
+  --
+  -- A Byron block holds at most one update proposal, so for Byron this list
+  -- can hold an update proposal that the block leaves out.
+  --
+  -- @Ouroboros.Consensus.NodeKernel.Forge.forge@ removes them from the
+  -- mempool if the ChainDB finds the block invalid. It traces them when the
+  -- ChainDB adopts the block.
+  , forgedTxsMeasure :: !(MempoolMeasure blk)
+  -- ^ The total measure of 'forgedTxs'.
+  --
+  -- For a hard fork block it is the era's measure.
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Forging.hardForkBlockForging'
+  -- injects it with the @hardForkInj*@ methods of
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork.CanHardFork'.
+  -- It can differ from the sum of the combined measures that the mempool
+  -- computes for the same transactions. For example,
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork.hardForkTxEbMeasure'
+  -- can count more than the injection of the era's endorser-block measure.
+  }
+
+{-------------------------------------------------------------------------------
+  Selecting transactions
+-------------------------------------------------------------------------------}
+
+-- | The ranking-block part of 'snapshotPartition' and its total measure.
+--
+-- A 'forgeBlock' that never builds an endorser block calls it.
+-- 'selectBlockTxs' passes a zero endorser-block capacity and drops the
+-- endorser-block part. The ranking-block part does not depend on that capacity.
+--
+-- The block capacity comes from 'fbCurrentTickedLedgerState', the state that
+-- the block extends. The ledger checks the block against that state, which can
+-- differ from the ledger state that the mempool last synced with.
+selectBlockTxs ::
+  TxLimits blk =>
+  ForgeBlockArgs blk ->
+  ([Validated (GenTx blk)], MempoolMeasure blk)
+selectBlockTxs ForgeBlockArgs{..} =
+  (txs, txsMeasure)
+ where
+  (txs, txsMeasure, _, _) =
+    snapshotPartition
+      fbMempoolSnapshot
+      (blockCapacityTxMeasure (configLedger fbConfig) fbCurrentTickedLedgerState)
+      Data.Measure.zero

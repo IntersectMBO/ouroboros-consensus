@@ -396,9 +396,13 @@ data TraceForgeEvent blk
   | -- | We forged a block
     --
     -- We record the current slot number, the point of the predecessor, the block
-    -- itself, the total size of the mempool snapshot at the time we produced
+    -- itself and the total size of the mempool snapshot at the time we produced
     -- the block (which may be significantly larger than the block, due to
-    -- maximum block size), and the size of the txs included in the block.
+    -- maximum block size). We also record 'forgedTxsMeasure', the total measure
+    -- of the transactions that 'forgeBlock' selected for the block.
+    -- For a hard fork block it is the era's measure, injected back into the
+    -- combined measure. So it can differ from the measure that the mempool
+    -- computes for the same transactions.
     --
     -- This will be followed by one of three messages:
     --

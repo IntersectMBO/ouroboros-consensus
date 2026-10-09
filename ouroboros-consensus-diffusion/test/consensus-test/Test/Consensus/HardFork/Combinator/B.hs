@@ -315,21 +315,27 @@ type instance CannotForge BlockB = Void
 type instance ForgeStateInfo BlockB = ()
 type instance ForgeStateUpdateError BlockB = Void
 
-forgeBlockB :: ForgeBlockArgs BlockB -> BlockB
-forgeBlockB ForgeBlockArgs{..} =
-  BlkB
-    { blkB_header =
-        HdrB
-          { hdrB_fields =
-              HeaderFields
-                { headerFieldHash = Lazy.toStrict . B.encode $ unSlotNo fbCurrentSlotNo
-                , headerFieldSlot = fbCurrentSlotNo
-                , headerFieldBlockNo = fbCurrentBlockNo
+forgeBlockB :: ForgeBlockArgs BlockB -> ForgedBlock BlockB
+forgeBlockB args@ForgeBlockArgs{..} =
+  ForgedBlock
+    { forgedBlock =
+        BlkB
+          { blkB_header =
+              HdrB
+                { hdrB_fields =
+                    HeaderFields
+                      { headerFieldHash = Lazy.toStrict . B.encode $ unSlotNo fbCurrentSlotNo
+                      , headerFieldSlot = fbCurrentSlotNo
+                      , headerFieldBlockNo = fbCurrentBlockNo
+                      }
+                , hdrB_prev = ledgerTipHash lst
                 }
-          , hdrB_prev = ledgerTipHash lst
           }
+    , forgedTxs = txs
+    , forgedTxsMeasure = txsMeasure
     }
  where
+  (txs, txsMeasure) = selectBlockTxs args
   TickedLedgerStateB lst = fbCurrentTickedLedgerState
 
 blockForgingB :: Monad m => BlockForging m BlockB

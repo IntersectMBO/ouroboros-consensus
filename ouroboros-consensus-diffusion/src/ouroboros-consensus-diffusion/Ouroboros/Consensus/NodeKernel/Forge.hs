@@ -17,7 +17,6 @@ import Control.Monad.Except
 import Control.Tracer
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
-import qualified Data.Measure
 import Data.Proxy
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
@@ -34,7 +33,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
-import Ouroboros.Consensus.Mempool.API (MempoolMeasure)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.Protocol.Abstract
@@ -87,7 +85,7 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
   -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
   -- is no longer on our chain. When that happens, we simply give up on the
   -- chance to produce a block.
-  (fbArgs, txssz, snapSize, forgingOnTopOf) <-
+  (fbArgs, forgingOnTopOf) <-
     ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
       Left _ -> do
         trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -114,7 +112,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
-        (txs, txssz, snapSize) <- getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker
+        mempoolSnapshot <-
+          getMempoolSnapshotToForge mempool currentSlot tickedLedgerState forker
 
         let fbArgs =
               Block.ForgeBlockArgs
@@ -123,28 +122,31 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
                 , Block.fbCurrentSlotNo = currentSlot
                 , Block.fbPerasCert = Nothing -- No PerasCert for now
                 , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-                , Block.fbTxs = txs
+                , Block.fbMempoolSnapshot = mempoolSnapshot
                 , Block.fbIsLeader = proof
                 }
         pure
           ( fbArgs
-          , txssz
-          , snapSize
           , ledgerTipPoint (ledgerState unticked)
           )
 
   -- Actually produce the block
-  newBlock <- lift $ Block.forgeBlock blockForging fbArgs
+  Block.ForgedBlock
+    { Block.forgedBlock = newBlock
+    , Block.forgedTxs
+    , Block.forgedTxsMeasure
+    } <-
+    lift $ Block.forgeBlock blockForging fbArgs
 
   trace $
     TraceForgedBlock
       currentSlot
       forgingOnTopOf
       newBlock
-      snapSize
-      txssz
+      (snapshotMempoolSize (Block.fbMempoolSnapshot fbArgs))
+      forgedTxsMeasure
 
-  addBlockToChainDB trace chainDB mempool currentSlot (fbTxs fbArgs) newBlock
+  addBlockToChainDB trace chainDB mempool currentSlot forgedTxs newBlock
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
@@ -310,14 +312,9 @@ addBlockToChainDB trace chainDB mempool currentSlot txs newBlock = do
 
     -- We successfully produced /and/ adopted a block
     --
-    -- NOTE: we are tracing the transactions we retrieved from the Mempool,
-    -- not the transactions actually /in the block/.
-    -- The transactions in the block should be a prefix of the transactions
-    -- in the mempool. If this is not the case, this is a bug.
-    -- Unfortunately, we can't
-    -- assert this here because the ability to extract transactions from a
-    -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
-    -- e.g., @DualBlock@.
+    -- NOTE: we trace the transactions that 'Block.forgeBlock' returns in
+    -- 'Block.forgedTxs'. We cannot check them against the block, because
+    -- not every block can implement @HasTxs@, for example @DualBlock@.
     trace $ TraceAdoptedBlock currentSlot newBlock txs
 
 -- | Obtain the ticked ledger view for 'currentSlot', required in order to
@@ -455,39 +452,28 @@ traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
 
   trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
--- | Get a consistent snapshot of the mempool for the given ticked ledger state
--- and select transactions up to block capacity.
-getTransactionsToForge ::
-  (IOLike m, RunNode blk) =>
-  TopLevelConfig blk ->
+-- | Get a consistent snapshot of the mempool for the given ticked ledger state.
+--
+-- 'Block.forgeBlock' selects the transactions for the block from the snapshot.
+getMempoolSnapshotToForge ::
+  IOLike m =>
   Mempool m blk ->
   SlotNo ->
   Ticked LedgerState blk DiffMK ->
   ReadOnlyForker m l blk ->
-  WithEarlyExit m ([Validated (GenTx blk)], MempoolMeasure blk, MempoolSize)
-getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker = lift $ do
+  WithEarlyExit m (MempoolSnapshot blk)
+getMempoolSnapshotToForge mempool currentSlot tickedLedgerState forker = lift $ do
   mempoolSnapshot <-
     getSnapshotFor
       mempool
       currentSlot
       tickedLedgerState
       (roforkerReadTables forker)
-
-  -- The endorser-block capacity is zero, so the endorser-block part of the
-  -- partition is empty and the block part is the whole selection.
-  let (txs, txssz, ebTxs, _) =
-        snapshotPartition
-          mempoolSnapshot
-          (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
-          Data.Measure.zero
-  -- Only a transaction with a zero 'txEbMeasure' fits a zero capacity, and
-  -- the 'txEbMeasure' INVARIANT forbids a zero result.
-  unless (null ebTxs) $
-    throwIO $
-      userError "getTransactionsToForge: non-empty endorser-block part for a zero capacity"
-  -- NB respect the capacity of the ledger state we're extending,
-  -- which is /not/ 'snapshotLedgerState'
-
-  _ <- evaluate (length txs)
-
-  pure (txs, txssz, snapshotMempoolSize mempoolSnapshot)
+  -- 'getSnapshotFor' revalidates the transactions lazily.
+  -- 'snapshotMempoolSize' counts every revalidated transaction, so forcing it
+  -- runs the revalidation here. If nothing forces it here, the forge of a
+  -- Shelley-based era runs the revalidation inside 'HotKey.sign', when it
+  -- hashes the block body for the header. 'HotKey.sign' holds the KES state
+  -- lock, so the revalidation then blocks other users of the key.
+  _ <- evaluate (snapshotMempoolSize mempoolSnapshot)
+  pure mempoolSnapshot

@@ -46,6 +46,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
+import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract
@@ -80,6 +81,7 @@ import System.FS.API (SomeHasFS (..))
 shelleyBlockForging ::
   forall m era c.
   ( ShelleyCompatible (TPraos c) era
+  , TxLimits (ShelleyBlock (TPraos c) era)
   , IOLike m
   ) =>
   TPraosParams ->
@@ -102,6 +104,7 @@ shelleyBlockForging tpraosParams hotKey credentials = do
 shelleySharedBlockForging ::
   forall m c era.
   ( ShelleyCompatible (TPraos c) era
+  , TxLimits (ShelleyBlock (TPraos c) era)
   , IOLike m
   ) =>
   HotKey c m ->
@@ -180,6 +183,7 @@ protocolInfoShelley
 protocolInfoTPraosShelleyBased ::
   forall m era c.
   ( ShelleyCompatible (TPraos c) era
+  , TxLimits (ShelleyBlock (TPraos c) era)
   , KESAgentContext c m
   ) =>
   SomeHasFS m ->

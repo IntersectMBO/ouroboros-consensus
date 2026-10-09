@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -39,6 +38,7 @@ import Ouroboros.Consensus.Byron.Crypto.DSIGN
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.ByronSpec.Ledger
+import Ouroboros.Consensus.Config (configBlock)
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
@@ -212,32 +212,37 @@ bridgeTransactionIds =
 forgeDualByronBlock ::
   HasCallStack =>
   ForgeBlockArgs DualByronBlock ->
-  DualByronBlock
-forgeDualByronBlock ForgeBlockArgs{..} =
-  -- NOTE: We do not /elaborate/ the real Byron block from the spec one, but
-  -- instead we /forge/ it. This is important, because we want to test that
-  -- codepath. This does mean that we do not get any kind of "bridge" between
-  -- the two blocks (which we would have gotten if we would have elaborated
-  -- the block instead). Fortunately, this is okay, since the bridge for the
-  -- block can be computed from the bridge information of all of the txs.
-  DualBlock
-    { dualBlockMain = main
-    , dualBlockAux = Just aux
-    , dualBlockBridge = mconcat $ map vDualGenTxBridge fbTxs
+  ForgedBlock DualByronBlock
+forgeDualByronBlock args@ForgeBlockArgs{..} =
+  ForgedBlock
+    { forgedBlock =
+        -- NOTE: We do not /elaborate/ the real Byron block from the spec one,
+        -- but instead we /forge/ it. This is important, because we want to
+        -- test that codepath. This does mean that we do not get any kind of
+        -- "bridge" between the two blocks (which we would have gotten if we
+        -- would have elaborated the block instead). Fortunately, this is okay,
+        -- since the bridge for the block can be computed from the bridge
+        -- information of all of the txs.
+        DualBlock
+          { dualBlockMain = main
+          , dualBlockAux = Just aux
+          , dualBlockBridge = mconcat $ map vDualGenTxBridge txs
+          }
+    , forgedTxs = txs
+    , forgedTxsMeasure = txsMeasure
     }
  where
+  (txs, txsMeasure) = selectBlockTxs args
+
   main :: ByronBlock
   main =
-    forgeByronBlock $
-      ForgeBlockArgs
-        { fbConfig = dualTopLevelConfigMain fbConfig
-        , fbCurrentBlockNo
-        , fbCurrentSlotNo
-        , fbPerasCert = Nothing -- Doesn't support Peras
-        , fbCurrentTickedLedgerState = tickedDualLedgerStateMain fbCurrentTickedLedgerState
-        , fbTxs = map vDualGenTxMain fbTxs
-        , fbIsLeader
-        }
+    forgeRegularBlock
+      (configBlock (dualTopLevelConfigMain fbConfig))
+      fbCurrentBlockNo
+      fbCurrentSlotNo
+      (tickedDualLedgerStateMain fbCurrentTickedLedgerState)
+      (map vDualGenTxMain txs)
+      fbIsLeader
 
   aux :: ByronSpecBlock
   aux =
@@ -245,7 +250,7 @@ forgeDualByronBlock ForgeBlockArgs{..} =
       fbCurrentBlockNo
       fbCurrentSlotNo
       (tickedDualLedgerStateAux fbCurrentTickedLedgerState)
-      (map vDualGenTxAux fbTxs)
+      (map vDualGenTxAux txs)
       ( bridgeToSpecKey
           (tickedDualLedgerStateBridge fbCurrentTickedLedgerState)
           (hashVerKey . deriveVerKeyDSIGN . pbftIsLeaderSignKey $ fbIsLeader)

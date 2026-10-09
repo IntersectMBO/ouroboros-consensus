@@ -21,6 +21,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
   , Validated (..)
   , hardForkApplyTxErrFromEither
   , hardForkApplyTxErrToEither
+  , injectValidatedGenTx
   ) where
 
 import Control.Arrow ((+++))

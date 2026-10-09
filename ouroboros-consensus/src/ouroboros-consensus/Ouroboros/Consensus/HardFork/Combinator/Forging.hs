@@ -1,10 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -14,6 +14,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Forging
   , HardForkForgeStateInfo (..)
   , HardForkForgeStateUpdateError
   , hardForkBlockForging
+  , projectMempoolSnapshot
+  , injectForgedBlock
   ) where
 
 import Control.Monad (void)
@@ -33,12 +35,17 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.Basics
-import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.Mempool
 import Ouroboros.Consensus.HardFork.Combinator.Protocol
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Mempool.API
+  ( MempoolMeasure (..)
+  , MempoolSnapshot (..)
+  , TicketNo
+  )
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 -- | If we cannot forge, it's because the current era could not forge
@@ -309,11 +316,11 @@ hardForkForgeBlock ::
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
   ForgeBlockArgs (HardForkBlock xs) ->
-  m (HardForkBlock xs)
+  m (ForgedBlock (HardForkBlock xs))
 hardForkForgeBlock blockForging ForgeBlockArgs{..} =
-  fmap (HardForkBlock . OneEraBlock)
-    $ hsequence
-    $ hizipWith3
+  hcollapse
+    $ hcizipWith3
+      proxySingle
       forgeBlockOne
       cfgs
       (OptNP.toNP blockForging)
@@ -323,7 +330,7 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
     $ Match.mustMatchNS
       "IsLeader"
       (getOneEraIsLeader fbIsLeader)
-    $ injectValidatedTxs ledgerState
+    $ State.tip ledgerState
  where
   TickedHardForkLedgerState transition ledgerState = fbCurrentTickedLedgerState
   cfgs = distribTopLevelConfig ei fbConfig
@@ -337,33 +344,6 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
   missingBlockForgingImpossible eraIndex =
     "impossible: current era lacks block forging but we have an IsLeader proof "
       <> show eraIndex
-
-  -- If we crossed an era boundary in this forge, the transactions were
-  -- revalidated against the tip in the new era so:
-  --
-  --  * Re-matching them MUST leave them in the right era via returning
-  --    'ReapplyTxs'.
-  --
-  --  * There should be no rejected-by-untranslatable transactions.
-  --
-  -- Otherwise there is a bug.
-  injectValidatedTxs ::
-    State.HardForkState f xs ->
-    NS (Product f ([] :.: WrapValidatedGenTx)) xs
-  injectValidatedTxs st =
-    case rematchValidatedTxs getHardForkValidatedGenTx st $ map (\x -> (x, (), ())) fbTxs of
-      ([], hfs) ->
-        hmap
-          ( \case
-              Pair _ ApplyTxs{} ->
-                error
-                  "Impossible! we have translated the txs to the current era, but they should already be in this era!"
-              Pair a (ReapplyTxs b) -> Pair a $ Comp $ map (\(x, (), ()) -> x) b
-          )
-          $ State.tip hfs
-      (_ : _, _) ->
-        error
-          "Impossible! some transactions were rejected as untranslatable by rematchValidatedTxs but all of them have been translated and applied just now."
 
   -- If we crossed an era boundary in this forge, and we are supposed to
   -- include a Peras certificate in this block, we must ensure that the
@@ -396,36 +376,162 @@ hardForkForgeBlock blockForging ForgeBlockArgs{..} =
 
   -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
   forgeBlockOne ::
+    SingleEraBlock blk =>
     Index xs blk ->
     TopLevelConfig blk ->
     (Maybe :.: BlockForging m) blk ->
-    Product
-      WrapIsLeader
-      ( Product
-          (FlipTickedLedgerState EmptyMK)
-          ([] :.: WrapValidatedGenTx)
-      )
-      blk ->
-    m blk
+    Product WrapIsLeader (FlipTickedLedgerState EmptyMK) blk ->
+    K (m (ForgedBlock (HardForkBlock xs))) blk
   forgeBlockOne
     index
     cfg'
     (Comp mBlockForging')
-    ( Pair
-        (WrapIsLeader isLeader')
-        (Pair (FlipTickedLedgerState ledgerState') (Comp txs'))
-      ) =
-      forgeBlock
-        ( fromMaybe
-            (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
-            mBlockForging'
-        )
-        ForgeBlockArgs
-          { fbConfig = cfg'
-          , fbCurrentBlockNo = fbCurrentBlockNo
-          , fbCurrentSlotNo = fbCurrentSlotNo
-          , fbPerasCert = fbPerasCert >>= injectPerasCertIfSameEra index
-          , fbCurrentTickedLedgerState = ledgerState'
-          , fbTxs = map unwrapValidatedGenTx txs'
-          , fbIsLeader = isLeader'
-          }
+    (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState')) =
+      K $
+        injectForgedBlock index
+          <$> forgeBlock
+            ( fromMaybe
+                (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
+                mBlockForging'
+            )
+            ForgeBlockArgs
+              { fbConfig = cfg'
+              , fbCurrentBlockNo = fbCurrentBlockNo
+              , fbCurrentSlotNo = fbCurrentSlotNo
+              , fbPerasCert = fbPerasCert >>= injectPerasCertIfSameEra index
+              , fbCurrentTickedLedgerState = ledgerState'
+              , fbMempoolSnapshot = projectMempoolSnapshot index fbMempoolSnapshot
+              , fbIsLeader = isLeader'
+              }
+
+-- | Inject the 'ForgedBlock' of the era at @index@ into the hard fork block.
+injectForgedBlock ::
+  CanHardFork xs =>
+  Index xs blk ->
+  ForgedBlock blk ->
+  ForgedBlock (HardForkBlock xs)
+injectForgedBlock index (ForgedBlock blk txs txsMeasure) =
+  ForgedBlock
+    { forgedBlock = HardForkBlock $ OneEraBlock $ injectNS index (I blk)
+    , forgedTxs = map (injectValidatedGenTx index) txs
+    , forgedTxsMeasure = injectMempoolMeasure index txsMeasure
+    }
+
+{-------------------------------------------------------------------------------
+  Mempool snapshot of one era
+-------------------------------------------------------------------------------}
+
+-- | The mempool snapshot of the era at @index@.
+--
+-- PRECONDITION: every transaction in the snapshot is from that era.
+-- 'hardForkBlockForging' passes the era of its ticked ledger state, and the
+-- transactions of 'fbMempoolSnapshot' apply to that state.
+-- The measures in the snapshot can come from an earlier era, because
+-- 'Ouroboros.Consensus.Mempool.API.getSnapshotFor' keeps the measure that
+-- each transaction got when the mempool added it.
+--
+-- The endorser-block part of 'snapshotPartition' uses the combined
+-- endorser-block measure. If that measure has no field that the era's measure
+-- lacks, the part is the part that the era's own measures give. Otherwise the
+-- part can end early. It stops before the first transaction that makes the sum
+-- in such a field exceed that field of the injected endorser-block capacity.
+projectMempoolSnapshot ::
+  forall xs blk.
+  (CanHardFork xs, SingleEraBlock blk) =>
+  Index xs blk ->
+  MempoolSnapshot (HardForkBlock xs) ->
+  MempoolSnapshot blk
+projectMempoolSnapshot index snapshot =
+  MempoolSnapshot
+    { snapshotTxs = map projectTicket (snapshotTxs snapshot)
+    , snapshotTxsAfter = map projectTicket . snapshotTxsAfter snapshot
+    , snapshotPartition = \blockCapacity ebCapacity ->
+        let (rbTxs, rbTxsMeasure, ebTxs, ebTxsMeasure) =
+              snapshotPartition
+                snapshot
+                (injectTxMeasure index blockCapacity)
+                (injectTxEbMeasure index ebCapacity)
+         in ( map projectTx rbTxs
+            , projectMempoolMeasure rbTxsMeasure
+            , map projectTx ebTxs
+            , projectMempoolMeasure ebTxsMeasure
+            )
+    , snapshotLookupTx = fmap projectTx . snapshotLookupTx snapshot
+    , snapshotHasTx =
+        snapshotHasTx snapshot
+          . HardForkGenTxId
+          . OneEraGenTxId
+          . injectNS index
+          . WrapGenTxId
+    , snapshotMempoolSize = snapshotMempoolSize snapshot
+    , snapshotSlotNo = snapshotSlotNo snapshot
+    , snapshotStateHash = case snapshotStateHash snapshot of
+        GenesisHash -> GenesisHash
+        BlockHash h -> BlockHash (projectHash h)
+    , snapshotPoint = case snapshotPoint snapshot of
+        GenesisPoint -> GenesisPoint
+        BlockPoint s h -> BlockPoint s (projectHash h)
+    }
+ where
+  projectTicket ::
+    (Validated (GenTx (HardForkBlock xs)), TicketNo, TxMeasure (HardForkBlock xs)) ->
+    (Validated (GenTx blk), TicketNo, TxMeasure blk)
+  projectTicket (tx, ticketNo, txMeasure) =
+    (projectTx tx, ticketNo, projectTxMeasure txMeasure)
+
+  projectTx :: Validated (GenTx (HardForkBlock xs)) -> Validated (GenTx blk)
+  projectTx tx =
+    case Match.matchNS
+      (getIndex index)
+      (getOneEraValidatedGenTx (getHardForkValidatedGenTx tx)) of
+      Left _mismatch ->
+        error "Impossible! the mempool snapshot has a transaction from another era"
+      Right nsPair ->
+        hcollapse $
+          hmap (\(Pair Refl (WrapValidatedGenTx tx')) -> K tx') nsPair
+
+  projectTxMeasure :: TxMeasure (HardForkBlock xs) -> TxMeasure blk
+  projectTxMeasure (TxMeasure p1 p2) =
+    TxMeasure
+      (unwrapTxMeasurePhase1 $ projectNP index $ hardForkProjTxMeasurePhase1 p1)
+      (unwrapTxMeasurePhase2 $ projectNP index $ hardForkProjTxMeasurePhase2 p2)
+
+  projectMempoolMeasure :: MempoolMeasure (HardForkBlock xs) -> MempoolMeasure blk
+  projectMempoolMeasure (MempoolMeasure txMeasure ebMeasure diffTime) =
+    MempoolMeasure
+      (projectTxMeasure txMeasure)
+      (unwrapTxEbMeasure $ projectNP index $ hardForkProjTxEbMeasure ebMeasure)
+      diffTime
+
+  -- 'CanHardFork' requires that every era has the hash size of the first era
+  -- ('EqualHashSizeOfHead'), so the raw bytes have the size that @blk@ needs.
+  projectHash :: HeaderHash (HardForkBlock xs) -> HeaderHash blk
+  projectHash = unsafeFromShortRawHash (Proxy @blk) . getOneEraHash
+
+injectTxMeasure ::
+  CanHardFork xs =>
+  Index xs blk ->
+  TxMeasure blk ->
+  TxMeasure (HardForkBlock xs)
+injectTxMeasure index (TxMeasure p1 p2) =
+  TxMeasure
+    (hardForkInjTxMeasurePhase1 $ injectNS index $ WrapTxMeasurePhase1 p1)
+    (hardForkInjTxMeasurePhase2 $ injectNS index $ WrapTxMeasurePhase2 p2)
+
+injectTxEbMeasure ::
+  CanHardFork xs =>
+  Index xs blk ->
+  TxEbMeasure blk ->
+  TxEbMeasure (HardForkBlock xs)
+injectTxEbMeasure index = hardForkInjTxEbMeasure . injectNS index . WrapTxEbMeasure
+
+injectMempoolMeasure ::
+  CanHardFork xs =>
+  Index xs blk ->
+  MempoolMeasure blk ->
+  MempoolMeasure (HardForkBlock xs)
+injectMempoolMeasure index (MempoolMeasure txMeasure ebMeasure diffTime) =
+  MempoolMeasure
+    (injectTxMeasure index txMeasure)
+    (injectTxEbMeasure index ebMeasure)
+    diffTime

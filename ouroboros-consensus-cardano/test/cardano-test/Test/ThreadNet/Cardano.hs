@@ -522,7 +522,7 @@ mkProtocolCardanoAndHardForkTxs
       TestNodeInitialization
         { tniCrucialTxs = crucialTxs
         , tniProtocolInfo = protocolInfo
-        , tniBlockForging = blockForging Tracer.nullTracer
+        , tniBlockForging = blockForging Tracer.nullTracer Tracer.nullTracer
         }
    where
     crucialTxs :: [GenTx (CardanoBlock c)]

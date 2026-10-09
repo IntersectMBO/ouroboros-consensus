@@ -53,11 +53,13 @@ import qualified Ouroboros.Consensus.Node.InitStorage as Node
   )
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
+import Ouroboros.Consensus.Shelley.HFEras (StandardDijkstraBlock)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
   ( ShelleyGenesis (..)
   , validateGenesis
   )
+import Ouroboros.Consensus.Shelley.Node.Leios (TraceLeiosForge)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
@@ -76,6 +78,7 @@ import System.Random (newStdGen)
 type CardanoProtocol =
   ( ProtocolInfo (CardanoBlock StandardCrypto)
   , Tracer IO KESAgentClientTrace ->
+    Tracer IO (TraceLeiosForge StandardDijkstraBlock) ->
     IO [BlockForging.MkBlockForging IO (CardanoBlock StandardCrypto)]
   )
 
@@ -190,7 +193,7 @@ synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig
 
     -- The KES agent client only reports a failure to connect by tracing it, so
     -- without this an unreachable agent would just forge nothing.
-    mbfs <- mkForgers $ (("--> KES agent: " <>) . show) >$< stdoutTracer
+    mbfs <- mkForgers ((("--> KES agent: " <>) . show) >$< stdoutTracer) nullTracer
     allocatedForgers <-
       traverse
         (\mbf -> allocate registry (const (BlockForging.mkBlockForging mbf)) BlockForging.finalize)

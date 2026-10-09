@@ -8,6 +8,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
@@ -16,8 +17,9 @@
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
-import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import Cardano.Ledger.BaseTypes (knownNonZeroBounded, nonZero, unNonZero)
 import Data.Function (on)
+import Data.Functor.Identity (Identity, runIdentity)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.SOP.BasicFunctors
@@ -38,6 +40,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.HardFork.Combinator.AcrossEras (OneEraIsLeader (..))
 import Ouroboros.Consensus.HardFork.Combinator.Condense ()
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
@@ -48,6 +51,14 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Mempool.API
+  ( DiffTimeMeasure (..)
+  , MempoolMeasure (..)
+  , MempoolSnapshot (..)
+  )
+import Ouroboros.Consensus.Mempool.Impl.Common (snapshotFromValidTxs)
+import Ouroboros.Consensus.Mempool.TxSeq (TicketNo (..), TxTicket (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -65,6 +76,7 @@ import Test.Consensus.HardFork.Combinator.A
 import Test.Consensus.HardFork.Combinator.B
 import Test.QuickCheck
 import Test.Tasty
+import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 import Test.ThreadNet.General
 import Test.ThreadNet.Network
@@ -87,6 +99,10 @@ tests =
     "Consensus"
     [ testProperty "simple convergence" $
         prop_simple_hfc_convergence
+    , testCase "forgeBlock in era A returns the transactions that era A selects" $
+        test_forgeBlock_eraA
+    , testCase "forgeBlock in era A can select the endorser-block part" $
+        test_forgeBlock_eraA_endorserBlockPart
     ]
 
 data AB a = AB {getA, getB :: a}
@@ -428,6 +444,156 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         . filter p
         $ Mock.chainToList nodeOutputFinalChain
 
+-- | Era A is at the tip, and the mempool snapshot has transactions of era A.
+--
+-- Era A selects the longest prefix that fits its block capacity. The hard fork
+-- combinator returns that prefix and its measure as combined values. The test
+-- fails if the projection of the ranking-block part of 'snapshotPartition'
+-- loses or reorders transactions, or changes their total measure. It also
+-- fails if the injection of 'forgedTxs' loses or reorders transactions, or if
+-- the injection of 'forgedTxsMeasure' changes the measure.
+test_forgeBlock_eraA :: Assertion
+test_forgeBlock_eraA = do
+  forgedTxs forged @?= take 2 eraATxs
+  forgedTxsMeasure forged @?= eraAMempoolMeasure 60_000 <> eraAMempoolMeasure 40_000
+ where
+  forged :: ForgedBlock TestBlock
+  forged = forgeTestBlock blockForgingA
+
+-- | Era A is at the tip, and its 'forgeBlock' returns the endorser-block part
+-- of the snapshot in place of the ranking-block part.
+--
+-- A block capacity of 100 KiB fits the first two transactions. An
+-- endorser-block capacity of 20000 bytes fits the endorser-block measure of
+-- the third transaction (20000 bytes). It does not fit that of the third and
+-- the fourth together (50000 bytes). The test fails if the hard fork
+-- combinator does not inject the endorser-block capacity. It also fails if the
+-- combinator does not project the endorser-block part of 'snapshotPartition'
+-- and its measure.
+test_forgeBlock_eraA_endorserBlockPart :: Assertion
+test_forgeBlock_eraA_endorserBlockPart = do
+  forgedTxs forged @?= take 1 (drop 2 eraATxs)
+  forgedTxsMeasure forged @?= eraAMempoolMeasure 10_000
+ where
+  forged :: ForgedBlock TestBlock
+  forged = forgeTestBlock blockForgingEbA
+
+  blockForgingEbA :: BlockForging Identity BlockA
+  blockForgingEbA =
+    blockForgingA
+      { forgeBlock = \args -> do
+          forgedA <- forgeBlock blockForgingA args
+          let (_, _, ebTxs, ebTxsMeasure) =
+                snapshotPartition
+                  (fbMempoolSnapshot args)
+                  (TxMeasure (IgnoringOverflow $ ByteSize32 $ 100 * 1024) TrivialTxMeasurePhase2)
+                  (TxMeasure (IgnoringOverflow $ ByteSize32 20_000) TrivialTxMeasurePhase2)
+          pure forgedA{forgedTxs = ebTxs, forgedTxsMeasure = ebTxsMeasure}
+      }
+
+eraALedgerState :: LedgerState TestBlock EmptyMK
+eraALedgerState = HardForkLedgerState $ initHardForkState $ Flip $ LgrA GenesisPoint Nothing
+
+eraASnapshot :: MempoolSnapshot TestBlock
+eraASnapshot =
+  snapshotFromValidTxs
+    [ TxTicket tx (TicketNo n) (eraAMempoolMeasure size)
+    | (n, tx, size) <- zip3 [1 ..] eraATxs eraATxSizes
+    ]
+    GenesisPoint
+    (SlotNo 0)
+
+-- | The ids are not in order, so 'test_forgeBlock_eraA' also fails if the
+-- transactions come back sorted by id.
+eraATxs :: [Validated (GenTx TestBlock)]
+eraATxs =
+  [ injectValidatedGenTx IZ $ ValidatedGenTxA $ TxA (TxIdA n) InitiateAtoB
+  | n <- [2, 0, 1, 3]
+  ]
+
+-- | 'blockCapacityTxMeasure' of 'BlockA' is 100 KiB, so the first two
+-- transactions fit and the third does not.
+eraATxSizes :: [Word32]
+eraATxSizes = [60_000, 40_000, 10_000, 15_000]
+
+-- | The endorser-block measure is twice the transaction measure, so the tests
+-- fail if the hard fork combinator derives one from the other.
+eraAMempoolMeasure :: Word32 -> MempoolMeasure TestBlock
+eraAMempoolMeasure size =
+  MempoolMeasure
+    { mmTxMeasure = TxMeasure (IgnoringOverflow $ ByteSize32 size) TrivialTxMeasurePhase2
+    , mmTxEbMeasure = TxMeasure (IgnoringOverflow $ ByteSize32 $ 2 * size) TrivialTxMeasurePhase2
+    , mmDiffTime = FiniteDiffTimeMeasure $ fromIntegral size
+    }
+
+-- | Forge one block with the hard fork combinator's 'BlockForging', which uses
+-- the given 'BlockForging' for era A. Era A is at the tip, and the mempool
+-- snapshot is 'eraASnapshot'.
+forgeTestBlock :: BlockForging Identity BlockA -> ForgedBlock TestBlock
+forgeTestBlock blockForgingEraA = runIdentity $ do
+  blockForging <-
+    mkBlockForging $
+      hardForkBlockForging (const "Test") $
+        OptCons (MkBlockForging $ pure blockForgingEraA) $
+          OptCons (MkBlockForging $ pure blockForgingB) $
+            OptNil
+  forgeBlock
+    blockForging
+    ForgeBlockArgs
+      { fbConfig = forgeTestConfig
+      , fbCurrentBlockNo = BlockNo 0
+      , fbCurrentSlotNo = slot
+      , fbPerasCert = Nothing
+      , fbCurrentTickedLedgerState =
+          forgetLedgerTables $
+            applyChainTick OmitLedgerEvents (configLedger forgeTestConfig) slot eraALedgerState
+      , fbMempoolSnapshot = eraASnapshot
+      , fbIsLeader = OneEraIsLeader $ Z $ WrapIsLeader ()
+      }
+ where
+  slot = SlotNo 0
+
+forgeTestK :: SecurityParam
+forgeTestK = SecurityParam $ knownNonZeroBounded @2
+
+forgeTestEraParams :: EraParams
+forgeTestEraParams =
+  History.defaultEraParams forgeTestK (slotLengthFromSec 1) History.NoPerasEnabled
+
+forgeTestConfig :: TopLevelConfig TestBlock
+forgeTestConfig =
+  TopLevelConfig
+    { topLevelConfigProtocol =
+        HardForkConsensusConfig
+          { hardForkConsensusConfigK = forgeTestK
+          , hardForkConsensusConfigShape = shape
+          , hardForkConsensusConfigPerEra =
+              PerEraConsensusConfig $
+                WrapPartialConsensusConfig (CfgA forgeTestK mempty)
+                  :* WrapPartialConsensusConfig (CfgB forgeTestK mempty)
+                  :* Nil
+          }
+    , topLevelConfigLedger =
+        HardForkLedgerConfig
+          { hardForkLedgerConfigShape = shape
+          , hardForkLedgerConfigPerEra =
+              PerEraLedgerConfig $
+                WrapPartialLedgerConfig (LCfgA forgeTestK (SystemStart dawnOfTime) mempty)
+                  :* WrapPartialLedgerConfig ()
+                  :* Nil
+          }
+    , topLevelConfigBlock =
+        HardForkBlockConfig $ PerEraBlockConfig $ BCfgA :* BCfgB :* Nil
+    , topLevelConfigCodec =
+        HardForkCodecConfig $ PerEraCodecConfig $ CCfgA :* CCfgB :* Nil
+    , topLevelConfigStorage =
+        HardForkStorageConfig $ PerEraStorageConfig $ SCfgA :* SCfgB :* Nil
+    , topLevelConfigCheckpoints = emptyCheckpointsMap
+    }
+ where
+  shape :: History.Shape '[BlockA, BlockB]
+  shape = History.Shape $ exactlyTwo forgeTestEraParams forgeTestEraParams
+
 -- We ignore the mempool for these tests
 instance TxGen TestBlock where
   testGenTxs _ _ _ _ _ _ = return []
@@ -486,6 +652,15 @@ instance CanHardFork '[BlockA, BlockB] where
     (Z (WrapTxEbMeasure (TxMeasure p1 p2))) ->
       txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
     S (Z (WrapTxEbMeasure x)) -> x
+
+  hardForkProjTxMeasurePhase1 x = WrapTxMeasurePhase1 x :* WrapTxMeasurePhase1 x :* Nil
+
+  hardForkProjTxMeasurePhase2 x = WrapTxMeasurePhase2 x :* WrapTxMeasurePhase2 x :* Nil
+
+  -- 'txEbMeasure' of 'BlockB' is 'id', so projecting the injection of an era-A
+  -- measure gives back that measure.
+  hardForkProjTxEbMeasure x@(TxMeasure p1 p2) =
+    WrapTxEbMeasure (TxMeasure p1 p2) :* WrapTxEbMeasure x :* Nil
 
   hardForkTxEbMeasure _ p1 p2 = txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
 

@@ -56,6 +56,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo
   , ProtocolInfo
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Protocol.Leios (Leios)
 import Ouroboros.Consensus.Protocol.PBFT
   ( PBftParams
   , PBftSignatureThreshold (..)
@@ -65,11 +66,14 @@ import Ouroboros.Consensus.Protocol.Praos.AgentClient
   , KESAgentClientTrace
   , KESAgentContext
   )
+import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Node
   ( ProtocolParamsShelleyBased (..)
   , ShelleyGenesis
   , ShelleyLeaderCredentials
   )
+import Ouroboros.Consensus.Shelley.Node.Leios (TraceLeiosForge)
 import System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.FS.Sim.STM as Sim
@@ -268,7 +272,9 @@ mkTestProtocolInfo ::
   CardanoHardForkTriggers ->
   m
     ( ProtocolInfo (CardanoBlock c)
-    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
+    , Tracer.Tracer m KESAgentClientTrace ->
+      Tracer.Tracer m (TraceLeiosForge (ShelleyBlock (Leios c) DijkstraEra)) ->
+      m [MkBlockForging m (CardanoBlock c)]
     )
 mkTestProtocolInfo
   fs

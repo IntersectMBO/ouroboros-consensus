@@ -17,6 +17,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Data.Text as T
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus)
+import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos
   ( Praos
@@ -42,6 +43,7 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 praosBlockForging ::
   forall m era c.
   ( ShelleyCompatible (Praos c) era
+  , TxLimits (ShelleyBlock (Praos c) era)
   , IOLike m
   ) =>
   PraosParams ->
@@ -64,6 +66,7 @@ praosBlockForging praosParams hotKey credentials =
 praosSharedBlockForging ::
   forall m c era.
   ( ShelleyCompatible (Praos c) era
+  , TxLimits (ShelleyBlock (Praos c) era)
   , IOLike m
   ) =>
   HotKey.HotKey c m ->

@@ -114,6 +114,42 @@ class
 
   hardForkInjTxEbMeasure :: SOP.NS WrapTxEbMeasure xs -> HardForkTxEbMeasure xs
 
+  -- | Projects a combined phase 1 measure to every era position. Projecting
+  -- the injection of a measure gives back that measure.
+  --
+  -- For every era position @idx@ and every measure @m@ of that era:
+  --
+  -- > projectNP idx (hardForkProjTxMeasurePhase1 (hardForkInjTxMeasurePhase1 (injectNS idx m))) == m
+  --
+  -- The argument can also be the injection of a measure of an earlier era.
+  -- Then the value at position @idx@ must be that measure, with zero in each
+  -- field that the earlier era lacks. After a hard fork, the mempool keeps the
+  -- measure that a transaction got in the era in which the mempool added it.
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Forging.projectMempoolSnapshot'
+  -- projects that measure with the projection of the new era.
+  --
+  -- The result is a strict 'SOP.NP'. A caller that picks one era with
+  -- 'Data.SOP.Index.projectNP' still evaluates every position. So every
+  -- position must give a result for any input. It must never call 'error' or
+  -- assert.
+  hardForkProjTxMeasurePhase1 :: HardForkTxMeasurePhase1 xs -> SOP.NP WrapTxMeasurePhase1 xs
+
+  -- | Projects a combined phase 2 measure to every era position. The rules of
+  -- 'hardForkProjTxMeasurePhase1' hold, with 'hardForkInjTxMeasurePhase2' as
+  -- the injection.
+  hardForkProjTxMeasurePhase2 :: HardForkTxMeasurePhase2 xs -> SOP.NP WrapTxMeasurePhase2 xs
+
+  -- | Projects a combined endorser-block measure to every era position. The
+  -- rules of 'hardForkProjTxMeasurePhase1' hold, with 'hardForkInjTxEbMeasure'
+  -- as the injection.
+  --
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Forging.hardForkBlockForging'
+  -- also projects sums of 'hardForkTxEbMeasure' results. Such a sum need not be
+  -- the injection of any era's measure. So the projection keeps the fields that
+  -- the era measures and ignores the rest. It does not check that the rest is
+  -- zero.
+  hardForkProjTxEbMeasure :: HardForkTxEbMeasure xs -> SOP.NP WrapTxEbMeasure xs
+
   -- | 'txEbMeasure' for the hard fork block.
   --
   -- The two arguments are the fields of its 'TxMeasure'. Naming that type
@@ -167,6 +203,10 @@ instance SingleEraBlock blk => CanHardFork '[blk] where
   hardForkInjTxMeasurePhase1 (SOP.Z (WrapTxMeasurePhase1 x)) = x
   hardForkInjTxMeasurePhase2 (SOP.Z (WrapTxMeasurePhase2 x)) = x
   hardForkInjTxEbMeasure (SOP.Z (WrapTxEbMeasure x)) = x
+
+  hardForkProjTxMeasurePhase1 x = WrapTxMeasurePhase1 x SOP.:* SOP.Nil
+  hardForkProjTxMeasurePhase2 x = WrapTxMeasurePhase2 x SOP.:* SOP.Nil
+  hardForkProjTxEbMeasure x = WrapTxEbMeasure x SOP.:* SOP.Nil
 
   hardForkTxEbMeasure _ p1 p2 = txEbMeasure (Proxy @blk) (TxMeasure p1 p2)
 

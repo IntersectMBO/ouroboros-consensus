@@ -1,10 +1,14 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Only Dijkstra allows an endorser block to hold anything, and it reads the
 -- endorser-block capacity from its protocol parameters.
+--
+-- Projecting the injection of a Cardano measure gives back that measure.
 module Test.Consensus.Cardano.Capacity (tests) where
 
 import qualified Cardano.Ledger.Core as Core
@@ -24,6 +28,9 @@ import Cardano.Ledger.Shelley.Translation
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import qualified Data.Measure as Measure
 import Data.Proxy (Proxy (..))
+import Data.SOP.BasicFunctors (K (..), (:.:) (..))
+import Data.SOP.Index (Index, hcimap, injectNS, projectNP)
+import Data.SOP.Strict (NP (..), NS, hcollapse)
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( slotLengthFromSec
@@ -36,6 +43,14 @@ import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Ledger.Ledger
   ( Ticked (TickedByronLedgerState)
   )
+import Ouroboros.Consensus.Cardano.Block (CardanoEras)
+import Ouroboros.Consensus.Cardano.Node ()
+import Ouroboros.Consensus.HardFork.Combinator
+  ( CanHardFork (..)
+  , SingleEraBlock (..)
+  , SingleEraInfo (..)
+  , proxySingle
+  )
 import Ouroboros.Consensus.Ledger.Basics
   ( LedgerConfig
   , LedgerState
@@ -44,6 +59,7 @@ import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , IgnoringOverflow (..)
+  , TrivialTxMeasurePhase2 (..)
   , TxLimits (..)
   , TxMeasure (..)
   )
@@ -69,6 +85,11 @@ import Ouroboros.Consensus.Shelley.Ledger.Mempool
   , fromExUnits
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import Ouroboros.Consensus.TypeFamilyWrappers
+  ( WrapTxEbMeasure (..)
+  , WrapTxMeasurePhase1 (..)
+  , WrapTxMeasurePhase2 (..)
+  )
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Cardano.Ledger.Shelley.Examples (testShelleyGenesis)
 import Test.Consensus.Byron.Generators
@@ -87,23 +108,27 @@ type Crypto = MockCryptoCompatByron
 tests :: TestTree
 tests =
   testGroup
-    "Endorser-block capacity"
-    [ testProperty "Byron" prop_byron
-    , testProperty "Shelley" $
-        prop_shelleyBased @(TPraos Crypto) @ShelleyEra
-          (pure emptyFromByronTranslationContext)
-    , testProperty "Allegra" $
-        prop_shelleyBased @(TPraos Crypto) @AllegraEra (pure Genesis.NoGenesis)
-    , testProperty "Mary" $
-        prop_shelleyBased @(TPraos Crypto) @MaryEra (pure Genesis.NoGenesis)
-    , testProperty "Alonzo" $
-        prop_shelleyBased @(TPraos Crypto) @AlonzoEra arbitrary
-    , testProperty "Babbage" $
-        prop_shelleyBased @(Praos Crypto) @BabbageEra (pure Genesis.NoGenesis)
-    , testProperty "Conway" $
-        prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
-    , testProperty "Dijkstra" prop_dijkstra
-    , testCase "Dijkstra transaction" test_dijkstraTxEbMeasure
+    "Measures"
+    [ testGroup
+        "Endorser-block capacity"
+        [ testProperty "Byron" prop_byron
+        , testProperty "Shelley" $
+            prop_shelleyBased @(TPraos Crypto) @ShelleyEra
+              (pure emptyFromByronTranslationContext)
+        , testProperty "Allegra" $
+            prop_shelleyBased @(TPraos Crypto) @AllegraEra (pure Genesis.NoGenesis)
+        , testProperty "Mary" $
+            prop_shelleyBased @(TPraos Crypto) @MaryEra (pure Genesis.NoGenesis)
+        , testProperty "Alonzo" $
+            prop_shelleyBased @(TPraos Crypto) @AlonzoEra arbitrary
+        , testProperty "Babbage" $
+            prop_shelleyBased @(Praos Crypto) @BabbageEra (pure Genesis.NoGenesis)
+        , testProperty "Conway" $
+            prop_shelleyBased @(Praos Crypto) @ConwayEra arbitrary
+        , testProperty "Dijkstra" prop_dijkstra
+        , testCase "Dijkstra transaction" test_dijkstraTxEbMeasure
+        ]
+    , testProperty "Projecting an injection gives back the measure" prop_projectionsGiveBackMeasures
     ]
 
 -- | Both endorser-block measures are zero.
@@ -207,6 +232,115 @@ test_dijkstraTxEbMeasure =
       , exUnits = fromExUnits (ExUnits 1 2)
       }
   refScripts = RefScriptSize (IgnoringOverflow (ByteSize32 10))
+
+{-------------------------------------------------------------------------------
+  Measure projections
+-------------------------------------------------------------------------------}
+
+type Eras = CardanoEras Crypto
+
+-- | For every era position, the projection of the injection of a measure of
+-- that era gives back the measure. The generators give arbitrary execution
+-- units and sizes, so a projection that drops or swaps a field fails.
+prop_projectionsGiveBackMeasures :: Property
+prop_projectionsGiveBackMeasures =
+  conjoin
+    [ counterexample "phase 1" $
+        prop_projectionGivesBackMeasure
+          hardForkInjTxMeasurePhase1
+          hardForkProjTxMeasurePhase1
+          (\x y -> unwrapTxMeasurePhase1 x === unwrapTxMeasurePhase1 y)
+          genPhase1
+    , counterexample "phase 2" $
+        prop_projectionGivesBackMeasure
+          hardForkInjTxMeasurePhase2
+          hardForkProjTxMeasurePhase2
+          (\x y -> unwrapTxMeasurePhase2 x === unwrapTxMeasurePhase2 y)
+          genPhase2
+    , counterexample "endorser block" $
+        prop_projectionGivesBackMeasure
+          hardForkInjTxEbMeasure
+          hardForkProjTxEbMeasure
+          (\x y -> unwrapTxEbMeasure x === unwrapTxEbMeasure y)
+          genEb
+    ]
+
+prop_projectionGivesBackMeasure ::
+  forall f m.
+  (NS f Eras -> m) ->
+  (m -> NP f Eras) ->
+  (forall blk. SingleEraBlock blk => f blk -> f blk -> Property) ->
+  NP (Gen :.: f) Eras ->
+  Property
+prop_projectionGivesBackMeasure inj proj eq gens =
+  conjoin . hcollapse $ hcimap proxySingle check gens
+ where
+  check :: SingleEraBlock blk => Index Eras blk -> (Gen :.: f) blk -> K Property blk
+  check idx (Comp gen) =
+    K . counterexample (show (singleEraName (singleEraInfo idx))) $
+      forAllBlind gen $ \x ->
+        projectNP idx (proj (inj (injectNS idx x))) `eq` x
+
+genPhase1 :: NP (Gen :.: WrapTxMeasurePhase1) Eras
+genPhase1 =
+  gen genByteSize
+    :* gen genByteSize
+    :* gen genByteSize
+    :* gen genByteSize
+    :* gen genAlonzoMeasure
+    :* gen genAlonzoMeasure
+    :* gen genAlonzoMeasure
+    :* gen genAlonzoMeasure
+    :* Nil
+ where
+  gen :: Gen (TxMeasurePhase1 blk) -> (Gen :.: WrapTxMeasurePhase1) blk
+  gen = Comp . fmap WrapTxMeasurePhase1
+
+genPhase2 :: NP (Gen :.: WrapTxMeasurePhase2) Eras
+genPhase2 =
+  gen genTrivial
+    :* gen genTrivial
+    :* gen genTrivial
+    :* gen genTrivial
+    :* gen genTrivial
+    :* gen genTrivial
+    :* gen genRefScriptSize
+    :* gen genRefScriptSize
+    :* Nil
+ where
+  gen :: Gen (TxMeasurePhase2 blk) -> (Gen :.: WrapTxMeasurePhase2) blk
+  gen = Comp . fmap WrapTxMeasurePhase2
+
+genEb :: NP (Gen :.: WrapTxEbMeasure) Eras
+genEb =
+  gen (TxMeasure <$> genByteSize <*> genTrivial)
+    :* gen (TxMeasure <$> genByteSize <*> genTrivial)
+    :* gen (TxMeasure <$> genByteSize <*> genTrivial)
+    :* gen (TxMeasure <$> genByteSize <*> genTrivial)
+    :* gen (TxMeasure <$> genAlonzoMeasure <*> genTrivial)
+    :* gen (TxMeasure <$> genAlonzoMeasure <*> genTrivial)
+    :* gen (TxMeasure <$> genAlonzoMeasure <*> genRefScriptSize)
+    :* gen
+      ( DijkstraEbMeasure
+          <$> (TxMeasure <$> genAlonzoMeasure <*> genRefScriptSize)
+          <*> genByteSize
+      )
+    :* Nil
+ where
+  gen :: Gen (TxEbMeasure blk) -> (Gen :.: WrapTxEbMeasure) blk
+  gen = Comp . fmap WrapTxEbMeasure
+
+genByteSize :: Gen (IgnoringOverflow ByteSize32)
+genByteSize = IgnoringOverflow . ByteSize32 <$> arbitrary
+
+genAlonzoMeasure :: Gen AlonzoMeasure
+genAlonzoMeasure = AlonzoMeasure <$> genByteSize <*> (fromExUnits <$> arbitrary)
+
+genRefScriptSize :: Gen RefScriptSize
+genRefScriptSize = RefScriptSize <$> genByteSize
+
+genTrivial :: Gen TrivialTxMeasurePhase2
+genTrivial = pure TrivialTxMeasurePhase2
 
 {-------------------------------------------------------------------------------
   Fixtures
