@@ -12,6 +12,7 @@ import Cardano.Ledger.BaseTypes (ProtVer (ProtVer), StrictMaybe)
 import Cardano.Ledger.Binary (getVersion32)
 import Cardano.Ledger.Block (BlockHeaderVersionInfo (..), EbReferencesAnnouncement)
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
+import Cardano.Ledger.Core (Era)
 import Cardano.Ledger.Hashes (EraIndependentBlockBody, HASH)
 import Cardano.Ledger.Slot (SlotNo (unSlotNo))
 import Cardano.Protocol.Crypto (Crypto, KES)
@@ -259,7 +260,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Praos2 c) where
         bbHash
         sz
         protVer
-        (\pb -> extendHeaderBodyWithLeios pb containsCert mbAnn)
+        (\pb -> extendHeaderBodyWithLeios era pb containsCert mbAnn)
         (LeiosCodec.mkHeader era)
 
 -- | The Leios header body is the Praos one plus the Leios fields.
@@ -267,26 +268,29 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Praos2 c) where
 -- The version info has the protocol version's wire format: the highest
 -- supported major version, and the self-reported software tag.
 extendHeaderBodyWithLeios ::
+  (Crypto c, Era era) =>
+  proxy era ->
   HeaderBody c ->
   -- | Whether the block body carries a Leios certificate
   Bool ->
   StrictMaybe EbReferencesAnnouncement ->
   LeiosCodec.HeaderBody c
-extendHeaderBodyWithLeios pb containsCert ann =
-  LeiosCodec.HeaderBody
-    { LeiosCodec.hbBlockNo = hbBlockNo pb
-    , LeiosCodec.hbSlotNo = hbSlotNo pb
-    , LeiosCodec.hbPrev = hbPrev pb
-    , LeiosCodec.hbVk = hbVk pb
-    , LeiosCodec.hbVrfVk = hbVrfVk pb
-    , LeiosCodec.hbVrfRes = hbVrfRes pb
-    , LeiosCodec.hbBodySize = hbBodySize pb
-    , LeiosCodec.hbBodyHash = hbBodyHash pb
-    , LeiosCodec.hbOCert = hbOCert pb
-    , LeiosCodec.hbVersionInfo = BlockHeaderVersionInfo (getVersion32 major) minor
-    , LeiosCodec.hbBlockBodyContainsLeiosCert = containsCert
-    , LeiosCodec.hbEbReferencesAnnouncement = ann
-    }
+extendHeaderBodyWithLeios proxy pb containsCert ann =
+  LeiosCodec.mkHeaderBody proxy $
+    LeiosCodec.HeaderBodyRaw
+      { LeiosCodec.hbrBlockNo = hbBlockNo pb
+      , LeiosCodec.hbrSlotNo = hbSlotNo pb
+      , LeiosCodec.hbrPrev = hbPrev pb
+      , LeiosCodec.hbrVk = hbVk pb
+      , LeiosCodec.hbrVrfVk = hbVrfVk pb
+      , LeiosCodec.hbrVrfRes = hbVrfRes pb
+      , LeiosCodec.hbrBodySize = hbBodySize pb
+      , LeiosCodec.hbrBodyHash = hbBodyHash pb
+      , LeiosCodec.hbrOCert = hbOCert pb
+      , LeiosCodec.hbrVersionInfo = BlockHeaderVersionInfo (getVersion32 major) minor
+      , LeiosCodec.hbrBlockBodyContainsLeiosCert = containsCert
+      , LeiosCodec.hbrEbReferencesAnnouncement = ann
+      }
  where
   ProtVer major minor = hbProtVer pb
 

@@ -414,26 +414,27 @@ translateLeiosHeader (SL.BHeader bhBody bhSig) =
   pb = praosHeaderBodyFromTPraos bhBody
   SL.ProtVer major minor = Praos.hbProtVer pb
   hBody =
-    Leios.HeaderBody
-      { Leios.hbBlockNo = Praos.hbBlockNo pb
-      , Leios.hbSlotNo = Praos.hbSlotNo pb
-      , Leios.hbPrev = Praos.hbPrev pb
-      , Leios.hbVk = Praos.hbVk pb
-      , Leios.hbVrfVk = Praos.hbVrfVk pb
-      , Leios.hbVrfRes = Praos.hbVrfRes pb
-      , Leios.hbBodySize = Praos.hbBodySize pb
-      , Leios.hbBodyHash = Praos.hbBodyHash pb
-      , Leios.hbOCert = Praos.hbOCert pb
-      , Leios.hbVersionInfo = SL.BlockHeaderVersionInfo (SL.getVersion32 major) minor
-      , Leios.hbBlockBodyContainsLeiosCert = True
-      , Leios.hbEbReferencesAnnouncement =
-          SL.SJust $
-            SL.EbReferencesAnnouncement
-              { SL.ebReferencesAnnouncementHash =
-                  unsafeMakeSafeHash $ Hash.castHash $ Praos.hbBodyHash pb
-              , SL.ebReferencesAnnouncementSize = 123
-              }
-      }
+    Leios.mkHeaderBody (Proxy @DijkstraEra) $
+      Leios.HeaderBodyRaw
+        { Leios.hbrBlockNo = Praos.hbBlockNo pb
+        , Leios.hbrSlotNo = Praos.hbSlotNo pb
+        , Leios.hbrPrev = Praos.hbPrev pb
+        , Leios.hbrVk = Praos.hbVk pb
+        , Leios.hbrVrfVk = Praos.hbVrfVk pb
+        , Leios.hbrVrfRes = Praos.hbVrfRes pb
+        , Leios.hbrBodySize = Praos.hbBodySize pb
+        , Leios.hbrBodyHash = Praos.hbBodyHash pb
+        , Leios.hbrOCert = Praos.hbOCert pb
+        , Leios.hbrVersionInfo = SL.BlockHeaderVersionInfo (SL.getVersion32 major) minor
+        , Leios.hbrBlockBodyContainsLeiosCert = True
+        , Leios.hbrEbReferencesAnnouncement =
+            SL.SJust $
+              SL.EbReferencesAnnouncement
+                { SL.ebReferencesAnnouncementHash =
+                    unsafeMakeSafeHash $ Hash.castHash $ Praos.hbBodyHash pb
+                , SL.ebReferencesAnnouncementSize = 123
+                }
+        }
 
 examplesShelley :: Examples StandardShelleyBlock
 examplesShelley = fromShelleyLedgerExamples ledgerExamplesShelley
