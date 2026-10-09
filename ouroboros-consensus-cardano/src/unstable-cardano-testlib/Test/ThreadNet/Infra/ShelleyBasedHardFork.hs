@@ -72,6 +72,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
+  , viaTranslateProto
   , translateChainDepStateAcrossShelley
   )
 import Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
@@ -268,7 +269,7 @@ instance
       { translateLedgerState = PCons translateLedgerState PNil
       , translateLedgerTables = PCons translateLedgerTables PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
-      , crossEraForecast = PCons crossEraForecastAcrossShelley PNil
+      , crossEraForecast = PCons (crossEraForecastAcrossShelley viaTranslateProto) PNil
       }
    where
     translateLedgerState ::

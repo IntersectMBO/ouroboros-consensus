@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Cardano.CanHardFork
     -- * Re-exports of Shelley code
   , ShelleyPartialLedgerConfig (..)
   , crossEraForecastAcrossShelley
+  , viaTranslateProto
   , translateChainDepStateAcrossShelley
 
     -- * Exposed for testing
@@ -47,6 +48,8 @@ import Control.Monad.Except (throwError)
 import Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import Data.Proxy
+import Cardano.Ledger.Dijkstra.Genesis (DijkstraGenesis (..))
+import Cardano.Ledger.Dijkstra.PParams (UpgradeDijkstraPParams (..))
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
@@ -95,7 +98,8 @@ import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
-import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, Praos2)
+import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, LeiosOnly (Praos2HasLeios), Praos2)
 import Ouroboros.Consensus.Protocol.TPraos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -169,12 +173,12 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                         PNil
       , crossEraForecast =
           PCons crossEraForecastByronToShelleyWrapper $
-            PCons crossEraForecastAcrossShelley $
-              PCons crossEraForecastAcrossShelley $
-                PCons crossEraForecastAcrossShelley $
-                  PCons crossEraForecastAcrossShelley $
-                    PCons crossEraForecastAcrossShelley $
-                      PCons crossEraForecastAcrossShelley $
+            PCons (crossEraForecastAcrossShelley viaTranslateProto) $
+              PCons (crossEraForecastAcrossShelley viaTranslateProto) $
+                PCons (crossEraForecastAcrossShelley viaTranslateProto) $
+                  PCons (crossEraForecastAcrossShelley viaTranslateProto) $
+                    PCons (crossEraForecastAcrossShelley viaTranslateProto) $
+                      PCons (crossEraForecastAcrossShelley translateLedgerViewConwayToDijkstra) $
                         PNil
       }
   hardForkChainSel =
@@ -753,6 +757,38 @@ translateLedgerTablesConwayToDijkstraWrapper =
     { translateTxInWith = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
+
+-- | How Dijkstra sees a Conway ledger view, for forecasting across the
+-- boundary.
+--
+-- The Leios parameters are those the Dijkstra genesis sets when the ledger
+-- translates its state at the boundary; Conway's governance cannot change
+-- them. The committee is empty, which is the truth in every slot a forecast
+-- from Conway can reach: Conway's stake snapshots carry no committee, a
+-- Dijkstra committee is first seated by a snapshot rotation at an epoch
+-- boundary after the first Dijkstra epoch, and a forecast reaches at most a
+-- stability window, less than an epoch, past the boundary.
+translateLedgerViewConwayToDijkstra ::
+  forall c.
+  TranslateLedgerViewAcrossShelley (Praos c) (Praos2 c) DijkstraEra
+translateLedgerViewConwayToDijkstra =
+  TranslateLedgerViewAcrossShelley $ \cfgDijkstra lv ->
+    let DijkstraGenesis{dgUpgradePParams = upgrade} =
+          shelleyLedgerTranslationContext cfgDijkstra
+     in (translateLedgerView (Proxy @(Praos c, Praos2 c)) lv)
+          { Views.plvQuorumStakeThreshold =
+              Praos2HasLeios $ udppLeiosQuorumStakeThreshold upgrade
+          , Views.plvAnnouncementPeriodLength =
+              Praos2HasLeios $ udppLeiosAnnouncementPeriodLength upgrade
+          , Views.plvVotePeriodLength =
+              Praos2HasLeios $ udppLeiosVotePeriodLength upgrade
+          , Views.plvDiffusionPeriodLength =
+              Praos2HasLeios $ udppLeiosDiffusionPeriodLength upgrade
+          , Views.plvMaxEbBodySize =
+              Praos2HasLeios $ udppMaxEndorserBlockReferencesSize upgrade
+          , Views.plvMaxEbTxsSize =
+              Praos2HasLeios $ udppMaxEndorserBlockTxsSize upgrade
+          }
 
 getDijkstraTranslationContext ::
   WrapLedgerConfig (ShelleyBlock (Praos2 c) DijkstraEra) ->
