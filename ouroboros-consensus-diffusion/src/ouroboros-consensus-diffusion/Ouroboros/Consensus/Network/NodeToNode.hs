@@ -385,13 +385,14 @@ data OutgoingLeiosNotify blk = MkOutgoingLeiosNotify
                LeiosDemoOnlyTestNotify.StIdle
            )
        )
-  , olnAnnounced :: !(Set.Set LeiosPoint)
+  , olnAnnounced :: !(Map.Map LeiosPoint (Set.Set Leios.OfferedBodyOrClosure))
   -- ^ The endorser blocks whose announcement we have enqueued to this peer,
-  -- pruned to our immutable tip; see 'offer'.
+  -- and which of their parts we have since offered, pruned to our immutable
+  -- tip; see 'offer'.
   }
 
 emptyOutgoingLeiosNotify :: OutgoingLeiosNotify blk
-emptyOutgoingLeiosNotify = MkOutgoingLeiosNotify Seq.empty Set.empty
+emptyOutgoingLeiosNotify = MkOutgoingLeiosNotify Seq.empty Map.empty
 
 mkHandlers ::
   forall m blk addrNTN addrNTC.
@@ -734,8 +735,11 @@ mkHandlers
                                 olnMessages out
                                   Seq.|> MsgLeiosBlockAnnouncement (Leios.ancHeader anc)
                             , olnAnnounced =
-                                Set.insert
+                                -- A re-announcement keeps what was offered.
+                                Map.insertWith
+                                  (\_new old -> old)
                                   (Leios.announcementLeiosPoint fields)
+                                  Set.empty
                                   (olnAnnounced out)
                             }
                   )
@@ -778,9 +782,9 @@ mkHandlers
               pruneAnnounced
               ( readTChan chan >>= \case
                   AcquiredEb point ebSize ->
-                    offer point $ MsgLeiosBlockOffer point ebSize
+                    offer point Leios.OfferedBody $ MsgLeiosBlockOffer point ebSize
                   AcquiredEbTxs point ->
-                    offer point $ MsgLeiosBlockTxsOffer point
+                    offer point Leios.OfferedClosure $ MsgLeiosBlockTxsOffer point
                 )
                 <|> (getNextVote <&> \vote -> Just $ MsgLeiosVotes [vote])
 
@@ -799,24 +803,41 @@ mkHandlers
               TVar.Unchecked.writeTVar queue $
                 out
                   { olnAnnounced =
-                      Set.dropWhileAntitone
+                      Map.dropWhileAntitone
                         ((< immTipSlot) . Leios.pointSlotNo)
                         (olnAnnounced out)
                   }
 
-            -- An offer goes out only if it is fresh enough to relay and this
-            -- peer has been told the announcement it is for.
+            -- An offer goes out only if it is fresh enough to relay, this peer
+            -- has been told the announcement it is for, and we have not offered
+            -- this part to it already: an honest peer disconnects on a repeat,
+            -- and the LeiosDb may notify the same acquisition twice.
             relayDecision =
               Leios.leiosOfferRelayDecision
                 (getLeiosMinOfferLead nodeKernel)
                 (getImmTipSlot nodeKernel)
-            offer point msg = do
+            offer point part msg = do
               shouldRelay <- relayDecision (Leios.pointSlotNo point)
               case shouldRelay of
                 Announcements.DoNotRelay -> pure Nothing
                 Announcements.DoRelay -> do
                   out <- TVar.Unchecked.readTVar queue
-                  pure $ if Set.member point (olnAnnounced out) then Just msg else Nothing
+                  pure $ case Map.lookup point (olnAnnounced out) of
+                    Just offered | Set.notMember part offered -> Just msg
+                    _ -> Nothing
+
+            -- Record an offer as made once it is actually enqueued.
+            recordOffer ::
+              LeiosDemoOnlyTestNotify.Message
+                (LeiosNotify LeiosPoint (Header blk) LeiosVote)
+                LeiosDemoOnlyTestNotify.StBusy
+                LeiosDemoOnlyTestNotify.StIdle ->
+              Map LeiosPoint (Set.Set Leios.OfferedBodyOrClosure) ->
+              Map LeiosPoint (Set.Set Leios.OfferedBodyOrClosure)
+            recordOffer = \case
+              MsgLeiosBlockOffer point _ -> Map.adjust (Set.insert Leios.OfferedBody) point
+              MsgLeiosBlockTxsOffer point -> Map.adjust (Set.insert Leios.OfferedClosure) point
+              _ -> id
 
             pump =
               ( do
@@ -832,7 +853,10 @@ mkHandlers
                         out <- TVar.Unchecked.readTVar queue
                         TVar.Unchecked.writeTVar
                           queue
-                          out{olnMessages = olnMessages out Seq.|> msg}
+                          out
+                            { olnMessages = olnMessages out Seq.|> msg
+                            , olnAnnounced = recordOffer msg (olnAnnounced out)
+                            }
               )
                 `finally` ( MVar.modifyMVar_ getLeiosCentralState $
                               pure . Announcements.deletePeerCentral peer

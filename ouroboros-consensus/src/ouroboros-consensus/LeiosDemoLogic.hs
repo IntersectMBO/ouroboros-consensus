@@ -1983,7 +1983,7 @@ instance Exception ExnLeiosWellHashedBodyRejected
 
 -- | Which of a point's two independent offers a LeiosNotify message makes.
 data OfferedBodyOrClosure = OfferedBody | OfferedClosure
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Thrown when a peer relays a 'MsgLeiosBlockAnnouncement' whose header carries
 -- no EB announcement (so 'mkAnnouncingHeader' returns 'Nothing'); the ensuing thread
