@@ -52,6 +52,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ProtocolHeaderSupportsProtocol (..)
   , ShelleyHash (ShelleyHash)
   , ShelleyProtocol
+  , defaultHeaderContainsLeiosCert
   )
 import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError
@@ -69,6 +70,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
   pHeaderBlock (Header body _) = hbBlockNo body
   pHeaderSize hdr = fromIntegral $ headerSize hdr
   pHeaderBlockSize (Header body _) = fromIntegral $ hbBodySize body
+  pHeaderContainsLeiosCert = defaultHeaderContainsLeiosCert
 
   type EnvelopeCheckError _ = EnvelopeError
 
@@ -223,6 +225,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsEnvelope (Praos2 c) where
   pHeaderBlock = LeiosCodec.hbBlockNo . LeiosCodec.headerBody
   pHeaderSize hdr = fromIntegral $ LeiosCodec.headerSize hdr
   pHeaderBlockSize = fromIntegral . LeiosCodec.hbBodySize . LeiosCodec.headerBody
+  pHeaderContainsLeiosCert = LeiosCodec.hbBlockBodyContainsLeiosCert . LeiosCodec.headerBody
 
   type EnvelopeCheckError _ = EnvelopeError
 

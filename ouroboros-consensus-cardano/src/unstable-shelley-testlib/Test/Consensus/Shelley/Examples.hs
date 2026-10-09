@@ -406,7 +406,8 @@ fromShelleyLedgerExamplesPraos2 =
   fromShelleyLedgerExamplesPolyPraos translateLeiosHeader
 
 -- | As 'translatePraosHeader', with the Leios fields of an example block that
--- carries a certificate and announces an endorser block of its own.
+-- announces an endorser block. It carries no certificate, since the example
+-- body has none and 'blockMatchesHeader' requires the two to agree.
 translateLeiosHeader :: SL.BHeader StandardCrypto -> Leios.Header StandardCrypto
 translateLeiosHeader (SL.BHeader bhBody bhSig) =
   Leios.mkHeader (Proxy @DijkstraEra) hBody (coerce bhSig)
@@ -426,7 +427,7 @@ translateLeiosHeader (SL.BHeader bhBody bhSig) =
         , Leios.hbrBodyHash = Praos.hbBodyHash pb
         , Leios.hbrOCert = Praos.hbOCert pb
         , Leios.hbrVersionInfo = SL.BlockHeaderVersionInfo (SL.getVersion32 major) minor
-        , Leios.hbrBlockBodyContainsLeiosCert = True
+        , Leios.hbrBlockBodyContainsLeiosCert = False
         , Leios.hbrEbReferencesAnnouncement =
             SL.SJust $
               SL.EbReferencesAnnouncement
