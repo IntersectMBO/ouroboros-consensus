@@ -11,6 +11,9 @@
 -- node-vs-environment tests.
 module Test.Consensus.Leios.LeiosNotify (tests) where
 
+import Cardano.Crypto.DSIGN.Class (genKeyDSIGN, signDSIGN)
+import Cardano.Crypto.Leios (LeiosSeatId (..), leiosSignContext)
+import Cardano.Crypto.Seed (mkSeedFromBytes)
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
@@ -23,13 +26,21 @@ import Control.Monad.Class.MonadThrow
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
 import qualified Data.Map.Strict as Map
 import Network.TypedProtocol.Codec (Codec)
+import Ouroboros.Consensus.Block (Header, SlotNo (..))
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Leios.Types
+  ( EbHash (..)
+  , LeiosPoint (..)
+  , LeiosVote (..)
+  , RbHash (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
@@ -41,7 +52,10 @@ import Ouroboros.Consensus.Network.LeiosNotify
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
 import Ouroboros.Network.Channel (Channel, createConnectedBufferedChannels)
-import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
+import Ouroboros.Network.Driver.Limits
+  ( ProtocolLimitFailure (..)
+  , runPipelinedPeerWithLimits
+  )
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , TemperatureBundle (..)
@@ -69,8 +83,17 @@ tests =
         ]
     , testGroup
         "node vs environment"
-        [ testCase "the node's client requests nothing, and quits when the node demotes the peer" $
-            runSimOrThrow (timeout 100 nodeClientQuits) @?= Just (NodeClientOutcome Running Succeeded 0)
+        [ testCase "the node's client keeps its pipeline full, and quits when the node demotes the peer" $
+            runSimOrThrow (timeout 100 nodeClientKeepsPipelineFull)
+              @?= Just (NodeClientOutcome leiosNotifyPipelineDepth)
+        , testCase "the node's client discards replies and keeps requesting" $
+            runSimOrThrow (timeout 100 nodeClientDiscardsReplies)
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 6))
+        , testCase "the node's client disconnects a peer that cancels a request unprompted" $
+            runSimOrThrow (timeout 100 nodeClientUnpromptedCancel)
+              @?= Just (NodeClientDisconnected UnexpectedCancel)
+        , testCase "the node's client disconnects a peer whose reply is too big" $
+            runSimOrThrow (timeout 100 nodeClientOversizedReply) @?= Just (NodeClientDisconnected ExceededSize)
         , testCase "the node's server cancels a peer's outstanding requests when the peer quits" $
             runSimOrThrow (timeout 100 nodeServerCancels) @?= Just (NodeServerOutcome 0)
         , testCase "the node's server disconnects a peer that exceeds the pipelining bound" $
@@ -224,35 +247,101 @@ nodeLeiosNotifyServer conn =
   maybe (throwIO $ userError "the node does not run a LeiosNotify server") pure $
     Map.lookup leiosNotifyMiniProtocolNum (connNodeResponders conn)
 
-data WhetherRunning = Running | Finished
+data NodeClientOutcome
+  = -- | how many requests the peer received
+    NodeClientOutcome Int
+  | NodeClientDisconnected DisconnectReason
   deriving (Eq, Show)
 
-data WhetherSucceeded = Succeeded | Failed
+data DisconnectReason = UnexpectedCancel | ExceededSize | ExceededTime
   deriving (Eq, Show)
 
-succeeded :: Either e a -> WhetherSucceeded
-succeeded = either (const Failed) (const Succeeded)
+-- | Run a peer's server that answers each request with whatever @next@ yields
+-- next, counting requests.
+runReplyingServer ::
+  LeiosNotifyCodec s ->
+  StrictTVar (IOSim s) Int ->
+  STM (IOSim s) (Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle) ->
+  Channel (IOSim s) BSL.ByteString ->
+  IOSim s ()
+runReplyingServer c requests next chan = do
+  peer <-
+    leiosNotifyServerPeerLookahead
+      (NotExcessiveRequests <$ atomically (modifyTVar requests (+ 1)))
+      next
+  fst
+    <$> runLookaheadFixedSenderPeerWithLimits nullTracer c sizeLimits timeLimitsLeiosNotify chan peer
 
-data NodeClientOutcome = NodeClientOutcome WhetherRunning WhetherSucceeded Int
-  deriving (Eq, Show)
-
--- | The peer's server rejects every request, so that the node sending one fails
--- the test.
-nodeClientQuits :: IOSim s NodeClientOutcome
-nodeClientQuits = withNode $ \nut -> do
+-- | The node's client, connected to a peer whose server answers with @next@;
+-- the node demotes the peer once the peer has received @target@ requests.
+runNodeClientAgainst ::
+  NodeUnderTest (IOSim s) ->
+  STM (IOSim s) (Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle) ->
+  Int ->
+  IOSim s NodeClientOutcome
+runNodeClientAgainst nut next target = do
   requests <- newTVarIO 0
   let envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runServer (envLeiosNotifyCodec nut) requests 0
+          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests next
           , epLeiosNotifyClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     client <- nodeLeiosNotifyClient conn
-    threadDelay 10
-    before <- atomically $ (Finished <$ client) `orElse` pure Running
-    connTerminate conn
-    ended <- atomically client
-    NodeClientOutcome before (succeeded ended) <$> readTVarIO requests
+    early <-
+      atomically $
+        (Just <$> client)
+          `orElse` (Nothing <$ (readTVar requests >>= check . (>= target)))
+    result <- case early of
+      Just result -> pure result
+      Nothing -> do
+        -- told to stop, the client drains its pipeline and ends
+        connTerminate conn
+        atomically client
+    case result of
+      Right _ -> NodeClientOutcome <$> readTVarIO requests
+      Left e
+        | Just MkExnLeiosNotifyUnexpectedCancel <- fromException e ->
+            pure $ NodeClientDisconnected UnexpectedCancel
+        | Just (ExceededSizeLimit _) <- fromException e ->
+            pure $ NodeClientDisconnected ExceededSize
+        | Just (ExceededTimeLimit _) <- fromException e ->
+            pure $ NodeClientDisconnected ExceededTime
+        | otherwise -> throwIO e
+
+-- | A peer that never has a notification: the node keeps exactly its
+-- pipelining bound of requests outstanding.
+nodeClientKeepsPipelineFull :: IOSim s NodeClientOutcome
+nodeClientKeepsPipelineFull = withNode $ \nut ->
+  runNodeClientAgainst nut retry leiosNotifyPipelineDepth
+
+-- | Six replies free six slots in the pipeline, which the node fills again.
+nodeClientDiscardsReplies :: IOSim s NodeClientOutcome
+nodeClientDiscardsReplies = withNode $ \nut -> do
+  queue <- newTQueueIO
+  atomically $
+    mapM_ (writeTQueue queue) $
+      replicate 5 (MsgLeiosBlockTxsOffer somePoint) <> [MsgLeiosVotes [someVote]]
+  runNodeClientAgainst nut (readTQueue queue) (leiosNotifyPipelineDepth + 6)
+
+nodeClientUnpromptedCancel :: IOSim s NodeClientOutcome
+nodeClientUnpromptedCancel = withNode $ \nut ->
+  runNodeClientAgainst nut (pure MsgCanceled) maxBound
+
+-- | A single reply larger than the byte limit allows.
+nodeClientOversizedReply :: IOSim s NodeClientOutcome
+nodeClientOversizedReply = withNode $ \nut ->
+  runNodeClientAgainst nut (pure (MsgLeiosVotes (replicate 2000 someVote))) maxBound
+
+somePoint :: LeiosPoint
+somePoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 0))
+
+someVote :: LeiosVote
+someVote =
+  MkLeiosVote rbHash (LeiosSeatId 0) $
+    signDSIGN leiosSignContext rbHash (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
+ where
+  rbHash = MkRbHash (BS.replicate 32 0)
 
 newtype NodeServerOutcome = NodeServerOutcome Int
   deriving (Eq, Show)
@@ -267,7 +356,7 @@ nodeServerCancels = withNode $ \nut -> do
   let codec' = envLeiosNotifyCodec nut
       envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runServer codec' requests 0
+          { epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient = Just $ runPipelinedClient codec' replies 3 stop
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
@@ -288,7 +377,7 @@ nodeServerExcessive = withNode $ \nut -> do
   let codec' = envLeiosNotifyCodec nut
       envPeer =
         EnvPeer
-          { epLeiosNotifyServer = runServer codec' requests 0
+          { epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient =
               Just $ runPipelinedClient codec' replies (leiosNotifyPipelineDepth + 1) stop
           }

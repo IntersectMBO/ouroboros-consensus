@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -63,9 +62,8 @@ import Data.Set (Set)
 import Data.Void (Void)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
-import Network.TypedProtocol.Core (IsPipelined (..))
-import Network.TypedProtocol.Peer (Peer)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..))
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -84,7 +82,11 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
-import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client (leiosNotifyClientPeerQuitOnly)
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
+  ( LeiosNotifyClientPeerPipelined
+  , awaitImmTipCanForecastNow
+  , leiosNotifyClientPeerDiscardingReplies
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
   ( LeiosNotifyServerPeerLookahead
   , WhetherExcessiveRequests (..)
@@ -97,7 +99,6 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   , codecLeiosNotifyId
   , timeLimitsLeiosNotify
   )
-import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type as LN
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound (objectDiffusionInbound)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
@@ -282,7 +283,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      Peer (LeiosNotify LeiosPoint (Header blk) LeiosVote) AsClient NonPipelined LN.StIdle m ()
+      LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
   , hLeiosNotifyServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
@@ -343,6 +344,7 @@ mkHandlers
     , getTracers = tracers
     , getPeerSharingAPI
     , getGsmState
+    , getBlockchainTime
     }
   txSubmissionLogicVersion =
     Handlers
@@ -447,11 +449,14 @@ mkHandlers
             (makePerasVotePoolReaderFromChainDB $ getChainDB)
             version
       , hLeiosNotifyClient = \_version controlMessageSTM _peer ->
-          leiosNotifyClientPeerQuitOnly $
-            controlMessageSTM >>= \case
-              Continue -> retry
-              Quiesce -> retry
-              Terminate -> pure ()
+          leiosNotifyClientPeerDiscardingReplies
+            leiosNotifyPipelineDepth
+            ( awaitImmTipCanForecastNow
+                getTopLevelConfig
+                (ChainDB.getImmutableLedger getChainDB)
+                (getCurrentSlot getBlockchainTime)
+            )
+            controlMessageSTM
       , hLeiosNotifyServer = \_version _peer -> do
           requests <- newTVarIO (0 :: Int)
           leiosNotifyServerPeerLookahead
@@ -1183,7 +1188,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     channel = do
       labelThisThread "LeiosNotifyClient"
       ((), trailing) <-
-        runPeerWithLimits
+        runPipelinedPeerWithLimits
           nullTracer
           (cLeiosNotifyCodec (mkCodecs version))
           blLeiosNotify
