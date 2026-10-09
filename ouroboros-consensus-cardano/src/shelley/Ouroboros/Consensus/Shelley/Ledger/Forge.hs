@@ -58,6 +58,7 @@ forgeShelleyBlock
     do
       hdr <-
         mkHeader @_ @(ProtoCrypto proto)
+          (Proxy @era)
           hotKey
           cbl
           fbIsLeader

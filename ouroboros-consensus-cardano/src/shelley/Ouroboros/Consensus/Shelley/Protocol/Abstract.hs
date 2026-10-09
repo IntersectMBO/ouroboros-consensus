@@ -28,6 +28,7 @@ import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
 import Cardano.Ledger.BaseTypes (ProtVer, StrictMaybe)
 import Cardano.Ledger.Block (EbReferencesAnnouncement)
+import Cardano.Ledger.Core (Era)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
@@ -146,7 +147,9 @@ class ProtocolHeaderSupportsKES proto where
     Bool
 
   mkHeader ::
-    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto) =>
+    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto, Era era) =>
+    -- | The era of the block being forged
+    proxy era ->
     HotKey crypto m ->
     CanBeLeader proto ->
     IsLeader proto ->

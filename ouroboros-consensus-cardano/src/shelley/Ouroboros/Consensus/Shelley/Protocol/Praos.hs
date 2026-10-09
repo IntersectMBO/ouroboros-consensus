@@ -12,7 +12,6 @@ import Cardano.Ledger.BaseTypes (ProtVer (ProtVer), StrictMaybe)
 import Cardano.Ledger.Binary (getVersion32)
 import Cardano.Ledger.Block (BlockHeaderVersionInfo (..), EbReferencesAnnouncement)
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
-import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Hashes (EraIndependentBlockBody, HASH)
 import Cardano.Ledger.Slot (SlotNo (unSlotNo))
 import Cardano.Protocol.Crypto (Crypto, KES)
@@ -31,7 +30,6 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.Block (BlockNo)
 import Control.Monad.Except (Except)
 import Data.Either (isRight)
-import Data.Proxy (Proxy (Proxy))
 import Data.Word (Word32, Word64)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos
@@ -109,7 +107,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
   configSlotsPerKESPeriod cfg = praosSlotsPerKESPeriod $ praosParams cfg
   verifyHeaderIntegrity slotsPerKESPeriod =
     verifyHeaderIntegrityPolyPraos slotsPerKESPeriod . protocolHeaderView
-  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer (PraosLacksLeios ()) =
+  mkHeader _ hk cbl il slotNo blockNo prevHash bbHash sz protVer (PraosLacksLeios ()) =
     mkHeaderPolyPraos hk cbl il slotNo blockNo prevHash bbHash sz protVer id Header
 
 -- | 'verifyHeaderIntegrity' for every Praos.
@@ -240,6 +238,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Praos2 c) where
   verifyHeaderIntegrity slotsPerKESPeriod =
     verifyHeaderIntegrityPolyPraos slotsPerKESPeriod . protocolHeaderView
   mkHeader
+    era
     hk
     cbl
     il
@@ -261,7 +260,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Praos2 c) where
         sz
         protVer
         (\pb -> extendHeaderBodyWithLeios pb containsCert mbAnn)
-        (LeiosCodec.mkHeader (Proxy @DijkstraEra))
+        (LeiosCodec.mkHeader era)
 
 -- | The Leios header body is the Praos one plus the Leios fields.
 --
