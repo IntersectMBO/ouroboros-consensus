@@ -10,6 +10,7 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
@@ -21,9 +22,12 @@ module Ouroboros.Consensus.Protocol.Praos2
   , ConsensusConfig (..)
   ) where
 
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..), StrictMaybe (..))
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
+import Cardano.Ledger.Core (TranslationContext)
 import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
+import Cardano.Ledger.Dijkstra.Genesis (DijkstraGenesis (..))
+import Cardano.Ledger.Dijkstra.PParams (UpgradeDijkstraPParams (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Protocol.Crypto (Crypto, StandardCrypto)
@@ -166,24 +170,26 @@ instance Dijkstra.DijkstraEraForecast era => Views.ForecastToPolyPraosLedgerView
 --
 -- Everything carries over unchanged; the Leios fields merely have to be
 -- introduced. The announcement starts empty, since no header of the protocol
--- being left could have carried one. The ledger view seats no committee, so
--- nothing can be certified against it: the committee is empty and the quorum is
--- the entire weight. That is the truth, not a placeholder, until a snapshot
--- seated by the new era's rules rotates in, so the other values do not matter.
-instance TranslateProto (Praos c) (Praos2 c) where
-  translateLedgerView _ lv =
+-- being left could have carried one. The Leios parameters come from the
+-- Dijkstra genesis. The committee is empty: none is seated until a stake
+-- snapshot rotation within the new era, beyond any forecast from the old one.
+instance
+  TranslationContext era ~ DijkstraGenesis =>
+  TranslateProto (Praos c) (Praos2 c) era
+  where
+  translateLedgerView _prx DijkstraGenesis{dgUpgradePParams = upgrade} lv =
     Views.PraosLedgerView
       { Views.plvPoolDistr = Views.plvPoolDistr lv
       , Views.plvMaxHeaderSize = Views.plvMaxHeaderSize lv
       , Views.plvMaxBodySize = Views.plvMaxBodySize lv
       , Views.plvProtocolVersion = Views.plvProtocolVersion lv
       , Views.plvCommittee = Praos2HasLeios emptyLeiosCommittee
-      , Views.plvQuorumStakeThreshold = Praos2HasLeios maxBound
-      , Views.plvAnnouncementPeriodLength = Praos2HasLeios (Milliseconds32 0)
-      , Views.plvVotePeriodLength = Praos2HasLeios (Milliseconds32 0)
-      , Views.plvDiffusionPeriodLength = Praos2HasLeios (Milliseconds32 1000000000)
-      , Views.plvMaxEbBodySize = Praos2HasLeios 0
-      , Views.plvMaxEbTxsSize = Praos2HasLeios 0
+      , Views.plvQuorumStakeThreshold = Praos2HasLeios (udppLeiosQuorumStakeThreshold upgrade)
+      , Views.plvAnnouncementPeriodLength = Praos2HasLeios (udppLeiosAnnouncementPeriodLength upgrade)
+      , Views.plvVotePeriodLength = Praos2HasLeios (udppLeiosVotePeriodLength upgrade)
+      , Views.plvDiffusionPeriodLength = Praos2HasLeios (udppLeiosDiffusionPeriodLength upgrade)
+      , Views.plvMaxEbBodySize = Praos2HasLeios (udppMaxEndorserBlockReferencesSize upgrade)
+      , Views.plvMaxEbTxsSize = Praos2HasLeios (udppMaxEndorserBlockTxsSize upgrade)
       }
 
   translateChainDepState _ st =
@@ -199,14 +205,18 @@ instance TranslateProto (Praos c) (Praos2 c) where
       , praosStateLeiosAnnouncement = Praos2HasLeios SNothing
       }
 
-instance forall c. TranslateProto (TPraos c) (Praos2 c) where
-  translateLedgerView _ =
-    translateLedgerView (Proxy @(Praos c, Praos2 c))
-      . translateLedgerView (Proxy @(TPraos c, Praos c))
+instance
+  forall c era.
+  TranslationContext era ~ DijkstraGenesis =>
+  TranslateProto (TPraos c) (Praos2 c) era
+  where
+  translateLedgerView _prx ctx =
+    translateLedgerView (Proxy @(Praos c, Praos2 c, era)) ctx
+      . translateLedgerView (Proxy @(TPraos c, Praos c, era)) ctx
 
   translateChainDepState _ =
-    translateChainDepState (Proxy @(Praos c, Praos2 c))
-      . translateChainDepState (Proxy @(TPraos c, Praos c))
+    translateChainDepState (Proxy @(Praos c, Praos2 c, era))
+      . translateChainDepState (Proxy @(TPraos c, Praos c, era))
 
 {-------------------------------------------------------------------------------
   PraosProtocolSupportsNode

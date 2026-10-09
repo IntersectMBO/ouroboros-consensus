@@ -284,7 +284,7 @@ instance SL.PraosCrypto c => HasPartialConsensusConfig (TPraos c) where
 
 translateChainDepStateAcrossShelley ::
   forall eraFrom eraTo protoFrom protoTo.
-  TranslateProto protoFrom protoTo =>
+  TranslateProto protoFrom protoTo eraTo =>
   RequiringBoth
     WrapConsensusConfig
     (Translate WrapChainDepState)
@@ -296,11 +296,11 @@ translateChainDepStateAcrossShelley =
       -- Same protocol, same 'ChainDepState'. Note that we don't have to apply
       -- any changes related to an epoch transition, this is already done when
       -- ticking the state.
-      WrapChainDepState $ translateChainDepState (Proxy @(protoFrom, protoTo)) chainDepState
+      WrapChainDepState $ translateChainDepState (Proxy @(protoFrom, protoTo, eraTo)) chainDepState
 
 crossEraForecastAcrossShelley ::
   forall eraFrom eraTo protoFrom protoTo.
-  ( TranslateProto protoFrom protoTo
+  ( TranslateProto protoFrom protoTo eraTo
   , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
   ) =>
   RequiringBoth
@@ -313,7 +313,7 @@ crossEraForecastAcrossShelley = coerce forecastAcrossShelley
 -- | Forecast from a Shelley-based era to the next Shelley-based era.
 forecastAcrossShelley ::
   forall protoFrom protoTo eraFrom eraTo mk.
-  ( TranslateProto protoFrom protoTo
+  ( TranslateProto protoFrom protoTo eraTo
   , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
   ) =>
   ShelleyLedgerConfig eraFrom ->
@@ -342,7 +342,10 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
     WrapLedgerView
       . either
         (\e -> error ("futureLedgerView failed: " <> show e))
-        (translateLedgerView (Proxy @(protoFrom, protoTo)))
+        ( translateLedgerView
+            (Proxy @(protoFrom, protoTo, eraTo))
+            (shelleyLedgerTranslationContext cfgTo)
+        )
       . runExcept
       . Forecast.forecastFor (ledgerViewForecastAt cfgFrom ledgerStateFrom)
 

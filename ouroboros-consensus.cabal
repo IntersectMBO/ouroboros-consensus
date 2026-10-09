@@ -1947,6 +1947,7 @@ test-suite cardano-test
     fs-sim,
     measures,
     microlens,
+    mtl,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
     ouroboros-network:{api, protocols, protocols-tests-lib},
     pretty-simple,
