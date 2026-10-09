@@ -74,6 +74,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextNotFoundForRound
   , PerasEpochContextResolver (..)
@@ -81,6 +82,7 @@ import Ouroboros.Consensus.Peras.Context
   , StateSupportsPerasEpochContext (..)
   , initPerasEpochContextResolver
   , resolveRoundNo
+  , tickPerasEpochContextResolver
   )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
@@ -247,12 +249,10 @@ instance
             tickedPerasState =
               PerasState
                 { perasEpochContextResolver =
-                    -- HOTFIX: disabled for now
-                    -- tickPerasEpochContextResolver
-                    --   lcfg
-                    --   (perasEpochContextResolver perasState, ledgerState, headerState)
-                    --   (slot, forgetLedgerTables tickedLedgerState, tickedHeaderState)
-                    perasEpochContextResolver perasState
+                    tickPerasEpochContextResolver
+                      lcfg
+                      (perasEpochContextResolver perasState, ledgerState, headerState)
+                      (slot, forgetLedgerTables tickedLedgerState, tickedHeaderState)
                 , latestPerasCertOnChainRound =
                     latestPerasCertOnChainRound perasState
                 }

@@ -15,6 +15,7 @@ import Ouroboros.Consensus.Block.SupportsPeras (PerasCert, ValidatedPerasCert)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionRulesDecision)
 import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
+import Ouroboros.Consensus.Storage.ChainDB.API (PerasCertInclusionViewError)
 
 -- | Peras certificate inclusion events.
 data TracePerasCertInclusionEvent blk
@@ -30,6 +31,23 @@ data TracePerasCertInclusionEvent blk
       PerasRoundNo
       -- | The reason to include or not include a certificate
       (PerasCertInclusionRulesDecision (WithArrivalTime (ValidatedPerasCert blk)))
+  | -- | Peras is not enabled for the current round
+    TracePerasCertInclusionNotEnabledForRound
+      -- | The current slot number
+      SlotNo
+  | -- | We triggered a 'PastHorizonException' while trying to find the round
+    -- number corresponding to the current slot number
+    TracePerasCertInclusionPastHorizonException
+      -- | The current slot number
+      SlotNo
+      -- | Serialised 'PastHorizonException'
+      String
+  | -- There was an error during the evaluation of the certificate inclusion rules
+    TracePerasCertInclusionError
+      -- | The current slot number
+      SlotNo
+      -- | The error encountered during the evaluation of the inclusion rules
+      PerasCertInclusionViewError
 
 deriving instance
   Show (PerasCert blk) =>
