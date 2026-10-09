@@ -251,10 +251,12 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- Cause this execution of the node (ie since the latest restart) to
     -- re-fetch CertRBs that aren't on the initial selection. See
     -- docs/website/contents/explanations/valid_claims_startup.md for why.
+    -- The anchor too: it is the immutable tip, which the VolatileDB still
+    -- holds and which the copy to the ImmutableDB looks up as a predecessor.
     VolatileDB.forgetLeiosCertsAtStartUpExcept volatileDB $
       Set.fromList $
-        map headerHash $
-          AF.toOldestFirst chain
+        [h | BlockHash h <- [AF.anchorToHash (AF.anchor chain)]]
+          <> map headerHash (AF.toOldestFirst chain)
 
     varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
     varTentativeState <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
