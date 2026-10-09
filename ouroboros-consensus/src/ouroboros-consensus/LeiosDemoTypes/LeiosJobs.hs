@@ -34,6 +34,7 @@ import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import Data.IntSet.NonEmpty (NEIntSet)
 import qualified Data.IntSet.NonEmpty as NEIntSet
+import qualified Data.Vector.Strict as V
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -85,7 +86,17 @@ data LeiosJob
   = -- TODO the offset set is immutable and only ever fully traversed, so a packed
     -- bitfield (a strict ByteString or unboxed Word64 vector) would be more
     -- compact than the 'IntSet' Patricia tree.
-    MkLeiosJob !IntSet !Word32 !JobRootHash
+    MkLeiosJob
+      -- | the offsets of the txs it covers
+      !IntSet
+      -- | their sizes, summed
+      !Word32
+      -- | the closure bytes it spans, as the range @[start, end)@: the sizes of
+      -- every tx before its first offset, held or not, summed, and likewise
+      -- through its last. A peer offering those bytes can serve it.
+      !Word32
+      !Word32
+      !JobRootHash
   deriving (Eq, Show)
 
 -- | Identifies a 'LeiosJob' within its 'LeiosJobPool' (0-based, stable for the
@@ -116,16 +127,27 @@ data LeiosJobPool = MkLeiosJobPool
   deriving (Eq, Show)
 
 -- | Partition the missing txs into jobs, greedily in offset order: a job grows
--- until adding the next tx would exceed @maxJobBytes@ or @maxJobTxCount@, but
--- always holds at least one tx (so an oversized tx would form a solo job, in
--- the unintended case of max tx size exceeding max job size).
+-- until adding the next tx would exceed @maxJobBytes@ or @maxJobTxCount@, or
+-- the next tx starts past a seam, but always holds at least one tx (so an
+-- oversized tx would form a solo job, in the unintended case of max tx size
+-- exceeding max job size).
 --
 -- Each miss is its offset within the EB body mapped to its tx hash and its
--- on-the-wire byte size. Each job's 'JobRootHash' commitment is computed here via
+-- on-the-wire byte size. The seams are the multiples of @seamBytes@ in the
+-- closure, where honest peers' incremental offers begin, so a job is servable
+-- once the offer covering its seam interval arrives; only its last tx may cross
+-- into the next one. Each job's 'JobRootHash' commitment is computed here via
 -- 'jobRootHashOfTxHashes' over its covered tx hashes.
 mkLeiosJobPool ::
-  Word32 -> Int -> IntMap (TxHash, Word32) -> LeiosJobPool
-mkLeiosJobPool maxJobBytes maxJobTxCount misses =
+  Word32 ->
+  Int ->
+  -- | the distance between offers' seams for honest nodes on the same version
+  Word32 ->
+  -- | the declared size of every tx of the body, in offset order
+  V.Vector Word32 ->
+  IntMap (TxHash, Word32) ->
+  LeiosJobPool
+mkLeiosJobPool maxJobBytes maxJobTxCount seamBytes sizes misses =
   MkLeiosJobPool
     { jobs =
         IntMap.fromList
@@ -137,21 +159,42 @@ mkLeiosJobPool maxJobBytes maxJobTxCount misses =
           NEIntSet.nonEmptySet (IntSet.fromList (map fst ijbs))
     }
  where
+  -- the closure byte each offset starts at, and one past the last
+  starts = V.scanl (+) 0 sizes
   ijbs = zip [0 ..] $ case IntMap.toAscList misses of
     [] -> []
     ((off0, (h0, sz0)) : rest) -> grow (IntSet.singleton off0) sz0 1 [h0] rest
 
-  flush !cur !bytes hashesRev = MkLeiosJob cur bytes (jobRootHashOfTxHashes (reverse hashesRev))
+  flush !cur !bytes hashesRev =
+    MkLeiosJob
+      cur
+      bytes
+      (starts V.! IntSet.findMin cur)
+      (starts V.! (IntSet.findMax cur + 1))
+      (jobRootHashOfTxHashes (reverse hashesRev))
+
+  -- which interval between seams a tx starts in
+  seamIntervalOf off = starts V.! off `div` seamBytes
 
   grow !cur !bytes !_count hashesRev [] = [flush cur bytes hashesRev]
   grow !cur !bytes !count hashesRev ((off, (h, sz)) : rest)
-    | count < maxJobTxCount && bytes + sz <= maxJobBytes =
+    | count < maxJobTxCount
+    , bytes + sz <= maxJobBytes
+    , seamIntervalOf off == seamIntervalOf (IntSet.findMin cur) =
         grow (IntSet.insert off cur) (bytes + sz) (count + 1) (h : hashesRev) rest
     | otherwise = flush cur bytes hashesRev : grow (IntSet.singleton off) sz 1 [h] rest
 
 -- | No unfinished jobs remain -- the EB's whole tx-closure has been fetched.
 nullLeiosJobPool :: LeiosJobPool -> Bool
 nullLeiosJobPool = IntMap.null . jobs
+
+-- | The unfinished jobs whose closure byte range the predicate rejects: those
+-- a peer cannot serve, given what it has offered.
+jobsOutside :: (Word32 -> Word32 -> Bool) -> LeiosJobPool -> IntSet
+jobsOutside offered =
+  IntMap.keysSet
+    . IntMap.filter (\(MkLeiosJobState (MkLeiosJob _ _ start end _) _) -> not (offered start end))
+    . jobs
 
 -- | The bitfield of an unfinished job, if it is still in the pool.
 lookupJob :: LeiosJobId -> LeiosJobPool -> Maybe LeiosJob

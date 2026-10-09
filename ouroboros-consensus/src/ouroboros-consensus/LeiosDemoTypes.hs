@@ -408,29 +408,63 @@ prettyBitmap (idx, bitmap) =
 -- patterns of access to the "Ouroboros.Consensus.NodeKernel"'s shared state.
 --
 
--- | Whether a peer has offered an endorser block's tx-closure.
-data WhetherTxsClosureOffered = TxsClosureOffered | TxsClosureNotOffered
+-- | The closure byte ranges a peer has offered for a point: disjoint, keyed by
+-- start, adjacent ones merged. Every range is left-closed and right-open,
+-- @[start, end)@. No ranges is the body alone (a bare 'MsgLeiosBlockOffer'); a
+-- range ending at 'maxBound' runs to the end of the closure, so
+-- @[0, maxBound)@ is all of it (a CertRB certifies the whole EB).
+newtype ClosureOffer = MkClosureOffer (Map BytesSize BytesSize)
   deriving (Eq, Show)
 
--- | Offered if either says so.
-instance Semigroup WhetherTxsClosureOffered where
-  TxsClosureOffered <> _ = TxsClosureOffered
-  _ <> y = y
+-- | Add a range, merging it with every held range it overlaps or touches.
+addClosureRange :: BytesSize -> BytesSize -> ClosureOffer -> ClosureOffer
+addClosureRange start end (MkClosureOffer ranges) =
+  MkClosureOffer $
+    Map.insert start' end' $
+      Map.filterWithKey (\s _ -> s < start' || s > end') ranges
+ where
+  -- the held ranges are disjoint and sorted, so the one starting last at or
+  -- before each end of the new range is the only one that can reach it
+  start' = case Map.lookupLE start ranges of
+    Just (s, e) | e >= start -> s
+    _ -> start
+  end' = case Map.lookupLE end ranges of
+    Just (_, e) | e > end -> e
+    _ -> end
 
-instance Monoid WhetherTxsClosureOffered where
-  mempty = TxsClosureNotOffered
+-- | The ranges of both.
+unionClosureOffer :: ClosureOffer -> ClosureOffer -> ClosureOffer
+unionClosureOffer (MkClosureOffer ranges) offer = Map.foldrWithKey addClosureRange offer ranges
+
+-- | Whether the peer has offered the whole range @[start, end)@.
+closureRangeOffered :: BytesSize -> BytesSize -> ClosureOffer -> Bool
+closureRangeOffered start end (MkClosureOffer ranges) =
+  case Map.lookupLE start ranges of
+    Just (_, e) -> end <= e
+    Nothing -> False
+
+instance Semigroup ClosureOffer where
+  (<>) = unionClosureOffer
+
+instance Monoid ClosureOffer where
+  mempty = MkClosureOffer Map.empty
+
+-- | All of the closure, as a CertRB offers it.
+wholeClosureOffer :: ClosureOffer
+wholeClosureOffer = MkClosureOffer (Map.singleton 0 maxBound)
 
 -- | What one peer has offered for one endorser block point.
 --
 -- The two LeiosNotify offers are independent messages: either can arrive
 -- first, or alone. A CertRB roll-forward makes both at once.
 --
--- The body offer carries a size and the closure offer does not, and that
--- asymmetry is not an oversight. We hold nothing to size a body request by, so
--- the peer's claim is both what the request asks for and what it spends
--- against that peer's byte budget. Closure jobs carry their own byte counts,
--- taken from the body we already hold by the time 'assignClosure' runs, so
--- there is nothing there for a peer to claim.
+-- The body offer carries a size and the closure offer a byte range of the
+-- closure, and neither is a size to request by in the same way. We hold
+-- nothing to size a body request by, so the peer's claim is both what the
+-- request asks for and what it spends against that peer's byte budget. Closure
+-- jobs carry their own byte counts and closure positions, taken from the body
+-- we already hold by the time 'assignClosure' runs, so the range only selects
+-- which of them this peer can serve.
 data PeerOffer = MkPeerOffer
   { poMaxEbTxsSize :: !(StrictMaybe BytesSize)
   -- ^ The maximum closure size allowed for this offered EB. It's 'Nothing' if
@@ -454,7 +488,8 @@ data PeerOffer = MkPeerOffer
   -- TODO disconnect a peer that ever offers one 'EbHash' at two sizes,
   -- whichever messages the two arrived on. That is proof it is lying, and
   -- today we keep both and carry on.
-  , poClosure :: !WhetherTxsClosureOffered
+  , poClosure :: !ClosureOffer
+  -- ^ The closure byte ranges this peer has offered, if any.
   }
   deriving (Eq, Show)
 
@@ -825,7 +860,7 @@ summarizeDecisions decs =
         sum
           [ fromIntegral b
           | LeiosBlockTxsRequest (MkLeiosBlockTxsRequest _ jobs) <- reqs
-          , Jobs.MkLeiosJob _ b _ <- F.toList jobs
+          , Jobs.MkLeiosJob _ b _ _ _ <- F.toList jobs
           ]
     }
  where
@@ -1168,8 +1203,8 @@ prettyOfferings m =
       SNothing -> ""
       SJust{} -> "b"
     txs = case closure of
-      TxsClosureNotOffered -> ""
-      TxsClosureOffered -> "c"
+      MkClosureOffer ranges ->
+        concat ["[" ++ show s ++ "," ++ show e ++ ")" | (s, e) <- Map.toList ranges]
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
@@ -1199,6 +1234,12 @@ data LeiosFetchStaticEnv = MkLeiosFetchStaticEnv
   -- ^ At most this many bytes of txs per job
   , maxJobTxCount :: Int
   -- ^ At most this many txs per job
+  , maxEbClosureBytesSize :: BytesSize
+  -- ^ At most this many bytes of txs in an EB's closure; a closure offer must
+  -- start below it, which bounds how many a peer can send per point.
+  --
+  -- TODO a Leios protocol parameter that varies with the slot; static stub for
+  -- now.
   , fetchPriorityWindowSlots :: Word64
   -- ^ @L = 3*L_hdr + L_vote + L_diff@ (in slots): the window, ending at the
   -- current slot, of EBs still worth voting on. Fetch prioritisation inverts to
@@ -1225,6 +1266,7 @@ demoLeiosFetchStaticEnv =
     , maxRequestBytesSize = maxLeiosTxsRequestBytesSize
     , maxJobBytesSize = 64 * thousandBase2
     , maxJobTxCount = 20000 -- TODO do we want this to be low enough to matter?
+    , maxEbClosureBytesSize = 12 * million
     , fetchPriorityWindowSlots = 10 -- TODO read dynamically from ledger state
     , maxLeiosNotifyIngressQueue = 1 * millionBase2
     , maxLeiosFetchIngressQueue = 5 * 12 * millionBase2
@@ -1634,11 +1676,13 @@ messageLeiosNotifyToObject announcedEb = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebBytesSize" .= ebBytesSize
       ]
-  MsgLeiosBlockTxsOffer (MkLeiosPoint ebSlot ebHash) ->
+  MsgLeiosBlockTxsOffer (MkLeiosPoint ebSlot ebHash) start end ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxsOffer"
       , "ebSlot" .= ebSlot
       , "ebHash" .= prettyEbHash ebHash
+      , "closureOfferStart" .= start
+      , "closureOfferEnd" .= end
       ]
   MsgLeiosVotes votes ->
     mconcat

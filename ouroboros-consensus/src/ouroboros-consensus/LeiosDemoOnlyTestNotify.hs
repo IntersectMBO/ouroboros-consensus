@@ -198,6 +198,10 @@ instance Protocol (LeiosNotify point announcement vote) where
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockTxsOffer ::
       !point ->
+      -- the closure byte range [start, end) on offer; an end of maxBound runs
+      -- to the end of the closure
+      !Word32 ->
+      !Word32 ->
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosVotes ::
       -- TODO: non-empty
@@ -322,10 +326,12 @@ encodeLeiosNotify encodeP encodeA encodeV = encode
         <> CBOR.encodeWord 5
         <> encodeP p
         <> CBOR.encodeWord32 sz
-    MsgLeiosBlockTxsOffer p ->
-      CBOR.encodeListLen 2
+    MsgLeiosBlockTxsOffer p start end ->
+      CBOR.encodeListLen 4
         <> CBOR.encodeWord 6
         <> encodeP p
+        <> CBOR.encodeWord32 start
+        <> CBOR.encodeWord32 end
     MsgLeiosVotes vs ->
       CBOR.encodeListLen 2
         <> CBOR.encodeWord 7
@@ -376,9 +382,11 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
         p <- decodeP
         sz <- CBOR.decodeWord32
         return $ SomeMessage $ MsgLeiosBlockOffer p sz
-      (SingBusy, 2, 6) -> do
+      (SingBusy, 4, 6) -> do
         p <- decodeP
-        return $ SomeMessage $ MsgLeiosBlockTxsOffer p
+        start <- CBOR.decodeWord32
+        end <- CBOR.decodeWord32
+        return $ SomeMessage $ MsgLeiosBlockTxsOffer p start end
       (SingBusy, 2, 7) -> do
         vs <- decodeVotes
         return $ SomeMessage $ MsgLeiosVotes vs

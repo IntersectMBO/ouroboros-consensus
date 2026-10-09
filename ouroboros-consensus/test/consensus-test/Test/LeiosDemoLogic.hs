@@ -43,7 +43,9 @@ import LeiosDemoDb
   )
 import LeiosDemoException (LeiosDbException)
 import LeiosDemoLogic
-  ( fetchPriorityTiers
+  ( ClosureOfferRejection (..)
+  , admitClosureOffer
+  , fetchPriorityTiers
   , leiosFetchLogicIteration
   , msgLeiosBlockRequest
   , newLeiosFetchContext
@@ -51,6 +53,7 @@ import LeiosDemoLogic
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( BytesSize
+  , ClosureOffer (..)
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosEb (..)
@@ -61,7 +64,6 @@ import LeiosDemoTypes
   , LeiosTx (..)
   , PeerId (..)
   , PeerOffer (MkPeerOffer)
-  , WhetherTxsClosureOffered (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , encodeLeiosEbSize
@@ -71,6 +73,7 @@ import LeiosDemoTypes
   , markBodyImminent
   , maxTxsPerEb
   , recordMaxAnnouncementSlot
+  , wholeClosureOffer
   )
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import System.Random (mkStdGen)
@@ -112,7 +115,46 @@ tests =
         , testCase "refuses a stored body of more than maxTxsPerEb entries" $
             test_refuseBodyOverLimit
         ]
+    , testGroup
+        "closure offer admission"
+        [ testCase "ranges are non-empty, long enough, within the closure and disjoint" $
+            test_closureOfferAdmission
+        ]
     ]
+
+-- | 'admitClosureOffer': a range must be non-empty, start within the largest
+-- closure, span the minimum unless it runs to the end, and not overlap what the
+-- peer already offered; adjacent ranges merge.
+test_closureOfferAdmission :: IO ()
+test_closureOfferAdmission = do
+  let env = demoLeiosFetchStaticEnv{maxEbClosureBytesSize = 1000}
+      minLength = 100
+      step start end = admitClosureOffer env minLength start end
+      admitted r = case r of
+        Right offered -> pure offered
+        Left why -> assertFailure ("offer rejected: " <> show why)
+      rejected why r = case r of
+        Right _ -> assertFailure "offer admitted"
+        Left why' -> why' @?= why
+  -- an empty or inverted range is invalid, and so is one shorter than the minimum
+  rejected ClosureRangeInvalid (step 100 100 mempty)
+  rejected ClosureRangeInvalid (step 200 100 mempty)
+  rejected ClosureRangeInvalid (step 0 99 mempty)
+  b1 <- admitted (step 0 100 mempty)
+  -- overlapping an earlier range is invalid, a repeat included
+  rejected ClosureRangeOverlaps (step 50 200 b1)
+  rejected ClosureRangeOverlaps (step 0 100 b1)
+  -- adjacent ranges merge
+  b2 <- admitted (step 100 250 b1)
+  b2 @?= MkClosureOffer (Map.singleton 0 250)
+  -- a range to the end of the closure is exempt from the minimum ...
+  b3 <- admitted (step 300 maxBound b2)
+  -- ... and nothing may overlap it either
+  rejected ClosureRangeOverlaps (step 500 600 b3)
+  -- a range starting at or past the most a closure can hold is invalid, even to the end
+  rejected ClosureRangeInvalid (step 1000 maxBound mempty)
+  _ <- admitted (step 999 maxBound mempty)
+  pure ()
 
 -- | With current slot S=100 and window L=10, EBs at slot >= 90 (the voting
 -- window) are prioritised oldest-first, EBs beyond S trail that first tier, and
@@ -208,7 +250,7 @@ test_forgedEbOfferIgnored =
 -- | A test fixture: static env, peer offerings, outstanding work.
 data Scenario pid = Scenario
   { scEnv :: !LeiosFetchStaticEnv
-  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint WhetherTxsClosureOffered))
+  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint ClosureOffer))
   , scOfferedSizes :: !(Map.Map LeiosPoint BytesSize)
   -- ^ The size each point is offered at.
   --
@@ -290,27 +332,24 @@ withRequestedBytesPerPeer pid n =
 -- | Peer @p@ offers the body (only) of these points.
 offersBody :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBody pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotOffered) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, mempty) | p <- points])
 
 -- | Peer @p@ offers both the body and the tx-closure of these points.
 offersBodyAndClosure :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBodyAndClosure pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureOffered) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, wholeClosureOffer) | p <- points])
 
 insertOffering ::
   Ord pid =>
   PeerId pid ->
-  Map.Map LeiosPoint WhetherTxsClosureOffered ->
+  Map.Map LeiosPoint ClosureOffer ->
   Scenario pid ->
   Scenario pid
 insertOffering pid offers sc =
   sc
     { scOfferings =
-        Map.insertWith (Map.unionWith mergeClosure) pid offers (scOfferings sc)
+        Map.insertWith (Map.unionWith (<>)) pid offers (scOfferings sc)
     }
- where
-  mergeClosure TxsClosureOffered _ = TxsClosureOffered
-  mergeClosure _ y = y
 
 -- | Internal: lift a function on 'LeiosOutstanding' to one on 'Scenario'.
 onOutstanding ::
@@ -344,7 +383,7 @@ runIteration sc =
 -- 'withMissingBody' named is offered with no size, which is the closure-only
 -- case.
 resolveOfferSize ::
-  Map.Map LeiosPoint BytesSize -> LeiosPoint -> WhetherTxsClosureOffered -> PeerOffer
+  Map.Map LeiosPoint BytesSize -> LeiosPoint -> ClosureOffer -> PeerOffer
 resolveOfferSize sizes p closure =
   MkPeerOffer SNothing (maybe SNothing SJust (Map.lookup p sizes)) closure
 

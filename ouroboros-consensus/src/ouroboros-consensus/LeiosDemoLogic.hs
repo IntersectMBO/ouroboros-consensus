@@ -84,6 +84,7 @@ import LeiosDemoTypes
   , AnnouncementFields (..)
   , AnnouncementSource (..)
   , BytesSize
+  , ClosureOffer (..)
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -100,8 +101,9 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   , TxHash (..)
-  , WhetherTxsClosureOffered (..)
+  , addClosureRange
   , announcementLeiosPoint
+  , closureRangeOffered
   , encodeLeiosEbSize
   , fetchArrivalEvicted
   , fetchArrivalExtra
@@ -144,6 +146,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   , ledgerViewForecastAt
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.Node.NetworkProtocolVersion (NodeToNodeVersion)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState, LedgerView)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
@@ -521,31 +524,28 @@ assignPeer env forecastMaxEbTxsSize mbCurrentSlot isBig peerId offers acc =
           -- though it might not be inserted yet): never request it, and the
           -- peer's offer is dead.
           pruneThisOffer
-        (Leios.NoBody, TxsClosureNotOffered) ->
-          -- Body-only offer: request the body. If that's all that was
-          -- offered, prune it.
+        (Leios.NoBody, closure) ->
+          -- Request the body. A body-only offer is then spent, so prune it; a
+          -- closure offer stays, for us to request the closure from this peer
+          -- once we hold the body.
           let (acc2, dec2) = assignBody forecastMaxEbTxsSize peerId ebHash slot offerKind (acc1, dec1)
-           in (acc2, dec2, Set.insert point drops)
-        (Leios.NoBody, TxsClosureOffered) ->
-          -- Request the body now, but keep the offer: we will request the
-          -- closure from this peer once we hold the body.
-          let (acc2, dec2) = assignBody forecastMaxEbTxsSize peerId ebHash slot offerKind (acc1, dec1)
-           in (acc2, dec2, drops)
-        (Leios.BodyAcquired _jobPool, TxsClosureNotOffered) ->
-          -- We hold the body and the peer never offered the closure, so it can
-          -- no longer help.
-          pruneThisOffer
-        (Leios.BodyAcquired jobPool, TxsClosureOffered)
+           in (acc2, dec2, if closure == mempty then Set.insert point drops else drops)
+        (Leios.BodyAcquired _jobPool, closure)
+          | closure == mempty ->
+              -- We hold the body and the peer never offered any of the
+              -- closure, so it can no longer help.
+              pruneThisOffer
+        (Leios.BodyAcquired jobPool, closure)
           | Jobs.nullLeiosJobPool jobPool ->
               -- Nothing left to fetch --- the whole datum is in hand, or we
               -- rejected the endorser block on arrival --- so the closure offer
               -- is useless now too.
               pruneThisOffer
           | otherwise ->
-              -- Still need the txs, and the peer offered the closure. If we just
-              -- now assign all remaining jobs to the peer, prune its offer.
+              -- Still need the txs. Assign this peer every remaining job its
+              -- offer covers; once nothing it covers is left, prune the offer.
               let ((acc2, dec2), MkWhetherPeerEbExhausted exhausted) =
-                    assignClosure env isBig peerId ebHash (acc1, dec1)
+                    assignClosure env isBig peerId ebHash closure (acc1, dec1)
                in (acc2, dec2, if not exhausted then drops else Set.insert point drops)
    where
     ebHash = point.pointEbHash
@@ -619,9 +619,11 @@ assignClosure ::
   IsBigLedgerPeer ->
   PeerId pid ->
   EbHash ->
+  -- | only the jobs whose closure bytes the peer has offered are assigned
+  ClosureOffer ->
   (LeiosOutstanding pid, Seq LeiosFetchRequest) ->
   ((LeiosOutstanding pid, Seq LeiosFetchRequest), WhetherPeerEbExhausted)
-assignClosure env isBig peerId ebHash st@(acc, dec) =
+assignClosure env isBig peerId ebHash offer st@(acc, dec) =
   case Map.lookup ebHash (Leios.ebState acc) of
     Nothing -> (st, MkWhetherPeerEbExhausted False)
     Just (Leios.MkEbState _slot _onset Leios.NoBody) -> (st, MkWhetherPeerEbExhausted False)
@@ -641,8 +643,15 @@ assignClosure env isBig peerId ebHash st@(acc, dec) =
         -- 'pickJobs' draws from the decision loop's own PRNG ('leiosFetchPrng');
         -- its advanced state is written back below (unchanged when nothing is
         -- picked, so the 'Nothing' branch's 'st' is correct as-is).
+        -- The jobs the offer does not cover are excluded like in-flight ones, so
+        -- the peer is exhausted once nothing it can serve remains.
+        uncovered = Jobs.jobsOutside (\start end -> closureRangeOffered start end offer) jobPool
         (picked, jobPool', prng', exhausted) =
-          pickJobs (Leios.leiosFetchPrng acc) inflightJobs jobPool (peerBudget env isBig acc peerId)
+          pickJobs
+            (Leios.leiosFetchPrng acc)
+            (IntSet.union inflightJobs uncovered)
+            jobPool
+            (peerBudget env isBig acc peerId)
      in flip (,) exhausted $ case nonEmpty picked of
           Nothing -> st
           Just nePicked ->
@@ -663,7 +672,7 @@ assignClosure env isBig peerId ebHash st@(acc, dec) =
                         Map.insertWith
                           (+)
                           peerId
-                          (sum $ fmap (\(_, Jobs.MkLeiosJob _ bytes _) -> bytes) nePicked)
+                          (sum $ fmap (\(_, Jobs.MkLeiosJob _ bytes _ _ _) -> bytes) nePicked)
                           (Leios.requestedBytesSizePerPeer acc)
                     , Leios.leiosFetchPrng = prng'
                     }
@@ -689,13 +698,14 @@ pickJobs prng0 inflightJobs0 jobPool0 budget0 =
     | budget <= 0 = (reverse acc, jobPool, prng, MkWhetherPeerEbExhausted False)
     | otherwise = case Jobs.pickLeastRequestedJobExcept prng inflightJobs jobPool of
         Nothing -> (reverse acc, jobPool, prng, MkWhetherPeerEbExhausted True)
-        Just (jid@(Jobs.MkLeiosJobId i), job@(Jobs.MkLeiosJob _offsets bytes _root), jobPool', prng') ->
-          go
-            prng'
-            (IntSet.insert i inflightJobs)
-            jobPool'
-            (budget - fromIntegral bytes)
-            ((jid, job) : acc)
+        Just
+          (jid@(Jobs.MkLeiosJobId i), job@(Jobs.MkLeiosJob _offsets bytes _start _end _root), jobPool', prng') ->
+            go
+              prng'
+              (IntSet.insert i inflightJobs)
+              jobPool'
+              (budget - fromIntegral bytes)
+              ((jid, job) : acc)
 
 -- | Partition the picked jobs into requests, each within 'maxRequestBytesSize'
 -- (a lone job above the cap simply forms its own request). Each request carries
@@ -711,7 +721,7 @@ batchTxsRequests env point (j0 :| rest0) =
   go j0 [] (jobBytes j0) rest0
  where
   cap = fromIntegral (Leios.maxRequestBytesSize env) :: Int
-  jobBytes (_jid, Jobs.MkLeiosJob _offs bytes _root) = fromIntegral bytes :: Int
+  jobBytes (_jid, Jobs.MkLeiosJob _offs bytes _start _end _root) = fromIntegral bytes :: Int
   -- 'accRev' are the batch's jobs after its seed; a batch is always non-empty.
   -- 'NEIntMap.fromList' keys by the raw job id; the picks are distinct ids, so no
   -- merge.
@@ -819,7 +829,7 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCache writer sys
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p jobs) ->
       -- The wire request is just the point + bitmap; the bitmap is the union of
       -- the covered jobs' offsets (the jobs and their commitments stay local).
-      let bitmaps = offsetsToBitmap (foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs)
+      let bitmaps = offsetsToBitmap (foldMap (\(Jobs.MkLeiosJob offs _ _ _ _) -> offs) jobs)
        in LF.MkSomeLeiosFetchJob
             (LF.MsgLeiosBlockTxsRequest p bitmaps)
             ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) ->
@@ -1126,6 +1136,8 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                     -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
                     (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
                     (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
+                    leiosClosureOfferSeamBytes
+                    (V.map snd (leiosEbTxs eb))
                     (IntMap.withoutKeys missedBoth (IntSet.fromList filledOffs))
             MVar.modifyMVar_ outstandingVar $
               pure . Leios.acquireEbBody ebHash jobPool
@@ -1359,7 +1371,7 @@ checkJobSize ::
   Jobs.LeiosJobId ->
   Jobs.LeiosJob ->
   Either String ()
-checkJobSize aligned (Jobs.MkLeiosJobId jid) (Jobs.MkLeiosJob offs expectedBytes _root)
+checkJobSize aligned (Jobs.MkLeiosJobId jid) (Jobs.MkLeiosJob offs expectedBytes _start _end _root)
   | IntMap.size sub /= IntSet.size offs =
       Left $ "MsgLeiosBlockTxs job " ++ show jid ++ " count mismatch"
   | fromIntegral (sum [BS.length bs | (_tx, bs) <- IntMap.elems sub]) /= expectedBytes =
@@ -1379,7 +1391,7 @@ ingestJob ::
   Jobs.LeiosJobId ->
   Jobs.LeiosJob ->
   Either String [(Int, TxHash, BS.ByteString)]
-ingestJob aligned (Jobs.MkLeiosJobId jid) (Jobs.MkLeiosJob offs _expectedBytes expectedRoot)
+ingestJob aligned (Jobs.MkLeiosJobId jid) (Jobs.MkLeiosJob offs _expectedBytes _start _end expectedRoot)
   | Jobs.jobRootHashOfTxHashes [h | (_, h, _) <- hashed] /= expectedRoot =
       Left $ "MsgLeiosBlockTxs job " ++ show jid ++ " root-hash mismatch"
   | otherwise = Right hashed
@@ -1448,7 +1460,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
         -- The union of the covered jobs' offsets, ascending -- the order the peer
         -- decoded our bitmap into, so it aligns position-wise with the arriving
         -- txs. No hashing here: 'aligned' is just @offset -> (tx, tx bytes)@.
-        offsetsSet = foldMap (\(Jobs.MkLeiosJob offs _ _) -> offs) jobs
+        offsetsSet = foldMap (\(Jobs.MkLeiosJob offs _ _ _ _) -> offs) jobs
     when (V.length txs /= IntSet.size offsetsSet) $
       invalidReply $
         "MsgLeiosBlockTxs count mismatch: " ++ show (V.length txs, IntSet.size offsetsSet)
@@ -1485,7 +1497,7 @@ processLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache writer sy
         redundantExtra =
           fetchArrivalExtra $
             IntMap.foldr
-              (\(Jobs.MkLeiosJob _ bytes _) acc -> bytes + acc)
+              (\(Jobs.MkLeiosJob _ bytes _ _ _) acc -> bytes + acc)
               0
               (IntMap.difference (NEIntMap.toMap jobs) pendingJobs)
     toIngest <-
@@ -1600,19 +1612,19 @@ recordEbBodyOffer ::
   m ()
 recordEbBodyOffer readyVar peerVars (point, ebBytesSize) =
   recordOffer readyVar peerVars point $
-    Leios.MkPeerOffer SNothing (SJust ebBytesSize) TxsClosureNotOffered
+    Leios.MkPeerOffer SNothing (SJust ebBytesSize) mempty
 
--- | Record this peer's 'MsgLeiosBlockTxsOffer': it can serve this endorser
--- block's tx closure.
+-- | Record this peer's 'MsgLeiosBlockTxsOffer': it can serve the closure bytes
+-- @[start, end)@ of this endorser block.
 --
--- Independent of the body offer, and carrying no size: closure jobs are per
--- endorser block and only assigned once we hold the body, so a bare point
--- names its closure unambiguously.
+-- Independent of the body offer: closure jobs are per endorser block and only
+-- assigned once we hold the body, which is what places each job in the
+-- closure, so the range alone says which jobs this peer can serve.
 recordEbClosureOffer ::
-  IOLike m => MVar m () -> LeiosPeerVars m -> LeiosPoint -> m ()
-recordEbClosureOffer readyVar peerVars point =
+  IOLike m => MVar m () -> LeiosPeerVars m -> LeiosPoint -> BytesSize -> BytesSize -> m ()
+recordEbClosureOffer readyVar peerVars point start end =
   recordOffer readyVar peerVars point $
-    Leios.MkPeerOffer SNothing SNothing TxsClosureOffered
+    Leios.MkPeerOffer SNothing SNothing (addClosureRange start end mempty)
 
 -- | Record a CertRB roll-forward as an offer of both the body and the
 -- closure.
@@ -1636,7 +1648,7 @@ recordCertRbOffer ::
   m ()
 recordCertRbOffer readyVar peerVars (point, ebBytesSize) maxEbTxsSize =
   recordOffer readyVar peerVars point $
-    Leios.MkPeerOffer (SJust maxEbTxsSize) (SJust ebBytesSize) TxsClosureOffered
+    Leios.MkPeerOffer (SJust maxEbTxsSize) (SJust ebBytesSize) Leios.wholeClosureOffer
 
 recordOffer ::
   IOLike m => MVar m () -> LeiosPeerVars m -> LeiosPoint -> Leios.PeerOffer -> m ()
@@ -1646,6 +1658,51 @@ recordOffer readyVar peerVars point offer = do
   void $ MVar.tryPutMVar readyVar ()
 
 -----
+
+-- | Where honest peers' incremental closure offers begin: the multiples of
+-- this many bytes. It is also the stub minimum length of a closure offer.
+leiosClosureOfferSeamBytes :: BytesSize
+leiosClosureOfferSeamBytes = 200 * 1024
+
+-- | The least a closure offer's range may span, except for one that runs to
+-- the end of the closure; see 'checkLeiosClosureOffer'.
+--
+-- TODO negotiate it in the handshake; until then every version gets the stub.
+leiosClosureOfferMinLength :: NodeToNodeVersion -> BytesSize
+leiosClosureOfferMinLength _version = leiosClosureOfferSeamBytes
+
+-- | Why 'admitClosureOffer' refused a range.
+data ClosureOfferRejection
+  = -- | Empty, starting beyond any closure, or shorter than the minimum
+    -- without running to the end of the closure.
+    ClosureRangeInvalid
+  | -- | Overlapping a range the peer already offered for the point.
+    ClosureRangeOverlaps
+  deriving (Eq, Show)
+
+-- | Add the range @[start, end)@ to what a peer has offered of one endorser
+-- block's closure, if it may offer it; see 'checkLeiosClosureOffer'.
+admitClosureOffer ::
+  LeiosFetchStaticEnv ->
+  -- | The minimum length of a range, see 'leiosClosureOfferMinLength'.
+  BytesSize ->
+  BytesSize ->
+  BytesSize ->
+  ClosureOffer ->
+  Either ClosureOfferRejection ClosureOffer
+admitClosureOffer env minLength start end offered@(MkClosureOffer ranges)
+  | start >= end
+      || start >= Leios.maxEbClosureBytesSize env
+      || (end /= maxBound && end - start < minLength) =
+      Left ClosureRangeInvalid
+  | overlaps = Left ClosureRangeOverlaps
+  | otherwise = Right (addClosureRange start end offered)
+ where
+  -- the held ranges are disjoint, so only the one starting last before 'end'
+  -- can reach into the new range
+  overlaps = case Map.lookupLT end ranges of
+    Just (_, e) -> e > start
+    Nothing -> False
 
 -- | The offer-side handling of a 'MsgRollForward': when the header is a CertRB
 -- ('headerContainsLeiosCert'), record this peer as offering the EB it certifies
@@ -1877,9 +1934,12 @@ data ExnLeiosInvalidOffer
     ExnLeiosBlockOfferTooBig !LeiosPoint !BytesSize !BytesSize
   | -- | A closure offer for an endorser block this peer never announced.
     ExnLeiosClosureOfferWithoutAnnouncement !LeiosPoint
-  | -- | A second offer of the body, or of the closure, this peer has already
+  | -- | A second offer of the body, or of closure bytes, this peer has already
     -- offered. The two are independent, so each may be offered once.
     ExnLeiosRepeatedOffer !LeiosPoint !OfferedBodyOrClosure
+  | -- | A closure offer whose range @[start, end)@ is empty, starts beyond any
+    -- closure, or is shorter than the minimum without running to the end.
+    ExnLeiosInvalidClosureRange !LeiosPoint !BytesSize !BytesSize
   | -- | An offer below the slot we have pruned this peer's announcements to,
     -- which is therefore unanswerable on its own terms: the offered point,
     -- and that slot. See 'leiosOfferRelayDecision' for why an honest peer
@@ -2249,25 +2309,36 @@ announcedIt point peerSt =
 -- it: either may arrive first, or alone. So a LeiosNotify server never has to
 -- track what it has already offered a peer in order to synthesise a body offer
 -- ahead of a closure offer.
+--
+-- A peer may offer one endorser block's closure in several ranges, as it
+-- acquires it, but never the same bytes twice. A range must be non-empty, start
+-- within the largest closure there can be, and span at least the minimum
+-- length unless it runs to the end of the closure; that bounds how many offers
+-- a peer can make per endorser block.
 checkLeiosClosureOffer ::
+  LeiosFetchStaticEnv ->
+  -- | The minimum length of a range, see 'leiosClosureOfferMinLength'.
+  BytesSize ->
   LeiosPoint ->
+  -- | The offered range @[start, end)@.
+  BytesSize ->
+  BytesSize ->
   LeiosNotifyPeerState blk ->
   Either ExnLeiosInvalidOffer (LeiosNotifyPeerState blk)
-checkLeiosClosureOffer point peerSt
+checkLeiosClosureOffer env minLength point start end peerSt
   | pointSlotNo point < lnpsPruneSlot peerSt =
       Left $ ExnLeiosOfferTooOld point (lnpsPruneSlot peerSt)
-  | TxsClosureOffered <- Leios.poClosure seen =
-      Left $ ExnLeiosRepeatedOffer point OfferedClosure
-  | not (announcedIt point peerSt) = Left $ ExnLeiosClosureOfferWithoutAnnouncement point
-  | otherwise =
-      Right
-        peerSt
-          { lnpsOffers =
-              Map.insert
-                point
-                seen{Leios.poClosure = TxsClosureOffered}
-                (lnpsOffers peerSt)
-          }
+  | otherwise = case admitClosureOffer env minLength start end (Leios.poClosure seen) of
+      Left ClosureRangeInvalid -> Left $ ExnLeiosInvalidClosureRange point start end
+      Left ClosureRangeOverlaps -> Left $ ExnLeiosRepeatedOffer point OfferedClosure
+      Right closure
+        | not (announcedIt point peerSt) -> Left $ ExnLeiosClosureOfferWithoutAnnouncement point
+        | otherwise ->
+            Right
+              peerSt
+                { lnpsOffers =
+                    Map.insert point seen{Leios.poClosure = closure} (lnpsOffers peerSt)
+                }
  where
   seen = Map.findWithDefault mempty point (lnpsOffers peerSt)
 

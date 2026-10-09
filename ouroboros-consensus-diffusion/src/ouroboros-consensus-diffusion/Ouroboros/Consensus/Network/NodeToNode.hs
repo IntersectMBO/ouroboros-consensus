@@ -546,7 +546,7 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM peer peerVars -> toLeiosNotifyClientPeerPipelined $ Effect $ do
+      , hLeiosNotifyClient = \version controlMessageSTM peer peerVars -> toLeiosNotifyClientPeerPipelined $ Effect $ do
           let tracer = leiosPeerTracer peer
               kernelTracer = Node.leiosKernelTracer tracers
               LeiosVoteState{addVote} = leiosVoteState
@@ -644,10 +644,19 @@ mkHandlers
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     checkOffer $ Leios.checkLeiosBlockOffer point ebBytesSize
                     Leios.recordEbBodyOffer getLeiosReady peerVars (point, ebBytesSize)
-                  MsgLeiosBlockTxsOffer point -> do
-                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint point
-                    checkOffer $ Leios.checkLeiosClosureOffer point
-                    Leios.recordEbClosureOffer getLeiosReady peerVars point
+                  MsgLeiosBlockTxsOffer point start end -> do
+                    traceWith tracer $
+                      MkTraceLeiosPeer $
+                        "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint point <> " " <> show (start, end)
+                    checkOffer $
+                      -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
+                      Leios.checkLeiosClosureOffer
+                        Leios.demoLeiosFetchStaticEnv
+                        (Leios.leiosClosureOfferMinLength version)
+                        point
+                        start
+                        end
+                    Leios.recordEbClosureOffer getLeiosReady peerVars point start end
                   MsgLeiosVotes vs -> do
                     -- TODO no LeiosNotify message may simply be ignored, or
                     -- the peer can send it without bound. Votes still can be:
@@ -788,7 +797,8 @@ mkHandlers
                   AcquiredEb point ebSize ->
                     offer point Leios.OfferedBody $ MsgLeiosBlockOffer point ebSize
                   AcquiredEbTxs point ->
-                    offer point Leios.OfferedClosure $ MsgLeiosBlockTxsOffer point
+                    -- [0, maxBound) offers the whole closure without knowing its size
+                    offer point Leios.OfferedClosure $ MsgLeiosBlockTxsOffer point 0 maxBound
                 )
                 <|> (getNextVote <&> \vote -> Just $ MsgLeiosVotes [vote])
 
@@ -840,7 +850,7 @@ mkHandlers
               Map LeiosPoint (Set.Set Leios.OfferedBodyOrClosure)
             recordOffer = \case
               MsgLeiosBlockOffer point _ -> Map.adjust (Set.insert Leios.OfferedBody) point
-              MsgLeiosBlockTxsOffer point -> Map.adjust (Set.insert Leios.OfferedClosure) point
+              MsgLeiosBlockTxsOffer point _ _ -> Map.adjust (Set.insert Leios.OfferedClosure) point
               _ -> id
 
             pump =

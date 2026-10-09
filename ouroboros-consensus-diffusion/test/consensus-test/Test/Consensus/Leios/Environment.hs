@@ -209,7 +209,7 @@ heardUnannouncedOffers PeerEnv{peHeard} =
       go (maybe id ((:) . fst) (lthAnnouncement hdr) announced) rest
     Notify.MsgLeiosBlockOffer point _size
       | point `notElem` announced -> point : go announced rest
-    Notify.MsgLeiosBlockTxsOffer point
+    Notify.MsgLeiosBlockTxsOffer point _start _end
       | point `notElem` announced -> point : go announced rest
     _ -> go announced rest
 
@@ -261,7 +261,7 @@ offerEb PeerEnv{peNotifications} point size =
   atomically $
     PlainSTM.modifyTVar peNotifications (<> [Notify.MsgLeiosBlockOffer point size])
 
--- | Have this peer offer this endorser block's closure over LeiosNotify.
+-- | Have this peer offer this endorser block's whole closure over LeiosNotify.
 --
 -- Independent of 'offerEb': either may be sent first, or alone. Like it, this
 -- is not an announcement, so an honest peer says it only after its own
@@ -269,7 +269,7 @@ offerEb PeerEnv{peNotifications} point size =
 offerEbTxs :: PeerEnv (IOSim s) -> LeiosPoint -> IOSim s ()
 offerEbTxs PeerEnv{peNotifications} point =
   atomically $
-    PlainSTM.modifyTVar peNotifications (<> [Notify.MsgLeiosBlockTxsOffer point])
+    PlainSTM.modifyTVar peNotifications (<> [Notify.MsgLeiosBlockTxsOffer point 0 maxBound])
 
 -- | The endorser blocks the node has offered this peer, in order.
 heardOffers :: PeerEnv (IOSim s) -> IOSim s [LeiosPoint]
@@ -280,7 +280,7 @@ heardOffers PeerEnv{peHeard} =
   offered :: LeiosNotification -> [LeiosPoint]
   offered = \case
     Notify.MsgLeiosBlockOffer point _size -> [point]
-    Notify.MsgLeiosBlockTxsOffer point -> [point]
+    Notify.MsgLeiosBlockTxsOffer point _start _end -> [point]
     _ -> []
 
 -- | The endorser blocks whose /body/ the node has told this peer it holds.
@@ -307,7 +307,7 @@ heardClosureOffers PeerEnv{peHeard} =
  where
   offered :: LeiosNotification -> [LeiosPoint]
   offered = \case
-    Notify.MsgLeiosBlockTxsOffer point -> [point]
+    Notify.MsgLeiosBlockTxsOffer point _start _end -> [point]
     _ -> []
 
 -- | Have this peer ask the node for this endorser block's body.
