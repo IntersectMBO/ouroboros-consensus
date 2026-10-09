@@ -732,15 +732,15 @@ translateLedgerStateConwayToDijkstraWrapper =
             . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra)
             . Comp
             . Flip
-            . transLeiosLS
+            . transPraos2LS
       }
  where
   -- Only the protocol index changes, so nothing in here is converted; the
   -- rebuild is what retypes it.
-  transLeiosLS ::
+  transPraos2LS ::
     LedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
     LedgerState (ShelleyBlock (Praos2 c) ConwayEra) mk
-  transLeiosLS (ShelleyLedgerState wo nes st tb) =
+  transPraos2LS (ShelleyLedgerState wo nes st tb) =
     ShelleyLedgerState
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
