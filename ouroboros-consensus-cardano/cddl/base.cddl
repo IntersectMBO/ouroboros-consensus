@@ -1,12 +1,15 @@
+; The current era is [bound, st]. It is written out instead of using a
+; currentEra<st> rule because cuddle mixes up nested generics when telescope8
+; is used more than once in the same file.
 telescope8<byron, shelley, allegra, mary, alonzo, babbage, conway, dijkstra>
-  = [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<dijkstra>] /
-    [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<conway>] /
-    [pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<babbage>] /
-    [pastEra, pastEra, pastEra, pastEra, currentEra<alonzo>] /
-    [pastEra, pastEra, pastEra, currentEra<mary>] /
-    [pastEra, pastEra, currentEra<allegra>] /
-    [pastEra, currentEra<shelley>] /
-    [currentEra<byron>]
+  = [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, [bound, dijkstra]] /
+    [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, [bound, conway]] /
+    [pastEra, pastEra, pastEra, pastEra, pastEra, [bound, babbage]] /
+    [pastEra, pastEra, pastEra, pastEra, [bound, alonzo]] /
+    [pastEra, pastEra, pastEra, [bound, mary]] /
+    [pastEra, pastEra, [bound, allegra]] /
+    [pastEra, [bound, shelley]] /
+    [[bound, byron]]
 
 ns8<byron, shelley, allegra, mary, alonzo, babbage, conway, dijkstra>
   = [7, dijkstra] /
@@ -20,15 +23,13 @@ ns8<byron, shelley, allegra, mary, alonzo, babbage, conway, dijkstra>
 
 ;; Blockchain types
 pastEra = [bound, bound]
-currentEra<st> = [bound, st]
-bound = [relativeTime, slotno, epochno]
+bound = [relativeTime, slotno, epochno, perasRoundNo]
 eraIdx = word8
 individualPoolStake = [stake, hash]
 nonce = [0] / [1, hash]
 point = [] / [ slotno, hash ]
 poolDistr = map<keyhash, individualPoolStake>
 slotno = word64
-roundno = word64
 stake = rational
 
 withOrigin<v> = [] / [v]
@@ -43,6 +44,7 @@ set<x> = #6.258([* x])
 ;; Types from other packages
 blockno = word64
 epochno = word64
+perasRoundNo = word64
 coin = word64
 rational = [int, int]
 keyhash = bstr .size 28

@@ -136,7 +136,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR (decodeWithOrigin, encodeWithOrigin)
 import Ouroboros.Consensus.Util.IndexedMemPack
-import Ouroboros.Consensus.Util.Versioned
 
 {-------------------------------------------------------------------------------
   Config
@@ -761,17 +760,6 @@ getPParams = view $ SL.newEpochStateGovStateL . SL.curPParamsGovStateL
   Serialisation
 -------------------------------------------------------------------------------}
 
--- | Current version
---
--- o 'serialisationFormatVersion0' used to include the 'LedgerViewHistory', but
---   since we had to break binary backwards compatibility of the 'TPraosState',
---   we dropped backwards compatibility with 'serialisationFormatVersion0' too.
--- o 'serialisationFormatVersion1' did not include a 'BlockNo' at the tip of
---   the ledger, which was introduced in version 2. Again, since we broke
---   compat anyway, we dropped support for version 1.
-serialisationFormatVersion2 :: VersionNumber
-serialisationFormatVersion2 = 2
-
 encodeShelleyAnnTip :: AnnTip (ShelleyBlock proto era) -> Encoding
 encodeShelleyAnnTip = defaultEncodeAnnTip toCBOR
 
@@ -835,36 +823,29 @@ encodeShelleyLedgerState
     , shelleyLedgerState
     , shelleyLedgerTransition
     } =
-    encodeVersion serialisationFormatVersion2 $
-      mconcat $
-        [ CBOR.encodeListLen 3
-        , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
-        , toCBOR shelleyLedgerState
-        , encodeShelleyTransition shelleyLedgerTransition
-        ]
+    mconcat $
+      [ CBOR.encodeListLen 3
+      , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
+      , toCBOR shelleyLedgerState
+      , encodeShelleyTransition shelleyLedgerTransition
+      ]
 
 decodeShelleyLedgerState ::
   forall era proto s.
   ShelleyCompatible proto era =>
   Decoder s (LedgerState (ShelleyBlock proto era) EmptyMK)
-decodeShelleyLedgerState =
-  decodeVersion
-    [ (serialisationFormatVersion2, Decode decodeShelleyLedgerState2)
-    ]
- where
-  decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era) EmptyMK)
-  decodeShelleyLedgerState2 = do
-    enforceSize "ShelleyLedgerState" 3
-    shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
-    shelleyLedgerState <- fromCBOR
-    shelleyLedgerTransition <- decodeShelleyTransition
-    return
-      ShelleyLedgerState
-        { shelleyLedgerTip
-        , shelleyLedgerState
-        , shelleyLedgerTransition
-        , shelleyLedgerTables = emptyLedgerTables
-        }
+decodeShelleyLedgerState = do
+  enforceSize "ShelleyLedgerState" 3
+  shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
+  shelleyLedgerState <- fromCBOR
+  shelleyLedgerTransition <- decodeShelleyTransition
+  return
+    ShelleyLedgerState
+      { shelleyLedgerTip
+      , shelleyLedgerState
+      , shelleyLedgerTransition
+      , shelleyLedgerTables = emptyLedgerTables
+      }
 
 instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
   upgradeTables _ _ = id

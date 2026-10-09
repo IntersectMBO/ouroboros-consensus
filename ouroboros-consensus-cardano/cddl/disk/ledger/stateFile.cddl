@@ -1,9 +1,10 @@
 ledgerStateSnapshot =
-  [snapshotEncodingVersion1, extLedgerState]
+  [snapshotEncodingVersion2, extLedgerState]
 
-snapshotEncodingVersion1 = 1
+snapshotEncodingVersion2 = 2
 
-extLedgerState = [ledgerState, headerState]
+extLedgerState = [ledgerState, headerState, perasState]
 
 ;# import headerState from headerstate
 ;# import ledgerState from ledgerstate
+;# import perasState from perasstate

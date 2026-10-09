@@ -151,11 +151,11 @@ import Ouroboros.Consensus.Protocol.Praos.Orphans ()
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.Signed (Signed)
 import Ouroboros.Consensus.Ticked (Ticked)
-import Ouroboros.Consensus.Util.CBOR (decodeStrictMaybe, encodeStrictMaybe)
-import Ouroboros.Consensus.Util.Versioned
-  ( VersionDecoder (Decode)
-  , decodeVersion
-  , encodeVersion
+import Ouroboros.Consensus.Util.CBOR
+  ( decodeStrictMaybe
+  , decodeWithOrigin
+  , encodeStrictMaybe
+  , encodeWithOrigin
   )
 
 -- | What a protocol needs of its crypto: the Praos essentials, plus signing
@@ -352,10 +352,9 @@ instance SerialisePraosState proto => FromCBOR (PolyPraosState proto) where
 
 -- | What encoding 'PolyPraosState' needs of its protocol.
 --
--- 'LeiosOnly' decides which fields are written, and which format version is
--- written: 0 for 'Praos', 1 for 'Praos2'. The two protocols' versions are
--- separate namespaces: the HFC's era index precedes them, so the codec is
--- already chosen when the version is read.
+-- 'LeiosOnly' decides which fields are written. There is no inner version: the
+-- snapshot version covers it, and the HFC's era index precedes it, so the codec
+-- is already chosen when it is read.
 type SerialisePraosState proto =
   ( Typeable proto
   , Applicative (LeiosOnly proto ())
@@ -375,45 +374,37 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
       , praosStateLastEpochBlockNonce
       , praosStateLeiosAnnouncement
       } =
-      encodeVersion version $
-        mconcat
-          [ CBOR.encodeListLen (8 + nLeiosFields)
-          , toCBOR praosStateLastSlot
-          , toCBOR praosStateOCertCounters
-          , toEraCBOR @ShelleyEra praosStateEvolvingNonce
-          , toEraCBOR @ShelleyEra praosStateCandidateNonce
-          , toEraCBOR @ShelleyEra praosStateEpochNonce
-          , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
-          , toEraCBOR @ShelleyEra praosStateLabNonce
-          , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
-          , foldMap (encodeStrictMaybe encodeAnnouncedBy) praosStateLeiosAnnouncement
-          ]
+      mconcat
+        [ CBOR.encodeListLen (8 + nLeiosFields)
+        , encodeWithOrigin toCBOR praosStateLastSlot
+        , toCBOR praosStateOCertCounters
+        , toEraCBOR @ShelleyEra praosStateEvolvingNonce
+        , toEraCBOR @ShelleyEra praosStateCandidateNonce
+        , toEraCBOR @ShelleyEra praosStateEpochNonce
+        , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
+        , toEraCBOR @ShelleyEra praosStateLabNonce
+        , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
+        , foldMap (encodeStrictMaybe encodeAnnouncedBy) praosStateLeiosAnnouncement
+        ]
      where
       nLeiosFields = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
-      version = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
 
-  decode =
-    decodeVersion
-      [(version, Decode decodePraosState)]
+  decode = do
+    enforceSize "PraosState" (8 + nLeiosFields)
+    PraosState
+      <$> decodeWithOrigin fromCBOR
+      <*> fromCBOR
+      <*> fromEraCBOR @ShelleyEra
+      <*> fromEraCBOR @ShelleyEra
+      <*> fromEraCBOR @ShelleyEra
+      <*> fromEraCBOR @ShelleyEra
+      <*> fromEraCBOR @ShelleyEra
+      <*> fromEraCBOR @ShelleyEra
+      <*> traverse
+        (\() -> decodeStrictMaybe decodeAnnouncedBy)
+        (pureLeiosOnly @proto ())
    where
-    version = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
     nLeiosFields = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
-
-    decodePraosState :: CBOR.Decoder s (PolyPraosState proto)
-    decodePraosState = do
-      enforceSize "PraosState" (8 + nLeiosFields)
-      PraosState
-        <$> fromCBOR
-        <*> fromCBOR
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> fromEraCBOR @ShelleyEra
-        <*> traverse
-          (\() -> decodeStrictMaybe decodeAnnouncedBy)
-          (pureLeiosOnly @proto ())
 
 data instance Ticked (PolyPraosState proto) = TickedPraosState
   { tickedPraosStateChainDepState :: PolyPraosState proto
