@@ -406,8 +406,8 @@ pureLeiosOnly = pure
 -- | Allow for any type on the side of a type-level switch that wasn't chosen
 --
 -- For our types like 'LeiosOnly', there is only one instance that type checks.
--- See 'Ouroboros.Consensus.Protocol.Praos.leiosContextFreeHeaderChecks' for an
--- example use.
+-- See 'Ouroboros.Consensus.Protocol.PolyPraos.leiosContextFreeHeaderChecks' for
+-- an example use.
 --
 -- Example:
 --
@@ -417,8 +417,8 @@ pureLeiosOnly = pure
 -- >   typeSwitchL = L (L ())
 -- >   typeSwitchR = L ()
 --
--- The usefulness is that the inner layer of L (L ()) is parametrically
--- polymorphic in @a@.
+-- The usefulness is that the inner layer of L (L ()) can have any type, even
+-- 'Void'.
 --
 -- Another way to think about it: these @ff@ are types like 'Either' except the
 -- choice between 'Left' and 'Right' is made statically rather than dynamically.
