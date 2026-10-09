@@ -156,7 +156,7 @@ leiosParams =
     [ -- Room for the endorser block's transactions: one block body's worth.
       ("maxEndorserBlockTxsSize", Number 81920)
     , -- Bounds how many transactions an endorser block may reference.
-      ("maxEndorserBlockReferencesSize", Number 1048576)
+      ("maxEndorserBlockReferencesSize", Number 100000)
     , -- Seat both of the fixture's pools. Only the one below carries our key;
       -- the other is seated keyless and never votes.
       ("leiosCommitteeSize", Number 2)
