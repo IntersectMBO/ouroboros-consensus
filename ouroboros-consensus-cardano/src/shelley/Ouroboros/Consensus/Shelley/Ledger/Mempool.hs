@@ -116,7 +116,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Leios.Types as Leios
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -810,7 +810,7 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
 -- measures do not depend on the protocol, so 'txEbMeasureDijkstra' and
 -- 'mempoolEbReservation' rebuild the 'TxMeasure' for any protocol.
 data DijkstraEbMeasure = DijkstraEbMeasure
-  { ebClosureMeasure :: !(TxMeasure (ShelleyBlock (Praos StandardCrypto) DijkstraEra))
+  { ebClosureMeasure :: !(TxMeasure (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))
   , txReferencesSize :: !(IgnoringOverflow ByteSize32)
   -- ^ Size of transaction references _excluding_ any framing overhead: of one
   -- transaction's reference, or summed over whatever is measured (an endorser

@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -14,6 +15,7 @@ import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import qualified Data.Sequence.Strict as Seq
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
@@ -22,6 +24,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Ouroboros.Consensus.Protocol.Praos.Common (LeiosOnly, pure_LeiosOnly)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
@@ -40,7 +43,10 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 
 forgeShelleyBlock ::
   forall m era proto.
-  (ShelleyCompatible proto era, Monad m) =>
+  ( ShelleyCompatible proto era
+  , Applicative (LeiosOnly proto ())
+  , Monad m
+  ) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
   ForgeBlockArgs (ShelleyBlock proto era) ->
@@ -61,12 +67,16 @@ forgeShelleyBlock
           (SL.hashBlockBody @era body)
           actualBodySize
           protocolVersion
+          leiosFields
       let blk = mkShelleyBlock $ SL.Block hdr body
       return $
         assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
           blk
    where
     protocolVersion = shelleyProtocolVersion $ configBlock fbConfig
+
+    -- TODO Forging does not yet certify or announce endorser blocks.
+    leiosFields = pure_LeiosOnly @proto (False, SNothing)
 
     body =
       SL.mkBasicBlockBody
