@@ -350,7 +350,7 @@ prop_decodeBlockTxsChecksCount =
   check label expected bitmaps declared nTxs = do
     let msg =
           CBOR.encodeListLen 4
-            <> CBOR.encodeWord 3
+            <> CBOR.encodeWord 4 -- MsgLeiosBlockTxs
             <> encodeLeiosPoint testPoint
             <> encodeBitmapEntries bitmaps
             <> CBOR.encodeListLen (fromIntegral declared)

@@ -77,7 +77,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Control.Exception (displayException)
+import Control.Exception (Exception, displayException)
 import Control.Monad (when)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
@@ -473,6 +473,11 @@ instance Semigroup PeerOffer where
 
 instance Monoid PeerOffer where
   mempty = MkPeerOffer SNothing SNothing mempty
+
+data LeiosNotifyException = LeiosNotifyUnexpectedMsgCancel
+  deriving (Eq, Show)
+
+instance Exception LeiosNotifyException
 
 data LeiosPeerVars m = MkLeiosPeerVars
   { whetherBigLedgerPeer :: !IsBigLedgerPeer
@@ -1643,6 +1648,14 @@ messageLeiosNotifyToObject announcedEb = \case
   LeiosNotify.MsgDone ->
     mconcat
       [ "kind" .= Aeson.String "MsgDone"
+      ]
+  LeiosNotify.MsgQuit ->
+    mconcat
+      [ "kind" .= Aeson.String "MsgQuit"
+      ]
+  LeiosNotify.MsgCanceled ->
+    mconcat
+      [ "kind" .= Aeson.String "MsgCanceled"
       ]
 
 messageLeiosFetchToObject ::

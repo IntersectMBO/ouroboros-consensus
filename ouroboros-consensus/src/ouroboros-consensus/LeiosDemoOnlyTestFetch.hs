@@ -171,13 +171,6 @@ instance Protocol (LeiosFetch point eb tx) where
       TxBitmaps ->
       !(V.Vector tx) ->
       Message (LeiosFetch point eb tx) (StBusy StBlockTxs) StIdle
-    -- MsgLeiosVotesRequest
-    -- MsgLeiosVoteDelivery
-
-    -- MsgLeiosBlockRangeRequest
-    -- MsgLeiosNextBlockAndTxsInRange
-    -- MsgLeiosLastBlockAndTxsInRange
-
     MsgDone ::
       Message (LeiosFetch point eb tx) StIdle StDone
 
@@ -193,11 +186,6 @@ instance NFData (Message (LeiosFetch point eb tx) from to) where
     MsgLeiosBlock{} -> ()
     MsgLeiosBlockTxsRequest _p bitmaps -> rnf bitmaps
     MsgLeiosBlockTxs{} -> ()
-    -- MsgLeiosVotesRequest
-    -- MsgLeiosVoteDelivery
-    -- MsgLeiosBlockRangeRequest
-    -- MsgLeiosNextBlockAndTxsInRange
-    -- MsgLeiosLastBlockAndTxsInRange
     MsgDone -> ()
 
 deriving instance
@@ -315,29 +303,29 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
     Message (LeiosFetch point eb tx) st0 st1 ->
     CBOR.Encoding
   encode = \case
+    MsgDone ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 0
     MsgLeiosBlockRequest p ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 0
+        <> CBOR.encodeWord 1
         <> encodeP p
     MsgLeiosBlock x ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 1
+        <> CBOR.encodeWord 2
         <> encodeEb x
     MsgLeiosBlockTxsRequest p bitmaps ->
       CBOR.encodeListLen 3
-        <> CBOR.encodeWord 2
+        <> CBOR.encodeWord 3
         <> encodeP p
         <> encodeBitmaps bitmaps
     MsgLeiosBlockTxs p bitmaps txs ->
       CBOR.encodeListLen 4
-        <> CBOR.encodeWord 3
+        <> CBOR.encodeWord 4
         <> encodeP p
         <> encodeBitmaps bitmaps
         <> CBOR.encodeListLen (fromIntegral $ V.length txs)
         <> foldMap encodeTx txs
-    MsgDone ->
-      CBOR.encodeListLen 1
-        <> CBOR.encodeWord 9
 
 decodeLeiosFetch ::
   forall
@@ -366,17 +354,19 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx = decode
     CBOR.Decoder s (SomeMessage st')
   decode stok len key = do
     case (stok, len, key) of
-      (SingIdle, 2, 0) -> do
+      (SingIdle, 1, 0) ->
+        return $ SomeMessage MsgDone
+      (SingIdle, 2, 1) -> do
         p <- decodeP
         return $ SomeMessage $ MsgLeiosBlockRequest p
-      (SingBlock, 2, 1) -> do
+      (SingBlock, 2, 2) -> do
         x <- decodeEb
         return $ SomeMessage $ MsgLeiosBlock x
-      (SingIdle, 3, 2) -> do
+      (SingIdle, 3, 3) -> do
         p <- decodeP
         bitmaps <- decodeBitmaps maxTxs
         return $ SomeMessage $ MsgLeiosBlockTxsRequest p bitmaps
-      (SingBlockTxs, 4, 3) -> do
+      (SingBlockTxs, 4, 4) -> do
         p <- decodeP
         bitmaps <- decodeBitmaps maxTxs
         n <- CBOR.decodeListLen
@@ -395,13 +385,6 @@ decodeLeiosFetch maxTxs decodeP decodeEb decodeTx = decode
               <> " txs in the bitmaps"
         txs <- V.generateM n $ \_i -> decodeTx
         return $ SomeMessage $ MsgLeiosBlockTxs p bitmaps txs
-      -- MsgLeiosVotesRequest
-      -- MsgLeiosVoteDelivery
-      -- MsgLeiosBlockRangeRequest
-      -- MsgLeiosNextBlockAndTxsInRange
-      -- MsgLeiosLastBlockAndTxsInRange
-      (SingIdle, 1, 9) ->
-        return $ SomeMessage MsgDone
       (SingDone, _, _) -> notActiveState stok
       -- failures per protocol state
       (SingIdle, _, _) ->

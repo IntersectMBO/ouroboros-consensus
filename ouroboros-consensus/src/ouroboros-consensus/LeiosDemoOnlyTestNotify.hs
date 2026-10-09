@@ -11,6 +11,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -39,7 +40,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
-import Control.Monad (replicateM)
+import Control.Monad (join, replicateM)
 -- for runLookaheadFixedSenderPeerWithLimits
 import Control.Monad.Class.MonadAsync
 import Control.Monad.Class.MonadFork
@@ -91,12 +92,20 @@ import Network.TypedProtocol.Peer
   , Receiver (..)
   , Sender (..)
   )
+import Ouroboros.Consensus.Util.IOLike
+  ( StrictTVar
+  , modifyTVar
+  , newTVarIO
+  , readTVar
+  , writeTVar
+  )
 import Ouroboros.Network.Channel
 import Ouroboros.Network.Driver.Limits (TraceSendRecv, driverWithLimits)
 import Ouroboros.Network.Protocol.Limits
   ( BearerBytes
   , ProtocolSizeLimits (..)
   , ProtocolTimeLimits (..)
+  , longWait
   , smallByteLimit
   , waitForever
   )
@@ -112,6 +121,7 @@ type LeiosNotify :: Type -> Type -> Type -> Type
 data LeiosNotify point announcement vote where
   StIdle :: LeiosNotify point announcement vote
   StBusy :: LeiosNotify point announcement vote
+  StQuit :: LeiosNotify point announcement vote
   StDone :: LeiosNotify point announcement vote
 
 instance
@@ -135,6 +145,8 @@ instance ShowProxy (StIdle :: LeiosNotify point announcement vote) where
   showProxy _ = "StIdle"
 instance ShowProxy (StBusy :: LeiosNotify point announcement vote) where
   showProxy _ = "StBusy"
+instance ShowProxy (StQuit :: LeiosNotify point announcement vote) where
+  showProxy _ = "StQuit"
 instance ShowProxy (StDone :: LeiosNotify point announcement vote) where
   showProxy _ = "StDone"
 
@@ -144,12 +156,14 @@ type SingLeiosNotify ::
 data SingLeiosNotify st where
   SingIdle :: SingLeiosNotify StIdle
   SingBusy :: SingLeiosNotify StBusy
+  SingQuit :: SingLeiosNotify StQuit
   SingDone :: SingLeiosNotify StDone
 
 deriving instance Show (SingLeiosNotify st)
 
 instance StateTokenI StIdle where stateToken = SingIdle
 instance StateTokenI StBusy where stateToken = SingBusy
+instance StateTokenI StQuit where stateToken = SingQuit
 instance StateTokenI StDone where stateToken = SingDone
 
 -----
@@ -190,10 +204,15 @@ instance Protocol (LeiosNotify point announcement vote) where
       [vote] ->
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgDone ::
-      Message (LeiosNotify point announcement vote) StIdle StDone
+      Message (LeiosNotify point announcement vote) StQuit StDone
+    MsgQuit ::
+      Message (LeiosNotify point announcement vote) StIdle StQuit
+    MsgCanceled ::
+      Message (LeiosNotify point announcement vote) StBusy StIdle
 
   type StateAgency StIdle = ClientAgency
   type StateAgency StBusy = ServerAgency
+  type StateAgency StQuit = ServerAgency
   type StateAgency StDone = NobodyAgency
 
   type StateToken = SingLeiosNotify
@@ -206,6 +225,8 @@ instance NFData (Message (LeiosNotify point announcement vote) from to) where
     MsgLeiosBlockTxsOffer{} -> ()
     MsgLeiosVotes{} -> ()
     MsgDone -> ()
+    MsgQuit -> ()
+    MsgCanceled -> ()
 
 deriving instance
   (Eq point, Eq announcement, Eq vote) =>
@@ -222,6 +243,7 @@ byteLimitsLeiosNotify ::
 byteLimitsLeiosNotify = ProtocolSizeLimits $ \case
   SingIdle -> smallByteLimit
   SingBusy -> smallByteLimit
+  SingQuit -> smallByteLimit
   st@SingDone -> notActiveState st
 
 timeLimitsLeiosNotify ::
@@ -229,6 +251,7 @@ timeLimitsLeiosNotify ::
 timeLimitsLeiosNotify = ProtocolTimeLimits $ \case
   SingIdle -> waitForever
   SingBusy -> waitForever
+  SingQuit -> longWait
   st@SingDone -> notActiveState st
 
 -----
@@ -278,33 +301,39 @@ encodeLeiosNotify encodeP encodeA encodeV = encode
     Message (LeiosNotify point announcement vote) st0 st1 ->
     CBOR.Encoding
   encode = \case
-    MsgLeiosNotificationRequestNext ->
+    MsgDone ->
       CBOR.encodeListLen 1
         <> CBOR.encodeWord 0
+    MsgQuit ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 1
+    MsgCanceled ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 2
+    MsgLeiosNotificationRequestNext ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 3
     MsgLeiosBlockAnnouncement x ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 1
+        <> CBOR.encodeWord 4
         <> encodeA x
     MsgLeiosBlockOffer p sz ->
       CBOR.encodeListLen 3
-        <> CBOR.encodeWord 2
+        <> CBOR.encodeWord 5
         <> encodeP p
         <> CBOR.encodeWord32 sz
     MsgLeiosBlockTxsOffer p ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 3
+        <> CBOR.encodeWord 6
         <> encodeP p
     MsgLeiosVotes vs ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 4
+        <> CBOR.encodeWord 7
         <> encodeVotes
      where
       encodeVotes =
         CBOR.encodeListLen (fromIntegral $ length vs)
           <> foldMap encodeV vs
-    MsgDone ->
-      CBOR.encodeListLen 1
-        <> CBOR.encodeWord 5
 
 decodeLeiosNotify ::
   forall
@@ -332,32 +361,38 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
     CBOR.Decoder s (SomeMessage st')
   decode stok len key = do
     case (stok, len, key) of
-      (SingIdle, 1, 0) ->
+      (SingQuit, 1, 0) ->
+        return $ SomeMessage MsgDone
+      (SingIdle, 1, 1) ->
+        return $ SomeMessage MsgQuit
+      (SingBusy, 1, 2) ->
+        return $ SomeMessage MsgCanceled
+      (SingIdle, 1, 3) ->
         return $ SomeMessage MsgLeiosNotificationRequestNext
-      (SingBusy, 2, 1) -> do
+      (SingBusy, 2, 4) -> do
         x <- decodeA
         return $ SomeMessage $ MsgLeiosBlockAnnouncement x
-      (SingBusy, 3, 2) -> do
+      (SingBusy, 3, 5) -> do
         p <- decodeP
         sz <- CBOR.decodeWord32
         return $ SomeMessage $ MsgLeiosBlockOffer p sz
-      (SingBusy, 2, 3) -> do
+      (SingBusy, 2, 6) -> do
         p <- decodeP
         return $ SomeMessage $ MsgLeiosBlockTxsOffer p
-      (SingBusy, 2, 4) -> do
+      (SingBusy, 2, 7) -> do
         vs <- decodeVotes
         return $ SomeMessage $ MsgLeiosVotes vs
        where
         decodeVotes = do
           n <- CBOR.decodeListLen
           replicateM n decodeV
-      (SingIdle, 1, 5) ->
-        return $ SomeMessage MsgDone
       (SingDone, _, _) -> notActiveState stok
       -- failures per protocol state
       (SingIdle, _, _) ->
         fail $ printf "codecLeiosNotify (%s) unexpected key (%d, %d)" (show stok) key len
       (SingBusy, _, _) ->
+        fail $ printf "codecLeiosNotify (%s) unexpected key (%d, %d)" (show stok) key len
+      (SingQuit, _, _) ->
         fail $ printf "codecLeiosNotify (%s) unexpected key (%d, %d)" (show stok) key len
 
 codecLeiosNotifyId ::
@@ -402,7 +437,11 @@ codecLeiosNotifyId = Codec{encode, decode}
         DecodeDone (SomeMessage msg) Nothing
       (SingBusy, Just (AnyMessage msg@MsgLeiosVotes{})) ->
         DecodeDone (SomeMessage msg) Nothing
-      (SingIdle, Just (AnyMessage msg@MsgDone)) ->
+      (SingQuit, Just (AnyMessage msg@MsgDone)) ->
+        DecodeDone (SomeMessage msg) Nothing
+      (SingIdle, Just (AnyMessage msg@MsgQuit)) ->
+        DecodeDone (SomeMessage msg) Nothing
+      (SingBusy, Just (AnyMessage msg@MsgCanceled)) ->
         DecodeDone (SomeMessage msg) Nothing
       (SingDone, _) ->
         notActiveState stok
@@ -414,6 +453,8 @@ codecLeiosNotifyId = Codec{encode, decode}
 leiosNotifyClientPeer ::
   forall m announcement point vote a.
   Monad m =>
+  -- | INVARIANT: this will only be 'MsgCanceled' if the peer sent that before
+  -- we sent 'MsgQuit'
   m (Either a (Message (LeiosNotify point announcement vote) StBusy StIdle -> m ())) ->
   Peer (LeiosNotify point announcement vote) AsClient NonPipelined StIdle m a
 leiosNotifyClientPeer checkDone =
@@ -424,8 +465,9 @@ leiosNotifyClientPeer checkDone =
     Effect $
       checkDone <&> \case
         Left x ->
-          Yield ReflClientAgency MsgDone $
-            Done ReflNobodyAgency x
+          Yield ReflClientAgency MsgQuit $
+            Await ReflServerAgency $
+              \MsgDone -> Done ReflNobodyAgency x
         Right k ->
           Yield ReflClientAgency MsgLeiosNotificationRequestNext $
             Await ReflServerAgency $ \msg -> case msg of
@@ -433,6 +475,7 @@ leiosNotifyClientPeer checkDone =
               MsgLeiosBlockOffer{} -> react $ k msg
               MsgLeiosBlockTxsOffer{} -> react $ k msg
               MsgLeiosVotes{} -> react $ k msg
+              MsgCanceled{} -> react $ k msg
 
   react action = Effect $ fmap (\() -> go) action
 
@@ -454,18 +497,18 @@ leiosNotifyServerPeer handler =
  where
   go :: Peer (LeiosNotify point announcement vote) AsServer NonPipelined StIdle m ()
   go = Await ReflClientAgency $ \case
-    MsgDone -> Done ReflNobodyAgency ()
     MsgLeiosNotificationRequestNext -> Effect $ do
       msg <- handler
       pure $
         Yield ReflServerAgency msg $
           go
+    MsgQuit -> Yield ReflServerAgency MsgDone $ Done ReflNobodyAgency ()
 
 -----
 
 -- | Merely an abbreviation local to this module
-type X point announcement vote m a n =
-  Peer (LeiosNotify point announcement vote) AsClient (Pipelined n C) StIdle m a
+type X point announcement vote st m a n =
+  Peer (LeiosNotify point announcement vote) AsClient (Pipelined n C) st m a
 
 type LeiosNotifyClientPeerPipelined point announcement vote m a =
   PeerPipelined (LeiosNotify point announcement vote) AsClient StIdle m a
@@ -485,87 +528,137 @@ data WhetherExcessiveRequests = ExcessiveRequests | NotExcessiveRequests
 
 leiosNotifyClientPeerPipelined ::
   forall m point announcement vote a.
-  PrimMonad m =>
+  (PrimMonad m, MonadSTM m) =>
   -- | either the return value or else the current max pipelining depth
-  m (Either a Int) ->
+  STM m (Either a Int) ->
+  -- | INVARIANT: this will only be 'MsgCanceled' if the peer sent that before
+  -- we sent 'MsgQuit'
   m (Message (LeiosNotify point announcement vote) StBusy StIdle -> m ()) ->
   Peer (LeiosNotify point announcement vote) AsClient (Pipelined Z C) StIdle m a
 leiosNotifyClientPeerPipelined checkDone k0 =
   Effect $ do
     stop <- Prim.newMutVar NotYetDraining
-    pure $ go stop Zero
+    arrived <- newTVarIO 0
+    pure $ go stop arrived Zero
  where
-  go :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point announcement vote m a n
-  go stop !n =
+  go ::
+    MutVar (PrimState m) WhetherDraining ->
+    StrictTVar m Int ->
+    Nat n ->
+    X point announcement vote StIdle m a n
+  go stop arrived !n =
     Effect $
-      checkDone <&> \case
-        Left x -> Effect $ do
-          Prim.writeMutVar stop AlreadyDraining
-          pure $ drainThePipe x n
-        Right maxDepth ->
-          case n of
-            Zero -> sendAnother stop n
-            Succ m ->
-              Collect
-                (if natToInt n >= maxDepth then Nothing else Just $ sendAnother stop n)
-                (\MkC -> go stop m)
+      join @m $
+        atomically $
+          checkDone >>= \case
+            Left x -> pure @(STM m) $ do
+              Prim.writeMutVar stop AlreadyDraining
+              pure @m $ case n of
+                Zero ->
+                  Yield ReflClientAgency MsgQuit $
+                    Await ReflServerAgency $ \MsgDone ->
+                      Done ReflNobodyAgency x
+                Succ _ ->
+                  YieldPipelined
+                    ReflClientAgency
+                    MsgQuit
+                    (ReceiverDone MkC) -- note that this Receiver doesn't await the MsgDone response
+                    $ drainThePipe x (Succ n)
+            Right maxDepth ->
+              case n of
+                Zero -> pure @(STM m) $ pure @m $ sendAnother stop arrived n
+                Succ p
+                  | natToInt n < maxDepth ->
+                      pure @(STM m) $ pure @m $ Collect (Just $ sendAnother stop arrived n) (collectOne p)
+                  | otherwise -> do
+                      readTVar arrived >>= check . (> 0)
+                      -- We can only call Collect if it would only block
+                      -- ephemerally. That way we're always able to send MsgQuit as
+                      -- soon as the Diffusion Layer commands us to.
+                      --
+                      -- This STM noise should be upstreamed into a CollectSTM that
+                      -- runs handles whichever happens first: the continuation
+                      -- becomes known or a pipelined request's reply arrives.
+                      pure @(STM m) $ pure @m $ Collect Nothing (collectOne p)
+   where
+    collectOne :: Nat p -> C -> X point announcement vote StIdle m a p
+    collectOne p MkC = Effect $ do
+      atomically $ modifyTVar arrived (subtract 1)
+      pure $ go stop arrived p
 
-  sendAnother :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point announcement vote m a n
-  sendAnother stop !n =
+  sendAnother ::
+    MutVar (PrimState m) WhetherDraining ->
+    StrictTVar m Int ->
+    Nat n ->
+    X point announcement vote StIdle m a n
+  sendAnother stop arrived !n =
     YieldPipelined
       ReflClientAgency
       MsgLeiosNotificationRequestNext
-      (receiver stop)
-      (go stop $ Succ n)
+      (receiver stop arrived)
+      (go stop arrived $ Succ n)
 
   receiver ::
     MutVar (PrimState m) WhetherDraining ->
+    StrictTVar m Int ->
     Receiver (LeiosNotify point announcement vote) AsClient StBusy StIdle m C
-  receiver stop =
+  receiver stop arrived =
     ReceiverAwait ReflServerAgency $ \msg -> case msg of
-      MsgLeiosBlockAnnouncement{} -> handler stop k0 msg
-      MsgLeiosBlockOffer{} -> handler stop k0 msg
-      MsgLeiosBlockTxsOffer{} -> handler stop k0 msg
-      MsgLeiosVotes{} -> handler stop k0 msg
+      MsgLeiosBlockAnnouncement{} -> handler stop arrived k0 msg
+      MsgLeiosBlockOffer{} -> handler stop arrived k0 msg
+      MsgLeiosBlockTxsOffer{} -> handler stop arrived k0 msg
+      MsgLeiosVotes{} -> handler stop arrived k0 msg
+      MsgCanceled{} -> handler stop arrived k0 msg
 
   handler ::
     MutVar (PrimState m) WhetherDraining ->
+    StrictTVar m Int ->
     m (msg -> m ()) ->
     msg ->
     Receiver (LeiosNotify point announcement vote) AsClient StIdle StIdle m C
-  handler stop k x = ReceiverEffect $ do
+  handler stop arrived k x = ReceiverEffect $ do
     Prim.readMutVar stop >>= \case
       AlreadyDraining -> pure ()
       NotYetDraining -> k >>= ($ x)
+    atomically $ modifyTVar arrived (+ 1)
     pure $ ReceiverDone MkC
 
-  drainThePipe :: a -> Nat n -> X point announcement vote m a n
+  drainThePipe :: a -> Nat n -> X point announcement vote StQuit m a n
   drainThePipe x = \case
     Zero ->
-      Yield ReflClientAgency MsgDone $
+      Await ReflServerAgency $ \MsgDone ->
         Done ReflNobodyAgency x
     Succ m ->
       Collect
-        Nothing
+        Nothing -- OK to block, since we're entirely passive now
         (\MkC -> drainThePipe x m)
 
 leiosNotifyServerPeerLookahead ::
   forall m point announcement vote.
-  MonadThrow m =>
+  (MonadThrow m, MonadSTM m) =>
   m WhetherExcessiveRequests ->
   -- | blocks until the next reply (announcement\/offer\/vote) is ready
-  m (Message (LeiosNotify point announcement vote) StBusy StIdle) ->
-  PeerLookaheadFixedSender (LeiosNotify point announcement vote) AsServer StIdle m ()
-leiosNotifyServerPeerLookahead incr next =
-  PeerLookaheadFixedSender responder start
+  STM m (Message (LeiosNotify point announcement vote) StBusy StIdle) ->
+  m (PeerLookaheadFixedSender (LeiosNotify point announcement vote) AsServer StIdle m ())
+leiosNotifyServerPeerLookahead incr next = do
+  quitVar <- newTVarIO False
+  pure $ PeerLookaheadFixedSender (responder quitVar) (start quitVar)
  where
-  responder :: Sender (LeiosNotify point announcement vote) AsServer VariableSender StBusy StIdle m
-  responder = SenderEffect $ next <&> \msg -> SenderYield ReflServerAgency msg SenderDone
+  responder ::
+    StrictTVar m Bool ->
+    Sender (LeiosNotify point announcement vote) AsServer VariableSender StBusy StIdle m
+  responder quitVar =
+    SenderEffect $
+      atomically $
+        orElse
+          (do readTVar quitVar >>= check; pure $ SenderYield ReflServerAgency MsgCanceled SenderDone)
+          (next <&> \msg -> SenderYield ReflServerAgency msg SenderDone)
 
-  -- StIdle with nothing outstanding: receive the first request (or done). A
+  -- StIdle with nothing outstanding: receive the first request (or quit). A
   -- plain 'Await' is required here; 'AwaitLookahead' defers the StBusy->StIdle
   -- send, so it is only usable once we hold a request (i.e. are at StBusy).
   start ::
+    StrictTVar m Bool ->
     Peer
       (LeiosNotify point announcement vote)
       AsServer
@@ -573,20 +666,23 @@ leiosNotifyServerPeerLookahead incr next =
       StIdle
       m
       ()
-  start =
+  start quitVar =
     Await ReflClientAgency $ \case
-      MsgDone -> Done ReflNobodyAgency ()
+      MsgQuit -> Effect $ do
+        atomically $ writeTVar quitVar True
+        pure $ Yield ReflServerAgency MsgDone $ Done ReflNobodyAgency ()
       MsgLeiosNotificationRequestNext ->
         Effect $ do
           incr >>= \case
             ExcessiveRequests -> throwIO MkExnLeiosNotifyExcessiveRequests
             NotExcessiveRequests -> pure ()
-          pure $ busy Zero
+          pure $ busy quitVar Zero
 
   -- StBusy with @n@ deferred sends outstanding: hand this reply off to the
   -- responder and look ahead to the next request (or done) in one step.
   busy ::
     forall n.
+    StrictTVar m Bool ->
     Nat n ->
     Peer
       (LeiosNotify point announcement vote)
@@ -595,17 +691,22 @@ leiosNotifyServerPeerLookahead incr next =
       StBusy
       m
       ()
-  busy n =
+  busy quitVar n =
     AwaitLookahead ReflClientAgency TheSender $ \case
-      MsgDone -> drain (Succ n)
+      MsgQuit -> Effect $ do
+        atomically (writeTVar quitVar True)
+        pure $ drain (Succ n)
       MsgLeiosNotificationRequestNext ->
         Effect $ do
           incr >>= \case
             ExcessiveRequests -> throwIO MkExnLeiosNotifyExcessiveRequests
             NotExcessiveRequests -> pure ()
-          pure $ busy (Succ n)
+          pure $ busy quitVar (Succ n)
 
-  -- on termination, flush the sends we've handed off, then Done.
+  -- on termination, flush the sends we've spawned, then send MsgDone.
+  --
+  -- Those sends are unblocked because the MsgQuit handler which lead us to this
+  -- already set the quitVar flag.
   drain ::
     forall n.
     Nat n ->
@@ -613,11 +714,11 @@ leiosNotifyServerPeerLookahead incr next =
       (LeiosNotify point announcement vote)
       AsServer
       (Lookahead n (FixedSender StBusy StIdle))
-      StDone
+      StQuit
       m
       ()
   drain = \case
-    Zero -> Done ReflNobodyAgency ()
+    Zero -> Yield ReflServerAgency MsgDone $ Done ReflNobodyAgency ()
     Succ j -> FlushSender Nothing (drain j)
 
 data ExnLeiosNotifyExcessiveRequests = MkExnLeiosNotifyExcessiveRequests

@@ -578,17 +578,18 @@ mkHandlers
                   Right peerSt' -> Prim.writeMutVar peerStateVar peerSt'
           pure $
             leiosNotifyClientPeerPipelined
-              ( atomically $
-                  controlMessageSTM >>= \case
-                    Terminate -> pure (Left ())
-                    _ -> do
-                      -- Gate on the immutable tip being able to forecast to the
-                      -- current wall clock.
-                      Leios.awaitImmTipCanForecastNow
-                        getTopLevelConfig
-                        (ChainDB.getImmutableLedger getChainDB)
-                        (getCurrentSlot getBlockchainTime)
-                      pure $ Right leiosNotifyPipelineDepth
+              -- In STM: the client retries this until either the governor asks
+              -- us to stop or the immutable tip can forecast to now.
+              ( controlMessageSTM >>= \case
+                  Terminate -> pure (Left ())
+                  _ -> do
+                    -- Gate on the immutable tip being able to forecast to the
+                    -- current wall clock.
+                    Leios.awaitImmTipCanForecastNow
+                      getTopLevelConfig
+                      (ChainDB.getImmutableLedger getChainDB)
+                      (getCurrentSlot getBlockchainTime)
+                    pure $ Right leiosNotifyPipelineDepth
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
@@ -697,6 +698,7 @@ mkHandlers
                               traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
                             Nothing -> pure ()
                         _ -> pure ()
+                  LeiosDemoOnlyTestNotify.MsgCanceled -> throwIO Leios.LeiosNotifyUnexpectedMsgCancel
               )
       , hLeiosNotifyServer = \_version peer -> do
           chan <- subscribeEbNotifications leiosDB
@@ -757,7 +759,9 @@ mkHandlers
                 else do
                   TVar.Unchecked.writeTVar credits $! n + 1
                   pure LeiosDemoOnlyTestNotify.NotExcessiveRequests
-            next = atomically $ do
+            -- Note that this is in STM: 'leiosNotifyServerPeerLookahead' needs
+            -- to compose the retry with its own, so it must not be run here.
+            next = do
               out <- TVar.Unchecked.readTVar queue
               case Seq.viewl (olnMessages out) of
                 Seq.EmptyL -> LazySTM.retry
@@ -862,7 +866,8 @@ mkHandlers
                               pure . Announcements.deletePeerCentral peer
                           )
 
-          pure (leiosNotifyServerPeerLookahead incr next, pump)
+          server <- leiosNotifyServerPeerLookahead incr next
+          pure (server, pump)
       , hLeiosFetchClient = \writer _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           pure $
