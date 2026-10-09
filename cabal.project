@@ -42,3 +42,39 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
+
+-- master after https://github.com/IntersectMBO/cardano-ledger/pull/6148
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  --sha256: sha256-s/LVusbn3sE+yXYyOJpEg52PY+YVKqwmmEFdHM9ikD0=
+  tag: 0a72d43f5996c23eae1f6164d7d6a4dfeabe4c7f
+  subdir:
+    libs/cardano-data
+    libs/cardano-ledger-api
+    libs/small-steps
+    libs/cardano-ledger-binary
+    libs/cardano-ledger-core
+    libs/cardano-protocol
+    libs/cardano-protocol-tpraos
+    eras/byron/chain/executable-spec
+    eras/byron/ledger/executable-spec
+    eras/shelley/impl
+    eras/shelley/test-suite
+    eras/shelley-ma/test-suite
+    eras/mary/impl
+    eras/allegra/impl
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/babbage/impl
+    eras/conway/impl
+    eras/dijkstra/impl
+
+allow-newer:
+    , cardano-keys:cardano-ledger-core
+    , cardano-keys:cardano-ledger-shelley
+    , cardano-keys:cardano-protocol
+    , cardano-config:cardano-ledger-conway
+    , cardano-config:cardano-ledger-core
+    , cardano-config:cardano-ledger-dijkstra
+    , cardano-config:cardano-ledger-shelley

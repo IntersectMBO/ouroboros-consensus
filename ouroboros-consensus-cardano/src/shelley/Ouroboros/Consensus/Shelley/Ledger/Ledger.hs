@@ -86,7 +86,6 @@ import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
-import Cardano.Ledger.Shelley.LedgerState (NewEpochState (..))
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.State as SL
 import Cardano.Slotting.EpochInfo
@@ -876,8 +875,8 @@ instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
 
 instance LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era)) where
   getPoolDistr =
-    nesPd . shelleyLedgerState
+    view SL.nesStakePoolDistrG . shelleyLedgerState
 
 instance LedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era)) where
   getPoolDistr =
-    nesPd . tickedShelleyLedgerState
+    view SL.nesStakePoolDistrG . tickedShelleyLedgerState
