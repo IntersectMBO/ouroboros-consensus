@@ -126,6 +126,10 @@ tests =
              "orphanhood"
              [ testCase "dropping the handle does not kill its owner" test_droppingTheHandleSpreadsNoException
              ]
+         , -- InMemory only: on SQLite a failed ingest write also kills the
+           -- writer (see 'startWriter'), which is linked to the test thread.
+           testCase "InMemory: inserting a body for an unregistered point fails, as on SQLite" $
+             withFreshDb InMemory test_ebBodyWithoutPointFails
          ]
 
 -- | Database creation strategy for different implementations.
@@ -845,6 +849,18 @@ test_noReNotifyOnRelatedTxReinsert db = do
 -- per (slot, hash) when the closure completes, regardless of how many
 -- slots reference the same hash. Conflating the slots loses a
 -- notification.
+-- | A body can only be persisted for a point already registered (via
+-- 'writeEbPoint', on the announcement path).
+test_ebBodyWithoutPointFails :: LeiosDbHandle IO -> IO ()
+test_ebBodyWithoutPointFails db = withRW db $ \con -> do
+  result <- tryDb $ rwInsertEbBody con (mkTestPoint (SlotNo 1) 1) (mkTestEb 2)
+  case result of
+    Left _ -> pure ()
+    Right _ -> assertFailure "writeEbBody succeeded for a point that was never registered"
+ where
+  tryDb :: IO a -> IO (Either LeiosDbException a)
+  tryDb = try
+
 test_multipleSlotsSameHash :: LeiosDbHandle IO -> IO ()
 test_multipleSlotsSameHash db = do
   chan <- subscribeEbNotifications db
