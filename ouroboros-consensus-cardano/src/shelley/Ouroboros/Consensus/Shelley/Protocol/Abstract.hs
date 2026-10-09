@@ -21,14 +21,13 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ShelleyHash (..)
   , ShelleyProtocol
   , ShelleyProtocolHeader
-  , defaultHeaderContainsLeiosCert
   ) where
 
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
-import Cardano.Ledger.BaseTypes (ProtVer)
-import Cardano.Ledger.Core (Era)
+import Cardano.Ledger.BaseTypes (ProtVer, StrictMaybe)
+import Cardano.Ledger.Block (EbReferencesAnnouncement)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
@@ -44,7 +43,7 @@ import Control.DeepSeq (NFData)
 import Control.Monad.Except (Except)
 import Data.Aeson.Types (FromJSON, ToJSON)
 import Data.Kind (Type)
-import Data.Typeable (Proxy, Typeable)
+import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -59,7 +58,11 @@ import Ouroboros.Consensus.Protocol.Abstract
   , ValidateView
   )
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Common (HasMaxMajorProtVer)
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( HasMaxMajorProtVer
+  , LeiosOnly
+  , ShelleyProtocolHeader
+  )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -95,9 +98,6 @@ instance Condense ShelleyHash where
   Header
 -------------------------------------------------------------------------------}
 
--- | Shelley header, determined by the associated protocol.
-type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
-
 -- | Indicates that the header (determined by the protocol) supports " Envelope
 -- " functionality. Envelope functionality refers to the minimal functionality
 -- required to construct a chain.
@@ -116,11 +116,6 @@ class
   pHeaderSize :: ShelleyProtocolHeader proto -> Natural
   pHeaderBlockSize :: ShelleyProtocolHeader proto -> Natural
 
-  -- | Whether the header says its block body carries a Leios certificate.
-  -- Protocols that don't support Leios define this as
-  -- 'defaultHeaderContainsLeiosCert'.
-  pHeaderContainsLeiosCert :: ShelleyProtocolHeader proto -> Bool
-
   type EnvelopeCheckError proto :: Type
 
   -- | Carry out any protocol-specific envelope checks. For example, this might
@@ -130,9 +125,6 @@ class
     LedgerView proto ->
     ShelleyProtocolHeader proto ->
     Except (EnvelopeCheckError proto) ()
-
-defaultHeaderContainsLeiosCert :: ShelleyProtocolHeader proto -> Bool
-defaultHeaderContainsLeiosCert = const False
 
 -- | `ProtocolHeaderSupportsKES` describes functionality common to protocols
 --    using key evolving signature schemes. This includes verifying the header
@@ -154,9 +146,7 @@ class ProtocolHeaderSupportsKES proto where
     Bool
 
   mkHeader ::
-    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto, Era era) =>
-    -- | The era the header is forged in, which fixes its serialisation
-    Proxy era ->
+    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto) =>
     HotKey crypto m ->
     CanBeLeader proto ->
     IsLeader proto ->
@@ -172,6 +162,9 @@ class ProtocolHeaderSupportsKES proto where
     Int ->
     -- | Protocol version
     ProtVer ->
+    -- | Optional fields for Leios: whether the body carries a certificate, and
+    -- this header's announcement, if any
+    LeiosOnly proto () (Bool, StrictMaybe EbReferencesAnnouncement) ->
     m (ShelleyProtocolHeader proto)
 
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete

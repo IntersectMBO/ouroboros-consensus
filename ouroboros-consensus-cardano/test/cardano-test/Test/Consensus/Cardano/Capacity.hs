@@ -48,8 +48,8 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasure (..)
   )
 import Ouroboros.Consensus.Ledger.Tables
-import Ouroboros.Consensus.Protocol.Leios (Leios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -80,7 +80,6 @@ import Test.Consensus.Shelley.Generators ()
 import Test.Tasty
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.QuickCheck
-import qualified Test.Util.QuickCheck as QC
 
 type Crypto = MockCryptoCompatByron
 
@@ -147,10 +146,10 @@ prop_shelleyBased genTranslationContext st =
 -- Few runs: setting the parameters forces the whole arbitrary ledger state,
 -- which is slow to generate, and the result depends only on the parameters.
 prop_dijkstra ::
-  LedgerState (ShelleyBlock (Leios Crypto) DijkstraEra) EmptyMK ->
+  LedgerState (ShelleyBlock (Praos2 Crypto) DijkstraEra) EmptyMK ->
   Property
 prop_dijkstra st =
-  QC.withNumTests 10 $
+  withNumTests 10 $
     forAllBlind arbitrary $ \translationContext ->
       let capacity =
             ebCapacityTxMeasure
@@ -164,7 +163,7 @@ prop_dijkstra st =
                     , txReferencesSize = IgnoringOverflow (ByteSize32 5000)
                     }
             , counterexample "mempool reservation for an endorser block" $
-                mempoolEbReservation (Proxy @(ShelleyBlock (Leios Crypto) DijkstraEra)) capacity
+                mempoolEbReservation (Proxy @(ShelleyBlock (Praos2 Crypto) DijkstraEra)) capacity
                   === TxMeasure closureAlonzo closureRefScripts
             ]
  where
@@ -194,7 +193,9 @@ prop_dijkstra st =
 -- reading the wrong field fails.
 test_dijkstraTxEbMeasure :: Assertion
 test_dijkstraTxEbMeasure =
-  txEbMeasure (Proxy @(ShelleyBlock (Leios Crypto) DijkstraEra)) (TxMeasure alonzo refScripts)
+  txEbMeasure
+    (Proxy @(ShelleyBlock (Praos2 Crypto) DijkstraEra))
+    (TxMeasure alonzo refScripts)
     @?= DijkstraEbMeasure
       { ebClosureMeasure = TxMeasure alonzo refScripts
       , -- 34 bytes for the hash, 3 bytes for a size of 300

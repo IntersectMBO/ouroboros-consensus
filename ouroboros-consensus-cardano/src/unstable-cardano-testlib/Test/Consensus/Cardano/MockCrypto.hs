@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -7,8 +9,8 @@ module Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron) where
 import Cardano.Crypto.KES (MockKES)
 import Cardano.Crypto.VRF (MockVRF)
 import Cardano.Protocol.Crypto (Crypto (..))
-import qualified Ouroboros.Consensus.Protocol.Leios as Leios
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import qualified Ouroboros.Consensus.Protocol.Praos2 as Leios
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 
 -- | A replacement for 'Test.Consensus.Shelley.MockCrypto' that is compatible
@@ -37,6 +39,10 @@ instance Crypto MockCryptoCompatByron where
 
 instance TPraos.PraosCrypto MockCryptoCompatByron
 
+instance Praos.PolyPraosCrypto (Praos.Praos MockCryptoCompatByron) MockCryptoCompatByron
+
 instance Praos.PraosCrypto MockCryptoCompatByron
+
+instance Praos.PolyPraosCrypto (Leios.Praos2 MockCryptoCompatByron) MockCryptoCompatByron
 
 instance Leios.LeiosCrypto MockCryptoCompatByron

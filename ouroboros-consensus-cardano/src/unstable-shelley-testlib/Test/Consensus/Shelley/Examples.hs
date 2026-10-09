@@ -1,11 +1,9 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 
 module Test.Consensus.Shelley.Examples
   ( -- * Setup
@@ -22,15 +20,17 @@ module Test.Consensus.Shelley.Examples
   , examplesShelley
   ) where
 
-import Cardano.Ledger.BaseTypes (getVersion32, pvMajor, pvMinor)
+import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Block (BlockHeaderVersionInfo (..))
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
+import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
-import Cardano.Protocol.Praos.BlockHeader (HeaderBody (..))
+import Cardano.Protocol.Praos.BlockHeader
+  ( HeaderBody (HeaderBody)
+  )
 import qualified Cardano.Protocol.Praos.BlockHeader as Praos
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
@@ -46,11 +46,10 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Protocol.Abstract
-  ( TranslateProto
-  , translateChainDepState
-  )
+import Ouroboros.Consensus.Protocol.Abstract (TranslateProto, translateChainDepState)
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Protocol.TPraos
   ( TPraos
   , TPraosState (TPraosState)
@@ -58,8 +57,6 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
-import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto, ShelleyProtocolHeader)
-import Ouroboros.Consensus.Shelley.Protocol.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
@@ -228,18 +225,23 @@ fromShelleyLedgerExamples
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
--- | TODO Factor this out into something nicer.
 fromShelleyLedgerExamplesPraos ::
+  ShelleyCompatible (Praos StandardCrypto) era =>
+  ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
+  Examples (ShelleyBlock (Praos StandardCrypto) era)
+fromShelleyLedgerExamplesPraos = fromShelleyLedgerExamplesPolyPraos translatePraosHeader
+
+-- | TODO Factor this out into something nicer.
+fromShelleyLedgerExamplesPolyPraos ::
   forall proto era.
   ( ShelleyCompatible proto era
-  , ProtoCrypto proto ~ StandardCrypto
   , TranslateProto (TPraos StandardCrypto) proto
   ) =>
   -- | Rebuild the example's TPraos header as this protocol's header
   (SL.BHeader StandardCrypto -> ShelleyProtocolHeader proto) ->
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
   Examples (ShelleyBlock proto era)
-fromShelleyLedgerExamplesPraos
+fromShelleyLedgerExamplesPolyPraos
   translateHeader
   ProtocolLedgerExamples
     { pleLedgerExamples = Shelley.LedgerExamples{..}
@@ -376,52 +378,11 @@ fromShelleyLedgerExamplesPraos
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
-examplesShelley :: Examples StandardShelleyBlock
-examplesShelley = fromShelleyLedgerExamples ledgerExamplesShelley
+-- | Rebuild a TPraos example header as a Praos one.
+translatePraosHeader :: SL.BHeader StandardCrypto -> Praos.Header StandardCrypto
+translatePraosHeader (SL.BHeader bhBody bhSig) =
+  Praos.Header (praosHeaderBodyFromTPraos bhBody) (coerce bhSig)
 
-examplesAllegra :: Examples StandardAllegraBlock
-examplesAllegra = fromShelleyLedgerExamples ledgerExamplesAllegra
-
-examplesMary :: Examples StandardMaryBlock
-examplesMary = fromShelleyLedgerExamples ledgerExamplesMary
-
-examplesAlonzo :: Examples StandardAlonzoBlock
-examplesAlonzo = fromShelleyLedgerExamples ledgerExamplesAlonzo
-
-examplesBabbage :: Examples StandardBabbageBlock
-examplesBabbage =
-  fromShelleyLedgerExamplesPraos
-    translatePraosHeader
-    (ledgerExamplesTPraos Babbage.ledgerExamples)
-
-examplesConway :: Examples StandardConwayBlock
-examplesConway =
-  fromShelleyLedgerExamplesPraos
-    translatePraosHeader
-    (ledgerExamplesTPraos Conway.ledgerExamples)
-
-examplesDijkstra :: Examples StandardDijkstraBlock
-examplesDijkstra =
-  fromShelleyLedgerExamplesPraos
-    (translateLeiosHeader @DijkstraEra)
-    (ledgerExamplesTPraos Dijkstra.ledgerExamples)
-
-exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
-exampleShelleyLedgerConfig translationContext =
-  ShelleyLedgerConfig
-    { shelleyLedgerCompactGenesis = compactGenesis Shelley.testShelleyGenesis
-    , shelleyLedgerGlobals =
-        SL.mkShelleyGlobals
-          Shelley.testShelleyGenesis
-          epochInfo
-    , shelleyLedgerTranslationContext = translationContext
-    }
- where
-  epochInfo = fixedEpochInfo (EpochSize 4) slotLength
-  slotLength = mkSlotLength (secondsToNominalDiffTime 7)
-
--- | The Praos header body of a TPraos example header, which carries the same
--- fields.
 praosHeaderBodyFromTPraos :: SL.BHBody StandardCrypto -> HeaderBody StandardCrypto
 praosHeaderBodyFromTPraos bhBody =
   HeaderBody
@@ -437,36 +398,75 @@ praosHeaderBodyFromTPraos bhBody =
     , hbProtVer = SL.bprotver bhBody
     }
 
--- | Rebuild a TPraos example header as a Praos one.
-translatePraosHeader :: SL.BHeader StandardCrypto -> Praos.Header StandardCrypto
-translatePraosHeader (SL.BHeader bhBody bhSig) =
-  Praos.Header (praosHeaderBodyFromTPraos bhBody) (coerce bhSig)
+fromShelleyLedgerExamplesPraos2 ::
+  ShelleyCompatible (Praos2 StandardCrypto) era =>
+  ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
+  Examples (ShelleyBlock (Praos2 StandardCrypto) era)
+fromShelleyLedgerExamplesPraos2 =
+  fromShelleyLedgerExamplesPolyPraos translateLeiosHeader
 
--- | Rebuild a TPraos example header as a Leios one: the Praos body with the
--- two Leios fields, which an example never sets.
-translateLeiosHeader ::
-  forall era. Era era => SL.BHeader StandardCrypto -> Leios.Header StandardCrypto
+-- | As 'translatePraosHeader', with the Leios fields of an example block that
+-- carries a certificate and announces an endorser block of its own.
+translateLeiosHeader :: SL.BHeader StandardCrypto -> Leios.Header StandardCrypto
 translateLeiosHeader (SL.BHeader bhBody bhSig) =
-  Leios.mkHeader (Proxy @era) headerBody (coerce bhSig)
+  Leios.mkHeader (Proxy @DijkstraEra) hBody (coerce bhSig)
  where
   pb = praosHeaderBodyFromTPraos bhBody
-  headerBody =
-    Leios.mkHeaderBody
-      (Proxy @era)
-      Leios.HeaderBodyRaw
-        { Leios.hbrBlockNo = hbBlockNo pb
-        , Leios.hbrSlotNo = hbSlotNo pb
-        , Leios.hbrPrev = hbPrev pb
-        , Leios.hbrVk = hbVk pb
-        , Leios.hbrVrfVk = hbVrfVk pb
-        , Leios.hbrVrfRes = hbVrfRes pb
-        , Leios.hbrBodySize = hbBodySize pb
-        , Leios.hbrBodyHash = hbBodyHash pb
-        , Leios.hbrOCert = hbOCert pb
-        , Leios.hbrVersionInfo =
-            BlockHeaderVersionInfo
-              (getVersion32 (pvMajor (hbProtVer pb)))
-              (pvMinor (hbProtVer pb))
-        , Leios.hbrBlockBodyContainsLeiosCert = False
-        , Leios.hbrEbReferencesAnnouncement = SL.SNothing
-        }
+  SL.ProtVer major minor = Praos.hbProtVer pb
+  hBody =
+    Leios.HeaderBody
+      { Leios.hbBlockNo = Praos.hbBlockNo pb
+      , Leios.hbSlotNo = Praos.hbSlotNo pb
+      , Leios.hbPrev = Praos.hbPrev pb
+      , Leios.hbVk = Praos.hbVk pb
+      , Leios.hbVrfVk = Praos.hbVrfVk pb
+      , Leios.hbVrfRes = Praos.hbVrfRes pb
+      , Leios.hbBodySize = Praos.hbBodySize pb
+      , Leios.hbBodyHash = Praos.hbBodyHash pb
+      , Leios.hbOCert = Praos.hbOCert pb
+      , Leios.hbVersionInfo = SL.BlockHeaderVersionInfo (SL.getVersion32 major) minor
+      , Leios.hbBlockBodyContainsLeiosCert = True
+      , Leios.hbEbReferencesAnnouncement =
+          SL.SJust $
+            SL.EbReferencesAnnouncement
+              { SL.ebReferencesAnnouncementHash =
+                  unsafeMakeSafeHash $ Hash.castHash $ Praos.hbBodyHash pb
+              , SL.ebReferencesAnnouncementSize = 123
+              }
+      }
+
+examplesShelley :: Examples StandardShelleyBlock
+examplesShelley = fromShelleyLedgerExamples ledgerExamplesShelley
+
+examplesAllegra :: Examples StandardAllegraBlock
+examplesAllegra = fromShelleyLedgerExamples ledgerExamplesAllegra
+
+examplesMary :: Examples StandardMaryBlock
+examplesMary = fromShelleyLedgerExamples ledgerExamplesMary
+
+examplesAlonzo :: Examples StandardAlonzoBlock
+examplesAlonzo = fromShelleyLedgerExamples ledgerExamplesAlonzo
+
+examplesBabbage :: Examples StandardBabbageBlock
+examplesBabbage = fromShelleyLedgerExamplesPraos (ledgerExamplesTPraos Babbage.ledgerExamples)
+
+examplesConway :: Examples StandardConwayBlock
+examplesConway = fromShelleyLedgerExamplesPraos (ledgerExamplesTPraos Conway.ledgerExamples)
+
+examplesDijkstra :: Examples StandardDijkstraBlock
+examplesDijkstra =
+  fromShelleyLedgerExamplesPraos2 (ledgerExamplesTPraos Dijkstra.ledgerExamples)
+
+exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
+exampleShelleyLedgerConfig translationContext =
+  ShelleyLedgerConfig
+    { shelleyLedgerCompactGenesis = compactGenesis Shelley.testShelleyGenesis
+    , shelleyLedgerGlobals =
+        SL.mkShelleyGlobals
+          Shelley.testShelleyGenesis
+          epochInfo
+    , shelleyLedgerTranslationContext = translationContext
+    }
+ where
+  epochInfo = fixedEpochInfo (EpochSize 4) slotLength
+  slotLength = mkSlotLength (secondsToNominalDiffTime 7)

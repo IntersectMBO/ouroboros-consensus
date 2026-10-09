@@ -5,6 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -41,8 +42,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
-import Ouroboros.Consensus.Protocol.Leios (LeiosState)
-import Ouroboros.Consensus.Protocol.Praos (PraosState)
+import Ouroboros.Consensus.Protocol.Praos (PolyPraosState, SerialisePraosState)
 import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
@@ -105,17 +105,17 @@ instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) TPra
 instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) TPraosState where
   decodeDisk _ = decode
 
-instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) PraosState where
+instance
+  (ShelleyCompatible proto era, proto ~ proto', SerialisePraosState proto') =>
+  EncodeDisk (ShelleyBlock proto era) (PolyPraosState proto')
+  where
   encodeDisk _ = encode
 
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) PraosState where
-  decodeDisk _ = decode
-
-instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) LeiosState where
-  encodeDisk _ = encode
-
-instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) LeiosState where
+instance
+  (ShelleyCompatible proto era, proto ~ proto', SerialisePraosState proto') =>
+  DecodeDisk (ShelleyBlock proto era) (PolyPraosState proto')
+  where
   decodeDisk _ = decode
 
 instance

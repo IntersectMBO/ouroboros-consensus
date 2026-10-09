@@ -17,10 +17,9 @@ module Ouroboros.Consensus.Shelley.HFEras
   ) where
 
 import Cardano.Protocol.Crypto
-import Ouroboros.Consensus.Protocol.Leios (Leios)
-import qualified Ouroboros.Consensus.Protocol.Leios as Leios
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, Praos2)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.Eras
@@ -37,7 +36,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   , ShelleyCompatible
   )
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
-import Ouroboros.Consensus.Shelley.Protocol.Leios ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()
@@ -58,7 +56,7 @@ type StandardBabbageBlock = ShelleyBlock (Praos StandardCrypto) BabbageEra
 
 type StandardConwayBlock = ShelleyBlock (Praos StandardCrypto) ConwayEra
 
-type StandardDijkstraBlock = ShelleyBlock (Leios StandardCrypto) DijkstraEra
+type StandardDijkstraBlock = ShelleyBlock (Praos2 StandardCrypto) DijkstraEra
 
 {-------------------------------------------------------------------------------
   ShelleyCompatible
@@ -84,4 +82,4 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) BabbageEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
-instance Leios.LeiosCrypto c => ShelleyCompatible (Leios c) DijkstraEra
+instance LeiosCrypto c => ShelleyCompatible (Praos2 c) DijkstraEra

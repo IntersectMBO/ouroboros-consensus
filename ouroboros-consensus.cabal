@@ -1175,11 +1175,12 @@ library protocol
   exposed-modules:
     Ouroboros.Consensus.Protocol.Ledger.HotKey
     Ouroboros.Consensus.Protocol.Ledger.Util
-    Ouroboros.Consensus.Protocol.Leios
     Ouroboros.Consensus.Protocol.Praos
     Ouroboros.Consensus.Protocol.Praos.AgentClient
     Ouroboros.Consensus.Protocol.Praos.Common
+    Ouroboros.Consensus.Protocol.Praos.Orphans
     Ouroboros.Consensus.Protocol.Praos.Views
+    Ouroboros.Consensus.Protocol.Praos2
     Ouroboros.Consensus.Protocol.TPraos
 
   build-depends:
@@ -1188,6 +1189,7 @@ library protocol
     cardano-crypto-class:cardano-crypto-class,
     cardano-ledger-binary,
     cardano-ledger-core,
+    cardano-ledger-dijkstra ^>=0.5,
     cardano-ledger-shelley ^>=1.21,
     cardano-protocol ^>=0.3,
     cardano-protocol-tpraos ^>=1.6,
@@ -1580,14 +1582,12 @@ library cardano
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common
     Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
-    Ouroboros.Consensus.Shelley.Node.Leios
     Ouroboros.Consensus.Shelley.Node.Peras
     Ouroboros.Consensus.Shelley.Node.Praos
     Ouroboros.Consensus.Shelley.Node.Serialisation
     Ouroboros.Consensus.Shelley.Node.TPraos
     Ouroboros.Consensus.Shelley.Protocol.Abstract
     Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
-    Ouroboros.Consensus.Shelley.Protocol.Leios
     Ouroboros.Consensus.Shelley.Protocol.Praos
     Ouroboros.Consensus.Shelley.Protocol.TPraos
     Ouroboros.Consensus.Shelley.ShelleyHFC

@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Generators suitable for serialisation. Note that these are not guaranteed
@@ -7,7 +9,6 @@ module Test.Consensus.Protocol.Serialisation.Generators () where
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
-import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
 import Cardano.Protocol.Praos.BlockHeader
   ( Header (Header)
   , HeaderBody (HeaderBody)
@@ -23,12 +24,12 @@ import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
-import Ouroboros.Consensus.Protocol.Leios
-  ( AnnouncedBy (AnnouncedBy)
-  , LeiosState (LeiosState)
+import Ouroboros.Consensus.Protocol.Praos
+  ( AnnouncedBy (MkAnnouncedBy)
+  , PolyPraosState (PraosState)
   )
-import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import Ouroboros.Consensus.Protocol.Praos.Common (pure_LeiosOnly)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Crypto.KES ()
 import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
@@ -72,7 +73,18 @@ instance Praos.PraosCrypto c => Arbitrary (Header c) where
     let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Header hBody hSig
 
-instance Arbitrary PraosState where
+instance Arbitrary AnnouncedBy where
+  arbitrary =
+    MkAnnouncedBy
+      <$> arbitrary
+      <*> (EbReferencesAnnouncement <$> arbitrary <*> arbitrary)
+
+instance
+  ( Applicative (Praos.LeiosOnly proto ())
+  , Traversable (Praos.LeiosOnly proto ())
+  ) =>
+  Arbitrary (PolyPraosState proto)
+  where
   arbitrary =
     PraosState
       <$> oneof
@@ -86,15 +98,4 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-
-instance Arbitrary AnnouncedBy where
-  arbitrary =
-    AnnouncedBy
-      <$> arbitrary
-      <*> ( EbReferencesAnnouncement
-              <$> (unsafeMakeSafeHash <$> arbitrary)
-              <*> arbitrary
-          )
-
-instance Arbitrary LeiosState where
-  arbitrary = LeiosState <$> arbitrary <*> arbitrary
+      <*> traverse (\() -> arbitrary) (pure_LeiosOnly ())

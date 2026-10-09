@@ -90,12 +90,12 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract hiding
   ( translateChainDepState
   )
-import Ouroboros.Consensus.Protocol.Leios (Leios, LeiosCrypto)
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, Praos2)
 import Ouroboros.Consensus.Protocol.TPraos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -120,7 +120,7 @@ type CardanoHardForkConstraints c =
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AlonzoEra)
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) BabbageEra)
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
-  , LedgerSupportsProtocol (ShelleyBlock (Leios c) DijkstraEra)
+  , LedgerSupportsProtocol (ShelleyBlock (Praos2 c) DijkstraEra)
   )
 
 -- | When performing era translations, two eras have special behaviours on the
@@ -136,7 +136,7 @@ type CardanoHardForkConstraints c =
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   type HardForkTxMeasurePhase1 (CardanoEras c) = AlonzoMeasure
   type HardForkTxMeasurePhase2 (CardanoEras c) = RefScriptSize
-  type HardForkTxEbMeasure (CardanoEras c) = TxEbMeasure (ShelleyBlock (Leios c) DijkstraEra)
+  type HardForkTxEbMeasure (CardanoEras c) = TxEbMeasure (ShelleyBlock (Praos2 c) DijkstraEra)
 
   hardForkEraTranslation =
     EraTranslation
@@ -275,10 +275,10 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         }
 
   hardForkTxEbMeasure _ p1 p2 =
-    txEbMeasure (Proxy @(ShelleyBlock (Leios c) DijkstraEra)) (TxMeasure p1 p2)
+    txEbMeasure (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) (TxMeasure p1 p2)
 
   hardForkMempoolEbReservation _ eb =
-    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock (Leios c) DijkstraEra)) eb
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) eb
      in (p1, p2)
 
   -- Both ids are ordered by their txid hash, ignoring the era. Equality reuses
@@ -717,7 +717,7 @@ translateLedgerStateConwayToDijkstraWrapper ::
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Leios c) DijkstraEra)
+    (ShelleyBlock (Praos2 c) DijkstraEra)
 translateLedgerStateConwayToDijkstraWrapper =
   RequireBoth $ \_cfgConway cfgDijkstra ->
     TranslateLedgerState
@@ -728,17 +728,15 @@ translateLedgerStateConwayToDijkstraWrapper =
             . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra)
             . Comp
             . Flip
-            . retypeProtocol
+            . transLeiosLS
       }
  where
-  -- Dijkstra is the first era to run Leios, so this translation crosses both
-  -- an era and a protocol. Only the protocol index changes here, which is a
-  -- phantom of 'ShelleyBlock': nothing is converted, the rebuild is what
-  -- retypes it.
-  retypeProtocol ::
+  -- Only the protocol index changes, so nothing in here is converted; the
+  -- rebuild is what retypes it.
+  transLeiosLS ::
     LedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
-    LedgerState (ShelleyBlock (Leios c) ConwayEra) mk
-  retypeProtocol (ShelleyLedgerState wo nes st tb) =
+    LedgerState (ShelleyBlock (Praos2 c) ConwayEra) mk
+  transLeiosLS (ShelleyLedgerState wo nes st tb) =
     ShelleyLedgerState
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
@@ -749,7 +747,7 @@ translateLedgerStateConwayToDijkstraWrapper =
 translateLedgerTablesConwayToDijkstraWrapper ::
   TranslateLedgerTables
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Leios c) DijkstraEra)
+    (ShelleyBlock (Praos2 c) DijkstraEra)
 translateLedgerTablesConwayToDijkstraWrapper =
   TranslateLedgerTables
     { translateTxInWith = coerce
@@ -757,7 +755,7 @@ translateLedgerTablesConwayToDijkstraWrapper =
     }
 
 getDijkstraTranslationContext ::
-  WrapLedgerConfig (ShelleyBlock (Leios c) DijkstraEra) ->
+  WrapLedgerConfig (ShelleyBlock (Praos2 c) DijkstraEra) ->
   SL.TranslationContext DijkstraEra
 getDijkstraTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
