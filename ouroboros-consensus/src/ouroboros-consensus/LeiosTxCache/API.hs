@@ -207,17 +207,20 @@ bucketTxArrival = \case
 
 -- | The worst-case number of txs the cache can be asked to hold: a full
 -- 'maxAnnouncementCount' window of EBs, each referencing the maximum
--- 'maxTxsPerEb' distinct txs. NOTE: this exceeds what the production table is
--- allocated to hold; see
--- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
+-- 'maxTxsPerEb' distinct txs.
 worstCaseCacheTxCount :: Int
 worstCaseCacheTxCount = maxAnnouncementCount * maxTxsPerEb
 
 -- | The table shift the node allocates its Leios tx cache with: @2 ^@ this
 -- many slots. The pure reference handle reports 'ibsCacheLoad' against the
 -- same allocation, so the load factor means one thing across both handles.
--- NOTE: this allocation does not cover 'worstCaseCacheTxCount'; see
--- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
+-- It covers 'worstCaseCacheTxCount' about twice over.
+--
+-- The latency profile of accessing the hash table is part of the overall
+-- diffusion correctness, and that begins to degrade when the load factor
+-- exceeds ~50%. So that degradation is already a limiting factor even before it
+-- risks a total failure (at >100%). Keep this in mind before lowering this or
+-- raising 'maxTxsPerEb' or 'maxLeiosEbBytesSize'.
 defaultLeiosTxCacheShift :: Int
 defaultLeiosTxCacheShift = 22
 

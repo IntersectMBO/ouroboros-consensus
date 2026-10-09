@@ -75,10 +75,10 @@
 -- -- catch-up with worst-case tx sharing: no tx is shared between EBs
 -- cabal run bench:leios-gc-bench -- --scenario catchup --load eb-no-sharing
 --
--- -- the 512 KB-body worst case (~40 GB volatile partition; TMPDIR must
+-- -- the 600 kB-body worst case (~40 GB volatile partition; TMPDIR must
 -- -- point at a disk with ~100 GB free, not a tmpfs; runs for hours)
 -- TMPDIR=\/scratch cabal run bench:leios-gc-bench -- \\
---   --scenario catchup --load eb-no-sharing --txs-per-eb 13000 --tx-bytes 923
+--   --scenario catchup --load eb-no-sharing --txs-per-eb 16000 --tx-bytes 750
 --
 -- -- raw sweep work and unprotected lock holds: no batching, no pauses
 -- cabal run bench:leios-gc-bench -- --scenario catchup --gc-pacing zero
@@ -386,7 +386,7 @@ optsParser =
           <> showDefault
           <> help
             "Synthetic mode: transactions per EB (2700 = observed on the \
-            \proto-devnet; 13000 = the 512 KB body worst case)"
+            \proto-devnet; 16000 = the 600 kB body worst case)"
       )
     <*> option
       auto

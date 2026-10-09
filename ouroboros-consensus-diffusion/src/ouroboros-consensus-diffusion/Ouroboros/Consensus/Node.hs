@@ -560,11 +560,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           -- so it cannot follow the leios protocol parameters.
           --
           -- Each EB is bounded by construction ('maxTxsPerEb', the fetch
-          -- buffers hold any legal body), but the aggregate is not: the
-          -- worst case is 'worstCaseCacheTxCount' = 128 * 71428 = 9142784
-          -- distinct txs, which no longer fits the 2^22 = 4194304 slots, and
-          -- the table errors when full rather than degrading. Tracked in
-          -- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290.
+          -- buffers hold any legal body), and so is the aggregate: the worst
+          -- case is 'worstCaseCacheTxCount' = 128 * 17142 = 2194176 distinct
+          -- txs, about half the 2^22 = 4194304 slots.
           leiosTxCache <-
             newHashTableLeiosTxCache defaultLeiosTxCacheShift leiosTxCacheSalt0 leiosTxCacheSalt1
 

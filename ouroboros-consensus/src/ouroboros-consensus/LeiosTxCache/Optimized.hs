@@ -76,8 +76,7 @@ emptyHtState :: HtState b
 emptyHtState = HtState Map.empty 0 Map.empty (SlotNo 0) Map.empty 0
 
 -- | A hash-table-backed handle. @nshift@ sizes the table (@2 ^ nshift@ slots;
--- the node uses 22, which no longer covers 'worstCaseCacheTxCount', see
--- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290) and
+-- the node uses 22, 'LeiosTxCache.API.defaultLeiosTxCacheShift') and
 -- @k0@\/@k1@ are the SipHash salt (feed a securely-random pair).
 newHashTableLeiosTxCache ::
   (IOLike m, ReferencesTxsByHash b) =>
