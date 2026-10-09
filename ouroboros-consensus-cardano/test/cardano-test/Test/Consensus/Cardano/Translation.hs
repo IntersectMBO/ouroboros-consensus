@@ -11,7 +11,7 @@
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
 #endif
 
-module Test.Consensus.Cardano.Translation (tests) where
+module Test.Consensus.Cardano.Translation (forecastTests, tests) where
 
 import qualified Cardano.Chain.Block as Byron
 import qualified Cardano.Chain.UTxO as Byron
@@ -39,18 +39,26 @@ import Cardano.Slotting.Slot (EpochNo (..))
 import qualified Data.Map.Strict as Map
 import Data.SOP.InPairs (RequiringBoth (..), provideBoth)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( slotLengthFromSec
+  ( RelativeTime (..)
+  , slotLengthFromSec
   )
+import Ouroboros.Consensus.Ledger.Abstract (ledgerTipSlot)
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock, byronLedgerState)
 import Ouroboros.Consensus.Cardano.Block (CardanoEras)
 import Ouroboros.Consensus.Cardano.CanHardFork ()
+import Cardano.Ledger.Dijkstra.Genesis (DijkstraGenesis (..))
+import Cardano.Ledger.Dijkstra.PParams (UpgradeDijkstraPParams (..))
+import Control.Monad.Except (runExcept)
+import Ouroboros.Consensus.HardFork.History (Bound (..))
+import Ouroboros.Consensus.Block (PerasRoundNo (..), succWithOrigin)
 import Ouroboros.Consensus.HardFork.Combinator
-  ( InPairs (..)
+  ( EraTranslation (..)
+  , InPairs (..)
   , hardForkEraTranslation
-  , translateLedgerState
   )
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
-  ( TranslateLedgerState (..)
+  ( CrossEraForecaster (..)
+  , TranslateLedgerState (..)
   )
 import Ouroboros.Consensus.Ledger.Basics
   ( LedgerCfg
@@ -61,7 +69,8 @@ import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Protocol.Praos
-import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosOnly (Praos2HasLeios), Praos2)
+import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -69,6 +78,7 @@ import Ouroboros.Consensus.Shelley.Ledger
   ( BigEndianTxIn (..)
   , ShelleyBlock
   , ShelleyLedgerConfig
+  , ShelleyLedgerConfig (..)
   , mkShelleyLedgerConfig
   , shelleyLedgerState
   , shelleyLedgerTables
@@ -259,6 +269,89 @@ testTablesTranslation propLabel translateWithConfig translationShouldSatisfy led
           translateWithConfig
           (WrapLedgerConfig tsSrcLedgerConfig)
           (WrapLedgerConfig tsDestLedgerConfig)
+
+
+{-------------------------------------------------------------------------------
+  Forecasting across an era boundary
+-------------------------------------------------------------------------------}
+
+forecastTests :: TestTree
+forecastTests =
+  testGroup
+    "CrossEraForecast"
+    [ testProperty
+        "Conway to Dijkstra takes the Leios parameters from the Dijkstra genesis"
+        prop_conwayToDijkstraForecast
+    ]
+
+
+-- | The combinator's own Conway-to-Dijkstra forecaster, as 'CanHardFork' wires it.
+conwayToDijkstraForecast ::
+  RequiringBoth
+    WrapLedgerConfig
+    (CrossEraForecaster LedgerState WrapLedgerView)
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+    (ShelleyBlock (Praos2 Crypto) DijkstraEra)
+PCons _ (PCons _ (PCons _ (PCons _ (PCons _ (PCons _ (PCons conwayToDijkstraForecast PNil)))))) =
+  crossEraForecast (hardForkEraTranslation :: EraTranslation (CardanoEras Crypto))
+
+-- | Forecasting a Dijkstra ledger view from a Conway ledger state, for the
+-- first slot past a boundary just after its tip, gives the Leios parameters
+-- the Dijkstra genesis sets.
+prop_conwayToDijkstraForecast ::
+  TestSetup
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+    (ShelleyBlock (Praos2 Crypto) DijkstraEra) ->
+  Property
+prop_conwayToDijkstraForecast ts =
+  case runExcept forecast of
+    Left err -> counterexample (show err) False
+    Right (WrapLedgerView lv) -> leiosParameters lv === expected
+ where
+  TestSetup{tsSrcLedgerConfig, tsDestLedgerConfig, tsSrcLedgerState, tsEpochNo} = ts
+  slot = succWithOrigin (ledgerTipSlot tsSrcLedgerState)
+  transition =
+    Bound
+      { boundTime = RelativeTime 0
+      , boundSlot = slot
+      , boundEpoch = tsEpochNo
+      , boundNextPerasRound = PerasRoundNo 0
+      }
+  forecast =
+    crossEraForecastWith
+      ( provideBoth
+          conwayToDijkstraForecast
+          (WrapLedgerConfig tsSrcLedgerConfig)
+          (WrapLedgerConfig tsDestLedgerConfig)
+      )
+      transition
+      slot
+      tsSrcLedgerState
+  DijkstraGenesis{dgUpgradePParams = upgrade} = shelleyLedgerTranslationContext tsDestLedgerConfig
+  expected =
+    ( udppMaxEndorserBlockReferencesSize upgrade
+    , udppMaxEndorserBlockTxsSize upgrade
+    , udppLeiosAnnouncementPeriodLength upgrade
+    , udppLeiosVotePeriodLength upgrade
+    , udppLeiosDiffusionPeriodLength upgrade
+    , udppLeiosQuorumStakeThreshold upgrade
+    )
+  leiosParameters
+    Views.PraosLedgerView
+      { Views.plvMaxEbBodySize = Praos2HasLeios maxEbBodySize
+      , Views.plvMaxEbTxsSize = Praos2HasLeios maxEbTxsSize
+      , Views.plvAnnouncementPeriodLength = Praos2HasLeios announcementPeriodLength
+      , Views.plvVotePeriodLength = Praos2HasLeios votePeriodLength
+      , Views.plvDiffusionPeriodLength = Praos2HasLeios diffusionPeriodLength
+      , Views.plvQuorumStakeThreshold = Praos2HasLeios quorumStakeThreshold
+      } =
+      ( maxEbBodySize
+      , maxEbTxsSize
+      , announcementPeriodLength
+      , votePeriodLength
+      , diffusionPeriodLength
+      , quorumStakeThreshold
+      )
 
 {-------------------------------------------------------------------------------
     Specific predicates

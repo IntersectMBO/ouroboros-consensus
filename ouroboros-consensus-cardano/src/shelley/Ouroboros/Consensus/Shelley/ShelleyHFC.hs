@@ -22,6 +22,8 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC
   , ShelleyPartialLedgerConfig (..)
   , crossEraForecastAcrossShelley
   , forecastAcrossShelley
+  , TranslateLedgerViewAcrossShelley (..)
+  , viaTranslateProto
   , translateChainDepStateAcrossShelley
   ) where
 
@@ -298,24 +300,41 @@ translateChainDepStateAcrossShelley =
       -- ticking the state.
       WrapChainDepState $ translateChainDepState (Proxy @(protoFrom, protoTo)) chainDepState
 
+-- | How the next Shelley-based era sees the ledger view of the era before it,
+-- for forecasting across the boundary; see 'crossEraForecastAcrossShelley'.
+--
+-- The new era's ledger config is at hand, since its translation context
+-- determines whatever the new view has that the old one lacks.
+newtype TranslateLedgerViewAcrossShelley protoFrom protoTo eraTo
+  = TranslateLedgerViewAcrossShelley
+      (ShelleyLedgerConfig eraTo -> LedgerView protoFrom -> LedgerView protoTo)
+
+-- | The protocol's own translation, which suffices whenever the new view has
+-- nothing the old one lacks.
+viaTranslateProto ::
+  forall protoFrom protoTo eraTo.
+  TranslateProto protoFrom protoTo =>
+  TranslateLedgerViewAcrossShelley protoFrom protoTo eraTo
+viaTranslateProto =
+  TranslateLedgerViewAcrossShelley $ \_cfgTo ->
+    translateLedgerView (Proxy @(protoFrom, protoTo))
+
 crossEraForecastAcrossShelley ::
   forall eraFrom eraTo protoFrom protoTo.
-  ( TranslateProto protoFrom protoTo
-  , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
-  ) =>
+  LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom) =>
+  TranslateLedgerViewAcrossShelley protoFrom protoTo eraTo ->
   RequiringBoth
     WrapLedgerConfig
     (CrossEraForecaster LedgerState WrapLedgerView)
     (ShelleyBlock protoFrom eraFrom)
     (ShelleyBlock protoTo eraTo)
-crossEraForecastAcrossShelley = coerce forecastAcrossShelley
+crossEraForecastAcrossShelley translate = coerce (forecastAcrossShelley translate)
 
 -- | Forecast from a Shelley-based era to the next Shelley-based era.
 forecastAcrossShelley ::
   forall protoFrom protoTo eraFrom eraTo mk.
-  ( TranslateProto protoFrom protoTo
-  , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
-  ) =>
+  LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom) =>
+  TranslateLedgerViewAcrossShelley protoFrom protoTo eraTo ->
   ShelleyLedgerConfig eraFrom ->
   ShelleyLedgerConfig eraTo ->
   -- | Transition between the two eras
@@ -324,7 +343,7 @@ forecastAcrossShelley ::
   SlotNo ->
   LedgerState (ShelleyBlock protoFrom eraFrom) mk ->
   Except OutsideForecastRange (WrapLedgerView (ShelleyBlock protoTo eraTo))
-forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
+forecastAcrossShelley (TranslateLedgerViewAcrossShelley translate) cfgFrom cfgTo transition forecastFor ledgerStateFrom
   | forecastFor < maxFor =
       return $ futureLedgerView forecastFor
   | otherwise =
@@ -342,7 +361,7 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
     WrapLedgerView
       . either
         (\e -> error ("futureLedgerView failed: " <> show e))
-        (translateLedgerView (Proxy @(protoFrom, protoTo)))
+        (translate cfgTo)
       . runExcept
       . Forecast.forecastFor (ledgerViewForecastAt cfgFrom ledgerStateFrom)
 
