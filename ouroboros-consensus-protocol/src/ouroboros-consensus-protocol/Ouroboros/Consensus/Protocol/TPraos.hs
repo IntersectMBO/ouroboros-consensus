@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Transitional Praos.
 --
@@ -15,6 +17,7 @@
 module Ouroboros.Consensus.Protocol.TPraos
   ( MaxMajorProtVer (..)
   , TPraos
+  , LeiosOnly (..)
   , TPraosFields (..)
   , TPraosIsLeader (..)
   , TPraosParams (..)
@@ -167,6 +170,29 @@ type TPraosValidateView c = SL.BHeader c
 -------------------------------------------------------------------------------}
 
 data TPraos c
+
+-- | TPraos has no Leios fields.
+newtype instance LeiosOnly (TPraos c) a b = TPraosLacksLeios a
+  deriving (Eq, Generic, Show)
+
+deriving anyclass instance NoThunks a => NoThunks (LeiosOnly (TPraos c) a b)
+
+instance Functor (LeiosOnly (TPraos c) a) where
+  fmap _ (TPraosLacksLeios a) = TPraosLacksLeios a
+
+instance () ~ a => Applicative (LeiosOnly (TPraos c) a) where
+  pure _ = TPraosLacksLeios ()
+  TPraosLacksLeios () <*> TPraosLacksLeios () = TPraosLacksLeios ()
+
+instance Foldable (LeiosOnly (TPraos c) a) where
+  foldMap _ (TPraosLacksLeios _) = mempty
+
+instance Traversable (LeiosOnly (TPraos c) a) where
+  traverse _ (TPraosLacksLeios a) = pure (TPraosLacksLeios a)
+
+instance TypeSwitch (LeiosOnly (TPraos c)) where
+  typeSwitchL = TPraosLacksLeios (TPraosLacksLeios ())
+  typeSwitchR = TPraosLacksLeios ()
 
 -- | TPraos parameters that are node independent
 data TPraosParams = TPraosParams

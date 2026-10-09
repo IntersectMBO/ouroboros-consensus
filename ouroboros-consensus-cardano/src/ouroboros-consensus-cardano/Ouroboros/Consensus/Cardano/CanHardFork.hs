@@ -95,6 +95,7 @@ import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, Praos2)
 import Ouroboros.Consensus.Protocol.TPraos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -112,13 +113,14 @@ import Ouroboros.Consensus.Util (coerceMapKeys)
 type CardanoHardForkConstraints c =
   ( TPraos.PraosCrypto c
   , Praos.PraosCrypto c
+  , LeiosCrypto c
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) ShelleyEra)
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AllegraEra)
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) MaryEra)
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AlonzoEra)
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) BabbageEra)
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
-  , LedgerSupportsProtocol (ShelleyBlock (Praos c) DijkstraEra)
+  , LedgerSupportsProtocol (ShelleyBlock (Praos2 c) DijkstraEra)
   )
 
 -- | When performing era translations, two eras have special behaviours on the
@@ -134,7 +136,7 @@ type CardanoHardForkConstraints c =
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   type HardForkTxMeasurePhase1 (CardanoEras c) = AlonzoMeasure
   type HardForkTxMeasurePhase2 (CardanoEras c) = RefScriptSize
-  type HardForkTxEbMeasure (CardanoEras c) = TxEbMeasure (ShelleyBlock (Praos c) DijkstraEra)
+  type HardForkTxEbMeasure (CardanoEras c) = TxEbMeasure (ShelleyBlock (Praos2 c) DijkstraEra)
 
   hardForkEraTranslation =
     EraTranslation
@@ -273,10 +275,10 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         }
 
   hardForkTxEbMeasure _ p1 p2 =
-    txEbMeasure (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) (TxMeasure p1 p2)
+    txEbMeasure (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) (TxMeasure p1 p2)
 
   hardForkMempoolEbReservation _ eb =
-    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) eb
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) eb
      in (p1, p2)
 
   -- Both ids are ordered by their txid hash, ignoring the era. Equality reuses
@@ -715,7 +717,7 @@ translateLedgerStateConwayToDijkstraWrapper ::
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (Praos2 c) DijkstraEra)
 translateLedgerStateConwayToDijkstraWrapper =
   RequireBoth $ \_cfgConway cfgDijkstra ->
     TranslateLedgerState
@@ -726,12 +728,26 @@ translateLedgerStateConwayToDijkstraWrapper =
             . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra)
             . Comp
             . Flip
+            . transLeiosLS
+      }
+ where
+  -- Only the protocol index changes, so nothing in here is converted; the
+  -- rebuild is what retypes it.
+  transLeiosLS ::
+    LedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
+    LedgerState (ShelleyBlock (Praos2 c) ConwayEra) mk
+  transLeiosLS (ShelleyLedgerState wo nes st tb) =
+    ShelleyLedgerState
+      { shelleyLedgerTip = fmap castShelleyTip wo
+      , shelleyLedgerState = nes
+      , shelleyLedgerTransition = st
+      , shelleyLedgerTables = coerce tb
       }
 
 translateLedgerTablesConwayToDijkstraWrapper ::
   TranslateLedgerTables
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (Praos2 c) DijkstraEra)
 translateLedgerTablesConwayToDijkstraWrapper =
   TranslateLedgerTables
     { translateTxInWith = coerce
@@ -739,7 +755,7 @@ translateLedgerTablesConwayToDijkstraWrapper =
     }
 
 getDijkstraTranslationContext ::
-  WrapLedgerConfig (ShelleyBlock (Praos c) DijkstraEra) ->
+  WrapLedgerConfig (ShelleyBlock (Praos2 c) DijkstraEra) ->
   SL.TranslationContext DijkstraEra
 getDijkstraTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig

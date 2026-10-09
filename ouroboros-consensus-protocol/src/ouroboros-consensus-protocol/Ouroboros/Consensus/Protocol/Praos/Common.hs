@@ -6,13 +6,18 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common
-  ( MaxMajorProtVer (..)
+  ( LeiosOnly
+  , pureLeiosOnly
+  , TypeSwitch (..)
+  , ShelleyProtocolHeader
+  , MaxMajorProtVer (..)
   , HasMaxMajorProtVer (..)
   , PraosCanBeLeader (..)
   , PraosTiebreakerView (..)
@@ -40,6 +45,7 @@ import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
 import qualified Control.Tracer as Tracer
 import Data.Function (on)
+import Data.Kind (Constraint, Type)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
 import Data.Word (Word64)
@@ -353,3 +359,58 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
   getPraosNonces :: proxy p -> ChainDepState p -> PraosNonces
 
   getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash BlockIssuer) Word64
+
+-----
+
+-- | The header a protocol validates, determined by the protocol.
+--
+-- TODO two things to fix here, both deferred because each touches every use in
+-- ouroboros-consensus-cardano. The name is not Shelley's --- this is whichever
+-- header the protocol signs, which is why 'HeaderView' and the instances for
+-- 'Praos', 'Praos2' and 'TPraos' all need it from the protocol package.
+-- And 'Shelley.Protocol.Abstract' currently re-exports this, which the importers
+-- there should stop relying on: they should name this module.
+type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
+
+-- | @a@ for the protocols without Leios, and @b@ for the ones with it.
+--
+-- One such family per extension, which is what keeps every type that mentions
+-- one indexed by @proto@ alone. Its two intended uses:
+--
+--  * @LeiosOnly proto Void ()@ gates a constructor, since the protocols
+--    without Leios cannot build it.
+--
+--  * @LeiosOnly proto () a@ gates a field, which those protocols have but
+--    cannot put anything in.
+type LeiosOnly :: Type -> Type -> Type -> Type
+data family LeiosOnly proto a :: Type -> Type
+
+-- | 'pure' for the field form of 'LeiosOnly', with @proto@ first so callers
+-- can fix it with a type application.
+pureLeiosOnly ::
+  forall proto b. Applicative (LeiosOnly proto ()) => b -> LeiosOnly proto () b
+pureLeiosOnly = pure
+
+-- | Allow for any type on the side of a type-level switch that wasn't chosen
+--
+-- For our types like 'LeiosOnly', there is only one instance that type checks.
+-- See 'Ouroboros.Consensus.Protocol.Praos.leiosContextFreeHeaderChecks' for an
+-- example use.
+--
+-- Example:
+--
+-- > newtype L a b = L a
+-- >
+-- > instance TypeSwitch L where
+-- >   typeSwitchL = L (L ())
+-- >   typeSwitchR = L ()
+--
+-- The usefulness is that the inner layer of L (L ()) is parametrically
+-- polymorphic in @a@.
+--
+-- Another way to think about it: these @ff@ are types like 'Either' except the
+-- choice between 'Left' and 'Right' is made statically rather than dynamically.
+type TypeSwitch :: (Type -> Type -> Type) -> Constraint
+class TypeSwitch ff where
+  typeSwitchL :: ff (ff () Void) ()
+  typeSwitchR :: ff () (ff Void ())
