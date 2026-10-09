@@ -124,14 +124,14 @@ instance LeiosCrypto c => ConsensusProtocol (Praos2 c) where
 
   protocolSecurityParam = praosSecurityParam . praosParams . leiosPraosConfig
 
-  checkIsLeader = checkIsLeaderPolyPraos . leiosPraosConfig
+  checkIsLeader = checkIsLeaderPolyPraos . praosParams . leiosPraosConfig
 
-  tickChainDepState = tickChainDepStatePolyPraos . leiosPraosConfig
+  tickChainDepState = tickChainDepStatePolyPraos . praosEpochInfo . leiosPraosConfig
 
   -- The Leios header checks are cheap, so they run before the signature checks.
-  updateChainDepState = updateChainDepStatePolyPraos . leiosPraosConfig
+  updateChainDepState (LeiosConfig (PraosConfig prms ei)) = updateChainDepStatePolyPraos prms ei
 
-  reupdateChainDepState = reupdateChainDepStatePolyPraos . leiosPraosConfig
+  reupdateChainDepState (LeiosConfig (PraosConfig prms ei)) = reupdateChainDepStatePolyPraos prms ei
 
 instance Dijkstra.DijkstraEraForecast era => Views.ForecastsLeios (Praos2 c) era where
   forecastToPolyPraosLedgerView (f :: SL.Forecast t era) =
