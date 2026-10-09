@@ -9,6 +9,9 @@ data DBTruncaterConfig = DBTruncaterConfig
   { dbDir :: FilePath
   , truncateAfter :: TruncateAfter
   , verbose :: Bool
+  , leios :: Bool
+  -- ^ This field should be gone once Leios is deployed and we always have a
+  -- LeiosDB.
   }
 
 -- | Where to truncate the ImmutableDB.

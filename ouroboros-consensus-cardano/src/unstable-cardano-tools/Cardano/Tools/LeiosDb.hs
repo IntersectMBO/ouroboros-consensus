@@ -19,8 +19,8 @@ data LeiosDbSource
 -- the '--db' option by appending the default names.
 --
 -- A missing file is fatal, because a tool cannot tell whether the chain holds a
--- cert-RB before it reads the chain. The operator passes @--no-leios-db@ to say
--- that the chain holds no cert-RB.
+-- cert-RB before it reads the chain. The operator omits @--leios@ to say that
+-- the chain holds no cert-RB.
 --
 -- Hence this check, rather than a check inside the SQLite backend: that backend
 -- opens with 'SQLOpenCreate' and it creates the schema when it finds no file.
@@ -39,5 +39,4 @@ requireLeiosDbFile path = do
         <> ". A block that carries a Leios certificate has an empty body, "
         <> "and the transactions that it puts on the chain are in the "
         <> "endorser block that it certifies, which the LeiosDb holds. "
-        <> "Pass --leios-db if the node writes that file elsewhere, or "
-        <> "--no-leios-db if this chain holds no such block."
+        <> "Omit --leios if this chain holds no such block."

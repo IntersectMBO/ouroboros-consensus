@@ -14,6 +14,7 @@ parseDBTruncaterConfig =
     <$> parseChainDBPath
     <*> parseTruncateAfter
     <*> parseVerbose
+    <*> parseLeios
  where
   parseChainDBPath =
     strOption $
@@ -23,6 +24,7 @@ parseDBTruncaterConfig =
         , metavar "PATH"
         ]
   parseVerbose = switch (long "verbose" <> help "Enable verbose logging")
+  parseLeios = switch (long "leios" <> help "Enable truncating a LeiosDB")
 
 parseTruncateAfter :: Parser TruncateAfter
 parseTruncateAfter =

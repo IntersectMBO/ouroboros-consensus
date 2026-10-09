@@ -47,15 +47,18 @@ truncate ::
   DBTruncaterConfig ->
   Args block ->
   IO ()
-truncate DBTruncaterConfig{dbDir, truncateAfter, verbose} args = do
+truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leios} args = do
   -- Check the files before the ImmutableDB truncation, so a missing LeiosDb
   -- fails before the tool deletes any block.
-  mLeiosDbPaths <- do
-    let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
-        immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
-    requireLeiosDbFile volLeiosDBFile
-    requireLeiosDbFile immLeiosDBFile
-    pure . Just $ (volLeiosDBFile, immLeiosDBFile)
+  mLeiosDbPaths <-
+    if leios
+      then do
+        let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
+            immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
+        requireLeiosDbFile volLeiosDBFile
+        requireLeiosDbFile immLeiosDBFile
+        pure . Just $ (volLeiosDBFile, immLeiosDBFile)
+      else pure Nothing
   withRegistry $ \registry -> do
     lock <- mkLock
     immutableDBTracer <- mkVerboseTracer lock verbose

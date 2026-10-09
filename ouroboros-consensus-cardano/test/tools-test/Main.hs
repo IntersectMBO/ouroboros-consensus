@@ -95,6 +95,7 @@ testTruncaterConfig =
     { DBTruncater.dbDir = chainDB
     , DBTruncater.truncateAfter = DBTruncater.TruncateAfterSlot truncateAfter
     , DBTruncater.verbose = False
+    , DBTruncater.leios = True
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
