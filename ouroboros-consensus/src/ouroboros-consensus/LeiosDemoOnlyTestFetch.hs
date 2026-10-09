@@ -217,19 +217,17 @@ deriving instance
 -- 'byteLimitsLeiosFetch'), but that slack pays for framing and nothing may
 -- spend it as capacity.
 --
--- TODO Two things wrong with this number. It should be 500 KiB; it is 512 KiB
--- only because @exampleDijkstraGenesis@ in the ledger's testlib sets
--- @maxEndorserBlockReferencesSize@ to that (I think that's simply a typo), and
--- @guardLeiosWireLimit@ refuses to run with a protocol parameter above this
--- ceiling.
+-- It is meant to equal the constitution's guardrail on
+-- @maxEndorserBlockReferencesSize@, so that any value governance may enact fits
+-- the wire: @guardLeiosWireLimit@ refuses to run with a parameter above it.
 --
--- And it should not be a constant wherever the ledger is in reach: this is the
--- constitution's bound on what @maxEndorserBlockReferencesSize@ may be, not
--- the value in force, which is whatever the current ledger state says. The
--- buffers sized from it are allocated before any ledger state can be read,
--- which is why at least those cannot do better.
+-- It should not be a constant wherever the ledger is in reach: this is the
+-- constitution's bound on what @maxEndorserBlockReferencesSize@ may be, not the
+-- value in force, which is whatever the current ledger state says. The buffers
+-- sized from it are allocated before any ledger state can be read, which is why
+-- at least those cannot do better.
 maxLeiosEbBytesSize :: Word32
-maxLeiosEbBytesSize = 512 * 1024
+maxLeiosEbBytesSize = 600 * 1000
 
 -- | The design ceiling on the transactions one @MsgLeiosBlockTxs@ carries, so
 -- on what a /single request/ may fetch.

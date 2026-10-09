@@ -675,7 +675,7 @@ data EbFetchState
     --
     -- The body itself is /not/ retained -- it lives in the LeiosDb, and each job
     -- carries a 'Jobs.JobRootHash' commitment sufficient to validate its
-    -- response. Retaining up to ~10k bodies (each up to ~512 kB) would cost
+    -- response. Retaining up to ~10k bodies (each up to ~600 kB) would cost
     -- gigabytes.
     --
     -- TODO the 'Jobs.LeiosJobPool' could be an 'MVar m LeiosJobPool' for per-EB

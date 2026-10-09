@@ -828,10 +828,14 @@ leiosEndorserBlockMeasure st =
 
 -- | Fail hard on protocol parameters the wire cannot carry: an endorser block
 -- filled to @maxEndorserBlockReferencesSize@ must fit the LeiosFetch codec's
--- message limit next to the message's own framing. Applied where the mempool
--- derives its capacity from the ledger state, so it fires when such
+-- message limit next to the message's own framing. Applied to the closure
+-- measure, though it guards a references parameter, because that is what the
+-- mempool derives its capacity from on every node: it fires when such
 -- parameters are first learned -- at node startup or on adopting the update
 -- -- and not in the forge path.
+--
+-- TODO Also check this when the parameter update is proposed, so that a
+-- proposal that would trip it is refused rather than enacted.
 guardLeiosWireLimit ::
   (ShelleyCompatible proto era, DijkstraEraPParams era) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->

@@ -1168,7 +1168,7 @@ boundaryAnnouncer = announcing boundaryPoint boundarySize (firstLeiosBlock 0)
 -- the announcement is valid, the offer is backed by it, and the body is the
 -- endorser block named. Only summing what it references catches it, and the
 -- node must do that before committing to fetch the closure --- which is the
--- whole attack, since a 512 KiB body can name hundreds of megabytes.
+-- whole attack, since a 600 kB body can name hundreds of megabytes.
 test_oversizedClosureIsRejected :: Assertion
 test_oversizedClosureIsRejected = do
   assertBool

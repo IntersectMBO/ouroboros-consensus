@@ -64,7 +64,7 @@ mkTxHash = fmap MkTxHash . packByteString
 -- concatenated tx hashes (in ascending offset order), via
 -- 'jobRootHashOfTxHashes'. It lets an arriving @MsgLeiosBlockTxs@ be validated
 -- against the job /without/ retaining the EB body -- crucial, since up to ~10k
--- EBs (each up to ~512 kB) could have txs in flight at once, far too much to
+-- EBs (each up to ~600 kB) could have txs in flight at once, far too much to
 -- hold in memory.
 newtype JobRootHash = MkJobRootHash ByteString
   deriving (Eq, Show)

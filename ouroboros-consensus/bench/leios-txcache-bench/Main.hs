@@ -11,12 +11,8 @@
 -- implementation (add another 'runBench' call).
 --
 -- The workload populates 'maxAnnouncementCount' EBs with fully disjoint tx
--- closures of 'txsPerEb' txs each — ~1.9M distinct txs resident. NOTE: since
--- 'LeiosDemoTypes.maxTxsPerEb' grew to the codec's message limit (~71k), this
--- no longer reaches the true worst case, which the node's 2^22-slot table
--- cannot hold either; both are tracked in
--- https://github.com/IntersectMBO/ouroboros-consensus/issues/2290, and the
--- bench should follow whatever sizing that settles on.
+-- closures of 'txsPerEb' txs each — 'worstCaseCacheTxCount', ~2.2M distinct txs
+-- resident, about half the node's 2^22-slot table.
 --
 -- Run (the stanza bakes in @-T@; add @-s@ for the RTS summary):
 --
@@ -42,6 +38,7 @@ import LeiosDemoTypes
   ( EbHash
   , RbHash (..)
   , TxHash
+  , maxTxsPerEb
   , txHashBytes
   )
 import LeiosTxCache
@@ -64,13 +61,9 @@ import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 numEbs :: Int
 numEbs = maxAnnouncementCount
 
--- | Tx references per EB: a ~512 kB body at 34 B/item (32-byte hash + 2-byte
--- size) in a compact, non-CBOR layout. NOT the current worst case: the
--- CBOR-precise 'LeiosDemoTypes.maxTxsPerEb' is ~71k, which at
--- 'maxAnnouncementCount' EBs overflows the 2^22-slot table this bench (and the
--- node) allocates — see the module header.
+-- | Tx references per EB: the most any EB may name.
 txsPerEb :: Int
-txsPerEb = 15_058
+txsPerEb = maxTxsPerEb
 
 -- | Timed repetitions of the batch lookup (plus one warmup).
 numLookupRuns :: Int
