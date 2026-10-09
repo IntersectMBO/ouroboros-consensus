@@ -6,6 +6,16 @@ sections.
 
 # Changelog entries
 
+<a id='changelog-5.1.0.1'></a>
+## 5.1.0.1 -- 2026-10-09
+
+### Patch
+
+- `db-truncater` exposes a new flag `--leios`. With it, the tool requires the
+  `leios.vol.db` and `leios.imm.db` files under `--db` and truncates them along
+  with the ImmutableDB. Without it, the LeiosDB is neither required nor touched.
+  This is a temporary flag until consensus always runs with a LeiosDB.
+
 <a id='changelog-5.1.0.0'></a>
 ## 5.1.0.0 -- 2026-10-06
 
