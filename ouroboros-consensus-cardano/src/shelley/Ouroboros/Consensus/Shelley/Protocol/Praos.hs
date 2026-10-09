@@ -12,7 +12,7 @@ import Cardano.Ledger.BaseTypes (ProtVer (ProtVer), StrictMaybe)
 import Cardano.Ledger.Binary (getVersion32)
 import Cardano.Ledger.Block (BlockHeaderVersionInfo (..), EbReferencesAnnouncement)
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
-import Cardano.Ledger.Dijkstra (DijkstraEra)
+import Cardano.Ledger.Core (Era)
 import Cardano.Ledger.Hashes (EraIndependentBlockBody, HASH)
 import Cardano.Ledger.Slot (SlotNo (unSlotNo))
 import Cardano.Protocol.Crypto (Crypto, KES)
@@ -31,7 +31,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.Block (BlockNo)
 import Control.Monad.Except (Except)
 import Data.Either (isRight)
-import Data.Proxy (Proxy (Proxy))
+import Data.Proxy (Proxy)
 import Data.Word (Word32, Word64)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos
@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ProtocolHeaderSupportsProtocol (..)
   , ShelleyHash (ShelleyHash)
   , ShelleyProtocol
+  , defaultHeaderContainsLeiosCert
   )
 import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError
@@ -71,6 +72,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
   pHeaderBlock (Header body _) = hbBlockNo body
   pHeaderSize hdr = fromIntegral $ headerSize hdr
   pHeaderBlockSize (Header body _) = fromIntegral $ hbBodySize body
+  pHeaderContainsLeiosCert = defaultHeaderContainsLeiosCert
 
   type EnvelopeCheckError _ = EnvelopeError
 
@@ -109,7 +111,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
   configSlotsPerKESPeriod cfg = praosSlotsPerKESPeriod $ praosParams cfg
   verifyHeaderIntegrity slotsPerKESPeriod =
     verifyHeaderIntegrityPolyPraos slotsPerKESPeriod . protocolHeaderView
-  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer (PraosLacksLeios ()) =
+  mkHeader _era hk cbl il slotNo blockNo prevHash bbHash sz protVer (PraosLacksLeios ()) =
     mkHeaderPolyPraos hk cbl il slotNo blockNo prevHash bbHash sz protVer id Header
 
 -- | 'verifyHeaderIntegrity' for every Praos.
@@ -225,6 +227,8 @@ instance LeiosCrypto c => ProtocolHeaderSupportsEnvelope (Praos2 c) where
   pHeaderBlock = LeiosCodec.hbBlockNo . LeiosCodec.headerBody
   pHeaderSize hdr = fromIntegral $ LeiosCodec.headerSize hdr
   pHeaderBlockSize = fromIntegral . LeiosCodec.hbBodySize . LeiosCodec.headerBody
+  pHeaderContainsLeiosCert =
+    LeiosCodec.hbBlockBodyContainsLeiosCert . LeiosCodec.headerBody
 
   type EnvelopeCheckError _ = EnvelopeError
 
@@ -240,6 +244,7 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Praos2 c) where
   verifyHeaderIntegrity slotsPerKESPeriod =
     verifyHeaderIntegrityPolyPraos slotsPerKESPeriod . protocolHeaderView
   mkHeader
+    era
     hk
     cbl
     il
@@ -260,34 +265,39 @@ instance LeiosCrypto c => ProtocolHeaderSupportsKES (Praos2 c) where
         bbHash
         sz
         protVer
-        (\pb -> extendHeaderBodyWithLeios pb containsCert mbAnn)
-        (LeiosCodec.mkHeader (Proxy @DijkstraEra))
+        (\pb -> extendHeaderBodyWithLeios era pb containsCert mbAnn)
+        (LeiosCodec.mkHeader era)
 
 -- | The Leios header body is the Praos one plus the Leios fields.
 --
 -- The version info has the protocol version's wire format: the highest
 -- supported major version, and the self-reported software tag.
 extendHeaderBodyWithLeios ::
+  (Crypto c, Era era) =>
+  -- | The era the header is forged in, which fixes its serialisation
+  Proxy era ->
   HeaderBody c ->
   -- | Whether the block body carries a Leios certificate
   Bool ->
   StrictMaybe EbReferencesAnnouncement ->
   LeiosCodec.HeaderBody c
-extendHeaderBodyWithLeios pb containsCert ann =
-  LeiosCodec.HeaderBody
-    { LeiosCodec.hbBlockNo = hbBlockNo pb
-    , LeiosCodec.hbSlotNo = hbSlotNo pb
-    , LeiosCodec.hbPrev = hbPrev pb
-    , LeiosCodec.hbVk = hbVk pb
-    , LeiosCodec.hbVrfVk = hbVrfVk pb
-    , LeiosCodec.hbVrfRes = hbVrfRes pb
-    , LeiosCodec.hbBodySize = hbBodySize pb
-    , LeiosCodec.hbBodyHash = hbBodyHash pb
-    , LeiosCodec.hbOCert = hbOCert pb
-    , LeiosCodec.hbVersionInfo = BlockHeaderVersionInfo (getVersion32 major) minor
-    , LeiosCodec.hbBlockBodyContainsLeiosCert = containsCert
-    , LeiosCodec.hbEbReferencesAnnouncement = ann
-    }
+extendHeaderBodyWithLeios era pb containsCert ann =
+  LeiosCodec.mkHeaderBody
+    era
+    LeiosCodec.HeaderBodyRaw
+      { LeiosCodec.hbrBlockNo = hbBlockNo pb
+      , LeiosCodec.hbrSlotNo = hbSlotNo pb
+      , LeiosCodec.hbrPrev = hbPrev pb
+      , LeiosCodec.hbrVk = hbVk pb
+      , LeiosCodec.hbrVrfVk = hbVrfVk pb
+      , LeiosCodec.hbrVrfRes = hbVrfRes pb
+      , LeiosCodec.hbrBodySize = hbBodySize pb
+      , LeiosCodec.hbrBodyHash = hbBodyHash pb
+      , LeiosCodec.hbrOCert = hbOCert pb
+      , LeiosCodec.hbrVersionInfo = BlockHeaderVersionInfo (getVersion32 major) minor
+      , LeiosCodec.hbrBlockBodyContainsLeiosCert = containsCert
+      , LeiosCodec.hbrEbReferencesAnnouncement = ann
+      }
  where
   ProtVer major minor = hbProtVer pb
 

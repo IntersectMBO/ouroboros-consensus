@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ShelleyHash (..)
   , ShelleyProtocol
   , ShelleyProtocolHeader
+  , defaultHeaderContainsLeiosCert
   ) where
 
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
@@ -28,6 +29,7 @@ import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
 import Cardano.Ledger.BaseTypes (ProtVer, StrictMaybe)
 import Cardano.Ledger.Block (EbReferencesAnnouncement)
+import Cardano.Ledger.Core (Era)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
@@ -43,6 +45,7 @@ import Control.DeepSeq (NFData)
 import Control.Monad.Except (Except)
 import Data.Aeson.Types (FromJSON, ToJSON)
 import Data.Kind (Type)
+import Data.Proxy (Proxy)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -116,6 +119,11 @@ class
   pHeaderSize :: ShelleyProtocolHeader proto -> Natural
   pHeaderBlockSize :: ShelleyProtocolHeader proto -> Natural
 
+  -- | Whether the header says its block body carries a Leios certificate.
+  -- Protocols that don't support Leios define this as
+  -- 'defaultHeaderContainsLeiosCert'.
+  pHeaderContainsLeiosCert :: ShelleyProtocolHeader proto -> Bool
+
   type EnvelopeCheckError proto :: Type
 
   -- | Carry out any protocol-specific envelope checks. For example, this might
@@ -125,6 +133,9 @@ class
     LedgerView proto ->
     ShelleyProtocolHeader proto ->
     Except (EnvelopeCheckError proto) ()
+
+defaultHeaderContainsLeiosCert :: ShelleyProtocolHeader proto -> Bool
+defaultHeaderContainsLeiosCert = const False
 
 -- | `ProtocolHeaderSupportsKES` describes functionality common to protocols
 --    using key evolving signature schemes. This includes verifying the header
@@ -146,7 +157,9 @@ class ProtocolHeaderSupportsKES proto where
     Bool
 
   mkHeader ::
-    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto) =>
+    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto, Era era) =>
+    -- | The era the header is forged in, which fixes its serialisation
+    Proxy era ->
     HotKey crypto m ->
     CanBeLeader proto ->
     IsLeader proto ->
