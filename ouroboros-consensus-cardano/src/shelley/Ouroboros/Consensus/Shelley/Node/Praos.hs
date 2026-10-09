@@ -27,8 +27,8 @@ import Ouroboros.Consensus.Protocol.Praos
   , PraosParams (..)
   , praosCheckCanForge
   )
-import Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader)
-import Ouroboros.Consensus.Protocol.Praos2 (ConsensusConfig (..), LeiosOnly, Praos2)
+import Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader, WhenLeios)
+import Ouroboros.Consensus.Protocol.Praos2 (ConsensusConfig (..), Praos2)
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyBlock
   , ShelleyCompatible
@@ -86,7 +86,7 @@ basePraosSharedBlockForging ::
   , ProtoCrypto proto ~ c
   , CanBeLeader proto ~ PraosCanBeLeader c
   , CannotForgeError proto ~ PraosCannotForge c
-  , Applicative (LeiosOnly proto ())
+  , Applicative (WhenLeios proto)
   , IOLike m
   ) =>
   -- | The Praos parameters within this protocol's configuration

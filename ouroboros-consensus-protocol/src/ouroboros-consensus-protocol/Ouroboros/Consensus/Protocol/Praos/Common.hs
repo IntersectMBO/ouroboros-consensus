@@ -14,6 +14,8 @@
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common
   ( LeiosOnly
+  , VoidUnlessLeios
+  , WhenLeios
   , pureLeiosOnly
   , TypeSwitch (..)
   , ShelleyProtocolHeader
@@ -378,18 +380,27 @@ type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
 -- One such family per extension, which is what keeps every type that mentions
 -- one indexed by @proto@ alone. Its two intended uses:
 --
---  * @LeiosOnly proto Void ()@ gates a constructor, since the protocols
+--  * @VoidUnlessLeios proto ()@ gates a constructor, since the protocols
 --    without Leios cannot build it.
 --
---  * @LeiosOnly proto () a@ gates a field, which those protocols have but
+--  * @WhenLeios proto a@ gates a field, which those protocols have but
 --    cannot put anything in.
 type LeiosOnly :: Type -> Type -> Type -> Type
 data family LeiosOnly proto a :: Type -> Type
 
+-- | The field use of 'LeiosOnly': present only when the protocol has Leios.
+type WhenLeios :: Type -> Type -> Type
+type WhenLeios proto = LeiosOnly proto ()
+
+-- | The constructor use of 'LeiosOnly': inhabited only when the protocol has
+-- Leios.
+type VoidUnlessLeios :: Type -> Type -> Type
+type VoidUnlessLeios proto = LeiosOnly proto Void
+
 -- | 'pure' for the field form of 'LeiosOnly', with @proto@ first so callers
 -- can fix it with a type application.
 pureLeiosOnly ::
-  forall proto b. Applicative (LeiosOnly proto ()) => b -> LeiosOnly proto () b
+  forall proto b. Applicative (WhenLeios proto) => b -> WhenLeios proto b
 pureLeiosOnly = pure
 
 -- | Allow for any type on the side of a type-level switch that wasn't chosen

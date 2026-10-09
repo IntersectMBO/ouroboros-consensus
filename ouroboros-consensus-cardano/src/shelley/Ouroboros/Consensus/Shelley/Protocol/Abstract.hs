@@ -61,8 +61,8 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( HasMaxMajorProtVer
-  , LeiosOnly
   , ShelleyProtocolHeader
+  , WhenLeios
   )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -167,7 +167,7 @@ class ProtocolHeaderSupportsKES proto where
     ProtVer ->
     -- | Optional fields for Leios: whether the body carries a certificate, and
     -- this header's announcement, if any
-    LeiosOnly proto () (Bool, StrictMaybe EbReferencesAnnouncement) ->
+    WhenLeios proto (Bool, StrictMaybe EbReferencesAnnouncement) ->
     m (ShelleyProtocolHeader proto)
 
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete

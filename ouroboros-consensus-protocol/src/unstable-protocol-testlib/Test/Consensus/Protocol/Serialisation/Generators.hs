@@ -80,8 +80,8 @@ instance Arbitrary AnnouncedBy where
       <*> (EbReferencesAnnouncement <$> arbitrary <*> arbitrary)
 
 instance
-  ( Applicative (Praos.LeiosOnly proto ())
-  , Traversable (Praos.LeiosOnly proto ())
+  ( Applicative (Praos.WhenLeios proto)
+  , Traversable (Praos.WhenLeios proto)
   ) =>
   Arbitrary (PolyPraosState proto)
   where

@@ -30,7 +30,7 @@ import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Slot (SlotNo)
 import Data.Kind (Constraint, Type)
 import Data.Word (Word16, Word32)
-import Ouroboros.Consensus.Protocol.Praos.Common (LeiosOnly, ShelleyProtocolHeader)
+import Ouroboros.Consensus.Protocol.Praos.Common (ShelleyProtocolHeader, WhenLeios)
 import Ouroboros.Consensus.Protocol.Signed (Signed)
 
 {-------------------------------------------------------------------------------
@@ -52,7 +52,7 @@ data PolyPraosValidateView proto crypto = HeaderView
   -- ^ operational certificate
   , hvSlotNo :: !SlotNo
   -- ^ Slot
-  , hvLeios :: !(LeiosOnly proto () (Bool, StrictMaybe EbReferencesAnnouncement))
+  , hvLeios :: !(WhenLeios proto (Bool, StrictMaybe EbReferencesAnnouncement))
   -- ^ Whether this block's body carries a Leios certificate, and the endorser
   -- block this header announces
   , hvSigned :: !(Signed (ShelleyProtocolHeader proto))
@@ -76,27 +76,27 @@ data PolyPraosLedgerView proto = PraosLedgerView
   -- ^ Maximum block body size
   , plvProtocolVersion :: !ProtVer
   -- ^ Current protocol version
-  , plvCommittee :: !(LeiosOnly proto () LeiosCommittee)
+  , plvCommittee :: !(WhenLeios proto LeiosCommittee)
   -- ^ Who may vote this epoch, and with what weight
-  , plvQuorumStakeThreshold :: !(LeiosOnly proto () UnitInterval)
+  , plvQuorumStakeThreshold :: !(WhenLeios proto UnitInterval)
   -- ^ Weight a certificate must accumulate
-  , plvAnnouncementPeriodLength :: !(LeiosOnly proto () Milliseconds32)
-  , plvVotePeriodLength :: !(LeiosOnly proto () Milliseconds32)
-  , plvDiffusionPeriodLength :: !(LeiosOnly proto () Milliseconds32)
+  , plvAnnouncementPeriodLength :: !(WhenLeios proto Milliseconds32)
+  , plvVotePeriodLength :: !(WhenLeios proto Milliseconds32)
+  , plvDiffusionPeriodLength :: !(WhenLeios proto Milliseconds32)
   -- ^ The three periods that determine how long after its announcement an
   -- endorser block may be certified. Kept as durations, since converting to a
   -- count of slots needs the slot length, which only the consensus config has.
-  , plvMaxEbBodySize :: !(LeiosOnly proto () Word32)
+  , plvMaxEbBodySize :: !(WhenLeios proto Word32)
   -- ^ Maximum size of an endorser block itself, not its closure
-  , plvMaxEbTxsSize :: !(LeiosOnly proto () Word32)
+  , plvMaxEbTxsSize :: !(WhenLeios proto Word32)
   -- ^ Maximum total size of the transactions an endorser block references
   }
 
 deriving instance
-  ( Show (LeiosOnly proto () LeiosCommittee)
-  , Show (LeiosOnly proto () UnitInterval)
-  , Show (LeiosOnly proto () Milliseconds32)
-  , Show (LeiosOnly proto () Word32)
+  ( Show (WhenLeios proto LeiosCommittee)
+  , Show (WhenLeios proto UnitInterval)
+  , Show (WhenLeios proto Milliseconds32)
+  , Show (WhenLeios proto Word32)
   ) =>
   Show (PolyPraosLedgerView proto)
 

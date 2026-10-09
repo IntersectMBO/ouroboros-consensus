@@ -19,6 +19,8 @@
 module Ouroboros.Consensus.Protocol.Praos
   ( ConsensusConfig (..)
   , LeiosOnly (..)
+  , VoidUnlessLeios
+  , WhenLeios
   , Praos
   , PraosCrypto
   , PraosLedgerView

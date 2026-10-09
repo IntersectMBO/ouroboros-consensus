@@ -24,7 +24,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Common (LeiosOnly, pureLeiosOnly)
+import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios, pureLeiosOnly)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
@@ -44,7 +44,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 forgeShelleyBlock ::
   forall m era proto.
   ( ShelleyCompatible proto era
-  , Applicative (LeiosOnly proto ())
+  , Applicative (WhenLeios proto)
   , Monad m
   ) =>
   HotKey (ProtoCrypto proto) m ->

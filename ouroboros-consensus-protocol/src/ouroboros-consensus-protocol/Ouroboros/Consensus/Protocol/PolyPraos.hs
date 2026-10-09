@@ -134,7 +134,6 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
 import Data.Typeable (Typeable)
-import Data.Void (Void)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -304,21 +303,21 @@ data PolyPraosState proto = PraosState
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
   , praosStateLeiosAnnouncement ::
-      !(LeiosOnly proto () (StrictMaybe AnnouncedBy))
+      !(WhenLeios proto (StrictMaybe AnnouncedBy))
   -- ^ The announcement carried by the most recently applied header, if any.
   -- A header with no announcement clears it.
   }
   deriving Generic
 
 deriving instance
-  Show (LeiosOnly proto () (StrictMaybe AnnouncedBy)) => Show (PolyPraosState proto)
+  Show (WhenLeios proto (StrictMaybe AnnouncedBy)) => Show (PolyPraosState proto)
 
 deriving instance
-  Eq (LeiosOnly proto () (StrictMaybe AnnouncedBy)) => Eq (PolyPraosState proto)
+  Eq (WhenLeios proto (StrictMaybe AnnouncedBy)) => Eq (PolyPraosState proto)
 
 instance
   ( Typeable proto
-  , NoThunks (LeiosOnly proto () (StrictMaybe AnnouncedBy))
+  , NoThunks (WhenLeios proto (StrictMaybe AnnouncedBy))
   ) =>
   NoThunks (PolyPraosState proto)
 
@@ -358,8 +357,8 @@ instance SerialisePraosState proto => FromCBOR (PolyPraosState proto) where
 -- already chosen when the version is read.
 type SerialisePraosState proto =
   ( Typeable proto
-  , Applicative (LeiosOnly proto ())
-  , Traversable (LeiosOnly proto ())
+  , Applicative (WhenLeios proto)
+  , Traversable (WhenLeios proto)
   )
 
 instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
@@ -462,33 +461,33 @@ data PolyPraosValidationErr proto c
   | -- | The header sets its cert bit, but its predecessor announced no endorser
     -- block, so there is nothing for the certificate to certify.
     LeiosCertWithoutAnnouncement
-      !(LeiosOnly proto Void ())
+      !(VoidUnlessLeios proto ())
   | -- | The header sets its cert bit too soon after its predecessor's
     -- announcement: the announcement, voting and diffusion periods have not all
     -- elapsed.
     LeiosCertTooYoung
-      !(LeiosOnly proto Void ())
+      !(VoidUnlessLeios proto ())
       !SlotNo -- Slot of the announcing block
       !SlotNo -- Slot of this header
       !SlotNo -- Earliest slot in which this header could have certified
   | -- | The header announces an endorser block larger than the protocol
     -- parameters allow.
     LeiosEbTooBig
-      !(LeiosOnly proto Void ())
+      !(VoidUnlessLeios proto ())
       !Word32 -- Announced size
       !Word32 -- Maximum size
   deriving Generic
 
 deriving instance
-  (Crypto c, Eq (LeiosOnly proto Void ())) =>
+  (Crypto c, Eq (VoidUnlessLeios proto ())) =>
   Eq (PolyPraosValidationErr proto c)
 
 deriving instance
-  (Typeable proto, Crypto c, NoThunks (LeiosOnly proto Void ())) =>
+  (Typeable proto, Crypto c, NoThunks (VoidUnlessLeios proto ())) =>
   NoThunks (PolyPraosValidationErr proto c)
 
 deriving instance
-  (Crypto c, Show (LeiosOnly proto Void ())) =>
+  (Crypto c, Show (VoidUnlessLeios proto ())) =>
   Show (PolyPraosValidationErr proto c)
 
 instance ChainDepStateSupportsPeras (PolyPraosState proto) where
@@ -588,8 +587,8 @@ tickChainDepStatePolyPraos
 -- - Call 'reupdateChainDepState'
 updateChainDepStatePolyPraos ::
   ( PolyPraosCrypto proto c
-  , Applicative (LeiosOnly proto ())
-  , Foldable (LeiosOnly proto ())
+  , Applicative (WhenLeios proto)
+  , Foldable (WhenLeios proto)
   , TypeSwitch (LeiosOnly proto)
   ) =>
   PraosParams ->
@@ -630,7 +629,7 @@ updateChainDepStatePolyPraos
 -- - Record the header's announcement, if any, replacing the previous one.
 reupdateChainDepStatePolyPraos ::
   forall proto c.
-  Functor (LeiosOnly proto ()) =>
+  Functor (WhenLeios proto) =>
   PraosParams ->
   EpochInfo (Except History.PastHorizonException) ->
   Views.PolyPraosValidateView proto c ->
@@ -681,8 +680,8 @@ reupdateChainDepStatePolyPraos
 -- They run only for protocols with Leios, which are the ones that fill
 -- 'typeSwitchR'.
 leiosContextFreeHeaderChecks ::
-  ( Applicative (LeiosOnly proto ())
-  , Foldable (LeiosOnly proto ())
+  ( Applicative (WhenLeios proto)
+  , Foldable (WhenLeios proto)
   , TypeSwitch (LeiosOnly proto)
   ) =>
   Views.PolyPraosLedgerView proto ->
@@ -708,8 +707,8 @@ leiosContextFreeHeaderChecks lv b =
 -- the certification gap, and only the predecessor's state says which
 -- announcement that is.
 leiosHeaderChecks ::
-  ( Applicative (LeiosOnly proto ())
-  , Foldable (LeiosOnly proto ())
+  ( Applicative (WhenLeios proto)
+  , Foldable (WhenLeios proto)
   , TypeSwitch (LeiosOnly proto)
   ) =>
   EpochInfo (Except History.PastHorizonException) ->
