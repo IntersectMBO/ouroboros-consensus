@@ -91,7 +91,7 @@ instance
 -- Uses the same projection as 'ledgerViewForecastAtPolyPraos', so the two agree.
 protocolLedgerViewPolyPraos ::
   forall proto era mk.
-  ( Praos.ForecastsLeios proto era
+  ( Praos.ForecastToPolyPraosLedgerView proto era
   , SL.EraForecast era
   ) =>
   LedgerConfig (ShelleyBlock proto era) ->
@@ -104,7 +104,7 @@ protocolLedgerViewPolyPraos _cfg =
 ledgerViewForecastAtPolyPraos ::
   forall proto era mk.
   ( ShelleyCompatible proto era
-  , Praos.ForecastsLeios proto era
+  , Praos.ForecastToPolyPraosLedgerView proto era
   ) =>
   LedgerConfig (ShelleyBlock proto era) ->
   LedgerState (ShelleyBlock proto era) mk ->

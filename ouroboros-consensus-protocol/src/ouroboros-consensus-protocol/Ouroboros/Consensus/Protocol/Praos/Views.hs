@@ -8,7 +8,7 @@
 module Ouroboros.Consensus.Protocol.Praos.Views
   ( PolyPraosLedgerView (..)
   , PolyPraosValidateView (..)
-  , ForecastsLeios (..)
+  , ForecastToPolyPraosLedgerView (..)
   ) where
 
 import Cardano.Crypto.KES (SignedKES)
@@ -105,7 +105,7 @@ deriving instance
 -- A method rather than one shared function because only the protocols with
 -- Leios may demand more of their era than 'SL.EraForecast', and knowing
 -- @proto@ alone cannot supply that @era@ dictionary.
-type ForecastsLeios :: Type -> Type -> Constraint
-class ForecastsLeios proto era where
+type ForecastToPolyPraosLedgerView :: Type -> Type -> Constraint
+class ForecastToPolyPraosLedgerView proto era where
   forecastToPolyPraosLedgerView ::
     SL.EraForecast era => SL.Forecast t era -> PolyPraosLedgerView proto

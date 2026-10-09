@@ -133,7 +133,7 @@ instance LeiosCrypto c => ConsensusProtocol (Praos2 c) where
 
   reupdateChainDepState (LeiosConfig (PraosConfig prms ei)) = reupdateChainDepStatePolyPraos prms ei
 
-instance Dijkstra.DijkstraEraForecast era => Views.ForecastsLeios (Praos2 c) era where
+instance Dijkstra.DijkstraEraForecast era => Views.ForecastToPolyPraosLedgerView (Praos2 c) era where
   forecastToPolyPraosLedgerView (f :: SL.Forecast t era) =
     Views.PraosLedgerView
       { Views.plvPoolDistr = f ^. SL.poolDistrForecastL @era @t
