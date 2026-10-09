@@ -1175,6 +1175,7 @@ library protocol
   exposed-modules:
     Ouroboros.Consensus.Protocol.Ledger.HotKey
     Ouroboros.Consensus.Protocol.Ledger.Util
+    Ouroboros.Consensus.Protocol.PolyPraos
     Ouroboros.Consensus.Protocol.Praos
     Ouroboros.Consensus.Protocol.Praos.AgentClient
     Ouroboros.Consensus.Protocol.Praos.Common
