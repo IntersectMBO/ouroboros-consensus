@@ -45,7 +45,7 @@ import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
-import Data.Foldable (toList)
+import Data.Foldable (foldl', toList)
 import Data.List (sort)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
