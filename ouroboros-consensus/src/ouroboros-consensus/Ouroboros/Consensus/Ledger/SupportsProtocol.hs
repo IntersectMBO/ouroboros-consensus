@@ -1,23 +1,24 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Ledger.SupportsProtocol
   ( GenesisWindow (..)
   , LedgerSupportsProtocol (..)
+  , leiosCommitteeOfTip
   , ledgerViewOfTip
   ) where
 
 import Control.Monad.Except
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (HasLeiosVoting (..), LeiosCommittee, Weight)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Protocol.Abstract
-
--- | Link protocol to ledger
 
 -- | The ledger view at the given ledger state's own tip slot
 --
@@ -48,6 +49,17 @@ ledgerViewOfTip cfg st =
   -- occupy, and the forecast's anchor is 'Origin', so it is in range.
   slot = fromWithOrigin (SlotNo 0) $ getTipSlot st
 
+-- | The Leios committee and quorum threshold at the given ledger state's tip
+leiosCommitteeOfTip ::
+  forall blk mk.
+  (LedgerSupportsProtocol blk, HasLeiosVoting blk) =>
+  LedgerConfig blk ->
+  LedgerState blk mk ->
+  Maybe (LeiosCommittee, Weight)
+leiosCommitteeOfTip cfg =
+  getLeiosCommitteeFromView (Proxy @blk) . ledgerViewOfTip cfg
+
+-- | Link protocol to ledger
 class
   ( BlockSupportsProtocol blk
   , UpdateLedger blk

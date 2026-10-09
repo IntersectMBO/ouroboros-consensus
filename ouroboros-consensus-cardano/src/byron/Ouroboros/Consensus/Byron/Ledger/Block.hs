@@ -108,10 +108,7 @@ instance ShowProxy ByronBlock
 -- | Default 'ResolveLeiosBlock' — Byron blocks never carry Leios certs.
 instance ResolveLeiosBlock ByronBlock
 
-instance HasLeiosVoting ByronBlock where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting ByronBlock
 
 instance NFData ByronBlock where
   rnf ByronBlock{byronBlockRaw, byronBlockSlotNo, byronBlockHash} =

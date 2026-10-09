@@ -147,10 +147,7 @@ data TestBlock = TestBlock
 
 -- | Default 'HasLeiosVoting' / 'ResolveLeiosBlock' — storage TestBlock
 -- never carries Leios certs.
-instance HasLeiosVoting TestBlock where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting TestBlock
 
 instance ResolveLeiosBlock TestBlock
 

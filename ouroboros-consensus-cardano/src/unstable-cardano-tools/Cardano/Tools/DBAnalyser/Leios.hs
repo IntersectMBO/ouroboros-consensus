@@ -54,7 +54,10 @@ import Ouroboros.Consensus.Ledger.Abstract (ApplyBlock (getBlockKeySets))
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
-import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  , leiosCommitteeOfTip
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -118,33 +121,32 @@ parentAnnouncement =
 -- without validation: no signatures, no scripts, no balances.
 verifyCertRb ::
   forall blk.
-  ( ResolveLeiosBlock blk
+  ( LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
+  LedgerConfig blk ->
   -- | The unticked parent state
   ExtLedgerState blk EmptyMK ->
   blk ->
   Either LeiosExtValidationError ()
-verifyCertRb parent blk = case blockLeiosCert blk of
+verifyCertRb cfg parent blk = case blockLeiosCert blk of
   Nothing -> Right ()
   Just cert -> case parentAnnouncement parent of
     -- A cert-RB certifies the EB that its predecessor announced. If the parent
     -- announced none, there is nothing to certify.
     Nothing -> Left (LeiosCertificateWithoutAnnouncement cert)
-    Just (announcedPoint, _size) -> case getLeiosCommittee (ledgerState parent) of
+    Just (announcedPoint, _size) -> case leiosCommitteeOfTip cfg (ledgerState parent) of
       -- A cert-RB in an era with no Leios committee is a protocol violation.
       Nothing -> Left (LeiosMissingCommittee announcedPoint cert)
-      Just committee -> case announcingRbHash blk of
+      Just (committee, threshold) -> case announcingRbHash blk of
         -- A cert-RB always has a non-genesis announcing parent.
         Nothing -> Left (LeiosCertificateAfterGenesis cert announcedPoint)
-        Just rbHash -> case getCurrentThreshold (ledgerState parent) of
-          -- The era has a committee, so it must have a quorum threshold too.
-          Nothing -> Left LeiosMissingThreshold
-          Just threshold ->
-            case verifyLeiosCert committee threshold rbHash cert of
-              Left invalid ->
-                Left (LeiosInvalidCertificate cert announcedPoint rbHash invalid)
-              Right _weight -> Right ()
+        Just rbHash ->
+          case verifyLeiosCert committee threshold rbHash cert of
+            Left invalid ->
+              Left (LeiosInvalidCertificate cert announcedPoint rbHash invalid)
+            Right _weight -> Right ()
 
 -- | The EB that this block certifies. 'Nothing' for a block that carries no
 -- Leios certificate.

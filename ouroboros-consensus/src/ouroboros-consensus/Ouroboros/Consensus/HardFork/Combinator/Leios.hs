@@ -49,22 +49,6 @@ instance
   (All HasLeiosVoting xs, CanHardFork xs) =>
   HasLeiosVoting (HardForkBlock xs)
   where
-  getLeiosCommittee (HardForkLedgerState (HardForkState tele)) =
-    hcollapse $
-      hcmap
-        (Proxy @HasLeiosVoting)
-        (\(Current _ (Flip ls)) -> K (getLeiosCommittee ls))
-        (Telescope.tip tele)
-
-  getCurrentThreshold (HardForkLedgerState (HardForkState tele)) =
-    hcollapse $
-      hcmap
-        (Proxy @HasLeiosVoting)
-        (\(Current _ (Flip ls)) -> K (getCurrentThreshold ls))
-        (Telescope.tip tele)
-
-  -- As above, but dispatching on the per-era ledger /view/ the protocol layer
-  -- carries instead of the ledger state.
   getLeiosCommitteeFromView _ (HardForkLedgerView _transition (HardForkState tele)) =
     hcollapse $
       hcmap
@@ -75,10 +59,9 @@ instance
     eraProxy :: WrapLedgerView blk -> Proxy blk
     eraProxy _ = Proxy
 
-  -- Unlike the other two, this one needs the era's config as well as its
-  -- state, and the combinator only stores partial configs -- hence completing
-  -- them against an 'EpochInfo' reconstructed from the very state we are
-  -- dispatching on.
+  -- This needs the era's config as well as its state, and the combinator only
+  -- stores partial configs -- hence completing them against an 'EpochInfo'
+  -- reconstructed from the very state we are dispatching on.
   getMinCertificationGap cfg (HardForkLedgerState hfState@(HardForkState tele)) =
     hcollapse $
       hczipWith

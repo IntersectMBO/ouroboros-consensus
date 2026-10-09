@@ -327,10 +327,7 @@ isStrictDescendentOf b1 b2 = b1 `isDescendentOf` b2 && b1 /= b2
 
 instance ShowProxy TestBlock
 
-instance HasLeiosVoting (TestBlockWith ptype) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (TestBlockWith ptype)
 
 -- | Default 'ResolveLeiosBlock' — test blocks never carry Leios certificates.
 instance Typeable ptype => ResolveLeiosBlock (TestBlockWith ptype)

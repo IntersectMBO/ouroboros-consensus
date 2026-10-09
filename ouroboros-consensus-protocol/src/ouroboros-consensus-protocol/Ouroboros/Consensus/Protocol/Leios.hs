@@ -33,6 +33,7 @@ import Cardano.Protocol.Crypto (Crypto, StandardCrypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import Cardano.Slotting.EpochInfo (epochInfoSlotLength)
 import Cardano.Slotting.Slot (SlotNo)
+import Cardano.Slotting.Time (SlotLength)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
@@ -42,7 +43,7 @@ import Data.Kind (Type)
 import Data.Proxy (Proxy (Proxy))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (ebAnnouncementSize, minCertificationSlot)
+import LeiosDemoTypes (certificationGapOfPeriods, ebAnnouncementSize)
 import qualified LeiosDemoTypes as Leios
 import NoThunks.Class (NoThunks)
 import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
@@ -153,19 +154,10 @@ leiosContextFreeHeaderChecks lv b = do
     SNothing -> pure ()
     SJust ann -> do
       let announced = ebAnnouncementSize ann
-          -- TEMPORARY KLUDGE -- DO NOT MERGE into main.
-          --
-          -- The deployed testnet has historical announcements above the
-          -- 'maxEndorserBlockReferencesSize' its own Dijkstra genesis sets
-          -- (e.g. 102429 against 100000 at slot 709083), so enforcing the
-          -- ledger's value stalls the sync there. Exception granted here and
-          -- here only: every other use of the limit, and the genesis file
-          -- itself, are untouched.
-          maximum' = max 200000 maxEbBodySize
-      when (announced > maximum') $
+      when (announced > maxEbBodySize) $
         throwError $
           LeiosHeaderErr (LeiosLeiosRight ()) $
-            Leios.LeiosEbTooBig announced maximum'
+            Leios.LeiosEbTooBig announced maxEbBodySize
 
 -- | The Leios-specific checks on a header, called by 'updateChainDepState'.
 --
@@ -183,9 +175,6 @@ leiosHeaderChecks ::
 leiosHeaderChecks cfg lv b slot cs = do
   leiosContextFreeHeaderChecks lv b
   let LeiosLeiosRight (containsCert, _mbAnn) = Views.hvLeios b
-      LeiosLeiosRight announcementPeriod = Views.plvAnnouncementPeriodLength lv
-      LeiosLeiosRight votePeriod = Views.plvVotePeriodLength lv
-      LeiosLeiosRight diffusionPeriod = Views.plvDiffusionPeriodLength lv
       LeiosLeiosRight announcedByPredecessor = praosStateLeiosAnnouncement cs
       PraosConfig{praosEpochInfo} = leiosPraosConfig cfg
 
@@ -200,9 +189,7 @@ leiosHeaderChecks cfg lv b slot cs = do
                       (History.toPureEpochInfo praosEpochInfo)
                       slot
                 )
-                announcementPeriod
-                votePeriod
-                diffusionPeriod
+                lv
                 announcingSlot
         when (slot < earliestAllowed) $
           throwError $
@@ -213,6 +200,34 @@ leiosHeaderChecks cfg lv b slot cs = do
       _ ->
         throwError $
           LeiosHeaderErr (LeiosLeiosRight ()) Leios.LeiosCertWithoutAnnouncement
+
+-- | The earliest slot at which a block may certify an endorser block announced
+-- in the given slot
+--
+-- 'certificationGapOfPeriods' rounds up because a block is forged at its slot's
+-- onset, so the answer is the first slot whose onset is far enough after the
+-- announcement. In the most-extreme-but-still-nonzero case, suppose all three
+-- periods are 1ms. Their 5ms total is a fraction of any realistic slot, and the
+-- gap rounds up to one: an announcement at the start of slot @X@ admits a
+-- CertRB in slot @X + 1@. Rounding down would give a gap of zero and admit one
+-- in slot @X@ itself, which is nonsensical.
+--
+-- The periods come from a forecast ledger view rather than a ledger state, so
+-- this cannot go through 'Leios.minCertificationGap'. Sharing
+-- 'certificationGapOfPeriods' is what keeps the two from drifting.
+minCertificationSlot ::
+  SlotLength ->
+  Views.BasePraosLedgerView (PraosWithLeios c) ->
+  -- | Slot of the announcing block
+  SlotNo ->
+  SlotNo
+minCertificationSlot slotLength lv announcingSlot =
+  announcingSlot
+    + certificationGapOfPeriods slotLength announcementPeriod votePeriod diffusionPeriod
+ where
+  LeiosLeiosRight announcementPeriod = Views.plvAnnouncementPeriodLength lv
+  LeiosLeiosRight votePeriod = Views.plvVotePeriodLength lv
+  LeiosLeiosRight diffusionPeriod = Views.plvDiffusionPeriodLength lv
 
 {-------------------------------------------------------------------------------
   ConsensusProtocol

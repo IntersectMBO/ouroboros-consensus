@@ -513,9 +513,6 @@ instance ResolveLeiosBlock LeiosTestBlock where
 -- the ledger config; the ledger /state/ carries none, so the voting-path
 -- methods have nothing to offer. The harness does not vote.
 instance HasLeiosVoting LeiosTestBlock where
-  getLeiosCommittee = fmap fst . ltlsCommittee
-  getCurrentThreshold = fmap snd . ltlsCommittee
-  getMinCertificationGap _ _ = Nothing
   getLeiosCommitteeFromView _ = ltvCommittee
 
 {-------------------------------------------------------------------------------
@@ -606,9 +603,9 @@ data instance LedgerState LeiosTestBlock mk = LeiosTestLedger
   -- ^ The committee seated for this state's slot.
   --
   -- Transactions never affect it; it is merely a cache of the oracle that
-  -- 'ltlcCommittees' is. Keeping it here is what keeps 'getLeiosCommittee' in
-  -- agreement with 'getLeiosCommitteeFromView': both are that oracle applied
-  -- to the same slot.
+  -- 'ltlcCommittees' is. Keeping it here is what keeps 'protocolLedgerView' in
+  -- agreement with 'ledgerViewForecastAt': both are that oracle applied to the
+  -- same slot.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks

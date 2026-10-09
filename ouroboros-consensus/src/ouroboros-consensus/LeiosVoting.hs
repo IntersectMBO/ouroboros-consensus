@@ -92,6 +92,10 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , LedgerSupportsMempool (..)
   , WhetherToIntervene (Intervene)
   )
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  , leiosCommitteeOfTip
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -253,9 +257,9 @@ runLeiosVoting ::
   , HasLeiosVoting blk
   , ResolveLeiosBlock blk
   , ConvertRawHash blk
-  , HasAnnTip blk
   , LedgerSupportsMempool blk
   , HasHardForkHistory blk
+  , LedgerSupportsProtocol blk
   , MonadTimer m
   ) =>
   Tracer m TraceLeiosKernel ->
@@ -343,7 +347,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           rbHash <-
             tipAnnouncerFor @blk hs point ?>= ChainTipDoesNotAnnounce
           committee <-
-            getLeiosCommittee ls ?>= NotOnCommittee
+            (fst <$> leiosCommitteeOfTip lcfg ls) ?>= NotOnCommittee
           let seats =
                 [ (sk, seatId)
                 | sk <- sks

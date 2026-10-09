@@ -979,26 +979,6 @@ focusElectionIfUnfocused elId ebHash outstanding
   | Map.member elId (elFocus outstanding) = outstanding
   | otherwise = focusElection elId ebHash outstanding
 
--- | Make this endorser block the one this election is fetching, whatever it was
--- fetching before.
---
--- Whatever it was fetching stops being asked for, unless another election is
--- also fetching it. Nothing else about that endorser block is disturbed: we
--- keep the body if we acquired it, and we still take whatever was already
--- requested for it, since those bytes are paid for either way.
---
--- TODO One election, one certified endorser block --- which holds only while
--- enough of the committee's weight is honest, since two valid certificates for
--- one election means the committee equivocated. Should that ever happen, this
--- is last-claim-wins: the focus lands on whichever certificate we validated
--- most recently, so the node can be left fetching the endorser block of one
--- fork while the chain it would select needs the other, and it stays stuck
--- there until something moves the focus again. The recourse is to restart the
--- node and hope the certificates arrive in the other order, since this state is
--- in memory only and the order they come back in is the network's to decide. We
--- deliberately do not spend complexity on that case here, since it requires
--- catastrophically buggy nodes and/or an amount of adversarial stake the
--- protocol itself is not designed to resist.
 -- | A verified certificate moves its election's focus onto the endorser block
 -- it names, and lists that body as one to fetch.
 --
@@ -1031,6 +1011,26 @@ trackCertifiedEb point outstanding
  where
   MkLeiosPoint ebSlot ebHash = point
 
+-- | Make this endorser block the one this election is fetching, whatever it was
+-- fetching before.
+--
+-- Whatever it was fetching stops being asked for, unless another election is
+-- also fetching it. Nothing else about that endorser block is disturbed: we
+-- keep the body if we acquired it, and we still take whatever was already
+-- requested for it, since those bytes are paid for either way.
+--
+-- TODO One election, one certified endorser block --- which holds only while
+-- enough of the committee's weight is honest, since two valid certificates for
+-- one election means the committee equivocated. Should that ever happen, this
+-- is last-claim-wins: the focus lands on whichever certificate we validated
+-- most recently, so the node can be left fetching the endorser block of one
+-- fork while the chain it would select needs the other, and it stays stuck
+-- there until something moves the focus again. The recourse is to restart the
+-- node and hope the certificates arrive in the other order, since this state is
+-- in memory only and the order they come back in is the network's to decide. We
+-- deliberately do not spend complexity on that case here, since it requires
+-- catastrophically buggy nodes and/or an amount of adversarial stake the
+-- protocol itself is not designed to resist.
 focusElection :: ElId -> EbHash -> LeiosOutstanding pid -> LeiosOutstanding pid
 focusElection elId ebHash outstanding = case Map.lookup elId (elFocus outstanding) of
   Just oldEbHash | oldEbHash == ebHash -> outstanding
@@ -1531,8 +1531,6 @@ data LeiosExtValidationError
   | -- | A CertRB reached ledger validation in an era/state with no Leios
     -- committee to verify the cert against.
     LeiosMissingCommittee !LeiosPoint !LeiosCert
-  | -- | No quorum stake threshold parameter available.
-    LeiosMissingThreshold
   | -- | A CertRB whose announcing ranking block could not be determined; it
     -- would be certifying against genesis.
     LeiosCertificateAfterGenesis !LeiosCert !LeiosPoint
@@ -1576,22 +1574,14 @@ deriving via
 -- the LedgerDB layer ('applyBlock') without pulling 'ChainDB' (which
 -- 'runLeiosVoting' depends on) into scope.
 class HasLeiosVoting blk where
-  -- | The voting committee for the given (pre-tick) ledger state, or 'Nothing'
-  -- if the era does not participate in Leios voting.
-  getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe LeiosCommittee
-
-  -- | The currently active quorum threshold for the given ledger state, or
-  -- 'Nothing' if the protocol parameter does not yet exist on the current era.
-  getCurrentThreshold :: LedgerState blk EmptyMK -> Maybe Weight
-
-  -- | The committee and quorum threshold according to a /forecast/ ledger view
-  -- rather than an applied ledger state.
+  -- | The committee and quorum threshold according to a ledger view, or
+  -- 'Nothing' if the era does not participate in Leios voting.
   --
-  -- ChainSel validates the certificate in a CertRB before it has applied that
-  -- block's predecessor, so it has no ledger state to read the committee off;
-  -- it forecasts the view instead. The two must agree wherever both are
-  -- available: this is the same committee 'getLeiosCommittee' would return for
-  -- a state at the forecast slot.
+  -- A view rather than a ledger state, because ChainSel validates the
+  -- certificate in a CertRB before it has applied that block's predecessor, so
+  -- it can only forecast. Wherever there is a ledger state instead,
+  -- 'Ouroboros.Consensus.Ledger.SupportsProtocol.leiosCommitteeOfTip' reads it
+  -- through its own view, so the two cannot disagree.
   getLeiosCommitteeFromView ::
     proxy blk ->
     LedgerView (BlockProtocol blk) ->
@@ -1607,6 +1597,7 @@ class HasLeiosVoting blk where
   -- for it. Either split the per-era Leios ledger parameters into their own
   -- class, or arrange for the forge loop not to need the gap in the first place.
   getMinCertificationGap :: LedgerConfig blk -> LedgerState blk EmptyMK -> Maybe SlotNo
+  getMinCertificationGap _ _ = Nothing
 
 -- * Tracing
 
@@ -2732,8 +2723,6 @@ leiosExtValidationErrorToObject = \case
       , "announcedEb" .= T.pack (show point)
       , "certificate" .= T.pack (show cert)
       ]
-  LeiosMissingThreshold ->
-    mconcat ["kind" .= Aeson.String "LeiosMissingThreshold"]
   LeiosCertificateAfterGenesis cert point ->
     mconcat
       [ "kind" .= Aeson.String "LeiosCertificateAfterGenesis"
@@ -2780,8 +2769,6 @@ leiosExtValidationErrorForHuman = \case
       <> T.pack (show point)
       <> " but there is no Leios committee to verify its certificate: "
       <> T.pack (show cert)
-  LeiosMissingThreshold ->
-    "CertRB validation, but no quorum stake threshold in pparams"
   LeiosCertificateAfterGenesis cert point ->
     "CertRB for "
       <> T.pack (show point)
@@ -2840,35 +2827,6 @@ minCertificationGap slotLength pp =
     (pp ^. ppLeiosAnnouncementPeriodLengthL)
     (pp ^. ppLeiosVotePeriodLengthL)
     (pp ^. ppLeiosDiffusionPeriodLengthL)
-
--- | The earliest slot at which a block may certify an endorser block announced
--- in the given slot
---
--- 'certificationGapOfPeriods' rounds up because a block is forged at its slot's
--- onset, so the answer is the first slot whose onset is far enough after the
--- announcement. In the most-extreme-but-still-nonzero case, supppose all three
--- periods are 1ms. Their 5ms total is a fraction of any realistic slot, and the
--- gap rounds up to one: an announcement at the start of slot @X@ admits a
--- CertRB in slot @X + 1@.  Rounding down would give a gap of zero and admit one
--- in slot @X@ itself, which is nonsensical.
---
--- The header checks in @updateChainDepState@ have the periods from a forecast
--- ledger view rather than a ledger state, so they cannot go through
--- 'minCertificationGap'. Sharing 'certificationGapOfPeriods' is what keeps the
--- two from drifting.
-minCertificationSlot ::
-  SlotLength ->
-  -- | Announcement period length
-  Milliseconds32 ->
-  -- | Vote period length
-  Milliseconds32 ->
-  -- | Diffusion period length
-  Milliseconds32 ->
-  -- | Slot of the announcing block
-  SlotNo ->
-  SlotNo
-minCertificationSlot slotLength announcement vote diffusion announcingSlot =
-  announcingSlot + certificationGapOfPeriods slotLength announcement vote diffusion
 
 -- | Aka @L@
 certificationGapOfPeriods ::

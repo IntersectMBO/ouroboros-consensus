@@ -49,7 +49,7 @@ import LeiosVoteState
   , VoteTally (..)
   , newLeiosVoteState
   )
-import LeiosVoting (HasLeiosVoting (getCurrentThreshold, getLeiosCommittee))
+import LeiosVoting (HasLeiosVoting)
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
@@ -179,8 +179,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   -- because it changes with the stake distribution snapshot at each
   -- epoch boundary.
   committee = do
-    ls <- ledgerState <$> getCurrentLedger chainDB
-    pure $ (,) <$> getLeiosCommittee ls <*> getCurrentThreshold ls
+    leiosCommitteeOfTip (configLedger cfg) . ledgerState
+      <$> getCurrentLedger chainDB
 
   -- A seat can exist without a key. If the pool registers no
   -- 'leiosKey', its seat is keyless. If its proof of possession does

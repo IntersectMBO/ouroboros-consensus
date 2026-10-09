@@ -84,7 +84,7 @@ import LeiosUtils.CallTrace
   )
 import qualified LeiosValidClaims
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
-import LeiosVoting (HasLeiosVoting (..), runLeiosVoting)
+import LeiosVoting (runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
@@ -95,7 +95,10 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsProtocol (ledgerViewForecastAt)
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( ledgerViewForecastAt
+  , leiosCommitteeOfTip
+  )
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -887,11 +890,8 @@ initInternalState
 
     leiosVoteState <-
       newLeiosVoteState $ do
-        ls <- ledgerState <$> ChainDB.getCurrentLedger chainDB
-        pure $
-          (,)
-            <$> getLeiosCommittee ls
-            <*> getCurrentThreshold ls
+        leiosCommitteeOfTip (configLedger cfg) . ledgerState
+          <$> ChainDB.getCurrentLedger chainDB
 
     return IS{..}
 

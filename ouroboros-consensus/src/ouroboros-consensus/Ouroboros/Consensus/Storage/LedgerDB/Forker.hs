@@ -117,7 +117,11 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
-import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewOfTip)
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  , ledgerViewOfTip
+  , leiosCommitteeOfTip
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( calculateDifference
   , forgetLedgerTables
@@ -534,9 +538,9 @@ applyBlockToForker ::
   forall m l blk.
   ( ApplyBlock l blk
   , MonadSTM m
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbReader m ->
@@ -563,9 +567,9 @@ applyBlock ::
   forall m l blk.
   ( ApplyBlock l blk
   , MonadSTM m
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbReader m ->
@@ -653,13 +657,9 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
 
           -- CertRB on an era without a Leios committee is itself a protocol
           -- violation: the era machinery shouldn't have let one through.
-          cm <-
-            getLeiosCommittee ls
+          (cm, threshold) <-
+            leiosCommitteeOfTip (configLedger (getExtLedgerCfg cfg)) ls
               ?>= ExtValidationErrorLeios (LeiosMissingCommittee announcedPoint cert)
-
-          -- If we have a committee, we must also have a quorum threshold.
-          threshold <-
-            getCurrentThreshold ls ?>= ExtValidationErrorLeios LeiosMissingThreshold
 
           -- Check the certificate
           case verifyLeiosCert cm threshold announcingRbHashValue cert of
@@ -709,11 +709,10 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
 -- push the resulting ledger state to the forker.
 applyThenPush ::
   ( ApplyBlock l blk
-  , GetHeader blk
   , MonadSTM m
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbReader m ->

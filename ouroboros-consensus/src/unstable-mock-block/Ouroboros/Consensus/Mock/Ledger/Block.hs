@@ -157,10 +157,7 @@ instance
 
   assumeValidatedClosureTx = ValidatedSimpleGenTx
 
-instance HasLeiosVoting (SimpleBlock' c ext ext') where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (SimpleBlock' c ext ext')
 
 instance
   (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>
