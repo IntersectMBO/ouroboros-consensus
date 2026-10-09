@@ -1136,6 +1136,7 @@ processLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache writer syste
                     -- TODO thread the real 'LeiosFetchStaticEnv' rather than the demo one
                     (Leios.maxJobBytesSize Leios.demoLeiosFetchStaticEnv)
                     (Leios.maxJobTxCount Leios.demoLeiosFetchStaticEnv)
+                    leiosClosureOfferSeamBytes
                     (V.map snd (leiosEbTxs eb))
                     (IntMap.withoutKeys missedBoth (IntSet.fromList filledOffs))
             MVar.modifyMVar_ outstandingVar $
@@ -1658,12 +1659,17 @@ recordOffer readyVar peerVars point offer = do
 
 -----
 
+-- | Where honest peers' incremental closure offers begin: the multiples of
+-- this many bytes. It is also the stub minimum length of a closure offer.
+leiosClosureOfferSeamBytes :: BytesSize
+leiosClosureOfferSeamBytes = 200 * 1024
+
 -- | The least a closure offer's range may span, except for one that runs to
 -- the end of the closure; see 'checkLeiosClosureOffer'.
 --
 -- TODO negotiate it in the handshake; until then every version gets the stub.
 leiosClosureOfferMinLength :: NodeToNodeVersion -> BytesSize
-leiosClosureOfferMinLength _version = 200 * 1024
+leiosClosureOfferMinLength _version = leiosClosureOfferSeamBytes
 
 -- | Why 'admitClosureOffer' refused a range.
 data ClosureOfferRejection

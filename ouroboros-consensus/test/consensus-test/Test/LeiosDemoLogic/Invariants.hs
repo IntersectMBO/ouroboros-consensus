@@ -64,6 +64,7 @@ import LeiosDemoLogic
   , ExnLeiosWellHashedBodyRejected (..)
   , LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
+  , leiosClosureOfferSeamBytes
   , leiosFetchLogicIteration
   , mkAnnouncingHeader
   , noMempoolPull
@@ -140,7 +141,7 @@ tests =
       , testCase "a body is claimed acquired only by a settled write" $ do
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
-              jobPool = Jobs.mkLeiosJobPool 1000 10 V.empty mempty
+              jobPool = Jobs.mkLeiosJobPool 1000 10 leiosClosureOfferSeamBytes V.empty mempty
               fetchStateOf o =
                 (\(Leios.MkEbState _ _ fs) -> fs) <$> Map.lookup h (Leios.ebState o)
               announced =
@@ -161,7 +162,7 @@ tests =
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
               -- an empty job pool suffices here
-              jobPool = Jobs.mkLeiosJobPool 1000 10 V.empty mempty
+              jobPool = Jobs.mkLeiosJobPool 1000 10 leiosClosureOfferSeamBytes V.empty mempty
               -- announce at slot 5, then again at the smaller slot 3, and acquire
               o =
                 Leios.acquireEbBody h jobPool $
@@ -267,6 +268,7 @@ tests =
                 Jobs.mkLeiosJobPool
                   (Leios.maxJobBytesSize demoLeiosFetchStaticEnv)
                   (Leios.maxJobTxCount demoLeiosFetchStaticEnv)
+                  leiosClosureOfferSeamBytes
                   (V.fromList (map txSizeOf ids))
                   misses
               peerId = MkPeerId (0 :: Int)
@@ -307,11 +309,42 @@ tests =
           run bigLedger (ordinaryCap + 1) @?= IntSet.fromList ids
           -- past even the big-ledger cap, though, a big-ledger peer is bounded too
           run bigLedger (bigLedgerCap + 1) @?= IntSet.empty
+      , testCase "a job stops at its missing-byte limit and at the seams between incremental offers" $ do
+          let jobsOf maxJobBytes seamBytes sizes missOffs =
+                [ (offs, start, end)
+                | Jobs.MkLeiosJobState (Jobs.MkLeiosJob offs _bytes start end _root) _m <-
+                    IntMap.elems
+                      ( Jobs.jobs
+                          ( Jobs.mkLeiosJobPool
+                              maxJobBytes
+                              10
+                              seamBytes
+                              (V.fromList sizes)
+                              (IntMap.fromList [(off, (txHashOf off, sizes !! off)) | off <- missOffs])
+                          )
+                      )
+                ]
+          -- the missing bytes are limited ...
+          jobsOf 15 1000 [10, 10] [0, 1]
+            @?= [(IntSet.singleton 0, 0, 10), (IntSet.singleton 1, 10, 20)]
+          -- ... but a held tx between the misses does not count toward the limit
+          jobsOf 50 1000 [10, 100, 10] [0, 2] @?= [(IntSet.fromList [0, 2], 0, 120)]
+          -- a seam between where the misses start splits them
+          jobsOf 50 100 [10, 100, 10] [0, 2]
+            @?= [(IntSet.singleton 0, 0, 10), (IntSet.singleton 2, 110, 120)]
+          -- a tx that starts before a seam stays in its job, though it ends after it
+          jobsOf 1000 100 [10, 95] [0, 1] @?= [(IntSet.fromList [0, 1], 0, 105)]
       , testCase "job assignment draws within the least-requested bucket, at random, respecting exclusions" $ do
           let misses = IntMap.fromList [(off, (txHashOf off, txSizeOf off)) | off <- [0 .. 5]]
               -- 'maxJobTxCount' 1 makes each tx its own job, so job ids 0..5 all
               -- start at multiplicity 0 (one bucket).
-              pool0 = Jobs.mkLeiosJobPool 1000000 1 (V.fromList [txSizeOf off | off <- [0 .. 5]]) misses
+              pool0 =
+                Jobs.mkLeiosJobPool
+                  1000000
+                  1
+                  leiosClosureOfferSeamBytes
+                  (V.fromList [txSizeOf off | off <- [0 .. 5]])
+                  misses
               pickId pool excluded s =
                 case Jobs.pickLeastRequestedJobExcept (mkStdGen s) excluded pool of
                   Just (Jobs.MkLeiosJobId i, _job, _pool', _prng') -> Just i
@@ -482,7 +515,7 @@ tests =
               elCertified = MkElId (SlotNo 7) (SBS.pack [2])
               o =
                 Leios.focusCertifiedEb (Leios.MkAnnouncementFields elCertified h 99) $
-                  Leios.acquireEbBody h (Jobs.mkLeiosJobPool 1000 10 V.empty mempty) $
+                  Leios.acquireEbBody h (Jobs.mkLeiosJobPool 1000 10 leiosClosureOfferSeamBytes V.empty mempty) $
                     -- the announcement that got us the body in the first place;
                     -- without it 'acquireEbBody' has no entry to update
                     Leios.recordMaxAnnouncementSlot h (SlotNo 7) SNothing $
@@ -497,7 +530,7 @@ tests =
                 sizes = V.fromList (map txSizeOf ids)
                 misses = IntMap.fromList [(off, (txHashOf i, txSizeOf i)) | (off, i) <- zip [0 ..] ids]
                 -- one job per tx, so a prefix boundary falls between jobs
-                jobPool = Jobs.mkLeiosJobPool 1000000 1 sizes misses
+                jobPool = Jobs.mkLeiosJobPool 1000000 1 leiosClosureOfferSeamBytes sizes misses
                 peerId = MkPeerId (0 :: Int)
                 -- exactly the first three txs
                 prefix = sum (map txSizeOf (take 3 ids))

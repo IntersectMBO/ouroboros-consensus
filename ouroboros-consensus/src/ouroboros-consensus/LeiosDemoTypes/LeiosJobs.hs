@@ -127,21 +127,27 @@ data LeiosJobPool = MkLeiosJobPool
   deriving (Eq, Show)
 
 -- | Partition the missing txs into jobs, greedily in offset order: a job grows
--- until adding the next tx would exceed @maxJobBytes@ or @maxJobTxCount@, but
--- always holds at least one tx (so an oversized tx would form a solo job, in
--- the unintended case of max tx size exceeding max job size).
+-- until adding the next tx would exceed @maxJobBytes@ or @maxJobTxCount@, or
+-- the next tx starts past a seam, but always holds at least one tx (so an
+-- oversized tx would form a solo job, in the unintended case of max tx size
+-- exceeding max job size).
 --
 -- Each miss is its offset within the EB body mapped to its tx hash and its
--- on-the-wire byte size. Each job's 'JobRootHash' commitment is computed here via
+-- on-the-wire byte size. The seams are the multiples of @seamBytes@ in the
+-- closure, where honest peers' incremental offers begin, so a job is servable
+-- once the offer covering its seam interval arrives; only its last tx may cross
+-- into the next one. Each job's 'JobRootHash' commitment is computed here via
 -- 'jobRootHashOfTxHashes' over its covered tx hashes.
 mkLeiosJobPool ::
   Word32 ->
   Int ->
+  -- | the distance between offers' seams for honest nodes on the same version
+  Word32 ->
   -- | the declared size of every tx of the body, in offset order
   V.Vector Word32 ->
   IntMap (TxHash, Word32) ->
   LeiosJobPool
-mkLeiosJobPool maxJobBytes maxJobTxCount sizes misses =
+mkLeiosJobPool maxJobBytes maxJobTxCount seamBytes sizes misses =
   MkLeiosJobPool
     { jobs =
         IntMap.fromList
@@ -167,9 +173,14 @@ mkLeiosJobPool maxJobBytes maxJobTxCount sizes misses =
       (starts V.! (IntSet.findMax cur + 1))
       (jobRootHashOfTxHashes (reverse hashesRev))
 
+  -- which interval between seams a tx starts in
+  seamIntervalOf off = starts V.! off `div` seamBytes
+
   grow !cur !bytes !_count hashesRev [] = [flush cur bytes hashesRev]
   grow !cur !bytes !count hashesRev ((off, (h, sz)) : rest)
-    | count < maxJobTxCount && bytes + sz <= maxJobBytes =
+    | count < maxJobTxCount
+    , bytes + sz <= maxJobBytes
+    , seamIntervalOf off == seamIntervalOf (IntSet.findMin cur) =
         grow (IntSet.insert off cur) (bytes + sz) (count + 1) (h : hashesRev) rest
     | otherwise = flush cur bytes hashesRev : grow (IntSet.singleton off) sz 1 [h] rest
 
