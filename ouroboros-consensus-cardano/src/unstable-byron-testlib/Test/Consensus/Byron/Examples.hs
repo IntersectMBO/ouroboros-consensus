@@ -56,7 +56,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Network.Block (Serialised (..))
+import Ouroboros.Network.Block (Serialised (..), mkSerialised)
 import qualified Test.Cardano.Chain.Common.Example as CC
 import qualified Test.Cardano.Chain.Genesis.Dummy as CC
 import qualified Test.Cardano.Chain.UTxO.Example as CC
@@ -67,6 +67,7 @@ import Test.Util.Serialisation.Examples
   ( Examples (Examples)
   , Labelled
   , labelled
+  , topLevelQueries
   , unlabelled
   )
 import qualified Test.Util.Serialisation.Examples as Examples
@@ -136,6 +137,7 @@ examples =
     , exampleGenTxId = unlabelled exampleGenTxId
     , exampleApplyTxErr = unlabelled exampleApplyTxErr
     , exampleQuery = unlabelled exampleQuery
+    , exampleTopLevelQuery = topLevelQueries
     , exampleResult = unlabelled exampleResult
     , exampleAnnTip = unlabelled exampleAnnTip
     , exampleLedgerConfig = unlabelled ledgerConfig
@@ -177,10 +179,10 @@ exampleEBB :: ByronBlock
 exampleEBB = forgeEBB blockConfig (SlotNo 0) (BlockNo 0) GenesisHash
 
 exampleSerialisedBlock :: Serialised ByronBlock
-exampleSerialisedBlock = Serialised "<BLOCK>"
+exampleSerialisedBlock = mkSerialised (encodeDisk codecConfig) exampleBlock
 
 exampleSerialisedEBB :: Serialised ByronBlock
-exampleSerialisedEBB = Serialised "<EBB>"
+exampleSerialisedEBB = mkSerialised (encodeDisk codecConfig) exampleEBB
 
 exampleHeader :: Header ByronBlock
 exampleHeader = getHeader exampleBlock
@@ -190,13 +192,11 @@ exampleEBBHeader = getHeader exampleEBB
 
 exampleSerialisedHeader :: SerialisedHeader ByronBlock
 exampleSerialisedHeader =
-  SerialisedHeaderFromDepPair $
-    GenDepPair (NestedCtxt (CtxtByronRegular 100)) (Serialised "<HEADER>")
+  SerialisedHeaderFromDepPair $ encodeDepPair codecConfig (unnest exampleHeader)
 
 exampleSerialisedEBBHeader :: SerialisedHeader ByronBlock
 exampleSerialisedEBBHeader =
-  SerialisedHeaderFromDepPair $
-    GenDepPair (NestedCtxt (CtxtByronBoundary 100)) (Serialised "<EBB_HEADER>")
+  SerialisedHeaderFromDepPair $ encodeDepPair codecConfig (unnest exampleEBBHeader)
 
 exampleAnnTip :: AnnTip ByronBlock
 exampleAnnTip =
