@@ -20,6 +20,42 @@ index-state:
 
 packages: .
 
+-- DO NOT MERGE
+--
+-- Points to cardano-ledger's nfrisby/leios-main-proto branch, which is a port
+-- from the merge PR https://github.com/IntersectMBO/cardano-ledger/pull/6064
+-- onto the latest CHaP release. I'll get that port merged into master before
+-- this ouroboros-consensus PR can merge into main.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  tag: dabb9284e3b3769b8e8c5d1588a6bba0067b9bc5
+  --sha256: sha256-XyClY0qwNIXvSBfOXAnMN32qwoNFe0TUH3esCTJg1Gk=
+  subdir:
+    libs/cardano-data
+    libs/cardano-ledger-api
+    libs/small-steps
+    libs/cardano-ledger-binary
+    libs/cardano-ledger-core
+    libs/cardano-protocol
+    libs/cardano-protocol-tpraos
+    eras/byron/chain/executable-spec
+    eras/byron/ledger/executable-spec
+    eras/shelley/impl
+    eras/shelley/test-suite
+    eras/shelley-ma/test-suite
+    eras/mary/impl
+    eras/allegra/impl
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/babbage/impl
+    eras/conway/impl
+    eras/dijkstra/impl
+
+-- TEMPORARY: CHaP's cardano-config bounds this ledger's Dijkstra out.
+allow-newer:
+  , cardano-config:cardano-ledger-dijkstra
+
 -- We want to always build the test-suites and benchmarks
 tests: True
 benchmarks: True
