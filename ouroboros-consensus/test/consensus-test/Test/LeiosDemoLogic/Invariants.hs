@@ -46,9 +46,9 @@ import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (foldl', toList)
-import Data.List (sort)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import Data.List (sort)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
@@ -76,17 +76,10 @@ import LeiosDemoLogic
   )
 import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
-import Test.Util.LeiosTestBlock
-  ( LeiosTestBlock
-  , announcing
-  , firstLeiosBlock
-  , issuedBy
-  , successorLeiosBlock
-  )
-import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import LeiosDemoTypes
   ( AnnouncementSource (..)
   , BytesSize
+  , ClosureOffer (..)
   , EbHash
   , LeiosBlockRequest (..)
   , LeiosEb (..)
@@ -96,7 +89,6 @@ import LeiosDemoTypes
   , LeiosTx (..)
   , PeerId (..)
   , TxHash
-  , WhetherTxsClosureOffered (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , encodeLeiosEbSize
@@ -112,6 +104,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
   )
+import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import Ouroboros.Consensus.Util.IOLike (IOLike, evaluate)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
@@ -121,6 +114,13 @@ import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.LeiosTestBlock
+  ( LeiosTestBlock
+  , announcing
+  , firstLeiosBlock
+  , issuedBy
+  , successorLeiosBlock
+  )
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
@@ -140,7 +140,7 @@ tests =
       , testCase "a body is claimed acquired only by a settled write" $ do
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
-              jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
+              jobPool = Jobs.mkLeiosJobPool 1000 10 V.empty mempty
               fetchStateOf o =
                 (\(Leios.MkEbState _ _ fs) -> fs) <$> Map.lookup h (Leios.ebState o)
               announced =
@@ -161,7 +161,7 @@ tests =
           let eb = ebOf [0, 1]
               h = hashLeiosEb eb
               -- an empty job pool suffices here
-              jobPool = Jobs.mkLeiosJobPool 1000 10 mempty
+              jobPool = Jobs.mkLeiosJobPool 1000 10 V.empty mempty
               -- announce at slot 5, then again at the smaller slot 3, and acquire
               o =
                 Leios.acquireEbBody h jobPool $
@@ -267,27 +267,29 @@ tests =
                 Jobs.mkLeiosJobPool
                   (Leios.maxJobBytesSize demoLeiosFetchStaticEnv)
                   (Leios.maxJobTxCount demoLeiosFetchStaticEnv)
+                  (V.fromList (map txSizeOf ids))
                   misses
               peerId = MkPeerId (0 :: Int)
               -- The body is already held in these runs, so the offer names no
               -- size; only its closure half is consulted.
               offers =
                 Map.singleton peerId $
-                  Map.singleton point (Leios.MkPeerOffer SNothing SNothing TxsClosureOffered)
+                  Map.singleton point (Leios.MkPeerOffer SNothing SNothing Leios.wholeClosureOffer)
               ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
               bigLedgerCap = Leios.maxRequestedBytesSizePerBigLedgerPeer demoLeiosFetchStaticEnv
               -- hold the body (so the pool is live), with the peer's in-flight bytes
               -- preloaded to 'used'
               run bigLedgerPeers used =
                 let outstanding =
-                      (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
+                      (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used})
+                        $
                         -- the election fetching it, without which nothing is requested
                         Leios.focusElectionIfUnfocused
                           (Leios.announcementElection (announcementOf point 0))
                           h
-                          $ Leios.acquireEbBody h jobPool
-                          $ Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing
-                          $ (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                        $ Leios.acquireEbBody h jobPool
+                        $ Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing
+                        $ (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                     (_o, reqs, _d) =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
@@ -309,7 +311,7 @@ tests =
           let misses = IntMap.fromList [(off, (txHashOf off, txSizeOf off)) | off <- [0 .. 5]]
               -- 'maxJobTxCount' 1 makes each tx its own job, so job ids 0..5 all
               -- start at multiplicity 0 (one bucket).
-              pool0 = Jobs.mkLeiosJobPool 1000000 1 misses
+              pool0 = Jobs.mkLeiosJobPool 1000000 1 (V.fromList [txSizeOf off | off <- [0 .. 5]]) misses
               pickId pool excluded s =
                 case Jobs.pickLeastRequestedJobExcept (mkStdGen s) excluded pool of
                   Just (Jobs.MkLeiosJobId i, _job, _pool', _prng') -> Just i
@@ -480,12 +482,63 @@ tests =
               elCertified = MkElId (SlotNo 7) (SBS.pack [2])
               o =
                 Leios.focusCertifiedEb (Leios.MkAnnouncementFields elCertified h 99) $
-                  Leios.acquireEbBody h (Jobs.mkLeiosJobPool 1000 10 mempty) $
+                  Leios.acquireEbBody h (Jobs.mkLeiosJobPool 1000 10 V.empty mempty) $
                     -- the announcement that got us the body in the first place;
                     -- without it 'acquireEbBody' has no entry to update
                     Leios.recordMaxAnnouncementSlot h (SlotNo 7) SNothing $
                       (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
           maybe False Leios.ebStateHasBody (Map.lookup h (Leios.ebState o)) @?= True
+      , testCase
+          "a closure-prefix offer is served only inside the prefix, and pruned once that is exhausted"
+          $ do
+            let ids = [0 .. 5] :: TestEb
+                h = hashLeiosEb (ebOf ids)
+                point = pointOf ids 10
+                sizes = V.fromList (map txSizeOf ids)
+                misses = IntMap.fromList [(off, (txHashOf i, txSizeOf i)) | (off, i) <- zip [0 ..] ids]
+                -- one job per tx, so a prefix boundary falls between jobs
+                jobPool = Jobs.mkLeiosJobPool 1000000 1 sizes misses
+                peerId = MkPeerId (0 :: Int)
+                -- exactly the first three txs
+                prefix = sum (map txSizeOf (take 3 ids))
+                ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
+                run offer used =
+                  let outstanding =
+                        (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used})
+                          $
+                          -- the election fetching it, without which nothing is requested
+                          Leios.focusElectionIfUnfocused
+                            (Leios.announcementElection (announcementOf point 0))
+                            h
+                          $ Leios.acquireEbBody h jobPool
+                          $ Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing
+                          $ (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                      (_o, reqs, drops) =
+                        leiosFetchLogicIteration
+                          demoLeiosFetchStaticEnv
+                          anyClosureSize
+                          (Just (SlotNo 11))
+                          (Map.singleton peerId (Map.singleton point (Leios.MkPeerOffer SNothing SNothing offer)))
+                          Map.empty
+                          outstanding
+                   in (requestedOffsets reqs, Map.keys drops)
+            -- only the jobs inside the prefix are requested, and with nothing else
+            -- it can serve the offer is pruned
+            run (MkClosureOffer (Map.singleton 0 prefix)) 0 @?= (IntSet.fromList [0, 1, 2], [peerId])
+            -- a prefix short of the first tx serves nothing, and so does a body-only offer
+            run (MkClosureOffer (Map.singleton 0 (txSizeOf 0 - 1))) 0 @?= (IntSet.empty, [peerId])
+            run (MkClosureOffer Map.empty) 0 @?= (IntSet.empty, [peerId])
+            -- the whole closure serves every job
+            run (MkClosureOffer (Map.singleton 0 maxBound)) 0 @?= (IntSet.fromList ids, [peerId])
+            -- a run offered out of order serves exactly the jobs inside it
+            let mid = sum (map txSizeOf (take 2 ids))
+                end5 = sum (map txSizeOf (take 5 ids))
+            run (MkClosureOffer (Map.singleton mid end5)) 0 @?= (IntSet.fromList [2, 3, 4], [peerId])
+            -- with budget for a single job the offer still has jobs to give, so it stays
+            let (one, kept) = run (MkClosureOffer (Map.singleton 0 prefix)) (ordinaryCap - 1)
+            IntSet.size one @?= 1
+            assertBool "the one job is inside the prefix" (one `IntSet.isSubsetOf` IntSet.fromList [0, 1, 2])
+            kept @?= []
       , testProperty
           "outstanding-state invariants hold across arbitrary sequences"
           prop_invariants
@@ -822,7 +875,7 @@ referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.PeerO
 referencedOffers o =
   Map.fromList
     [ ( Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h
-      , Leios.MkPeerOffer SNothing (SJust 1) Leios.TxsClosureOffered
+      , Leios.MkPeerOffer SNothing (SJust 1) Leios.wholeClosureOffer
       )
     | (h, s) <- Map.toList (Leios.ebState o)
     ]
@@ -839,7 +892,7 @@ forceDecisions m =
     Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p jobs) ->
       sum
         [ off
-        | Jobs.MkLeiosJob offs _bytes _root <- toList jobs
+        | Jobs.MkLeiosJob offs _bytes _start _end _root <- toList jobs
         , off <- IntSet.toList offs
         ]
 
@@ -859,7 +912,7 @@ requestedOffsets m =
     [ offs
     | reqs <- Map.elems m
     , Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p jobs) <- toList reqs
-    , Jobs.MkLeiosJob offs _bytes _root <- toList jobs
+    , Jobs.MkLeiosJob offs _bytes _start _end _root <- toList jobs
     ]
 
 ------------------------------------------------------------

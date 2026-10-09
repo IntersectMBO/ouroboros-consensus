@@ -1,12 +1,15 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.LeiosDemoTypes (tests) where
 
 import Cardano.Binary (serialize')
 import Cardano.Slotting.Slot (SlotNo (..))
+import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure (..), deserialiseFromBytes)
 import Codec.CBOR.Write (toLazyByteString)
@@ -26,6 +29,11 @@ import LeiosDemoOnlyTestFetch
   , codecLeiosFetch
   , decodeBitmaps
   , encodeBitmaps
+  )
+import LeiosDemoOnlyTestNotify
+  ( Message (..)
+  , SingLeiosNotify (..)
+  , codecLeiosNotify
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -49,7 +57,13 @@ import LeiosDemoTypes
   , selectCommitteeByStake
   , txHashBytes
   )
-import Network.TypedProtocol.Codec (ActiveState, CodecF (..), StateToken, runDecoder)
+import Network.TypedProtocol.Codec
+  ( ActiveState
+  , CodecF (..)
+  , SomeMessage (..)
+  , StateToken
+  , runDecoder
+  )
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Test.QuickCheck
   ( Gen
@@ -101,6 +115,9 @@ tests =
     , testProperty
         "MsgLeiosBlockTxs decoder rejects a wrong or too large tx count"
         prop_decodeBlockTxsChecksCount
+    , testProperty
+        "codecLeiosNotify round-trips MsgLeiosBlockTxsOffer"
+        prop_leiosNotifyTxsOfferRoundTrip
     , testProperty
         "decodeBitmaps accepts exactly the valid entry lists"
         prop_decodeBitmapsAcceptsExactlyValid
@@ -357,6 +374,25 @@ prop_decodeBlockTxsChecksCount =
             <> mconcat (replicate nTxs (encodeLeiosTx (MkLeiosTx BS.empty)))
     failure <- decodeFailure SingBlockTxs msg
     pure $ counterexample label $ failsWith expected failure
+
+-- | 'codecLeiosNotify' round-trips 'MsgLeiosBlockTxsOffer': the point and the
+-- offered prefix size both survive.
+prop_leiosNotifyTxsOfferRoundTrip :: Property
+prop_leiosNotifyTxsOfferRoundTrip =
+  forAll ((,) <$> chooseEnum (minBound, maxBound :: BytesSize) <*> chooseEnum (minBound, maxBound)) $ \(start, end) -> ioProperty $ do
+    let Codec{encode, decode} =
+          codecLeiosNotify
+            encodeLeiosPoint
+            decodeLeiosPoint
+            (\() -> CBOR.encodeNull)
+            CBOR.decodeNull
+            (\() -> CBOR.encodeNull)
+            CBOR.decodeNull
+    step <- decode SingBusy
+    runDecoder [encode (MsgLeiosBlockTxsOffer testPoint start end)] step <&> \case
+      Left (DeserialiseFailure _ reason) -> counterexample reason False
+      Right (SomeMessage (MsgLeiosBlockTxsOffer p start' end')) -> (p, start', end') === (testPoint, start, end)
+      Right (SomeMessage msg) -> counterexample ("decoded " <> show msg) False
 
 -- | 'decodeBitmaps' accepts exactly the entry lists the protocol allows.
 --

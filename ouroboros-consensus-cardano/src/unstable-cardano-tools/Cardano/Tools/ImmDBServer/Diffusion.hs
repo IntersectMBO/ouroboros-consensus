@@ -172,6 +172,9 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
 -- | A JSON-encoded list of @(slotDbl, (ebSlot, ebHashHex, mbEbBytesSize))@
 -- entries; the immdb-server delivers each entry at its scheduled slot via the
 -- LeiosNotify mini-protocol.
+--
+-- TODO the third component could be a Bool saying which offer to send, with
+-- the EB offer's size looked up just-in-time.
 data LeiosSchedule = MkLeiosSchedule [(Double, (Word64, T.Text, Maybe Word32))]
   deriving Generic
 
