@@ -77,7 +77,7 @@ praosSharedBlockForging ::
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->
   BlockForging m (ShelleyBlock (Praos c) era)
-praosSharedBlockForging = basePraosSharedBlockForging id
+praosSharedBlockForging = basePraosSharedBlockForging praosParams
 
 -- | 'praosSharedBlockForging' for every Praos.
 basePraosSharedBlockForging ::
@@ -89,14 +89,14 @@ basePraosSharedBlockForging ::
   , Applicative (LeiosOnly proto ())
   , IOLike m
   ) =>
-  -- | The Praos configuration within this protocol's
-  (ConsensusConfig proto -> ConsensusConfig (Praos c)) ->
+  -- | The Praos parameters within this protocol's configuration
+  (ConsensusConfig proto -> PraosParams) ->
   HotKey.HotKey c m ->
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->
   BlockForging m (ShelleyBlock proto era)
 basePraosSharedBlockForging
-  getPraosConfig
+  getPraosParams
   hotKey
   slotToPeriod
   ShelleyLeaderCredentials
@@ -111,7 +111,7 @@ basePraosSharedBlockForging
             <$> HotKey.evolve hotKey (slotToPeriod curSlot)
       , checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
           praosCheckCanForge
-            (getPraosConfig (configConsensus cfg))
+            (getPraosParams (configConsensus cfg))
             curSlot
       , forgeBlock = forgeShelleyBlock hotKey canBeLeader
       , finalize = HotKey.finalize hotKey
@@ -127,4 +127,4 @@ praos2SharedBlockForging ::
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->
   BlockForging m (ShelleyBlock (Praos2 c) era)
-praos2SharedBlockForging = basePraosSharedBlockForging leiosPraosConfig
+praos2SharedBlockForging = basePraosSharedBlockForging (praosParams . leiosPraosConfig)
