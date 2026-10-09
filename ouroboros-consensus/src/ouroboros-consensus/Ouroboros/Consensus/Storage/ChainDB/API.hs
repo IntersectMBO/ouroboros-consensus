@@ -129,26 +129,6 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API.Types (FsError)
 
--- | The chain database
---
--- The chain database provides a unified interface on top of:
---
--- * The ImmutableDB, storing the part of the chain that can't roll back.
--- * The VolatileDB, storing the blocks near the tip of the chain, possibly in
---   multiple competing forks.
--- * The LedgerDB, storing snapshots of the ledger state for blocks in the
---   ImmutableDB (and in-memory snapshots for the rest).
---
--- In addition to providing a unifying interface on top of these disparate
--- components, the main responsibilities that the ChainDB itself has are:
---
--- * Chain selection (on initialization and whenever a block is added)
--- * Trigger full recovery whenever we detect disk failure in any component
--- * Provide iterators across fixed fragments of the current chain
--- * Provide followers that track the status of the current chain
---
--- The ChainDB instantiates all the various type parameters of these databases
--- to conform to the unified interface we provide here.
 -- | What the caller knows about the block's predecessor
 --
 -- ChainSel needs the ledger view at the predecessor's slot, because that is the
@@ -196,6 +176,26 @@ trivialPredecessor = \case
   Origin -> NoPredecessor
   NotOrigin slot -> Predecessor slot ()
 
+-- | The chain database
+--
+-- The chain database provides a unified interface on top of:
+--
+-- * The ImmutableDB, storing the part of the chain that can't roll back.
+-- * The VolatileDB, storing the blocks near the tip of the chain, possibly in
+--   multiple competing forks.
+-- * The LedgerDB, storing snapshots of the ledger state for blocks in the
+--   ImmutableDB (and in-memory snapshots for the rest).
+--
+-- In addition to providing a unifying interface on top of these disparate
+-- components, the main responsibilities that the ChainDB itself has are:
+--
+-- * Chain selection (on initialization and whenever a block is added)
+-- * Trigger full recovery whenever we detect disk failure in any component
+-- * Provide iterators across fixed fragments of the current chain
+-- * Provide followers that track the status of the current chain
+--
+-- The ChainDB instantiates all the various type parameters of these databases
+-- to conform to the unified interface we provide here.
 data ChainDB m blk = ChainDB
   { addBlockAsync ::
       InvalidBlockPunishment m ->

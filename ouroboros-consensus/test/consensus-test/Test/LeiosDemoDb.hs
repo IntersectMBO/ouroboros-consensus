@@ -844,11 +844,6 @@ test_noReNotifyOnRelatedTxReinsert db = do
               "completed EB should not be re-notified on re-insert of its own tx"
       [] -> assertFailure "test EB has no txs"
 
--- | The same EB content can be forged at multiple slots; the DB must
--- track each 'LeiosPoint' independently and emit one 'AcquiredEbTxs'
--- per (slot, hash) when the closure completes, regardless of how many
--- slots reference the same hash. Conflating the slots loses a
--- notification.
 -- | A body can only be persisted for a point already registered (via
 -- 'writeEbPoint', on the announcement path).
 test_ebBodyWithoutPointFails :: LeiosDbHandle IO -> IO ()
@@ -861,6 +856,11 @@ test_ebBodyWithoutPointFails db = withRW db $ \con -> do
   tryDb :: IO a -> IO (Either LeiosDbException a)
   tryDb = try
 
+-- | The same EB content can be forged at multiple slots; the DB must
+-- track each 'LeiosPoint' independently and emit one 'AcquiredEbTxs'
+-- per (slot, hash) when the closure completes, regardless of how many
+-- slots reference the same hash. Conflating the slots loses a
+-- notification.
 test_multipleSlotsSameHash :: LeiosDbHandle IO -> IO ()
 test_multipleSlotsSameHash db = do
   chan <- subscribeEbNotifications db

@@ -64,10 +64,6 @@ praosBlockForging praosParams hotKey credentials =
   slotToPeriod (SlotNo slot) =
     SL.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
--- | Create a 'BlockForging' record safely using the given 'Hotkey'.
---
--- The name of the era (separated by a @_@) will be appended to each
--- 'forgeLabel'.
 -- | Shared by every Praos extension; the caller supplies the Leios token,
 -- since it knows which extension it is.
 basePraosSharedBlockForging ::
@@ -113,6 +109,10 @@ basePraosSharedBlockForging
       , finalize = HotKey.finalize hotKey
       }
 
+-- | Create a 'BlockForging' record safely using the given 'Hotkey'.
+--
+-- The name of the era (separated by a @_@) will be appended to each
+-- 'forgeLabel'.
 praosSharedBlockForging ::
   forall m c era.
   ( ShelleyCompatible (Praos c) era
