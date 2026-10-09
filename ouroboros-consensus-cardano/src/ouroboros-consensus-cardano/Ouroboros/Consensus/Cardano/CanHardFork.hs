@@ -66,10 +66,11 @@ import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Forecast
+import qualified Ouroboros.Consensus.Forecast as Forecast
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.History
-  ( Bound (boundSlot)
+  ( Bound (boundEpoch, boundSlot)
   , addSlots
   )
 import Ouroboros.Consensus.HardFork.Simple
@@ -82,7 +83,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-  ( LedgerSupportsProtocol
+  ( LedgerSupportsProtocol (ledgerViewForecastAt)
   )
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -186,7 +187,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                 PCons crossEraForecastAcrossShelley $
                   PCons crossEraForecastAcrossShelley $
                     PCons crossEraForecastAcrossShelley $
-                      PCons crossEraForecastAcrossShelley $
+                      PCons crossEraForecastConwayToDijkstraWrapper $
                         PNil
       }
   hardForkChainSel =
@@ -869,6 +870,49 @@ translateLedgerTablesConwayToDijkstraWrapper =
     { translateTxInWith = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
+
+-- | Forecast a Dijkstra ledger view from a Conway ledger state
+--
+-- 'crossEraForecastAcrossShelley' translates the Conway view, which has no
+-- Leios parameters or committee to translate, so they would be invented. This
+-- instead translates the state, as the combinator does when it ticks across
+-- the boundary, and forecasts with Dijkstra's own rules.
+crossEraForecastConwayToDijkstraWrapper ::
+  CardanoHardForkConstraints c =>
+  RequiringBoth
+    WrapLedgerConfig
+    (CrossEraForecaster LedgerState WrapLedgerView)
+    (ShelleyBlock (Praos c) ConwayEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+crossEraForecastConwayToDijkstraWrapper =
+  RequireBoth $ \cfgConway cfgDijkstra ->
+    CrossEraForecaster $ \transition forecastFor st ->
+      let RequireBoth translate = translateLedgerStateConwayToDijkstraWrapper
+          stDijkstra =
+            forgetLedgerTables $
+              translateLedgerStateWith
+                (translate cfgConway cfgDijkstra)
+                (boundEpoch transition)
+                st
+          maxFor =
+            crossEraForecastBound
+              (ledgerTipSlot st)
+              (boundSlot transition)
+              (SL.stabilityWindow (shelleyLedgerGlobals (unwrapLedgerConfig cfgConway)))
+              (SL.stabilityWindow (shelleyLedgerGlobals (unwrapLedgerConfig cfgDijkstra)))
+       in if forecastFor < maxFor
+            then
+              WrapLedgerView
+                <$> Forecast.forecastFor
+                  (ledgerViewForecastAt (unwrapLedgerConfig cfgDijkstra) stDijkstra)
+                  forecastFor
+            else
+              throwError
+                OutsideForecastRange
+                  { outsideForecastAt = ledgerTipSlot st
+                  , outsideForecastMaxFor = maxFor
+                  , outsideForecastFor = forecastFor
+                  }
 
 getDijkstraTranslationContext ::
   WrapLedgerConfig (ShelleyBlock (PraosWithLeios c) DijkstraEra) ->
