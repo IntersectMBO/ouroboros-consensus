@@ -141,10 +141,7 @@ instance
   (Typeable m, Typeable a) =>
   ResolveLeiosBlock (DualBlock m a)
 
-instance HasLeiosVoting (DualBlock m a) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (DualBlock m a)
 
 instance Condense m => Condense (DualBlock m a) where
   condense = condense . dualBlockMain

@@ -35,6 +35,7 @@ import Control.Concurrent.Class.MonadMVar
   , newMVar
   , readMVar
   )
+import Control.Concurrent.Class.MonadSTM.Strict (atomically, tryReadTChan)
 import Control.Monad (forever)
 import Control.Monad.Class.MonadAsync (concurrently_)
 import Control.Monad.Class.MonadTest (exploreRaces)
@@ -43,7 +44,9 @@ import Control.Monad.Class.MonadTimer (threadDelay)
 import Control.Monad.IOSim (IOSim, exploreSimTrace, runSimOrThrow, traceResult)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
-import Data.Foldable (toList)
+import qualified Data.ByteString.Short as SBS
+import Data.Foldable (foldl', toList)
+import Data.List (sort)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
@@ -53,21 +56,36 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
+import Data.Word (Word64)
 import LeiosDemoDb (withWriter)
 import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
-  ( LeiosBlockSource (..)
+  ( AnnouncingHeader
+  , ExnLeiosWellHashedBodyRejected (..)
+  , LeiosBlockSource (..)
   , LeiosBlockTxsSource (..)
   , leiosFetchLogicIteration
+  , mkAnnouncingHeader
   , noMempoolPull
+  , processAnnouncementCentrally
   , processLeiosBlock
   , processLeiosBlockTxs
   , recordAnnouncedEb
   , recordEbBodyOffer
   , removePeerFromOutstanding
   )
+import qualified LeiosDemoLogic.Announcements as Announcements
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
+import Test.Util.LeiosTestBlock
+  ( LeiosTestBlock
+  , announcing
+  , firstLeiosBlock
+  , issuedBy
+  , successorLeiosBlock
+  )
+import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import LeiosDemoTypes
-  ( AlsoOfferedTxsClosure (..)
+  ( AnnouncementSource (..)
   , BytesSize
   , EbHash
   , LeiosBlockRequest (..)
@@ -78,6 +96,7 @@ import LeiosDemoTypes
   , LeiosTx (..)
   , PeerId (..)
   , TxHash
+  , WhetherTxsClosureOffered (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
   , encodeLeiosEbSize
@@ -88,6 +107,7 @@ import LeiosDemoTypes
 import qualified LeiosDemoTypes as Leios
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
 import LeiosTxCache (LeiosTxCache, defaultLeiosTxCacheShift, newPureLeiosTxCache, nullLeiosTxCache)
+import Ouroboros.Consensus.Block (getHeader)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
@@ -99,7 +119,7 @@ import Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import System.Random (mkStdGen)
 import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertBool, testCase, (@?=))
+import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestEnv (adjustQuickCheckTests)
@@ -212,14 +232,12 @@ tests =
           -- so every seeded EB reports as held ...
           all Leios.ebStateHasBody (Map.elems (Leios.ebState o)) @?= True
           -- ... nothing is listed for fetch (empty pools, no missing bodies) ...
-          Leios.missingEbBodies o @?= Map.empty
-          Leios.reverseSlotIndexByEbHash o @?= Map.empty
           -- ... no requests are outstanding (there are no connections at start-up) ...
           Leios.requestedBytesSizePerPeer o @?= Map.empty
           Leios.requestedEbPeers o @?= Map.empty
           Leios.requestedJobsPerPeer o @?= Map.empty
           -- ... and the pruning watermark is seeded from the immutable tip
-          Leios.acquiredEbBodiesPrunedSlot o @?= immTipSlot
+          Leios.outstandingPrunedSlot o @?= immTipSlot
       , testCase "start-up seeding: a peer's offer of a seeded EB is not re-fetched" $ do
           let ebA = [0, 1] :: TestEb
               ebB = [2, 3] :: TestEb
@@ -229,7 +247,13 @@ tests =
               -- a peer offers every seeded EB, body and closure
               offerings = Map.singleton peerId (referencedOffers o)
               (_out', decs, _drops) =
-                leiosFetchLogicIteration demoLeiosFetchStaticEnv (Just (SlotNo 10)) offerings Map.empty o
+                leiosFetchLogicIteration
+                  demoLeiosFetchStaticEnv
+                  anyClosureSize
+                  (Just (SlotNo 10))
+                  offerings
+                  Map.empty
+                  o
           -- no body is re-requested (the whole point of the seed) ...
           ebBodyRequestHashes decs @?= []
           -- ... and with empty pools there is nothing at all to request
@@ -245,7 +269,11 @@ tests =
                   (Leios.maxJobTxCount demoLeiosFetchStaticEnv)
                   misses
               peerId = MkPeerId (0 :: Int)
-              offers = Map.singleton peerId (Map.singleton point TxsClosureAlsoOffered)
+              -- The body is already held in these runs, so the offer names no
+              -- size; only its closure half is consulted.
+              offers =
+                Map.singleton peerId $
+                  Map.singleton point (Leios.MkPeerOffer SNothing SNothing TxsClosureOffered)
               ordinaryCap = Leios.maxRequestedBytesSizePerPeer demoLeiosFetchStaticEnv
               bigLedgerCap = Leios.maxRequestedBytesSizePerBigLedgerPeer demoLeiosFetchStaticEnv
               -- hold the body (so the pool is live), with the peer's in-flight bytes
@@ -253,12 +281,17 @@ tests =
               run bigLedgerPeers used =
                 let outstanding =
                       (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
-                        Leios.acquireEbBody h jobPool $
-                          Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing $
-                            (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                        -- the election fetching it, without which nothing is requested
+                        Leios.focusElectionIfUnfocused
+                          (Leios.announcementElection (announcementOf point 0))
+                          h
+                          $ Leios.acquireEbBody h jobPool
+                          $ Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing
+                          $ (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                     (_o, reqs, _d) =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
+                        anyClosureSize
                         (Just (SlotNo 11))
                         offers
                         bigLedgerPeers
@@ -301,31 +334,158 @@ tests =
             "least-requested bucket wins: job 0 (multiplicity 1) is not drawn"
             (not (0 `Set.member` drawnFromPool1))
           assertBool "still shuffles among the least-requested jobs" (Set.size drawnFromPool1 > 1)
-      , testCase "prune drops below-tip missing-body points and keeps the reverse index in sync" $ do
-          let hA = hashLeiosEb (ebOf [0, 1]) -- to be listed at slots 3 and 10
-              hB = hashLeiosEb (ebOf [2, 3]) -- to be listed at slot 3 only
-              pointAt slot h = MkLeiosPoint (SlotNo slot) h
-              o0 :: LeiosOutstanding Int
-              o0 =
-                (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
-                  { Leios.missingEbBodies =
-                      Map.fromList [(pointAt 3 hA, 10), (pointAt 10 hA, 10), (pointAt 3 hB, 20)]
-                  , Leios.reverseSlotIndexByEbHash =
-                      Map.fromList
-                        [ (hA, NESet.insert (SlotNo 3) (NESet.singleton (SlotNo 10)))
-                        , (hB, NESet.singleton (SlotNo 3))
-                        ]
-                  }
-              o = snd (Leios.pruneOutstandingToImmTip (SlotNo 5) o0)
-          -- hA's slot-3 point is dropped, its slot-10 point kept
-          Map.lookup (pointAt 3 hA) (Leios.missingEbBodies o) @?= Nothing
-          Map.lookup (pointAt 10 hA) (Leios.missingEbBodies o) @?= Just 10
-          -- hB was listed only at slot 3, so it drops out entirely
-          Map.lookup (pointAt 3 hB) (Leios.missingEbBodies o) @?= Nothing
-          Map.size (Leios.missingEbBodies o) @?= 1
-          -- the reverse index stays the exact inverse: hA at slot 10 only, hB gone
-          Map.lookup hA (Leios.reverseSlotIndexByEbHash o) @?= Just (NESet.singleton (SlotNo 10))
-          Map.lookup hB (Leios.reverseSlotIndexByEbHash o) @?= Nothing
+      , testCase "only the announcement that takes an election's focus is tracked" $ do
+          -- The announcement path contributes at most one 'ebState' entry per
+          -- election: the one that takes the election's focus. A second
+          -- announcement for an already-focused election is an equivocation,
+          -- and tracking its endorser block too would let a pool double what
+          -- its won slots cost us. Should that one turn out to be the certified
+          -- one, 'trackCertifiedEb' gives it an entry then --- which this says
+          -- nothing about, and is the other way an election can reach
+          -- 'ebState'.
+          let hFocused = hashLeiosEb (ebOf [0, 1])
+              hRival = hashLeiosEb (ebOf [2, 3])
+              elId = MkElId (SlotNo 5) (SBS.pack [1])
+              fieldsFor h = Leios.MkAnnouncementFields elId h 99
+              o = runSimOrThrow $ do
+                outstandingVar <-
+                  newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                readyVar <- newEmptyMVar
+                recordAnnouncedEb (outstandingVar, readyVar) SNothing (fieldsFor hFocused)
+                recordAnnouncedEb (outstandingVar, readyVar) SNothing (fieldsFor hRival)
+                readMVar outstandingVar
+          Map.member hFocused (Leios.ebState o) @?= True
+          Map.member hRival (Leios.ebState o) @?= False
+          Map.lookup elId (Leios.elFocus o) @?= Just hFocused
+      , testGroup
+          "EB-hash collision (ported from #2309)"
+          -- 'announcementOf' derives the election from (slot, hash), so the same
+          -- EB at two slots is two elections. Only 'Forge' completes a closure
+          -- here (no tx-delivery command, no mempool pull), so notifications are
+          -- only asserted in the 'Forge' scenarios.
+          [ testCase "forged, then the same EB announced at a new slot: both points registered and notified" $ do
+              let (points, notified) = runCmdsCollision [Forge collisionEb 5, Announce collisionEb 8]
+              points @?= [(SlotNo 5, collisionHash), (SlotNo 8, collisionHash)]
+              notified @?= [pointOf collisionEb 5, pointOf collisionEb 8]
+          , testCase "body held, then the same EB announced at a new slot: both points registered" $ do
+              let (points, _) =
+                    runCmdsCollision
+                      [Announce collisionEb 5, Decide 5, ArriveBody collisionEb 5, Announce collisionEb 8]
+              points @?= [(SlotNo 5, collisionHash), (SlotNo 8, collisionHash)]
+          , testCase "both announced before the fetch: both points registered" $ do
+              let (points, _) =
+                    runCmdsCollision
+                      [Announce collisionEb 5, Announce collisionEb 8, Decide 8, ArriveBody collisionEb 8]
+              points @?= [(SlotNo 5, collisionHash), (SlotNo 8, collisionHash)]
+          , testCase "forged, then the same EB merely offered at a new slot: the offer registers nothing" $ do
+              -- An offer is an unverified claim (#2309's 9c8e5d9aa).
+              let (points, notified) = runCmdsCollision [Forge collisionEb 5, Offer collisionEb 8]
+              points @?= [(SlotNo 5, collisionHash)]
+              notified @?= [pointOf collisionEb 5]
+          ]
+      , testCase "a certificate tracks an endorser block no announcement did" $ do
+          -- A certificate can reach us for an announcement we never processed:
+          -- if the announcing block has been on our selection since initial
+          -- chain selection, ChainSync intersects at or after it, so its header
+          -- never rolls forward and nothing announces it to us. Then only the
+          -- certificate gives that endorser block an 'ebState' entry, without
+          -- which the decision logic skips every offer of it.
+          let eb = ebOf [0, 1]
+              h = hashLeiosEb eb
+              elCertified = MkElId (SlotNo 7) (SBS.pack [2])
+              o =
+                Leios.focusCertifiedEb (Leios.MkAnnouncementFields elCertified h 99) $
+                  (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+          Map.lookup h (Leios.ebState o)
+            @?= Just (Leios.MkEbState (SlotNo 7) SNothing Leios.NoBody)
+          Map.lookup elCertified (Leios.elFocus o) @?= Just h
+      , testCase "an endorser block that references too many tx bytes is dropped, not fetched" $ do
+          -- The references are what the closure costs, and bounding the encoded
+          -- body does not bound them: a reference is charged the CBOR digits of
+          -- the size it claims. So the arriving body is weighed against the
+          -- bound its request carried, before any closure job exists.
+          let ids = [0 .. 3]
+              eb = ebOf ids
+              point = pointOf ids 5
+              h = Leios.pointEbHash point
+              referenced = sum (map (fromIntegral . txSizeOf) ids) :: Word64
+              -- One byte under what this endorser block references.
+              bound = fromIntegral referenced - 1
+              run = runSimOrThrow $ do
+                dbHandle <- LeiosDb.newLeiosDBInMemory
+                withWriter dbHandle $ \conn -> do
+                  outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+                  readyVar <- newEmptyMVar
+                  let kv = (outstandingVar, readyVar)
+                  recordAnnouncedEb kv SNothing $
+                    announcementOf point (encodeLeiosEbSize eb)
+                  r <-
+                    try $
+                      processLeiosBlock
+                        nullTracer
+                        nullTracer
+                        kv
+                        nullLeiosTxCache
+                        conn
+                        dummySystemTime
+                        noMempoolPull
+                        (ReceivedBlockFrom (MkPeerId (0 :: Int)) (MkLeiosBlockRequest point (encodeLeiosEbSize eb) bound))
+                        eb
+                  outstanding <- readMVar outstandingVar
+                  pure (r :: Either ExnLeiosWellHashedBodyRejected (), outstanding)
+              (thrown, o) = run
+          -- The peer answers for it.
+          case thrown of
+            Left (ExnLeiosClosureTooBig p referenced' bound') ->
+              (p, referenced', bound') @?= (point, referenced, bound)
+            other -> assertFailure ("expected ExnLeiosClosureTooBig, got " <> show other)
+          -- Recorded with an empty job pool: no closure to fetch, and the next
+          -- peer to serve the same bytes does not cost us the work again.
+          Map.lookup h (Leios.ebState o)
+            @?= Just (Leios.MkEbState (SlotNo 5) SNothing (Leios.BodyAcquired Jobs.emptyLeiosJobPool))
+          Leios.numMissingBodies o @?= 0
+      , testCase "an endorser block at exactly its bound is fetched" $ do
+          let ids = [0 .. 3]
+              eb = ebOf ids
+              point = pointOf ids 5
+              h = Leios.pointEbHash point
+              bound = sum (map txSizeOf ids)
+              o = runSimOrThrow $ do
+                dbHandle <- LeiosDb.newLeiosDBInMemory
+                withWriter dbHandle $ \conn -> do
+                  outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+                  readyVar <- newEmptyMVar
+                  let kv = (outstandingVar, readyVar)
+                  recordAnnouncedEb kv SNothing $
+                    announcementOf point (encodeLeiosEbSize eb)
+                  processLeiosBlock
+                    nullTracer
+                    nullTracer
+                    kv
+                    nullLeiosTxCache
+                    conn
+                    dummySystemTime
+                    noMempoolPull
+                    (ReceivedBlockFrom (MkPeerId (0 :: Int)) (MkLeiosBlockRequest point (encodeLeiosEbSize eb) bound))
+                    eb
+                  readMVar outstandingVar
+          -- Accepted, so its closure became jobs rather than an empty pool.
+          case Map.lookup h (Leios.ebState o) of
+            Just (Leios.MkEbState _ _ (Leios.BodyAcquired jobPool)) ->
+              assertBool "expected a non-empty job pool" (jobPool /= Jobs.emptyLeiosJobPool)
+            other -> assertFailure ("expected BodyAcquired, got " <> show other)
+      , testCase "a certificate leaves a body we already hold held" $ do
+          let eb = ebOf [0, 1]
+              h = hashLeiosEb eb
+              elCertified = MkElId (SlotNo 7) (SBS.pack [2])
+              o =
+                Leios.focusCertifiedEb (Leios.MkAnnouncementFields elCertified h 99) $
+                  Leios.acquireEbBody h (Jobs.mkLeiosJobPool 1000 10 mempty) $
+                    -- the announcement that got us the body in the first place;
+                    -- without it 'acquireEbBody' has no entry to update
+                    Leios.recordMaxAnnouncementSlot h (SlotNo 7) SNothing $
+                      (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+          maybe False Leios.ebStateHasBody (Map.lookup h (Leios.ebState o)) @?= True
       , testProperty
           "outstanding-state invariants hold across arbitrary sequences"
           prop_invariants
@@ -333,7 +493,7 @@ tests =
           "the fetch logic never requests an already-held EB body"
           prop_neverRefetchesHeldBody
       , testProperty
-          "a concurrent offer and body arrival never leave a held EB body listed (IOSimPOR)"
+          "a concurrent offer, announcement and body arrival keep the reverse index in sync (IOSimPOR)"
           prop_neverRefetchesHeldBodyConcurrent
       ]
 
@@ -405,6 +565,25 @@ ebOf ids = MkLeiosEb (V.fromList [(txHashOf i, txSizeOf i) | i <- ids])
 pointOf :: TestEb -> Word -> LeiosPoint
 pointOf ids slot = MkLeiosPoint (fromIntegral slot) (hashLeiosEb (ebOf ids))
 
+-- | The announcing header a 'Announce' stands for: a block in that slot, by
+-- 'issuerOf', announcing that EB.
+announcingHeaderOf :: TestEb -> Word -> AnnouncingHeader LeiosTestBlock
+announcingHeaderOf ids slot =
+  case mkAnnouncingHeader (getHeader blk) of
+    Nothing -> error "announcingHeaderOf: header announces nothing"
+    Just anc -> anc
+ where
+  blk =
+    announcing (pointOf ids slot) (encodeLeiosEbSize (ebOf ids)) $
+      issuedBy (issuerOf ids) $
+        iterate successorLeiosBlock (firstLeiosBlock 9) !! (fromIntegral slot - 1)
+
+-- | A distinct issuer per 'TestEb', so that two endorser blocks announced in
+-- one slot are two elections rather than one pool equivocating. 'headerElId'
+-- keeps only the low byte, and the four 'worldEbs' map to 9, 17, 1 and 180.
+issuerOf :: TestEb -> Word64
+issuerOf = fromIntegral . foldl' (\acc i -> (acc * 7 + i + 1) `mod` 256) 0
+
 ------------------------------------------------------------
 -- Harness
 ------------------------------------------------------------
@@ -413,6 +592,43 @@ pointOf ids slot = MkLeiosPoint (fromIntegral slot) (hashLeiosEb (ebOf ids))
 -- the invariant after each command. 'Left' names the first failing command.
 runCmds :: [Cmd] -> Either String ()
 runCmds = (() <$) . runCmdsReFetchViolations
+
+collisionEb :: TestEb
+collisionEb = [0, 1]
+
+collisionHash :: EbHash
+collisionHash = hashLeiosEb (ebOf collisionEb)
+
+-- | Run a command sequence against a fresh in-memory LeiosDb, then report the
+-- EB points it has registered (sorted) and every 'AcquiredEbTxs' it emitted, in
+-- order (duplicates kept, so "exactly once" is checkable).
+--
+-- The in-memory writer performs each write at submission, so everything the
+-- commands wrote has landed by the time 'withWriter' returns.
+runCmdsCollision :: [Cmd] -> ([(SlotNo, EbHash)], [LeiosPoint])
+runCmdsCollision cmds = runSimOrThrow go
+ where
+  go :: forall s. IOSim s ([(SlotNo, EbHash)], [LeiosPoint])
+  go = do
+    dbHandle <- LeiosDb.newLeiosDBInMemory
+    chan <- LeiosDb.subscribeEbNotifications dbHandle
+    withWriter dbHandle $ \conn -> do
+      outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
+      readyVar <- newEmptyMVar
+      peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
+      let kv = (outstandingVar, readyVar)
+      centralVar <- newMVar Announcements.emptyCentralState
+      mapM_
+        (applyCmd centralVar conn nullLeiosTxCache kv peerVars (MkPeerId (0 :: Int)))
+        cmds
+    -- The plain selector: record dot cannot select a 'HasCallStack =>' field.
+    points <- LeiosDb.withReader dbHandle LeiosDb.scanEbPoints
+    let drain acc =
+          atomically (tryReadTChan chan) >>= \case
+            Nothing -> pure (reverse acc)
+            Just n -> drain (n : acc)
+    notifs <- drain []
+    pure (sort points, [p | LeiosDb.AcquiredEbTxs p <- notifs])
 
 -- | Like 'runCmds', but on success also return the EB bodies that the fetch
 -- logic requested despite already holding them (i.e. despite 'ebStateHasBody'),
@@ -429,13 +645,14 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
       outstandingVar <- newMVar (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0))
       readyVar <- newEmptyMVar
       peerVars <- newLeiosPeerVars IsNotBigLedgerPeer
+      centralVar <- newMVar Announcements.emptyCentralState
       let kv = (outstandingVar, readyVar)
           txCache = nullLeiosTxCache
           peerId = MkPeerId (0 :: Int)
           loop acc [] = pure (Right acc)
           loop acc (c : cs) = do
             r <-
-              try (applyCmd conn txCache kv peerVars peerId c) ::
+              try (applyCmd centralVar conn txCache kv peerVars peerId c) ::
                 IOSim s (Either SomeException [EbHash])
             case r of
               Left e -> pure (Left ("exception on " <> show c <> ": " <> show e))
@@ -458,6 +675,9 @@ runCmdsReFetchViolations cmds = runSimOrThrow (go cmds)
 -- but a misbehaving 'Decide'.
 applyCmd ::
   forall s.
+  MVar
+    (IOSim s)
+    (Announcements.CentralState (IOSim s) (PeerId Int) (AnnouncingHeader LeiosTestBlock)) ->
   LeiosDb.LeiosDbWriter (IOSim s) ->
   LeiosTxCache (IOSim s) () () Leios.SerializedEbBody ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
@@ -465,22 +685,37 @@ applyCmd ::
   PeerId Int ->
   Cmd ->
   IOSim s [EbHash]
-applyCmd conn txCache kv peerVars peerId = \case
+applyCmd centralVar conn txCache kv peerVars peerId = \case
   Announce ids slot -> do
+    -- Through the same entry point the node uses, so that whatever a validated
+    -- announcement is defined to do --- today that includes registering the
+    -- point with the LeiosDb --- these commands do too, without this harness
+    -- having to know what that is.
+    --
     -- These invariants are about the fetch bookkeeping, which never reads the
     -- onset; only the voting path needs it.
-    recordAnnouncedEb kv SNothing (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
+    processAnnouncementCentrally
+      nullTracer
+      centralVar
+      kv
+      txCache
+      conn
+      (Just peerId)
+      ReceivedViaLeiosNotify
+      Announcements.DoRelay
+      SNothing
+      Nothing
+      (announcingHeaderOf ids slot)
     pure []
   Offer ids slot -> do
     recordEbBodyOffer
-      kv
+      (snd kv)
       peerVars
-      TxsClosureNotAlsoOffered
       (pointOf ids slot, encodeLeiosEbSize (ebOf ids))
     pure []
   ArriveBody ids slot -> do
     let eb = ebOf ids
-        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
+        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb) maxBound
     processLeiosBlock
       nullTracer
       nullTracer
@@ -498,7 +733,7 @@ applyCmd conn txCache kv peerVars peerId = \case
     pure []
   ArriveBodyLostWrite ids slot -> do
     let eb = ebOf ids
-        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb)
+        req = MkLeiosBlockRequest (pointOf ids slot) (encodeLeiosEbSize eb) maxBound
         -- The body write is never enqueued, so its promise never resolves and
         -- the acquisition is never confirmed.
         lostConn = conn{LeiosDb.writeEbBody = \_ _ _ -> pure (LeiosDb.Promise (forever (threadDelay 1000000)))}
@@ -557,6 +792,7 @@ applyCmd conn txCache kv peerVars peerId = \case
         (out', decs, _drops) =
           leiosFetchLogicIteration
             demoLeiosFetchStaticEnv
+            anyClosureSize
             (Just (fromIntegral slot))
             offerings
             Map.empty
@@ -572,13 +808,22 @@ applyCmd conn txCache kv peerVars peerId = \case
     let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
     pure (filter (\h -> Set.member h held) (ebBodyRequestHashes decs))
 
--- | Offer every EB the outstanding state tracks, at its 'ebStateMaxSlot' and as
--- 'TxsClosureAlsoOffered' (which implies the body too) -- an all-offering peer, so
--- the fetch logic can act on whichever half each EB still needs.
-referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.AlsoOfferedTxsClosure
+-- | Offer every EB the outstanding state tracks, at its 'ebStateMaxSlot',
+-- offering both its body and its closure -- an all-offering peer, so the fetch
+-- logic can act on whichever of the two each EB still needs.
+--
+-- Offering unconditionally is the point: declining to fetch must be the fetch
+-- logic's own doing, not something this fixture arranged by withholding the
+-- offer. One byte for the same reason: the size a peer claims is what its
+-- request spends against the per-peer byte budget, so the smallest claim is
+-- the one least likely to end an iteration before it has assigned everything
+-- it would.
+referencedOffers :: LeiosOutstanding Int -> Map.Map Leios.LeiosPoint Leios.PeerOffer
 referencedOffers o =
   Map.fromList
-    [ (Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h, Leios.TxsClosureAlsoOffered)
+    [ ( Leios.MkLeiosPoint (Leios.ebStateMaxSlot s) h
+      , Leios.MkPeerOffer SNothing (SJust 1) Leios.TxsClosureOffered
+      )
     | (h, s) <- Map.toList (Leios.ebState o)
     ]
 
@@ -590,7 +835,7 @@ forceDecisions m =
   sum [reqScore req | reqs <- Map.elems m, req <- toList reqs]
  where
   reqScore = \case
-    Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest _p sz) -> fromIntegral sz
+    Leios.LeiosBlockRequest r -> fromIntegral (Leios.lbrOfferedSize r)
     Leios.LeiosBlockTxsRequest (Leios.MkLeiosBlockTxsRequest _p jobs) ->
       sum
         [ off
@@ -604,7 +849,7 @@ ebBodyRequestHashes :: Map.Map peer (NESeq Leios.LeiosFetchRequest) -> [EbHash]
 ebBodyRequestHashes m =
   [ p.pointEbHash
   | reqs <- Map.elems m
-  , Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest p _sz) <- toList reqs
+  , Leios.LeiosBlockRequest (Leios.MkLeiosBlockRequest p _sz _) <- toList reqs
   ]
 
 -- | The union of every tx offset the requests fetch, across all peers.
@@ -621,15 +866,25 @@ requestedOffsets m =
 -- The invariant
 ------------------------------------------------------------
 
--- | Two invariants:
+-- | The closure bound these tests forecast: large enough that nothing here
+-- trips it. 'Test.Consensus.Leios.RecoveryPath' is where the bound itself is
+-- exercised, against a real node.
+anyClosureSize :: SlotNo -> Either OutsideForecastRange Leios.BytesSize
+anyClosureSize _slot = Right maxBound
+
+-- | Three invariants:
 --
 -- * 'ebsPerMaxAnnouncementSlot' must be the exact inverse of the greatest-slot
 --   field of 'ebState' (the reverse index 'pruneOutstandingToImmTip' prunes by).
 --
+-- * 'numMissingBodies' must be the count 'ebState' would give if we walked it
+--   (which nothing does at run time, which is why this checks it).
+--
 -- * No absorbing 'BodyAcquired': see below.
 --
 -- (The old missing-tx \/ reverse-index invariant is gone with the EbTxs rewrite.)
--- | @dbBodies@: the EBs the LeiosDb actually holds a body for. Passed in because
+--
+-- @dbBodies@: the EBs the LeiosDb actually holds a body for. Passed in because
 -- the central invariant is a claim about the database, not about the state alone.
 checkInvariant :: Set.Set EbHash -> LeiosOutstanding Int -> Either String ()
 checkInvariant dbBodies o
@@ -637,6 +892,11 @@ checkInvariant dbBodies o
       Left
         ( "ebsPerMaxAnnouncementSlot desynced from ebState: "
             <> show (Leios.ebsPerMaxAnnouncementSlot o, inverseOfMax)
+        )
+  | Leios.numMissingBodies o /= countedMissing =
+      Left
+        ( "numMissingBodies desynced from ebState: "
+            <> show (Leios.numMissingBodies o, countedMissing)
         )
   -- 'BodyAcquired' asserts the LeiosDb holds the body, and the fetch logic
   -- retires a peer's offer for good on the strength of it. So the state may only
@@ -658,16 +918,15 @@ checkInvariant dbBodies o
       [ (Leios.ebStateMaxSlot s, NESet.singleton h)
       | (h, s) <- Map.toList (Leios.ebState o)
       ]
+  countedMissing = sum (map Leios.wantsBody (Map.elems (Leios.ebState o)))
 
 ------------------------------------------------------------
 -- Curated repros
 ------------------------------------------------------------
 
 -- | A peer offers an EB body; we forge the same EB before the offered body
--- arrives. Forging must purge the offered body from 'missingEbBodies' (its
--- 'ebState' now reads 'BodyAcquired'), so the fetch logic never re-requests a body
--- we already hold. Pre-fix the forge recorded the body as acquired without purging,
--- so the 'Decide' re-fetched it.
+-- arrives. Forging must leave that endorser block's 'ebState' reading
+-- 'BodyAcquired', so the fetch logic never re-requests a body we already hold.
 reproForgeAfterOffer :: [Cmd]
 reproForgeAfterOffer =
   [ Offer [0, 1] 10
@@ -806,17 +1065,14 @@ prop_neverRefetchesHeldBody =
 -- explore every interleaving.
 --
 -- An 'EbHash' is not 1-to-1 with slots, so this is exactly the shape that armed
--- the storm: whichever listing wins is recorded at its own slot, and the arrival
--- (at yet another slot) must clear it /by hash/, not by point. In every
--- interleaving the state invariant "a held EB body is never still listed for
--- fetching" must hold, which is what stops a later decision from re-requesting
--- it.
+-- the storm the fetch bookkeeping used to be vulnerable to: three handlers
+-- writing about one endorser block at three slots at once. What they write now
+-- is 'ebState', keyed by hash, and 'ebsPerMaxAnnouncementSlot', its reverse
+-- index --- so what is left to violate is 'checkInvariant'.
 --
--- With the shipped fix each handler's "held?"/"listed?" test and its state update
--- are one 'outstandingVar' critical section, and acquisition purges every point
--- sharing the hash via 'reverseSlotIndexByEbHash', so no interleaving can violate
--- this; the test guards against regressing either half (moving a check back out
--- of the lock, or reverting to a delete-by-point that misses the other slots).
+-- Each handler's read and its state update are one 'outstandingVar' critical
+-- section, so no interleaving can desync the two; this guards against moving a
+-- check back out of the lock.
 prop_neverRefetchesHeldBodyConcurrent :: Property
 prop_neverRefetchesHeldBodyConcurrent =
   exploreSimTrace id (exploreRaces *> raceSameHashMultiSlot) $ \_ tr ->
@@ -847,9 +1103,9 @@ raceSameHashMultiSlot = do
         announcePoint = pointOf ids 11
         arrivalPoint = pointOf ids 12
     concurrently_
-      (recordEbBodyOffer kv peerVars TxsClosureNotAlsoOffered (offerPoint, ebBytesSize))
+      (recordEbBodyOffer (snd kv) peerVars (offerPoint, ebBytesSize))
       ( concurrently_
-          (recordAnnouncedEb kv SNothing (announcePoint, ebBytesSize))
+          (recordAnnouncedEb kv SNothing (announcementOf announcePoint ebBytesSize))
           ( processLeiosBlock
               nullTracer
               nullTracer
@@ -858,16 +1114,35 @@ raceSameHashMultiSlot = do
               conn
               dummySystemTime
               noMempoolPull
-              (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize))
+              (ReceivedBlockFrom peerId (MkLeiosBlockRequest arrivalPoint ebBytesSize maxBound))
               eb
           )
       )
     outstanding <- readMVar outstandingVar
-    let held = Map.keysSet (Map.filter Leios.ebStateHasBody (Leios.ebState outstanding))
-        listed =
-          Set.fromList (map (.pointEbHash) (Map.keys (Leios.missingEbBodies outstanding)))
-        heldAndListed = Set.toList (Set.intersection held listed)
-    pure $
-      counterexample
-        ("held EB body still listed for fetching: " <> show heldAndListed)
-        (null heldAndListed)
+    -- Which bodies the LeiosDb really holds, for the no-absorbing-
+    -- 'BodyAcquired' half of the invariant.
+    dbBodies <-
+      LeiosDb.withReader dbHandle $ \rdr ->
+        fmap (Set.fromList . map fst . filter (not . null . snd)) $
+          mapM (\h -> (,) h <$> LeiosDb.lookupEbBody rdr h) $
+            Map.keys (Leios.ebState outstanding)
+    -- Three handlers wrote about one endorser block at three slots at once; the
+    -- reverse index must still be the exact inverse of 'ebState', whichever
+    -- order they ran in.
+    pure $ case checkInvariant dbBodies outstanding of
+      Right () -> counterexample "" True
+      Left why -> counterexample why False
+
+-- | An announcement of this endorser block, in an election of its own.
+--
+-- These tests are about the fetch bookkeeping rather than about which
+-- announcement an election is fetching, so the election is derived from the
+-- endorser block: no two announcements here ever compete for one election.
+announcementOf :: LeiosPoint -> Leios.BytesSize -> Leios.AnnouncementFields
+announcementOf point size =
+  Leios.MkAnnouncementFields
+    (MkElId (Leios.pointSlotNo point) (SBS.toShort (Leios.ebHashBytes ebHash)))
+    ebHash
+    size
+ where
+  ebHash = Leios.pointEbHash point

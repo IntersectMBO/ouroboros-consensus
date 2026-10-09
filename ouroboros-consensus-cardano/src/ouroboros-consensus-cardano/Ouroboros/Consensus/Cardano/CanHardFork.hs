@@ -66,10 +66,11 @@ import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Forecast
+import qualified Ouroboros.Consensus.Forecast as Forecast
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.History
-  ( Bound (boundSlot)
+  ( Bound (boundEpoch, boundSlot)
   , addSlots
   )
 import Ouroboros.Consensus.HardFork.Simple
@@ -82,7 +83,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-  ( LedgerSupportsProtocol
+  ( LedgerSupportsProtocol (ledgerViewForecastAt)
   )
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -91,6 +92,7 @@ import Ouroboros.Consensus.Protocol.Abstract hiding
   )
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
+import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
@@ -130,9 +132,9 @@ type CardanoHardForkConstraints c =
   , ShelleyCompatible (Praos c) ConwayEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
   , LedgerSupportsPeras (ShelleyBlock (Praos c) ConwayEra)
-  , ShelleyCompatible (Praos c) DijkstraEra
-  , LedgerSupportsProtocol (ShelleyBlock (Praos c) DijkstraEra)
-  , LedgerSupportsPeras (ShelleyBlock (Praos c) DijkstraEra)
+  , ShelleyCompatible (PraosWithLeios c) DijkstraEra
+  , LedgerSupportsProtocol (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+  , LedgerSupportsPeras (ShelleyBlock (PraosWithLeios c) DijkstraEra)
   )
 
 -- | When performing era translations, two eras have special behaviours on the
@@ -185,7 +187,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                 PCons crossEraForecastAcrossShelley $
                   PCons crossEraForecastAcrossShelley $
                     PCons crossEraForecastAcrossShelley $
-                      PCons crossEraForecastAcrossShelley $
+                      PCons crossEraForecastConwayToDijkstraWrapper $
                         PNil
       }
   hardForkChainSel =
@@ -829,7 +831,7 @@ translateLedgerStateConwayToDijkstraWrapper ::
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
 translateLedgerStateConwayToDijkstraWrapper =
   RequireBoth $ \_cfgConway cfgDijkstra ->
     TranslateLedgerState
@@ -840,20 +842,80 @@ translateLedgerStateConwayToDijkstraWrapper =
             . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra)
             . Comp
             . Flip
+            . transLeiosLS
+      }
+ where
+  -- Only the protocol index changes, so nothing in here is converted; the
+  -- rebuild is what retypes it. Contrast 'transPraosLS', which crosses between
+  -- two genuinely different protocols.
+  transLeiosLS ::
+    LedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
+    LedgerState (ShelleyBlock (PraosWithLeios c) ConwayEra) mk
+  transLeiosLS (ShelleyLedgerState wo nes st tb lcr ctb) =
+    ShelleyLedgerState
+      { shelleyLedgerTip = fmap castShelleyTip wo
+      , shelleyLedgerState = nes
+      , shelleyLedgerTransition = st
+      , shelleyLedgerTables = coerce tb
+      , shelleyLedgerLatestPerasCertRound = lcr
+      , shelleyCumulativeTxBytes = ctb
       }
 
 translateLedgerTablesConwayToDijkstraWrapper ::
   TranslateLedgerTables
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
 translateLedgerTablesConwayToDijkstraWrapper =
   TranslateLedgerTables
     { translateTxInWith = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
 
+-- | Forecast a Dijkstra ledger view from a Conway ledger state
+--
+-- 'crossEraForecastAcrossShelley' translates the Conway view, which has no
+-- Leios parameters or committee to translate, so they would be invented. This
+-- instead translates the state, as the combinator does when it ticks across
+-- the boundary, and forecasts with Dijkstra's own rules.
+crossEraForecastConwayToDijkstraWrapper ::
+  CardanoHardForkConstraints c =>
+  RequiringBoth
+    WrapLedgerConfig
+    (CrossEraForecaster LedgerState WrapLedgerView)
+    (ShelleyBlock (Praos c) ConwayEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+crossEraForecastConwayToDijkstraWrapper =
+  RequireBoth $ \cfgConway cfgDijkstra ->
+    CrossEraForecaster $ \transition forecastFor st ->
+      let RequireBoth translate = translateLedgerStateConwayToDijkstraWrapper
+          stDijkstra =
+            forgetLedgerTables $
+              translateLedgerStateWith
+                (translate cfgConway cfgDijkstra)
+                (boundEpoch transition)
+                st
+          maxFor =
+            crossEraForecastBound
+              (ledgerTipSlot st)
+              (boundSlot transition)
+              (SL.stabilityWindow (shelleyLedgerGlobals (unwrapLedgerConfig cfgConway)))
+              (SL.stabilityWindow (shelleyLedgerGlobals (unwrapLedgerConfig cfgDijkstra)))
+       in if forecastFor < maxFor
+            then
+              WrapLedgerView
+                <$> Forecast.forecastFor
+                  (ledgerViewForecastAt (unwrapLedgerConfig cfgDijkstra) stDijkstra)
+                  forecastFor
+            else
+              throwError
+                OutsideForecastRange
+                  { outsideForecastAt = ledgerTipSlot st
+                  , outsideForecastMaxFor = maxFor
+                  , outsideForecastFor = forecastFor
+                  }
+
 getDijkstraTranslationContext ::
-  WrapLedgerConfig (ShelleyBlock (Praos c) DijkstraEra) ->
+  WrapLedgerConfig (ShelleyBlock (PraosWithLeios c) DijkstraEra) ->
   SL.TranslationContext DijkstraEra
 getDijkstraTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
@@ -862,17 +924,33 @@ translateTxConwayToDijkstraWrapper ::
   SL.TranslationContext DijkstraEra ->
   InjectTx
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
 translateTxConwayToDijkstraWrapper ctxt =
   InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
+    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . transLeiosTx
+ where
+  transLeiosTx ::
+    GenTx (ShelleyBlock (Praos c) ConwayEra) ->
+    GenTx (ShelleyBlock (PraosWithLeios c) ConwayEra)
+  transLeiosTx (ShelleyTx ti tx) = ShelleyTx ti tx
 
 translateValidatedTxConwayToDijkstraWrapper ::
   forall c.
   SL.TranslationContext DijkstraEra ->
   InjectValidatedTx
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
+    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
 translateValidatedTxConwayToDijkstraWrapper ctxt =
   InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
+    fmap unComp
+      . eitherToMaybe
+      . runExcept
+      . SL.translateEra ctxt
+      . Comp
+      . transLeiosValidatedTx
+ where
+  transLeiosValidatedTx ::
+    WrapValidatedGenTx (ShelleyBlock (Praos c) ConwayEra) ->
+    WrapValidatedGenTx (ShelleyBlock (PraosWithLeios c) ConwayEra)
+  transLeiosValidatedTx (WrapValidatedGenTx x) = case x of
+    ShelleyValidatedTx txid vtx -> WrapValidatedGenTx $ ShelleyValidatedTx txid vtx

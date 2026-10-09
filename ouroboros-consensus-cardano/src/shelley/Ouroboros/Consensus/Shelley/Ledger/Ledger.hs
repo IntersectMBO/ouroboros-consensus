@@ -89,7 +89,6 @@ import Cardano.Ledger.Core
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
-import Cardano.Ledger.Dijkstra.PParams (ppLeiosQuorumStakeThresholdL)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
@@ -134,7 +133,9 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
+import Ouroboros.Consensus.Protocol.Leios (EitherLeiosF (..), PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
+import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -991,37 +992,25 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 
 -- TODO: Ledger-level type class EraCommittee? LedgerState era -> Committee
 
-instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra)
 
-instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra)
 
-instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra)
 
-instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra)
 
-instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra)
 
-instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
 
-instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
+instance HasLeiosVoting (ShelleyBlock (PraosWithLeios c) DijkstraEra) where
+  getMinCertificationGap cfg =
+    Just
+      . minCertificationGap (shelleyLedgerSlotLength cfg)
+      . getPParams
+      . shelleyLedgerState
+
   -- The ledger already seats the committee, on the stake snapshot, at the era
   -- boundary; take it from there rather than selecting a second time here.
   --
@@ -1035,23 +1024,7 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   -- snapshot of the previous boundary, which is exactly what 'ssStakeSet'
   -- holds after the rotation. Taking the committee from the same snapshot
   -- keeps a pool's voting weight and its block-production weight in step.
-  getLeiosCommittee ls =
-    Just $
-      ls.shelleyLedgerState
-        ^. SL.nesEsL
-          . SL.esSnapshotsL
-          . SL.ssStakeSetL
-          . SL.ssLeiosCommitteeL
-
-  getMinCertificationGap cfg =
-    Just
-      . minCertificationGap (shelleyLedgerSlotLength cfg)
-      . getPParams
-      . shelleyLedgerState
-
-  getCurrentThreshold ls =
-    Just $
-      getPParams ls.shelleyLedgerState
-        ^. ppLeiosQuorumStakeThresholdL
-        -- TODO: Use UnitInterval further upstream
-        & unboundRational
+  getLeiosCommitteeFromView _ lv =
+    case (Views.plvCommittee lv, Views.plvQuorumStakeThreshold lv) of
+      (LeiosLeiosRight cmt, LeiosLeiosRight q) ->
+        Just (cmt, unboundRational q)

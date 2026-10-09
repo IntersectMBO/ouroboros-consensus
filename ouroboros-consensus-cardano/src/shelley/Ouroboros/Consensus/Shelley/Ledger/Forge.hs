@@ -28,7 +28,7 @@ import Control.Monad (when)
 import Control.Tracer (traceWith)
 import Data.ByteString.Short (fromShort)
 import Data.Maybe (isJust)
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
+import Data.Maybe.Strict (maybeToStrictMaybe)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoTypes
@@ -39,8 +39,7 @@ import LeiosDemoTypes
   , encodeLeiosEbSize
   , forgeLeiosEb
   , hashLeiosEb
-  , maxMsgLeiosBlockBytesSize
-  , msgLeiosBlockFramingSize
+  , maxLeiosEbBytesSize
   )
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
@@ -48,8 +47,8 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
+import Ouroboros.Consensus.Protocol.Praos.Common (EitherLeiosF)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Header (HeaderLeiosExtension (..))
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -69,12 +68,16 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 
 forgeShelleyBlock ::
   forall m era proto.
-  (ShelleyCompatible proto era, Monad m) =>
+  ( ShelleyCompatible proto era
+  , Traversable (EitherLeiosF proto ())
+  , Monad m
+  ) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
+  EitherLeiosF proto () () ->
   ForgeBlockArgs m (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
-forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
+forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
   -- Forge an RB and attempt to announce an EB and/or certify a previously announced one:
   --
   --  * Certify: if the forge loop decided to certify a previously-announced
@@ -83,10 +86,14 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   --  * Announce: forge and store a new EB from 'fbEbTxs' and announce it on this RB's header.
   --    When we are also certifying, 'fbEbTxs' contains transactions from the mempool that has already
   --    been rebased onto the post-certificate ledger state.
-  mayEbAnn <-
-    case Typeable.eqT @era @DijkstraEra of
-      Just Refl -> mkEb
-      Nothing -> pure Nothing
+  -- Runs 'mkEb' exactly where the protocol has the field.
+  leiosResult <- traverse (\() -> mkEb) leiosToken
+  let mayEbAnn :: Maybe (ForgedLeiosEb, EbAnnouncement)
+      mayEbAnn = foldr (\x _ -> x) Nothing leiosResult
+
+      leiosFields =
+        (\ann -> (isJust fbMayLeiosCert, maybeToStrictMaybe (snd <$> ann)))
+          <$> leiosResult
   let rbBody = mkBody fbMayLeiosCert
       actualRbBodySize = SL.blockBodySize protocolVersion rbBody
   hdr <-
@@ -100,11 +107,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       (SL.hashBlockBody @era rbBody)
       actualRbBodySize
       protocolVersion
-      $ SJust
-        HeaderLeiosExtension
-          { containsCert = isJust fbMayLeiosCert
-          , ebAnnouncement = maybeToStrictMaybe $ snd <$> mayEbAnn
-          }
+      leiosFields
 
   let blk = mkShelleyBlock $ SL.Block hdr rbBody
   case fst <$> mayEbAnn of
@@ -172,7 +175,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           -- and the encoder have drifted apart.
           ebSize =
             assert
-              (encodeLeiosEbSize forgedEb.body <= maxMsgLeiosBlockBytesSize - msgLeiosBlockFramingSize)
+              (encodeLeiosEbSize forgedEb.body <= maxLeiosEbBytesSize)
               (encodeLeiosEbSize forgedEb.body)
           ebAnn =
             EbAnnouncement

@@ -49,7 +49,7 @@ import LeiosVoteState
   , VoteTally (..)
   , newLeiosVoteState
   )
-import LeiosVoting (HasLeiosVoting (getCurrentThreshold, getLeiosCommittee))
+import LeiosVoting (HasLeiosVoting)
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
@@ -81,6 +81,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   ( AddBlockResult (..)
   , ChainDB
+  , Predecessor (..)
   , addBlockAsync
   , blockProcessed
   , getCurrentChain
@@ -178,8 +179,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
   -- because it changes with the stake distribution snapshot at each
   -- epoch boundary.
   committee = do
-    ls <- ledgerState <$> getCurrentLedger chainDB
-    pure $ (,) <$> getLeiosCommittee ls <*> getCurrentThreshold ls
+    leiosCommitteeOfTip (configLedger cfg) . ledgerState
+      <$> getCurrentLedger chainDB
 
   -- A seat can exist without a key. If the pool registers no
   -- 'leiosKey', its seat is keyless. If its proof of possession does
@@ -222,7 +223,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
         leiosDbWriter
         forgedEb.point
         [(off, bs) | (off, (_txh, bs)) <- zip [0 ..] forgedEb.txClosure]
-    awaitAll [pointWritten, void bodyWritten, void txsWritten]
+    awaitAll [void pointWritten, void bodyWritten, void txsWritten]
     traceWith leiosTracer $
       TraceLeiosBlockStored{slot = forgedEb.point.pointSlotNo, eb = forgedEb.body}
 
@@ -421,7 +422,15 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+    -- 'unticked' is the state at 'bcPrevPoint', ie at this block's
+    -- predecessor, so its view is the one at the predecessor's slot.
+    let predecessor = case pointSlot bcPrevPoint of
+          Origin -> ChainDB.NoPredecessor
+          NotOrigin slot ->
+            ChainDB.Predecessor
+              slot
+              (ledgerViewOfTip (configLedger cfg) (ledgerState unticked))
+    result <- lift $ ChainDB.addBlockAsync chainDB noPunish predecessor newBlock
     mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 
     when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $

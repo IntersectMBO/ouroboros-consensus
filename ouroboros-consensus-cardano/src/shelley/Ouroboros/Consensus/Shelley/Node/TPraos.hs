@@ -124,6 +124,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
         forgeShelleyBlock
           hotKey
           canBeLeader
+          (TPraosLeiosLeft ())
           cfg
     , finalize = HotKey.finalize hotKey
     }

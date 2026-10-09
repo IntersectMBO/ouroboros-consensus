@@ -50,6 +50,7 @@ import Control.Tracer
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Common (scanCompleteEbClosuresNotOlderThanSlot, withReader)
 import LeiosDemoTypes
@@ -57,12 +58,11 @@ import LeiosDemoTypes
   , acquiredLeiosEbHashes
   , acquiredLeiosEbsFromList
   )
+import LeiosValidClaims (emptyValidClaims)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.HeaderValidation (forgetValidation)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -229,7 +229,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
     varAcquiredLeiosEbs <-
       newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
-    chain <-
+    varLeiosValidClaims <- newTVarIO (WithFingerprint emptyValidClaims (Fingerprint 0))
+    chainWithTime <-
       ChainSel.initialChainSelection
         immutableDB
         volatileDB
@@ -243,18 +244,19 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer InitialChainSelected
     LedgerDB.tryFlush lgrDB
 
-    curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
-    let lcfg = configLedger (Args.cdbsTopLevelConfig cdbSpecificArgs)
+    -- Initial chain selection validated these headers, so they already carry
+    -- what validation reveals; see 'HeaderWithTime'.
+    let chain = forgetValidation chainWithTime
 
-        -- the volatile tip ledger state can translate the slots of the volatile
-        -- headers
-        chainWithTime =
-          AF.mapAnchoredFragment
-            ( mkHeaderWithTime
-                lcfg
-                (ledgerState curLedger)
-            )
-            chain
+    -- Cause this execution of the node (ie since the latest restart) to
+    -- re-fetch CertRBs that aren't on the initial selection. See
+    -- docs/website/contents/explanations/valid_claims_startup.md for why.
+    -- The anchor too: it is the immutable tip, which the VolatileDB still
+    -- holds and which the copy to the ImmutableDB looks up as a predecessor.
+    VolatileDB.forgetLeiosCertsAtStartUpExcept volatileDB $
+      Set.fromList $
+        [h | BlockHash h <- [AF.anchorToHash (AF.anchor chain)]]
+          <> map headerHash (AF.toOldestFirst chain)
 
     varChain <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
     varTentativeState <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
@@ -293,6 +295,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
+            , cdbLeiosValidClaims = varLeiosValidClaims
             , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
             , cdbLeiosEvictTxCache = Args.cdbsLeiosEvictTxCache cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
@@ -304,7 +307,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
-            { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
+            { addBlockAsync = getEnv3 h ChainSel.addBlockAsync
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime
@@ -334,6 +337,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
+            , getLeiosValidClaims = getEnvSTM h (readTVar . cdbLeiosValidClaims)
             }
     addBlockTestFuse <- newFuse "test chain selection"
     let testing =

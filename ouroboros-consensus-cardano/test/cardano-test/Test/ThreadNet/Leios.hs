@@ -38,6 +38,7 @@ import Cardano.Ledger.Api.Tx.In (TxIn (..))
 import Cardano.Ledger.BaseTypes (ProtVer (..), StrictMaybe (..), TxIx (..), knownNonZeroBounded)
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core (TopTx, sizeTxF, txSeqBlockBodyL)
+import qualified Cardano.Ledger.Core as Ledger
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Ledger.Dijkstra.Genesis (DijkstraGenesis (..))
 import Cardano.Ledger.Dijkstra.PParams
@@ -55,6 +56,7 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
   )
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
+import Cardano.Slotting.Slot (EpochSize (unEpochSize))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import Control.DeepSeq (force)
@@ -91,6 +93,7 @@ import LeiosDemoTypes
   , LeiosVote (..)
   , RbHash (..)
   , TraceLeiosKernel (..)
+  , announcementEbHash
   , hashLeiosEb
   , minCertificationGap
   , prettyEbHash
@@ -115,7 +118,12 @@ import Ouroboros.Consensus.Cardano.Block
   , pattern GenTxDijkstra
   , pattern LedgerStateDijkstra
   )
-import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
+import Ouroboros.Consensus.Cardano.Node
+  ( CardanoHardForkTrigger (CardanoTriggerHardForkAtEpoch)
+  , CardanoHardForkTriggers (triggerHardForkDijkstra)
+  , CardanoProtocolParams (..)
+  , protocolInfoCardano
+  )
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig, configLedger)
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
@@ -153,7 +161,7 @@ import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
 import qualified Test.Cardano.Ledger.Shelley.Examples as Shelley (leTranslationContext)
-import Test.Consensus.Cardano.ProtocolInfo (Era (Dijkstra), hardForkInto)
+import Test.Consensus.Cardano.ProtocolInfo (Era (Conway, Dijkstra), hardForkInto)
 import Test.QuickCheck
   ( Property
   , Testable
@@ -163,6 +171,7 @@ import Test.QuickCheck
   , discard
   , forAll
   , ioProperty
+  , once
   , property
   , tabulate
   , (.&&.)
@@ -186,6 +195,7 @@ import Test.ThreadNet.Infra.Shelley
   , DecentralizationParam (..)
   , genCoreNode
   , mkCredential
+  , mkEpochSize
   , mkGenesisConfig
   , mkKesConfig
   , mkLeaderCredentials
@@ -221,6 +231,7 @@ tests =
           testProperty "late join" prop_leios_late_join
     , adjustQuickCheckTests (`div` 10) $
         testProperty "invalid endorsed tx is not certified" prop_leios_invalid_eb
+    , testProperty "hard fork from Conway" prop_leios_hard_fork_from_conway
     ]
 
 -- | Verify a suite of basic Leios ThreadNet invariants in a single run:
@@ -377,13 +388,20 @@ prop_leios seed =
   -- an RB can finalise the previous EB (via a cert) while announcing the
   -- next one. With continuous tx flow, a certifying block rebases the
   -- mempool onto the post-certified-EB ledger state and announces a fresh EB
-  -- from the survivors. Unless the run produced no certifying blocks at all,
-  -- at least one should exercise the combined path.
-  propCertifyAndAnnounce =
-    (not (null announcedAndCertifiedSlots))
-      & counterexample "no block both certified and announced"
-      & counterexample ("certifying block slots: " <> show certificateBlocks)
-      & counterexample ("announced-and-certified slots: " <> show announcedAndCertifiedSlots)
+  -- from the survivors. A run that certified nothing at all cannot exercise the
+  -- combined path, so it is discarded rather than passed vacuously. That needs
+  -- every gap between consecutive blocks to fall short of 'minCertGap', which
+  -- at @f = 1/20@ over 200 slots is around one run in several hundred: ~10
+  -- blocks, so ~9 gaps, each reaching 14 slots with probability
+  -- @0.95^14 ~ 0.49@.
+  propCertifyAndAnnounce
+    | null certificateBlocks = discard
+    | otherwise =
+        (not (null announcedAndCertifiedSlots))
+          & counterexample "no block both certified and announced"
+          & counterexample ("certifying block slots: " <> show certificateBlocks)
+          & counterexample
+            ("announced-and-certified slots: " <> show announcedAndCertifiedSlots)
 
   -- In an honest net every acquired closure must apply against the announcing
   -- RB's ledger state, because 'partitionMempool' cuts both the RB's and the
@@ -679,6 +697,54 @@ prop_leios_late_join seed =
           Right _ -> pure $ property True
  where
   numSlots = 200 :: Word64
+
+-- | Nodes cross from Conway into Dijkstra while EBs are being announced.
+--
+-- Until a node's selection reaches Dijkstra, it validates Dijkstra headers
+-- against a view forecast across the era boundary, so that view must carry
+-- Dijkstra's Leios parameters rather than ones made up for the translation.
+-- An announcement checked against a made-up limit is rejected, so the nodes
+-- fail to adopt each other's blocks.
+prop_leios_hard_fork_from_conway :: Seed -> Property
+prop_leios_hard_fork_from_conway seed =
+  once $
+    conjoin
+      [ not (null announcedAfterFork)
+          & counterexample "no EB announced in Dijkstra"
+      , ( case Map.elems nodeChains of
+            [] -> True
+            c : cs -> all (== c) cs
+        )
+          & counterexample "nodes have different chains"
+          & counterexample ("chain lengths: " <> show (length <$> nodeChains))
+      ]
+ where
+  -- 'hardForkInto' forks at epoch 0, which skips Conway entirely.
+  triggers =
+    (hardForkInto Conway){triggerHardForkDijkstra = CardanoTriggerHardForkAtEpoch 1}
+
+  epochLength = unEpochSize $ mkEpochSize securityParam activeSlotCoeff
+
+  numSlots = epochLength + 200
+
+  numCoreNodes = NumCoreNodes 3
+
+  (testOutput, _) =
+    runThreadNetWith
+      triggers
+      seed
+      (NumSlots numSlots)
+      numCoreNodes
+      (trivialNodeJoinPlan numCoreNodes)
+      (\_nid -> id)
+
+  nodeChains = Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
+
+  announcedAfterFork =
+    [ point
+    | FromNode _ (FromLeios TraceLeiosBlockAnnounced{announcedEbPoint = point}) <- testOutput.allTraces
+    , unSlotNo point.pointSlotNo >= epochLength
+    ]
 
 -- | An EB whose closure cannot apply must never be certified: the committee is
 -- supposed to validate the endorsed transactions before signing a vote.
@@ -1004,8 +1070,9 @@ foldWithResolution leiosDb cfg blks initState =
       Just _cert -> case protocolStateLeiosAnnouncement @(CardanoBlock StandardCrypto) cds of
         Nothing ->
           error "foldWithResolution: CertRB but no announcement on parent chain-dep state"
-        Just (point, _) -> do
-          closureTxs <- map snd . orFail <$> resolveLeiosClosure leiosDb (pointEbHash point)
+        Just fields -> do
+          closureTxs <-
+            map snd . orFail <$> resolveLeiosClosure leiosDb (announcementEbHash fields)
           let ls = ledgerState state
               lcfg = configLedger (getExtLedgerCfg cfg)
           case applyLeiosClosure lcfg closureTxs ls of
@@ -1042,7 +1109,23 @@ runThreadNet' ::
     TestNodeInitialization m (CardanoBlock StandardCrypto)
   ) ->
   (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
-runThreadNet' initSeed numSlots numCoreNodes joinPlan tweakNodeInit =
+runThreadNet' = runThreadNetWith (hardForkInto Dijkstra)
+
+-- | 'runThreadNet'' with the given hard fork triggers
+runThreadNetWith ::
+  CardanoHardForkTriggers ->
+  Seed ->
+  NumSlots ->
+  NumCoreNodes ->
+  NodeJoinPlan ->
+  ( forall m.
+    Functor m =>
+    CoreNodeId ->
+    TestNodeInitialization m (CardanoBlock StandardCrypto) ->
+    TestNodeInitialization m (CardanoBlock StandardCrypto)
+  ) ->
+  (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
+runThreadNetWith triggers initSeed numSlots numCoreNodes joinPlan tweakNodeInit =
   ( runTestNetwork
       testConfig
       testConfigB
@@ -1085,7 +1168,7 @@ runThreadNet' initSeed numSlots numCoreNodes joinPlan tweakNodeInit =
                 -- that, with d=0, it's stake based leaders.
                 pure . mkLeaderCredentials $ coreNodes !! fromIntegral nid
             }
-      , cardanoHardForkTriggers = hardForkInto Dijkstra
+      , cardanoHardForkTriggers = triggers
       , cardanoLedgerTransitionConfig =
           mkLatestTransitionConfig
             shelleyGenesis
@@ -1143,7 +1226,11 @@ runThreadNet' initSeed numSlots numCoreNodes joinPlan tweakNodeInit =
             , ctgeShelleyCoreNodes = coreNodes
             , ctgeExtraTxGen = \slot cn pparams utxo ->
                 -- NOTE: Stop generating txs 20 slots before end of test run.
-                if unSlotNo slot > unNumSlots numSlots - 20
+                -- Only in Dijkstra: a tx the mempool injects across the era
+                -- boundary holds a thunk, which TxSubmission's invariant
+                -- rejects.
+                if not (isDijkstraOrLater pparams)
+                  || unSlotNo slot > unNumSlots numSlots - 20
                   then pure []
                   else pure $ constantLoadTxs numCoreNodes (TPS 100) slot cn pparams utxo
             }
@@ -1169,6 +1256,10 @@ maxLovelaceSupply = 100_000_000_000_000
 newtype TxPerSecond = TPS Word64
 
 -- | Generate a constant load of transactions per second over all nodes.
+-- | Whether these are the protocol parameters of Dijkstra or a later era
+isDijkstraOrLater :: forall era. Ledger.Era era => PParams era -> Bool
+isDijkstraOrLater _ = eraProtVerLow @era >= eraProtVerLow @DijkstraEra
+
 constantLoadTxs ::
   EraTx era =>
   NumCoreNodes ->

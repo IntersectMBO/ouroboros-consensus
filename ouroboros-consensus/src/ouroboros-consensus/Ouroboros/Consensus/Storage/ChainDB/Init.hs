@@ -20,8 +20,10 @@ import Prelude hiding (map)
 
 -- | Restricted interface to the 'ChainDB' used on node initialization
 data InitChainDB m blk = InitChainDB
-  { addBlock :: blk -> m ()
-  -- ^ Add a block to the DB
+  { addTheFirstEbb :: blk -> m ()
+  -- ^ Add the EBB that begins the chain
+  --
+  -- Only chains starting in Byron with EBBs enabled calls this, and only once.
   , getCurrentLedger :: m (LedgerState blk EmptyMK)
   -- ^ Return the current ledger state
   }
@@ -31,8 +33,8 @@ fromFull ::
   ChainDB m blk -> InitChainDB m blk
 fromFull db =
   InitChainDB
-    { addBlock =
-        ChainDB.addBlock_ db InvalidBlockPunishment.noPunishment
+    { addTheFirstEbb =
+        ChainDB.addBlock_ db InvalidBlockPunishment.noPunishment ChainDB.NoPredecessor
     , getCurrentLedger =
         atomically $ ledgerState <$> ChainDB.getCurrentLedger db
     }
@@ -45,6 +47,6 @@ map ::
   InitChainDB m blk'
 map f g db =
   InitChainDB
-    { addBlock = addBlock db . f
+    { addTheFirstEbb = addTheFirstEbb db . f
     , getCurrentLedger = g <$> getCurrentLedger db
     }

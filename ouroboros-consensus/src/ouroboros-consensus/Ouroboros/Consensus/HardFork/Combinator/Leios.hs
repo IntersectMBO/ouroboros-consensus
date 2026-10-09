@@ -28,12 +28,18 @@ import Ouroboros.Consensus.HardFork.Combinator.Basics
   , distribLedgerConfig
   )
 import Ouroboros.Consensus.HardFork.Combinator.Protocol ()
+import Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
+  ( HardForkLedgerView_ (HardForkLedgerView)
+  )
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( Current (..)
   , HardForkState (..)
   )
-import Ouroboros.Consensus.TypeFamilyWrappers (WrapLedgerConfig (..))
+import Ouroboros.Consensus.TypeFamilyWrappers
+  ( WrapLedgerConfig (..)
+  , WrapLedgerView (..)
+  )
 
 -- | Dispatch to the active era of a hard-fork chain. Requires every era in
 -- the @xs@ list to have a 'HasLeiosVoting' instance.
@@ -43,24 +49,19 @@ instance
   (All HasLeiosVoting xs, CanHardFork xs) =>
   HasLeiosVoting (HardForkBlock xs)
   where
-  getLeiosCommittee (HardForkLedgerState (HardForkState tele)) =
+  getLeiosCommitteeFromView _ (HardForkLedgerView _transition (HardForkState tele)) =
     hcollapse $
       hcmap
         (Proxy @HasLeiosVoting)
-        (\(Current _ (Flip ls)) -> K (getLeiosCommittee ls))
+        (\(Current _ wlv) -> K (getLeiosCommitteeFromView (eraProxy wlv) (unwrapLedgerView wlv)))
         (Telescope.tip tele)
+   where
+    eraProxy :: WrapLedgerView blk -> Proxy blk
+    eraProxy _ = Proxy
 
-  getCurrentThreshold (HardForkLedgerState (HardForkState tele)) =
-    hcollapse $
-      hcmap
-        (Proxy @HasLeiosVoting)
-        (\(Current _ (Flip ls)) -> K (getCurrentThreshold ls))
-        (Telescope.tip tele)
-
-  -- Unlike the other two, this one needs the era's config as well as its
-  -- state, and the combinator only stores partial configs -- hence completing
-  -- them against an 'EpochInfo' reconstructed from the very state we are
-  -- dispatching on.
+  -- This needs the era's config as well as its state, and the combinator only
+  -- stores partial configs -- hence completing them against an 'EpochInfo'
+  -- reconstructed from the very state we are dispatching on.
   getMinCertificationGap cfg (HardForkLedgerState hfState@(HardForkState tele)) =
     hcollapse $
       hczipWith

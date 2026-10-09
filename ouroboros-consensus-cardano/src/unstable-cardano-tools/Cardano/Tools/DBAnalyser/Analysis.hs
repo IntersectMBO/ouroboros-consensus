@@ -796,7 +796,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
         -- 'DP.totalTime' and 'DP.mut'. It has no column of its own.
         case ledgerAppMode of
           LedgerReapply -> pure ()
-          LedgerApply -> case verifyCertRb st blk of
+          LedgerApply -> case verifyCertRb lcfg st blk of
             Left err ->
               fail $
                 "benchmark doesn't support invalid certificates: "

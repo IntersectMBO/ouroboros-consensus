@@ -1,17 +1,31 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Generators suitable for serialisation. Note that these are not guaranteed
 -- to be semantically correct at all, only structurally correct.
 module Test.Consensus.Protocol.Serialisation.Generators () where
 
+import qualified Cardano.Crypto.DSIGN as DSIGN
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
-import Cardano.Ledger.BaseTypes (StrictMaybe (..))
+import qualified Cardano.Crypto.VRF as VRF
+import Cardano.Ledger.Keys (DSIGN)
+import Cardano.Protocol.Crypto (Crypto, VRF)
+import qualified Cardano.Protocol.Leios.BlockHeader as Leios
+import Cardano.Protocol.Praos.BlockHeader
+  ( Header (Header)
+  , HeaderBody (..)
+  )
+import Cardano.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Cardano.Protocol.TPraos.BlockHeader (HashHeader, PrevHash (..))
 import Cardano.Protocol.TPraos.OCert
   ( KESPeriod (KESPeriod)
   , OCert (OCert)
+  , OCertSignable
   )
 import Cardano.Slotting.Block (BlockNo (BlockNo))
 import Cardano.Slotting.Slot
@@ -23,13 +37,15 @@ import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , EbHash
   )
-import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
-import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header (..)
-  , HeaderBody (..)
+import Ouroboros.Consensus.Protocol.Leios (LeiosCrypto)
+import Ouroboros.Consensus.Protocol.Praos
+  ( AnnouncedBy (MkAnnouncedBy)
+  , BasePraosState (PraosState)
+  , EitherLeiosF
   )
-import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
+import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import Ouroboros.Consensus.Protocol.Praos.Common (toCodecEbAnnouncement)
+import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Cardano.StrictContainers.Instances ()
 import Test.Crypto.KES ()
@@ -44,10 +60,19 @@ instance Arbitrary EbHash where
 instance Arbitrary EbAnnouncement where
   arbitrary = EbAnnouncement <$> arbitrary <*> arbitrary
 
+instance Arbitrary AnnouncedBy where
+  arbitrary = MkAnnouncedBy <$> arbitrary <*> arbitrary
+
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
 
-instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
+instance
+  ( Crypto c
+  , DSIGN.Signable DSIGN (OCertSignable c)
+  , VRF.Signable (VRF c) InputVRF
+  ) =>
+  Arbitrary (HeaderBody c)
+  where
   arbitrary =
     let ocert =
           OCert
@@ -74,10 +99,6 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> arbitrary
           <*> ocert
           <*> arbitrary
-          -- FIXME: Cannot generate HeaderLeiosExtension because we don't know
-          -- for which era/protocol version this header is. However, Dijkstra is
-          -- currently disabled anyways in Test.Consensus.Cardano.Generators
-          <*> pure SNothing
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do
@@ -87,7 +108,27 @@ instance Praos.PraosCrypto c => Arbitrary (Header c) where
     let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Header hBody hSig
 
-instance Arbitrary PraosState where
+instance Arbitrary Leios.EbAnnouncement where
+  arbitrary = toCodecEbAnnouncement <$> arbitrary
+
+instance LeiosCrypto c => Arbitrary (Leios.HeaderBody c) where
+  arbitrary = extendHeaderBodyWithLeios <$> arbitrary <*> arbitrary <*> arbitrary
+
+instance LeiosCrypto c => Arbitrary (Leios.Header c) where
+  arbitrary = do
+    hBody <- arbitrary
+    period <- arbitrary
+    sKey <- arbitrary
+    let hSig = unsoundPureSignedKES () period hBody sKey
+    pure $ Leios.Header hBody hSig
+
+instance
+  forall proto.
+  ( Applicative (EitherLeiosF proto ())
+  , Traversable (EitherLeiosF proto ())
+  ) =>
+  Arbitrary (BasePraosState proto)
+  where
   arbitrary =
     PraosState
       <$> oneof
@@ -101,4 +142,4 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> pure SNothing
+      <*> traverse (\() -> arbitrary) (pure () :: EitherLeiosF proto () ())

@@ -3,17 +3,24 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common
-  ( MaxMajorProtVer (..)
+  ( ShelleyProtocolHeader
+  , MaxMajorProtVer (..)
   , HasMaxMajorProtVer (..)
   , PraosCanBeLeader (..)
   , PraosTiebreakerView (..)
@@ -25,28 +32,41 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
   , instantiatePraosCredentials
+
+    -- * Leios
+  , EitherLeiosF
+  , fromCodecEbAnnouncement
+  , toCodecEbAnnouncement
   ) where
 
 import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN)
 import Cardano.Crypto.DSIGN.Class (SignKeyDSIGN)
+import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES.Class as KES
 import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.KESAgent.KES.Crypto as Agent
 import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Binary (FromCBOR, ToCBOR)
+import Cardano.Ledger.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Ledger.Hashes
+  ( extractHash
+  , unsafeMakeSafeHash
+  )
 import Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
+import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
 import qualified Control.Tracer as Tracer
 import Data.Function (on)
+import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbAnnouncement (..), EbHash (MkEbHash))
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -361,3 +381,59 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
   getPraosNonces :: proxy p -> ChainDepState p -> PraosNonces
 
   getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash BlockIssuer) Word64
+
+-----
+
+-- | The header a protocol validates, determined by the protocol.
+--
+-- TODO two things to fix here, both deferred because each touches every use in
+-- ouroboros-consensus-cardano. The name is not Shelley's --- this is whichever
+-- header the protocol signs, which is why 'HeaderView' and the instances for
+-- 'Praos', 'PraosWithLeios' and 'TPraos' all need it from the protocol package.
+-- And 'Shelley.Protocol.Abstract' currently re-exports this, which the importers
+-- there should stop relying on: they should name this module.
+type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
+
+-----
+
+
+-----
+
+-- | @a@ for the protocols without Leios, and @b@ for the ones with it.
+--
+-- One such family per extension, which is what keeps every type that mentions
+-- one indexed by @proto@ alone. The two uses so far:
+--
+--  * @EitherLeiosF proto Void ()@ gates a constructor, since the protocols
+--    without Leios cannot build it.
+--
+--  * @EitherLeiosF proto () a@ gates a field, which those protocols have but
+--    cannot put anything in.
+type EitherLeiosF :: Type -> Type -> Type -> Type
+data family EitherLeiosF proto a :: Type -> Type
+
+
+-----
+
+-- | The announcement as 'LeiosDemoTypes' spells it.
+--
+-- The two records differ only in how they wrap the endorser block's hash:
+-- upstream as a 'SafeHash', 'LeiosDemoTypes' as an 'EbHash'. Both hold the same
+-- packed bytes.
+fromCodecEbAnnouncement :: LeiosCodec.EbAnnouncement -> EbAnnouncement
+fromCodecEbAnnouncement ann =
+  EbAnnouncement
+    { ebAnnouncementHash =
+        MkEbHash $ Hash.hashToPackedBytes $ extractHash $ LeiosCodec.ebAnnouncementHash ann
+    , ebAnnouncementSize = LeiosCodec.ebAnnouncementSize ann
+    }
+
+-- | The inverse of 'fromCodecEbAnnouncement'.
+toCodecEbAnnouncement :: EbAnnouncement -> LeiosCodec.EbAnnouncement
+toCodecEbAnnouncement ann =
+  LeiosCodec.EbAnnouncement
+    { LeiosCodec.ebAnnouncementHash = unsafeMakeSafeHash (Hash.hashFromPackedBytes bytes)
+    , LeiosCodec.ebAnnouncementSize = ebAnnouncementSize ann
+    }
+ where
+  MkEbHash bytes = ebAnnouncementHash ann

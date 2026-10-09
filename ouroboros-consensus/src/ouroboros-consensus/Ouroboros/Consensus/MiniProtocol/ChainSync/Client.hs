@@ -785,14 +785,33 @@ data ConfigEnv m blk = ConfigEnv
   , leiosMsgRollForwardCallback ::
       Header blk ->
       RelativeTime ->
+      LedgerView (BlockProtocol blk) ->
       ChainDepState (BlockProtocol blk) ->
       m ()
   -- ^ Invoked on each accepted 'MsgRollForward' with the just-arrived header,
-  -- its slot's wall-clock onset, and the chain-dep state as of its predecessor.
+  -- its slot's wall-clock onset, and the ledger view and chain-dep state as of
+  -- its predecessor.
+  --
+  -- For a CertRB the predecessor is the block that announced the endorser block
+  -- it certifies, so that view is forecast for the announced slot --- and the
+  -- ChainSync client reaches further than our immutable tip, which is why the
+  -- fetch logic retains this rather than forecasting it later (see
+  -- 'LeiosDemoTypes.poMaxEbTxsSize').
   -- For Leios the wiring uses this to both register any EB the header
   -- /certifies/ as an offer from this peer, and feed any EB the header
   -- /announces/ into the central announcement state — dating that announcement
   -- from the slot onset. A no-op for non-Leios setups.
+  , leiosJumpAcceptedCallback :: JumpInfo blk -> m ()
+  -- ^ Invoked when this peer accepts a jump, with the dynamo's candidate
+  -- fragment that jump carries. For Leios the wiring records, for each header
+  -- in that fragment, the same per-peer offer that header's 'MsgRollForward'
+  -- would have. A no-op for non-Leios setups.
+  --
+  -- A jumper never runs 'leiosMsgRollForwardCallback' for the headers it
+  -- jumped over, so without this it has no offers at all, and a node that
+  -- loses its dynamo has nobody left to ask for the endorser blocks those
+  -- headers announced. Agreeing to a jump asserts the peer would have sent
+  -- those headers, which is what makes treating them as its offers sound.
   }
 
 -- | Arguments determined dynamically
@@ -1188,14 +1207,34 @@ withTime fragment (HeaderStateHistory history) =
     )
     $ AF.fromOldestFirst
       (AF.castAnchor $ AF.anchor fragment)
-    $ fmap addTimeToHeader
-    $ zip (AF.toOldestFirst fragment) (AF.toOldestFirst history)
+    $ fmap enrichHeader
+    $ zip3
+      predecessors
+      (AF.toOldestFirst fragment)
+      (AF.toOldestFirst history)
  where
-  addTimeToHeader :: (Header blk, HeaderStateWithTime blk) -> HeaderWithTime blk
-  addTimeToHeader (hdr, hsWt) =
+  -- What each header's predecessor contributes, which for the oldest header is
+  -- the anchor. The history is in lockstep with the fragment, so its entries
+  -- shifted by one are the predecessors'.
+  predecessors =
+    (AF.anchorToSlotNo (AF.anchor fragment), hswtLedgerView (AF.anchor history))
+      : zipWith
+        (\hdr hswt -> (NotOrigin (blockSlot hdr), hswtLedgerView hswt))
+        (AF.toOldestFirst fragment)
+        (AF.toOldestFirst history)
+
+  enrichHeader ::
+    ( (WithOrigin SlotNo, LedgerView (BlockProtocol blk))
+    , Header blk
+    , HeaderStateWithTime blk
+    ) ->
+    HeaderWithTime blk
+  enrichHeader ((predSlot, predLedgerView), hdr, hsWt) =
     HeaderWithTime
       { hwtHeader = hdr
       , hwtSlotRelativeTime = hswtSlotTime hsWt
+      , hwtPredecessorSlot = predSlot
+      , hwtLedgerViewOfPredecessor = predLedgerView
       }
 
 {-------------------------------------------------------------------------------
@@ -1336,6 +1375,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               if
                 | pt == dynamoTipPt -> do
                     Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                    leiosJumpAcceptedCallback cfgEnv jumpInfo
                     traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
                     let kis' = case jump of
                           -- Since the updated kis is needed to validate headers,
@@ -1533,10 +1573,13 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
           -- Pass the predecessor's chain-dep state (the pre-validation state,
           -- whose history tip is still the predecessor); see
           -- 'leiosMsgRollForwardCallback'.
-          leiosMsgRollForwardCallback cfgEnv hdr hdrSlotTime $
-            headerStateChainDep $
-              hswtHeaderState $
-                HeaderStateHistory.current (theirHeaderStateHistory kis')
+          let predHeaderState = HeaderStateHistory.current (theirHeaderStateHistory kis')
+          leiosMsgRollForwardCallback
+            cfgEnv
+            hdr
+            hdrSlotTime
+            (hswtLedgerView predHeaderState)
+            (headerStateChainDep (hswtHeaderState predHeaderState))
 
           continueWithState kis''' $
             nextStep mkPipelineDecision n theirTip
@@ -1949,6 +1992,11 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
       HeaderWithTime
         { hwtHeader = hdr
         , hwtSlotRelativeTime = hdrSlotTime
+        , hwtPredecessorSlot = AF.headSlot theirFrag
+        , hwtLedgerViewOfPredecessor =
+            hswtLedgerView $
+              -- NB that this is the history _before_ applying hdr
+              HeaderStateHistory.current theirHeaderStateHistory
         }
     theirFrag' = theirFrag :> validatedHdr
     -- Advance the most recent intersection if we have the same

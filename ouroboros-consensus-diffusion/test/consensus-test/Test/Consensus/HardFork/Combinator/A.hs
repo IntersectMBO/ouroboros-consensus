@@ -697,7 +697,4 @@ instance SerialiseBlockQueryResult BlockA BlockQuery where
 
 -- * Leios
 
-instance HasLeiosVoting BlockA where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting BlockA

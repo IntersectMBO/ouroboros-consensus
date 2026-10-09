@@ -49,6 +49,7 @@ import LeiosDemoTypes
   , RbHash (..)
   , SerializedEbBody
   , TraceLeiosKernel (..)
+  , announcementLeiosPoint
   , getLeiosSeatId
   , prettyLeiosPoint
   , signLeiosVote
@@ -90,6 +91,10 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , LedgerSupportsMempool (..)
   , WhetherToIntervene (Intervene)
+  )
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  , leiosCommitteeOfTip
   )
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
@@ -252,9 +257,9 @@ runLeiosVoting ::
   , HasLeiosVoting blk
   , ResolveLeiosBlock blk
   , ConvertRawHash blk
-  , HasAnnTip blk
   , LedgerSupportsMempool blk
   , HasHardForkHistory blk
+  , LedgerSupportsProtocol blk
   , MonadTimer m
   ) =>
   Tracer m TraceLeiosKernel ->
@@ -342,7 +347,7 @@ runLeiosVoting tracer lcfg chainDB systemTime leiosDB txCache voteState = \case
           rbHash <-
             tipAnnouncerFor @blk hs point ?>= ChainTipDoesNotAnnounce
           committee <-
-            getLeiosCommittee ls ?>= NotOnCommittee
+            (fst <$> leiosCommitteeOfTip lcfg ls) ?>= NotOnCommittee
           let seats =
                 [ (sk, seatId)
                 | sk <- sks
@@ -439,6 +444,11 @@ data EbClosureVerdict blk
 -- Each tx is validated in full, except where the LeiosTxCache reports it
 -- already validated: then only the state-dependent checks re-run
 -- ('LedgerSupportsMempool.reapplyTx' rather than 'applyTx').
+--
+-- TODO Issue https://github.com/input-output-hk/ouroboros-leios/issues/1115.
+-- Waiting on @AcquiredEbTxs@ is enough today, since that is where an endorser
+-- block misstating a transaction's size will be caught. Voting logic that
+-- does not wait that long would have to check the sizes itself.
 validateEbClosure ::
   forall m blk.
   ( IOLike m
@@ -545,7 +555,8 @@ tipAnnouncerFor ::
   LeiosPoint ->
   Maybe RbHash
 tipAnnouncerFor hs point = do
-  (announcedPoint, _) <- protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
+  announcedPoint <-
+    announcementLeiosPoint <$> protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
   NotOrigin tip <- Just (headerStateTip hs)
   -- 'protocolStateLeiosAnnouncement' returns the pending announcement
   -- keyed by the tip's slot; equality with the acquired point (which

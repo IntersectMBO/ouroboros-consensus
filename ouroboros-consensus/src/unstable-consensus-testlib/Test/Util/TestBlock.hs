@@ -202,6 +202,13 @@ import Test.Util.Orphans.ToExpr ()
 -- in-memory representation).
 --
 -- The 'BlockNo' of the corresponding block is just the length of the list.
+--
+-- WARNING: this is a position in the block tree and nothing else. Unlike a real
+-- hash it covers none of the block's contents, so two blocks at the same
+-- position have the same hash however much they otherwise differ --- which is
+-- what lets a test build a chain and then edit its blocks. Block types built on
+-- this inherit it; see the 'HeaderHash' instance for @LeiosTestBlock@ for what
+-- that costs.
 newtype TestHash = UnsafeTestHash
   { unTestHash :: NonEmpty Word64
   }
@@ -320,10 +327,7 @@ isStrictDescendentOf b1 b2 = b1 `isDescendentOf` b2 && b1 /= b2
 
 instance ShowProxy TestBlock
 
-instance HasLeiosVoting (TestBlockWith ptype) where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (TestBlockWith ptype)
 
 -- | Default 'ResolveLeiosBlock' — test blocks never carry Leios certificates.
 instance Typeable ptype => ResolveLeiosBlock (TestBlockWith ptype)

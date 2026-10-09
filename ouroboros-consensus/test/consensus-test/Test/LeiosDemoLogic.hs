@@ -25,13 +25,14 @@ import Control.Monad (void)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as SBS
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (StrictMaybe (SNothing))
+import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
-import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbWriter (..)
@@ -47,9 +48,9 @@ import LeiosDemoLogic
   , msgLeiosBlockRequest
   , newLeiosFetchContext
   )
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
-  ( AlsoOfferedTxsClosure (..)
-  , BytesSize
+  ( BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosEb (..)
@@ -59,15 +60,19 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , LeiosTx (..)
   , PeerId (..)
+  , PeerOffer (MkPeerOffer)
+  , WhetherTxsClosureOffered (..)
   , demoLeiosFetchStaticEnv
   , emptyLeiosOutstanding
+  , encodeLeiosEbSize
+  , focusElectionIfUnfocused
   , hashLeiosEb
   , hashLeiosTx
   , markBodyImminent
   , maxTxsPerEb
-  , mergeOffer
   , recordMaxAnnouncementSlot
   )
+import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import System.Random (mkStdGen)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -203,7 +208,19 @@ test_forgedEbOfferIgnored =
 -- | A test fixture: static env, peer offerings, outstanding work.
 data Scenario pid = Scenario
   { scEnv :: !LeiosFetchStaticEnv
-  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint AlsoOfferedTxsClosure))
+  , scOfferings :: !(Map.Map (PeerId pid) (Map.Map LeiosPoint WhetherTxsClosureOffered))
+  , scOfferedSizes :: !(Map.Map LeiosPoint BytesSize)
+  -- ^ The size each point is offered at.
+  --
+  -- NOTE a peculiarity of this harness: every peer offering a point offers it
+  -- at the same size, the one 'withMissingBody' named. The protocol does not
+  -- work that way --- each offer carries its own size, and 'assignBody' asks
+  -- for whatever the peer it is asking claimed --- so no scenario here can have
+  -- two peers disagree about a size. Nothing these tests cover turns on that.
+  --
+  -- It is a field of its own because the size is the offering peer's claim
+  -- rather than anything the outstanding state holds, so the fixture must
+  -- supply it.
   , scOutstanding :: !(LeiosOutstanding pid)
   }
 
@@ -212,22 +229,32 @@ empty =
   Scenario
     { scEnv = demoLeiosFetchStaticEnv
     , scOfferings = Map.empty
+    , scOfferedSizes = Map.empty
     , scOutstanding = emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0)
     }
 
 -- | Outstanding-work combinators -----------------------------------------
+
+-- | The body of this point is still to fetch, and every peer that offers it
+-- offers it at this size.
 withMissingBody :: LeiosPoint -> BytesSize -> Scenario pid -> Scenario pid
-withMissingBody p@(MkLeiosPoint slot ebHash) size =
-  onOutstanding $ \o ->
-    -- Seed everything the announce path would: the missing-body point and its
-    -- reverse index, plus (via 'recordMaxAnnouncementSlot') the 'ebState' NoBody
-    -- entry that the fetch loop now drives bodies off of.
-    recordMaxAnnouncementSlot ebHash slot SNothing $
-      o
-        { missingEbBodies = Map.insert p size (missingEbBodies o)
-        , reverseSlotIndexByEbHash =
-            Map.insertWith NESet.union ebHash (NESet.singleton slot) (reverseSlotIndexByEbHash o)
-        }
+withMissingBody p@(MkLeiosPoint slot ebHash) size sc =
+  onOutstanding seed sc{scOfferedSizes = Map.insert p size (scOfferedSizes sc)}
+ where
+  -- Seed what the announce path would: the 'ebState' NoBody entry the fetch
+  -- loop drives bodies off of, and the election that is fetching it, without
+  -- which the loop asks no one for it. Only a certificate overrules an election
+  -- already fetching something, so this seeds it the way an announcement would.
+  seed =
+    focusElectionIfUnfocused (MkElId slot fixtureIssuer) ebHash
+      . recordMaxAnnouncementSlot ebHash slot SNothing
+
+-- | The one pool a scenario here pretends announced everything, since these
+-- have no headers to take an issuer from. An endorser block's election is
+-- therefore just its slot, so two announced in one slot share an election and
+-- only the first is fetched.
+fixtureIssuer :: ShortByteString
+fixtureIssuer = SBS.pack [0]
 
 -- | Mark an EB as one our own forge produced -- the 'BodyImminent' 'ebState'
 -- entry that 'onForgedLeiosEb' installs at announcement time.
@@ -263,24 +290,27 @@ withRequestedBytesPerPeer pid n =
 -- | Peer @p@ offers the body (only) of these points.
 offersBody :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBody pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotAlsoOffered) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureNotOffered) | p <- points])
 
 -- | Peer @p@ offers both the body and the tx-closure of these points.
 offersBodyAndClosure :: Ord pid => pid -> [LeiosPoint] -> Scenario pid -> Scenario pid
 offersBodyAndClosure pid points =
-  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureAlsoOffered) | p <- points])
+  insertOffering (MkPeerId pid) (Map.fromList [(p, TxsClosureOffered) | p <- points])
 
 insertOffering ::
   Ord pid =>
   PeerId pid ->
-  Map.Map LeiosPoint AlsoOfferedTxsClosure ->
+  Map.Map LeiosPoint WhetherTxsClosureOffered ->
   Scenario pid ->
   Scenario pid
 insertOffering pid offers sc =
   sc
     { scOfferings =
-        Map.insertWith (Map.unionWith mergeOffer) pid offers (scOfferings sc)
+        Map.insertWith (Map.unionWith mergeClosure) pid offers (scOfferings sc)
     }
+ where
+  mergeClosure TxsClosureOffered _ = TxsClosureOffered
+  mergeClosure _ y = y
 
 -- | Internal: lift a function on 'LeiosOutstanding' to one on 'Scenario'.
 onOutstanding ::
@@ -300,8 +330,23 @@ runIteration sc =
   let (_out, reqs, _drops) =
         -- No big-ledger peers in these scenarios (the aggressive-fetch path is
         -- exercised in "Test.LeiosDemoLogic.Invariants").
-        leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings Map.empty sc.scOutstanding
+        leiosFetchLogicIteration
+          sc.scEnv
+          anyClosureSize
+          (Just minBound)
+          (Map.map (Map.mapWithKey (resolveOfferSize sc.scOfferedSizes)) sc.scOfferings)
+          Map.empty
+          sc.scOutstanding
    in reqs
+
+-- | Give a fixture's offer the size 'withMissingBody' said peers offer that
+-- point at, which is the size 'assignBody' then requests. A point no
+-- 'withMissingBody' named is offered with no size, which is the closure-only
+-- case.
+resolveOfferSize ::
+  Map.Map LeiosPoint BytesSize -> LeiosPoint -> WhetherTxsClosureOffered -> PeerOffer
+resolveOfferSize sizes p closure =
+  MkPeerOffer SNothing (maybe SNothing SJust (Map.lookup p sizes)) closure
 
 ------------------------------------------------------------
 -- Assertions
@@ -319,7 +364,7 @@ assertBodyRequest pid p size m =
     Nothing -> assertFailure $ "no request for peer " <> show pid
     Just reqs ->
       [ (pt.pointEbHash, sz)
-      | LeiosBlockRequest (MkLeiosBlockRequest pt sz) <- toList reqs
+      | LeiosBlockRequest (MkLeiosBlockRequest pt sz _) <- toList reqs
       ]
         @?= [(p.pointEbHash, size)]
 
@@ -374,7 +419,16 @@ serveStoredBody n = do
   db <- newLeiosDBInMemory
   let body = MkLeiosEb $ V.generate n $ \i -> (hashLeiosTx (MkLeiosTx (BS8.pack (show i))), 100)
       bodyPoint = MkLeiosPoint (SlotNo 0) (hashLeiosEb body)
-  withWriter db $ \w -> void . await =<< writeEbBody w bodyPoint body []
+  -- The point first: a body can only be written for a registered point.
+  withWriter db $ \w -> do
+    void . await =<< writeEbPoint w bodyPoint (encodeLeiosEbSize body)
+    void . await =<< writeEbBody w bodyPoint body []
   withReader db $ \r -> do
     ctx <- newLeiosFetchContext r
     msgLeiosBlockRequest nullTracer ctx bodyPoint
+
+-- | The closure bound these scenarios forecast: large enough that nothing here
+-- trips it. 'Test.Consensus.Leios.RecoveryPath' is where the bound itself is
+-- exercised, against a real node.
+anyClosureSize :: SlotNo -> Either OutsideForecastRange BytesSize
+anyClosureSize _slot = Right maxBound

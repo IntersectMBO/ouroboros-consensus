@@ -90,7 +90,7 @@ import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (lookupEbClosure)
+import LeiosDemoDb (lookupTrustedEbClosure)
 import LeiosDemoTypes (LeiosClosureError (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
@@ -151,16 +151,13 @@ instance
   ResolveLeiosBlock (SimpleBlock' c ext ext)
   where
   resolveLeiosClosure leiosDb ebHash =
-    lookupEbClosure leiosDb ebHash <&> \case
+    lookupTrustedEbClosure leiosDb ebHash <&> \case
       Nothing -> Left $ LeiosClosureMissing ebHash
       Just txs -> Right $ fmap (fmap (deserialise . Lazy.fromStrict)) txs
 
   assumeValidatedClosureTx = ValidatedSimpleGenTx
 
-instance HasLeiosVoting (SimpleBlock' c ext ext') where
-  getLeiosCommittee = const Nothing
-  getCurrentThreshold = const Nothing
-  getMinCertificationGap _ _ = Nothing
+instance HasLeiosVoting (SimpleBlock' c ext ext')
 
 instance
   (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>

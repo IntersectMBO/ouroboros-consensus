@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
@@ -8,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Intended for qualified import
@@ -43,6 +43,8 @@ module Ouroboros.Consensus.Network.NodeToNode
   , initiatorAndResponder
 
     -- * Leios mini-protocol limits
+  , leiosFetchPipelineDepth
+  , leiosNotifyPipelineDepth
   , leiosNotifyProtocolLimits
   , leiosFetchProtocolLimits
   ) where
@@ -60,7 +62,7 @@ import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
-import Control.Monad (forM_, forever, void, when)
+import Control.Monad (forM_, forever, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExceptT)
@@ -75,6 +77,7 @@ import Data.Maybe.Strict (StrictMaybe (SJust))
 import qualified Data.Primitive.MutVar as Prim
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
+import Data.Typeable (Typeable)
 import Data.Void (Void)
 import LeiosDemoDb
   ( LeiosDbHandle (subscribeEbNotifications)
@@ -146,15 +149,24 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , systemTimeCurrent
   )
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
-import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.HeaderStateHistory
+  ( HeaderStateHistory (..)
+  , HeaderStateWithTime (..)
+  )
+import Ouroboros.Consensus.HeaderValidation
+  ( HeaderWithTime (..)
+  , headerStateChainDep
+  )
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mempool.API (getLeiosTxIndex)
+import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncStateView (..)
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (JumpInfo (..))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -162,6 +174,7 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState, LedgerView)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
@@ -171,6 +184,8 @@ import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy, whenJust)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Block
   ( Serialised (..)
   , decodePoint
@@ -287,7 +302,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       FetchedMetricsTracer m ->
-      BlockFetchClient (HeaderWithTime blk) blk m ()
+      BlockFetchClient (HeaderWithTime blk) blk (BlockFetchClientInterface.MatchedBlock blk) m ()
   , hBlockFetchServer ::
       ConnectionId addr ->
       NodeToNodeVersion ->
@@ -357,6 +372,28 @@ data Handlers m addr blk = Handlers
       LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
   }
 
+-- | One peer's outgoing LeiosNotify queue, and what it has been announced.
+--
+-- The two travel together so that the pure step the central relay logic uses
+-- to enqueue an announcement is also what records it; see 'qav'.
+data OutgoingLeiosNotify blk = MkOutgoingLeiosNotify
+  { olnMessages ::
+      !( Seq.Seq
+           ( LeiosDemoOnlyTestNotify.Message
+               (LeiosNotify LeiosPoint (Header blk) LeiosVote)
+               LeiosDemoOnlyTestNotify.StBusy
+               LeiosDemoOnlyTestNotify.StIdle
+           )
+       )
+  , olnAnnounced :: !(Map.Map LeiosPoint (Set.Set Leios.OfferedBodyOrClosure))
+  -- ^ The endorser blocks whose announcement we have enqueued to this peer,
+  -- and which of their parts we have since offered, pruned to our immutable
+  -- tip; see 'offer'.
+  }
+
+emptyOutgoingLeiosNotify :: OutgoingLeiosNotify blk
+emptyOutgoingLeiosNotify = MkOutgoingLeiosNotify Seq.empty Map.empty
+
 mkHandlers ::
   forall m blk addrNTN addrNTC.
   ( IOLike m
@@ -410,11 +447,12 @@ mkHandlers
               , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
-              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime cds -> do
+              , CsClient.leiosMsgRollForwardCallback = \hdr hdrSlotTime predLedgerView cds -> do
                   Leios.checkMsgRollForwardForLeiosOffers
                     (getLeiosOutstanding, getLeiosReady)
                     peerVars
                     hdr
+                    predLedgerView
                     cds
                   -- Feed any EB this header announces into the central
                   -- announcement state (relay + dedup + txCache), central-only:
@@ -428,12 +466,29 @@ mkHandlers
                       getLeiosCentralState
                       (getLeiosOutstanding, getLeiosReady)
                       getLeiosTxCache
+                      leiosCentralWriter
                       (Just peer)
                       Leios.ReceivedViaChainSync
                       Announcements.DoRelay
                       (SJust hdrSlotTime)
                       (Just (diffRelTime now hdrSlotTime))
                       ancHdr
+              , CsClient.leiosJumpAcceptedCallback = \jumpInfo -> do
+                  let varMax = Leios.maxAcceptedJumpSlot peerVars
+                  acceptedThrough <- TVar.Unchecked.readTVarIO varMax
+                  forM_ (headersWithPredecessorStates acceptedThrough jumpInfo) $
+                    \(hdr, predLedgerView, cds) ->
+                      Leios.checkMsgRollForwardForLeiosOffers
+                        (getLeiosOutstanding, getLeiosReady)
+                        peerVars
+                        hdr
+                        predLedgerView
+                        cds
+                  atomically $
+                    TVar.Unchecked.modifyTVar varMax $
+                      max $
+                        AF.headSlot $
+                          jTheirFragment jumpInfo
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -498,7 +553,29 @@ mkHandlers
           -- Per-upstream-peer announcement accountability (dedup and
           -- equivocation counting). The pipelined-client handler is a stateless
           -- callback, so this state lives in a (single-threaded) ref.
-          peerStateVar <- Prim.newMutVar (SlotNo 0, Announcements.emptyPeerState)
+          peerStateVar <- Prim.newMutVar Leios.emptyLeiosNotifyPeerState
+          -- Run one of the offer checks, committing what it accepted or
+          -- disconnecting the peer.
+          --
+          -- Pruning first is what keeps the too-old bound on the immutable tip
+          -- itself rather than on wherever this peer's last announcement left
+          -- it. It cannot strand a legal offer: the announcements a prune
+          -- drops are those of elections below the immutable tip, an announced
+          -- point's slot is its election's slot, and so an offer relying on one
+          -- is rejected as too old by the very tip that dropped it.
+          let checkOffer ::
+                ( Leios.LeiosNotifyPeerState blk ->
+                  Either Leios.ExnLeiosInvalidOffer (Leios.LeiosNotifyPeerState blk)
+                ) ->
+                m ()
+              checkOffer runCheck = do
+                immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                peerSt <-
+                  Leios.pruneLeiosNotifyPeerStateToImmTip immLedger
+                    <$> Prim.readMutVar peerStateVar
+                case runCheck peerSt of
+                  Left err -> throwIO err
+                  Right peerSt' -> Prim.writeMutVar peerStateVar peerSt'
           pure $
             leiosNotifyClientPeerPipelined
               ( atomically $
@@ -521,7 +598,7 @@ mkHandlers
                       Nothing -> throwIO Leios.ExnLeiosBlockAnnouncementMissing
                       Just x -> pure x
                     immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
-                    (latestPruneSlot, peerSt0) <- Prim.readMutVar peerStateVar
+                    peerSt0 <- Prim.readMutVar peerStateVar
                     res <-
                       runExceptT $
                         Announcements.onAnnouncement
@@ -545,6 +622,7 @@ mkHandlers
                                 getLeiosCentralState
                                 (getLeiosOutstanding, getLeiosReady)
                                 getLeiosTxCache
+                                leiosCentralWriter
                                 (Just peer)
                                 Leios.ReceivedViaLeiosNotify
                                 shouldRelay
@@ -552,29 +630,45 @@ mkHandlers
                                 (Just age)
                                 ancHdr
                           )
-                          peerSt0
+                          (Leios.lnpsAnnouncements peerSt0)
                           anc
-                    peerSt1 <- case res of
+                    announcements <- case res of
                       Left err -> throwIO $ Leios.ReactToAnnouncementError err
                       Right x -> pure x
-                    let (!latestPruneSlot', !peerSt2) =
-                          Leios.prunePeerStateToImmTip immLedger latestPruneSlot peerSt1
-                    Prim.writeMutVar peerStateVar (latestPruneSlot', peerSt2)
+                    Prim.writeMutVar peerStateVar $!
+                      Leios.pruneLeiosNotifyPeerStateToImmTip
+                        immLedger
+                        peerSt0{Leios.lnpsAnnouncements = announcements}
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
-                    -- TODO punish peer for a too-old offer, modulo clock/immtip skew.
-                    Leios.recordEbBodyOffer
-                      (getLeiosOutstanding, getLeiosReady)
-                      peerVars
-                      Leios.TxsClosureNotAlsoOffered
-                      (point, ebBytesSize)
-                  MsgLeiosBlockTxsOffer p -> do
-                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
-                    -- A closure offer implies the body too.
-                    MVar.modifyMVar_ (Leios.offerings peerVars) $
-                      pure . Map.insertWith Leios.mergeOffer p Leios.TxsClosureAlsoOffered
-                    void $ MVar.tryPutMVar getLeiosReady ()
+                    checkOffer $ Leios.checkLeiosBlockOffer point ebBytesSize
+                    Leios.recordEbBodyOffer getLeiosReady peerVars (point, ebBytesSize)
+                  MsgLeiosBlockTxsOffer point -> do
+                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint point
+                    checkOffer $ Leios.checkLeiosClosureOffer point
+                    Leios.recordEbClosureOffer getLeiosReady peerVars point
                   MsgLeiosVotes vs -> do
+                    -- TODO no LeiosNotify message may simply be ignored, or
+                    -- the peer can send it without bound. Votes still can be:
+                    -- 'addVote' silently returns 'AlreadyKnown' for a
+                    -- duplicate, and says nothing at all about a vote for an
+                    -- election we have no interest in. They want the same
+                    -- shape the announcements have:
+                    --
+                    --  * the age limits announcements use, a sending bound
+                    --    comfortably below a receiving bound, so that an
+                    --    honest relayer never trips ours;
+                    --
+                    --  * a bitfield per /election/ per peer --- not per
+                    --    announcement, since the committee is seated by the
+                    --    election's slot --- so that a peer that votes twice
+                    --    as one committee member is disconnected;
+                    --
+                    --  * the same bitfield per election centrally, so that a
+                    --    vote we have already seen from elsewhere, or one
+                    --    that equivocates, is silently not relayed rather
+                    --    than relayed on to everyone.
+                    --
                     -- No peer-level trace here: 'TraceLeiosVoteAcquired' below
                     -- reports every vote with structured fields, and votes are
                     -- the one Leios message whose count scales with committee
@@ -619,13 +713,36 @@ mkHandlers
           -- this peer with those components too, rather than the pump draining
           -- fresh per-peer subscriptions.
           credits <- TVar.Unchecked.newTVarIO (0 :: Int)
-          queue <- TVar.Unchecked.newTVarIO Seq.empty
+          queue <- TVar.Unchecked.newTVarIO emptyOutgoingLeiosNotify
 
-          -- The view the central relay logic uses to enqueue announcements
+          -- The view the central relay logic uses to enqueue announcements.
+          --
+          -- It also records what it announced, which is what lets an offer be
+          -- held back until this peer has been told the endorser block exists:
+          -- we require exactly that of our own upstream peers, so offering one
+          -- we never announced would have an honest peer disconnect us. The
+          -- record is written here, by the same pure step that enqueues, so it
+          -- cannot claim an announcement that never went out --- in particular
+          -- the central logic drops the announcement outright when this peer
+          -- has no credits, and then this does not record it.
           let qav =
                 Announcements.MkQueueAnnouncementView
                   credits
-                  (\q anc -> q Seq.|> MsgLeiosBlockAnnouncement (Leios.ancHeader anc))
+                  ( \out anc ->
+                      let fields = Leios.ancAnnouncementFields anc
+                       in MkOutgoingLeiosNotify
+                            { olnMessages =
+                                olnMessages out
+                                  Seq.|> MsgLeiosBlockAnnouncement (Leios.ancHeader anc)
+                            , olnAnnounced =
+                                -- A re-announcement keeps what was offered.
+                                Map.insertWith
+                                  (\_new old -> old)
+                                  (Leios.announcementLeiosPoint fields)
+                                  Set.empty
+                                  (olnAnnounced out)
+                            }
+                  )
                   queue
 
           let
@@ -641,42 +758,105 @@ mkHandlers
                   TVar.Unchecked.writeTVar credits $! n + 1
                   pure LeiosDemoOnlyTestNotify.NotExcessiveRequests
             next = atomically $ do
-              q <- TVar.Unchecked.readTVar queue
-              case Seq.viewl q of
+              out <- TVar.Unchecked.readTVar queue
+              case Seq.viewl (olnMessages out) of
                 Seq.EmptyL -> LazySTM.retry
-                msg Seq.:< q' -> do
-                  TVar.Unchecked.writeTVar queue q'
+                msg Seq.:< msgs' -> do
+                  TVar.Unchecked.writeTVar queue out{olnMessages = msgs'}
                   pure msg
 
+            -- 'Nothing' when the notification it consumed is one we must not
+            -- relay (eg because it'd be too old): the caller commits that
+            -- anyway, so the channel drains.
             pumpNext ::
               STM
                 m
-                ( LeiosDemoOnlyTestNotify.Message
-                    (LeiosNotify LeiosPoint (Header blk) LeiosVote)
-                    LeiosDemoOnlyTestNotify.StBusy
-                    LeiosDemoOnlyTestNotify.StIdle
+                ( Maybe
+                    ( LeiosDemoOnlyTestNotify.Message
+                        (LeiosNotify LeiosPoint (Header blk) LeiosVote)
+                        LeiosDemoOnlyTestNotify.StBusy
+                        LeiosDemoOnlyTestNotify.StIdle
+                    )
                 )
-            pumpNext =
+            pumpNext = do
+              pruneAnnounced
               ( readTChan chan >>= \case
                   AcquiredEb point ebSize ->
-                    pure $ MsgLeiosBlockOffer point ebSize
+                    offer point Leios.OfferedBody $ MsgLeiosBlockOffer point ebSize
                   AcquiredEbTxs point ->
-                    pure $ MsgLeiosBlockTxsOffer point
-              )
-                <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
+                    offer point Leios.OfferedClosure $ MsgLeiosBlockTxsOffer point
+                )
+                <|> (getNextVote <&> \vote -> Just $ MsgLeiosVotes [vote])
+
+            -- Keep 'olnAnnounced' to our immutable tip, so it does not grow for
+            -- the life of the connection. Nothing below that is ever offered
+            -- anyway, since the relay decision holds offers back to
+            -- 'leiosMinOfferLead' above it.
+            --
+            -- Runs for every message the pump produces --- offers, suppressed
+            -- notifications and votes alike --- rather than only for the ones
+            -- that consult the record, since it is announcements that grow it
+            -- and a peer can be relayed those without our acquiring anything.
+            pruneAnnounced = do
+              immTipSlot <- withOrigin (SlotNo 0) id <$> getImmTipSlot nodeKernel
+              out <- TVar.Unchecked.readTVar queue
+              TVar.Unchecked.writeTVar queue $
+                out
+                  { olnAnnounced =
+                      Map.dropWhileAntitone
+                        ((< immTipSlot) . Leios.pointSlotNo)
+                        (olnAnnounced out)
+                  }
+
+            -- An offer goes out only if it is fresh enough to relay, this peer
+            -- has been told the announcement it is for, and we have not offered
+            -- this part to it already: an honest peer disconnects on a repeat,
+            -- and the LeiosDb may notify the same acquisition twice.
+            relayDecision =
+              Leios.leiosOfferRelayDecision
+                (getLeiosMinOfferLead nodeKernel)
+                (getImmTipSlot nodeKernel)
+            offer point part msg = do
+              shouldRelay <- relayDecision (Leios.pointSlotNo point)
+              case shouldRelay of
+                Announcements.DoNotRelay -> pure Nothing
+                Announcements.DoRelay -> do
+                  out <- TVar.Unchecked.readTVar queue
+                  pure $ case Map.lookup point (olnAnnounced out) of
+                    Just offered | Set.notMember part offered -> Just msg
+                    _ -> Nothing
+
+            -- Record an offer as made once it is actually enqueued.
+            recordOffer ::
+              LeiosDemoOnlyTestNotify.Message
+                (LeiosNotify LeiosPoint (Header blk) LeiosVote)
+                LeiosDemoOnlyTestNotify.StBusy
+                LeiosDemoOnlyTestNotify.StIdle ->
+              Map LeiosPoint (Set.Set Leios.OfferedBodyOrClosure) ->
+              Map LeiosPoint (Set.Set Leios.OfferedBodyOrClosure)
+            recordOffer = \case
+              MsgLeiosBlockOffer point _ -> Map.adjust (Set.insert Leios.OfferedBody) point
+              MsgLeiosBlockTxsOffer point -> Map.adjust (Set.insert Leios.OfferedClosure) point
+              _ -> id
 
             pump =
               ( do
                   MVar.modifyMVar_ getLeiosCentralState $
                     pure . Announcements.insertPeerCentral peer qav
                   forever $ atomically $ do
-                    msg <- pumpNext
+                    mMsg <- pumpNext
                     c <- TVar.Unchecked.readTVar credits
                     -- FIXME: Is this dropping messages when we run out of credits?
-                    when (c > 0) $ do
-                      TVar.Unchecked.writeTVar credits $! c - 1
-                      q <- TVar.Unchecked.readTVar queue
-                      TVar.Unchecked.writeTVar queue (q Seq.|> msg)
+                    forM_ mMsg $ \msg ->
+                      when (c > 0) $ do
+                        TVar.Unchecked.writeTVar credits $! c - 1
+                        out <- TVar.Unchecked.readTVar queue
+                        TVar.Unchecked.writeTVar
+                          queue
+                          out
+                            { olnMessages = olnMessages out Seq.|> msg
+                            , olnAnnounced = recordOffer msg (olnAnnounced out)
+                            }
               )
                 `finally` ( MVar.modifyMVar_ getLeiosCentralState $
                               pure . Announcements.deletePeerCentral peer
@@ -686,7 +866,7 @@ mkHandlers
       , hLeiosFetchClient = \writer _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           pure $
-            ( leiosFetchClientPeerPipelined $
+            ( leiosFetchClientPeerPipelined leiosFetchPipelineDepth $
                 Leios.nextLeiosFetchClientCommand
                   (Node.leiosKernelTracer tracers)
                   (leiosPeerTracer peer)
@@ -711,6 +891,7 @@ mkHandlers
    where
     NodeKernel
       { getLeiosDB = leiosDB
+      , getLeiosCentralWriter = leiosCentralWriter
       , getLeiosVoteState = leiosVoteState
       , getLeiosOutstanding
       , getLeiosReady
@@ -1033,17 +1214,32 @@ data ByteLimits bCS bBF bTX bKA bPS bLN bLF = ByteLimits
         bLF
   }
 
+-- | Every protocol unlimited, for tests that do not want the production caps.
+--
+-- NOTE: 2026 September 25. Once this was 'byteLimitsChainSync' and friends
+-- applied to @const 0@, which measured every message as empty. The
+-- 'ProtocolSizeLimits' type lost that size function to the 'BearerBytes' class,
+-- and the conversion incorrectly left this record equal to 'byteLimits' --- so
+-- every caller asking for no limits was instead getting the production
+-- limits. That apparently didn't cause intractable problems, because it was
+-- months ago.
 noByteLimits :: ByteLimits bCS bBF bTX bKA bPS bLN bLF
 noByteLimits =
   ByteLimits
-    { blChainSync = byteLimitsChainSync
-    , blBlockFetch = byteLimitsBlockFetch
-    , blTxSubmission2 = byteLimitsTxSubmission2
-    , blKeepAlive = byteLimitsKeepAlive
-    , blPeerSharing = byteLimitsPeerSharing
-    , blLeiosNotify = byteLimitsLeiosNotify
-    , blLeiosFetch = byteLimitsLeiosFetch
+    { blChainSync = unlimitedSizeLimits
+    , blBlockFetch = unlimitedSizeLimits
+    , blTxSubmission2 = unlimitedSizeLimits
+    , blKeepAlive = unlimitedSizeLimits
+    , blPeerSharing = unlimitedSizeLimits
+    , blLeiosNotify = unlimitedSizeLimits
+    , blLeiosFetch = unlimitedSizeLimits
     }
+ where
+  -- A limit no message can reach. The decoder only ever tests
+  -- @consumed > limit@, so nothing underflows and no real message comes near
+  -- 'maxBound'.
+  unlimitedSizeLimits :: ProtocolSizeLimits ps bytes
+  unlimitedSizeLimits = ProtocolSizeLimits{sizeLimitForState = const maxBound}
 
 byteLimits ::
   ByteLimits ByteString ByteString ByteString ByteString ByteString ByteString ByteString
@@ -1677,8 +1873,73 @@ perasUnsupportedInitiatorResponder =
     (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
     (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
 
+-- | The part of the dynamo's candidate header fragment past the given slot ---
+-- the jump it offered is the whole fragment's tip --- each header paired with
+-- the chain-dep state as of its predecessor, the two arguments
+-- 'CsClient.leiosMsgRollForwardCallback' would have been given for it.
+--
+-- The history holds one state per header plus its anchor, and the state at an
+-- index is the one /after/ that header. So splitting the history at the same
+-- slot leaves its anchor holding the first kept header's predecessor state,
+-- and shifting by one pairs the rest up.
+--
+-- Both splits are @O(log n)@ in the underlying finger tree, which is the point
+-- of doing them here rather than filtering the list afterwards: successive
+-- jumps overlap in everything but their last @csjcJumpSize@ headers.
+--
+-- A split yields 'Nothing' if the sequence holds nothing at the given slot, in
+-- which case the whole of it is walked. That needs this peer to have accepted
+-- a jump on one chain and then a jump on an alternative chain, which in turn
+-- needs the dynamo to have changed --- one dynamo may not roll back before the
+-- last jump it requested, and CSJ disengages it if it tries. So the peer is
+-- either dishonest, or honest and close enough to the wall clock to have
+-- switched chains in between.
+headersWithPredecessorStates ::
+  (HasHeader (Header blk), Typeable blk) =>
+  WithOrigin SlotNo ->
+  JumpInfo blk ->
+  [(Header blk, LedgerView (BlockProtocol blk), ChainDepState (BlockProtocol blk))]
+headersWithPredecessorStates acceptedThrough jumpInfo =
+  zipWith
+    (\hdr hsWt -> (hdr, hswtLedgerView hsWt, headerStateChainDep (hswtHeaderState hsWt)))
+    (hwtHeader <$> AF.toOldestFirst fragment)
+    (AS.anchor history : AS.toOldestFirst history)
+ where
+  past ::
+    AS.Anchorable (WithOrigin SlotNo) a b =>
+    AS.AnchoredSeq (WithOrigin SlotNo) a b ->
+    AS.AnchoredSeq (WithOrigin SlotNo) a b
+  past s = case AS.splitAfterMeasure acceptedThrough (const True) s of
+    Just (_before, after) -> after
+    Nothing -> s
+
+  fragment = past $ jTheirFragment jumpInfo
+  history = past $ unHeaderStateHistory (jTheirHeaderStateHistory jumpInfo)
+
 leiosNotifyPipelineDepth :: Int
 leiosNotifyPipelineDepth = 1000 -- TODO magic number
+
+-- | The most LeiosFetch requests to leave outstanding on one connection.
+--
+-- Sized from what an honest client needs, which is set by
+-- 'maxRequestedBytesSizePerBigLedgerPeer': enough to ask a big-ledger peer for
+-- five endorser blocks of the largest size the protocol allows. Each such
+-- closure is 12 MiB, which is 192 jobs of 'maxJobBytesSize', and a request
+-- carries 7 of those --- the 8th would pass 'maxRequestBytesSize', and a job
+-- may not span two requests. So 28 requests per endorser block, 140 for five,
+-- rounded up for headroom.
+--
+-- Far below what the mini-protocol's ingress queue could hold, so this is a
+-- statement about fetch concurrency rather than about buffering.
+--
+-- At the limit the client collects one response for each request it sends. A
+-- low-water mark would instead let it drain before refilling, so that it is
+-- not blocked on a response between one send and the next --- but each send
+-- still hands the driver a single message either way, so whether that changes
+-- anything on the wire is a question for measurement rather than for this
+-- comment. Left out until someone has one.
+leiosFetchPipelineDepth :: Int
+leiosFetchPipelineDepth = 150
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits =

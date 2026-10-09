@@ -168,7 +168,11 @@ newLeiosDBSQLite tracer volLeiosDbPath immLeiosDbPath =
 -- | 'newLeiosDBSQLite' with an explicit GC sweep batch size: how many EBs
 -- the writer evicts per turn, between the jobs it serves.
 newLeiosDBSQLiteWithGcBatchSize ::
-  Tracer IO TraceLeiosDb -> FilePath -> FilePath -> Int64 -> IO (LeiosDbHandle IO)
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  FilePath ->
+  Int64 ->
+  IO (LeiosDbHandle IO)
 newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize = do
   -- The database opens before whoever owns these directories creates them.
   mapM_ (createDirectoryIfMissing True . takeDirectory) [volLeiosDbPath, immLeiosDbPath]
@@ -253,7 +257,7 @@ newLeiosDBSQLiteWithGcBatchSize tracer volLeiosDbPath immLeiosDbPath gcBatchSize
         , scanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
         , lookupEbBody = sqlLookupEbBody conn
         , batchRetrieveTxs = sqlBatchRetrieveTxs conn
-        , lookupEbClosure = sqlLookupEbClosure conn
+        , lookupTrustedEbClosure = sqlLookupTrustedEbClosure conn
         }
 
   openWriter writeQueue =
@@ -855,6 +859,8 @@ sweepEbBatch conn batchSize = do
 data VolStmts = VolStmts
   { stScanEbPoints :: !DB.Statement
   , stInsertEbPoint :: !DB.Statement
+  , stLookupStoredEbSize :: !DB.Statement
+  , stSetEbPointSize :: !DB.Statement
   , stLookupEbBody :: !DB.Statement
   , stInsertEbTxsRow :: !DB.Statement
   , stInitMissingCount :: !DB.Statement
@@ -864,7 +870,7 @@ data VolStmts = VolStmts
   , stDecrMissingCount :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
-  , stLookupEbClosure :: !DB.Statement
+  , stLookupTrustedEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
   }
 
@@ -890,7 +896,7 @@ data Conn = Conn
 -- before their connection.
 data ImmStmts = ImmStmts
   { immStLookupEbBody :: !DB.Statement
-  , immStLookupEbClosure :: !DB.Statement
+  , immStLookupTrustedEbClosure :: !DB.Statement
   , immStBatchRetrieveTxs :: !DB.Statement
   , immStFilterPresent :: !DB.Statement
   }
@@ -898,7 +904,7 @@ data ImmStmts = ImmStmts
 prepareImmStmts :: HasCallStack => DB.Database -> IO ImmStmts
 prepareImmStmts db = do
   immStLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
-  immStLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
+  immStLookupTrustedEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   immStBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
   immStFilterPresent <- dbPrepare db (fromString sql_imm_filter_present)
   pure ImmStmts{..}
@@ -907,7 +913,7 @@ prepareImmStmts db = do
 finalizeImmStmts :: ImmStmts -> IO ()
 finalizeImmStmts ImmStmts{..} = do
   dbFinalize immStLookupEbBody
-  dbFinalize immStLookupEbClosure
+  dbFinalize immStLookupTrustedEbClosure
   dbFinalize immStBatchRetrieveTxs
   dbFinalize immStFilterPresent
 
@@ -916,6 +922,8 @@ prepareVolStmts :: DB.Database -> IO VolStmts
 prepareVolStmts db = do
   stScanEbPoints <- dbPrepare db (fromString sql_scan_ebs)
   stInsertEbPoint <- dbPrepare db (fromString sql_insert_eb)
+  stLookupStoredEbSize <- dbPrepare db (fromString sql_lookup_stored_eb_size)
+  stSetEbPointSize <- dbPrepare db (fromString sql_set_eb_point_size)
   stLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
   stInsertEbTxsRow <- dbPrepare db (fromString sql_insert_ebBody)
   stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
@@ -925,7 +933,7 @@ prepareVolStmts db = do
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
   stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
-  stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
+  stLookupTrustedEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
   stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
   pure VolStmts{..}
 
@@ -935,6 +943,8 @@ finalizeVolStmts :: VolStmts -> IO ()
 finalizeVolStmts VolStmts{..} = do
   dbFinalize stScanEbPoints
   dbFinalize stInsertEbPoint
+  dbFinalize stLookupStoredEbSize
+  dbFinalize stSetEbPointSize
   dbFinalize stLookupEbBody
   dbFinalize stInsertEbTxsRow
   dbFinalize stInitMissingCount
@@ -944,7 +954,7 @@ finalizeVolStmts VolStmts{..} = do
   dbFinalize stDecrMissingCount
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
-  dbFinalize stLookupEbClosure
+  dbFinalize stLookupTrustedEbClosure
   dbFinalize stScanCompleteEbsSince
 
 -- | Run an action on a pre-prepared statement and always @sqlite3_reset@
@@ -1006,7 +1016,7 @@ closeChecked db =
 -- for a write lock on the volatile partition. Sweeping is not a job at all
 -- -- the worker does it between jobs; see 'startWriter'.
 data WriteJob
-  = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult ())
+  = WriteEbPoint !LeiosPoint !BytesSize !(WriteResult CompletedEbs)
   | WriteEbBody !LeiosPoint !LeiosEb ![LocalFill] !(WriteResult (CompletedEbs, [TxOffset]))
   | WriteTxs !LeiosPoint ![(TxOffset, ByteString)] !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
@@ -1193,7 +1203,8 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
   sealedVar <- newTVarIO Nothing
   sweepStateVar <- newTVarIO SweepIdle
   jobsServedVar <- newTVarIO (0 :: Int)
-  let notify = atomically . writeTChan notificationChan
+  let notify :: LeiosEbNotification -> IO ()
+      notify = atomically . writeTChan notificationChan
 
       -- Statements before connections; an open statement holds the close off.
       closeConnections = do
@@ -1211,7 +1222,7 @@ startWriter tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath i
           atomically $ putTMVar resultVar result
           pure True
         WriteEbPoint point size resultVar ->
-          publish resultVar (sqlInsertEbPoint conn point size) >> pure False
+          publish resultVar (sqlInsertEbPoint conn notify point size) >> pure False
         WriteEbBody point eb fills resultVar ->
           publish resultVar (sqlInsertEbBody tracer conn notify point eb fills) >> pure False
         WriteTxs point offBytes resultVar ->
@@ -1495,20 +1506,94 @@ bodyLoop stmt acc =
       size <- fromIntegral <$> DB.columnInt64 stmt 1
       bodyLoop stmt ((txHash, size) : acc)
 
-sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint conn point ebBytesSize = do
-  inserted <- dbWithWriteTransaction conn $ useStmt stmt $ do
-    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-    dbBindBlob stmt 2 (ebHashBytes point.pointEbHash)
-    dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
-    dbStep1 stmt
-    DB.changes db
+sqlInsertEbPoint ::
+  Conn ->
+  (LeiosEbNotification -> IO ()) ->
+  LeiosPoint ->
+  BytesSize ->
+  IO CompletedEbs
+sqlInsertEbPoint conn notify point ebBytesSize = do
+  (inserted, mbAcquired) <- dbWithWriteTransaction conn $ do
+    inserted <- useStmt stInsertEbPoint $ do
+      dbBindInt64 stInsertEbPoint 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+      dbBindBlob stInsertEbPoint 2 (ebHashBytes point.pointEbHash)
+      dbBindInt64 stInsertEbPoint 3 (fromIntegral ebBytesSize)
+      dbStep1 stInsertEbPoint
+      DB.changes db
+    if inserted == 0
+      then pure (inserted, Nothing)
+      else do
+        -- Cannot match the row just inserted, whose @missingTxCount@ is NULL.
+        mbStoredSize <- useStmt stLookupStoredEbSize $ do
+          dbBindBlob stLookupStoredEbSize 1 (ebHashBytes point.pointEbHash)
+          dbStep stLookupStoredEbSize >>= \case
+            DB.Done -> pure Nothing
+            DB.Row ->
+              Just . fromIntegral <$> DB.columnInt64 stLookupStoredEbSize 0
+        case mbStoredSize of
+          Nothing -> pure (inserted, Nothing)
+          Just storedSize -> do
+            -- The @ebs.ebHashBytes@ field might have been incorrect, since
+            -- announcements aren't necessarily
+            -- correct. 'sql_lookup_stored_eb_size' needs it to be correct, so
+            -- overwrite it now.
+            useStmt stSetEbPointSize $ do
+              dbBindInt64 stSetEbPointSize 1 (fromIntegral storedSize)
+              dbBindInt64 stSetEbPointSize 2 (fromIntegral $ unSlotNo point.pointSlotNo)
+              dbBindBlob stSetEbPointSize 3 (ebHashBytes point.pointEbHash)
+              dbStep1 stSetEbPointSize
+            missingCount <- useStmt stInitMissingCount $ do
+              dbBindBlob stInitMissingCount 1 (ebHashBytes point.pointEbHash)
+              dbBindBlob stInitMissingCount 2 (ebHashBytes point.pointEbHash)
+              dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
+              readReturningInt64 stInitMissingCount
+            completed <-
+              if missingCount /= 0
+                then pure []
+                else do
+                  useStmt stMarkPointNotified $ do
+                    dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+                    dbBindBlob stMarkPointNotified 2 (ebHashBytes point.pointEbHash)
+                    dbStep1 stMarkPointNotified
+                  pure [point]
+            pure (inserted, Just (storedSize, completed))
   bumpVolatileStats conn inserted
+  forM_ mbAcquired $ \(storedSize, completed) -> do
+    notify (AcquiredEb point storedSize)
+    forM_ completed $ notify . AcquiredEbTxs
+  pure $ maybe [] snd mbAcquired
  where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stInsertEbPoint = stmt}} = conn
+  Conn
+    { conVolDb = db
+    , connVolStmts =
+      VolStmts
+        { stInsertEbPoint
+        , stLookupStoredEbSize
+        , stSetEbPointSize
+        , stInitMissingCount
+        , stMarkPointNotified
+        }
+    } = conn
 
 -- | Persist an EB body. The point MUST already be present (inserted
 -- via 'sqlInsertEbPoint' on the announcement path).
+--
+-- TODO Nothing here says an endorser block was caught misstating a
+-- transaction's size, though this is where it is first detectable: the size
+-- predicate in 'sql_insert_missing_txs' leaves such a body waiting on a
+-- transaction we already hold, so its @missingTxCount@ stays positive for
+-- good. A trace would want to fire once per offending endorser block rather
+-- than once per transaction, which needs state neither this function nor
+-- 'sqlInsertTxs' keeps, and there is no action to take on it either way ---
+-- the issuer is not a peer we are connected to, and the peer that relayed the
+-- body may be perfectly honest. Until that is worth building, an old endorser
+-- block stuck at a positive @missingTxCount@ is the signal, and this names
+-- them:
+--
+-- > SELECT e.ebHashBytes, COUNT(*) FROM ebTxs e
+-- > JOIN txs t ON e.txHashBytes = t.txHashBytes
+-- > WHERE t.txBytesSize <> e.txBytesSize
+-- > GROUP BY e.ebHashBytes
 sqlInsertEbBody ::
   Tracer IO TraceLeiosDb ->
   Conn ->
@@ -1531,6 +1616,13 @@ sqlInsertEbBody tracer conn notify point eb fills = do
         "ebTxs"
         (show point.pointEbHash <> "@" <> show txOffset)
         stInsertEbTxsRow
+    -- The body is the authority on its own size, whatever size the
+    -- announcement's point was inserted at; see 'sql_lookup_stored_eb_size'.
+    useStmt stSetEbPointSize $ do
+      dbBindInt64 stSetEbPointSize 1 (fromIntegral ebBytesSize)
+      dbBindInt64 stSetEbPointSize 2 (fromIntegral $ unSlotNo point.pointSlotNo)
+      dbBindBlob stSetEbPointSize 3 ebHashRaw
+      dbStep1 stSetEbPointSize
     -- Allocate the closure's rows in one offset-ordered pass; see
     -- 'sql_prealloc_ebTxBytes'.
     useStmt stPreallocEbTxBytes $ do
@@ -1572,7 +1664,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
         else pure []
     pure (completed, reverse filledOffs)
   notify $ AcquiredEb point ebBytesSize
-  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
+  forM_ completedNow $ notify . AcquiredEbTxs
   pure (completedNow, filledOffs)
  where
   ebHashRaw = ebHashBytes point.pointEbHash
@@ -1585,6 +1677,7 @@ sqlInsertEbBody tracer conn notify point eb fills = do
     , stFillFromLocal
     , stInitMissingCount
     , stMarkPointNotified
+    , stSetEbPointSize
     } = connVolStmts
 
 -- | Read a single-column @Int64@ from a statement that uses a
@@ -1601,6 +1694,11 @@ readReturningInt64 stmt =
         DB.Done -> pure n
         DB.Row -> throwLeiosDbException "readReturningInt64: expected exactly one row from RETURNING"
 
+-- | Persist arriving transactions, completing the closure of every endorser
+-- block that was waiting on them.
+--
+-- TODO As 'sqlInsertEbBody': an endorser block left waiting here because it
+-- misstated this transaction's size goes unremarked, and for the same reasons.
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
   Conn ->
@@ -1650,7 +1748,7 @@ sqlInsertTxs _tracer conn notify point offBytes = do
           dbStep1 stMarkPointNotified
         pure [MkLeiosPoint slot point.pointEbHash | slot <- completedSlots]
   -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ \p -> notify (AcquiredEbTxs p)
+  forM_ completed $ notify . AcquiredEbTxs
   pure completed
  where
   Conn{connVolStmts} = conn
@@ -1697,6 +1795,8 @@ immBatchRetrieveTxs conn ebHash offsets =
  where
   Conn{connImmStmts = ImmStmts{immStBatchRetrieveTxs = stmt}} = conn
 
+-- | Walk the joined rows, the way 'closureLoop' walks them until a tx is
+-- missing.
 retrieveLoop ::
   DB.Statement ->
   [(Int, TxHash, Maybe ByteString)] ->
@@ -1807,8 +1907,8 @@ jsonIntArray xs =
   intersperseB _ [x] = [x]
   intersperseB s (x : rest) = x : s : intersperseB s rest
 
-sqlLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
-sqlLookupEbClosure conn ebHash = do
+sqlLookupTrustedEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlLookupTrustedEbClosure conn ebHash = do
   vol <-
     dbWithTransaction db $ useStmt stmt $ do
       dbBindBlob stmt 1 (ebHashBytes ebHash)
@@ -1819,19 +1919,19 @@ sqlLookupEbClosure conn ebHash = do
   -- answer for it, or replaying its cert-RB fails.
   case vol of
     Just rows -> pure (Just rows)
-    Nothing -> immLookupEbClosure conn ebHash
+    Nothing -> immLookupTrustedEbClosure conn ebHash
  where
-  Conn{conVolDb = db, connVolStmts = VolStmts{stLookupEbClosure = stmt}} = conn
+  Conn{conVolDb = db, connVolStmts = VolStmts{stLookupTrustedEbClosure = stmt}} = conn
 
--- | Immutable-partition fallback of 'sqlLookupEbClosure'. Closures land there
+-- | Immutable-partition fallback of 'sqlLookupTrustedEbClosure'. Closures land there
 -- atomically and whole, so any rows are all the rows.
-immLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
-immLookupEbClosure conn ebHash =
+immLookupTrustedEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+immLookupTrustedEbClosure conn ebHash =
   useStmt stmt $ do
     dbBindBlob stmt 1 (ebHashBytes ebHash)
     closureLoop stmt []
  where
-  Conn{connImmStmts = ImmStmts{immStLookupEbClosure = stmt}} = conn
+  Conn{connImmStmts = ImmStmts{immStLookupTrustedEbClosure = stmt}} = conn
 
 closureLoop ::
   DB.Statement -> [(TxHash, ByteString)] -> IO (Maybe [(TxHash, ByteString)])
@@ -1861,7 +1961,10 @@ sql_schema =
     [ "CREATE TABLE ebs ("
     , "  ebSlot INTEGER NOT NULL,"
     , "  ebHashBytes BLOB NOT NULL,"
-    , "  ebBytesSize INTEGER NOT NULL,"
+    , -- the body's actual size once this point has acquired it (see
+      -- 'sql_lookup_stored_eb_size'), and the first size it was announced at
+      -- before that
+      "  ebBytesSize INTEGER NOT NULL,"
     , -- NULL = body not downloaded, >0 = txs missing, 0 = just completed, <0 = notified
       "  missingTxCount INTEGER,"
     , -- 0 = volatile, 1 = certified/pinned awaiting copy,
@@ -1871,6 +1974,12 @@ sql_schema =
     , "  PRIMARY KEY (ebSlot, ebHashBytes)"
     , ");"
     , "CREATE INDEX idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
+    , -- What 'sql_lookup_stored_eb_size' seeks on. Partial, so the rows that
+      -- name a hash without having fetched its body are never visited: an
+      -- attacker announcing one hash in every slot it wins makes them as
+      -- numerous as its elections in the live window, and every later
+      -- announcement of that hash would otherwise visit them all again.
+      "CREATE INDEX idx_ebs_acquired ON ebs(ebHashBytes) WHERE missingTxCount IS NOT NULL;"
     , -- The body: one row per referenced tx, written in one pass when the body
       -- arrives. 'txHashBytes' is a payload here, not a key -- nothing indexes
       -- by tx hash, so the insert is sequential within the EB. Optimized for
@@ -1956,6 +2065,28 @@ sql_scan_complete_ebs_since =
 sql_insert_eb :: String
 sql_insert_eb =
   "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize) VALUES (?, ?, ?)"
+
+-- | The size the stored body of this EB really is, read off whichever of its
+-- points has already acquired it (@missingTxCount IS NOT NULL@) --- the rows
+-- whose @ebBytesSize@ is an actual size rather than an announcement's claim.
+--
+-- @idx_ebs_acquired@ indexes exactly those rows, so this is a seek among them
+-- rather than a walk over every point naming the hash.
+--
+-- Parameters: 1 = ebHashBytes
+sql_lookup_stored_eb_size :: String
+sql_lookup_stored_eb_size =
+  "SELECT ebBytesSize FROM ebs\n\
+  \WHERE ebHashBytes = ? AND missingTxCount IS NOT NULL\n\
+  \LIMIT 1\n\
+  \"
+
+-- | Overwrite one point's recorded size; see 'sql_lookup_stored_eb_size'.
+--
+-- Parameters: 1 = ebBytesSize, 2 = ebSlot, 3 = ebHashBytes
+sql_set_eb_point_size :: String
+sql_set_eb_point_size =
+  "UPDATE ebs SET ebBytesSize = ? WHERE ebSlot = ? AND ebHashBytes = ?"
 
 sql_lookup_ebBodies :: String
 sql_lookup_ebBodies =

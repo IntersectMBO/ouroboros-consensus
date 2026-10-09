@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -9,6 +10,7 @@ module Ouroboros.Consensus.Shelley.Node.Praos
   ( -- * BlockForging
     praosBlockForging
   , praosSharedBlockForging
+  , praosWithLeiosSharedBlockForging
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
@@ -18,8 +20,12 @@ import qualified Data.Text as T
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
+import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, ConsensusConfig)
+import Ouroboros.Consensus.Protocol.Leios (ConsensusConfig (..), EitherLeiosF (..), PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader)
 import Ouroboros.Consensus.Protocol.Praos
-  ( Praos
+  ( PraosCannotForge
+  , Praos
   , PraosParams (..)
   , praosCheckCanForge
   )
@@ -31,6 +37,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node.Common
   ( ShelleyLeaderCredentials (..)
   )
+import Ouroboros.Consensus.Shelley.Protocol.Abstract (CannotForgeError, ProtoCrypto)
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
@@ -57,20 +64,26 @@ praosBlockForging praosParams hotKey credentials =
   slotToPeriod (SlotNo slot) =
     SL.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
--- | Create a 'BlockForging' record safely using the given 'Hotkey'.
---
--- The name of the era (separated by a @_@) will be appended to each
--- 'forgeLabel'.
-praosSharedBlockForging ::
-  forall m c era.
-  ( ShelleyCompatible (Praos c) era
+-- | Shared by every Praos extension; the caller supplies the Leios token,
+-- since it knows which extension it is.
+basePraosSharedBlockForging ::
+  forall m proto c era.
+  ( ShelleyCompatible proto era
+  , Traversable (EitherLeiosF proto ())
+  , ProtoCrypto proto ~ c
+  , CanBeLeader proto ~ PraosCanBeLeader c
+  , CannotForgeError proto ~ PraosCannotForge c
   , IOLike m
   ) =>
+  EitherLeiosF proto () () ->
+  (ConsensusConfig proto -> PraosParams) ->
   HotKey.HotKey c m ->
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->
-  BlockForging m (ShelleyBlock (Praos c) era)
-praosSharedBlockForging
+  BlockForging m (ShelleyBlock proto era)
+basePraosSharedBlockForging
+  leiosToken
+  getPraosParams
   hotKey
   slotToPeriod
   ShelleyLeaderCredentials
@@ -85,12 +98,39 @@ praosSharedBlockForging
             <$> HotKey.evolve hotKey (slotToPeriod curSlot)
       , checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
           praosCheckCanForge
-            (configConsensus cfg)
+            (getPraosParams (configConsensus cfg))
             curSlot
       , forgeBlock = \cfg ->
           forgeShelleyBlock
             hotKey
             canBeLeader
+            leiosToken
             cfg
       , finalize = HotKey.finalize hotKey
       }
+
+-- | Create a 'BlockForging' record safely using the given 'Hotkey'.
+--
+-- The name of the era (separated by a @_@) will be appended to each
+-- 'forgeLabel'.
+praosSharedBlockForging ::
+  forall m c era.
+  ( ShelleyCompatible (Praos c) era
+  , IOLike m
+  ) =>
+  HotKey.HotKey c m ->
+  (SlotNo -> Absolute.KESPeriod) ->
+  ShelleyLeaderCredentials c ->
+  BlockForging m (ShelleyBlock (Praos c) era)
+praosSharedBlockForging = basePraosSharedBlockForging (PraosLeiosLeft ()) praosParams
+
+praosWithLeiosSharedBlockForging ::
+  forall m c era.
+  ( ShelleyCompatible (PraosWithLeios c) era
+  , IOLike m
+  ) =>
+  HotKey.HotKey c m ->
+  (SlotNo -> Absolute.KESPeriod) ->
+  ShelleyLeaderCredentials c ->
+  BlockForging m (ShelleyBlock (PraosWithLeios c) era)
+praosWithLeiosSharedBlockForging = basePraosSharedBlockForging (LeiosLeiosRight ()) (praosParams . leiosPraosConfig)

@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -59,6 +60,7 @@ instance Crypto MockCrypto where
   type VRF MockCrypto = MockVRF
 
 instance SL.PraosCrypto MockCrypto
+instance Praos.BasePraosCrypto (Praos.Praos MockCrypto) MockCrypto
 instance Praos.PraosCrypto MockCrypto
 
 type Block = ShelleyBlock (TPraos MockCrypto) ShelleyEra

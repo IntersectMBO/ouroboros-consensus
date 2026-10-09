@@ -57,6 +57,9 @@ import Ouroboros.Consensus.Ticked
 -- Defined out of the class so that protocols can define this type without
 -- having to define the entire protocol at the same time (or indeed in the same
 -- module).
+--
+-- TODO See the TODO about this misnomer at
+-- 'Ouroboros.Consensus.Config.topLevelConfigProtocol'.
 data family ConsensusConfig p :: Type
 
 -- | The (open) universe of Ouroboros protocols
