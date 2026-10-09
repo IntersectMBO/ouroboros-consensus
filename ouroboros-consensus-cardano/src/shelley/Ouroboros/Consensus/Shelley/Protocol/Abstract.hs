@@ -26,7 +26,8 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
-import Cardano.Ledger.BaseTypes (ProtVer)
+import Cardano.Ledger.BaseTypes (ProtVer, StrictMaybe)
+import Cardano.Ledger.Block (EbReferencesAnnouncement)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
@@ -57,7 +58,11 @@ import Ouroboros.Consensus.Protocol.Abstract
   , ValidateView
   )
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import Ouroboros.Consensus.Protocol.Praos.Common (HasMaxMajorProtVer)
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( HasMaxMajorProtVer
+  , LeiosOnly
+  , ShelleyProtocolHeader
+  )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -92,9 +97,6 @@ instance Condense ShelleyHash where
 {-------------------------------------------------------------------------------
   Header
 -------------------------------------------------------------------------------}
-
--- | Shelley header, determined by the associated protocol.
-type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
 
 -- | Indicates that the header (determined by the protocol) supports " Envelope
 -- " functionality. Envelope functionality refers to the minimal functionality
@@ -160,6 +162,9 @@ class ProtocolHeaderSupportsKES proto where
     Int ->
     -- | Protocol version
     ProtVer ->
+    -- | Optional fields for Leios: whether the body carries a certificate, and
+    -- this header's announcement, if any
+    LeiosOnly proto () (Bool, StrictMaybe EbReferencesAnnouncement) ->
     m (ShelleyProtocolHeader proto)
 
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete

@@ -36,10 +36,15 @@ module Ouroboros.Consensus.Leios.Types
   , encodeLeiosEbMaxFramingSize
   , encodeLeiosEbSize
   , leiosReferencesCapacity
+
+    -- * Header checks
+  , minCertificationSlot
   ) where
 
 import Cardano.Crypto.Util (SignableRepresentation (..))
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Slotting.Slot (SlotNo (..))
+import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
@@ -226,3 +231,32 @@ cborIntBytesSize n
   | n < 0x100 = 2
   | n < 0x10000 = 3
   | otherwise = 5
+
+-- * Header checks
+
+-- | The earliest slot at which a block may certify an endorser block announced
+-- in the given slot.
+--
+-- The announcement, voting and diffusion periods must all have elapsed. They
+-- are wall-clock durations, so the gap rounds up to whole slots: a block is
+-- forged at its slot's onset, so the answer is the first slot whose onset is far
+-- enough after the announcement.
+minCertificationSlot ::
+  SlotLength ->
+  -- | Announcement period length
+  Milliseconds32 ->
+  -- | Vote period length
+  Milliseconds32 ->
+  -- | Diffusion period length
+  Milliseconds32 ->
+  -- | Slot of the announcing block
+  SlotNo ->
+  SlotNo
+minCertificationSlot slotLength announcement vote diffusion announcingSlot =
+  announcingSlot + SlotNo (fromIntegral ((totalMs + slotMs - 1) `div` slotMs))
+ where
+  totalMs = 3 * ms announcement + ms vote + ms diffusion
+  ms = toInteger . unMilliseconds32
+  slotMs = case slotLengthToMillisec slotLength of
+    0 -> error "minCertificationSlot: zero slot length"
+    n -> n
