@@ -931,7 +931,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
-    Test.Ouroboros.Storage.LeiosDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.PerasCertDB
     Test.Ouroboros.Storage.PerasCertDB.Model
@@ -958,8 +957,6 @@ test-suite storage-test
     cborg,
     containers,
     contra-tracer,
-    deepseq,
-    direct-sqlite,
     directory,
     filepath,
     fs-api,
@@ -988,6 +985,35 @@ test-suite storage-test
     time,
     transformers,
     tree-diff,
+    unstable-consensus-testlib,
+    vector,
+
+test-suite leios-storage-test
+  import: common-test
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus/test/leios-storage-test
+  main-is: Main.hs
+  other-modules:
+    Test.Ouroboros.Storage.LeiosDB
+
+  build-depends:
+    base,
+    bytestring,
+    cardano-slotting,
+    containers,
+    contra-tracer,
+    deepseq,
+    direct-sqlite,
+    directory,
+    io-classes:{io-classes, si-timers, strict-stm},
+    ouroboros-consensus,
+    QuickCheck,
+    tasty,
+    tasty-hunit,
+    tasty-quickcheck,
+    temporary,
+    text,
+    time,
     unstable-consensus-testlib,
     vector,
 
