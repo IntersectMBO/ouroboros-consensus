@@ -53,6 +53,12 @@ data PerasCertDB m blk = PerasCertDB
   , getCertIds ::
       STM m (Set PerasRoundNo)
   -- ^ Get the set of all cert IDs currently in the database.
+  , getCertsBoosting ::
+      Point blk ->
+      STM m [WithArrivalTime (ValidatedPerasCert blk)]
+  -- ^ Get all certificates known to boost the block at the given point.
+  -- Indeed, there is a non-trivial probability for two consecutive rounds
+  -- to boost the same block.
   , getCertsAfter ::
       PerasCertTicketNo ->
       STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))

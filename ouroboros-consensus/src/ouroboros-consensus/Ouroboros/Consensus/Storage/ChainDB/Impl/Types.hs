@@ -130,6 +130,8 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasImmutableCertDB (PerasImmutableCertDB)
+import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB as PerasImmutableCertDB
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import Ouroboros.Consensus.Storage.Serialisation
@@ -161,6 +163,9 @@ class
   , VolatileDbSerialiseConstraints blk
   , -- Needed for Follower
     EncodeDiskDep (NestedCtxt Header) blk
+  , -- Needed for the PerasImmutableCertDB
+    EncodeDisk blk (PerasCert blk)
+  , DecodeDisk blk (PerasCert blk)
   ) =>
   SerialiseDiskConstraints blk
 
@@ -385,6 +390,7 @@ data ChainDbEnv m blk = CDB
   -- ^ PRNG for determining the random delay we'll wait before actually
   -- performing the snapshot when one has been requested.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
+  , cdbPerasImmutableCertDB :: !(PerasImmutableCertDB m blk)
   , cdbPerasVoteDB :: !(PerasVoteDB m blk)
   }
   deriving Generic
@@ -808,6 +814,7 @@ data TraceEvent blk
   | TraceImmutableDBEvent (ImmutableDB.TraceEvent blk)
   | TraceVolatileDBEvent (VolatileDB.TraceEvent blk)
   | TracePerasCertDbEvent (PerasCertDB.TraceEvent blk)
+  | TracePerasImmutableCertDbEvent (PerasImmutableCertDB.TraceEvent blk)
   | TracePerasVoteDbEvent (PerasVoteDB.TraceEvent blk)
   | TraceLastShutdownUnclean
   | TraceChainSelStarvationEvent (TraceChainSelStarvationEvent blk)

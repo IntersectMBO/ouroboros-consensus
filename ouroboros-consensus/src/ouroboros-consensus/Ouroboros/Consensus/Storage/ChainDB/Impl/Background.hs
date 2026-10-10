@@ -61,6 +61,7 @@ import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (forgetArrivalTime))
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -79,6 +80,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB.API as PerasImmutableCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
@@ -147,7 +149,8 @@ launchBgTasks cdb@CDB{..} = do
 -------------------------------------------------------------------------------}
 
 -- | Copy the blocks older than the immutable tip from the VolatileDB to the
--- ImmutableDB.
+-- ImmutableDB. Peras certificates boosting these blocks are also copied from
+-- the volatile 'PerasCertDB' to the 'PerasImmutableCertDB'.
 --
 -- The headers of these blocks can be retrieved by considering headers in
 -- 'cdbChain' that are not also in 'getCurrentChain' (a suffix of 'cdbChain').
@@ -204,6 +207,13 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- these two lines: the tip was updated on the line above, but the
       -- anchor point is only updated on the line below.
       atomically $ removeFromChain pt
+      -- Copy any certificates boosting this now-immutable block from the
+      -- volatile PerasCertDB to the PerasImmutableCertDB, so that they
+      -- remain available for syncing nodes. This is best-effort: a
+      -- certificate arriving after its boosted block has already been
+      -- copied here is not retried.
+      certsBoostingBlk <- atomically $ PerasCertDB.getCertsBoosting cdbPerasCertDB pt
+      forM_ certsBoostingBlk (PerasImmutableCertDB.addCert cdbPerasImmutableCertDB . forgetArrivalTime)
       trace $ CopiedBlockToImmutableDB pt
 
   -- Get the /possibly/ updated tip of the ImmutableDB

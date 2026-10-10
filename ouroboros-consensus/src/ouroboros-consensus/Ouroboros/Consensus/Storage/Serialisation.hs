@@ -60,7 +60,7 @@ module Ouroboros.Consensus.Storage.Serialisation
   , encodeDepPair
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeListLenOf, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -68,7 +68,11 @@ import Codec.Serialise
 import qualified Data.ByteString.Lazy as Lazy
 import Data.ByteString.Short (ShortByteString)
 import Data.SOP.BasicFunctors
+import Data.Typeable (Typeable)
+import Data.Void (absurd)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Common
   ( BinaryBlockInfo (..)
@@ -117,6 +121,35 @@ class DecodeDisk blk a where
     Serialise a =>
     CodecConfig blk -> forall s. Decoder s a
   decodeDisk _ccfg = decode
+
+instance EncodeDisk blk (VoidPerasCert blk) where
+  encodeDisk _ = absurd . unVoidPerasCert
+
+instance DecodeDisk blk (VoidPerasCert blk) where
+  decodeDisk _ = fail "VoidPerasCert cannot be decoded"
+
+instance (Typeable blk, ToCBOR (Point blk)) => EncodeDisk blk (MockPerasCert blk) where
+  encodeDisk _ = toCBOR
+
+instance (Typeable blk, FromCBOR (Point blk)) => DecodeDisk blk (MockPerasCert blk) where
+  decodeDisk _ = fromCBOR
+
+instance Typeable blk => EncodeDisk blk (V1.PerasCert blk) where
+  encodeDisk _ = toCBOR
+
+instance Typeable blk => DecodeDisk blk (V1.PerasCert blk) where
+  decodeDisk _ = fromCBOR
+
+instance EncodeDisk blk (PerasCert blk) => EncodeDisk blk (ValidatedPerasCert blk) where
+  encodeDisk ccfg (ValidatedPerasCert cert boost) =
+    CBOR.encodeListLen 2
+      <> encodeDisk ccfg cert
+      <> toCBOR boost
+
+instance DecodeDisk blk (PerasCert blk) => DecodeDisk blk (ValidatedPerasCert blk) where
+  decodeDisk ccfg = do
+    decodeListLenOf 2
+    ValidatedPerasCert <$> decodeDisk ccfg <*> fromCBOR
 
 {-------------------------------------------------------------------------------
   Dependent pairs

@@ -94,12 +94,20 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block
   ( Serialised
+  , decodePoint
+  , encodePoint
   , unwrapCBORinCBOR
   , wrapCBORinCBOR
   )
 import Ouroboros.Network.Magic
 import Test.Cardano.Slotting.Numeric ()
 import Test.Util.Time (dawnOfTime)
+
+instance FromCBOR (Point BlockB) where
+  fromCBOR = decodePoint decode
+
+instance ToCBOR (Point BlockB) where
+  toCBOR = encodePoint encode
 
 {-------------------------------------------------------------------------------
   BlockB
