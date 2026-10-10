@@ -79,7 +79,8 @@ import Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
 import Test.Consensus.Shelley.Generators ()
 import Test.Tasty
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
-import Test.Tasty.QuickCheck
+import Test.Tasty.QuickCheck hiding (withNumTests)
+import Test.Util.QuickCheck (withNumTests)
 
 type Crypto = MockCryptoCompatByron
 

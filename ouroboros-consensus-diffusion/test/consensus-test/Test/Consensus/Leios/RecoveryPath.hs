@@ -54,7 +54,6 @@ import LeiosDemoTypes
   , TxHash
   , Weight
   , aggregateLeiosCert
-  , leiosSignContext
   , offerings
   , outstandingPrunedSlot
   )
@@ -457,7 +456,7 @@ mkCert TestCommittee{committee, allKeys} msg =
  where
   sigs =
     Map.fromList
-      [ (LeiosSeatId (fromIntegral i), signDSIGN leiosSignContext msg sk)
+      [ (LeiosSeatId (fromIntegral i), signDSIGN () msg sk)
       | (i, sk) <- zip [0 :: Int ..] allKeys
       ]
 

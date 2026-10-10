@@ -56,7 +56,6 @@ import Cardano.Crypto.Leios
   , aggregateLeiosCert
   , getLeiosSeatId
   , leiosCommitteeSize
-  , leiosSignContext
   , resolveLeiosSeat
   , verifyLeiosCert
   )
@@ -1522,7 +1521,7 @@ signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
     { announcingRbHash
     , voterId
-    , voteSignature = signDSIGN leiosSignContext announcingRbHash sk
+    , voteSignature = signDSIGN () announcingRbHash sk
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
@@ -1534,7 +1533,7 @@ validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature
       case seat.seatVKey of
         SNothing -> Left SignerHasNoKey
         SJust vk ->
-          case verifyDSIGN leiosSignContext vk announcingRbHash voteSignature of
+          case verifyDSIGN () vk announcingRbHash voteSignature of
             Left _ -> Left InvalidSignature
             Right () -> Right seat.seatWeight
 

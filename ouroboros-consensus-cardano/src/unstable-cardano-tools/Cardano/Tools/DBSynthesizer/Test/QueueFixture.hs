@@ -49,7 +49,6 @@ import Cardano.Crypto.DSIGN
   , genKeyDSIGN
   , seedSizeDSIGN
   )
-import Cardano.Crypto.DSIGN.BLS12381.Internal (minSigPoPDST)
 import Cardano.Crypto.Hash (Blake2b_256, hashToTextAsHex, hashWith)
 import Cardano.Crypto.Seed (Seed, mkSeedFromBytes)
 import qualified Cardano.Keys as Keys
@@ -203,7 +202,7 @@ withBlsKey blsSk = \case
  where
   blsKeyJson =
     Aeson.toJSON $
-      BlsKey (deriveVerKeyDSIGN blsSk) (createPossessionProofDSIGN minSigPoPDST blsSk)
+      BlsKey (deriveVerKeyDSIGN blsSk) (createPossessionProofDSIGN blsSk)
 
 -- | The generated addresses, plus the two the fixture already had.
 --
