@@ -5,6 +5,8 @@ open import Spec.Foreign.ExternalFunctions
 open import Foreign.Haskell.Coerce
 
 open import Spec.Foreign.HSConsensus.BaseTypes
+-- NOTE: Needed for the `AnnouncedEB` instances used by `LastAppliedBlock` below.
+open import Spec.Foreign.HSConsensus.BlockDefinitions
 open import Spec.ChainHead DummyCrypto DummyNonces DummyEpochStructure DummyBlockStructure DummyAbstractFunctions DummyLedgerInterface DummyRationalExtStructure
 
 unquoteDecl = do
