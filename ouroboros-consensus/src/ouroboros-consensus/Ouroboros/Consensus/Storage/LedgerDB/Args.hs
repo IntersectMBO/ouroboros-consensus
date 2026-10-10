@@ -25,7 +25,6 @@ import Control.Tracer
 import Data.Kind
 import Data.Word
 import GHC.Generics (Generic)
-import qualified LeiosDemoDb
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
@@ -35,6 +34,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq (AnchoredSeq)
@@ -59,7 +59,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrTracer :: !(Tracer m (TraceEvent blk))
   , lgrBackendArgs :: LedgerDbBackendArgs m blk
   , lgrQueryBatchSize :: QueryBatchSize
-  , lgrLeiosDb :: HKD f (LeiosDemoDb.LeiosDbHandle m)
+  , lgrLeiosDb :: HKD f (LeiosDB.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
   -- its own per-thread 'LeiosDbReader' from this handle.
   }

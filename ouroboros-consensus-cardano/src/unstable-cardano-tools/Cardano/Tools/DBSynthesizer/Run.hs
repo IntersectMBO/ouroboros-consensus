@@ -31,7 +31,6 @@ import Data.Bool (bool)
 import qualified Data.ByteString.Lazy.Char8 as BSL8 (unpack)
 import Data.Functor (($>))
 import qualified Data.Set as Set
-import LeiosDemoDb (withLeiosDBSQLite, withReader, withWriter)
 import LeiosDemoTypes
   ( LeiosSigningKey
   , TraceLeiosKernel (TraceLeiosDb)
@@ -72,6 +71,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import Ouroboros.Consensus.Storage.LeiosDB (withLeiosDBSQLite, withReader, withWriter)
 import Ouroboros.Consensus.Util.IOLike
   ( atomically
   , bracket_

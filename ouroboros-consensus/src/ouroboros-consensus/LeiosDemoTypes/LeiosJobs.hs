@@ -22,7 +22,6 @@
 module LeiosDemoTypes.LeiosJobs (module LeiosDemoTypes.LeiosJobs) where
 
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
 import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -37,28 +36,8 @@ import qualified Data.IntSet.NonEmpty as NEIntSet
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Leios.Types (TxHash (..), txHashBytes)
 import System.Random (StdGen, uniformR)
-
--- | Hash of a Leios transaction (the 'Cardano.Crypto.Leios.HASH' of its bytes).
---
--- The fixed length makes decoding reject a peer-supplied hash of any other
--- length, and lets the tx cache read the four key words directly.
-newtype TxHash = MkTxHash (PackedBytes 32)
-  deriving stock (Eq, Ord, Generic)
-  deriving anyclass (NFData, NoThunks)
-
-instance Show TxHash where
-  show = prettyTxHash
-
-prettyTxHash :: TxHash -> String
-prettyTxHash = BS8.unpack . BS16.encode . txHashBytes
-
-txHashBytes :: TxHash -> ByteString
-txHashBytes (MkTxHash bytes) = unpackPinnedBytes bytes
-
--- | Fails unless the input is exactly 32 bytes.
-mkTxHash :: MonadFail m => ByteString -> m TxHash
-mkTxHash = fmap MkTxHash . packByteString
 
 -- | A job's commitment to which txs it covers: the Blake2b-256 hash of the
 -- concatenated tx hashes (in ascending offset order), via

@@ -82,11 +82,6 @@ import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoDb
-  ( LeiosDbReader
-  , newLeiosDBInMemoryWith
-  , withReader
-  )
 import LeiosDemoTypes
   ( LeiosNotVotedReason (..)
   , LeiosPoint (..)
@@ -153,6 +148,11 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader
+  , newLeiosDBInMemoryWith
+  , withReader
+  )
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS

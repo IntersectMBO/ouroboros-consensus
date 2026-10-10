@@ -21,12 +21,9 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
   , SweeperConn (..)
   , SweepState (..)
   , sweepEbBatch
-  , sweepOrphanBatch
-  , gcReinit
 
     -- * GC batch sizes
   , defaultGcBatchSize
-  , gcOrphanTxBatchSize
 
     -- * Stats
   , initialStats
@@ -58,15 +55,15 @@ import Control.ResourceRegistry
   , forkLinkedThread
   )
 import Control.Tracer (Tracer, traceWith)
-import qualified Data.ByteString as BS
 import Data.Int (Int64)
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Leios.Types
-  ( EbHash (..)
+  ( EbHash
   , LeiosPoint (..)
+  , ebHashBytes
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
@@ -135,7 +132,7 @@ copyEbToImmutable tracer statsVar conn ebHash =
       pure True
  where
   CopierConn{ccDb, ccStmts} = conn
-  CopierStmts{ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertTxs} = ccStmts
+  CopierStmts{ccCompleteness, ccInsertEb, ccInsertEbTxs, ccInsertEbTxBytes} = ccStmts
 
   -- Attempt to do the actual copying.
   --
@@ -184,9 +181,9 @@ copyEbToImmutable tracer statsVar conn ebHash =
             dbStep1Safe ccInsertEbTxs
           nTxs <- DB.changes ccDb
           -- copy the transactions
-          useStmt ccInsertTxs $ do
-            dbBindBlob ccInsertTxs 1 (ebHashBytes ebHash)
-            dbStep1Safe ccInsertTxs
+          useStmt ccInsertEbTxBytes $ do
+            dbBindBlob ccInsertEbTxBytes 1 (ebHashBytes ebHash)
+            dbStep1Safe ccInsertEbTxBytes
           pure (Just nTxs)
 
 -- | The copier: the only writer into the immutable partition.
@@ -227,7 +224,7 @@ startCopier registry tracer statsVar copierDoorbell writeQueue volPath immPath =
               dbStepSafe nextPinnedStmt >>= \case
                 DB.Done -> pure (reverse acc)
                 DB.Row -> do
-                  h <- MkEbHash <$> DB.columnBlob nextPinnedStmt 0
+                  h <- ebHashFromBlob =<< DB.columnBlob nextPinnedStmt 0
                   rows (h : acc)
          in rows []
 
@@ -275,14 +272,6 @@ copyBatchSize = 32
 defaultGcBatchSize :: Int64
 defaultGcBatchSize = 4
 
--- | How many orphaned txs to GC in one sweep.
-gcOrphanTxBatchSize :: Int64
-gcOrphanTxBatchSize = 1024
-
--- | Page size of the 'gcReinit' scan.
-gcCandidatesPageSize :: Int64
-gcCandidatesPageSize = 4096
-
 -- | Implements 'leiosDbGarbageCollect': the MARK phase of GC mark-and-sweep,
 -- as a 'GcMark' job on the writer (see 'gcMark').
 sqlGarbageCollect :: WriteQueue -> SlotNo -> IO ()
@@ -292,7 +281,6 @@ sqlGarbageCollect writeQueue gcSlot =
 -- | The MARK phase of GC mark-and-sweep:
 --   - mark for GC (@status = 3@) every EB hash all of whose announcements are older
 --     than the given slot and not pinned (@status = 1@);
---   - stage its txs as GC candidates;
 --   - ask for a sweep.
 --
 -- Runs on the writer. It does not do much work, but rather primes the state
@@ -305,29 +293,20 @@ gcMark ::
   SlotNo ->
   IO ()
 gcMark sweepDoorbell db gcStmts gcSlot = do
-  let GcStmts{gsHasWork, gsAddGcCandidatesTxs, gsMarkEbForGC} = gcStmts
+  let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
   -- check if GC has any work to do
   hasWork <-
     useStmt gsHasWork $ do
       dbBindInt64 gsHasWork 1 slot
       (/= 0) <$> readSingleInt64 gsHasWork
   when hasWork $ do
-    (nTxsStagedAsGCCandidates, nEbsMarked) <-
+    nEbsMarked <-
       dbWithWriteTransactionRaw db $ do
-        -- transactions must be marked for GC before their EBs,
-        -- due to the way the sql statements are written.
-        -- mark transactions b for GC
-        useStmt gsAddGcCandidatesTxs $ do
-          dbBindInt64 gsAddGcCandidatesTxs 1 slot
-          dbStep1Safe gsAddGcCandidatesTxs
-        nTxsStagedAsGCCandidates <- DB.changes db
-        -- now mark the EB
         useStmt gsMarkEbForGC $ do
           dbBindInt64 gsMarkEbForGC 1 slot
           dbStep1Safe gsMarkEbForGC
-        nEbsMarked <- DB.changes db
-        pure (nTxsStagedAsGCCandidates, nEbsMarked)
-    when (nTxsStagedAsGCCandidates > 0 || nEbsMarked > 0) $
+        DB.changes db
+    when (nEbsMarked > 0) $
       atomically $
         writeTVar sweepDoorbell True
  where
@@ -348,93 +327,33 @@ data SweeperConn = SweeperConn
 sweepEbBatch :: SweeperConn -> Int64 -> IO Int
 sweepEbBatch conn batchSize = do
   let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swPickMarked, swEvictEbTxs, swEvictMissingTxs, swEvictEbs} = swStmts
+      SweeperStmts{swPickMarked, swEvictEbTxs, swEvictEbTxBytes, swEvictEbs} = swStmts
   dbWithWriteTransactionRaw swDb $ do
     -- check if any EBs are ready to be evicted
     evictableEbs <- useStmt swPickMarked $ do
       -- a negative LIMIT means no limit in SQLite
       dbBindInt64 swPickMarked 1 (if batchSize <= 0 then -1 else batchSize)
       collectBlobs swPickMarked
-    -- evict EBs if any are ready to be GCed
+    -- Three range deletes: the bytes are owned by their EB, so there is
+    -- nothing to orphan and nothing to probe.
     if null evictableEbs
       then pure 0
       else do
         let evictableEbsJson = jsonHexArray evictableEbs
+        execJson swEvictEbTxBytes evictableEbsJson
         execJson swEvictEbTxs evictableEbsJson
-        execJson swEvictMissingTxs evictableEbsJson
         execJson swEvictEbs evictableEbsJson
         DB.changes swDb
-
--- | One 'SweepOrphanBatch' transaction: evict up to the given number of
--- orphaned txs, or 'Nothing' if there was nothing to do. Runs on the writer.
-sweepOrphanBatch :: SweeperConn -> Int64 -> IO (Maybe Int)
-sweepOrphanBatch conn batchSize = do
-  let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swAnyMarked, swPickOrphans, swOrphanTxs, swPopOrphans} = swStmts
-  dbWithWriteTransactionRaw swDb $ do
-    -- don't run the sweep if any GC-marked EBs remain
-    blocked <- useStmt swAnyMarked $ (/= 0) <$> readSingleInt64 swAnyMarked
-    if blocked
-      then pure Nothing
-      else do
-        -- look for txs to GC
-        orphanedTxs <- useStmt swPickOrphans $ do
-          dbBindInt64 swPickOrphans 1 batchSize
-          collectBlobs swPickOrphans
-        if null orphanedTxs
-          then pure Nothing
-          else do
-            let orphanedTxsJson = jsonHexArray orphanedTxs
-            -- evict transactions
-            execJson swOrphanTxs orphanedTxsJson
-            nTxs <- DB.changes swDb
-            -- and delete them from the GC transaction candidates table
-            execJson swPopOrphans orphanedTxsJson
-            pure (Just nTxs)
-
--- | Stage every unstaged GC candidate, one page per transaction.
---
--- The sweeper only ever reads 'gcTxCandidates', which the mark phase fills
--- ('sql_gc_stage_marked'). A tx orphaned by anything else -- a
--- 'truncateLeiosDbAfterSlot' that dropped its EB's rows, a database written
--- before the table existed -- is referenced by nothing and staged nowhere,
--- and would never be collected.
---
--- Only such out-of-band edits can leave that behind, and only before the
--- writer started, so this runs once per process, on the writer.
-gcReinit :: SweeperConn -> IO ()
-gcReinit conn = do
-  let SweeperConn{swDb, swStmts} = conn
-      SweeperStmts{swHasUnstagedGcCandidates, swUnstagedGcCandidatesPage, swInsertGcCandidates} = swStmts
-  anyUnstaged <-
-    useStmt swHasUnstagedGcCandidates $
-      (/= 0) <$> readSingleInt64 swHasUnstagedGcCandidates
-  let pageLoop cursor = do
-        page <- useStmt swUnstagedGcCandidatesPage $ do
-          dbBindBlob swUnstagedGcCandidatesPage 1 cursor
-          dbBindInt64 swUnstagedGcCandidatesPage 2 gcCandidatesPageSize
-          collectBlobs swUnstagedGcCandidatesPage
-        unless (null page) $ do
-          dbWithWriteTransactionRaw swDb $
-            execJson swInsertGcCandidates (jsonHexArray page)
-          when (length page == fromIntegral gcCandidatesPageSize) $
-            pageLoop (last page)
-  when anyUnstaged $ pageLoop BS.empty
 
 -- | How far a sweep pass has got. The writer advances it one batch per turn
 -- rather than running a pass to completion, so an insert waits for a batch at
 -- most.
 data SweepState
   = SweepIdle
-  | -- | Evicting GC-marked EBs.
+  | -- | Evicting GC-marked EBs. There is no orphan phase: an EB's tx bytes
+    -- live in its own rows and die with it.
     SweepEbs
       -- | EBs evicted so far
-      !Int
-  | -- | Evicting the txs they orphaned.
-    SweepOrphans
-      -- | EBs evicted in the EB phase
-      !Int
-      -- | txs evicted so far
       !Int
   deriving Eq
 

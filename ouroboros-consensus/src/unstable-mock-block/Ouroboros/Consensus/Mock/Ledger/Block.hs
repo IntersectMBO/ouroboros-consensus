@@ -90,7 +90,6 @@ import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.TypeLits (KnownNat)
-import LeiosDemoDb (lookupTrustedEbClosure)
 import LeiosDemoTypes (LeiosClosureError (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
@@ -118,6 +117,7 @@ import Ouroboros.Consensus.Storage.Common
   , SizeInBytes
   )
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LeiosDB (lookupEbClosure)
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -154,7 +154,7 @@ instance
   ResolveLeiosBlock (SimpleBlock' c ext ext)
   where
   resolveLeiosClosure leiosDb ebHash =
-    lookupTrustedEbClosure leiosDb ebHash <&> \case
+    lookupEbClosure leiosDb ebHash <&> \case
       Nothing -> Left $ LeiosClosureMissing ebHash
       Just txs -> Right $ fmap (fmap (deserialise . Lazy.fromStrict)) txs
 

@@ -36,7 +36,6 @@ import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Traversable (for)
-import qualified LeiosDemoDb as LeiosDb
 import Network.TypedProtocol.Channel (createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage (..))
 import Network.TypedProtocol.Core (PeerRole (..))
@@ -49,6 +48,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM

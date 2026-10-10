@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Connection
   ( -- * Partition files
     initialiseLeiosDbFiles
   , openRawConnection
+  , openReadOnlyRawConnection
   , withReadOnlyConn
   , closeChecked
 
@@ -53,7 +54,7 @@ withReadOnlyConn dbPath =
 openReadOnlyRawConnection :: HasCallStack => FilePath -> IO DB.Database
 openReadOnlyRawConnection dbPath = do
   db <- open2 (fromString dbPath) [SQLOpenReadOnly] SQLVFSDefault
-  -- Only mmap_size: journal_mode and page_size need write access.
+  dbExec db "pragma busy_timeout = 1000;"
   dbExec db "pragma mmap_size = 268435500;"
   pure db
 
@@ -95,11 +96,24 @@ connectionPragmas =
     "pragma busy_timeout = 1000;"
   , "pragma synchronous = normal;"
   , "pragma mmap_size = 268435500;"
-  , -- SQLite's own default, spelled out because it is what keeps the log
-    -- bounded: passive checkpoints reset the WAL every 1000 frames, provided
-    -- no connection is sitting on a stale read snapshot. One that is will
-    -- freeze back-fill indefinitely; see 'dbWithWriteTransaction'.
+  , -- SQLite's default, spelled out. Automatic checkpointing is what keeps
+    -- the WAL bounded on both partitions: a checkpoint every 1000 frames,
+    -- run inline on whichever connection trips the threshold. Nothing must
+    -- disable it -- with nobody checkpointing, the WAL grows without bound
+    -- ('journal_size_limit' cannot truncate a log that never checkpoints;
+    -- observed 5 GB of WAL on a 1 GB partition, twelve of which filled a
+    -- disk).
     "pragma wal_autocheckpoint = 1000;"
+  , -- Sweep-sized sorts otherwise spill to a temp file.
+    "pragma temp_store = memory;"
+  , -- Without this the WAL keeps whatever high-water mark it ever reached:
+    -- SQLite reuses the file in place rather than truncating it after a
+    -- checkpoint, so one write burst sets the footprint for the life of the
+    -- database. The limit becomes the resting size, so it is the footprint:
+    -- measured on a sync, 64 MiB rests at 64 MiB and truncates spikes of
+    -- 110-460 MB back down, while staying far above the 4 MB a checkpoint
+    -- cycle needs ('wal_autocheckpoint' x 'page_size').
+    "pragma journal_size_limit = 67108864;"
   ]
 
 -- | Persistent pragmas, set once by 'initialiseLeiosDbFiles' after

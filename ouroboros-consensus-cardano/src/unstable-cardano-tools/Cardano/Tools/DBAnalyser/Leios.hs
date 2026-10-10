@@ -36,7 +36,6 @@ module Cardano.Tools.DBAnalyser.Leios
 import Cardano.Tools.DBAnalyser.Types (LedgerApplicationMode (..))
 import Control.Monad (when)
 import Data.SOP (All, Top)
-import LeiosDemoDb (LeiosDbReader, lookupEbBody)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -84,6 +83,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   , protocolStateLeiosAnnouncement
   , resolveLeiosClosure
   )
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader, lookupEbBody)
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.SizeInBytes
 

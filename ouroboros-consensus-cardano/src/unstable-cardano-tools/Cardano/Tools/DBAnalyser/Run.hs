@@ -22,12 +22,6 @@ import Control.Tracer (mkTracer, nullTracer, (>$<))
 import Data.SOP (All, Top)
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
-import LeiosDemoDb
-  ( allocateHandle
-  , newLeiosDBInMemory
-  , newLeiosDBSQLite
-  , withReader
-  )
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -59,13 +53,19 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( allocateHandle
+  , newLeiosDBInMemory
+  , newLeiosDBSQLite
+  , withReader
+  )
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
 import System.FS.API
-import qualified System.FilePath as FilePath
 import System.FilePath (splitDirectories)
+import qualified System.FilePath as FilePath
 import System.IO
 import System.Random (genWord64, newStdGen)
 import Text.Printf (printf)
@@ -192,7 +192,7 @@ analyse dbaConfig args =
     -- left writing to the immutable partition with nobody able to stop it.
     -- The registry releases youngest first and nothing else is in it yet, so
     -- the handle closes after every resource that reads through it.
-    leiosDbHandle <- allocateHandle registry openLeiosDb
+    leiosDbHandle <- allocateHandle registry (openLeiosDb registry)
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case backend of
@@ -288,14 +288,14 @@ analyse dbaConfig args =
         putStrLn $ "ImmutableDB tip: " ++ show tipPoint
         pure result
  where
-  openLeiosDb = case leiosDbSource of
+  openLeiosDb registry = case leiosDbSource of
     NoLeiosDb -> newLeiosDBInMemory
     LeiosDbFiles -> do
       let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
           immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
       requireLeiosDbFile volLeiosDBFile
       requireLeiosDbFile immLeiosDBFile
-      newLeiosDBSQLite nullTracer volLeiosDBFile immLeiosDBFile
+      newLeiosDBSQLite registry nullTracer volLeiosDBFile immLeiosDBFile
 
   DBAnalyserConfig
     { analysis

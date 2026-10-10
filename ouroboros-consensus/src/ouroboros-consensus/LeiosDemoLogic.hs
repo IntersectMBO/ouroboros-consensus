@@ -52,14 +52,6 @@ import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
-import LeiosDemoDb
-  ( LeiosDbReader
-  , LeiosDbWriter (..)
-  , Promise (..)
-  , batchRetrieveTxs
-  , lookupEbBody
-  )
-import LeiosDemoException (throwLeiosDbException)
 import LeiosDemoLogic.Announcements
   ( AnnouncementVerdict (..)
   , ElState (..)
@@ -149,6 +141,14 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
   )
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , batchRetrieveTxs
+  , lookupEbBody
+  )
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (throwLeiosDbException)
 import Ouroboros.Consensus.Util.IOLike (IOLike, async, link)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)

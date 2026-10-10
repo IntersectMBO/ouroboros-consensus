@@ -22,13 +22,13 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , StrictTVar
   , isFullTBQueue
   , newEmptyTMVarIO
-  , putTMVar
   , readTMVar
   , readTVar
+  , tryPutTMVar
   , writeTBQueue
   )
 import Control.Exception (SomeException, throwIO)
-import Control.Monad (join)
+import Control.Monad (join, void)
 import Control.Monad.Class.MonadThrow (onException)
 import Control.Tracer (Tracer, traceWith)
 import Data.ByteString (ByteString)
@@ -37,13 +37,13 @@ import qualified GHC.Stack
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
-  , EbHash (..)
+  , EbHash
   , LeiosEb
   , LeiosPoint (..)
-  , TxHash (..)
+  , TxOffset
   , leiosEbTxs
   )
-import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, Promise (..))
+import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, LocalFill, Promise (..))
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbWriteFailure (..)
@@ -67,17 +67,21 @@ data WriteJob
       -- | its announced size
       !BytesSize
       -- | where the worker puts the result
-      !(WriteResult ())
+      !(WriteResult CompletedEbs)
   | WriteEbBody
       -- | the EB's point
       !LeiosPoint
       -- | the EB body
       !LeiosEb
+      -- | cross-EB fills from locally held bytes
+      ![LocalFill]
       -- | where the worker puts the result
-      !(WriteResult CompletedEbs)
+      !(WriteResult (CompletedEbs, [TxOffset]))
   | WriteTxs
-      -- | txs with their bytes
-      ![(TxHash, ByteString)]
+      -- | the EB the txs belong to
+      !LeiosPoint
+      -- | txs with their bytes, by offset into the EB's body
+      ![(TxOffset, ByteString)]
       -- | where the worker puts the result
       !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
@@ -167,28 +171,38 @@ submitJob WriteQueue{wqJobs, wqSealed, wqTracer} mkJob = do
 describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
-  WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
-  WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
+  WriteEbBody point eb fills _ ->
+    "WriteEbBody "
+      <> show point
+      <> " ("
+      <> show (length (leiosEbTxs eb))
+      <> " txs, "
+      <> show (length fills)
+      <> " local fills)"
+  WriteTxs point offBytes _ -> "WriteTxs " <> show point <> " (" <> show (length offBytes) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
   MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
   GcMark slot _ -> "GcMark " <> show slot
   Shutdown _ -> "Shutdown"
 
--- | Publish the worker's parting exception as a queued job's result.
+-- | Publish an exception as a job's result: for each job still queued when
+-- the worker stops, and for the job in hand when running it throws.
 failJob :: SomeException -> WriteJob -> IO ()
 failJob cause = \case
   WriteEbPoint _ _ rv -> put rv
-  WriteEbBody _ _ rv -> put rv
-  WriteTxs _ rv -> put rv
+  WriteEbBody _ _ _ rv -> put rv
+  WriteTxs _ _ rv -> put rv
   Flush rv -> put rv
   PinEb _ rv -> put rv
   MarkCopied _ rv -> put rv
   GcMark _ rv -> put rv
   Shutdown rv -> put rv
  where
+  -- A job's result can be written before the exception reaches 'failJob'
+  -- (see the writer), so the second write must not block.
   put :: WriteResult a -> IO ()
-  put rv = atomically $ putTMVar rv (Left cause)
+  put rv = atomically $ void $ tryPutTMVar rv (Left cause)
 
 -- | How many queued jobs the writer serves back-to-back before it takes a
 -- turn of maintenance anyway.

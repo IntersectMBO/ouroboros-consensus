@@ -64,12 +64,6 @@ import Data.Time.Clock
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb.Common
-  ( LeiosEbNotification (..)
-  , leiosDbGarbageCollect
-  , leiosDbPromoteToImmutable
-  , subscribeEbNotifications
-  )
 import LeiosDemoTypes (LeiosPoint, pointEbHash)
 import qualified LeiosDemoTypes
 import LeiosUtils.CallTrace
@@ -97,6 +91,12 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB.API
+  ( LeiosEbNotification (..)
+  , leiosDbGarbageCollect
+  , leiosDbPromoteToImmutable
+  , subscribeEbNotifications
+  )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB

@@ -25,9 +25,6 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import qualified Data.Measure
 import Data.Proxy
-import LeiosDemoDb
-  ( LeiosDbReader (..)
-  )
 import LeiosDemoTypes
   ( LeiosCert
   , TraceLeiosKernel (..)
@@ -68,6 +65,9 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader (..)
+  )
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.EarlyExit
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
@@ -342,7 +342,7 @@ decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
           -- detect it the other way around: if we have a cert, but not
           -- downloaded it ourselves -> warning!
-          mClosure <- lookupTrustedEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
+          mClosure <- lookupEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
           case mClosure of
             Nothing -> do
               traceWith tracer $

@@ -35,6 +35,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Primitives
   , withDieJust
   , withDieDoneStmt
   , throwDbException
+  , txHashFromBlob
+  , ebHashFromBlob
   ) where
 
 import Control.Exception (SomeException, throwIO)
@@ -43,6 +45,7 @@ import Control.Monad.Class.MonadThrow (bracket, catch, finally, generalBracket)
 import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
@@ -50,6 +53,7 @@ import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
+import Ouroboros.Consensus.Leios.Types (EbHash, TxHash, mkEbHash, mkTxHash)
 import Ouroboros.Consensus.Storage.LeiosDB.Exception
   ( LeiosDbException (..)
   , LeiosDbFailure (..)
@@ -315,3 +319,25 @@ throwDbException db e = do
         { ldfErrorMessage = show e <> ": " <> show reason
         , ldfCallStack = GHC.Stack.prettyCallStack GHC.Stack.callStack
         }
+
+-- | Decode a stored tx hash. A database that an older build wrote can hold
+-- hashes of other lengths, so a bad length throws a 'LeiosDbException' that
+-- the callers trace.
+txHashFromBlob :: ByteString -> IO TxHash
+txHashFromBlob bs =
+  maybe
+    ( throwLeiosDbException $
+        "stored TxHash has " <> show (BS.length bs) <> " bytes, expected 32"
+    )
+    pure
+    (mkTxHash bs)
+
+-- | Decode a stored EB hash. See 'txHashFromBlob'.
+ebHashFromBlob :: ByteString -> IO EbHash
+ebHashFromBlob bs =
+  maybe
+    ( throwLeiosDbException $
+        "stored EbHash has " <> show (BS.length bs) <> " bytes, expected 32"
+    )
+    pure
+    (mkEbHash bs)

@@ -28,14 +28,6 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.List (isInfixOf)
 import Data.String (fromString)
 import Data.Word (Word64)
-import LeiosDemoDb
-  ( LeiosDbReader (scanEbPoints)
-  , LeiosDbWriter (writeEbPoint)
-  , Promise (await)
-  , withLeiosDBSQLite
-  , withReader
-  , withWriter
-  )
 import LeiosDemoTypes (LeiosPoint (..))
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
@@ -51,6 +43,14 @@ import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (IteratorResult (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Impl
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader (testScanEbPoints)
+  , LeiosDbWriter (writeEbPoint)
+  , Promise (await)
+  , withLeiosDBSQLite
+  , withReader
+  , withWriter
+  )
 import Ouroboros.Consensus.Util.Args (Complete)
 import System.FS.API (MountPoint (..), SomeHasFS (..))
 import System.FS.IO (ioHasFS)
@@ -217,7 +217,7 @@ blockCountTest logStep = do
 
   ebPoints <-
     withLeiosDBSQLite mempty leiosVolDb leiosImmDb $ \leiosDb ->
-      withReader leiosDb scanEbPoints
+      withReader leiosDb testScanEbPoints
   ebPoints == [(0, pointEbHash keptEb)]
     @? "the LeiosDb does not hold the kept EB alone: " ++ show ebPoints
 
@@ -316,7 +316,7 @@ fileTxGenTest logStep =
         nullTracer
         (db </> "leios.vol.db")
         (db </> "leios.imm.db")
-        (\h -> withReader h scanEbPoints)
+        (\h -> withReader h testScanEbPoints)
     not (null ebs)
       @? "the stream was replayed but no endorser block reached the LeiosDb"
 
@@ -339,7 +339,8 @@ fileTxGenTest logStep =
         }
 
     logStep "checking the endorser blocks were certified"
-    config <- pInfoConfig <$> mkProtocolInfo (Cardano.CardanoBlockArgs (fixture </> "config.json") Nothing)
+    config <-
+      pInfoConfig <$> mkProtocolInfo (Cardano.CardanoBlockArgs (fixture </> "config.json") Nothing)
     certified <- certifiedBlockSlots config db
     length certified == length ebs
       @? "endorser blocks were announced at "

@@ -20,7 +20,6 @@ import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Function ((&))
 import Data.Kind
 import Data.Time.Clock (secondsToDiffTime)
-import qualified LeiosDemoDb.Common
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -40,6 +39,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -92,12 +92,12 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
     cdbsLoE :: GetLoEFragment m blk
   -- ^ If this is 'LoEEnabled', it contains an action that returns the
   -- current LoE fragment.
-  , cdbsLeiosDb :: HKD f (LeiosDemoDb.Common.LeiosDbHandle m)
+  , cdbsLeiosDb :: HKD f (LeiosDB.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
   -- its own per-thread 'LeiosDbReader' from this handle.
   , cdbsLeiosEvictTxCache :: HKD f (SlotNo -> m ())
   -- ^ Prune the LeiosTxCache to the given slot. Invoked immediately BEFORE
-  -- 'LeiosDemoDb.Common.leiosDbGarbageCollect' at the same slot (see
+  -- 'LeiosDB.leiosDbGarbageCollect' at the same slot (see
   -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.Background.garbageCollectBlocks'):
   -- the cache is an in-memory index of the LeiosDb, so pruning it first is what
   -- keeps it from ever reporting a hit for a tx the LeiosDb has already dropped.
@@ -197,7 +197,7 @@ completeChainDbArgs ::
   StdGen ->
   LedgerDbBackendArgs m blk ->
   -- | Leios demo DB handle
-  LeiosDemoDb.Common.LeiosDbHandle m ->
+  LeiosDB.LeiosDbHandle m ->
   -- | Prune the LeiosTxCache to a slot; run before 'leiosDbGarbageCollect' at the
   -- same slot (the "LeiosTxCache" ordering contract).
   (SlotNo -> m ()) ->

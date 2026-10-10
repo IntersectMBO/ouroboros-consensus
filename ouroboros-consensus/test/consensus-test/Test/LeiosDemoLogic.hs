@@ -34,14 +34,6 @@ import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
 import qualified Data.Set as Set
 import qualified Data.Vector.Strict as V
-import LeiosDemoDb
-  ( LeiosDbWriter (..)
-  , Promise (..)
-  , newLeiosDBInMemory
-  , withReader
-  , withWriter
-  )
-import LeiosDemoException (LeiosDbException)
 import LeiosDemoLogic
   ( fetchPriorityTiers
   , leiosFetchLogicIteration
@@ -73,6 +65,14 @@ import LeiosDemoTypes
   , recordMaxAnnouncementSlot
   )
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbWriter (..)
+  , Promise (..)
+  , newLeiosDBInMemory
+  , withReader
+  , withWriter
+  )
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import System.Random (mkStdGen)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))

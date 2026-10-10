@@ -34,12 +34,6 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
-import LeiosDemoDb
-  ( LeiosDbHandle (..)
-  , LeiosDbReader
-  , LeiosEbNotification (..)
-  , withReader
-  )
 import LeiosDemoTypes
   ( HasLeiosVoting (..)
   , LeiosClosureError (..)
@@ -105,6 +99,12 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   , ResolveLeiosBlock (..)
   , ledgerStateReadOnlyForker
   , protocolStateLeiosAnnouncement
+  )
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbHandle (..)
+  , LeiosDbReader
+  , LeiosEbNotification (..)
+  , withReader
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike

@@ -10,14 +10,16 @@ import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Leios.Types
   ( BytesSize
   , LeiosEb (..)
-  , TxHash (..)
+  , TxHash
   , encodeLeiosEb
   , encodeLeiosEbItemSize
   , encodeLeiosEbMaxFramingSize
   , leiosReferencesCapacity
+  , txHashBytes
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
+import Test.Util.LeiosHash (unsafeTxHashFromBytes)
 
 tests :: TestTree
 tests =
@@ -31,7 +33,7 @@ tests =
     ]
 
 genTxHash :: Gen TxHash
-genTxHash = MkTxHash . BS.pack <$> vectorOf 32 arbitrary
+genTxHash = unsafeTxHashFromBytes . BS.pack <$> vectorOf 32 arbitrary
 
 -- | A tx size with good coverage of CBOR encoding boundaries.
 -- Values 0-23 encode in 1 byte, 24-255 in 2 bytes, 256-65535 in 3 bytes.
@@ -69,8 +71,8 @@ genLeiosEb numTxs =
 -- for that reference.
 prop_referenceSizeConsistent :: Property
 prop_referenceSizeConsistent =
-  forAll ((,) <$> genTxHash <*> genTxBytesSize) $ \(txHash@(MkTxHash bytes), txSize) ->
-    let encoded = toStrictByteString $ CBOR.encodeBytes bytes <> CBOR.encodeWord32 txSize
+  forAll ((,) <$> genTxHash <*> genTxBytesSize) $ \(txHash, txSize) ->
+    let encoded = toStrictByteString $ CBOR.encodeBytes (txHashBytes txHash) <> CBOR.encodeWord32 txSize
         ByteSize32 estimatedSize = encodeLeiosEbItemSize (ByteSize32 txSize)
      in counterexample
           ("reference: " <> show (txHash, txSize))

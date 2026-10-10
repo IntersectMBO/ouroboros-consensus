@@ -104,7 +104,6 @@ import Data.Maybe (fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
-import LeiosDemoDb (LeiosDbHandle)
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes (SerializedEbBody)
 import LeiosTxCache
@@ -155,6 +154,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -259,7 +259,7 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   , rnLeiosDb :: LeiosDbHandle m
   -- ^ Caller-supplied Leios demo DB. The caller owns its lifecycle: it must
   -- outlive the node and be closed after 'run' returns (see
-  -- 'LeiosDemoDb.withLeiosDBSQLite').
+  -- 'LeiosDB.withLeiosDBSQLite').
   }
 
 -- | Arguments that usually only tests /directly/ specify.

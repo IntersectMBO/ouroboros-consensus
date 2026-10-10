@@ -86,7 +86,6 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Generics
 import GHC.Stack
-import qualified LeiosDemoDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch (LeiosFetch)
 import LeiosDemoOnlyTestNotify (LeiosNotify)
@@ -132,6 +131,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -769,7 +769,7 @@ runThreadNetwork
       LeiosState (MonadSTMStrict.StrictTVar m) ->
       CoreNodeId ->
       m
-        ( LeiosDemoDb.LeiosDbHandle m
+        ( LeiosDB.LeiosDbHandle m
         , LeiosTxCache m () () LeiosDemoTypes.SerializedEbBody
         , ChainDbArgs Identity m blk
         )
@@ -785,7 +785,7 @@ runThreadNetwork
       nodeDBs
       leiosState
       _coreNodeId = do
-        leiosDbHandle <- LeiosDemoDb.newLeiosDBInMemoryWith (lsLeiosDb leiosState)
+        leiosDbHandle <- LeiosDB.newLeiosDBInMemoryWith (lsLeiosDb leiosState)
         leiosTxCache <- newPureLeiosTxCache defaultLeiosTxCacheShift
         let args =
               fromMinimalChainDbArgs
@@ -1725,7 +1725,7 @@ newNodeInfo = do
       )
 
   (nodeInfoLeios, readLeios) <- do
-    lsLeiosDb <- MonadSTMStrict.newTVarIO LeiosDemoDb.emptyInMemoryLeiosDb
+    lsLeiosDb <- MonadSTMStrict.newTVarIO LeiosDB.emptyInMemoryLeiosDb
     pure
       ( LeiosState{lsLeiosDb}
       , atomically $ do
@@ -1762,7 +1762,7 @@ data NodeOutput blk = NodeOutput
 -- functor @f@ so that during the run we hold mutable references
 -- (@StrictTVar m@) and at the end we snapshot to @Identity@ for the test.
 newtype LeiosState f = LeiosState
-  { lsLeiosDb :: f LeiosDemoDb.InMemoryLeiosDb
+  { lsLeiosDb :: f LeiosDB.InMemoryLeiosDb
   }
   deriving Generic
 

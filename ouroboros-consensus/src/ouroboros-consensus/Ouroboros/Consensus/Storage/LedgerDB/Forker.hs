@@ -83,7 +83,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
   ( AnnouncementFields
@@ -136,6 +135,7 @@ import Ouroboros.Consensus.Protocol.Abstract
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader)
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike

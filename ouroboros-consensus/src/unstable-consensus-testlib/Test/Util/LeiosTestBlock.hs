@@ -121,7 +121,6 @@ import qualified Data.Vector.Strict as V
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoDb (lookupTrustedEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( AnnouncementFields (..)
@@ -194,6 +193,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB (lookupEbClosure)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -501,7 +501,7 @@ instance ResolveLeiosBlock LeiosTestBlock where
   -- The closure the LeiosDb holds for this endorser block, decoded back into
   -- transactions. A CertRB is not selectable until this succeeds.
   resolveLeiosClosure leiosDb ebHash =
-    lookupTrustedEbClosure leiosDb ebHash >>= \case
+    lookupEbClosure leiosDb ebHash >>= \case
       Nothing -> pure $ Left $ LeiosClosureMissing ebHash
       Just closure -> pure $ traverse decodeOne closure
    where

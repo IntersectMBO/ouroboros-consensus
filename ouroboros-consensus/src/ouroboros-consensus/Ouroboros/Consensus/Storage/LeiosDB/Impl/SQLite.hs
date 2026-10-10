@@ -18,7 +18,8 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite
   , sql_schema_imm
   , sql_insert_eb
   , sql_insert_ebBody
-  , sql_insert_tx
+  , sql_fill_ebTxBytes
+  , sql_prealloc_ebTxBytes
   ) where
 
 import Cardano.Prelude (forM_, when)
@@ -39,7 +40,8 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTVar
   )
 import Control.Exception
-  ( throwIO
+  ( SomeException
+  , throwIO
   , toException
   )
 import Control.Monad (unless, void)
@@ -62,7 +64,7 @@ import Data.Int (Int64)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
 import qualified GHC.Stack
-import Ouroboros.Consensus.Leios.Types (EbHash (..))
+import Ouroboros.Consensus.Leios.Types (ebHashBytes)
 import Ouroboros.Consensus.Storage.LeiosDB.API
   ( LeiosDbHandle (..)
   , LeiosDbReader (..)
@@ -208,8 +210,8 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       Right promise -> await promise
 
   implOpenReader statsVar = do
-    volDb <- openRawConnection volLeiosDbPath
-    immDb <- orCloseOnError volDb $ openRawConnection immLeiosDbPath
+    volDb <- openReadOnlyRawConnection volLeiosDbPath
+    immDb <- orCloseOnError volDb $ openReadOnlyRawConnection immLeiosDbPath
     conn <- mkConn tracer statsVar volDb immDb
     pure
       LeiosDbReader
@@ -227,8 +229,8 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
         { -- Not a teardown -- the write connection outlives every writer.
           closeWriter = void . await =<< submitJob writeQueue Flush
         , writeEbPoint = \point size -> submitJob writeQueue (WriteEbPoint point size)
-        , writeEbBody = \point eb -> submitJob writeQueue (WriteEbBody point eb)
-        , writeTxs = \txs -> submitJob writeQueue (WriteTxs txs)
+        , writeEbBody = \point eb fills -> submitJob writeQueue (WriteEbBody point eb fills)
+        , writeTxs = \point offBytes -> submitJob writeQueue (WriteTxs point offBytes)
         }
 
 -- | 'newLeiosDBSQLite' bracketed with its 'closeLeiosDbHandle': on release
@@ -315,7 +317,6 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
   shutdownVar <- newIORef Nothing
   sweepStateVar <- newTVarIO SweepIdle
-  gcReinitDoneVar <- newTVarIO False
   jobsServedVar <- newTVarIO (0 :: Int)
   let notify = atomically . writeTChan notificationChan
 
@@ -340,11 +341,11 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
               writeIORef shutdownVar (Just resultVar)
               pure True
             WriteEbPoint point size resultVar ->
-              publish resultVar (sqlInsertEbPoint conn point size) >> pure False
-            WriteEbBody point eb resultVar ->
-              publish resultVar (sqlInsertEbBody tracer conn notify point eb) >> pure False
-            WriteTxs txs resultVar ->
-              publish resultVar (sqlInsertTxs tracer conn notify txs) >> pure False
+              publish resultVar (sqlInsertEbPoint conn notify point size) >> pure False
+            WriteEbBody point eb fills resultVar ->
+              publish resultVar (sqlInsertEbBody tracer conn notify point eb fills) >> pure False
+            WriteTxs point offBytes resultVar ->
+              publish resultVar (sqlInsertTxs tracer conn notify point offBytes) >> pure False
             Flush resultVar ->
               publish resultVar (pure ()) >> pure False
             PinEb ebHashes resultVar -> do
@@ -389,7 +390,10 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
                     Just job -> Just job <$ writeTVar jobsServedVar (served + 1)
             case mJob of
               Just job -> do
-                stop <- runJob job
+                -- 'tryReadTBQueue' above removed the job, so the drain that runs
+                -- when the worker stops cannot reach it. If running it throws,
+                -- only this handler can still tell the awaiter.
+                stop <- runJob job `catch` \(e :: SomeException) -> failJob e job >> throwIO e
                 traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
                 unless stop serve
               Nothing -> do
@@ -425,35 +429,20 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
                       writeTVar sweepDoorbell False
                       writeTVar sweepStateVar (SweepEbs 0)
                     pure rung
-                  if not asked
-                    then pure True
-                    else do
-                      -- Stages the GC tx candidates a restart left behind.
-                      done <- readTVarIO gcReinitDoneVar
-                      unless done $ do
-                        gcReinit sweeperConn
-                        atomically $ writeTVar gcReinitDoneVar True
-                      pure False
+                  pure (not asked)
                 SweepEbs nEbs -> do
                   evicted <- sweepEbBatch sweeperConn gcBatchSize
-                  if evicted == 0
-                    then atomically $ writeTVar sweepStateVar (SweepOrphans nEbs 0)
-                    else do
+                  if evicted > 0
+                    then do
                       bumpVolatileStatsVar statsVar (negate evicted)
                       atomically $ writeTVar sweepStateVar (SweepEbs (nEbs + evicted))
-                  pure False
-                SweepOrphans nEbs nTxs ->
-                  sweepOrphanBatch sweeperConn gcOrphanTxBatchSize >>= \case
-                    Just evicted -> do
-                      atomically $ writeTVar sweepStateVar (SweepOrphans nEbs (nTxs + evicted))
-                      pure False
-                    Nothing -> do
-                      when (nEbs > 0 || nTxs > 0) $ do
+                    else do
+                      when (nEbs > 0) $ do
                         -- Flush the WAL only after real work.
                         dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
                         traceWith tracer $ TraceLeiosDbEvicted nEbs
                       atomically $ writeTVar sweepStateVar SweepIdle
-                      pure False
+                  pure False
 
       -- Seal, then fail what was already queued: nothing can be queued after
       -- the seal ('submitJob'), so afterwards the queue stays empty forever.

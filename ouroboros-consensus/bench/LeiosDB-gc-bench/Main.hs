@@ -3,9 +3,10 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Benchmark for the sqlite backend of "Ouroboros.Consensus.Storage.LeiosDB": full-EB insertion,
+-- | Benchmark for the sqlite backend of 'LeiosDemoDb': full-EB insertion,
 -- promote-to-immutable and garbage collection, as a load matrix.
 --
 -- The volatile database is always populated with 2160 EBs (the k=2160 steady
@@ -43,7 +44,10 @@
 --      un-copied, as un-certified EBs are on a real node;
 --   3. call 'leiosDbGarbageCollect' --- which only MARKS (@markSeconds@) ---
 --      and wait for the background sweeper to drain the marks
---      (@sweepSeconds@).
+--      (@sweepSeconds@). The sweep is decomposed via its call-trace spans:
+--      the one-off GC-candidates initialisation (first pass of the process
+--      only), the EB-eviction loop, the orphan-tx loop (both loops include
+--      the pacing sleeps between their batches) and the WAL checkpoint.
 --
 -- @--gc-pacing@ selects the sweeper pacing: @default@ is what the node runs
 -- (4-EB eviction batches with 100ms pauses in between, trading drain time
@@ -71,10 +75,10 @@
 -- -- catch-up with worst-case tx sharing: no tx is shared between EBs
 -- cabal run bench:leios-gc-bench -- --scenario catchup --load eb-no-sharing
 --
--- -- the 512 KB-body worst case (~40 GB volatile partition; TMPDIR must
+-- -- the 600 kB-body worst case (~40 GB volatile partition; TMPDIR must
 -- -- point at a disk with ~100 GB free, not a tmpfs; runs for hours)
 -- TMPDIR=\/scratch cabal run bench:leios-gc-bench -- \\
---   --scenario catchup --load eb-no-sharing --txs-per-eb 13000 --tx-bytes 923
+--   --scenario catchup --load eb-no-sharing --txs-per-eb 16000 --tx-bytes 750
 --
 -- -- raw sweep work and unprotected lock holds: no batching, no pauses
 -- cabal run bench:leios-gc-bench -- --scenario catchup --gc-pacing zero
@@ -90,7 +94,7 @@ module Main (main) where
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
-import Control.Exception (evaluate)
+import Control.Exception (evaluate, finally)
 import Control.Monad (forM, forever, replicateM, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.ResourceRegistry (withRegistry)
@@ -105,15 +109,17 @@ import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word64)
 import qualified Database.SQLite3 as SQL
-import Options.Applicative hiding (action)
-import Ouroboros.Consensus.Leios.Types
+import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
   , LeiosEb (..)
   , LeiosPoint (..)
   , TxHash (..)
+  , ebHashBytes
   , encodeLeiosEbSize
+  , txHashBytes
   )
+import Options.Applicative hiding (action)
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
   , LeiosDbStats (..)
@@ -135,6 +141,7 @@ import System.IO
   , stdout
   )
 import System.IO.Temp (withSystemTempDirectory)
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 import Text.Printf (printf)
 
 main :: IO ()
@@ -179,50 +186,53 @@ main = do
         db <- mkDb
         schedule <- populateDb opts db
         pure (db, schedule)
-    when (optNoTxIndex opts) $ do
-      hPutStrLn stderr "Dropping idx_ebTxs_txHashBytes from the volatile partition"
-      dropTxIndex benchVol
-    when (null schedule) $
-      die "empty EB schedule (no volatile ebs)"
-    when (sum (map snd (phaseSeries (optScenario opts))) > length schedule) $
-      hPutStrLn stderr $
-        "NOTE: the phases want "
-          <> show (sum (map snd (phaseSeries (optScenario opts))))
-          <> " EBs but only "
-          <> show (length schedule)
-          <> " are scheduled; later phases will be skipped"
-    let describeSeries =
-          List.intercalate
-            " + "
-            [ scenario <> "×" <> show (length grp) <> " (" <> show n <> " EBs each)"
-            | grp@((scenario, n) : _) <- List.group (phaseSeries (optScenario opts))
-            ]
-    hPutStr stderr $
-      unlines
-        [ ""
-        , "Scheduled EBs       : " <> show (length schedule)
-        , "Phases              : " <> describeSeries
-        , "GC pacing           : " <> gcPacingName (optGcPacing opts)
-        , "idx_ebTxs_txHashBytes: " <> (if optNoTxIndex opts then "DROPPED" else "present")
-        , ""
-        ]
-    -- Await the sweeper's startup self-heal (GC-candidates initialisation +
-    -- resume of persisted marks), so it is not attributed to phase 1.
-    sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
-    initialBacklog <- mkBacklogProbe benchVol sqlInitialBacklog
-    (_, initialSweepWall) <- timed $ awaitZero "initial self-heal" initialBacklog
-    hPutStrLn stderr ("initial sweep: " <> showTime initialSweepWall)
-    before <- leiosDbSampleStats db
-    hPutStrLn stderr (renderStats "before" before)
-    latRef <- newIORef 0
-    putStrLn csvHeader
-    phaseStats <-
-      withAsync mutator $ \_ ->
-        withAsync (tickProbe latRef) $ \_ ->
-          runPhases opts db flushEvents latRef sweepBacklog schedule (immutableEbs before)
-    after <- leiosDbSampleStats db
-    hPutStrLn stderr (renderStats "after " after)
-    hPutStr stderr (renderSummary opts phaseStats)
+    -- 'withSystemTempDirectory' removes the directory on the way out, so the
+    -- connections must be closed before that.
+    (`finally` closeLeiosDbHandle db) $ do
+      when (optNoTxIndex opts) $ do
+        hPutStrLn stderr "Dropping idx_ebTxs_txHashBytes from the volatile partition"
+        dropTxIndex benchVol
+      when (null schedule) $
+        die "empty EB schedule (no volatile ebs)"
+      when (sum (map snd (phaseSeries (optScenario opts))) > length schedule) $
+        hPutStrLn stderr $
+          "NOTE: the phases want "
+            <> show (sum (map snd (phaseSeries (optScenario opts))))
+            <> " EBs but only "
+            <> show (length schedule)
+            <> " are scheduled; later phases will be skipped"
+      let describeSeries =
+            List.intercalate
+              " + "
+              [ scenario <> "×" <> show (length grp) <> " (" <> show n <> " EBs each)"
+              | grp@((scenario, n) : _) <- List.group (phaseSeries (optScenario opts))
+              ]
+      hPutStr stderr $
+        unlines
+          [ ""
+          , "Scheduled EBs       : " <> show (length schedule)
+          , "Phases              : " <> describeSeries
+          , "GC pacing           : " <> gcPacingName (optGcPacing opts)
+          , "idx_ebTxs_txHashBytes: " <> (if optNoTxIndex opts then "DROPPED" else "present")
+          , ""
+          ]
+      -- Await the sweeper's startup self-heal (GC-candidates initialisation +
+      -- resume of persisted marks), so it is not attributed to phase 1.
+      sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
+      initialBacklog <- mkBacklogProbe benchVol sqlInitialBacklog
+      (_, initialSweepWall) <- timed $ awaitZero "initial self-heal" initialBacklog
+      hPutStrLn stderr ("initial sweep: " <> showTime initialSweepWall)
+      before <- leiosDbSampleStats db
+      hPutStrLn stderr (renderStats "before" before)
+      latRef <- newIORef 0
+      putStrLn csvHeader
+      phaseStats <-
+        withAsync mutator $ \_ ->
+          withAsync (tickProbe latRef) $ \_ ->
+            runPhases opts db flushEvents latRef sweepBacklog schedule (immutableEbs before)
+      after <- leiosDbSampleStats db
+      hPutStrLn stderr (renderStats "after " after)
+      hPutStr stderr (renderSummary opts phaseStats)
 
 -- | The imm-file sibling of a volatile fixture path. Fixtures are named the
 -- way the node names its partitions (@FOO.vol.db@); a @FOO.vol@ from before
@@ -320,7 +330,7 @@ optsInfo =
     (optsParser <**> helper)
     ( fullDesc
         <> progDesc
-          "Benchmark LeiosDB full-EB insertion, promote-to-immutable and \
+          "Benchmark LeiosDemoDb full-EB insertion, promote-to-immutable and \
           \garbage collection at a chosen volatile load level, varying how \
           \many EBs each GC call may collect; per-phase results are written \
           \to stdout as CSV"
@@ -377,7 +387,7 @@ optsParser =
           <> showDefault
           <> help
             "Synthetic mode: transactions per EB (2700 = observed on the \
-            \proto-devnet; 13000 = the 512 KB body worst case)"
+            \proto-devnet; 16000 = the 600 kB body worst case)"
       )
     <*> option
       auto
@@ -416,18 +426,19 @@ populateDb opts db =
   withWriter db $ \writer ->
     forM [0 .. populationEbs - 1] $ \ebIdx -> do
       let slot = fromIntegral (ebIdx * slotsPerEb) :: Word64
-          MkEbHash hashBytes = genEbHash ebIdx
-          point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
+          ebHash = genEbHash ebIdx
+          hashBytes = ebHashBytes ebHash
+          point = MkLeiosPoint (SlotNo slot) ebHash
           eb = genEb opts ebIdx
-          txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
+          txs = [(off, genTx opts h) | (off, h) <- zip [0 ..] (ebTxHashesFor opts ebIdx)]
       pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
-      bodyWritten <- writeEbBody writer point eb
-      txsWritten <- writeTxs writer txs
-      awaitAll [pointWritten, void bodyWritten, void txsWritten]
+      bodyWritten <- writeEbBody writer point eb []
+      txsWritten <- writeTxs writer point txs
+      awaitAll [void pointWritten, void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
 
 -- | Drop the tx -> referencing-EB index from the volatile partition
--- (the next handle creation re-creates it; this run keeps its handle open).
+-- ('sql_schema' only runs at file creation, so the drop persists).
 dropTxIndex :: FilePath -> IO ()
 dropTxIndex path = do
   db <- SQL.open (T.pack path)
@@ -439,7 +450,7 @@ dropTxIndex path = do
 
 -- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
 genEbHash :: Int -> EbHash
-genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genEbHash i = unsafeEbHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
@@ -467,19 +478,21 @@ genEb opts ebIdx =
 
 -- | Unique 'TxHash': \"txHash:<ebIdx>:<txIdx>\" padded to 32 bytes with zeros.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx txIdx = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
 -- | Shared-pool 'TxHash': \"sharedTx:<poolIdx>\" padded to 32 bytes with zeros.
 genSharedTxHash :: Int -> TxHash
-genSharedTxHash j = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genSharedTxHash j = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("sharedTx:" <> show j)
 
 -- | Generate a TX payload: the TX hash bytes padded with zeros to 'optTxBytes'.
 genTx :: Opts -> TxHash -> BS.ByteString
-genTx opts (MkTxHash h) = h <> BS.replicate (optTxBytes opts - BS.length h) 0
+genTx opts txHash = h <> BS.replicate (optTxBytes opts - BS.length h) 0
+ where
+  h = txHashBytes txHash
 
 -- * Measurement phases
 
@@ -522,15 +535,15 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           let ebIdx = 10_000_000 + k
               point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
               eb = genEb opts ebIdx
-              txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
+              txs = [(off, genTx opts h) | (off, h) <- zip [0 ..] (ebTxHashesFor opts ebIdx)]
           snd
             <$> timed
               ( do
                   pointWritten <- writeEbPoint w point (encodeLeiosEbSize eb)
-                  bodyWritten <- writeEbBody w point eb
-                  txsWritten <- writeTxs w txs
+                  bodyWritten <- writeEbBody w point eb []
+                  txsWritten <- writeTxs w point txs
                   -- Awaiting all three times them to durability.
-                  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+                  awaitAll [void pointWritten, void bodyWritten, void txsWritten]
                   pure ()
               )
     _ <- flushEvents -- discard events from handle setup
@@ -567,7 +580,7 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
             timed $
               leiosDbPromoteToImmutable
                 db
-                [MkLeiosPoint (SlotNo s) (MkEbHash h) | (s, h) <- take nPromote due]
+                [MkLeiosPoint (SlotNo s) (unsafeEbHashFromBytes h) | (s, h) <- take nPromote due]
           promotedTotal <- atomicModifyIORef' promotedRef (\c -> (c + nPromote, c + nPromote))
           (_, copyWaitWall) <- timed $ awaitCopier (immBefore + promotedTotal)
           -- 3. GC: mark, then wait for the sweeper to drain
@@ -619,21 +632,15 @@ medianTime ts = List.sort ts !! (length ts `div` 2)
 
 -- * Sweep backlog probes
 
--- | What the sweeper still owes: GC-marked rows plus unresolved orphan hints.
+-- | What the sweeper still owes: GC-marked rows. There is no orphan phase --
+-- an EB's tx bytes die with its rows.
 sqlSweepBacklog :: T.Text
 sqlSweepBacklog =
-  "SELECT (SELECT COUNT(*) FROM ebs WHERE status = 3)\n\
-  \     + (SELECT COUNT(*) FROM gcTxCandidates)"
+  "SELECT COUNT(*) FROM ebs WHERE status = 3"
 
--- | 'sqlSweepBacklog' plus whether any legacy orphan tx exists at all: only 0
--- once the sweeper's GC-candidates initialisation has both run and been swept
--- (counting staged candidates alone would race the initialisation scan).
+-- | Same as 'sqlSweepBacklog': there is no initialisation scan anymore.
 sqlInitialBacklog :: T.Text
-sqlInitialBacklog =
-  "SELECT (SELECT COUNT(*) FROM ebs WHERE status = 3)\n\
-  \     + (SELECT COUNT(*) FROM gcTxCandidates)\n\
-  \     + (SELECT EXISTS (SELECT 1 FROM txs WHERE NOT EXISTS\n\
-  \          (SELECT 1 FROM ebTxs WHERE ebTxs.txHashBytes = txs.txHashBytes)))"
+sqlInitialBacklog = sqlSweepBacklog
 
 -- | A reusable single-integer probe on its own connection (WAL readers do
 -- not block the sweeper's writes; the reset after each poll releases the

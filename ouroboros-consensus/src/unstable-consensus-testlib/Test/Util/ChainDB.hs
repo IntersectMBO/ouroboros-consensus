@@ -13,7 +13,6 @@ module Test.Util.ChainDB
 import Control.Concurrent.Class.MonadSTM.Strict hiding (StrictTVar)
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
-import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
   , configCodec
@@ -32,6 +31,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle)
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB

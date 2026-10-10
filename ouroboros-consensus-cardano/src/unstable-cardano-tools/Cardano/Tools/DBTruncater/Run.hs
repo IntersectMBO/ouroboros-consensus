@@ -17,11 +17,6 @@ import Control.Tracer (Tracer, mkTracer)
 import Data.Foldable (asum)
 import Data.Functor ((<&>))
 import Data.Functor.Identity
-import LeiosDemoDb
-  ( deleteDanglingTxs
-  , truncateLeiosDbAfterSlot
-  , vacuumLeiosDb
-  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Node as Node
@@ -35,6 +30,11 @@ import Ouroboros.Consensus.Storage.ImmutableDB
   )
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Impl
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( deleteDanglingTxs
+  , truncateLeiosDbAfterSlot
+  , vacuumLeiosDb
+  )
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import qualified System.FilePath as FilePath

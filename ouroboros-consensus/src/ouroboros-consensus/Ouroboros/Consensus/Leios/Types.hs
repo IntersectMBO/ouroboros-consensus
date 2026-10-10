@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -13,6 +14,8 @@
 module Ouroboros.Consensus.Leios.Types
   ( -- * Hashes
     EbHash (..)
+  , ebHashBytes
+  , mkEbHash
   , encodeEbHash
   , decodeEbHash
   , prettyEbHash
@@ -21,6 +24,8 @@ module Ouroboros.Consensus.Leios.Types
   , decodeRbHash
   , prettyRbHash
   , TxHash (..)
+  , txHashBytes
+  , mkTxHash
   , prettyTxHash
 
     -- * Points
@@ -29,6 +34,8 @@ module Ouroboros.Consensus.Leios.Types
 
     -- * Endorser blocks
   , BytesSize
+  , TxOffset
+  , TxLocation (..)
   , LeiosEb (..)
   , leiosEbBodyItems
   , encodeLeiosEb
@@ -41,6 +48,8 @@ module Ouroboros.Consensus.Leios.Types
   , minCertificationSlot
   ) where
 
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
+import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -52,7 +61,9 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
+import Control.Monad (when)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import Data.Foldable (toList)
@@ -68,21 +79,31 @@ import Ouroboros.Consensus.Util (ShowProxy (..))
 -- * Hashes
 
 -- | Hash of an Endorser Block
-newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
-  deriving newtype (Eq, Ord, NoThunks, Serialise)
+--
+-- The fixed length makes decoding reject a peer-supplied hash of any other
+-- length.
+newtype EbHash = MkEbHash (PackedBytes 32)
+  deriving newtype (Eq, Ord, NoThunks)
   deriving stock Generic
 
 instance Show EbHash where
   show = prettyEbHash
 
+ebHashBytes :: EbHash -> ByteString
+ebHashBytes (MkEbHash bytes) = unpackPinnedBytes bytes
+
+-- | Fails unless the input is exactly 32 bytes.
+mkEbHash :: MonadFail m => ByteString -> m EbHash
+mkEbHash = fmap MkEbHash . packByteString
+
 encodeEbHash :: EbHash -> Encoding
-encodeEbHash (MkEbHash bytes) = CBOR.encodeBytes bytes
+encodeEbHash (MkEbHash bytes) = encodeFixedSized bytes
 
 decodeEbHash :: Decoder s EbHash
-decodeEbHash = MkEbHash <$> CBOR.decodeBytes
+decodeEbHash = MkEbHash <$> decodeFixedSized
 
 prettyEbHash :: EbHash -> String
-prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
+prettyEbHash = BS8.unpack . BS16.encode . ebHashBytes
 
 -- | Hash of a Ranking Block
 --
@@ -99,8 +120,14 @@ instance Show RbHash where
 encodeRbHash :: RbHash -> Encoding
 encodeRbHash (MkRbHash bytes) = CBOR.encodeBytes bytes
 
+-- | Fails unless the hash is exactly 32 bytes.
 decodeRbHash :: Decoder s RbHash
-decodeRbHash = MkRbHash <$> CBOR.decodeBytes
+decodeRbHash = do
+  bytes <- CBOR.decodeBytes
+  when (BS.length bytes /= 32) $
+    fail $
+      "RbHash: " <> show (BS.length bytes) <> " bytes, expected 32"
+  pure $ MkRbHash bytes
 
 prettyRbHash :: RbHash -> String
 prettyRbHash (MkRbHash bytes) = BS8.unpack (BS16.encode bytes)
@@ -111,15 +138,25 @@ instance SignableRepresentation RbHash where
       encodeRbHash point
 
 -- | Hash of a Leios transaction (the Blake2b-256 hash of its bytes).
-newtype TxHash = MkTxHash ByteString
+--
+-- The fixed length makes decoding reject a peer-supplied hash of any other
+-- length, and lets the tx cache read the four key words directly.
+newtype TxHash = MkTxHash (PackedBytes 32)
   deriving stock (Eq, Ord, Generic)
   deriving anyclass (NFData, NoThunks)
 
 instance Show TxHash where
   show = prettyTxHash
 
+txHashBytes :: TxHash -> ByteString
+txHashBytes (MkTxHash bytes) = unpackPinnedBytes bytes
+
+-- | Fails unless the input is exactly 32 bytes.
+mkTxHash :: MonadFail m => ByteString -> m TxHash
+mkTxHash = fmap MkTxHash . packByteString
+
 prettyTxHash :: TxHash -> String
-prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
+prettyTxHash = BS8.unpack . BS16.encode . txHashBytes
 
 -- * Points
 
@@ -142,12 +179,23 @@ instance SignableRepresentation LeiosPoint where
         <> encodeEbHash (pointEbHash point)
 
 prettyLeiosPoint :: LeiosPoint -> String
-prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
-  "(" ++ show slotNo ++ ", " ++ BS8.unpack (BS16.encode bytes) ++ ")"
+prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) ebHash) =
+  "(" ++ show slotNo ++ ", " ++ prettyEbHash ebHash ++ ")"
 
 -- * Endorser blocks
 
 type BytesSize = Word32
+
+-- | A transaction's offset (index) into an EB body.
+type TxOffset = Int
+
+-- | Where a tx's durable bytes live: an EB that references it, and the offset
+-- of its row there. Recorded in the LeiosTxCache on write confirmation, read
+-- back for cross-EB fill: a later EB referencing the same tx copies the bytes
+-- locally instead of re-fetching. Staleness is harmless -- the fill's guards
+-- make a vanished source a no-op and the tx stays in the fetch set.
+data TxLocation = MkTxLocation !EbHash !TxOffset
+  deriving (Eq, Show)
 
 -- | An Endorser Block as it is submitted through the network.
 -- TODO: Keep track of the slot of an EB?
@@ -192,8 +240,8 @@ encodeLeiosEbItemSize (ByteSize32 txSize) =
 encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb references) =
   foldl
-    ( \acc (MkTxHash bytes, txBytesSize) ->
-        acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
+    ( \acc (MkTxHash txHash, txBytesSize) ->
+        acc <> encodeFixedSized txHash <> CBOR.encodeWord32 txBytesSize
     )
     (CBOR.encodeMapLen $ fromIntegral $ length references)
     references

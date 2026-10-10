@@ -53,7 +53,6 @@ import Data.Maybe.Strict (StrictMaybe (..))
 import Data.SOP (All, Top)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb.Common (scanCompleteEbClosuresNotOlderThanSlot, withReader)
 import LeiosDemoTypes
   ( HasLeiosVoting
   , acquiredLeiosEbHashes
@@ -94,6 +93,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB.API (scanCompleteEbClosuresNotOlderThanSlot, withReader)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB

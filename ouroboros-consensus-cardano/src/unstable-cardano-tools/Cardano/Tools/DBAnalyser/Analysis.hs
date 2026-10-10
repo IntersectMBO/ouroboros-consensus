@@ -61,7 +61,6 @@ import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
-import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoTypes
   ( BytesSize
   , HasLeiosVoting (..)
@@ -105,6 +104,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
   , headerLeiosAnnouncement
   )
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader)
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.SizeInBytes

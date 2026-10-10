@@ -19,7 +19,7 @@
 --
 -- The benchmark populates through the first, @fsync@s the file, then reads
 -- through the second (a separate connection, so its private page cache starts
--- cold). This is @not@ reusing "LeiosDemoDb.SQLite": its @WAL@ + @mmap@ pin the
+-- cold). This is @not@ reusing "LeiosDB.SQLite": its @WAL@ + @mmap@ pin the
 -- pages and defeat cooling.
 module LeiosTxCache.Bench.SQLite
   ( newSQLiteLeiosTxCacheForPopulation
@@ -71,7 +71,7 @@ newSQLiteLeiosTxCacheForPopulation =
 --     intra-batch reuse: that is the honest "best SQLite can do cold".
 --   * DELETE journal — data in the single main file, no WAL\/-shm (itself an
 --     mmap) to cool separately; equivalent to WAL for a cold, disk-bound lookup.
---   * @page_size = 32768@ — matches "LeiosDemoDb.SQLite".
+--   * @page_size = 32768@ — matches "LeiosDB.SQLite".
 --
 -- The batch is resolved by the buffer-and-lie trick: each 'look' records its
 -- hash and answers 'Nothing' (only the timing matters), then one @IN@ query runs
@@ -82,7 +82,7 @@ newSQLiteLeiosTxCacheForQueries ::
   Int -> Int -> FilePath -> IO (LeiosTxCache IO () () b, IO ())
 newSQLiteLeiosTxCacheForQueries cacheSize nParams path = do
   -- A large @IN (?,..)@ rather than the @json_each(?)@ + @unhex@ form that
-  -- LeiosDemoDb.SQLite uses: json_each was measured both slower (parsing the
+  -- LeiosDB.SQLite uses: json_each was measured both slower (parsing the
   -- array and unhex-decoding every element) and far heavier on allocation
   -- (~50 MiB/batch building the hex text vs a few MiB here), and the
   -- SQLITE_MAX_VARIABLE_NUMBER worry that motivated it never bit — the limit is

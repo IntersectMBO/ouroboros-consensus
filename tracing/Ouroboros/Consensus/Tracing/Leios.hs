@@ -24,7 +24,6 @@ module Ouroboros.Consensus.Tracing.Leios
 
 import Cardano.Logging
 import Cardano.Slotting.Slot (SlotNo (..))
-import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
 import qualified LeiosDemoOnlyTestFetch as LF
 import qualified LeiosDemoOnlyTestNotify as LN
@@ -49,6 +48,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
   , headerLeiosAnnouncement
   )
+import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import qualified Ouroboros.Consensus.Tracing.Cdf as Cdf
 
 --------------------------------------------------------------------------------
@@ -120,20 +120,19 @@ calculateLeiosMetrics
       MkElId slotNo@(SlotNo slotNo_) _ ->
         if Cdf.null lmCdfState && annDelay > 20 -- During startup wait until we are in sync
           then nothingToDo
-          else
-            case Cdf.processDataPoint
-              Cdf.defaultConfig -- should come from config file
-              (fromIntegral slotNo_, slotNo, annDelay)
-              lmCdfState
-              lm of
-              Nothing -> nothingToDo
-              Just (lm', lmCdfState') ->
-                lm'
-                  { lmCdfState = lmCdfState'
-                  , lmTraceIt = True
-                  , lmTraceVars = Cdf.size lmCdfState' >= 45 -- wait until we have at least 45 samples before providing cdf estimates
-                  , lmDelay = realToFrac annDelay
-                  }
+          else case Cdf.processDataPoint
+            Cdf.defaultConfig -- should come from config file
+            (fromIntegral slotNo_, slotNo, annDelay)
+            lmCdfState
+            lm of
+            Nothing -> nothingToDo
+            Just (lm', lmCdfState') ->
+              lm'
+                { lmCdfState = lmCdfState'
+                , lmTraceIt = True
+                , lmTraceVars = Cdf.size lmCdfState' >= 45 -- wait until we have at least 45 samples before providing cdf estimates
+                , lmDelay = realToFrac annDelay
+                }
    where
     nothingToDo = lm{lmTraceIt = False}
 calculateLeiosMetrics lm _lc _ = lm
@@ -168,16 +167,46 @@ instance MetaTrace LeiosMetrics where
   documentFor _ = Just "EB announcement delay metrics, recomputed on every accepted announcement."
 
   metricsDocFor (Namespace _ ["LeiosMetrics"]) =
-    [ ("leios.eb.announcement.delay.cdf200ms", "probability for EB announcemement to complete within 200ms")
-    , ("leios.eb.announcement.delay.cdf400ms", "probability for EB announcemement to complete within 400ms")
-    , ("leios.eb.announcement.delay.cdf600ms", "probability for EB announcemement to complete within 600ms")
-    , ("leios.eb.announcement.delay.cdf800ms", "probability for EB announcemement to complete within 800ms")
-    , ("leios.eb.announcement.delay.cdf1000ms", "probability for EB announcemement to complete within 1000ms")
-    , ("leios.eb.announcement.delay.cdf1200ms", "probability for EB announcemement to complete within 1200ms")
-    , ("leios.eb.announcement.delay.cdf1400ms", "probability for EB announcemement to complete within 1400ms")
-    , ("leios.eb.announcement.delay.cdf1600ms", "probability for EB announcemement to complete within 1600ms")
-    , ("leios.eb.announcement.delay.cdf1800ms", "probability for EB announcemement to complete within 1800ms")
-    , ("leios.eb.announcement.delay.cdf2000ms", "probability for EB announcemement to complete within 2000ms")
+    [
+      ( "leios.eb.announcement.delay.cdf200ms"
+      , "probability for EB announcemement to complete within 200ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf400ms"
+      , "probability for EB announcemement to complete within 400ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf600ms"
+      , "probability for EB announcemement to complete within 600ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf800ms"
+      , "probability for EB announcemement to complete within 800ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf1000ms"
+      , "probability for EB announcemement to complete within 1000ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf1200ms"
+      , "probability for EB announcemement to complete within 1200ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf1400ms"
+      , "probability for EB announcemement to complete within 1400ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf1600ms"
+      , "probability for EB announcemement to complete within 1600ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf1800ms"
+      , "probability for EB announcemement to complete within 1800ms"
+      )
+    ,
+      ( "leios.eb.announcement.delay.cdf2000ms"
+      , "probability for EB announcemement to complete within 2000ms"
+      )
     , ("leios.eb.announcement.late", "number of late EB announcements that took longer than 2s")
     ]
   metricsDocFor _ = []

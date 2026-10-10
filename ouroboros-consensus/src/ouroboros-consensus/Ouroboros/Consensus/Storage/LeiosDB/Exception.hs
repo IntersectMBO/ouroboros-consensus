@@ -7,6 +7,7 @@ module Ouroboros.Consensus.Storage.LeiosDB.Exception
   , LeiosDbFailure (..)
   , LeiosDbWriteFailure (..)
   , throwLeiosDbException
+  , jsonLeiosDbException
   ) where
 
 import Control.Monad.Class.MonadThrow (Exception (..), MonadThrow, SomeException, throwIO)

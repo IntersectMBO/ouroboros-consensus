@@ -25,7 +25,6 @@ import qualified Codec.CBOR.Write as CBOR.Write
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
-import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoTypes (LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -38,6 +37,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Enclose
   ( Enclosing

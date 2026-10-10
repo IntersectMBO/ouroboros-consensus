@@ -29,7 +29,6 @@ import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
 import Data.Maybe (isJust)
-import qualified LeiosDemoDb as LeiosDb
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin, Origin))
 import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint (..)
@@ -47,6 +46,7 @@ import Ouroboros.Consensus.Storage.Common
   , StreamTo (..)
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block

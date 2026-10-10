@@ -55,7 +55,6 @@ import GHC.Generics (Generic)
 import GHC.IO.Handle (Handle)
 import GHC.IO.IOMode (IOMode (WriteMode))
 import GHC.Stack (HasCallStack, callStack)
-import LeiosDemoDb (InMemoryLeiosDb (..))
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block (Proxy (..), SlotNo)
 import Ouroboros.Consensus.BlockchainTime (mkSlotLength)
@@ -84,6 +83,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import qualified Ouroboros.Consensus.Shelley.Ledger.Ledger as SL
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (sgEpochLength))
+import Ouroboros.Consensus.Storage.LeiosDB (InMemoryLeiosDb (..))
 import System.Exit (die)
 import System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS

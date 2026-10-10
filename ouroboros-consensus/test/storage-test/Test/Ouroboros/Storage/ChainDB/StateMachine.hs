@@ -111,7 +111,6 @@ import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import Generics.SOP (All, Top)
 import qualified Generics.SOP as SOP
-import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes (HasLeiosVoting, TraceLeiosChainSel)
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
@@ -151,6 +150,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   )
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB

@@ -29,7 +29,6 @@ import qualified Data.Set as Set
 import Data.Time (secondsToDiffTime)
 import Data.Traversable (for)
 import Data.Word (Word64)
-import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -43,6 +42,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util (dropLast)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (Enclosing' (FallingEdgeWith))

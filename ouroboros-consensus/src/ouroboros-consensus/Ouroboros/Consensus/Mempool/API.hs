@@ -50,11 +50,11 @@ import Data.Map.Strict (Map)
 import Data.Measure (Measure)
 import qualified Data.Measure
 import GHC.Generics (Generic)
-import LeiosDemoTypes.LeiosJobs (TxHash)
 import NoThunks.Class
 import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Leios.Types (TxHash)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import Ouroboros.Consensus.Util.IOLike

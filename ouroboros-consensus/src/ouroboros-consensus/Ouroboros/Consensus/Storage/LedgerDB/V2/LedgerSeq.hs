@@ -54,7 +54,6 @@ import Cardano.Ledger.BaseTypes
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbReader)
 import LeiosDemoTypes (LeiosPoint (..), announcementLeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -70,6 +69,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   , ResolveLeiosBlock (..)
   , resolveAndApplyLeiosClosure
   )
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor

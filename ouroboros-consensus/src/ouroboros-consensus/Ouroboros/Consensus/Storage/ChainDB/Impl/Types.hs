@@ -93,7 +93,6 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoDb.Common (LeiosDbHandle)
 import LeiosDemoTypes (AcquiredLeiosEbs, EbHash, TraceLeiosChainSel)
 import LeiosUtils.CallTrace (SomeJsonCallTrace)
 import LeiosValidClaims (ValidClaims)
@@ -135,6 +134,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)

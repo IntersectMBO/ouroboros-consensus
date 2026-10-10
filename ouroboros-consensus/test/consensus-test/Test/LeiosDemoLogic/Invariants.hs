@@ -46,9 +46,9 @@ import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import Data.Foldable (foldl', toList)
-import Data.List (sort)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import Data.List (sort)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust, SNothing))
 import Data.Sequence.NonEmpty (NESeq)
@@ -57,8 +57,6 @@ import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Vector.Strict as V
 import Data.Void (Void, absurd)
 import Data.Word (Word64)
-import LeiosDemoDb (withWriter)
-import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoLogic
   ( AnnouncingHeader
   , ExnLeiosWellHashedBodyRejected (..)
@@ -76,14 +74,6 @@ import LeiosDemoLogic
   )
 import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
-import Test.Util.LeiosTestBlock
-  ( LeiosTestBlock
-  , announcing
-  , firstLeiosBlock
-  , issuedBy
-  , successorLeiosBlock
-  )
-import Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import LeiosDemoTypes
   ( AnnouncementSource (..)
   , BytesSize
@@ -112,6 +102,9 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , SystemTime (..)
   )
+import Ouroboros.Consensus.Forecast (OutsideForecastRange)
+import Ouroboros.Consensus.Storage.LeiosDB (withWriter)
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.IOLike (IOLike, evaluate)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( IsBigLedgerPeer (..)
@@ -121,6 +114,13 @@ import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.LeiosTestBlock
+  ( LeiosTestBlock
+  , announcing
+  , firstLeiosBlock
+  , issuedBy
+  , successorLeiosBlock
+  )
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
@@ -280,14 +280,15 @@ tests =
               -- preloaded to 'used'
               run bigLedgerPeers used =
                 let outstanding =
-                      (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used}) $
+                      (\o -> o{Leios.requestedBytesSizePerPeer = Map.singleton peerId used})
+                        $
                         -- the election fetching it, without which nothing is requested
                         Leios.focusElectionIfUnfocused
                           (Leios.announcementElection (announcementOf point 0))
                           h
-                          $ Leios.acquireEbBody h jobPool
-                          $ Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing
-                          $ (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
+                        $ Leios.acquireEbBody h jobPool
+                        $ Leios.recordMaxAnnouncementSlot h (SlotNo 10) SNothing
+                        $ (emptyLeiosOutstanding (mkStdGen 0) (SlotNo 0) :: LeiosOutstanding Int)
                     (_o, reqs, _d) =
                       leiosFetchLogicIteration
                         demoLeiosFetchStaticEnv
@@ -622,7 +623,7 @@ runCmdsCollision cmds = runSimOrThrow go
         (applyCmd centralVar conn nullLeiosTxCache kv peerVars (MkPeerId (0 :: Int)))
         cmds
     -- The plain selector: record dot cannot select a 'HasCallStack =>' field.
-    points <- LeiosDb.withReader dbHandle LeiosDb.scanEbPoints
+    points <- LeiosDb.withReader dbHandle LeiosDb.testScanEbPoints
     let drain acc =
           atomically (tryReadTChan chan) >>= \case
             Nothing -> pure (reverse acc)

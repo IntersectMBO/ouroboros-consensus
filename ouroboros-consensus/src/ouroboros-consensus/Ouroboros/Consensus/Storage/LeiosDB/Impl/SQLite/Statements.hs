@@ -55,8 +55,8 @@ data CopierStmts = CopierStmts
   -- ^ 'sql_copy_insert_eb'
   , ccInsertEbTxs :: !DB.Statement
   -- ^ 'sql_copy_insert_ebTxs'
-  , ccInsertTxs :: !DB.Statement
-  -- ^ 'sql_copy_insert_txs'
+  , ccInsertEbTxBytes :: !DB.Statement
+  -- ^ 'sql_copy_insert_ebTxBytes'
   }
 
 -- | Prepare the copy statements on the copier's immutable connection, which
@@ -66,7 +66,7 @@ prepareCopierStmts db = preparingStmts db $ \prep -> do
   ccCompleteness <- prep sql_copy_completeness
   ccInsertEb <- prep sql_copy_insert_eb
   ccInsertEbTxs <- prep sql_copy_insert_ebTxs
-  ccInsertTxs <- prep sql_copy_insert_txs
+  ccInsertEbTxBytes <- prep sql_copy_insert_ebTxBytes
   pure CopierStmts{..}
 
 finalizeCopierStmts :: CopierStmts -> IO ()
@@ -74,15 +74,13 @@ finalizeCopierStmts CopierStmts{..} = do
   dbFinalize ccCompleteness
   dbFinalize ccInsertEb
   dbFinalize ccInsertEbTxs
-  dbFinalize ccInsertTxs
+  dbFinalize ccInsertEbTxBytes
 
 -- | The GC tick's prepared statements, prepared once on the writer's
 -- volatile connection.
 data GcStmts = GcStmts
   { gsHasWork :: !DB.Statement
   -- ^ 'sql_gc_has_work'
-  , gsAddGcCandidatesTxs :: !DB.Statement
-  -- ^ 'sql_gc_stage_marked'
   , gsMarkEbForGC :: !DB.Statement
   -- ^ 'sql_gc_mark'
   }
@@ -90,14 +88,12 @@ data GcStmts = GcStmts
 prepareGcStmts :: HasCallStack => DB.Database -> IO GcStmts
 prepareGcStmts db = preparingStmts db $ \prep -> do
   gsHasWork <- prep sql_gc_has_work
-  gsAddGcCandidatesTxs <- prep sql_gc_stage_marked
   gsMarkEbForGC <- prep sql_gc_mark
   pure GcStmts{..}
 
 finalizeGcStmts :: GcStmts -> IO ()
 finalizeGcStmts GcStmts{..} = do
   dbFinalize gsHasWork
-  dbFinalize gsAddGcCandidatesTxs
   dbFinalize gsMarkEbForGC
 
 -- | The sweep statements, prepared on the writer's volatile connection;
@@ -107,24 +103,10 @@ data SweeperStmts = SweeperStmts
   -- ^ 'sql_sweep_pick_marked'
   , swEvictEbTxs :: !DB.Statement
   -- ^ 'sql_gc_ebTxs'
-  , swEvictMissingTxs :: !DB.Statement
-  -- ^ 'sql_gc_missing_txs'
+  , swEvictEbTxBytes :: !DB.Statement
+  -- ^ 'sql_gc_ebTxBytes'
   , swEvictEbs :: !DB.Statement
   -- ^ 'sql_gc_ebs_by_hash'
-  , swAnyMarked :: !DB.Statement
-  -- ^ 'sql_sweep_any_marked'
-  , swPickOrphans :: !DB.Statement
-  -- ^ 'sql_sweep_pick_orphans'
-  , swOrphanTxs :: !DB.Statement
-  -- ^ 'sql_sweep_orphan_txs'
-  , swPopOrphans :: !DB.Statement
-  -- ^ 'sql_sweep_pop_orphans'
-  , swHasUnstagedGcCandidates :: !DB.Statement
-  -- ^ 'sql_has_unstaged_gc_candidates'
-  , swUnstagedGcCandidatesPage :: !DB.Statement
-  -- ^ 'sql_unstaged_gc_candidates_page'
-  , swInsertGcCandidates :: !DB.Statement
-  -- ^ 'sql_insert_gc_candidates'
   }
 
 -- | Prepare the sweep statements on the writer's volatile connection.
@@ -132,47 +114,32 @@ prepareSweeperStmts :: HasCallStack => DB.Database -> IO SweeperStmts
 prepareSweeperStmts db = preparingStmts db $ \prep -> do
   swPickMarked <- prep sql_sweep_pick_marked
   swEvictEbTxs <- prep sql_gc_ebTxs
-  swEvictMissingTxs <- prep sql_gc_missing_txs
+  swEvictEbTxBytes <- prep sql_gc_ebTxBytes
   swEvictEbs <- prep sql_gc_ebs_by_hash
-  swAnyMarked <- prep sql_sweep_any_marked
-  swPickOrphans <- prep sql_sweep_pick_orphans
-  swOrphanTxs <- prep sql_sweep_orphan_txs
-  swPopOrphans <- prep sql_sweep_pop_orphans
-  swHasUnstagedGcCandidates <- prep sql_has_unstaged_gc_candidates
-  swUnstagedGcCandidatesPage <- prep sql_unstaged_gc_candidates_page
-  swInsertGcCandidates <- prep sql_insert_gc_candidates
   pure SweeperStmts{..}
 
 finalizeSweeperStmts :: SweeperStmts -> IO ()
 finalizeSweeperStmts SweeperStmts{..} = do
   dbFinalize swPickMarked
   dbFinalize swEvictEbTxs
-  dbFinalize swEvictMissingTxs
+  dbFinalize swEvictEbTxBytes
   dbFinalize swEvictEbs
-  dbFinalize swAnyMarked
-  dbFinalize swPickOrphans
-  dbFinalize swOrphanTxs
-  dbFinalize swPopOrphans
-  dbFinalize swHasUnstagedGcCandidates
-  dbFinalize swUnstagedGcCandidatesPage
-  dbFinalize swInsertGcCandidates
 
 -- | Compiled SQL statements for the Volatile partition.
 data VolStmts = VolStmts
   { stScanEbPoints :: !DB.Statement
   , stInsertEbPoint :: !DB.Statement
+  , stLookupStoredEbSize :: !DB.Statement
+  , stSetEbPointSize :: !DB.Statement
   , stLookupEbBody :: !DB.Statement
   , stInsertEbTxsRow :: !DB.Statement
   , stInitMissingCount :: !DB.Statement
-  , stInsertTx :: !DB.Statement
+  , stPreallocEbTxBytes :: !DB.Statement
+  , stFillEbTxBytes :: !DB.Statement
+  , stFillFromLocal :: !DB.Statement
   , stDecrMissingCount :: !DB.Statement
-  , stInsertMissingTxs :: !DB.Statement
-  , stDeleteMissingTxs :: !DB.Statement
-  , stFindCompleteEbs :: !DB.Statement
-  , stMarkNotifiedEbs :: !DB.Statement
   , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
-  , stFilterMissingTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
   , stScanCompleteEbsSince :: !DB.Statement
   }
@@ -210,18 +177,17 @@ prepareVolStmts :: DB.Database -> IO VolStmts
 prepareVolStmts db = preparingStmts db $ \prep -> do
   stScanEbPoints <- prep sql_scan_ebs
   stInsertEbPoint <- prep sql_insert_eb
+  stLookupStoredEbSize <- prep sql_lookup_stored_eb_size
+  stSetEbPointSize <- prep sql_set_eb_point_size
   stLookupEbBody <- prep sql_lookup_ebBodies
   stInsertEbTxsRow <- prep sql_insert_ebBody
   stInitMissingCount <- prep sql_init_missing_tx_count
-  stInsertTx <- prep sql_insert_tx
+  stPreallocEbTxBytes <- prep sql_prealloc_ebTxBytes
+  stFillEbTxBytes <- prep sql_fill_ebTxBytes
+  stFillFromLocal <- prep sql_fill_from_local
   stDecrMissingCount <- prep sql_decrement_missing_tx_count
-  stInsertMissingTxs <- prep sql_insert_missing_txs
-  stDeleteMissingTxs <- prep sql_delete_missing_txs
-  stFindCompleteEbs <- prep sql_find_complete_ebs
-  stMarkNotifiedEbs <- prep sql_mark_notified_ebs
   stMarkPointNotified <- prep sql_mark_point_notified
   stBatchRetrieveTxs <- prep sql_retrieve_from_ebTxs_json
-  stFilterMissingTxs <- prep sql_filter_missing_txs_json
   stLookupEbClosure <- prep sql_lookup_eb_closure
   stScanCompleteEbsSince <- prep sql_scan_complete_ebs_since
   pure VolStmts{..}
@@ -232,17 +198,16 @@ finalizeVolStmts :: VolStmts -> IO ()
 finalizeVolStmts VolStmts{..} = do
   dbFinalize stScanEbPoints
   dbFinalize stInsertEbPoint
+  dbFinalize stLookupStoredEbSize
+  dbFinalize stSetEbPointSize
   dbFinalize stLookupEbBody
   dbFinalize stInsertEbTxsRow
   dbFinalize stInitMissingCount
-  dbFinalize stInsertTx
+  dbFinalize stPreallocEbTxBytes
+  dbFinalize stFillEbTxBytes
+  dbFinalize stFillFromLocal
   dbFinalize stDecrMissingCount
-  dbFinalize stInsertMissingTxs
-  dbFinalize stDeleteMissingTxs
-  dbFinalize stFindCompleteEbs
-  dbFinalize stMarkNotifiedEbs
   dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
-  dbFinalize stFilterMissingTxs
   dbFinalize stLookupEbClosure
   dbFinalize stScanCompleteEbsSince

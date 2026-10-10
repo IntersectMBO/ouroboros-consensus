@@ -17,15 +17,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Function ((&))
 import qualified Data.Vector.Strict as V
-import LeiosDemoDb
-  ( LeiosDbHandle
-  , LeiosDbReader (..)
-  , LeiosDbWriter (..)
-  , Promise (..)
-  , newLeiosDBInMemory
-  , withReader
-  , withWriter
-  )
 import LeiosDemoTypes
   ( BytesSize
   , LeiosEb (..)
@@ -51,6 +42,15 @@ import Ouroboros.Consensus.Ledger.Tables (HasLedgerTables (projectLedgerTables))
 import Ouroboros.Consensus.Ledger.Tables.Combinators (ltliftA2)
 import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK)
 import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables, restrictValuesMK)
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbHandle
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , newLeiosDBInMemory
+  , withReader
+  , withWriter
+  )
 import Test.Consensus.Mempool.Util
   ( TestBlock
   , TestTx

@@ -37,8 +37,6 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (withReader)
-import LeiosDemoDb.Common (LeiosDbHandle (..), LeiosDbReader (..))
 import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -63,6 +61,8 @@ import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Storage.LeiosDB (withReader)
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle (..), LeiosDbReader (..))
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
@@ -492,7 +492,7 @@ implCloseDB (LDBHandle varState) = do
         s' <- readTVarIO s
         closeLedgerSeq s'
         releaseResources (Proxy @blk) res'
-        leiosDbReader.close
+        closeReader leiosDbReader
     )
 
 {-------------------------------------------------------------------------------

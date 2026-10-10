@@ -1,7 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
--- | Concurrent benchmark for "Ouroboros.Consensus.Storage.LeiosDB" mirroring production access patterns.
+-- | Concurrent benchmark for 'LeiosDemoDb' mirroring production access patterns.
 --
 -- The following roles run concurrently against the same SQLite handle:
 --
@@ -26,28 +27,30 @@
 -- Usage:
 --
 -- @
--- cabal bench leios-db-bench --benchmark-options='+RTS -N2 -RTS'
+-- cabal bench leios-db-bench --benchmark-options='+RTS -N4 -RTS'
 -- @
 module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
+import Control.Exception (bracket)
 import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.ResourceRegistry (ResourceRegistry, withRegistry)
-import Control.Tracer (debugTracer, (>$<))
+import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Strict as V
-import Ouroboros.Consensus.Leios.Types
+import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
   , LeiosEb (..)
   , LeiosPoint (..)
   , TxHash (..)
   , encodeLeiosEbSize
+  , txHashBytes
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (..)
@@ -63,12 +66,13 @@ import Ouroboros.Consensus.Storage.LeiosDB
   )
 import System.IO (hFlush, stdout)
 import System.IO.Temp (withSystemTempDirectory)
+import Test.Util.LeiosHash (unsafeEbHashFromBytes, unsafeTxHashFromBytes)
 
 main :: IO ()
 main = do
   putStr $
     unlines
-      [ "LeiosDB concurrent benchmark"
+      [ "LeiosDemoDb concurrent benchmark"
       , ""
       , "Database setup:"
       , "  EBs pre-populated : " <> show numPrePopulatedEbs
@@ -84,9 +88,11 @@ main = do
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
       , ""
       ]
-  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> withRegistry $ \registry -> do
-    env <- setupBenchEnv registry tmpDir
-    runBench (benchConcurrentAll env)
+  withSystemTempDirectory "leios-db-bench" $ \tmpDir -> withRegistry $ \registry ->
+    -- The directory goes with this scope, so the connections must close
+    -- before it does.
+    bracket (setupBenchEnv registry tmpDir) (\env -> closeLeiosDbHandle env.beDb) $ \env ->
+      runBench (benchConcurrentAll env)
 
 -- * Configuration
 
@@ -152,7 +158,7 @@ chainSelReader :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
 chainSelReader db points =
   withReader db $ \r ->
     forM_ (take numChainSelReads (cycle points)) $ \p ->
-      lookupEbClosure r (pointEbHash p)
+      lookupEbClosure r p.pointEbHash
 
 -- | Fires periodic garbage-collect calls. Handle-level operation; touches
 -- every table when implemented (currently a no-op backend-side, but the
@@ -166,8 +172,8 @@ gcTicker db =
 fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()
 fetchServer db points i =
   withReader db $ \r -> do
-    forM_ ebPoints $ \p -> lookupEbBody r (pointEbHash p)
-    forM_ txPoints $ \p -> batchRetrieveTxs r (pointEbHash p) sampleOffsets
+    forM_ ebPoints $ \p -> lookupEbBody r p.pointEbHash
+    forM_ txPoints $ \p -> batchRetrieveTxs r p.pointEbHash sampleOffsets
  where
   sampleOffsets = [0, 10 .. txsPerEb - 1]
   ebPoints = take 30 $ drop (i * 30) (cycle points)
@@ -189,11 +195,7 @@ data BenchEnv = BenchEnv
 setupBenchEnv :: ResourceRegistry IO -> FilePath -> IO BenchEnv
 setupBenchEnv registry tmpDir = do
   db <-
-    newLeiosDBSQLite
-      registry
-      (show >$< debugTracer)
-      (tmpDir <> "/bench.vol.db")
-      (tmpDir <> "/bench.imm.db")
+    newLeiosDBSQLite registry nullTracer (tmpDir <> "/bench.vol.db") (tmpDir <> "/bench.imm.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
     withWriter db (`insertOneEb` i)
@@ -245,16 +247,19 @@ insertOneEb writer ebIdx = do
   let point = genPoint ebIdx
       eb = genEb ebIdx
       txs =
-        [ (h, genTx h)
+        [ (txIdx, genTx (genTxHash ebIdx txIdx))
         | txIdx <- [0 .. txsPerEb - 1]
-        , let h = genTxHash ebIdx txIdx
         ]
   pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
-  bodyWritten <- writeEbBody writer point eb
-  txsWritten <- writeTxs writer txs
-  awaitAll [pointWritten, void bodyWritten, void txsWritten]
+  bodyWritten <- writeEbBody writer point eb []
+  txsWritten <- writeTxs writer point txs
+  awaitAll [void pointWritten, void bodyWritten, void txsWritten]
 
 -- * Deterministic data generation
+
+-- | Size of every generated TX payload: 16 KiB.
+txBytesSize :: Int
+txBytesSize = 16_384
 
 -- | 'LeiosPoint' from an index (SlotNo = index).
 genPoint :: Int -> LeiosPoint
@@ -262,16 +267,21 @@ genPoint i = MkLeiosPoint (SlotNo $ fromIntegral i) (genEbHash i)
 
 -- | 'EbHash' from an index: \"ebHash:<index>\" padded to 32 bytes with zeros.
 genEbHash :: Int -> EbHash
-genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genEbHash i = unsafeEbHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
--- | 'LeiosEb' with 'txsPerEb' transactions (200 bytes each).
+-- | 'LeiosEb' with 'txsPerEb' transactions of 'txBytesSize' each.
+--
+-- The declared size must be the payload size of 'genTx': a tx write of any
+-- other size is dropped.
 genEb :: Int -> LeiosEb
 genEb ebIdx =
   MkLeiosEb $
     V.fromList
-      [(genTxHash ebIdx txIdx, 200 :: BytesSize) | txIdx <- [0 .. txsPerEb - 1]]
+      [ (genTxHash ebIdx txIdx, fromIntegral txBytesSize :: BytesSize)
+      | txIdx <- [0 .. txsPerEb - 1]
+      ]
 
 -- | 'TxHash' from an EB index + TX offset: \"txHash:<ebIdx>:<txIdx>\" padded
 -- to 32 bytes with zeros.
@@ -279,10 +289,13 @@ genEb ebIdx =
 -- NOTE: This is taking an EB index as it always generates the worst case of
 -- fully disjunct transaction closures between EBs.
 genTxHash :: Int -> Int -> TxHash
-genTxHash ebIdx txIdx = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
+genTxHash ebIdx txIdx = unsafeTxHashFromBytes $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
--- | Generate a TX payload: the TX hash bytes padded with zeros to 16 KiB.
+-- | Generate a TX payload: the TX hash bytes padded with zeros to
+-- 'txBytesSize'.
 genTx :: TxHash -> BS.ByteString
-genTx (MkTxHash h) = h <> BS.replicate (16_384 - BS.length h) 0
+genTx txHash = h <> BS.replicate (txBytesSize - BS.length h) 0
+ where
+  h = txHashBytes txHash

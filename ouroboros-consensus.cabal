@@ -96,12 +96,6 @@ library
   import: common-lib
   hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus
   exposed-modules:
-    LeiosDemoDb
-    LeiosDemoDb.Common
-    LeiosDemoDb.InMemory
-    LeiosDemoDb.SQLite
-    LeiosDemoDb.Trace
-    LeiosDemoException
     LeiosDemoLogic
     LeiosDemoLogic.Announcements
     LeiosDemoLogic.Announcements.ElBimap
@@ -886,7 +880,6 @@ test-suite consensus-test
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
     Test.Consensus.Util.Versioned
-    Test.LeiosDemoDb
     Test.LeiosDemoLogic
     Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoLogic.Invariants
@@ -1187,50 +1180,6 @@ benchmark PerasCertDB-bench
     tasty-bench,
     unstable-consensus-testlib,
 
-benchmark leios-db-bench
-  import: common-bench
-  type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/bench/leios-db-bench
-  main-is: Main.hs
-  ghc-options: -with-rtsopts=-N4
-  build-depends:
-    async,
-    base,
-    bytestring,
-    cardano-slotting,
-    contra-tracer,
-    io-classes:si-timers,
-    ouroboros-consensus,
-    ouroboros-consensus:unstable-consensus-testlib,
-    resource-registry,
-    temporary,
-    time,
-    vector,
-
-benchmark leios-gc-bench
-  import: common-bench
-  type: exitcode-stdio-1.0
-  hs-source-dirs: ouroboros-consensus/bench/leios-gc-bench
-  main-is: Main.hs
-  ghc-options: -with-rtsopts=-N4
-  build-depends:
-    async,
-    base,
-    bytestring,
-    cardano-slotting,
-    contra-tracer,
-    direct-sqlite,
-    directory,
-    io-classes:si-timers,
-    optparse-applicative,
-    ouroboros-consensus,
-    ouroboros-consensus:unstable-consensus-testlib,
-    resource-registry,
-    temporary,
-    text,
-    time,
-    vector,
-
 benchmark leios-txcache-bench
   import: common-bench
   type: exitcode-stdio-1.0
@@ -1288,6 +1237,7 @@ benchmark LeiosDB-bench
     contra-tracer,
     io-classes:si-timers,
     ouroboros-consensus,
+    ouroboros-consensus:unstable-consensus-testlib,
     resource-registry,
     temporary,
     time,
@@ -1311,6 +1261,7 @@ benchmark LeiosDB-gc-bench
     io-classes:si-timers,
     optparse-applicative,
     ouroboros-consensus,
+    ouroboros-consensus:unstable-consensus-testlib,
     resource-registry,
     temporary,
     text,

@@ -63,7 +63,6 @@ import qualified Data.Text as Text
 import Data.Typeable
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes.LeiosJobs (TxHash)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -71,6 +70,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (TxHash)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))

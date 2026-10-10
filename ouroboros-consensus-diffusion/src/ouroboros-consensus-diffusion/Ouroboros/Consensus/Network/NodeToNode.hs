@@ -81,14 +81,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Data.Void (Void)
-import LeiosDemoDb
-  ( LeiosDbHandle (subscribeEbNotifications)
-  , LeiosDbReader
-  , LeiosDbWriter
-  , LeiosEbNotification (..)
-  , withReader
-  , withWriter
-  )
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoOnlyTestFetch
@@ -187,6 +179,14 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
   , leiosTxBytesOfGenTx
+  )
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbHandle (subscribeEbNotifications)
+  , LeiosDbReader
+  , LeiosDbWriter
+  , LeiosEbNotification (..)
+  , withReader
+  , withWriter
   )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy, whenJust)

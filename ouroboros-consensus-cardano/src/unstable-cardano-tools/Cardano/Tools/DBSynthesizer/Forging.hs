@@ -27,11 +27,6 @@ import Data.Either (isRight)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
-import LeiosDemoDb
-  ( LeiosDbReader
-  , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
-  , awaitAll
-  )
 import LeiosDemoTypes
   ( ForgedLeiosEb (..)
   , LeiosPoint (..)
@@ -93,6 +88,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
   ( noPunishment
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader
+  , LeiosDbWriter (writeEbBody, writeEbPoint, writeTxs)
+  , awaitAll
+  )
 import Ouroboros.Consensus.Util.EarlyExit
   ( withEarlyExit
   )

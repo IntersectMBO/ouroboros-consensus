@@ -33,7 +33,6 @@ import qualified Test.Consensus.Util.Bitmap (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Pred (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
-import qualified Test.LeiosDemoDb (tests)
 import qualified Test.LeiosDemoLogic (tests)
 import qualified Test.LeiosDemoLogic.Announcements (tests)
 import qualified Test.LeiosDemoLogic.Invariants (tests)
@@ -112,7 +111,6 @@ tests =
     , testGroup
         "Leios"
         [ Test.LeiosDemoTypes.tests
-        , Test.LeiosDemoDb.tests
         , Test.LeiosDemoLogic.tests
         , Test.LeiosDemoLogic.Announcements.tests
         , Test.LeiosDemoLogic.Invariants.tests

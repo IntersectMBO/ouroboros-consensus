@@ -24,17 +24,14 @@ sql_schema_vol =
           -- 3 = marked for GC, awaiting the sweeper
           "  status INTEGER NOT NULL DEFAULT 0,"
         ]
-        <> sharedTables
-        <> [ -- This index speeds up tx -> EB lookups, which is necessary for GCing orphaned transactions
-             -- after their EB was GCed.
-             "CREATE INDEX IF NOT EXISTS idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);"
-           , "CREATE TABLE IF NOT EXISTS ebsMissingTxs ("
-           , "  txHashBytes BLOB NOT NULL,"
-           , "  ebHashBytes BLOB NOT NULL,"
-           , "  PRIMARY KEY (txHashBytes, ebHashBytes)"
-           , ");"
-           , "CREATE INDEX IF NOT EXISTS idx_ebsMissingTxs_ebHashBytes ON ebsMissingTxs(ebHashBytes);"
+        <> [ -- What 'sql_lookup_stored_eb_size' seeks on. Partial, so the rows that
+             -- name a hash without having fetched its body are never visited: an
+             -- attacker announcing one hash in every slot it wins makes them as
+             -- numerous as its elections in the live window, and every later
+             -- announcement of that hash would otherwise visit them all again.
+             "CREATE INDEX IF NOT EXISTS idx_ebs_acquired ON ebs(ebHashBytes) WHERE missingTxCount IS NOT NULL;"
            ]
+        <> sharedTables
     )
     <> sql_schema_gc
 
@@ -42,11 +39,7 @@ sql_schema_vol =
 sql_schema_gc :: String
 sql_schema_gc =
   unlines
-    [ -- Persistent orphan-tx hints: txs of GC-marked EBs, deleted only once
-      -- provably unreferenced ('sql_sweep_orphan_txs'). Survives restarts
-      -- together with the status = 3 marks.
-      "CREATE TABLE IF NOT EXISTS gcTxCandidates (txHashBytes BLOB NOT NULL PRIMARY KEY);"
-    , -- What the mark scan reads; marking removes the row from it, so
+    [ -- What the mark scan reads; marking removes the row from it, so
       -- each row is marked at most once.
       "CREATE INDEX IF NOT EXISTS idx_ebs_sweepable ON ebs(ebSlot) WHERE status IN (0, 2);"
     , -- What the sweeper's batch pick reads.
@@ -63,9 +56,7 @@ sql_schema_gc =
 -- over ATTACH.
 --
 -- Left out, since EBs land here complete and are never collected:
--- @ebs.missingTxCount@, @ebs.status@, @ebsMissingTxs@, the GC tables and
--- indexes, and @idx_ebTxs_txHashBytes@. Files created before the split still
--- have some of them; nothing reads them.
+-- @ebs.missingTxCount@, @ebs.status@ and the indexes on them.
 sql_schema_imm :: String
 sql_schema_imm = unlines $ ebsTable [] <> sharedTables
 
@@ -80,7 +71,10 @@ ebsTable extraColumns =
   [ "CREATE TABLE IF NOT EXISTS ebs ("
   , "  ebSlot INTEGER NOT NULL,"
   , "  ebHashBytes BLOB NOT NULL,"
-  , "  ebBytesSize INTEGER NOT NULL,"
+  , -- the body's actual size once this point has acquired it (see
+    -- 'sql_lookup_stored_eb_size'), and the first size it was announced at
+    -- before that
+    "  ebBytesSize INTEGER NOT NULL,"
   ]
     <> extraColumns
     <> [ "  PRIMARY KEY (ebSlot, ebHashBytes)"
@@ -92,16 +86,40 @@ ebsTable extraColumns =
 -- | The tables that are identical in both partitions.
 sharedTables :: [String]
 sharedTables =
-  [ "CREATE TABLE IF NOT EXISTS ebTxs ("
+  [ -- The body: one row per referenced tx, written in one pass when the body
+    -- arrives. 'txHashBytes' is a payload here, not a key -- nothing indexes
+    -- by tx hash, so the insert is sequential within the EB. Optimized for
+    -- the worst case: an adversary shares no txs between EBs, so a shared
+    -- store only ever saved bytes an adversary declines to share, while its
+    -- hash-scattered writes cost ~1 dirtied page per row on every EB
+    -- (measured 79% of the body write) and scale with a tx count the EB
+    -- producer chooses.
+    "CREATE TABLE IF NOT EXISTS ebTxs ("
   , "  ebHashBytes BLOB NOT NULL,"
   , "  txOffset INTEGER NOT NULL,"
   , "  txHashBytes BLOB NOT NULL,"
   , "  txBytesSize INTEGER NOT NULL,"
   , "  PRIMARY KEY (ebHashBytes, txOffset)"
   , ");"
-  , "CREATE TABLE IF NOT EXISTS txs ("
-  , "  txHashBytes BLOB NOT NULL PRIMARY KEY,"
+  , -- The closure: tx bytes owned by the referencing EB, same key as its
+    -- 'ebTxs' row. A tx shared by two EBs is stored twice; in exchange
+    -- writes are sequential, completion is counting, and eviction is a
+    -- range delete -- no orphan concept, no tx-hash index.
+    --
+    -- Every row is allocated at body-arrival time as @zeroblob@ of the
+    -- declared size, in one offset-ordered pass, so the range's pages are
+    -- physically contiguous and fully packed. A closure is written once but
+    -- served many times: peers fetch it as offset ranges, voting reads it
+    -- whole, the copier streams it -- all sequential reads over that
+    -- layout. Arrivals then overwrite rows in place ('filled' 0 -> 1),
+    -- which cannot split pages because the size cannot change.
+    --
+    -- 'filled' precedes the blob so probing it never touches overflow pages.
+    "CREATE TABLE IF NOT EXISTS ebTxBytes ("
+  , "  ebHashBytes BLOB NOT NULL,"
+  , "  txOffset INTEGER NOT NULL,"
+  , "  filled INTEGER NOT NULL DEFAULT 0,"
   , "  txBytes BLOB NOT NULL,"
-  , "  txBytesSize INTEGER NOT NULL"
+  , "  PRIMARY KEY (ebHashBytes, txOffset)"
   , ");"
   ]
