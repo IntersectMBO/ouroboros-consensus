@@ -20,6 +20,18 @@ index-state:
 
 packages: .
 
+-- Temporary dependency on https://github.com/IntersectMBO/ouroboros-network/pull/5431.
+-- Replace with an upstream main commit or release before merging.
+source-repository-package
+  type: git
+  location: https://github.com/intersectmbo/ouroboros-network.git
+  tag: 23da2ca0b33eafb1ea4dffec822a725cc6ae7554
+  --sha256: sha256-Gu/LprEhYve46XH//o20DnwcMnJ3paqM2XCrzo8zsRA=
+  subdir:
+    ouroboros-network
+    cardano-diffusion
+    network-mux
+
 -- We want to always build the test-suites and benchmarks
 tests: True
 benchmarks: True
