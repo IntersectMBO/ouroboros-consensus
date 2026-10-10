@@ -75,8 +75,8 @@ tests =
         "TxSeq"
         [ testProperty "lookupByTicketNo complete" prop_TxSeq_lookupByTicketNo_complete
         , testProperty "lookupByTicketNo sound" prop_TxSeq_lookupByTicketNo_sound
-        , testProperty "splitAfterTxSize" prop_TxSeq_splitAfterTxSize
-        , testProperty "splitAfterTxSizeSpec" prop_TxSeq_splitAfterTxSizeSpec
+        , testProperty "splitAfterTxSizeWithInitSize" prop_TxSeq_splitAfterTxSizeWithInitSize
+        , testProperty "splitAfterTxSizeWithInitSizeSpec" prop_TxSeq_splitAfterTxSizeWithInitSizeSpec
         ]
     , testGroup
         "IOSim properties"
@@ -125,8 +125,8 @@ prop_Mempool_snapshotPartition_zeroEbCapacity :: TestSetupWithTxs -> Property
 prop_Mempool_snapshotPartition_zeroEbCapacity setup =
   withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
     _ <- addTxs mempool (allTxs setup)
-    MempoolSnapshot{snapshotPartition} <- atomically $ getSnapshot mempool
-    let (_blockTxs, _blockSize, ebTxs, _ebSize) = snapshotPartition Measure.zero Measure.zero
+    MempoolSnapshot{snapshotPartitionWithInitialPayload} <- atomically $ getSnapshot mempool
+    let (_blockTxs, _blockSize, ebTxs, _ebSize) = snapshotPartitionWithInitialPayload Nothing Measure.zero Measure.zero
     return $
       counterexample ("endorser-block part not empty: " <> condense (map txForgetValidated ebTxs)) $
         null ebTxs
@@ -139,7 +139,8 @@ prop_Mempool_snapshotPartition_blockPrefix setup =
   forAll (choose (0, 120 :: Word32)) $ \percent ->
     withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
       _ <- addTxs mempool (allTxs setup)
-      MempoolSnapshot{snapshotTxs, snapshotPartition} <- atomically $ getSnapshot mempool
+      MempoolSnapshot{snapshotTxs, snapshotPartitionWithInitialPayload} <-
+        atomically $ getSnapshot mempool
       let measures = [m | (_, _, m) <- snapshotTxs]
           TxMeasure (IgnoringOverflow (ByteSize32 totalBytes)) _ = List.foldl' Measure.plus Measure.zero measures
           capacity =
@@ -152,7 +153,7 @@ prop_Mempool_snapshotPartition_blockPrefix setup =
             length $ takeWhile (Measure.<= capacity) $ drop 1 $ scanl Measure.plus Measure.zero measures
           expectedTxs = map (txForgetValidated . prjTx) (take prefixLength snapshotTxs)
           expectedSize = List.foldl' Measure.plus Measure.zero (take prefixLength measures)
-          (blockTxs, blockSize, ebTxs, _ebSize) = snapshotPartition capacity Measure.zero
+          (blockTxs, blockSize, ebTxs, _ebSize) = snapshotPartitionWithInitialPayload Nothing capacity Measure.zero
       return $
         counterexample ("capacity: " <> show capacity) $
           map txForgetValidated blockTxs === expectedTxs
@@ -989,16 +990,26 @@ prop_TxSeq_lookupByTicketNo_sound smalls small =
   mkTicket x = TxTicket x (mkTicketNo x) mempty
   mkTicketNo = TicketNo . toEnum
 
--- | Test that the 'fst' of the result of 'splitAfterTxSize' only contains
--- 'TxTicket's whose summed up transaction sizes are less than or equal to
--- that of the byte size which the 'TxSeq' was split on.
-prop_TxSeq_splitAfterTxSize :: TxSizeSplitTestSetup -> Property
-prop_TxSeq_splitAfterTxSize tss =
-  property $ txSizeSum (TxSeq.toList before) <= tssTxSizeToSplitOn
+-- | Test that one of the following is true:
+-- * the 'fst' of the result of 'splitAfterTxSizeWithInitSize' only contains 'TxTicket's
+--   whose summed up transaction sizes, plus initial payload size, are less than or equal
+--   to that of the byte size which the 'TxSeq' was split on,
+-- * the initial payload size is greater than or equal to the byte size which the 'TxSeq'
+--   was split on, in which case no transactions have been selected.
+prop_TxSeq_splitAfterTxSizeWithInitSize :: TxSizeSplitTestSetup -> Property
+prop_TxSeq_splitAfterTxSizeWithInitSize tss =
+  label testLabel $
+    txSizeSum (TxSeq.toList before) `Measure.plus` tssTxInitialPayloadSize <= tssTxSizeToSplitOn
+      .||. (tssTxSizeToSplitOn <= tssTxInitialPayloadSize && null (TxSeq.toList before))
  where
-  TxSizeSplitTestSetup{tssTxSizeToSplitOn} = tss
+  TxSizeSplitTestSetup{tssTxSizeToSplitOn, tssTxInitialPayloadSize} = tss
 
-  (before, _after) = splitAfterTxSize txseq tssTxSizeToSplitOn
+  (before, _after) = splitAfterTxSizeWithInitSize tssTxInitialPayloadSize txseq tssTxSizeToSplitOn
+
+  testLabel =
+    if tssTxInitialPayloadSize > tssTxSizeToSplitOn
+      then "initial payload > size limit"
+      else "initial payload <= size limit"
 
   txseq :: TxSeq TheMeasure Int
   txseq = txSizeSplitTestSetupToTxSeq tss
@@ -1006,19 +1017,19 @@ prop_TxSeq_splitAfterTxSize tss =
   txSizeSum :: [TxTicket TheMeasure tx] -> TheMeasure
   txSizeSum = foldMap txTicketSize
 
--- | Test that the results of 'splitAfterTxSizeSpec', a specification of
--- 'splitAfterTxSize', match those of the real 'splitAfterTxSize'
+-- | Test that the results of 'splitAfterTxSizeWithInitSizeSpec', a specification of
+-- 'splitAfterTxSizeWithInitSize', match those of the real 'splitAfterTxSizeWithInitSize'
 -- implementation.
-prop_TxSeq_splitAfterTxSizeSpec :: TxSizeSplitTestSetup -> Property
-prop_TxSeq_splitAfterTxSizeSpec tss =
+prop_TxSeq_splitAfterTxSizeWithInitSizeSpec :: TxSizeSplitTestSetup -> Property
+prop_TxSeq_splitAfterTxSizeWithInitSizeSpec tss =
   TxSeq.toList implBefore === TxSeq.toList specBefore
     .&&. TxSeq.toList implAfter === TxSeq.toList specAfter
  where
-  TxSizeSplitTestSetup{tssTxSizeToSplitOn} = tss
+  TxSizeSplitTestSetup{tssTxSizeToSplitOn, tssTxInitialPayloadSize} = tss
 
-  (implBefore, implAfter) = splitAfterTxSize txseq tssTxSizeToSplitOn
+  (implBefore, implAfter) = splitAfterTxSizeWithInitSize tssTxInitialPayloadSize txseq tssTxSizeToSplitOn
 
-  (specBefore, specAfter) = splitAfterTxSizeSpec txseq tssTxSizeToSplitOn
+  (specBefore, specAfter) = splitAfterTxSizeWithInitSizeSpec tssTxInitialPayloadSize txseq tssTxSizeToSplitOn
 
   txseq :: TxSeq TheMeasure Int
   txseq = txSizeSplitTestSetupToTxSeq tss
@@ -1031,6 +1042,7 @@ prop_TxSeq_splitAfterTxSizeSpec tss =
 data TxSizeSplitTestSetup = TxSizeSplitTestSetup
   { tssTxSizes :: ![TheMeasure]
   , tssTxSizeToSplitOn :: !TheMeasure
+  , tssTxInitialPayloadSize :: !TheMeasure
   }
   deriving Show
 
@@ -1046,22 +1058,32 @@ instance Arbitrary TxSizeSplitTestSetup where
         , (1, pure totalTxsSize)
         , (1, choose (totalTxsSize + 1, totalTxsSize + 1000))
         ]
+    initialPayloadSize <-
+      frequency
+        [ (5, pure 0)
+        , (2, choose (0, txSizeToSplitOn))
+        , (1, choose (txSizeToSplitOn + 1, txSizeToSplitOn + 1000))
+        ]
     pure
       TxSizeSplitTestSetup
         { tssTxSizes = map (IgnoringOverflow . ByteSize32) txSizes
         , tssTxSizeToSplitOn = IgnoringOverflow $ ByteSize32 txSizeToSplitOn
+        , tssTxInitialPayloadSize = IgnoringOverflow $ ByteSize32 initialPayloadSize
         }
 
-  shrink TxSizeSplitTestSetup{tssTxSizes, tssTxSizeToSplitOn} =
+  shrink TxSizeSplitTestSetup{tssTxSizes, tssTxSizeToSplitOn, tssTxInitialPayloadSize} =
     [ TxSizeSplitTestSetup
         { tssTxSizes = map (IgnoringOverflow . ByteSize32) tssTxSizes'
         , tssTxSizeToSplitOn = IgnoringOverflow $ ByteSize32 tssTxSizeToSplitOn'
+        , tssTxInitialPayloadSize = IgnoringOverflow $ ByteSize32 tssTxInitialPayloadSize'
         }
     | tssTxSizes' <- shrinkList (const []) [y | IgnoringOverflow (ByteSize32 y) <- tssTxSizes]
-    , tssTxSizeToSplitOn' <- shrinkIntegral x
+    , tssTxSizeToSplitOn' <- shrinkIntegral splitOnSz
+    , tssTxInitialPayloadSize' <- shrinkIntegral initSz
     ]
    where
-    IgnoringOverflow (ByteSize32 x) = tssTxSizeToSplitOn
+    IgnoringOverflow (ByteSize32 splitOnSz) = tssTxSizeToSplitOn
+    IgnoringOverflow (ByteSize32 initSz) = tssTxInitialPayloadSize
 
 -- | Convert a 'TxSizeSplitTestSetup' to a 'TxSeq'.
 txSizeSplitTestSetupToTxSeq :: TxSizeSplitTestSetup -> TxSeq TheMeasure Int

@@ -1,4 +1,6 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Empty Peras support for Byron.
@@ -21,12 +23,15 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , defaultVerifyPerasVote
   )
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
+import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance BlockSupportsPeras ByronBlock where
+-- The saturated LHS is needed because the actual instance for
+-- 'TxLimits ByronBlock' is lower in the dependency hierarchy.
+instance TxLimits ByronBlock => BlockSupportsPeras ByronBlock where
   type PerasVote ByronBlock = VoidPerasVote ByronBlock
   type PerasCert ByronBlock = VoidPerasCert ByronBlock
   type PerasError ByronBlock = VoidPerasError ByronBlock

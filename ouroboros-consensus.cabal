@@ -655,6 +655,7 @@ library unstable-consensus-testlib
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm},
     io-sim,
+    measures,
     mempack,
     mtl,
     nonempty-containers,
@@ -764,6 +765,7 @@ library unstable-tutorials
     containers,
     deepseq,
     hashable,
+    measures,
     mtl,
     nothunks,
     ouroboros-consensus,
@@ -807,6 +809,7 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
     Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
     Test.Consensus.Peras.Cert.Inclusion
+    Test.Consensus.Peras.Cert.V1
     Test.Consensus.Peras.Serialisation
     Test.Consensus.Peras.Voting.Adapter
     Test.Consensus.Peras.Voting.Rules
@@ -967,6 +970,7 @@ test-suite storage-test
     generics-sop,
     io-classes:{io-classes, si-timers, strict-stm},
     io-sim,
+    measures,
     mempack,
     mtl,
     nonempty-containers,

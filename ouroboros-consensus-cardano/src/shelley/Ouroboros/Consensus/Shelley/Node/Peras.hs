@@ -13,10 +13,15 @@
 -- instances, but defining them there would be too confusing.
 module Ouroboros.Consensus.Shelley.Node.Peras () where
 
+import Cardano.Binary (serialize)
 import Cardano.Ledger.Api
+import Control.Monad (when)
+import qualified Data.ByteString.Lazy as LazyByteString
+import qualified Data.Measure as Measure
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
+  , ValidatedPerasCert (..)
   , VoidPerasCert
   , VoidPerasCrypto
   , VoidPerasError
@@ -27,7 +32,14 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , defaultVerifyPerasCert
   , defaultVerifyPerasVote
   )
+import Ouroboros.Consensus.HardFork.Combinator.AcrossEras (OneEraPerasCert)
 import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ByteSize32 (..)
+  , IgnoringOverflow (..)
+  , IsTxSizeable (..)
+  , TxLimits (..)
+  )
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
@@ -35,6 +47,7 @@ import Ouroboros.Consensus.Peras.Context
   )
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import Ouroboros.Consensus.Peras.Params (dijkstraPerasMaxCertSize)
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
@@ -43,6 +56,7 @@ import Ouroboros.Consensus.Protocol.Abstract
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock (..))
 import Ouroboros.Consensus.Shelley.Ledger.Ledger ()
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (AlonzoMeasure (..))
 import Ouroboros.Consensus.Ticked (Ticked)
 
 {-------------------------------------------------------------------------------
@@ -148,10 +162,42 @@ instance
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith V1.mkPerasVotingCommitteeInput
 
 {-------------------------------------------------------------------------------
+  IsTxSizeable
+-------------------------------------------------------------------------------}
+
+instance Typeable blk => IsTxSizeable (IgnoringOverflow ByteSize32) (V1.PerasCert blk) where
+  getTxLikeSize cert =
+    IgnoringOverflow $ ByteSize32 $ fromIntegral $ LazyByteString.length $ serialize cert
+
+instance
+  IsTxSizeable (IgnoringOverflow ByteSize32) (V1.PerasCert blk) =>
+  IsTxSizeable AlonzoMeasure (V1.PerasCert blk)
+  where
+  getTxLikeSize = toAlonzo . getTxLikeSize
+
+instance
+  IsTxSizeable (IgnoringOverflow ByteSize32) (OneEraPerasCert xs) =>
+  IsTxSizeable AlonzoMeasure (OneEraPerasCert xs)
+  where
+  getTxLikeSize = toAlonzo . getTxLikeSize
+
+toAlonzo :: (IgnoringOverflow ByteSize32) -> AlonzoMeasure
+toAlonzo sz =
+  AlonzoMeasure
+    { byteSize = sz
+    , exUnits = Measure.zero
+    }
+
+{-------------------------------------------------------------------------------
   BlockSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto ShelleyEra) where
+instance
+  ( Typeable proto
+  , TxLimits (ShelleyBlock proto ShelleyEra)
+  ) =>
+  BlockSupportsPeras (ShelleyBlock proto ShelleyEra)
+  where
   type PerasVote (ShelleyBlock proto ShelleyEra) = VoidPerasVote (ShelleyBlock proto ShelleyEra)
   type PerasCert (ShelleyBlock proto ShelleyEra) = VoidPerasCert (ShelleyBlock proto ShelleyEra)
   type PerasError (ShelleyBlock proto ShelleyEra) = VoidPerasError (ShelleyBlock proto ShelleyEra)
@@ -163,7 +209,12 @@ instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto ShelleyEra) wh
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock _ = Right Nothing
 
-instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto AllegraEra) where
+instance
+  ( Typeable proto
+  , TxLimits (ShelleyBlock proto AllegraEra)
+  ) =>
+  BlockSupportsPeras (ShelleyBlock proto AllegraEra)
+  where
   type PerasVote (ShelleyBlock proto AllegraEra) = VoidPerasVote (ShelleyBlock proto AllegraEra)
   type PerasCert (ShelleyBlock proto AllegraEra) = VoidPerasCert (ShelleyBlock proto AllegraEra)
   type PerasError (ShelleyBlock proto AllegraEra) = VoidPerasError (ShelleyBlock proto AllegraEra)
@@ -175,7 +226,12 @@ instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto AllegraEra) wh
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock _ = Right Nothing
 
-instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto MaryEra) where
+instance
+  ( Typeable proto
+  , TxLimits (ShelleyBlock proto MaryEra)
+  ) =>
+  BlockSupportsPeras (ShelleyBlock proto MaryEra)
+  where
   type PerasVote (ShelleyBlock proto MaryEra) = VoidPerasVote (ShelleyBlock proto MaryEra)
   type PerasCert (ShelleyBlock proto MaryEra) = VoidPerasCert (ShelleyBlock proto MaryEra)
   type PerasError (ShelleyBlock proto MaryEra) = VoidPerasError (ShelleyBlock proto MaryEra)
@@ -187,7 +243,12 @@ instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto MaryEra) where
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock _ = Right Nothing
 
-instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto AlonzoEra) where
+instance
+  ( Typeable proto
+  , TxLimits (ShelleyBlock proto AlonzoEra)
+  ) =>
+  BlockSupportsPeras (ShelleyBlock proto AlonzoEra)
+  where
   type PerasVote (ShelleyBlock proto AlonzoEra) = VoidPerasVote (ShelleyBlock proto AlonzoEra)
   type PerasCert (ShelleyBlock proto AlonzoEra) = VoidPerasCert (ShelleyBlock proto AlonzoEra)
   type PerasError (ShelleyBlock proto AlonzoEra) = VoidPerasError (ShelleyBlock proto AlonzoEra)
@@ -199,7 +260,12 @@ instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto AlonzoEra) whe
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock _ = Right Nothing
 
-instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto BabbageEra) where
+instance
+  ( Typeable proto
+  , TxLimits (ShelleyBlock proto BabbageEra)
+  ) =>
+  BlockSupportsPeras (ShelleyBlock proto BabbageEra)
+  where
   type PerasVote (ShelleyBlock proto BabbageEra) = VoidPerasVote (ShelleyBlock proto BabbageEra)
   type PerasCert (ShelleyBlock proto BabbageEra) = VoidPerasCert (ShelleyBlock proto BabbageEra)
   type PerasError (ShelleyBlock proto BabbageEra) = VoidPerasError (ShelleyBlock proto BabbageEra)
@@ -211,7 +277,12 @@ instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto BabbageEra) wh
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock _ = Right Nothing
 
-instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto ConwayEra) where
+instance
+  ( Typeable proto
+  , TxLimits (ShelleyBlock proto ConwayEra)
+  ) =>
+  BlockSupportsPeras (ShelleyBlock proto ConwayEra)
+  where
   type PerasVote (ShelleyBlock proto ConwayEra) = VoidPerasVote (ShelleyBlock proto ConwayEra)
   type PerasCert (ShelleyBlock proto ConwayEra) = VoidPerasCert (ShelleyBlock proto ConwayEra)
   type PerasError (ShelleyBlock proto ConwayEra) = VoidPerasError (ShelleyBlock proto ConwayEra)
@@ -224,7 +295,9 @@ instance Typeable proto => BlockSupportsPeras (ShelleyBlock proto ConwayEra) whe
   getPerasCertInBlock _ = Right Nothing
 
 instance
-  Typeable proto =>
+  ( Typeable proto
+  , TxLimits (ShelleyBlock proto DijkstraEra)
+  ) =>
   BlockSupportsPeras (ShelleyBlock proto DijkstraEra)
   where
   type PerasVote (ShelleyBlock proto DijkstraEra) = V1.PerasVote (ShelleyBlock proto DijkstraEra)
@@ -234,6 +307,12 @@ instance
   type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = V1.PerasVotingCommitteeScheme
   forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
   verifyPerasVote = defaultVerifyPerasVote
-  forgePerasCert = defaultForgePerasCert
+  forgePerasCert ctx votes = do
+    cert <- defaultForgePerasCert ctx votes
+    let sizeUpperBound = V1.perasCertSizeUpperBound $ vpcCert cert
+    when (sizeUpperBound > dijkstraPerasMaxCertSize) $
+      Left $
+        V1.PerasCertTooLargeError sizeUpperBound dijkstraPerasMaxCertSize
+    pure cert
   verifyPerasCert = defaultVerifyPerasCert
   getPerasCertInBlock _ = Right Nothing
