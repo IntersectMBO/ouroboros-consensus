@@ -35,7 +35,7 @@ import Control.Concurrent.Async (async, mapConcurrently_, wait)
 import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.ResourceRegistry (ResourceRegistry, withRegistry)
-import Control.Tracer (debugTracer, (>$<))
+import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
@@ -191,7 +191,7 @@ setupBenchEnv registry tmpDir = do
   db <-
     newLeiosDBSQLite
       registry
-      (show >$< debugTracer)
+      nullTracer
       (tmpDir <> "/bench.vol.db")
       (tmpDir <> "/bench.imm.db")
   putStr "Inserting EBs: " >> hFlush stdout
@@ -245,13 +245,12 @@ insertOneEb writer ebIdx = do
   let point = genPoint ebIdx
       eb = genEb ebIdx
       txs =
-        [ (h, genTx h)
+        [ (txIdx, genTx (genTxHash ebIdx txIdx))
         | txIdx <- [0 .. txsPerEb - 1]
-        , let h = genTxHash ebIdx txIdx
         ]
   pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
   bodyWritten <- writeEbBody writer point eb
-  txsWritten <- writeTxs writer txs
+  txsWritten <- writeTxs writer point txs
   awaitAll [pointWritten, void bodyWritten, void txsWritten]
 
 -- * Deterministic data generation
@@ -266,12 +265,17 @@ genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
 
--- | 'LeiosEb' with 'txsPerEb' transactions (200 bytes each).
+-- | 'LeiosEb' with 'txsPerEb' transactions of 'txBytesSize' each.
+--
+-- The declared size must be the payload size of 'genTx': a tx write of any
+-- other size is dropped.
 genEb :: Int -> LeiosEb
 genEb ebIdx =
   MkLeiosEb $
     V.fromList
-      [(genTxHash ebIdx txIdx, 200 :: BytesSize) | txIdx <- [0 .. txsPerEb - 1]]
+      [ (genTxHash ebIdx txIdx, fromIntegral txBytesSize :: BytesSize)
+      | txIdx <- [0 .. txsPerEb - 1]
+      ]
 
 -- | 'TxHash' from an EB index + TX offset: \"txHash:<ebIdx>:<txIdx>\" padded
 -- to 32 bytes with zeros.
@@ -283,6 +287,11 @@ genTxHash ebIdx txIdx = MkTxHash $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("txHash:" <> show ebIdx <> ":" <> show txIdx)
 
--- | Generate a TX payload: the TX hash bytes padded with zeros to 16 KiB.
+-- | Size of every generated TX payload: 16 KiB.
+txBytesSize :: Int
+txBytesSize = 16_384
+
+-- | Generate a TX payload: the TX hash bytes padded with zeros to
+-- 'txBytesSize'.
 genTx :: TxHash -> BS.ByteString
-genTx (MkTxHash h) = h <> BS.replicate (16_384 - BS.length h) 0
+genTx (MkTxHash h) = h <> BS.replicate (txBytesSize - BS.length h) 0

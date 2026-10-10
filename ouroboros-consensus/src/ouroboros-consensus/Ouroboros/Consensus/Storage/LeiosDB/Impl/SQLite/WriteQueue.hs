@@ -40,7 +40,7 @@ import Ouroboros.Consensus.Leios.Types
   , EbHash (..)
   , LeiosEb
   , LeiosPoint (..)
-  , TxHash (..)
+  , TxOffset
   , leiosEbTxs
   )
 import Ouroboros.Consensus.Storage.LeiosDB.API (CompletedEbs, Promise (..))
@@ -76,8 +76,10 @@ data WriteJob
       -- | where the worker puts the result
       !(WriteResult CompletedEbs)
   | WriteTxs
-      -- | txs with their bytes
-      ![(TxHash, ByteString)]
+      -- | the EB the txs belong to
+      !LeiosPoint
+      -- | txs with their bytes, by offset into the EB's body
+      ![(TxOffset, ByteString)]
       -- | where the worker puts the result
       !(WriteResult CompletedEbs)
   | -- | Does nothing; awaiting it after the queue's FIFO order means every
@@ -168,7 +170,7 @@ describeJob :: WriteJob -> String
 describeJob = \case
   WriteEbPoint point _ _ -> "WriteEbPoint " <> show point
   WriteEbBody point eb _ -> "WriteEbBody " <> show point <> " (" <> show (length (leiosEbTxs eb)) <> " txs)"
-  WriteTxs txs _ -> "WriteTxs (" <> show (length txs) <> " txs)"
+  WriteTxs point txs _ -> "WriteTxs " <> show point <> " (" <> show (length txs) <> " txs)"
   Flush _ -> "Flush"
   PinEb ebHashes _ -> "PinEb (" <> show (length ebHashes) <> " ebs)"
   MarkCopied ebHashes _ -> "MarkCopied (" <> show (length ebHashes) <> " ebs)"
@@ -180,7 +182,7 @@ failJob :: SomeException -> WriteJob -> IO ()
 failJob cause = \case
   WriteEbPoint _ _ rv -> put rv
   WriteEbBody _ _ rv -> put rv
-  WriteTxs _ rv -> put rv
+  WriteTxs _ _ rv -> put rv
   Flush rv -> put rv
   PinEb _ rv -> put rv
   MarkCopied _ rv -> put rv

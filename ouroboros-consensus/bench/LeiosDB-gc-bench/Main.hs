@@ -15,9 +15,10 @@
 --
 --   * @eb-with-sharing@ --- 25% of each EB's txs come from a pool shared
 --     between EBs
---   * @eb-no-sharing@   --- no shared txs: every tx is unique to one EB, so
---     copies get no @OR IGNORE@ savings and every swept EB orphans its full
---     closure
+--   * @eb-no-sharing@   --- no shared txs: every tx is unique to one EB
+--
+-- Tx bytes are owned by the referencing EB, so a shared tx is stored once per
+-- EB that references it: sharing changes the payloads, not the work.
 --
 -- (a production @FIXTURE.vol.db@ argument replaces the synthetic population
 -- entirely).
@@ -50,14 +51,6 @@
 -- for short write-lock holds); @zero@ removes both bounds (one unbounded
 -- eviction transaction, no pauses), measuring the raw sweep work.
 --
--- @--no-tx-index@ drops @idx_ebTxs_txHashBytes@ (the tx -> referencing-EB
--- index) from the volatile partition after population, to price the index:
--- insertion pays one scattered index write per body row with it, while the
--- sweeper's orphan probes degrade to full @ebTxs@ scans without it. NOTE:
--- sweeping without the index is extremely slow — pair it with
--- @--scenario steady@ (a catch-up sweep would hit the timeout) and read the
--- @insertEbSeconds@ column, sampled before each phase's sweep.
---
 -- Reported per phase, as one CSV row on stdout (everything else goes to
 -- stderr).
 --
@@ -78,9 +71,6 @@
 --
 -- -- raw sweep work and unprotected lock holds: no batching, no pauses
 -- cabal run bench:leios-gc-bench -- --scenario catchup --gc-pacing zero
---
--- -- price idx_ebTxs_txHashBytes on the insert path
--- cabal run bench:leios-gc-bench -- --scenario steady --no-tx-index
 --
 -- -- a production volatile partition instead of the synthetic population
 -- cabal run bench:leios-gc-bench -- --scenario steady leios.vol.db
@@ -179,9 +169,6 @@ main = do
         db <- mkDb
         schedule <- populateDb opts db
         pure (db, schedule)
-    when (optNoTxIndex opts) $ do
-      hPutStrLn stderr "Dropping idx_ebTxs_txHashBytes from the volatile partition"
-      dropTxIndex benchVol
     when (null schedule) $
       die "empty EB schedule (no volatile ebs)"
     when (sum (map snd (phaseSeries (optScenario opts))) > length schedule) $
@@ -203,11 +190,10 @@ main = do
         , "Scheduled EBs       : " <> show (length schedule)
         , "Phases              : " <> describeSeries
         , "GC pacing           : " <> gcPacingName (optGcPacing opts)
-        , "idx_ebTxs_txHashBytes: " <> (if optNoTxIndex opts then "DROPPED" else "present")
         , ""
         ]
-    -- Await the sweeper's startup self-heal (GC-candidates initialisation +
-    -- resume of persisted marks), so it is not attributed to phase 1.
+    -- Await the sweeper's startup self-heal (resume of persisted marks), so
+    -- it is not attributed to phase 1.
     sweepBacklog <- mkBacklogProbe benchVol sqlSweepBacklog
     initialBacklog <- mkBacklogProbe benchVol sqlInitialBacklog
     (_, initialSweepWall) <- timed $ awaitZero "initial self-heal" initialBacklog
@@ -281,7 +267,6 @@ data Opts = Opts
   , optGcPacing :: GcPacing
   , optTxsPerEb :: Int
   , optTxBytes :: Int
-  , optNoTxIndex :: Bool
   }
 
 -- | Synthetic-mode volatile population: k EBs, the steady-state window.
@@ -387,12 +372,6 @@ optsParser =
           <> showDefault
           <> help "Synthetic mode: bytes per transaction payload (min 32)"
       )
-    <*> switch
-      ( long "no-tx-index"
-          <> help
-            "Drop idx_ebTxs_txHashBytes after population, to price the \
-            \index on the insert and sweep paths"
-      )
 
 readLoad :: String -> Either String Load
 readLoad = \case
@@ -419,21 +398,12 @@ populateDb opts db =
           MkEbHash hashBytes = genEbHash ebIdx
           point = MkLeiosPoint (SlotNo slot) (MkEbHash hashBytes)
           eb = genEb opts ebIdx
-          txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
+          txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
       pointWritten <- writeEbPoint writer point (encodeLeiosEbSize eb)
       bodyWritten <- writeEbBody writer point eb
-      txsWritten <- writeTxs writer txs
+      txsWritten <- writeTxs writer point txs
       awaitAll [pointWritten, void bodyWritten, void txsWritten]
       pure (slot, hashBytes)
-
--- | Drop the tx -> referencing-EB index from the volatile partition
--- (the next handle creation re-creates it; this run keeps its handle open).
-dropTxIndex :: FilePath -> IO ()
-dropTxIndex path = do
-  db <- SQL.open (T.pack path)
-  SQL.exec db "pragma busy_timeout = 30000;"
-  SQL.exec db "DROP INDEX IF EXISTS idx_ebTxs_txHashBytes"
-  SQL.close db
 
 -- * Deterministic data generation (as in leios-db-bench)
 
@@ -445,9 +415,7 @@ genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
 
 -- | The txs of a synthetic EB: the first @dup-fraction@ of them come from a
 -- pool shared between EBs (a rotating slice, so consecutive EBs overlap),
--- the rest are unique to this EB. With dup fraction 0 every tx is unique ---
--- the worst case for copy (@OR IGNORE@ never saves work) and sweep (every
--- swept EB orphans its whole closure).
+-- the rest are unique to this EB. With dup fraction 0 every tx is unique.
 ebTxHashesFor :: Opts -> Int -> [TxHash]
 ebTxHashesFor opts ebIdx =
   [genSharedTxHash ((ebIdx * nShared + k) `mod` poolSize) | k <- [0 .. nShared - 1]]
@@ -522,13 +490,13 @@ runPhases opts db flushEvents latRef sweepBacklog schedule immBefore =
           let ebIdx = 10_000_000 + k
               point = MkLeiosPoint (SlotNo (2_000_000_000 + fromIntegral k)) (genEbHash ebIdx)
               eb = genEb opts ebIdx
-              txs = [(h, genTx opts h) | h <- ebTxHashesFor opts ebIdx]
+              txs = zip [0 ..] (map (genTx opts) (ebTxHashesFor opts ebIdx))
           snd
             <$> timed
               ( do
                   pointWritten <- writeEbPoint w point (encodeLeiosEbSize eb)
                   bodyWritten <- writeEbBody w point eb
-                  txsWritten <- writeTxs w txs
+                  txsWritten <- writeTxs w point txs
                   -- Awaiting all three times them to durability.
                   awaitAll [pointWritten, void bodyWritten, void txsWritten]
                   pure ()
@@ -619,21 +587,14 @@ medianTime ts = List.sort ts !! (length ts `div` 2)
 
 -- * Sweep backlog probes
 
--- | What the sweeper still owes: GC-marked rows plus unresolved orphan hints.
+-- | What the sweeper still owes: GC-marked rows.
 sqlSweepBacklog :: T.Text
 sqlSweepBacklog =
-  "SELECT (SELECT COUNT(*) FROM ebs WHERE status = 3)\n\
-  \     + (SELECT COUNT(*) FROM gcTxCandidates)"
+  "SELECT COUNT(*) FROM ebs WHERE status = 3"
 
--- | 'sqlSweepBacklog' plus whether any legacy orphan tx exists at all: only 0
--- once the sweeper's GC-candidates initialisation has both run and been swept
--- (counting staged candidates alone would race the initialisation scan).
+-- | What the sweeper owes at startup: the marks a previous run persisted.
 sqlInitialBacklog :: T.Text
-sqlInitialBacklog =
-  "SELECT (SELECT COUNT(*) FROM ebs WHERE status = 3)\n\
-  \     + (SELECT COUNT(*) FROM gcTxCandidates)\n\
-  \     + (SELECT EXISTS (SELECT 1 FROM txs WHERE NOT EXISTS\n\
-  \          (SELECT 1 FROM ebTxs WHERE ebTxs.txHashBytes = txs.txHashBytes)))"
+sqlInitialBacklog = sqlSweepBacklog
 
 -- | A reusable single-integer probe on its own connection (WAL readers do
 -- not block the sweeper's writes; the reset after each poll releases the
