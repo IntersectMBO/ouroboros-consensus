@@ -30,12 +30,10 @@
 --   verifies. This generates the key, registers it on a pool, and writes the
 --   signing key for @--shelley-bls-key@.
 --
--- * __Leios turned on.__ The fixture's Dijkstra genesis zeroes every Leios
---   parameter, so no endorser block holds a transaction and no committee is
---   seated. This gives the endorser block a capacity and seats the committee,
---   and leaves the announcement, vote and diffusion periods at zero so that the
---   block after an announcement may already certify it -- the alternation the
---   file generator requires.
+-- * __Leios turned on.__ This gives the endorser block a capacity, seats the
+--   committee, and sets the announcement, vote and diffusion periods to zero
+--   so that the block after an announcement may already certify it -- the
+--   alternation the file generator requires.
 --
 -- The keys come from fixed seeds, so the fixture is the same on every run.
 module Cardano.Tools.DBSynthesizer.Test.QueueFixture
@@ -59,7 +57,7 @@ import Cardano.Ledger.Address (serialiseAddr)
 import qualified Cardano.Ledger.Keys as LK
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (BlsKey (BlsKey))
-import Data.Aeson (Value (Number, Object))
+import Data.Aeson (Value (Bool, Number, Object))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as Pretty
 import qualified Data.Aeson.Key as Key
@@ -129,8 +127,9 @@ writeQueueFixture srcDir outDir count = do
 
   -- Dijkstra has no TestDijkstraHardForkAtEpoch in the fixture, so it triggers
   -- on a protocol version the chain never reaches. Leios lives in Dijkstra, so
-  -- the run has to start there. The two genesis files changed, and the
-  -- configuration names them by hash.
+  -- the run has to start there. Without ExperimentalHardForksEnabled the
+  -- Dijkstra genesis file is ignored for built-in defaults. The two genesis
+  -- files changed, and the configuration names them by hash.
   _ <-
     writeJson (outDir </> "config.json") . Object $
       updateSection "Protocol" (KeyMap.insert "ShelleyGenesisHash" (Aeson.toJSON shelleyHash)) $
@@ -138,7 +137,12 @@ writeQueueFixture srcDir outDir count = do
           "Testing"
           ( KeyMap.insert "DijkstraGenesisHash" (Aeson.toJSON dijkstraHash)
               . KeyMap.union
-                (KeyMap.fromList [("TestConwayHardForkAtEpoch", Number 0), ("TestDijkstraHardForkAtEpoch", Number 0)])
+                ( KeyMap.fromList
+                    [ ("ExperimentalHardForksEnabled", Bool True)
+                    , ("TestConwayHardForkAtEpoch", Number 0)
+                    , ("TestDijkstraHardForkAtEpoch", Number 0)
+                    ]
+                )
           )
           config
 
@@ -155,16 +159,18 @@ writeQueueFixture srcDir outDir count = do
       ++ show perAddr
       ++ " lovelace each"
 
--- | The Leios parameters the fixture zeroes.
+-- | The Leios parameters the run needs.
 --
--- The three period lengths stay at zero, so 'minCertificationGap' is zero
--- slots and the block after an announcement may certify it. The execution unit
--- and reference script limits stay at zero too: the generated transactions
--- carry no scripts.
+-- The three period lengths are zero, so 'minCertificationGap' is zero slots
+-- and the block after an announcement may certify it. The fixture's own
+-- values do not matter: they are overridden here.
 leiosParams :: KeyMap.KeyMap Value
 leiosParams =
   KeyMap.fromList
-    [ -- Room for the endorser block's transactions: one block body's worth.
+    [ ("leiosAnnouncementPeriodLength", Number 0)
+    , ("leiosVotePeriodLength", Number 0)
+    , ("leiosDiffusionPeriodLength", Number 0)
+    , -- Room for the endorser block's transactions: one block body's worth.
       ("maxEndorserBlockTxsSize", Number 81920)
     , -- Bounds how many transactions an endorser block may reference.
       ("maxEndorserBlockReferencesSize", Number 100000)
