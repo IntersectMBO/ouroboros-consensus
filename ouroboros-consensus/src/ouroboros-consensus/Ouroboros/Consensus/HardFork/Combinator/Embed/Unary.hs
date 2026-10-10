@@ -1,10 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -66,9 +66,11 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
@@ -200,7 +202,12 @@ instance Isomorphic WrapHeaderHash where
     WrapHeaderHash (HardForkBlock '[blk]) -> WrapHeaderHash blk
   project =
     WrapHeaderHash
-      . fromShortRawHash (Proxy @blk)
+      -- The input is the header hash of @HardForkBlock '[blk]@, i.e. an
+      -- @OneEraHash '[blk]@ wrapping the raw bytes of @blk@'s header hash. Since
+      -- @HashSize (HardForkBlock '[blk]) ~ HashSize blk@ (see the
+      -- 'ConvertRawHash' instance for 'HardForkBlock'), these bytes are always
+      -- exactly @hashSize blk@ long, so 'unsafeFromShortRawHash' cannot fail.
+      . unsafeFromShortRawHash (Proxy @blk)
       . getOneEraHash
       . unwrapHeaderHash
 
@@ -351,12 +358,42 @@ instance Isomorphic (FlipTickedLedgerState mk) where
       . Telescope.TZ
       . State.Current History.initBound
 
+instance Isomorphic PerasState where
+  project PerasState{..} =
+    PerasState
+      { perasEpochContextResolver =
+          case perasEpochContextResolver of
+            PerasEpochContextResolverError err ->
+              PerasEpochContextResolverError err
+            PerasEpochContextResolver hfcCurrBoundedContext hfcPrevBoundedContext ->
+              PerasEpochContextResolver
+                (fromZ . projectHFCBoundedPerasEpochContext <$> hfcCurrBoundedContext)
+                (fromZ . projectHFCBoundedPerasEpochContext <$> hfcPrevBoundedContext)
+      , latestPerasCertOnChainRound =
+          latestPerasCertOnChainRound
+      }
+   where
+    fromZ :: NS f '[a] -> f a
+    fromZ (Z x) = x
+
+  inject PerasState{..} =
+    PerasState
+      { perasEpochContextResolver =
+          injectHFCPerasEpochContextResolver (toZ perasEpochContextResolver)
+      , latestPerasCertOnChainRound =
+          latestPerasCertOnChainRound
+      }
+   where
+    toZ :: f a -> NS f '[a]
+    toZ x = Z x
+
 instance Isomorphic (Flip ExtLedgerState mk) where
   project (Flip ExtLedgerState{..}) =
     Flip $
       ExtLedgerState
         { ledgerState = unFlip $ project $ Flip ledgerState
         , headerState = project headerState
+        , perasState = project perasState
         }
 
   inject (Flip ExtLedgerState{..}) =
@@ -364,6 +401,7 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ inject $ Flip ledgerState
         , headerState = inject headerState
+        , perasState = inject perasState
         }
 
 instance Isomorphic AnnTip where
@@ -455,26 +493,40 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \fbArgs ->
-          first (project' (Proxy @(I blk)))
-            <$> forgeBlock
-              ForgeBlockArgs
-                { fbConfig = inject (fbConfig fbArgs)
-                , fbCurrentBlockNo = fbCurrentBlockNo fbArgs
-                , fbCurrentSlotNo = fbCurrentSlotNo fbArgs
-                , fbCurrentTickedLedgerState =
-                    getFlipTickedLedgerState
-                      (inject (FlipTickedLedgerState (fbCurrentTickedLedgerState fbArgs)))
-                , fbRbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbRbTxs fbArgs
-                , fbEbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs fbArgs
-                , fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) (fbIsLeader fbArgs)
-                , fbChainDepState = Nothing
-                , fbLeiosTracer = fbLeiosTracer fbArgs
-                , fbLeiosVoteState = fbLeiosVoteState fbArgs
-                , fbMayLeiosCert = fbMayLeiosCert fbArgs
-                }
+      , forgeBlock =
+          \leiosArgs
+           ForgeBlockArgs
+             { fbConfig
+             , fbCurrentBlockNo
+             , fbCurrentSlotNo
+             , fbPerasCert
+             , fbCurrentTickedLedgerState
+             , fbTxs
+             , fbIsLeader
+             , fbEbTxs
+             , fbMayLeiosCert
+             } ->
+              first (project' (Proxy @(I blk)))
+                <$> forgeBlock
+                  leiosArgs
+                  ForgeBlockArgs
+                    { fbConfig = inject fbConfig
+                    , fbCurrentBlockNo = fbCurrentBlockNo
+                    , fbCurrentSlotNo = fbCurrentSlotNo
+                    , fbPerasCert = injectPerasCert fbPerasCert
+                    , fbCurrentTickedLedgerState =
+                        getFlipTickedLedgerState (inject (FlipTickedLedgerState fbCurrentTickedLedgerState))
+                    , fbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
+                    , fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) fbIsLeader
+                    , fbEbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
+                    , fbChainDepState = Nothing
+                    , fbMayLeiosCert = fbMayLeiosCert
+                    }
       }
    where
+    injectPerasCert :: Maybe (PerasCert blk) -> Maybe (PerasCert (HardForkBlock '[blk]))
+    injectPerasCert = fmap (OneEraPerasCert . Z . WrapPerasCert)
+
     injTickedChainDepSt ::
       EpochInfo (Except PastHorizonException) ->
       Ticked (ChainDepState (BlockProtocol blk)) ->
@@ -510,26 +562,40 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \fbArgs ->
-          first (inject' (Proxy @(I blk)))
-            <$> forgeBlock
-              ForgeBlockArgs
-                { fbConfig = project (fbConfig fbArgs)
-                , fbCurrentBlockNo = fbCurrentBlockNo fbArgs
-                , fbCurrentSlotNo = fbCurrentSlotNo fbArgs
-                , fbCurrentTickedLedgerState =
-                    getFlipTickedLedgerState
-                      (project (FlipTickedLedgerState (fbCurrentTickedLedgerState fbArgs)))
-                , fbRbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbRbTxs fbArgs
-                , fbEbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs fbArgs
-                , fbIsLeader = project' (Proxy @(WrapIsLeader blk)) (fbIsLeader fbArgs)
-                , fbChainDepState = Nothing
-                , fbLeiosTracer = fbLeiosTracer fbArgs
-                , fbLeiosVoteState = fbLeiosVoteState fbArgs
-                , fbMayLeiosCert = fbMayLeiosCert fbArgs
-                }
+      , forgeBlock =
+          \leiosArgs
+           ForgeBlockArgs
+             { fbConfig
+             , fbCurrentBlockNo
+             , fbCurrentSlotNo
+             , fbPerasCert
+             , fbCurrentTickedLedgerState
+             , fbTxs
+             , fbIsLeader
+             , fbEbTxs
+             , fbMayLeiosCert
+             } ->
+              first (inject' (Proxy @(I blk)))
+                <$> forgeBlock
+                  leiosArgs
+                  ForgeBlockArgs
+                    { fbConfig = project fbConfig
+                    , fbCurrentBlockNo = fbCurrentBlockNo
+                    , fbCurrentSlotNo = fbCurrentSlotNo
+                    , fbPerasCert = projectPerasCert fbPerasCert
+                    , fbCurrentTickedLedgerState =
+                        getFlipTickedLedgerState (project (FlipTickedLedgerState fbCurrentTickedLedgerState))
+                    , fbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbTxs
+                    , fbIsLeader = project' (Proxy @(WrapIsLeader blk)) fbIsLeader
+                    , fbEbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
+                    , fbChainDepState = Nothing
+                    , fbMayLeiosCert = fbMayLeiosCert
+                    }
       }
    where
+    projectPerasCert :: Maybe (PerasCert (HardForkBlock '[blk])) -> Maybe (PerasCert blk)
+    projectPerasCert = fmap (unwrapPerasCert . unZ . getOneEraPerasCert)
+
     projTickedChainDepSt ::
       Ticked (ChainDepState (HardForkProtocol '[blk])) ->
       Ticked (ChainDepState (BlockProtocol blk))
@@ -628,7 +694,7 @@ instance Isomorphic (SomeSecond (NestedCtxt f)) where
 instance Isomorphic WrapLedgerErr where
   project = WrapLedgerErr . aux . unwrapLedgerErr
    where
-    aux :: HardForkLedgerError '[blk] -> LedgerErr (LedgerState blk)
+    aux :: HardForkLedgerError '[blk] -> LedgerErr LedgerState blk
     aux (HardForkLedgerErrorFromEra err) =
       unwrapLedgerErr
         . unZ
@@ -639,7 +705,7 @@ instance Isomorphic WrapLedgerErr where
 
   inject = WrapLedgerErr . aux . unwrapLedgerErr
    where
-    aux :: LedgerErr (LedgerState blk) -> HardForkLedgerError '[blk]
+    aux :: LedgerErr LedgerState blk -> HardForkLedgerError '[blk]
     aux = HardForkLedgerErrorFromEra . OneEraLedgerError . Z . WrapLedgerErr
 
 {-------------------------------------------------------------------------------

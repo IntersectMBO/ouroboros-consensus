@@ -34,7 +34,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -56,14 +55,10 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   { lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
   , lgrGenesis :: HKD f (m (ExtLedgerState blk ValuesMK))
   , lgrHasFS :: HKD f (SomeHasFS m)
-  , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
+  , lgrConfig :: LedgerDbCfgF f ExtLedgerState blk
   , lgrTracer :: !(Tracer m (TraceEvent blk))
   , lgrBackendArgs :: LedgerDbBackendArgs m blk
   , lgrQueryBatchSize :: QueryBatchSize
-  , lgrStartSnapshot :: Maybe DiskSnapshot
-  -- ^ If provided, the ledgerdb will start using said snapshot and fallback
-  -- to genesis. It will ignore any other existing snapshots. Useful for
-  -- db-analyser.
   , lgrLeiosDb :: HKD f (LeiosDemoDb.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
   -- its own per-thread 'LeiosDbReader' from this handle.
@@ -85,13 +80,11 @@ defaultArgs backendArgs =
     , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
       lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs
-    , lgrStartSnapshot = Nothing
     , lgrLeiosDb = NoDefault
     }
 
-data LedgerDbBackendArgs m blk
-  = LedgerDbBackendArgsV1 (V1.LedgerDbBackendArgs m (ExtLedgerState blk))
-  | LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
+newtype LedgerDbBackendArgs m blk
+  = LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize

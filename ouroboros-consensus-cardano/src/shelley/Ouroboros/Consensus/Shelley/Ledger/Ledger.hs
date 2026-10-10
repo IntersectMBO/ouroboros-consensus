@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -12,7 +11,6 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
@@ -28,7 +26,7 @@
 module Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
   , LedgerTables (..)
-  , ShelleyBasedEra
+  , ShelleyBasedEra (..)
   , ShelleyTip (..)
   , ShelleyTransition (..)
   , Ticked (..)
@@ -61,7 +59,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
-import Cardano.Ledger.BaseTypes (strictMaybeToMaybe, unboundRational)
+import Cardano.Ledger.BaseTypes (unboundRational)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
@@ -106,7 +104,6 @@ import qualified Control.State.Transition.Extended as STS
 import Data.Coerce
 import Data.Foldable (toList)
 import Data.Functor.Identity
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.MemPack
 import qualified Data.Text as T
 import qualified Data.Text as Text
@@ -130,12 +127,12 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import Ouroboros.Consensus.Protocol.Leios (EitherLeiosF (..), PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosOnly (Praos2HasLeios), Praos2)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -144,6 +141,7 @@ import Ouroboros.Consensus.Shelley.Eras
   , ConwayEra
   , DijkstraEra
   , MaryEra
+  , ShelleyBasedEra (..)
   , ShelleyEra
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -155,14 +153,8 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , envelopeChecks
   )
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util
-import Ouroboros.Consensus.Util.CBOR
-  ( decodeStrictMaybe
-  , decodeWithOrigin
-  , encodeStrictMaybe
-  , encodeWithOrigin
-  )
+import Ouroboros.Consensus.Util.CBOR (decodeWithOrigin, encodeWithOrigin)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Versioned
 
@@ -194,17 +186,17 @@ shelleyLedgerSlotLength =
   mkSlotLength . SL.fromNominalDiffTimeMicro . SL.sgSlotLength . shelleyLedgerGenesis
 
 shelleyEraParams ::
+  ShelleyBasedEra era =>
   SL.ShelleyGenesis ->
+  Proxy era ->
   HardFork.EraParams
-shelleyEraParams genesis =
+shelleyEraParams genesis proxyEra =
   HardFork.EraParams
     { eraEpochSize = SL.sgEpochLength genesis
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone stabilityWindow
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , -- TODO(geo2a): enabled Peras conditionally in the Dijkstra era
-      -- see https://github.com/tweag/cardano-peras/issues/112
-      eraPerasRoundLength = HardFork.NoPerasEnabled
+    , eraPerasRoundLength = getShelleyEraPerasRoundLength proxyEra
     }
  where
   stabilityWindow =
@@ -213,14 +205,17 @@ shelleyEraParams genesis =
       (SL.sgActiveSlotCoeff genesis)
 
 -- | Separate variant of 'shelleyEraParams' to be used for a Shelley-only chain.
-shelleyEraParamsNeverHardForks :: SL.ShelleyGenesis -> HardFork.EraParams
-shelleyEraParamsNeverHardForks genesis =
+shelleyEraParamsNeverHardForks ::
+  SL.ShelleyGenesis ->
+  HardFork.PerasEnabled PerasRoundLength ->
+  HardFork.EraParams
+shelleyEraParamsNeverHardForks genesis perasRoundLength =
   HardFork.EraParams
     { eraEpochSize = SL.sgEpochLength genesis
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , eraPerasRoundLength = HardFork.NoPerasEnabled
+    , eraPerasRoundLength = perasRoundLength
     }
  where
   stabilityWindow =
@@ -243,7 +238,7 @@ mkShelleyLedgerConfig genesis transCtxt epochInfo =
     , shelleyLedgerTranslationContext = transCtxt
     }
 
-type instance LedgerCfg (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerConfig era
+type instance LedgerCfg LedgerState (ShelleyBlock proto era) = ShelleyLedgerConfig era
 
 data ShelleyPartialLedgerConfig era = ShelleyPartialLedgerConfig
   { shelleyLedgerConfig :: !(ShelleyLedgerConfig era)
@@ -309,8 +304,7 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , shelleyLedgerState :: !(SL.NewEpochState era)
   , shelleyLedgerTransition :: !ShelleyTransition
-  , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
-  , shelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
+  , shelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , shelleyCumulativeTxBytes :: !Word64
   -- ^ Monotonically-increasing sum of all transaction bytes ever
   -- applied. Updated on each block-apply by the sum of its body's
@@ -389,21 +383,21 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
-type instance TxIn (LedgerState (ShelleyBlock proto era)) = BigEndianTxIn
-type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+type instance TxIn (ShelleyBlock proto era) = BigEndianTxIn
+type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
 
 instance
   (txout ~ Core.TxOut era, MemPack txout) =>
-  IndexedMemPack (LedgerState (ShelleyBlock proto era) EmptyMK) txout
+  IndexedMemPack LedgerState (ShelleyBlock proto era) txout
   where
-  indexedTypeName _ = typeName @txout
+  indexedTypeName _ _ = typeName @txout
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
 instance
   ShelleyCompatible proto era =>
-  SerializeTablesWithHint (LedgerState (ShelleyBlock proto era))
+  SerializeTablesWithHint LedgerState (ShelleyBlock proto era)
   where
   encodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
     toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
@@ -421,7 +415,7 @@ instance
 
 instance
   ShelleyBasedEra era =>
-  HasLedgerTables (LedgerState (ShelleyBlock proto era))
+  HasLedgerTables LedgerState (ShelleyBlock proto era)
   where
   projectLedgerTables = shelleyLedgerTables
   withLedgerTables st tables =
@@ -430,7 +424,6 @@ instance
       , shelleyLedgerState
       , shelleyLedgerTransition
       , shelleyLedgerTables = tables
-      , shelleyLedgerLatestPerasCertRound
       , shelleyCumulativeTxBytes
       }
    where
@@ -438,22 +431,20 @@ instance
       { shelleyLedgerTip
       , shelleyLedgerState
       , shelleyLedgerTransition
-      , shelleyLedgerLatestPerasCertRound
       , shelleyCumulativeTxBytes
       } = st
 
 instance
   ShelleyBasedEra era =>
-  HasLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  HasLedgerTables (Ticked LedgerState) (ShelleyBlock proto era)
   where
-  projectLedgerTables = castLedgerTables . tickedShelleyLedgerTables
+  projectLedgerTables = tickedShelleyLedgerTables
   withLedgerTables st tables =
     TickedShelleyLedgerState
       { untickedShelleyLedgerTip
       , tickedShelleyLedgerTransition
       , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = castLedgerTables tables
-      , tickedShelleyLedgerLatestPerasCertRound
+      , tickedShelleyLedgerTables = tables
       , tickedShelleyCumulativeTxBytes
       }
    where
@@ -461,7 +452,6 @@ instance
       { untickedShelleyLedgerTip
       , tickedShelleyLedgerTransition
       , tickedShelleyLedgerState
-      , tickedShelleyLedgerLatestPerasCertRound
       , tickedShelleyCumulativeTxBytes
       } = st
 
@@ -475,7 +465,6 @@ instance
       , shelleyLedgerState = shelleyLedgerState'
       , shelleyLedgerTransition = shelleyLedgerTransition
       , shelleyLedgerTables = emptyLedgerTables
-      , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound
       , shelleyCumulativeTxBytes = shelleyCumulativeTxBytes
       }
    where
@@ -485,7 +474,6 @@ instance
       , shelleyLedgerState
       , shelleyLedgerTransition
       , shelleyLedgerTables = LedgerTables (ValuesMK m)
-      , shelleyLedgerLatestPerasCertRound
       , shelleyCumulativeTxBytes
       } = st
   unstowLedgerTables st =
@@ -494,7 +482,6 @@ instance
       , shelleyLedgerState = shelleyLedgerState'
       , shelleyLedgerTransition = shelleyLedgerTransition
       , shelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys $ SL.unUTxO tbs))
-      , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound
       , shelleyCumulativeTxBytes = shelleyCumulativeTxBytes
       }
    where
@@ -503,13 +490,12 @@ instance
       { shelleyLedgerTip
       , shelleyLedgerState
       , shelleyLedgerTransition
-      , shelleyLedgerLatestPerasCertRound
       , shelleyCumulativeTxBytes
       } = st
 
 instance
   ShelleyBasedEra era =>
-  CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  CanStowLedgerTables (Ticked LedgerState (ShelleyBlock proto era))
   where
   stowLedgerTables st =
     TickedShelleyLedgerState
@@ -517,7 +503,6 @@ instance
       , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
       , tickedShelleyLedgerState = tickedShelleyLedgerState'
       , tickedShelleyLedgerTables = emptyLedgerTables
-      , tickedShelleyLedgerLatestPerasCertRound = tickedShelleyLedgerLatestPerasCertRound
       , tickedShelleyCumulativeTxBytes = tickedShelleyCumulativeTxBytes
       }
    where
@@ -528,7 +513,6 @@ instance
       , tickedShelleyLedgerTransition
       , tickedShelleyLedgerState
       , tickedShelleyLedgerTables = LedgerTables (ValuesMK tbs)
-      , tickedShelleyLedgerLatestPerasCertRound
       , tickedShelleyCumulativeTxBytes
       } = st
 
@@ -538,7 +522,6 @@ instance
       , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
       , tickedShelleyLedgerState = tickedShelleyLedgerState'
       , tickedShelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys (SL.unUTxO tbs)))
-      , tickedShelleyLedgerLatestPerasCertRound = tickedShelleyLedgerLatestPerasCertRound
       , tickedShelleyCumulativeTxBytes = tickedShelleyCumulativeTxBytes
       }
    where
@@ -547,7 +530,6 @@ instance
       { untickedShelleyLedgerTip
       , tickedShelleyLedgerTransition
       , tickedShelleyLedgerState
-      , tickedShelleyLedgerLatestPerasCertRound
       , tickedShelleyCumulativeTxBytes
       } = st
 
@@ -567,7 +549,7 @@ slUtxoL st vals =
 instance GetTip (LedgerState (ShelleyBlock proto era)) where
   getTip = castPoint . shelleyLedgerTipPoint
 
-instance GetTip (Ticked (LedgerState (ShelleyBlock proto era))) where
+instance GetTip (Ticked LedgerState (ShelleyBlock proto era)) where
   getTip = castPoint . untickedShelleyLedgerTipPoint
 
 {-------------------------------------------------------------------------------
@@ -575,7 +557,7 @@ instance GetTip (Ticked (LedgerState (ShelleyBlock proto era))) where
 -------------------------------------------------------------------------------}
 
 -- | Ticking only affects the state itself
-data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLedgerState
+data instance Ticked LedgerState (ShelleyBlock proto era) mk = TickedShelleyLedgerState
   { untickedShelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , tickedShelleyLedgerTransition :: !ShelleyTransition
   -- ^ We are counting blocks within an epoch, this means:
@@ -584,9 +566,7 @@ data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLe
   -- 2. However, we count within an epoch, which is slot-based. So the count
   --    must be reset when /ticking/, not when applying a block.
   , tickedShelleyLedgerState :: !(SL.NewEpochState era)
-  , tickedShelleyLedgerTables ::
-      !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
-  , tickedShelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
+  , tickedShelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , tickedShelleyCumulativeTxBytes :: !Word64
   -- ^ Mirrors 'shelleyCumulativeTxBytes' across ticks. Preserved as-is
   -- on tick; incremented on apply by the block body's tx byte size.
@@ -598,10 +578,10 @@ untickedShelleyLedgerTipPoint ::
   Point (ShelleyBlock proto era)
 untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
-instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) where
-  type LedgerErr (LedgerState (ShelleyBlock proto era)) = SL.BlockTransitionError era
+type instance AuxLedgerEvent (ShelleyBlock proto era) = ShelleyLedgerEvent era
 
-  type AuxLedgerEvent (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerEvent era
+instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) where
+  type LedgerErr LedgerState (ShelleyBlock proto era) = SL.BlockTransitionError era
 
   applyChainTickLedgerResult
     evs
@@ -611,7 +591,6 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
       { shelleyLedgerTip
       , shelleyLedgerState
       , shelleyLedgerTransition
-      , shelleyLedgerLatestPerasCertRound
       , shelleyCumulativeTxBytes
       } =
       appTick globals shelleyLedgerState slotNo <&> \l' ->
@@ -628,8 +607,6 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
           , -- The UTxO set is only mutated by block/transaction execution and
             -- era translations, that is why we put empty tables here.
             tickedShelleyLedgerTables = emptyLedgerTables
-          , tickedShelleyLedgerLatestPerasCertRound =
-              shelleyLedgerLatestPerasCertRound
           , tickedShelleyCumulativeTxBytes = shelleyCumulativeTxBytes
           }
      where
@@ -655,7 +632,7 @@ data ShelleyLedgerEvent era
 
 instance
   ShelleyCompatible proto era =>
-  ApplyBlock (LedgerState (ShelleyBlock proto era)) (ShelleyBlock proto era)
+  ApplyBlock LedgerState (ShelleyBlock proto era)
   where
   -- Note: in the Shelley ledger, the @CHAIN@ rule is used to apply a whole
   -- block. In consensus, we split up the application of a block to the ledger
@@ -685,6 +662,10 @@ instance
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (\err -> Exception.throw $! ShelleyReapplyException @era err)
 
+instance
+  ShelleyCompatible proto era =>
+  GetBlockKeySets (ShelleyBlock proto era)
+  where
   getBlockKeySets =
     LedgerTables
       . KeysMK
@@ -711,17 +692,17 @@ applyHelper ::
     Either
       (SL.BlockTransitionError era)
       ( LedgerResult
-          (LedgerState (ShelleyBlock proto era))
+          (ShelleyBlock proto era)
           (SL.NewEpochState era)
       )
   ) ->
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
-  Ticked (LedgerState (ShelleyBlock proto era)) ValuesMK ->
+  Ticked LedgerState (ShelleyBlock proto era) ValuesMK ->
   Either
     (SL.BlockTransitionError era)
     ( LedgerResult
-        (LedgerState (ShelleyBlock proto era))
+        (ShelleyBlock proto era)
         (LedgerState (ShelleyBlock proto era) DiffMK)
     )
 applyHelper f cfg blk stBefore = do
@@ -765,8 +746,6 @@ applyHelper f cfg blk stBefore = do
                           shelleyAfterVoting tickedShelleyLedgerTransition
                     }
               , shelleyLedgerTables = emptyLedgerTables
-              , shelleyLedgerLatestPerasCertRound =
-                  shelleyLedgerLatestPerasCertRound'
               , shelleyCumulativeTxBytes =
                   tickedShelleyCumulativeTxBytes stBefore
                     + sum
@@ -797,30 +776,13 @@ applyHelper f cfg blk stBefore = do
   votingDeadline :: SlotNo
   votingDeadline = subSlots (2 * swindow) startOfNextEpoch
 
-  -- Update the latest Peras certificate round if the new block contains a
-  -- certificate from a round more recent than the currently cached one.
-  shelleyLedgerLatestPerasCertRound' :: StrictMaybe PerasRoundNo
-  shelleyLedgerLatestPerasCertRound' =
-    case getPerasCertRoundInBlock blk of
-      SNothing ->
-        tickedShelleyLedgerLatestPerasCertRound stBefore
-      SJust certRoundInBlock ->
-        case tickedShelleyLedgerLatestPerasCertRound stBefore of
-          SNothing ->
-            SJust certRoundInBlock
-          SJust latestCertRoundInLedgerState ->
-            SJust (certRoundInBlock `max` latestCertRoundInLedgerState)
-
-  -- Extract the round number of the Peras certificate stored in a block, if any
-  getPerasCertRoundInBlock :: ShelleyBlock proto era -> StrictMaybe PerasRoundNo
-  getPerasCertRoundInBlock =
-    fmap getPerasCertRound . maybeToStrictMaybe . getPerasCertInBlock
-
-instance HasHardForkHistory (ShelleyBlock proto era) where
+instance ShelleyBasedEra era => HasHardForkHistory (ShelleyBlock proto era) where
   type HardForkIndices (ShelleyBlock proto era) = '[ShelleyBlock proto era]
   hardForkSummary =
-    neverForksHardForkSummary $
-      shelleyEraParamsNeverHardForks . shelleyLedgerGenesis
+    neverForksHardForkSummary $ \cfg ->
+      shelleyEraParamsNeverHardForks
+        (shelleyLedgerGenesis cfg)
+        (getShelleyEraPerasRoundLength (Proxy @era))
 
 instance
   ShelleyCompatible proto era =>
@@ -929,16 +891,14 @@ encodeShelleyLedgerState
     { shelleyLedgerTip
     , shelleyLedgerState
     , shelleyLedgerTransition
-    , shelleyLedgerLatestPerasCertRound
     , shelleyCumulativeTxBytes
     } =
     encodeVersion serialisationFormatVersion2 $
       mconcat $
-        [ CBOR.encodeListLen 5
+        [ CBOR.encodeListLen 4
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
         , toCBOR shelleyLedgerState
         , encodeShelleyTransition shelleyLedgerTransition
-        , encodeStrictMaybe toCBOR shelleyLedgerLatestPerasCertRound
         , toCBOR shelleyCumulativeTxBytes
         ]
 
@@ -953,11 +913,10 @@ decodeShelleyLedgerState =
  where
   decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era) EmptyMK)
   decodeShelleyLedgerState2 = do
-    enforceSize "ShelleyLedgerState" 5
+    enforceSize "ShelleyLedgerState" 4
     shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
     shelleyLedgerState <- fromCBOR
     shelleyLedgerTransition <- decodeShelleyTransition
-    shelleyLedgerLatestPerasCertRound <- decodeStrictMaybe fromCBOR
     shelleyCumulativeTxBytes <- fromCBOR
     return
       ShelleyLedgerState
@@ -965,21 +924,23 @@ decodeShelleyLedgerState =
         , shelleyLedgerState
         , shelleyLedgerTransition
         , shelleyLedgerTables = emptyLedgerTables
-        , shelleyLedgerLatestPerasCertRound
         , shelleyCumulativeTxBytes
         }
 
-instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
+instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
   upgradeTables _ _ = id
 
 {-------------------------------------------------------------------------------
   LedgerSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance LedgerSupportsPeras (ShelleyBlock proto era) where
-  getLatestPerasCertRound =
-    strictMaybeToMaybe
-      . shelleyLedgerLatestPerasCertRound
+instance LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era)) where
+  getPoolDistr =
+    view SL.nesStakePoolDistrG . shelleyLedgerState
+
+instance LedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era)) where
+  getPoolDistr =
+    view SL.nesStakePoolDistrG . tickedShelleyLedgerState
 
 {-------------------------------------------------------------------------------
   HasLeiosVoting
@@ -1004,7 +965,7 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra)
 
 instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
 
-instance HasLeiosVoting (ShelleyBlock (PraosWithLeios c) DijkstraEra) where
+instance HasLeiosVoting (ShelleyBlock (Praos2 c) DijkstraEra) where
   getMinCertificationGap cfg =
     Just
       . minCertificationGap (shelleyLedgerSlotLength cfg)
@@ -1026,5 +987,5 @@ instance HasLeiosVoting (ShelleyBlock (PraosWithLeios c) DijkstraEra) where
   -- keeps a pool's voting weight and its block-production weight in step.
   getLeiosCommitteeFromView _ lv =
     case (Views.plvCommittee lv, Views.plvQuorumStakeThreshold lv) of
-      (LeiosLeiosRight cmt, LeiosLeiosRight q) ->
+      (Praos2HasLeios cmt, Praos2HasLeios q) ->
         Just (cmt, unboundRational q)

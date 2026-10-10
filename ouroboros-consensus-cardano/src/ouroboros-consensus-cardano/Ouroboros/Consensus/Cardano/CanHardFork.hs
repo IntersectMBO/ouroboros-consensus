@@ -7,12 +7,10 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -48,10 +46,9 @@ import Cardano.Ledger.Shelley.Translation
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
-import Control.Monad.Except (runExcept, throwError)
+import Control.Monad.Except (throwError)
 import Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors (Flip (..))
@@ -65,6 +62,9 @@ import Ouroboros.Consensus.Byron.ByronHFC ()
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Cardano.CanHardFork.OptimizedTxIdComparison
+  ( compareCardanoGenTxId
+  )
 import Ouroboros.Consensus.Forecast
 import qualified Ouroboros.Consensus.Forecast as Forecast
 import Ouroboros.Consensus.HardFork.Combinator
@@ -78,10 +78,14 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
   , IgnoringOverflow
+  , TrivialTxMeasurePhase2 (..)
   , TxEbMeasure
-  , TxMeasure
+  , TxMeasure (..)
+  , TxMeasurePhase1
+  , TxMeasurePhase2
+  , mempoolEbReservation
+  , txEbMeasure
   )
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (ledgerViewForecastAt)
   )
@@ -92,10 +96,10 @@ import Ouroboros.Consensus.Protocol.Abstract hiding
   )
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
-import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, Praos2)
 import Ouroboros.Consensus.Protocol.TPraos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -104,7 +108,7 @@ import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util (coerceMapKeys, eitherToMaybe)
+import Ouroboros.Consensus.Util (coerceMapKeys)
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -113,28 +117,14 @@ import Ouroboros.Consensus.Util (coerceMapKeys, eitherToMaybe)
 type CardanoHardForkConstraints c =
   ( TPraos.PraosCrypto c
   , Praos.PraosCrypto c
-  , TranslateProto (TPraos c) (Praos c)
-  , ShelleyCompatible (TPraos c) ShelleyEra
+  , LeiosCrypto c
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) ShelleyEra)
-  , LedgerSupportsPeras (ShelleyBlock (TPraos c) ShelleyEra)
-  , ShelleyCompatible (TPraos c) AllegraEra
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AllegraEra)
-  , LedgerSupportsPeras (ShelleyBlock (TPraos c) AllegraEra)
-  , ShelleyCompatible (TPraos c) MaryEra
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) MaryEra)
-  , LedgerSupportsPeras (ShelleyBlock (TPraos c) MaryEra)
-  , ShelleyCompatible (TPraos c) AlonzoEra
   , LedgerSupportsProtocol (ShelleyBlock (TPraos c) AlonzoEra)
-  , LedgerSupportsPeras (ShelleyBlock (TPraos c) AlonzoEra)
-  , ShelleyCompatible (Praos c) BabbageEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) BabbageEra)
-  , LedgerSupportsPeras (ShelleyBlock (Praos c) BabbageEra)
-  , ShelleyCompatible (Praos c) ConwayEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
-  , LedgerSupportsPeras (ShelleyBlock (Praos c) ConwayEra)
-  , ShelleyCompatible (PraosWithLeios c) DijkstraEra
-  , LedgerSupportsProtocol (ShelleyBlock (PraosWithLeios c) DijkstraEra)
-  , LedgerSupportsPeras (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+  , LedgerSupportsProtocol (ShelleyBlock (Praos2 c) DijkstraEra)
   )
 
 -- | When performing era translations, two eras have special behaviours on the
@@ -148,8 +138,9 @@ type CardanoHardForkConstraints c =
 --     the calculation of later rewards. In this transition, we consume the
 --     'shelleyToAllegraAVVMsToDelete' as deletions in the ledger tables.
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
-  type HardForkTxMeasure (CardanoEras c) = ConwayMeasure
-  type HardForkTxEbMeasure (CardanoEras c) = DijkstraEbMeasure
+  type HardForkTxMeasurePhase1 (CardanoEras c) = AlonzoMeasure
+  type HardForkTxMeasurePhase2 (CardanoEras c) = RefScriptSize
+  type HardForkTxEbMeasure (CardanoEras c) = TxEbMeasure (ShelleyBlock (Praos2 c) DijkstraEra)
 
   hardForkEraTranslation =
     EraTranslation
@@ -196,59 +187,16 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     -- Inter-Shelley-based
     $
       Tails.hcpure (Proxy @(HasPraosTiebreakerView c)) SameTiebreakerAcrossEras
-  hardForkInjectTxs =
-    PCons (ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx)
-      $ PCons
-        ( ignoringBoth $
-            Pair2
-              translateTxShelleyToAllegraWrapper
-              translateValidatedTxShelleyToAllegraWrapper
-        )
-      $ PCons
-        ( ignoringBoth $
-            Pair2
-              translateTxAllegraToMaryWrapper
-              translateValidatedTxAllegraToMaryWrapper
-        )
-      $ PCons
-        ( RequireBoth $ \_cfgMary cfgAlonzo ->
-            let ctxt = getAlonzoTranslationContext cfgAlonzo
-             in Pair2
-                  (translateTxMaryToAlonzoWrapper ctxt)
-                  (translateValidatedTxMaryToAlonzoWrapper ctxt)
-        )
-      $ PCons
-        ( RequireBoth $ \_cfgAlonzo _cfgBabbage ->
-            let ctxt = SL.NoGenesis
-             in Pair2
-                  (translateTxAlonzoToBabbageWrapper ctxt)
-                  (translateValidatedTxAlonzoToBabbageWrapper ctxt)
-        )
-      $ PCons
-        ( RequireBoth $ \_cfgBabbage cfgConway ->
-            let ctxt = getConwayTranslationContext cfgConway
-             in Pair2
-                  (translateTxBabbageToConwayWrapper ctxt)
-                  (translateValidatedTxBabbageToConwayWrapper ctxt)
-        )
-      $ PCons
-        ( RequireBoth $ \_cfgConway cfgDijkstra ->
-            let ctxt = getDijkstraTranslationContext cfgDijkstra
-             in Pair2
-                  (translateTxConwayToDijkstraWrapper ctxt)
-                  (translateValidatedTxConwayToDijkstraWrapper ctxt)
-        )
-      $ PNil
 
-  hardForkInjTxMeasure =
+  hardForkInjTxMeasurePhase1 =
     fromByteSize
       `o` fromByteSize
       `o` fromByteSize
       `o` fromByteSize
-      `o` fromAlonzo
-      `o` fromAlonzo
-      `o` fromConway
-      `o` fromConway
+      `o` id
+      `o` id
+      `o` id
+      `o` id
       `o` nil
    where
     nil :: SOP.NS f '[] -> a
@@ -256,28 +204,47 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
     infixr 9 `o`
     o ::
-      (TxMeasure x -> a) ->
-      (SOP.NS WrapTxMeasure xs -> a) ->
-      SOP.NS WrapTxMeasure (x : xs) ->
+      (TxMeasurePhase1 x -> a) ->
+      (SOP.NS WrapTxMeasurePhase1 xs -> a) ->
+      SOP.NS WrapTxMeasurePhase1 (x : xs) ->
       a
     o f g = \case
-      SOP.Z (WrapTxMeasure x) -> f x
+      SOP.Z (WrapTxMeasurePhase1 x) -> f x
       SOP.S y -> g y
 
-    fromByteSize :: IgnoringOverflow ByteSize32 -> ConwayMeasure
-    fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
-    fromAlonzo x = fromConway $ ConwayMeasure x mempty
-    fromConway x = x
+  hardForkInjTxMeasurePhase2 =
+    fromTrivial
+      `o` fromTrivial
+      `o` fromTrivial
+      `o` fromTrivial
+      `o` fromTrivial
+      `o` fromTrivial
+      `o` id
+      `o` id
+      `o` nil
+   where
+    nil :: SOP.NS f '[] -> a
+    nil = \case {}
+
+    infixr 9 `o`
+    o ::
+      (TxMeasurePhase2 x -> a) ->
+      (SOP.NS WrapTxMeasurePhase2 xs -> a) ->
+      SOP.NS WrapTxMeasurePhase2 (x : xs) ->
+      a
+    o f g = \case
+      SOP.Z (WrapTxMeasurePhase2 x) -> f x
+      SOP.S y -> g y
 
   hardForkInjTxEbMeasure =
-    fromByteSize
-      `o` fromByteSize
-      `o` fromByteSize
-      `o` fromByteSize
-      `o` fromAlonzo
-      `o` fromAlonzo
-      `o` fromConway
-      `o` fromDijkstra
+    inj fromByteSize fromTrivial
+      `o` inj fromByteSize fromTrivial
+      `o` inj fromByteSize fromTrivial
+      `o` inj fromByteSize fromTrivial
+      `o` inj id fromTrivial
+      `o` inj id fromTrivial
+      `o` inj id id
+      `o` id
       `o` nil
    where
     nil :: SOP.NS f '[] -> a
@@ -293,21 +260,49 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxEbMeasure x) -> f x
       SOP.S y -> g y
 
-    -- Pre-Dijkstra transactions cannot appear in an endorser block, but they
-    -- must not measure zero: a zero measure fits those eras' zero
-    -- endorser-block capacity, and a fill would take the whole mempool.
-    fromByteSize :: IgnoringOverflow ByteSize32 -> DijkstraEbMeasure
-    fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
-    fromAlonzo x = fromConway $ ConwayMeasure x mempty
-    fromConway x = DijkstraEbMeasure x mempty
+    -- Before Dijkstra 'TxEbMeasure' is 'TxMeasure', so each position widens
+    -- both phases the same way 'hardForkInjTxMeasurePhase1' and
+    -- 'hardForkInjTxMeasurePhase2' do.
+    --
+    -- Eras before Dijkstra have no endorser blocks, so their references cost
+    -- nothing. The closure keeps the block measure, because
+    -- 'txEbMeasure' must never be zero.
+    inj ::
+      (TxMeasurePhase1 x -> AlonzoMeasure) ->
+      (TxMeasurePhase2 x -> RefScriptSize) ->
+      TxMeasure x ->
+      DijkstraEbMeasure
+    inj f g (TxMeasure p1 p2) =
+      DijkstraEbMeasure
+        { ebClosureMeasure = TxMeasure (f p1) (g p2)
+        , txReferencesSize = mempty
+        }
 
-    fromDijkstra :: DijkstraEbMeasure -> DijkstraEbMeasure
-    fromDijkstra x = x
+  hardForkTxEbMeasure _ p1 p2 =
+    txEbMeasure (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) (TxMeasure p1 p2)
 
-  hardForkTxEbMeasure _ = txEbMeasureDijkstra
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) eb
+     in (p1, p2)
+
+  -- Both ids are ordered by their txid hash, ignoring the era. Equality reuses
+  -- 'compare' rather than a separate path: 'hardForkEqGenTxId' is
+  -- 'compareCardanoGenTxId' returning 'EQ'. This allocates no heap: all three
+  -- 'Ordering' constructors take zero arguments, so they are never allocated on
+  -- the dynamic heap; every 'Ordering' pointer is to one of three statically
+  -- allocated addresses. 'compareCardanoGenTxId' keeps the comparison itself
+  -- allocation-free.
+  hardForkCompareGenTxId = compareCardanoGenTxId
+  hardForkEqGenTxId l r = compareCardanoGenTxId l r == EQ
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
+
+fromByteSize :: IgnoringOverflow ByteSize32 -> AlonzoMeasure
+fromByteSize x = AlonzoMeasure x mempty
+
+fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
+fromTrivial TrivialTxMeasurePhase2 = mempty
 
 {-------------------------------------------------------------------------------
   Translation from Byron to Shelley
@@ -315,17 +310,24 @@ instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosT
 
 translateHeaderHashByronToShelley ::
   forall c.
-  ShelleyCompatible (TPraos c) ShelleyEra =>
   Proxy c ->
   HeaderHash ByronBlock ->
   HeaderHash (ShelleyBlock (TPraos c) ShelleyEra)
-translateHeaderHashByronToShelley _ =
-  fromShortRawHash (Proxy @(ShelleyBlock (TPraos c) ShelleyEra))
-    . toShortRawHash (Proxy @ByronBlock)
+translateHeaderHashByronToShelley _ h =
+  case sameSizeSafety of
+    Refl ->
+      unsafeFromShortRawHash (Proxy @(ShelleyBlock (TPraos c) ShelleyEra)) $
+        toShortRawHash (Proxy @ByronBlock) h
+ where
+  -- Calling 'unsafeFromShortRawHash' is only valid if the raw bytes of a Byron
+  -- header hash are also a valid Shelley header hash, i.e. both hashes have the
+  -- same size. This holds because both are 32-byte Blake2b_256 digests; we
+  -- assert it here so that any future divergence is caught at compile time.
+  sameSizeSafety :: HashSize ByronBlock :~: HashSize (ShelleyBlock (TPraos c) ShelleyEra)
+  sameSizeSafety = Refl
 
 translatePointByronToShelley ::
   forall c.
-  ShelleyCompatible (TPraos c) ShelleyEra =>
   Point ByronBlock ->
   WithOrigin BlockNo ->
   WithOrigin (ShelleyTip (TPraos c) ShelleyEra)
@@ -344,7 +346,6 @@ translatePointByronToShelley point bNo =
       error "translatePointByronToShelley: invalid Byron state"
 
 translateLedgerStateByronToShelleyWrapper ::
-  ShelleyCompatible (TPraos c) ShelleyEra =>
   RequiringBoth
     WrapLedgerConfig
     TranslateLedgerState
@@ -370,7 +371,6 @@ translateLedgerStateByronToShelleyWrapper =
                 , shelleyLedgerTransition =
                     ShelleyTransitionInfo{shelleyAfterVoting = 0}
                 , shelleyLedgerTables = emptyLedgerTables
-                , shelleyLedgerLatestPerasCertRound = SNothing
                 , shelleyCumulativeTxBytes = 0
                 }
         }
@@ -561,22 +561,6 @@ translateLedgerTablesShelleyToAllegraWrapper =
     , translateTxOutWith = SL.upgradeTxOut
     }
 
-translateTxShelleyToAllegraWrapper ::
-  InjectTx
-    (ShelleyBlock (TPraos c) ShelleyEra)
-    (ShelleyBlock (TPraos c) AllegraEra)
-translateTxShelleyToAllegraWrapper =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
-
-translateValidatedTxShelleyToAllegraWrapper ::
-  InjectValidatedTx
-    (ShelleyBlock (TPraos c) ShelleyEra)
-    (ShelleyBlock (TPraos c) AllegraEra)
-translateValidatedTxShelleyToAllegraWrapper =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
-
 {-------------------------------------------------------------------------------
   Translation from Allegra to Mary
 -------------------------------------------------------------------------------}
@@ -608,22 +592,6 @@ translateLedgerTablesAllegraToMaryWrapper =
     { translateTxInWith = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
-
-translateTxAllegraToMaryWrapper ::
-  InjectTx
-    (ShelleyBlock (TPraos c) AllegraEra)
-    (ShelleyBlock (TPraos c) MaryEra)
-translateTxAllegraToMaryWrapper =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
-
-translateValidatedTxAllegraToMaryWrapper ::
-  InjectValidatedTx
-    (ShelleyBlock (TPraos c) AllegraEra)
-    (ShelleyBlock (TPraos c) MaryEra)
-translateValidatedTxAllegraToMaryWrapper =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
 
 {-------------------------------------------------------------------------------
   Translation from Mary to Alonzo
@@ -663,25 +631,6 @@ getAlonzoTranslationContext ::
 getAlonzoTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
 
-translateTxMaryToAlonzoWrapper ::
-  SL.TranslationContext AlonzoEra ->
-  InjectTx
-    (ShelleyBlock (TPraos c) MaryEra)
-    (ShelleyBlock (TPraos c) AlonzoEra)
-translateTxMaryToAlonzoWrapper ctxt =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
-
-translateValidatedTxMaryToAlonzoWrapper ::
-  forall c.
-  SL.TranslationContext AlonzoEra ->
-  InjectValidatedTx
-    (ShelleyBlock (TPraos c) MaryEra)
-    (ShelleyBlock (TPraos c) AlonzoEra)
-translateValidatedTxMaryToAlonzoWrapper ctxt =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
-
 {-------------------------------------------------------------------------------
   Translation from Alonzo to Babbage
 -------------------------------------------------------------------------------}
@@ -708,13 +657,12 @@ translateLedgerStateAlonzoToBabbageWrapper =
   transPraosLS ::
     LedgerState (ShelleyBlock (TPraos c) AlonzoEra) mk ->
     LedgerState (ShelleyBlock (Praos c) AlonzoEra) mk
-  transPraosLS (ShelleyLedgerState wo nes st tb lcr ctb) =
+  transPraosLS (ShelleyLedgerState wo nes st tb ctb) =
     ShelleyLedgerState
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
       , shelleyLedgerTransition = st
       , shelleyLedgerTables = coerce tb
-      , shelleyLedgerLatestPerasCertRound = lcr
       , shelleyCumulativeTxBytes = ctb
       }
 
@@ -727,43 +675,6 @@ translateLedgerTablesAlonzoToBabbageWrapper =
     { translateTxInWith = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
-
-translateTxAlonzoToBabbageWrapper ::
-  SL.TranslationContext BabbageEra ->
-  InjectTx
-    (ShelleyBlock (TPraos c) AlonzoEra)
-    (ShelleyBlock (Praos c) BabbageEra)
-translateTxAlonzoToBabbageWrapper ctxt =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . transPraosTx
- where
-  transPraosTx ::
-    GenTx (ShelleyBlock (TPraos c) AlonzoEra) ->
-    GenTx (ShelleyBlock (Praos c) AlonzoEra)
-  transPraosTx (ShelleyTx ti tx) = ShelleyTx ti (coerce tx)
-
-translateValidatedTxAlonzoToBabbageWrapper ::
-  forall c.
-  SL.TranslationContext BabbageEra ->
-  InjectValidatedTx
-    (ShelleyBlock (TPraos c) AlonzoEra)
-    (ShelleyBlock (Praos c) BabbageEra)
-translateValidatedTxAlonzoToBabbageWrapper ctxt =
-  InjectValidatedTx $
-    fmap unComp
-      . eitherToMaybe
-      . runExcept
-      . SL.translateEra ctxt
-      . Comp
-      . transPraosValidatedTx
- where
-  transPraosValidatedTx ::
-    WrapValidatedGenTx (ShelleyBlock (TPraos c) AlonzoEra) ->
-    WrapValidatedGenTx (ShelleyBlock (Praos c) AlonzoEra)
-  transPraosValidatedTx (WrapValidatedGenTx x) = case x of
-    ShelleyValidatedTx txid vtx ->
-      WrapValidatedGenTx $
-        ShelleyValidatedTx txid (SL.coerceValidated vtx)
 
 {-------------------------------------------------------------------------------
   Translation from Babbage to Conway
@@ -803,25 +714,6 @@ getConwayTranslationContext ::
 getConwayTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
 
-translateTxBabbageToConwayWrapper ::
-  SL.TranslationContext ConwayEra ->
-  InjectTx
-    (ShelleyBlock (Praos c) BabbageEra)
-    (ShelleyBlock (Praos c) ConwayEra)
-translateTxBabbageToConwayWrapper ctxt =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
-
-translateValidatedTxBabbageToConwayWrapper ::
-  forall c.
-  SL.TranslationContext ConwayEra ->
-  InjectValidatedTx
-    (ShelleyBlock (Praos c) BabbageEra)
-    (ShelleyBlock (Praos c) ConwayEra)
-translateValidatedTxBabbageToConwayWrapper ctxt =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
-
 {-------------------------------------------------------------------------------
   Translation from Conway to Dijkstra
 -------------------------------------------------------------------------------}
@@ -831,7 +723,7 @@ translateLedgerStateConwayToDijkstraWrapper ::
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+    (ShelleyBlock (Praos2 c) DijkstraEra)
 translateLedgerStateConwayToDijkstraWrapper =
   RequireBoth $ \_cfgConway cfgDijkstra ->
     TranslateLedgerState
@@ -846,25 +738,23 @@ translateLedgerStateConwayToDijkstraWrapper =
       }
  where
   -- Only the protocol index changes, so nothing in here is converted; the
-  -- rebuild is what retypes it. Contrast 'transPraosLS', which crosses between
-  -- two genuinely different protocols.
+  -- rebuild is what retypes it.
   transLeiosLS ::
     LedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
-    LedgerState (ShelleyBlock (PraosWithLeios c) ConwayEra) mk
-  transLeiosLS (ShelleyLedgerState wo nes st tb lcr ctb) =
+    LedgerState (ShelleyBlock (Praos2 c) ConwayEra) mk
+  transLeiosLS (ShelleyLedgerState wo nes st tb ctb) =
     ShelleyLedgerState
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
       , shelleyLedgerTransition = st
       , shelleyLedgerTables = coerce tb
-      , shelleyLedgerLatestPerasCertRound = lcr
       , shelleyCumulativeTxBytes = ctb
       }
 
 translateLedgerTablesConwayToDijkstraWrapper ::
   TranslateLedgerTables
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+    (ShelleyBlock (Praos2 c) DijkstraEra)
 translateLedgerTablesConwayToDijkstraWrapper =
   TranslateLedgerTables
     { translateTxInWith = coerce
@@ -883,7 +773,7 @@ crossEraForecastConwayToDijkstraWrapper ::
     WrapLedgerConfig
     (CrossEraForecaster LedgerState WrapLedgerView)
     (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+    (ShelleyBlock (Praos2 c) DijkstraEra)
 crossEraForecastConwayToDijkstraWrapper =
   RequireBoth $ \cfgConway cfgDijkstra ->
     CrossEraForecaster $ \transition forecastFor st ->
@@ -915,42 +805,7 @@ crossEraForecastConwayToDijkstraWrapper =
                   }
 
 getDijkstraTranslationContext ::
-  WrapLedgerConfig (ShelleyBlock (PraosWithLeios c) DijkstraEra) ->
+  WrapLedgerConfig (ShelleyBlock (Praos2 c) DijkstraEra) ->
   SL.TranslationContext DijkstraEra
 getDijkstraTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
-
-translateTxConwayToDijkstraWrapper ::
-  SL.TranslationContext DijkstraEra ->
-  InjectTx
-    (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
-translateTxConwayToDijkstraWrapper ctxt =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . transLeiosTx
- where
-  transLeiosTx ::
-    GenTx (ShelleyBlock (Praos c) ConwayEra) ->
-    GenTx (ShelleyBlock (PraosWithLeios c) ConwayEra)
-  transLeiosTx (ShelleyTx ti tx) = ShelleyTx ti tx
-
-translateValidatedTxConwayToDijkstraWrapper ::
-  forall c.
-  SL.TranslationContext DijkstraEra ->
-  InjectValidatedTx
-    (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (PraosWithLeios c) DijkstraEra)
-translateValidatedTxConwayToDijkstraWrapper ctxt =
-  InjectValidatedTx $
-    fmap unComp
-      . eitherToMaybe
-      . runExcept
-      . SL.translateEra ctxt
-      . Comp
-      . transLeiosValidatedTx
- where
-  transLeiosValidatedTx ::
-    WrapValidatedGenTx (ShelleyBlock (Praos c) ConwayEra) ->
-    WrapValidatedGenTx (ShelleyBlock (PraosWithLeios c) ConwayEra)
-  transLeiosValidatedTx (WrapValidatedGenTx x) = case x of
-    ShelleyValidatedTx txid vtx -> WrapValidatedGenTx $ ShelleyValidatedTx txid vtx

@@ -9,8 +9,8 @@
 -- needs, out of the one the @tools-test@ fixture already holds.
 --
 -- The @tools-test@ suite is the only consumer. It sits in this library rather
--- than beside that suite because it uses 'Cardano.Api.KeysShelley' and
--- 'Cardano.Api.SerialiseTextEnvelope', which are private to this library.
+-- than beside that suite because it writes keys with @cardano-keys@, which only
+-- this library depends on.
 --
 -- The file generator, and the queue that 'writeQueueTxs' runs to write its
 -- file, want more of a genesis than the respend generator does, and none of it
@@ -42,8 +42,6 @@ module Cardano.Tools.DBSynthesizer.Test.QueueFixture
   ( writeQueueFixture
   ) where
 
-import Cardano.Api.KeysShelley (SigningKey (PaymentSigningKey))
-import Cardano.Api.SerialiseTextEnvelope (serialiseToTextEnvelope)
 import Cardano.Crypto.DSIGN
   ( BLS12381MinSigDSIGN
   , DSIGNAlgorithm
@@ -53,12 +51,14 @@ import Cardano.Crypto.DSIGN
   , genKeyDSIGN
   , seedSizeDSIGN
   )
+import Cardano.Crypto.DSIGN.BLS12381.Internal (minSigPoPDST)
+import Cardano.Crypto.Hash (Blake2b_256, hashToTextAsHex, hashWith)
 import Cardano.Crypto.Seed (Seed, mkSeedFromBytes)
+import qualified Cardano.Keys as Keys
 import Cardano.Ledger.Address (serialiseAddr)
 import qualified Cardano.Ledger.Keys as LK
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (BlsKey (BlsKey))
-import Cardano.Tools.DBSynthesizer.BlsKey (BlsSigningKey (BlsSigningKey))
 import Data.Aeson (Value (Number, Object))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as Pretty
@@ -95,10 +95,12 @@ writeQueueFixture srcDir outDir count = do
       blsSk :: SignKeyDSIGN BLS12381MinSigDSIGN
       blsSk = genKeyDSIGN (seedFor @BLS12381MinSigDSIGN "queue-fixture-bls-key")
 
-  writeJson (outDir </> "payment.skey") $
-    serialiseToTextEnvelope Nothing (PaymentSigningKey paySk)
-  writeJson (outDir </> "bls.skey") $
-    serialiseToTextEnvelope Nothing (BlsSigningKey blsSk)
+  _ <-
+    writeJson (outDir </> "payment.skey") $
+      Keys.serialiseToTextEnvelope Nothing (Keys.PaymentSigningKey paySk)
+  _ <-
+    writeJson (outDir </> "bls.skey") $
+      Keys.serialiseToTextEnvelope Nothing (Keys.BlsSigningKey blsSk)
 
   -- The addresses. One payment credential, one staking credential per output,
   -- so the ledger's pseudo-input differs for each and the key owns them all.
@@ -116,20 +118,29 @@ writeQueueFixture srcDir outDir count = do
   dijkstra <- readJsonObject (srcDir </> "dijkstra-genesis.json")
   config <- readJsonObject (srcDir </> "config.json")
 
-  writeJson (outDir </> "shelley-genesis.json") . Object $
-    KeyMap.insert "initialFunds" (fundsOf addrs perAddr (shelley KeyMap.!? "initialFunds")) $
-      KeyMap.insert "staking" (withBlsKey blsSk (shelley KeyMap.!? "staking")) shelley
+  shelleyHash <-
+    writeJson (outDir </> "shelley-genesis.json") . Object $
+      KeyMap.insert "initialFunds" (fundsOf addrs perAddr (shelley KeyMap.!? "initialFunds")) $
+        KeyMap.insert "staking" (withBlsKey blsSk (shelley KeyMap.!? "staking")) shelley
 
-  writeJson (outDir </> "dijkstra-genesis.json") . Object $
-    KeyMap.union leiosParams dijkstra
+  dijkstraHash <-
+    writeJson (outDir </> "dijkstra-genesis.json") . Object $
+      KeyMap.union leiosParams dijkstra
 
-  -- Conway and Dijkstra have no Test*HardForkAtEpoch in the fixture, so they
-  -- trigger on a protocol version the chain never reaches. Leios lives in
-  -- Dijkstra, so the run has to start there.
-  writeJson (outDir </> "config.json") . Object $
-    KeyMap.union
-      (KeyMap.fromList [("TestConwayHardForkAtEpoch", Number 0), ("TestDijkstraHardForkAtEpoch", Number 0)])
-      config
+  -- Dijkstra has no TestDijkstraHardForkAtEpoch in the fixture, so it triggers
+  -- on a protocol version the chain never reaches. Leios lives in Dijkstra, so
+  -- the run has to start there. The two genesis files changed, and the
+  -- configuration names them by hash.
+  _ <-
+    writeJson (outDir </> "config.json") . Object $
+      updateSection "Protocol" (KeyMap.insert "ShelleyGenesisHash" (Aeson.toJSON shelleyHash)) $
+        updateSection
+          "Testing"
+          ( KeyMap.insert "DijkstraGenesisHash" (Aeson.toJSON dijkstraHash)
+              . KeyMap.union
+                (KeyMap.fromList [("TestConwayHardForkAtEpoch", Number 0), ("TestDijkstraHardForkAtEpoch", Number 0)])
+          )
+          config
 
   mapM_
     (\f -> copyFile (srcDir </> f) (outDir </> f))
@@ -186,7 +197,7 @@ withBlsKey blsSk = \case
  where
   blsKeyJson =
     Aeson.toJSON $
-      BlsKey (deriveVerKeyDSIGN blsSk) (createPossessionProofDSIGN blsSk)
+      BlsKey (deriveVerKeyDSIGN blsSk) (createPossessionProofDSIGN minSigPoPDST blsSk)
 
 -- | The generated addresses, plus the two the fixture already had.
 --
@@ -234,8 +245,27 @@ readJsonObject path =
     Left err -> die $ path ++ ": " ++ err
 
 -- | Keys sorted and one value per line, so the fixture reads and diffs like the
--- one it is generated from.
-writeJson :: Aeson.ToJSON a => FilePath -> a -> IO ()
-writeJson path =
-  BSL.writeFile path
-    . Pretty.encodePretty' Pretty.defConfig{Pretty.confCompare = compare}
+-- one it is generated from. Returns the hash a node configuration names the
+-- file by.
+writeJson :: Aeson.ToJSON a => FilePath -> a -> IO Text.Text
+writeJson path a = do
+  BSL.writeFile path bytes
+  pure $ hashToTextAsHex $ hashWith @Blake2b_256 id $ BSL.toStrict bytes
+ where
+  bytes = Pretty.encodePretty' Pretty.defConfig{Pretty.confCompare = compare} a
+
+-- | Change one section of the node configuration's @Configuration@ object.
+updateSection ::
+  Key.Key ->
+  (KeyMap.KeyMap Value -> KeyMap.KeyMap Value) ->
+  KeyMap.KeyMap Value ->
+  KeyMap.KeyMap Value
+updateSection name f = adjust inConfiguration "Configuration"
+ where
+  adjust g k m = maybe m (\v -> KeyMap.insert k (g v) m) (KeyMap.lookup k m)
+  inConfiguration = \case
+    Object configuration -> Object $ adjust inSection name configuration
+    other -> error $ "writeQueueFixture: unexpected Configuration: " ++ show other
+  inSection = \case
+    Object section -> Object (f section)
+    other -> error $ "writeQueueFixture: unexpected section: " ++ show other

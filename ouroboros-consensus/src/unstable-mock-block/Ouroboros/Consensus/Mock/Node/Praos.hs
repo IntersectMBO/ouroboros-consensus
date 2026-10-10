@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -21,7 +21,7 @@ import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -39,31 +39,36 @@ protocolInfoPraos ::
   PraosEvolvingStake ->
   ProtocolInfo MockPraosBlock
 protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
-  ProtocolInfo
-    { pInfoConfig =
-        TopLevelConfig
-          { topLevelConfigProtocol =
-              PraosConfig
-                { praosParams = params
-                , praosSignKeyVRF = signKeyVRF nid
-                , praosInitialEta = eta0
-                , praosInitialStake = genesisStakeDist addrDist
-                , praosEvolvingStake = evolvingStakeDist
-                , praosVerKeys = verKeys
-                }
-          , topLevelConfigLedger = SimpleLedgerConfig addrDist eraParams defaultMockConfig
-          , topLevelConfigBlock = SimpleBlockConfig
-          , topLevelConfigCodec = SimpleCodecConfig
-          , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
-          , topLevelConfigCheckpoints = emptyCheckpointsMap
-          , topLevelConfigVotingKeys = []
-          }
-    , pInfoInitLedger =
-        ExtLedgerState
-          { ledgerState = genesisSimpleLedgerState addrDist
-          , headerState = genesisHeaderState (PraosChainDepState [])
-          }
-    }
+  let ledgerConfig = SimpleLedgerConfig addrDist eraParams defaultMockConfig
+   in ProtocolInfo
+        { pInfoConfig =
+            TopLevelConfig
+              { topLevelConfigProtocol =
+                  PraosConfig
+                    { praosParams = params
+                    , praosSignKeyVRF = signKeyVRF nid
+                    , praosInitialEta = eta0
+                    , praosInitialStake = genesisStakeDist addrDist
+                    , praosEvolvingStake = evolvingStakeDist
+                    , praosVerKeys = verKeys
+                    }
+              , topLevelConfigLedger = ledgerConfig
+              , topLevelConfigBlock = SimpleBlockConfig
+              , topLevelConfigCodec = SimpleCodecConfig
+              , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
+              , topLevelConfigCheckpoints = emptyCheckpointsMap
+              , topLevelConfigVotingKeys = []
+              }
+        , pInfoInitLedger =
+            let ledgerState = genesisSimpleLedgerState addrDist
+                headerState = genesisHeaderState (PraosChainDepState [])
+                perasState = initPerasState ledgerConfig ledgerState headerState
+             in ExtLedgerState
+                  { ledgerState
+                  , headerState
+                  , perasState
+                  }
+        }
  where
   signKeyVRF :: CoreNodeId -> SignKeyVRF MockVRF
   signKeyVRF (CoreNodeId n) = SignKeyMockVRF n
@@ -136,17 +141,11 @@ praosBlockForging cid initHotKey = do
               . second forgeStateUpdateInfoFromUpdateInfo
               . evolveKey sno
       , checkCanForge = \_ _ _ _ _ -> return ()
-      , forgeBlock = \ForgeBlockArgs{..} -> do
+      , forgeBlock = \_leiosArgs fbArgs -> do
           hotKey <- readMVar varHotKey
-          return $
-            flip (,) Nothing $
-              forgeSimple
-                (forgePraosExt hotKey)
-                fbConfig
-                fbCurrentBlockNo
-                fbCurrentSlotNo
-                fbCurrentTickedLedgerState
-                (map txForgetValidated fbRbTxs)
-                fbIsLeader
+          return
+            ( forgeSimple (forgePraosExt hotKey) fbArgs
+            , Nothing
+            )
       , finalize = pure ()
       }

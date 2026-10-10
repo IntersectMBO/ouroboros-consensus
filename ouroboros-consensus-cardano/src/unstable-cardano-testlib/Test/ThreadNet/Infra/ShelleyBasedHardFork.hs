@@ -53,9 +53,9 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
-import Control.Monad.Except (runExcept)
 import qualified Control.Tracer as Tracer
 import Data.Coerce
+import Data.Function (on)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Proxy
@@ -83,7 +83,6 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -100,7 +99,6 @@ import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util (eitherToMaybe)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import System.FS.API (SomeHasFS)
 import Test.ThreadNet.TxGen
@@ -154,13 +152,13 @@ pattern ShelleyBasedHardForkNodeToNodeVersionMax =
 
 pattern HardForkSpecificNodeToNodeVersionMax :: HardForkSpecificNodeToNodeVersion
 pattern HardForkSpecificNodeToNodeVersionMax <- ((== maxBound) -> True)
-  where
-    HardForkSpecificNodeToNodeVersionMax = maxBound
+ where
+  HardForkSpecificNodeToNodeVersionMax = maxBound
 
 pattern ShelleyNodeToNodeVersionMax :: ShelleyNodeToNodeVersion
 pattern ShelleyNodeToNodeVersionMax <- ((== maxBound) -> True)
-  where
-    ShelleyNodeToNodeVersionMax = maxBound
+ where
+  ShelleyNodeToNodeVersionMax = maxBound
 
 pattern ShelleyBasedHardForkNodeToClientVersionMax ::
   BlockNodeToClientVersion (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
@@ -174,13 +172,13 @@ pattern ShelleyBasedHardForkNodeToClientVersionMax =
 
 pattern HardForkSpecificNodeToClientVersionMax :: HardForkSpecificNodeToClientVersion
 pattern HardForkSpecificNodeToClientVersionMax <- ((== maxBound) -> True)
-  where
-    HardForkSpecificNodeToClientVersionMax = maxBound
+ where
+  HardForkSpecificNodeToClientVersionMax = maxBound
 
 pattern ShelleyNodeToClientVersionMax :: ShelleyNodeToClientVersion
 pattern ShelleyNodeToClientVersionMax <- ((== maxBound) -> True)
-  where
-    ShelleyNodeToClientVersionMax = maxBound
+ where
+  ShelleyNodeToClientVersionMax = maxBound
 
 {-------------------------------------------------------------------------------
   Consensus instances
@@ -191,12 +189,19 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , ShelleyCompatible proto2 era2
   , LedgerSupportsProtocol (ShelleyBlock proto1 era1)
   , LedgerSupportsProtocol (ShelleyBlock proto2 era2)
-  , LedgerSupportsPeras (ShelleyBlock proto1 era1)
-  , LedgerSupportsPeras (ShelleyBlock proto2 era2)
+  , SerialiseConstraintsHFC (ShelleyBlock proto1 era1)
+  , SerialiseConstraintsHFC (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
-  , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
-  , TranslateTxMeasure (TxEbMeasure (ShelleyBlock proto1 era1)) (TxEbMeasure (ShelleyBlock proto2 era2))
+  , TranslateTxMeasure
+      (TxMeasurePhase1 (ShelleyBlock proto1 era1))
+      (TxMeasurePhase1 (ShelleyBlock proto2 era2))
+  , TranslateTxMeasure
+      (TxMeasurePhase2 (ShelleyBlock proto1 era1))
+      (TxMeasurePhase2 (ShelleyBlock proto2 era2))
+  , TranslateTxMeasure
+      (TxEbMeasure (ShelleyBlock proto1 era1))
+      (TxEbMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
   , SL.TranslateEra era2 (SL.Tx SL.TopTx)
@@ -206,12 +211,14 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , PraosCrypto (ProtoCrypto proto1)
   , proto1 ~ TPraos (ProtoCrypto proto1)
   , proto1 ~ proto2
-  , MemPack (TxOut (LedgerState (ShelleyBlock proto1 era1)))
-  , MemPack (TxOut (LedgerState (ShelleyBlock proto2 era2)))
+  , MemPack (TxOut (ShelleyBlock proto1 era1))
+  , MemPack (TxOut (ShelleyBlock proto2 era2))
   )
 
 class TranslateTxMeasure a b where
   translateTxMeasure :: a -> b
+
+-- Phase 1 measures
 
 instance TranslateTxMeasure (IgnoringOverflow ByteSize32) (IgnoringOverflow ByteSize32) where
   translateTxMeasure = id
@@ -219,26 +226,28 @@ instance TranslateTxMeasure (IgnoringOverflow ByteSize32) (IgnoringOverflow Byte
 instance TranslateTxMeasure (IgnoringOverflow ByteSize32) AlonzoMeasure where
   translateTxMeasure x = AlonzoMeasure x mempty
 
-instance TranslateTxMeasure (IgnoringOverflow ByteSize32) ConwayMeasure where
-  translateTxMeasure =
-    translateTxMeasure . (\x -> x :: AlonzoMeasure) . translateTxMeasure
-
 instance TranslateTxMeasure AlonzoMeasure AlonzoMeasure where
   translateTxMeasure = id
 
-instance TranslateTxMeasure AlonzoMeasure ConwayMeasure where
-  translateTxMeasure x = ConwayMeasure x mempty
+-- Phase 2 measures
 
-instance TranslateTxMeasure ConwayMeasure ConwayMeasure where
+instance TranslateTxMeasure TrivialTxMeasurePhase2 TrivialTxMeasurePhase2 where
   translateTxMeasure = id
 
--- | Pre-Dijkstra transactions cannot appear in an endorser block, but they
--- must not measure zero (see 'txEbMeasure').
-instance TranslateTxMeasure ConwayMeasure DijkstraEbMeasure where
-  translateTxMeasure x = DijkstraEbMeasure x mempty
+instance TranslateTxMeasure TrivialTxMeasurePhase2 RefScriptSize where
+  translateTxMeasure TrivialTxMeasurePhase2 = mempty
 
-instance TranslateTxMeasure DijkstraEbMeasure DijkstraEbMeasure where
+instance TranslateTxMeasure RefScriptSize RefScriptSize where
   translateTxMeasure = id
+
+instance
+  ( TranslateTxMeasure (TxMeasurePhase1 x) (TxMeasurePhase1 y)
+  , TranslateTxMeasure (TxMeasurePhase2 x) (TxMeasurePhase2 y)
+  ) =>
+  TranslateTxMeasure (TxMeasure x) (TxMeasure y)
+  where
+  translateTxMeasure (TxMeasure p1 p2) =
+    TxMeasure (translateTxMeasure p1) (translateTxMeasure p2)
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
@@ -251,9 +260,11 @@ instance
   CanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   where
   type
-    HardForkTxMeasure (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
-      TxMeasure (ShelleyBlock proto2 era2)
-
+    HardForkTxMeasurePhase1 (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+      TxMeasurePhase1 (ShelleyBlock proto2 era2)
+  type
+    HardForkTxMeasurePhase2 (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+      TxMeasurePhase2 (ShelleyBlock proto2 era2)
   type
     HardForkTxEbMeasure (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
       TxEbMeasure (ShelleyBlock proto2 era2)
@@ -298,45 +309,29 @@ instance
 
   hardForkChainSel = Tails.mk2 SameTiebreakerAcrossEras
 
-  hardForkInjectTxs =
-    InPairs.mk2 $
-      InPairs.RequireBoth $ \_cfg1 cfg2 ->
-        let ctxt = shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2)
-         in Pair2
-              (InjectTx (translateTx ctxt))
-              (InjectValidatedTx (translateValidatedTx ctxt))
-   where
-    translateTx ::
-      SL.TranslationContext era2 ->
-      GenTx (ShelleyBlock proto era1) ->
-      Maybe (GenTx (ShelleyBlock proto era2))
-    translateTx transCtxt =
-      fmap unComp
-        . eitherToMaybe
-        . runExcept
-        . SL.translateEra transCtxt
-        . Comp
+  hardForkInjTxMeasurePhase1 = \case
+    (Z (WrapTxMeasurePhase1 x)) -> translateTxMeasure x
+    S (Z (WrapTxMeasurePhase1 x)) -> x
 
-    translateValidatedTx ::
-      SL.TranslationContext era2 ->
-      WrapValidatedGenTx (ShelleyBlock proto era1) ->
-      Maybe (WrapValidatedGenTx (ShelleyBlock proto era2))
-    translateValidatedTx transCtxt =
-      fmap unComp
-        . eitherToMaybe
-        . runExcept
-        . SL.translateEra transCtxt
-        . Comp
-
-  hardForkInjTxMeasure = \case
-    (Z (WrapTxMeasure x)) -> translateTxMeasure x
-    S (Z (WrapTxMeasure x)) -> x
+  hardForkInjTxMeasurePhase2 = \case
+    (Z (WrapTxMeasurePhase2 x)) -> translateTxMeasure x
+    S (Z (WrapTxMeasurePhase2 x)) -> x
 
   hardForkInjTxEbMeasure = \case
     (Z (WrapTxEbMeasure x)) -> translateTxMeasure x
     S (Z (WrapTxEbMeasure x)) -> x
 
-  hardForkTxEbMeasure _ = txEbMeasure (Proxy @(ShelleyBlock proto2 era2))
+  hardForkTxEbMeasure _ p1 p2 =
+    txEbMeasure (Proxy @(ShelleyBlock proto2 era2)) (TxMeasure p1 p2)
+
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @(ShelleyBlock proto2 era2)) eb
+     in (p1, p2)
+
+  -- Test-only hard fork. For a test block the unoptimized raw-hash
+  -- comparison is fine.
+  hardForkEqGenTxId = (==) `on` rawHashNS
+  hardForkCompareGenTxId = compare `on` rawHashNS
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
@@ -498,7 +493,10 @@ protocolInfoShelleyBasedHardFork
     genesis = transCfg2 ^. L.tcShelleyGenesisL
 
     eraParams1 :: History.EraParams
-    eraParams1 = shelleyEraParams genesis
+    eraParams1 =
+      shelleyEraParams
+        genesis
+        (Proxy @era1)
 
     toPartialLedgerConfig1 ::
       LedgerConfig (ShelleyBlock proto1 era1) ->
@@ -512,7 +510,10 @@ protocolInfoShelleyBasedHardFork
     -- Era 2
 
     eraParams2 :: History.EraParams
-    eraParams2 = shelleyEraParams genesis
+    eraParams2 =
+      shelleyEraParams
+        genesis
+        (Proxy @era2)
 
     toPartialLedgerConfig2 ::
       LedgerConfig (ShelleyBlock proto2 era2) ->
@@ -548,7 +549,8 @@ instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   HasCanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   where
-  newtype CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) = ShelleyHFCTxIn
+  newtype CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
+    = ShelleyHFCTxIn
     { getShelleyHFCTxIn :: BigEndianTxIn
     }
     deriving stock (Show, Eq, Ord)
@@ -575,12 +577,13 @@ instance
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   SerializeTablesWithHint
-    (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+    LedgerState
+    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   where
   encodeTablesWithHint ::
     LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK ->
     LedgerTables
-      (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+      (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
       ValuesMK ->
     Encoding
   encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
@@ -609,7 +612,7 @@ instance
     Decoder
       s
       ( LedgerTables
-          (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+          (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
           ValuesMK
       )
   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
@@ -624,14 +627,14 @@ instance
     getOne ::
       forall proto era.
       ShelleyCompatible proto era =>
-      ( TxOut (LedgerState (ShelleyBlock proto era)) ->
-        TxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+      ( TxOut (ShelleyBlock proto era) ->
+        TxOut (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
       ) ->
       LedgerState (ShelleyBlock proto era) EmptyMK ->
       Decoder
         s
         ( LedgerTables
-            (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+            (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
             ValuesMK
         )
     getOne toShelleyTxOut st =
@@ -651,10 +654,11 @@ instance
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   IndexedMemPack
-    (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK)
+    LedgerState
+    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
     (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   where
-  indexedTypeName _ =
+  indexedTypeName _ _ =
     typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   indexedPackedByteCount _ txout =
     hcollapse $
@@ -670,6 +674,35 @@ instance
             packM txout
         )
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
+    hsequence'
+      $ hcmap
+        (Proxy @MemPackTxOut)
+        (const $ Comp $ WrapTxOut <$> unpackM)
+      $ Telescope.tip idx
+
+instance
+  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
+  IndexedMemPack
+    (Ticked LedgerState)
+    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+    (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+  where
+  indexedTypeName _ _ =
+    typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+  indexedPackedByteCount _ txout =
+    hcollapse $
+      hcmap
+        (Proxy @MemPackTxOut)
+        (K . packedByteCount . unwrapTxOut)
+        txout
+  indexedPackM _ =
+    hcollapse
+      . hcimap
+        (Proxy @MemPackTxOut)
+        ( \_ (WrapTxOut txout) -> K $ do
+            packM txout
+        )
+  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
     hsequence'
       $ hcmap
         (Proxy @MemPackTxOut)

@@ -3,23 +3,33 @@
 module Main (main) where
 
 import qualified Test.Consensus.BlockchainTime.Simple (tests)
+import qualified Test.Consensus.Committee.Class (tests)
+import qualified Test.Consensus.Committee.EveryoneVotes (tests)
+import qualified Test.Consensus.Committee.TestCrypto (tests)
 import qualified Test.Consensus.Committee.WFALS (tests)
 import qualified Test.Consensus.HardFork.Forecast (tests)
 import qualified Test.Consensus.HardFork.History (tests)
 import qualified Test.Consensus.HardFork.Summary (tests)
 import qualified Test.Consensus.HeaderValidation (tests)
 import qualified Test.Consensus.Ledger.Tables.Diff (tests)
-import qualified Test.Consensus.Ledger.Tables.DiffSeq (tests)
 import qualified Test.Consensus.Mempool (tests)
+import qualified Test.Consensus.Mempool.Capacity (tests)
 import qualified Test.Consensus.Mempool.Fairness (tests)
 import qualified Test.Consensus.Mempool.StateMachine (tests)
 import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
+import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke (tests)
+import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke (tests)
+import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests)
 import qualified Test.Consensus.Peras.Cert.Inclusion (tests)
+import qualified Test.Consensus.Peras.Serialisation (tests)
+import qualified Test.Consensus.Peras.Voting.Adapter (tests)
 import qualified Test.Consensus.Peras.Voting.Rules (tests)
+import qualified Test.Consensus.Peras.Voting.V1 (tests)
 import qualified Test.Consensus.Peras.WeightSnapshot (tests)
+import qualified Test.Consensus.Util.Bitmap (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Pred (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
@@ -51,24 +61,38 @@ tests =
   testGroup
     "ouroboros-consensus"
     [ Test.Consensus.BlockchainTime.Simple.tests
-    , Test.Consensus.Committee.WFALS.tests
+    , testGroup
+        "Committee"
+        [ Test.Consensus.Committee.WFALS.tests
+        , Test.Consensus.Committee.EveryoneVotes.tests
+        , Test.Consensus.Committee.Class.tests
+        , Test.Consensus.Committee.TestCrypto.tests
+        ]
     , Test.Consensus.HeaderValidation.tests
     , Test.Consensus.MiniProtocol.BlockFetch.Client.tests
     , Test.Consensus.MiniProtocol.ChainSync.CSJ.tests
     , Test.Consensus.MiniProtocol.ChainSync.Client.tests
+    , Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke.tests
+    , Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke.tests
+    , Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke.tests
     , Test.Consensus.MiniProtocol.LocalStateQuery.Server.tests
     , testGroup
         "Mempool"
         [ Test.Consensus.Mempool.tests
+        , Test.Consensus.Mempool.Capacity.tests
         , Test.Consensus.Mempool.Fairness.tests
         , Test.Consensus.Mempool.StateMachine.tests
         ]
     , testGroup
         "Peras"
         [ Test.Consensus.Peras.Cert.Inclusion.tests
+        , Test.Consensus.Peras.Voting.Adapter.tests
         , Test.Consensus.Peras.Voting.Rules.tests
+        , Test.Consensus.Peras.Voting.V1.tests
         , Test.Consensus.Peras.WeightSnapshot.tests
+        , Test.Consensus.Peras.Serialisation.tests
         ]
+    , Test.Consensus.Util.Bitmap.tests
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
     , Test.Consensus.Util.Versioned.tests
     , Test.Consensus.Util.Pred.tests
@@ -85,7 +109,6 @@ tests =
             ]
         ]
     , Test.Consensus.Ledger.Tables.Diff.tests
-    , Test.Consensus.Ledger.Tables.DiffSeq.tests
     , testGroup
         "Leios"
         [ Test.LeiosDemoTypes.tests

@@ -78,6 +78,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..))
+import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( makePublicPeerSelectionStateVar
   )
@@ -235,7 +236,7 @@ mkNodeKernelArgs cfg registry chainDB leiosDB btime = do
               -- simulation's clock ever advancing, so give it a real one.
               bfcDecisionLoopIntervalPraos = 0.05
             , bfcDecisionLoopIntervalGenesis = 0.05
-            , bfcSalt = 0
+            , bfcSalt = mkUnsafeSalt 0
             , bfcGenesisBFConfig = gcBlockFetchConfig enableGenesisConfigDefault
             }
       , keepAliveRng = mkStdGen 1

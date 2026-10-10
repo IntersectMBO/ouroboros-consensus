@@ -1,25 +1,24 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common
-  ( ShelleyProtocolHeader
+  ( LeiosOnly
+  , VoidUnlessLeios
+  , WhenLeios
+  , pureLeiosOnly
+  , TypeSwitch (..)
+  , ShelleyProtocolHeader
   , MaxMajorProtVer (..)
   , HasMaxMajorProtVer (..)
   , PraosCanBeLeader (..)
@@ -32,41 +31,30 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
   , instantiatePraosCredentials
-
-    -- * Leios
-  , EitherLeiosF
-  , fromCodecEbAnnouncement
-  , toCodecEbAnnouncement
   ) where
 
 import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN)
 import Cardano.Crypto.DSIGN.Class (SignKeyDSIGN)
-import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES.Class as KES
 import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.KESAgent.KES.Crypto as Agent
 import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Binary (FromCBOR (..), ToCBOR (..))
-import Cardano.Ledger.Hashes
-  ( extractHash
-  , unsafeMakeSafeHash
-  )
+import Cardano.Ledger.Binary (FromCBOR, ToCBOR)
 import Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
-import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
 import qualified Control.Tracer as Tracer
 import Data.Function (on)
-import Data.Kind (Type)
+import Data.Kind (Constraint, Type)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (..))
+import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement (..), EbHash (MkEbHash))
 import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -389,51 +377,59 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
 -- TODO two things to fix here, both deferred because each touches every use in
 -- ouroboros-consensus-cardano. The name is not Shelley's --- this is whichever
 -- header the protocol signs, which is why 'HeaderView' and the instances for
--- 'Praos', 'PraosWithLeios' and 'TPraos' all need it from the protocol package.
+-- 'Praos', 'Praos2' and 'TPraos' all need it from the protocol package.
 -- And 'Shelley.Protocol.Abstract' currently re-exports this, which the importers
 -- there should stop relying on: they should name this module.
 type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
 
------
-
-
------
-
 -- | @a@ for the protocols without Leios, and @b@ for the ones with it.
 --
 -- One such family per extension, which is what keeps every type that mentions
--- one indexed by @proto@ alone. The two uses so far:
+-- one indexed by @proto@ alone. Its two intended uses:
 --
---  * @EitherLeiosF proto Void ()@ gates a constructor, since the protocols
+--  * @VoidUnlessLeios proto ()@ gates a constructor, since the protocols
 --    without Leios cannot build it.
 --
---  * @EitherLeiosF proto () a@ gates a field, which those protocols have but
+--  * @WhenLeios proto a@ gates a field, which those protocols have but
 --    cannot put anything in.
-type EitherLeiosF :: Type -> Type -> Type -> Type
-data family EitherLeiosF proto a :: Type -> Type
+type LeiosOnly :: Type -> Type -> Type -> Type
+data family LeiosOnly proto a :: Type -> Type
 
+-- | The field use of 'LeiosOnly': present only when the protocol has Leios.
+type WhenLeios :: Type -> Type -> Type
+type WhenLeios proto = LeiosOnly proto ()
 
------
+-- | The constructor use of 'LeiosOnly': inhabited only when the protocol has
+-- Leios.
+type VoidUnlessLeios :: Type -> Type -> Type
+type VoidUnlessLeios proto = LeiosOnly proto Void
 
--- | The announcement as 'LeiosDemoTypes' spells it.
+-- | 'pure' for the field form of 'LeiosOnly', with @proto@ first so callers
+-- can fix it with a type application.
+pureLeiosOnly ::
+  forall proto b. Applicative (WhenLeios proto) => b -> WhenLeios proto b
+pureLeiosOnly = pure
+
+-- | Allow for any type on the side of a type-level switch that wasn't chosen
 --
--- The two records differ only in how they wrap the endorser block's hash:
--- upstream as a 'SafeHash', 'LeiosDemoTypes' as an 'EbHash'. Both hold the same
--- packed bytes.
-fromCodecEbAnnouncement :: LeiosCodec.EbAnnouncement -> EbAnnouncement
-fromCodecEbAnnouncement ann =
-  EbAnnouncement
-    { ebAnnouncementHash =
-        MkEbHash $ Hash.hashToPackedBytes $ extractHash $ LeiosCodec.ebAnnouncementHash ann
-    , ebAnnouncementSize = LeiosCodec.ebAnnouncementSize ann
-    }
-
--- | The inverse of 'fromCodecEbAnnouncement'.
-toCodecEbAnnouncement :: EbAnnouncement -> LeiosCodec.EbAnnouncement
-toCodecEbAnnouncement ann =
-  LeiosCodec.EbAnnouncement
-    { LeiosCodec.ebAnnouncementHash = unsafeMakeSafeHash (Hash.hashFromPackedBytes bytes)
-    , LeiosCodec.ebAnnouncementSize = ebAnnouncementSize ann
-    }
- where
-  MkEbHash bytes = ebAnnouncementHash ann
+-- For our types like 'LeiosOnly', there is only one instance that type checks.
+-- See 'Ouroboros.Consensus.Protocol.PolyPraos.leiosContextFreeHeaderChecks' for
+-- an example use.
+--
+-- Example:
+--
+-- > newtype L a b = L a
+-- >
+-- > instance TypeSwitch L where
+-- >   typeSwitchL = L (L ())
+-- >   typeSwitchR = L ()
+--
+-- The usefulness is that the inner layer of L (L ()) can have any type, even
+-- 'Void'.
+--
+-- Another way to think about it: these @ff@ are types like 'Either' except the
+-- choice between 'Left' and 'Right' is made statically rather than dynamically.
+type TypeSwitch :: (Type -> Type -> Type) -> Constraint
+class TypeSwitch ff where
+  typeSwitchL :: ff (ff () Void) ()
+  typeSwitchR :: ff () (ff Void ())

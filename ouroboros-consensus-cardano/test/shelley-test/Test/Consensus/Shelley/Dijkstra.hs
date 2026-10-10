@@ -8,16 +8,21 @@ import Cardano.Binary (serialize')
 import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.Block as SL (pattern Block)
-import qualified Cardano.Ledger.Core as Core (hashBlockBody, sizeTxF, txSeqBlockBodyL)
+import qualified Cardano.Ledger.Core as Core (BlockBody, hashBlockBody, sizeTxF, txSeqBlockBodyL)
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.Leios.BlockHeader
   ( HeaderBody (..)
-  , pattern Header
+  , HeaderBodyRaw (..)
+  , headerBody
+  , headerSig
+  , mkHeader
+  , mkHeaderBody
   )
 import qualified Data.ByteString as BS
+import Data.Proxy (Proxy (..))
 import Lens.Micro ((&), (.~), (^.))
-import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
@@ -59,7 +64,7 @@ tests =
 -- produce an endorser block no peer accepts.
 prop_leiosEbItemChargeCoversEncoder :: Property
 prop_leiosEbItemChargeCoversEncoder =
-  forAll (arbitrary :: Gen (GenTx (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))) $
+  forAll (arbitrary :: Gen (GenTx (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))) $
     \(ShelleyTx _txid tx) ->
       let wireSize = toInteger $ BS.length (serialize' tx)
           chargedSize = toInteger $ tx ^. Core.sizeTxF
@@ -74,24 +79,22 @@ prop_leiosBodyWithCertAndTxsRejected =
       "blockMatchesHeader should be False when body contains both Cert and Txs"
       (not (blockMatchesHeader (getHeader blk) blk))
  where
-  genBlockWithTxsAndCert :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
+  genBlockWithTxsAndCert :: Gen (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra)
   genBlockWithTxsAndCert = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))
     txsBody <-
       genSmallDijkstraTxsBlockBody @DijkstraEra `suchThat` (\b -> not (null (b ^. Core.txSeqBlockBodyL)))
     cert <- arbitrary :: Gen LeiosCert
     containsCert <- arbitrary :: Gen Bool
-    let Header hbody sig = shelleyHeaderRaw shelleyHdr
+    let hbody = headerBody (shelleyHeaderRaw shelleyHdr)
+        sig = headerSig (shelleyHeaderRaw shelleyHdr)
         body = txsBody & leiosCertBlockBodyL .~ SJust cert
     return $
       mkShelleyBlock $
         SL.Block
-          ( Header
-              hbody
-                { hbBodyHash = Core.hashBlockBody body
-                , hbBlockBodyContainsLeiosCert = containsCert
-                , hbEbAnnouncement = SNothing
-                }
+          ( mkHeader
+              (Proxy @DijkstraEra)
+              (withBodyClaims hbody body containsCert)
               sig -- invalid
           )
           body
@@ -107,38 +110,58 @@ prop_leiosCertFlagMismatchRejected =
                not (blockMatchesHeader (getHeader blk) blk)
          )
  where
-  genBlockCertHeaderAndTxsBody :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
+  genBlockCertHeaderAndTxsBody :: Gen (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra)
   genBlockCertHeaderAndTxsBody = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))
     txsBody <- genSmallDijkstraTxsBlockBody @DijkstraEra
-    let Header hbody sig = shelleyHeaderRaw shelleyHdr
+    let hbody = headerBody (shelleyHeaderRaw shelleyHdr)
+        sig = headerSig (shelleyHeaderRaw shelleyHdr)
     return $
       mkShelleyBlock $
         SL.Block
-          ( Header
-              hbody
-                { hbBodyHash = Core.hashBlockBody txsBody
-                , hbBlockBodyContainsLeiosCert = True
-                , hbEbAnnouncement = SNothing
-                }
+          ( mkHeader
+              (Proxy @DijkstraEra)
+              (withBodyClaims hbody txsBody True)
               sig -- invalid
           )
           txsBody
 
-  genBlockTxsHeaderAndCertBody :: Gen (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra)
+  genBlockTxsHeaderAndCertBody :: Gen (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra)
   genBlockTxsHeaderAndCertBody = do
-    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra))
+    shelleyHdr <- arbitrary :: Gen (Header (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))
     certBody <- genSmallDijkstraCertBlockBody @DijkstraEra
-    let Header hbody sig = shelleyHeaderRaw shelleyHdr
+    let hbody = headerBody (shelleyHeaderRaw shelleyHdr)
+        sig = headerSig (shelleyHeaderRaw shelleyHdr)
     return $
       mkShelleyBlock $
         SL.Block
-          ( Header
-              hbody
-                { hbBodyHash = Core.hashBlockBody certBody
-                , hbBlockBodyContainsLeiosCert = False
-                , hbEbAnnouncement = SNothing
-                }
+          ( mkHeader
+              (Proxy @DijkstraEra)
+              (withBodyClaims hbody certBody False)
               sig -- invalid
           )
           certBody
+
+-- | The header body for another block body and Leios certificate claim, with no
+-- announcement.
+withBodyClaims ::
+  HeaderBody StandardCrypto ->
+  Core.BlockBody DijkstraEra ->
+  Bool ->
+  HeaderBody StandardCrypto
+withBodyClaims hb body containsCert =
+  mkHeaderBody (Proxy @DijkstraEra) $
+    HeaderBodyRaw
+      { hbrBlockNo = hbBlockNo hb
+      , hbrSlotNo = hbSlotNo hb
+      , hbrPrev = hbPrev hb
+      , hbrVk = hbVk hb
+      , hbrVrfVk = hbVrfVk hb
+      , hbrVrfRes = hbVrfRes hb
+      , hbrBodySize = hbBodySize hb
+      , hbrBodyHash = Core.hashBlockBody body
+      , hbrOCert = hbOCert hb
+      , hbrVersionInfo = hbVersionInfo hb
+      , hbrBlockBodyContainsLeiosCert = containsCert
+      , hbrEbReferencesAnnouncement = SNothing
+      }

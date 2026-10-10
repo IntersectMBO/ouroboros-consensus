@@ -1,18 +1,12 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MonadComprehensions #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
@@ -86,7 +80,8 @@ import Cardano.Network.NodeToNode
   , blockFetchPipeliningMax
   , defaultMiniProtocolParameters
   )
-import Cardano.Network.PeerSelection (ChurnMode (..), PeerTrustable, UseBootstrapPeers (..))
+import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
+import Cardano.Network.PeerSelection (ChurnMode (ChurnMode), PeerTrustable, UseBootstrapPeers (..))
 import Cardano.Network.Protocol.ChainSync.Codec.TimeLimits (timeLimitsChainSync)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
@@ -122,7 +117,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
-import Ouroboros.Consensus.Ledger.Basics (ValuesMK)
+import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
@@ -166,10 +161,7 @@ import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
-  )
-import Ouroboros.Network.BlockFetch.ConsensusInterface
-  ( FetchMode (PraosFetchMode)
-  , PraosFetchMode (FetchModeDeadline)
+  , PraosFetchMode (..)
   )
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
@@ -191,7 +183,7 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress
   )
-import Ouroboros.Network.PerasSupport (PerasSupport (PerasUnsupported))
+import Ouroboros.Network.PerasSupport (PerasSupport (..))
 import Ouroboros.Network.RethrowPolicy
 import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
@@ -201,7 +193,7 @@ import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
 import System.FilePath ((</>))
-import System.Random (StdGen, newStdGen, randomIO, splitGen, uniform)
+import System.Random (StdGen, newStdGen, splitGen, uniform)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -313,7 +305,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
       NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
       NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
   -- ^ Customise the 'NodeArgs'
-  , llrnBfcSalt :: Int
+  , llrnBfcSalt :: Diffusion.Salt
   -- ^ Ie 'bfcSalt'
   , llrnRng :: StdGen
   -- ^ StdGen for various applications, e.g. keep-alive, chain-sync, gsm anti
@@ -343,7 +335,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   --
   -- 'run' will not return before this does.
   , llrnVersionDataNTC :: NodeToClientVersionData
-  , llrnVersionDataNTN :: NodeToNodeVersionData
+  , llrnVersionDataNTN :: NodeToNodeVersion -> NodeToNodeVersionData
   , llrnNodeToNodeVersions :: Map NodeToNodeVersion (BlockNodeToNodeVersion blk)
   -- ^ node-to-node protocol versions to run.
   , llrnNodeToClientVersions :: Map NodeToClientVersion (BlockNodeToClientVersion blk)
@@ -552,6 +544,10 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
           forM_ (sanityCheckConfig cfg) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
+          let snapshotPolicyArgs =
+                lgrSnapshotPolicyArgs $ ChainDB.cdbLgrDbArgs llrnChainDbArgsDefaults
+          forM_ (sanityCheckSnapshotPolicyArgs (configSecurityParam cfg) snapshotPolicyArgs) $ \issue ->
+            traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
           -- Created before the ChainDB so its GC thread can prune the cache to
           -- each GC slot just before GCing the LeiosDb (the ordering contract in
@@ -573,6 +569,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               initLedger
               llrnMkImmutableHasFS
               llrnMkVolatileHasFS
+              snapshotDelayRng
               llrnLdbFlavorArgs
               rnLeiosDb
               (\slot -> void (evictOlderThan leiosTxCache slot))
@@ -642,7 +639,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   leiosTxCache
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
-            churnModeVar <- StrictSTM.newTVarIO (ChurnMode (PraosFetchMode FetchModeDeadline))
+            churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
             churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
             let consensusDiffusionArgs =
                   Cardano.Diffusion.CardanoConsensusArguments
@@ -663,22 +660,20 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                           when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
                                 , Cardano.getImmutableBlockPoint = \targetBlock k -> do
                                     case targetBlock of
-                                      GenesisPoint ->
-                                        k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
-                                      (BlockPoint targetSlot (RawBlockHash targetHash)) -> do
-                                        let targetPoint = RealPoint targetSlot (fromShortRawHash (Proxy @blk) targetHash)
-                                        ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
-                                          Left{} ->
-                                            k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
-                                          Right (RealPoint actualSlot actualHash) ->
-                                            k
-                                              ( pure
-                                                  ( Right $
-                                                      BlockPoint
-                                                        actualSlot
-                                                        (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash)
-                                                  )
-                                              )
+                                      GenesisPoint -> k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
+                                      (BlockPoint targetSlot (RawBlockHash targetHash)) ->
+                                        case fromShortRawHash (Proxy @blk) targetHash of
+                                          -- TODO: eventually we want to return
+                                          -- a proper error value here, see
+                                          -- https://github.com/IntersectMBO/ouroboros-network/issues/5396
+                                          Nothing -> error "RawBlockHash size does not match the expected size for the HeaderHash of the block type"
+                                          Just targetHeaderHash -> do
+                                            let targetPoint = RealPoint targetSlot targetHeaderHash
+                                            ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
+                                              Left ChainDB.TipIsOrigin -> k (pure (Left Cardano.ImmutableBlockPointTipIsOrigin))
+                                              Left ChainDB.TargetNewerThanTip -> k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
+                                              Right (RealPoint actualSlot actualHash) ->
+                                                k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
@@ -701,10 +696,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   (gsmAntiThunderingHerd, rng') = splitGen llrnRng
   (peerSelectionRng, rng'') = splitGen rng'
   (keepAliveRng, rng''') = splitGen rng''
+  (ntnAppsRng, rng'''') = splitGen rng'''
+  (snapshotDelayRng, leiosTxCacheSaltRng) = splitGen rng''''
   -- 'leiosTxCacheSaltRng' seeds the LeiosTxCache SipHash salt: a per-node secret,
   -- an independent split of the node generator, never exposed (tx hashes are
   -- grindable, so an unpredictable salt is what prevents hash-flooding the table).
-  (ntnAppsRng, leiosTxCacheSaltRng) = splitGen rng'''
   (leiosTxCacheSalt0, leiosTxCacheSaltRng') = uniform leiosTxCacheSaltRng
   (leiosTxCacheSalt1, _) = uniform leiosTxCacheSaltRng'
 
@@ -726,6 +722,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
     NTN.Apps
       m
       addrNTN
+      ByteString
+      ByteString
       ByteString
       ByteString
       ByteString
@@ -776,6 +774,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
         ByteString
         ByteString
         ByteString
+        ByteString
+        ByteString
         NodeToNodeInitiatorResult
         ()
     ) ->
@@ -816,9 +816,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               combineVersions
                 [ simpleSingletonVersions
                     version
-                    llrnVersionDataNTN
+                    (llrnVersionDataNTN version)
                     ( \versionData ->
-                        NTN.initiator miniProtocolParams version versionData
+                        NTN.initiator llrnFeatureFlags miniProtocolParams version versionData
                         -- Initiator side won't start responder side of Peer
                         -- Sharing protocol so we give a dummy implementation
                         -- here.
@@ -831,9 +831,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               combineVersions
                 [ simpleSingletonVersions
                     version
-                    llrnVersionDataNTN
+                    (llrnVersionDataNTN version)
                     ( \versionData ->
-                        NTN.initiatorAndResponder miniProtocolParams version versionData $
+                        NTN.initiatorAndResponder llrnFeatureFlags miniProtocolParams version versionData $
                           ntnApps blockVersion
                     )
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
@@ -905,6 +905,8 @@ openChainDB ::
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
+  -- | RNG used to randomise snapshot delays
+  StdGen ->
   LedgerDbBackendArgs m blk ->
   -- | Leios demo DB handle
   LeiosDbHandle m ->
@@ -916,7 +918,7 @@ openChainDB ::
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb leiosEvictTxCache defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol delayRng flavorArgs leiosDb leiosEvictTxCache defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -927,6 +929,7 @@ openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb leiosEvictTxC
             (nodeCheckIntegrity (configStorage cfg))
             fsImm
             fsVol
+            delayRng
             flavorArgs
             leiosDb
             leiosEvictTxCache
@@ -937,7 +940,7 @@ mkNodeKernelArgs ::
   forall m addrNTN addrNTC blk.
   (RunNode blk, IOLike m) =>
   ResourceRegistry m ->
-  Int ->
+  Diffusion.Salt ->
   StdGen ->
   StdGen ->
   TopLevelConfig blk ->
@@ -1067,21 +1070,22 @@ stdMkChainDbHasFS ::
 stdMkChainDbHasFS rootPath (ChainDB.RelativeMountPoint relPath) =
   SomeHasFS $ ioHasFS $ MountPoint $ rootPath </> relPath
 
-stdBfcSaltIO :: IO Int
-stdBfcSaltIO = randomIO
+stdBfcSaltIO :: IO Diffusion.Salt
+stdBfcSaltIO = Diffusion.mkSaltIO
 
 stdVersionDataNTN ::
   NetworkMagic ->
   DiffusionMode ->
   PeerSharing ->
+  PerasSupport ->
   NodeToNodeVersionData
-stdVersionDataNTN networkMagic diffusionMode peerSharing =
+stdVersionDataNTN networkMagic diffusionMode peerSharing perasSupport =
   NodeToNodeVersionData
     { networkMagic
     , diffusionMode
     , peerSharing
     , query = False
-    , perasSupport = PerasUnsupported
+    , perasSupport
     }
 
 stdVersionDataNTC :: NetworkMagic -> NodeToClientVersionData
@@ -1148,11 +1152,12 @@ stdLowLevelRunNodeArgsIO
                 apps
         , llrnVersionDataNTC =
             stdVersionDataNTC networkMagic
-        , llrnVersionDataNTN =
+        , llrnVersionDataNTN = \version ->
             stdVersionDataNTN
               networkMagic
               (Diffusion.dcMode srnDiffusionConfiguration)
               rnPeerSharing
+              (getLocalPerasSupport rnFeatureFlags version)
         , llrnNodeToNodeVersions =
             limitToLatestReleasedVersion
               fst

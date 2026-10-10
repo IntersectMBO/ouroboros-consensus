@@ -11,7 +11,7 @@
 -- executable.
 module Ouroboros.Consensus.Cardano.SnapshotConversion
   ( SnapshotsDirectory (..)
-  , LSMDatabaseFilePath (..)
+  , ExportedSnapshotPath (..)
   , Snapshot (..)
   , SnapshotsDirectoryWithFormat (..)
   , snapshotDirectory
@@ -32,12 +32,11 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node ()
 import Ouroboros.Consensus.Cardano.StreamingLedgerTables
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.IOLike hiding (yield)
@@ -53,15 +52,23 @@ import System.Random
 
 data SnapshotsDirectory = SnapshotsDirectory {getSnapshotDir :: FilePath}
 
-data LSMDatabaseFilePath = LSMDatabaseFilePath {getLSMDatabaseDir :: FilePath}
+-- | The directory holding a standalone (exported) LSM snapshot, i.e. the LSM
+-- ledger tables exported out of a session via @lsm-tree@'s @exportSnapshot@.
+--
+-- This is paired with a 'SnapshotsDirectory' that holds the @state@/@meta@
+-- files, just like the parts of an LSM snapshot inside a running node are split
+-- between the ChainDB @ledger@ directory and the LSM session directory.
+data ExportedSnapshotPath = ExportedSnapshotPath {getExportedSnapshotPath :: FilePath}
 
 data StandaloneFormat
   = Mem
-  | LMDB
 
 data SnapshotsDirectoryWithFormat
   = StandaloneSnapshot SnapshotsDirectory StandaloneFormat
-  | LSMSnapshot SnapshotsDirectory LSMDatabaseFilePath
+  | -- | A standalone (exported) LSM snapshot. Conversions never operate on a
+    -- live LSM database; they only ever read from or write to exported
+    -- snapshots (see 'ExportedSnapshotPath').
+    ExportedLSMSnapshot SnapshotsDirectory ExportedSnapshotPath
 
 data Snapshot = Snapshot
   { snapshotSnapShotDir :: SnapshotsDirectoryWithFormat
@@ -70,7 +77,7 @@ data Snapshot = Snapshot
 
 snapshotDirectory :: SnapshotsDirectoryWithFormat -> SnapshotsDirectory
 snapshotDirectory (StandaloneSnapshot fp _) = fp
-snapshotDirectory (LSMSnapshot fp _) = fp
+snapshotDirectory (ExportedLSMSnapshot fp _) = fp
 
 {-------------------------------------------------------------------------------
  Errors
@@ -150,8 +157,6 @@ data InEnv backend = InEnv
 data OutEnv backend = OutEnv
   { outStream :: IO (SomeBackend SinkArgs)
   -- ^ Sink arguments for consuming a stream of TxOuts
-  , outDeleteExtra :: Maybe FilePath
-  -- ^ In case some other directory needs to be wiped out
   , outProgressMsg :: String
   -- ^ A progress message (just for displaying)
   , outBackend :: SnapshotBackend
@@ -160,8 +165,8 @@ data OutEnv backend = OutEnv
 
 data SomeBackend c where
   SomeBackend ::
-    StreamingBackend IO backend (LedgerState (CardanoBlock StandardCrypto)) =>
-    c IO backend (LedgerState (CardanoBlock StandardCrypto)) -> SomeBackend c
+    StreamingBackend IO backend LedgerState (CardanoBlock StandardCrypto) =>
+    c IO backend LedgerState (CardanoBlock StandardCrypto) -> SomeBackend c
 
 instance NoThunks (SomeBackend c) where
   wNoThunks _ (SomeBackend _) = pure Nothing
@@ -176,9 +181,9 @@ convertSnapshot ::
 convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
   InEnv{..} <- getInEnv
 
-  o@OutEnv{..} <- getOutEnv inState
+  OutEnv{..} <- getOutEnv inState
 
-  wipeOutputPaths o
+  wipePath interactive (getSnapshotDir outSnapDir F.</> snapshotToDirName outSnap)
 
   when interactive $ lift $ putStr "Copying state file..." >> hFlush stdout
   inStateFile <- lift $ unsafeToFilePath inHasFS (snapshotToStatePath inSnap)
@@ -233,13 +238,6 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
   inSomeHasFS, outSomeHasFS :: SomeHasFS IO
   inSomeHasFS = SomeHasFS inHasFS
   outSomeHasFS = SomeHasFS outHasFS
-
-  wipeOutputPaths OutEnv{..} = do
-    wipePath interactive (getSnapshotDir outSnapDir F.</> snapshotToDirName outSnap)
-    maybe
-      (pure ())
-      (wipePath interactive)
-      outDeleteExtra
 
   getState ::
     DiskSnapshot ->
@@ -313,26 +311,17 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
           ("InMemory@[" <> snapshotToDirName inSnap <> "]")
           c
           metadataCrc
-    Snapshot (StandaloneSnapshot _ LMDB) _ -> do
-      metadataCrc <- getMetadata inSnap UTxOHDLMDBSnapshot
-      (st, c) <- getState inSnap
-      checkSnapSlot st inSnap
-      pure $
-        InEnv
-          st
-          (SomeBackend <$> V1.mkLMDBYieldArgs inSomeHasFS inSnap defaultLMDBLimits st)
-          ("LMDB@[" <> snapshotToDirName inSnap <> "]")
-          c
-          metadataCrc
-    Snapshot (LSMSnapshot _ (getLSMDatabaseDir -> lsmDbPath)) _ -> do
+    Snapshot (ExportedLSMSnapshot _ (getExportedSnapshotPath -> exportDir)) _ -> do
       metadataCrc <- getMetadata inSnap UTxOHDLSMSnapshot
       (st, c) <- getState inSnap
       checkSnapSlot st inSnap
       pure $
         InEnv
           st
-          (SomeBackend <$> mkLSMYieldArgs lsmDbPath inSnap stdMkBlockIOFS newStdGen)
-          ("LSM@[" <> lsmDbPath <> "]")
+          ( SomeBackend
+              <$> mkExportedLSMYieldArgs exportDir inSnap stdMkBlockIOFS (SomeHasFS . ioHasFS . MountPoint) newStdGen
+          )
+          ("LSM (exported)@[" <> exportDir <> "]")
           c
           metadataCrc
 
@@ -346,31 +335,21 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         OutEnv
           (pure $ SomeBackend $ mkInMemSinkArgs outSomeHasFS outSnap st)
-          Nothing
           ("InMemory@[" <> snapshotToDirName outSnap <> "]")
           UTxOHDMemSnapshot
-    Snapshot (StandaloneSnapshot _ LMDB) _ -> do
-      checkSnapSlot st outSnap
-      pure $
-        OutEnv
-          (SomeBackend <$> V1.mkLMDBSinkArgs outSomeHasFS outSnap defaultLMDBLimits st)
-          Nothing
-          ("LMDB@[" <> snapshotToDirName outSnap <> "]")
-          UTxOHDLMDBSnapshot
-    Snapshot (LSMSnapshot _ (LSMDatabaseFilePath lsmDbPath)) _ -> do
+    Snapshot (ExportedLSMSnapshot _ (ExportedSnapshotPath exportDir)) _ -> do
       checkSnapSlot st outSnap
       pure $
         OutEnv
           ( SomeBackend
-              <$> mkLSMSinkArgs
-                lsmDbPath
+              <$> mkExportedLSMSinkArgs
+                exportDir
                 outSnap
                 outSomeHasFS
                 stdMkBlockIOFS
                 newStdGen
           )
-          (Just lsmDbPath)
-          ("LSM@[" <> lsmDbPath <> "]")
+          ("LSM (exported)@[" <> exportDir <> "]")
           UTxOHDLSMSnapshot
 
   stream ::
@@ -382,12 +361,16 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     ExceptT $
       bracket
         ((,) <$> mYieldArgs <*> mSinkArgs)
-        ( \(SomeBackend (yArgs :: YieldArgs IO backend1 l), (SomeBackend (sArgs :: SinkArgs IO backend2 l))) -> do
-            releaseYieldArgs yArgs
-            releaseSinkArgs sArgs
+        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
+             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
+             ) -> do
+              releaseYieldArgs yArgs
+              releaseSinkArgs sArgs
         )
-        ( \(SomeBackend (yArgs :: YieldArgs IO backend1 l), (SomeBackend (sArgs :: SinkArgs IO backend2 l))) -> do
-            runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
+        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
+             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
+             ) -> do
+              runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
         )
 
 {-------------------------------------------------------------------------------
@@ -448,15 +431,3 @@ wipePath interactive fp = do
       else id
     )
     (lift $ D.removePathForcibly fp >> D.createDirectoryIfMissing True fp)
-
-{-------------------------------------------------------------------------------
-  Helpers
--------------------------------------------------------------------------------}
-
-defaultLMDBLimits :: V1.LMDBLimits
-defaultLMDBLimits =
-  V1.LMDBLimits
-    { V1.lmdbMapSize = 16 * 1024 * 1024 * 1024
-    , V1.lmdbMaxDatabases = 10
-    , V1.lmdbMaxReaders = 16
-    }

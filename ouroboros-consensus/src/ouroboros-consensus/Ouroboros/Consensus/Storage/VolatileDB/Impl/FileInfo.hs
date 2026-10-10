@@ -3,7 +3,6 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
 
 -- | Information about the files stored by the volatile DB
 --

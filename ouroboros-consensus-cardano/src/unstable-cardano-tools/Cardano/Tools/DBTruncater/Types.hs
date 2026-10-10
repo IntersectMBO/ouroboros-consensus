@@ -3,19 +3,21 @@ module Cardano.Tools.DBTruncater.Types
   , TruncateAfter (..)
   ) where
 
-import Cardano.Tools.LeiosDb (LeiosDbSource)
 import Ouroboros.Consensus.Block.Abstract
 
 data DBTruncaterConfig = DBTruncaterConfig
   { dbDir :: FilePath
   , truncateAfter :: TruncateAfter
   , verbose :: Bool
-  , leiosDbSource :: LeiosDbSource
-  -- ^ 'NoLeiosDb' skips every LeiosDb operation. The tool then neither opens
-  -- nor modifies any LeiosDb file, whether or not one exists.
+  , leios :: Bool
+  -- ^ 'False' skips every LeiosDb operation. The tool then neither opens nor
+  -- modifies any LeiosDb file, whether or not one exists.
   --
-  -- With 'LeiosDbFile' the tool requires that file, because it cannot tell a
+  -- With 'True' the tool requires the LeiosDb files, because it cannot tell a
   -- pre-Leios chain from a Leios one before it reads the chain.
+  --
+  -- This field should be gone once Leios is deployed and we always have a
+  -- LeiosDB.
   }
 
 -- | Where to truncate the ImmutableDB.

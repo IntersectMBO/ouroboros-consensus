@@ -1,7 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
 
 -- | Business logic of the ChainSync and BlockFetch protocol handlers that operate
 -- on the 'NodeState' of a point schedule.

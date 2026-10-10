@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
@@ -292,7 +291,7 @@ prop_simple_real_tpraos_convergence
                   setupInitialNonce
                   nextProtVer
                   (coreNodes !! fromIntegral nid)
-              pure
+              pure $
                 TestNodeInitialization
                   { tniProtocolInfo = protocolInfo
                   , tniCrucialTxs =

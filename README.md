@@ -1,12 +1,12 @@
 # Ouroboros Consensus
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-3.0.1.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-3.0.1.0/) [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-5.0.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-5.0.0.0/) [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
 
 Implementation of the Ouroboros family of consensus algorithms.
 
 ## Libraries and executables
 
-This repository provides six sublibraries, with the following dependencies among
+This repository provides five sublibraries, with the following dependencies among
 them:
 
 ``` mermaid
@@ -16,7 +16,6 @@ flowchart TD
     B --> C
     D["ouroboros-consensus:diffusion"] --> C
     E["ouroboros-consensus:lsm"] --> C
-    F["ouroboros-consensus:lmdb"] --> C
 ```
 
 The package contains many test-suites that complicate the dependency graph as
@@ -32,7 +31,7 @@ This repository also provides some executables:
 | `db-immutaliser`     | Converting the volatile suffix of the chain into immutable, so that `db-analyser` can also analyse it |
 | `immdb-server`       | Serves immutable blocks from a ChainDB in a Node-to-node connection                                   |
 | `gen-header`         | Generate and validate Praos headers                                                                   |
-| `snapshot-converter` | Converts snapshots among the UTxO-HD formats of the database (InMemory, LMDB, LSM)                    |
+| `snapshot-converter` | Converts snapshots among the UTxO-HD formats of the database (InMemory, LSM)                          |
 
 Some documentation on how to use the tools can be found in the
 [`ouroboros-consensus:cardano` README](./ouroboros-consensus-cardano/README.md).
@@ -175,11 +174,7 @@ We have several sources of documentation:
 - [`fs-api`](https://github.com/input-output-hk/fs-sim)
 - [`fs-sim`](https://github.com/input-output-hk/fs-sim)
 - [`io-classes`](https://github.com/input-output-hk/io-sim)
-- [`io-sim`](https://github.com/input-output-hk/io-sim)
-- [`cardano-lmdb`](https://github.com/input-output-hk/haskell-lmdb)
-- [`cardano-lmdb-simple`](https://github.com/input-output-hk/lmdb-simple)
-- [`diff-containers`](https://github.com/input-output-hk/anti-diffs)
-- [`fingertree-rm`](https://github.com/input-output-hk/anti-diffs)
+- [`io-sim`](https://github.com/IntersectMBO/io-sim)
 - [`blockio`](https://github.com/IntersectMBO/lsm-tree)
 - [`lsm-tree`](https://github.com/IntersectMBO/lsm-tree)
 

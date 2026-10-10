@@ -145,7 +145,7 @@ ledgerConfig =
     (const (Just (testCommittee.committee, wholeCommittee)))
 
 eraParams :: HardFork.EraParams
-eraParams = HardFork.defaultEraParams securityParam (slotLengthFromSec 1)
+eraParams = HardFork.defaultEraParams securityParam (slotLengthFromSec 1) HardFork.NoPerasEnabled
 
 -- | Larger than every chain these tests build, so nothing becomes immutable and
 -- every block stays in the VolatileDB, where forgetting can reach it.

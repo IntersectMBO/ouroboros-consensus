@@ -1,6 +1,4 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -54,11 +52,7 @@ import Ouroboros.Consensus.HeaderValidation (AnnTip)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
-import Ouroboros.Consensus.Ledger.Tables
-  ( EmptyMK
-  , ValuesMK
-  , castLedgerTables
-  )
+import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
@@ -115,7 +109,6 @@ combineEras perEraExamples =
         fmap (second unFlip) $ viaInject (fmap (second Flip) . exampleExtLedgerState)
     , exampleSlotNo = coerce $ viaInject @(K SlotNo) (coerce exampleSlotNo)
     , exampleLedgerConfig = exampleLedgerConfigCardano
-    , exampleLedgerTables = exampleLedgerTablesCardano
     }
  where
   viaInject ::
@@ -138,13 +131,6 @@ combineEras perEraExamples =
     prefixWithEraName es = prefixExamples (T.unpack eraName) es
      where
       eraName = singleEraName $ singleEraInfo es
-
-  exampleLedgerTablesCardano ::
-    Labelled (LedgerTables (LedgerState (HardForkBlock (CardanoEras Crypto))) ValuesMK)
-  exampleLedgerTablesCardano =
-    mconcat $
-      hcollapse $
-        himap (\ix -> K . map (second (injectLedgerTables ix)) . exampleLedgerTables) perEraExamplesPrefixed
 
   exampleLedgerConfigCardano ::
     Labelled (HardForkLedgerConfig (CardanoEras Crypto))
@@ -227,7 +213,6 @@ instance Inject Examples where
       , exampleChainDepState = inj (Proxy @WrapChainDepState) exampleChainDepState
       , exampleExtLedgerState = inj (Proxy @(Flip ExtLedgerState EmptyMK)) exampleExtLedgerState
       , exampleSlotNo = exampleSlotNo
-      , exampleLedgerTables = inj (Proxy @WrapLedgerTables) exampleLedgerTables
       , -- We cannot create a HF Ledger Config out of just one of the eras
         exampleLedgerConfig = mempty
       }
@@ -241,43 +226,56 @@ instance Inject Examples where
       Proxy f -> Labelled a -> Labelled b
     inj p = map (fmap (inject' p iidx))
 
--- | This wrapper is used only in the 'Example' instance of 'Inject' so that we
--- can use a type that matches the kind expected by 'inj'.
-newtype WrapLedgerTables blk = WrapLedgerTables (LedgerTables (ExtLedgerState blk) ValuesMK)
-
-instance Inject WrapLedgerTables where
-  inject idx (WrapLedgerTables lt) =
-    WrapLedgerTables $
-      castLedgerTables $
-        injectLedgerTables (forgetInjectionIndex idx) (castLedgerTables lt)
-
 {-------------------------------------------------------------------------------
   Setup
 -------------------------------------------------------------------------------}
 
 byronEraParams :: History.EraParams
-byronEraParams = Byron.byronEraParams Byron.ledgerConfig
+byronEraParams =
+  Byron.byronEraParams
+    Byron.ledgerConfig
 
 shelleyEraParams :: History.EraParams
-shelleyEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+shelleyEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @ShelleyEra)
 
 allegraEraParams :: History.EraParams
-allegraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+allegraEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @AllegraEra)
 
 maryEraParams :: History.EraParams
-maryEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+maryEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @MaryEra)
 
 alonzoEraParams :: History.EraParams
-alonzoEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+alonzoEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @AlonzoEra)
 
 babbageEraParams :: History.EraParams
-babbageEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+babbageEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @BabbageEra)
 
 conwayEraParams :: History.EraParams
-conwayEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+conwayEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @ConwayEra)
 
 dijkstraEraParams :: History.EraParams
-dijkstraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+dijkstraEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @DijkstraEra)
 
 -- | We use 10, 20, 30, 40, ... as the transition epochs
 shelleyTransitionEpoch :: EpochNo

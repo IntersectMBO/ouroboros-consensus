@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
   , ForgeBlockArgs (..)
+  , ForgeBlockLeiosArgs (..)
   , ShouldForge (..)
   , checkShouldForge
   )
@@ -67,8 +68,7 @@ import Ouroboros.Consensus.HeaderValidation
   ( BasicEnvelopeValidation (..)
   , HeaderState (..)
   )
-import Ouroboros.Consensus.Ledger.Abstract (Validated)
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -133,7 +133,7 @@ initialForgeState = ForgeState 0 0 0 0
 type GenTxs blk =
   SlotNo ->
   Bool ->
-  ReadOnlyForker IO (ExtLedgerState blk) ->
+  ReadOnlyForker' IO blk ->
   TickedLedgerState blk DiffMK ->
   IO ([Validated (GenTx blk)], [Validated (GenTx blk)], IO ())
 
@@ -361,7 +361,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
       _ -> exitEarly' "NoLeader"
 
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
-    let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
+    let tickedLedgerState :: Ticked LedgerState blk DiffMK
         tickedLedgerState =
           applyChainTick
             OmitLedgerEvents
@@ -404,17 +404,20 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg votingKey genTxs leio
       lift $
         Block.forgeBlock
           blockForging'
+          ForgeBlockLeiosArgs
+            { fbLeiosTracer = leiosTracer
+            , fbLeiosVoteState = leiosVoteState
+            }
           ForgeBlockArgs
             { fbConfig = cfg
             , fbCurrentBlockNo = bcBlockNo
             , fbCurrentSlotNo = currentSlot
+            , fbPerasCert = Nothing -- DBSynthesizer does not include Peras certs in blocks for now
             , fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-            , fbRbTxs = rbTxs
+            , fbTxs = rbTxs
             , fbEbTxs = ebTxs
             , fbIsLeader = proof
             , fbChainDepState = Nothing
-            , fbLeiosTracer = leiosTracer
-            , fbLeiosVoteState = leiosVoteState
             , fbMayLeiosCert = fst <$> mCert
             }
 

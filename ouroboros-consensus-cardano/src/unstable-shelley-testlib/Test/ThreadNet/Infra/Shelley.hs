@@ -43,6 +43,7 @@ import Cardano.Crypto.DSIGN
   , createPossessionProofDSIGN
   , seedSizeDSIGN
   )
+import Cardano.Crypto.DSIGN.BLS12381.Internal (minSigPoPDST)
 import Cardano.Crypto.KES
   ( KESAlgorithm (..)
   , UnsoundPureKESAlgorithm (..)
@@ -490,7 +491,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
                 SL.SJust $
                   BlsKey
                     (deriveVerKeyDSIGN blsSk)
-                    (createPossessionProofDSIGN blsSk)
+                    (createPossessionProofDSIGN minSigPoPDST blsSk)
         ]
 
 mkProtocolShelley ::

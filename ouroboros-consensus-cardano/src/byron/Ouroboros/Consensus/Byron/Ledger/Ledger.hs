@@ -11,7 +11,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -57,7 +56,7 @@ import qualified Cardano.Chain.Update.Validation.Endorsement as UPE
 import qualified Cardano.Chain.Update.Validation.Interface as UPI
 import qualified Cardano.Chain.ValidationMode as CC
 import Cardano.Ledger.BaseTypes (unNonZero)
-import Cardano.Ledger.Binary (fromByronCBOR, toByronCBOR)
+import Cardano.Ledger.Binary (ToCBOR (..), fromByronCBOR, toByronCBOR)
 import Cardano.Ledger.Binary.Plain (encodeListLen, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -82,6 +81,7 @@ import Ouroboros.Consensus.Byron.Ledger.Serialisation
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -89,9 +89,10 @@ import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -125,7 +126,7 @@ data ByronTransition
 
 instance UpdateLedger ByronBlock
 
-type instance LedgerCfg (LedgerState ByronBlock) = Gen.Config
+type instance LedgerCfg LedgerState ByronBlock = Gen.Config
 
 initByronLedgerState ::
   Gen.Config ->
@@ -160,7 +161,7 @@ initByronLedgerState genesis mUtxo =
 instance GetTip (LedgerState ByronBlock) where
   getTip = castPoint . getByronTip . byronLedgerState
 
-instance GetTip (Ticked (LedgerState ByronBlock)) where
+instance GetTip (Ticked LedgerState ByronBlock) where
   getTip = castPoint . getByronTip . tickedByronLedgerState
 
 getByronTip :: CC.ChainValidationState -> Point ByronBlock
@@ -178,18 +179,16 @@ getByronTip state =
 -------------------------------------------------------------------------------}
 
 -- | The ticked Byron ledger state
-data instance Ticked (LedgerState ByronBlock) mk = TickedByronLedgerState
+data instance Ticked LedgerState ByronBlock mk = TickedByronLedgerState
   { tickedByronLedgerState :: !CC.ChainValidationState
   , untickedByronLedgerTransition :: !ByronTransition
   }
   deriving (Generic, NoThunks)
 
-instance IsLedger (LedgerState ByronBlock) where
-  type LedgerErr (LedgerState ByronBlock) = CC.ChainValidationError
+type instance AuxLedgerEvent ByronBlock = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState ByronBlock) =
-      VoidLedgerEvent (LedgerState ByronBlock)
+instance IsLedger LedgerState ByronBlock where
+  type LedgerErr LedgerState ByronBlock = CC.ChainValidationError
 
   applyChainTickLedgerResult _ cfg slotNo ByronLedgerState{..} =
     pureLedgerResult $
@@ -200,46 +199,44 @@ instance IsLedger (LedgerState ByronBlock) where
             byronLedgerTransition
         }
 
-type instance TxIn (LedgerState ByronBlock) = Void
-type instance TxOut (LedgerState ByronBlock) = Void
+type instance TxIn ByronBlock = Void
+type instance TxOut ByronBlock = Void
 
-instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
-  convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
-instance LedgerTablesAreTrivial (Ticked (LedgerState ByronBlock)) where
-  convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
+instance LedgerTablesAreTrivial LedgerState ByronBlock where
+  convertMapKind ByronLedgerState{..} = ByronLedgerState{..}
 
-deriving via
-  Void
-  instance
-    IndexedMemPack (LedgerState ByronBlock EmptyMK) Void
+instance LedgerTablesAreTrivial (Ticked LedgerState) ByronBlock where
+  convertMapKind TickedByronLedgerState{..} = TickedByronLedgerState{..}
 
-deriving via
-  TrivialLedgerTables (LedgerState ByronBlock)
-  instance
-    HasLedgerTables (LedgerState ByronBlock)
-deriving via
-  TrivialLedgerTables (Ticked (LedgerState ByronBlock))
-  instance
-    HasLedgerTables (Ticked (LedgerState ByronBlock))
-deriving via
-  TrivialLedgerTables (LedgerState ByronBlock)
-  instance
-    CanStowLedgerTables (LedgerState ByronBlock)
-deriving via
-  TrivialLedgerTables (LedgerState ByronBlock)
-  instance
-    SerializeTablesWithHint (LedgerState ByronBlock)
+instance HasLedgerTables LedgerState ByronBlock where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+
+instance HasLedgerTables (Ticked LedgerState) ByronBlock where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+
+instance CanStowLedgerTables (LedgerState ByronBlock) where
+  stowLedgerTables = trivialStowLedgerTables
+  unstowLedgerTables = trivialUnstowLedgerTables
+
+instance SerializeTablesWithHint LedgerState ByronBlock where
+  encodeTablesWithHint = trivialEncodeTablesWithHint
+  decodeTablesWithHint = trivialDecodeTablesWithHint
+
+deriving via Void instance IndexedMemPack LedgerState ByronBlock Void
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces
 -------------------------------------------------------------------------------}
 
-instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
+instance ApplyBlock LedgerState ByronBlock where
   applyBlockLedgerResultWithValidation doValidation opts =
     fmap pureLedgerResult ..: applyByronBlock doValidation opts
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 
+instance GetBlockKeySets ByronBlock where
   getBlockKeySets _ = emptyLedgerTables
 
 data instance BlockQuery ByronBlock fp result where
@@ -477,6 +474,7 @@ encodeByronExtLedgerState =
     encodeByronLedgerState
     encodeByronChainDepState
     encodeByronAnnTip
+    toCBOR
 
 encodeByronHeaderState :: HeaderState ByronBlock -> Encoding
 encodeByronHeaderState =
@@ -577,5 +575,19 @@ decodeByronResult ::
 decodeByronResult query = case query of
   GetUpdateInterfaceState -> fromByronCBOR
 
-instance CanUpgradeLedgerTables (LedgerState ByronBlock) where
+instance CanUpgradeLedgerTables LedgerState ByronBlock where
   upgradeTables _ _ = id
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+instance LedgerStateSupportsPeras (LedgerState ByronBlock)
+
+instance LedgerStateSupportsPeras (Ticked LedgerState ByronBlock)
+
+instance StateSupportsPerasEpochContext ByronBlock where
+  type MaybeEraIndexedEpochToPerasRoundInfo ByronBlock = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: ByronBlock does not support Peras"

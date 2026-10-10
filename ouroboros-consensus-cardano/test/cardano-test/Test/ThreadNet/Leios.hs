@@ -128,6 +128,7 @@ import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig, configLed
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
   ( ComputeLedgerEvents (OmitLedgerEvents)
+  , HasLedgerTables (withLedgerTables)
   , LedgerCfg
   , tickThenReapply
   )
@@ -139,7 +140,7 @@ import Ouroboros.Consensus.Ledger.Extended
   )
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx, extractTxs)
 import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK)
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, forgetLedgerTables)
+import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs, emptyLedgerTables, forgetLedgerTables)
 import Ouroboros.Consensus.Mempool (TraceEventMempool (..))
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -938,14 +939,19 @@ endorseInvalidTx adversary nid tni
  where
   poison bf =
     bf
-      { forgeBlock = \args ->
-          forgeBlock bf args{fbEbTxs = fbEbTxs args <> [lie invalidEbTx]}
+      { forgeBlock = \leiosArgs args ->
+          forgeBlock bf leiosArgs args{fbEbTxs = fbEbTxs args <> [lie args invalidEbTx]}
       }
   -- The lie is told here and only here: 'assumeValidatedClosureTx' stamps the tx
   -- as mempool-validated so the forge will endorse it, which is exactly the
   -- claim a voter is now supposed to disbelieve. Applying it at the use site
-  -- keeps 'invalidEbTx' an ordinary, plainly invalid transaction.
-  lie = assumeValidatedClosureTx
+  -- keeps 'invalidEbTx' an ordinary, plainly invalid transaction. The forge
+  -- state holds no values, and the tx's input exists nowhere anyway.
+  lie args =
+    assumeValidatedClosureTx
+      (configLedger (fbConfig args))
+      (fbCurrentSlotNo args)
+      (fbCurrentTickedLedgerState args `withLedgerTables` emptyLedgerTables)
 
 -- | A Dijkstra transaction that spends an output which does not exist: its
 -- input names the id of a transaction that is never applied anywhere, so the
@@ -1051,7 +1057,7 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
 foldWithResolution ::
   Monad m =>
   LeiosDbReader m ->
-  LedgerCfg (ExtLedgerState (CardanoBlock StandardCrypto)) ->
+  LedgerCfg ExtLedgerState (CardanoBlock StandardCrypto) ->
   [CardanoBlock StandardCrypto] ->
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
   m (ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK)

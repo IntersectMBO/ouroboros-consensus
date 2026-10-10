@@ -12,7 +12,7 @@ module Ouroboros.Consensus.Mempool.Query
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils (restrictValues')
+import Ouroboros.Consensus.Ledger.Tables.Utils (restrictValuesMK)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Ledger
@@ -50,7 +50,7 @@ implGetSnapshotFor ::
   TickedLedgerState blk DiffMK ->
   -- | A function that returns values corresponding to the given keys for
   -- the unticked ledger state.
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   m (MempoolSnapshot blk)
 implGetSnapshotFor = getSnapshotUsingPolicyFor UseCache
 
@@ -72,7 +72,7 @@ implGetSnapshotForNoCache ::
   TickedLedgerState blk DiffMK ->
   -- | A function that returns values corresponding to the given keys for
   -- the unticked ledger state.
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   m (MempoolSnapshot blk)
 implGetSnapshotForNoCache = getSnapshotUsingPolicyFor AlwaysRevalidate
 
@@ -86,7 +86,7 @@ getSnapshotUsingPolicyFor ::
   MempoolEnv m blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   m (MempoolSnapshot blk)
 getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
   is <- atomically $ readSVarSTM istate
@@ -107,7 +107,7 @@ getSnapshotUsingPolicyFor policy mpEnv slot ticked readUntickedTables = do
           if canUseCache
             -- We are looking for a snapshot at the same state ticked
             -- to a different slot, so we can reuse the cached values
-            then pure . restrictValues' (isTxValues is)
+            then pure . ltliftA2 restrictValuesMK (isTxValues is)
             -- We are looking for a snapshot at a different state, so we
             -- need to read the values from the ledgerdb.
             else readUntickedTables
@@ -131,7 +131,7 @@ snapshotStepTxsPerStep = 100
 computeSnapshot ::
   forall blk m.
   (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   Maybe MempoolTimeoutConfig ->
   LedgerConfig blk ->
   SlotNo ->

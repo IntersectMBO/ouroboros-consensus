@@ -8,6 +8,7 @@ module Cardano.Tools.DBAnalyser.HasAnalysis
   , WithLedgerState (..)
   ) where
 
+import Cardano.Tools.DBAnalyser.Types (LedgerDBBackend)
 import Data.Map.Strict (Map)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (HasAnnTip (..))
@@ -61,4 +62,21 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
 class HasProtocolInfo blk where
   data Args blk
+
   mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk)
+  mkProtocolInfo = fmap fst . mkProtocolInfoAndBackend
+
+  -- | The protocol info, together with the LedgerDB backend (and its settings)
+  -- that the node configuration file selects, which db-analyser uses when the
+  -- command line does not select one. Both are produced by a single call so that
+  -- the configuration only has to be read once.
+  --
+  -- Defaults to no backend (nothing to read one from); only the Cardano instance
+  -- overrides this.
+  mkProtocolInfoAndBackend :: Args blk -> IO (ProtocolInfo blk, Maybe LedgerDBBackend)
+  mkProtocolInfoAndBackend args = (\pInfo -> (pInfo, Nothing)) <$> mkProtocolInfo args
+
+  -- The two defaults above are mutually recursive, so without this pragma GHC
+  -- would infer an empty minimal complete definition and let an instance that
+  -- defines neither method diverge at runtime without any warning.
+  {-# MINIMAL mkProtocolInfo | mkProtocolInfoAndBackend #-}

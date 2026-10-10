@@ -1,16 +1,17 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol
@@ -34,6 +35,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
   , injectValidationErr
   ) where
 
+import Cardano.Ledger.BaseTypes (Nonce)
 import Control.Monad.Except
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
@@ -133,6 +135,28 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
 
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
+
+instance CanHardFork xs => ChainDepStateSupportsPeras (HardForkChainDepState xs) where
+  getEpochNonce =
+    hcollapse
+      . hcmap proxySingle getEpochNonce'
+      . State.tip
+   where
+    getEpochNonce' :: forall blk. SingleEraBlock blk => WrapChainDepState blk -> K Nonce blk
+    getEpochNonce' (WrapChainDepState st) =
+      K (getEpochNonce st)
+
+instance CanHardFork xs => ChainDepStateSupportsPeras (Ticked (HardForkChainDepState xs)) where
+  getEpochNonce =
+    hcollapse
+      . hcmap proxySingle getEpochNonce'
+      . State.tip
+      . tickedHardForkChainDepStatePerEra
+   where
+    getEpochNonce' ::
+      forall blk. SingleEraBlock blk => (Ticked :.: WrapChainDepState) blk -> K Nonce blk
+    getEpochNonce' (Comp (WrapTickedChainDepState st)) =
+      K (getEpochNonce st)
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol

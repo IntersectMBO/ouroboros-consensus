@@ -113,7 +113,7 @@ for dir in "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}"/*; do
   printf "\t- %s\n" "$package"
   cp -r "${dir}/noopt/doc/html/${package}" "${OUTPUT_DIR}/${package}"
   printf "\t\t- library\n"
-  copy_components "$package" "$dir" "l" "false"
+  copy_components "$package" "$dir" "l" "true"
   copy_components "$package" "$dir" "t" "true"
   copy_components "$package" "$dir" "b" "true"
   copy_components "$package" "$dir" "x" "true"
@@ -124,12 +124,11 @@ declare -a interface_options=()
 for package_path in "${OUTPUT_DIR}"/*/; do
   if [[ -d "${package_path}" ]]; then
     package=$(echo "${package_path}" | rev | cut -d'/' -f2 | rev)
-    # Find the .haddock file for this package.
-    # Main libraries have .haddock at depth 1: package/package.haddock
-    # Sub-libraries have .haddock at depth 2: package/sub-lib/sub-lib.haddock
-    # We use -maxdepth 2 to find both cases while avoiding unintended files
-    # deeper in the directory tree (e.g., in src/ subdirectories).
-    haddock_file=$(find "${package_path}" -maxdepth 2 -type f -name "*.haddock" -print | cut -d/ -f2- | head -1)
+    # Find the .haddock file for this component. Every directory we copied above
+    # holds the html of a single component, so its .haddock file sits at depth 1
+    # (eg ouroboros-consensus-diffusion/diffusion.haddock); -maxdepth 1 avoids
+    # picking up unintended files deeper in the tree (eg in src/ subdirectories).
+    haddock_file=$(find "${package_path}" -maxdepth 1 -type f -name "*.haddock" -print | cut -d/ -f2- | head -1)
     interface_options+=("--read-interface=${package},${haddock_file}")
   fi
 done

@@ -59,7 +59,7 @@ data ReapplyStepState blk = ReapplyStepState
   -- ^ Transactions successfully applied to produce 'currentLedgerSt'.
   , appliedTxIds :: !(Set.Set (GenTxId blk))
   -- ^ Set of all accepted transactions (view on 'appliedTxs').
-  , phantomUTxOs :: !(Set (TxIn (LedgerState blk)))
+  , phantomUTxOs :: !(Set (TxIn blk))
   -- ^ UTxOs created by unapplicable transactions in 'unapplicableTxs'.
   }
 
@@ -84,7 +84,7 @@ initReapplyStepState startingLedgerStDiff txs =
 reapply ::
   forall blk m.
   (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
@@ -102,7 +102,7 @@ reapplyUntilTimeout ::
   (IOLike m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   DiffTime ->
   Int ->
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
@@ -120,7 +120,7 @@ reapplyStep ::
   forall blk m.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk), IOLike m) =>
   Int ->
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   LedgerConfig blk ->
   SlotNo ->
   ReapplyStepState blk ->
@@ -173,7 +173,7 @@ reapplyTxs cfg slot txs stBefore =
      in case runExcept (reapplyTx cfg slot vtx (currentLedgerSt st)) of
           Left !err ->
             st
-              { unapplicableTxs = unapplicableTxs st |> Invalidated vtx err
+              { unapplicableTxs = unapplicableTxs st |> Invalidated (txForgetValidated vtx) err
               , phantomUTxOs = phantomUTxOs st `Set.union` Map.keysSet txCreated -- propagate phantom outputs
               }
           Right !ledgerStAfterTx ->
@@ -194,23 +194,23 @@ createdFromTx ::
   forall blk.
   LedgerSupportsMempool blk =>
   ValidatedTxWithDiffs blk ->
-  Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
+  Map (TxIn blk) (TxOut blk)
 createdFromTx = snd . Diff.deletedAndCreated . diffFromTx
 
 diffFromTx ::
   forall blk.
-  ValidatedTxWithDiffs blk -> Diff.Diff (TxIn (LedgerState blk)) (TxOut (LedgerState blk))
+  ValidatedTxWithDiffs blk -> Diff.Diff (TxIn blk) (TxOut blk)
 diffFromTx = getDiffMK . getLedgerTables . validatedTxDiffs
 
 inputsFromTx ::
-  forall blk. LedgerSupportsMempool blk => ValidatedTxWithDiffs blk -> Set (TxIn (LedgerState blk))
+  forall blk. LedgerSupportsMempool blk => ValidatedTxWithDiffs blk -> Set (TxIn blk)
 inputsFromTx = getKeysMK . getLedgerTables . getTransactionKeySets . txForgetValidated . validatedTx
 
 cdFromLedgerState ::
   forall blk.
   LedgerSupportsMempool blk =>
   TickedLedgerState blk DiffMK ->
-  (Map (TxIn (LedgerState blk)) (TxOut (LedgerState blk)), Set (TxIn (LedgerState blk)))
+  (Map (TxIn blk) (TxOut blk), Set (TxIn blk))
 cdFromLedgerState st =
   let (deleted, created) = Diff.deletedAndCreated . getDiffMK . getLedgerTables . projectLedgerTables $ st
    in (created, deleted)
@@ -223,7 +223,7 @@ boundaryInputsForTxs ::
   forall blk.
   LedgerSupportsMempool blk =>
   TxSeq.TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
-  Set (TxIn (LedgerState blk))
+  Set (TxIn blk)
 boundaryInputsForTxs txs =
   let (!boundaryInputs, _) =
         Foldable.foldl'

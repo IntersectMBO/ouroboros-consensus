@@ -40,9 +40,11 @@ module Test.Consensus.HardFork.Combinator.A
   , TxId (..)
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.Monad (guard)
 import qualified Data.Binary as B
@@ -52,6 +54,7 @@ import qualified Data.ByteString.Short as SBS
 import Data.Functor.Identity
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void
@@ -64,12 +67,15 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Forecast
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Condense
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HardFork.History
   ( Bound (..)
+  , EpochToPerasRoundInfo
   , EraParams (..)
+  , forgetEraIndex
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
@@ -79,16 +85,27 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (repeatedlyM)
 import Ouroboros.Consensus.Util.Condense
@@ -199,47 +216,46 @@ data instance LedgerState BlockA mk = LgrA
   deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA mk)
 
 -- | Ticking has no state on the A ledger state
-newtype instance Ticked (LedgerState BlockA) mk = TickedLedgerStateA
+newtype instance Ticked LedgerState BlockA mk = TickedLedgerStateA
   { getTickedLedgerStateA :: LedgerState BlockA mk
   }
   deriving stock (Generic, Show, Eq)
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked (LedgerState BlockA) mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked LedgerState BlockA mk)
 
 {-------------------------------------------------------------------------------
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState BlockA) = Void
-type instance TxOut (LedgerState BlockA) = Void
+type instance TxIn BlockA = Void
+type instance TxOut BlockA = Void
 
-instance LedgerTablesAreTrivial (LedgerState BlockA) where
+instance LedgerTablesAreTrivial LedgerState BlockA where
   convertMapKind (LgrA x y) = LgrA x y
-instance LedgerTablesAreTrivial (Ticked (LedgerState BlockA)) where
+instance LedgerTablesAreTrivial (Ticked LedgerState) BlockA where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
-deriving via
-  Void
-  instance
-    IndexedMemPack (LedgerState BlockA EmptyMK) Void
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    HasLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (Ticked (LedgerState BlockA))
-  instance
-    HasLedgerTables (Ticked (LedgerState BlockA))
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    CanStowLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    CanUpgradeLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    SerializeTablesWithHint (LedgerState BlockA)
+
+deriving via Void instance IndexedMemPack LedgerState BlockA Void
+
+instance HasLedgerTables LedgerState BlockA where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance HasLedgerTables (Ticked LedgerState) BlockA where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance CanStowLedgerTables (LedgerState BlockA) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+
+instance CanUpgradeLedgerTables LedgerState BlockA where
+  upgradeTables _ _ = id
+
+instance SerializeTablesWithHint LedgerState BlockA where
+  decodeTablesWithHint _ = do
+    _ <- CBOR.decodeMapLen
+    pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
 
 data PartialLedgerConfigA = LCfgA
   { lcfgA_k :: SecurityParam
@@ -260,29 +276,25 @@ instance (HasZero a, Serialise a) => Serialise (NonZero a) where
       Nothing -> fail "Expected non zero but found zero!"
       Just a' -> pure a'
 
-type instance
-  LedgerCfg (LedgerState BlockA) =
-    (EpochInfo Identity, PartialLedgerConfigA)
+type instance LedgerCfg LedgerState BlockA = (EpochInfo Identity, PartialLedgerConfigA)
 
 instance GetTip (LedgerState BlockA) where
   getTip = castPoint . lgrA_tip
 
-instance GetTip (Ticked (LedgerState BlockA)) where
+instance GetTip (Ticked LedgerState BlockA) where
   getTip = castPoint . getTip . getTickedLedgerStateA
 
-instance IsLedger (LedgerState BlockA) where
-  type LedgerErr (LedgerState BlockA) = Void
+type instance AuxLedgerEvent BlockA = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState BlockA) =
-      VoidLedgerEvent (LedgerState BlockA)
+instance IsLedger LedgerState BlockA where
+  type LedgerErr LedgerState BlockA = Void
 
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
       . TickedLedgerStateA
       . noNewTickingDiffs
 
-instance ApplyBlock (LedgerState BlockA) BlockA where
+instance ApplyBlock LedgerState BlockA where
   applyBlockLedgerResultWithValidation _ _ cfg blk =
     fmap (pureLedgerResult . convertMapKind . setTip)
       . repeatedlyM
@@ -296,7 +308,8 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult absurd
 
-  getBlockKeySets _blk = trivialLedgerTables
+instance GetBlockKeySets BlockA where
+  getBlockKeySets _blk = emptyLedgerTables
 
 instance UpdateLedger BlockA
 
@@ -311,7 +324,34 @@ instance LedgerSupportsProtocol BlockA where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerSupportsPeras BlockA
+instance LedgerStateSupportsPeras (LedgerState BlockA)
+
+instance LedgerStateSupportsPeras (Ticked LedgerState BlockA)
+
+-- NOTE: BlockA is only ever used wrapped in the hard fork combinator (which
+-- implements 'hardForkSummary' directly and never delegates to the underlying
+-- era), so this method is never actually called.
+instance HasHardForkHistory BlockA where
+  type HardForkIndices BlockA = '[BlockA]
+  hardForkSummary = error "BlockA being used as a SingleEraBlock"
+
+instance StateSupportsPerasEpochContext BlockA where
+  type MaybeEraIndexedEpochToPerasRoundInfo BlockA = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+
+instance BlockSupportsPeras BlockA where
+  type PerasCrypto BlockA = MockPerasCrypto BlockA
+  type PerasVotingCommitteeScheme BlockA = MockPerasVotingCommitteeScheme BlockA
+  type PerasVote BlockA = MockPerasVote BlockA
+  type PerasCert BlockA = MockPerasCert BlockA
+  type PerasError BlockA = MockPerasError BlockA
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing
 
 instance HasPartialConsensusConfig ProtocolA
 
@@ -327,31 +367,25 @@ type instance CannotForge BlockA = Void
 type instance ForgeStateInfo BlockA = ()
 type instance ForgeStateUpdateError BlockA = Void
 
-forgeBlockA ::
-  TopLevelConfig BlockA ->
-  BlockNo ->
-  SlotNo ->
-  TickedLedgerState BlockA mk ->
-  [GenTx BlockA] ->
-  IsLeader (BlockProtocol BlockA) ->
-  BlockA
-forgeBlockA tlc bno sno (TickedLedgerStateA st) _txs _ =
+forgeBlockA :: ForgeBlockArgs BlockA -> BlockA
+forgeBlockA ForgeBlockArgs{..} =
   BlkA
     { blkA_header =
         HdrA
           { hdrA_fields =
               HeaderFields
-                { headerFieldHash = Lazy.toStrict . B.encode $ unSlotNo sno
-                , headerFieldSlot = sno
-                , headerFieldBlockNo = bno
+                { headerFieldHash = Lazy.toStrict . B.encode $ unSlotNo fbCurrentSlotNo
+                , headerFieldSlot = fbCurrentSlotNo
+                , headerFieldBlockNo = fbCurrentBlockNo
                 }
-          , hdrA_prev = ledgerTipHash st
+          , hdrA_prev = ledgerTipHash lst
           }
-    , blkA_body = Map.findWithDefault [] sno (lcfgA_forgeTxs ledgerConfig)
+    , blkA_body = Map.findWithDefault [] fbCurrentSlotNo (lcfgA_forgeTxs ledgerConfig)
     }
  where
+  TickedLedgerStateA lst = fbCurrentTickedLedgerState
   ledgerConfig :: PartialLedgerConfig BlockA
-  ledgerConfig = snd $ configLedger tlc
+  ledgerConfig = snd $ configLedger fbConfig
 
 blockForgingA :: Monad m => BlockForging m BlockA
 blockForgingA =
@@ -360,16 +394,7 @@ blockForgingA =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \ForgeBlockArgs{..} ->
-        return $
-          flip (,) Nothing $
-            forgeBlockA
-              fbConfig
-              fbCurrentBlockNo
-              fbCurrentSlotNo
-              fbCurrentTickedLedgerState
-              (fmap txForgetValidated fbRbTxs)
-              fbIsLeader
+    , forgeBlock = \_leiosArgs args -> return (forgeBlockA args, Nothing)
     , finalize = return ()
     }
 
@@ -390,6 +415,11 @@ data instance GenTx BlockA = TxA
   deriving (Show, Eq, Generic, Serialise)
   deriving NoThunks via OnlyCheckWhnfNamed "TxA" (GenTx BlockA)
 
+instance FromCBOR (GenTx BlockA) where
+  fromCBOR = decode
+instance ToCBOR (GenTx BlockA) where
+  toCBOR = encode
+
 newtype instance Validated (GenTx BlockA) = ValidatedGenTxA {forgetValidatedGenTxA :: GenTx BlockA}
   deriving stock Show
   deriving newtype (Generic, Eq)
@@ -408,15 +438,24 @@ instance LedgerSupportsMempool BlockA where
 
   txForgetValidated = forgetValidatedGenTxA
 
-  getTransactionKeySets _tx = trivialLedgerTables
+  getTransactionKeySets _tx = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
 instance TxLimits BlockA where
-  type TxMeasure BlockA = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 BlockA = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 BlockA = TrivialTxMeasurePhase2
   txWireSize = const . fromIntegral $ (0 :: Int)
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
-  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  blockCapacityTxMeasure _cfg _st = TxMeasure (IgnoringOverflow $ ByteSize32 $ 100 * 1024) TrivialTxMeasurePhase2 -- arbitrary
+  txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+
+  type TxEbMeasure BlockA = TxMeasure BlockA
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock (Show, Eq, Ord, Generic)
@@ -444,9 +483,10 @@ instance SameDepIndex2 (BlockQuery BlockA) where
   sameDepIndex2 qry _qry' = case qry of {}
 
 instance ConvertRawHash BlockA where
+  -- We use the 'SlotNo' as the hash, which is 'Word64'
+  type HashSize BlockA = 8
   toRawHash _ = id
-  fromRawHash _ = id
-  hashSize _ = 8 -- We use the SlotNo as the hash, which is Word64
+  unsafeFromRawHash _ = id
 
 data instance NestedCtxt_ BlockA f a where
   CtxtA :: NestedCtxt_ BlockA f (f BlockA)

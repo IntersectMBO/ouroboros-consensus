@@ -66,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.7", "9.10.3", "9.12.2", "9.14.1"]
+        ghc: ["9.6.7", "9.10.3", "9.12.4", "9.14.1"]
         variant: [default, no-thunks]
         test-set: [all, no-thunks-safe]
         exclude:
@@ -81,7 +81,7 @@ jobs:
       CABAL: "3.16.1.0"
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         submodules: true
 
@@ -105,6 +105,9 @@ jobs:
     - name: Configure Cabal
       run: |
         cp .github/workflows/cabal.project.${{ matrix.variant }}.local ./cabal.project.local
+        # Same configuration for the GHC boot library check below, which uses
+        # its own project file and therefore its own local file.
+        cp .github/workflows/cabal.project.${{ matrix.variant }}.local ./cabal.project.ghc-pin.local
 
     - name: Update Cabal (Hackage and CHaP)
       run: |
@@ -143,7 +146,7 @@ jobs:
     # Otherwise, we could restore a cache from a previous month, which makes
     # caches grow unboundedly.
     - name: "Restore cache for cabal-store"
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       id: restore-cabal-store
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
@@ -163,7 +166,7 @@ jobs:
     #
     # See https://github.com/actions/cache/tree/v3/save#always-save-cache.
     - name: "Save cache for cabal-store"
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       id: save-cabal-store
       if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-store.outputs.cache-hit != 'true'
       with:
@@ -180,7 +183,6 @@ jobs:
         bundler-cache: true
 
     - name: Install cddl tools
-      if: matrix.ghc != '9.14.1'
       run: |
         gem install cddlc
         cabal install cuddle-1.8.1.0 --index-state="2026-07-15T21:58:35Z" --ignore-project
@@ -216,7 +218,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.10.3'
+        && matrix.ghc=='9.14.1'
       run: |
         # need for latex, dvisvgm and standalone
         sudo apt install texlive-latex-extra texlive-latex-base
@@ -231,12 +233,28 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.10.3'
+        && matrix.ghc=='9.14.1'
       uses: actions/upload-artifact@v7
       with:
         name: haddocks
         path: haddocks.tgz
         retention-days: 1
+
+    # Downstream consumers, such as cardano-node, also depend on the `ghc`
+    # package. The installed `ghc` package pins every boot library to the version
+    # that the compiler shipped with, so a plan that works here can still fail
+    # downstream. This step resolves a plan under that same restriction. See
+    # cabal.project.ghc-pin.
+    #
+    # It runs last, so that a conflict does not hide the build and test results.
+    # It needs its own build directory, so that it does not overwrite the plan of
+    # the normal build.
+    - name: Check the build plan against GHC's boot libraries
+      run: |
+        cabal build all --dry-run \
+          --project-file=cabal.project.ghc-pin \
+          --builddir=dist-newstyle-ghc-pin \
+          --minimize-conflict-set
 
   benchmarks:
     name: Run benchmarks
@@ -249,7 +267,7 @@ jobs:
         ghc: ["9.6.7", "9.10.3"]
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
@@ -281,7 +299,7 @@ jobs:
     # run on the `main` branch. If we run this workflow in the context of a PR,
     # then we will save the same results we just restored.
     - name: Cache benchmark baseline results
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: baseline-mempool-benchmarks.csv
         key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
@@ -329,7 +347,7 @@ jobs:
       run:
         working-directory: ./docs/website
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download haddocks
         uses: actions/download-artifact@v8
@@ -340,7 +358,14 @@ jobs:
         working-directory: .
         run: tar vzxf haddocks.tgz
 
-      - uses: actions/setup-node@v6
+      # Installs the Yarn shim, which provisions the exact version named by the
+      # "packageManager" field of docs/website/package.json. Must run before
+      # setup-node, whose "cache: yarn" probes the active Yarn to locate its
+      # cache folder; the runner's default Yarn is Classic 1.x, which differs.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: yarn
@@ -357,7 +382,9 @@ jobs:
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: |
+          yarn --version
+          yarn install --immutable
 
       - name: Build website
         run: yarn build

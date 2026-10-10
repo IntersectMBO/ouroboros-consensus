@@ -56,12 +56,14 @@ import Cardano.Crypto.Leios
   , aggregateLeiosCert
   , getLeiosSeatId
   , leiosCommitteeSize
+  , leiosSignContext
   , resolveLeiosSeat
   , verifyLeiosCert
   )
 import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Core (EraTx, PParams, Tx, TxLevel (TopTx))
 import Cardano.Ledger.Dijkstra.PParams
   ( DijkstraEraPParams
@@ -69,6 +71,7 @@ import Cardano.Ledger.Dijkstra.PParams
   , ppLeiosDiffusionPeriodLengthL
   , ppLeiosVotePeriodLengthL
   )
+import Cardano.Ledger.Hashes (extractHash, unsafeMakeSafeHash)
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (Origin), withOrigin)
 import Cardano.Slotting.Time (RelativeTime, SlotLength, slotLengthToMillisec)
@@ -143,12 +146,13 @@ import Ouroboros.Consensus.Block.RealPoint
   , realPointHash
   , realPointSlot
   )
-import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerConfig, LedgerState)
+import Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
-  , TxMeasureMetrics
+  , TxMeasurePhase1Metrics
   , txMeasureMetricTxSizeBytes
   )
+import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK)
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
@@ -341,6 +345,26 @@ data EbAnnouncement = EbAnnouncement
   }
   deriving stock (Generic, Show, Eq, Ord)
   deriving anyclass NoThunks
+
+-- | The ledger's announcement wraps the hash as a 'SafeHash', this one as an
+-- 'EbHash'; both hold the same bytes.
+fromCodecEbAnnouncement :: EbReferencesAnnouncement -> EbAnnouncement
+fromCodecEbAnnouncement ann =
+  EbAnnouncement
+    { ebAnnouncementHash =
+        MkEbHash $ Hash.hashToPackedBytes $ extractHash $ ebReferencesAnnouncementHash ann
+    , ebAnnouncementSize = ebReferencesAnnouncementSize ann
+    }
+
+-- | The inverse of 'fromCodecEbAnnouncement'.
+toCodecEbAnnouncement :: EbAnnouncement -> EbReferencesAnnouncement
+toCodecEbAnnouncement ann =
+  EbReferencesAnnouncement
+    { ebReferencesAnnouncementHash = unsafeMakeSafeHash (Hash.hashFromPackedBytes bytes)
+    , ebReferencesAnnouncementSize = ebAnnouncementSize ann
+    }
+ where
+  MkEbHash bytes = ebAnnouncementHash ann
 
 encodeEbAnnouncement :: EbAnnouncement -> Encoding
 encodeEbAnnouncement ebAnn =
@@ -1498,7 +1522,7 @@ signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
     { announcingRbHash
     , voterId
-    , voteSignature = signDSIGN () announcingRbHash sk
+    , voteSignature = signDSIGN leiosSignContext announcingRbHash sk
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
@@ -1510,7 +1534,7 @@ validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature
       case seat.seatVKey of
         SNothing -> Left SignerHasNoKey
         SJust vk ->
-          case verifyDSIGN () vk announcingRbHash voteSignature of
+          case verifyDSIGN leiosSignContext vk announcingRbHash voteSignature of
             Left _ -> Left InvalidSignature
             Right () -> Right seat.seatWeight
 
@@ -1735,7 +1759,7 @@ data TraceLeiosKernel
     -- using @missedBoth@ avoids double-counting the mempool\/cache overlap. The two
     -- 'Int's are the mempool count then @missedBoth@.
     TraceLeiosBodyHits LeiosPoint LeiosTxCacheInsertBodySummary Int Int
-  | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
+  | forall m. (Show m, TxMeasurePhase1Metrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
       , eb :: LeiosEb
       , ebMeasure :: m
@@ -2677,52 +2701,7 @@ leiosChainSelNSByPath p =
     p
     [(nsiPath i, i) | ns <- [minBound .. maxBound], let i = leiosChainSelNSInfo ns]
 
--- | Why a Leios header check rejected a header
---
--- Wrapped by @BasePraosValidationErr@'s @LeiosHeaderErr@ constructor. Its own
--- type for the same reason as 'TraceLeiosChainSel': cardano-node reaches it
--- only through 'leiosHeaderErrToObject'.
-data LeiosHeaderErr
-  = -- | The header sets its cert bit, but its predecessor announced no endorser
-    -- block, so there is nothing for the certificate to certify.
-    LeiosCertWithoutAnnouncement
-  | -- | The header sets its cert bit too soon after its predecessor's
-    -- announcement: the announcement, voting and diffusion periods have not all
-    -- elapsed.
-    --
-    -- Carries the announcing block's slot, this header's slot, and the earliest
-    -- slot in which this header could have certified.
-    LeiosCertTooYoung !SlotNo !SlotNo !SlotNo
-  | -- | The header announces an endorser block larger than the protocol
-    -- parameters allow. Carries the announced size and the maximum.
-    LeiosEbTooBig !Word32 !Word32
-  deriving (Eq, Show, Generic)
-
-deriving via
-  OnlyCheckWhnfNamed "LeiosHeaderErr" LeiosHeaderErr
-  instance
-    NoThunks LeiosHeaderErr
-
-leiosHeaderErrToObject :: LeiosHeaderErr -> Aeson.Object
-leiosHeaderErrToObject = \case
-  LeiosCertWithoutAnnouncement ->
-    mconcat ["kind" .= Aeson.String "LeiosCertWithoutAnnouncement"]
-  LeiosCertTooYoung announcingSlot slot earliestAllowed ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosCertTooYoung"
-      , "announcingSlot" .= announcingSlot
-      , "slot" .= slot
-      , "earliestAllowedSlot" .= earliestAllowed
-      ]
-  LeiosEbTooBig announced maxSize ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosEbTooBig"
-      , "announcedEndorserBlockSize" .= announced
-      , "maxEndorserBlockSize" .= maxSize
-      ]
-
--- | As 'leiosHeaderErrToObject', for the errors ChainSel and the LedgerDB raise
--- about a CertRB.
+-- | The errors ChainSel and the LedgerDB raise about a CertRB, as JSON.
 leiosExtValidationErrorToObject :: LeiosExtValidationError -> Aeson.Object
 leiosExtValidationErrorToObject = \case
   LeiosCertificateWithoutAnnouncement cert ->

@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -15,12 +17,17 @@
 -- denote ignored variables.
 module Test.Consensus.Peras.Cert.Inclusion (tests) where
 
+import Data.Set (Set)
+import qualified Data.Set as Set
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Block (WithOrigin (..))
+import Ouroboros.Consensus.Block (Point (..), WithOrigin (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
+  ( BoostedBlock
+  , IsPerasCert (..)
+  , PerasCertMaxRounds (..)
+  , PerasParams (..)
   , PerasRoundNo (..)
-  , getPerasCertRound
+  , defaultPerasParams
   )
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( LatestCertOnChainView (..)
@@ -29,12 +36,6 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
   , PerasCertInclusionView (..)
   , needCert
   )
-import Ouroboros.Consensus.Peras.Params
-  ( PerasCertMaxRounds (..)
-  , PerasParams (..)
-  , mkPerasParams
-  )
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot (..))
 import Ouroboros.Consensus.Util.Pred (Evidence (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
@@ -50,6 +51,7 @@ import Test.Tasty.QuickCheck
   , testProperty
   )
 import Test.Util.QuickCheck (geometric)
+import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 {-------------------------------------------------------------------------------
@@ -83,7 +85,7 @@ data PerasCertInclusionRulesDecisionModel
 --
 -- NOTE: this predicate could be lifted directly from the agda specification.
 needCertModel ::
-  PerasCertInclusionView TestCert TestBlk ->
+  PerasCertInclusionView TestCert TestBlock ->
   PerasCertInclusionRulesDecisionModel
 needCertModel
   PerasCertInclusionView
@@ -91,7 +93,7 @@ needCertModel
     , currRoundNo
     , latestCertSeen
     , latestCertOnChain
-    , certSnapshot
+    , certIds
     } =
     PerasCertInclusionDecisionModel
       { shouldIncludeCert =
@@ -109,7 +111,7 @@ needCertModel
     noCertsFromTwoRoundsAgo =
       if currRoundNo < 2
         then False
-        else not (containsCert certSnapshot (currRoundNo - 2))
+        else not ((currRoundNo - 2) `Set.member` certIds)
 
     latestCertSeenIsNotExpired =
       currRoundNo
@@ -203,11 +205,11 @@ certInclusionDecisionTag = \case
 --  - 25% chance of being 2
 --  - 12.5% chance of being 3
 --  ... and so on
-genPerasParams :: Gen PerasParams
+genPerasParams :: Gen (PerasParams blk)
 genPerasParams = do
   _A <- fromIntegral . (+ 1) <$> geometric 0.5
   pure
-    mkPerasParams
+    defaultPerasParams
       { perasCertMaxRounds = PerasCertMaxRounds _A
       }
 
@@ -235,8 +237,13 @@ data TestCert
   }
   deriving (Show, Eq, Generic)
 
-instance HasPerasCertRound TestCert where
+type instance BoostedBlock TestCert = Point TestBlock
+
+instance IsPerasCert TestCert TestBlock where
   getPerasCertRound = tcRoundNo
+
+  -- We don't really care about the block being boosted for the inclusion rules
+  getPerasCertBlock = const GenesisPoint
 
 -- | Generate a test certificate
 --
@@ -255,13 +262,6 @@ genTestCert roundNo = do
     TestCert
       { tcRoundNo = roundNo'
       }
-
--- * Mocked block type
-
--- | A mocked block type for testing
-data TestBlk
-  = TestBlk
-  deriving (Show, Eq, Generic)
 
 -- * Certificate and inclusion views
 
@@ -283,33 +283,29 @@ genLatestCertOnChain roundNo = do
       { lcocRoundNo = certRoundNo
       }
 
-genPerasCertSnapshot :: PerasRoundNo -> Gen (PerasCertSnapshot TestBlk)
-genPerasCertSnapshot currRoundNo = do
+genPerasCertIds :: PerasRoundNo -> Gen (Set PerasRoundNo)
+genPerasCertIds currRoundNo = do
   -- Decide whether to include a cert from two rounds ago
   containsCertFromTwoRoundsAgo <- arbitrary
   pure $
-    PerasCertSnapshot
-      { containsCert = \roundNo ->
-          containsCertFromTwoRoundsAgo
-            && roundNo == currRoundNo - 2
-      , getCertsAfter = \_ ->
-          mempty
-      }
+    if containsCertFromTwoRoundsAgo && currRoundNo >= 2
+      then Set.singleton (currRoundNo - 2)
+      else Set.empty
 
-genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlk)
+genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlock)
 genPerasCertInclusionView = do
   perasParams <- genPerasParams
   currRoundNo <- genPerasRoundNo
   latestCertSeen <- genLatestCertSeen currRoundNo
   latestCertOnChain <- genWithOrigin (genLatestCertOnChain currRoundNo)
-  certSnapshopt <- genPerasCertSnapshot currRoundNo
+  certIds <- genPerasCertIds currRoundNo
   pure
     PerasCertInclusionView
       { perasParams
       , currRoundNo
       , latestCertSeen = latestCertSeen
       , latestCertOnChain = latestCertOnChain
-      , certSnapshot = certSnapshopt
+      , certIds = certIds
       }
  where
   genWithOrigin gen =

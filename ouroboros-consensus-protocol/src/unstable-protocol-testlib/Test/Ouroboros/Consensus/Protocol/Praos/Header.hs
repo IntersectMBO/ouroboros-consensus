@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -20,7 +19,11 @@ module Test.Ouroboros.Consensus.Protocol.Praos.Header
   , generateSamples
   ) where
 
-import Cardano.Binary.FixedSizeCodec (encodeFixedSized, rawDecodeFixedSized, rawEncodeFixedSized)
+import Cardano.Binary.FixedSizeCodec
+  ( encodeFixedSized
+  , rawDecodeFixedSized
+  , rawEncodeFixedSized
+  )
 import Cardano.Crypto.DSIGN
   ( DSIGNAlgorithm (SignKeyDSIGN, genKeyDSIGN)
   , Ed25519DSIGN
@@ -104,10 +107,7 @@ import Data.Ratio ((%))
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Protocol.Praos
-  ( BasePraosValidationErr (..)
-  , PraosValidationErr
-  )
+import Ouroboros.Consensus.Protocol.Praos (PolyPraosValidationErr (..), PraosValidationErr)
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 import Test.QuickCheck
   ( Gen

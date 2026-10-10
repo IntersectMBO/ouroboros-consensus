@@ -674,6 +674,8 @@ peerCodecs ::
     ByteString
     ByteString
     ByteString
+    ByteString
+    ByteString
 peerCodecs nut =
   NTN.defaultCodecs
     (configCodec (nutTopLevelConfig nut))
@@ -687,6 +689,8 @@ peerApps ::
   NTN.Apps
     (IOSim s)
     PeerAddr
+    ByteString
+    ByteString
     ByteString
     ByteString
     ByteString

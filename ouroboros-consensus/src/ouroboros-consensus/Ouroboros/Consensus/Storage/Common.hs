@@ -4,7 +4,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Storage.Common
   ( -- * Indexing

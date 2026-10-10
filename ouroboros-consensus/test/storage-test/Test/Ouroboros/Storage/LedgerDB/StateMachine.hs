@@ -1,24 +1,16 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 #if __GLASGOW_HASKELL__ >= 908
 {-# OPTIONS_GHC -Wno-x-partial #-}
@@ -43,13 +35,12 @@ import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.State hiding (state)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), mkTracer, (>$<))
+import Control.Tracer (Tracer, mkTracer, (>$<))
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import qualified Data.SOP.Dict as Dict
 import Data.Word
 import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
@@ -62,14 +53,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
-  ( LedgerDbBackendArgs
-  )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as V1.InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2.InMemory
@@ -87,7 +70,6 @@ import System.FS.Sim.STM
 import qualified System.FilePath as FilePath
 import qualified System.IO.Temp as Temp
 import Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
-import Test.Ouroboros.Storage.LedgerDB.V1.LMDB
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
@@ -104,12 +86,8 @@ tests :: TestTree
 tests =
   testGroup
     "StateMachine"
-    [ testProperty "InMemV1" $
-        prop_sequential 100000 inMemV1TestArguments noFilePath simulatedFS
-    , testProperty "InMemV2" $
+    [ testProperty "InMemV2" $
         prop_sequential 100000 inMemV2TestArguments noFilePath simulatedFS
-    , testProperty "LMDB" $
-        prop_sequential 1000 lmdbTestArguments (realFilePath "lmdb") realFS
     , testProperty "LSM" $
         prop_sequential 1000 lsmTestArguments (realFilePath "lsm") realFS
     ]
@@ -189,7 +167,7 @@ instance {-# OVERLAPPING #-} Show TestBlock where
 
 data TestArguments m = TestArguments
   { argFlavorArgs :: !(LedgerDbBackendArgs m TestBlock)
-  , argLedgerDbCfg :: !(LedgerDbCfg (ExtLedgerState TestBlock))
+  , argLedgerDbCfg :: !(LedgerDbCfg ExtLedgerState TestBlock)
   }
 
 noFilePath :: IO (FilePath, IO ())
@@ -217,18 +195,6 @@ realFS = liftIO $ do
   tmpdir <- Temp.createTempDirectory systmpdir "init_standalone_db"
   pure (SomeHasFS $ FSIO.ioHasFS $ MountPoint tmpdir, Dir.removeDirectoryRecursive tmpdir)
 
-inMemV1TestArguments ::
-  SecurityParam ->
-  LSM.Salt ->
-  FilePath ->
-  TestArguments IO
-inMemV1TestArguments secParam _ _ =
-  TestArguments
-    { argFlavorArgs =
-        LedgerDbBackendArgsV1 $ V1Args DisableFlushing $ V1.SomeBackendArgs V1.InMemory.InMemArgs
-    , argLedgerDbCfg = extLedgerDbConfig secParam
-    }
-
 inMemV2TestArguments ::
   SecurityParam ->
   LSM.Salt ->
@@ -250,22 +216,12 @@ lsmTestArguments secParam salt fp =
     { argFlavorArgs =
         LedgerDbBackendArgsV2 $
           SomeBackendArgs $
-            LSM.LSMArgs (mkFsPath $ FilePath.splitDirectories fp) salt (LSM.stdMkBlockIOFS fp)
-    , argLedgerDbCfg = extLedgerDbConfig secParam
-    }
-
-lmdbTestArguments ::
-  SecurityParam ->
-  LSM.Salt ->
-  FilePath ->
-  TestArguments IO
-lmdbTestArguments secParam _ fp =
-  TestArguments
-    { argFlavorArgs =
-        LedgerDbBackendArgsV1 $
-          V1Args DisableFlushing $
-            V1.SomeBackendArgs $
-              LMDB.LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
+            LSM.LSMArgs
+              (mkFsPath $ FilePath.splitDirectories fp)
+              Nothing
+              salt
+              LSM.DiskCacheAll
+              (LSM.stdMkBlockIOFS fp)
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -573,7 +529,7 @@ blockNotFound =
 openLedgerDB ::
   LedgerDbBackendArgs IO TestBlock ->
   ChainDB IO ->
-  LedgerDbCfg (ExtLedgerState TestBlock) ->
+  LedgerDbCfg ExtLedgerState TestBlock ->
   SomeHasFS IO ->
   IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock, IO NumOpenHandles)
 openLedgerDB flavArgs env cfg fs = do
@@ -584,29 +540,17 @@ openLedgerDB flavArgs env cfg fs = do
   leiosDbHandle <- newLeiosDBInMemory
   let args =
         LedgerDbArgs
-          (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
+          defaultSnapshotPolicyArgs
           (pure genesis)
           fs
           cfg
           tracer
           flavArgs
           DefaultQueryBatchSize
-          Nothing
           leiosDbHandle
-  (ldb, _, od) <-
+  (ldb, od) <-
     runWithTempRegistry $
       (\x -> (x, ())) <$> case lgrBackendArgs args of
-        LedgerDbBackendArgsV1 bss -> do
-          let snapManager = V1.snapshotManager args
-          initDb <-
-            lift $
-              V1.mkInitDb
-                args
-                bss
-                getBlock
-                snapManager
-                (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
-          lift $ openDBInternal args initDb snapManager stream replayGoal
         LedgerDbBackendArgsV2 (V2.SomeBackendArgs bArgs) -> do
           res <-
             mkResources
@@ -621,10 +565,9 @@ openLedgerDB flavArgs env cfg fs = do
                   (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                   (LedgerDBSnapshotEvent >$< lgrTracer args)
                   (lgrHasFS args)
-          initDb <-
-            lift $
-              V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
-          lift $ openDBInternal args initDb snapManager stream replayGoal
+          let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
+          -- These tests do not use EBBs.
+          lift $ openDBInternal args initDb snapManager stream replayGoal IsNotEBB
   case NE.nonEmpty volBlocks of
     Nothing -> pure ()
     Just volBlocks' -> do

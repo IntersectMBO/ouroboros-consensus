@@ -358,9 +358,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 tracer = \case
         ["(LookingForIntersection", terseJumpInfo goodJumpInfo, terseJumpInfo badJumpInfo, ")"]
 
 traceScheduledServerHandlerEventTestBlockWith ::
-  ( Condense (NodeState blk)
-  , Monad m
-  ) =>
+  (Monad m, Condense (NodeState blk)) =>
   Tracer m String ->
   String ->
   TraceScheduledServerHandlerEvent (NodeState blk) blk ->
@@ -380,7 +378,8 @@ traceScheduledServerHandlerEventTestBlockWith tracer unit = \case
   traceLines = traceUnitLinesWith tracer unit
 
 traceScheduledChainSyncServerEventTestBlockWith ::
-  ( Condense (NodeState blk)
+  ( Monad m
+  , Condense (NodeState blk)
   , Terse blk
   , Monad m
   ) =>
@@ -425,7 +424,8 @@ traceScheduledChainSyncServerEventTestBlockWith tracer peerId = \case
   traceLines = traceUnitLinesWith tracer unit
 
 traceScheduledBlockFetchServerEventTestBlockWith ::
-  ( Condense (NodeState blk)
+  ( Monad m
+  , Condense (NodeState blk)
   , Terse blk
   , Monad m
   ) =>
@@ -488,7 +488,8 @@ traceChainDBEventTestBlockWith tracer = \case
 
 traceChainSyncClientEventTestBlockWith ::
   forall blk m.
-  ( AF.HasHeader (Header blk)
+  ( Monad m
+  , AF.HasHeader (Header blk)
   , Terse blk
   , Typeable blk
   , Monad m
@@ -585,9 +586,8 @@ traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
 
 -- | Trace all the SendRecv events of the ChainSync mini-protocol.
 traceChainSyncSendRecvEventTestBlockWith ::
-  ( Terse blk
-  , Monad m
-  ) =>
+  Monad m =>
+  Terse blk =>
   PeerId ->
   String ->
   Tracer m String ->
@@ -624,8 +624,7 @@ traceDbjEventWith tracer =
     RotatedDynamo old new -> "Rotated dynamo from " ++ condense old ++ " to " ++ condense new
 
 traceCsjEventWith ::
-  Monad m =>
-  Terse blk =>
+  (Monad m, Terse blk) =>
   PeerId ->
   Tracer m String ->
   TraceEventCsj PeerId blk ->

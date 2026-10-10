@@ -1,0 +1,27 @@
+cabal-version: 3.0
+name:          ghc-pin
+version:       0
+synopsis:      Force GHC's boot libraries into the build plan
+description:
+  Downstream consumers of @ouroboros-consensus@, such as @cardano-node@, also
+  depend on the @ghc@ package. The installed @ghc@ package depends on the exact
+  versions of the boot libraries that the compiler was built with, so the solver
+  cannot pick a newer @bytestring@, @containers@, @time@ and so on. The result is
+  that a build plan which works here can still fail downstream.
+
+  This package exists only to reproduce that situation. It depends on @ghc@ and
+  on nothing else. Cabal picks one version per package name for a whole project,
+  so adding this package to the project pins the boot libraries for
+  @ouroboros-consensus@ as well.
+
+  Build it through @cabal.project.ghc-pin@ in the root of the repository. The
+  @Check the build plan against GHC's boot libraries@ step of the build job in
+  @.github/workflows/ci.yml@ runs that project for every compiler in the matrix.
+
+build-type:    Simple
+
+library
+  default-language: Haskell2010
+  build-depends:
+    , base
+    , ghc

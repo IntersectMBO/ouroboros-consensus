@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
@@ -319,7 +318,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
       (SL.StakeRefBase $ Shelley.mkCredential stakingSK)
 
   -- A simplistic individual pool
-  poolParams :: SL.Coin -> SL.StakePoolParams ShelleyEra
+  poolParams :: SL.Coin -> SL.StakePoolParams era
   poolParams pledge =
     SL.StakePoolParams
       { SL.sppCost = SL.Coin 1

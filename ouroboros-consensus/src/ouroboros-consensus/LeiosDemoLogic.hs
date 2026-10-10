@@ -137,12 +137,12 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.Forecast (OutsideForecastRange, forecastFor)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
-import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , ledgerViewForecastAt
   )
+import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState, LedgerView)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker

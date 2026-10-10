@@ -3,7 +3,6 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Mock.Ledger.UTxO
   ( -- * Basic definitions
@@ -73,8 +72,8 @@ data Tx = UnsafeTx Expiry (Set TxIn) [TxOut]
 
 pattern Tx :: Expiry -> Set TxIn -> [TxOut] -> Tx
 pattern Tx expiry ins outs <- UnsafeTx expiry ins outs
-  where
-    Tx expiry ins outs = force $ UnsafeTx expiry ins outs
+ where
+  Tx expiry ins outs = force $ UnsafeTx expiry ins outs
 
 {-# COMPLETE Tx #-}
 

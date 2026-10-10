@@ -1,10 +1,9 @@
-{-# LANGUAGE CPP #-}
-
 module Test.Ouroboros.Storage (tests) where
 
 import qualified Test.Ouroboros.Storage.ChainDB as ChainDB
 import qualified Test.Ouroboros.Storage.ImmutableDB as ImmutableDB
 import qualified Test.Ouroboros.Storage.LedgerDB as LedgerDB
+import qualified Test.Ouroboros.Storage.LeiosDB as LeiosDB
 import qualified Test.Ouroboros.Storage.PerasCertDB as PerasCertDB
 import qualified Test.Ouroboros.Storage.PerasVoteDB as PerasVoteDB
 import qualified Test.Ouroboros.Storage.VolatileDB as VolatileDB
@@ -23,5 +22,6 @@ tests =
     , LedgerDB.tests
     , ChainDB.tests
     , PerasCertDB.tests
+    , LeiosDB.tests
     , PerasVoteDB.tests
     ]

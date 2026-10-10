@@ -1,0 +1,65 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+-- | Empty Peras support for the mock block.
+--
+-- NOTE: this module exists solely because the orphan module
+-- 'Ouroboros.Consensus.Mock.Node.Serialisation' needs some of the these
+-- instances, but defining them there would be too confusing.
+module Ouroboros.Consensus.Mock.Node.Peras () where
+
+import Data.Typeable (Typeable)
+import Ouroboros.Consensus.Block (BlockProtocol)
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  , VoidPerasCert
+  , VoidPerasCrypto
+  , VoidPerasError
+  , VoidPerasVote
+  , VoidPerasVotingCommitteeScheme
+  , defaultForgePerasCert
+  , defaultForgePerasVoteIfEligible
+  , defaultVerifyPerasCert
+  , defaultVerifyPerasVote
+  )
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
+import Ouroboros.Consensus.Mock.Ledger.Block (SimpleBlock, SimpleCrypto)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Protocol.Abstract
+  ( ChainDepState
+  , ChainDepStateSupportsPeras
+  )
+import Ouroboros.Consensus.Ticked (Ticked)
+
+instance
+  ( SimpleCrypto c
+  , Typeable ext
+  , ChainDepStateSupportsPeras (ChainDepState (BlockProtocol (SimpleBlock c ext)))
+  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol (SimpleBlock c ext))))
+  ) =>
+  StateSupportsPerasEpochContext (SimpleBlock c ext)
+  where
+  type MaybeEraIndexedEpochToPerasRoundInfo (SimpleBlock c ext) = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: SimpleBlock does not support Peras"
+
+instance
+  ( SimpleCrypto c
+  , Typeable ext
+  ) =>
+  BlockSupportsPeras (SimpleBlock c ext)
+  where
+  type PerasVote (SimpleBlock c ext) = VoidPerasVote (SimpleBlock c ext)
+  type PerasCert (SimpleBlock c ext) = VoidPerasCert (SimpleBlock c ext)
+  type PerasError (SimpleBlock c ext) = VoidPerasError (SimpleBlock c ext)
+  type PerasCrypto (SimpleBlock c ext) = VoidPerasCrypto (SimpleBlock c ext)
+  type PerasVotingCommitteeScheme (SimpleBlock c ext) = VoidPerasVotingCommitteeScheme
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing

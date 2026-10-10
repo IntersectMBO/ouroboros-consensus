@@ -2,10 +2,9 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -15,9 +14,11 @@ module Test.Consensus.Shelley.Generators
   ( SomeResult (..)
   , praosHeaderBodyFromTPraos
   , translateTPraosHeader_Praos
-  , translateTPraosHeader_PraosWithLeios
+  , translateTPraosHeader_Praos2
   ) where
 
+import Cardano.Ledger.BaseTypes (ProtVer (..), getVersion32)
+import Cardano.Ledger.Block (BlockHeaderVersionInfo (..), EbReferencesAnnouncement (..))
 import Cardano.Ledger.Core (TranslationContext)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.State (InstantStake)
@@ -27,17 +28,20 @@ import qualified Cardano.Protocol.Praos.BlockHeader as Praos
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Cardano.Slotting.EpochInfo
 import Control.Monad (replicateM)
+import qualified Data.ByteString.Short as SBS
 import Data.Coerce (coerce)
-import Data.Maybe.Strict (StrictMaybe (..))
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Proxy (Proxy (..))
+import Data.Ratio ((%))
+import Data.Word (Word16)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
@@ -50,9 +54,19 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Network.Block (mkSerialised)
-import Test.Cardano.Ledger.AllegraEraGen ()
-import Test.Cardano.Ledger.Alonzo.AlonzoEraGen ()
-import Test.Cardano.Ledger.MaryEraGen ()
+import Ouroboros.Network.Magic (NetworkMagic (..))
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type
+  ( AccPoolStake (..)
+  , LedgerPeerSnapshot (..)
+  , LedgerPeersKind (..)
+  , PoolStake (..)
+  , RawBlockHash (..)
+  , SingLedgerPeersKind (..)
+  )
+import Ouroboros.Network.PeerSelection.RelayAccessPoint
+  ( IP (..)
+  , LedgerRelayAccessPoint (..)
+  )
 import Test.Cardano.Ledger.Shelley.Constants
   ( defaultConstants
   , numCoreNodes
@@ -63,7 +77,6 @@ import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators
   ( genCoherentBlock
   )
 import Test.Cardano.Ledger.Shelley.Serialisation.Generators ()
-import Test.Cardano.Ledger.ShelleyMA.Serialisation.Generators ()
 import Test.Cardano.Protocol.TPraos.Arbitrary (genBlock)
 import Test.Consensus.Protocol.Serialisation.Generators ()
 import Test.Consensus.Shelley.MockCrypto (CanMock)
@@ -107,10 +120,10 @@ instance
 
 instance
   ( Praos.PraosCrypto crypto
-  , CanMock (PraosWithLeios crypto) era
-  , Arbitrary (ShelleyProtocolHeader (PraosWithLeios crypto))
+  , CanMock (Praos2 crypto) era
+  , Arbitrary (ShelleyProtocolHeader (Praos2 crypto))
   ) =>
-  Arbitrary (ShelleyBlock (PraosWithLeios crypto) era)
+  Arbitrary (ShelleyBlock (Praos2 crypto) era)
   where
   arbitrary = mkShelleyBlock <$> blk
    where
@@ -150,19 +163,37 @@ translateTPraosHeader_Praos ::
 translateTPraosHeader_Praos (SL.BHeader bhBody bhSig) =
   pure $ Praos.Header (praosHeaderBodyFromTPraos bhBody) (coerce bhSig)
 
--- | Rebuild a TPraos header as this protocol's header.
+-- | Rebuild a TPraos header as 'Praos2''s header.
 --
 -- In 'Gen' because this header has fields the TPraos header has no counterpart
 -- for. Only the generators that borrow upstream's coherent-block generator need
 -- this.
-translateTPraosHeader_PraosWithLeios ::
+translateTPraosHeader_Praos2 ::
   Crypto c => SL.BHeader c -> Gen (Leios.Header c)
-translateTPraosHeader_PraosWithLeios (SL.BHeader bhBody bhSig) =
-  flip Leios.Header (coerce bhSig)
-    <$> ( extendHeaderBodyWithLeios (praosHeaderBodyFromTPraos bhBody)
-            <$> arbitrary
-            <*> arbitrary
-        )
+translateTPraosHeader_Praos2 (SL.BHeader bhBody bhSig) = do
+  containsCert <- arbitrary
+  ann <- arbitrary
+  let hBody =
+        Leios.mkHeaderBody (Proxy @DijkstraEra) $
+          Leios.HeaderBodyRaw
+            { Leios.hbrBlockNo = Praos.hbBlockNo pb
+            , Leios.hbrSlotNo = Praos.hbSlotNo pb
+            , Leios.hbrPrev = Praos.hbPrev pb
+            , Leios.hbrVk = Praos.hbVk pb
+            , Leios.hbrVrfVk = Praos.hbVrfVk pb
+            , Leios.hbrVrfRes = Praos.hbVrfRes pb
+            , Leios.hbrBodySize = Praos.hbBodySize pb
+            , Leios.hbrBodyHash = Praos.hbBodyHash pb
+            , Leios.hbrOCert = Praos.hbOCert pb
+            , Leios.hbrVersionInfo = BlockHeaderVersionInfo (getVersion32 major) minor
+            , Leios.hbrBlockBodyContainsLeiosCert = containsCert
+            , Leios.hbrEbReferencesAnnouncement =
+                EbReferencesAnnouncement <$> fmap fst ann <*> fmap snd ann
+            }
+  pure $ Leios.mkHeader (Proxy @DijkstraEra) hBody (coerce bhSig)
+ where
+  pb = praosHeaderBodyFromTPraos bhBody
+  ProtVer major minor = Praos.hbProtVer pb
 
 -- | The body of the 'Coherent' instances below.
 genCoherentShelleyBlock ::
@@ -188,10 +219,10 @@ instance
   arbitrary = genCoherentShelleyBlock translateTPraosHeader_Praos
 
 instance
-  CanMock (PraosWithLeios crypto) era =>
-  Arbitrary (Coherent (ShelleyBlock (PraosWithLeios crypto) era))
+  CanMock (Praos2 crypto) era =>
+  Arbitrary (Coherent (ShelleyBlock (Praos2 crypto) era))
   where
-  arbitrary = genCoherentShelleyBlock translateTPraosHeader_PraosWithLeios
+  arbitrary = genCoherentShelleyBlock translateTPraosHeader_Praos2
 
 instance
   CanMock (TPraos crypto) era =>
@@ -210,10 +241,10 @@ instance
     pure $ ShelleyHeader hdr (pHeaderHash hdr)
 
 instance
-  ( CanMock (PraosWithLeios crypto) era
-  , Arbitrary (ShelleyProtocolHeader (PraosWithLeios crypto))
+  ( CanMock (Praos2 crypto) era
+  , Arbitrary (ShelleyProtocolHeader (Praos2 crypto))
   ) =>
-  Arbitrary (Header (ShelleyBlock (PraosWithLeios crypto) era))
+  Arbitrary (Header (ShelleyBlock (Praos2 crypto) era))
   where
   arbitrary = do
     hdr <- arbitrary
@@ -241,6 +272,8 @@ instance CanMock proto era => Arbitrary (SomeBlockQuery (BlockQuery (ShelleyBloc
       , pure $ SomeBlockQuery GetGenesisConfig
       , pure $ SomeBlockQuery DebugNewEpochState
       , pure $ SomeBlockQuery GetStakeDistribution2
+      , pure $ SomeBlockQuery (GetLedgerPeerSnapshot SingBigLedgerPeers)
+      , pure $ SomeBlockQuery (GetLedgerPeerSnapshot SingAllLedgerPeers)
       ]
 
 instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeResult (ShelleyBlock proto era)) where
@@ -259,7 +292,68 @@ instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeRes
       , SomeResult GetGenesisConfig . compactGenesis <$> arbitrary
       , SomeResult DebugNewEpochState <$> arbitrary
       , SomeResult GetStakeDistribution2 <$> arbitrary
+      , SomeResult (GetLedgerPeerSnapshot SingBigLedgerPeers) <$> genBigLedgerPeerSnapshot
+      , SomeResult (GetLedgerPeerSnapshot SingAllLedgerPeers) <$> genAllLedgerPeerSnapshot
       ]
+
+{-------------------------------------------------------------------------------
+  Generators for ledger peer snapshots
+
+  Plain 'Gen's rather than 'Arbitrary' instances, to avoid clashing with the
+  orphan instances @ouroboros-network@'s test library defines for some of these
+  types.
+-------------------------------------------------------------------------------}
+
+genBigLedgerPeerSnapshot :: Gen (LedgerPeerSnapshot BigLedgerPeers)
+genBigLedgerPeerSnapshot =
+  LedgerBigPeerSnapshotV23
+    <$> genLedgerPeerSnapshotPoint
+    <*> (NetworkMagic <$> arbitrary)
+    <*> listOf
+      ( (,)
+          <$> (AccPoolStake <$> genStake)
+          <*> ((,) <$> (PoolStake <$> genStake) <*> genRelays)
+      )
+
+genAllLedgerPeerSnapshot :: Gen (LedgerPeerSnapshot AllLedgerPeers)
+genAllLedgerPeerSnapshot =
+  LedgerAllPeerSnapshotV23
+    <$> genLedgerPeerSnapshotPoint
+    <*> (NetworkMagic <$> arbitrary)
+    <*> listOf ((,) <$> (PoolStake <$> genStake) <*> genRelays)
+
+-- | Both 'GenesisPoint' and 'BlockPoint' have their own encoding, so generate
+-- both.
+genLedgerPeerSnapshotPoint :: Gen (Point RawBlockHash)
+genLedgerPeerSnapshotPoint =
+  oneof
+    [ pure GenesisPoint
+    , BlockPoint
+        <$> (SlotNo <$> arbitrary)
+        <*> (RawBlockHash . SBS.pack <$> vectorOf 32 arbitrary)
+    ]
+
+-- | Stake is documented to be in @[0, 1]@.
+genStake :: Gen Rational
+genStake = (% 1000) <$> choose (0, 1000)
+
+genRelays :: Gen (NonEmpty LedgerRelayAccessPoint)
+genRelays =
+  (:|)
+    <$> genLedgerRelayAccessPoint
+    <*> listOf genLedgerRelayAccessPoint
+
+genLedgerRelayAccessPoint :: Gen LedgerRelayAccessPoint
+genLedgerRelayAccessPoint =
+  oneof
+    [ LedgerRelayAccessAddress <$> genIP <*> genPort
+    , LedgerRelayAccessDomain <$> genDomain <*> genPort
+    , LedgerRelayAccessSRVDomain <$> genDomain
+    ]
+ where
+  genIP = elements [IPv4 "1.1.1.1", IPv4 "3.3.3.3", IPv6 "2001:db8::1"]
+  genDomain = elements ["test1.", "test2.", "test3."]
+  genPort = fromIntegral <$> (arbitrary :: Gen Word16)
 
 instance Arbitrary NonMyopicMemberRewards where
   arbitrary = NonMyopicMemberRewards <$> arbitrary
@@ -296,7 +390,6 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> pure (LedgerTables EmptyMK)
-      <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
       <*> arbitrary
 
 instance
@@ -309,7 +402,6 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> (LedgerTables . ValuesMK <$> arbitrary)
-      <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
       <*> arbitrary
 
 deriving newtype instance Arbitrary BigEndianTxIn
@@ -377,15 +469,9 @@ arbitraryFixedEpochInfo = fixedEpochInfo <$> arbitrary <*> arbitrary
   Versioned generators for serialisation
 -------------------------------------------------------------------------------}
 
--- | Some 'Query's are only supported by 'ShelleyNodeToClientVersion2', so we
--- make sure to not generate those queries in combination with
--- 'ShelleyNodeToClientVersion1'.
 instance
   CanMock proto era =>
   Arbitrary
     (WithVersion ShelleyNodeToClientVersion (SomeBlockQuery (BlockQuery (ShelleyBlock proto era))))
   where
-  arbitrary = do
-    query@(SomeBlockQuery q) <- arbitrary
-    version <- arbitrary `suchThat` blockQueryIsSupportedOnVersion q
-    return $ WithVersion version query
+  arbitrary = WithVersion <$> arbitrary <*> arbitrary

@@ -1,4 +1,3 @@
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -251,22 +250,22 @@ initLedgerDB s c = do
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
-          , lgrStartSnapshot = Nothing
           , lgrLeiosDb = leiosDbHandle
           }
   ldb <-
-    fst
-      <$> runWithTempRegistry
-        ( do
-            db <-
-              LedgerDB.openDB
-                args
-                streamAPI
-                (Chain.headPoint c)
-                (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
-                (LedgerDB.praosGetVolatileSuffix s)
-            pure (db, ())
-        )
+    runWithTempRegistry
+      ( do
+          db <-
+            LedgerDB.openDB
+              args
+              streamAPI
+              (Chain.headPoint c)
+              -- These tests do not use EBBs.
+              IsNotEBB
+              (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+              (LedgerDB.praosGetVolatileSuffix s)
+          pure (db, ())
+      )
 
   case NE.nonEmpty $ Chain.toOldestFirst c of
     Nothing -> pure ()
@@ -317,7 +316,7 @@ testCfg securityParam =
   numCoreNodes = NumCoreNodes 1
 
   eraParams :: HardFork.EraParams
-  eraParams = HardFork.defaultEraParams securityParam slotLength
+  eraParams = HardFork.defaultEraParams securityParam slotLength (PerasEnabled ())
 
 {-------------------------------------------------------------------------------
   Orphans

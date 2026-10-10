@@ -365,6 +365,7 @@ initNodeKernel
     let IS
           { blockFetchInterface
           , fetchClientRegistry
+          , keepAliveRegistry
           , mempool
           , peerSharingRegistry
           , varChainSyncHandles
@@ -378,7 +379,6 @@ initNodeKernel
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
-    keepAliveRegistry <- newKeepAliveRegistry
 
     do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -771,6 +771,7 @@ data InternalState m addrNTN addrNTC blk = IS
         blk
         (BlockFetchClientInterface.MatchedBlock blk)
         m
+  , keepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
   , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
@@ -788,7 +789,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosVoteState :: LeiosVoteState m
   -- ^ Accumulator for Leios votes; assembles certificates once a
   -- point's tally crosses 'minCertificationThreshold'. Source of
-  -- 'fbLeiosVoteState' threaded into 'ForgeBlockArgs'.
+  -- 'fbLeiosVoteState' threaded into 'ForgeBlockLeiosArgs'.
   , leiosMinOfferLead :: Leios.LeiosMinOfferLead
   }
 
@@ -842,6 +843,7 @@ initInternalState
         (mempoolTracer tracers)
 
     fetchClientRegistry <- newFetchClientRegistry
+    keepAliveRegistry <- newKeepAliveRegistry
 
     leiosPeersVars <- LazySTM.newTVarIO Map.empty
     -- Seed 'outstandingPrunedSlot' from the immutable tip: everything at or

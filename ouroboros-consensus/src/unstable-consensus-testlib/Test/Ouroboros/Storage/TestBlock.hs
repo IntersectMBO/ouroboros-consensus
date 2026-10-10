@@ -63,9 +63,11 @@ module Test.Ouroboros.Storage.TestBlock
   , shrinkCorruptions
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (unNonZero)
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (Serialise (decode, encode), serialise)
@@ -84,6 +86,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
+import Data.Set.NonEmpty.Internal (NESet (..))
 import Data.TreeDiff
 import Data.Void (Void)
 import Data.Word
@@ -93,12 +96,14 @@ import LeiosDemoTypes (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
   ( ImmutableEraParams (immutableEraParams)
   )
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HardFork.History.EraParams
   ( EraParams (eraGenesisWin)
@@ -107,25 +112,41 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock
+  ( MockPerasVote (..)
+  )
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.ModChainSel
 import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Storage.ImmutableDB (Tip)
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks
-import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import Ouroboros.Network.Point (Block)
 import System.FS.API.Lazy
 import Test.Cardano.Slotting.Numeric ()
 import Test.Cardano.Slotting.TreeDiff ()
@@ -133,6 +154,7 @@ import Test.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.SignableRepresentation ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras (divisorClosestToQuotient)
 
 {-------------------------------------------------------------------------------
   TestBlock
@@ -204,13 +226,13 @@ data TestBody = TestBody
   -- Note that this is a /local/ number, it is specific to this block,
   -- other blocks need not be aware of it.
   , tbIsValid :: !Bool
-  , tbPerasCertRound :: !(Maybe PerasRoundNo)
+  , tbPerasCert :: !(Maybe (PerasCert TestBlock))
   -- ^ Some real blocks will ocasionally carry a Peras certificate inside their
-  -- body to coordinate the end of a cooldown period. For the purposes of the
-  -- ChainDB, we don't really care about the details of the certificate other
-  -- than its round number, which needs to be stored (and carefully updated
-  -- whenever a newer one pops up) so it can be used to evaluate the Peras
-  -- voting rules and decide if a node should resume voting.
+  -- body to coordinate the end of a cooldown period.
+  -- NOTE: for the purposes of the ChainDB, we don't care about the details of
+  -- the certificate other than its round number, which needs to be stored (and
+  -- carefully updated whenever a newer one pops up) so it can be used to
+  -- evaluate the Peras voting rules and decide if a node should resume voting.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData, NoThunks, Serialise, Hashable)
@@ -235,9 +257,10 @@ type instance HeaderHash TestBlock = TestHeaderHash
 type instance HeaderHash TestHeader = TestHeaderHash
 
 instance ConvertRawHash TestBlock where
+  -- 'TestHeaderHash' is a newtype over 'Int' thus has size 8
+  type HashSize TestBlock = 8
   toRawHash _ = Lazy.toStrict . Binary.encode
-  fromRawHash _ = Binary.decode . Lazy.fromStrict
-  hashSize _ = 8
+  unsafeFromRawHash _ = Binary.decode . Lazy.fromStrict
 
 instance HasHeader TestBlock where
   getHeaderFields = getBlockHeaderFields
@@ -570,59 +593,52 @@ data TestBlockError
     InvalidBlock
   deriving (Eq, Show, Generic, NoThunks)
 
-type instance LedgerCfg (LedgerState TestBlock) = HardFork.EraParams
+type instance LedgerCfg LedgerState TestBlock = HardFork.EraParams
 
 instance GetTip (LedgerState TestBlock) where
   getTip = castPoint . lastAppliedPoint
 
-instance GetTip (Ticked (LedgerState TestBlock)) where
+instance GetTip (Ticked LedgerState TestBlock) where
   getTip = castPoint . getTip . getTickedTestLedger
 
-instance IsLedger (LedgerState TestBlock) where
-  type LedgerErr (LedgerState TestBlock) = TestBlockError
+type instance AuxLedgerEvent TestBlock = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState TestBlock) =
-      VoidLedgerEvent (LedgerState TestBlock)
+instance IsLedger LedgerState TestBlock where
+  type LedgerErr LedgerState TestBlock = TestBlockError
 
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
       . TickedTestLedger
       . noNewTickingDiffs
 
-type instance TxIn (LedgerState TestBlock) = Void
-type instance TxOut (LedgerState TestBlock) = Void
-
-instance LedgerTablesAreTrivial (LedgerState TestBlock) where
+type instance TxIn TestBlock = Void
+type instance TxOut TestBlock = Void
+instance LedgerTablesAreTrivial LedgerState TestBlock where
   convertMapKind (TestLedger x y z) = TestLedger x y z
-instance LedgerTablesAreTrivial (Ticked (LedgerState TestBlock)) where
+instance LedgerTablesAreTrivial (Ticked LedgerState) TestBlock where
   convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
-deriving via
-  TrivialLedgerTables (LedgerState TestBlock)
-  instance
-    HasLedgerTables (LedgerState TestBlock)
-deriving via
-  TrivialLedgerTables (Ticked (LedgerState TestBlock))
-  instance
-    HasLedgerTables (Ticked (LedgerState TestBlock))
-deriving via
-  TrivialLedgerTables (LedgerState TestBlock)
-  instance
-    CanStowLedgerTables (LedgerState TestBlock)
-deriving via
-  TrivialLedgerTables (LedgerState TestBlock)
-  instance
-    CanUpgradeLedgerTables (LedgerState TestBlock)
-deriving via
-  TrivialLedgerTables (LedgerState TestBlock)
-  instance
-    SerializeTablesWithHint (LedgerState TestBlock)
 deriving via
   Void
   instance
-    IndexedMemPack (LedgerState TestBlock EmptyMK) Void
+    IndexedMemPack LedgerState TestBlock Void
+instance HasLedgerTables LedgerState TestBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+instance HasLedgerTables (Ticked LedgerState) TestBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+instance CanStowLedgerTables (LedgerState TestBlock) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+instance SerializeTablesWithHint LedgerState TestBlock where
+  decodeTablesWithHint _ = do
+    _ <- CBOR.decodeMapLen
+    pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
+instance CanUpgradeLedgerTables LedgerState TestBlock where
+  upgradeTables _ _ = id
 
-instance ApplyBlock (LedgerState TestBlock) TestBlock where
+instance ApplyBlock LedgerState TestBlock where
   applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
     | blockPrevHash tb /= lastAppliedHash =
         throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
@@ -634,28 +650,25 @@ instance ApplyBlock (LedgerState TestBlock) TestBlock where
             TestLedger
               (Chain.blockPoint tb)
               (BlockHash (blockHash tb))
-              ( let
-                  -- NOTE: this bypasses the degenerate global implementation of
-                  -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
-                  -- which currently always returns 'Nothing'.
-                  --
-                  -- TODO: refactor this to use 'getPerasCertInBlock' after the
-                  -- HFC plumbing for 'BlockSupportsPeras' is in place.
-                  certRoundInBlock = tbPerasCertRound testBody
-                 in
-                  -- the highest Peras certificate round number  we've seen so far
-                  case (certRoundInBlock, latestPerasCertRound) of
-                    (Nothing, Nothing) -> Nothing
-                    (Just rb, Nothing) -> Just rb
-                    (Nothing, Just rl) -> Just rl
-                    (Just rb, Just rl) -> Just (rb `max` rl)
-              )
+              latestPerasCertRound'
+   where
+    -- The round number of the Peras certificate stored in this block, if any
+    perasCertRoundInBlock =
+      either (const Nothing) (fmap getPerasCertRound) (getPerasCertInBlock tb)
+    -- The highest Peras certificate round number we've seen so far
+    latestPerasCertRound' =
+      case (perasCertRoundInBlock, latestPerasCertRound) of
+        (Nothing, Nothing) -> Nothing
+        (Just rb, Nothing) -> Just rb
+        (Nothing, Just rl) -> Just rl
+        (Just rb, Just rl) -> Just (rb `max` rl)
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: impossible " <>) . show)
 
-  getBlockKeySets _blk = trivialLedgerTables
+instance GetBlockKeySets TestBlock where
+  getBlockKeySets _blk = emptyLedgerTables
 
 data instance LedgerState TestBlock mk
   = TestLedger
@@ -670,7 +683,7 @@ data instance LedgerState TestBlock mk
   deriving anyclass (Serialise, NoThunks)
 
 -- Ticking has no effect on the test ledger state
-newtype instance Ticked (LedgerState TestBlock) mk = TickedTestLedger
+newtype instance Ticked LedgerState TestBlock mk = TickedTestLedger
   { getTickedTestLedger :: LedgerState TestBlock mk
   }
 
@@ -733,12 +746,32 @@ instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerSupportsPeras TestBlock where
-  getLatestPerasCertRound = latestPerasCertRound
+instance LedgerStateSupportsPeras (LedgerState TestBlock)
+
+instance LedgerStateSupportsPeras (Ticked LedgerState TestBlock)
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
   hardForkSummary = neverForksHardForkSummary id
+
+instance StateSupportsPerasEpochContext TestBlock where
+  type MaybeEraIndexedEpochToPerasRoundInfo TestBlock = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+
+-- NOTE: this is a mocked up implementation without crypto!
+instance BlockSupportsPeras TestBlock where
+  type PerasCrypto TestBlock = MockPerasCrypto TestBlock
+  type PerasVotingCommitteeScheme TestBlock = MockPerasVotingCommitteeScheme TestBlock
+  type PerasVote TestBlock = MockPerasVote TestBlock
+  type PerasCert TestBlock = MockPerasCert TestBlock
+  type PerasError TestBlock = MockPerasError TestBlock
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock = Right . tbPerasCert . testBody
 
 instance InspectLedger TestBlock
 
@@ -747,12 +780,16 @@ instance InspectLedger TestBlock
 testInitLedger :: LedgerState TestBlock EmptyMK
 testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
-testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
-testInitExtLedger =
-  ExtLedgerState
-    { ledgerState = testInitLedger
-    , headerState = genesisHeaderState ()
-    }
+testInitExtLedger :: LedgerConfig TestBlock -> ExtLedgerState TestBlock EmptyMK
+testInitExtLedger ledgerConfig =
+  let ledgerState = testInitLedger
+      headerState = genesisHeaderState ()
+      perasState = initPerasState ledgerConfig ledgerState headerState
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasState
+        }
 
 -- Only for a single node
 mkTestConfig :: SecurityParam -> ChunkSize -> TopLevelConfig TestBlock
@@ -794,7 +831,19 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
       , eraSlotLength = slotLength
       , eraSafeZone = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
       , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
-      , eraPerasRoundLength = HardFork.PerasEnabled (perasRoundLength mkPerasParams)
+      , -- Epoch size is 'numRegularBlocks' (between 5 and 15), and
+        -- perasRoundLength should divive it.
+        -- picking the closest divisor to get us about 3 Peras rounds per epoch
+        -- gives us a suitable distribution of perasRoundLengths:
+        -- >>> flip divisorClosestToQuotient 3 <$> [5..15]
+        -- [1,2,1,2,3,2,1,4,1,7,5]
+        -- TODO: it would be better to generate PerasRoundLength randomly in
+        -- accordance with the 'ChunkInfo' directly, but that would require an
+        -- overhaul of how test config is propagated all over this file.
+        -- See https://github.com/tweag/cardano-peras/issues/257
+        eraPerasRoundLength =
+          PerasEnabled . PerasRoundLength $
+            divisorClosestToQuotient numRegularBlocks 3
       }
 
 instance ImmutableEraParams TestBlock where
@@ -945,16 +994,22 @@ corruptionFiles = map snd . NE.toList
   Orphans
 -------------------------------------------------------------------------------}
 
+-- ** Hashable
+
 deriving newtype instance Hashable SlotNo
 deriving newtype instance Hashable BlockNo
 deriving newtype instance Hashable PerasRoundNo
+
 instance Hashable IsEBB
-
--- use generic instance
-
+instance Hashable (Block SlotNo TestHeaderHash)
+instance Hashable (Point TestBlock)
+instance Hashable PerasSeatIndex
+instance Hashable (NESet PerasSeatIndex)
+instance Hashable (MockPerasCert TestBlock)
+instance (Hashable a, Hashable (WithOrigin a)) => Hashable (WithOrigin a)
 instance (StandardHash b, Hashable (HeaderHash b)) => Hashable (ChainHash b)
 
--- use generic instance
+-- ** ToExpr
 
 instance ToExpr EBB
 instance ToExpr IsEBB
@@ -976,6 +1031,20 @@ deriving instance ToExpr (HeaderEnvelopeError TestBlock)
 deriving instance ToExpr BftValidationErr
 deriving instance ToExpr (ExtValidationError TestBlock)
 
+deriving anyclass instance
+  ToExpr (VotingCommitteeError (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock))
+
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile
 deriving instance ToExpr BinaryBlockInfo
+
+-- ** Serialise for MockPerasCert via FromCBOR/ToCBOR
+instance Serialise (MockPerasCert TestBlock) where
+  encode = toCBOR
+  decode = fromCBOR
+
+-- ** FromCBOR/ToCBOR for Point TestBlock via Serialise
+instance FromCBOR (Point TestBlock) where
+  fromCBOR = decode
+instance ToCBOR (Point TestBlock) where
+  toCBOR = encode

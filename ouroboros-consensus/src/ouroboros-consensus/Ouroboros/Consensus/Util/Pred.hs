@@ -29,6 +29,7 @@ where
 
 import Data.Bifunctor (bimap)
 import Data.Typeable (Typeable, cast)
+import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 
 {-------------------------------------------------------------------------------
   Self-explaining boolean predicates
@@ -98,6 +99,11 @@ data Evidence (res :: Bool) a where
 
 deriving instance Show a => Show (Evidence res a)
 deriving instance Eq a => Eq (Evidence res a)
+
+deriving via
+  OnlyCheckWhnfNamed "Evidence" (Evidence res a)
+  instance
+    NoThunks (Evidence res a)
 
 -- | Forget the evidence payload, yielding just its corresponding boolean value
 forgetEvidence :: Evidence res a -> Bool

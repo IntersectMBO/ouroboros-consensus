@@ -156,16 +156,16 @@ viewFront (TxSeq txs) = case FingerTree.viewl txs of
 -- | An empty mempool sequence.
 pattern Empty :: Measure sz => TxSeq sz tx
 pattern Empty <- (viewFront -> Nothing)
-  where
-    Empty = TxSeq FingerTree.empty
+ where
+  Empty = TxSeq FingerTree.empty
 
 -- | \( O(1) \). Access or add a tx at the back of the mempool sequence.
 --
 -- New txs are always added at the back.
 pattern (:>) :: Measure sz => TxSeq sz tx -> TxTicket sz tx -> TxSeq sz tx
 pattern txs :> tx <- (viewBack -> Just (txs, tx))
-  where
-    TxSeq txs :> tx = TxSeq (txs FingerTree.|> tx) -- TODO: assert ordered by ticket no
+ where
+  TxSeq txs :> tx = TxSeq (txs FingerTree.|> tx) -- TODO: assert ordered by ticket no
 
 -- | \( O(1) \). Access a tx at the front of the mempool sequence.
 --
@@ -215,11 +215,11 @@ splitAfterTxSize ::
   (TxSeq sz tx, TxSeq sz tx)
 splitAfterTxSize = splitAfterTxSizeOn id
 
--- | \( O(\log(n)) \). Like 'splitAfterTxSize', but bounding only a projected
--- component of the summed @sz@, leaving the other components unrestricted.
+-- | \( O(\log(n)) \). Like 'splitAfterTxSize', but bounds only a projection
+-- of the summed @sz@. The other components are not bounded.
 --
--- The projection must distribute over 'Measure.plus' (componentwise
--- projections do), or the splitting predicate is not monotone.
+-- The projection must distribute over 'Measure.plus', or the split predicate
+-- is not monotone. The projection to one record field satisfies this.
 splitAfterTxSizeOn ::
   (Measure sz, Measure sz') =>
   (sz -> sz') ->

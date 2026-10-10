@@ -18,23 +18,22 @@ module Ouroboros.Consensus.Storage.LedgerDB
 
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
-import Data.Functor.Contravariant ((>$<))
-import Data.Word
+import Control.Tracer ((>$<))
+import Data.SOP (All, Top)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Util.Args
@@ -52,11 +51,12 @@ import System.FS.API
 openDB ::
   forall m blk st.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , InspectLedger blk
   , HasCallStack
-  , HasHardForkHistory blk
-  , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
@@ -71,28 +71,20 @@ openDB ::
   StreamAPI m blk blk ->
   -- | The Replay goal i.e. the tip of the stream of blocks.
   Point blk ->
+  -- | Whether the block at the replay goal is an EBB, see 'initialize'.
+  IsEBB ->
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
   GetVolatileSuffix m blk ->
-  WithTempRegistry st m (LedgerDB' m blk, Word64)
+  WithTempRegistry st m (LedgerDB' m blk)
 openDB
   args
   stream
   replayGoal
+  replayGoalIsEBB
   getBlock
   getVolatileSuffix =
     case lgrBackendArgs args of
-      LedgerDbBackendArgsV1 bss -> do
-        let snapManager = V1.snapshotManager args
-        initDb <-
-          lift $
-            V1.mkInitDb
-              args
-              bss
-              getBlock
-              snapManager
-              getVolatileSuffix
-        lift $ doOpenDB args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         -- Note this is the only step that cares about the temporary
         -- registry. Note also that the final state is an polymorphic and
@@ -111,8 +103,8 @@ openDB
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                 snapTracer
                 (lgrHasFS args)
-        initDb <- lift $ V2.mkInitDb args getBlock snapManager getVolatileSuffix res
-        lift $ doOpenDB args initDb snapManager stream replayGoal
+        let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
+        lift $ doOpenDB args initDb snapManager stream replayGoal replayGoalIsEBB
        where
         !tr = lgrTracer args
         !snapTracer = LedgerDBSnapshotEvent >$< tr
@@ -122,7 +114,7 @@ openDB
 -------------------------------------------------------------------------------}
 
 doOpenDB ::
-  forall m n blk db st.
+  forall m blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -130,14 +122,13 @@ doOpenDB ::
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
-  SnapshotManager m n blk st ->
+  SnapshotManager m blk st ->
   StreamAPI m blk blk ->
   Point blk ->
-  m (LedgerDB' m blk, Word64)
-doOpenDB args initDb snapManager stream replayGoal =
-  f <$> openDBInternal args initDb snapManager stream replayGoal
- where
-  f (ldb, replayCounter, _) = (ldb, replayCounter)
+  IsEBB ->
+  m (LedgerDB' m blk)
+doOpenDB args initDb snapManager stream replayGoal replayGoalIsEBB =
+  fst <$> openDBInternal args initDb snapManager stream replayGoal replayGoalIsEBB
 
 -- | Open the ledger DB and expose internals for testing purposes
 openDBInternal ::
@@ -148,29 +139,29 @@ openDBInternal ::
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
-  SnapshotManager m n blk st ->
+  SnapshotManager m blk st ->
   StreamAPI m blk blk ->
   Point blk ->
-  m (LedgerDB' m blk, Word64, TestInternals' m blk)
-openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal = do
+  IsEBB ->
+  m (LedgerDB' m blk, TestInternals' m blk)
+openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal replayGoalIsEBB = do
   createDirectoryIfMissing fs True (mkFsPath [])
-  (_initLog, db, replayCounter) <-
+  (_initLog, db) <-
     initialize
       replayTracer
       snapTracer
       lgrConfig
       stream
       replayGoal
+      replayGoalIsEBB
       initDb
       snapManager
-      lgrStartSnapshot
   (ledgerDb, internal) <- mkLedgerDb initDb db
-  return (ledgerDb, replayCounter, internal)
+  return (ledgerDb, internal)
  where
   LedgerDbArgs
     { lgrConfig
     , lgrTracer
-    , lgrStartSnapshot
     } = args
 
   replayTracer = LedgerReplayEvent >$< lgrTracer

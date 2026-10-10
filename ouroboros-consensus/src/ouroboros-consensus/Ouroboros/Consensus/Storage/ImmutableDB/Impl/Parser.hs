@@ -3,10 +3,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Parser
   ( BlockSummary (..)

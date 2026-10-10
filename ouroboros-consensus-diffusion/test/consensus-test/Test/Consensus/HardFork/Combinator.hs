@@ -3,15 +3,13 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -19,6 +17,7 @@
 module Test.Consensus.HardFork.Combinator (tests) where
 
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import Data.Function (on)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.SOP.BasicFunctors
@@ -47,6 +46,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -77,6 +77,7 @@ import Test.ThreadNet.Util.NodeToNodeVersion
 import Test.ThreadNet.Util.NodeTopology
 import Test.ThreadNet.Util.Seed
 import Test.Util.HardFork.Future
+import Test.Util.Peras (divisorClosestToQuotient)
 import Test.Util.SanityCheck (prop_sanityChecks)
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.Time (dawnOfTime)
@@ -109,7 +110,7 @@ data TestSetup = TestSetup
 
 instance Arbitrary TestSetup where
   arbitrary = do
-    testSetupEpochSize <- abM $ EpochSize <$> choose (1, 10)
+    testSetupEpochSize <- abM $ EpochSize <$> choose (2, 10)
     testSetupK <- SecurityParam <$> choose (2, 10) `suchThatMap` nonZero
     -- TODO why does k=1 cause the nodes to only forge in the first epoch?
     testSetupTxSlot <- SlotNo <$> choose (0, 9)
@@ -165,7 +166,22 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         (History.StandardSafeZone (safeFromTipA k))
         (safeZoneB k)
       <*> pure (GenesisWindow ((unNonZero $ maxRollbacks k) * 2))
-      <*> pure (History.PerasEnabled (perasRoundLength mkPerasParams))
+      <*> AB
+        (mkPerasRoundLength (getA testSetupEpochSize))
+        (mkPerasRoundLength (getB testSetupEpochSize))
+
+  -- Epoch size is a number between 1 and 10 perasRoundLength should divide it.
+  -- Picking the closest divisor to get us about 2 Peras rounds per epoch gives
+  -- us a suitable distribution of perasRoundLengths:
+  -- >>> flip divisorClosestToQuotient 2 <$> [1..10]
+  -- [1,1,1,2,1,3,1,4,3,5]
+  -- TODO: it would be better to generate PerasRoundLength randomly in
+  -- accordance with the epoch length directly, see:
+  -- https://github.com/tweag/cardano-peras/issues/257
+  mkPerasRoundLength epochSize =
+    History.PerasEnabled $
+      PerasRoundLength $
+        divisorClosestToQuotient (unEpochSize epochSize) 2
 
   shape :: History.Shape '[BlockA, BlockB]
   shape = History.Shape $ exactlyTwo eraParamsA eraParamsB
@@ -245,21 +261,31 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 
   protocolInfo :: CoreNodeId -> ProtocolInfo TestBlock
   protocolInfo nid =
-    ProtocolInfo
-      { pInfoConfig =
-          topLevelConfig nid
-      , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState =
-                HardForkLedgerState $
-                  initHardForkState
-                    (Flip initLedgerState)
-            , headerState =
-                genesisHeaderState $
-                  initHardForkState
-                    (WrapChainDepState initChainDepState)
-            }
-      }
+    let topConfig = topLevelConfig nid
+        ledgerConfig = topLevelConfigLedger topConfig
+     in ProtocolInfo
+          { pInfoConfig =
+              topConfig
+          , pInfoInitLedger =
+              let ledgerState =
+                    HardForkLedgerState $
+                      initHardForkState
+                        (Flip initLedgerState)
+                  headerState =
+                    genesisHeaderState $
+                      initHardForkState
+                        (WrapChainDepState initChainDepState)
+                  perasState =
+                    initPerasState
+                      ledgerConfig
+                      ledgerState
+                      headerState
+               in ExtLedgerState
+                    { ledgerState
+                    , headerState
+                    , perasState
+                    }
+          }
 
   blockForging :: Monad m => [MkBlockForging m TestBlock]
   blockForging =
@@ -441,8 +467,9 @@ instance ResolveLeiosBlock BlockB
 instance ResolveLeiosBlock TestBlock
 
 instance CanHardFork '[BlockA, BlockB] where
-  type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
-  type HardForkTxEbMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
+  type HardForkTxMeasurePhase1 '[BlockA, BlockB] = IgnoringOverflow ByteSize32
+  type HardForkTxMeasurePhase2 '[BlockA, BlockB] = TrivialTxMeasurePhase2
+  type HardForkTxEbMeasure '[BlockA, BlockB] = TxEbMeasure BlockB
 
   hardForkEraTranslation =
     EraTranslation
@@ -452,17 +479,27 @@ instance CanHardFork '[BlockA, BlockB] where
       , crossEraForecast = PCons forecast_AtoB PNil
       }
   hardForkChainSel = Tails.mk2 NoTiebreakerAcrossEras
-  hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
 
-  hardForkInjTxMeasure = \case
-    (Z (WrapTxMeasure x)) -> x
-    S (Z (WrapTxMeasure x)) -> x
+  hardForkInjTxMeasurePhase1 = \case
+    (Z (WrapTxMeasurePhase1 x)) -> x
+    S (Z (WrapTxMeasurePhase1 x)) -> x
+
+  hardForkInjTxMeasurePhase2 = \case
+    (Z (WrapTxMeasurePhase2 x)) -> x
+    S (Z (WrapTxMeasurePhase2 x)) -> x
 
   hardForkInjTxEbMeasure = \case
-    (Z (WrapTxEbMeasure x)) -> x
+    (Z (WrapTxEbMeasure (TxMeasure p1 p2))) ->
+      txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
     S (Z (WrapTxEbMeasure x)) -> x
 
-  hardForkTxEbMeasure _ = id
+  hardForkTxEbMeasure _ p1 p2 = txEbMeasure (Proxy @BlockB) (TxMeasure p1 p2)
+
+  hardForkMempoolEbReservation _ eb =
+    let TxMeasure p1 p2 = mempoolEbReservation (Proxy @BlockB) eb in (p1, p2)
+
+  hardForkEqGenTxId = (==) `on` rawHashNS
+  hardForkCompareGenTxId = compare `on` rawHashNS
 
 versionN2N :: BlockNodeToNodeVersion TestBlock
 versionN2N =
@@ -492,16 +529,17 @@ instance SerialiseHFC '[BlockA, BlockB]
 
 -- Use defaults
 
-instance SerializeTablesWithHint (LedgerState (HardForkBlock '[BlockA, BlockB])) where
+instance SerializeTablesWithHint LedgerState (HardForkBlock '[BlockA, BlockB]) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
 instance
   IndexedMemPack
-    (LedgerState (HardForkBlock '[BlockA, BlockB]) EmptyMK)
+    LedgerState
+    (HardForkBlock '[BlockA, BlockB])
     (DefaultHardForkTxOut '[BlockA, BlockB])
   where
-  indexedTypeName _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
+  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
   indexedPackedByteCount _ txout =
     hcollapse $
       hcmap
@@ -516,6 +554,33 @@ instance
             packM txout
         )
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
+    hsequence'
+      $ hcmap
+        (Proxy @MemPackTxOut)
+        (const $ Comp $ WrapTxOut <$> unpackM)
+      $ Telescope.tip idx
+
+instance
+  IndexedMemPack
+    (Ticked LedgerState)
+    (HardForkBlock '[BlockA, BlockB])
+    (DefaultHardForkTxOut '[BlockA, BlockB])
+  where
+  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
+  indexedPackedByteCount _ txout =
+    hcollapse $
+      hcmap
+        (Proxy @MemPackTxOut)
+        (K . packedByteCount . unwrapTxOut)
+        txout
+  indexedPackM _ =
+    hcollapse
+      . hcimap
+        (Proxy @MemPackTxOut)
+        ( \_ (WrapTxOut txout) -> K $ do
+            packM txout
+        )
+  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
     hsequence'
       $ hcmap
         (Proxy @MemPackTxOut)
@@ -566,15 +631,6 @@ forecast_AtoB ::
 forecast_AtoB = InPairs.ignoringBoth $ CrossEraForecaster $ \_ _ _ ->
   return $
     WrapLedgerView ()
-
-injectTx_AtoB ::
-  RequiringBoth
-    WrapLedgerConfig
-    (Product2 InjectTx InjectValidatedTx)
-    BlockA
-    BlockB
-injectTx_AtoB =
-  InPairs.ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx
 
 {-------------------------------------------------------------------------------
   Query HF

@@ -20,6 +20,7 @@ import LeiosDemoTypes
   , RbHash
   , Weight
   , aggregateLeiosCert
+  , leiosSignContext
   )
 import LeiosValidClaims
   ( Announcing (..)
@@ -162,7 +163,7 @@ mkCert TestCommittee{committee, allKeys} msg =
  where
   sigs =
     Map.fromList
-      [ (LeiosSeatId (fromIntegral i), signDSIGN () msg sk)
+      [ (LeiosSeatId (fromIntegral i), signDSIGN leiosSignContext msg sk)
       | (i, sk) <- zip [0 :: Int ..] allKeys
       ]
 

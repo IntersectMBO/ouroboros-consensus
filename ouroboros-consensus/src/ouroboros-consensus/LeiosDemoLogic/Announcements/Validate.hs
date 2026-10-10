@@ -43,12 +43,12 @@ import Ouroboros.Consensus.HeaderValidation
   , tickedHeaderStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
-import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , ledgerViewForecastAt
   )
+import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK)
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)

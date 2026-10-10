@@ -1,31 +1,66 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB (..)
+  , WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
   , AddPerasCertResult (..)
-
-    -- * 'PerasCertSnapshot'
-  , PerasCertSnapshot (..)
   , PerasCertTicketNo
   , zeroPerasCertTicketNo
+
+    -- * Invariants
+  , prop_addCertThenGetCertIds
+  , prop_getCertsAfterZero
+  , prop_getCertsAfterMonotonic
+  , prop_garbageCollectRemovesOldCerts
+  , prop_addCertLatestCertSeenMonotonic
+  , prop_garbageCollectPreservesLatestCertSeen
   ) where
 
+import qualified Data.List as List
 import Data.Map (Map)
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Word (Word64)
+import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
-import Ouroboros.Consensus.Peras.Weight
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
+import Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM (..))
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 
 data PerasCertDB m blk = PerasCertDB
-  { addCert :: WithArrivalTime (ValidatedPerasCert blk) -> m AddPerasCertResult
-  -- ^ Add a Peras certificate to the database. The result indicates whether
-  -- the certificate was actually added, or if it was already present.
+  { addCert ::
+      WithArrivalTime (ValidatedPerasCert blk) ->
+      STM m (m AddPerasCertResult)
+  -- ^ Add a Peras certificate to the database. The STM transaction adds the
+  -- certificate to the in-memory index, and the resulting 'm' action performs
+  -- tracing and might perform side-effects in implementations with on-disk
+  -- storage.
+  -- The 'AddPerasCertResult' indicates whether the certificate was actually
+  -- added, or if it was already present.
+  --
+  -- NOTE: Use the @join . atomically@ pattern to run both the transaction
+  -- and the side-effects in sequence.
+  , getCertIds ::
+      STM m (Set PerasRoundNo)
+  -- ^ Get the set of all cert IDs currently in the database.
+  , getCertsAfter ::
+      PerasCertTicketNo ->
+      STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
+  -- ^ Get all certs with a ticket number strictly greater than the given one,
+  -- in ascending order.
+  -- Unlike 'getVotesAfter' in 'PerasVoteDB', the resulting map contains 'm' actions to
+  -- retrieve the certificates, instead of the certificates directly. This is to
+  -- allow implementation with on-disk storage to retrieve certificates from disk.
   , getWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Return the Peras weights in order compare the current selection against
   -- potential candidate chains, namely the weights for blocks not older than
@@ -34,37 +69,51 @@ data PerasCertDB m blk = PerasCertDB
   --
   -- The 'Fingerprint' is updated every time a new certificate is added, but it
   -- stays the same when certificates are garbage-collected.
-  , getCertSnapshot :: STM m (PerasCertSnapshot blk)
-  , getLatestCertSeen :: STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
-  -- ^ Get the certificate with the highest round number that has been added to
-  -- the db since it has been opened. This certificate is not affected by garbage
-  -- collection, but it's forgotten when the db is closed.
+  , getLatestCertSeen ::
+      STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
+  -- ^ This field impacts voting directly because having seen a certificate is a
+  -- precondition for voting in any round except for the very first one
+  -- (at origin).
+  , garbageCollect ::
+      SlotNo ->
+      STM m (m ())
+  -- ^ Garbage-collect certificates whose target slot is strictly smaller
+  -- than the given slot number.
+  -- The STM transaction clears the relevant state from the in-memory index, and
+  -- the resulting 'm' action performs tracing and might perform side-effects in
+  -- implementations with on-disk storage.
   --
-  -- FIXME(peras): having seen a certificate is a precondition to start voting
-  -- in every round except for the first one (at origin). As a consequence, only
-  -- caught-up nodes can actively participate in the Peras protocol for now.
-  , garbageCollect :: SlotNo -> m ()
-  -- ^ Garbage-collect state older than the given slot number.
-  , closeDB :: m ()
+  -- NOTE: Use the `join . atomically` pattern to consume its output.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasCertDB" (PerasCertDB m blk)
 
-data AddPerasCertResult = AddedPerasCertToDB | PerasCertAlreadyInDB
-  deriving stock (Show, Eq)
+-- | Indicate whether the block being boosted by a certificate is expected to
+-- still be part of the volatile chain suffix or not.
+--
+-- This is relevant for Peras voting because we need to know if a candidate
+-- block extends the chain that contains the block being boosted by the latest
+-- certificate seen. For this purpose, we want to limit the voting rules to only
+-- look within the volatile chain suffix, and assume that, if the boosted block
+-- is no longer in the volatile suffix, then it trivially extends the candidate
+-- block (because it must have been copied into the immutable chain prefix). For
+-- this reason, we need to manually keep track of whether the boosted block of
+-- this certificate has already been garbage collected from the volatile suffix
+-- or not.
+data WithBoostedBlockStatus cert
+  = -- | Certificate boosting a block within the volatile chain suffix
+    CertBoostingBlockInVolatileDB !cert
+  | -- | Certificate boosting a block that no longer belongs to the volatile
+    -- chain suffix. This typically means that the block has been copied to the
+    -- immutable prefix, and then garbage collected from the volatile suffix.
+    CertBoostingBlockNoLongerInVolatileDB !cert
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
-data PerasCertSnapshot blk = PerasCertSnapshot
-  { containsCert :: PerasRoundNo -> Bool
-  -- ^ Do we have the certificate for this round?
-  , getCertsAfter ::
-      PerasCertTicketNo ->
-      Map PerasCertTicketNo (WithArrivalTime (ValidatedPerasCert blk))
-  -- ^ Get certificates after the given ticket number (excluded).
-  -- The result is a map of ticket numbers to validated certificates.
-  }
-
--- Instance needed for testing w.r.t. certificate inclusion rules.
-instance Show (PerasCertSnapshot blk) where
-  show _ = "PerasCertSnapshot(..)"
+-- | Deconstruct a certificate from its provenance wrapper
+forgetBoostedBlockStatus :: WithBoostedBlockStatus cert -> cert
+forgetBoostedBlockStatus = \case
+  CertBoostingBlockInVolatileDB cert -> cert
+  CertBoostingBlockNoLongerInVolatileDB cert -> cert
 
 -- | A sequence number, incremented every time we receive a new certificate.
 --
@@ -80,3 +129,120 @@ newtype PerasCertTicketNo = PerasCertTicketNo Word64
 
 zeroPerasCertTicketNo :: PerasCertTicketNo
 zeroPerasCertTicketNo = PerasCertTicketNo 0
+
+data AddPerasCertResult
+  = AddedPerasCertToDB
+  | PerasCertAlreadyInDB
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+-- * Invariants
+
+-- (currently not enforced, see https://github.com/tweag/cardano-peras/issues/217)
+
+-- | After adding a cert, its round number should be present in 'getCertIds'.
+prop_addCertThenGetCertIds ::
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDB m blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
+  m Bool
+prop_addCertThenGetCertIds db cert =
+  atomically $ do
+    let certRound = getPerasCertRound cert
+    _ <- addCert db cert
+    certIds <- getCertIds db
+    pure $
+      certRound `elem` certIds
+
+-- | 'getCertsAfter' with ticket 0 should return all certs in the database.
+-- NOTE: this property is not purely STM.
+prop_getCertsAfterZero ::
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDB m blk ->
+  m Bool
+prop_getCertsAfterZero db = do
+  (allCertActions, certIds) <- atomically $ do
+    allCerts <- getCertsAfter db zeroPerasCertTicketNo
+    certIds <- getCertIds db
+    pure (allCerts, certIds)
+  allCertValues <- sequence (Map.elems allCertActions)
+  let allCertIds =
+        Set.fromList $
+          fmap
+            (getPerasCertRound . forgetArrivalTime)
+            allCertValues
+  pure $
+    length allCertActions == Set.size certIds
+      && allCertIds == certIds
+
+-- | 'getCertsAfter' returns strictly increasing ticket numbers.
+prop_getCertsAfterMonotonic ::
+  MonadSTM m =>
+  PerasCertDB m blk ->
+  PerasCertTicketNo ->
+  m Bool
+prop_getCertsAfterMonotonic db ticketNo =
+  atomically $ do
+    certs <- getCertsAfter db ticketNo
+    let tickets = Map.keys certs
+    pure $
+      tickets == List.sort tickets
+        && all (> ticketNo) tickets
+
+-- | After garbage collection for slot S, no certs with target slot < S should remain.
+-- NOTE: this property is not purely STM.
+prop_garbageCollectRemovesOldCerts ::
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDB m blk ->
+  SlotNo ->
+  m Bool
+prop_garbageCollectRemovesOldCerts db slotNo = do
+  allCertActions <- atomically $ do
+    _ <- garbageCollect db slotNo
+    getCertsAfter db zeroPerasCertTicketNo
+  allCertValues <- sequence (Map.elems allCertActions)
+  let targetSlots = pointSlot . getPerasCertPoint <$> allCertValues
+  pure $
+    all (>= NotOrigin slotNo) targetSlots
+
+-- | After adding a cert, the round number reported by 'getLatestCertSeen'
+-- should be greater than or equal to its previous value.
+prop_addCertLatestCertSeenMonotonic ::
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDB m blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
+  m Bool
+prop_addCertLatestCertSeenMonotonic db cert =
+  atomically $ do
+    prevLatest <- getLatestCertSeen db
+    _ <- addCert db cert
+    newLatest <- getLatestCertSeen db
+    let getRound = getPerasCertRound . forgetBoostedBlockStatus
+    pure $ case (prevLatest, newLatest) of
+      (_, Nothing) -> False -- after adding a cert, the latest cert seen should not go back to 'Nothing'
+      (Nothing, Just _) -> True -- if there was no cert seen before, any new cert should be greater than or equal to it
+      (Just prev, Just new) -> getRound new >= getRound prev
+
+-- | 'getLatestCertSeen' is not affected by garbage collection.
+prop_garbageCollectPreservesLatestCertSeen ::
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  PerasCertDB m blk ->
+  SlotNo ->
+  m Bool
+prop_garbageCollectPreservesLatestCertSeen db slotNo =
+  atomically $ do
+    prevLatest <- getLatestCertSeen db
+    _ <- garbageCollect db slotNo
+    newLatest <- getLatestCertSeen db
+    let getRound = getPerasCertRound . forgetBoostedBlockStatus
+    pure $ fmap getRound prevLatest == fmap getRound newLatest

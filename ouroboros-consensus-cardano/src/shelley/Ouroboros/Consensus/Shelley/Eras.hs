@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -35,8 +36,7 @@ import Cardano.Ledger.Allegra.Translation ()
 import Cardano.Ledger.Alonzo (AlonzoEra, ApplyTxError (AlonzoApplyTxError))
 import Cardano.Ledger.Alonzo.Core as Core
 import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
-import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
-import qualified Cardano.Ledger.Api.Era as L
+import qualified Cardano.Ledger.Api as L
 import Cardano.Ledger.Babbage (ApplyTxError (BabbageApplyTxError), BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import Cardano.Ledger.BaseTypes
@@ -49,6 +49,7 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   )
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
+import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
@@ -69,6 +70,12 @@ import Lens.Micro
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
+  )
+import Ouroboros.Consensus.Peras.Params
+  ( PerasEnabled
+  , PerasRoundLength
+  , dijkstraPerasRoundLength
+  , pattern NoPerasEnabled
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
@@ -125,7 +132,7 @@ class
     Except
       (SL.ApplyTxError era)
       ( SL.LedgerState era
-      , SL.Validated (Core.Tx TopTx era)
+      , SL.ValidatedTx era
       )
 
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
@@ -133,6 +140,18 @@ class
 
   mkEraMkMempoolApplyTxError ::
     proxy era -> Maybe (Text -> SL.ApplyTxError era)
+
+  -- | Retrieve the optionally enabled Peras round length of this epoch.
+  --
+  -- Defaults to 'NoPerasEnabled' for eras that don't explictily support Peras.
+  getShelleyEraPerasRoundLength :: proxy era -> PerasEnabled PerasRoundLength
+  getShelleyEraPerasRoundLength _ = NoPerasEnabled
+
+  -- | Whether this block body carries a Leios certificate.
+  --
+  -- Eras that don't support Leios define this as
+  -- 'defaultBlockBodyContainsLeiosCert'.
+  blockBodyContainsLeiosCert :: Core.BlockBody era -> Bool
 
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
@@ -153,11 +172,11 @@ defaultApplyShelleyBasedTx ::
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx TopTx era)
+    , SL.ValidatedTx era
     )
 defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
   liftEither $
-    SL.applyTx
+    SL.applyTxWithFullValidation
       globals
       ledgerEnv
       mempoolState
@@ -166,12 +185,17 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
 defaultGetConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 defaultGetConwayEraGovDict _ = Nothing
 
+defaultBlockBodyContainsLeiosCert :: Core.BlockBody era -> Bool
+defaultBlockBodyContainsLeiosCert _ = False
+
 instance ShelleyBasedEra ShelleyEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
   mkEraMkMempoolApplyTxError _prx = Nothing
+
+  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
 
 instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
@@ -180,12 +204,16 @@ instance ShelleyBasedEra AllegraEra where
 
   mkEraMkMempoolApplyTxError _prx = Nothing
 
+  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+
 instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
   mkEraMkMempoolApplyTxError _prx = Nothing
+
+  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
 
 instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -194,12 +222,16 @@ instance ShelleyBasedEra AlonzoEra where
 
   mkEraMkMempoolApplyTxError _prx = Nothing
 
+  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
+
 instance ShelleyBasedEra BabbageEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
   mkEraMkMempoolApplyTxError _prx = Nothing
+
+  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
 
 instance ShelleyBasedEra ConwayEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -208,6 +240,8 @@ instance ShelleyBasedEra ConwayEra where
 
   mkEraMkMempoolApplyTxError _prx =
     Just $ \txt -> ConwayApplyTxError (NE.singleton (Conway.ConwayMempoolFailure txt))
+
+  blockBodyContainsLeiosCert = defaultBlockBodyContainsLeiosCert
 
 instance ShelleyBasedEra DijkstraEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -218,6 +252,10 @@ instance ShelleyBasedEra DijkstraEra where
   -- use MempoolFailure type family instead of just PredicateFailure type
   -- family
   mkEraMkMempoolApplyTxError _prx = Nothing
+
+  getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
+
+  blockBodyContainsLeiosCert bb = isSJust (bb ^. leiosCertBlockBodyL)
 
 applyAlonzoBasedTx ::
   forall era.
@@ -233,7 +271,7 @@ applyAlonzoBasedTx ::
   Except
     (SL.ApplyTxError era)
     ( SL.LedgerState era
-    , SL.Validated (Core.Tx TopTx era)
+    , SL.ValidatedTx era
     )
 applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   (mempoolState', vtx) <-
@@ -247,7 +285,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   pure (mempoolState', vtx)
  where
   intervenedTx = case wti of
-    DoNotIntervene -> tx & Core.isValidTxL .~ Alonzo.IsValid True
+    DoNotIntervene -> tx & Core.isPhase2ValidTxL .~ L.Phase2Valid
     Intervene -> tx
 
   handler e = case (wti, e) of
@@ -267,7 +305,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
             ledgerEnv
             mempoolState
             wti
-            (tx & Core.isValidTxL .~ Alonzo.IsValid False)
+            (tx & Core.isPhase2ValidTxL .~ L.Phase2Invalid)
     _ -> throwError e
 
 -- reject the transaction, protecting the local wallet
@@ -283,7 +321,7 @@ instance SupportsTwoPhaseValidation AlonzoEra where
           ( SL.UtxoFailure
               ( Alonzo.UtxosFailure
                   ( Alonzo.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
+                      _isValid
                       _validationErrs
                     )
                 )
@@ -301,7 +339,7 @@ instance SupportsTwoPhaseValidation BabbageEra where
                   ( Babbage.AlonzoInBabbageUtxoPredFailure
                       ( Alonzo.UtxosFailure
                           ( Alonzo.ValidationTagMismatch
-                              (Alonzo.IsValid _claimedFlag)
+                              _isValid
                               _validationErrs
                             )
                         )
@@ -314,7 +352,7 @@ instance SupportsTwoPhaseValidation BabbageEra where
           ( Babbage.AlonzoInBabbageUtxoPredFailure
               ( Alonzo.UtxosFailure
                   ( Alonzo.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
+                      _isValid
                       _validationErrs
                     )
                 )
@@ -329,7 +367,7 @@ instance SupportsTwoPhaseValidation ConwayEra where
       ( Conway.UtxoFailure
           ( Conway.UtxosFailure
               ( Conway.ValidationTagMismatch
-                  (Alonzo.IsValid _claimedFlag)
+                  _isValid
                   _validationErrs
                 )
             )
@@ -344,7 +382,7 @@ instance SupportsTwoPhaseValidation DijkstraEra where
           ( Dijkstra.UtxoFailure
               ( Dijkstra.UtxosFailure
                   ( Conway.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
+                      _isValid
                       _validationErrs
                     )
                 )

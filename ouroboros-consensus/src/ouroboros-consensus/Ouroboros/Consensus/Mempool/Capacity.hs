@@ -1,10 +1,9 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Mempool capacity, size and transaction size datatypes.
 --
@@ -25,6 +24,7 @@ module Ouroboros.Consensus.Mempool.Capacity
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Measure (Measure)
 import qualified Data.Measure as Measure
+import Data.Proxy (Proxy (..))
 import Data.Semigroup (stimes)
 import Data.Word (Word32)
 import GHC.Generics
@@ -40,11 +40,11 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 -- maximum transaction capacity
 data MempoolCapacityBytesOverride
   = -- | Use 2x the maximum transaction capacity of a block plus, under Leios,
-    -- an endorser block's closure. This will change dynamically with the
-    -- protocol parameters adopted in the current ledger.
+    -- of an endorser block. This will change dynamically with the protocol
+    -- parameters adopted in the current ledger.
     NoMempoolCapacityBytesOverride
-  | -- | Use the least multiple of the block (plus endorser-block closure)
-    -- capacity that is no less than this size.
+  | -- | Use the least multiple of the block (plus endorser-block) capacity
+    -- that is no less than this size.
     MempoolCapacityBytesOverride !ByteSize32
   deriving (Eq, Show)
 
@@ -54,18 +54,20 @@ mkCapacityBytesOverride :: ByteSize32 -> MempoolCapacityBytesOverride
 mkCapacityBytesOverride = MempoolCapacityBytesOverride
 
 -- | If no override is provided, calculate the default mempool capacity as 2x
--- what one forging opportunity can drain from the mempool: the current
+-- what one forging opportunity can take from the mempool: the current
 -- ledger's maximum transaction capacity of a block plus, under Leios, of an
--- endorser block's closure ('ebClosureCapacityTxMeasure', zero elsewhere).
+-- endorser block ('mempoolEbReservation' of 'ebCapacityTxMeasure', zero
+-- elsewhere).
 --
--- If an override is present, reinterpret it as a number of such forging units
--- (rounded up), and then simply multiply the unit capacity by that number.
+-- If an override is present, reinterpret it as a number of such units
+-- (rounded up), and then multiply the unit capacity by that number.
 --
 -- Note that admission is bounded on the 'TxMeasure' components only: an
 -- endorser block's references are bounded per fill (by 'ebCapacityTxMeasure'
 -- at forge time), never here, so no endorser-block parameter can gate what
 -- enters the mempool.
 computeMempoolCapacity ::
+  forall blk mk.
   LedgerSupportsMempool blk =>
   LedgerConfig blk ->
   TickedLedgerState blk mk ->
@@ -76,7 +78,7 @@ computeMempoolCapacity cfg st override =
  where
   oneUnit =
     blockCapacityTxMeasure cfg st
-      `Measure.plus` ebClosureCapacityTxMeasure cfg st
+      `Measure.plus` mempoolEbReservation (Proxy @blk) (ebCapacityTxMeasure cfg st)
   ByteSize32 oneUnitBytes = txMeasureByteSize oneUnit
 
   unitCount = case override of

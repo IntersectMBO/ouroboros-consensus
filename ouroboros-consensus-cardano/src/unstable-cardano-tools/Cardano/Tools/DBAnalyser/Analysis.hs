@@ -1,6 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -53,11 +51,12 @@ import Cardano.Tools.DBAnalyser.Types
 import Control.Monad (join, unless, void, when)
 import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), nullTracer, traceWith)
+import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Bifunctor (bimap)
 import Data.Int (Int64)
 import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
+import Data.SOP (All, Top)
 import Data.Singletons
 import Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
@@ -72,6 +71,7 @@ import NoThunks.Class (noThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast (forecastFor)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation
   ( HasAnnTip (..)
   , HeaderState (..)
@@ -81,11 +81,8 @@ import Ouroboros.Consensus.HeaderValidation
   , validateHeader
   )
 import Ouroboros.Consensus.Ledger.Abstract
-  ( ApplyBlock (getBlockKeySets, reapplyBlockLedgerResult)
-  , applyBlockLedgerResult
-  )
-import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( LedgerSupportsMempool
   )
@@ -96,6 +93,9 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.Impl.Common
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext
+  )
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -117,13 +117,18 @@ import qualified System.IO as IO
 runAnalysis ::
   forall blk.
   ( HasAnalysis blk
+  , All Top (HardForkIndices blk)
   , LedgerSupportsMempool.HasTxId (LedgerSupportsMempool.GenTx blk)
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , CanStowLedgerTables (LedgerState blk)
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   AnalysisName -> SomeAnalysis blk
 runAnalysis analysisName = case go analysisName of
@@ -308,7 +313,12 @@ data MempoolAndForgeRepro = MempoolAndForgeRepro
   -- ^ Total time spent in gc when calling 'Mempool.getSnapshotFor'.
   }
 
-instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) where
+instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Show (TraceEvent blk)
+  where
   show (StartedEvent analysisName) = "Started " <> (show analysisName)
   show DoneEvent = "Done"
   show (BlockSlotEvent bn sn h) =
@@ -553,9 +563,12 @@ showEBBs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
 
 storeLedgerStateAt ::
   forall blk.
-  ( LedgerSupportsProtocol blk
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , HasAnalysis blk
   ) =>
   SlotNo ->
@@ -580,7 +593,6 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
               join $ IOLike.atomically $ LedgerDB.forkerCommit frk
               when (blockSlot blk > slotNo) $ issueWarning blk
               when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-              LedgerDB.tryFlush ldb
               LedgerDB.garbageCollect ldb
                 . fromWithOrigin 0
                 . pointSlot
@@ -633,10 +645,13 @@ countBlocks (AnalysisEnv{db, registry, startFrom, limit, tracer}) = do
 
 checkNoThunksEvery ::
   forall blk.
-  ( HasAnalysis blk
+  ( All Top (HardForkIndices blk)
+  , HasAnalysis blk
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   Word64 ->
@@ -668,7 +683,6 @@ checkNoThunksEvery
         IOLike.evaluate (ledgerState newLedger') >>= checkNoThunks bn
 
       LedgerDB.push internal newLedger
-      LedgerDB.tryFlush ldb
 
     checkNoThunks :: NoThunksMK mk => BlockNo -> LedgerState blk mk -> IO ()
     checkNoThunks bn ls =
@@ -685,10 +699,13 @@ checkNoThunksEvery
 
 traceLedgerProcessing ::
   forall blk.
-  ( HasAnalysis blk
+  ( All Top (HardForkIndices blk)
+  , HasAnalysis blk
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
@@ -712,7 +729,6 @@ traceLedgerProcessing
       mapM_ Debug.traceMarkerIO traces
 
       LedgerDB.push internal newLedger
-      LedgerDB.tryFlush ldb
 
 {-------------------------------------------------------------------------------
   Analysis: maintain a ledger state and time the five major ledger calculations
@@ -734,10 +750,12 @@ traceLedgerProcessing
 
 benchmarkLedgerOps ::
   forall blk.
-  ( LedgerSupportsProtocol blk
+  ( All Top (HardForkIndices blk)
   , HasAnalysis blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , LedgerSupportsProtocol blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   Maybe FilePath ->
   LedgerApplicationMode ->
@@ -885,10 +903,14 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     -- LedgerDB never receives the EB's change and the next blocks read stale
     -- tables.
     LedgerDB.push intLedgerDB $
-      ExtLedgerState
-        (maybe id prependDiffs caClosureDiff (prependDiffs tkLdgrSt newLedger))
-        newHeader
-    LedgerDB.tryFlush ledgerDB
+      let ledgerState = maybe id prependDiffs caClosureDiff (prependDiffs tkLdgrSt newLedger)
+          headerState = newHeader
+          perasState = initPerasState lcfg ledgerState headerState
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasState
+            }
    where
     rp = blockRealPoint blk
 
@@ -944,7 +966,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     tickTheLedgerState ::
       SlotNo ->
       ExtLedgerState blk EmptyMK ->
-      IO (Ticked (LedgerState blk) DiffMK)
+      IO (Ticked LedgerState blk DiffMK)
     tickTheLedgerState slot st =
       pure $ applyChainTick OmitLedgerEvents lcfg slot (ledgerState st)
 
@@ -970,9 +992,12 @@ withFile Nothing = \f -> f IO.stdout
 getBlockApplicationMetrics ::
   forall blk.
   ( HasAnalysis blk
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   NumberOfBlocks -> Maybe FilePath -> Analysis blk StartFromLedgerState
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
@@ -1010,7 +1035,6 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
       IO.hFlush outFileHandle
 
     LedgerDB.push intLedgerDB nextLedgerSt
-    LedgerDB.tryFlush ldb
 
     pure ()
 
@@ -1027,8 +1051,13 @@ reproMempoolForge ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , All Top (HardForkIndices blk)
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   Int ->
   Analysis blk StartFromLedgerState
@@ -1224,7 +1253,7 @@ reproMempoolForge numBlks env = do
             ((), durSnap, mutSnap, gcSnap) <- timed $ do
               snap <-
                 getSnapshot mempool slot ticked $
-                  fmap castLedgerTables . LedgerDB.forkerReadTables forker . castLedgerTables
+                  LedgerDB.forkerReadTables forker
 
               pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotStateHash snap `seq` ()
 
@@ -1268,7 +1297,6 @@ reproMempoolForge numBlks env = do
           -- doing this sharing optimization?
           (_, nextLedgerSt) <- applyBlockAtTip leiosDbReader LedgerReapply cfg ledgerDB blk
           LedgerDB.push intLedgerDB nextLedgerSt
-          LedgerDB.tryFlush ledgerDB
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain
           void $ Mempool.testSyncWithLedger mempool

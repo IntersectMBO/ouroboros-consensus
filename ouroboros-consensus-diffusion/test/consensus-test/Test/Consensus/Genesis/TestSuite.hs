@@ -1,10 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | A 'TestSuite' data structure for quick access to 'ConformanceTest' values.
 -- It encodes a hierarchical nested structure allowing it to compile into a
@@ -35,21 +32,23 @@ import qualified Data.Map.Monoidal as MMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Monoid (Endo (..))
+import Data.SOP (All, Top)
 import GHC.Generics (Generic, Generically (..))
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
   ( BlockSupportsDiffusionPipelining
+  , BlockSupportsPeras
   , ConvertRawHash
   , Header
   )
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
@@ -182,19 +181,20 @@ render (TestTrie here children) =
 
 -- | Compile a 'TestSuite' into a list of tasty 'TestTree'.
 toTestTree ::
-  ( Condense (StateView blk)
+  ( All Top (HardForkIndices blk)
+  , Condense (StateView blk)
   , CondenseList (NodeState blk)
   , ShowProxy blk
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables (LedgerState blk)
+  , CanUpgradeLedgerTables LedgerState blk
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , Eq blk

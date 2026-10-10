@@ -3,14 +3,14 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
   ( -- * Opening
@@ -20,17 +20,11 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
 
     -- * Trace types
   , TraceEvent (..)
-
-    -- * Exceptions
-  , ExistingPerasRoundWinner (..)
-  , BlockedPerasRoundWinner (..)
-  , PerasVoteDbError (..)
   ) where
 
 import Control.Monad (when)
 import Control.Monad.Except (throwError)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Data (Typeable)
 import Data.Foldable (for_)
 import Data.Foldable qualified as Foldable
 import Data.Kind (Type)
@@ -42,6 +36,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))
+import Ouroboros.Consensus.Peras.Context
 import Ouroboros.Consensus.Peras.Vote.Aggregation
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
 import Ouroboros.Consensus.Util.Args
@@ -61,7 +56,7 @@ data PerasVoteDbEnv m blk = PerasVoteDbEnv
 
 -- INVARIANT: See 'invariantForPerasVoteDbState'.
 data PerasVoteDbState blk = PerasVoteDbState
-  { pvdsVoteIds :: !(Set (PerasVoteId blk))
+  { pvdsVoteIds :: !(Set PerasVoteId)
   , pvdsRoundVoteStates :: !(Map PerasRoundNo (PerasRoundVoteState blk))
   , pvdsVotesByTicket :: !(Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   -- ^ The votes by 'PerasVoteTicketNo'.
@@ -70,8 +65,30 @@ data PerasVoteDbState blk = PerasVoteDbState
   , pvdsLastTicketNo :: !PerasVoteTicketNo
   -- ^ The most recent 'PerasVoteTicketNo' (or 'zeroPerasVoteTicketNo' otherwise).
   }
-  deriving stock (Show, Generic)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  , Show (PerasVotingCommittee blk)
+  ) =>
+  Show (PerasVoteDbState blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  , Eq (PerasVotingCommittee blk)
+  ) =>
+  Eq (PerasVoteDbState blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  , NoThunks (PerasVotingCommittee blk)
+  ) =>
+  NoThunks (PerasVoteDbState blk)
+deriving instance
+  Generic (PerasVoteDbState blk)
 
 initialPerasVoteDbState :: WithFingerprint (PerasVoteDbState blk)
 initialPerasVoteDbState =
@@ -86,10 +103,14 @@ initialPerasVoteDbState =
 
 -- | Check that the fields of 'PerasVoteState' are in sync.
 invariantForPerasVoteDbState ::
+  IsPerasVote (PerasVote blk) blk =>
   WithFingerprint (PerasVoteDbState blk) -> Either String ()
 invariantForPerasVoteDbState pvs = do
   for_ (Map.toList pvdsRoundVoteStates) $ \(roundNo, prvs) ->
-    checkEqual "pvcRoundVoteStates rounds" roundNo (getPerasVoteRound prvs)
+    checkEqual
+      "pvcRoundVoteStates rounds"
+      roundNo
+      (getPerasRoundVoteStateRound prvs)
   checkEqual
     "pvcsVotesByTicket"
     (Set.fromList (getPerasVoteRound <$> Map.elems pvdsVotesByTicket))
@@ -119,36 +140,29 @@ invariantForPerasVoteDbState pvs = do
 
 data TraceEvent blk
   = AddVote
-      (PerasVoteId blk)
+      PerasVoteId
       (WithArrivalTime (ValidatedPerasVote blk))
       (AddPerasVoteResult blk)
   | GarbageCollected
-      PerasRoundNo
-  deriving stock (Show, Eq, Generic)
+      SlotNo
 
-{-------------------------------------------------------------------------------
-  Exceptions
--------------------------------------------------------------------------------}
-
-newtype ExistingPerasRoundWinner blk
-  = ExistingPerasRoundWinner (Point blk, PerasVoteStake)
-  deriving stock (Show, Eq)
-
-newtype BlockedPerasRoundWinner blk
-  = BlockedPerasRoundWinner (Point blk, PerasVoteStake)
-  deriving stock (Show, Eq)
-
-data PerasVoteDbError blk
-  = -- | Attempted to add a vote that would lead to multiple winners for the
-    -- same round
-    MultipleWinnersInRound
-      PerasRoundNo
-      (ExistingPerasRoundWinner blk)
-      (BlockedPerasRoundWinner blk)
-  | -- | An error occurred while forging a certificate
-    ForgingCertError (PerasForgeErr blk)
-  deriving stock Show
-  deriving anyclass Exception
+deriving instance
+  ( Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (TraceEvent blk)
+deriving instance
+  ( Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (TraceEvent blk)
+deriving instance
+  ( NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (TraceEvent blk)
+deriving instance
+  Generic (TraceEvent blk)
 
 {------------------------------------------------------------------------------
   Creating the database
@@ -157,25 +171,23 @@ data PerasVoteDbError blk
 type PerasVoteDbArgs :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data PerasVoteDbArgs f m blk = PerasVoteDbArgs
   { pvdbaTracer :: Tracer m (TraceEvent blk)
-  , pvdbaPerasCfg :: HKD f (PerasCfg blk)
   }
 
 defaultArgs :: Monad m => Incomplete PerasVoteDbArgs m blk
 defaultArgs =
   PerasVoteDbArgs
     { pvdbaTracer = nullTracer
-    , pvdbaPerasCfg = noDefault
     }
 
 createDB ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
-  , Typeable blk
+  , BlockSupportsPeras blk
   ) =>
   Complete PerasVoteDbArgs m blk ->
+  PerasEpochContextResolverHandle m blk ->
   m (PerasVoteDB m blk)
-createDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
+createDB args perasEpochContextResolverHandle = do
   pvdeState <-
     newTVarWithInvariantIO
       (either Just (const Nothing) . invariantForPerasVoteDbState)
@@ -187,7 +199,7 @@ createDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
           }
   pure
     PerasVoteDB
-      { addVote = implAddVote pvdbaPerasCfg env
+      { addVote = implAddVote perasEpochContextResolverHandle env
       , getVoteIds = implGetVoteIds env
       , getVotesAfter = implGetVotesAfter env
       , getForgedCertForRound = implGetForgedCertForRound env
@@ -205,15 +217,15 @@ createDB args@PerasVoteDbArgs{pvdbaPerasCfg} = do
 -- TODO: we will need to update this method with non-trivial validation logic
 -- see https://github.com/tweag/cardano-peras/issues/120
 implAddVote ::
+  forall m blk.
   ( IOLike m
-  , StandardHash blk
-  , Typeable blk
+  , BlockSupportsPeras blk
   ) =>
-  PerasCfg blk ->
+  PerasEpochContextResolverHandle m blk ->
   PerasVoteDbEnv m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   STM m (m (AddPerasVoteResult blk))
-implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
+implAddVote resolverHandle PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
   let voteId = getPerasVoteId vote
   addPerasVoteRes <- do
     WithFingerprint pvds fp <- readTVar pvdeState
@@ -238,7 +250,7 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
         pvsVotesByTicket' = Map.insert pvsLastTicketNo' vote (pvdsVotesByTicket pvds)
 
     (addPerasVoteRes, pvsRoundVoteStates') <-
-      case updatePerasRoundVoteStates vote perasCfg (pvdsRoundVoteStates pvds) of
+      updatePerasRoundVoteStates vote resolverHandle (pvdsRoundVoteStates pvds) >>= \case
         -- Added vote and reached a quorum, forging a new certificate
         Right (VoteGeneratedNewCert cert, pvsRoundVoteStates') ->
           pure (AddedPerasVoteAndGeneratedNewCert cert, pvsRoundVoteStates')
@@ -254,19 +266,22 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
             MultipleWinnersInRound
               (getPerasVoteRound vote)
               ( ExistingPerasRoundWinner
-                  ( getPerasVoteBlock winnerState
-                  , ptvsTotalStake winnerState
+                  ( getPerasTargetVoteStateBlock winnerState
+                  , getPerasTargetVoteStateTotalWeight winnerState
                   )
               )
               ( BlockedPerasRoundWinner
-                  ( getPerasVoteBlock loserState
-                  , ptvsTotalStake loserState
+                  ( getPerasTargetVoteStateBlock loserState
+                  , getPerasTargetVoteStateTotalWeight loserState
                   )
               )
         -- Reached quorum but failed to forge a certificate
         Left (RoundVoteStateForgingCertError forgeErr) ->
           throwSTM $
             ForgingCertError forgeErr
+        Left (RoundVoteStateEpochContextNotFound resolverErr) ->
+          throwSTM $
+            EpochContextNotFoundForRound @blk resolverErr
 
     pure
       ( addPerasVoteRes
@@ -281,7 +296,7 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
 implGetVoteIds ::
   IOLike m =>
   PerasVoteDbEnv m blk ->
-  STM m (Set (PerasVoteId blk))
+  STM m (Set PerasVoteId)
 implGetVoteIds PerasVoteDbEnv{pvdeState} = do
   PerasVoteDbState{pvdsVoteIds} <-
     forgetFingerprint <$> readTVar pvdeState
@@ -311,16 +326,18 @@ implGetForgedCertForRound PerasVoteDbEnv{pvdeState} roundNo = do
 
 implGarbageCollect ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDbEnv m blk ->
-  PerasRoundNo ->
+  SlotNo ->
   STM m (m ())
-implGarbageCollect PerasVoteDbEnv{pvdeTracer, pvdeState} roundNo = do
+implGarbageCollect PerasVoteDbEnv{pvdeTracer, pvdeState} slotNo = do
   -- No need to update the 'Fingerprint' as we only remove votes that do
   -- not matter for comparing interesting chains.
   modifyTVar pvdeState (fmap gc)
   pure $ do
-    traceWith pvdeTracer (GarbageCollected roundNo)
+    traceWith pvdeTracer (GarbageCollected slotNo)
     return ()
  where
   gc :: PerasVoteDbState blk -> PerasVoteDbState blk
@@ -331,22 +348,38 @@ implGarbageCollect PerasVoteDbEnv{pvdeTracer, pvdeState} roundNo = do
       , pvdsVotesByTicket
       , pvdsLastTicketNo
       } =
-      let pvsRoundVoteStates' =
-            Map.filterWithKey
-              (\rNo _ -> rNo >= roundNo)
-              pvdsRoundVoteStates
-          (pvsVotesByTicket', votesToRemove) =
-            Map.partition
-              (\vote -> getPerasVoteRound vote >= roundNo)
-              pvdsVotesByTicket
-          pvsVoteIds' =
-            Foldable.foldl'
-              (\set vote -> Set.delete (getPerasVoteId vote) set)
-              pvdsVoteIds
-              votesToRemove
-       in PerasVoteDbState
-            { pvdsVoteIds = pvsVoteIds'
-            , pvdsRoundVoteStates = pvsRoundVoteStates'
-            , pvdsVotesByTicket = pvsVotesByTicket'
-            , pvdsLastTicketNo = pvdsLastTicketNo
-            }
+      let
+        -- First, determine which rounds to delete based on the round vote
+        -- state: a round is deleted only when the youngest target of all its
+        -- votes is strictly older than the GC threshold.
+        --
+        -- NOTE:
+        -- This conservative approach could cause round states to be kept
+        -- for a long time if an attacker keeps adding votes for a given
+        -- round but with a target far into the future,
+        -- see https://github.com/tweag/cardano-peras/issues/218
+        (roundsToDelete, pvsRoundVoteStates') =
+          Map.partition
+            (\rvs -> getPerasRoundVoteStateMaxTargetedSlot rvs < NotOrigin slotNo)
+            pvdsRoundVoteStates
+        deletedRoundNos =
+          Map.keysSet roundsToDelete
+        -- Then, remove all votes belonging to deleted rounds from the
+        -- by-ticket index
+        (pvsVotesByTicket', votesToRemove) =
+          Map.partition
+            (\vote -> not (Set.member (getPerasVoteRound vote) deletedRoundNos))
+            pvdsVotesByTicket
+        -- Finally, remove the corresponding ids from the set of vote ids
+        pvsVoteIds' =
+          Foldable.foldl'
+            (\set vote -> Set.delete (getPerasVoteId vote) set)
+            pvdsVoteIds
+            votesToRemove
+       in
+        PerasVoteDbState
+          { pvdsVoteIds = pvsVoteIds'
+          , pvdsRoundVoteStates = pvsRoundVoteStates'
+          , pvdsVotesByTicket = pvsVotesByTicket'
+          , pvdsLastTicketNo = pvdsLastTicketNo
+          }

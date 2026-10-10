@@ -1,14 +1,11 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -189,7 +186,7 @@ data Mempool m blk = Mempool
   , getSnapshotFor ::
       SlotNo ->
       TickedLedgerState blk DiffMK ->
-      (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+      (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
       m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the mempool state that is valid with respect to
   -- the given ledger state
@@ -206,7 +203,7 @@ data Mempool m blk = Mempool
   , getSnapshotForNoCache ::
       SlotNo ->
       TickedLedgerState blk DiffMK ->
-      (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+      (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
       m (MempoolSnapshot blk)
   -- ^ Like 'getSnapshotFor', but always revalidates against the supplied
   -- ledger state instead of possibly returning the cached snapshot.
@@ -333,7 +330,7 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
 -- | The result of attempting to add a transaction to the mempool.
 data MempoolAddTxResult blk
   = -- | The transaction was added to the mempool.
-    MempoolTxAdded !(Validated (GenTx blk)) !(LedgerTables (TickedLedgerState blk) DiffMK)
+    MempoolTxAdded !(Validated (GenTx blk)) !(LedgerTables blk DiffMK)
   | -- | The transaction was rejected and could not be added to the mempool
     -- for the specified reason.
     MempoolTxRejected !(GenTx blk) !(ApplyTxErr blk)
@@ -342,14 +339,16 @@ deriving instance
   ( Eq (GenTx blk)
   , Eq (Validated (GenTx blk))
   , Eq (ApplyTxErr blk)
-  , Eq (LedgerTables (TickedLedgerState blk) DiffMK)
+  , Eq (TxIn blk)
+  , Eq (TxOut blk)
   ) =>
   Eq (MempoolAddTxResult blk)
 deriving instance
   ( Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (ApplyTxErr blk)
-  , Show (LedgerTables (TickedLedgerState blk) DiffMK)
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   Show (MempoolAddTxResult blk)
 
@@ -466,11 +465,11 @@ data MempoolSnapshot blk = MempoolSnapshot
       , [Validated (GenTx blk)]
       , MempoolMeasure blk
       )
-  -- ^ Partition the mempool for one forging opportunity: the greatest prefix
-  -- (oldest to newest) respecting the given block capacity on the 'TxMeasure'
-  -- component, and then the greatest run of /following/ transactions
-  -- respecting the given endorser-block capacity on their 'TxEbMeasure'
-  -- component alone. Each with its total size.
+  -- ^ Partition the mempool for one forging opportunity. The first part is
+  -- the greatest prefix (oldest to newest) whose 'TxMeasure' respects the
+  -- given block capacity. The second part is the greatest run of the
+  -- /following/ transactions whose 'TxEbMeasure' respects the given
+  -- endorser-block capacity. Each part comes with its total size.
   , snapshotLookupTx :: TicketNo -> Maybe (Validated (GenTx blk))
   -- ^ Get a specific transaction from the mempool snapshot by its ticket
   -- number, if it exists.
@@ -541,10 +540,12 @@ binopComponentwise f (MempoolMeasure a b c) (MempoolMeasure p q r) =
 instance HasByteSize (TxMeasure blk) => HasByteSize (MempoolMeasure blk) where
   txMeasureByteSize = txMeasureByteSize . mmTxMeasure
 
-instance TxMeasureMetrics (TxMeasure blk) => TxMeasureMetrics (MempoolMeasure blk) where
+instance TxMeasurePhase1Metrics (TxMeasure blk) => TxMeasurePhase1Metrics (MempoolMeasure blk) where
   txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . mmTxMeasure
   txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . mmTxMeasure
   txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . mmTxMeasure
+
+instance TxMeasurePhase2Metrics (TxMeasure blk) => TxMeasurePhase2Metrics (MempoolMeasure blk) where
   txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . mmTxMeasure
 
 -- | How long it took to validate a valid tx

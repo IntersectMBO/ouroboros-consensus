@@ -1,6 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Node.ProtocolInfo
   ( NumCoreNodes (..)
@@ -13,7 +11,7 @@ import Data.Word
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Basics (ValuesMK)
+import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.NodeId
 

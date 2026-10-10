@@ -11,7 +11,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -31,7 +30,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , RangeQueryPrevious (..)
   , Statistics (..)
   , forkerCurrentPoint
-  , castRangeQueryPrevious
   , ledgerStateReadOnlyForker
 
     -- ** Read only
@@ -75,7 +73,6 @@ import Control.Monad.Except
   , runExcept
   , runExceptT
   )
-import Data.Bifunctor (first)
 import qualified Data.ByteString as Strict
 import Data.Foldable (Foldable (foldMap'))
 import Data.Functor ((<&>))
@@ -151,8 +148,9 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 
 -- | An independent handle to a point in the LedgerDB, which can be advanced to
 -- evaluate forks in the chain.
-type Forker :: (Type -> Type) -> LedgerStateKind -> Type
-data Forker m l = Forker
+-- TODO @js split l in l blk
+type Forker :: (Type -> Type) -> StateKind -> Type -> Type
+data Forker m l blk = Forker
   { forkerClose :: !(m ())
   -- ^ Close the current forker (idempotent).
   --
@@ -166,9 +164,10 @@ data Forker m l = Forker
   -- and not by the LedgerDB.
   , -- Queries
 
-    forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+    forkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ Read ledger tables from disk.
-  , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , forkerRangeReadTables ::
+      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
   -- ^ Range-read ledger tables from disk.
   --
   -- This range read will return as many values as the 'QueryBatchSize' that was
@@ -182,7 +181,7 @@ data Forker m l = Forker
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , forkerGetLedgerState :: !(STM m (l EmptyMK))
+  , forkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ Get the full ledger state without tables.
   --
   -- If an empty ledger state is all you need, use 'getVolatileTip',
@@ -193,7 +192,7 @@ data Forker m l = Forker
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , -- Updates
 
-    forkerPush :: !(l DiffMK -> m ())
+    forkerPush :: !(l blk DiffMK -> m ())
   -- ^ Advance the fork handle by pushing a new ledger state to the tip of the
   -- current fork.
   , forkerCommit :: !(STM m (m ()))
@@ -204,29 +203,24 @@ data Forker m l = Forker
   -- resources from the LedgerDB.
   }
   deriving Generic
-  deriving NoThunks via OnlyCheckWhnf (Forker m l)
+  deriving NoThunks via OnlyCheckWhnf (Forker m l blk)
 
 -- | An identifier for a 'Forker'. See 'ldbForkers'.
 newtype ForkerKey = ForkerKey Word16
   deriving stock (Show, Eq, Ord)
   deriving newtype (Enum, NoThunks, Num)
 
-type instance HeaderHash (Forker m l) = HeaderHash l
+type instance HeaderHash (Forker m l blk) = HeaderHash (l blk)
 
-type Forker' m blk = Forker m (ExtLedgerState blk)
+type Forker' m blk = Forker m ExtLedgerState blk
 
 instance
-  (GetTip l, MonadSTM m) =>
-  GetTipSTM m (Forker m l)
+  (GetTip (l blk), MonadSTM m) =>
+  GetTipSTM m (Forker m l blk)
   where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
 data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (TxIn l)
-
-castRangeQueryPrevious :: TxIn l ~ TxIn l' => RangeQueryPrevious l -> RangeQueryPrevious l'
-castRangeQueryPrevious NoPreviousQuery = NoPreviousQuery
-castRangeQueryPrevious PreviousQueryWasFinal = PreviousQueryWasFinal
-castRangeQueryPrevious (PreviousQueryWasUpTo txin) = PreviousQueryWasUpTo txin
 
 data RangeQuery l = RangeQuery
   { rqPrev :: !(RangeQueryPrevious l)
@@ -267,9 +261,9 @@ data ExceededRollback = ExceededRollback
   deriving (Show, Eq)
 
 forkerCurrentPoint ::
-  (GetTip l, HeaderHash l ~ HeaderHash blk, Functor (STM m)) =>
+  (GetTip (l blk), HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
   Proxy blk ->
-  Forker m l ->
+  Forker m l blk ->
   STM m (Point blk)
 forkerCurrentPoint _ forker =
   castPoint
@@ -277,13 +271,12 @@ forkerCurrentPoint _ forker =
     <$> forkerGetLedgerState forker
 
 ledgerStateReadOnlyForker ::
-  IOLike m => ReadOnlyForker m (ExtLedgerState blk) -> ReadOnlyForker m (LedgerState blk)
+  IOLike m => ReadOnlyForker' m blk -> ReadOnlyForker m LedgerState blk
 ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
-    , roforkerReadTables = fmap castLedgerTables . roforkerReadTables . castLedgerTables
-    , roforkerRangeReadTables =
-        fmap (first castLedgerTables) . roforkerRangeReadTables . castRangeQueryPrevious
+    , roforkerReadTables = roforkerReadTables
+    , roforkerRangeReadTables = roforkerRangeReadTables
     , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
     }
@@ -310,30 +303,31 @@ ledgerStateReadOnlyForker frk =
 -- - Forging loop.
 --
 -- - Mempool.
-type ReadOnlyForker :: (Type -> Type) -> LedgerStateKind -> Type
-data ReadOnlyForker m l = ReadOnlyForker
+type ReadOnlyForker :: (Type -> Type) -> StateKind -> Type -> Type
+data ReadOnlyForker m l blk = ReadOnlyForker
   { roforkerClose :: !(m ())
   -- ^ See 'forkerClose'
-  , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , roforkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ See 'forkerReadTables'
-  , roforkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , roforkerRangeReadTables ::
+      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
   -- ^ See 'forkerRangeReadTables'.
-  , roforkerGetLedgerState :: !(STM m (l EmptyMK))
+  , roforkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ See 'forkerGetLedgerState'
   , roforkerReadStatistics :: !(m Statistics)
   -- ^ See 'forkerReadStatistics'
   }
   deriving Generic
 
-instance NoThunks (ReadOnlyForker m l) where
+instance NoThunks (ReadOnlyForker m l blk) where
   wNoThunks _ _ = pure Nothing
   showTypeOf _ = "ReadOnlyForker"
 
 type instance HeaderHash (ReadOnlyForker m l) = HeaderHash l
 
-type ReadOnlyForker' m blk = ReadOnlyForker m (ExtLedgerState blk)
+type ReadOnlyForker' m blk = ReadOnlyForker m ExtLedgerState blk
 
-readOnlyForker :: Forker m l -> ReadOnlyForker m l
+readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
 readOnlyForker forker =
   ReadOnlyForker
     { roforkerClose = forkerClose forker
@@ -350,13 +344,14 @@ readOnlyForker forker =
 data ValidateArgs m l blk = ValidateArgs
   { resolve :: !(ResolveBlock m blk)
   -- ^ How to retrieve blocks from headers
-  , validateConfig :: !(LedgerCfg l)
+  , validateConfig :: !(LedgerCfg l blk)
   -- ^ The config
   , addPrevApplied :: !([RealPoint blk] -> STM m ())
   -- ^ How to add a previously applied block to the set of known blocks
   , prevApplied :: !(STM m (Set (RealPoint blk)))
   -- ^ Get the current set of previously applied blocks
-  , withForkerAtFromTip :: !(forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r))
+  , withForkerAtFromTip ::
+      !(forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r))
   -- ^ Create a forker from the tip
   , onSuccess :: !(SuccessForkerAction m l blk)
   -- ^ Continuation to run when the validation was successful
@@ -384,7 +379,7 @@ validate ::
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , l ~ ExtLedgerState blk
+  , l ~ ExtLedgerState
   ) =>
   ComputeLedgerEvents ->
   ValidateArgs m l blk ->
@@ -462,12 +457,12 @@ switch ::
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , l ~ ExtLedgerState blk
+  , l ~ ExtLedgerState
   ) =>
   LeiosDbReader m ->
-  (forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r)) ->
+  (forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg l blk ->
   -- | How many blocks to roll back
   Word64 ->
   (TraceValidateEvent blk -> m ()) ->
@@ -510,7 +505,7 @@ switch leiosDb withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolv
 --     1. Are we passing the block by value or by reference?
 --
 --     2. Are we applying or reapplying the block?
-type Ap :: (Type -> Type) -> LedgerStateKind -> Type -> Type
+type Ap :: (Type -> Type) -> StateKind -> Type -> Type
 data Ap m l blk where
   ReapplyVal :: blk -> Ap m l blk
   ApplyVal :: blk -> Ap m l blk
@@ -541,15 +536,15 @@ applyBlockToForker ::
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , l ~ ExtLedgerState blk
+  , l ~ ExtLedgerState
   ) =>
   LeiosDbReader m ->
   BlockApplicationMode ->
   ComputeLedgerEvents ->
-  LedgerCfg l ->
-  Forker m l ->
+  LedgerCfg l blk ->
+  Forker m l blk ->
   blk ->
-  m (Either (AnnLedgerError l blk) (l DiffMK))
+  m (Either (AnnLedgerError l blk) (l blk DiffMK))
 applyBlockToForker leiosDb mode evs cfg fo blk =
   fmap (fmap snd) $ applyBlock leiosDb evs cfg ap fo noResolution
  where
@@ -570,16 +565,16 @@ applyBlock ::
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , l ~ ExtLedgerState blk
+  , l ~ ExtLedgerState
   ) =>
   LeiosDbReader m ->
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg l blk ->
   Ap m l blk ->
-  Forker m l ->
+  Forker m l blk ->
   ResolveBlock m blk ->
   -- | The block that was resolved, alongside the result of applying it.
-  m (Either (AnnLedgerError l blk) (blk, l DiffMK))
+  m (Either (AnnLedgerError l blk) (blk, l blk DiffMK))
 applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b -> fmap (fmap (\st -> (b, st))) $ do
     case blockLeiosCert b of
@@ -600,8 +595,8 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             error $ "applyBlock ReapplyVal: nothing announced!?"
           Just fields -> do
             let announcedPoint = announcementLeiosPoint fields
-            let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
-                readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
+            let bKeys = getBlockKeySets b
+                readTables = forkerReadTables fo
             res <-
               resolveAndApplyLeiosClosure
                 leiosDb
@@ -672,8 +667,8 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
           -- FIXME: Check the EB references size, txs size, ex units and ref scripts capacities
 
           -- get the UTXO-HD keys of the RB we are applying the cert onto
-          let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
-          let readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
+          let bKeys = getBlockKeySets b
+          let readTables = forkerReadTables fo
           -- Resolve the EB closure from disk and apply it onto the ledger state.
           LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} <-
             withExceptT ExtValidationErrorLedger . ExceptT $
@@ -698,8 +693,8 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
  where
   withValues ::
     blk ->
-    (l ValuesMK -> m (Either (AnnLedgerError l blk) (l DiffMK))) ->
-    m (Either (AnnLedgerError l blk) (l DiffMK))
+    (l blk ValuesMK -> m (Either (AnnLedgerError l blk) (l blk DiffMK))) ->
+    m (Either (AnnLedgerError l blk) (l blk DiffMK))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
     vs <- withLedgerTables l <$> forkerReadTables fo (getBlockKeySets blk)
@@ -713,16 +708,16 @@ applyThenPush ::
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , l ~ ExtLedgerState blk
+  , l ~ ExtLedgerState
   ) =>
   LeiosDbReader m ->
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg l blk ->
   Ap m l blk ->
-  Forker m l ->
+  Forker m l blk ->
   ResolveBlock m blk ->
   -- | The header of the block that was applied and the resulting state
-  m (Either (AnnLedgerError l blk) (Header blk, l DiffMK))
+  m (Either (AnnLedgerError l blk) (Header blk, l blk DiffMK))
 applyThenPush leiosDb evs cfg ap fo doResolve = do
   eLerr <- applyBlock leiosDb evs cfg ap fo doResolve
   case eLerr of
@@ -739,14 +734,14 @@ applyThenPushMany ::
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , l ~ ExtLedgerState blk
+  , l ~ ExtLedgerState
   ) =>
   LeiosDbReader m ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
-  LedgerCfg l ->
+  LedgerCfg l blk ->
   [Ap m l blk] ->
-  Forker m l ->
+  Forker m l blk ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) (), AnchoredFragment (HeaderWithTime blk))
 applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = do
@@ -855,6 +850,10 @@ class ResolveLeiosBlock blk where
   -- 'LedgerSupportsMempool.reapplyTx' — which skips only the static checks
   -- (witnesses, scripts) — over a full 'LedgerSupportsMempool.applyTx'.
   --
+  -- The ledger's validated tx carries annotations derived from the state it
+  -- was validated against, so the token is built against the state the tx is
+  -- about to be reapplied to.
+  --
   -- NOTE: The token carries no evidence of its own; the cache's tag is the
   -- evidence, and the ledger recomputes every state-dependent check from the
   -- state at hand. Calling this on a tx the cache has /not/ tagged validated
@@ -862,8 +861,13 @@ class ResolveLeiosBlock blk where
   --
   -- The default panics, like 'leiosClosureTxKeySets': a non-Leios block never
   -- reaches the voting path.
-  assumeValidatedClosureTx :: GenTx blk -> Validated (GenTx blk)
-  assumeValidatedClosureTx _ =
+  assumeValidatedClosureTx ::
+    LedgerConfig blk ->
+    SlotNo ->
+    TickedLedgerState blk ValuesMK ->
+    GenTx blk ->
+    Validated (GenTx blk)
+  assumeValidatedClosureTx _ _ _ _ =
     error "assumeValidatedClosureTx: not Leios-enabled for this block type"
 
   -- | The ledger keys read by a closure tx — what 'forkerReadTables' needs
@@ -875,7 +879,7 @@ class ResolveLeiosBlock blk where
   -- 'emptyLedgerTables' as a defensive default because building one needs
   -- 'LedgerTableConstraints' which isn't in scope at the class-default site.
   -- TODO: could be avoided if we move this into resolveLeiosClosure?
-  leiosClosureTxKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
+  leiosClosureTxKeySets :: GenTx blk -> LedgerTables blk KeysMK
   leiosClosureTxKeySets _ =
     error "leiosClosureTxKeySets: not Leios-enabled for this block type"
 
@@ -896,10 +900,10 @@ class ResolveLeiosBlock blk where
   -- the per-era ledger 'ApplyTx' class, which works directly on the pure
   -- per-era @LedgerState era@.
   applyLeiosClosure ::
-    LedgerCfg (LedgerState blk) ->
+    LedgerConfig blk ->
     [GenTx blk] ->
     LedgerState blk ValuesMK ->
-    Either (LedgerErr (LedgerState blk)) (LedgerState blk ValuesMK)
+    Either (LedgerError blk) (LedgerState blk ValuesMK)
   applyLeiosClosure _ _ st = Right st
 
   -- | Inline transactions of an EB closure into a 'blk'. The returned 'blk' may be deemed invalid, but
@@ -1030,19 +1034,19 @@ resolveAndApplyLeiosClosure ::
   forall m blk.
   ( Monad m
   , ResolveLeiosBlock blk
-  , HasLedgerTables (LedgerState blk)
+  , HasLedgerTables LedgerState blk
   ) =>
   LeiosDbReader m ->
-  LedgerCfg (LedgerState blk) ->
+  LedgerConfig blk ->
   -- | The EB to resolve
   EbHash ->
   -- | The function to read the ledger tables given the keys of the EB closure's transactions.
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   -- | Additional keys to be read, for example the UTxOs from an RB.
-  LedgerTables (LedgerState blk) KeysMK ->
+  LedgerTables blk KeysMK ->
   -- | The base ledger state to apply the EB on top of.
   LedgerState blk EmptyMK ->
-  m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
+  m (Either (LedgerError blk) (LeiosClosureApplied blk))
 resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
   closureTxs <-
@@ -1085,7 +1089,7 @@ resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
 newtype SuccessForkerAction m l blk = MkSuccessForkerAction
   { applySuccessForkerAction ::
       AnchoredFragment (HeaderWithTime blk) ->
-      Forker m l ->
+      Forker m l blk ->
       m ()
   -- ^ Run with the blocks that were applied, as validated headers anchored at
   -- the fork point. This is the only point at which they and the forker are
@@ -1118,11 +1122,11 @@ data AnnLedgerError l blk = AnnLedgerError
   -- ^ The last block that was valid
   , annLedgerErrRef :: RealPoint blk
   -- ^ Reference to the block that had the error
-  , annLedgerErr :: LedgerErr l
+  , annLedgerErr :: LedgerErr l blk
   -- ^ The ledger error itself
   }
 
-type AnnLedgerError' blk = AnnLedgerError (ExtLedgerState blk) blk
+type AnnLedgerError' blk = AnnLedgerError ExtLedgerState blk
 
 {-------------------------------------------------------------------------------
   Trace validation events

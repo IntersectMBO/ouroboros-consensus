@@ -50,7 +50,6 @@ import Cardano.Network.NodeToNode
   ( ConnectionId (..)
   , ExpandedInitiatorContext (..)
   , IsBigLedgerPeer (..)
-  , MiniProtocolParameters (..)
   , ResponderContext (..)
   , defaultMiniProtocolParameters
   )
@@ -112,6 +111,8 @@ import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert (PerasCertDiffusion)
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote (PerasVoteDiffusion)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.ExitPolicy
 import qualified Ouroboros.Consensus.Node.GSM as GSM
@@ -148,6 +149,7 @@ import Ouroboros.Network.BlockFetch
   )
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
+import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.Mock.Chain (Chain (Genesis))
 import Ouroboros.Network.PeerSelection.Governor
   ( makePublicPeerSelectionStateVar
@@ -164,10 +166,6 @@ import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( TxSubmissionInitDelay (..)
   , TxSubmissionLogicVersion (..)
-  )
-import Ouroboros.Network.TxSubmission.Inbound.V2.Policy
-  ( TxDecisionPolicy (..)
-  , defaultTxDecisionPolicy
   )
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
@@ -831,7 +829,7 @@ runThreadNetwork
           Origin -> error "selTracer"
 
         -- prop_general relies on this tracer
-        instrumentationTracer = Tracer . emit $ \case
+        instrumentationTracer = mkTracer $ \case
           ChainDB.TraceAddBlockEvent
             (ChainDB.AddBlockValidation (ChainDB.InvalidBlock e p)) ->
               traceWith invalidTracer (p, e)
@@ -893,7 +891,7 @@ runThreadNetwork
       -- prop_general relies on these tracers
       let invalidTracer = nodeEventsInvalids nodeInfoEvents
           updatesTracer = nodeEventsUpdates nodeInfoEvents
-          wrapTracer tr = Tracer . emit $ \(p, bno) -> do
+          wrapTracer tr = mkTracer $ \(p, bno) -> do
             s <- OracularClock.getCurrentSlot clock
             traceWith tr (s, p, bno)
           addTracer = wrapTracer $ nodeEventsAdds nodeInfoEvents
@@ -919,14 +917,11 @@ runThreadNetwork
 
       let customForgeBlock ::
             BlockForging m blk ->
-            ForgeBlockArgs m blk ->
+            ForgeBlockLeiosArgs m ->
+            ForgeBlockArgs blk ->
             m (blk, Maybe LeiosDemoTypes.ForgedLeiosEb)
-          customForgeBlock origBlockForging fbArgs = do
-            let currentBno = fbCurrentBlockNo fbArgs
-                currentSlot = fbCurrentSlotNo fbArgs
-                tickedLdgSt = fbCurrentTickedLedgerState fbArgs
-
-            let currentEpoch = HFF.futureSlotToEpoch future currentSlot
+          customForgeBlock origBlockForging leiosArgs args@ForgeBlockArgs{..} = do
+            let currentEpoch = HFF.futureSlotToEpoch future fbCurrentSlotNo
 
             -- EBBs are only ever possible in the first era
             let inFirstEra = HFF.futureEpochInFirstEra future currentEpoch
@@ -938,17 +933,20 @@ runThreadNetwork
                   EpochSize y = epochSize0
 
             let p :: Point blk
-                p = castPoint $ getTip tickedLdgSt
+                p = castPoint $ getTip fbCurrentTickedLedgerState
 
             let needEBB = inFirstEra && NotOrigin ebbSlot > pointSlot p
             case mbForgeEbbEnv <* guard needEBB of
               Nothing ->
                 -- no EBB needed, forge without making one
-                forgeBlock origBlockForging fbArgs
+                forgeBlock
+                  origBlockForging
+                  leiosArgs
+                  args
               Just forgeEbbEnv -> do
                 -- The EBB shares its BlockNo with its predecessor (if
                 -- there is one)
-                let ebbBno = case currentBno of
+                let ebbBno = case fbCurrentBlockNo of
                       -- We assume this invariant:
                       --
                       -- If forging of EBBs is enabled then the node
@@ -970,14 +968,14 @@ runThreadNetwork
                 -- if it is valid, we retick to the /same/ slot
                 let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
                     tables = emptyLedgerTables -- EBBs need no input tables
-                tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
+                tickedLdgSt' <- case Exc.runExcept $ apply ebb (fbCurrentTickedLedgerState `withLedgerTables` tables) of
                   Left e -> Exn.throw $ JitEbbError @blk e
                   Right st ->
                     pure $
                       applyChainTick
                         OmitLedgerEvents
                         (configLedger pInfoConfig)
-                        currentSlot
+                        fbCurrentSlotNo
                         (forgetLedgerTables st)
 
                 -- forge the block usings the ledger state that includes
@@ -985,7 +983,8 @@ runThreadNetwork
                 blk <-
                   forgeBlock
                     origBlockForging
-                    fbArgs{fbCurrentTickedLedgerState = forgetLedgerTables tickedLdgSt'}
+                    leiosArgs
+                    args{fbCurrentTickedLedgerState = forgetLedgerTables tickedLdgSt'}
 
                 -- If the EBB or the subsequent block is invalid, then the
                 -- ChainDB will reject it as invalid, and
@@ -993,7 +992,7 @@ runThreadNetwork
                 -- because of a block rejection.
                 -- The EBB extends 'p', so its predecessor's view comes from
                 -- the ledger state there. Asking the ChainDB rather than
-                -- reusing 'tickedLdgSt', whose view is the one at the current
+                -- reusing 'fbCurrentTickedLedgerState', whose view is the one at the current
                 -- slot and so differs across an epoch boundary.
                 predecessor <- case pointSlot p of
                   Origin -> pure ChainDB.NoPredecessor
@@ -1041,7 +1040,7 @@ runThreadNetwork
         -- prop_general relies on these tracers
         instrumentationTracers =
           nullTracers
-            { chainSyncClientTracer = Tracer . emit $ \case
+            { chainSyncClientTracer = mkTracer $ \case
                 TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) ->
                   case blockPoint hdr of
                     GenesisPoint -> pure ()
@@ -1052,7 +1051,7 @@ runThreadNetwork
                         headerAddTracer
                         (RealPoint s h, blockNo hdr)
                 _ -> pure ()
-            , forgeTracer = Tracer . emit $ \(TraceLabelCreds _ ev) -> do
+            , forgeTracer = mkTracer $ \(TraceLabelCreds _ ev) -> do
                 traceWith (nodeEventsForges nodeInfoEvents) ev
                 traceWith nodeTracer (FromForge ev)
                 case ev of
@@ -1131,18 +1130,7 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , miniProtocolParameters =
-                  defaultMiniProtocolParameters
-                    { chainSyncPipeliningHighMark = 4
-                    , chainSyncPipeliningLowMark = 2
-                    , blockFetchPipeliningMax = 10
-                    , txDecisionPolicy =
-                        -- Same as the default window. A larger one lets the V1
-                        -- inbound state grow, and with +checktvarinvariants its
-                        -- NoThunks check walks the whole state at every step,
-                        -- which makes the run quadratic.
-                        defaultTxDecisionPolicy{maxUnacknowledgedTxIds = 10}
-                    }
+              , miniProtocolParameters = defaultMiniProtocolParameters
               , blockFetchConfiguration =
                   BlockFetchConfiguration
                     { bfcMaxConcurrencyBulkSync = 1
@@ -1151,7 +1139,7 @@ runThreadNetwork
                     , bfcDecisionLoopIntervalPraos = 0.0 -- Mock testsuite can use sub-second slot
                     , bfcDecisionLoopIntervalGenesis = 0.0 -- interval which doesn't play nice with
                     -- blockfetch descision interval.
-                    , bfcSalt = 0
+                    , bfcSalt = mkUnsafeSalt 0
                     , bfcGenesisBFConfig = gcBlockFetchConfig enableGenesisConfigDefault
                     }
               , gsmArgs =
@@ -1276,6 +1264,8 @@ runThreadNetwork
         Lazy.ByteString
         Lazy.ByteString
         (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+        (AnyMessage (PerasCertDiffusion blk))
+        (AnyMessage (PerasVoteDiffusion blk))
         (AnyMessage KeepAlive)
         (AnyMessage (PeerSharing NodeId))
         (AnyMessage (LeiosNotify LeiosDemoTypes.LeiosPoint (Header blk) LeiosDemoTypes.LeiosVote))
@@ -1297,6 +1287,12 @@ runThreadNetwork
         , cTxSubmission2Codec =
             mapFailureCodec CodecIdFailure $
               NTN.cTxSubmission2Codec NTN.identityCodecs
+        , cPerasCertDiffusionCodec =
+            mapFailureCodec CodecIdFailure $
+              NTN.cPerasCertDiffusionCodec NTN.identityCodecs
+        , cPerasVoteDiffusionCodec =
+            mapFailureCodec CodecIdFailure $
+              NTN.cPerasVoteDiffusionCodec NTN.identityCodecs
         , cKeepAliveCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cKeepAliveCodec NTN.identityCodecs
@@ -1894,9 +1890,12 @@ type TracingConstraints blk =
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
-  , Show (TxMeasure blk)
+  , Show (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase2 blk)
   , Show (TxEbMeasure blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   , HasNestedContent Header blk
   , HasRawTxId (GenTxId blk)
   )
@@ -1943,6 +1942,8 @@ type LimitedApp' m addr blk =
     Lazy.ByteString
     Lazy.ByteString
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+    (AnyMessage (PerasCertDiffusion blk))
+    (AnyMessage (PerasVoteDiffusion blk))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
     (AnyMessage (LeiosNotify LeiosDemoTypes.LeiosPoint (Header blk) LeiosDemoTypes.LeiosVote))

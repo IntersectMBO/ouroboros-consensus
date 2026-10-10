@@ -1,20 +1,13 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.QueryHF () where
@@ -22,11 +15,9 @@ module Ouroboros.Consensus.Cardano.QueryHF () where
 import Data.Coerce
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
-import Data.SOP.Constraint
 import Data.SOP.Index
 import Data.SOP.Strict
 import Data.Singletons
-import NoThunks.Class
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
@@ -41,7 +32,6 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.TypeFamilyWrappers
 
 -- | Just to have the @x@ as the last type variable
 newtype FlipBlockQuery footprint result x
@@ -51,7 +41,6 @@ answerCardanoQueryHF ::
   forall x xs c footprint result m.
   ( xs ~ CardanoEras c
   , CardanoHardForkConstraints c
-  , All (Compose NoThunks WrapTxOut) xs
   , SingI footprint
   ) =>
   ( forall blk.
@@ -88,7 +77,7 @@ shelleyCardanoFilter ::
   , ShelleyCompatible proto era
   ) =>
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  TxOut (LedgerState (HardForkBlock (CardanoEras c))) ->
+  TxOut (HardForkBlock (CardanoEras c)) ->
   Bool
 shelleyCardanoFilter q = eliminateCardanoTxOut (\_ -> shelleyQFTraverseTablesPredicate q)
 
@@ -125,6 +114,6 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
 
 byronCardanoFilter ::
   BlockQuery ByronBlock QFTraverseTables result ->
-  TxOut (LedgerState (HardForkBlock (CardanoEras c))) ->
+  TxOut (HardForkBlock (CardanoEras c)) ->
   Bool
 byronCardanoFilter = \case {}

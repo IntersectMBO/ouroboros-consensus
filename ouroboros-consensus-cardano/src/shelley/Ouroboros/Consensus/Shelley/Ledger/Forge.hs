@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -20,7 +21,7 @@ import qualified Cardano.Ledger.Core as SL
   , txSeqBlockBodyL
   )
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
-import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
+import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractValidatedTx)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.Exception
@@ -40,6 +41,7 @@ import LeiosDemoTypes
   , forgeLeiosEb
   , hashLeiosEb
   , maxLeiosEbBytesSize
+  , toCodecEbAnnouncement
   )
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
@@ -47,8 +49,8 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
-import Ouroboros.Consensus.Protocol.Praos.Common (EitherLeiosF)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Ouroboros.Consensus.Protocol.Praos.Common (WhenLeios, pureLeiosOnly)
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -69,15 +71,16 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 forgeShelleyBlock ::
   forall m era proto.
   ( ShelleyCompatible proto era
-  , Traversable (EitherLeiosF proto ())
+  , Applicative (WhenLeios proto)
+  , Traversable (WhenLeios proto)
   , Monad m
   ) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
-  EitherLeiosF proto () () ->
-  ForgeBlockArgs m (ShelleyBlock proto era) ->
+  ForgeBlockLeiosArgs m ->
+  ForgeBlockArgs (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
-forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
+forgeShelleyBlock hotKey cbl ForgeBlockLeiosArgs{fbLeiosTracer} ForgeBlockArgs{..} = do
   -- Forge an RB and attempt to announce an EB and/or certify a previously announced one:
   --
   --  * Certify: if the forge loop decided to certify a previously-announced
@@ -87,17 +90,18 @@ forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
   --    When we are also certifying, 'fbEbTxs' contains transactions from the mempool that has already
   --    been rebased onto the post-certificate ledger state.
   -- Runs 'mkEb' exactly where the protocol has the field.
-  leiosResult <- traverse (\() -> mkEb) leiosToken
+  leiosResult <- traverse (\() -> mkEb) (pureLeiosOnly @proto ())
   let mayEbAnn :: Maybe (ForgedLeiosEb, EbAnnouncement)
       mayEbAnn = foldr (\x _ -> x) Nothing leiosResult
 
       leiosFields =
-        (\ann -> (isJust fbMayLeiosCert, maybeToStrictMaybe (snd <$> ann)))
+        (\ann -> (isJust fbMayLeiosCert, maybeToStrictMaybe (toCodecEbAnnouncement . snd <$> ann)))
           <$> leiosResult
   let rbBody = mkBody fbMayLeiosCert
       actualRbBodySize = SL.blockBodySize protocolVersion rbBody
   hdr <-
     mkHeader @_ @(ProtoCrypto proto)
+      (Proxy @era)
       hotKey
       cbl
       fbIsLeader
@@ -142,14 +146,14 @@ forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
   mkBody mayLeiosCert =
     let txs = case mayLeiosCert of
           Just _ -> Seq.empty
-          Nothing -> Seq.fromList (fmap extractTx fbRbTxs)
+          Nothing -> Seq.fromList (fmap extractTx fbTxs)
         base = SL.mkBasicBlockBody & SL.txSeqBlockBodyL .~ txs
      in case Typeable.eqT @era @DijkstraEra of
           Just Refl -> base & leiosCertBlockBodyL .~ maybeToStrictMaybe mayLeiosCert
           Nothing -> base
 
   extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx Core.TopTx era
-  extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
+  extractTx (ShelleyValidatedTx _txid vtx) = SL.extractValidatedTx vtx
 
   prevHash :: SL.PrevHash
   prevHash =
@@ -171,7 +175,7 @@ forgeShelleyBlock hotKey cbl leiosToken ForgeBlockArgs{..} = do
           -- An EB over the codec's message limit never diffuses: peers drop
           -- the connection and we would not learn why, since we skip
           -- validating our own EB. The mempool measure plans within the limit
-          -- ('leiosEndorserBlockMeasure'), so a breach here means the measure
+          -- ('leiosEndorserBlockCapacity'), so a breach here means the measure
           -- and the encoder have drifted apart.
           ebSize =
             assert

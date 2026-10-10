@@ -7,6 +7,7 @@ module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
 import Cardano.Slotting.Slot (SlotNo (..))
+import Cardano.Tools.Config (withConfigErrorHandling)
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import qualified Cardano.Tools.ImmDBServer.Diffusion as ImmDBServer
@@ -23,7 +24,7 @@ import System.Exit (die)
 import qualified System.IO as SIO
 
 main :: IO ()
-main = withStdTerminalHandles $ do
+main = withStdTerminalHandles $ withConfigErrorHandling $ do
   SIO.hSetBuffering SIO.stdout SIO.LineBuffering
   cryptoInit
   Opts

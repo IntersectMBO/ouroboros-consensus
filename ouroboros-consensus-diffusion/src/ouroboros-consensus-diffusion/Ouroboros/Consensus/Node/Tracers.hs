@@ -16,6 +16,8 @@ module Ouroboros.Consensus.Node.Tracers
     -- * Specific tracers
   , TraceForgeEvent (..)
   , TraceLabelCreds (..)
+  , TracePerasCertInclusionEvent (..)
+  , TracePerasVoteForgingEvent (..)
   ) where
 
 import Control.Exception (SomeException)
@@ -46,7 +48,13 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
+import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
 import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
+import Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
+  ( TracePerasCertInclusionEvent (..)
+  )
+import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVoteForgingEvent (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
@@ -82,6 +90,17 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , txLogicTracer :: f (TraceTxLogic remotePeer (GenTxId blk) (GenTx blk))
   , txCountersTracer :: f TxSubmissionCounters
   , mempoolTracer :: f (TraceEventMempool blk)
+  , perasCertDiffusionInboundTracer ::
+      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionInbound blk))
+  , perasCertDiffusionOutboundTracer ::
+      f (TraceLabelPeer remotePeer (TracePerasCertDiffusionOutbound blk))
+  , perasVoteDiffusionInboundTracer ::
+      f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionInbound blk))
+  , perasVoteDiffusionOutboundTracer ::
+      f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionOutbound blk))
+  , perasCertInclusionTracer ::
+      f (TracePerasCertInclusionEvent blk)
+  , perasVoteForgingTracer :: f (TracePerasVoteForgingEvent blk)
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
@@ -116,6 +135,12 @@ instance
       , txLogicTracer = f txLogicTracer
       , txCountersTracer = f txCountersTracer
       , mempoolTracer = f mempoolTracer
+      , perasCertDiffusionInboundTracer = f perasCertDiffusionInboundTracer
+      , perasCertDiffusionOutboundTracer = f perasCertDiffusionOutboundTracer
+      , perasVoteDiffusionInboundTracer = f perasVoteDiffusionInboundTracer
+      , perasVoteDiffusionOutboundTracer = f perasVoteDiffusionOutboundTracer
+      , perasCertInclusionTracer = f perasCertInclusionTracer
+      , perasVoteForgingTracer = f perasVoteForgingTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
       , forgeStateInfoTracer = f forgeStateInfoTracer
@@ -155,6 +180,12 @@ nullTracers =
     , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
     , mempoolTracer = nullTracer
+    , perasCertDiffusionInboundTracer = nullTracer
+    , perasCertDiffusionOutboundTracer = nullTracer
+    , perasVoteDiffusionInboundTracer = nullTracer
+    , perasVoteForgingTracer = nullTracer
+    , perasVoteDiffusionOutboundTracer = nullTracer
+    , perasCertInclusionTracer = nullTracer
     , forgeTracer = nullTracer
     , blockchainTimeTracer = nullTracer
     , forgeStateInfoTracer = nullTracer
@@ -173,7 +204,8 @@ nullTracers =
     }
 
 showTracers ::
-  ( Show blk
+  ( Monad m
+  , Show blk
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (GenTxId blk)
@@ -183,9 +215,14 @@ showTracers ::
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
-  , Show (TxMeasure blk)
+  , Show (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase2 blk)
   , Show (TxEbMeasure blk)
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  , Show (PerasError blk)
   , Show remotePeer
+  , HasRawTxId (GenTxId blk)
   , LedgerSupportsProtocol blk
   , Monad m
   ) =>
@@ -204,6 +241,12 @@ showTracers tr =
     , txLogicTracer = show >$< tr
     , txCountersTracer = show >$< tr
     , mempoolTracer = show >$< tr
+    , perasCertDiffusionInboundTracer = show >$< tr
+    , perasCertDiffusionOutboundTracer = show >$< tr
+    , perasVoteDiffusionInboundTracer = show >$< tr
+    , perasVoteDiffusionOutboundTracer = show >$< tr
+    , perasCertInclusionTracer = show >$< tr
+    , perasVoteForgingTracer = show >$< tr
     , forgeTracer = show >$< tr
     , blockchainTimeTracer = show >$< tr
     , forgeStateInfoTracer = show >$< tr
@@ -399,8 +442,10 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (ForgeStateUpdateError blk)
   , Eq (CannotForge blk)
-  , Eq (TxMeasure blk)
+  , Eq (TxMeasurePhase1 blk)
+  , Eq (TxMeasurePhase2 blk)
   , Eq (TxEbMeasure blk)
+  , Eq (PerasError blk)
   ) =>
   Eq (TraceForgeEvent blk)
 deriving instance
@@ -409,8 +454,10 @@ deriving instance
   , Show (Validated (GenTx blk))
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
-  , Show (TxMeasure blk)
+  , Show (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase2 blk)
   , Show (TxEbMeasure blk)
+  , Show (PerasError blk)
   ) =>
   Show (TraceForgeEvent blk)
 

@@ -1,19 +1,15 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -110,11 +106,12 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView)
+import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView, WithEmptyFragment)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
+  , AddPerasCertChainSelOutcome (..)
   , AddPerasCertPromise (..)
   , ChainDbError (..)
   , ChainSelectionPromise (..)
@@ -140,6 +137,8 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDB)
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
   ( VolatileDB
@@ -160,6 +159,7 @@ import Ouroboros.Network.Block (MaxSlotNo (..))
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( ChainSelStarvation (..)
   )
+import System.Random (StdGen)
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class
@@ -399,7 +399,11 @@ data ChainDbEnv m blk = CDB
   , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
+  , cdbSnapshotDelayRNG :: !(StrictTVar m StdGen)
+  -- ^ PRNG for determining the random delay we'll wait before actually
+  -- performing the snapshot when one has been requested.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
+  , cdbPerasVoteDB :: !(PerasVoteDB m blk)
   , cdbAcquiredLeiosEbs :: !(StrictTVar m AcquiredLeiosEbs)
   -- ^ The Leios EBs whose tx closure has been acquired, aged by youngest
   -- announcement slot. ChainSel consults it (membership) to avoid selecting an
@@ -447,7 +451,11 @@ data ChainDbEnv m blk = CDB
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a
 -- constraint and still have it work with the simulator)
 instance
-  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining blk) =>
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , BlockSupportsDiffusionPipelining blk
+  ) =>
   NoThunks (ChainDbEnv m blk)
   where
   showTypeOf _ = "ChainDbEnv m " ++ show (typeRep (Proxy @blk))
@@ -466,7 +474,11 @@ data Internal m blk = Internal
   , intGarbageCollect :: SlotNo -> m ()
   -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
   , intTryTakeSnapshot :: m ()
-  -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s).
+  -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s), if
+  -- the 'SnapshotPolicy' indicates so.
+  --
+  -- Unlike in a running node, the snapshots are written synchronously and
+  -- right away; see 'Background.tryServeSnapshotRequestNow'.
   , intAddBlockRunner :: m Void
   -- ^ Start the loop that adds blocks to the ChainDB retrieved from the
   -- queue populated by 'ChainDB.addBlock'. Execute this loop in a separate
@@ -595,7 +607,24 @@ data InvalidBlockInfo blk = InvalidBlockInfo
   { invalidBlockReason :: !(ExtValidationError blk)
   , invalidBlockSlotNo :: !SlotNo
   }
-  deriving (Eq, Show, Generic, NoThunks)
+
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Show (InvalidBlockInfo blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Eq (InvalidBlockInfo blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  NoThunks (InvalidBlockInfo blk)
+deriving instance
+  Generic (InvalidBlockInfo blk)
 
 {-------------------------------------------------------------------------------
   Blocks to add
@@ -645,7 +674,7 @@ data ChainSelMessage m blk
     ChainSelAddPerasCert
       !(WithArrivalTime (ValidatedPerasCert blk))
       -- | Used for 'AddPerasCertPromise'.
-      !(StrictTMVar m ())
+      !(StrictTMVar m AddPerasCertChainSelOutcome)
   | -- | Reprocess blocks that have been postponed by the LoE.
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
@@ -704,7 +733,9 @@ addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish
 
 -- | Add a Peras certificate to the background queue.
 addPerasCertToQueue ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   Tracer m (TraceAddPerasCertEvent blk) ->
   ChainSelQueue m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
@@ -721,7 +752,7 @@ addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
       { waitPerasCertProcessed = atomically $ readTMVar varProcessed
       }
  where
-  addedToQueue = AddedPerasCertToQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
+  addedToQueue = AddedPerasCertToQueue (getPerasCertRound cert) (getPerasCertPoint cert)
 
 -- | Try to add blocks again that were postponed due to the LoE.
 addReprocessLoEBlocks ::
@@ -801,7 +832,7 @@ closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
     ChainSelAddBlock ab ->
       tryPutTMVar (varBlockProcessed ab) (FailedToAddBlock "Queue flushed")
     ChainSelAddPerasCert _cert varProcessed ->
-      tryPutTMVar varProcessed ()
+      tryPutTMVar varProcessed PerasCertNotProcessedClosing
     ChainSelReprocessLoEBlocks varProcessed ->
       tryPutTMVar varProcessed ()
     ChainSelReprocessLeiosEb{} ->
@@ -864,6 +895,7 @@ data TraceEvent blk
   | TraceImmutableDBEvent (ImmutableDB.TraceEvent blk)
   | TraceVolatileDBEvent (VolatileDB.TraceEvent blk)
   | TracePerasCertDbEvent (PerasCertDB.TraceEvent blk)
+  | TracePerasVoteDbEvent (PerasVoteDB.TraceEvent blk)
   | TraceLastShutdownUnclean
   | TraceChainSelStarvationEvent (TraceChainSelStarvationEvent blk)
   | TraceAddPerasCertEvent (TraceAddPerasCertEvent blk)
@@ -871,6 +903,7 @@ data TraceEvent blk
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , Show (TraceAddBlockEvent blk)
   ) =>
@@ -1026,15 +1059,19 @@ data TraceAddBlockEvent blk
 deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , Eq (ReasonForSwitch' blk)
+  , Eq (ReasonForSwitch (WithEmptyFragment (WeightedSelectView (BlockProtocol blk))))
+  , Eq (ReasonForSwitch (SelectView (BlockProtocol blk)))
   ) =>
   Eq (TraceAddBlockEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , Show (ReasonForSwitch' blk)
+  , Show (ReasonForSwitch (WithEmptyFragment (WeightedSelectView (BlockProtocol blk))))
+  , Show (ReasonForSwitch (SelectView (BlockProtocol blk)))
   ) =>
   Show (TraceAddBlockEvent blk)
 
@@ -1051,11 +1088,13 @@ data TraceValidationEvent blk
 deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Eq (TraceValidationEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Show (TraceValidationEvent blk)
 
@@ -1085,11 +1124,13 @@ data TraceInitChainSelEvent blk
 deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Eq (TraceInitChainSelEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Show (TraceInitChainSelEvent blk)
 

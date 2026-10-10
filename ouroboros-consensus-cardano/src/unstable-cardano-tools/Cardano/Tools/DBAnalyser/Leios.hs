@@ -35,6 +35,7 @@ module Cardano.Tools.DBAnalyser.Leios
 
 import Cardano.Tools.DBAnalyser.Types (LedgerApplicationMode (..))
 import Control.Monad (when)
+import Data.SOP (All, Top)
 import LeiosDemoDb (LeiosDbReader, lookupEbBody)
 import LeiosDemoTypes
   ( BytesSize
@@ -49,8 +50,9 @@ import LeiosDemoTypes
   )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Abstract (HardForkIndices)
 import Ouroboros.Consensus.HeaderValidation (HeaderState (..))
-import Ouroboros.Consensus.Ledger.Abstract (ApplyBlock (getBlockKeySets))
+import Ouroboros.Consensus.Ledger.Abstract (GetBlockKeySets (getBlockKeySets))
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
@@ -58,7 +60,15 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , leiosCommitteeOfTip
   )
+import Ouroboros.Consensus.Ledger.Tables
+  ( DiffMK
+  , EmptyMK
+  , HasLedgerTables (..)
+  , KeysMK
+  , ValuesMK
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
@@ -241,17 +251,17 @@ missingEbBodyError ebHash =
 -- | The ledger keys that the given EB txs read.
 closureKeySets ::
   ( ResolveLeiosBlock blk
-  , HasLedgerTables (LedgerState blk)
+  , HasLedgerTables LedgerState blk
   ) =>
   [LedgerSupportsMempool.GenTx blk] ->
-  LedgerTables (ExtLedgerState blk) KeysMK
-closureKeySets = castLedgerTables . foldMap leiosClosureTxKeySets
+  LedgerTables blk KeysMK
+closureKeySets = foldMap leiosClosureTxKeySets
 
 -- | What 'applyClosure' produces.
 data ClosureApplied blk = ClosureApplied
   { caStateAfterEb :: ExtLedgerState blk EmptyMK
   -- ^ The ledger state after applying the EB txs, without its tables.
-  , caTablesAfterEb :: LedgerTables (ExtLedgerState blk) ValuesMK
+  , caTablesAfterEb :: LedgerTables blk ValuesMK
   -- ^ The tables of that state.
   , caClosureDiff :: Maybe (LedgerState blk DiffMK)
   -- ^ The change that applying the EB txs makes. The caller prepends this to
@@ -268,14 +278,14 @@ data ClosureApplied blk = ClosureApplied
 -- the action measures the whole application.
 applyClosure ::
   ( ResolveLeiosBlock blk
-  , HasLedgerTables (LedgerState blk)
-  , Show (LedgerErr (LedgerState blk))
+  , HasLedgerTables LedgerState blk
+  , Show (LedgerErr LedgerState blk)
   ) =>
-  LedgerCfg (LedgerState blk) ->
+  LedgerCfg LedgerState blk ->
   [LedgerSupportsMempool.GenTx blk] ->
   -- | Parent tip
   ExtLedgerState blk EmptyMK ->
-  LedgerTables (ExtLedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   IO (ClosureApplied blk)
 applyClosure _lcfg [] parent tables = pure (ClosureApplied parent tables Nothing)
 applyClosure lcfg closureTxs parent tables =
@@ -290,10 +300,10 @@ applyClosure lcfg closureTxs parent tables =
       pure $
         ClosureApplied
           (parent{ledgerState = forgetLedgerTables stateAfterEb})
-          (ltprj stateAfterEb)
+          (projectLedgerTables stateAfterEb)
           (Just (trackingToDiffs (calculateDifference stateBeforeEb stateAfterEb)))
  where
-  stateBeforeEb = ledgerState parent `ltwith` castLedgerTables tables
+  stateBeforeEb = ledgerState parent `withLedgerTables` tables
 
 -- | The 'LedgerDB.BlockApplicationMode' that a 'LedgerApplicationMode' selects.
 --
@@ -312,6 +322,9 @@ blockApplicationMode = \case
 -- won't apply.
 applyBlockAtTip ::
   ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , All Top (HardForkIndices blk)
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
@@ -334,6 +347,9 @@ applyBlockAtTip reader mode cfg ldb blk =
 -- | Apply the block to the given forker, in the given mode.
 applyBlockToTipForker ::
   ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , All Top (HardForkIndices blk)
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
@@ -344,7 +360,7 @@ applyBlockToTipForker ::
   blk ->
   IO
     ( Either
-        (LedgerDB.AnnLedgerError (ExtLedgerState blk) blk)
+        (LedgerDB.AnnLedgerError ExtLedgerState blk)
         (ExtLedgerState blk DiffMK)
     )
 applyBlockToTipForker reader mode cfg frk blk =

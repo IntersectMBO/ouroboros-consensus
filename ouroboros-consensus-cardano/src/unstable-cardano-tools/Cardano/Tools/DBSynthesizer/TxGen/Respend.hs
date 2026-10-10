@@ -15,9 +15,8 @@ module Cardano.Tools.DBSynthesizer.TxGen.Respend
   ( mkRespendTxGen
   ) where
 
-import Cardano.Api.Key (Key (SigningKey))
-import Cardano.Api.KeysShelley (PaymentKey, SigningKey (PaymentSigningKey))
 import Cardano.Crypto.DSIGN (SignKeyDSIGN)
+import Cardano.Keys (PaymentKey, SigningKey (PaymentSigningKey))
 import Cardano.Ledger.Api
   ( EraTx
   , EraTxOut
@@ -41,7 +40,7 @@ import qualified Cardano.Ledger.Keys as LK
 import Cardano.Ledger.Val (inject)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Tools.DBSynthesizer.Forging (GenTxs)
-import Cardano.Tools.DBSynthesizer.TxGen (ownsAddr, readPaymentSigningKey)
+import Cardano.Tools.DBSynthesizer.TxGen (measureTx, ownsAddr, readPaymentSigningKey)
 import Control.DeepSeq (force)
 import Control.Exception (throwIO)
 import Control.Monad (when)
@@ -81,13 +80,12 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , blockCapacityTxMeasure
   , ebCapacityTxMeasure
   , txEbMeasure
-  , txMeasure
   )
 import Ouroboros.Consensus.Ledger.Tables
-  ( KeysMK (KeysMK)
+  ( HasLedgerTables (projectLedgerTables)
+  , KeysMK (KeysMK)
   , LedgerTables (LedgerTables)
   , ValuesMK
-  , castLedgerTables
   , getLedgerTables
   , getValuesMK
   , ltliftA2
@@ -96,7 +94,6 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
   ( applyDiffForKeysOnTables
   , applyDiffs
   , emptyLedgerTables
-  , ltprj
   , unionValues
   )
 import Ouroboros.Consensus.Shelley.Ledger (IsShelleyBlock, ShelleyBlock)
@@ -230,17 +227,11 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
     -- The forker is at the point of the parent block, so its values are those
     -- of the ledger state after the parent block. The tick to this slot adds
     -- the diffs that 'ticked' holds. The UTxO of this slot needs both.
-    let keysForSlot :: LedgerTables (TickedLedgerState Cardano) KeysMK
-        keysForSlot = castLedgerTables keys
+    let stateAtSlot :: TickedLedgerState Cardano ValuesMK
+        stateAtSlot = applyDiffForKeysOnTables valuesAtParent keys ticked
 
-        valuesForSlot :: LedgerTables (TickedLedgerState Cardano) ValuesMK
-        valuesForSlot = castLedgerTables valuesAtParent
-
-        stateAtSlot :: TickedLedgerState Cardano ValuesMK
-        stateAtSlot = applyDiffForKeysOnTables valuesForSlot keysForSlot ticked
-
-        tablesAtSlot :: LedgerTables (LedgerState Cardano) ValuesMK
-        tablesAtSlot = ltprj stateAtSlot
+        tablesAtSlot :: LedgerTables Cardano ValuesMK
+        tablesAtSlot = projectLedgerTables stateAtSlot
 
         -- The table of a CardanoBlock keeps a hard-fork wrapper on each key and
         -- on each value. 'ejectLedgerTables' removes both wrappers, and gives
@@ -338,7 +329,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
         let Cursor{cursorState = state, cursorEntry = (txIn, txOut)} = cursor
         (tx, madeOut) <- respendTx signKey txIn txOut
         let genTx = wrap (mkShelleyTx tx)
-        measured <- case runExcept (txMeasure lcfg state genTx) of
+        measured <- case runExcept (measureTx lcfg state genTx) of
           Left err ->
             throwIO . userError $
               "db-synthesizer: a generated transaction breaks a per-transaction limit at slot "
@@ -380,8 +371,8 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
     forall proto era.
     Index (CardanoEras StandardCrypto) (ShelleyBlock proto era) ->
     IO
-      ( LedgerTables (ExtLedgerState Cardano) KeysMK
-      , LedgerTables (ExtLedgerState Cardano) ValuesMK
+      ( LedgerTables Cardano KeysMK
+      , LedgerTables Cardano ValuesMK
       )
   readCandidates idx =
     readIORef lastOutput >>= \case
@@ -406,7 +397,7 @@ respendTxGen lastOutput (PaymentSigningKey signKey) cfg slot certifies forker ti
     forall proto era.
     Index (CardanoEras StandardCrypto) (ShelleyBlock proto era) ->
     TxIn ->
-    LedgerTables (ExtLedgerState Cardano) KeysMK
+    LedgerTables Cardano KeysMK
   oneKey idx txIn =
     LedgerTables . KeysMK . Set.singleton $ injectCanonicalTxIn idx (BigEndianTxIn txIn)
 
@@ -448,8 +439,8 @@ ownedBy signKey txOut = ownsAddr signKey (txOut ^. addrTxOutL)
 
 -- | Read every entry of the UTxO, one page at a time.
 readWholeUtxo ::
-  ReadOnlyForker IO (ExtLedgerState Cardano) ->
-  IO (LedgerTables (ExtLedgerState Cardano) ValuesMK)
+  ReadOnlyForker IO ExtLedgerState Cardano ->
+  IO (LedgerTables Cardano ValuesMK)
 readWholeUtxo forker = go emptyLedgerTables NoPreviousQuery
  where
   go acc prev = do

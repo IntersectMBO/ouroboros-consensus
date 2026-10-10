@@ -3,7 +3,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
@@ -11,15 +10,16 @@
 module Cardano.Tools.DBAnalyser.Run (analyse) where
 
 import Cardano.Ledger.BaseTypes
+import Cardano.Tools.Config (throwConfigError)
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
 import Cardano.Tools.LeiosDb (LeiosDbSource (..), requireLeiosDbFile)
+import Control.Monad (unless)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), emit, nullTracer)
-import Data.Functor.Contravariant ((>$<))
-import qualified Data.SOP.Dict as Dict
+import Control.Tracer (mkTracer, nullTracer, (>$<))
+import Data.SOP (All, Top)
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import LeiosDemoDb
@@ -31,8 +31,8 @@ import LeiosDemoDb
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
@@ -42,18 +42,19 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as LedgerDB.V1
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+  ( DiskSnapshot (..)
+  , listSnapshots
+  )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
@@ -64,8 +65,9 @@ import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
 import System.FS.API
 import qualified System.FilePath as FilePath
+import System.FilePath (splitDirectories)
 import System.IO
-import System.Random
+import System.Random (genWord64, newStdGen)
 import Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
@@ -74,33 +76,32 @@ import Text.Printf (printf)
 
 openLedgerDB ::
   forall blk.
-  ( LedgerSupportsProtocol blk
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , InspectLedger blk
-  , HasHardForkHistory blk
-  , LedgerDB.LedgerSupportsLedgerDB blk
   , LedgerDB.ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
+  ImmutableDB.ImmutableDB IO blk ->
+  -- | The replay goal, i.e. the point up to which blocks from the ImmutableDB
+  -- are replayed on top of the chosen snapshot. The chosen snapshot is the
+  -- newest one that is not more recent than this point, and blocks are replayed
+  -- on top of it until the ledger state is exactly at this point. For
+  -- db-analyser this is the @--analyse-from@ point, so that an analysis
+  -- starting from a ledger state begins exactly there, regardless of which
+  -- snapshots happen to exist on disk.
+  Point blk ->
   IO
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args =
+openLedgerDB args immutableDB replayGoal =
   runWithTempRegistry $
     (,()) <$> do
-      (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
-        LedgerDB.LedgerDbBackendArgsV1 bss -> do
-          let snapManager = LedgerDB.V1.snapshotManager args
-          initDb <-
-            lift $
-              LedgerDB.V1.mkInitDb
-                args
-                bss
-                (\_ -> pure (error "no stream"))
-                snapManager
-                (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+      (ldb, od) <- case LedgerDB.lgrBackendArgs args of
         LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
           res <-
             LedgerDB.V2.mkResources
@@ -115,33 +116,53 @@ openLedgerDB args =
                   (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
                   (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
                   (LedgerDB.lgrHasFS args)
-          initDb <-
-            lift $
-              LedgerDB.V2.mkInitDb
-                args
-                (\_ -> pure (error "no stream"))
-                snapManager
-                (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-                res
-          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+          let initDb =
+                LedgerDB.V2.mkInitDb
+                  args
+                  (\_ -> pure (error "no stream"))
+                  snapManager
+                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+                  res
+          lift $ do
+            warnUnlessSnapshotAtGoal snapManager
+            -- The replay goal is the @--analyse-from@ point, which is not
+            -- necessarily the ImmutableDB tip, so we do not know whether it
+            -- is an EBB. Assume it is not, like the vast majority of blocks.
+            LedgerDB.openDBInternal args initDb snapManager replayStream replayGoal IsNotEBB
       pure (ldb, od)
+ where
+  -- Stream blocks from the ImmutableDB, stopping as soon as we reach a block
+  -- that is more recent than the replay goal. As a result, the replay leaves
+  -- the ledger state exactly at the replay goal (the last block at or before
+  -- it), rather than streaming all the way to the ImmutableDB tip.
+  replayStream = ImmutableDB.streamAPI' shouldStop GetBlock immutableDB
+   where
+    shouldStop blk
+      | NotOrigin (blockSlot blk) > pointSlot replayGoal = pure ImmutableDB.NoMoreItems
+      | otherwise = pure $ ImmutableDB.NextItem blk
 
-emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
-emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems
-
-defaultLMDBLimits :: LMDB.LMDBLimits
-defaultLMDBLimits =
-  LMDB.LMDBLimits
-    { LMDB.lmdbMapSize = 16 * 1024 * 1024 * 1024
-    , LMDB.lmdbMaxDatabases = 10
-    , LMDB.lmdbMaxReaders = 16
-    }
+  -- Warn when there is no snapshot exactly at the requested replay goal. In
+  -- that case the LedgerDB is initialised from the newest older snapshot and
+  -- blocks are replayed up to the goal, which can be considerably slower than
+  -- starting from a snapshot that already sits at the requested slot.
+  warnUnlessSnapshotAtGoal snapManager =
+    case pointSlot replayGoal of
+      Origin -> pure ()
+      NotOrigin slot -> do
+        snapshots <- listSnapshots snapManager
+        unless (any ((== unSlotNo slot) . dsNumber) snapshots) $
+          hPutStrLn stderr $
+            "Warning: no ledger snapshot exists exactly at slot "
+              <> show (unSlotNo slot)
+              <> "; starting from the newest older snapshot and replaying blocks up to that slot."
 
 analyse ::
   forall blk.
   ( Node.RunNode blk
   , Show (Header blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   , HasAnalysis blk
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
@@ -153,11 +174,19 @@ analyse ::
 analyse dbaConfig args =
   withRegistry $ \registry -> do
     lock <- newMVar ()
-    chainDBTracer <- mkTracer lock verbose
-    analysisTracer <- mkTracer lock True
+    chainDBTracer <- mkVerboseTracer lock verbose
+    analysisTracer <- mkVerboseTracer lock True
     lsmSalt <- fst . genWord64 <$> newStdGen
-    ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
-      mkProtocolInfo args
+    (ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg}, configBackend) <-
+      mkProtocolInfoAndBackend args
+    backend <- case selectLedgerDBBackend ldbBackend configBackend of
+      Just backend -> pure backend
+      Nothing ->
+        -- Unreachable for the Cardano instance, whose configuration always
+        -- resolves a backend; this guards a block type whose Args carry none.
+        throwConfigError
+          "no LedgerDB backend was selected and none could be determined from the configuration."
+    snapshotDelayRng <- newStdGen
     -- 'withReader' below captures the reader, not the handle, so without an
     -- owner the handle dies as soon as the reader is open and the copier is
     -- left writing to the immutable partition with nobody able to stop it.
@@ -166,23 +195,19 @@ analyse dbaConfig args =
     leiosDbHandle <- allocateHandle registry openLeiosDb
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
-        flavargs = case ldbBackend of
-          V1LMDB ->
-            LedgerDB.LedgerDbBackendArgsV1
-              $ LedgerDB.V1.V1Args
-                LedgerDB.V1.DisableFlushing
-              $ LedgerDB.V1.SomeBackendArgs
-              $ LMDB.LMDBBackingStoreArgs
-                "lmdb"
-                defaultLMDBLimits
-                Dict.Dict
+        flavargs = case backend of
           V2InMem ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs
-          V2LSM ->
+          V2LSM LSMOptions{lsmDatabasePath, lsmExportPath, lsmNoDiskCache} ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs $
-                LSM.LSMArgs (mkFsPath ["lsm"]) lsmSalt (LSM.stdMkBlockIOFS dbDir)
+                LSM.LSMArgs
+                  (mkFsPath (splitDirectories lsmDatabasePath))
+                  (mkFsPath . splitDirectories <$> lsmExportPath)
+                  lsmSalt
+                  (if lsmNoDiskCache then LSM.DiskCacheNone else LSM.DiskCacheAll)
+                  (LSM.stdMkBlockIOFS dbDir)
 
         args' =
           ChainDB.completeChainDbArgs
@@ -193,6 +218,7 @@ analyse dbaConfig args =
             (const True)
             shfs
             shfs
+            snapshotDelayRng
             flavargs
             leiosDbHandle
             (\_ -> pure ()) -- no LeiosTxCache in this tool
@@ -219,16 +245,23 @@ analyse dbaConfig args =
 
     withImmutableDB immutableDbArgs $ \(immutableDB, internal) -> do
       SomeAnalysis (Proxy :: Proxy startFrom) ana <- pure $ runAnalysis analysis
+
+      let getPointForSlot :: SlotNo -> IO (Point blk)
+          getPointForSlot slot =
+            ImmutableDB.getHashForSlot internal slot >>= \case
+              Just hash -> pure $ BlockPoint slot hash
+              Nothing -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
+
       startFrom <- case sing :: Sing startFrom of
-        SStartFromPoint ->
+        SStartFromPoint -> do
           FromPoint <$> case startSlot of
             Origin -> pure GenesisPoint
-            NotOrigin slot ->
-              ImmutableDB.getHashForSlot internal slot >>= \case
-                Just hash -> pure $ BlockPoint slot hash
-                Nothing -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
+            NotOrigin slot -> getPointForSlot slot
         SStartFromLedgerState -> do
-          (ledgerDB, intLedgerDB) <- openLedgerDB ldbArgs
+          (ledgerDB, intLedgerDB) <-
+            openLedgerDB ldbArgs immutableDB =<< case startSlot of
+              Origin -> pure genesisPoint
+              NotOrigin slot -> getPointForSlot slot
           -- This marker divides the "loading" phase of the program, where the
           -- system is principally occupied with reading snapshot data from
           -- disk, from the "processing" phase, where we are streaming blocks
@@ -282,10 +315,10 @@ analyse dbaConfig args =
       (ImmutableDB.openDBInternal immutableDbArgs)
       (ImmutableDB.closeDB . fst)
 
-  mkTracer _ False = return nullTracer
-  mkTracer lock True = do
+  mkVerboseTracer _ False = return nullTracer
+  mkVerboseTracer lock True = do
     startTime <- getMonotonicTime
-    return $ Tracer . emit $ \ev -> withLock $ do
+    return $ mkTracer $ \ev -> withLock $ do
       traceTime <- getMonotonicTime
       let diff = diffTime traceTime startTime
       hPutStrLn stderr $ printf "[%.6fs] %s" (realToFrac diff :: Double) (show ev)

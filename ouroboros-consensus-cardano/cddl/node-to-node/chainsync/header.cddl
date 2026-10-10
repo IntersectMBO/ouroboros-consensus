@@ -6,7 +6,7 @@ header
             serialisedShelleyHeader<alonzo.header>,
             serialisedShelleyHeader<babbage.header>,
             serialisedShelleyHeader<conway.header>,
-            serialisedShelleyHeader<dijkstra.header>>
+            serialisedShelleyHeader<dijkstraPraosHeader>>
 
 byronHeader = [byronRegularIdx, #6.24(bytes .cbor byron.blockhead)]
             / [byronBoundaryIdx, #6.24(bytes .cbor byron.ebbhead)]
@@ -15,6 +15,8 @@ byronBoundaryIdx = [0, base.word32]
 byronRegularIdx = [1, base.word32]
 
 serialisedShelleyHeader<era> = #6.24(bytes .cbor era)
+
+dijkstraPraosHeader = conway.header
 
 ;# include byron as byron
 ;# include shelley as shelley

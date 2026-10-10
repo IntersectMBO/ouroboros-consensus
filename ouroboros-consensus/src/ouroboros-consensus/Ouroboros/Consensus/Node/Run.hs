@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Infrastructure required to run a node
 --
@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Node.Run
   , RunNode
   ) where
 
+import Data.SOP (All, Top)
 import Data.Typeable (Typeable)
 import LeiosVoting (HasLeiosVoting)
 import Ouroboros.Consensus.Block
@@ -33,11 +34,11 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB
   ( ImmutableDbSerialiseConstraints
   , SerialiseDiskConstraints
@@ -62,6 +63,8 @@ class
   , SerialiseNodeToNode blk (SerialisedHeader blk)
   , SerialiseNodeToNode blk (GenTx blk)
   , SerialiseNodeToNode blk (GenTxId blk)
+  , SerialiseNodeToNode blk (PerasVote blk)
+  , SerialiseNodeToNode blk (PerasCert blk)
   ) =>
   SerialiseNodeToNodeConstraints blk
   where
@@ -93,8 +96,8 @@ class
   SerialiseNodeToClientConstraints blk
 
 class
-  ( LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , LedgerSupportsMempool blk
@@ -113,6 +116,8 @@ class
   , NodeInitStorage blk
   , BlockSupportsMetrics blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsSanityCheck blk
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)
@@ -123,8 +128,10 @@ class
   , ShowProxy (Header blk)
   , ShowProxy (BlockQuery blk)
   , ShowProxy (TxId (GenTx blk))
+  , ShowProxy (PerasVote blk)
+  , ShowProxy (PerasCert blk)
   , (forall fp. ShowQuery (BlockQuery blk fp))
-  , LedgerSupportsLedgerDB blk
+  , CanUpgradeLedgerTables LedgerState blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>

@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -78,6 +77,7 @@ mkTestLedgerConfig mockCfg =
         HardFork.defaultEraParams
           (SecurityParam (knownNonZeroBounded @4))
           (slotLengthFromSec 20)
+          NoPerasEnabled
     , simpleLedgerMockConfig = mockCfg
     }
 

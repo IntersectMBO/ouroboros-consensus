@@ -35,7 +35,6 @@ import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import Control.Monad (forM_, void)
 import Data.Bifunctor (first)
 import Data.ByteString.Lazy (ByteString)
-import Data.Functor.Classes
 import Data.Functor.Identity (Identity)
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE
@@ -49,6 +48,7 @@ import GHC.Generics
 import GHC.Stack
 import qualified Generics.SOP as SOP
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (FileId)
@@ -77,6 +77,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras.Mock (genMockPerasVoterIndices)
 import Test.Util.QuickCheck
 import Test.Util.SOP
 import Test.Util.ToExpr ()
@@ -167,15 +168,15 @@ deriving instance Rank2.Foldable (At CmdErr)
 deriving instance Rank2.Functor (At Cmd)
 deriving instance Rank2.Functor (At CmdErr)
 deriving instance Rank2.Traversable (At CmdErr)
-deriving instance Show1 r => Show (CmdErr :@ r)
-deriving instance Show1 r => Show (Cmd :@ r)
+deriving instance Show (CmdErr :@ r)
+deriving instance Show (Cmd :@ r)
 
 deriving instance SOP.Generic Cmd
 deriving instance SOP.HasDatatypeInfo Cmd
 
 deriving instance Generic1 (At Resp)
 deriving instance Rank2.Foldable (At Resp)
-deriving instance Show1 r => Show (Resp :@ r)
+deriving instance Show (Resp :@ r)
 
 deriving instance ToExpr (Model r)
 
@@ -392,7 +393,7 @@ generatorCmdImpl Model{..} =
       TestBody
         <$> arbitrary
         <*> arbitrary
-        <*> liftArbitrary (PerasRoundNo <$> arbitrary)
+        <*> liftArbitrary genPerasCert
     prevHash <-
       frequency
         [ (1, return GenesisHash)
@@ -406,6 +407,18 @@ generatorCmdImpl Model{..} =
     -- We don't care about chain length in the VolatileDB
     let clen = ChainLength (fromIntegral (unBlockNo no))
     return $ mkBlock canContainEBB body prevHash slot no clen ebb
+
+  genPerasCert :: Gen (PerasCert Block)
+  genPerasCert = do
+    mockCertRound <- PerasRoundNo <$> arbitrary
+    mockCertBlock <- blockPoint <$> genRandomBlock
+    mockCertVoters <- genMockPerasVoterIndices
+    pure $
+      MockPerasCert
+        { mockCertRound
+        , mockCertBlock
+        , mockCertVoters
+        }
 
   genHash :: Gen (HeaderHash Block)
   genHash =

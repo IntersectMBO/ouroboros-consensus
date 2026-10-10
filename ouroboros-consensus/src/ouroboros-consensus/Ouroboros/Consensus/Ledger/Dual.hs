@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
@@ -18,7 +16,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Ledger.Dual
   ( Bridge (..)
@@ -65,7 +62,7 @@ module Ouroboros.Consensus.Ledger.Dual
   , encodeDualLedgerState
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (FromCBOR, ToCBOR, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise
@@ -73,6 +70,7 @@ import Control.Arrow ((+++))
 import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
+import Data.Coerce
 import Data.Functor ((<&>))
 import Data.Kind (Type)
 import Data.Typeable
@@ -85,6 +83,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
@@ -93,9 +92,12 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepStateSupportsPeras, ConsensusProtocol (..))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -150,9 +152,9 @@ type instance HeaderHash (DualBlock m a) = HeaderHash m
 instance StandardHash m => StandardHash (DualBlock m a)
 
 instance ConvertRawHash m => ConvertRawHash (DualBlock m a) where
+  type HashSize (DualBlock m a) = HashSize m
   toShortRawHash _ = toShortRawHash (Proxy @m)
-  fromShortRawHash _ = fromShortRawHash (Proxy @m)
-  hashSize _ = hashSize (Proxy @m)
+  unsafeFromShortRawHash _ = unsafeFromShortRawHash (Proxy @m)
 
 {-------------------------------------------------------------------------------
   Header
@@ -278,6 +280,12 @@ class
   , Serialise (BridgeLedger m a)
   , Serialise (BridgeBlock m a)
   , Serialise (BridgeTx m a)
+  , -- Requirements for Peras epoch context
+    Show (PerasEpochContext (DualBlock m a))
+  , Eq (PerasEpochContext (DualBlock m a))
+  , NoThunks (PerasEpochContext (DualBlock m a))
+  , FromCBOR (PerasEpochContext (DualBlock m a))
+  , ToCBOR (PerasEpochContext (DualBlock m a))
   , Show (BridgeTx m a)
   ) =>
   Bridge m a
@@ -368,22 +376,22 @@ data DualLedgerConfig m a = DualLedgerConfig
 
 deriving instance (Show (LedgerConfig m), Show (LedgerConfig a)) => Show (DualLedgerConfig m a)
 
-type instance LedgerCfg (LedgerState (DualBlock m a)) = DualLedgerConfig m a
+type instance LedgerCfg LedgerState (DualBlock m a) = DualLedgerConfig m a
 
 instance Bridge m a => HasPartialLedgerConfig (DualBlock m a)
 
 instance Bridge m a => GetTip (LedgerState (DualBlock m a)) where
   getTip = castPoint . getTip . dualLedgerStateMain
 
-instance Bridge m a => GetTip (Ticked (LedgerState (DualBlock m a))) where
+instance Bridge m a => GetTip (Ticked LedgerState (DualBlock m a)) where
   getTip = castPoint . getTip . tickedDualLedgerStateMain
 
 -- We only have tables on the main ledger state to be able to compare it to a
 -- reference spec implementation which doesn't use tables. The result should be
 -- the same.
-data instance Ticked (LedgerState (DualBlock m a)) mk = TickedDualLedgerState
-  { tickedDualLedgerStateMain :: Ticked (LedgerState m) mk
-  , tickedDualLedgerStateAux :: Ticked (LedgerState a) ValuesMK
+data instance Ticked LedgerState (DualBlock m a) mk = TickedDualLedgerState
+  { tickedDualLedgerStateMain :: Ticked LedgerState m mk
+  , tickedDualLedgerStateAux :: Ticked LedgerState a ValuesMK
   , tickedDualLedgerStateBridge :: BridgeLedger m a
   , tickedDualLedgerStateAuxOrig :: LedgerState a ValuesMK
   -- ^ The original, unticked ledger for the auxiliary block
@@ -392,10 +400,12 @@ data instance Ticked (LedgerState (DualBlock m a)) mk = TickedDualLedgerState
   -- not every main block is paired with an auxiliary block. When there is
   -- no auxiliary block, the auxiliary ledger state remains unchanged.
   }
-  deriving NoThunks via AllowThunk (Ticked (LedgerState (DualBlock m a)) mk)
+  deriving NoThunks via AllowThunk (Ticked LedgerState (DualBlock m a) mk)
 
-instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
-  type LedgerErr (LedgerState (DualBlock m a)) = DualLedgerError m a
+type instance AuxLedgerEvent (DualBlock m a) = AuxLedgerEvent m
+
+instance Bridge m a => IsLedger LedgerState (DualBlock m a) where
+  type LedgerErr LedgerState (DualBlock m a) = DualLedgerError m a
 
   -- \| The dual ledger events are exactly those of the main ledger; it ignores
   -- any possible auxiliary ledger events.
@@ -404,7 +414,6 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
   -- the same events. And right now we only use the Dual ledger for our tests,
   -- and do so only with the Byron and ByronSpecs ledgers, neither of which have
   -- any events. So we make this easy choice for for now.
-  type AuxLedgerEvent (LedgerState (DualBlock m a)) = AuxLedgerEvent (LedgerState m)
 
   applyChainTickLedgerResult
     evs
@@ -435,18 +444,18 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
 applyHelper ::
   Bridge m a =>
   ( ComputeLedgerEvents ->
-    LedgerCfg (LedgerState m) ->
+    LedgerCfg LedgerState m ->
     m ->
-    Ticked (LedgerState m) ValuesMK ->
-    Except (LedgerErr (LedgerState m)) (LedgerResult (LedgerState m) (LedgerState m DiffMK))
+    Ticked LedgerState m ValuesMK ->
+    Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m DiffMK))
   ) ->
   ComputeLedgerEvents ->
   DualLedgerConfig m a ->
   DualBlock m a ->
-  Ticked (LedgerState (DualBlock m a)) ValuesMK ->
+  Ticked LedgerState (DualBlock m a) ValuesMK ->
   Except
     (DualLedgerError m a)
-    (LedgerResult (LedgerState (DualBlock m a)) (LedgerState (DualBlock m a) DiffMK))
+    (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a) DiffMK))
 applyHelper f opts cfg block@DualBlock{..} TickedDualLedgerState{..} = do
   (ledgerResult, aux') <-
     agreeOnError
@@ -474,7 +483,7 @@ applyHelper f opts cfg block@DualBlock{..} TickedDualLedgerState{..} = do
               tickedDualLedgerStateBridge
         }
 
-instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) where
+instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
   applyBlockLedgerResultWithValidation doValidate =
     applyHelper (applyBlockLedgerResultWithValidation doValidate)
 
@@ -510,10 +519,8 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
           dualBlockMain
           tickedDualLedgerStateMain
 
-  getBlockKeySets =
-    castLedgerTables
-      . getBlockKeySets @(LedgerState m)
-      . dualBlockMain
+instance GetBlockKeySets m => GetBlockKeySets (DualBlock m a) where
+  getBlockKeySets = coerce . getBlockKeySets @m . dualBlockMain
 
 data instance LedgerState (DualBlock m a) mk = DualLedgerState
   { dualLedgerStateMain :: LedgerState m mk
@@ -546,6 +553,7 @@ dualExtValidationErrorMain = \case
   ExtValidationErrorLedger e -> ExtValidationErrorLedger (dualLedgerErrorMain e)
   ExtValidationErrorHeader e -> ExtValidationErrorHeader (castHeaderError e)
   ExtValidationErrorLeios e -> ExtValidationErrorLeios e
+  ExtValidationErrorPerasEpochContextResolver e -> ExtValidationErrorPerasEpochContextResolver e
 
 {-------------------------------------------------------------------------------
   LedgerSupportsProtocol
@@ -740,10 +748,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       , vDualGenTxBridge
       } = vtx
 
-  getTransactionKeySets =
-    castLedgerTables
-      . getTransactionKeySets @m
-      . dualGenTxMain
+  getTransactionKeySets = coerce . getTransactionKeySets @m . dualGenTxMain
 
   mkMempoolApplyTxError TickedDualLedgerState{..} txt = do
     x <- mkMempoolApplyTxError tickedDualLedgerStateMain txt
@@ -751,28 +756,37 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
     Just $ DualGenTxErr x y
 
 instance Bridge m a => TxLimits (DualBlock m a) where
-  type TxMeasure (DualBlock m a) = TxMeasure m
+  type TxMeasurePhase1 (DualBlock m a) = TxMeasurePhase1 m
+  type TxMeasurePhase2 (DualBlock m a) = TxMeasurePhase2 m
 
   txWireSize = txWireSize . dualGenTxMain
-  txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
+  txMeasurePhase1 DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
     do
       mapExcept (inj +++ id)
-      $ txMeasure dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+      $ txMeasurePhase1 dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+   where
+    inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
+  txMeasurePhase2 DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
+    do
+      mapExcept (inj +++ id)
+      $ txMeasurePhase2 dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
    where
     inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
 
   blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
-    blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+    let TxMeasure a b = blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+     in TxMeasure a b
 
   type TxEbMeasure (DualBlock m a) = TxEbMeasure m
 
-  txEbMeasure _ = txEbMeasure (Proxy @m)
+  txEbMeasure _ (TxMeasure p1 p2) = txEbMeasure (Proxy @m) (TxMeasure p1 p2)
 
   ebCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
     ebCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
 
-  ebClosureCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
-    ebClosureCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+  mempoolEbReservation _ eb =
+    let TxMeasure a b = mempoolEbReservation (Proxy @m) eb
+     in TxMeasure a b
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId
@@ -975,8 +989,8 @@ agreeOnError f (ma, mb) =
 -------------------------------------------------------------------------------}
 
 encodeDualLedgerConfig ::
-  (LedgerCfg (LedgerState m) -> Encoding) ->
-  (LedgerCfg (LedgerState a) -> Encoding) ->
+  (LedgerCfg LedgerState m -> Encoding) ->
+  (LedgerCfg LedgerState a -> Encoding) ->
   DualLedgerConfig m a ->
   Encoding
 encodeDualLedgerConfig encodeM encodeA (DualLedgerConfig m a) =
@@ -987,8 +1001,8 @@ encodeDualLedgerConfig encodeM encodeA (DualLedgerConfig m a) =
     ]
 
 decodeDualLedgerConfig ::
-  Decoder s (LedgerCfg (LedgerState m)) ->
-  Decoder s (LedgerCfg (LedgerState a)) ->
+  Decoder s (LedgerCfg LedgerState m) ->
+  Decoder s (LedgerCfg LedgerState a) ->
   Decoder s (DualLedgerConfig m a)
 decodeDualLedgerConfig decodeM decodeA = do
   enforceSize "DualLedgerConfig" 2
@@ -1129,75 +1143,59 @@ decodeDualLedgerState decodeMain = do
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState (DualBlock m a)) = TxIn (LedgerState m)
-type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
+type instance TxIn (DualBlock m a) = TxIn m
+type instance TxOut (DualBlock m a) = TxOut m
 
-instance CanUpgradeLedgerTables (LedgerState (DualBlock m a)) where
+instance CanUpgradeLedgerTables LedgerState (DualBlock m a) where
   upgradeTables _ _ = id
 
 instance
-  (txout ~ TxOut (LedgerState m), IndexedMemPack (LedgerState m EmptyMK) txout) =>
-  IndexedMemPack (LedgerState (DualBlock m a) EmptyMK) txout
+  (txout ~ TxOut m, IndexedMemPack LedgerState m txout) =>
+  IndexedMemPack LedgerState (DualBlock m a) txout
   where
-  indexedTypeName (DualLedgerState st _ _) = indexedTypeName @(LedgerState m EmptyMK) @txout st
+  indexedTypeName p (DualLedgerState st _ _) = indexedTypeName p st
   indexedPackedByteCount (DualLedgerState st _ _) = indexedPackedByteCount st
   indexedPackM (DualLedgerState st _ _) = indexedPackM st
   indexedUnpackM (DualLedgerState st _ _) = indexedUnpackM st
 
 instance
-  (Ord (TxIn (LedgerState m)), MemPack (TxIn (LedgerState m)), MemPack (TxOut (LedgerState m))) =>
-  SerializeTablesWithHint (LedgerState (DualBlock m a))
+  (Ord (TxIn m), MemPack (TxIn m), MemPack (TxOut m)) =>
+  SerializeTablesWithHint LedgerState (DualBlock m a)
   where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
 instance
   ( Bridge m a
-  , NoThunks (TxOut (LedgerState m))
-  , NoThunks (TxIn (LedgerState m))
-  , Show (TxOut (LedgerState m))
-  , Show (TxIn (LedgerState m))
-  , Eq (TxOut (LedgerState m))
-  , Ord (TxIn (LedgerState m))
-  , MemPack (TxIn (LedgerState m))
+  , HasLedgerTables LedgerState m
   ) =>
-  HasLedgerTables (LedgerState (DualBlock m a))
+  HasLedgerTables LedgerState (DualBlock m a)
   where
   projectLedgerTables DualLedgerState{..} =
-    castLedgerTables
-      (projectLedgerTables dualLedgerStateMain)
+    coerce $ projectLedgerTables @LedgerState @m dualLedgerStateMain
 
   withLedgerTables DualLedgerState{..} main =
     DualLedgerState
-      { dualLedgerStateMain =
-          withLedgerTables dualLedgerStateMain $
-            castLedgerTables main
+      { dualLedgerStateMain = withLedgerTables @LedgerState @m dualLedgerStateMain (coerce main)
       , dualLedgerStateAux = dualLedgerStateAux
       , dualLedgerStateBridge = dualLedgerStateBridge
       }
 
 instance
   ( Bridge m a
-  , NoThunks (TxOut (LedgerState m))
-  , NoThunks (TxIn (LedgerState m))
-  , Show (TxOut (LedgerState m))
-  , Show (TxIn (LedgerState m))
-  , Eq (TxOut (LedgerState m))
-  , Ord (TxIn (LedgerState m))
-  , MemPack (TxIn (LedgerState m))
+  , HasLedgerTables (Ticked LedgerState) m
   ) =>
-  HasLedgerTables (Ticked (LedgerState (DualBlock m a)))
+  HasLedgerTables (Ticked LedgerState) (DualBlock m a)
   where
   projectLedgerTables TickedDualLedgerState{..} =
-    castLedgerTables
-      (projectLedgerTables tickedDualLedgerStateMain)
+    coerce $ projectLedgerTables @(Ticked LedgerState) @m tickedDualLedgerStateMain
 
   withLedgerTables
     TickedDualLedgerState{..}
     main =
       TickedDualLedgerState
         { tickedDualLedgerStateMain =
-            withLedgerTables tickedDualLedgerStateMain $ castLedgerTables main
+            withLedgerTables @(Ticked LedgerState) @m tickedDualLedgerStateMain $ coerce main
         , tickedDualLedgerStateAux
         , tickedDualLedgerStateBridge
         , tickedDualLedgerStateAuxOrig
@@ -1232,3 +1230,43 @@ instance
       , dualLedgerStateAux
       , dualLedgerStateBridge
       } = dls
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+instance LedgerStateSupportsPeras (LedgerState (DualBlock m a))
+
+instance LedgerStateSupportsPeras (Ticked LedgerState (DualBlock m a))
+
+instance
+  ( Bridge m a
+  , Typeable m
+  , Typeable a
+  , ChainDepStateSupportsPeras (ChainDepState (BlockProtocol m))
+  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol m)))
+  ) =>
+  StateSupportsPerasEpochContext (DualBlock m a)
+  where
+  type MaybeEraIndexedEpochToPerasRoundInfo (DualBlock m a) = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: DualBlock does not support Peras"
+
+instance
+  ( StandardHash m
+  , Typeable m
+  , Typeable a
+  ) =>
+  BlockSupportsPeras (DualBlock m a)
+  where
+  type PerasVote (DualBlock m a) = VoidPerasVote (DualBlock m a)
+  type PerasCert (DualBlock m a) = VoidPerasCert (DualBlock m a)
+  type PerasError (DualBlock m a) = VoidPerasError (DualBlock m a)
+  type PerasCrypto (DualBlock m a) = VoidPerasCrypto (DualBlock m a)
+  type PerasVotingCommitteeScheme (DualBlock m a) = VoidPerasVotingCommitteeScheme
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing

@@ -4,12 +4,11 @@ import Control.Monad (unless)
 import qualified System.Directory as Directory
 import System.Exit (die)
 
--- | Which LeiosDb the tool works on, per @--leios-db@ and @--no-leios-db@.
+-- | Which LeiosDb db-analyser works on, per @--no-leios-db@.
 data LeiosDbSource
   = -- | The LeiosDb file, derived from @--db@ directory defaults.
     LeiosDbFiles
-  | -- | No file. db-analyser uses an empty in-memory LeiosDb, and db-truncater
-    -- skips every LeiosDb step.
+  | -- | No file. db-analyser uses an empty in-memory LeiosDb.
     NoLeiosDb
 
 -- | The path of the LeiosDb file. Dies if that file does not exist.
@@ -19,8 +18,9 @@ data LeiosDbSource
 -- the '--db' option by appending the default names.
 --
 -- A missing file is fatal, because a tool cannot tell whether the chain holds a
--- cert-RB before it reads the chain. The operator passes @--no-leios-db@ to say
--- that the chain holds no cert-RB.
+-- cert-RB before it reads the chain. The operator passes @--no-leios-db@ to
+-- db-analyser, or omits @--leios@ from db-truncater, to say that the chain
+-- holds no cert-RB.
 --
 -- Hence this check, rather than a check inside the SQLite backend: that backend
 -- opens with 'SQLOpenCreate' and it creates the schema when it finds no file.
@@ -39,5 +39,5 @@ requireLeiosDbFile path = do
         <> ". A block that carries a Leios certificate has an empty body, "
         <> "and the transactions that it puts on the chain are in the "
         <> "endorser block that it certifies, which the LeiosDb holds. "
-        <> "Pass --leios-db if the node writes that file elsewhere, or "
-        <> "--no-leios-db if this chain holds no such block."
+        <> "Pass --no-leios-db to db-analyser, or omit --leios from "
+        <> "db-truncater, if this chain holds no such block."

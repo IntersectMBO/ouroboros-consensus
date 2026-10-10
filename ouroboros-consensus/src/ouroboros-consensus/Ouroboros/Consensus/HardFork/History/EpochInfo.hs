@@ -1,7 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 -- | Derive 'EpochInfo'
 module Ouroboros.Consensus.HardFork.History.EpochInfo
   ( dummyEpochInfo
@@ -23,12 +19,11 @@ import Ouroboros.Consensus.HardFork.History.Summary
 -------------------------------------------------------------------------------}
 
 -- | Construct an 'EpochInfo' for a /snapshot/ of the ledger state
-summaryToEpochInfo :: forall xs. Summary xs -> EpochInfo (Except PastHorizonException)
+summaryToEpochInfo :: Summary xs -> EpochInfo (Except PastHorizonException)
 summaryToEpochInfo = interpreterToEpochInfo . mkInterpreter
 
 -- | Construct an 'EpochInfo' for a /snapshot/ of the ledger state
 interpreterToEpochInfo ::
-  forall xs.
   Interpreter xs ->
   EpochInfo (Except PastHorizonException)
 interpreterToEpochInfo i =

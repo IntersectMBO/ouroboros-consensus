@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -24,7 +23,8 @@ import Ouroboros.Consensus.Protocol.Signed
   , SignedHeader (headerSigned)
   )
 import Ouroboros.Consensus.Protocol.TPraos
-  ( MaxMajorProtVer (MaxMajorProtVer)
+  ( LeiosOnly (TPraosLacksLeios)
+  , MaxMajorProtVer (MaxMajorProtVer)
   , TPraos
   , TPraosCannotForge
   , TPraosFields (..)
@@ -42,8 +42,8 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ShelleyHash (..)
   , ShelleyProtocol
   , ShelleyProtocolHeader
-  , default_pHeaderLeiosContainsCert
-  , default_pHeaderLeiosEbAnnouncement
+  , defaultHeaderContainsLeiosCert
+  , defaultHeaderLeiosEbAnnouncement
   )
 import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError
@@ -63,8 +63,8 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
   pHeaderBlock = SL.bheaderBlockNo . SL.bhbody
   pHeaderSize = fromIntegral . originalBytesSize
   pHeaderBlockSize = fromIntegral @Word32 @Natural . SL.bsize . SL.bhbody
-  pHeaderLeiosContainsCert = default_pHeaderLeiosContainsCert
-  pHeaderLeiosEbAnnouncement = default_pHeaderLeiosEbAnnouncement
+  pHeaderContainsLeiosCert = defaultHeaderContainsLeiosCert
+  pHeaderLeiosEbAnnouncement = defaultHeaderLeiosEbAnnouncement
 
   type EnvelopeCheckError _ = EnvelopeError
 
@@ -82,7 +82,6 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
     MaxMajorProtVer maxPV = tpraosMaxMajorPV (tpraosParams cfg)
 
 instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
-
   configSlotsPerKESPeriod cfg = tpraosSlotsPerKESPeriod $ tpraosParams cfg
   verifyHeaderIntegrity slotsPerKESPeriod hdr =
     isRight $ SL.verifySignedKES () ocertVkHot t hdrBody hdrSignature
@@ -102,8 +101,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
           currentKesPeriod - startOfKesPeriod
       | otherwise =
           0
-
-  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mLeios = do
+  mkHeader _ hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer (TPraosLacksLeios ()) = do
     TPraosFields{tpraosSignature, tpraosToSign} <-
       forgeTPraosFields hotKey canBeLeader isLeader mkBhBody
     pure $ SL.BHeader tpraosToSign tpraosSignature

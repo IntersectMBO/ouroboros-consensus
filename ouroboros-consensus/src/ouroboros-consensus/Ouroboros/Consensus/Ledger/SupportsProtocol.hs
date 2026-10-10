@@ -1,4 +1,3 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -47,7 +46,7 @@ ledgerViewOfTip cfg st =
   forecast = ledgerViewForecastAt cfg st
   -- At genesis there is no tip slot; slot 0 is the first slot any header could
   -- occupy, and the forecast's anchor is 'Origin', so it is in range.
-  slot = fromWithOrigin (SlotNo 0) $ getTipSlot st
+  slot = fromWithOrigin (SlotNo 0) $ ledgerTipSlot st
 
 -- | The Leios committee and quorum threshold at the given ledger state's tip
 leiosCommitteeOfTip ::
@@ -73,7 +72,7 @@ class
   -- relation between this and forecasting.
   protocolLedgerView ::
     LedgerConfig blk ->
-    Ticked (LedgerState blk) mk ->
+    Ticked LedgerState blk mk ->
     LedgerView (BlockProtocol blk)
 
   -- | Get a forecast at the given ledger state.

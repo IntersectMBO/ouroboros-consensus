@@ -1,7 +1,6 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
@@ -31,7 +30,7 @@ import Control.Monad.Class.MonadTime
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), mkTracer, nullTracer, traceWith)
+import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Data.Bifunctor (first)
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
@@ -75,6 +74,7 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( PraosFetchMode (..)
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
+import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
@@ -428,7 +428,7 @@ instance Arbitrary BlockFetchClientTestSetup where
         bfcDecisionLoopIntervalGenesis = 0
         bfcDecisionLoopIntervalPraos = 0
       bfcMaxRequestsInflight <- chooseEnum (2, 10)
-      bfcSalt <- arbitrary
+      bfcSalt <- mkUnsafeSalt <$> arbitrary
       gbfcGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
       let bfcGenesisBFConfig = GenesisBlockFetchConfiguration{..}
       pure BlockFetchConfiguration{..}

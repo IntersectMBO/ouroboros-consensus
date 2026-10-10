@@ -1,5 +1,4 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -8,7 +7,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -31,6 +29,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( GenTx (..)
   , SL.ApplyTxError (..)
   , TxId (..)
+  , DijkstraEbMeasure (..)
   , Validated (..)
   , fixedBlockBodyOverhead
   , mkShelleyTx
@@ -39,11 +38,9 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
 
     -- * Exported for tests
   , AlonzoMeasure (..)
-  , ConwayMeasure (..)
-  , DijkstraEbMeasure (..)
+  , RefScriptSize (..)
   , fromExUnits
-  , leiosEndorserBlockClosureMeasure
-  , leiosEndorserBlockMeasure
+  , leiosEndorserBlockCapacity
   , txEbMeasureDijkstra
   ) where
 
@@ -69,7 +66,6 @@ import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
 import Cardano.Ledger.Alonzo.Scripts
   ( ExUnits
   , ExUnits' (..)
-  , OrdExUnits (..)
   , pointWiseExUnits
   , unWrapExUnits
   )
@@ -92,8 +88,7 @@ import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError))
 import Cardano.Ledger.Dijkstra.PParams
-  ( DijkstraEraPParams
-  , ppMaxEndorserBlockExUnitsL
+  ( ppMaxEndorserBlockExUnitsL
   , ppMaxEndorserBlockReferencesSizeL
   , ppMaxEndorserBlockTxsSizeL
   , ppMaxRefScriptSizePerEndorserBlockL
@@ -101,6 +96,7 @@ import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
+import Cardano.Ledger.Plutus.ExUnits (OrdExUnits (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)
@@ -111,19 +107,22 @@ import Control.Monad.Identity (Identity (..))
 import Data.ByteString.Short (ShortByteString)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
-import Data.Measure (Measure)
+import Data.Measure (Measure, zero)
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
-import qualified LeiosDemoTypes as Leios
+import LeiosDemoTypes (maxLeiosEbBytesSize)
 import Lens.Micro ((^.))
-import NoThunks.Class (NoThunks (..))
+import Lens.Micro.Extras (view)
+import NoThunks.Class (NoThunks (..), allNoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Leios.Types as Leios
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -133,7 +132,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   , getPParams
   )
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
+import Ouroboros.Consensus.Util (ShowProxy (..), coerceMapKeys, coerceSet)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 import Ouroboros.Network.SizeInBytes
@@ -153,14 +152,30 @@ instance
 data instance Validated (GenTx (ShelleyBlock proto era))
   = ShelleyValidatedTx
       !SL.TxId
-      !(SL.Validated (Tx TopTx era))
-  deriving stock Generic
+      !(SL.ValidatedTx era)
 
-deriving instance ShelleyBasedEra era => NoThunks (Validated (GenTx (ShelleyBlock proto era)))
+-- We cannot use @deriving stock@ or @deriving instance@ for these instances
+-- because 'SL.ValidatedTx' wraps 'SL.StAnnTx', a type family whose Dijkstra
+-- instance ('DijkstraStAnnTx') contains 'TxInfoResult', which holds function
+-- values. Function types admit no 'Show', 'Eq', or 'NoThunks' instances.
+-- Instead we write manual instances that either delegate to the underlying
+-- transaction (extracted via 'SL.extractValidatedTx') or ignore the
+-- validated-tx payload entirely when it is not needed.
 
-deriving instance ShelleyBasedEra era => Eq (Validated (GenTx (ShelleyBlock proto era)))
+instance ShelleyBasedEra era => NoThunks (Validated (GenTx (ShelleyBlock proto era))) where
+  showTypeOf _ = "Validated (GenTx (ShelleyBlock proto era))"
+  wNoThunks ctxt (ShelleyValidatedTx txid vtx) =
+    allNoThunks
+      [ wNoThunks ctxt txid
+      , wNoThunks ctxt (SL.extractValidatedTx vtx)
+      ]
 
-deriving instance ShelleyBasedEra era => Show (Validated (GenTx (ShelleyBlock proto era)))
+instance ShelleyBasedEra era => Eq (Validated (GenTx (ShelleyBlock proto era))) where
+  ShelleyValidatedTx txid1 _ == ShelleyValidatedTx txid2 _ = txid1 == txid2
+
+instance ShelleyBasedEra era => Show (Validated (GenTx (ShelleyBlock proto era))) where
+  show (ShelleyValidatedTx txid vtx) =
+    "(ShelleyValidatedTx " ++ show txid ++ " " ++ show (SL.extractValidatedTx vtx) ++ ")"
 
 instance
   (Typeable era, Typeable proto) =>
@@ -205,7 +220,7 @@ instance
 
   reapplyTx = reapplyShelleyTx
 
-  txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
+  txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractValidatedTx vtx)
 
   getTransactionKeySets (ShelleyTx _ tx) =
     LedgerTables $
@@ -223,11 +238,11 @@ mkShelleyTx tx = ShelleyTx (txIdTx tx) tx
 mkShelleyValidatedTx ::
   forall era proto.
   ShelleyBasedEra era =>
-  SL.Validated (Tx TopTx era) ->
+  SL.ValidatedTx era ->
   Validated (GenTx (ShelleyBlock proto era))
 mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
  where
-  txid = txIdTx (SL.extractTx vtx)
+  txid = txIdTx (SL.extractValidatedTx vtx)
 
 newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
@@ -350,7 +365,7 @@ reapplyShelleyTx cfg slot vgtx st0 = do
 
   mempoolState' <-
     liftEither $
-      SL.reapplyTx
+      SL.reapplyValidatedTx
         (shelleyLedgerGlobals cfg)
         (SL.mkMempoolEnv innerSt slot)
         (SL.mkMempoolState innerSt)
@@ -398,7 +413,7 @@ validateMaybe err mb = maybe (V.Failure (TxErrorSG err)) V.Success mb
 runValidation ::
   V.Validation (TxErrorSG era) a ->
   Except (SL.ApplyTxError era) a
-runValidation = liftEither . (unTxErrorSG +++ id) . (^. V.either)
+runValidation = liftEither . (unTxErrorSG +++ id) . view V.either
 
 -----
 
@@ -535,22 +550,49 @@ wrapCBORinCBOROverhead size =
     + fromIntegral size
 
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
-  type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (ShelleyBlock p ShelleyEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txMeasurePhase1 _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . txsMaxBytes
+
+  type TxEbMeasure (ShelleyBlock p ShelleyEra) = TxMeasure (ShelleyBlock p ShelleyEra)
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
-  type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (ShelleyBlock p AllegraEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txMeasurePhase1 _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . txsMaxBytes
+
+  type TxEbMeasure (ShelleyBlock p AllegraEra) = TxMeasure (ShelleyBlock p AllegraEra)
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
-  type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (ShelleyBlock p MaryEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txMeasurePhase1 _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . txsMaxBytes
+
+  type TxEbMeasure (ShelleyBlock p MaryEra) = TxMeasure (ShelleyBlock p MaryEra)
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 -----
 
@@ -575,11 +617,10 @@ instance Monoid AlonzoMeasure where
   mappend = (<>)
   mempty = AlonzoMeasure mempty mempty
 
-instance TxMeasureMetrics AlonzoMeasure where
+instance TxMeasurePhase1Metrics AlonzoMeasure where
   txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . byteSize
   txMeasureMetricExUnitsMemory = exUnitsMem' . exUnits
   txMeasureMetricExUnitsSteps = exUnitsSteps' . exUnits
-  txMeasureMetricRefScriptsSizeBytes _ = mempty
 
 fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
@@ -604,12 +645,13 @@ txMeasureAlonzo ::
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) EmptyMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) AlonzoMeasure
 txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
   AlonzoMeasure <$> txInBlockSize st tx <*> exunits
  where
+  -- TODO: getTotalExUnits once the ledger fork has subtransaction batches again
   txsz = totExUnits tx'
 
   pparams = getPParams $ tickedShelleyLedgerState st
@@ -678,40 +720,28 @@ instance
   ShelleyCompatible p AlonzoEra =>
   TxLimits (ShelleyBlock p AlonzoEra)
   where
-  type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
+  type TxMeasurePhase1 (ShelleyBlock p AlonzoEra) = AlonzoMeasure
+  type TxMeasurePhase2 (ShelleyBlock p AlonzoEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
-  blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  txMeasurePhase1 _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . blockCapacityAlonzoMeasure
+
+  type TxEbMeasure (ShelleyBlock p AlonzoEra) = TxMeasure (ShelleyBlock p AlonzoEra)
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 -----
 
-data ConwayMeasure = ConwayMeasure
-  { alonzoMeasure :: !AlonzoMeasure
-  , refScriptsSize :: !(IgnoringOverflow ByteSize32)
-  }
-  deriving stock (Eq, Generic, Show)
-  deriving anyclass NoThunks
-  deriving
-    Measure
-    via (InstantiatedAt Generic ConwayMeasure)
+newtype RefScriptSize = RefScriptSize {refScriptsSize :: IgnoringOverflow ByteSize32}
+  deriving (Eq, Generic, Show)
+  deriving newtype (NoThunks, Measure, Semigroup, Monoid)
 
-instance Semigroup ConwayMeasure where
-  ConwayMeasure a1 r1 <> ConwayMeasure a2 r2 =
-    ConwayMeasure (a1 <> a2) (r1 <> r2)
-
-instance Monoid ConwayMeasure where
-  mappend = (<>)
-  mempty = ConwayMeasure mempty mempty
-
-instance HasByteSize ConwayMeasure where
-  txMeasureByteSize = txMeasureByteSize . alonzoMeasure
-
-instance TxMeasureMetrics ConwayMeasure where
-  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . alonzoMeasure
-  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . alonzoMeasure
-  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . alonzoMeasure
-  txMeasureMetricRefScriptsSizeBytes =
-    unIgnoringOverflow . refScriptsSize
+instance TxMeasurePhase2Metrics RefScriptSize where
+  txMeasureMetricRefScriptsSizeBytes = unIgnoringOverflow . refScriptsSize
 
 blockCapacityConwayMeasure ::
   forall proto era mk.
@@ -719,35 +749,31 @@ blockCapacityConwayMeasure ::
   , SL.ConwayEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
-  ConwayMeasure
+  (AlonzoMeasure, RefScriptSize)
 blockCapacityConwayMeasure st =
-  ConwayMeasure
-    { alonzoMeasure = blockCapacityAlonzoMeasure st
-    , refScriptsSize =
-        IgnoringOverflow $
-          ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
-    }
+  ( blockCapacityAlonzoMeasure st
+  , RefScriptSize $
+      IgnoringOverflow $
+        ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
+  )
  where
   pparams = getPParams $ tickedShelleyLedgerState st
 
-txMeasureConway ::
+txMeasureRefScripts ::
   forall proto era.
   ( ShelleyCompatible proto era
-  , L.AlonzoEraTx era
   , L.BabbageEraTxBody era
-  , ExUnitsTooBigUTxO era
-  , MaxTxSizeUTxO era
   , TxRefScriptsSizeTooBig era
   , SL.ConwayEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) ConwayMeasure
-txMeasureConway st tx@(ShelleyTx _txid tx') =
-  ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes
+  V.Validation (TxErrorSG era) RefScriptSize
+txMeasureRefScripts st (ShelleyTx _txid tx') =
+  RefScriptSize <$> refScriptBytes
  where
-  utxo = SL.getUTxO . tickedShelleyLedgerState $ st
-  txsz = SL.txNonDistinctRefScriptsSize utxo tx' :: Int
+  ValuesMK utxo = getLedgerTables $ projectLedgerTables st
+  txsz = SL.txNonDistinctRefScriptsSize (SL.UTxO $ coerceMapKeys utxo) tx' :: Int
 
   pparams = getPParams $ tickedShelleyLedgerState st
 
@@ -757,126 +783,6 @@ txMeasureConway st tx@(ShelleyTx _txid tx') =
     validateMaybe (txRefScriptsSizeTooBig txsz limit) $ do
       guard $ txsz <= limit
       Just $ IgnoringOverflow $ ByteSize32 $ fromIntegral txsz
-
------
-
--- | Measure of transactions in a Dijkstra-era Leios endorser block.
---
--- An endorser block carries references to transactions, while the referenced
--- transactions -- its closure -- must satisfy block-like limits. So this
--- pairs the closure's 'ConwayMeasure' with the one dimension specific to
--- endorser blocks: the size of the references themselves.
---
--- This is the Dijkstra-era 'TxEbMeasure'; the era's 'TxMeasure' is plain
--- 'ConwayMeasure'.
-data DijkstraEbMeasure = DijkstraEbMeasure
-  { ebClosureMeasure :: !ConwayMeasure
-  , txReferencesSize :: !(IgnoringOverflow ByteSize32)
-  -- ^ Size of transaction references _excluding_ any framing overhead: of one
-  -- transaction's reference, or summed over whatever is measured (an endorser
-  -- block, a run of mempool transactions).
-  }
-  deriving stock (Eq, Generic, Show)
-  deriving anyclass NoThunks
-  deriving
-    Measure
-    via (InstantiatedAt Generic DijkstraEbMeasure)
-
-instance Semigroup DijkstraEbMeasure where
-  DijkstraEbMeasure c1 l1 <> DijkstraEbMeasure c2 l2 =
-    DijkstraEbMeasure (c1 <> c2) (l1 <> l2)
-
-instance Monoid DijkstraEbMeasure where
-  mappend = (<>)
-  mempty = DijkstraEbMeasure mempty mempty
-
--- | The cost of one transaction in an endorser block: its closure cost is the
--- transaction's block measure, and its reference costs the bytes
--- 'forgeLeiosEb' serialises for it.
---
--- The reference records the length of the serialised transaction. At the
--- current ledger pin that length is exactly the Conway byte size, and a larger
--- number only ever widens the size's varint, so the reference is rounded up
--- but never short. @prop_leiosEbItemChargeCoversEncoder@ keeps a ledger bump
--- from silently breaking this.
-txEbMeasureDijkstra :: ConwayMeasure -> DijkstraEbMeasure
-txEbMeasureDijkstra conway =
-  DijkstraEbMeasure
-    { ebClosureMeasure = conway
-    , txReferencesSize =
-        IgnoringOverflow . Leios.encodeLeiosEbItemSize $ txMeasureByteSize conway
-    }
-
--- | Measure for Leios endorser blocks (introduced in Dijkstra era).
-leiosEndorserBlockMeasure ::
-  (ShelleyCompatible proto era, DijkstraEraPParams era) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  DijkstraEbMeasure
-leiosEndorserBlockMeasure st =
-  DijkstraEbMeasure
-    { ebClosureMeasure = leiosEndorserBlockClosureMeasure st
-    , -- Transactions are charged 'encodeLeiosEbItemSize' for their reference
-      -- and nothing else, so the framing 'encodeLeiosEb' writes ahead of them
-      -- comes off the capacity here ('leiosReferencesCapacity').
-      txReferencesSize =
-        IgnoringOverflow . ByteSize32 . Leios.leiosReferencesCapacity $
-          -- In bounds of the codec's message limit by 'guardLeiosWireLimit'.
-          pparams ^. ppMaxEndorserBlockReferencesSizeL
-    }
- where
-  pparams = getPParams $ tickedShelleyLedgerState st
-
--- | Fail hard on protocol parameters the wire cannot carry: an endorser block
--- filled to @maxEndorserBlockReferencesSize@ must fit the LeiosFetch codec's
--- message limit next to the message's own framing. Applied to the closure
--- measure, though it guards a references parameter, because that is what the
--- mempool derives its capacity from on every node: it fires when such
--- parameters are first learned -- at node startup or on adopting the update
--- -- and not in the forge path.
---
--- TODO Also check this when the parameter update is proposed, so that a
--- proposal that would trip it is refused rather than enacted.
-guardLeiosWireLimit ::
-  (ShelleyCompatible proto era, DijkstraEraPParams era) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  a ->
-  a
-guardLeiosWireLimit st a
-  | paramLimit <= wireLimit = a
-  | otherwise =
-      error $
-        "maxEndorserBlockReferencesSize ("
-          <> show paramLimit
-          <> ") exceeds the LeiosFetch message limit ("
-          <> show wireLimit
-          <> ")"
- where
-  wireLimit = Leios.maxLeiosEbBytesSize
-  paramLimit = getPParams (tickedShelleyLedgerState st) ^. ppMaxEndorserBlockReferencesSizeL
-
--- | What an endorser block's closure may amount to, in block-measure terms:
--- the 'ebClosureMeasure' component of 'leiosEndorserBlockMeasure'.
-leiosEndorserBlockClosureMeasure ::
-  (ShelleyCompatible proto era, DijkstraEraPParams era) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  ConwayMeasure
-leiosEndorserBlockClosureMeasure st =
-  guardLeiosWireLimit st $
-    ConwayMeasure
-      { alonzoMeasure =
-          AlonzoMeasure
-            { byteSize =
-                IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
-            , exUnits =
-                fromExUnits . unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
-            }
-      , refScriptsSize =
-          IgnoringOverflow . ByteSize32 $ pparams ^. ppMaxRefScriptSizePerEndorserBlockL
-      }
- where
-  pparams = getPParams $ tickedShelleyLedgerState st
-
------
 
 class TxRefScriptsSizeTooBig era where
   txRefScriptsSizeTooBig :: Int -> Int -> SL.ApplyTxError era
@@ -900,37 +806,150 @@ instance TxRefScriptsSizeTooBig DijkstraEra where
             , mismatchExpected = limit
             }
 
------
+-- | Measure of transactions in a Dijkstra-era Leios endorser block.
+--
+-- An endorser block carries references to transactions, while the referenced
+-- transactions, its closure, must satisfy block-like limits. So this pairs the
+-- closure's 'TxMeasure' with the one dimension specific to endorser blocks:
+-- the size of the references themselves.
+--
+-- The closure type names one protocol, 'Praos' 'StandardCrypto'. The phase
+-- measures do not depend on the protocol, so 'txEbMeasureDijkstra' and
+-- 'mempoolEbReservation' rebuild the 'TxMeasure' for any protocol.
+data DijkstraEbMeasure = DijkstraEbMeasure
+  { ebClosureMeasure :: !(TxMeasure (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra))
+  , txReferencesSize :: !(IgnoringOverflow ByteSize32)
+  -- ^ Size of transaction references _excluding_ any framing overhead: of one
+  -- transaction's reference, or summed over whatever is measured (an endorser
+  -- block, a run of mempool transactions).
+  }
+  deriving stock (Eq, Generic, Show)
+  deriving anyclass NoThunks
+  deriving
+    Measure
+    via (InstantiatedAt Generic DijkstraEbMeasure)
+
+-- | The cost of one transaction in an endorser block: its closure cost is the
+-- transaction's 'TxMeasure', and its reference costs the bytes
+-- 'Leios.encodeLeiosEb' writes for it.
+txEbMeasureDijkstra :: TxMeasure (ShelleyBlock p DijkstraEra) -> DijkstraEbMeasure
+txEbMeasureDijkstra (TxMeasure alonzo refScripts) =
+  DijkstraEbMeasure
+    { ebClosureMeasure = TxMeasure alonzo refScripts
+    , txReferencesSize =
+        IgnoringOverflow . Leios.encodeLeiosEbItemSize $
+          txMeasureByteSize alonzo
+    }
+
+-- | What one Leios endorser block may hold, from the Dijkstra endorser-block
+-- protocol parameters.
+leiosEndorserBlockCapacity ::
+  forall proto mk.
+  TickedLedgerState (ShelleyBlock proto DijkstraEra) mk ->
+  DijkstraEbMeasure
+leiosEndorserBlockCapacity st =
+  guardLeiosWireLimit st $
+    DijkstraEbMeasure
+      { ebClosureMeasure =
+          TxMeasure
+            AlonzoMeasure
+              { byteSize = IgnoringOverflow $ ByteSize32 $ pparams ^. ppMaxEndorserBlockTxsSizeL
+              , exUnits = fromExUnits $ unOrdExUnits $ pparams ^. ppMaxEndorserBlockExUnitsL
+              }
+            ( RefScriptSize $
+                IgnoringOverflow $
+                  ByteSize32 (pparams ^. ppMaxRefScriptSizePerEndorserBlockL)
+            )
+      , -- Transactions are charged 'Leios.encodeLeiosEbItemSize' for their
+        -- reference and nothing else, so the framing 'Leios.encodeLeiosEb' writes
+        -- ahead of them comes off the capacity here.
+        --
+        -- In bounds of the LeiosFetch message limit by 'guardLeiosWireLimit'.
+        txReferencesSize =
+          IgnoringOverflow . ByteSize32 . Leios.leiosReferencesCapacity $
+            pparams ^. ppMaxEndorserBlockReferencesSizeL
+      }
+ where
+  pparams = getPParams $ tickedShelleyLedgerState st
+
+-- | Fail hard on protocol parameters the wire cannot carry: an endorser block
+-- filled to @maxEndorserBlockReferencesSize@ must fit the LeiosFetch codec's
+-- message limit next to the message's own framing. Applied to the capacity
+-- because that is what the mempool derives its reservation from on every
+-- node: it fires when such parameters are first learned -- at node startup or
+-- on adopting the update -- and not in the forge path.
+--
+-- TODO Also check this when the parameter update is proposed, so that a
+-- proposal that would trip it is refused rather than enacted.
+guardLeiosWireLimit ::
+  TickedLedgerState (ShelleyBlock proto DijkstraEra) mk ->
+  a ->
+  a
+guardLeiosWireLimit st a
+  | paramLimit <= wireLimit = a
+  | otherwise =
+      error $
+        "maxEndorserBlockReferencesSize ("
+          <> show paramLimit
+          <> ") exceeds the LeiosFetch message limit ("
+          <> show wireLimit
+          <> ")"
+ where
+  wireLimit = maxLeiosEbBytesSize
+  paramLimit = getPParams (tickedShelleyLedgerState st) ^. ppMaxEndorserBlockReferencesSizeL
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance
   ShelleyCompatible p BabbageEra =>
   TxLimits (ShelleyBlock p BabbageEra)
   where
-  type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
+  type TxMeasurePhase1 (ShelleyBlock p BabbageEra) = AlonzoMeasure
+  type TxMeasurePhase2 (ShelleyBlock p BabbageEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
-  blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  txMeasurePhase1 _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . blockCapacityAlonzoMeasure
+
+  type TxEbMeasure (ShelleyBlock p BabbageEra) = TxMeasure (ShelleyBlock p BabbageEra)
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 instance
   ShelleyCompatible p ConwayEra =>
   TxLimits (ShelleyBlock p ConwayEra)
   where
-  type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
+  type TxMeasurePhase1 (ShelleyBlock p ConwayEra) = AlonzoMeasure
+  type TxMeasurePhase2 (ShelleyBlock p ConwayEra) = RefScriptSize
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  txMeasurePhase1 _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasurePhase2 _cfg st tx = runValidation $ txMeasureRefScripts st tx
+  blockCapacityTxMeasure _cfg = uncurry TxMeasure . blockCapacityConwayMeasure
+
+  type TxEbMeasure (ShelleyBlock p ConwayEra) = TxMeasure (ShelleyBlock p ConwayEra)
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = zero
+  mempoolEbReservation _ = id
 
 instance
   ShelleyCompatible p DijkstraEra =>
   TxLimits (ShelleyBlock p DijkstraEra)
   where
-  type TxMeasure (ShelleyBlock p DijkstraEra) = ConwayMeasure
-  txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  type TxMeasurePhase1 (ShelleyBlock p DijkstraEra) = AlonzoMeasure
+  type TxMeasurePhase2 (ShelleyBlock p DijkstraEra) = RefScriptSize
+  blockCapacityTxMeasure _cfg = uncurry TxMeasure . blockCapacityConwayMeasure
+  txMeasurePhase1 _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasurePhase2 _cfg st tx = runValidation $ txMeasureRefScripts st tx
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
 
   type TxEbMeasure (ShelleyBlock p DijkstraEra) = DijkstraEbMeasure
+
   txEbMeasure _ = txEbMeasureDijkstra
-  ebCapacityTxMeasure _cfg = leiosEndorserBlockMeasure
-  ebClosureCapacityTxMeasure _cfg = leiosEndorserBlockClosureMeasure
+
+  ebCapacityTxMeasure _cfg = leiosEndorserBlockCapacity
+  mempoolEbReservation _ DijkstraEbMeasure{ebClosureMeasure = TxMeasure alonzo refScripts} =
+    TxMeasure alonzo refScripts

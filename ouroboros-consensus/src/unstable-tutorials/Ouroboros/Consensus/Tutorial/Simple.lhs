@@ -51,14 +51,25 @@ First, some imports we'll need:
 >    Header, StorageConfig, ChainHash, HasHeader(..), HeaderFields(..),
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
->   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
+>    (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
 > import Ouroboros.Consensus.Ticked ( Ticked, Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
->   (BlockSupportsProtocol (tiebreakerView, validateView))
+>    ( BlockSupportsProtocol (tiebreakerView, validateView)
+>    , BlockSupportsPeras (..)
+>    , VoidPerasCert
+>    , VoidPerasCrypto
+>    , VoidPerasError
+>    , VoidPerasVote
+>    , VoidPerasVotingCommitteeScheme
+>    , defaultForgePerasCert
+>    , defaultForgePerasVoteIfEligible
+>    , defaultVerifyPerasCert
+>    , defaultVerifyPerasVote
+>    )
 > import Ouroboros.Consensus.Ledger.Abstract
->   (GetTip(..), IsLedger(..), LedgerCfg,
+>   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
->    LedgerState, ApplyBlock(..), UpdateLedger,
+>    LedgerState, ApplyBlock(..), UpdateLedger, GetBlockKeySets (..),
 >    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
@@ -66,7 +77,7 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
 > import Ouroboros.Consensus.Ledger.Tables
-> import Ouroboros.Consensus.Storage.LedgerDB
+> import Ouroboros.Consensus.Ledger.Tables.Utils
 > import Ouroboros.Consensus.Util.IndexedMemPack
 
 Conceptual Overview and Definitions of Key Terms
@@ -396,7 +407,20 @@ will know nothing about the structure of the data - instead there are other
 typeclasses needed to build an interface to derive things that are needed from
 this value.  We'll implement those typeclasses next.
 
+We also need to instantiate `BlockSupportsPeras` for `BlockC`. Since `BlockC`
+does not support Peras, we use the void Peras types and default implementations.
 
+> instance BlockSupportsPeras BlockC where
+>   type PerasVote BlockC = VoidPerasVote BlockC
+>   type PerasCert BlockC = VoidPerasCert BlockC
+>   type PerasError BlockC = VoidPerasError BlockC
+>   type PerasCrypto BlockC = VoidPerasCrypto BlockC
+>   type PerasVotingCommitteeScheme BlockC = VoidPerasVotingCommitteeScheme
+>   forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+>   verifyPerasVote = defaultVerifyPerasVote
+>   forgePerasCert = defaultForgePerasCert
+>   verifyPerasCert = defaultVerifyPerasCert
+>   getPerasCertInBlock _ = Right Nothing
 
 Interface to the Block Header
 -----------------------------
@@ -520,7 +544,7 @@ ledger has an associated static configuration which is represented using the
 type family `LedgerCfg`.  For our example, we have nothing interesting to
 configure, thus:
 
-> type instance LedgerCfg (LedgerState BlockC) = ()
+> type instance LedgerCfg LedgerState BlockC = ()
 
 `LedgerState` - The Value Computed by the Blockchain
 ----------------------------------------------------
@@ -555,7 +579,7 @@ Again, the slot abstraction defines a logical clock - and instances of the
 As such, we will also need to define an instance of `Ticked` for our ledger
 state.  In our example, this is essentially an `Identity` functor:
 
-> newtype instance Ticked (LedgerState BlockC) mk =
+> newtype instance Ticked LedgerState BlockC mk =
 >   TickedLedgerStateC
 >     { unTickedLedgerStateC :: LedgerState BlockC mk }
 >   deriving (Show, Eq, Generic, Serialise)
@@ -567,10 +591,11 @@ state.  In our example, this is essentially an `Identity` functor:
 The `IsLedger` class describes some of the basic functionality and associated
 types for a ledger.  Though we are here using
 
-> instance IsLedger (LedgerState BlockC) where
->   type instance LedgerErr  (LedgerState BlockC) = Void
->   type instance AuxLedgerEvent (LedgerState BlockC) = Void
->
+> type instance AuxLedgerEvent BlockC = Void
+
+> instance IsLedger LedgerState BlockC where
+>   type instance LedgerErr LedgerState BlockC = Void
+
 >   applyChainTickLedgerResult _events _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = TickedLedgerStateC $ convertMapKind ldgrSt
@@ -599,7 +624,7 @@ A block `b` is said to have been `applied` to a `LedgerState` if that
 `LedgerState` is the result of having witnessed `b` at some point.  We can
 express this as a function:
 
-> applyBlockTo :: BlockC -> Ticked (LedgerState BlockC) mk -> LedgerState BlockC mk
+> applyBlockTo :: BlockC -> Ticked LedgerState BlockC mk -> LedgerState BlockC mk
 > applyBlockTo block tickedLedgerState =
 >   ledgerState { lsbc_tip = blockPoint block
 >               , lsbc_count = lsbc_count'
@@ -620,16 +645,17 @@ between block applications.
 The interface used by the rest of the ledger infrastructure to access this is
 the `ApplyBlock` typeclass:
 
-> instance ApplyBlock (LedgerState BlockC) BlockC where
+> instance ApplyBlock LedgerState BlockC where
 >   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg block tickedLdgrSt =
 >     pure $ LedgerResult { lrEvents = []
 >                         , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
 >                         }
->
+
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
->
->   getBlockKeySets = const trivialLedgerTables
+
+> instance GetBlockKeySets BlockC where
+>   getBlockKeySets = const emptyLedgerTables
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever
@@ -664,7 +690,7 @@ The `GetTip` typeclass describes how to get the `Point` of the tip - which is
 the most recently applied block.  We need to implement this both for
 `LedgerState BlockC` as well as its ticked version:
 
-> instance GetTip (Ticked (LedgerState BlockC)) where
+> instance GetTip (Ticked LedgerState BlockC) where
 >    getTip = castPoint . lsbc_tip . unTickedLedgerStateC
 
 > instance GetTip (LedgerState BlockC) where
@@ -739,21 +765,19 @@ the `LedgerTables`. For a Ledger state definition as simple as the one we are
 defining there the tables are trivially empty so the operations are all trivial
 and we use the default implementation
 
-> type instance TxIn  (LedgerState BlockC) = Void
-> type instance TxOut (LedgerState BlockC) = Void
+> type instance TxIn  BlockC = Void
+> type instance TxOut BlockC = Void
 
-> instance LedgerTablesAreTrivial (LedgerState BlockC) where
+> instance LedgerTablesAreTrivial LedgerState BlockC where
 >   convertMapKind (LedgerC x y) = LedgerC x y
-> instance LedgerTablesAreTrivial (Ticked (LedgerState BlockC)) where
+> instance LedgerTablesAreTrivial (Ticked LedgerState) BlockC where
 >   convertMapKind (TickedLedgerStateC x) =
 >       TickedLedgerStateC (convertMapKind x)
-> deriving via TrivialLedgerTables (LedgerState BlockC)
->     instance HasLedgerTables (LedgerState BlockC)
 > deriving via Void
->   instance IndexedMemPack (LedgerState BlockC EmptyMK) Void
-> deriving via TrivialLedgerTables (Ticked (LedgerState BlockC))
->     instance HasLedgerTables (Ticked (LedgerState BlockC))
-> deriving via TrivialLedgerTables (LedgerState BlockC)
->     instance CanStowLedgerTables (LedgerState BlockC)
-> deriving via TrivialLedgerTables (LedgerState BlockC)
->     instance CanUpgradeLedgerTables (LedgerState BlockC)
+>   instance IndexedMemPack LedgerState BlockC Void
+> instance HasLedgerTables LedgerState BlockC where
+>   projectLedgerTables _ = emptyLedgerTables
+>   withLedgerTables st _ = convertMapKind st
+> instance HasLedgerTables (Ticked LedgerState) BlockC where
+>   projectLedgerTables _ = emptyLedgerTables
+>   withLedgerTables st _ = convertMapKind st

@@ -1,7 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -22,8 +21,13 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
     -- * Copying blocks from the VolatileDB to the ImmutableDB
   , copyToImmutableDB
 
+    -- * Writing LedgerDB snapshots
+  , snapshotRunner
+  , tryServeSnapshotRequestNow
+
     -- * Executing garbage collection
   , garbageCollectBlocks
+  , garbageCollectPeras
 
     -- * Scheduling garbage collections
   , GcParams (..)
@@ -43,12 +47,13 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
 
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Exception (assert)
-import Control.Monad (forM, forever, guard, void, when)
+import Control.Monad (forM, forever, guard, join, void, when)
 import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Aeson as Aeson
+import Data.Bifunctor (first)
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
@@ -57,7 +62,6 @@ import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
 import Data.Time.Clock
 import Data.Void (Void)
-import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb.Common
@@ -82,6 +86,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
+  , AddPerasCertChainSelOutcome (..)
   , BlockComponent (..)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
@@ -91,14 +96,17 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
+import Ouroboros.Consensus.Util.STM (Watcher (..), blockUntilJust, forkLinkedWatcher)
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import System.Random
 
 {-------------------------------------------------------------------------------
   Launch background tasks
@@ -107,6 +115,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 launchBgTasks ::
   forall m blk.
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
@@ -115,24 +124,23 @@ launchBgTasks ::
   , LeiosDemoTypes.HasLeiosVoting blk
   ) =>
   ChainDbEnv m blk ->
-  -- | Number of immutable blocks replayed on ledger DB startup
-  Word64 ->
   m ()
-launchBgTasks cdb@CDB{..} replayed = do
+launchBgTasks cdb@CDB{..} = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
 
-  ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
-  !ledgerDbMaintenaceThread <-
+  ledgerDbTasksTrigger <- newLedgerDbTasksTrigger
+  !ledgerDbMaintenanceThread <-
     forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
       ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
 
   gcSchedule <- newGcSchedule
   !gcThread <-
-    launch "ChainDB.gcBlocksScheduleRunner" $
-      gcScheduleRunner gcSchedule $
-        garbageCollectBlocks cdb
+    launch "ChainDB.gcBlocksAndPerasScheduleRunner" $
+      gcScheduleRunner gcSchedule $ \slot -> do
+        garbageCollectBlocks cdb slot
+        garbageCollectPeras cdb slot
 
   !copyToImmutableDBThread <-
     launch "ChainDB.copyToImmutableDBRunner" $
@@ -142,14 +150,19 @@ launchBgTasks cdb@CDB{..} replayed = do
     launch "ChainDB.leiosAcquiredEbsRunner" $
       leiosAcquiredEbsRunner cdb
 
+  !snapshotThread <-
+    launch "ChainDB.snapshotRunner" $
+      snapshotRunner cdb
+
   atomically $
     writeTVar cdbKillBgThreads $
       sequence_
         [ addBlockThread
-        , cancelThread ledgerDbMaintenaceThread
+        , cancelThread ledgerDbMaintenanceThread
         , gcThread
         , copyToImmutableDBThread
         , leiosAcquiredThread
+        , snapshotThread
         ]
  where
   launch :: String -> m Void -> m (m ())
@@ -323,8 +336,8 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
 -- VolatileDB to the ImmutableDB (using 'copyToImmutableDB'). Once that is
 -- complete,
 --
--- * Trigger LedgerDB maintenance tasks, namely flushing, taking snapshots and
---   garbage collection.
+-- * Trigger LedgerDB maintenance tasks, namely taking snapshots and garbage
+--   collection.
 --
 -- * Schedule GC of the VolatileDB ('scheduleGC') for the 'SlotNo' of the most
 --   recent block that was copied.
@@ -349,20 +362,15 @@ copyToImmutableDBRunner ::
   GcSchedule m ->
   m Void
 copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
-  -- this first flush will persist the differences that come from the initial
-  -- chain selection.
-  LedgerDB.tryFlush cdbLedgerDB
   forever copyAndTrigger
  where
   copyAndTrigger :: m ()
   copyAndTrigger = do
     -- Wait for 'cdbChain' to become longer than 'getCurrentChain'.
-    numToWrite <- atomically $ do
+    atomically $ do
       curChain <- icWithoutTime <$> readTVar cdbChain
       curChainVolSuffix <- Query.getCurrentChain cdb
-      let numToWrite = AF.length curChain - AF.length curChainVolSuffix
-      check $ numToWrite > 0
-      return $ fromIntegral numToWrite
+      check $ AF.length curChain > AF.length curChainVolSuffix
 
     -- Copy blocks to ImmutableDB
     --
@@ -370,7 +378,7 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
     -- copied to disk (though not flushed, necessarily).
     gcSlotNo <- copyToImmutableDB cdb
 
-    triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo numToWrite
+    triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo
     -- Prune the acquired-EB set now, as the GC is scheduled. The GC (and the
     -- LeiosDb closure eviction it drives) only runs at least 'cdbGcDelay' later,
     -- so the set stops advertising a closure well before that closure can be
@@ -398,29 +406,10 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
 -- | Trigger for the LedgerDB maintenance tasks, namely whenever the immutable
 -- DB tip slot advances when we finish copying blocks to it.
 newtype LedgerDbTasksTrigger m
-  = LedgerDbTasksTrigger (StrictTVar m LedgerDbTaskState)
+  = LedgerDbTasksTrigger (StrictTVar m (WithOrigin SlotNo))
 
-data LedgerDbTaskState = LedgerDbTaskState
-  { ldbtsImmTip :: !(WithOrigin SlotNo)
-  , ldbtsPrevSnapshotTime :: !(Maybe Time)
-  , ldbtsBlocksSinceLastSnapshot :: !Word64
-  }
-  deriving stock Generic
-  deriving anyclass NoThunks
-
-newLedgerDbTasksTrigger ::
-  IOLike m =>
-  -- | Number of blocks replayed.
-  Word64 ->
-  m (LedgerDbTasksTrigger m)
-newLedgerDbTasksTrigger replayed = LedgerDbTasksTrigger <$> newTVarIO st
- where
-  st =
-    LedgerDbTaskState
-      { ldbtsImmTip = Origin
-      , ldbtsPrevSnapshotTime = Nothing
-      , ldbtsBlocksSinceLastSnapshot = replayed
-      }
+newLedgerDbTasksTrigger :: IOLike m => m (LedgerDbTasksTrigger m)
+newLedgerDbTasksTrigger = LedgerDbTasksTrigger <$> newTVarIO Origin
 
 triggerLedgerDbTasks ::
   forall m.
@@ -428,61 +417,116 @@ triggerLedgerDbTasks ::
   LedgerDbTasksTrigger m ->
   -- | New tip of the ImmutableDB.
   WithOrigin SlotNo ->
-  -- | Number of blocks written to the ImmutableDB.
-  Word64 ->
   m ()
-triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) immTip numWritten =
-  atomically $ modifyTVar varSt $ \st ->
-    st
-      { ldbtsImmTip = immTip
-      , ldbtsBlocksSinceLastSnapshot = ldbtsBlocksSinceLastSnapshot st + numWritten
-      }
+triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) =
+  atomically . writeTVar varSt
 
 -- | Run LedgerDB maintenance tasks when 'LedgerDbTasksTrigger' changes.
 --
---  * Flushing of differences.
 --  * Taking snapshots.
 --  * Garbage collection.
 ledgerDbTaskWatcher ::
   forall m blk.
-  (IOLike m, ConsensusProtocol (BlockProtocol blk), GetHeader blk, HasHeader blk) =>
+  IOLike m =>
   ChainDbEnv m blk ->
   LedgerDbTasksTrigger m ->
-  Watcher m LedgerDbTaskState (WithOrigin SlotNo)
-ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
+  Watcher m SlotNo SlotNo
+ledgerDbTaskWatcher CDB{cdbLedgerDB} (LedgerDbTasksTrigger varSt) =
   Watcher
-    { wFingerprint = ldbtsImmTip
+    { wFingerprint = id
     , wInitial = Nothing
-    , wReader = readTVar varSt
-    , wNotify =
-        \LedgerDbTaskState
-           { ldbtsImmTip
-           , ldbtsBlocksSinceLastSnapshot = blocksSinceLast
-           , ldbtsPrevSnapshotTime = prevSnapTime
-           } ->
-            whenJust (withOriginToMaybe ldbtsImmTip) $ \slotNo -> do
-              LedgerDB.tryFlush cdbLedgerDB
-
-              now <- getMonotonicTime
-              LedgerDB.SnapCounters
-                { prevSnapshotTime
-                , ntBlocksSinceLastSnap
-                } <-
-                LedgerDB.tryTakeSnapshot
-                  cdbLedgerDB
-                  (void $ copyToImmutableDB cdb)
-                  ((,now) <$> prevSnapTime)
-                  blocksSinceLast
-              when (ntBlocksSinceLastSnap == 0) $ traceMarkerIO "Took snapshot"
-              atomically $ modifyTVar varSt $ \st ->
-                st
-                  { ldbtsBlocksSinceLastSnapshot =
-                      ldbtsBlocksSinceLastSnapshot st - blocksSinceLast + ntBlocksSinceLastSnap
-                  , ldbtsPrevSnapshotTime = prevSnapshotTime
-                  }
-
-              LedgerDB.garbageCollect cdbLedgerDB slotNo
+    , wReader = blockUntilJust $ withOriginToMaybe <$> readTVar varSt
+    , wNotify = \slotNo -> do
+        -- Both of these are non-blocking: 'tryTakeSnapshot' only hands a
+        -- request over to 'snapshotRunner'.
+        LedgerDB.tryTakeSnapshot cdbLedgerDB
+        LedgerDB.garbageCollect cdbLedgerDB slotNo
     }
+
+{-------------------------------------------------------------------------------
+  Writing LedgerDB snapshots
+-------------------------------------------------------------------------------}
+
+-- | Serve the snapshot requests made by 'LedgerDB.tryTakeSnapshot', one at a
+-- time.
+--
+-- This thread is parked on the LedgerDB's snapshot request queue until there is
+-- work to do, and it keeps the queue occupied until it is done with a request,
+-- so no two snapshot requests are ever served concurrently.
+--
+-- Serving a request means copying the immutable blocks to the ImmutableDB and
+-- sleeping out a randomised delay (so that not all nodes snapshot at the same
+-- time) before writing the snapshots to disk. Doing that here rather than in
+-- the thread that decided the snapshot must be taken is what allows that
+-- thread to carry on in the meantime, in particular to garbage-collect the
+-- LedgerDB states the snapshots no longer need.
+snapshotRunner ::
+  forall m blk.
+  ( IOLike m
+  , ConsensusProtocol (BlockProtocol blk)
+  , HasHeader blk
+  , GetHeader blk
+  , HasCallStack
+  ) =>
+  ChainDbEnv m blk ->
+  m Void
+snapshotRunner cdb@CDB{cdbTracer, cdbLedgerDB} =
+  forever $ LedgerDB.withSnapshotRequest queue $ \req -> do
+    -- The LedgerDB assumes that all snapshots correspond to immutable blocks,
+    -- so copy the immutable blocks from the VolatileDB to the ImmutableDB
+    -- first.
+    void $ copyToImmutableDB cdb
+
+    delayBeforeSnapshotting <- mkRandomSnapshotDelay cdb delayRange
+    traceWith (TraceLedgerDBEvent . LedgerDB.LedgerDBSnapshotEvent >$< cdbTracer) $
+      LedgerDB.SnapshotRequestDelayed
+        (LedgerDB.snapshotRequestedAt req)
+        delayBeforeSnapshotting
+        (LedgerDB.snapshotRequestSlots req)
+    threadDelay delayBeforeSnapshotting
+
+    LedgerDB.writeSnapshots req
+ where
+  queue = LedgerDB.snapshotRequestQueue cdbLedgerDB
+
+  -- Fixed by the 'SnapshotPolicy' the LedgerDB was opened with, so read it
+  -- once rather than for every request.
+  delayRange = LedgerDB.snapshotQueueDelayRange queue
+
+-- | Serve the snapshot request that is currently queued, if any, right away,
+-- and return immediately when there is none.
+--
+-- Unlike 'snapshotRunner', this neither copies any blocks to the ImmutableDB
+-- nor waits out the randomised delay first.
+--
+-- For testing purposes: it lets 'Internal' drive snapshotting without a
+-- 'snapshotRunner' thread, which would otherwise leave the requests unserved
+-- and the ledger tables handles they hold on to unreleased. The model of the
+-- ChainDB state machine tests cannot faithfully implement the conditional
+-- copying that 'snapshotRunner' does, and it has no notion of time either.
+tryServeSnapshotRequestNow ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  m ()
+tryServeSnapshotRequestNow CDB{cdbLedgerDB} =
+  LedgerDB.tryWithSnapshotRequest (LedgerDB.snapshotRequestQueue cdbLedgerDB) $
+    LedgerDB.writeSnapshots
+
+-- | Draw the delay to wait before actually writing a requested snapshot.
+mkRandomSnapshotDelay ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  LedgerDB.SnapshotDelayRange ->
+  m DiffTime
+mkRandomSnapshotDelay CDB{cdbSnapshotDelayRNG} sdr =
+  atomically $ stateTVar cdbSnapshotDelayRNG randomSnapshotDelay
+ where
+  randomSnapshotDelay :: StdGen -> (DiffTime, StdGen)
+  randomSnapshotDelay rng =
+    first fromInteger $
+      uniformR (floor (LedgerDB.minimumDelay sdr), floor (LedgerDB.maximumDelay sdr)) rng
 
 {-------------------------------------------------------------------------------
   Executing garbage collection
@@ -505,7 +549,6 @@ garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
-  PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   -- Evict LeiosDb EB bodies and closures no longer needed now that everything
   -- up to 'slotNo' is immutable. Driven by the same scheduled slot as the other
   -- stores; currently a no-op (see 'leiosDbGarbageCollect'). The LeiosTxCache is
@@ -544,6 +587,18 @@ pruneLeiosValidClaims CDB{..} immTip = case immTip of
       -- to wake anyone about.
       modifyTVar cdbLeiosValidClaims $
         fmap (LeiosValidClaims.pruneValidClaims immTipSlot)
+
+-- | Garbage-collect Peras state (certificates and votes) whose target slot is
+-- strictly smaller than the given 'SlotNo'.
+garbageCollectPeras ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  SlotNo ->
+  m ()
+garbageCollectPeras CDB{..} slotNo = do
+  join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
+  join . atomically $ PerasVoteDB.garbageCollect cdbPerasVoteDB slotNo
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections
@@ -746,6 +801,7 @@ dumpGcSchedule (GcSchedule varQueue) = toList <$> readTVar varQueue
 addBlockRunner ::
   forall m blk.
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
@@ -805,7 +861,7 @@ addBlockRunner fuse cdb@CDB{..} = do
                           (FailedToAddBlock "Failed to add block synchronously")
                       pure ()
                     ChainSelAddPerasCert _cert varProcessed ->
-                      void $ tryPutTMVar varProcessed ()
+                      void $ tryPutTMVar varProcessed PerasCertNotProcessedClosing
                   closeChainSelQueue cdbChainSelQueue
               )
               ( \message -> do
@@ -818,10 +874,10 @@ addBlockRunner fuse cdb@CDB{..} = do
                     ChainSelAddPerasCert cert _varProcessed ->
                       traceWith cdbTracer $
                         TraceAddPerasCertEvent $
-                          PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
+                          PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertPoint cert)
                   chainSelSync cdb pcsCCtx message
                   lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
               )
       )
  where
-  starvationTracer = TraceChainSelStarvationEvent >$< cdbTracer
+  starvationTracer = mkTracer $ traceWith cdbTracer . TraceChainSelStarvationEvent

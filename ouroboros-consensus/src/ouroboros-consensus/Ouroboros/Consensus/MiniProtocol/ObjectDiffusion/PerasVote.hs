@@ -20,22 +20,22 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (ObjectDiffusionOutbo
 import Ouroboros.Network.Protocol.ObjectDiffusion.Type (ObjectDiffusion)
 
 type TracePerasVoteDiffusionInbound blk =
-  TraceObjectDiffusionInbound PerasRoundNo (PerasVote blk)
+  TraceObjectDiffusionInbound PerasVoteId (PerasVote blk)
 
 type TracePerasVoteDiffusionOutbound blk =
-  TraceObjectDiffusionOutbound PerasRoundNo (PerasVote blk)
+  TraceObjectDiffusionOutbound PerasVoteId (PerasVote blk)
 
 type PerasVotePoolReader blk m =
-  ObjectPoolReader PerasRoundNo (PerasVote blk) PerasVoteTicketNo m
+  ObjectPoolReader PerasVoteId (PerasVote blk) PerasVoteTicketNo m
 
 type PerasVotePoolWriter blk m =
-  ObjectPoolWriter PerasRoundNo (PerasVote blk) m
+  ObjectPoolWriter PerasVoteId (PerasVote blk) m
 
 type PerasVoteDiffusionInboundPipelined blk m a =
-  ObjectDiffusionInboundPipelined PerasRoundNo (PerasVote blk) m a
+  ObjectDiffusionInboundPipelined PerasVoteId (PerasVote blk) m a
 
 type PerasVoteDiffusionOutbound blk m a =
-  ObjectDiffusionOutbound PerasRoundNo (PerasVote blk) m a
+  ObjectDiffusionOutbound PerasVoteId (PerasVote blk) m a
 
 type PerasVoteDiffusion blk =
-  ObjectDiffusion PerasRoundNo (PerasVote blk)
+  ObjectDiffusion PerasVoteId (PerasVote blk)

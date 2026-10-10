@@ -174,6 +174,16 @@ An attack on a blockchain (or any other peer-to-peer network) system in which ma
 
 A cryptographic proof that the [Ouroboros](#ouroboros) protocol did indeed assign the [block](#block)'s issuer to lead the block's [slot](#slot).
 
+## ;Endorser block, ;EB
+
+A Linear Leios block that lists transactions by reference.
+Each entry of an EB is the hash and the size of one transaction, not the transaction itself.
+A [ranking block](#ranking-block-rb) announces an EB.
+When a later ranking block carries a certificate for the EB, the transactions of the EB go on the chain.
+The node stores EBs and their transactions in the [LeiosDB](#leiosdb).
+
+NOTE: this entry will be expanded as more Linear Leios features are merged. In particular, we intentionally omit EB certification.
+
 ## ;Epoch
 
 The sequence of slots is partitioned into a sequence of epochs, each of which is a contiguous run of a fixed number of slots.
@@ -392,6 +402,14 @@ The genesis block is not actually a block; it's the first ledger state.
 The small part of the ledger state actually required for header validation.
 It's the same part whether or not the validation is done via forecasting.
 
+## ;LeiosDB
+
+The storage for Leios [endorser blocks](#endorser-block-eb) (EBs) and their transactions.
+It has two partitions, which mirror the split of the [ChainDB](#chaindb).
+The volatile partition stores the EBs and transactions that the node downloads or forges.
+The immutable partition stores the complete EBs that a certificate on the [immutable chain](#immutable-chain) refers to.
+See [LeiosDB](../explanations/leiosdb.md) for its design and database schema.
+
 ## ;Limit on Eagerness (LoE)
 
 Do not select more than `k` blocks past the intersection of all candidate fragments.
@@ -465,6 +483,12 @@ Nodes communicate with other nodes via a set of two-party protocols in which one
 ## ;Node's immutable chain
 
 The prefix of the node's selection that excludes the youngest `k` blocks.
+
+## ;Node-to-node protocol
+
+The set of [mini protocols](#mini-protocol) (ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing) that Cardano nodes use to exchange blocks, headers, and transactions, keep connections alive, and discover peers.
+Its wire format is negotiated at connection time via a `NodeToNodeVersion`.
+See [Hard forks and node-to-node versioning](../explanations/hard_forks_and_node_to_node_versioning.md).
 
 ## ;Nonce
 
@@ -557,6 +581,14 @@ Permissive BFT, Transitional Praos (aka. TPraos), Praos.
 
 Peers coming from trusted public information (IOG relays, Cardano foundation also hosts similar nodes).
 
+## ;Ranking block, ;RB
+
+A Ranking Block is a slightly modified [Praos](#ouroboros-praos) [block](#block) in Linear Leios.
+A ranking block can announce an [endorser block](#endorser-block-eb) or carry a certificate for one.
+A ranking block that carries a certificate (a cert-RB) has an empty body.
+
+NOTE: this entry will be expanded as more Linear Leios features are merged. In particular, we intentionally omit EB certification.
+
 ## ;Real point
 
 The slot number and hash of a block.
@@ -618,6 +650,13 @@ The process of becoming synchronized with the system, either from scratch or due
 
 TPraos (Transitional Praos) is a Proof-of-Stake consensus protocol used in the early decentralized eras of Cardano (specifically Shelley, Allegra, and Mary).
 It was designed to manage the transition from the initial federated system by using a decentralization parameter (`d`) which controls the ratio of slots produced by legacy bootstrap keys (OBFT slots) versus those produced by stake pools selected via Ouroboros Praos, allowing for a smooth shift toward full decentralization.
+
+## ;Tick, ;Ticking, ;Ticked
+
+Ticking advances a [ledger state](#ledger-state) or protocol state from its current slot to a later target slot, applying every rule that depends only on time (epoch transitions, rewards pulsing, nonce switching, hard-fork activations).
+It is distinct from applying a block: ticking captures the changes that happen between blocks, even at slots where no block exists.
+A *ticked* state is one to which ticking has been applied; the `Ticked` type wrapper enforces that blocks are only applied on top of ticked states.
+See the [Ticking explanation](../explanations/ticking.md) for when and why consensus ticks, and its relationship to [forecasting](#forecasting).
 
 ## ;Transactions
 

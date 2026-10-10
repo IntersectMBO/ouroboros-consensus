@@ -1,10 +1,9 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -37,21 +36,21 @@
 --    blk EmptyMK@, stored in the @./state@ file in the snapshot directory.
 --
 -- V2 backends will provide means of loading a snapshot via the method
--- 'newHandleFromSnapshot'. V1 backends load the snapshot directly in
--- 'initFromSnapshot'.
+-- 'openStateRefFromSnapshot'.
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( -- * Snapshots
     CRCError (..)
   , DiskSnapshot (..)
   , MetadataErr (..)
-  , NumOfDiskSnapshots (..)
   , ReadSnapshotErr (..)
   , SnapshotBackend (..)
   , SnapshotFailure (..)
   , SnapshotMetadata (..)
   , SnapshotPolicyArgs (..)
   , TablesCodecVersion (..)
+  , NumOfDiskSnapshots (..)
   , defaultSnapshotPolicyArgs
+  , mithrilSnapshotPolicyArgs
 
     -- * Codec
   , readExtLedgerState
@@ -75,11 +74,33 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , writeSnapshotMetadata
 
     -- * Policy
-  , SnapshotInterval (..)
   , SnapshotPolicy (..)
+  , SnapshotDelayRange (..)
+  , SnapshotSelectorContext (..)
+  , SnapshotFrequency (..)
+  , SnapshotFrequencyArgs (..)
+  , SnapshotInterval (..)
+  , resolveSnapshotInterval
   , defaultSnapshotPolicy
+  , SnapshotPolicyInfo (..)
+  , snapshotPolicyInfo
+  , SnapshotPolicyMismatch (..)
+  , snapshotPolicyMismatches
+  , snapshotPolicyIntervalTime
+  , mithrilEpochSize
+  , sanityCheckSnapshotPolicyArgs
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
+
+    -- * Requesting snapshots
+  , SnapshotRequest (..)
+  , SnapshotRequestQueue
+  , newSnapshotRequestQueue
+  , snapshotQueueDelayRange
+  , snapshotRequestInFlight
+  , tryEnqueueSnapshotRequest
+  , tryWithSnapshotRequest
+  , withSnapshotRequest
 
     -- * Tracing
   , TraceSnapshotEvent (..)
@@ -95,6 +116,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ) where
 
 import Cardano.Ledger.BaseTypes
+import Cardano.Slotting.Time (SlotLength, getSlotLength)
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import qualified Codec.CBOR.Write as CBOR
@@ -109,7 +131,8 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser)
 import Data.Functor.Identity
 import qualified Data.List as List
-import Data.Maybe (isJust, mapMaybe)
+import Data.List.NonEmpty (NonEmpty)
+import Data.Maybe (catMaybes, isJust, mapMaybe, maybeToList)
 import Data.Ord
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -118,10 +141,10 @@ import Data.Word
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Util (Flag (..))
+import Ouroboros.Consensus.Util (Flag (..), lastMaybe)
 import Ouroboros.Consensus.Util.CBOR
   ( ReadIncrementalErr
   , decodeWithOrigin
@@ -254,10 +277,7 @@ data MetadataErr
   deriving (Eq, Show)
 
 -- | Management of snapshots for the different LedgerDB backends.
---
--- The LedgerDB V1 takes snapshots in @ReadLocked m@, hence the two different
--- @m@ and @n@ monad types.
-data SnapshotManager m n blk st = SnapshotManager
+data SnapshotManager m blk st = SnapshotManager
   { listSnapshots :: m [DiskSnapshot]
   , deleteSnapshotIfTemporary :: DiskSnapshot -> m ()
   , takeSnapshot ::
@@ -267,7 +287,7 @@ data SnapshotManager m n blk st = SnapshotManager
       -- \^ The state needed for taking the snapshot:
       -- - In V1: this will be the DbChangelog and the Backing store
       -- - In V2: this will be a StateRef
-      n (Maybe (DiskSnapshot, RealPoint blk))
+      m (Maybe (DiskSnapshot, RealPoint blk))
       -- \^ If a Snapshot was taken, its information and the point at which it
       -- was taken.
   }
@@ -348,12 +368,12 @@ loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
           Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
           Right meta -> pure $ Right meta
 
-snapshotsMapM_ :: Monad m => SnapshotManager m n blk st -> (DiskSnapshot -> m a) -> m ()
+snapshotsMapM_ :: Monad m => SnapshotManager m blk st -> (DiskSnapshot -> m a) -> m ()
 snapshotsMapM_ snapManager f =
   mapM_ f =<< listSnapshots snapManager
 
 -- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SnapshotManager m n blk st -> m ()
+destroySnapshots :: Monad m => SnapshotManager m blk st -> m ()
 destroySnapshots snapManager =
   snapshotsMapM_
     snapManager
@@ -399,7 +419,7 @@ writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
 -- The deleted snapshots are returned.
 trimSnapshots ::
   Monad m =>
-  SnapshotManager m n blk st ->
+  SnapshotManager m blk st ->
   SnapshotPolicy ->
   m [DiskSnapshot]
 trimSnapshots snapManager SnapshotPolicy{onDiskNumSnapshots} = do
@@ -407,7 +427,7 @@ trimSnapshots snapManager SnapshotPolicy{onDiskNumSnapshots} = do
   ss <- filter diskSnapshotIsTemporary <$> listSnapshots snapManager
   -- The snapshot are most recent first, so we can simply drop from the
   -- front to get the snapshots that are "too" old.
-  let ssTooOld = drop (fromIntegral onDiskNumSnapshots) ss
+  let ssTooOld = drop (fromIntegral . getNumOfDiskSnapshots $ onDiskNumSnapshots) ss
   mapM
     ( \s -> do
         deleteSnapshotIfTemporary snapManager s
@@ -494,19 +514,10 @@ decodeLBackwardsCompatible _ decodeLedger decodeHash =
   Policy
 -------------------------------------------------------------------------------}
 
--- | Length of time that has to pass after which a snapshot is taken.
-data SnapshotInterval
-  = DefaultSnapshotInterval
-  | RequestedSnapshotInterval DiffTime
-  | DisableSnapshots
-  deriving stock (Eq, Generic, Show)
-
--- | Number of snapshots to be stored on disk. This is either the default value
--- as determined by the @'SnapshotPolicy'@, or it is provided by the user. See the
+-- | Number of snapshots to be stored on disk. See the
 -- @'SnapshotPolicy'@ documentation for more information.
-data NumOfDiskSnapshots
-  = DefaultNumOfDiskSnapshots
-  | RequestedNumOfDiskSnapshots Word
+newtype NumOfDiskSnapshots
+  = NumOfDiskSnapshots {getNumOfDiskSnapshots :: Word}
   deriving stock (Eq, Generic, Show)
 
 -- | Type-safe flag to regulate the checksum policy of the ledger state snapshots.
@@ -522,7 +533,7 @@ pattern NoDoDiskSnapshotChecksum = Flag False
 -- snapshots that are guaranteed valid). The on-disk policy determines how often
 -- we write to disk and how many checkpoints we keep.
 data SnapshotPolicy = SnapshotPolicy
-  { onDiskNumSnapshots :: Word
+  { onDiskNumSnapshots :: NumOfDiskSnapshots
   -- ^ How many snapshots do we want to keep on disk?
   --
   -- A higher number of on-disk snapshots is primarily a safe-guard against
@@ -541,104 +552,479 @@ data SnapshotPolicy = SnapshotPolicy
   --        the next snapshot, we delete the oldest one, leaving the middle
   --        one available in case of truncation of the write. This is
   --        probably a sane value in most circumstances.
-  , onDiskShouldTakeSnapshot :: Maybe DiffTime -> Word64 -> Bool
-  -- ^ Should we write a snapshot of the ledger state to disk?
-  --
-  -- This function is passed two bits of information:
-  --
-  -- * The time since the last snapshot, or 'NoSnapshotTakenYet' if none was taken yet.
-  --   Note that 'NoSnapshotTakenYet' merely means no snapshot had been taking yet
-  --   since the node was started; it does not necessarily mean that none
-  --   exist on disk.
-  --
-  -- * The distance in terms of blocks applied to the /oldest/ ledger
-  --   snapshot in memory. During normal operation, this is the number of
-  --   blocks written to the ImmutableDB since the last snapshot. On
-  --   startup, it is computed by counting how many immutable blocks we had
-  --   to reapply to get to the chain tip. This is useful, as it allows the
-  --   policy to decide to take a snapshot /on node startup/ if a lot of
-  --   blocks had to be replayed.
+  , onDiskSnapshotSelector :: SnapshotSelectorContext -> [SlotNo]
+  -- ^ Select the slots to take a snapshot for, in increasing order. Must be a
+  -- sublist of 'sscSnapshotSlots'.
   --
   -- See also 'defaultSnapshotPolicy'
+  , onDiskSnapshotDelayRange :: SnapshotDelayRange
+  -- ^ Minimum and maximum durations of the random delay between requesting
+  -- a snapshot and taking that snapshot.
   }
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
 
-data SnapshotPolicyArgs = SnapshotPolicyArgs
-  { spaInterval :: !SnapshotInterval
-  , spaNum :: !NumOfDiskSnapshots
+-- | Range from which the randomised snapshot delay will be taken. The randomly
+-- chosen duration will be at least 'minimumDelay' and at most 'maximumDelay'.
+data SnapshotDelayRange = SnapshotDelayRange
+  { minimumDelay :: !DiffTime
+  -- ^ minimum acceptable delay between requesting a snapshot and taking the
+  -- snapshot
+  , maximumDelay :: !DiffTime
+  -- ^ maximum acceptable delay between requesting a snapshot and taking the
+  -- snapshot
   }
-  deriving (Eq, Show)
+  deriving (Show, Eq, Generic, NoThunks)
 
-defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
-defaultSnapshotPolicyArgs =
-  SnapshotPolicyArgs
+data SnapshotSelectorContext = SnapshotSelectorContext
+  { sscTimeSinceLast :: Maybe DiffTime
+  -- ^ The time since the last snapshot, or 'Nothing' if none was taken yet.
+  -- Note that 'Nothing' merely means no snapshot had been taking yet since the
+  -- node was started; it does not necessarily mean that none exist on disk.
+  , sscSnapshotSlots :: [SlotNo]
+  -- ^ An increasing list of slots for which a snapshot can be taken (as the
+  -- corresponding ledger state is immutable). The result of
+  -- 'onDiskSnapshotSelector' must be a subset of this list.
+  }
+  deriving stock Show
+
+-- | Determines when/how often we take ledger snapshots.
+--
+-- We only write snapshots for ledger states that are /immutable/. Concretely,
+-- for every slot @s@ out of
+--
+-- > sfaOffset, sfaOffset + sfaInterval, sfaOffset + 2 * sfaInterval, sfaOffset + 3 * sfaInterval, ...
+--
+-- we write a snapshot for the most recent immutable ledger state before @s@.
+-- This way, nodes with the same @sfaInterval@/@sfaOffset@ configuration create
+-- snapshots for precisely the same slots.
+--
+-- For example, on Cardano mainnet, where @k=2160@ and @f=1/20@, setting
+-- @sfaInterval = 10*k/f = 432000@ (one epoch) and @sfaOffset = 0@ will cause
+-- the node to create snapshots for the last block in every Shelley epoch. By
+-- setting @sfaOffset@ to eg @5*k/f@ (half an epoch), snapshots are created just
+-- before the midway point in each epoch.
+--
+-- Additionally, there is an (optional, opt-out) rate limit (useful while
+-- bulk-syncing). When set to a given duration, we will skip writing a snapshot
+-- if less time than the given duration has passed since we finished writing the
+-- previous snapshot (if any).
+--
+-- To avoid skipping a snapshot write when caught-up, it is advisable to set
+-- 'sfaRateLimit' to something significantly smaller than the wall-clock duration
+-- of 'sfaInterval'.
+data SnapshotFrequencyArgs = SnapshotFrequencyArgs
+  { sfaInterval :: SnapshotInterval
+  -- ^ Try to write snapshots every 'sfaInterval' many slots.
+  , sfaOffset :: SlotNo
+  -- ^ An offset for when to write snapshots, see 'SnapshotFrequency'.
+  , sfaRateLimit :: DiffTime
+  -- ^ Ensure (if present) that at least this amount of time passes between
+  -- writing snapshots. Setting this to a non-positive value disable the rate
+  -- limit.
+  , sfaDelaySnapshotRange :: SnapshotDelayRange
+  }
+  deriving stock (Show, Eq)
+
+data SnapshotFrequency
+  = SnapshotFrequency SnapshotFrequencyArgs
+  | DisableSnapshots
+  deriving stock (Show, Eq)
+
+-- | How many slots to leave between snapshots, see 'SnapshotFrequencyArgs'.
+--
+-- The interval is only resolved into a concrete number of slots once the
+-- 'SecurityParam' is known, see 'resolveSnapshotInterval'.
+data SnapshotInterval
+  = -- | @40k@ slots, see 'mithrilSnapshotPolicyArgs'.
     DefaultSnapshotInterval
-    DefaultNumOfDiskSnapshots
+  | -- | An explicit number of slots.
+    RequestedSnapshotInterval (NonZero Word64)
+  deriving stock (Show, Eq)
+
+-- | Resolve a 'SnapshotInterval' into a concrete number of slots.
+resolveSnapshotInterval :: SecurityParam -> SnapshotInterval -> NonZero Word64
+resolveSnapshotInterval k = \case
+  DefaultSnapshotInterval -> unsafeNonZero $ 40 * unNonZero (maxRollbacks k)
+  RequestedSnapshotInterval interval -> interval
+
+data SnapshotPolicyArgs = SnapshotPolicyArgs
+  { spaFrequency :: SnapshotFrequency
+  , spaNum :: NumOfDiskSnapshots
+  -- ^ See 'onDiskNumSnapshots'.
+  }
+  deriving stock (Show, Eq)
+
+-- | Default snapshot policy args are Mithril snapshot policy args
+defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
+defaultSnapshotPolicyArgs = mithrilSnapshotPolicyArgs
+
+-- | Snapshot Policy arguments to be used by Mithril
+--
+-- The snapshot interval is derived as follows:
+--   * The epoch in Shelley is 432,000 (10k/f) slots long, which corresponds to 5 days.
+--   * We want to take a snapshot a day, so that is 40*k.
+--
+-- Note that we will take a snapshot at the beginning of each epoch too, but we
+-- will not write it immediately. Instead we will write it between 5 minutes and
+-- 6 hours later, so that we do not risk imposing more work on the epoch
+-- boundary, and so that the writes of all the nodes in the network are spread
+-- out. On mainnet, 6 hours is 10*k seconds.
+mithrilSnapshotPolicyArgs :: SnapshotPolicyArgs
+mithrilSnapshotPolicyArgs =
+  SnapshotPolicyArgs
+    { spaFrequency =
+        SnapshotFrequency $
+          SnapshotFrequencyArgs
+            { sfaInterval = DefaultSnapshotInterval
+            , sfaOffset = 0
+            , sfaRateLimit = secondsToDiffTime $ 10 * 60
+            , sfaDelaySnapshotRange = SnapshotDelayRange fiveMinutes sixHours
+            }
+    , spaNum = NumOfDiskSnapshots 2
+    }
+ where
+  fiveMinutes :: DiffTime
+  fiveMinutes = 5 * 60
+
+  sixHours :: DiffTime
+  sixHours = 6 * 60 * 60
+
+-- | The snapshot policy as it came out, for the trace emitted when the LedgerDB
+-- is opened (see 'ConfiguredSnapshotPolicy').
+--
+-- These values are worth reporting together because they are stated in
+-- different units. The interval is a number of SLOTS, while the rate limit and
+-- the delay range are in SECONDS, so whether a policy is sensible depends on the
+-- slot length of the network it runs on. A policy carried over from mainnet,
+-- where a slot is a second, means something quite different on a testnet with
+-- short slots: the same delay range can be a large fraction of the interval, or
+-- longer than it. The slot length of the era at the tip is reported so that the
+-- interval can be read as wall-clock time without the reader having to know
+-- which network this is.
+--
+-- The whole of 'SnapshotPolicyArgs' is carried, since the offset, the rate
+-- limit, the delay range and the number of snapshots kept are all part of what
+-- the policy does, along with the interval as a number of slots. A node started
+-- from a configuration file is given a concrete interval and the two agree; they
+-- differ only for a caller that builds the arguments in Haskell and asks for
+-- 'DefaultSnapshotInterval' (see IntersectMBO/ouroboros-consensus#2355).
+data SnapshotPolicyInfo = SnapshotPolicyInfo
+  { spiSecurityParam :: !SecurityParam
+  , spiArgs :: !SnapshotPolicyArgs
+  -- ^ The policy as configured.
+  , spiIntervalSlots :: !(Maybe (NonZero Word64))
+  -- ^ 'sfaInterval' put through 'resolveSnapshotInterval', which is the number
+  -- it already holds when one was configured, and @40k@ when it was not.
+  -- 'Nothing' when snapshots are disabled.
+  , spiSlotLengthAtTip :: !SlotLength
+  -- ^ The slot length of the era the tip is in when the LedgerDB is opened,
+  -- which is the one the interval converts through for now. It changes at a
+  -- hard fork, and on a node that is still syncing an early era it is not the
+  -- slot length the node will end up running at.
+  }
+  deriving (Generic, Eq, Show)
+
+-- | Describe a policy for 'ConfiguredSnapshotPolicy'.
+snapshotPolicyInfo ::
+  SecurityParam ->
+  SnapshotPolicyArgs ->
+  -- | The slot length of the era at the tip.
+  SlotLength ->
+  SnapshotPolicyInfo
+snapshotPolicyInfo k args slotLengthAtTip =
+  SnapshotPolicyInfo
+    { spiSecurityParam = k
+    , spiArgs = args
+    , spiIntervalSlots = case spaFrequency args of
+        DisableSnapshots -> Nothing
+        SnapshotFrequency SnapshotFrequencyArgs{sfaInterval} ->
+          Just $ resolveSnapshotInterval k sfaInterval
+    , spiSlotLengthAtTip = slotLengthAtTip
+    }
+
+-- | A way in which a snapshot policy does not hang together on the network it
+-- is about to run on.
+--
+-- Each of these compares a value configured in SECONDS against the interval,
+-- which is configured in SLOTS. The two only line up at a given slot length, so
+-- a policy that is right for one network can be wrong on another with no value
+-- having changed. That is what happens to a node started on a short-slot
+-- testnet with the snapshot settings left unset: the interval stays at the same
+-- number of slots, so the time it stands for falls with the slot length, while
+-- the delay and the rate limit are absolute and stay where they are.
+data SnapshotPolicyMismatch
+  = -- | The longest write delay is at least as long as the interval, so a write
+    -- can still be pending when the next snapshot is already due.
+    WriteDelayExceedsInterval
+  | -- | The rate limit is at least as long as the interval, so it will suppress
+    -- most of the writes the interval asks for.
+    RateLimitExceedsInterval
+  deriving (Generic, Eq, Show)
+
+-- | The wall-clock time between snapshots, at the slot length in
+-- 'spiSlotLengthAtTip'. 'Nothing' when snapshots are disabled.
+snapshotPolicyIntervalTime :: SnapshotPolicyInfo -> Maybe NominalDiffTime
+snapshotPolicyIntervalTime info =
+  toTime <$> spiIntervalSlots info
+ where
+  toTime slots =
+    fromIntegral (unNonZero slots) * getSlotLength (spiSlotLengthAtTip info)
+
+-- | The ways, if any, in which a policy does not hang together at the slot
+-- length it is about to run at. An empty list does not mean the policy is a good
+-- one, only that these two relations hold.
+snapshotPolicyMismatches :: SnapshotPolicyInfo -> [SnapshotPolicyMismatch]
+snapshotPolicyMismatches info =
+  case (spaFrequency (spiArgs info), snapshotPolicyIntervalTime info) of
+    (SnapshotFrequency fargs, Just intervalTime) ->
+      catMaybes
+        [ WriteDelayExceedsInterval
+            <$ guard (asTime (maximumDelay (sfaDelaySnapshotRange fargs)) >= intervalTime)
+        , RateLimitExceedsInterval
+            <$ guard (asTime (sfaRateLimit fargs) >= intervalTime)
+        ]
+    _ -> []
+ where
+  asTime :: DiffTime -> NominalDiffTime
+  asTime = realToFrac
 
 -- | Default on-disk policy suitable to use with cardano-node
 defaultSnapshotPolicy ::
   SecurityParam ->
   SnapshotPolicyArgs ->
   SnapshotPolicy
-defaultSnapshotPolicy
-  (SecurityParam k)
-  (SnapshotPolicyArgs requestedInterval reqNumOfSnapshots) =
-    SnapshotPolicy
-      { onDiskNumSnapshots
-      , onDiskShouldTakeSnapshot
-      }
+defaultSnapshotPolicy k args =
+  SnapshotPolicy
+    { onDiskNumSnapshots = spaNum
+    , onDiskSnapshotSelector
+    , onDiskSnapshotDelayRange
+    }
+ where
+  SnapshotPolicyArgs
+    { spaFrequency
+    , spaNum
+    } = args
+
+  onDiskSnapshotSelector :: SnapshotSelectorContext -> [SlotNo]
+  onDiskSnapshotSelector ctx
+    | Just timeSinceLast <- sscTimeSinceLast ctx
+    , not $ passesRateLimitCheck timeSinceLast =
+        []
+    | otherwise = case spaFrequency of
+        DisableSnapshots -> []
+        SnapshotFrequency
+          SnapshotFrequencyArgs
+            { sfaInterval
+            , sfaOffset
+            , sfaRateLimit
+            } ->
+            applyRateLimit $
+              catMaybes $
+                zipWith
+                  shouldTakeSnapshot
+                  (sscSnapshotSlots ctx)
+                  (drop 1 (sscSnapshotSlots ctx))
+           where
+            interval = unNonZero $ resolveSnapshotInterval k sfaInterval
+
+            -- Test whether there is a non-negative integer @n@ such that
+            --
+            -- > candidateSlot < offset + n * interval <= nextSlot
+            --
+            -- If so, return @'Just' 'candidateSlot'@ for snapshotting.
+            shouldTakeSnapshot ::
+              SlotNo -> -- The slot to potentially take a snapshot for.
+              SlotNo -> -- The next slot in 'sscSnapshotSlots'.
+              Maybe SlotNo
+            shouldTakeSnapshot candidateSlot nextSlot
+              | nextSlot < sfaOffset = Nothing
+              | candidateSlot < sfaOffset + n * SlotNo interval = Just candidateSlot
+              | otherwise = Nothing
+             where
+              n = SlotNo $ unSlotNo (nextSlot - sfaOffset) `div` interval
+
+            -- When rate limiting is enabled, only return at most one (the last)
+            -- of the slots satisfying 'shouldTakeSnapshot'.
+            applyRateLimit :: [SlotNo] -> [SlotNo]
+            applyRateLimit
+              | sfaRateLimit > 0 = maybeToList . lastMaybe
+              | otherwise = id
+
+  onDiskSnapshotDelayRange = case spaFrequency of
+    DisableSnapshots -> SnapshotDelayRange 0 0 -- snapshots are disabled, but we need to provide some value here
+    SnapshotFrequency sfa -> sfaDelaySnapshotRange sfa
+
+  passesRateLimitCheck t = case spaFrequency of
+    SnapshotFrequency SnapshotFrequencyArgs{sfaRateLimit} ->
+      t >= sfaRateLimit
+    DisableSnapshots -> False
+
+-- | The Cardano mainnet epoch length in slots, used as the reference for the
+-- Mithril snapshot compatibility check in 'sanityCheckSnapshotPolicyArgs'.
+-- Mithril requires a ledger snapshot at each epoch boundary; for snapshots to
+-- land on every epoch boundary, 'sfaInterval' must divide this value evenly.
+mithrilEpochSize :: Word64
+mithrilEpochSize = 432000
+
+-- | Check a 'SnapshotPolicyArgs' for suspicious configurations and return a
+-- (possibly empty) list of 'SanityCheckIssue's describing any problems found.
+--
+-- Only 'Override' values are checked — 'UseDefault' values are known-good and
+-- are never flagged. Checks that are specific to 'SnapshotFrequency' are
+-- skipped entirely when 'spaFrequency' is 'DisableSnapshots'.
+sanityCheckSnapshotPolicyArgs :: SecurityParam -> SnapshotPolicyArgs -> [SanityCheckIssue]
+sanityCheckSnapshotPolicyArgs k SnapshotPolicyArgs{spaFrequency, spaNum} =
+  catMaybes $
+    checkNumZero spaNum
+      : case spaFrequency of
+        DisableSnapshots -> []
+        SnapshotFrequency sfa -> checkFrequencyArgs sfa
+ where
+  checkNumZero (NumOfDiskSnapshots 0) = Just SnapshotNumZero
+  checkNumZero _ = Nothing
+
+  checkFrequencyArgs SnapshotFrequencyArgs{sfaDelaySnapshotRange, sfaRateLimit, sfaInterval} =
+    [ checkDelayRange sfaDelaySnapshotRange
+    , checkRateLimitDisabled sfaRateLimit
+    , checkRateLimitLarge sfaRateLimit
+    , checkMithrilDivisibility sfaInterval
+    ]
+
+  checkDelayRange (SnapshotDelayRange mn mx)
+    | mn < 0 = Just (SnapshotDelayRangeNegativeMinimum mn)
+    | mn > mx = Just (SnapshotDelayRangeInverted mn mx)
+    | otherwise = Nothing
+
+  checkRateLimitDisabled rl
+    | rl <= 0 = Just SnapshotRateLimitDisabled
+    | otherwise = Nothing
+
+  checkRateLimitLarge rl
+    | rl > 86400 = Just (SnapshotRateLimitSuspiciouslyLarge rl)
+    | otherwise = Nothing
+
+  checkMithrilDivisibility sfaInterval
+    | mithrilEpochSize `mod` interval /= 0 =
+        Just (SnapshotIntervalNotDivisorOfEpoch interval)
+    | otherwise = Nothing
    where
-    onDiskNumSnapshots :: Word
-    onDiskNumSnapshots = case reqNumOfSnapshots of
-      DefaultNumOfDiskSnapshots -> 2
-      RequestedNumOfDiskSnapshots value -> value
+    interval = unNonZero $ resolveSnapshotInterval k sfaInterval
 
-    onDiskShouldTakeSnapshot ::
-      Maybe DiffTime ->
-      Word64 ->
-      Bool
-    onDiskShouldTakeSnapshot Nothing blocksSinceLast =
-      -- If users never leave their wallet running for long, this would mean
-      -- that under some circumstances we would never take a snapshot
-      -- So, on startup (when the 'time since the last snapshot' is `Nothing`),
-      -- we take a snapshot as soon as there are @k@ blocks replayed.
-      -- This means that even if users frequently shut down their wallet, we still
-      -- take a snapshot roughly every @k@ blocks. It does mean the possibility of
-      -- an extra unnecessary snapshot during syncing (if the node is restarted), but
-      -- that is not a big deal.
-      blocksSinceLast >= unNonZero k
-    onDiskShouldTakeSnapshot (Just timeSinceLast) blocksSinceLast =
-      snapshotInterval timeSinceLast
-        || substantialAmountOfBlocksWereProcessed blocksSinceLast timeSinceLast
+{-------------------------------------------------------------------------------
+  Requesting snapshots
+-------------------------------------------------------------------------------}
 
-    -- \| We want to create a snapshot after a substantial amount of blocks were
-    -- processed (hard-coded to 50k blocks). Given the fact that during bootstrap
-    -- a fresh node will see a lot of blocks over a short period of time, we want
-    -- to limit this condition to happen not more often then a fixed amount of
-    -- time (here hard-coded to 6 minutes)
-    substantialAmountOfBlocksWereProcessed blocksSinceLast timeSinceLast =
-      let minBlocksBeforeSnapshot = 50_000
-          minTimeBeforeSnapshot = 6 * secondsToDiffTime 60
-       in blocksSinceLast >= minBlocksBeforeSnapshot
-            && timeSinceLast >= minTimeBeforeSnapshot
+-- | A pending request to write ledger snapshots to disk.
+--
+-- The ledger states to snapshot have already been selected and pinned down
+-- (the request holds on to duplicated ledger tables handles), but nothing has
+-- been written yet. Serving the request via 'writeSnapshots' is what writes
+-- the snapshots and releases those handles again.
+data SnapshotRequest m = SnapshotRequest
+  { snapshotRequestedAt :: !Time
+  -- ^ The time at which the ledger states to snapshot were selected.
+  , snapshotRequestSlots :: !(NonEmpty SlotNo)
+  -- ^ The slots of the ledger states that will be snapshotted, for tracing.
+  , writeSnapshots :: !(m ())
+  -- ^ Write the snapshots and release the ledger tables handles this request
+  -- holds on to.
+  --
+  -- This is a closure rather than data that whoever serves the request could
+  -- act on, because writing a snapshot needs the ledger tables handles and the
+  -- backend-specific machinery of the LedgerDB implementation, neither of
+  -- which is nameable outside of it. All that is left to the server is /when/
+  -- to run this.
+  }
 
-    -- \| Requested snapshot interval can be explicitly provided by the
-    -- caller (RequestedSnapshotInterval) or the caller might request the default
-    -- snapshot interval (DefaultSnapshotInterval). If the latter then the
-    -- snapshot interval is defaulted to k * 2 seconds - when @k = 2160@ the interval
-    -- defaults to 72 minutes.
-    snapshotInterval t = case requestedInterval of
-      RequestedSnapshotInterval value -> t >= value
-      DefaultSnapshotInterval -> t >= secondsToDiffTime (fromIntegral $ unNonZero k * 2)
-      DisableSnapshots -> False
+-- | A queue holding at most one 'SnapshotRequest'.
+--
+-- It is shared between the thread deciding that a snapshot must be taken and
+-- the background thread taking it. The former never blocks
+-- ('tryEnqueueSnapshotRequest' drops the request when the queue is occupied),
+-- the latter is parked on the queue until there is work to do
+-- ('withSnapshotRequest').
+--
+-- The queue stays occupied for as long as a request is being /served/, not
+-- merely while it is waiting to be picked up. Hence at most one snapshot
+-- request is alive at any point in time.
+--
+-- Bounding it this way is not something the 'SnapshotPolicy' rate limit can do
+-- on its own: 'sscTimeSinceLast' is derived from the last /completed/ request,
+-- so it stays satisfied for the whole of a request's delay, and it can be
+-- disabled altogether ('SnapshotRateLimitDisabled'). Without this bound, every
+-- advance of the immutable tip
+-- during one delay would start another request, each pinning a ledger state
+-- and each writing a snapshot that 'trimSnapshots' then discards.
+data SnapshotRequestQueue m
+  = SnapshotRequestQueue !SnapshotDelayRange !(StrictMVar m (SnapshotRequest m))
+  deriving NoThunks via OnlyCheckWhnfNamed "SnapshotRequestQueue" (SnapshotRequestQueue m)
+
+newSnapshotRequestQueue :: MonadMVar m => SnapshotDelayRange -> m (SnapshotRequestQueue m)
+newSnapshotRequestQueue delayRange =
+  SnapshotRequestQueue delayRange <$> uncheckedNewEmptyMVar
+
+-- | The range to draw the randomised delay before writing the snapshots from,
+-- see 'onDiskSnapshotDelayRange'.
+--
+-- It lives on the queue, and not in every 'SnapshotRequest', because it is a
+-- property of the 'SnapshotPolicy' the LedgerDB was opened with, hence the same
+-- for every request.
+snapshotQueueDelayRange :: SnapshotRequestQueue m -> SnapshotDelayRange
+snapshotQueueDelayRange (SnapshotRequestQueue delayRange _) = delayRange
+
+-- | Whether a request is currently queued or being served.
+--
+-- Merely a hint: by the time the caller acts on it, the answer might have
+-- changed. It is meant to let a would-be producer skip the (not entirely
+-- cheap) work of assembling a request that 'tryEnqueueSnapshotRequest' would
+-- then drop anyway.
+snapshotRequestInFlight :: MonadMVar m => SnapshotRequestQueue m -> m Bool
+snapshotRequestInFlight (SnapshotRequestQueue _ var) = not <$> isEmptyMVar var
+
+-- | Enqueue a request, unless one is already queued or being served.
+--
+-- Never blocks. Returns 'False' when the request was dropped, in which case
+-- the caller is responsible for releasing the resources it holds on to.
+tryEnqueueSnapshotRequest ::
+  MonadMVar m => SnapshotRequestQueue m -> SnapshotRequest m -> m Bool
+tryEnqueueSnapshotRequest (SnapshotRequestQueue _ var) = tryPutMVar var
+
+-- | Block until a request is enqueued, then serve it.
+--
+-- The queue is only freed once the given action has returned or thrown, so
+-- that no further request is accepted while this one is being served.
+withSnapshotRequest ::
+  (MonadMVar m, MonadThrow m) =>
+  SnapshotRequestQueue m ->
+  (SnapshotRequest m -> m a) ->
+  m a
+withSnapshotRequest (SnapshotRequestQueue _ var) =
+  bracket (readMVar var) (\_ -> takeMVar var)
+
+-- | Like 'withSnapshotRequest', but do nothing when no request is queued
+-- instead of waiting for one.
+tryWithSnapshotRequest ::
+  (MonadMVar m, MonadThrow m) =>
+  SnapshotRequestQueue m ->
+  (SnapshotRequest m -> m ()) ->
+  m ()
+tryWithSnapshotRequest (SnapshotRequestQueue _ var) f =
+  bracket (tryReadMVar var) (mapM_ (\_ -> takeMVar var)) (mapM_ f)
 
 {-------------------------------------------------------------------------------
   Tracing snapshot events
 -------------------------------------------------------------------------------}
 
 data TraceSnapshotEvent blk
-  = -- | An on disk snapshot was skipped because it was invalid.
+  = -- | The snapshot policy the LedgerDB was opened with. See 'SnapshotPolicyInfo'.
+    ConfiguredSnapshotPolicy SnapshotPolicyInfo
+  | -- | An on disk snapshot was skipped because it was invalid.
     InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
+  | -- | A delayed snapshot requested was issued at a timestamp,
+    --   with a delay and for ledger states at the specified slot numbers
+    SnapshotRequestDelayed Time DiffTime (NonEmpty SlotNo)
+  | -- | A snapshot request was completed
+    SnapshotRequestCompleted
   | -- | A snapshot was written to disk.
     TookSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
   | -- | An old or invalid on-disk snapshot was deleted

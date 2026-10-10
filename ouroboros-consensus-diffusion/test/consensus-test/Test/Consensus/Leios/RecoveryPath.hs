@@ -54,6 +54,7 @@ import LeiosDemoTypes
   , TxHash
   , Weight
   , aggregateLeiosCert
+  , leiosSignContext
   , offerings
   , outstandingPrunedSlot
   )
@@ -456,7 +457,7 @@ mkCert TestCommittee{committee, allKeys} msg =
  where
   sigs =
     Map.fromList
-      [ (LeiosSeatId (fromIntegral i), signDSIGN () msg sk)
+      [ (LeiosSeatId (fromIntegral i), signDSIGN leiosSignContext msg sk)
       | (i, sk) <- zip [0 :: Int ..] allKeys
       ]
 
@@ -468,7 +469,7 @@ nodeConfig :: NodeUnderTestConfig
 nodeConfig =
   defaultNodeUnderTestConfig
     ( leiosTestLedgerConfig
-        (HardFork.defaultEraParams securityParam (slotLengthFromSec 1))
+        (HardFork.defaultEraParams securityParam (slotLengthFromSec 1) HardFork.NoPerasEnabled)
         100
         (const (Just (testCommittee.committee, wholeCommittee)))
     )

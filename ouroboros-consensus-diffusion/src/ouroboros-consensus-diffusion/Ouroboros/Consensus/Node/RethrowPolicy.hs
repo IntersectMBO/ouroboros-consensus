@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Node.RethrowPolicy (consensusRethrowPolicy) where
@@ -10,7 +11,7 @@ import Control.ResourceRegistry
   )
 import Data.Proxy (Proxy)
 import Data.Typeable (Typeable)
-import Ouroboros.Consensus.Block (StandardHash)
+import Ouroboros.Consensus.Block (BlockSupportsPeras (..), StandardHash)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( BlockFetchServerException
@@ -26,6 +27,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDBError)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
+import Ouroboros.Consensus.Storage.PerasVoteDB.API (PerasVoteDbError (..))
 import Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDBError)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
 import Ouroboros.Network.RethrowPolicy
@@ -47,7 +49,10 @@ import System.FS.API.Types (FsError)
 -- terminate with a storage layer exception (restart with full recovery).
 consensusRethrowPolicy ::
   forall blk.
-  (Typeable blk, StandardHash blk) =>
+  ( Typeable blk
+  , StandardHash blk
+  , Show (PerasError blk)
+  ) =>
   Proxy blk ->
   RethrowPolicy
 consensusRethrowPolicy pb =
@@ -97,6 +102,15 @@ consensusRethrowPolicy pb =
     -- for some blocks we used to have but got GCed. This means the
     -- peer is on a chain that forks off more than @k@ blocks away.
     <> mkRethrowPolicy (\_ctx (_ :: BlockFetchServerException) -> distantPeer)
+    -- Peras components as part of the ChainDB can create exceptions, see
+    -- https://github.com/tweag/cardano-peras/issues/216
+    <> mkRethrowPolicy
+      ( \_ctx (e :: PerasVoteDbError blk) ->
+          case e of
+            MultipleWinnersInRound{} -> ourBug
+            ForgingCertError{} -> ourBug
+            EpochContextNotFoundForRound{} -> ourBug
+      )
     -- Some chain sync client exceptions indicate malicious behaviour,
     -- others merely mean that we should disconnect from this client
     -- because we have diverged too much.

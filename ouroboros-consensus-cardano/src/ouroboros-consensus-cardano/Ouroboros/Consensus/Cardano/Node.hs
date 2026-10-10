@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -8,6 +9,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -32,13 +34,6 @@ module Ouroboros.Consensus.Cardano.Node
   , protocolInfoCardano
 
     -- * SupportedNetworkProtocolVersion
-  , pattern CardanoNodeToClientVersion12
-  , pattern CardanoNodeToClientVersion13
-  , pattern CardanoNodeToClientVersion14
-  , pattern CardanoNodeToClientVersion15
-  , pattern CardanoNodeToClientVersion16
-  , pattern CardanoNodeToClientVersion17
-  , pattern CardanoNodeToClientVersion18
   , pattern CardanoNodeToClientVersion19
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
@@ -50,8 +45,6 @@ import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Ledger.Shelley.LedgerState (NewEpochState, esSnapshotsL, nesEsL)
-import Cardano.Ledger.State (mkGoSnapShot, mkSetSnapShot, ssStakeGoL, ssStakeMarkL, ssStakeSetL)
 import Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Codec.CBOR.Decoding as CBOR
@@ -70,7 +63,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Word (Word16, Word64)
-import Lens.Micro ((&), (.~), (^.))
+import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.ByronHFC
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
@@ -88,17 +81,18 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
-import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosCanBeLeader (..)
   , instantiatePraosCredentials
   )
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -298,129 +292,6 @@ pattern CardanoNodeToNodeVersion2 =
         :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion8' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion12 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion12 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
-        :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion9' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion13 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion13 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
-        :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion10' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion14 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion14 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-        :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion11' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion15 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion15 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-        :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion12' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion16 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion16 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
-        :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
--- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion13' for the
--- Shelley-based eras.
-pattern CardanoNodeToClientVersion17 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion17 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
-        :* Nil
-      )
-
-pattern CardanoNodeToClientVersion18 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion18 =
-  HardForkNodeToClientEnabled
-    HardForkSpecificNodeToClientVersion3
-    ( EraNodeToClientEnabled ByronNodeToClientVersion1
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
-        :* Nil
-      )
-
 pattern CardanoNodeToClientVersion19 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion19 =
   HardForkNodeToClientEnabled
@@ -447,16 +318,24 @@ instance
       , (NodeToNodeV_16, CardanoNodeToNodeVersion2)
       ]
 
+  -- \| The @cardano-node@ release that first shipped each version, which is what
+  -- determines when it can be dropped: a client built against an older
+  -- @cardano-node@ can offer nothing newer than that release's maximum.
+  --
+  -- > NodeToClientV_16   9.0.0
+  -- > NodeToClientV_17   9.2.0
+  -- > NodeToClientV_18   10.1.1
+  -- > NodeToClientV_19   10.2.1
+  -- > NodeToClientV_20   10.3.1
+  -- > NodeToClientV_21   10.6.0
+  -- > NodeToClientV_22   10.6.0
+  -- > NodeToClientV_23   10.7.0
+  --
+  -- Note that 11.x introduced no new version: 10.7.1 and 11.0.1 both use
+  -- @ouroboros-consensus-3.0.1.0@ and so offer the very same set.
   supportedNodeToClientVersions _ =
     Map.fromList $
-      [ (NodeToClientV_16, CardanoNodeToClientVersion12)
-      , (NodeToClientV_17, CardanoNodeToClientVersion13)
-      , (NodeToClientV_18, CardanoNodeToClientVersion14)
-      , (NodeToClientV_19, CardanoNodeToClientVersion15)
-      , (NodeToClientV_20, CardanoNodeToClientVersion16)
-      , (NodeToClientV_21, CardanoNodeToClientVersion17)
-      , (NodeToClientV_22, CardanoNodeToClientVersion18)
-      , (NodeToClientV_23, CardanoNodeToClientVersion19)
+      [ (NodeToClientV_23, CardanoNodeToClientVersion19)
       ]
 
   latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_23)
@@ -488,44 +367,6 @@ toTriggerHardFork = \case
   CardanoTriggerHardForkAtEpoch epochNo ->
     TriggerHardForkAtEpoch epochNo
 
--- | Warm the initial stake snapshots for early-bootstrap (test) networks, so the
--- stake distribution -- and hence anything reading it at genesis, e.g. the Leios
--- committee via @nesPd@ -- is active from the first epochs instead of only after
--- the ~2-epoch snapshot pipeline has run. @ssStakeMark@ is already seeded from
--- genesis staking by the ledger's 'L.injectIntoTestState'; here we backfill
--- set\/go by how early the era boots. Only fires for
--- 'CardanoTriggerHardForkAtEpoch' (test-only; real networks use
--- 'CardanoTriggerHardForkAtDefaultVersion' and are left untouched):
---
---   * hard fork at epoch 0   -> go = set = mark
---   * hard fork at epoch 1   -> set = mark
---   * hard fork at epoch >=2 -> unchanged
-seedInitialStakeSnapshots ::
-  TriggerHardFork ->
-  NewEpochState era ->
-  NewEpochState era
-seedInitialStakeSnapshots trigger nes = case trigger of
-  TriggerHardForkAtEpoch (EpochNo 0) ->
-    nes
-      & (nesEsL . esSnapshotsL . ssStakeSetL) .~ setSnap
-      & (nesEsL . esSnapshotsL . ssStakeGoL) .~ mkGoSnapShot setSnap
-  TriggerHardForkAtEpoch (EpochNo 1) ->
-    nes & (nesEsL . esSnapshotsL . ssStakeSetL) .~ setSnap
-  _ -> nes
- where
-  mark = nes ^. nesEsL . esSnapshotsL . ssStakeMarkL
-  -- Mark/Set/Go stopped being textually the same type (differentiated stake
-  -- snapshots by phase), so seating the committee on the set/go position now
-  -- goes through 'mkSetSnapShot' rather than a bare lens write. It wants a
-  -- max key age (CIP-0164) to judge every seat's key by; this function is
-  -- test/devnet-only (see the trigger match above), every key it seats was
-  -- just registered this same epoch, and pre-Dijkstra eras never force the
-  -- committee at all -- so a generous constant that cannot itself expire a
-  -- key here is as good as reading 'ppLeiosMaxKeyAgeEpochsL' would be, and
-  -- avoids adding a 'DijkstraEraPParams' constraint this function cannot
-  -- have (it fires uniformly across every Shelley-based era).
-  setSnap = mkSetSnapShot mark (SL.EpochInterval 1000000)
-
 newtype CardanoHardForkTriggers = CardanoHardForkTriggers
   { getCardanoHardForkTriggers ::
       NP CardanoHardForkTrigger (CardanoShelleyEras StandardCrypto)
@@ -539,7 +380,7 @@ pattern CardanoHardForkTriggers' ::
   CardanoHardForkTrigger (ShelleyBlock (TPraos c) AlonzoEra) ->
   CardanoHardForkTrigger (ShelleyBlock (Praos c) BabbageEra) ->
   CardanoHardForkTrigger (ShelleyBlock (Praos c) ConwayEra) ->
-  CardanoHardForkTrigger (ShelleyBlock (PraosWithLeios c) DijkstraEra) ->
+  CardanoHardForkTrigger (ShelleyBlock (Praos2 c) DijkstraEra) ->
   CardanoHardForkTriggers
 pattern CardanoHardForkTriggers'
   { triggerHardForkShelley
@@ -870,7 +711,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
 
   -- Dijkstra
 
-  blockConfigDijkstra :: BlockConfig (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+  blockConfigDijkstra :: BlockConfig (ShelleyBlock (Praos2 c) DijkstraEra)
   blockConfigDijkstra =
     Shelley.mkShelleyBlockConfig
       cardanoProtocolVersion
@@ -878,14 +719,13 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
   partialConsensusConfigDijkstra ::
-    PartialConsensusConfig (BlockProtocol (ShelleyBlock (PraosWithLeios c) DijkstraEra))
+    PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos2 c) DijkstraEra))
   partialConsensusConfigDijkstra = praosParams
 
-  partialLedgerConfigDijkstra :: PartialLedgerConfig (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+  partialLedgerConfigDijkstra :: PartialLedgerConfig (ShelleyBlock (Praos2 c) DijkstraEra)
   partialLedgerConfigDijkstra =
-    mkPartialLedgerConfigShelley
+    partialLedgerConfigForLastKnownEra
       transitionConfigDijkstra
-      TriggerHardForkNotDuringThisExecution
 
   -- Cardano
 
@@ -897,14 +737,31 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
     History.Shape $
       Exactly $
         K (Byron.byronEraParams genesisByron)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @ShelleyEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @AllegraEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @MaryEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @AlonzoEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @BabbageEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @ConwayEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @DijkstraEra))
           :* Nil
+
+  ledgerConfig =
+    HardForkLedgerConfig
+      { hardForkLedgerConfigShape = shape
+      , hardForkLedgerConfigPerEra =
+          PerEraLedgerConfig
+            ( WrapPartialLedgerConfig partialLedgerConfigByron
+                :* WrapPartialLedgerConfig partialLedgerConfigShelley
+                :* WrapPartialLedgerConfig partialLedgerConfigAllegra
+                :* WrapPartialLedgerConfig partialLedgerConfigMary
+                :* WrapPartialLedgerConfig partialLedgerConfigAlonzo
+                :* WrapPartialLedgerConfig partialLedgerConfigBabbage
+                :* WrapPartialLedgerConfig partialLedgerConfigConway
+                :* WrapPartialLedgerConfig partialLedgerConfigDijkstra
+                :* Nil
+            )
+      }
 
   cfg :: TopLevelConfig (CardanoBlock c)
   cfg =
@@ -927,21 +784,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
                   )
             }
       , topLevelConfigLedger =
-          HardForkLedgerConfig
-            { hardForkLedgerConfigShape = shape
-            , hardForkLedgerConfigPerEra =
-                PerEraLedgerConfig
-                  ( WrapPartialLedgerConfig partialLedgerConfigByron
-                      :* WrapPartialLedgerConfig partialLedgerConfigShelley
-                      :* WrapPartialLedgerConfig partialLedgerConfigAllegra
-                      :* WrapPartialLedgerConfig partialLedgerConfigMary
-                      :* WrapPartialLedgerConfig partialLedgerConfigAlonzo
-                      :* WrapPartialLedgerConfig partialLedgerConfigBabbage
-                      :* WrapPartialLedgerConfig partialLedgerConfigConway
-                      :* WrapPartialLedgerConfig partialLedgerConfigDijkstra
-                      :* Nil
-                  )
-            }
+          ledgerConfig
       , topLevelConfigBlock =
           CardanoBlockConfig
             blockConfigByron
@@ -987,15 +830,19 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   mkInitExtLedgerStateCardano = do
     let HardForkLedgerState st = initLedgerState
     st' <- hsequence' (hap perEraInjections st)
+    let ledgerState = HardForkLedgerState st'
+    let headerState = initHeaderState
+    let perasState = initPerasState ledgerConfig ledgerState headerState
     pure
       ExtLedgerState
-        { headerState = initHeaderState
-        , ledgerState = HardForkLedgerState st'
+        { ledgerState
+        , headerState
+        , perasState
         }
    where
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
-    ExtLedgerState initLedgerState initHeaderState =
+    ExtLedgerState initLedgerState initHeaderState _ =
       injectInitialExtLedgerState cfg $
         initExtLedgerStateByron
 
@@ -1005,34 +852,15 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
         (CardanoEras c)
     perEraInjections =
       fn (Comp . pure)
-        :* hczipWith
-          (Proxy @IsShelleyBlock)
-          (\(K trigger) -> shelleyInjection trigger)
-          perEraTriggers
-          shelleyTcfgs
-
-    -- Crypto-erased triggers per Shelley-based era, so 'shelleyInjection' can
-    -- warm the initial stake snapshots on an early ('AtEpoch') bootstrap. A K-NP
-    -- avoids the @c ~ StandardCrypto@ mismatch of the raw 'CardanoHardForkTriggers'.
-    perEraTriggers :: NP (K TriggerHardFork) (CardanoShelleyEras c)
-    perEraTriggers =
-      K (toTriggerHardFork triggerHardForkShelley)
-        :* K (toTriggerHardFork triggerHardForkAllegra)
-        :* K (toTriggerHardFork triggerHardForkMary)
-        :* K (toTriggerHardFork triggerHardForkAlonzo)
-        :* K (toTriggerHardFork triggerHardForkBabbage)
-        :* K (toTriggerHardFork triggerHardForkConway)
-        :* K (toTriggerHardFork triggerHardForkDijkstra)
-        :* Nil
+        :* hcmap (Proxy @IsShelleyBlock) shelleyInjection shelleyTcfgs
 
     shelleyInjection ::
       forall proto era.
       Shelley.ShelleyCompatible proto era =>
-      TriggerHardFork ->
       WrapTransitionConfig (ShelleyBlock proto era) ->
       (Flip LedgerState ValuesMK -.-> (m :.: Flip LedgerState ValuesMK))
         (ShelleyBlock proto era)
-    shelleyInjection trigger (WrapTransitionConfig tcfg) = fn $ \(Flip stIn) -> Comp $ do
+    shelleyInjection (WrapTransitionConfig tcfg) = fn $ \(Flip stIn) -> Comp $ do
       let stowed = stowLedgerTables stIn
       newNES <-
         L.injectIntoTestState
@@ -1040,10 +868,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
           tcfg
           (Shelley.shelleyLedgerState stowed)
       pure . Flip . unstowLedgerTables $
-        stowed
-          { Shelley.shelleyLedgerState =
-              seedInitialStakeSnapshots trigger newNES
-          }
+        stowed{Shelley.shelleyLedgerState = newNES}
 
     shelleyTcfgs :: NP WrapTransitionConfig (CardanoShelleyEras c)
     shelleyTcfgs =
@@ -1138,12 +963,12 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
         praos =
           Praos.praosSharedBlockForging hotKey slotToPeriod credentials
 
-    let praosWithLeios ::
+    let praos2 ::
           forall era.
-          Shelley.ShelleyCompatible (PraosWithLeios c) era =>
-          BlockForging m (ShelleyBlock (PraosWithLeios c) era)
-        praosWithLeios =
-          Praos.praosWithLeiosSharedBlockForging hotKey slotToPeriod credentials
+          Shelley.ShelleyCompatible (Praos2 c) era =>
+          BlockForging m (ShelleyBlock (Praos2 c) era)
+        praos2 =
+          Praos.praos2SharedBlockForging hotKey slotToPeriod credentials
 
     pure $
       OptSkip $ -- Byron
@@ -1154,7 +979,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
             :* tpraos
             :* praos
             :* praos
-            :* praosWithLeios
+            :* praos2
             :* Nil
 
 protocolClientInfoCardano ::
@@ -1200,3 +1025,16 @@ mkPartialLedgerConfigShelley transitionConfig shelleyTriggerHardFork =
 -- | We need this wrapper to partially apply a 'TransitionConfig' in an NP.
 newtype WrapTransitionConfig blk
   = WrapTransitionConfig (L.TransitionConfig (ShelleyBlockLedgerEra blk))
+
+-- | Only the last known era must have no HardForkTrigger out of it.
+partialLedgerConfigForLastKnownEra ::
+  ShelleyBlock proto era ~ Last (CardanoEras c) =>
+  L.TransitionConfig era -> PartialLedgerConfig (ShelleyBlock proto era)
+partialLedgerConfigForLastKnownEra transitionConfig =
+  mkPartialLedgerConfigShelley
+    transitionConfig
+    TriggerHardForkNotDuringThisExecution
+
+type family Last xs where
+  Last '[x] = x
+  Last (x ': xs) = Last xs

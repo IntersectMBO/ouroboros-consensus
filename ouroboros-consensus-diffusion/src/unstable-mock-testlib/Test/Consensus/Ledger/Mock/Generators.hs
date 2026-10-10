@@ -18,7 +18,7 @@ import qualified Data.Set as Set
 import Data.Typeable
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -96,7 +96,7 @@ instance
   arbitrary = getHeader <$> arbitrary
 
 instance
-  (HashAlgorithm (SimpleHash c), Arbitrary ext, Serialise ext) =>
+  HashAlgorithm (SimpleHash c) =>
   Arbitrary (SimpleStdHeader c ext)
   where
   arbitrary =
@@ -119,24 +119,18 @@ instance Arbitrary (SomeBlockQuery (BlockQuery (SimpleBlock c ext))) where
 instance (SimpleCrypto c, Typeable ext) => Arbitrary (SomeResult (SimpleBlock c ext)) where
   arbitrary = SomeResult QueryLedgerTip <$> arbitrary
 
-instance
-  (SimpleCrypto c, Typeable ext) =>
-  Arbitrary (LedgerState (SimpleBlock c ext) EmptyMK)
-  where
+instance Arbitrary (LedgerState (SimpleBlock c ext) EmptyMK) where
   arbitrary =
     forgetLedgerTables
       <$> arbitrary @(LedgerState (SimpleBlock c ext) ValuesMK)
 
-instance
-  (SimpleCrypto c, Typeable ext) =>
-  Arbitrary (LedgerState (SimpleBlock c ext) ValuesMK)
-  where
+instance Arbitrary (LedgerState (SimpleBlock c ext) ValuesMK) where
   arbitrary =
     unstowLedgerTables
       . flip SimpleLedgerState emptyLedgerTables
       <$> arbitrary
 
-instance Arbitrary (LedgerTables (LedgerState (SimpleBlock c ext)) ValuesMK) where
+instance Arbitrary (LedgerTables (SimpleBlock c ext) ValuesMK) where
   arbitrary = LedgerTables . ValuesMK <$> arbitrary
 
 instance Arbitrary ByteSize32 where

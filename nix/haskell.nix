@@ -14,11 +14,13 @@ let
       ../cabal
       ../cabal.project
       ../cardano-blueprint
+      ../golden
       ../ouroboros-consensus
       ../ouroboros-consensus-cardano
       ../ouroboros-consensus-diffusion
       ../ouroboros-consensus-protocol
       ../ouroboros-consensus.cabal
+      ../tracing
     ];
   };
   forAllProjectPackages = cfg: args@{ config, lib, ... }: {
@@ -29,12 +31,17 @@ let
         );
       });
   };
+  forAllPackages = cfg: args@{ config, lib, ... }: {
+    options.packages = lib.genAttrs config.package-keys (_:
+      lib.mkOption {
+        type = lib.types.submodule ({ ... }: cfg args);
+      });
+  };
   hsPkgs = haskell-nix.cabalProject {
     src = ouroborosConsensusSrc;
     compiler-nix-name = "ghc967";
     flake.variants = {
-      ghc910 = { compiler-nix-name = lib.mkForce "ghc9103"; };
-      ghc912 = { compiler-nix-name = lib.mkForce "ghc9122"; };
+      ghc914 = { compiler-nix-name = lib.mkForce "ghc9141"; };
     };
     inputMap = {
       "https://chap.intersectmbo.org/" = inputs.CHaP;
@@ -60,13 +67,21 @@ let
         packages.cardano-ledger-dijkstra.components.library.doHaddock = false;
         packages.cardano-ledger-mary.components.library.doHaddock = false;
         packages.cardano-ledger-shelley.components.library.doHaddock = false;
-        # Options related to tasty and tasty-golden:
-        packages.ouroboros-consensus.components.tests =
-          lib.listToAttrs (map
-            (n: lib.nameValuePair "${n}-test" {
-              testFlags = lib.mkForce [ "--no-create --hide-successes" ];
-              extraSrcFiles = [ "ouroboros-consensus-cardano/golden/${n}/**/*" ];
-            }) [ "byron" "shelley" "cardano" ]);
+        # Options related to tasty and tasty-golden. The golden files live
+        # outside their test component's hs-source-dirs, so each one has to be
+        # listed here; otherwise haskell.nix prunes it out of the component
+        # source and tasty-golden creates it and passes instead of comparing.
+        packages.ouroboros-consensus.components.tests = lib.mapAttrs
+          (_: golden: {
+            testFlags = lib.mkForce [ "--no-create --hide-successes" ];
+            extraSrcFiles = [ "${golden}/**/*" ];
+          })
+          {
+            byron-test = "ouroboros-consensus-cardano/golden/byron";
+            shelley-test = "ouroboros-consensus-cardano/golden/shelley";
+            cardano-test = "ouroboros-consensus-cardano/golden/cardano";
+            tracing-test = "golden/tracing";
+          };
       }
       ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
         # https://github.com/input-output-hk/haskell.nix/issues/2332
@@ -119,6 +134,16 @@ let
           profilingDetail = "late";
         }];
       };
+      ipe = {
+        compilerSelection = lib.mkForce (p:
+          lib.mapAttrs (_: ghc: ghc.override { enableIPE = true; })
+            p.haskell-nix.compiler);
+        modules = [
+          (forAllPackages ({ ... }: {
+            ghcOptions = [ "-finfo-table-map" "-fdistinct-constructor-tables" ];
+          }))
+        ];
+      };
     };
   };
 in
@@ -148,10 +173,18 @@ in
       final.texliveFull
     ];
 
+    # `cabal-docspec` doesn't use XDG, so we need to trick it with a fake
+    # `$CABAL_DIR`
+    #
+    # `--no-cabal-plan` now parses its arg as a package name (no dots/slashes),
+    # then uses it verbatim as the .cabal path, so we symlink the file under a
+    # dot-free name that doesn't clash with the existing `ouroboros-consensus/`
+    # dir
     buildPhase = ''
       export CABAL_DIR=$(mktemp -d)
       touch $CABAL_DIR/config $out
-      cabal-docspec --no-cabal-plan ouroboros-consensus.cabal
+      ln -s ouroboros-consensus.cabal consensus-docspec
+      cabal-docspec --no-cabal-plan consensus-docspec
     '';
   };
 }

@@ -6,7 +6,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.Shelley.MockCrypto
@@ -27,6 +26,7 @@ import Cardano.Ledger.BaseTypes (Seed)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
 import Cardano.Ledger.Shelley.LedgerState (StashedAVVMAddresses)
+import Cardano.Ledger.Shelley.Rules (UTXOW)
 import Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BlockHeader as SL
@@ -60,7 +60,7 @@ instance Crypto MockCrypto where
   type VRF MockCrypto = MockVRF
 
 instance SL.PraosCrypto MockCrypto
-instance Praos.BasePraosCrypto (Praos.Praos MockCrypto) MockCrypto
+instance Praos.PolyPraosCrypto (Praos.Praos MockCrypto) MockCrypto
 instance Praos.PraosCrypto MockCrypto
 
 type Block = ShelleyBlock (TPraos MockCrypto) ShelleyEra
@@ -85,7 +85,7 @@ type CanMock proto era =
   , Arbitrary (Core.Tx Core.TopTx era)
   , Arbitrary (Core.TxOut era)
   , Arbitrary (Core.Value era)
-  , Arbitrary (PredicateFailure (Core.EraRule "UTXOW" era))
+  , Arbitrary (PredicateFailure (UTXOW era))
   , Arbitrary (Core.TxWits era)
   , Arbitrary (StashedAVVMAddresses era)
   , Arbitrary (Core.GovState era)
