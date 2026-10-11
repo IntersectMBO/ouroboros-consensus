@@ -1,4 +1,3 @@
-{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -85,6 +84,7 @@ import Ouroboros.Network.Mux
   , RunMiniProtocol (..)
   )
 import Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing (..))
+import Ouroboros.Network.PerasSupport (PerasSupport (..))
 import Ouroboros.Network.Protocol.BlockFetch.Server
 import qualified Ouroboros.Network.Protocol.BlockFetch.Type as BF
 import Ouroboros.Network.Protocol.ChainSync.Server
@@ -142,6 +142,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic getSlotDelay mkLeiosNoti
               networkMagic
               N2N.InitiatorOnlyDiffusionMode
               PeerSharingDisabled
+              PerasUnsupported
         }
 
   application ::

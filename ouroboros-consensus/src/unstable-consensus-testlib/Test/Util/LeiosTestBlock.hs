@@ -88,16 +88,16 @@ module Test.Util.LeiosTestBlock
   , singleNodeLeiosTestConfig
   ) where
 
-import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize)
+import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
 import Cardano.Ledger.Binary (decodeFull', serialize', shelleyProtVer)
 import Cardano.Slotting.EpochInfo (epochInfoEpoch, fixedEpochInfo)
 import Codec.CBOR.Decoding (Decoder, decodeBytes)
+import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), deserialiseOrFail, serialise)
 import Control.Monad (foldM, guard, replicateM, replicateM_)
 import Control.Monad.Except (throwError)
-import Data.String (fromString)
 import qualified Data.Binary.Get as Get
 import qualified Data.Binary.Put as Put
 import qualified Data.ByteString as BS
@@ -113,6 +113,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Proxy
 import Data.Ratio (denominator, numerator, (%))
+import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
@@ -120,7 +121,6 @@ import qualified Data.Vector.Strict as V
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoDb (lookupTrustedEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( AnnouncementFields (..)
@@ -151,6 +151,7 @@ import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
   ( ImmutableEraParams (immutableEraParams)
   )
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -159,12 +160,13 @@ import Ouroboros.Consensus.Ledger.CommonProtocolParams
   )
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
   ( LedgerSupportsPeerSelection (..)
   )
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage (NodeInitStorage (..))
@@ -175,10 +177,23 @@ import Ouroboros.Consensus.Node.Run
   , SerialiseNodeToNodeConstraints (..)
   )
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB (lookupEbClosure)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -486,7 +501,7 @@ instance ResolveLeiosBlock LeiosTestBlock where
   -- The closure the LeiosDb holds for this endorser block, decoded back into
   -- transactions. A CertRB is not selectable until this succeeds.
   resolveLeiosClosure leiosDb ebHash =
-    lookupTrustedEbClosure leiosDb ebHash >>= \case
+    lookupEbClosure leiosDb ebHash >>= \case
       Nothing -> pure $ Left $ LeiosClosureMissing ebHash
       Just closure -> pure $ traverse decodeOne closure
    where
@@ -507,7 +522,7 @@ instance ResolveLeiosBlock LeiosTestBlock where
 
   leiosClosureTxKeySets = getTransactionKeySets
 
-  assumeValidatedClosureTx = ValidatedLeiosTestGenTx
+  assumeValidatedClosureTx _ _ _ = ValidatedLeiosTestGenTx
 
 -- | The committee lives in the ledger view, which the forecast computes from
 -- the ledger config; the ledger /state/ carries none, so the voting-path
@@ -534,6 +549,10 @@ instance Serialise LeiosTestChainDepState where
 
 newtype instance Ticked LeiosTestChainDepState
   = TickedLeiosTestChainDepState LeiosTestChainDepState
+
+instance ChainDepStateSupportsPeras LeiosTestChainDepState
+
+instance ChainDepStateSupportsPeras (Ticked LeiosTestChainDepState)
 
 -- | No leader schedule and no header crypto: what this protocol contributes is
 -- the ledger view and the announcement above.
@@ -610,7 +629,7 @@ data instance LedgerState LeiosTestBlock mk = LeiosTestLedger
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
 
-newtype instance Ticked (LedgerState LeiosTestBlock) mk = TickedLeiosTestLedger
+newtype instance Ticked LedgerState LeiosTestBlock mk = TickedLeiosTestLedger
   { getTickedLeiosTestLedger :: LedgerState LeiosTestBlock mk
   }
   deriving stock Generic
@@ -657,7 +676,7 @@ leiosTestLedgerConfig ::
 leiosTestLedgerConfig eraParams forecastRange committees =
   LeiosTestLedgerConfig eraParams forecastRange committees maxBound
 
-type instance LedgerCfg (LedgerState LeiosTestBlock) = LeiosTestLedgerConfig
+type instance LedgerCfg LedgerState LeiosTestBlock = LeiosTestLedgerConfig
 
 -- | The genesis ledger, seeded with the given state so that a test's first tx
 -- can have non-trivial assertions.
@@ -669,67 +688,70 @@ leiosTestInitExtLedger ::
   LeiosTestLedgerConfig -> IntMap Char -> ExtLedgerState LeiosTestBlock ValuesMK
 leiosTestInitExtLedger cfg st =
   ExtLedgerState
-    { ledgerState = leiosTestInitLedger cfg st
-    , headerState = genesisHeaderState (LeiosTestChainDepState Nothing)
+    { ledgerState
+    , headerState
+    , perasState = initPerasState cfg ledgerState headerState
     }
+ where
+  ledgerState = leiosTestInitLedger cfg st
+  headerState = genesisHeaderState (LeiosTestChainDepState Nothing)
 
 -- | No UTxO HD for this block, at least not yet
-type instance TxIn (LedgerState LeiosTestBlock) = Void
+type instance TxIn LeiosTestBlock = Void
 
 -- | No UTxO HD for this block, at least not yet
-type instance TxOut (LedgerState LeiosTestBlock) = Void
+type instance TxOut LeiosTestBlock = Void
 
-instance LedgerTablesAreTrivial (LedgerState LeiosTestBlock) where
+instance LedgerTablesAreTrivial LedgerState LeiosTestBlock where
   convertMapKind (LeiosTestLedger tip st c) = LeiosTestLedger tip st c
 
-instance LedgerTablesAreTrivial (Ticked (LedgerState LeiosTestBlock)) where
+instance LedgerTablesAreTrivial (Ticked LedgerState) LeiosTestBlock where
   convertMapKind (TickedLeiosTestLedger x) =
     TickedLeiosTestLedger $ convertMapKind x
 
-deriving via
-  TrivialLedgerTables (LedgerState LeiosTestBlock)
-  instance
-    HasLedgerTables (LedgerState LeiosTestBlock)
-deriving via
-  TrivialLedgerTables (LedgerState LeiosTestBlock)
-  instance
-    HasLedgerTables (Ticked (LedgerState LeiosTestBlock))
-deriving via
-  TrivialLedgerTables (LedgerState LeiosTestBlock)
-  instance
-    CanStowLedgerTables (LedgerState LeiosTestBlock)
-deriving via
-  TrivialLedgerTables (LedgerState LeiosTestBlock)
-  instance
-    CanUpgradeLedgerTables (LedgerState LeiosTestBlock)
-deriving via
-  TrivialLedgerTables (LedgerState LeiosTestBlock)
-  instance
-    SerializeTablesWithHint (LedgerState LeiosTestBlock)
+instance HasLedgerTables LedgerState LeiosTestBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance HasLedgerTables (Ticked LedgerState) LeiosTestBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance CanStowLedgerTables (LedgerState LeiosTestBlock) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+
+instance CanUpgradeLedgerTables LedgerState LeiosTestBlock where
+  upgradeTables _ _ = id
+
+instance SerializeTablesWithHint LedgerState LeiosTestBlock where
+  decodeTablesWithHint _ = do
+    _ <- CBOR.decodeMapLen
+    pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
+
 deriving via
   Void
   instance
-    IndexedMemPack (LedgerState LeiosTestBlock EmptyMK) Void
+    IndexedMemPack LedgerState LeiosTestBlock Void
 
 instance GetTip (LedgerState LeiosTestBlock) where
   getTip = castPoint . ltlsTip
 
-instance GetTip (Ticked (LedgerState LeiosTestBlock)) where
+instance GetTip (Ticked LedgerState LeiosTestBlock) where
   getTip = castPoint . ltlsTip . getTickedLeiosTestLedger
 
-instance IsLedger (LedgerState LeiosTestBlock) where
-  type LedgerErr (LedgerState LeiosTestBlock) = LeiosTestBlockError
+type instance AuxLedgerEvent LeiosTestBlock = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState LeiosTestBlock) =
-      VoidLedgerEvent (LedgerState LeiosTestBlock)
+instance IsLedger LedgerState LeiosTestBlock where
+  type LedgerErr LedgerState LeiosTestBlock = LeiosTestBlockError
 
   applyChainTickLedgerResult _events cfg slot st =
     pureLedgerResult $
       TickedLeiosTestLedger
         (noNewTickingDiffs st){ltlsCommittee = committeeAt cfg slot}
 
-instance ApplyBlock (LedgerState LeiosTestBlock) LeiosTestBlock where
+instance ApplyBlock LedgerState LeiosTestBlock where
   applyBlockLedgerResultWithValidation
     _validation
     _events
@@ -755,7 +777,8 @@ instance ApplyBlock (LedgerState LeiosTestBlock) LeiosTestBlock where
     defaultReapplyBlockLedgerResult
       (error . ("reapplying a block failed: " ++) . show)
 
-  getBlockKeySets = const trivialLedgerTables
+instance GetBlockKeySets LeiosTestBlock where
+  getBlockKeySets = const emptyLedgerTables
 
 instance UpdateLedger LeiosTestBlock
 
@@ -767,7 +790,30 @@ instance BasicEnvelopeValidation LeiosTestBlock
 
 instance ValidateEnvelope LeiosTestBlock
 
-instance LedgerSupportsPeras LeiosTestBlock
+-- NOTE: Peras as 'Test.Util.TestBlock' mocks it; no Leios test uses it.
+instance BlockSupportsPeras LeiosTestBlock where
+  type PerasCrypto LeiosTestBlock = MockPerasCrypto LeiosTestBlock
+  type
+    PerasVotingCommitteeScheme LeiosTestBlock =
+      MockPerasVotingCommitteeScheme LeiosTestBlock
+  type PerasVote LeiosTestBlock = MockPerasVote LeiosTestBlock
+  type PerasCert LeiosTestBlock = MockPerasCert LeiosTestBlock
+  type PerasError LeiosTestBlock = MockPerasError LeiosTestBlock
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing
+
+instance LedgerStateSupportsPeras (LedgerState LeiosTestBlock)
+
+instance LedgerStateSupportsPeras (Ticked LedgerState LeiosTestBlock)
+
+instance StateSupportsPerasEpochContext LeiosTestBlock where
+  type MaybeEraIndexedEpochToPerasRoundInfo LeiosTestBlock = EpochToPerasRoundInfo
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
 
 instance LedgerSupportsProtocol LeiosTestBlock where
   protocolLedgerView cfg =
@@ -981,8 +1027,9 @@ maxLeiosTestChainLength :: Int
 maxLeiosTestChainLength = 100
 
 instance ConvertRawHash LeiosTestBlock where
-  -- The length, and one 'Word64' per path component.
-  hashSize _ = 8 * fromIntegral (1 + maxLeiosTestChainLength)
+  -- The length, and one 'Word64' per path component: @8 * (1 + 100)@, with
+  -- 100 being 'maxLeiosTestChainLength'.
+  type HashSize LeiosTestBlock = 808
   toRawHash _ (TestHash h)
     | len > maxLeiosTestChainLength =
         error $
@@ -995,7 +1042,7 @@ instance ConvertRawHash LeiosTestBlock where
         replicateM_ (maxLeiosTestChainLength - len) $ Put.putWord64le 0
    where
     len = length h
-  fromRawHash _ bs = flip Get.runGet (BL.fromStrict bs) $ do
+  unsafeFromRawHash _ bs = flip Get.runGet (BL.fromStrict bs) $ do
     len <- fromIntegral <$> Get.getWord64le
     (NE.nonEmpty -> Just h, rs) <-
       splitAt len <$> replicateM maxLeiosTestChainLength Get.getWord64le
@@ -1007,8 +1054,8 @@ instance Serialise (AnnTip LeiosTestBlock) where
   decode = defaultDecodeAnnTip decode
 
 instance Serialise (ExtLedgerState LeiosTestBlock EmptyMK) where
-  encode = encodeExtLedgerState encode encode encode
-  decode = decodeExtLedgerState decode decode decode
+  encode = encodeExtLedgerState encode encode encode toCBOR
+  decode = decodeExtLedgerState decode decode decode fromCBOR
 
 instance Serialise (RealPoint LeiosTestBlock) where
   encode = encodeRealPoint encode
@@ -1117,15 +1164,18 @@ instance LedgerSupportsMempool LeiosTestBlock where
 
   txForgetValidated = forgetValidatedLeiosTestGenTx
 
-  getTransactionKeySets _tx = trivialLedgerTables
+  getTransactionKeySets _tx = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
 instance TxLimits LeiosTestBlock where
-  type TxMeasure LeiosTestBlock = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 LeiosTestBlock = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 LeiosTestBlock = TrivialTxMeasurePhase2
   txWireSize = const 0
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024
-  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  blockCapacityTxMeasure _cfg _st =
+    TxMeasure (IgnoringOverflow $ ByteSize32 $ 100 * 1024) TrivialTxMeasurePhase2
+  txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
 
 {-------------------------------------------------------------------------------
   Queries

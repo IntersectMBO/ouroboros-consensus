@@ -17,19 +17,18 @@ module Test.Consensus.PeerSimulator.NodeLifecycle
 import Control.ResourceRegistry
 import Control.Tracer (Tracer, mkTracer, traceWith)
 import Data.Functor (void)
+import Data.SOP (All, Top)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
-import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -37,6 +36,7 @@ import Ouroboros.Consensus.Ledger.Tables.MapKind (ValuesMK)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection (..)
   )
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -136,14 +137,15 @@ data NodeLifecycle blk m = NodeLifecycle
 -- candidate fragments.
 mkChainDb ::
   IOLike m =>
-  ( LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables (LedgerState blk)
+  , CanUpgradeLedgerTables LedgerState blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
@@ -158,17 +160,19 @@ mkChainDb resources = do
     void $ swapTMVar (nodeDBsLgr lrCdb) MockFS.empty
   chainDbArgs <- do
     mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
-    let args0 =
-          fromMinimalChainDbArgs
-            MinimalChainDbArgs
-              { mcdbTopLevelConfig = lrConfig
-              , mcdbChunkInfo = lrChunkInfo
-              , mcdbInitLedger = lrInitLedger
-              , mcdbRegistry = lrRegistry
-              , mcdbNodeDBs = lrCdb
-              , mcdbLeiosDb
-              }
-    let args = updateTracer (mkTracer (traceWith lrTracer . TraceChainDBEvent)) args0
+    let args =
+          updateTracer
+            (mkTracer (traceWith lrTracer . TraceChainDBEvent))
+            ( fromMinimalChainDbArgs
+                MinimalChainDbArgs
+                  { mcdbTopLevelConfig = lrConfig
+                  , mcdbChunkInfo = lrChunkInfo
+                  , mcdbInitLedger = lrInitLedger
+                  , mcdbRegistry = lrRegistry
+                  , mcdbNodeDBs = lrCdb
+                  , mcdbLeiosDb
+                  }
+            )
     pure $
       args
         { ChainDB.cdbsArgs =
@@ -191,14 +195,15 @@ mkChainDb resources = do
 -- intervals, the ChainDB and its persisted state.
 restoreNode ::
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables (LedgerState blk)
+  , CanUpgradeLedgerTables LedgerState blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
@@ -223,14 +228,15 @@ restoreNode resources LiveIntervalResult{lirPeerResults, lirActive} = do
 lifecycleStart ::
   forall m blk.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables (LedgerState blk)
+  , CanUpgradeLedgerTables LedgerState blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>

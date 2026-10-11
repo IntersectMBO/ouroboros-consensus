@@ -33,7 +33,7 @@ jobs:
 
     steps:
 
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
         # Check out the actual PR head, not the synthetic merge commit that
@@ -56,7 +56,7 @@ jobs:
 
     steps:
 
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
 
@@ -79,7 +79,7 @@ jobs:
       with:
         cabal-version: "3.10.1.0"
 
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Cabal check
       run: cabal check
@@ -112,7 +112,7 @@ jobs:
         mkdir -p ${HOME}/.local/bin
         mv cabal-plan ${HOME}/.local/bin/cabal-plan
 
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Diff plans
       run: GH=1 ./scripts/release/cabal-plan-diff.sh

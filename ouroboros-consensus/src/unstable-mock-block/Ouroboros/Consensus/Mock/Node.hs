@@ -6,7 +6,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -22,7 +21,6 @@ import qualified Data.Map.Strict as Map
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Node.Abstract
@@ -59,7 +57,7 @@ deriving via
   SelectViewDiffusionPipelining (SimpleBlock c ext)
   instance
     ( BlockSupportsProtocol (SimpleBlock c ext)
-    , Show (SelectView (BlockProtocol (SimpleBlock c ext)))
+    , Show (TiebreakerView (BlockProtocol (SimpleBlock c ext)))
     ) =>
     BlockSupportsDiffusionPipelining (SimpleBlock c ext)
 
@@ -76,6 +74,10 @@ instance
   , Show (ForgeStateUpdateError (SimpleBlock SimpleMockCrypto ext))
   , Serialise ext
   , RunMockBlock SimpleMockCrypto ext
+  , ChainDepStateSupportsPeras
+      (ChainDepState (BlockProtocol (SimpleBlock SimpleMockCrypto ext)))
+  , ChainDepStateSupportsPeras
+      (Ticked (ChainDepState (BlockProtocol (SimpleBlock SimpleMockCrypto ext))))
   ) =>
   RunNode (SimpleBlock SimpleMockCrypto ext)
 
@@ -101,17 +103,7 @@ simpleBlockForging aCanBeLeader aForgeExt =
     , canBeLeader = aCanBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \ForgeBlockArgs{..} ->
-        return $
-          flip (,) Nothing $
-            forgeSimple
-              aForgeExt
-              fbConfig
-              fbCurrentBlockNo
-              fbCurrentSlotNo
-              fbCurrentTickedLedgerState
-              (map txForgetValidated fbRbTxs)
-              fbIsLeader
+    , forgeBlock = \_leiosArgs fbArgs -> return (forgeSimple aForgeExt fbArgs, Nothing)
     , finalize = pure ()
     }
  where

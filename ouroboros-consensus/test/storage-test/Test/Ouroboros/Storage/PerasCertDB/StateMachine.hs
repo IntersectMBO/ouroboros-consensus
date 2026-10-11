@@ -1,17 +1,14 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 #if !MIN_VERSION_QuickCheck(2,16,0)
 {-# OPTIONS_GHC -Wno-dodgy-imports #-}
@@ -19,20 +16,29 @@
 
 module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 
+import Control.Monad (join)
 import Control.Monad.State
 import Control.Tracer (nullTracer)
+import Data.Containers.NonEmpty (HasNonEmpty (..))
 import Data.Function ((&))
 import qualified Data.List.NonEmpty as NE
+import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+  ( AddPerasCertResult (..)
+  , PerasCertDB
+  , WithBoostedBlockStatus
+  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
@@ -53,8 +59,8 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = mkPerasParams
+perasTestParams :: PerasParams TestBlock
+perasTestParams = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = QC.monadic f $ property () <$ runActions actions
@@ -67,17 +73,16 @@ newtype Model = Model (Model.Model TestBlock) deriving (Show, Generic)
 instance StateModel Model where
   data Action Model a where
     OpenDB :: Action Model ()
-    CloseDB :: Action Model ()
     AddCert :: WithArrivalTime (ValidatedPerasCert TestBlock) -> Action Model AddPerasCertResult
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
-    GetLatestCertSeen :: Action Model (Maybe (WithArrivalTime (ValidatedPerasCert TestBlock)))
+    GetLatestCertSeen ::
+      Action Model (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert TestBlock))))
     GarbageCollect :: SlotNo -> Action Model ()
 
   arbitraryAction _ (Model model)
     | model.open =
         frequency
-          [ (1, pure $ Some CloseDB)
-          , (20, Some <$> genAddCert)
+          [ (20, Some <$> genAddCert)
           , (20, pure $ Some GetWeightSnapshot)
           , (10, pure $ Some GetLatestCertSeen)
           , (5, Some . GarbageCollect . SlotNo <$> arbitrary)
@@ -90,16 +95,18 @@ instance StateModel Model where
     genAddCert = do
       roundNo <- genRoundNo
       boostedBlock <- genPoint
+      voters <- genVoters
       now <- genRelativeTime
       let certWithTime =
             WithArrivalTime now $
               ValidatedPerasCert
                 { vpcCert =
-                    PerasCert
-                      { pcCertRound = roundNo
-                      , pcCertBoostedBlock = boostedBlock
+                    MockPerasCert
+                      { mockCertRound = roundNo
+                      , mockCertBlock = boostedBlock
+                      , mockCertVoters = voters
                       }
-                , vpcCertBoost = perasWeight perasTestCfg
+                , vpcCertBoost = perasWeight perasTestParams
                 }
       pure (AddCert certWithTime)
 
@@ -120,19 +127,37 @@ instance StateModel Model where
         ]
     genHash = TestHash . NE.fromList . getNonEmpty <$> arbitrary
 
+    genVoters :: Gen (NE (Set PerasSeatIndex))
+    genVoters =
+      NESet.fromList <$> (liftA2 (NE.:|) genSeatIndex (listOf genSeatIndex))
+
+    genSeatIndex = PerasSeatIndex <$> arbitrary
+
   initialState = Model Model.initModel
 
   nextState (Model model) action _ = Model $ case action of
     OpenDB -> Model.openDB model
-    CloseDB -> Model.closeDB model
-    AddCert cert -> Model.addCert model cert
+    AddCert cert -> snd $ Model.addCert model cert
     GetWeightSnapshot -> model
     GetLatestCertSeen -> model
-    GarbageCollect slot -> Model.garbageCollect slot model
+    GarbageCollect slotNo -> Model.garbageCollect slotNo model
 
   precondition (Model model) = \case
     OpenDB -> not model.open
-    _ -> model.open
+    action ->
+      model.open && case action of
+        -- Do not add equivocating certificates.
+        AddCert cert -> all p model.certs
+         where
+          -- We should reject equivocating certificates, that is, certificates
+          -- for the same round but boosting different blocks.
+          -- So we should enforce: round = round' => boostedBlock = boostedBlock'
+          p cert' =
+            getPerasCertRound cert /= getPerasCertRound cert'
+              || getPerasCertPoint cert == getPerasCertPoint cert'
+        GetWeightSnapshot -> True
+        GetLatestCertSeen -> True
+        GarbageCollect _slotNo -> True
 
 deriving stock instance Show (Action Model a)
 deriving stock instance Eq (Action Model a)
@@ -143,28 +168,24 @@ instance HasVariables (Action Model a) where
 instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
   perform _ action _ = case action of
     OpenDB -> do
-      perasCertDB <- lift $ PerasCertDB.openDB (PerasCertDB.PerasCertDbArgs nullTracer)
+      perasCertDB <- lift $ PerasCertDB.createDB (PerasCertDB.PerasCertDbArgs nullTracer)
       put perasCertDB
-    CloseDB -> do
-      perasCertDB <- get
-      lift $ PerasCertDB.closeDB perasCertDB
     AddCert cert -> do
       perasCertDB <- get
-      lift $ PerasCertDB.addCert perasCertDB cert
+      res <- lift $ join $ atomically $ PerasCertDB.addCert perasCertDB cert
+      pure res
     GetWeightSnapshot -> do
       perasCertDB <- get
       lift $ atomically $ forgetFingerprint <$> PerasCertDB.getWeightSnapshot perasCertDB
     GetLatestCertSeen -> do
       perasCertDB <- get
       lift $ atomically $ PerasCertDB.getLatestCertSeen perasCertDB
-    GarbageCollect slot -> do
+    GarbageCollect slotNo -> do
       perasCertDB <- get
-      lift $ PerasCertDB.garbageCollect perasCertDB slot
+      lift $ join $ atomically $ PerasCertDB.garbageCollect perasCertDB slotNo
 
   postcondition (Model model, _) (AddCert cert) _ actual = do
-    let expected
-          | model.certs `Model.hasRoundNo` cert = PerasCertAlreadyInDB
-          | otherwise = AddedPerasCertToDB
+    let expected = fst $ Model.addCert model cert
     counterexamplePost $ show expected <> " /= " <> show actual
     pure $ expected == actual
   postcondition (Model model, _) GetWeightSnapshot _ actual = do
@@ -188,7 +209,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
         "Certificate block collision"
         [ show $
             Set.member
-              (getPerasCertBoostedBlock cert)
-              (Set.map getPerasCertBoostedBlock model.certs)
+              (getPerasCertPoint cert)
+              (Set.map getPerasCertPoint model.certs)
         ]
   monitoring _ _ _ _ prop = prop

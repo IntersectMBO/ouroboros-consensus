@@ -1,34 +1,51 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Util.Orphans () where
 
-import Cardano.Binary (fromCBOR, toCBOR)
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import Cardano.Crypto.Hash (Hash, HashAlgorithm)
+import Cardano.Ledger.BaseTypes (Nonce, shelleyProtVer)
+import Cardano.Ledger.Binary
+  ( DecCBOR (..)
+  , EncCBOR (..)
+  , toPlainDecoder
+  , toPlainEncoding
+  )
 import Cardano.Ledger.Genesis (NoGenesis (..))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.Serialise (Serialise (..))
 import Control.Tracer (Tracer)
+import Data.Array (Array)
+import qualified Data.Array as Array
 import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
+import Data.Map.NonEmpty (NEMap)
+import qualified Data.Map.NonEmpty as NEMap
+import Data.Map.Strict.Internal (Map (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
+import Data.Set.NonEmpty (NESet)
+import qualified Data.Set.NonEmpty as NESet
+import qualified Data.Strict.Either as Strict
 import Data.Typeable (Typeable)
+import Data.Void (Void)
+import GHC.Generics (Generic)
 import NoThunks.Class
   ( InspectHeapNamed (..)
   , NoThunks (..)
+  , OnlyCheckWhnf (..)
   , OnlyCheckWhnfNamed (..)
   , allNoThunks
   )
@@ -36,6 +53,8 @@ import Ouroboros.Network.Util.ShowProxy
 import System.FS.API (SomeHasFS)
 import System.FS.API.Types (Handle)
 import System.FS.CRC (CRC (CRC))
+import System.Random (StdGen)
+import qualified System.Random.Internal as Random
 
 {-------------------------------------------------------------------------------
   Serialise
@@ -50,6 +69,16 @@ instance Serialise (VerKeyDSIGN MockDSIGN) where
   decode = decodeFixedSized
 
 {-------------------------------------------------------------------------------
+  FromCBOR / ToCBOR
+-------------------------------------------------------------------------------}
+
+instance FromCBOR Nonce where
+  fromCBOR = toPlainDecoder Nothing shelleyProtVer decCBOR
+
+instance ToCBOR Nonce where
+  toCBOR = toPlainEncoding shelleyProtVer . encCBOR
+
+{-------------------------------------------------------------------------------
   NoThunks
 -------------------------------------------------------------------------------}
 
@@ -60,7 +89,6 @@ instance NoThunks (NoGenesis era) where
 instance
   ( NoThunks p
   , NoThunks v
-  , Ord p
   ) =>
   NoThunks (IntPSQ p v)
   where
@@ -88,6 +116,27 @@ instance NoThunks a => NoThunks (MultiSet a) where
   showTypeOf _ = "MultiSet"
   wNoThunks ctxt = wNoThunks ctxt . MultiSet.toMap
 
+instance (NoThunks k, NoThunks v) => NoThunks (NEMap k v) where
+  showTypeOf _ = "NEMap"
+  wNoThunks ctxt = wNoThunks ctxt . NEMap.toMap
+
+instance NoThunks v => NoThunks (NESet v) where
+  showTypeOf _ = "NESet"
+  wNoThunks ctxt = wNoThunks ctxt . NESet.toSet
+
+instance (NoThunks a, NoThunks b) => NoThunks (Strict.Either a b) where
+  showTypeOf _ = "Strict.Either"
+  wNoThunks ctxt (Strict.Left a) = noThunks ctxt a
+  wNoThunks ctxt (Strict.Right b) = noThunks ctxt b
+
+instance NoThunks a => NoThunks (Array i a) where
+  showTypeOf _ = "Array"
+  wNoThunks ctxt = wNoThunks ctxt . Array.elems
+
+instance NoThunks StdGen where
+  showTypeOf _ = "StdGen"
+  wNoThunks ctx = wNoThunks ctx . OnlyCheckWhnf . Random.unStdGen
+
 {-------------------------------------------------------------------------------
   fs-api
 -------------------------------------------------------------------------------}
@@ -101,3 +150,16 @@ deriving via
   OnlyCheckWhnfNamed "SomeHasFS" (SomeHasFS m)
   instance
     NoThunks (SomeHasFS m)
+
+{-------------------------------------------------------------------------------
+  ShowProxy
+-------------------------------------------------------------------------------}
+
+instance ShowProxy Void
+instance ShowProxy ()
+
+{-------------------------------------------------------------------------------
+  Generic
+-------------------------------------------------------------------------------}
+
+deriving instance Generic (Map k v)

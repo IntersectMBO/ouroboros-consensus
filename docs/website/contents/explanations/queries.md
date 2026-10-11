@@ -58,34 +58,43 @@ and how to interpret the results.
 
 The top-level available queries depend on the `NodeToClientVersion`.
 
-| `NodeToClientVersion` | `QueryVersion`  | Newly enabled top-level queries                                    |
-|-----------------------|-----------------|--------------------------------------------------------------------|
-| `NodeToClientV_16`    | `QueryVersion2` | `BlockQuery`, `GetSystemStart`, `GetChainBlockNo`, `GetChainPoint` |
-| `NodeToClientV_17`    | `QueryVersion2` |                                                                    |
-| `NodeToClientV_18`    | `QueryVersion2` |                                                                    |
-| `NodeToClientV_19`    | `QueryVersion2` |                                                                    |
-| `NodeToClientV_20`    | `QueryVersion3` | `DebugLedgerConfig`                                                |
-| `NodeToClientV_21`    | `QueryVersion3` |                                                                    |
-| `NodeToClientV_22`    | `QueryVersion3` |                                                                    |
-| `NodeToClientV_23`    | `QueryVersion3` |                                                                    |
+|`NodeToClientVersion`|`QueryVersion` |Available top-level queries                                                            |
+|---------------------|---------------|---------------------------------------------------------------------------------------|
+|`NodeToClientV_23`   |`QueryVersion3`|`BlockQuery`, `GetSystemStart`, `GetChainBlockNo`, `GetChainPoint`, `DebugLedgerConfig`|
 
-Particular block-query versions are of type `BlockNodeToNodeVersion blk`, which
-is associated with the global `NodeToClientVersion` in
+Particular block-query versions are of type `BlockNodeToClientVersion blk`,
+which is associated with the global `NodeToClientVersion` in
 `supportedNodeToClientVersions`. There exist associations for the Byron and
 Shelley blocks alone but those are in principle uninteresting for mainnet, and
 instead we focus on the Cardano version. All the current versions imply also
 `HardForkSpecificNodeToClientVersion3` and `ByronNodeToClientVersion1`:
 
-| `NodeToClientVersion` | `BlockNodeToNodeVersion blk`   | `ShelleyNodeToClientVersion`   |
+| `NodeToClientVersion` | `BlockNodeToClientVersion blk` | `ShelleyNodeToClientVersion`   |
 |-----------------------|--------------------------------|--------------------------------|
-| `NodeToClientV_16`    | `CardanoNodeToClientVersion12` | `ShelleyNodeToClientVersion8`  |
-| `NodeToClientV_17`    | `CardanoNodeToClientVersion13` | `ShelleyNodeToClientVersion9`  |
-| `NodeToClientV_18`    | `CardanoNodeToClientVersion14` | `ShelleyNodeToClientVersion10` |
-| `NodeToClientV_19`    | `CardanoNodeToClientVersion15` | `ShelleyNodeToClientVersion11` |
-| `NodeToClientV_20`    | `CardanoNodeToClientVersion16` | `ShelleyNodeToClientVersion12` |
-| `NodeToClientV_21`    | `CardanoNodeToClientVersion17` | `ShelleyNodeToClientVersion13` |
-| `NodeToClientV_22`    | `CardanoNodeToClientVersion18` | `ShelleyNodeToClientVersion14` |
 | `NodeToClientV_23`    | `CardanoNodeToClientVersion19` | `ShelleyNodeToClientVersion15` |
+
+What determines when a version may be dropped is the `cardano-node` release
+that first shipped it, since a client built against an older `cardano-node` can
+offer nothing newer than that release's maximum:
+
+| `NodeToClientVersion` | First shipped in `cardano-node` |
+|-----------------------|---------------------------------|
+| `NodeToClientV_16`    | 9.0.0                           |
+| `NodeToClientV_17`    | 9.2.0                           |
+| `NodeToClientV_18`    | 10.1.1                          |
+| `NodeToClientV_19`    | 10.2.1                          |
+| `NodeToClientV_20`    | 10.3.1                          |
+| `NodeToClientV_21`    | 10.6.0                          |
+| `NodeToClientV_22`    | 10.6.0                          |
+| `NodeToClientV_23`    | 10.7.0                          |
+
+Note that 11.x introduced no new version: 10.7.1 and 11.0.1 both use
+`ouroboros-consensus-3.0.1.0` and so offer the very same set.
+
+This table is mirrored by the comment on `supportedNodeToClientVersions` for
+`CardanoBlock`, in
+[`Ouroboros/Consensus/Cardano/Node.hs`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs);
+keep the two in sync when a new version is added.
 
 ## Codecs
 
@@ -138,8 +147,8 @@ We will discuss the codecs of the Shelley eras' queries in the section below.
 
 The encoding of results is a CBOR encoding of the value, done without any
 tagging or prefixing. As the client knows which query it sent, it can infer how
-to decode the result. Sometimes the encoding of the result changes depending on
-the particular `NodeToClientVersion` negotiated.
+to decode the result. One result does not use the codec of its own type, see
+tag 11 in the table below.
 
 ## Shelley queries
 
@@ -149,58 +158,51 @@ only accessible when the tip of the chain is in Conway or a later era. The
 encoding of the queries consists of a (definite-length) list containing a tag
 and the serialization of the arguments.
 
-| Tag | Query                                     | Only active on Shelley NTC versions | Arguments                                                                                     | Result                                                       |
-|-----|-------------------------------------------|-------------------------------------|-----------------------------------------------------------------------------------------------|--------------------------------------------------------------|
-| 0   | `GetLedgerTip`                            |                                     |                                                                                               | `Point (ShelleyBlock proto era)`                             |
-| 1   | `GetEpochNo`                              |                                     |                                                                                               | `EpochNo`                                                    |
-| 2   | `GetNonMyopicMemberRewards`               |                                     | `Set (Either Coin (Credential Staking))`                                                      | `NonMyopicMemberRewards`                                     |
-| 3   | `GetCurrentPParams`                       |                                     |                                                                                               | `PParams era`                                                |
-| 4   | `GetProposedPParamsUpdates`               | < v12                               |                                                                                               | `ProposedPPUpdates era` ‡                                    |
-| 5   | `GetStakeDistribution`                    | < v13 *                             |                                                                                               | `PoolDistr (ProtoCrypto proto)`                              |
-| 6   | `GetUTxOByAddress`                        |                                     | `Set Addr`                                                                                    | `UTxO era`                                                   |
-| 7   | `GetUTxOWhole`                            |                                     |                                                                                               | `UTxO era`                                                   |
-| 8   | `DebugEpochState`                         |                                     |                                                                                               | `EpochState era`                                             |
-| 9   | `GetCBOR`                                 | the version of the internal query   | `BlockQuery (ShelleyBlock proto era) fp result`                                               | `BlockQuery (ShelleyBlock proto era) fp (Serialised result)` |
-| 10  | `GetFilteredDelegationsAndRewardAccounts` |                                     | `Set (Credential Staking)`                                                                    | `(Delegations, Map (Credential Staking) Coin)`               |
-| 11  | `GetGenesisConfig`                        |                                     |                                                                                               | `CompactGenesis` ‡                                           |
-| 12  | `DebugNewEpochState`                      |                                     |                                                                                               | `NewEpochState era`                                          |
-| 13  | `DebugChainDepState`                      |                                     |                                                                                               | `ChainDepState proto`                                        |
-| 14  | `GetRewardProvenance`                     |                                     |                                                                                               | `RewardProvenance`                                           |
-| 15  | `GetUTxOByTxIn`                           |                                     | `Set TxIn`                                                                                    | `UTxO era`                                                   |
-| 16  | `GetStakePools`                           |                                     |                                                                                               | `Set (KeyHash StakePool)`                                    |
-| 17  | `GetStakePoolParams`                      |                                     | `Set (KeyHash StakePool)`                                                                     | `Map (KeyHash StakePool) PoolParams`                         |
-| 18  | `GetRewardInfoPools`                      |                                     |                                                                                               | `(RewardParams, Map (KeyHash StakePool) RewardInfoPool)`     |
-| 19  | `GetPoolState`                            |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `QueryPoolStateResult`                                       |
-| 20  | `GetStakeSnapshots`                       |                                     | `Maybe (Set (KeyHash StakePool))`                                                             | `StakeSnapshots`                                             |
-| 21  | `GetPoolDistr`                            | < v13 *                             | `Maybe (Set (KeyHash StakePool))`                                                             | `PoolDistr (ProtoCrypto proto)`                              |
-| 22  | `GetStakeDelegDeposits`                   |                                     | `Set StakeCredential`                                                                         | `Map StakeCredential Coin`                                   |
-| 23  | `GetConstitution`                         | †                                   |                                                                                               | `Constitution era`                                           |
-| 24  | `GetGovState`                             |                                     |                                                                                               | `GovState era`                                               |
-| 25  | `GetDRepState`                            | †                                   | `Set (Credential DRepRole)`                                                                   | `Map (Credential DRepRole) DRepState`                        |
-| 26  | `GetDRepStakeDistr`                       | †                                   | `Set DRep`                                                                                    | `Map DRep Coin`                                              |
-| 27  | `GetCommitteeMembersState`                | †                                   | `Set (Credential ColdCommitteeRole)`, `Set (Credential HotCommitteeRole)`, `Set MemberStatus` | `CommitteeMembersState`                                      |
-| 28  | `GetFilteredVoteDelegatees`               | †                                   | `Set (Credential Staking)`                                                                    | `VoteDelegatees`                                             |
-| 29  | `GetAccountState`                         | †                                   |                                                                                               | `ChainAccountState`                                          |
-| 30  | `GetSPOStakeDistr`                        | †                                   | `Set (KeyHash StakePool)`                                                                     | `Map (KeyHash StakePool) Coin`                               |
-| 31  | `GetProposals`                            | >= v9 †                             | `Set GovActionId`                                                                             | `Seq (GovActionState era)`                                   |
-| 32  | `GetRatifyState`                          | >= v9 †                             |                                                                                               | `RatifyState era`                                            |
-| 33  | `GetFuturePParams`                        | >= v10                              |                                                                                               | `Maybe (PParams era)`                                        |
-| 34  | `GetBigLedgerPeerSnapshot`                | >= v11                              |                                                                                               | `LedgerPeerSnapshot` ‡                                       |
-| 35  | `GetStakePoolDefaultVote`                 | >= v12 †                            | `KeyHash StakePool`                                                                           | `DefaultVote`                                                |
-| 36  | `GetPoolDistr2`                           | >= v13 *                            | `Maybe (Set (KeyHash StakePool))`                                                             | `PoolDistr`                                                  |
-| 37  | `GetStakeDistribution2`                   | >= v13 *                            |                                                                                               | `PoolDistr`                                                  |
-| 38  | `GetMaxMajorProtocolVersion`              | >= v13                              |                                                                                               | `MaxMajorProtVer`                                            |
-| 39  | `GetDRepDelegations`                      | >= v14                              | `Set DRep`                                                                                    | `(Map DRep (Set (Credential Staking)))`                      |
+| Tag | Query                                     | Era restriction            | Arguments                                                                                     | Result                                                       |
+|-----|-------------------------------------------|----------------------------|-----------------------------------------------------------------------------------------------|--------------------------------------------------------------|
+| 0   | `GetLedgerTip`                            |                            |                                                                                               | `Point (ShelleyBlock proto era)`                             |
+| 1   | `GetEpochNo`                              |                            |                                                                                               | `EpochNo`                                                    |
+| 2   | `GetNonMyopicMemberRewards`               |                            | `Set (Either Coin (Credential Staking))`                                                      | `NonMyopicMemberRewards`                                     |
+| 3   | `GetCurrentPParams`                       |                            |                                                                                               | `PParams era`                                                |
+| 4   | *(removed, do not reuse)*                 |                            |                                                                                               |                                                              |
+| 5   | *(removed, do not reuse)*                 |                            |                                                                                               |                                                              |
+| 6   | `GetUTxOByAddress`                        |                            | `Set Addr`                                                                                    | `UTxO era`                                                   |
+| 7   | `GetUTxOWhole`                            |                            |                                                                                               | `UTxO era`                                                   |
+| 8   | `DebugEpochState`                         |                            |                                                                                               | `EpochState era`                                             |
+| 9   | `GetCBOR`                                 | that of the internal query | `BlockQuery (ShelleyBlock proto era) fp result`                                               | `BlockQuery (ShelleyBlock proto era) fp (Serialised result)` |
+| 10  | `GetFilteredDelegationsAndRewardAccounts` |                            | `Set (Credential Staking)`                                                                    | `(Delegations, Map (Credential Staking) Coin)`               |
+| 11  | `GetGenesisConfig`                        |                            |                                                                                               | `CompactGenesis`, 15 fields, no `sgExtraConfig`              |
+| 12  | `DebugNewEpochState`                      |                            |                                                                                               | `NewEpochState era`                                          |
+| 13  | `DebugChainDepState`                      |                            |                                                                                               | `ChainDepState proto`                                        |
+| 14  | `GetRewardProvenance`                     |                            |                                                                                               | `RewardProvenance`                                           |
+| 15  | `GetUTxOByTxIn`                           |                            | `Set TxIn`                                                                                    | `UTxO era`                                                   |
+| 16  | `GetStakePools`                           |                            |                                                                                               | `Set (KeyHash StakePool)`                                    |
+| 17  | `GetStakePoolParams`                      |                            | `Set (KeyHash StakePool)`                                                                     | `Map (KeyHash StakePool) PoolParams`                         |
+| 18  | `GetRewardInfoPools`                      |                            |                                                                                               | `(RewardParams, Map (KeyHash StakePool) RewardInfoPool)`     |
+| 19  | `GetPoolState`                            |                            | `Maybe (Set (KeyHash StakePool))`                                                             | `QueryPoolStateResult`                                       |
+| 20  | `GetStakeSnapshots`                       |                            | `Maybe (Set (KeyHash StakePool))`                                                             | `StakeSnapshots`                                             |
+| 21  | *(removed, do not reuse)*                 |                            |                                                                                               |                                                              |
+| 22  | `GetStakeDelegDeposits`                   |                            | `Set StakeCredential`                                                                         | `Map StakeCredential Coin`                                   |
+| 23  | `GetConstitution`                         | †                          |                                                                                               | `Constitution era`                                           |
+| 24  | `GetGovState`                             |                            |                                                                                               | `GovState era`                                               |
+| 25  | `GetDRepState`                            | †                          | `Set (Credential DRepRole)`                                                                   | `Map (Credential DRepRole) DRepState`                        |
+| 26  | `GetDRepStakeDistr`                       | †                          | `Set DRep`                                                                                    | `Map DRep Coin`                                              |
+| 27  | `GetCommitteeMembersState`                | †                          | `Set (Credential ColdCommitteeRole)`, `Set (Credential HotCommitteeRole)`, `Set MemberStatus` | `CommitteeMembersState`                                      |
+| 28  | `GetFilteredVoteDelegatees`               | †                          | `Set (Credential Staking)`                                                                    | `VoteDelegatees`                                             |
+| 29  | `GetAccountState`                         |                            |                                                                                               | `ChainAccountState`                                          |
+| 30  | `GetSPOStakeDistr`                        | †                          | `Set (KeyHash StakePool)`                                                                     | `Map (KeyHash StakePool) Coin`                               |
+| 31  | `GetProposals`                            | †                          | `Set GovActionId`                                                                             | `Seq (GovActionState era)`                                   |
+| 32  | `GetRatifyState`                          | †                          |                                                                                               | `RatifyState era`                                            |
+| 33  | `GetFuturePParams`                        | †                          |                                                                                               | `Maybe (PParams era)`                                        |
+| 34  | `GetLedgerPeerSnapshot`                   |                            | `SingLedgerPeersKind`, encoded as `0` (all peers) or `1` (big peers)                          | `LedgerPeerSnapshot`                                         |
+| 35  | `QueryStakePoolDefaultVote`               | †                          | `KeyHash StakePool`                                                                           | `DefaultVote`                                                |
+| 36  | `GetPoolDistr2`                           |                            | `Maybe (Set (KeyHash StakePool))`                                                             | `PoolDistr`                                                  |
+| 37  | `GetStakeDistribution2`                   |                            |                                                                                               | `PoolDistr`                                                  |
+| 38  | `GetMaxMajorProtocolVersion`              |                            |                                                                                               | `MaxMajorProtVer`                                            |
+| 39  | `GetDRepDelegations`                      | †                          | `Set DRep`                                                                                    | `(Map DRep (Set (Credential Staking)))`                      |
 
-*: The queries enabled only before version 13 used old types from the Ledger
-that were removed in recent versions. The queries enabled at version 13 use the
-new corresponding ledger types.
+A removed query's tag stays spent: it is never reassigned, because deployed
+clients still encode the removed query with it.
 
-†: Even if an appropriate version is enabled, these queries can only be answered
-when the corresponding era is Conway or later, as they relate to governance
-concepts only present starting on Conway.
-
-‡: The format of the result of these queries depend on the particular
-`NodeToClientVersion` negotiated. For now, do check
-[`encodeShelleyResult`](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus-cardano/Ouroboros-Consensus-Shelley-Ledger-Query.html#v:encodeShelleyResult)
-to see what exactly changes.
+†: these queries can only be answered when the corresponding era is Conway or
+later, as they relate to governance concepts only present starting on Conway.

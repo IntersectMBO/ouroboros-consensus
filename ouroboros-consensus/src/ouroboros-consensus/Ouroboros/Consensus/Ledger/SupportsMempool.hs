@@ -1,11 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
@@ -30,7 +32,10 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , ReapplyTxsResult (..)
   , TxId
   , TxLimits (..)
-  , TxMeasureMetrics (..)
+  , TxMeasure (..)
+  , TxMeasurePhase1Metrics (..)
+  , TxMeasurePhase2Metrics (..)
+  , TrivialTxMeasurePhase2 (..)
   , Validated
   , WhetherToIntervene (..)
   , nothingMkMempoolApplyTxError
@@ -45,9 +50,10 @@ import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure, zero)
-import qualified Data.Measure
+import qualified Data.Measure as M
 import Data.Text (Text)
 import Data.Word (Word32)
+import GHC.Generics
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Numeric.Natural
@@ -101,7 +107,7 @@ type data WhatToDoWithTxDiffs = Collect | Discard
 -- differences, we don't even have differences around that we might misuse.
 type family InputTxDiffs blk wtd where
   InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = LedgerTables (TickedLedgerState blk) DiffMK
+  InputTxDiffs blk Collect = LedgerTables blk DiffMK
 
 class
   ( UpdateLedger blk
@@ -191,7 +197,7 @@ class
       Foldable.foldl'
         ( \(accE, accV, st') a ->
             case runExcept (reapplyTx cfg slot (projectTx a) st') of
-              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
+              Left err -> (Invalidated (txForgetValidated $ projectTx a) err : accE, accV, st')
               Right st'' -> (accE, a : accV, st'')
         )
         ([], [], st)
@@ -203,7 +209,7 @@ class
   -- ledger state. This is implemented in the Ledger. An example of non-obvious
   -- needed keys in Cardano are those of reference scripts for computing the
   -- transaction size.
-  getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
+  getTransactionKeySets :: GenTx blk -> LedgerTables blk KeysMK
 
   -- Mempools live in a single slot so in the hard fork block case
   -- it is cheaper to perform these operations on LedgerStates, saving
@@ -231,8 +237,8 @@ class
   -- Intended to be non-default in the HardFork instance for optimizing
   -- performance.
   applyMempoolDiffs ::
-    LedgerTables (LedgerState blk) ValuesMK ->
-    LedgerTables (LedgerState blk) KeysMK ->
+    LedgerTables blk ValuesMK ->
+    LedgerTables blk KeysMK ->
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk ValuesMK
   applyMempoolDiffs = applyDiffForKeysOnTables
@@ -309,6 +315,48 @@ class HasTxs blk where
   Tx sizes
 -------------------------------------------------------------------------------}
 
+data TxMeasure blk = TxMeasure
+  { tmPhase1 :: !(TxMeasurePhase1 blk)
+  , tmPhase2 :: !(TxMeasurePhase2 blk)
+  }
+  deriving Generic
+
+deriving instance (Eq (TxMeasurePhase1 blk), Eq (TxMeasurePhase2 blk)) => Eq (TxMeasure blk)
+
+deriving instance (Show (TxMeasurePhase1 blk), Show (TxMeasurePhase2 blk)) => Show (TxMeasure blk)
+
+deriving via
+  InstantiatedAt Generic (TxMeasure blk)
+  instance
+    (Measure (TxMeasurePhase1 blk), Measure (TxMeasurePhase2 blk)) =>
+    Measure (TxMeasure blk)
+
+instance HasByteSize (TxMeasurePhase1 blk) => HasByteSize (TxMeasure blk) where
+  txMeasureByteSize = txMeasureByteSize . tmPhase1
+
+instance (NoThunks (TxMeasurePhase1 blk), NoThunks (TxMeasurePhase2 blk)) => NoThunks (TxMeasure blk)
+
+instance TxMeasurePhase1Metrics (TxMeasurePhase1 blk) => TxMeasurePhase1Metrics (TxMeasure blk) where
+  txMeasureMetricTxSizeBytes (TxMeasure a _) = txMeasureMetricTxSizeBytes a
+  txMeasureMetricExUnitsMemory (TxMeasure a _) = txMeasureMetricExUnitsMemory a
+  txMeasureMetricExUnitsSteps (TxMeasure a _) = txMeasureMetricExUnitsSteps a
+
+instance TxMeasurePhase2Metrics (TxMeasurePhase2 blk) => TxMeasurePhase2Metrics (TxMeasure blk) where
+  txMeasureMetricRefScriptsSizeBytes (TxMeasure _ b) = txMeasureMetricRefScriptsSizeBytes b
+
+data TrivialTxMeasurePhase2 = TrivialTxMeasurePhase2
+  deriving (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+instance Measure TrivialTxMeasurePhase2 where
+  zero = TrivialTxMeasurePhase2
+  plus _ _ = TrivialTxMeasurePhase2
+  max _ _ = TrivialTxMeasurePhase2
+  min _ _ = TrivialTxMeasurePhase2
+
+instance TxMeasurePhase2Metrics TrivialTxMeasurePhase2 where
+  txMeasureMetricRefScriptsSizeBytes _ = mempty
+
 -- | Each block has its limits of how many transactions it can hold. That limit
 -- is compared against the sum of measurements taken of each of the
 -- transactions in that block.
@@ -323,20 +371,32 @@ class HasTxs blk where
 -- execution units). For details please see the individual instances for the
 -- TxLimits.
 class
-  ( Measure (TxMeasure blk)
-  , HasByteSize (TxMeasure blk)
-  , NoThunks (TxMeasure blk)
-  , TxMeasureMetrics (TxMeasure blk)
-  , Show (TxMeasure blk)
-  , Measure (TxEbMeasure blk)
+  ( -- \* Phase 1
+    Measure (TxMeasurePhase1 blk)
+  , HasByteSize (TxMeasurePhase1 blk)
+  , NoThunks (TxMeasurePhase1 blk)
+  , TxMeasurePhase1Metrics (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase1 blk)
+  , -- \* Phase 2
+    Measure (TxMeasurePhase2 blk)
+  , NoThunks (TxMeasurePhase2 blk)
+  , TxMeasurePhase2Metrics (TxMeasurePhase2 blk)
+  , Show (TxMeasurePhase2 blk)
+  , -- \* Endorser block
+    Measure (TxEbMeasure blk)
   , NoThunks (TxEbMeasure blk)
   , Eq (TxEbMeasure blk)
   , Show (TxEbMeasure blk)
   ) =>
   TxLimits blk
   where
-  -- | The (possibly multi-dimensional) size of a transaction in a block.
-  type TxMeasure blk
+  -- | The (possibly multi-dimensional) size of a transaction in a block, for
+  -- the components that do not need the UTxO.
+  type TxMeasurePhase1 blk
+
+  -- | The components of the size that need the UTxO. In Cardano this is the
+  -- reference scripts.
+  type TxMeasurePhase2 blk
 
   -- | The size of the transaction from the perspective of diffusion layer
   txWireSize :: GenTx blk -> Network.SizeInBytes
@@ -364,41 +424,56 @@ class
   -- absence implies the tx is invalid. In fact, that invalidity could be
   -- reported by this function, but it need not be.
   --
-  -- INVARIANT @Right x = txMeasure cfg st tx@ implies @x 'Measure.<='
-  -- 'blockCapacityTxMeasure cfg st'. Otherwise, the mempool could block
-  -- forever.
+  -- INVARIANT @Right x = txMeasurePhase1 cfg st tx@ implies @x 'Measure.<='
+  -- 'tmPhase1' ('blockCapacityTxMeasure' cfg st)@. Otherwise, the mempool
+  -- could block forever.
   --
   -- Returns an exception if and only if the transaction violates the per-tx
   -- limits.
-  txMeasure ::
+  txMeasurePhase1 ::
+    -- | used at least by HFC's composition logic
+    LedgerConfig blk ->
+    -- | This state has no values. The mempool measures phase 1 before it reads
+    -- the ledger tables, so it can reject a transaction without that read.
+    TickedLedgerState blk EmptyMK ->
+    GenTx blk ->
+    Except (ApplyTxErr blk) (TxMeasurePhase1 blk)
+
+  -- | INVARIANT @Right y = txMeasurePhase2 cfg st tx@ implies @y 'Measure.<='
+  -- 'tmPhase2' ('blockCapacityTxMeasure' cfg st)@. Otherwise, the mempool
+  -- could block forever.
+  --
+  -- Returns an exception if and only if the transaction violates the per-tx
+  -- limits.
+  txMeasurePhase2 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
     -- | This state needs values as a transaction measure might depend on
     -- those. For example in Cardano they look at the reference scripts.
     TickedLedgerState blk ValuesMK ->
     GenTx blk ->
-    Except (ApplyTxErr blk) (TxMeasure blk)
+    Except (ApplyTxErr blk) (TxMeasurePhase2 blk)
 
   -- | What is the allowed capacity for the txs in an individual block?
   blockCapacityTxMeasure ::
-    -- | at least for symmetry with 'txMeasure'
+    -- | at least for symmetry with 'txMeasurePhase1'
     LedgerConfig blk ->
     TickedLedgerState blk mk ->
     TxMeasure blk
 
   -- | The (possibly multi-dimensional) size of a transaction in a Leios
-  -- endorser block: what it costs of 'ebCapacityTxMeasure'. The block measure
-  -- itself for protocols without endorser blocks.
+  -- endorser block: what it costs of 'ebCapacityTxMeasure'. It is 'TxMeasure'
+  -- for @blk@s without endorser blocks.
   type TxEbMeasure blk
 
   type TxEbMeasure blk = TxMeasure blk
 
   -- | The size of a transaction in a Leios endorser block, derived from its
-  -- block measure ('txMeasure').
+  -- 'TxMeasure'.
   --
-  -- The block measure itself by default. A transaction must never measure
-  -- zero: a zero measure fits a zero 'ebCapacityTxMeasure', so an
-  -- endorser-block fill would take the whole mempool instead of nothing.
+  -- INVARIANT the result must never be zero. A zero measure fits a zero
+  -- 'ebCapacityTxMeasure', so one endorser-block fill takes the whole mempool
+  -- instead of nothing.
   txEbMeasure ::
     proxy blk ->
     TxMeasure blk ->
@@ -420,16 +495,21 @@ class
     TxEbMeasure blk
   ebCapacityTxMeasure _ _ = zero
 
-  -- | What one full endorser-block fill drains from the mempool, in
-  -- 'TxMeasure' terms: an endorser block's closure is transactions. Only used
-  -- to size the mempool ('Ouroboros.Consensus.Mempool.computeMempoolCapacity').
+  -- | Convert an endorser-block measure to a 'TxMeasure', keeping only the
+  -- parts the mempool counts, so that the mempool can reserve room for
+  -- endorser blocks.
   --
-  -- Zero for blocks without endorser blocks.
-  ebClosureCapacityTxMeasure ::
-    LedgerConfig blk ->
-    TickedLedgerState blk mk ->
+  -- The identity for blocks without endorser blocks.
+  mempoolEbReservation ::
+    proxy blk ->
+    TxEbMeasure blk ->
     TxMeasure blk
-  ebClosureCapacityTxMeasure _ _ = zero
+  default mempoolEbReservation ::
+    TxEbMeasure blk ~ TxMeasure blk =>
+    proxy blk ->
+    TxEbMeasure blk ->
+    TxMeasure blk
+  mempoolEbReservation _ = id
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for
@@ -481,7 +561,7 @@ newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
   deriving newtype (Monoid, Semigroup)
   deriving newtype NoThunks
   deriving newtype HasByteSize
-  deriving newtype TxMeasureMetrics
+  deriving newtype TxMeasurePhase1Metrics
 
 instance Measure (IgnoringOverflow ByteSize32) where
   zero = coerce (0 :: Word32)
@@ -496,21 +576,25 @@ class HasByteSize a where
 instance HasByteSize ByteSize32 where
   txMeasureByteSize = id
 
-class TxMeasureMetrics msr where
+class TxMeasurePhase1Metrics msr where
   txMeasureMetricTxSizeBytes :: msr -> ByteSize32
   txMeasureMetricExUnitsMemory :: msr -> Natural
   txMeasureMetricExUnitsSteps :: msr -> Natural
+
+class TxMeasurePhase2Metrics msr where
   txMeasureMetricRefScriptsSizeBytes :: msr -> ByteSize32
 
-instance TxMeasureMetrics ByteSize32 where
+instance TxMeasurePhase2Metrics () where
+  txMeasureMetricRefScriptsSizeBytes () = mempty
+
+instance TxMeasurePhase1Metrics ByteSize32 where
   txMeasureMetricTxSizeBytes = id
   txMeasureMetricExUnitsMemory _ = 0
   txMeasureMetricExUnitsSteps _ = 0
-  txMeasureMetricRefScriptsSizeBytes _ = mempty
 
 -- | A transaction that was previously valid. Used to clarify the types on the
 -- 'reapplyTxs' function.
 data Invalidated blk = Invalidated
-  { getInvalidated :: !(Validated (GenTx blk))
+  { getInvalidated :: !(GenTx blk)
   , getReason :: !(ApplyTxErr blk)
   }

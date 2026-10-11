@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -10,20 +8,15 @@ module Cardano.Tools.DBTruncater.Run (truncate) where
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBTruncater.Types
-import Cardano.Tools.LeiosDb (LeiosDbSource (..), requireLeiosDbFile)
+import Cardano.Tools.LeiosDb (requireLeiosDbFile)
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
 import Control.ResourceRegistry (withRegistry)
-import Control.Tracer (Tracer (..), emit)
+import Control.Tracer (Tracer, mkTracer)
 import Data.Foldable (asum)
 import Data.Functor ((<&>))
 import Data.Functor.Identity
-import LeiosDemoDb
-  ( deleteDanglingTxs
-  , truncateLeiosDbAfterSlot
-  , vacuumLeiosDb
-  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Node as Node
@@ -37,6 +30,11 @@ import Ouroboros.Consensus.Storage.ImmutableDB
   )
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Impl
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( deleteDanglingTxs
+  , truncateLeiosDbAfterSlot
+  , vacuumLeiosDb
+  )
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import qualified System.FilePath as FilePath
@@ -49,20 +47,21 @@ truncate ::
   DBTruncaterConfig ->
   Args block ->
   IO ()
-truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leiosDbSource} args = do
-  -- Check the file before the ImmutableDB truncation, so a missing LeiosDb
+truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leios} args = do
+  -- Check the files before the ImmutableDB truncation, so a missing LeiosDb
   -- fails before the tool deletes any block.
-  mLeiosDbPaths <- case leiosDbSource of
-    NoLeiosDb -> pure Nothing
-    LeiosDbFiles -> do
-      let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
-          immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
-      requireLeiosDbFile volLeiosDBFile
-      requireLeiosDbFile immLeiosDBFile
-      pure . Just $ (volLeiosDBFile, immLeiosDBFile)
+  mLeiosDbPaths <-
+    if leios
+      then do
+        let volLeiosDBFile = dbDir FilePath.</> "leios.vol.db"
+            immLeiosDBFile = dbDir FilePath.</> "leios.imm.db"
+        requireLeiosDbFile volLeiosDBFile
+        requireLeiosDbFile immLeiosDBFile
+        pure . Just $ (volLeiosDBFile, immLeiosDBFile)
+      else pure Nothing
   withRegistry $ \registry -> do
     lock <- mkLock
-    immutableDBTracer <- mkTracer lock verbose
+    immutableDBTracer <- mkVerboseTracer lock verbose
     ProtocolInfo
       { pInfoConfig = config
       } <-
@@ -118,8 +117,9 @@ truncate DBTruncaterConfig{dbDir, truncateAfter, verbose, leiosDbSource} args = 
               -- can leave a cert-RB whose EB is gone.
               forM_ mLeiosDbPaths $ \(volLeiosDbPath, immLeiosDbPath) ->
                 (`onException` hPutStrLn stderr (leiosDbCutFailed newTip)) $ do
-                  -- truncate both the volatile and the immutable LeiosDB partitions,
-                  -- even though the volatile one likely does not need truncation.
+                  -- Truncate both the volatile and the immutable LeiosDB
+                  -- partitions, even though the volatile one likely does not
+                  -- need truncation.
                   truncateLeiosDbFile volLeiosDbPath (tipSlotNo newTip)
                   truncateLeiosDbFile immLeiosDbPath (tipSlotNo newTip)
  where
@@ -162,11 +162,11 @@ findLast p iter =
 mkLock :: MonadMVar m => m (StrictMVar m ())
 mkLock = newMVar ()
 
-mkTracer :: Show a => StrictMVar IO () -> Bool -> IO (Tracer IO a)
-mkTracer _ False = pure mempty
-mkTracer lock True = do
+mkVerboseTracer :: Show a => StrictMVar IO () -> Bool -> IO (Tracer IO a)
+mkVerboseTracer _ False = pure mempty
+mkVerboseTracer lock True = do
   startTime <- getMonotonicTime
-  pure $ Tracer . emit $ \ev -> do
+  pure $ mkTracer $ \ev -> do
     bracket_ (takeMVar lock) (putMVar lock ()) $ do
       traceTime <- getMonotonicTime
       let diff = diffTime traceTime startTime

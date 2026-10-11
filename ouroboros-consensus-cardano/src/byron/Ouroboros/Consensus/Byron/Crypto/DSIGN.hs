@@ -1,10 +1,7 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -114,19 +111,19 @@ instance FixedSizeCodec (VerKeyDSIGN ByronDSIGN) where
   type FixedSize (VerKeyDSIGN ByronDSIGN) = 64
   rawEncodeFixedSized (VerKeyByronDSIGN (VerificationKey vk)) = CC.unXPub vk
   rawDecodeFixedSized bs =
-    VerKeyByronDSIGN . VerificationKey <$> either fail pure (CC.xpub bs)
+    either fail (pure . VerKeyByronDSIGN . VerificationKey) (CC.xpub bs)
 
 instance FixedSizeCodec (SignKeyDSIGN ByronDSIGN) where
   type FixedSize (SignKeyDSIGN ByronDSIGN) = 128
   rawEncodeFixedSized (SignKeyByronDSIGN (SigningKey sk)) = CC.unXPrv sk
   rawDecodeFixedSized bs =
-    SignKeyByronDSIGN . SigningKey <$> either fail pure (CC.xprv bs)
+    either fail (pure . SignKeyByronDSIGN . SigningKey) (CC.xprv bs)
 
 instance FixedSizeCodec (SigDSIGN ByronDSIGN) where
   type FixedSize (SigDSIGN ByronDSIGN) = 64
   rawEncodeFixedSized (SigByronDSIGN (Signature sig)) = CC.unXSignature sig
   rawDecodeFixedSized bs =
-    SigByronDSIGN . Signature <$> either fail pure (CC.xsignature bs)
+    either fail (pure . SigByronDSIGN . Signature) (CC.xsignature bs)
 
 instance Condense (SigDSIGN ByronDSIGN) where
   condense (SigByronDSIGN s) = show s

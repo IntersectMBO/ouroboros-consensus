@@ -127,7 +127,7 @@ prop_simple_pbft_convergence
                 plainTestNodeInitialization
                   ( protocolInfoMockPBFT
                       params
-                      (HardFork.defaultEraParams k slotLength)
+                      (HardFork.defaultEraParams k slotLength NoPerasEnabled)
                   )
                   (pure $ fmap (MkBlockForging . pure) $ blockForgingMockPBFT nid)
           , mkRekeyM = Nothing

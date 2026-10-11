@@ -2,7 +2,6 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Test.Consensus.Genesis.Setup.Classifiers
   ( Classifiers (..)

@@ -32,7 +32,6 @@ import Data.Hashable (Hashable)
 import qualified Data.IntMap.Strict as IntMap
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
-import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosTxCache (defaultLeiosTxCacheShift, newPureLeiosTxCache)
 import Ouroboros.Consensus.BlockchainTime
@@ -75,9 +74,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..))
+import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( makePublicPeerSelectionStateVar
   )
@@ -235,7 +236,7 @@ mkNodeKernelArgs cfg registry chainDB leiosDB btime = do
               -- simulation's clock ever advancing, so give it a real one.
               bfcDecisionLoopIntervalPraos = 0.05
             , bfcDecisionLoopIntervalGenesis = 0.05
-            , bfcSalt = 0
+            , bfcSalt = mkUnsafeSalt 0
             , bfcGenesisBFConfig = gcBlockFetchConfig enableGenesisConfigDefault
             }
       , keepAliveRng = mkStdGen 1

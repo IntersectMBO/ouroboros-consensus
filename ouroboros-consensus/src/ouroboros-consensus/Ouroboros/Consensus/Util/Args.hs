@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 

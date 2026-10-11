@@ -1,5 +1,12 @@
 # Ticking
 
+:::note
+
+For an accessible introduction to ticking — what it is, when consensus ticks, and how it relates to forecasting — see the [Ticking explanation](../../explanations/ticking.md).
+This page is the deeper archival discussion: cross-era ticking in the Hard Fork Combinator, bounded computation costs, and the partiality argument.
+
+:::
+
 "Tick" is a common term in discrete systems for time passing.
 Within Ouroboros, time is divided into slots, and to _tick_ a state X means to advance X from one slot to a later slot.
 In the Cardano system, we tick a ledger state, a protocol state, or both at once (see `ExtLedgerState`).

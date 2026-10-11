@@ -1,14 +1,6 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Node
@@ -33,6 +25,7 @@ import qualified Data.Map.Strict as Map
 import LeiosVoting (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.NoHardForks
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
@@ -52,6 +45,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , pHeaderIssuer
   )
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Util (ShowProxy)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -123,7 +117,10 @@ instance
   , BlockSupportsSanityCheck (ShelleyBlock proto era)
   , HasLeiosVoting (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
-  , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
+  , NoHardForks (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , SerialiseNodeToNodeConstraints (ShelleyBlock proto era)
+  , ShowProxy (PerasCert (ShelleyBlock proto era))
+  , ShowProxy (PerasVote (ShelleyBlock proto era))
   ) =>
   RunNode (ShelleyBlock proto era)

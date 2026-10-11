@@ -17,15 +17,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Function ((&))
 import qualified Data.Vector.Strict as V
-import LeiosDemoDb
-  ( LeiosDbHandle
-  , LeiosDbReader (..)
-  , LeiosDbWriter (..)
-  , Promise (..)
-  , newLeiosDBInMemory
-  , withReader
-  , withWriter
-  )
 import LeiosDemoTypes
   ( BytesSize
   , LeiosEb (..)
@@ -47,8 +38,19 @@ import LeiosTxCache
 import LeiosVoting (EbClosureVerdict (..), validateEbClosure)
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
+import Ouroboros.Consensus.Ledger.Tables (HasLedgerTables (projectLedgerTables))
+import Ouroboros.Consensus.Ledger.Tables.Combinators (ltliftA2)
 import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK, ValuesMK)
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables, restrictValues')
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables, restrictValuesMK)
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbHandle
+  , LeiosDbReader (..)
+  , LeiosDbWriter (..)
+  , Promise (..)
+  , newLeiosDBInMemory
+  , withReader
+  , withWriter
+  )
 import Test.Consensus.Mempool.Util
   ( TestBlock
   , TestTx
@@ -202,7 +204,7 @@ validateOnce Harness{hReader, hCache, hPoint} txs = do
       -- key sets came back empty would otherwise still validate, and the
       -- transitive-closure TODO in 'validateEbClosure' has nothing to fail
       -- against.
-      (\keys -> pure (restrictValues' testInitLedger keys))
+      (\keys -> pure (ltliftA2 restrictValuesMK (projectLedgerTables testInitLedger) keys))
       hPoint
       baseLedger
   tagged <- withLookupTx hCache $ \look ->

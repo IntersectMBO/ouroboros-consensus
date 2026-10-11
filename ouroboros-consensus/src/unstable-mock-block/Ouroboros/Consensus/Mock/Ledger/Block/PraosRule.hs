@@ -6,7 +6,6 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test the Praos chain selection rule (with explicit leader schedule)
@@ -32,6 +31,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Mock.Ledger.Forge
 import Ouroboros.Consensus.Mock.Node.Abstract
+import Ouroboros.Consensus.Mock.Node.Peras ()
 import Ouroboros.Consensus.Mock.Protocol.LeaderSchedule
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.NodeId (CoreNodeId)

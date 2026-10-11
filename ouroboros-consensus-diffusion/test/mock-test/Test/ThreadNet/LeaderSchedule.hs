@@ -134,7 +134,7 @@ prop_simple_leader_schedule_convergence
                         , praosSlotsPerEpoch = unEpochSize epochSize
                         , praosLeaderF = dummyF
                         }
-                      (HardFork.defaultEraParams k slotLength)
+                      (HardFork.defaultEraParams k slotLength NoPerasEnabled)
                       schedule
                       emptyPraosEvolvingStake
                   )

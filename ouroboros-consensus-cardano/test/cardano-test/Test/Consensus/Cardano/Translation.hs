@@ -1,15 +1,10 @@
-{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
@@ -65,8 +60,8 @@ import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -197,7 +192,7 @@ conwayToDijkstraLedgerStateTranslation ::
     WrapLedgerConfig
     TranslateLedgerState
     (ShelleyBlock (Praos Crypto) ConwayEra)
-    (ShelleyBlock (PraosWithLeios Crypto) DijkstraEra)
+    (ShelleyBlock (Praos2 Crypto) DijkstraEra)
 PCons
   byronToShelleyLedgerStateTranslation
   ( PCons
@@ -230,8 +225,8 @@ PCons
 testTablesTranslation ::
   forall srcBlk dstBlk.
   ( Arbitrary (TestSetup srcBlk dstBlk)
-  , Show (LedgerCfg (LedgerState srcBlk))
-  , Show (LedgerCfg (LedgerState dstBlk))
+  , Show (LedgerCfg LedgerState srcBlk)
+  , Show (LedgerCfg LedgerState dstBlk)
   , Show (LedgerState srcBlk EmptyMK)
   ) =>
   -- | Property label
@@ -440,7 +435,7 @@ instance
   Arbitrary
     ( TestSetup
         (ShelleyBlock (Praos Crypto) ConwayEra)
-        (ShelleyBlock (PraosWithLeios Crypto) DijkstraEra)
+        (ShelleyBlock (Praos2 Crypto) DijkstraEra)
     )
   where
   arbitrary =

@@ -7,8 +7,8 @@
 -- 'Cardano.Tools.DBSynthesizer.TxGen.File.mkFileTxGen' replays.
 --
 -- The @tools-test@ suite is the only consumer. It sits in this library rather
--- than beside that suite because it uses 'Cardano.Api.KeysShelley' and
--- 'Cardano.Api.SerialiseTextEnvelope', which are private to this library.
+-- than beside that suite because it reads keys with @cardano-keys@, which only
+-- this library depends on.
 --
 -- It keeps the outputs the payment key owns in a queue, takes two off the head
 -- for each transaction and appends the two that transaction makes to the tail.
@@ -33,8 +33,8 @@ module Cardano.Tools.DBSynthesizer.Test.QueueTxFile
   ( writeQueueTxs
   ) where
 
-import Cardano.Api.KeysShelley (SigningKey (PaymentSigningKey))
 import Cardano.Crypto.DSIGN (SignKeyDSIGN)
+import Cardano.Keys (SigningKey (PaymentSigningKey))
 import Cardano.Ledger.Api
   ( Addr
   , EraTx

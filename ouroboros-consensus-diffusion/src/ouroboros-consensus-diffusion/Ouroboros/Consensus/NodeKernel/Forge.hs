@@ -25,9 +25,6 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import qualified Data.Measure
 import Data.Proxy
-import LeiosDemoDb
-  ( LeiosDbReader (..)
-  )
 import LeiosDemoTypes
   ( LeiosCert
   , TraceLeiosKernel (..)
@@ -68,6 +65,9 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbReader (..)
+  )
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.EarlyExit
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
@@ -230,14 +230,13 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
               { Block.fbConfig = cfg
               , Block.fbCurrentBlockNo = bcBlockNo
               , Block.fbCurrentSlotNo = currentSlot
+              , Block.fbPerasCert = Nothing -- No PerasCert for now
               , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-              , Block.fbRbTxs = rbTxs
-              , Block.fbEbTxs = ebTxs
+              , Block.fbTxs = rbTxs
               , Block.fbIsLeader = proof
+              , Block.fbEbTxs = ebTxs
               , Block.fbChainDepState = Just (headerStateChainDep (headerState unticked))
               , Block.fbMayLeiosCert = fst <$> mayLeiosCertAndAnnouncement
-              , Block.fbLeiosTracer = leiosTracer
-              , Block.fbLeiosVoteState = leiosVoteState
               }
           , ForgingOnTopOf
               { forgingOnTopOfPoint = ledgerTipPoint (ledgerState unticked)
@@ -255,6 +254,12 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
           , rbTxsSize
           )
 
+  let forgeBlockLeiosArgs =
+        Block.ForgeBlockLeiosArgs
+          { Block.fbLeiosTracer = leiosTracer
+          , Block.fbLeiosVoteState = leiosVoteState
+          }
+
   -- Actually produce the block (and the EB it announces, if any)
   (newBlock, mForgedEb) <-
     forgeTrace'Via
@@ -262,7 +267,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       "forge-block"
       currentSlot
       $ lift
-      $ Block.forgeBlock blockForging forgeBlockArgs
+      $ Block.forgeBlock blockForging forgeBlockLeiosArgs forgeBlockArgs
 
   trace $
     TraceForgedBlock
@@ -293,7 +298,7 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       mempool
       currentSlot
       (forgingOnTopOfPredecessor forgingOnTopOf)
-      (Block.fbRbTxs forgeBlockArgs)
+      (Block.fbTxs forgeBlockArgs)
       (Block.fbEbTxs forgeBlockArgs)
       newBlock
 
@@ -337,7 +342,7 @@ decideLeiosCertify leiosDbReader voteState tracer ledgerCfg currentSlot extState
           -- TODO: Why exactly do we guard against this? Also, shouldn't we
           -- detect it the other way around: if we have a cert, but not
           -- downloaded it ourselves -> warning!
-          mClosure <- lookupTrustedEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
+          mClosure <- lookupEbClosure leiosDbReader (Leios.pointEbHash ebPoint)
           case mClosure of
             Nothing -> do
               traceWith tracer $
@@ -597,10 +602,10 @@ getLedgerView trace cfg currentSlot unticked = do
         currentSlot of
       Left err -> do
         -- There are so many empty slots between the tip of our chain and the
-        -- current slot that we cannot get an ledger view anymore In
+        -- current slot that we cannot get a ledger view anymore. In
         -- principle, this is no problem; we can still produce a block (we use
         -- the ticked ledger state). However, we probably don't /want/ to
-        -- produce a block in this case; we are most likely missing a blocks
+        -- produce a block in this case; we are most likely missing blocks
         -- on our chain.
         trace $ TraceNoLedgerView currentSlot err
         exitEarly
@@ -677,7 +682,7 @@ getTickedLedgerState ::
   SlotNo ->
   Point blk ->
   ExtLedgerState blk EmptyMK ->
-  WithEarlyExit m (Ticked (LedgerState blk) DiffMK)
+  WithEarlyExit m (Ticked LedgerState blk DiffMK)
 getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked = do
   let tickedLedgerState =
         applyChainTick
@@ -730,7 +735,7 @@ partitionMempool ::
   TopLevelConfig blk ->
   Mempool m blk ->
   SlotNo ->
-  Ticked (LedgerState blk) DiffMK ->
+  Ticked LedgerState blk DiffMK ->
   ExtLedgerState blk EmptyMK ->
   ReadOnlyForker' m blk ->
   m
@@ -741,7 +746,7 @@ partitionMempool ::
     , Maybe (LeiosCert, Leios.EbHash)
     )
 partitionMempool leiosDbReader leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedLedgerState unticked forker = do
-  let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+  let readTables = roforkerReadTables forker
 
       pmTraceVia ::
         (Aeson.ToJSON a, Aeson.ToJSON r') =>

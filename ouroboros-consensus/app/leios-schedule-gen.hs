@@ -44,8 +44,8 @@ import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64, Word8)
 import qualified Database.SQLite3.Direct as DB
 import GHC.Generics (Generic)
-import qualified LeiosDemoDb
 import qualified Numeric
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
 import System.Exit (die)
@@ -163,15 +163,15 @@ newtype LeiosScheduleItem = MkLeiosScheduleItem (Double, (Word64, T.Text, Maybe 
 -- | Deriving via "GHC.Generics"
 instance JSON.ToJSON LeiosScheduleItem
 
--- TODO: we should pull this out so it stays maintainable against the LeiosDemoDb
+-- TODO: we should pull this out so it stays maintainable against the LeiosDB
 generateDb :: R.RandomGen g => g -> DB.Database -> [EbRecipe] -> IO [LeiosScheduleItem]
 generateDb prng0 db ebRecipes = do
   gref <- R.newIOGenM prng0
   -- init db
   -- NOTE: The SQLSchema evolved and the "generate" tool was only patched to stay compatible.
-  withDieMsg $ DB.exec db (fromString LeiosDemoDb.sql_schema)
-  stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_eb)
-  stmt_write_ebBody <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_ebBody)
+  withDieMsg $ DB.exec db (fromString LeiosDB.sql_schema_vol)
+  stmt_write_ebPoint <- withDieJust $ DB.prepare db (fromString LeiosDB.sql_insert_eb)
+  stmt_write_ebBody <- withDieJust $ DB.prepare db (fromString LeiosDB.sql_insert_ebBody)
   -- Clustered schema: bytes are owned per (ebHashBytes, txOffset). The
   -- generator holds the bytes at insert time, so it writes the row directly
   -- as filled, skipping the node's prealloc-then-fill two-step.
@@ -923,7 +923,7 @@ ebIdFromPoint' db ebSlot ebHash = do
     Nothing -> pure ()
     Just{} -> do
       -- INSERT INTO ebPoints
-      stmt_write_ebPoints <- withDieJust $ DB.prepare db (fromString LeiosDemoDb.sql_insert_eb)
+      stmt_write_ebPoints <- withDieJust $ DB.prepare db (fromString LeiosDB.sql_insert_eb)
       withDie $ DB.bindInt64 stmt_write_ebPoints 1 (fromIntegral ebSlot)
       withDie $ DB.bindBlob stmt_write_ebPoints 2 ebHash
       withDie $ DB.bindInt64 stmt_write_ebPoints 3 (fromIntegralEbId ebId)
@@ -1435,7 +1435,7 @@ openEvenIfMissing dbPath lfstPath = do
     b <- doesFileExist dbPath
     db <- withDieMsg $ DB.open (fromString dbPath)
     when (not b) $ do
-      withDieMsg $ DB.exec db (fromString LeiosDemoDb.sql_schema)
+      withDieMsg $ DB.exec db (fromString LeiosDB.sql_schema_vol)
     pure db
   lfst <-
     doesFileExist lfstPath >>= \case

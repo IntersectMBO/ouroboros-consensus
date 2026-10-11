@@ -25,7 +25,6 @@ import Control.Tracer (nullTracer)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.IntMap.Strict as IntMap
 import Data.Maybe (isJust)
-import qualified LeiosDemoDb as LeiosDb
 import LeiosDemoTypes
   ( LeiosPoint (..)
   , RbHash (MkRbHash)
@@ -41,6 +40,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.BlockFetch.ConsensusInterface (WithFingerprint (..))
 import System.FS.Sim.MockFS (MockFS)
@@ -145,7 +145,7 @@ ledgerConfig =
     (const (Just (testCommittee.committee, wholeCommittee)))
 
 eraParams :: HardFork.EraParams
-eraParams = HardFork.defaultEraParams securityParam (slotLengthFromSec 1)
+eraParams = HardFork.defaultEraParams securityParam (slotLengthFromSec 1) HardFork.NoPerasEnabled
 
 -- | Larger than every chain these tests build, so nothing becomes immutable and
 -- every block stays in the VolatileDB, where forgetting can reach it.

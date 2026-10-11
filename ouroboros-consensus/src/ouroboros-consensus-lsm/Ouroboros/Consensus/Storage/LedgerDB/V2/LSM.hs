@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -34,12 +35,21 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     -- * Streaming
   , YieldArgs (YieldLSM)
   , mkLSMYieldArgs
+  , mkExportedLSMYieldArgs
   , SinkArgs (SinkLSM)
   , mkLSMSinkArgs
+  , mkExportedLSMSinkArgs
+
+    -- * Standalone (exported) snapshots
+  , lsmDbExportSnapshot
+  , lsmDbImportSnapshot
 
     -- * Exported for tests
   , LSM.Salt
   , SomeHasFSAndBlockIO (..)
+
+    -- * Disk cache policy
+  , LSM.DiskCachePolicy (..)
   ) where
 
 import Codec.Serialise (decode)
@@ -59,6 +69,7 @@ import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
+import qualified Data.Primitive as P
 import qualified Data.Primitive.ByteArray as PBA
 import qualified Data.Set as Set
 import Data.String (fromString)
@@ -85,18 +96,27 @@ import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util (chunks)
+import Ouroboros.Consensus.Util (chunks, whenJust)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
+import qualified System.Directory as D
 import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import System.FilePath (splitDirectories, splitFileName)
+import qualified System.FS.IO as FS
+import System.FilePath
+  ( makeRelative
+  , splitDirectories
+  , splitFileName
+  , takeDirectory
+  , takeFileName
+  )
+import qualified System.FilePath as F
 import System.Random
 import Prelude hiding (read)
 
@@ -110,18 +130,20 @@ instance NoThunks (Table m txin txout Void) where
 data LSMClosedExn = LSMClosedExn
   deriving (Show, Exception)
 
+type ExportSnapshot m = LSM.SnapshotName -> m ()
+
 {-------------------------------------------------------------------------------
   TxOuts
 -------------------------------------------------------------------------------}
 
 newtype TxOutBytes = TxOutBytes {unTxOutBytes :: LSM.RawBytes}
 
-toTxOutBytes :: IndexedMemPack (l EmptyMK) (TxOut l) => l EmptyMK -> TxOut l -> TxOutBytes
+toTxOutBytes :: IndexedMemPack l blk (TxOut blk) => l blk EmptyMK -> TxOut blk -> TxOutBytes
 toTxOutBytes st txout =
   let barr = indexedPackByteArray True st txout
    in TxOutBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
 
-fromTxOutBytes :: IndexedMemPack (l EmptyMK) (TxOut l) => l EmptyMK -> TxOutBytes -> TxOut l
+fromTxOutBytes :: IndexedMemPack l blk (TxOut blk) => l blk EmptyMK -> TxOutBytes -> TxOut blk
 fromTxOutBytes st (TxOutBytes (LSM.RawBytes vec)) =
   case indexedUnpackEither st vec of
     Left err ->
@@ -145,12 +167,12 @@ deriving via LSM.ResolveAsFirst TxOutBytes instance LSM.ResolveValue TxOutBytes
 
 newtype TxInBytes = TxInBytes {unTxInBytes :: LSM.RawBytes}
 
-toTxInBytes :: MemPack (TxIn l) => Proxy l -> TxIn l -> TxInBytes
+toTxInBytes :: MemPack (TxIn blk) => Proxy blk -> TxIn blk -> TxInBytes
 toTxInBytes _ txin =
   let barr = packByteArray True txin
    in TxInBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
 
-fromTxInBytes :: MemPack (TxIn l) => Proxy l -> TxInBytes -> TxIn l
+fromTxInBytes :: MemPack (TxIn blk) => Proxy blk -> TxInBytes -> TxIn blk
 fromTxInBytes _ (TxInBytes (LSM.RawBytes vec)) =
   case unpackEither vec of
     Left err ->
@@ -186,28 +208,31 @@ duplicateLSMTable tracer t = do
   LedgerTablesHandle
 -------------------------------------------------------------------------------}
 
+type LSMConstraints l blk =
+  (HasLedgerTables l blk, MemPack (TxIn blk), IndexedMemPack l blk (TxOut blk))
+
 newLSMLedgerTablesHandle ::
-  forall m l.
+  forall m l blk.
   ( IOLike m
-  , HasLedgerTables l
-  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , LSMConstraints l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
+  ExportSnapshot m ->
   -- | The size of the tables
   Word64 ->
   UTxOTable m ->
-  m (LedgerTablesHandle m l)
-newLSMLedgerTablesHandle tracer utxosSize t =
+  m (LedgerTablesHandle m l blk)
+newLSMLedgerTablesHandle tracer exportSnapshot utxosSize t =
   encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ do
     pure
       LedgerTablesHandle
         { close = closeLSMTable tracer t
-        , duplicateWithDiffs = implDuplicateWithDiffs tracer t utxosSize
-        , duplicate = implDuplicate utxosSize t tracer
+        , duplicateWithDiffs = implDuplicateWithDiffs tracer exportSnapshot t utxosSize
+        , duplicate = implDuplicate utxosSize t tracer exportSnapshot
         , read = implRead tracer t
         , readRange = implReadRange t
         , readAll = implReadAll t
-        , takeHandleSnapshot = implTakeHandleSnapshot tracer t
+        , takeHandleSnapshot = implTakeHandleSnapshot tracer exportSnapshot t
         , tablesSize = fromIntegral utxosSize
         }
 
@@ -220,39 +245,40 @@ newLSMLedgerTablesHandle tracer utxosSize t =
 
 implDuplicate ::
   ( IOLike m
-  , HasLedgerTables l
-  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , LSMConstraints l blk
   ) =>
   Word64 ->
   UTxOTable m ->
   Tracer m LedgerDBV2Trace ->
-  m (LedgerTablesHandle m l)
-implDuplicate size t tracer =
+  ExportSnapshot m ->
+  m (LedgerTablesHandle m l blk)
+implDuplicate size t tracer exportSnapshot =
   duplicateLSMTable tracer t
     >>= newLSMLedgerTablesHandle
       tracer
+      exportSnapshot
       size
 
 implDuplicateWithDiffs ::
-  forall m l mk.
+  forall m l blk mk.
   ( IOLike m
-  , HasLedgerTables l
-  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , LSMConstraints l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
+  ExportSnapshot m ->
   UTxOTable m ->
   Word64 ->
-  l mk ->
-  l DiffMK ->
-  m (LedgerTablesHandle m l)
-implDuplicateWithDiffs tracer t0 size _ !st1 = do
+  l blk mk ->
+  l blk DiffMK ->
+  m (LedgerTablesHandle m l blk)
+implDuplicateWithDiffs tracer exportSnapshot t0 size _ !st1 = do
   t <- duplicateLSMTable tracer t0
   encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
     let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
     let vec = V.create $ do
           vec' <- VM.new (Map.size diffs)
           Monad.foldM_
-            (\idx (k, item) -> VM.write vec' idx (toTxInBytes (Proxy @l) k, (f item)) >> pure (idx + 1))
+            (\idx (k, item) -> VM.write vec' idx (toTxInBytes (Proxy @blk) k, (f item)) >> pure (idx + 1))
             0
             $ Map.toList diffs
           pure vec'
@@ -270,28 +296,27 @@ implDuplicateWithDiffs tracer t0 size _ !st1 = do
               size + ins - dels
 
     encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates t vec
-    newLSMLedgerTablesHandle tracer size' t
+    newLSMLedgerTablesHandle tracer exportSnapshot size' t
  where
   f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
   f Diff.Delete = LSM.Delete
 
 implRead ::
-  forall m l.
+  forall m l blk.
   ( IOLike m
-  , HasLedgerTables l
-  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , LSMConstraints l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   UTxOTable m ->
-  l EmptyMK ->
-  LedgerTables l KeysMK ->
-  m (LedgerTables l ValuesMK)
+  l blk EmptyMK ->
+  LedgerTables blk KeysMK ->
+  m (LedgerTables blk ValuesMK)
 implRead tracer t st (LedgerTables (KeysMK keys)) =
   encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
     let vec' = V.create $ do
           vec <- VM.new (Set.size keys)
           Monad.foldM_
-            (\i x -> VM.write vec i (toTxInBytes (Proxy @l) x) >> pure (i + 1))
+            (\i x -> VM.write vec i (toTxInBytes (Proxy @blk) x) >> pure (i + 1))
             0
             keys
           pure vec
@@ -303,7 +328,7 @@ implRead tracer t st (LedgerTables (KeysMK keys)) =
       . Foldable.foldl'
         ( \m (k, item) ->
             case item of
-              LSM.Found v -> Map.insert (fromTxInBytes (Proxy @l) k) (fromTxOutBytes st v) m
+              LSM.Found v -> Map.insert (fromTxInBytes (Proxy @blk) k) (fromTxOutBytes st v) m
               LSM.NotFound -> m
               LSM.FoundWithBlob{} -> m
         )
@@ -311,13 +336,12 @@ implRead tracer t st (LedgerTables (KeysMK keys)) =
       $ V.zip vec' res
 
 implReadRange ::
-  forall m l.
-  (IOLike m, IndexedMemPack (l EmptyMK) (TxOut l)) =>
-  HasLedgerTables l =>
+  forall m l blk.
+  (IOLike m, LSMConstraints l blk) =>
   UTxOTable m ->
-  l EmptyMK ->
-  (Maybe (TxIn l), Int) ->
-  m (LedgerTables l ValuesMK, Maybe (TxIn l))
+  l blk EmptyMK ->
+  (Maybe (TxIn blk), Int) ->
+  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
 implReadRange table st (mPrev, num) = do
   entries <- maybe cursorFromStart cursorFromKey mPrev
   pure
@@ -325,30 +349,29 @@ implReadRange table st (mPrev, num) = do
         . ValuesMK
         . V.foldl'
           ( \m -> \case
-              LSM.Entry k v -> Map.insert (fromTxInBytes (Proxy @l) k) (fromTxOutBytes st v) m
+              LSM.Entry k v -> Map.insert (fromTxInBytes (Proxy @blk) k) (fromTxOutBytes st v) m
               LSM.EntryWithBlob{} -> m
           )
           Map.empty
         $ entries
     , case snd <$> V.unsnoc entries of
         Nothing -> Nothing
-        Just (LSM.Entry k _) -> Just (fromTxInBytes (Proxy @l) k)
-        Just (LSM.EntryWithBlob k _ _) -> Just (fromTxInBytes (Proxy @l) k)
+        Just (LSM.Entry k _) -> Just (fromTxInBytes (Proxy @blk) k)
+        Just (LSM.EntryWithBlob k _ _) -> Just (fromTxInBytes (Proxy @blk) k)
     )
  where
   cursorFromStart = LSM.withCursor table (LSM.take num)
   -- Here we ask for one value more and we drop one value because the
   -- cursor returns also the key at which it was opened.
-  cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table (toTxInBytes (Proxy @l) k) (LSM.take $ num + 1)
+  cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table (toTxInBytes (Proxy @blk) k) (LSM.take $ num + 1)
 
 implReadAll ::
   ( IOLike m
-  , HasLedgerTables l
-  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , LSMConstraints l blk
   ) =>
   UTxOTable m ->
-  l EmptyMK ->
-  m (LedgerTables l ValuesMK)
+  l blk EmptyMK ->
+  m (LedgerTables blk ValuesMK)
 implReadAll t st =
   let readAll' m = do
         (v, n) <- implReadRange t st (m, 100000)
@@ -356,13 +379,15 @@ implReadAll t st =
    in readAll' Nothing
 
 implTakeHandleSnapshot ::
-  IOLike m => Tracer m LedgerDBV2Trace -> UTxOTable m -> t -> String -> m (Maybe a)
-implTakeHandleSnapshot tracer t _ snapshotName = do
+  IOLike m =>
+  Tracer m LedgerDBV2Trace -> (LSM.SnapshotName -> m ()) -> UTxOTable m -> t -> String -> m (Maybe a)
+implTakeHandleSnapshot tracer exportSnapshot t _ snapshotName = do
   encloseTimedWith (BackendTrace . SomeBackendTrace . LSMSnap >$< tracer) $
     LSM.saveSnapshot
       (fromString snapshotName)
       (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
       t
+  exportSnapshot (fromString snapshotName)
   pure Nothing
 
 {-------------------------------------------------------------------------------
@@ -397,7 +422,7 @@ snapshotManager ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
+  SnapshotManager m blk (StateRef m ExtLedgerState blk)
 snapshotManager session ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
@@ -417,7 +442,7 @@ implTakeSnapshot ::
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
   Maybe String ->
-  StateRef m (ExtLedgerState blk) ->
+  StateRef m ExtLedgerState blk ->
   m (Maybe (DiskSnapshot, RealPoint blk))
 implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFs) suffix st =
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
@@ -518,15 +543,18 @@ loadSnapshot ::
   forall blk m.
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
+  , LSMConstraints LedgerState blk
   , IOLike m
   ) =>
   Tracer m LedgerDBV2Trace ->
   CodecConfig blk ->
   SomeHasFS m ->
   Session m ->
+  ExportSnapshot m ->
+  LSM.DiskCachePolicy ->
   DiskSnapshot ->
-  ExceptT (SnapshotFailure blk) m (StateRef m (ExtLedgerState blk), RealPoint blk)
-loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
+  ExceptT (SnapshotFailure blk) m (StateRef m ExtLedgerState blk, RealPoint blk)
+loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session exportSnapshot cachePolicy ds = do
   fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
   Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
   snapshotMeta <-
@@ -546,12 +574,13 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
       values <-
         lift $
           encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
-            LSM.openTableFromSnapshot
+            LSM.openTableFromSnapshotWith
+              LSM.noTableConfigOverride{LSM.overrideDiskCachePolicy = Just cachePolicy}
               session
               (fromString $ snapshotToDirName ds)
               (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
 
-      h <- lift $ newLSMLedgerTablesHandle tracer msz values
+      h <- lift $ newLSMLedgerTablesHandle tracer exportSnapshot msz values
       Monad.when
         (checksumAsRead /= snapshotChecksum snapshotMeta)
         $ throwE
@@ -562,26 +591,27 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
 -- | Create the initial LSM table from values, which should happen only at
 -- Genesis.
 tableFromValuesMK ::
-  forall m l.
+  forall m l blk.
   ( IOLike m
-  , IndexedMemPack (l EmptyMK) (TxOut l)
-  , MemPack (TxIn l)
+  , LSMConstraints l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   Session m ->
-  l EmptyMK ->
-  LedgerTables l ValuesMK ->
+  LSM.DiskCachePolicy ->
+  l blk EmptyMK ->
+  LedgerTables blk ValuesMK ->
   m (UTxOTable m, Word64)
-tableFromValuesMK tracer session st (LedgerTables (ValuesMK values)) = do
+tableFromValuesMK tracer session cachePolicy st (LedgerTables (ValuesMK values)) = do
   table <-
-    encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
+    encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
+      LSM.newTableWith (LSM.defaultTableConfig{LSM.confDiskCachePolicy = cachePolicy}) session
   mapM_ (go table) $ chunks 1000 $ Map.toList values
   pure (table, fromIntegral $ Map.size values)
  where
   go table items =
     LSM.inserts table $
       V.fromListN (length items) $
-        map (\(k, v) -> (toTxInBytes (Proxy @l) k, toTxOutBytes st v, Nothing)) items
+        map (\(k, v) -> (toTxInBytes (Proxy @blk) k, toTxOutBytes st v, Nothing)) items
 
 {-------------------------------------------------------------------------------
   Helpers
@@ -607,12 +637,27 @@ mkLSMArgsIO ::
   ( LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
   ) =>
-  Proxy blk -> FilePath -> FilePath -> StdGen -> (LedgerDbBackendArgs IO blk, StdGen)
-mkLSMArgsIO _ fp fastStorage gen =
+  Proxy blk ->
+  -- | LSM database path, relative to the FS root.
+  FilePath ->
+  -- | LSM export path, relative to the FS root.
+  Maybe FilePath ->
+  -- | Root for the LSM filesystem.
+  FilePath ->
+  -- | Disk cache policy for the UTxO table, see 'LSM.DiskCachePolicy'.
+  LSM.DiskCachePolicy ->
+  StdGen ->
+  (LedgerDbBackendArgs IO blk, StdGen)
+mkLSMArgsIO _ fpDb fpExport fastStorage cachePolicy gen =
   let (lsmSalt, gen') = genWord64 gen
    in ( LedgerDbBackendArgsV2 $
           SomeBackendArgs $
-            LSMArgs (mkFsPath $ splitDirectories fp) lsmSalt (stdMkBlockIOFS fastStorage)
+            LSMArgs
+              (mkFsPath $ splitDirectories fpDb)
+              (fmap (mkFsPath . splitDirectories) fpExport)
+              lsmSalt
+              cachePolicy
+              (stdMkBlockIOFS fastStorage)
       , gen'
       )
 
@@ -620,7 +665,7 @@ instance
   ( LedgerSupportsProtocol blk
   , IOLike m
   , LedgerDbSerialiseConstraints blk
-  , HasLedgerTables (LedgerState blk)
+  , HasLedgerTables LedgerState blk
   ) =>
   Backend m LSM blk
   where
@@ -629,12 +674,19 @@ instance
         FsPath
         -- \^ The file path relative to the fast storage directory in which the LSM
         -- trees database will be located.
+        (Maybe FsPath)
+        -- \^ The file path relative to the fast storage directory in which the LSM
+        -- trees database will dump its exports.
         Salt
+        LSM.DiskCachePolicy
+        -- \^ The disk cache policy to use for UTxO table reads/writes.
         (forall st. WithTempRegistry st m (SomeHasFSAndBlockIO m))
 
   data Resources m LSM = LSMResources
     { sessionResource :: !(Session m)
+    , exportSnapshotResource :: !(ExportSnapshot m)
     , someHasFSAndBlockIO :: !(SomeHasFSAndBlockIO m)
+    , cachePolicyResource :: !LSM.DiskCachePolicy
     }
     deriving Generic
 
@@ -646,9 +698,10 @@ instance
     | LSMOpenSession EnclosingTimed
     deriving Show
 
-  mkResources _ trcr (LSMArgs path salt mkFS) _ = do
+  mkResources _ trcr (LSMArgs pathDb pathExp salt cachePolicy mkFS) _ = do
     sblockio@(SomeHasFSAndBlockIO fs blockio) <- mkFS
-    lift $ createDirectoryIfMissing fs True path
+    lift $ createDirectoryIfMissing fs True pathDb
+    whenJust pathExp (lift . createDirectoryIfMissing fs True)
     session <-
       allocateTemp
         ( encloseTimedWith (BackendTrace . SomeBackendTrace . LSMOpenSession >$< trcr) $
@@ -657,45 +710,59 @@ instance
               fs
               blockio
               salt
-              path
+              pathDb
         )
         (\s -> LSM.closeSession s >> pure True)
         impossibleToNotTransfer
-    pure (LSMResources session sblockio)
+    let exportSnap = case pathExp of
+          Nothing -> const (pure ())
+          Just p -> \snap -> LSM.exportSnapshot session snap p
+    pure (LSMResources session exportSnap sblockio cachePolicy)
 
-  releaseResources _ (LSMResources session (SomeHasFSAndBlockIO _ blockio)) = do
+  releaseResources _ (LSMResources session _ (SomeHasFSAndBlockIO _ blockio) _) = do
     LSM.closeSession session
     BIO.close blockio
 
   openStateRefFromSnapshot trcr ccfg shfs res ds = do
-    loadSnapshot trcr ccfg shfs (sessionResource res) ds
+    loadSnapshot
+      trcr
+      ccfg
+      shfs
+      (sessionResource res)
+      (exportSnapshotResource res)
+      (cachePolicyResource res)
+      ds
 
   createAndPopulateStateRefFromGenesis trcr res st = do
     let st' = forgetLedgerTables st
     (table, sz) <-
-      tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
-    StateRef st' <$> newLSMLedgerTablesHandle trcr sz table
+      tableFromValuesMK trcr (sessionResource res) (cachePolicyResource res) st' (ltprj st)
+    StateRef st' <$> newLSMLedgerTablesHandle trcr (exportSnapshotResource res) sz table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
 instance
-  ( MemPack (TxIn l)
-  , IndexedMemPack (l EmptyMK) (TxOut l)
+  ( LSMConstraints l blk
   , IOLike m
   ) =>
-  StreamingBackend m LSM l
+  StreamingBackend m LSM l blk
   where
-  data YieldArgs m LSM l
+  data YieldArgs m LSM l blk
     = -- \| Yield an LSM snapshot
       YieldLSM
         Int
-        (LedgerTablesHandle m l)
+        (LedgerTablesHandle m l blk)
         -- \| Only to be closed by 'releaseYieldArgs'
         (Session m)
         -- \| Only to be closed by 'releaseYieldArgs'
         (SomeHasFSAndBlockIO m)
+        -- \| Cleanup hook run by 'releaseYieldArgs' /after/ the session has been
+        -- closed. Used to remove the temporary scratch session created when
+        -- yielding from a standalone (exported) snapshot. 'pure ()' for a plain
+        -- database yield.
+        (m ())
 
-  data SinkArgs m LSM l
+  data SinkArgs m LSM l blk
     = SinkLSM
         -- \| Chunk size
         Int
@@ -706,26 +773,39 @@ instance
         -- \| DiskSnapshot
         DiskSnapshot
         (Session m)
+        -- \| \"After save\" hook, run by 'sink' /while the session is still
+        -- open/, right after the snapshot has been saved into it. Used to
+        -- export the freshly saved snapshot to a standalone directory. 'pure ()'
+        -- for a plain database sink.
+        (m ())
+        -- \| Cleanup hook run by 'releaseSinkArgs' /after/ the session has been
+        -- closed. Used to remove the temporary scratch session created when
+        -- sinking to a standalone (exported) snapshot. 'pure ()' for a plain
+        -- database sink.
+        (m ())
 
-  releaseYieldArgs (YieldLSM _ hdl session (SomeHasFSAndBlockIO _ bio)) = do
+  releaseYieldArgs (YieldLSM _ hdl session (SomeHasFSAndBlockIO _ bio) cleanup) = do
     close hdl
     LSM.closeSession session
+    cleanup
     BIO.close bio
 
-  releaseSinkArgs (SinkLSM _ _ (SomeHasFSAndBlockIO _ bio) _ session) = do
+  releaseSinkArgs (SinkLSM _ _ (SomeHasFSAndBlockIO _ bio) _ session _afterSave cleanup) = do
     LSM.closeSession session
+    cleanup
     BIO.close bio
 
-  yield _ (YieldLSM chunkSize hdl _ _) = yieldLsmS chunkSize hdl
+  yield _ (YieldLSM chunkSize hdl _ _ _) = yieldLsmS chunkSize hdl
 
-  sink _ (SinkLSM chunkSize shfs _ ds session) = sinkLsmS chunkSize shfs ds session
+  sink _ (SinkLSM chunkSize shfs _ ds session afterSave _cleanup) =
+    sinkLsmS chunkSize shfs ds session afterSave
 
 data SomeHasFSAndBlockIO m where
   SomeHasFSAndBlockIO ::
     (Eq h, Typeable h) => HasFS m h -> BIO.HasBlockIO m h -> SomeHasFSAndBlockIO m
 
 instance IOLike m => NoThunks (Resources m LSM) where
-  wNoThunks _ (LSMResources _ (SomeHasFSAndBlockIO _ _)) = pure Nothing
+  wNoThunks _ (LSMResources _ _ (SomeHasFSAndBlockIO _ _) _) = pure Nothing
 
 {-------------------------------------------------------------------------------
   Streaming
@@ -734,8 +814,8 @@ instance IOLike m => NoThunks (Resources m LSM) where
 yieldLsmS ::
   Monad m =>
   Int ->
-  LedgerTablesHandle m l ->
-  Yield m l
+  LedgerTablesHandle m l blk ->
+  Yield m l blk
 yieldLsmS readChunkSize tb hint k = do
   r <- k (go (Nothing, readChunkSize))
   lift $ S.effects r
@@ -749,22 +829,24 @@ yieldLsmS readChunkSize tb hint k = do
         go (mx, readChunkSize)
 
 sinkLsmS ::
-  forall m l.
+  forall m l blk.
   ( MonadAsync m
   , MonadMVar m
   , MonadThrow (STM m)
   , MonadMask m
   , MonadST m
   , MonadEvaluate m
-  , MemPack (TxIn l)
-  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , LSMConstraints l blk
   ) =>
   Int ->
   SomeHasFS m ->
   DiskSnapshot ->
   Session m ->
-  Sink m l
-sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
+  -- | \"After save\" hook, run while the session is still open, right after the
+  -- snapshot has been saved into it.
+  m () ->
+  Sink m l blk
+sinkLsmS writeChunkSize (SomeHasFS hfs) ds session afterSave st stream = do
   r <-
     bracket
       (lift $ LSM.newTable session)
@@ -777,15 +859,16 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
               (LSM.SnapshotLabel $ T.pack "UTxO table")
               lsmTable
           lift $ writeUTxOSizeFile hfs (snapshotToUTxOSizeFilePath ds) utxosSize
+          lift afterSave
           pure r
       )
   pure (fmap (,Nothing) r)
  where
-  writeToTable :: UTxOTable m -> [(TxIn l, TxOut l)] -> m ()
+  writeToTable :: UTxOTable m -> [(TxIn blk, TxOut blk)] -> m ()
   writeToTable lsmTable accUTxOs =
     LSM.inserts lsmTable $
       V.fromList
-        [(toTxInBytes (Proxy @l) txin, toTxOutBytes st txout, Nothing) | (txin, txout) <- accUTxOs]
+        [(toTxInBytes (Proxy @blk) txin, toTxOutBytes st txout, Nothing) | (txin, txout) <- accUTxOs]
 
   go utxosSize lsmTable 0 accUTxOs stream' = do
     lift $ writeToTable lsmTable accUTxOs
@@ -801,8 +884,7 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
 -- | Create Yield arguments for LSM
 mkLSMYieldArgs ::
   ( IOLike m
-  , HasLedgerTables l
-  , IndexedMemPack (l EmptyMK) (TxOut l)
+  , LSMConstraints l blk
   ) =>
   -- | The filepath in which the LSM database lives. Must not have a trailing slash!
   FilePath ->
@@ -812,7 +894,7 @@ mkLSMYieldArgs ::
   (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
   -- | Usually 'newStdGen'
   (m StdGen) ->
-  m (YieldArgs m LSM l)
+  m (YieldArgs m LSM l blk)
 mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
   shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
     -- The Yield args will be created in the alloc step of a bracket so we do the
@@ -826,8 +908,224 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
       session
       (LSM.toSnapshotName (snapshotToDirName ds))
       (LSM.SnapshotLabel $ T.pack "UTxO table")
-  h <- newLSMLedgerTablesHandle nullTracer 0 tb
-  pure $ YieldLSM 1000 h session shfsbio
+  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb
+  pure $ YieldLSM 1000 h session shfsbio (pure ())
+
+-- | Create Yield arguments for a standalone (exported) LSM snapshot.
+--
+-- Unlike 'mkLSMYieldArgs', which reads a snapshot out of a live LSM database,
+-- this opens a /temporary/ scratch session next to the exported snapshot,
+-- imports the exported snapshot into it, and then streams it as usual. The
+-- scratch session is removed by 'releaseYieldArgs'.
+--
+-- The scratch session is created in the parent directory of the exported
+-- snapshot, so that it lives on the same volume (a requirement of importing).
+mkExportedLSMYieldArgs ::
+  ( IOLike m
+  , LSMConstraints l blk
+  ) =>
+  -- | The directory containing the exported snapshot. Must not have a trailing
+  -- slash!
+  FilePath ->
+  -- | The complete name of the snapshot, so @<slotno>[_<suffix>]@.
+  DiskSnapshot ->
+  -- | Usually 'stdMkBlockIOFS'
+  (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'ioHasFS'
+  (FilePath -> SomeHasFS m) ->
+  -- | Usually 'newStdGen'
+  (m StdGen) ->
+  m (YieldArgs m LSM l blk)
+mkExportedLSMYieldArgs exportDir ds mkFSBIO mkFS mkGen = do
+  shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
+    runWithTempRegistry $ (\x -> (x, ())) <$> mkFSBIO (takeDirectory exportDir)
+  nonce <- hACK_GET_SALT_FROM_BLOOMFILTER mkGen $ mkFS exportDir
+  let scratch = scratchSessionPath nonce
+  freshDirectory hasFS scratch
+  let snapName = LSM.toSnapshotName (snapshotToDirName ds)
+  session <-
+    LSM.newSession
+      nullTracer
+      hasFS
+      blockIO
+      nonce
+      scratch
+  LSM.importSnapshot
+    session
+    snapName
+    (mkFsPath [takeFileName exportDir])
+  tb <-
+    LSM.openTableFromSnapshot
+      session
+      snapName
+      (LSM.SnapshotLabel $ T.pack "UTxO table")
+  -- A scratch session used only for reading; it never exports snapshots.
+  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb
+  pure $ YieldLSM 1000 h session shfsbio (removeDirectoryRecursive hasFS scratch)
+
+-- | Create Sink arguments for a standalone (exported) LSM snapshot.
+--
+-- Unlike 'mkLSMSinkArgs', which sinks into a live LSM database, this sinks into
+-- a /temporary/ scratch session next to the destination directory, and then
+-- exports the resulting snapshot to that directory (see 'LSM.exportSnapshot').
+-- The scratch session is removed by 'releaseSinkArgs'.
+--
+-- The scratch session is created in the parent directory of the destination, so
+-- that it lives on the same volume (a requirement of 'LSM.exportSnapshot').
+mkExportedLSMSinkArgs ::
+  IOLike m =>
+  -- | The destination directory for the exported snapshot. It will be
+  -- (re)created, and must not have a trailing slash!
+  FilePath ->
+  -- | The complete name of the snapshot, so @<slotno>[_<suffix>]@.
+  DiskSnapshot ->
+  -- | Usually 'ioHasFS', for the LedgerDB snapshot (@state@/@meta@) files.
+  SomeHasFS m ->
+  -- | Usually 'stdMkBlockIOFS'
+  (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'newStdGen'
+  (m StdGen) ->
+  m (SinkArgs m LSM l blk)
+mkExportedLSMSinkArgs exportDir ds snapFs mkBlockIOFS mkGen = do
+  shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
+    runWithTempRegistry $ (\x -> (x, ())) <$> mkBlockIOFS (takeDirectory exportDir)
+  (nonce, gen') <- genWord64 <$> mkGen
+  let salt = fst $ genWord64 gen'
+      scratch = scratchSessionPath nonce
+      exportFsPath = mkFsPath [takeFileName exportDir]
+  freshDirectory hasFS scratch
+  -- 'LSM.exportSnapshot' requires the destination directory to not exist.
+  whenM (doesDirectoryExist hasFS exportFsPath) $
+    removeDirectoryRecursive hasFS exportFsPath
+  session <- LSM.newSession nullTracer hasFS blockIO salt scratch
+  let afterSave =
+        LSM.exportSnapshot session (LSM.toSnapshotName (snapshotToDirName ds)) exportFsPath
+  pure (SinkLSM 1000 snapFs shfsbio ds session afterSave (removeDirectoryRecursive hasFS scratch))
+
+-- | Export a snapshot out of a (offline) LSM database into a standalone
+-- directory, which must not exist yet.
+--
+-- The database session and the destination must live on the same volume.
+lsmDbExportSnapshot ::
+  -- | The LSM database (session) directory.
+  FilePath ->
+  -- | The name of the snapshot to export, so @<slotno>[_<suffix>]@.
+  String ->
+  -- | The destination directory, which must not exist yet.
+  FilePath ->
+  IO ()
+lsmDbExportSnapshot dbPath snapName exportDir = do
+  salt <- fst . genWord64 <$> newStdGen
+  withRootFS $ \hasFS blockIO -> do
+    sessionDir <- toRootFsPath dbPath
+    exportFs <- toRootFsPath exportDir
+    bracket
+      (LSM.openSession nullTracer hasFS blockIO salt sessionDir)
+      LSM.closeSession
+      (\session -> LSM.exportSnapshot session (LSM.toSnapshotName snapName) exportFs)
+
+-- | Import a snapshot from a standalone directory into a new (offline) LSM
+-- database, created at the given (empty or absent) directory.
+--
+-- The database session and the source must live on the same volume.
+lsmDbImportSnapshot ::
+  -- | The LSM database (session) directory. Created if it does not exist; must
+  -- be empty otherwise.
+  FilePath ->
+  -- | The name to give the imported snapshot, so @<slotno>[_<suffix>]@.
+  String ->
+  -- | The source directory containing the exported snapshot.
+  FilePath ->
+  IO ()
+lsmDbImportSnapshot dbPath snapName srcDir =
+  withRootFS $ \hasFS blockIO -> do
+    sessionDir <- toRootFsPath dbPath
+    srcFs <- toRootFsPath srcDir
+    createDirectoryIfMissing hasFS True sessionDir
+    salt <- hACK_GET_SALT_FROM_BLOOMFILTER newStdGen $ SomeHasFS $ FS.ioHasFS $ MountPoint srcDir
+
+    bracket
+      ( LSM.newSession
+          nullTracer
+          hasFS
+          blockIO
+          salt
+          sessionDir
+      )
+      LSM.closeSession
+      (\s -> LSM.importSnapshot s (LSM.toSnapshotName snapName) srcFs)
+
+-- HACK: while we wait for https://github.com/IntersectMBO/lsm-tree/pull/855
+--
+-- Read the salt from one of the bloomfilter files in the snapshot.
+hACK_GET_SALT_FROM_BLOOMFILTER ::
+  forall m.
+  IOLike m =>
+  -- | To generate a salt if we don't get it from an existing bloom filter
+  m StdGen ->
+  -- | A FS anchored at the exported LSM snapshot.
+  SomeHasFS m ->
+  m Salt
+hACK_GET_SALT_FROM_BLOOMFILTER gen (SomeHasFS fs) = do
+  files <- listDirectory fs (mkFsPath [])
+  case List.find ((".filter" ==) . F.takeExtension) files of
+    Just f ->
+      withFile fs (mkFsPath [f]) ReadMode $ \h -> do
+        -- We read exactly 24 bytes
+        header <- hGetByteArrayExactly fs h 24
+        -- We then read the 3rd Word64 from those bytes, which happens to be the
+        -- Salt of the filter.
+        --
+        -- Can be inspected in Bash with:
+        --
+        -- @
+        -- echo "ibase=16; $(hexdump -s 16 -n 8 -e '1/8 "%X"' path/to/nnn.filter)" | bc
+        -- @
+        pure $ P.indexByteArray header 2 :: m LSM.Salt
+    Nothing ->
+      fst . genWord64 <$> gen
+ where
+  hGetByteArrayExactly hfs h len = do
+    buf <- P.newByteArray len
+    _ <- hGetBufExactly hfs h buf 0 (fromIntegral len)
+    P.unsafeFreezeByteArray buf
+
+-- | Mount the filesystem at the root, run an action with the resulting handles,
+-- and close the underlying block IO afterwards.
+--
+-- Mounting at the root means that any 'FsPath' (the session directory itself,
+-- as well as the import/export directories) can be expressed relative to a
+-- single mount point, even when they live in unrelated parts of the filesystem
+-- (as long as they are on the same volume, which the caller must guarantee).
+withRootFS ::
+  (forall h. (Eq h, Typeable h) => HasFS IO h -> BIO.HasBlockIO IO h -> IO a) ->
+  IO a
+withRootFS act = do
+  SomeHasFSAndBlockIO hasFS blockIO <-
+    runWithTempRegistry $ (\x -> (x, ())) <$> stdMkBlockIOFS "/"
+  act hasFS blockIO
+    `finally` BIO.close blockIO
+
+-- | A 'FsPath' (relative to the filesystem root) for a temporary scratch
+-- session directory, named after a nonce to make collisions unlikely.
+scratchSessionPath :: Word64 -> FsPath
+scratchSessionPath nonce = mkFsPath ["lsm-convert-scratch-" <> show nonce]
+
+-- | Interpret a (possibly relative) 'FilePath' as a 'FsPath' relative to the
+-- filesystem root, so that it can be used with a session mounted at the root.
+toRootFsPath :: FilePath -> IO FsPath
+toRootFsPath p = do
+  absPath <- D.makeAbsolute p
+  pure $ mkFsPath $ splitDirectories $ makeRelative "/" absPath
+
+-- | Ensure a directory exists and is empty.
+freshDirectory :: Monad m => HasFS m h -> FsPath -> m ()
+freshDirectory hasFS p = do
+  whenM (doesDirectoryExist hasFS p) $ removeDirectoryRecursive hasFS p
+  createDirectoryIfMissing hasFS True p
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM mb act = mb >>= \b -> Monad.when b act
 
 -- | Create Sink arguments for LSM
 mkLSMSinkArgs ::
@@ -842,7 +1140,7 @@ mkLSMSinkArgs ::
   (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
   -- | Usually 'newStdGen'
   (m StdGen) ->
-  m (SinkArgs m LSM l)
+  m (SinkArgs m LSM l blk)
 mkLSMSinkArgs (splitFileName -> (lsmDbParentPath, lsmDbPath)) ds snapFs mkBlockIOFS mkGen = do
   shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
     -- The Sink args will be created in the alloc step of a bracket so we do the
@@ -854,4 +1152,4 @@ mkLSMSinkArgs (splitFileName -> (lsmDbParentPath, lsmDbPath)) ds snapFs mkBlockI
   createDirectory hasFS lsmDbPath'
   salt <- fst . genWord64 <$> mkGen
   session <- LSM.newSession nullTracer hasFS blockIO salt lsmDbPath'
-  pure (SinkLSM 1000 snapFs shfsbio ds session)
+  pure (SinkLSM 1000 snapFs shfsbio ds session (pure ()) (pure ()))

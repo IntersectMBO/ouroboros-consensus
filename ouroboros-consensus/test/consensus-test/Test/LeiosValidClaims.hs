@@ -34,10 +34,10 @@ import LeiosValidClaims
   )
 import Ouroboros.Consensus.Block (RealPoint (..), SlotNo (..))
 import Test.Cardano.Crypto.Leios.Gen (TestCommittee (..), genCommittee)
-import Test.LeiosDemoDb (genRbHash)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.LeiosHash (genRbHash)
 import Test.Util.TestBlock (TestBlock, TestHash (..))
 
 tests :: TestTree

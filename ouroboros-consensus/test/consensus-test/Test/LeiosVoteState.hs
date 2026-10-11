@@ -47,7 +47,6 @@ import LeiosVoteState
   , subscribeVotes
   )
 import Test.Cardano.Crypto.Leios.Gen (TestCommittee (..), genCommittee, genLeiosSigningKey)
-import Test.LeiosDemoDb (genRbHash)
 import Test.QuickCheck
   ( Gen
   , Property
@@ -65,6 +64,7 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.LeiosHash (genRbHash)
 
 tests :: TestTree
 tests =

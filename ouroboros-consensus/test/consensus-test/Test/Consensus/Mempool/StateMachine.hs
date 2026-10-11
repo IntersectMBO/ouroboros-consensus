@@ -4,10 +4,9 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -30,8 +29,9 @@ import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
 import Control.Monad (when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import Control.Monad.Except (runExcept)
-import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
+import Control.Monad.Except (Except, runExcept)
+import Control.Tracer (nullTracer)
+import qualified Control.Tracer as CT (Tracer, mkTracer, traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
 import qualified Data.List.NonEmpty as NE
@@ -46,11 +46,12 @@ import qualified Data.TreeDiff.OMap as TD
 import GHC.Generics
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics hiding (TxIn, TxOut)
+import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import qualified Ouroboros.Consensus.Ledger.Tables.Basics as Ledger
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..), tickLedgerState)
@@ -112,7 +113,7 @@ data Model blk r = Model
   -- ^ Last seen ticket number
   --
   -- This indicates how many transactions have ever been added to the mempool.
-  , modelConfig :: !(LedgerCfg (LedgerState blk))
+  , modelConfig :: !(LedgerCfg LedgerState blk)
   , --  * LedgerDB
 
     modelLedgerDBTip :: !(LedgerState blk ValuesMK)
@@ -495,7 +496,7 @@ foldTxs cfg nextTk capacity initialFilled initialState =
     let slot = case getTipSlot st of
           Origin -> minimumPossibleSlotNo (Proxy @blk)
           At v -> v + 1
-     in case runExcept $ (,) <$> txMeasure cfg st tx <*> applyTx cfg DoNotIntervene slot tx st of
+     in case runExcept $ (,) <$> txMeasureFull cfg st tx <*> applyTx cfg DoNotIntervene slot tx st of
           Left{} ->
             go
               ( acc
@@ -526,6 +527,17 @@ foldTxs cfg nextTk capacity initialFilled initialState =
                   , st
                   )
                   next
+
+txMeasureFull ::
+  LedgerSupportsMempool blk =>
+  LedgerConfig blk ->
+  TickedLedgerState blk ValuesMK ->
+  GenTx blk ->
+  Except (ApplyTxErr blk) (TxMeasure blk)
+txMeasureFull cfg st tx =
+  TxMeasure
+    <$> txMeasurePhase1 cfg (forgetLedgerTables st) tx
+    <*> txMeasurePhase2 cfg st tx
 
 tick ::
   ( ValidateEnvelope blk
@@ -597,7 +609,7 @@ newLedgerInterface initialLedger = do
                       ReadOnlyForker
                         { roforkerClose = pure ()
                         , roforkerReadStatistics = pure $ Statistics 0
-                        , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
+                        , roforkerReadTables = pure . ltliftA2 restrictValuesMK (projectLedgerTables st)
                         , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
                         , roforkerGetLedgerState = pure $ forgetLedgerTables st
                         }
@@ -619,28 +631,28 @@ mkSUT ::
   ) =>
   LedgerConfig blk ->
   LedgerState blk ValuesMK ->
-  m (SUT m blk, Tracer m String)
+  m (SUT m blk, CT.Tracer m String)
 mkSUT cfg initialLedger = do
   (lif, t) <- newLedgerInterface initialLedger
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
   let trcr =
-        mkTracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
+        CT.mkTracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
           atomically . writeTChan trcrChan
   mempool <-
     openMempoolWithoutSyncThread
       lif
       cfg
-      (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
+      (MempoolCapacityBytesOverride $ unIgnoringOverflow $ tmPhase1 txMaxBytes')
       (Nothing :: Maybe MempoolTimeoutConfig)
-      (mkTracer $ traceWith trcr . Right)
-  pure (SUT mempool t, mkTracer $ atomically . writeTChan trcrChan . Left)
+      (CT.mkTracer $ CT.traceWith trcr . Right)
+  pure (SUT mempool t, CT.mkTracer $ atomically . writeTChan trcrChan . Left)
 
 semantics ::
   ( LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , IOLike m
   ) =>
-  Tracer m String ->
+  CT.Tracer m String ->
   Command blk Concrete ->
   StrictTVar m (SUT m blk) ->
   m (Response blk Concrete)
@@ -661,7 +673,7 @@ semantics trcr cmd r = do
       txs <- snapshotTxs <$> atomically (getSnapshot m)
       pure $ GotSnapshot [(txForgetValidated vtx, tk) | (vtx, tk, _) <- txs]
     Event (ChangeLedger l') -> do
-      traceWith trcr $ "ChangingLedger to " <> show (getTip l')
+      CT.traceWith trcr $ "ChangingLedger to " <> show (getTip l')
       atomically $ do
         MockedLedgerDB ledgerTip oldReachableTips <- readTVar t
         if getTip l' == getTip ledgerTip
@@ -691,6 +703,8 @@ postcondition ::
   , ValidateEnvelope blk
   , ToExpr (Command blk Concrete)
   , ToExpr (GenTx blk)
+  , Show (Ledger.TxIn blk)
+  , Show (Ledger.TxOut blk)
   ) =>
   Model blk Concrete ->
   Command blk Concrete ->
@@ -744,7 +758,7 @@ sm ::
   , ValidateEnvelope blk
   ) =>
   StateMachine (Model blk) (Command blk) m (Response blk) ->
-  Tracer m String ->
+  CT.Tracer m String ->
   StrictTVar m (SUT m blk) ->
   StateMachine (Model blk) (Command blk) m (Response blk)
 sm sm0 trcr ior = sm0{QC.semantics = \c -> semantics trcr c ior}
@@ -783,9 +797,7 @@ smUnused cfg initialState capacity ma gTxs =
 
 prop_mempoolSequential ::
   forall blk.
-  ( HasTxId (GenTx blk)
-  , blk ~ TestBlock
-  ) =>
+  blk ~ TestBlock =>
   LedgerConfig blk ->
   TxMeasure blk ->
   -- | Initial state
@@ -826,9 +838,7 @@ prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothi
       "[" <> show l <> "-" <> show (l + n) <> ")"
 
 prop_mempoolParallel ::
-  ( HasTxId (GenTx blk)
-  , blk ~ TestBlock
-  ) =>
+  blk ~ TestBlock =>
   LedgerConfig blk ->
   TxMeasure blk ->
   LedgerState blk ValuesMK ->
@@ -918,7 +928,7 @@ prop_removeDuringSyncSM = do
             removeTxsEvenIfValid mempool (NE.fromList [xid])
       readTables st keys = do
         interposeRemoval st
-        pure (projectLedgerTables st `restrictValues'` keys)
+        pure (ltliftA2 restrictValuesMK (projectLedgerTables st) keys)
       ledgerInterface =
         LedgerInterface
           { getCurrentLedgerState = do
@@ -941,7 +951,7 @@ prop_removeDuringSyncSM = do
     openMempoolWithoutSyncThread
       ledgerInterface
       cfg
-      (MempoolCapacityBytesOverride $ unIgnoringOverflow capacity)
+      (MempoolCapacityBytesOverride $ unIgnoringOverflow $ tmPhase1 capacity)
       (Nothing :: Maybe MempoolTimeoutConfig)
       nullTracer
   putMVar mempoolRef mempool
@@ -989,12 +999,13 @@ tests =
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
         "parallel"
-        [ -- Restring the length of the command list for QSM parallel testing.
+        [ -- Restrict the length of the command list for QSM parallel testing.
           -- More commands require exponentially more memory to explore.
           localOption (QuickCheckMaxSize 40) $
             testProperty "atomic" $
-              prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
-                \i -> fmap (fmap fst . fst) . genTxs i
+              QC.withNumTests 1000 $
+                prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
+                  \i -> fmap (fmap fst . fst) . genTxs i
         , testProperty "non atomic" $
             QC.withNumTests 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $
@@ -1009,8 +1020,8 @@ tests =
 -- | The 'TestBlock' txMaxBytes is fixed to a very high number. We use this
 -- local declaration to have a mempool that sometimes fill but still don't make
 -- it configurable.
-txMaxBytes' :: IgnoringOverflow ByteSize32
-txMaxBytes' = IgnoringOverflow $ ByteSize32 maxBound
+txMaxBytes' :: TxMeasure TestBlock
+txMaxBytes' = TxMeasure (IgnoringOverflow $ ByteSize32 maxBound) TrivialTxMeasurePhase2
 
 instance
   (StandardHash blk, GetTip (LedgerState blk)) =>
@@ -1038,8 +1049,7 @@ instance NoThunks (Mempool IO TestBlock) where
   wNoThunks _ _ = return Nothing
 
 instance
-  ( ToExpr (TxId (GenTx blk))
-  , ToExpr (GenTx blk)
+  ( ToExpr (GenTx blk)
   , ToExpr (LedgerState blk ValuesMK)
   , ToExpr (TickedLedgerState blk ValuesMK)
   , LedgerSupportsMempool blk
@@ -1058,8 +1068,7 @@ instance
         ]
 
 instance
-  ( ToExpr (TxId (GenTx blk))
-  , ToExpr (GenTx blk)
+  ( ToExpr (GenTx blk)
   , ToExpr (TickedLedgerState blk ValuesMK)
   , ToExpr (LedgerState blk ValuesMK)
   , LedgerSupportsMempool blk
@@ -1165,7 +1174,7 @@ deriving instance ToExpr (GenTx TestBlock)
 deriving instance ToExpr Tx
 deriving instance ToExpr Expiry
 
-instance ToExpr (LedgerTables (LedgerState TestBlock) ValuesMK) where
+instance ToExpr (LedgerTables TestBlock ValuesMK) where
   toExpr (LedgerTables (ValuesMK v)) = Lst [toExpr (condense txin, condense txout) | (txin, txout) <- Map.toList v]
 
 instance ToExpr (ValuesMK TxIn TxOut) where

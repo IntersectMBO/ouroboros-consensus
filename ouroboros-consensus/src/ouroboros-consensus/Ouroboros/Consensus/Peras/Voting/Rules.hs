@@ -1,12 +1,10 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Pure Peras voting rules
 --
@@ -33,25 +31,25 @@ module Ouroboros.Consensus.Peras.Voting.Rules
   )
 where
 
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (WithOrigin (..))
 import Ouroboros.Consensus.Block.Abstract
-  ( SlotNo (..)
+  ( Point
+  , SlotNo (..)
+  , StandardHash
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
-  , PerasRoundNo (..)
-  , getPerasCertRound
-  , onPerasRoundNo
-  )
-import Ouroboros.Consensus.Peras.Params
-  ( PerasCertArrivalThreshold (..)
+  ( IsPerasCert (..)
+  , PerasCertArrivalThreshold (..)
   , PerasCooldownRounds (..)
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
+  , PerasRoundNo (..)
+  , onPerasRoundNo
   )
 import Ouroboros.Consensus.Peras.Voting.View
-  ( LatestCertOnChainView (..)
-  , LatestCertSeenView (..)
+  ( LatestCertSeenView (..)
   , PerasVotingView (..)
   )
 import Ouroboros.Consensus.Util.Pred
@@ -69,25 +67,27 @@ import Ouroboros.Consensus.Util.Pred
 -- | Whether we are allowed to vote according to the rules.
 --
 -- This type additionally carries the evidence for the decision taken.
-data PerasVotingRulesDecision
-  = Vote (Evidence True PerasVotingRule)
+data PerasVotingRulesDecision blk
+  = Vote (Evidence True PerasVotingRule) (Point blk)
   | NoVote (Evidence False PerasVotingRule)
-  deriving Show
+  deriving (Show, Eq, Generic, NoThunks)
 
-instance Explainable PerasVotingRulesDecision where
+instance StandardHash blk => Explainable (PerasVotingRulesDecision blk) where
   explain mode = \case
-    Vote (ETrue e) -> "Vote(" <> explain mode e <> ")"
-    NoVote (EFalse e) -> "NoVote(" <> explain mode e <> ")"
+    Vote (ETrue e) candidate ->
+      "Vote(" <> show candidate <> "," <> explain mode e <> ")"
+    NoVote (EFalse e) ->
+      "NoVote(" <> explain mode e <> ")"
 
 -- | Evaluate whether voting is allowed or not according to the voting rules
 isPerasVotingAllowed ::
-  HasPerasCertRound cert =>
-  PerasVotingView cert ->
-  PerasVotingRulesDecision
+  IsPerasCert cert blk =>
+  PerasVotingView cert blk ->
+  PerasVotingRulesDecision blk
 isPerasVotingAllowed pvv =
   evalPred (perasVotingRules pvv) $ \e ->
     case e of
-      ETrue{} -> Vote e
+      ETrue{} -> Vote e (candidateBlock pvv)
       EFalse{} -> NoVote e
 
 -- | Voting rules
@@ -132,8 +132,8 @@ instance Explainable PerasVotingRule where
 -- | VR-1A: the voter has seen the certificate for the previous round, and the
 -- certificate was received in the first X slots after the start of the round.
 perasVR1A ::
-  HasPerasCertRound cert =>
-  PerasVotingView cert ->
+  IsPerasCert cert blk =>
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR1A
   PerasVotingView
@@ -171,7 +171,7 @@ perasVR1A
 
 -- | VR-1B: the block being voted upon extends the most recently certified one.
 perasVR1B ::
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR1B
   PerasVotingView
@@ -195,8 +195,8 @@ perasVR1B
 -- This enforces the chain-healing period that must occur before leaving a
 -- cooldown period.
 perasVR2A ::
-  HasPerasCertRound cert =>
-  PerasVotingView cert ->
+  IsPerasCert cert blk =>
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR2A
   PerasVotingView
@@ -228,26 +228,25 @@ perasVR2A
 -- This enforces chain quality and common prefix before leaving a cooldown
 -- period.
 perasVR2B ::
-  HasPerasCertRound cert =>
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR2B
   PerasVotingView
     { perasParams
     , currRoundNo
-    , latestCertOnChain
+    , latestCertOnChainRound
     } =
     VR2B c := vr2b
    where
     vr2b =
-      case latestCertOnChain of
+      case latestCertOnChainRound of
         -- There is a certificate on chain ==> we must check its round number
-        NotOrigin cert ->
+        NotOrigin certRoundNo ->
           -- The certificate comes from a round older than the current one
-          (currRoundNo :>: getPerasCertRound (lcocCert cert))
+          (currRoundNo :>: certRoundNo)
             -- The certificate round is c⋅K rounds away from the current one
             :/\: ( (currRoundNo `rmod` _K)
-                     :==: (getPerasCertRound (lcocCert cert) `rmod` _K)
+                     :==: (certRoundNo `rmod` _K)
                  )
         -- There is no certificate on chain ==> check if we are recovering
         -- from an initial cooldown after having initially failed to
@@ -272,8 +271,8 @@ perasVR2B
 -- | Both VR-1A and VR-1B hold, which is the situation typically occurring when
 -- the voting has regularly occurred in preceding rounds.
 perasVR1 ::
-  HasPerasCertRound cert =>
-  PerasVotingView cert ->
+  IsPerasCert cert blk =>
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR1 pvv =
   perasVR1A pvv :/\: perasVR1B pvv
@@ -281,16 +280,16 @@ perasVR1 pvv =
 -- | Both VR-2A and VR-2B hold, which is the situation typically occurring when
 -- the chain is about to exit a cooldown period.
 perasVR2 ::
-  HasPerasCertRound cert =>
-  PerasVotingView cert ->
+  IsPerasCert cert blk =>
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR2 pvv =
   perasVR2A pvv :/\: perasVR2B pvv
 
 -- | Voting is allowed if either VR-1A and VR-1B hold, or VR-2A and VR-2B hold.
 perasVotingRules ::
-  HasPerasCertRound cert =>
-  PerasVotingView cert ->
+  IsPerasCert cert blk =>
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVotingRules pvv =
   perasVR1 pvv :\/: perasVR2 pvv

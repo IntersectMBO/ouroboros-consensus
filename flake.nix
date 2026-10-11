@@ -33,13 +33,13 @@
       flake = false;
     };
     hls = {
-      url = "github:haskell/haskell-language-server/2.11.0.0";
+      url = "github:haskell/haskell-language-server/2.14.0.0";
       flake = false;
     };
     agda-nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     # for cabal-docspec
     cabal-extras = {
-      url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20240703";
+      url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20250606";
       flake = false;
     };
     gentle-introduction = {
@@ -52,7 +52,6 @@
     let
       supportedSystems = [
         "x86_64-linux"
-        "x86_64-darwin"
         #"aarch64-linux"
         "aarch64-darwin"
       ];
@@ -79,20 +78,23 @@
       {
         devShells = rec {
           default = ghc96;
-          ghc96 = hydraJobs.native.haskell96.devShell;
-          ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
-          ghc910 = hydraJobs.native.haskell910.devShell;
-          ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
-          ghc912 = hydraJobs.native.haskell912.devShell;
-          ghc912-profiled = hydraJobs.native.haskell912.devShellProfiled;
+          ghc96 = import ./nix/shell.nix {
+            inherit inputs pkgs;
+            hsPkgs = pkgs.hsPkgs;
+          };
+          ghc914 = import ./nix/shell.nix {
+            inherit inputs pkgs;
+            hsPkgs = pkgs.hsPkgs.projectVariants.ghc914;
+          };
+          ghc914-ipe = import ./nix/shell.nix {
+            inherit inputs pkgs;
+            hsPkgs = pkgs.hsPkgs.projectVariants.ghc914.projectVariants.ipe;
+          };
 
           agda-spec = pkgs.agda-spec.shell;
 
           website = pkgs.mkShell {
-            packages = [
-              pkgs.nodejs
-              pkgs.yarn
-            ];
+            packages = [ pkgs.nodejs pkgs.yarn-berry ];
           };
         };
         inherit hydraJobs;

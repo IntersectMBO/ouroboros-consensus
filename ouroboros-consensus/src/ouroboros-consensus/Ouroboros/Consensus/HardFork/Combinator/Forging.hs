@@ -1,7 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -21,9 +23,6 @@ import Data.Maybe (fromMaybe)
 import Data.SOP (Top)
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint (All)
-import Data.SOP.Functors (Product2 (..))
-import Data.SOP.InPairs (InPairs)
-import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Index
 import qualified Data.SOP.Match as Match
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
@@ -311,142 +310,166 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  ForgeBlockArgs m (HardForkBlock xs) ->
+  ForgeBlockLeiosArgs m ->
+  ForgeBlockArgs (HardForkBlock xs) ->
   m (HardForkBlock xs, Maybe ForgedLeiosEb)
-hardForkForgeBlock
-  blockForging
-  ForgeBlockArgs
-    { fbConfig
-    , fbCurrentBlockNo
-    , fbCurrentSlotNo
-    , fbCurrentTickedLedgerState = TickedHardForkLedgerState transition ledgerState
-    , fbRbTxs
-    , fbEbTxs
-    , fbIsLeader
-    , fbChainDepState
-    , fbLeiosTracer
-    , fbLeiosVoteState
-    , fbMayLeiosCert
-    } =
-    fmap
-      ( \ns ->
-          ( HardForkBlock $ OneEraBlock $ hmap (\(Pair blk _) -> blk) ns
-          , hcollapse $ hmap (\(Pair _ mEb) -> mEb) ns
+hardForkForgeBlock blockForging leiosArgs ForgeBlockArgs{..} =
+  fmap
+    ( \ns ->
+        ( HardForkBlock $ OneEraBlock $ hmap (\(Pair blk _) -> blk) ns
+        , hcollapse $ hmap (\(Pair _ mEb) -> mEb) ns
+        )
+    )
+    $ hsequence'
+    $ hizipWith3
+      forgeBlockOne
+      cfgs
+      (OptNP.toNP blockForging)
+    -- We know both NSs must be from the same era, because they were all
+    -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
+    -- it statically.
+    $ Match.mustMatchNS
+      "IsLeader"
+      (getOneEraIsLeader fbIsLeader)
+    $ withChainDepState
+    $ injectValidatedTxs ledgerState
+ where
+  TickedHardForkLedgerState transition ledgerState = fbCurrentTickedLedgerState
+  cfgs = distribTopLevelConfig ei fbConfig
+  ei =
+    State.epochInfoPrecomputedTransitionInfo
+      (hardForkLedgerConfigShape (configLedger fbConfig))
+      transition
+      ledgerState
+
+  missingBlockForgingImpossible :: EraIndex xs -> String
+  missingBlockForgingImpossible eraIndex =
+    "impossible: current era lacks block forging but we have an IsLeader proof "
+      <> show eraIndex
+
+  -- The unticked 'ChainDepState' may legitimately be in a previous era (era
+  -- boundary); we pass 'Nothing' to that era in that case.
+  withChainDepState ::
+    NS f xs ->
+    NS (Product (Maybe :.: WrapChainDepState) f) xs
+  withChainDepState ledgerAndTxs = case fbChainDepState of
+    Nothing -> hmap (Pair (Comp Nothing)) ledgerAndTxs
+    Just cds -> case Match.matchNS (State.tip cds) ledgerAndTxs of
+      Right matched -> hmap (\(Pair cds' x) -> Pair (Comp (Just cds')) x) matched
+      Left _mismatch -> hmap (Pair (Comp Nothing)) ledgerAndTxs
+
+  -- If we crossed an era boundary in this forge, the transactions were
+  -- revalidated against the tip in the new era so:
+  --
+  --  * Re-matching them MUST leave them in the right era via returning
+  --    'ReapplyTxs'.
+  --
+  --  * There should be no rejected-by-untranslatable transactions.
+  --
+  -- Otherwise there is a bug.
+  --
+  -- The ranking block's and the endorser block's transactions are re-matched
+  -- together, tagged with their destination, and split again afterwards.
+  injectValidatedTxs ::
+    State.HardForkState f xs ->
+    NS (Product f (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))) xs
+  injectValidatedTxs st =
+    case rematchValidatedTxs getHardForkValidatedGenTx st $
+      map (\x -> (x, ToRankingBlock, ())) fbTxs
+        <> map (\x -> (x, ToEndorserBlock, ())) fbEbTxs of
+      ([], hfs) ->
+        hmap
+          ( \case
+              Pair _ ApplyTxs{} ->
+                error
+                  "Impossible! we have translated the txs to the current era, but they should already be in this era!"
+              Pair a (ReapplyTxs b) ->
+                Pair a $
+                  Pair
+                    (Comp [x | (x, ToRankingBlock, ()) <- b])
+                    (Comp [x | (x, ToEndorserBlock, ()) <- b])
+          )
+          $ State.tip hfs
+      (_ : _, _) ->
+        error
+          "Impossible! some transactions were rejected as untranslatable by rematchValidatedTxs but all of them have been translated and applied just now."
+
+  -- If we crossed an era boundary in this forge, and we are supposed to
+  -- include a Peras certificate in this block, we must ensure that the
+  -- certificate being passed to us (i.e., the latest certificate seen) is
+  -- from the same era as the block being forged. Otherwise, we drop it
+  -- (treating it as absent), since inter-era certificate inclusion is not
+  -- supported for now. In the unlikely event of recovering from a cooldown
+  -- period that crosses an era boundary, one should jumpstart the voting
+  -- process again via the same type of governance action that started this
+  -- process in the first place, but in the new era.
+  injectPerasCertIfSameEra ::
+    Index xs blk ->
+    PerasCert (HardForkBlock xs) ->
+    Maybe (PerasCert blk)
+  injectPerasCertIfSameEra index hardForkPerasCert =
+    case ( Match.matchNS
+             (getIndex index)
+             (getOneEraPerasCert hardForkPerasCert)
+         ) of
+      -- The Peras certificate is from a different era than the block being
+      -- forged, so we drop it (treating it as absent).
+      Left _mismatch ->
+        Nothing
+      -- The Peras certificate is from the same era as the block being forged,
+      -- so we keep it and pass it down to the current era's 'forgeBlock'.
+      Right nsPair ->
+        hcollapse $
+          hmap (\(Pair Refl (WrapPerasCert cert)) -> K (Just cert)) $
+            nsPair
+
+  -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
+  forgeBlockOne ::
+    Index xs blk ->
+    TopLevelConfig blk ->
+    (Maybe :.: BlockForging m) blk ->
+    Product
+      WrapIsLeader
+      ( Product
+          (Maybe :.: WrapChainDepState)
+          ( Product
+              (FlipTickedLedgerState EmptyMK)
+              (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
           )
       )
-      $ hsequence'
-      $ hizipWith3
-        forgeBlockOne
-        cfgs
-        (OptNP.toNP blockForging)
-      $ injectTxs
-      -- IsLeader and ledger are guaranteed to be in the same era. The
-      -- unticked 'ChainDepState' may legitimately be in a previous era
-      -- (era boundary); we pass 'Nothing' to that era in that case.
-      $ Match.mustMatchNS
-        "IsLeader"
-        (getOneEraIsLeader fbIsLeader)
-        chainDepStateAndLedger
-   where
-    ledgerNS = State.tip ledgerState
-
-    chainDepStateAndLedger ::
-      NS (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK)) xs
-    chainDepStateAndLedger = case fbChainDepState of
-      Nothing -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
-      Just cds -> case Match.matchNS ledgerNS (State.tip cds) of
-        Right matched -> hmap (\(Pair l cds') -> Pair (Comp (Just cds')) l) matched
-        Left _mismatch -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
-
-    cfgs = distribTopLevelConfig ei fbConfig
-    ei =
-      State.epochInfoPrecomputedTransitionInfo
-        (hardForkLedgerConfigShape (configLedger fbConfig))
-        transition
-        ledgerState
-
-    missingBlockForgingImpossible :: EraIndex xs -> String
-    missingBlockForgingImpossible eraIndex =
-      "impossible: current era lacks block forging but we have an IsLeader proof "
-        <> show eraIndex
-
-    -- Reassociate the per-era state so that RB and EB tx lists end up paired.
-    reassoc ::
-      Product (Product f g) h blk ->
-      Product f (Product g h) blk
-    reassoc (Pair (Pair f g) h) = Pair f (Pair g h)
-
-    injectTxs =
-      injectRbAndEbTxs
-        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) fbRbTxs)
-        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) fbEbTxs)
-
-    injectRbAndEbTxs ::
-      [NS WrapValidatedGenTx xs] ->
-      [NS WrapValidatedGenTx xs] ->
-      NS f xs ->
-      NS (Product f (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))) xs
-    injectRbAndEbTxs rb eb state =
-      hmap reassoc $
-        noMismatches $
-          flip (matchValidatedTxsNS injTxs) eb $
-            noMismatches $
-              flip (matchValidatedTxsNS injTxs) rb state
-     where
-      injTxs :: InPairs InjectValidatedTx xs
-      injTxs =
-        InPairs.hmap (\(Pair2 _ x) -> x) $
-          InPairs.requiringBoth
-            (hmap (WrapLedgerConfig . configLedger) cfgs)
-            hardForkInjectTxs
-
-      noMismatches ::
-        ([Match.Mismatch WrapValidatedGenTx f xs], NS (Product f ([] :.: WrapValidatedGenTx)) xs) ->
-        NS (Product f ([] :.: WrapValidatedGenTx)) xs
-      noMismatches ([], xs) = xs
-      noMismatches (_errs, _) = error "unexpected unmatchable transactions"
-
-    -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
-    forgeBlockOne ::
-      Index xs blk ->
-      TopLevelConfig blk ->
-      (Maybe :.: BlockForging m) blk ->
-      Product
-        ( Product
-            WrapIsLeader
-            (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK))
-        )
-        (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
-        blk ->
-      (m :.: Product I (K (Maybe ForgedLeiosEb))) blk
-    forgeBlockOne
-      index
-      cfg'
-      (Comp mBlockForging')
-      ( Pair
-          ( Pair
-              (WrapIsLeader isLeader')
-              (Pair (Comp mChainDepState') (FlipTickedLedgerState ledgerState'))
+      blk ->
+    (m :.: Product I (K (Maybe ForgedLeiosEb))) blk
+  forgeBlockOne
+    index
+    cfg'
+    (Comp mBlockForging')
+    ( Pair
+        (WrapIsLeader isLeader')
+        ( Pair
+            (Comp mChainDepState')
+            (Pair (FlipTickedLedgerState ledgerState') (Pair (Comp rbTxs') (Comp ebTxs')))
+          )
+      ) =
+      Comp $
+        (\(blk, mEb) -> Pair (I blk) (K mEb))
+          <$> forgeBlock
+            ( fromMaybe
+                (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
+                mBlockForging'
             )
-          (Pair (Comp rbTxs') (Comp ebTxs'))
-        ) =
-        Comp $
-          (\(blk, mEb) -> Pair (I blk) (K mEb))
-            <$> forgeBlock
-              ( fromMaybe
-                  (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
-                  mBlockForging'
-              )
-              ForgeBlockArgs
-                { fbConfig = cfg'
-                , fbCurrentBlockNo
-                , fbCurrentSlotNo
-                , fbCurrentTickedLedgerState = ledgerState'
-                , fbRbTxs = map unwrapValidatedGenTx rbTxs'
-                , fbEbTxs = map unwrapValidatedGenTx ebTxs'
-                , fbIsLeader = isLeader'
-                , fbChainDepState = unwrapChainDepState <$> mChainDepState'
-                , fbLeiosTracer
-                , fbLeiosVoteState
-                , fbMayLeiosCert
-                }
+            leiosArgs
+            ForgeBlockArgs
+              { fbConfig = cfg'
+              , fbCurrentBlockNo = fbCurrentBlockNo
+              , fbCurrentSlotNo = fbCurrentSlotNo
+              , fbPerasCert = fbPerasCert >>= injectPerasCertIfSameEra index
+              , fbCurrentTickedLedgerState = ledgerState'
+              , fbTxs = map unwrapValidatedGenTx rbTxs'
+              , fbIsLeader = isLeader'
+              , fbEbTxs = map unwrapValidatedGenTx ebTxs'
+              , fbChainDepState = unwrapChainDepState <$> mChainDepState'
+              , fbMayLeiosCert = fbMayLeiosCert
+              }
+
+-- | Which block a transaction handed to 'hardForkForgeBlock' goes into.
+data TxDestination = ToRankingBlock | ToEndorserBlock

@@ -39,7 +39,6 @@ import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.Ratio ((%))
-import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoLogic.Announcements (ShouldRelay (..))
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
@@ -68,6 +67,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import Ouroboros.Consensus.NodeKernel (NodeKernel (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB (headerElId)
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (forgetFingerprint)
 import Ouroboros.Network.ConnectionId (ConnectionId (..))
@@ -468,7 +468,7 @@ nodeConfig :: NodeUnderTestConfig
 nodeConfig =
   defaultNodeUnderTestConfig
     ( leiosTestLedgerConfig
-        (HardFork.defaultEraParams securityParam (slotLengthFromSec 1))
+        (HardFork.defaultEraParams securityParam (slotLengthFromSec 1) HardFork.NoPerasEnabled)
         100
         (const (Just (testCommittee.committee, wholeCommittee)))
     )
@@ -701,7 +701,7 @@ test_lyingSizeIsNotOffered arrival = do
               offerEbTxs holder honestPoint
               awaitPollingWith getTraces "the shared transaction is in the LeiosDb" $
                 LeiosDb.withReader leiosDb $ \r ->
-                  isJust <$> LeiosDb.lookupTrustedEbClosure r (pointEbHash honestPoint)
+                  isJust <$> LeiosDb.lookupEbClosure r (pointEbHash honestPoint)
             servesTheLie = do
               announceEb liar (getHeader lyingAnnouncer)
               offerEb liar lyingPoint lyingSize
@@ -866,7 +866,7 @@ test_requestIsRefused held asksIt = do
             offerEbTxs holder honestPoint
             awaitPollingWith getTraces "the closure is in the LeiosDb" $
               LeiosDb.withReader leiosDb $ \r ->
-                isJust <$> LeiosDb.lookupTrustedEbClosure r (pointEbHash honestPoint)
+                isJust <$> LeiosDb.lookupEbClosure r (pointEbHash honestPoint)
 
         asksIt greedy
         threadDelay 30
@@ -1403,7 +1403,7 @@ runReannounced ra = do
 
         awaitPollingWith getTraces "the endorser block's closure is complete" $
           LeiosDb.withReader leiosDb $ \r ->
-            isJust <$> LeiosDb.lookupTrustedEbClosure r (pointEbHash (raFirstPoint ra))
+            isJust <$> LeiosDb.lookupEbClosure r (pointEbHash (raFirstPoint ra))
 
         -- No offer is needed alongside: the CertRB's own MsgRollForward
         -- registers this peer as offering the endorser block its predecessor

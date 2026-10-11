@@ -2,7 +2,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Test.ThreadNet.Util
   ( -- * Chain properties

@@ -22,6 +22,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
   , eraIndexZero
   ) where
 
+import Cardano.Binary (FromCBOR, ToCBOR)
 import Codec.Serialise
 import Data.Either (isRight)
 import Data.Proxy
@@ -32,21 +33,25 @@ import Data.SOP.Match
 import Data.SOP.Strict
 import qualified Data.Text as Text
 import Data.Void
+import GHC.TypeNats (KnownNat)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Info
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
-import Ouroboros.Consensus.HardFork.History (Bound, EraParams)
+import Ouroboros.Consensus.HardFork.History (Bound, EpochToPerasRoundInfo, EraParams)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context
+  ( MaybeEraIndexedEpochToPerasRoundInfo
+  , StateSupportsPerasEpochContext (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Ticked
@@ -59,7 +64,6 @@ import Ouroboros.Consensus.Util.Condense
 -- | Blocks from which we can assemble a hard fork
 class
   ( LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , InspectLedger blk
   , LedgerSupportsMempool blk
   , ConvertRawTxId (GenTx blk)
@@ -67,18 +71,26 @@ class
   , HasPartialConsensusConfig (BlockProtocol blk)
   , HasPartialLedgerConfig blk
   , ConvertRawHash blk
+  , -- All eras must agree on the size of header hashes; see 'CanHardFork' for
+    -- how this is exploited to give 'HardForkBlock' a 'ConvertRawHash' instance.
+    KnownNat (HashSize blk)
   , ReconstructNestedCtxt Header blk
   , CommonProtocolParams blk
   , LedgerSupportsPeerSelection blk
   , ConfigSupportsNode blk
   , NodeInitStorage blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
   , -- LedgerTables
     CanStowLedgerTables (LedgerState blk)
-  , HasLedgerTables (LedgerState blk)
-  , HasLedgerTables (Ticked (LedgerState blk))
+  , HasLedgerTables LedgerState blk
+  , HasLedgerTables (Ticked LedgerState) blk
+  , ToCBOR (GenTx blk)
+  , FromCBOR (GenTx blk)
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))

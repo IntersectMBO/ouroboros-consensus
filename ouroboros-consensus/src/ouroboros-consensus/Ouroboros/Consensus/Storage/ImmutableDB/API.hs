@@ -3,11 +3,9 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 module Ouroboros.Consensus.Storage.ImmutableDB.API
@@ -386,7 +384,7 @@ data ApiMisuse blk
     -- the database is closed.
     OpenDBError
 
-deriving instance (StandardHash blk, Typeable blk) => Show (ApiMisuse blk)
+deriving instance StandardHash blk => Show (ApiMisuse blk)
 
 throwApiMisuse ::
   (MonadThrow m, HasCallStack, StandardHash blk, Typeable blk) =>
@@ -425,7 +423,7 @@ data UnexpectedFailure blk
     -- it was added.
     CorruptBlockError (RealPoint blk)
 
-deriving instance (StandardHash blk, Typeable blk) => Show (UnexpectedFailure blk)
+deriving instance StandardHash blk => Show (UnexpectedFailure blk)
 
 throwUnexpectedFailure ::
   (StandardHash blk, Typeable blk, MonadThrow m) =>

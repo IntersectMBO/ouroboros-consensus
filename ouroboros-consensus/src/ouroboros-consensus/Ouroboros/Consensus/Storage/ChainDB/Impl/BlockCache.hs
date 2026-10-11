@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
-
 -- | Cache blocks in memory
 --
 -- Intended for qualified import.

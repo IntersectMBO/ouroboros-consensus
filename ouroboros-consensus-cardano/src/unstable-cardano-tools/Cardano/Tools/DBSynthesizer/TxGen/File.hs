@@ -27,6 +27,7 @@ import Cardano.Ledger.Binary (Annotator (runAnnotator), DecCBOR (decCBOR), FullB
 import Cardano.Ledger.Binary.Plain (DecoderError (DecoderErrorDeserialiseFailure))
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Tools.DBSynthesizer.Forging (GenTxs)
+import Cardano.Tools.DBSynthesizer.TxGen (measureTx)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.Exception (throwIO)
@@ -41,7 +42,7 @@ import Data.SOP.BasicFunctors (K (K))
 import Data.SOP.Dict (Dict (Dict))
 import Data.SOP.Index (Index (IS, IZ), dictIndexAll, hcimap, injectNS)
 import Data.SOP.Strict (hcollapse)
-import Ouroboros.Consensus.Cardano.Block (CardanoBlock, CardanoEras, LedgerState)
+import Ouroboros.Consensus.Cardano.Block (CardanoBlock, CardanoEras)
 import Ouroboros.Consensus.Cardano.Ledger ()
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (proxySingle)
@@ -49,7 +50,6 @@ import Ouroboros.Consensus.HardFork.Combinator.AcrossEras (OneEraGenTx (OneEraGe
 import Ouroboros.Consensus.HardFork.Combinator.Ledger (Ticked (TickedHardForkLedgerState))
 import Ouroboros.Consensus.HardFork.Combinator.Mempool (GenTx (HardForkGenTx))
 import Ouroboros.Consensus.Ledger.Basics (TickedLedgerState)
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( HasByteSize (txMeasureByteSize)
   , TxEbMeasure
@@ -61,11 +61,10 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , ebCapacityTxMeasure
   , getTransactionKeySets
   , txEbMeasure
-  , txMeasure
   , txWireSize
   , unByteSize32
   )
-import Ouroboros.Consensus.Ledger.Tables (KeysMK, LedgerTables, ValuesMK, castLedgerTables)
+import Ouroboros.Consensus.Ledger.Tables (KeysMK, LedgerTables, ValuesMK)
 import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffForKeysOnTables, applyDiffs)
 import Ouroboros.Consensus.Shelley.Ledger (IsShelleyBlock, ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
@@ -215,17 +214,10 @@ fileTxGen fileState path cfg slot certifies forker ticked
   stateHolding :: [GenTx Cardano] -> IO (TickedLedgerState Cardano ValuesMK)
   stateHolding txs = do
     values <- roforkerReadTables forker keys
-    let keysForSlot :: LedgerTables (TickedLedgerState Cardano) KeysMK
-        keysForSlot = castLedgerTables keys
-
-        valuesForSlot :: LedgerTables (TickedLedgerState Cardano) ValuesMK
-        valuesForSlot = castLedgerTables values
-    pure $ applyDiffForKeysOnTables valuesForSlot keysForSlot ticked
+    pure $ applyDiffForKeysOnTables values keys ticked
    where
-    keys :: LedgerTables (ExtLedgerState Cardano) KeysMK
-    keys =
-      castLedgerTables
-        (foldMap getTransactionKeySets txs :: LedgerTables (LedgerState Cardano) KeysMK)
+    keys :: LedgerTables Cardano KeysMK
+    keys = foldMap getTransactionKeySets txs
 
   -- Fill the ranking block, then the endorser block it announces, from the
   -- same run of the stream.
@@ -292,7 +284,7 @@ fileTxGen fileState path cfg slot certifies forker ticked
       -- 'decodeStream' crashes on it.
       [] -> pure stopped
       genTx : rest -> do
-        measured <- case runExcept (txMeasure lcfg state genTx) of
+        measured <- case runExcept (measureTx lcfg state genTx) of
           Left err ->
             throwIO . userError $
               "db-synthesizer: a transaction of the stream breaks a per-transaction limit at slot "

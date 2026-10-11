@@ -1,4 +1,3 @@
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -7,6 +6,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module contains 'SupportsProtocol' instances tying the ledger and
@@ -26,9 +26,10 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (..)
   )
-import Ouroboros.Consensus.Protocol.Leios (PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
+import qualified Ouroboros.Consensus.Protocol.Praos as Praos (PraosCrypto)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
+import Ouroboros.Consensus.Protocol.Praos2 (Praos2)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -79,52 +80,41 @@ instance
 instance
   ( ShelleyCompatible (Praos c) era
   , SL.EraForecast era
+  , Praos.PraosCrypto c
   ) =>
   LedgerSupportsProtocol (ShelleyBlock (Praos c) era)
   where
-  protocolLedgerView = protocolLedgerView_BasePraos
-  ledgerViewForecastAt = ledgerViewForecastAt_BasePraos
+  protocolLedgerView = protocolLedgerViewPolyPraos
+  ledgerViewForecastAt = ledgerViewForecastAtPolyPraos
 
-instance
-  ( ShelleyCompatible (PraosWithLeios c) era
-  , Dijkstra.DijkstraEraForecast era
-  , SL.EraForecast era
-  ) =>
-  LedgerSupportsProtocol (ShelleyBlock (PraosWithLeios c) era)
-  where
-  protocolLedgerView = protocolLedgerView_BasePraos
-  ledgerViewForecastAt = ledgerViewForecastAt_BasePraos
-
--- | 'protocolLedgerView' for any Praos.
+-- | 'protocolLedgerView' for every Praos.
 --
--- 'SL.currentForecast' is 'SL.mkForecast': a projection of the state, with no
--- TICKF. 'SL.futureForecast' is TICKF and then that same projection. Reusing it
--- here is what makes this function and 'ledgerViewForecastAt_BasePraos' agree by
--- construction, instead of by two copies of the projection staying in step.
-protocolLedgerView_BasePraos ::
-  ( Praos.ForecastsLeios proto era
+-- Uses the same projection as 'ledgerViewForecastAtPolyPraos', so the two agree.
+protocolLedgerViewPolyPraos ::
+  forall proto era mk.
+  ( Praos.ForecastToPolyPraosLedgerView proto era
   , SL.EraForecast era
   ) =>
   LedgerConfig (ShelleyBlock proto era) ->
-  Ticked (LedgerState (ShelleyBlock proto era)) mk ->
-  Praos.BasePraosLedgerView proto
-protocolLedgerView_BasePraos _cfg =
-  Praos.forecastToBasePraosLedgerView . SL.currentForecast . tickedShelleyLedgerState
+  Ticked LedgerState (ShelleyBlock proto era) mk ->
+  Praos.PolyPraosLedgerView proto
+protocolLedgerViewPolyPraos _cfg =
+  Praos.forecastToPolyPraosLedgerView . SL.currentForecast . tickedShelleyLedgerState
 
--- | 'ledgerViewForecastAt' for any Praos.
-ledgerViewForecastAt_BasePraos ::
+-- | 'ledgerViewForecastAt' for every Praos.
+ledgerViewForecastAtPolyPraos ::
   forall proto era mk.
   ( ShelleyCompatible proto era
-  , Praos.ForecastsLeios proto era
+  , Praos.ForecastToPolyPraosLedgerView proto era
   ) =>
   LedgerConfig (ShelleyBlock proto era) ->
   LedgerState (ShelleyBlock proto era) mk ->
-  Forecast (Praos.BasePraosLedgerView proto)
-ledgerViewForecastAt_BasePraos cfg ledgerState = Forecast at $ \for ->
+  Forecast (Praos.PolyPraosLedgerView proto)
+ledgerViewForecastAtPolyPraos cfg ledgerState = Forecast at $ \for ->
   if
     | NotOrigin for == at ->
         return $
-          Praos.forecastToBasePraosLedgerView (SL.currentForecast shelleyLedgerState)
+          Praos.forecastToPolyPraosLedgerView (SL.currentForecast shelleyLedgerState)
     | for < maxFor ->
         return $ futureLedgerView for
     | otherwise ->
@@ -140,11 +130,21 @@ ledgerViewForecastAt_BasePraos cfg ledgerState = Forecast at $ \for ->
   swindow = SL.stabilityWindow globals
   at = ledgerTipSlot ledgerState
 
-  futureLedgerView :: SlotNo -> Praos.BasePraosLedgerView proto
+  futureLedgerView :: SlotNo -> Praos.PolyPraosLedgerView proto
   futureLedgerView for =
-    Praos.forecastToBasePraosLedgerView $
+    Praos.forecastToPolyPraosLedgerView $
       SL.futureForecast globals for shelleyLedgerState
 
   -- Exclusive upper bound
   maxFor :: SlotNo
   maxFor = addSlots swindow $ succWithOrigin at
+
+instance
+  ( ShelleyCompatible (Praos2 c) era
+  , Dijkstra.DijkstraEraForecast era
+  , SL.EraForecast era
+  ) =>
+  LedgerSupportsProtocol (ShelleyBlock (Praos2 c) era)
+  where
+  protocolLedgerView = protocolLedgerViewPolyPraos
+  ledgerViewForecastAt = ledgerViewForecastAtPolyPraos

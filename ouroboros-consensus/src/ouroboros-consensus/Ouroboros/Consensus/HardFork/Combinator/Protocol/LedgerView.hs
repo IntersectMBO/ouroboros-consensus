@@ -3,7 +3,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
   ( -- * Hard fork

@@ -1,11 +1,8 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -32,17 +29,14 @@ import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
 import Data.Maybe (isJust)
-import qualified LeiosDemoDb as LeiosDb
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin, Origin))
 import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint (..)
   , blockRealPoint
   )
-import Ouroboros.Consensus.Config
-  ( TopLevelConfig
-  )
+import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
@@ -52,6 +46,7 @@ import Ouroboros.Consensus.Storage.Common
   , StreamTo (..)
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block
@@ -60,6 +55,7 @@ import Ouroboros.Network.Block
   , SlotNo
   , blockPoint
   , blockSlot
+  , genesisPoint
   )
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import Test.Ouroboros.Storage.ChainDB.Model (Model)
@@ -123,6 +119,12 @@ tests =
         , testGroup
             "Empty slot, returns block at next filled slot"
             [testCase "system" $ runSystemIO waitForImmutableBlock_emptySlot]
+        ]
+    , testGroup
+        "Interaction of ImmutableDB, wiping the VolatileDB and ledger state snapshots"
+        [ testGroup
+            "Chain not long enough to take a snapshot, so blocks are not persisted into ImmutableDB and are lost."
+            [testCase "system" $ runSystemIO updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot]
         ]
     ]
 
@@ -203,8 +205,7 @@ ouroboros_network_4183 =
 -- hence, may not yet have happened when the next item in the iterator is
 -- requested.
 ouroboros_network_3999 ::
-  ( Mock.HasHeader (Block m)
-  , Block m ~ TestBlock
+  ( Block m ~ TestBlock
   , SupportsUnitTest m
   , MonadError TestFailure m
   ) =>
@@ -337,6 +338,36 @@ waitForImmutableBlock_emptySlot = do
  where
   fork0 = TestBody 0 True Nothing
 
+-- | Taking a ledger state snapshot should only copy blocks to the
+-- ImmutableDB when the snapshot policy selects slots for snapshotting. When the
+-- immutable chain is too short, no blocks should be flushed, and WipeVolatileDB
+-- should recover to the tip of the (empty) ImmutableDB.
+updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot ::
+  forall m.
+  ( Block m ~ TestBlock
+  , SupportsUnitTest m
+  , MonadError TestFailure m
+  ) =>
+  m ()
+updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot = do
+  b1 <- addBlock Origin $ firstBlock 1 $ fork0
+  b2 <- addBlock (NotOrigin (blockSlot b1)) $ mkNextBlock b1 3 $ fork0
+  _b3 <- addBlock (NotOrigin (blockSlot b2)) $ mkNextBlock b2 5 $ fork0
+
+  -- With k=2, 3 blocks are not enough to trigger a snapshot,
+  updateLedgerSnapshots
+
+  tip <- wipeVolatileDB
+  tip
+    == genesisPoint
+      `orFailWith` ("Expected ChainDB tip after wiping VolatileDB to be at Genesis, but got: " <> show tip)
+ where
+  fork0 = TestBody 1 True Nothing
+
+{-------------------------------------------------------------------------------
+  Helpers and testing infrastructure
+-------------------------------------------------------------------------------}
+
 streamAssertSuccess ::
   (MonadError TestFailure m, SupportsUnitTest m, Mock.HasHeader (Block m)) =>
   StreamFrom (Block m) -> StreamTo (Block m) -> m (IteratorId m)
@@ -356,7 +387,7 @@ runModelIO loe expr = toAssertion (runModel newModel topLevelConfig expr)
  where
   chunkInfo = ImmutableDB.simpleChunkInfo 100
   k = SecurityParam (knownNonZeroBounded @2)
-  newModel = Model.empty loe testInitExtLedger
+  newModel = Model.empty loe (testInitExtLedger (topLevelConfigLedger topLevelConfig))
   topLevelConfig = mkTestCfg k chunkInfo
 
 -- | Helper function to run the test against the actual chain database and
@@ -367,7 +398,9 @@ runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
   chunkInfo = ImmutableDB.simpleChunkInfo 100
   k = SecurityParam (knownNonZeroBounded @2)
   topLevelConfig = mkTestCfg k chunkInfo
-  withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
+  withChainDbEnv =
+    withTestChainDbEnv topLevelConfig chunkInfo $
+      convertMapKind (testInitExtLedger (topLevelConfigLedger topLevelConfig))
 
 newtype TestFailure = TestFailure String deriving Show
 
@@ -455,6 +488,10 @@ class SupportsUnitTest m where
     IteratorId m ->
     m (API.IteratorResult (Block m) (AllComponents (Block m)))
 
+  updateLedgerSnapshots :: m ()
+
+  wipeVolatileDB :: m (Point (Block m))
+
   waitForImmutableBlock ::
     RealPoint (Block m) -> m (Either API.SeekBlockError (RealPoint (Block m)))
 
@@ -498,7 +535,7 @@ runModelCmd cmd = do
     Right success -> pure success
 
 instance
-  (TestConstraints blk, LedgerTablesAreTrivial (LedgerState blk)) =>
+  (TestConstraints blk, LedgerTablesAreTrivial LedgerState blk) =>
   SupportsUnitTest (ModelM blk)
   where
   type FollowerId (ModelM blk) = Model.FollowerId
@@ -532,6 +569,15 @@ instance
 
   persistBlksThenGC =
     void $ runModelCmd SM.PersistBlksThenGC
+
+  updateLedgerSnapshots =
+    void $ runModelCmd SM.UpdateLedgerSnapshots
+
+  wipeVolatileDB = do
+    result <- runModelCmd SM.WipeVolatileDB
+    case result of
+      SM.Point p -> pure p
+      _ -> error $ "wipeVolatileDB: unexpected result" <> show result
 
   stream from to = do
     result <- runModelCmd (SM.Stream from to)
@@ -668,6 +714,15 @@ instance (IOLike m, TestConstraints blk) => SupportsUnitTest (SystemM blk m) whe
 
   persistBlksThenGC =
     void $ runCmd SM.PersistBlksThenGC
+
+  updateLedgerSnapshots = do
+    void $ runCmd SM.UpdateLedgerSnapshots
+
+  wipeVolatileDB = do
+    result <- runCmd SM.WipeVolatileDB
+    case result of
+      SM.Point p -> pure p
+      _ -> error $ "wipeVolatileDB: unexpected result"
 
   newFollower = do
     result <- runCmd (SM.NewFollower API.SelectedChain)

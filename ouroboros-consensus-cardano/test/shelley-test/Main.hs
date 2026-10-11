@@ -2,7 +2,9 @@ module Main (main) where
 
 import qualified Test.Consensus.Shelley.Coherence (tests)
 import qualified Test.Consensus.Shelley.Dijkstra (tests)
+import qualified Test.Consensus.Shelley.EndorserBlock (tests)
 import qualified Test.Consensus.Shelley.Golden (tests)
+import qualified Test.Consensus.Shelley.Integrity (tests)
 import qualified Test.Consensus.Shelley.LedgerTables (tests)
 import qualified Test.Consensus.Shelley.Serialisation (tests)
 import qualified Test.Consensus.Shelley.SupportedNetworkProtocolVersion (tests)
@@ -22,7 +24,9 @@ tests =
     "shelley"
     [ Test.Consensus.Shelley.Coherence.tests
     , Test.Consensus.Shelley.Dijkstra.tests
+    , Test.Consensus.Shelley.EndorserBlock.tests
     , Test.Consensus.Shelley.Golden.tests
+    , Test.Consensus.Shelley.Integrity.tests
     , Test.Consensus.Shelley.LedgerTables.tests
     , Test.Consensus.Shelley.Serialisation.tests
     , Test.Consensus.Shelley.SupportedNetworkProtocolVersion.tests

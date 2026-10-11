@@ -23,7 +23,7 @@ module LeiosDemoTypes
 
     -- * Re-exports
   , module Cardano.Crypto.Leios
-  , module TxHashReexports
+  , module LeiosTypesReexports
   ) where
 
 import Cardano.Binary
@@ -62,6 +62,7 @@ import Cardano.Crypto.Leios
 import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Core (EraTx, PParams, Tx, TxLevel (TopTx))
 import Cardano.Ledger.Dijkstra.PParams
   ( DijkstraEraPParams
@@ -69,6 +70,7 @@ import Cardano.Ledger.Dijkstra.PParams
   , ppLeiosDiffusionPeriodLengthL
   , ppLeiosVotePeriodLengthL
   )
+import Cardano.Ledger.Hashes (extractHash, unsafeMakeSafeHash)
 import Cardano.Prelude (NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (Origin), withOrigin)
 import Cardano.Slotting.Time (RelativeTime, SlotLength, slotLengthToMillisec)
@@ -114,8 +116,6 @@ import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
-import LeiosDemoDb.Trace (LeiosDbStats (..), TraceLeiosDb (..))
-import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
 import LeiosDemoOnlyTestFetch
   ( LeiosFetch
@@ -126,14 +126,7 @@ import LeiosDemoOnlyTestFetch
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
-import LeiosDemoTypes.LeiosJobs as TxHashReexports
-  ( TxHash (..)
-  , mkTxHash
-  , prettyTxHash
-  , txHashBytes
-  )
 import qualified LeiosDemoTypes.LeiosJobs as Jobs
-import LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
 import Lens.Micro ((^.))
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
@@ -143,13 +136,44 @@ import Ouroboros.Consensus.Block.RealPoint
   , realPointHash
   , realPointSlot
   )
-import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerConfig, LedgerState)
+import Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
-  , TxMeasureMetrics
+  , TxMeasurePhase1Metrics
   , txMeasureMetricTxSizeBytes
   )
+import Ouroboros.Consensus.Ledger.Tables.MapKind (EmptyMK)
+import Ouroboros.Consensus.Leios.Types as LeiosTypesReexports
+  ( BytesSize
+  , EbHash (..)
+  , LeiosEb (..)
+  , LeiosPoint (..)
+  , RbHash (..)
+  , TxHash (..)
+  , TxLocation (..)
+  , TxOffset
+  , decodeEbHash
+  , decodeRbHash
+  , ebHashBytes
+  , encodeEbHash
+  , encodeLeiosEb
+  , encodeLeiosEbItemSize
+  , encodeLeiosEbMaxFramingSize
+  , encodeLeiosEbSize
+  , encodeRbHash
+  , leiosEbBodyItems
+  , leiosReferencesCapacity
+  , mkEbHash
+  , mkTxHash
+  , prettyEbHash
+  , prettyLeiosPoint
+  , prettyRbHash
+  , prettyTxHash
+  , txHashBytes
+  )
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException (..), jsonLeiosDbException)
+import Ouroboros.Consensus.Storage.LeiosDB.Trace (LeiosDbStats (..), TraceLeiosDb (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
@@ -166,88 +190,6 @@ newtype PeerId a = MkPeerId a
 
 -- Hash algorithm used in leios for EBs and txs
 type HASH = Hash.Blake2b_256
-
--- | Hash of an Endorser Block
---
--- The fixed length makes decoding reject a peer-supplied hash of any other
--- length.
-newtype EbHash = MkEbHash (PackedBytes 32)
-  deriving newtype (Eq, Ord, NoThunks)
-  deriving stock Generic
-
-instance Show EbHash where
-  show = prettyEbHash
-
-ebHashBytes :: EbHash -> ByteString
-ebHashBytes (MkEbHash bytes) = unpackPinnedBytes bytes
-
--- | Fails unless the input is exactly 32 bytes.
-mkEbHash :: MonadFail m => ByteString -> m EbHash
-mkEbHash = fmap MkEbHash . packByteString
-
-encodeEbHash :: EbHash -> Encoding
-encodeEbHash (MkEbHash bytes) = encodeFixedSized bytes
-
-decodeEbHash :: Decoder s EbHash
-decodeEbHash = MkEbHash <$> decodeFixedSized
-
-prettyEbHash :: EbHash -> String
-prettyEbHash = BS8.unpack . BS16.encode . ebHashBytes
-
--- | Hash of a Ranking Block
---
--- A Ranking Block is the Praos Block. While the regular Praos headers are parameterised
--- over 'blk', we choose to keep 'RbHash' monomorphic. Use the 'ConvertRawHash' type class
--- to convert between this type and 'HeaderHash'.
-newtype RbHash = MkRbHash {rbHashBytes :: ByteString}
-  deriving newtype (Eq, Ord, NoThunks)
-  deriving stock Generic
-
-instance Show RbHash where
-  show = prettyRbHash
-
-encodeRbHash :: RbHash -> Encoding
-encodeRbHash (MkRbHash bytes) = CBOR.encodeBytes bytes
-
--- | Fails unless the hash is exactly 32 bytes.
-decodeRbHash :: Decoder s RbHash
-decodeRbHash = do
-  bytes <- CBOR.decodeBytes
-  when (BS.length bytes /= 32) $
-    fail $
-      "RbHash: " <> show (BS.length bytes) <> " bytes, expected 32"
-  pure $ MkRbHash bytes
-
-prettyRbHash :: RbHash -> String
-prettyRbHash (MkRbHash bytes) = BS8.unpack (BS16.encode bytes)
-
-instance SignableRepresentation RbHash where
-  getSignableRepresentation point =
-    toStrictByteString $
-      encodeRbHash point
-
--- | Uniquely identifies an endorser block in Leios. Could use 'Block SlotNo
--- EbHash' eventually, but a dedicated type is better to explore.
-data LeiosPoint = MkLeiosPoint {pointSlotNo :: SlotNo, pointEbHash :: EbHash}
-  deriving stock (Eq, Ord, Generic)
-  deriving anyclass NoThunks
-
-instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
-
--- TODO: prettyprinter instance Pretty?
-instance Show LeiosPoint where
-  show = prettyLeiosPoint
-
-instance SignableRepresentation LeiosPoint where
-  getSignableRepresentation point =
-    toStrictByteString $
-      -- REVIEW: Flat concatenation expected as what is signed?
-      encode point.pointSlotNo
-        <> encodeEbHash point.pointEbHash
-
-prettyLeiosPoint :: LeiosPoint -> String
-prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) ebHash) =
-  "(" ++ show slotNo ++ ", " ++ prettyEbHash ebHash ++ ")"
 
 encodeLeiosPoint :: LeiosPoint -> Encoding
 encodeLeiosPoint (MkLeiosPoint ebSlot ebHash) =
@@ -342,6 +284,26 @@ data EbAnnouncement = EbAnnouncement
   deriving stock (Generic, Show, Eq, Ord)
   deriving anyclass NoThunks
 
+-- | The ledger's announcement wraps the hash as a 'SafeHash', this one as an
+-- 'EbHash'; both hold the same bytes.
+fromCodecEbAnnouncement :: EbReferencesAnnouncement -> EbAnnouncement
+fromCodecEbAnnouncement ann =
+  EbAnnouncement
+    { ebAnnouncementHash =
+        MkEbHash $ Hash.hashToPackedBytes $ extractHash $ ebReferencesAnnouncementHash ann
+    , ebAnnouncementSize = ebReferencesAnnouncementSize ann
+    }
+
+-- | The inverse of 'fromCodecEbAnnouncement'.
+toCodecEbAnnouncement :: EbAnnouncement -> EbReferencesAnnouncement
+toCodecEbAnnouncement ann =
+  EbReferencesAnnouncement
+    { ebReferencesAnnouncementHash = unsafeMakeSafeHash (Hash.hashFromPackedBytes bytes)
+    , ebReferencesAnnouncementSize = ebAnnouncementSize ann
+    }
+ where
+  MkEbHash bytes = ebAnnouncementHash ann
+
 encodeEbAnnouncement :: EbAnnouncement -> Encoding
 encodeEbAnnouncement ebAnn =
   CBOR.encodeListLen 2
@@ -354,8 +316,6 @@ decodeEbAnnouncement = do
   EbAnnouncement <$> decodeEbHash <*> decode
 
 -- * Fetch logic types
-
-type BytesSize = Word32
 
 data LeiosFetchRequest
   = LeiosBlockRequest LeiosBlockRequest
@@ -831,17 +791,6 @@ summarizeDecisions decs =
  where
   reqs = concatMap toList (Map.elems decs)
 
--- | A transaction's offset (index) into an EB body.
-type TxOffset = Int
-
--- | Where a tx's durable bytes live: an EB that references it, and the offset
--- of its row there. Recorded in the LeiosTxCache on write confirmation, read
--- back for cross-EB fill: a later EB referencing the same tx copies the bytes
--- locally instead of re-fetching. Staleness is harmless -- the fill's guards
--- make a vanished source a no-op and the tx stays in the fetch set.
-data TxLocation = MkTxLocation !EbHash !TxOffset
-  deriving (Eq, Show)
-
 -- | The body's LeiosDb write is durable, so claim 'BodyAcquired' with the pool
 -- of jobs the settled write still leaves to fetch.
 --
@@ -952,7 +901,7 @@ minOnset (SJust a) (SJust b) = SJust (min a b)
 --
 -- The 'cdbAcquiredLeiosEbs' field of the ChainDB (which gates ChainSel for
 -- CertRBs) is initialized in the exact same way: from
--- 'LeiosDemoDb.scanCompleteEbClosuresNotOlderThanSlot', already
+-- 'LeiosDB.scanCompleteEbClosuresNotOlderThanSlot', already
 -- restricted to announcers no older than the immutable tip. And, it's
 -- necessarily initialized earlier, as part of the ChainDB. But for the sake of
 -- modularity/independence (see the TODO below), we're not reusing it to
@@ -1277,14 +1226,6 @@ hashLeiosTx =
 
 -- * Endorser Block
 
--- | An Endorser Block as it is submitted through the network.
--- TODO: Keep track of the slot of an EB?
-data LeiosEb = MkLeiosEb
-  { leiosEbTxs :: !(Vector (TxHash, BytesSize))
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
-
 -- | A newly forged 'LeiosEb' that includes the whole closure of endorsed
 -- transactions.
 data ForgedLeiosEb = ForgedLeiosEb
@@ -1294,8 +1235,6 @@ data ForgedLeiosEb = ForgedLeiosEb
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
-
-instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
 forgeLeiosEb :: EraTx era => SlotNo -> NonEmpty (Tx TopTx era) -> ForgedLeiosEb
 forgeLeiosEb slot txs =
@@ -1326,73 +1265,9 @@ forgeLeiosEb slot txs =
     , let byteSize = fromIntegral $ BS.length bytes
     ]
 
-leiosEbBodyItems :: LeiosEb -> [(Int, TxHash, BytesSize)]
-leiosEbBodyItems eb =
-  leiosEbTxs eb
-    & V.imap (\ix (txh, size) -> (ix, txh, size))
-    & toList
-
 hashLeiosEb :: LeiosEb -> EbHash
 hashLeiosEb =
   MkEbHash . Hash.hashToPackedBytes . Hash.hashWith @HASH id . serialize' . encodeLeiosEb
-
--- | Encode a 'LeiosEb' with all its items. Must not add more overhead than
--- 'encodeLeiosEbMaxFramingSize' and individual item encodings must match
--- 'encodeLeiosEbItemSize'.
-encodeLeiosEb :: LeiosEb -> Encoding
-encodeLeiosEb (MkLeiosEb v) =
-  foldl
-    ( \acc (MkTxHash txHash, txBytesSize) ->
-        acc <> encodeFixedSized txHash <> CBOR.encodeWord32 txBytesSize
-    )
-    (CBOR.encodeMapLen $ fromIntegral $ length v)
-    v
-
--- | The widest the map-length prefix 'encodeLeiosEb' writes ahead of the items
--- can get. CBOR map headers have the same widths as 'cborIntBytesSize', and the
--- item count fits 'BytesSize'.
---
--- A capacity expressed in references ('encodeLeiosEbItemSize' each) subtracts
--- this once at the block level; no single transaction can be charged for it.
-encodeLeiosEbMaxFramingSize :: ByteSize32
-encodeLeiosEbMaxFramingSize = ByteSize32 $ cborIntBytesSize (maxBound :: BytesSize)
-
--- | The references capacity a @maxEndorserBlockReferencesSize@ parameter
--- yields: the parameter less the framing 'encodeLeiosEb' writes ahead of the
--- references. A parameter smaller than the framing exhausts the capacity --
--- no reference fits, so no endorser blocks are forged -- rather than wrapping
--- around to \"no limit\" (issue #2291).
-leiosReferencesCapacity :: BytesSize -> BytesSize
-leiosReferencesCapacity paramLimit = paramLimit - min paramLimit framing
- where
-  ByteSize32 framing = encodeLeiosEbMaxFramingSize
-
--- | The bytes one reference occupies for a transaction of the given size: the
--- hash and the size itself, exactly as 'encodeLeiosEb' writes them.
---
--- Also used on the Dijkstra transaction measure, so the mempool charges a
--- transaction what it will actually cost in the reference list rather than an
--- approximation of it.
-encodeLeiosEbItemSize :: ByteSize32 -> ByteSize32
-encodeLeiosEbItemSize (ByteSize32 txSize) =
-  ByteSize32 $ cborBytesSize 32 + cborIntBytesSize txSize
- where
-  cborBytesSize len = cborIntBytesSize len + len
-
--- | Compute the size of a 'LeiosEb' encoded via 'encodeLeiosEb'.
-encodeLeiosEbSize :: LeiosEb -> BytesSize
-encodeLeiosEbSize (MkLeiosEb items) =
-  cborIntBytesSize (length items)
-    + sum (fmap (unByteSize32 . encodeLeiosEbItemSize . ByteSize32 . snd) items)
-
--- | Length of a unsigned integer if it were encoded in a "flattened format".
--- See 'encodeInteger'.
-cborIntBytesSize :: Integral i => i -> BytesSize
-cborIntBytesSize n
-  | n < 24 = 1
-  | n < 0x100 = 2
-  | n < 0x10000 = 3
-  | otherwise = 5
 
 decodeLeiosEb :: Decoder s LeiosEb
 decodeLeiosEb = do
@@ -1735,7 +1610,7 @@ data TraceLeiosKernel
     -- using @missedBoth@ avoids double-counting the mempool\/cache overlap. The two
     -- 'Int's are the mempool count then @missedBoth@.
     TraceLeiosBodyHits LeiosPoint LeiosTxCacheInsertBodySummary Int Int
-  | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
+  | forall m. (Show m, TxMeasurePhase1Metrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
       , eb :: LeiosEb
       , ebMeasure :: m
@@ -1969,10 +1844,6 @@ jsonLeiosDb = \case
       , "ebHash" .= ebHash
       , "reason" .= reason
       ]
-  -- The object carries @"kind": "Call"@ (from 'callTraceToObject'), matching
-  -- the forge loop's call traces, so one dashboard query shape covers both.
-  TraceLeiosDbCall (SomeJsonCallTrace ct) ->
-    callTraceToObject ct
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
@@ -2263,7 +2134,6 @@ data LeiosKernelNS
   | LKNSEbValidated
   | LKNSDbException
   | LKNSDb
-  | LKNSDbCall
   | LKNSDbCopied
   | LKNSDbEvicted
   | LKNSDbSweepError
@@ -2295,10 +2165,8 @@ leiosKernelNSOf = \case
   TraceLeiosVoteScheduled{} -> LKNSVoteScheduled
   TraceLeiosEbValidated{} -> LKNSEbValidated
   TraceLeiosDbException{} -> LKNSDbException
-  -- Call spans and the copier/sweeper events get their own namespaces under
-  -- Db so their severity and frequency can be configured apart from the stats
-  -- gauges (a dozen span events per GC vs one stats event).
-  TraceLeiosDb TraceLeiosDbCall{} -> LKNSDbCall
+  -- The copier/sweeper events get their own namespaces under Db so their
+  -- severity and frequency can be configured apart from the stats gauges.
   TraceLeiosDb TraceLeiosDbCopiedToImmutable{} -> LKNSDbCopied
   TraceLeiosDb TraceLeiosDbEvicted{} -> LKNSDbEvicted
   TraceLeiosDb TraceLeiosDbGCError{} -> LKNSDbSweepError
@@ -2370,7 +2238,6 @@ leiosKernelNSInfo = \case
       , ("leiosDbImmutableEbs", "LeiosDb: EBs in the immutable partition")
       , ("leiosDbWalBytes", "LeiosDb: current size of the volatile partition's write-ahead log in bytes")
       ]
-  LKNSDbCall -> LeiosNSInfo ["Db", "Call"] LSDebug []
   -- Accumulating counters, bumped per copier commit / GC pass.
   LKNSDbCopied ->
     LeiosNSInfo
@@ -2677,52 +2544,7 @@ leiosChainSelNSByPath p =
     p
     [(nsiPath i, i) | ns <- [minBound .. maxBound], let i = leiosChainSelNSInfo ns]
 
--- | Why a Leios header check rejected a header
---
--- Wrapped by @BasePraosValidationErr@'s @LeiosHeaderErr@ constructor. Its own
--- type for the same reason as 'TraceLeiosChainSel': cardano-node reaches it
--- only through 'leiosHeaderErrToObject'.
-data LeiosHeaderErr
-  = -- | The header sets its cert bit, but its predecessor announced no endorser
-    -- block, so there is nothing for the certificate to certify.
-    LeiosCertWithoutAnnouncement
-  | -- | The header sets its cert bit too soon after its predecessor's
-    -- announcement: the announcement, voting and diffusion periods have not all
-    -- elapsed.
-    --
-    -- Carries the announcing block's slot, this header's slot, and the earliest
-    -- slot in which this header could have certified.
-    LeiosCertTooYoung !SlotNo !SlotNo !SlotNo
-  | -- | The header announces an endorser block larger than the protocol
-    -- parameters allow. Carries the announced size and the maximum.
-    LeiosEbTooBig !Word32 !Word32
-  deriving (Eq, Show, Generic)
-
-deriving via
-  OnlyCheckWhnfNamed "LeiosHeaderErr" LeiosHeaderErr
-  instance
-    NoThunks LeiosHeaderErr
-
-leiosHeaderErrToObject :: LeiosHeaderErr -> Aeson.Object
-leiosHeaderErrToObject = \case
-  LeiosCertWithoutAnnouncement ->
-    mconcat ["kind" .= Aeson.String "LeiosCertWithoutAnnouncement"]
-  LeiosCertTooYoung announcingSlot slot earliestAllowed ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosCertTooYoung"
-      , "announcingSlot" .= announcingSlot
-      , "slot" .= slot
-      , "earliestAllowedSlot" .= earliestAllowed
-      ]
-  LeiosEbTooBig announced maxSize ->
-    mconcat
-      [ "kind" .= Aeson.String "LeiosEbTooBig"
-      , "announcedEndorserBlockSize" .= announced
-      , "maxEndorserBlockSize" .= maxSize
-      ]
-
--- | As 'leiosHeaderErrToObject', for the errors ChainSel and the LedgerDB raise
--- about a CertRB.
+-- | The errors ChainSel and the LedgerDB raise about a CertRB, as JSON.
 leiosExtValidationErrorToObject :: LeiosExtValidationError -> Aeson.Object
 leiosExtValidationErrorToObject = \case
   LeiosCertificateWithoutAnnouncement cert ->

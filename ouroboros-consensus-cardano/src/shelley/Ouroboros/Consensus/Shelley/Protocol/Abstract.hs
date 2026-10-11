@@ -1,15 +1,12 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Commonality between multiple protocols.
 --
@@ -19,19 +16,21 @@
 module Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
-  , default_pHeaderLeiosContainsCert
-  , default_pHeaderLeiosEbAnnouncement
   , ProtocolHeaderSupportsKES (..)
   , ProtocolHeaderSupportsProtocol (..)
   , ShelleyHash (..)
   , ShelleyProtocol
   , ShelleyProtocolHeader
+  , defaultHeaderContainsLeiosCert
+  , defaultHeaderLeiosEbAnnouncement
   ) where
 
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
 import Cardano.Ledger.BaseTypes (ProtVer, StrictMaybe (SNothing))
+import Cardano.Ledger.Block (EbReferencesAnnouncement)
+import Cardano.Ledger.Core (Era)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
@@ -41,7 +40,7 @@ import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import Cardano.Protocol.Crypto (Crypto, VRF)
 import Cardano.Protocol.TPraos.BlockHeader (PrevHash)
 import Cardano.Slotting.Block (BlockNo)
-import Cardano.Slotting.Slot (SlotNo, WithOrigin)
+import Cardano.Slotting.Slot (SlotNo)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad.Except (Except)
@@ -50,7 +49,6 @@ import Data.Kind (Type)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -66,7 +64,7 @@ import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( HasMaxMajorProtVer
   , ShelleyProtocolHeader
-  , EitherLeiosF
+  , WhenLeios
   )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -121,17 +119,14 @@ class
   pHeaderSize :: ShelleyProtocolHeader proto -> Natural
   pHeaderBlockSize :: ShelleyProtocolHeader proto -> Natural
 
-  -- | Whether the header records that this block's body carries a Leios
-  -- certificate (i.e. it is a "CertRB"). Praos reads 'hbLeiosContainsCert';
-  -- protocols/headers without Leios support (e.g. TPraos) use
-  -- 'default_pHeaderLeiosContainsCert'. Used by 'blockMatchesHeader' to check
-  -- the header/body envelope.
-  pHeaderLeiosContainsCert :: ShelleyProtocolHeader proto -> Bool
+  -- | Whether the header says its block body carries a Leios certificate.
+  -- Protocols that don't support Leios define this as
+  -- 'defaultHeaderContainsLeiosCert'.
+  pHeaderContainsLeiosCert :: ShelleyProtocolHeader proto -> Bool
 
-  -- | The endorser block this header announces. 'SNothing' for
-  -- protocols/headers without Leios support, which use
-  -- 'default_pHeaderLeiosEbAnnouncement'.
-  pHeaderLeiosEbAnnouncement :: ShelleyProtocolHeader proto -> StrictMaybe EbAnnouncement
+  -- | The endorser block the header announces. Protocols that don't support
+  -- Leios define this as 'defaultHeaderLeiosEbAnnouncement'.
+  pHeaderLeiosEbAnnouncement :: ShelleyProtocolHeader proto -> StrictMaybe EbReferencesAnnouncement
 
   type EnvelopeCheckError proto :: Type
 
@@ -143,18 +138,12 @@ class
     ShelleyProtocolHeader proto ->
     Except (EnvelopeCheckError proto) ()
 
--- | The 'pHeaderLeiosContainsCert' for protocols/headers without Leios support:
--- a header that cannot carry a Leios certificate never claims to. Instances
--- that have no Leios support should define
--- @'pHeaderLeiosContainsCert' = 'default_pHeaderLeiosContainsCert'@ explicitly.
-default_pHeaderLeiosContainsCert :: ShelleyProtocolHeader proto -> Bool
-default_pHeaderLeiosContainsCert = const False
+defaultHeaderContainsLeiosCert :: ShelleyProtocolHeader proto -> Bool
+defaultHeaderContainsLeiosCert = const False
 
--- | The 'pHeaderLeiosEbAnnouncement' for protocols/headers without Leios
--- support: a header that cannot announce an endorser block never does.
-default_pHeaderLeiosEbAnnouncement ::
-  ShelleyProtocolHeader proto -> StrictMaybe EbAnnouncement
-default_pHeaderLeiosEbAnnouncement = const SNothing
+defaultHeaderLeiosEbAnnouncement ::
+  ShelleyProtocolHeader proto -> StrictMaybe EbReferencesAnnouncement
+defaultHeaderLeiosEbAnnouncement = const SNothing
 
 -- | `ProtocolHeaderSupportsKES` describes functionality common to protocols
 --    using key evolving signature schemes. This includes verifying the header
@@ -176,8 +165,9 @@ class ProtocolHeaderSupportsKES proto where
     Bool
 
   mkHeader ::
-    forall crypto m.
-    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto) =>
+    (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto, Era era) =>
+    -- | The era of the block being forged
+    proxy era ->
     HotKey crypto m ->
     CanBeLeader proto ->
     IsLeader proto ->
@@ -195,20 +185,8 @@ class ProtocolHeaderSupportsKES proto where
     ProtVer ->
     -- | Optional fields for Leios: whether the body carries a certificate, and
     -- this header's announcement, if any
-    EitherLeiosF proto () (Bool, StrictMaybe EbAnnouncement) ->
+    WhenLeios proto (Bool, StrictMaybe EbReferencesAnnouncement) ->
     m (ShelleyProtocolHeader proto)
-
-  -- | Extract the most recently announced (and not yet certified) Leios EB
-  -- from the protocol's chain-dep state, alongside the slot in which it
-  -- was announced. 'Nothing' for protocols that do not carry Leios info
-  -- (TPraos); 'Just' for Praos when an announcement has been seen on
-  -- chain. Used at forge time to decide whether to embed a Leios
-  -- certificate in the block body.
-  protocolStateLeiosInfo ::
-    proxy proto ->
-    ChainDepState proto ->
-    Maybe (EbAnnouncement, WithOrigin SlotNo)
-  protocolStateLeiosInfo _ _ = Nothing
 
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete
 --   block header to support the `ConsensusProtocol` itself.

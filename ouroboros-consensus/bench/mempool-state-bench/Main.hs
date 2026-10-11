@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -66,12 +67,13 @@ import Ouroboros.Consensus.Ledger.Tables
   ( KeysMK (KeysMK)
   , LedgerTables (LedgerTables)
   , ValuesMK
+  , ltliftA2
   , projectLedgerTables
   )
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( emptyLedgerTables
   , forgetLedgerTables
-  , restrictValues'
+  , restrictValuesMK
   )
 import Ouroboros.Consensus.Mempool
   ( Mempool (addTx, getSnapshot, testSyncWithLedger)
@@ -371,12 +373,13 @@ runAdder ::
 runAdder cfg expired mempool onBehalf j addedRef = go 0
  where
   base = j * chainStride
+
   intervalMicros =
     if cfgTargetTpsTotal cfg <= 0
       then 0
       else round (1_000_000 * fromIntegral (numAdders cfg) / cfgTargetTpsTotal cfg)
-  go :: Int -> IO ()
-  go i = do
+
+  go !i = do
     done <- expired
     if done
       then pure ()
@@ -418,14 +421,13 @@ runSyncer ::
   IO ()
 runSyncer cfg expired mempool ledgerVar baseLedger syncDursRef = go 1
  where
-  go :: Int -> IO ()
-  go n = do
+  go !n = do
     Conc.threadDelay (round (1_000_000 * cfgSyncPeriodSec cfg))
     done <- expired
     if done
       then pure ()
       else do
-        atomically $ writeTVar ledgerVar (advanceTip (fromIntegral n) baseLedger)
+        atomically $ writeTVar ledgerVar (advanceTip n baseLedger)
         t0 <- getMonotonicTime
         _ <- testSyncWithLedger mempool
         t1 <- getMonotonicTime
@@ -457,14 +459,14 @@ latencyLedgerInterface cfg ledgerVar =
                         -- the mempool lock), so rounding it up to ~1ms would
                         -- badly distort the results.
                         spinMicros (cfgReadBaseMicros cfg + cfgReadPerKeyMicros cfg * keysCount keys)
-                        pure (projectLedgerTables st `restrictValues'` keys)
+                        pure (ltliftA2 restrictValuesMK (projectLedgerTables st) keys)
                     , roforkerReadStatistics = pure (Statistics 0)
                     , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
                     }
             )
     }
 
-keysCount :: LedgerTables (LedgerState TestBlock) KeysMK -> Int
+keysCount :: LedgerTables TestBlock KeysMK -> Int
 keysCount (LedgerTables (KeysMK s)) = Set.size s
 
 -- | Busy-wait for the given number of microseconds. Unlike 'Conc.threadDelay',

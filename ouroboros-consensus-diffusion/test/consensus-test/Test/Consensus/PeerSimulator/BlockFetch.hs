@@ -1,10 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
 
 -- | Functions that call to the BlockFetch API to start clients and servers
 module Test.Consensus.PeerSimulator.BlockFetch
@@ -20,8 +19,7 @@ import Control.Monad (void)
 import Control.Monad.Class.MonadTime
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Functor.Contravariant ((>$<))
+import Control.Tracer (Tracer, nullTracer, traceWith, (>$<))
 import Network.TypedProtocol.Codec
   ( ActiveState
   , AnyMessage
@@ -71,6 +69,7 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
+import Ouroboros.Network.Hashable (mkUnsafeSalt)
 import Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import Ouroboros.Network.Protocol.BlockFetch.Server
   ( BlockFetchServer (..)
@@ -152,7 +151,7 @@ startBlockFetchLogic enableChainSelStarvation registry tracer protocolInfo chain
           , bfcMaxRequestsInflight = 10
           , bfcDecisionLoopIntervalPraos = 0
           , bfcDecisionLoopIntervalGenesis = 0
-          , bfcSalt = 0
+          , bfcSalt = mkUnsafeSalt 0
           , bfcGenesisBFConfig
           }
 

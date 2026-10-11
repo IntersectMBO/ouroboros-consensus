@@ -3,8 +3,6 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -30,9 +28,23 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , addBlockWaitWrittenToDisk
   , addBlock_
 
-    -- * Adding a Peras certificate
+    -- * Adding a Peras certificate or vote
+  , AddPerasCertChainSelOutcome (..)
   , AddPerasCertPromise (..)
+  , AddPerasCertResult (..)
+  , AddPerasVoteResult (..)
   , addPerasCertSync
+  , addPerasVoteSync
+  , WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
+
+    -- * Peras stateful handles
+  , PerasVotingViewError (..)
+  , PerasVotingViewHandle (..)
+  , isPerasVotingAllowedWithHandle
+  , PerasCertInclusionViewError (..)
+  , PerasCertInclusionViewHandle (..)
+  , needCertWithHandle
 
     -- * Trigger chain selection
   , ChainSelectionPromise (..)
@@ -86,6 +98,8 @@ module Ouroboros.Consensus.Storage.ChainDB.API
 
 import Control.Monad (void)
 import Control.ResourceRegistry
+import Data.Map (Map)
+import Data.Set (Set)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import LeiosValidClaims (ValidClaims)
@@ -97,6 +111,18 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Cert.Inclusion
+  ( PerasCertInclusionRulesDecision
+  , PerasCertInclusionView
+  , needCert
+  )
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextNotFoundForRound
+  , PerasEpochContextResolverHandle
+  , TimeResolutionContextHandle
+  )
+import Ouroboros.Consensus.Peras.Voting.Rules (PerasVotingRulesDecision, isPerasVotingAllowed)
+import Ouroboros.Consensus.Peras.Voting.View (PerasQryException, PerasVotingView)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
@@ -107,7 +133,16 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , ReadOnlyForker'
   , Statistics
   )
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+  ( AddPerasCertResult (..)
+  , PerasCertTicketNo
+  , WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
+  )
+import Ouroboros.Consensus.Storage.PerasVoteDB.API
+  ( AddPerasVoteResult (..)
+  , PerasVoteTicketNo
+  )
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
@@ -475,15 +510,55 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
-  , addPerasCertAsync :: WithArrivalTime (ValidatedPerasCert blk) -> m (AddPerasCertPromise m)
-  -- ^ Asynchronously insert a certificate to the DB. If this leads to a fork to
-  -- be weightier than our current selection, this will trigger a fork switch.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
   -- all blocks newer than the current immutable tip.
-  , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
-  -- ^ Get the Peras certificate snapshot, containing the currently-known
-  -- certificates boosting blocks newer than the immutable tip.
+  , getLatestPerasCertSeen ::
+      STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
+  -- ^ Get the latest Peras certificate that has been seen by this node.
+  , getLatestPerasCertOnChainRound :: STM m (Maybe PerasRoundNo)
+  -- ^ Get the round number of the latest Peras certificate on the currently
+  -- preferred chain.
+  --
+  -- Returns 'Nothing' if the block does not contain a Peras certificate, or
+  -- if the block is from an era that does not support Peras certificates.
+  , addPerasCertAsync :: WithArrivalTime (ValidatedPerasCert blk) -> m (AddPerasCertPromise m)
+  -- ^ Asynchronously insert a certificate to the DB. If this leads to a fork to
+  -- be weightier than our current selection, this will trigger a fork switch.
+  , getPerasCertsAfter ::
+      PerasCertTicketNo ->
+      STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
+  -- ^ Get all known Peras certs with a ticket number strictly greater than the
+  -- given one, in ascending order. The values are 'm' actions to allow
+  -- implementations with on-disk storage.
+  , getPerasCertIds :: STM m (Set PerasRoundNo)
+  -- ^ Get the set of all Peras certificate round numbers currently in the
+  -- database.
+  , addPerasVoteWithAsyncCertHandling ::
+      WithArrivalTime (ValidatedPerasVote blk) ->
+      m (AddPerasVoteResult blk, Maybe (AddPerasCertPromise m))
+  -- ^ Add a Peras vote to the vote database, returning the result of the
+  -- vote addition. If a certificate is produced in the process (quorum
+  -- reached), it will be added via 'addPerasCertAsync' under the hood, in
+  -- which case the corresponding promise will be returned.
+  , getPerasVotesAfter ::
+      PerasVoteTicketNo ->
+      STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
+  -- ^ Get all known Peras votes with a ticket number strictly greater than the
+  -- given one, in ascending order.
+  , getPerasVoteIds :: STM m (Set PerasVoteId)
+  -- ^ Get the set of all Peras vote IDs currently in the database.
+  , getPerasEpochContextResolverHandle :: PerasEpochContextResolverHandle m blk
+  -- ^ Returns a handle to obtain the 'PerasEpochContext' for a given 'PerasRoundNo'
+  , getPerasVotingViewHandle :: PerasVotingViewHandle m blk
+  -- ^ Returns a handle to obtain a 'PerasVotingView' that is used to decide
+  -- when to vote with respect to the Peras voting rules.
+  , getPerasCertInclusionViewHandle :: PerasCertInclusionViewHandle m blk
+  -- ^ Returns a handle to obtain a 'PerasCertInclusionView' that is used to
+  -- decide when a Peras certificate must be included in the next forged block.
+  , getTimeResolutionContextHandle :: TimeResolutionContextHandle m blk
+  -- ^ Returns a handle to obtain a 'TimeResolutionContext' used to run
+  -- time-sensitive queries.
   , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
   -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
   --   - returns the block when it becomes the immutable tip,
@@ -497,12 +572,6 @@ data ChainDB m blk = ChainDB
   --
   -- Currently, the only use-case of this function is to verify the immutability
   -- of a block from the big ledger peer snapshot file.
-  , getLatestPerasCertOnChainRound :: STM m (Maybe PerasRoundNo)
-  -- ^ Get the round number of the latest Peras certificate on the currently
-  -- preferred chain.
-  --
-  -- Returns 'Nothing' if the block does not contain a Peras certificate, or
-  -- if the block is from an era that does not support Peras certificates.
   , getLeiosValidClaims :: STM m (WithFingerprint ValidClaims)
   -- ^ The Leios claims ChainSel has verified: the announcing blocks whose
   -- endorser block some CertRB has been seen to certify.
@@ -641,11 +710,24 @@ triggerChainSelection chainDB =
   waitChainSelectionPromise =<< chainSelAsync chainDB
 
 {-------------------------------------------------------------------------------
-  Adding a Peras certificate
+  Adding a Peras certificate or vote
 -------------------------------------------------------------------------------}
 
+-- | The outcome of processing a Peras certificate w.r.t. chain selection.
+data AddPerasCertChainSelOutcome
+  = -- | The certificate was too old to influence chain selection (the boosted
+    -- block is already immutable), so it was ignored entirely.
+    PerasCertIgnoredTooOld
+  | -- | The certificate was not processed because the ChainDB was closing.
+    PerasCertNotProcessedClosing
+  | -- | The certificate was processed; whether it was actually added to the DB
+    -- or was a duplicate is captured by the inner 'AddPerasCertResult'.
+    PerasCertProcessed AddPerasCertResult
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
 newtype AddPerasCertPromise m = AddPerasCertPromise
-  { waitPerasCertProcessed :: m ()
+  { waitPerasCertProcessed :: m AddPerasCertChainSelOutcome
   -- ^ Wait until the Peras certificate has been processed (which potentially
   -- includes switching to a different chain). If the PerasCertDB did already
   -- contain a certificate for this round, the certificate is ignored (as the
@@ -653,9 +735,92 @@ newtype AddPerasCertPromise m = AddPerasCertPromise
   -- impossible).
   }
 
-addPerasCertSync :: IOLike m => ChainDB m blk -> WithArrivalTime (ValidatedPerasCert blk) -> m ()
+addPerasCertSync ::
+  IOLike m =>
+  ChainDB m blk -> WithArrivalTime (ValidatedPerasCert blk) -> m AddPerasCertChainSelOutcome
 addPerasCertSync chainDB cert =
   waitPerasCertProcessed =<< addPerasCertAsync chainDB cert
+
+addPerasVoteSync ::
+  IOLike m =>
+  ChainDB m blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  m (AddPerasVoteResult blk, Maybe AddPerasCertChainSelOutcome)
+addPerasVoteSync chainDB vote = do
+  (voteRes, mCertPromise) <- addPerasVoteWithAsyncCertHandling chainDB vote
+  mCertRes <- case mCertPromise of
+    Nothing -> return Nothing
+    Just certPromise -> Just <$> waitPerasCertProcessed certPromise
+  return (voteRes, mCertRes)
+
+{-------------------------------------------------------------------------------
+  Peras stateful handles
+-------------------------------------------------------------------------------}
+
+-- | Errors that can occur when constructing a Peras voting view.
+data PerasVotingViewError
+  = PerasVotingViewEpochContextNotFoundForRound
+      PerasEpochContextNotFoundForRound
+  | PerasVotingViewQryException
+      PerasQryException
+  deriving (Show, Eq, Generic, NoThunks)
+
+-- | Handle for querying the Peras voting view via STM.
+newtype PerasVotingViewHandle m blk
+  = PerasVotingViewHandle
+      ( PerasRoundNo ->
+        STM
+          m
+          ( Either
+              PerasVotingViewError
+              (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+          )
+      )
+
+isPerasVotingAllowedWithHandle ::
+  (IsPerasCert (WithArrivalTime (ValidatedPerasCert blk)) blk, MonadSTM m) =>
+  PerasVotingViewHandle m blk ->
+  PerasRoundNo ->
+  STM
+    m
+    ( Either
+        PerasVotingViewError
+        (PerasVotingRulesDecision blk)
+    )
+isPerasVotingAllowedWithHandle (PerasVotingViewHandle getPerasVotingView) =
+  fmap (fmap isPerasVotingAllowed) . getPerasVotingView
+
+-- | Errors that can occur when constructing a Peras certificate inclusion view.
+data PerasCertInclusionViewError
+  = PerasCertInclusionEpochContextNotFoundForRound
+      PerasEpochContextNotFoundForRound
+  deriving (Show, Eq, Generic, NoThunks)
+
+-- | Handle for querying the Peras certificate inclusion rules via STM.
+newtype PerasCertInclusionViewHandle m blk
+  = PerasCertInclusionViewHandle
+      ( PerasRoundNo ->
+        STM
+          m
+          ( Either
+              PerasCertInclusionViewError
+              (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+          )
+      )
+
+-- | Query the Peras certificate inclusion rules via STM.
+needCertWithHandle ::
+  MonadSTM m =>
+  PerasCertInclusionViewHandle m blk ->
+  PerasRoundNo ->
+  STM
+    m
+    ( Either
+        PerasCertInclusionViewError
+        (Maybe (PerasCertInclusionRulesDecision (WithArrivalTime (ValidatedPerasCert blk))))
+    )
+needCertWithHandle (PerasCertInclusionViewHandle getPerasCertInclusionView) =
+  fmap (fmap (fmap needCert)) . getPerasCertInclusionView
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point
@@ -808,10 +973,10 @@ data IteratorResult blk b
   deriving (Functor, Foldable, Traversable)
 
 deriving instance
-  (Eq blk, Eq b, StandardHash blk) =>
+  (Eq b, StandardHash blk) =>
   Eq (IteratorResult blk b)
 deriving instance
-  (Show blk, Show b, StandardHash blk) =>
+  (Show b, StandardHash blk) =>
   Show (IteratorResult blk b)
 
 data UnknownRange blk
@@ -1022,7 +1187,7 @@ data ChainDbError blk
     --   upper bound, or the lower bound starts from genesis, /inclusive/.
     InvalidIteratorRange (StreamFrom blk) (StreamTo blk)
 
-deriving instance (Typeable blk, StandardHash blk) => Show (ChainDbError blk)
+deriving instance StandardHash blk => Show (ChainDbError blk)
 
 instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
   displayException = \case

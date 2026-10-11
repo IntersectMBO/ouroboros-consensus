@@ -1,10 +1,8 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE EmptyCase #-}
-{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -86,11 +84,12 @@ import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor ((<&>))
 import Data.Kind (Type)
+import qualified Data.Measure as Measure
 import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (lookupTrustedEbClosure)
+import GHC.TypeLits (KnownNat)
 import LeiosDemoTypes (LeiosClosureError (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
@@ -107,7 +106,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.State
@@ -117,7 +116,8 @@ import Ouroboros.Consensus.Storage.Common
   ( BinaryBlockInfo (..)
   , SizeInBytes
   )
-import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LeiosDB (lookupEbClosure)
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -147,15 +147,18 @@ data SimpleBlock' c ext ext' = SimpleBlock
 --
 -- Narrowed to @ext' ~ ext@ because that is where 'GenTx' is defined.
 instance
-  (Typeable c, Typeable ext, Serialise (GenTx (SimpleBlock' c ext ext))) =>
+  ( Typeable c
+  , Typeable ext
+  , Serialise (GenTx (SimpleBlock' c ext ext))
+  ) =>
   ResolveLeiosBlock (SimpleBlock' c ext ext)
   where
   resolveLeiosClosure leiosDb ebHash =
-    lookupTrustedEbClosure leiosDb ebHash <&> \case
+    lookupEbClosure leiosDb ebHash <&> \case
       Nothing -> Left $ LeiosClosureMissing ebHash
       Just txs -> Right $ fmap (fmap (deserialise . Lazy.fromStrict)) txs
 
-  assumeValidatedClosureTx = ValidatedSimpleGenTx
+  assumeValidatedClosureTx _ _ _ = ValidatedSimpleGenTx
 
 instance HasLeiosVoting (SimpleBlock' c ext ext')
 
@@ -312,10 +315,13 @@ instance
   (SimpleCrypto c, Typeable ext, Typeable ext') =>
   StandardHash (SimpleBlock' c ext ext')
 
-instance SimpleCrypto c => ConvertRawHash (SimpleBlock' c ext ext') where
+instance
+  (KnownNat (Hash.HashSize (SimpleHash c)), SimpleCrypto c) =>
+  ConvertRawHash (SimpleBlock' c ext ext')
+  where
+  type HashSize (SimpleBlock' c ext ext') = Hash.HashSize (SimpleHash c)
   toShortRawHash _ = Hash.hashToBytesShort
-  fromShortRawHash _ = hashFromBytesShortE
-  hashSize _ = fromIntegral $ Hash.hashSize (Proxy @(SimpleHash c))
+  unsafeFromShortRawHash _ = hashFromBytesShortE
 
 {-------------------------------------------------------------------------------
   HasMockTxs instance
@@ -412,7 +418,7 @@ deriving instance
   Serialise (MockLedgerConfig c ext) =>
   Serialise (SimpleLedgerConfig c ext)
 
-type instance LedgerCfg (LedgerState (SimpleBlock c ext)) = SimpleLedgerConfig c ext
+type instance LedgerCfg LedgerState (SimpleBlock c ext) = SimpleLedgerConfig c ext
 
 instance MockProtocolSpecific c ext => HasPartialLedgerConfig (SimpleBlock c ext)
 
@@ -423,18 +429,16 @@ instance
 instance GetTip (LedgerState (SimpleBlock c ext)) where
   getTip (SimpleLedgerState st _) = castPoint $ mockTip st
 
-instance GetTip (Ticked (LedgerState (SimpleBlock c ext))) where
+instance GetTip (Ticked LedgerState (SimpleBlock c ext)) where
   getTip = castPoint . getTip . getTickedSimpleLedgerState
+
+type instance AuxLedgerEvent (SimpleBlock c ext) = VoidLedgerEvent
 
 instance
   MockProtocolSpecific c ext =>
-  IsLedger (LedgerState (SimpleBlock c ext))
+  IsLedger LedgerState (SimpleBlock c ext)
   where
-  type LedgerErr (LedgerState (SimpleBlock c ext)) = MockError (SimpleBlock c ext)
-
-  type
-    AuxLedgerEvent (LedgerState (SimpleBlock c ext)) =
-      VoidLedgerEvent (LedgerState (SimpleBlock c ext))
+  type LedgerErr LedgerState (SimpleBlock c ext) = MockError (SimpleBlock c ext)
 
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
@@ -444,7 +448,7 @@ instance
 
 instance
   MockProtocolSpecific c ext =>
-  ApplyBlock (LedgerState (SimpleBlock c ext)) (SimpleBlock c ext)
+  ApplyBlock LedgerState (SimpleBlock c ext)
   where
   applyBlockLedgerResultWithValidation _validation _events a blk st =
     fmap
@@ -462,12 +466,13 @@ instance
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: unexpected error: " <>) . show)
 
+instance GetBlockKeySets (SimpleBlock c ext) where
   getBlockKeySets SimpleBlock{simpleBody = SimpleBody txs} =
     LedgerTables $ KeysMK $ Mock.txIns txs
 
 data instance LedgerState (SimpleBlock c ext) mk = SimpleLedgerState
-  { simpleLedgerState :: MockState (SimpleBlock c ext)
-  , simpleLedgerTables :: LedgerTables (LedgerState (SimpleBlock c ext)) mk
+  { simpleLedgerState :: !(MockState (SimpleBlock c ext))
+  , simpleLedgerTables :: !(LedgerTables (SimpleBlock c ext) mk)
   }
   deriving stock Generic
 
@@ -491,7 +496,7 @@ deriving instance
   Show (LedgerState (SimpleBlock c ext) mk)
 
 -- Ticking has no effect on the simple ledger state
-newtype instance Ticked (LedgerState (SimpleBlock c ext)) mk = TickedSimpleLedgerState
+newtype instance Ticked LedgerState (SimpleBlock c ext) mk = TickedSimpleLedgerState
   { getTickedSimpleLedgerState :: LedgerState (SimpleBlock c ext) mk
   }
   deriving Generic
@@ -500,13 +505,10 @@ deriving anyclass instance
   ( SimpleCrypto c
   , Typeable ext
   ) =>
-  NoThunks (Ticked (LedgerState (SimpleBlock c ext)) TrackingMK)
+  NoThunks (Ticked LedgerState (SimpleBlock c ext) TrackingMK)
 deriving instance
-  ( SimpleCrypto c
-  , Typeable ext
-  , Show (LedgerState (SimpleBlock c ext) mk)
-  ) =>
-  Show (Ticked (LedgerState (SimpleBlock c ext)) mk)
+  Show (LedgerState (SimpleBlock c ext) mk) =>
+  Show (Ticked LedgerState (SimpleBlock c ext) mk)
 
 instance MockProtocolSpecific c ext => UpdateLedger (SimpleBlock c ext)
 
@@ -548,39 +550,40 @@ instance MockProtocolSpecific c ext => CommonProtocolParams (SimpleBlock c ext) 
 instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
   getPeers = const []
 
-instance LedgerSupportsPeras (SimpleBlock c ext)
+instance LedgerStateSupportsPeras (LedgerState (SimpleBlock c ext))
+
+instance LedgerStateSupportsPeras (Ticked LedgerState (SimpleBlock c ext))
 
 {-------------------------------------------------------------------------------
   LedgerTables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState (SimpleBlock c ext)) = Mock.TxIn
-type instance TxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
+type instance TxIn (SimpleBlock c ext) = Mock.TxIn
+type instance TxOut (SimpleBlock c ext) = Mock.TxOut
 
-instance CanUpgradeLedgerTables (LedgerState (SimpleBlock c ext)) where
+instance CanUpgradeLedgerTables LedgerState (SimpleBlock c ext) where
   upgradeTables _ _ = id
 
-instance IndexedMemPack (LedgerState (SimpleBlock c ext) EmptyMK) Mock.TxOut where
-  indexedTypeName _ = typeName @Mock.TxOut
+instance IndexedMemPack LedgerState (SimpleBlock c ext) Mock.TxOut where
+  indexedTypeName _ _ = typeName @Mock.TxOut
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
-instance SerializeTablesWithHint (LedgerState (SimpleBlock c ext)) where
+instance SerializeTablesWithHint LedgerState (SimpleBlock c ext) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
-instance HasLedgerTables (LedgerState (SimpleBlock c ext)) where
+instance HasLedgerTables LedgerState (SimpleBlock c ext) where
   projectLedgerTables = simpleLedgerTables
   withLedgerTables (SimpleLedgerState s _) = SimpleLedgerState s
 
-instance HasLedgerTables (Ticked (LedgerState (SimpleBlock c ext))) where
+instance HasLedgerTables (Ticked LedgerState) (SimpleBlock c ext) where
   projectLedgerTables =
-    castLedgerTables
-      . simpleLedgerTables
+    simpleLedgerTables
       . getTickedSimpleLedgerState
   withLedgerTables (TickedSimpleLedgerState st) tables =
-    TickedSimpleLedgerState $ withLedgerTables st $ castLedgerTables tables
+    TickedSimpleLedgerState $ withLedgerTables st tables
 
 instance CanStowLedgerTables (LedgerState (SimpleBlock c ext)) where
   stowLedgerTables st =
@@ -605,7 +608,7 @@ instance CanStowLedgerTables (LedgerState (SimpleBlock c ext)) where
       { simpleLedgerState
       } = st
 
-deriving newtype instance CanStowLedgerTables (Ticked (LedgerState (SimpleBlock c ext)))
+deriving newtype instance CanStowLedgerTables (Ticked LedgerState (SimpleBlock c ext))
 
 {-------------------------------------------------------------------------------
   Support for the mempool
@@ -655,7 +658,8 @@ instance
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
 
 instance TxLimits (SimpleBlock c ext) where
-  type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (SimpleBlock c ext) = TrivialTxMeasurePhase2
 
   txWireSize = fromIntegral . unByteSize32 . genTxSize
 
@@ -663,12 +667,21 @@ instance TxLimits (SimpleBlock c ext) where
   -- don't override it.
   --
   -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow simpleBlockCapacity
+  blockCapacityTxMeasure _cfg _st = TxMeasure (IgnoringOverflow simpleBlockCapacity) TrivialTxMeasurePhase2
 
-  txMeasure cfg _st =
+  txMeasurePhase1 cfg _st =
     fmap IgnoringOverflow
       . checkTxSize (simpleLedgerMockConfig cfg)
       . simpleGenTx
+
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+
+  type TxEbMeasure (SimpleBlock c ext) = TxMeasure (SimpleBlock c ext)
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 simpleBlockCapacity :: ByteSize32
 simpleBlockCapacity = ByteSize32 512

@@ -1,4 +1,3 @@
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -10,11 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
--- 'SL.unsafeMakeValidated' is deprecated in favour of the ledger's newer
--- 'ValidatedTx', which consensus has not moved to yet (see the same FIXME in
--- "Ouroboros.Consensus.Shelley.Ledger.Mempool"). Suppressed here the way the
--- sibling Shelley modules do.
-{-# OPTIONS_GHC -Wno-deprecations #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Leios () where
@@ -41,7 +36,6 @@ import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as Text
-import LeiosDemoDb (lookupTrustedEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( AnnouncementFields (..)
@@ -50,32 +44,32 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , LeiosTx (..)
   , RbHash (..)
+  , fromCodecEbAnnouncement
   , hashLeiosTx
   )
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
-import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
+import Ouroboros.Consensus.Ledger.SupportsMempool (LedgerSupportsMempool (..))
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
-import Ouroboros.Consensus.Protocol.Leios
-  ( ConsensusConfig (..)
-  , EitherLeiosF (..)
-  , LeiosCrypto
-  , PraosWithLeios
-  , leiosContextFreeHeaderChecks
-  )
 import Ouroboros.Consensus.Protocol.Praos
   ( AnnouncedBy (..)
-  , BasePraosState (..)
+  , PolyPraosState (..)
   , Praos
   , PraosParams (..)
   , Ticked (..)
   , WhetherToUpperBoundOCERT (..)
+  , leiosContextFreeHeaderChecks
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as PP
-
 import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as PP
+import Ouroboros.Consensus.Protocol.Praos2
+  ( ConsensusConfig (..)
+  , LeiosCrypto
+  , LeiosOnly (..)
+  , Praos2
+  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -93,6 +87,7 @@ import Ouroboros.Consensus.Shelley.Ledger
   )
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
+  , Ticked (..)
   , shelleyLedgerGlobals
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
@@ -101,8 +96,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Mempool
   , mkShelleyValidatedTx
   )
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
-  ( pHeaderIssuer
-  , pHeaderLeiosContainsCert
+  ( pHeaderContainsLeiosCert
+  , pHeaderIssuer
   , pHeaderLeiosEbAnnouncement
   , pHeaderSlot
   )
@@ -110,6 +105,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( OCINStaleness (..)
   , ResolveLeiosBlock (..)
   )
+import Ouroboros.Consensus.Storage.LeiosDB (lookupEbClosure)
 
 {-------------------------------------------------------------------------------
   ResolveLeiosBlock
@@ -127,8 +123,8 @@ instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)
 
 instance
   forall c.
-  (LeiosCrypto c, ShelleyCompatible (PraosWithLeios c) DijkstraEra) =>
-  ResolveLeiosBlock (ShelleyBlock (PraosWithLeios c) DijkstraEra)
+  (LeiosCrypto c, ShelleyCompatible (Praos2 c) DijkstraEra) =>
+  ResolveLeiosBlock (ShelleyBlock (Praos2 c) DijkstraEra)
   where
   -- The on-wire bytes and 'TxHash' a forged EB records for each tx (see
   -- 'forgeLeiosEb'): 'serialize'' the tx, and hash exactly those bytes. Matching
@@ -139,10 +135,10 @@ instance
 
   getLeiosMaxEbTxsSizeFromView _ lv =
     case PP.plvMaxEbTxsSize lv of
-      LeiosLeiosRight sz -> sz
+      Praos2HasLeios sz -> sz
 
   resolveLeiosClosure leiosDb ebHash = do
-    lookupTrustedEbClosure leiosDb ebHash >>= \case
+    lookupEbClosure leiosDb ebHash >>= \case
       Nothing ->
         pure $ Left $ LeiosClosureMissing ebHash
       Just closureEntries ->
@@ -153,11 +149,19 @@ instance
             Left err -> Left $ LeiosClosureTxUndecodable ebHash txh $ Text.pack (show err)
             Right !tx -> Right (txh, mkShelleyTx tx)
 
-  -- The ledger's 'Validated' is a bare newtype over the tx, so rebuilding the
-  -- token costs only the tx-id hash; 'SL.reapplyTx' derives the state-dependent
-  -- annotation itself, so nothing stale rides along.
-  assumeValidatedClosureTx (ShelleyTx _ tx) =
-    mkShelleyValidatedTx (SL.unsafeMakeValidated tx)
+  -- The ledger's 'SL.ValidatedTx' carries the state-derived annotation
+  -- ('SL.StAnnTx') that 'SL.reapplyValidatedTx' runs the rules on, so it is
+  -- derived here from the very state the tx is reapplied to, exactly as
+  -- 'SL.applyTx' would derive it; nothing stale rides along.
+  assumeValidatedClosureTx cfg slot st (ShelleyTx _ tx) =
+    mkShelleyValidatedTx $
+      SL.unsafeMakeValidatedTx
+        (shelleyLedgerGlobals cfg)
+        (SL.mkMempoolEnv innerSt slot)
+        (SL.mkMempoolState innerSt)
+        tx
+   where
+    innerSt = tickedShelleyLedgerState (stowLedgerTables st)
 
   leiosClosureTxKeySets = getTransactionKeySets
 
@@ -227,10 +231,10 @@ instance
   blockLeiosCert blk =
     strictMaybeToMaybe $ blk.shelleyBlockRaw.blockBody ^. leiosCertBlockBodyL
 
-  headerContainsLeiosCert = pHeaderLeiosContainsCert . shelleyHeaderRaw
+  headerContainsLeiosCert = pHeaderContainsLeiosCert . shelleyHeaderRaw
 
   headerLeiosAnnouncement hdr = do
-    ann <- strictMaybeToMaybe $ pHeaderLeiosEbAnnouncement raw
+    ann <- fromCodecEbAnnouncement <$> strictMaybeToMaybe (pHeaderLeiosEbAnnouncement raw)
     pure
       ( MkLeiosPoint
           { pointSlotNo = pHeaderSlot raw
@@ -289,8 +293,9 @@ instance
         hv
 
   protocolStateLeiosAnnouncement st = do
-    MkAnnouncedBy issuer ann <- case praosStateLeiosAnnouncement st of
-      LeiosLeiosRight mbAnn -> strictMaybeToMaybe mbAnn
+    MkAnnouncedBy issuer codecAnn <- case praosStateLeiosAnnouncement st of
+      Praos2HasLeios mbAnn -> strictMaybeToMaybe mbAnn
+    let ann = fromCodecEbAnnouncement codecAnn
     pure
       MkAnnouncementFields
         { announcementElection =
@@ -306,4 +311,4 @@ instance
     case blockPrevHash blk of
       GenesisHash -> Nothing
       BlockHash h ->
-        Just $ MkRbHash $ toRawHash (Proxy @(ShelleyBlock (PraosWithLeios c) DijkstraEra)) h
+        Just $ MkRbHash $ toRawHash (Proxy @(ShelleyBlock (Praos2 c) DijkstraEra)) h

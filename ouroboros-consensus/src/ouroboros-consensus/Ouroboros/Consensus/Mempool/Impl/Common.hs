@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -41,6 +40,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
 
     -- * Conversions
   , snapshotFromIS
+  , snapshotFromValidTxs
 
     -- * Ticking a ledger state
   , tickLedgerState
@@ -63,7 +63,6 @@ import qualified Data.Text as Text
 import Data.Typeable
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes.LeiosJobs (TxHash)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -71,6 +70,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (TxHash)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
@@ -95,7 +95,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 -- will have to reconsider what we can cache and what we can't.
 data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
   { validatedTx :: !(Validated (GenTx blk))
-  , validatedTxDiffs :: !(LedgerTables (TickedLedgerState blk) DiffMK)
+  , validatedTxDiffs :: !(LedgerTables blk DiffMK)
   , validatedTxLeiosHash :: !(StrictMaybe TxHash)
   -- ^ Cached here so it isn't computed on every resync.
   --
@@ -106,8 +106,8 @@ data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
 
 deriving instance
   ( NoThunks (Validated (GenTx blk))
-  , NoThunks (TxIn (LedgerState blk))
-  , NoThunks (TxOut (LedgerState blk))
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
   ) =>
   NoThunks (ValidatedTxWithDiffs blk)
 
@@ -137,12 +137,12 @@ data InternalState blk = IS
   -- rescanning. Maintained in lockstep with 'isTxs' via the block's
   -- 'ResolveLeiosBlock' @leiosTxHashOfGenTx@; empty when that returns 'Nothing'
   -- for every tx (i.e. a non-Leios setup).
-  , isTxKeys :: !(LedgerTables (LedgerState blk) KeysMK)
+  , isTxKeys :: !(LedgerTables blk KeysMK)
   -- ^ The cached set of keys needed for the transactions
   -- currently in the mempool.
   --
   -- INVARIANT: @'isTxKeys' == foldMap (getTransactionKeySets . txForgetValidated) $ toList 'isTxs'@
-  , isTxValues :: !(LedgerTables (LedgerState blk) ValuesMK)
+  , isTxValues :: !(LedgerTables blk ValuesMK)
   -- ^ The cached values corresponding to reading 'isTxKeys' at
   -- 'isLedgerState'. These values can be used unless we switch to
   -- a different ledger state. It usually happens in the forging
@@ -186,7 +186,7 @@ data InternalState blk = IS
   -- transactions will be in the next block. So any changes caused by that
   -- block will take effect after applying it and will only affect the
   -- next block.
-  , isRemovalGen :: !Word64
+  , isRemovalCounter :: !Word64
   -- ^ A monotonic counter bumped each time 'implRemoveTxsEvenIfValid' drops a
   -- transaction. A sync carries it along its (off-lock) candidate and re-checks
   -- it against the committed state under the lock: a mismatch means a removal
@@ -199,9 +199,10 @@ deriving instance
   ( NoThunks (Validated (GenTx blk))
   , NoThunks (GenTxId blk)
   , NoThunks (TickedLedgerState blk DiffMK)
-  , NoThunks (TxIn (LedgerState blk))
-  , NoThunks (TxOut (LedgerState blk))
-  , NoThunks (TxMeasure blk)
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
+  , NoThunks (TxMeasurePhase1 blk)
+  , NoThunks (TxMeasurePhase2 blk)
   , NoThunks (TxEbMeasure blk)
   , StandardHash blk
   , Typeable blk
@@ -215,7 +216,7 @@ isMempoolSize = mempoolSize . isTxs
 
 -- | \( O(1) \). Return the number of transactions paired with their total size in bytes.
 mempoolSize ::
-  TxLimits blk => TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) -> MempoolSize
+  TxLimits blk => TxSeq (MempoolMeasure blk) tx -> MempoolSize
 mempoolSize txs =
   MempoolSize
     { msNumTxs = fromIntegral . length $ txs
@@ -242,7 +243,7 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
     , isTip = castPoint $ getTip st
     , isSlotNo = slot
     , isLastTicketNo = lastTicketNo
-    , isRemovalGen = 0
+    , isRemovalCounter = 0
     , isCapacity = computeMempoolCapacity cfg st capacityOverride
     }
 
@@ -258,7 +259,7 @@ newtype LedgerInterface m blk = LedgerInterface
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
   { mldViewState :: LedgerState blk EmptyMK
   -- ^ The ledger state currently at the tip of the LedgerDB
-  , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m (LedgerState blk)))
+  , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m LedgerState blk))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
   -- case that such state is now gone from the LedgerDB.
   --
@@ -268,7 +269,7 @@ data MempoolLedgerDBView m blk = MempoolLedgerDBView
 
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
 chainDBLedgerInterface ::
-  (IOLike m, IsLedger (LedgerState blk)) =>
+  (IOLike m, IsLedger LedgerState blk) =>
   ChainDB m blk ->
   LedgerInterface m blk
 chainDBLedgerInterface chainDB =
@@ -293,7 +294,7 @@ chainDBLedgerInterface chainDB =
 -- different operations.
 data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
-  , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk))
+  , mpEnvForker :: StrictMVar m (ReadOnlyForker m LedgerState blk)
   , mpEnvLedgerCfg :: LedgerConfig blk
   , mpEnvStateVar :: StrictSVar m (InternalState blk)
   -- ^ The single, authoritative internal state of the mempool, which doubles as
@@ -392,14 +393,14 @@ validateNewTransaction ::
   GenTx blk ->
   TxMeasure blk ->
   -- | Values to cache if success
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   -- | This state is the internal state with the tables for this transaction
   -- advanced through the diffs in the internal state. One could think we can
   -- create this value here, but it is needed for some other uses like calling
   -- 'txMeasure' before this function.
   TickedLedgerState blk ValuesMK ->
   InternalState blk ->
-  ( Either (ApplyTxErr blk) (Validated (GenTx blk), LedgerTables (TickedLedgerState blk) DiffMK)
+  ( Either (ApplyTxErr blk) (Validated (GenTx blk), LedgerTables blk DiffMK)
   , DiffTimeMeasure -> InternalState blk
   )
 validateNewTransaction cfg wti tx txsz origValues st is =
@@ -450,7 +451,7 @@ revalidateTxsFor ::
   forall m blk.
   (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   -- | The forker to read the transactions' inputs from.
-  ReadOnlyForker m (LedgerState blk) ->
+  ReadOnlyForker m LedgerState blk ->
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -458,7 +459,7 @@ revalidateTxsFor ::
   TickedLedgerState blk DiffMK ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
-  -- | The removal generation to stamp on the result (see 'isRemovalGen').
+  -- | The removal generation to stamp on the result (see 'isRemovalCounter').
   Word64 ->
   [TxTicket (MempoolMeasure blk) (ValidatedTxWithDiffs blk)] ->
   m (RevalidateTxsResult blk)
@@ -474,7 +475,7 @@ revalidateTxsFor frk capacityOverride cfg slot st lastTicketNo removalGen txTick
   -- the mempool's ticket counter is preserved and the next add continues from it.
   emptyResult =
     RevalidateTxsResult
-      (initInternalState capacityOverride lastTicketNo cfg slot st){isRemovalGen = removalGen}
+      (initInternalState capacityOverride lastTicketNo cfg slot st){isRemovalCounter = removalGen}
       []
 
 -- | The general revalidation step: reapply a /delta/ of already-validated txs on
@@ -493,7 +494,7 @@ revalidateTxsFor' ::
   forall m blk.
   (Monad m, LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   -- | The forker to read the delta txs' inputs from.
-  ReadOnlyForker m (LedgerState blk) ->
+  ReadOnlyForker m LedgerState blk ->
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
@@ -511,7 +512,7 @@ revalidateTxsFor' ::
 revalidateTxsFor' frk capacityOverride cfg slot (RevalidateTxsResult cand removedSoFar) lastTicketNo deltaTxTickets = do
   let deltaTxs = map wrap deltaTxTickets
       deltaKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) deltaTxs
-  deltaValues <- castLedgerTables <$> roforkerReadTables frk (castLedgerTables deltaKeys)
+  deltaValues <- roforkerReadTables frk deltaKeys
   let
     -- Seed the delta reapplication from @cand@'s post-reapply ledger state, so
     -- a delta tx spending one of @cand@'s outputs sees it. This is exactly the
@@ -585,35 +586,117 @@ snapshot ::
   TxSeq (MempoolMeasure blk) (ValidatedTxWithDiffs blk) ->
   MempoolSnapshot blk
 snapshot slotNo tipPoint txIds txs =
-  MempoolSnapshot
-    { snapshotTxs = txsAfter TxSeq.zeroTicketNo
-    , snapshotTxsAfter = txsAfter
-    , snapshotLookupTx = \n -> fmap validatedTx (TxSeq.lookupByTicketNo txs n)
-    , snapshotHasTx = \tid -> Set.member tid txIds
-    , snapshotMempoolSize = mempoolSize txs
-    , snapshotSlotNo = slotNo
-    , snapshotStateHash = pointHash tipPoint
-    , snapshotPartition = \blockLimit ebLimit ->
-        let (x, rest) = TxSeq.splitAfterTxSizeOn mmTxMeasure txs blockLimit
-            (y, _) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure rest ebLimit
-         in (txSeqToList x, TxSeq.toSize x, txSeqToList y, TxSeq.toSize y)
-    , snapshotPoint = tipPoint
-    }
- where
-  txsAfter n =
-    [ (validatedTx a, b, mmTxMeasure c)
-    | (a, b, c) <- TxSeq.toTuples (snd (TxSeq.splitAfterTicketNo txs n))
-    ]
-
-  txSeqToList = map (validatedTx . TxSeq.txTicketTx) . TxSeq.toList
+  snapshotFromTxSeq validatedTx txs txIds tipPoint slotNo
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
+--
+-- The internal state already maintains both the sequence of transactions
+-- ('isTxs') and the set of their ids ('isTxIds'), so this is @O(1)@: it only
+-- wraps the structures that are there, without recomputing either of them.
 snapshotFromIS ::
   forall blk.
   (HasTxId (GenTx blk), TxLimits blk) =>
   InternalState blk ->
   MempoolSnapshot blk
-snapshotFromIS IS{..} = snapshot isSlotNo isTip isTxIds isTxs
+snapshotFromIS is =
+  snapshotFromTxSeq
+    validatedTx
+    (isTxs is)
+    (isTxIds is)
+    (isTip is)
+    (isSlotNo is)
+
+-- | Create a Mempool Snapshot from a list of validated transactions.
+--
+-- Unlike 'snapshotFromIS' this has to build the transaction sequence and the
+-- set of transaction ids, so it is @O(n)@ in the number of transactions and
+-- computes the txid of every one of them. Only use it when there is no internal
+-- state to take those from.
+snapshotFromValidTxs ::
+  forall blk.
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  [TxTicket (MempoolMeasure blk) (Validated (GenTx blk))] ->
+  Point blk ->
+  SlotNo ->
+  MempoolSnapshot blk
+snapshotFromValidTxs validTxs =
+  let (txs, txIds) =
+        Foldable.foldl'
+          ( \(accTxs, accTxIds) tx ->
+              ( accTxs TxSeq.:> tx
+              , Set.insert (txId (txForgetValidated (txTicketTx tx))) accTxIds
+              )
+          )
+          (TxSeq.Empty, Set.empty)
+          validTxs
+   in snapshotFromTxSeq id txs txIds
+
+-- | Create a Mempool Snapshot from an already built transaction sequence and
+-- the ids of the transactions in it.
+--
+-- The sequence is generic in its element so that callers holding something
+-- richer than a validated transaction (like the internal state, which keeps
+-- the diffs alongside) can pass their sequence as it is instead of rebuilding
+-- it; @prj@ projects the validated transaction out of an element.
+snapshotFromTxSeq ::
+  forall blk tx.
+  (HasTxId (GenTx blk), TxLimits blk) =>
+  (tx -> Validated (GenTx blk)) ->
+  TxSeq (MempoolMeasure blk) tx ->
+  Set (GenTxId blk) ->
+  Point blk ->
+  SlotNo ->
+  MempoolSnapshot blk
+snapshotFromTxSeq prj txs txIds tipPoint slot =
+  MempoolSnapshot
+    { snapshotTxs = implSnapshotGetTxs
+    , snapshotTxsAfter = implSnapshotGetTxsAfter
+    , snapshotLookupTx = implSnapshotGetTx
+    , snapshotHasTx = implSnapshotHasTx
+    , snapshotMempoolSize = mempoolSize txs
+    , snapshotSlotNo = slot
+    , snapshotStateHash = pointHash tipPoint
+    , snapshotPartition = implSnapshotPartition
+    , snapshotPoint = castPoint tipPoint
+    }
+ where
+  implSnapshotGetTxs ::
+    [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
+  implSnapshotGetTxs = implSnapshotGetTxsAfter TxSeq.zeroTicketNo
+
+  implSnapshotGetTxsAfter ::
+    TicketNo ->
+    [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
+  implSnapshotGetTxsAfter =
+    (\x -> [(prj a, b, mmTxMeasure c) | (a, b, c) <- x])
+      . TxSeq.toTuples
+      . snd
+      . TxSeq.splitAfterTicketNo txs
+
+  implSnapshotPartition ::
+    TxMeasure blk ->
+    TxEbMeasure blk ->
+    ( [Validated (GenTx blk)]
+    , MempoolMeasure blk
+    , [Validated (GenTx blk)]
+    , MempoolMeasure blk
+    )
+  implSnapshotPartition blockLimit ebLimit =
+    (txSeqToList inBlock, TxSeq.toSize inBlock, txSeqToList inEb, TxSeq.toSize inEb)
+   where
+    (inBlock, afterBlock) = TxSeq.splitAfterTxSizeOn mmTxMeasure txs blockLimit
+    (inEb, _) = TxSeq.splitAfterTxSizeOn mmTxEbMeasure afterBlock ebLimit
+    txSeqToList = map (prj . TxSeq.txTicketTx) . TxSeq.toList
+
+  implSnapshotGetTx ::
+    TicketNo ->
+    Maybe (Validated (GenTx blk))
+  implSnapshotGetTx = fmap prj . (txs `TxSeq.lookupByTicketNo`)
+
+  implSnapshotHasTx ::
+    GenTxId blk ->
+    Bool
+  implSnapshotHasTx = (`Set.member` txIds)
 
 {-------------------------------------------------------------------------------
   Tracing support for the mempool operations
@@ -642,7 +725,7 @@ data TraceEventMempool blk
       -- | Previously valid transactions that are no longer valid because of
       -- changes in the ledger state (details are in the provided 'ApplyTxErr').
       -- These transactions have been removed from the Mempool.
-      [(Validated (GenTx blk), ApplyTxErr blk)]
+      [(GenTx blk, ApplyTxErr blk)]
       -- | The current size of the Mempool.
       MempoolSize
   | TraceMempoolManuallyRemovedTxs
@@ -654,15 +737,15 @@ data TraceEventMempool blk
       --
       -- This list shares not transactions with the list of manually removed
       -- transactions.
-      [Validated (GenTx blk)]
+      [GenTx blk]
       -- | The current size of the Mempool.
       MempoolSize
   | -- | Emitted when the mempool is adjusted after the tip has changed.
     TraceMempoolSynced
       -- | How long the sync operation took.
       EnclosingTimed
-  | -- | The mempool capacity changed while syncing with the ledger, e.g.
-    -- because a protocol parameter update was adopted.
+  | -- | The mempool capacity changed during a sync with the ledger.
+    -- An adopted protocol parameter update changes it.
     TraceMempoolCapacityChanged
       -- | The capacity before the sync.
       (TxMeasure blk)
@@ -685,7 +768,8 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (GenTxId blk)
   , Eq (ApplyTxErr blk)
-  , Eq (TxMeasure blk)
+  , Eq (TxMeasurePhase1 blk)
+  , Eq (TxMeasurePhase2 blk)
   , StandardHash blk
   ) =>
   Eq (TraceEventMempool blk)
@@ -695,7 +779,8 @@ deriving instance
   , Show (Validated (GenTx blk))
   , Show (GenTxId blk)
   , Show (ApplyTxErr blk)
-  , Show (TxMeasure blk)
+  , Show (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase2 blk)
   , StandardHash blk
   ) =>
   Show (TraceEventMempool blk)

@@ -1,6 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -9,70 +7,43 @@
 -- to be semantically correct at all, only structurally correct.
 module Test.Consensus.Protocol.Serialisation.Generators () where
 
-import qualified Cardano.Crypto.DSIGN as DSIGN
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
-import qualified Cardano.Crypto.VRF as VRF
-import Cardano.Ledger.Keys (DSIGN)
-import Cardano.Protocol.Crypto (Crypto, VRF)
+import Cardano.Ledger.BaseTypes (ProtVer (..), getVersion32)
+import Cardano.Ledger.Block (BlockHeaderVersionInfo (..), EbReferencesAnnouncement (..))
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import Cardano.Protocol.Praos.BlockHeader
   ( Header (Header)
-  , HeaderBody (..)
+  , HeaderBody (HeaderBody)
   )
 import Cardano.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Cardano.Protocol.TPraos.BlockHeader (HashHeader, PrevHash (..))
 import Cardano.Protocol.TPraos.OCert
   ( KESPeriod (KESPeriod)
   , OCert (OCert)
-  , OCertSignable
   )
 import Cardano.Slotting.Block (BlockNo (BlockNo))
 import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
-import qualified Data.ByteString as BS
-import LeiosDemoTypes
-  ( EbAnnouncement (EbAnnouncement)
-  , EbHash
-  )
-import Ouroboros.Consensus.Protocol.Leios (LeiosCrypto)
+import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Protocol.Praos
   ( AnnouncedBy (MkAnnouncedBy)
-  , BasePraosState (PraosState)
-  , EitherLeiosF
+  , PolyPraosState (PraosState)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Common (toCodecEbAnnouncement)
-import Ouroboros.Consensus.Protocol.Praos.Views (extendHeaderBodyWithLeios)
+import Ouroboros.Consensus.Protocol.Praos.Common (pureLeiosOnly)
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
-import Test.Cardano.StrictContainers.Instances ()
 import Test.Crypto.KES ()
 import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
-import Test.Util.LeiosHash (unsafeEbHashFromBytes)
-
-instance Arbitrary EbHash where
-  arbitrary = unsafeEbHashFromBytes . BS.pack <$> vectorOfWord8 32
-   where
-    vectorOfWord8 n = sequence (replicate n arbitrary)
-
-instance Arbitrary EbAnnouncement where
-  arbitrary = EbAnnouncement <$> arbitrary <*> arbitrary
-
-instance Arbitrary AnnouncedBy where
-  arbitrary = MkAnnouncedBy <$> arbitrary <*> arbitrary
 
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
 
-instance
-  ( Crypto c
-  , DSIGN.Signable DSIGN (OCertSignable c)
-  , VRF.Signable (VRF c) InputVRF
-  ) =>
-  Arbitrary (HeaderBody c)
-  where
+instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
   arbitrary =
     let ocert =
           OCert
@@ -108,26 +79,49 @@ instance Praos.PraosCrypto c => Arbitrary (Header c) where
     let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Header hBody hSig
 
-instance Arbitrary Leios.EbAnnouncement where
-  arbitrary = toCodecEbAnnouncement <$> arbitrary
+-- | A Praos header body extended with arbitrary Leios fields.
+instance (Praos.PraosCrypto c, LeiosCrypto c) => Arbitrary (Leios.HeaderBody c) where
+  arbitrary = do
+    HeaderBody blockNo slotNo prev vk vrfVk vrfRes bodySize bodyHash ocert (ProtVer major minor) <-
+      arbitrary
+    containsCert <- arbitrary
+    ann <- arbitrary
+    pure $
+      Leios.mkHeaderBody (Proxy @DijkstraEra) $
+        Leios.HeaderBodyRaw
+          { Leios.hbrBlockNo = blockNo
+          , Leios.hbrSlotNo = slotNo
+          , Leios.hbrPrev = prev
+          , Leios.hbrVk = vk
+          , Leios.hbrVrfVk = vrfVk
+          , Leios.hbrVrfRes = vrfRes
+          , Leios.hbrBodySize = bodySize
+          , Leios.hbrBodyHash = bodyHash
+          , Leios.hbrOCert = ocert
+          , Leios.hbrVersionInfo = BlockHeaderVersionInfo (getVersion32 major) minor
+          , Leios.hbrBlockBodyContainsLeiosCert = containsCert
+          , Leios.hbrEbReferencesAnnouncement = uncurry EbReferencesAnnouncement <$> ann
+          }
 
-instance LeiosCrypto c => Arbitrary (Leios.HeaderBody c) where
-  arbitrary = extendHeaderBodyWithLeios <$> arbitrary <*> arbitrary <*> arbitrary
-
-instance LeiosCrypto c => Arbitrary (Leios.Header c) where
+instance (Praos.PraosCrypto c, LeiosCrypto c) => Arbitrary (Leios.Header c) where
   arbitrary = do
     hBody <- arbitrary
     period <- arbitrary
     sKey <- arbitrary
     let hSig = unsoundPureSignedKES () period hBody sKey
-    pure $ Leios.Header hBody hSig
+    pure $ Leios.mkHeader (Proxy @DijkstraEra) hBody hSig
+
+instance Arbitrary AnnouncedBy where
+  arbitrary =
+    MkAnnouncedBy
+      <$> arbitrary
+      <*> (EbReferencesAnnouncement <$> arbitrary <*> arbitrary)
 
 instance
-  forall proto.
-  ( Applicative (EitherLeiosF proto ())
-  , Traversable (EitherLeiosF proto ())
+  ( Applicative (Praos.WhenLeios proto)
+  , Traversable (Praos.WhenLeios proto)
   ) =>
-  Arbitrary (BasePraosState proto)
+  Arbitrary (PolyPraosState proto)
   where
   arbitrary =
     PraosState
@@ -142,4 +136,4 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> traverse (\() -> arbitrary) (pure () :: EitherLeiosF proto () ())
+      <*> traverse (\() -> arbitrary) (pureLeiosOnly ())

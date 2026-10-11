@@ -1,16 +1,11 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.HardFork.History.EraParams
   ( -- * API
@@ -21,6 +16,7 @@ module Ouroboros.Consensus.HardFork.History.EraParams
   , pattern NoPerasEnabled
   , PerasEnabledT (..)
   , fromPerasEnabled
+  , perasEnabledToMaybe
 
     -- * Defaults
   , defaultEraParams
@@ -31,14 +27,14 @@ import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
 import Codec.Serialise (Serialise (..))
-import Control.Monad (ap, liftM, void)
-import Control.Monad.Trans.Class
+import Control.Monad (void)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Peras.Params
 
 {-------------------------------------------------------------------------------
   OVERVIEW
@@ -152,70 +148,32 @@ data EraParams = EraParams
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
--- | A marker for era parameters that are Peras-specific
---   and are not present in pre-Peras eras
-newtype PerasEnabled a = MkPerasEnabled (Maybe a)
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass NoThunks
-  deriving newtype (Functor, Applicative, Monad)
-
-pattern PerasEnabled :: a -> PerasEnabled a
-pattern PerasEnabled x <- MkPerasEnabled (Just !x)
-  where
-    PerasEnabled !x = MkPerasEnabled (Just x)
-
-pattern NoPerasEnabled :: PerasEnabled a
-pattern NoPerasEnabled = MkPerasEnabled Nothing
-
-{-# COMPLETE PerasEnabled, NoPerasEnabled #-}
-
--- | A 'fromMaybe'-like eliminator for 'PerasEnabled'
-fromPerasEnabled :: a -> PerasEnabled a -> a
-fromPerasEnabled defaultValue =
-  \case
-    NoPerasEnabled -> defaultValue
-    PerasEnabled value -> value
-
--- | A 'MaybeT'-like monad transformer.
---
---   Used solely for the Peras-related hard fork combinator queries,
---   see 'Ouroboros.Consensus.HardFork.History.Qry'.
-newtype PerasEnabledT m a = PerasEnabledT {runPerasEnabledT :: m (PerasEnabled a)}
-  deriving stock Functor
-
-instance (Functor m, Monad m) => Applicative (PerasEnabledT m) where
-  pure = PerasEnabledT . pure . PerasEnabled
-  (<*>) = ap
-
-instance Monad m => Monad (PerasEnabledT m) where
-  x >>= f = PerasEnabledT $ do
-    v <- runPerasEnabledT x
-    case v of
-      NoPerasEnabled -> pure NoPerasEnabled
-      PerasEnabled y -> runPerasEnabledT (f y)
-
-instance MonadTrans PerasEnabledT where
-  lift = PerasEnabledT . liftM PerasEnabled
-
 -- | Default 'EraParams'
 --
 -- We set
 --
--- * epoch size to @10k@ slots
--- * the safe zone to @2k@ slots
+-- * epoch size to @10*k@ slots
+-- * the safe zone to @2*k@ slots
 -- * the upper bound to 'NoLowerBound'
--- * the Peras Round Length is unset
+-- * the Peras Round Length is set to @2*k@ slots if peras is enabled
+--   (because it must be a divisor of the epoch size)
 --
 -- This is primarily useful for tests.
-defaultEraParams :: SecurityParam -> SlotLength -> EraParams
-defaultEraParams (SecurityParam k) slotLength =
+defaultEraParams ::
+  SecurityParam ->
+  SlotLength ->
+  PerasEnabled () ->
+  EraParams
+defaultEraParams (SecurityParam k) slotLength perasEnabled =
   EraParams
     { eraEpochSize = EpochSize (unNonZero k * 10)
     , eraSlotLength = slotLength
     , eraSafeZone = StandardSafeZone (unNonZero k * 2)
     , eraGenesisWin = GenesisWindow (unNonZero k * 2)
-    , -- Peras is disabled by default
-      eraPerasRoundLength = NoPerasEnabled
+    , eraPerasRoundLength =
+        fmap
+          (\_ -> PerasRoundLength (unNonZero k * 2))
+          perasEnabled
     }
 
 -- | Zone in which it is guaranteed that no hard fork can take place

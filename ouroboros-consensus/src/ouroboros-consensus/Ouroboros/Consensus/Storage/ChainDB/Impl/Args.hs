@@ -1,9 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Args
@@ -24,7 +20,6 @@ import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Function ((&))
 import Data.Kind
 import Data.Time.Clock (secondsToDiffTime)
-import qualified LeiosDemoDb.Common
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -44,11 +39,14 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LeiosDB.API as LeiosDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
+import System.Random (StdGen)
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -59,6 +57,7 @@ data ChainDbArgs f m blk = ChainDbArgs
   , cdbVolDbArgs :: VolatileDB.VolatileDbArgs f m blk
   , cdbLgrDbArgs :: LedgerDB.LedgerDbArgs f m blk
   , cdbPerasCertDbArgs :: PerasCertDB.PerasCertDbArgs f m blk
+  , cdbPerasVoteDbArgs :: PerasVoteDB.PerasVoteDbArgs f m blk
   , cdbsArgs :: ChainDbSpecificArgs f m blk
   }
 
@@ -93,17 +92,19 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
     cdbsLoE :: GetLoEFragment m blk
   -- ^ If this is 'LoEEnabled', it contains an action that returns the
   -- current LoE fragment.
-  , cdbsLeiosDb :: HKD f (LeiosDemoDb.Common.LeiosDbHandle m)
+  , cdbsLeiosDb :: HKD f (LeiosDB.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
   -- its own per-thread 'LeiosDbReader' from this handle.
   , cdbsLeiosEvictTxCache :: HKD f (SlotNo -> m ())
   -- ^ Prune the LeiosTxCache to the given slot. Invoked immediately BEFORE
-  -- 'LeiosDemoDb.Common.leiosDbGarbageCollect' at the same slot (see
+  -- 'LeiosDB.leiosDbGarbageCollect' at the same slot (see
   -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.Background.garbageCollectBlocks'):
   -- the cache is an in-memory index of the LeiosDb, so pruning it first is what
   -- keeps it from ever reporting a hit for a tx the LeiosDb has already dropped.
   -- Mandatory (no default): the node wires it to the cache's 'evictOlderThan';
   -- callers without a cache pass an explicit no-op.
+  , cdbsSnapshotDelayRNG :: HKD f StdGen
+  -- ^ RNG used to randomly determine the duration of snapshot delays
   }
 
 -- | Default arguments
@@ -140,6 +141,7 @@ defaultSpecificArgs =
     , cdbsLoE = pure LoEDisabled
     , cdbsLeiosDb = noDefault
     , cdbsLeiosEvictTxCache = noDefault
+    , cdbsSnapshotDelayRNG = noDefault
     }
 
 -- | Default arguments
@@ -148,11 +150,10 @@ defaultSpecificArgs =
 -- and 'defaultSpecificArgs' for a list of which fields are not given a default
 -- and must therefore be set explicitly.
 defaultArgs ::
-  forall m blk.
   ( IOLike m
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerDB.LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  , LedgerDB.CanUpgradeLedgerTables LedgerState blk
   ) =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
@@ -161,6 +162,7 @@ defaultArgs =
     VolatileDB.defaultArgs
     (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
     PerasCertDB.defaultArgs
+    PerasVoteDB.defaultArgs
     defaultSpecificArgs
 
 ensureValidateAll ::
@@ -179,7 +181,6 @@ ensureValidateAll args =
     }
 
 completeChainDbArgs ::
-  forall m blk.
   (ConsensusProtocol (BlockProtocol blk), IOLike m) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
@@ -192,9 +193,11 @@ completeChainDbArgs ::
   (RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
+  -- | Randomised snapshot delay RNG
+  StdGen ->
   LedgerDbBackendArgs m blk ->
   -- | Leios demo DB handle
-  LeiosDemoDb.Common.LeiosDbHandle m ->
+  LeiosDB.LeiosDbHandle m ->
   -- | Prune the LeiosTxCache to a slot; run before 'leiosDbGarbageCollect' at the
   -- same slot (the "LeiosTxCache" ordering contract).
   (SlotNo -> m ()) ->
@@ -209,6 +212,7 @@ completeChainDbArgs
   checkIntegrity
   mkImmFS
   mkVolFS
+  snapshotDelayRNG
   flavorArgs
   leiosDb
   leiosEvictTxCache
@@ -243,6 +247,10 @@ completeChainDbArgs
           PerasCertDB.PerasCertDbArgs
             { PerasCertDB.pcdbaTracer = PerasCertDB.pcdbaTracer (cdbPerasCertDbArgs defArgs)
             }
+      , cdbPerasVoteDbArgs =
+          PerasVoteDB.PerasVoteDbArgs
+            { PerasVoteDB.pvdbaTracer = PerasVoteDB.pvdbaTracer (cdbPerasVoteDbArgs defArgs)
+            }
       , cdbsArgs =
           (cdbsArgs defArgs)
             { cdbsRegistry = registry
@@ -250,6 +258,7 @@ completeChainDbArgs
             , cdbsHasFSGsmDB = mkVolFS $ RelativeMountPoint "gsm"
             , cdbsLeiosDb = leiosDb
             , cdbsLeiosEvictTxCache = leiosEvictTxCache
+            , cdbsSnapshotDelayRNG = snapshotDelayRNG
             }
       }
 
@@ -265,6 +274,8 @@ updateTracer trcr args =
     , cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrTracer = TraceLedgerDBEvent >$< trcr}
     , cdbPerasCertDbArgs =
         (cdbPerasCertDbArgs args){PerasCertDB.pcdbaTracer = TracePerasCertDbEvent >$< trcr}
+    , cdbPerasVoteDbArgs =
+        (cdbPerasVoteDbArgs args){PerasVoteDB.pvdbaTracer = TracePerasVoteDbEvent >$< trcr}
     , cdbsArgs = (cdbsArgs args){cdbsTracer = trcr}
     }
 

@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -10,7 +9,6 @@
 
 module Ouroboros.Consensus.Block.Forging
   ( BlockForging (..)
-  , ForgeBlockArgs (..)
   , MkBlockForging (..)
   , CannotForge
   , ForgeStateInfo
@@ -23,6 +21,10 @@ module Ouroboros.Consensus.Block.Forging
 
     -- * 'UpdateInfo'
   , UpdateInfo (..)
+
+    -- * 'ForgeBlockArgs'
+  , ForgeBlockArgs (..)
+  , ForgeBlockLeiosArgs (..)
   ) where
 
 import Control.Tracer (Tracer, traceWith)
@@ -32,6 +34,7 @@ import GHC.Stack
 import LeiosDemoTypes (ForgedLeiosEb, LeiosCert, TraceLeiosKernel)
 import LeiosVoteState (LeiosVoteState)
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.SupportsPeras (PerasCert)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -123,7 +126,8 @@ data BlockForging m blk = BlockForging
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
   , forgeBlock ::
-      ForgeBlockArgs m blk ->
+      ForgeBlockLeiosArgs m ->
+      ForgeBlockArgs blk ->
       m (blk, Maybe ForgedLeiosEb)
   -- ^ Forge a block
   --
@@ -131,20 +135,6 @@ data BlockForging m blk = BlockForging
   -- any (only Leios-enabled eras produce one, and only when there were EB txs).
   -- The caller persists it and registers it in the cache /after/ relaying
   -- the announcement, so the body offer never precedes the announcement.
-  --
-  -- The function is passed the prefix of the mempool that will fit within
-  -- a valid block; this is a set of transactions that is guaranteed to be
-  -- consistent with the ledger state (also provided as an argument) and
-  -- with each other (when applied in order). All of them should be
-  -- included in the forged block, since the mempool ensures they can fit.
-  --
-  -- NOTE: do not refer to the consensus or ledger config in the closure,
-  -- because they might contain an @EpochInfo Identity@, which will be
-  -- incorrect when used as part of the hard fork combinator. Use the
-  -- given 'TopLevelConfig' instead, as it is guaranteed to be correct
-  -- even when used as part of the hard fork combinator.
-  --
-  -- PRECONDITION: 'checkCanForge' returned @Right ()@.
   , finalize :: m ()
   -- ^ Clean up any unmanaged resources.
   --
@@ -253,23 +243,53 @@ forgeStateUpdateInfoFromUpdateInfo = \case
 -------------------------------------------------------------------------------}
 
 -- | Arguments to 'forgeBlock' aggregated into a single record.
---
--- Bundles the regular-block and Endorser-Block transactions, the Leios demo
--- DB and a Leios tracer so that Leios-enabled eras can produce and store EBs
--- inline as part of forging.
-data ForgeBlockArgs m blk = ForgeBlockArgs
-  { fbConfig :: TopLevelConfig blk
-  , fbCurrentBlockNo :: BlockNo
-  , fbCurrentSlotNo :: SlotNo
-  , fbCurrentTickedLedgerState :: TickedLedgerState blk EmptyMK
-  , fbRbTxs :: [Validated (GenTx blk)]
-  , fbEbTxs :: [Validated (GenTx blk)]
-  , fbIsLeader :: IsLeader (BlockProtocol blk)
-  , fbChainDepState :: Maybe (ChainDepState (BlockProtocol blk))
-  , fbMayLeiosCert :: Maybe LeiosCert
+data ForgeBlockArgs blk = ForgeBlockArgs
+  { fbConfig :: !(TopLevelConfig blk)
+  -- ^ The node's top-level config.
+  , fbCurrentBlockNo :: !BlockNo
+  -- ^ The block number of the block to be forged.
+  , fbCurrentSlotNo :: !SlotNo
+  -- ^ The slot number of the block to be forged.
+  , fbPerasCert :: !(Maybe (PerasCert blk))
+  -- ^ Optional Peras certificate to include in the forged block
+  --
+  -- For 'blk' that supports Peras 'Nothing' means no certificate.
+  -- For 'blk' that doesn't support Peras it's always 'Nothing'.
+  , fbCurrentTickedLedgerState :: !(TickedLedgerState blk EmptyMK)
+  -- ^ The current ledger state ticked to 'fbCurrentSlotNo'.
+  , fbTxs :: ![Validated (GenTx blk)]
+  -- ^ The transactions to include in the forged block.
+  --
+  -- The function is passed the prefix of the mempool that will fit within
+  -- a valid block; this is a set of transactions that is guaranteed to be
+  -- consistent with the ledger state 'fbCurrentTickedLedgerState' and
+  -- with each other (when applied in order). All of them should be
+  -- included in the forged block, since the mempool ensures they can fit.
+  --
+  -- NOTE: do not refer to the consensus or ledger config in the closure,
+  -- because they might contain an @EpochInfo Identity@, which will be
+  -- incorrect when used as part of the hard fork combinator. Use the
+  -- given 'fbConfig' instead, as it is guaranteed to be correct
+  -- even when used as part of the hard fork combinator.
+  --
+  -- PRECONDITION: 'checkCanForge' returned @Right ()@.
+  , fbIsLeader :: !(IsLeader (BlockProtocol blk))
+  -- ^ Proof that the node is the slot leader.
+  , fbEbTxs :: ![Validated (GenTx blk)]
+  -- ^ The transactions to include in the Endorser Block this block announces,
+  -- if any. They follow 'fbTxs' in the mempool. Ignored by eras without Leios.
+  , fbChainDepState :: !(Maybe (ChainDepState (BlockProtocol blk)))
+  -- ^ The chain-dependent state of the ledger state the block extends, if the
+  -- caller has it.
+  , fbMayLeiosCert :: !(Maybe LeiosCert)
   -- ^ The Leios certificate this block should embed, if it certifies a
   -- previously-announced EB. 'Nothing' for non-Leios eras and for
   -- blocks that don't certify anything.
-  , fbLeiosTracer :: Tracer m TraceLeiosKernel
+  }
+
+-- | The Leios arguments to 'forgeBlock' that live in @m@, so they cannot be
+-- part of 'ForgeBlockArgs'.
+data ForgeBlockLeiosArgs m = ForgeBlockLeiosArgs
+  { fbLeiosTracer :: Tracer m TraceLeiosKernel
   , fbLeiosVoteState :: LeiosVoteState m
   }

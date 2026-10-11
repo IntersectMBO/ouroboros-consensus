@@ -2,11 +2,9 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -800,7 +798,7 @@ runChainSync
         }
 
     eraParams :: HardFork.EraParams
-    eraParams = HardFork.defaultEraParams securityParam slotLength
+    eraParams = HardFork.defaultEraParams securityParam slotLength (PerasEnabled ())
 
     numCoreNodes :: NumCoreNodes
     numCoreNodes = NumCoreNodes 2

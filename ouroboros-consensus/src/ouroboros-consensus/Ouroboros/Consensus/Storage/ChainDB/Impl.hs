@@ -50,9 +50,9 @@ import Control.Tracer
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.SOP (All, Top)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb.Common (scanCompleteEbClosuresNotOlderThanSlot, withReader)
 import LeiosDemoTypes
   ( HasLeiosVoting
   , acquiredLeiosEbHashes
@@ -61,12 +61,22 @@ import LeiosDemoTypes
 import LeiosValidClaims (emptyValidClaims)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (forgetValidation)
+import Ouroboros.Consensus.Ledger.Extended (mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolverHandle (..)
+  , StateSupportsPerasEpochContext
+  , TimeResolutionContextHandle (..)
+  )
+import Ouroboros.Consensus.Storage.ChainDB.API
+  ( ChainDB
+  , PerasCertInclusionViewHandle (..)
+  , PerasVotingViewHandle (..)
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
   ( ChainDbArgs
@@ -81,12 +91,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB
-  ( LedgerSupportsLedgerDB
-  , ResolveLeiosBlock
-  )
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB.API (scanCompleteEbClosuresNotOlderThanSlot, withReader)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust)
 import Ouroboros.Consensus.Util.Args
@@ -108,14 +117,14 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
 withDB ::
   forall m blk a.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
@@ -127,14 +136,14 @@ withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
 openDB ::
   forall m blk.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
@@ -145,15 +154,15 @@ openDB args = fst <$> openDBInternal args True
 openDBInternal ::
   forall m blk.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack
-  , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
   ) =>
@@ -163,7 +172,7 @@ openDBInternal ::
   m (ChainDB m blk, Internal m blk)
 openDBInternal args launchBgTasks = runWithTempRegistry $ do
   ( immutableDB
-    , immutableDbTipPoint
+    , immutableDbTip
     , volatileDB
     , ledgerDbGetVolatileSuffix
     , setGetCurrentChainForLedgerDB
@@ -171,8 +180,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent StartedOpeningDB
     traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
     immutableDB <- ImmutableDB.openDB argsImmutableDb
-    immutableDbTipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
-    let immutableDbTipChunk =
+    immutableDbTip <- atomically $ ImmutableDB.getTip immutableDB
+    let immutableDbTipPoint = ImmutableDB.tipToPoint immutableDbTip
+        immutableDbTipChunk =
           chunkIndexOfPoint (ImmutableDB.immChunkInfo argsImmutableDb) immutableDbTipPoint
     traceWith tracer $
       TraceOpenEvent $
@@ -186,7 +196,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- mkLedgerDbGetVolatileSuffix
     pure
       ( immutableDB
-      , immutableDbTipPoint
+      , immutableDbTip
       , volatileDB
       , ledgerDbGetVolatileSuffix
       , setGetCurrentChainForLedgerDB
@@ -197,18 +207,24 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   -- want to track that one to close it on exception. See "Resource management
   -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API" for an
   -- explanation of why.
-  (lgrDB, replayed) <-
+  lgrDB <-
     LedgerDB.openDB
       argsLgrDb
       (ImmutableDB.streamAPI immutableDB)
-      immutableDbTipPoint
+      (ImmutableDB.tipToPoint immutableDbTip)
+      ( case immutableDbTip of
+          Origin -> IsNotEBB
+          NotOrigin tip -> ImmutableDB.tipIsEBB tip
+      )
       (Query.getAnyKnownBlock immutableDB volatileDB)
       ledgerDbGetVolatileSuffix
 
   lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
-    perasCertDB <- PerasCertDB.openDB argsPerasCertDB
+    let resolverHandle = mkPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
+    perasCertDB <- PerasCertDB.createDB argsPerasCertDB
+    perasVoteDB <- PerasVoteDB.createDB argsPerasVoteDB resolverHandle
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
@@ -226,7 +242,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       withReader (Args.cdbsLeiosDb cdbSpecificArgs) $ \reader ->
         scanCompleteEbClosuresNotOlderThanSlot
           reader
-          (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
+          (fromWithOrigin (SlotNo 0) (pointSlot (ImmutableDB.tipToPoint immutableDbTip)))
     varAcquiredLeiosEbs <-
       newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
     varLeiosValidClaims <- newTVarIO (WithFingerprint emptyValidClaims (Fingerprint 0))
@@ -242,7 +258,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         (void initialLoE)
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
-    LedgerDB.tryFlush lgrDB
 
     -- Initial chain selection validated these headers, so they already carry
     -- what validation reveals; see 'HeaderWithTime'.
@@ -270,6 +285,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
+    varSnapshotDelayRNG <- newTVarIO (Args.cdbsSnapshotDelayRNG cdbSpecificArgs)
 
     let env =
           CDB
@@ -300,6 +316,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLeiosEvictTxCache = Args.cdbsLeiosEvictTxCache cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
+            , cdbPerasVoteDB = perasVoteDB
+            , cdbSnapshotDelayRNG = varSnapshotDelayRNG
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -334,7 +352,31 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
-            , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
+            , getLatestPerasCertSeen = getEnvSTM h Query.getLatestPerasCertSeen
+            , getPerasCertsAfter = getEnvSTM1 h Query.getPerasCertsAfter
+            , getPerasCertIds = getEnvSTM h Query.getPerasCertIds
+            , addPerasVoteWithAsyncCertHandling = getEnv1 h ChainSel.addPerasVoteWithAsyncCertHandling
+            , getPerasVotesAfter = getEnvSTM1 h Query.getPerasVotesAfter
+            , getPerasVoteIds = getEnvSTM h Query.getPerasVoteIds
+            , getPerasEpochContextResolverHandle =
+                PerasEpochContextResolverHandle $
+                  getEnvSTM h $
+                    Query.getPerasEpochContextResolver
+            , getPerasVotingViewHandle =
+                PerasVotingViewHandle $ \roundNo ->
+                  getEnvSTM h $
+                    Query.getPerasVotingView
+                      (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
+                      roundNo
+            , getPerasCertInclusionViewHandle =
+                PerasCertInclusionViewHandle $ \roundNo ->
+                  getEnvSTM h $
+                    Query.getPerasCertInclusionView roundNo
+            , getTimeResolutionContextHandle =
+                TimeResolutionContextHandle $
+                  getEnvSTM h $
+                    Query.getTimeResolutionContext
+                      (topLevelConfigLedger (Args.cdbsTopLevelConfig cdbSpecificArgs))
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             , getLeiosValidClaims = getEnvSTM h (readTVar . cdbLeiosValidClaims)
@@ -345,14 +387,14 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
+                Background.garbageCollectPeras e slot
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
-            , intTryTakeSnapshot = getEnv h $ \env' ->
-                void $
-                  LedgerDB.tryTakeSnapshot
-                    (cdbLedgerDB env')
-                    (void $ Background.copyToImmutableDB env')
-                    Nothing
-                    maxBound
+            , intTryTakeSnapshot = getEnv h $ \e -> do
+                -- 'tryTakeSnapshot' only enqueues a request for the snapshots;
+                -- as the background thread that would serve it is usually not
+                -- running in the tests using this, serve it ourselves.
+                LedgerDB.tryTakeSnapshot (cdbLedgerDB e)
+                Background.tryServeSnapshotRequestNow e
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
@@ -363,7 +405,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env replayed
+    when launchBgTasks $ Background.launchBgTasks env
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually
@@ -382,6 +424,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     argsVolatileDb
     argsLgrDb
     argsPerasCertDB
+    argsPerasVoteDB
     cdbSpecificArgs = args
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')

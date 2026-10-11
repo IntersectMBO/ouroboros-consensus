@@ -23,13 +23,12 @@ import Cardano.Ledger.BaseTypes (nonZero)
 import Control.Monad (forever)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), contramapM, mkTracer, traceWith)
+import Control.Tracer (Tracer, contramapM, mkTracer, traceWith)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
-import qualified LeiosDemoDb as LeiosDb
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -37,6 +36,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike

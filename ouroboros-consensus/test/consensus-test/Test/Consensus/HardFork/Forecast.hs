@@ -1,9 +1,11 @@
+{-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ < 914
 {-# LANGUAGE DataKinds #-}
+#endif
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}

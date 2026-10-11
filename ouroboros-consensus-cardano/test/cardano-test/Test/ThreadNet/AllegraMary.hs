@@ -1,14 +1,7 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.ThreadNet.AllegraMary (tests) where
@@ -267,7 +260,7 @@ prop_simple_allegraMary_convergence
                         L.mkShelleyTransitionConfig genesisShelley
                   )
                   hardForkTrigger
-              pure
+              pure $
                 TestNodeInitialization
                   { tniCrucialTxs =
                       if not setupHardFork

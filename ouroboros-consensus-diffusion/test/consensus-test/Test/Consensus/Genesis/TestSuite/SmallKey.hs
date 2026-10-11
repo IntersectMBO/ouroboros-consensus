@@ -1,14 +1,10 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE NoStarIsType #-}
 
 -- | Internal module defining the 'SmallKey' utiliy class for 'TestSuite'
 -- construction. Exposed through 'Test.Consensus.Genesis.TestSuite' re-exports.

@@ -77,6 +77,13 @@ cabal.project.consensus
 */.tasty-rerun-log
 ouroboros-consensus-cardano/test/tools-test/disk/chaindb/
 
+# artefacts written by the CDDL tests
+/failing_cddl_tests/
+/ntnblock.cddl
+/ntnheader.cddl
+/ntntx.cddl
+/ntntxid.cddl
+
 # https://github.com/github/gitignore/blob/main/Haskell.gitignore
 dist
 dist-*
@@ -101,3 +108,9 @@ cabal.project.local
 cabal.project.local~
 .HTF/
 .ghc.environment.*
+
+**/.yarn
+
+# Build directory of the GHC boot library check, see cabal.project.ghc-pin
+dist-newstyle-*/
+/cabal.project.*.local

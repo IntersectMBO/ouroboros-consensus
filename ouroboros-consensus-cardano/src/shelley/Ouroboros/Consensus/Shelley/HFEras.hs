@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -17,12 +16,10 @@ module Ouroboros.Consensus.Shelley.HFEras
   , StandardShelleyBlock
   ) where
 
-import Cardano.Ledger.Dijkstra.Era (DijkstraEraBlockHeader (..))
 import Cardano.Protocol.Crypto
-import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
-import Ouroboros.Consensus.Protocol.Leios (LeiosCrypto, PraosWithLeios)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import Ouroboros.Consensus.Protocol.Praos2 (LeiosCrypto, Praos2)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.Eras
@@ -37,8 +34,6 @@ import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
   ( ShelleyBlock
   , ShelleyCompatible
-  , encodeShelleyBlockWorkaroundLedgerIssue5937
-  , workaroundLedgerIssue5937
   )
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
@@ -61,7 +56,7 @@ type StandardBabbageBlock = ShelleyBlock (Praos StandardCrypto) BabbageEra
 
 type StandardConwayBlock = ShelleyBlock (Praos StandardCrypto) ConwayEra
 
-type StandardDijkstraBlock = ShelleyBlock (PraosWithLeios StandardCrypto) DijkstraEra
+type StandardDijkstraBlock = ShelleyBlock (Praos2 StandardCrypto) DijkstraEra
 
 {-------------------------------------------------------------------------------
   ShelleyCompatible
@@ -87,8 +82,4 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) BabbageEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
-instance LeiosCrypto c => ShelleyCompatible (PraosWithLeios c) DijkstraEra where
-  workaroundLedgerIssue5937 = encodeShelleyBlockWorkaroundLedgerIssue5937
-
-instance Crypto c => DijkstraEraBlockHeader (LeiosCodec.Header c) DijkstraEra where
-  prevNonceBlockHeaderL = error "Not implemented. Peras placeholder"
+instance LeiosCrypto c => ShelleyCompatible (Praos2 c) DijkstraEra

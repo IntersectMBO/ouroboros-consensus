@@ -1,6 +1,8 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 #if __GLASGOW_HASKELL__ >= 908
@@ -150,9 +152,9 @@ data DummyBlock
 
 -- | Only 'hashSize' is used.
 instance ConvertRawHash DummyBlock where
-  hashSize _ = 32
+  type HashSize DummyBlock = 32
   toRawHash _ = error "not used in the tests"
-  fromRawHash _ = error "not used in the tests"
+  unsafeFromRawHash _ = error "not used in the tests"
 
 prop_reconstructPrimaryIndex :: TestPrimaryIndex -> Property
 prop_reconstructPrimaryIndex (TestPrimaryIndex chunkInfo chunk primaryIndex _slot) =

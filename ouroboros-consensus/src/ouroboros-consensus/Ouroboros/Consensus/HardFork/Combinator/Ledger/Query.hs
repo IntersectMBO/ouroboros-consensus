@@ -80,8 +80,10 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.Serialisation (Some (..))
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
   ( WrapChainDepState (..)
@@ -124,8 +126,8 @@ class
   ( All (Compose NoThunks WrapTxOut) xs
   , All (Compose Show WrapTxOut) xs
   , All (Compose Eq WrapTxOut) xs
-  , All (Compose HasTickedLedgerTables LedgerState) xs
-  , All (Compose HasLedgerTables LedgerState) xs
+  , All (HasLedgerTables (Ticked LedgerState)) xs
+  , All (HasLedgerTables LedgerState) xs
   ) =>
   BlockSupportsHFLedgerQuery xs
   where
@@ -153,7 +155,7 @@ class
   queryLedgerGetTraversingFilter ::
     Index xs x ->
     BlockQuery x QFTraverseTables result ->
-    TxOut (LedgerState (HardForkBlock xs)) ->
+    TxOut (HardForkBlock xs) ->
     Bool
 
 {-------------------------------------------------------------------------------
@@ -217,7 +219,7 @@ instance
   answerPureBlockQuery
     (ExtLedgerCfg cfg)
     query
-    ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _) =
+    ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _ _) =
       case query of
         QueryIfCurrent queryIfCurrent ->
           interpretQueryIfCurrent
@@ -265,7 +267,7 @@ instance
 
 -- | NOT EXPORTED, for footprints other than 'QFNoTables'
 answerBlockQueryHelper ::
-  (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs) =>
+  (MonadSTM m, CanHardFork xs) =>
   ( NP ExtLedgerCfg xs ->
     QueryIfCurrent xs footprint result ->
     ReadOnlyForker' m (HardForkBlock xs) ->
@@ -294,9 +296,26 @@ answerBlockQueryHelper
 distribExtLedgerState ::
   All SingleEraBlock xs =>
   ExtLedgerState (HardForkBlock xs) mk -> NS (Flip ExtLedgerState mk) xs
-distribExtLedgerState (ExtLedgerState ledgerState headerState) =
-  hmap (\(Pair hst lst) -> Flip $ ExtLedgerState (unFlip lst) hst) $
-    mustMatchNS
+distribExtLedgerState (ExtLedgerState ledgerState headerState perasState) =
+  hmap
+    ( \(Pair headerState' ledgerState') ->
+        Flip $
+          ExtLedgerState
+            { ledgerState = unFlip ledgerState'
+            , headerState = headerState'
+            , perasState =
+                PerasState
+                  { perasEpochContextResolver =
+                      PerasEpochContextResolverError $
+                        "distribExtLedgerState: single-era Peras epoch"
+                          <> " context resolution queries are not supported."
+                          <> " Implement them via Hard Fork queries instead."
+                  , latestPerasCertOnChainRound =
+                      latestPerasCertOnChainRound perasState
+                  }
+            }
+    )
+    $ mustMatchNS
       "HeaderState"
       (distribHeaderState headerState)
       (State.tip (hardForkLedgerStatePerEra ledgerState))

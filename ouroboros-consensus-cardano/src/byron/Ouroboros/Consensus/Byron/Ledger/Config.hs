@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 

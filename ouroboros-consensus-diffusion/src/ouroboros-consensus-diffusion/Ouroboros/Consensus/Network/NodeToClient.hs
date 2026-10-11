@@ -1,11 +1,7 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -62,7 +58,6 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Typeable
 import Data.Void (Void)
-import LeiosDemoDb (LeiosDbReader, withReader)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
@@ -83,6 +78,7 @@ import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbReader, withReader)
 import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk, EncodeDisk)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
@@ -439,7 +435,7 @@ mkApps ::
   , ShowProxy (ApplyTxErr blk)
   , ShowProxy (GenTx blk)
   , ShowProxy (GenTxId blk)
-  , ShowProxy (Query blk)
+  , ShowProxy (BlockQuery blk)
   , forall fp. ShowQuery (BlockQuery blk fp)
   ) =>
   NodeKernel m addrNTN addrNTC blk ->

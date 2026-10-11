@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Test.Util.ChainDB
   ( MinimalChainDbArgs (..)
@@ -14,13 +13,12 @@ module Test.Util.ChainDB
 import Control.Concurrent.Class.MonadSTM.Strict hiding (StrictTVar)
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
-import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
   , configCodec
   )
 import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB hiding
@@ -33,7 +31,9 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import Ouroboros.Consensus.Storage.LeiosDB (LeiosDbHandle)
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
+import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
@@ -42,6 +42,7 @@ import System.FS.API (SomeHasFS (..))
 import System.FS.Sim.MockFS
 import qualified System.FS.Sim.MockFS as Mock
 import System.FS.Sim.STM (simHasFS)
+import System.Random (mkStdGen)
 import Test.Util.Orphans.NoThunks ()
 import Test.Util.TestBlock (TestBlock, TestBlockLedgerConfig (..))
 
@@ -92,7 +93,8 @@ mkTestChunkInfo = simpleChunkInfo . eraEpochSize . tblcHardForkParams . topLevel
 fromMinimalChainDbArgs ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsLedgerDB blk
+  , LedgerDbSerialiseConstraints blk
+  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   MinimalChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -126,10 +128,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           }
     , cdbLgrDbArgs =
         LedgerDbArgs
-          { lgrSnapshotPolicyArgs =
-              LedgerDB.SnapshotPolicyArgs
-                LedgerDB.DefaultSnapshotInterval
-                LedgerDB.DefaultNumOfDiskSnapshots
+          { lgrSnapshotPolicyArgs = LedgerDB.defaultSnapshotPolicyArgs
           , -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
             -- k seconds, where k is the security parameter.
             lgrGenesis = return mcdbInitLedger
@@ -138,12 +137,15 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrConfig = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize
-          , lgrStartSnapshot = Nothing
           , lgrLeiosDb = mcdbLeiosDb
           }
     , cdbPerasCertDbArgs =
         PerasCertDbArgs
           { pcdbaTracer = nullTracer
+          }
+    , cdbPerasVoteDbArgs =
+        PerasVoteDbArgs
+          { pvdbaTracer = nullTracer
           }
     , cdbsArgs =
         ChainDbSpecificArgs
@@ -155,6 +157,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTracer = nullTracer
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
+          , cdbsSnapshotDelayRNG = mkStdGen 0
           , cdbsLeiosDb = mcdbLeiosDb
           , cdbsLeiosEvictTxCache = \_slot -> pure ()
           }

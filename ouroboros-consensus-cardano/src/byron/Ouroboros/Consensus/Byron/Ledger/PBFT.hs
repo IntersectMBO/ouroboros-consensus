@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -25,6 +23,7 @@ import Ouroboros.Consensus.Byron.Crypto.DSIGN
 import Ouroboros.Consensus.Byron.Ledger.Block
 import Ouroboros.Consensus.Byron.Ledger.Config
 import Ouroboros.Consensus.Byron.Ledger.Serialisation ()
+import Ouroboros.Consensus.Byron.Node.Peras ()
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT

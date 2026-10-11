@@ -23,24 +23,21 @@ module Cardano.Tools.ThreadNet.Run
   , writeExampleThreadNetConfig
   ) where
 
-import Cardano.Api.Any (HasTypeProxy (proxyToAsType))
-import Cardano.Api.Key (Key (SigningKey))
-import Cardano.Api.KeysShelley (PaymentKey, SigningKey (PaymentSigningKey))
-import Cardano.Api.SerialiseTextEnvelope (readFileTextEnvelope)
+import qualified Cardano.Configuration.CliArgs as CLI
 import qualified Cardano.Crypto.DSIGN as Crypto
+import Cardano.Keys (SigningKey (PaymentSigningKey))
 import qualified Cardano.Ledger.Api as SL
-import Cardano.Ledger.BaseTypes (TxIx (..))
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), TxIx (..))
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Keys as Ledger
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.Transition (tcShelleyGenesisL)
 import Cardano.Ledger.Val (Val (coin, (<->)), inject)
-import Cardano.Node.Protocol.Shelley (readLeaderCredentials)
-import Cardano.Node.Types (ProtocolFilepaths (..))
+import Cardano.Tools.Credentials (readShelleyLeaderCredentials)
 import Cardano.Tools.DBAnalyser.Block.Cardano (mkCardanoProtocolParams)
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
+import Cardano.Tools.DBSynthesizer.TxGen (readPaymentSigningKey)
 import Control.Monad (forM, forM_, guard)
-import Control.Monad.Except (runExceptT)
 import Control.Tracer (nullTracer)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
@@ -58,7 +55,6 @@ import GHC.Generics (Generic)
 import GHC.IO.Handle (Handle)
 import GHC.IO.IOMode (IOMode (WriteMode))
 import GHC.Stack (HasCallStack, callStack)
-import LeiosDemoDb (InMemoryLeiosDb (..))
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block (Proxy (..), SlotNo)
 import Ouroboros.Consensus.BlockchainTime (mkSlotLength)
@@ -87,6 +83,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import qualified Ouroboros.Consensus.Shelley.Ledger.Ledger as SL
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (sgEpochLength))
+import Ouroboros.Consensus.Storage.LeiosDB (InMemoryLeiosDb (..))
 import System.Exit (die)
 import System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS
@@ -409,10 +406,7 @@ processThreadNetConfig ThreadNetConfig{..} = do
 processTransferAllConfig :: HasCallStack => TransferAllConfig -> IO TransferAll
 processTransferAllConfig TransferAllConfig{..} = do
   errOrPsk <-
-    fmap (\(PaymentSigningKey sk) -> sk)
-      <$> readFileTextEnvelope
-        (proxyToAsType (Proxy :: (Proxy (SigningKey PaymentKey))))
-        tacPaymentSigningKey
+    fmap (\(PaymentSigningKey sk) -> sk) <$> readPaymentSigningKey tacPaymentSigningKey
 
   taPaymentSigningKey <-
     either (\err -> die . show $ ("Failed reading psk: ", err, callStack)) return errOrPsk
@@ -421,17 +415,12 @@ processTransferAllConfig TransferAllConfig{..} = do
 processCoreNodeConfig :: HasCallStack => CoreNodeConfig -> IO CoreNode
 processCoreNodeConfig CoreNodeConfig{..} = do
   credsOrError <-
-    runExceptT $
-      readLeaderCredentials $
-        Just $
-          ProtocolFilepaths
-            { shelleyVRFFile = Just cncVrfSigningKey
-            , shelleyKESFile = Just cncKesSigningKey
-            , shelleyCertFile = Just cncOCert
-            , shelleyBulkCredsFile = Nothing
-            , byronKeyFile = Nothing
-            , byronCertFile = Nothing
-            }
+    readShelleyLeaderCredentials
+      CLI.emptyCredentials
+        { CLI.shelleyVRFKey = SJust cncVrfSigningKey
+        , CLI.shelleyKES = SJust (CLI.KESKeyFilePath cncKesSigningKey)
+        , CLI.shelleyOperationalCertificate = SJust cncOCert
+        }
   creds <- case credsOrError of
     Left err -> error . show $ ("Failed processing CoreNodeConfig", err, callStack)
     Right creds -> return creds

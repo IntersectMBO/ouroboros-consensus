@@ -269,7 +269,7 @@ mkHeaderStateWithTime ::
   LedgerConfig blk ->
   ExtLedgerState blk mk ->
   HeaderStateWithTime blk
-mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
+mkHeaderStateWithTime lcfg (ExtLedgerState lst hst _) =
   mkHeaderStateWithTimeFromSummary summary lcfg lst hst
  where
   -- A summary can always translate the tip slot of the ledger state it was
@@ -320,7 +320,7 @@ validateHeader cfg lv hdr slotTime history = do
 -- PRECONDITION: the blocks in the chain are valid.
 fromChain ::
   forall blk.
-  ( ApplyBlock (ExtLedgerState blk) blk
+  ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , LedgerSupportsProtocol blk
   ) =>

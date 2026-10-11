@@ -1,6 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -40,7 +39,6 @@ import Control.ResourceRegistry
 import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
-import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
@@ -66,6 +64,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )

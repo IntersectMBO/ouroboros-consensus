@@ -36,7 +36,6 @@ import Cardano.Slotting.Time (mkSlotLength)
 import Control.Monad.Except (Except)
 import qualified Control.Tracer as Tracer
 import Data.Bifunctor (first)
-import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Lens.Micro ((^.))
@@ -46,6 +45,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract
@@ -120,12 +120,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           (configConsensus cfg)
           forgingVRFHash
           curSlot
-    , forgeBlock = \cfg ->
-        forgeShelleyBlock
-          hotKey
-          canBeLeader
-          (TPraosLeiosLeft ())
-          cfg
+    , forgeBlock = forgeShelleyBlock hotKey canBeLeader
     , finalize = HotKey.finalize hotKey
     }
  where
@@ -205,11 +200,14 @@ protocolInfoTPraosShelleyBased
   transitionCfg
   protVer =
     assertWithMsg (validateGenesis genesis) $ do
-      initLedgerState <- mkInitLedgerState
+      ledgerState <- mkInitLedgerState
+      let headerState = genesisHeaderState initChainDepState
+      let perasState = initPerasState ledgerConfig ledgerState headerState
       let initExtLedgerState =
             ExtLedgerState
-              { ledgerState = initLedgerState
-              , headerState = genesisHeaderState initChainDepState
+              { ledgerState
+              , headerState
+              , perasState
               }
       pure
         ( ProtocolInfo
@@ -281,7 +279,6 @@ protocolInfoTPraosShelleyBased
         protVer
         genesis
         (shelleyBlockIssuerVKey <$> credentialss)
-
     storageConfig :: StorageConfig (ShelleyBlock (TPraos c) era)
     storageConfig =
       ShelleyStorageConfig
@@ -303,7 +300,6 @@ protocolInfoTPraosShelleyBased
             , shelleyLedgerState = injected
             , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
             , shelleyLedgerTables = emptyLedgerTables
-            , shelleyLedgerLatestPerasCertRound = SNothing
             , shelleyCumulativeTxBytes = 0
             }
 

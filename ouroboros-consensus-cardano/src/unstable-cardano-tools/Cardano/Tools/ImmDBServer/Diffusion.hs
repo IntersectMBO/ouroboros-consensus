@@ -26,8 +26,6 @@ import qualified Data.Text.Encoding as T
 import Data.Void (Void)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
-import LeiosDemoDb (allocateHandle)
-import qualified LeiosDemoDb
 import qualified LeiosDemoLogic as LeiosLogic
 import qualified LeiosDemoTypes as Leios
 import qualified Network.Mux as Mux
@@ -42,6 +40,8 @@ import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run (SerialiseNodeToNodeConstraints)
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import Ouroboros.Consensus.Storage.LeiosDB (allocateHandle)
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.IOManager (withIOManager)
@@ -121,7 +121,8 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
   -- first, so they close before the database does.
   leiosDb <-
     allocateHandle registry $
-      LeiosDemoDb.newLeiosDBSQLite
+      LeiosDB.newLeiosDBSQLite
+        registry
         nullTracer
         (leiosDbFile <> ".vol.db")
         (leiosDbFile <> ".imm.db")
@@ -136,7 +137,7 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
             (leiosScheduler getSlotDelay leiosNotifyContext leiosSchedule)
         pure leiosNotifyContext
   let mkLeiosFetchContext = do
-        reader <- LeiosDemoDb.allocateReader registry leiosDb
+        reader <- LeiosDB.allocateReader registry leiosDb
         LeiosLogic.MkSomeLeiosFetchContext
           <$> LeiosLogic.newLeiosFetchContext reader
   ImmutableDB.withDB

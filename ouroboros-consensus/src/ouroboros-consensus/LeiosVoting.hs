@@ -34,12 +34,6 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as Text
 import Data.Time.Clock (NominalDiffTime)
-import LeiosDemoDb
-  ( LeiosDbHandle (..)
-  , LeiosDbReader
-  , LeiosEbNotification (..)
-  , withReader
-  )
 import LeiosDemoTypes
   ( HasLeiosVoting (..)
   , LeiosClosureError (..)
@@ -105,6 +99,12 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   , ResolveLeiosBlock (..)
   , ledgerStateReadOnlyForker
   , protocolStateLeiosAnnouncement
+  )
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbHandle (..)
+  , LeiosDbReader
+  , LeiosEbNotification (..)
+  , withReader
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -460,7 +460,7 @@ validateEbClosure ::
   LeiosTxCache m () () SerializedEbBody ->
   -- | Read the ledger tables the closure's txs need, as
   -- 'resolveAndApplyLeiosClosure' does on the apply path.
-  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   LeiosPoint ->
   -- | The announcing RB's unticked ledger state, which the closure applies to.
   LedgerState blk EmptyMK ->
@@ -486,12 +486,12 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
   -- apply path does when a later RB certifies this EB.
   slot = pointSlotNo point
 
-  -- NOTE: 'assumeValidatedClosureTx' sits on the lookup that licenses it: the
-  -- tag is the evidence that this tx was validated before, so the token is
-  -- built here and nowhere else.
+  -- NOTE: The lookup licenses 'assumeValidatedClosureTx': the tag is the
+  -- evidence that this tx was validated before. The token itself is built in
+  -- 'goValidate' and nowhere else, against the state it is reapplied to.
   decide look (txh, tx) =
     look txh >>= \case
-      Just Right{} -> pure (txh, Right (assumeValidatedClosureTx tx))
+      Just Right{} -> pure (txh, Right tx)
       _ -> pure (txh, Left tx)
 
   -- Apply or reapply txs, accumulating the ones we newly validated so the cache
@@ -501,13 +501,14 @@ validateEbClosure lcfg reader txCache resolveValues point lsBase = do
     pure $ EbClosureValid reapplied applied
   goValidate !st ((txh, decision) : rest) !reapplied !applied newly =
     case decision of
-      Right vtx ->
+      Right tx ->
         -- Already validated once, so only the state-dependent checks re-run. A
         -- failure here is state-dependent (a spent input, say) and says nothing
         -- about the static checks, so the tx keeps the tag it already has.
-        case runExcept $ reapplyTx lcfg slot vtx st of
-          Left err -> abandon newly err
-          Right st' -> goValidate st' rest (reapplied + 1) applied newly
+        let vtx = assumeValidatedClosureTx lcfg slot st tx
+         in case runExcept $ reapplyTx lcfg slot vtx st of
+              Left err -> abandon newly err
+              Right st' -> goValidate st' rest (reapplied + 1) applied newly
       Left tx ->
         -- 'Intervene', despite the mempool's framing of it as a courtesy to
         -- local clients. What it actually selects is whether the era's applyTx

@@ -1,5 +1,3 @@
-{-# LANGUAGE PatternSynonyms #-}
-
 -- | The hard fork combinator
 --
 -- Intended for unqualified import
@@ -33,12 +31,9 @@ import Ouroboros.Consensus.HardFork.Combinator.Forging as X
   )
 import Ouroboros.Consensus.HardFork.Combinator.Info as X
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs as X
-  ( InjectTx
-  , InjectValidatedTx
-  , cannotInjectTx
-  , cannotInjectValidatedTx
-  , pattern InjectTx
-  , pattern InjectValidatedTx
+  ( TxsToApply (..)
+  , matchTx
+  , rematchValidatedTxs
   )
 import Ouroboros.Consensus.HardFork.Combinator.Ledger as X
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams as X ()

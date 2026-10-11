@@ -1,25 +1,4 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
-
 #if __GLASGOW_HASKELL__ >= 908
 {-# OPTIONS_GHC -Wno-x-partial #-}
 #endif
@@ -66,9 +45,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
-import Ouroboros.Consensus.Storage.LedgerDB hiding
-  ( pattern NoDoDiskSnapshotChecksum
-  )
+import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API

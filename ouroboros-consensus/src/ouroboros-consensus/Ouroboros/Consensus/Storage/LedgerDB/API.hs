@@ -67,12 +67,6 @@
 --     read and used to restore the current ledger state, as well as the past
 --      \(k\) ledger states.
 --
--- - __Flushing 'LedgerTable' differences__: The running Consensus has to
---     periodically flush chunks of [differences]("Data.Map.Diff.Strict")
---     from the 'DbChangelog' to the 'BackingStore', so that memory is
---     off-loaded to the backing store, and if the backing store is an on-disk
---     implementation, reduce the memory usage.
---
 -- Note that whenever we say /ledger state/ we mean the @'ExtLedgerState' blk
 -- mk@ type described in "Ouroboros.Consensus.Ledger.Basics".
 --
@@ -81,24 +75,6 @@
 -- The LedgerDB has currently 3 backends it can use:
 --
 -- - InMemory: This backend is pure except for tracing. No resources are allocated.
---
--- - LMDB: This backend allocates a 'BackingStore' and
---   'BackingStoreValueHandle's on it. The 'BackingStore' does not necessarily
---   need to be closed as described in [the LMDB
---   documentation](http://www.lmdb.tech/doc/group__internal.html#ga52dd98d0c542378370cd6b712ff961b5):
---
---   > Closing a database handle is not necessary, but lets mdb_dbi_open() reuse the handle value.
---
---   Therefore, the 'BackingStore' is not allocated in any resource or tracked
---   in any way as a resource.
---
---   For the value handles, all the usages of those are bracketed or
---   tracked in a resource registry, so they will be closed
---   individually when an exception arrives. The key difference is
---   that in V1, the value handle cannot outlive the Forker (see
---   "'Forker' management in the running node" below), while in V2 the
---   resources (handles) can outlive the forkers and be moved to the
---   LedgerDB.
 --
 -- - LSM: This backend allocates a 'BlockIOFS' and a 'Session'. Using the
 --   session, new 'Tables' are allocated, but closing the session closes any
@@ -202,11 +178,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDB'
   , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
-  , LedgerSupportsInMemoryLedgerDB
-  , LedgerSupportsLedgerDB
-  , LedgerSupportsLMDBLedgerDB
-  , LedgerSupportsV1LedgerDB
-  , LedgerSupportsV2LedgerDB
   , ResolveBlock
   , currentPoint
 
@@ -237,9 +208,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , getTipStatistics
   , withTipForker
 
-    -- * Snapshots
-  , SnapCounters (..)
-
     -- * Streaming
   , StreamingBackend (..)
   , Yield
@@ -252,20 +220,19 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , WhereToTakeSnapshot (..)
   ) where
 
+import Cardano.Binary (FromCBOR, ToCBOR)
 import Codec.CBOR.Decoding
 import Codec.CBOR.Read
 import Codec.Serialise
-import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
 import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Proxy
 import Data.Set (Set)
-import Data.Void (absurd)
+import Data.Typeable (Typeable)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -307,30 +274,34 @@ type LedgerDbSerialiseConstraints blk =
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , -- For InMemory LedgerDBs
-    MemPack (TxIn (LedgerState blk))
-  , SerializeTablesWithHint (LedgerState blk)
-  , -- For OnDisk LedgerDBs
-    IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
+  , IndexedMemPack LedgerState blk (TxOut blk)
+  , MemPack (TxIn blk)
+  , SerializeTablesWithHint LedgerState blk
+  , -- Needed for Peras
+    Typeable blk
+  , Typeable (PerasCrypto blk)
+  , Typeable (PerasVotingCommitteeScheme blk)
+  , FromCBOR (PerasVotingCommittee blk)
+  , ToCBOR (PerasVotingCommittee blk)
   )
 
 -- | The core API of the LedgerDB component
-type LedgerDB :: (Type -> Type) -> LedgerStateKind -> Type -> Type
+type LedgerDB :: (Type -> Type) -> StateKind -> Type -> Type
 data LedgerDB m l blk = LedgerDB
-  { getVolatileTip :: STM m (l EmptyMK)
+  { getVolatileTip :: STM m (l blk EmptyMK)
   -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
-  , getImmutableTip :: STM m (l EmptyMK)
+  , getImmutableTip :: STM m (l blk EmptyMK)
   -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
-  , getPastLedgerState :: Point blk -> STM m (Maybe (l EmptyMK))
+  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk EmptyMK))
   -- ^ Get an empty ledger state at a requested point in the LedgerDB, if it
   -- exists.
   , getHeaderStateHistory ::
-      l ~ ExtLedgerState blk =>
+      l ~ ExtLedgerState =>
       STM m (HeaderStateHistory blk)
   -- ^ Get the header state history for all ledger states in the LedgerDB.
   , openForkerAtTarget ::
       Target (Point blk) ->
-      m (Either GetForkerError (Forker m l))
+      m (Either GetForkerError (Forker m l blk))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
@@ -360,25 +331,19 @@ data LedgerDB m l blk = LedgerDB
   --  * Ledger states (and potentially underlying handles for on-disk storage).
   --
   --  * The set of previously applied points.
-  , tryTakeSnapshot ::
-      m () ->
-      Maybe (Time, Time) ->
-      Word64 ->
-      m SnapCounters
-  -- ^ If the provided arguments indicate so (based on the SnapshotPolicy with
-  -- which this LedgerDB was opened), take a snapshot and delete stale ones.
+  , tryTakeSnapshot :: m ()
+  -- ^ If the 'SnapshotPolicy' with which this LedgerDB was opened indicates
+  -- so, select the ledger states to snapshot and enqueue a 'SnapshotRequest'
+  -- for them on 'snapshotRequestQueue'.
   --
-  -- The arguments are:
-  --
-  -- - If a snapshot has been taken already, the time at which it was taken
-  --   and the current time.
-  --
-  -- - How many blocks have been processed since the last snapshot.
-  , tryFlush :: m ()
-  -- ^ Flush V1 in-memory LedgerDB state to disk, if possible. This is a no-op
-  -- for implementations that do not need an explicit flush function.
-  --
-  -- Note that this is rate-limited by 'ldbShouldFlush'.
+  -- This neither blocks nor writes anything to disk itself: the writing (and
+  -- the randomised delay preceding it) is the job of whoever serves
+  -- 'snapshotRequestQueue'. The request is dropped when the queue is already
+  -- occupied.
+  , snapshotRequestQueue :: SnapshotRequestQueue m
+  -- ^ The queue on which 'tryTakeSnapshot' puts its requests. In a running
+  -- node, it is served by a background thread of the ChainDB; see
+  -- 'withSnapshotRequest'.
   , closeDB :: m ()
   -- ^ Close the LedgerDB
   --
@@ -390,10 +355,10 @@ data LedgerDB m l blk = LedgerDB
 
 type instance HeaderHash (LedgerDB m l blk) = HeaderHash blk
 
-type LedgerDB' m blk = LedgerDB m (ExtLedgerState blk) blk
+type LedgerDB' m blk = LedgerDB m ExtLedgerState blk
 
 currentPoint ::
-  (GetTip l, HeaderHash l ~ HeaderHash blk, Functor (STM m)) =>
+  (GetTip (l blk), HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
   LedgerDB m l blk ->
   STM m (Point blk)
 currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
@@ -403,7 +368,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l DiffMK -> m ()
+  , push :: l blk DiffMK -> m ()
   -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
@@ -415,33 +380,32 @@ data TestInternals m l blk = TestInternals
   , truncateSnapshots :: m ()
   , closeLedgerDB :: m ()
   , getNumLedgerTablesHandles :: m Word64
-  -- ^ Get the number of referenced 'LedgerTablesHandle's for V2. For V1, this
-  -- always returns 0.
+  -- ^ Get the number of referenced 'LedgerTablesHandle's.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m l blk)
 
-type TestInternals' m blk = TestInternals m (ExtLedgerState blk) blk
+type TestInternals' m blk = TestInternals m ExtLedgerState blk
 
 {-------------------------------------------------------------------------------
   Config
 -------------------------------------------------------------------------------}
 
-data LedgerDbCfgF f l = LedgerDbCfg
+data LedgerDbCfgF f l blk = LedgerDbCfg
   { ledgerDbCfgSecParam :: !(HKD f SecurityParam)
-  , ledgerDbCfg :: !(HKD f (LedgerCfg l))
+  , ledgerDbCfg :: !(HKD f (LedgerCfg l blk))
   , ledgerDbCfgComputeLedgerEvents :: !ComputeLedgerEvents
   }
   deriving Generic
 
 type LedgerDbCfg l = Complete LedgerDbCfgF l
 
-deriving instance NoThunks (LedgerCfg l) => NoThunks (LedgerDbCfg l)
+deriving instance NoThunks (LedgerCfg l blk) => NoThunks (LedgerDbCfg l blk)
 
 configLedgerDb ::
   ConsensusProtocol (BlockProtocol blk) =>
   TopLevelConfig blk ->
   ComputeLedgerEvents ->
-  LedgerDbCfg (ExtLedgerState blk)
+  LedgerDbCfg ExtLedgerState blk
 configLedgerDb config evs =
   LedgerDbCfg
     { ledgerDbCfgSecParam = configSecurityParam config
@@ -473,7 +437,7 @@ data LedgerDbError
 withTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
-  (Forker m l -> m a) ->
+  (Forker m l blk -> m a) ->
   m a
 withTipForker ldb =
   bracket
@@ -496,20 +460,8 @@ openReadOnlyForker ::
   MonadSTM m =>
   LedgerDB m l blk ->
   Target (Point blk) ->
-  m (Either GetForkerError (ReadOnlyForker m l))
+  m (Either GetForkerError (ReadOnlyForker m l blk))
 openReadOnlyForker ldb pt = fmap readOnlyForker <$> openForkerAtTarget ldb pt
-
-{-------------------------------------------------------------------------------
-  Snapshots
--------------------------------------------------------------------------------}
-
--- | Counters to keep track of when we made the last snapshot.
-data SnapCounters = SnapCounters
-  { prevSnapshotTime :: !(Maybe Time)
-  -- ^ When was the last time we made a snapshot
-  , ntBlocksSinceLastSnap :: !Word64
-  -- ^ How many blocks have we processed since the last snapshot
-  }
 
 {-------------------------------------------------------------------------------
   Initialization
@@ -544,13 +496,13 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
+  , initReapplyBlock :: !(LedgerDbCfg ExtLedgerState blk -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
   , currentTip :: !(db -> LedgerState blk EmptyMK)
   -- ^ Getting the current tip for tracing the Ledger Events.
   , mkLedgerDb ::
-      !(db -> m (LedgerDB m (ExtLedgerState blk) blk, TestInternals m (ExtLedgerState blk) blk))
+      !(db -> m (LedgerDB' m blk, TestInternals' m blk))
   -- ^ Create a LedgerDB from the initialized data structures from previous
   -- steps.
   }
@@ -568,7 +520,9 @@ data InitDB db m blk = InitDB
 -- * We cannot deserialise them, or
 --
 -- * they are /ahead/ of the chain, they refer to a slot which is later than the
---     last slot in the immutable db.
+--     last slot in the immutable db (or the same slot, if the immutable db
+--     tip is an EBB, as the snapshot could then be for the EBB's same-slot
+--     successor block, which is not in the immutable db).
 --
 -- We do /not/ attempt to use multiple ledger states from disk to construct the
 -- ledger DB. Instead we load only a /single/ ledger state from disk, and
@@ -576,7 +530,7 @@ data InitDB db m blk = InitDB
 -- obtained in this way will (hopefully) share much of their memory footprint
 -- with their predecessors.
 initialize ::
-  forall m n blk db st.
+  forall m blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -584,32 +538,55 @@ initialize ::
   ) =>
   Tracer m (TraceReplayEvent blk) ->
   Tracer m (TraceSnapshotEvent blk) ->
-  LedgerDbCfg (ExtLedgerState blk) ->
+  LedgerDbCfg ExtLedgerState blk ->
   StreamAPI m blk blk ->
   Point blk ->
+  -- | Whether the block at the replay goal is an EBB. Used to decide whether
+  -- snapshots are ahead of the immutable db, see @snapshotTooRecent@.
+  IsEBB ->
   InitDB db m blk ->
-  SnapshotManager m n blk st ->
-  Maybe DiskSnapshot ->
-  m (InitLog blk, db, Word64)
+  SnapshotManager m blk st ->
+  m (InitLog blk, db)
 initialize
   replayTracer
   snapTracer
   cfg
   stream
   replayGoal
+  replayGoalIsEBB
   dbIface
-  snapManager
-  fromSnapshot =
-    case fromSnapshot of
-      Nothing -> listSnapshots snapManager >>= tryNewestFirst id
-      Just snap -> tryNewestFirst id [snap]
+  snapManager =
+    listSnapshots snapManager >>= tryNewestFirst id
    where
     InitDB{initFromGenesis, initFromSnapshot} = dbIface
+
+    -- \| Whether the given snapshot is ahead of the replay goal (the tip of
+    -- the immutable db), in which case it must be discarded, as replaying
+    -- from it would require blocks that are not in the immutable db.
+    --
+    -- Snapshots are named after the slot of the ledger state they contain,
+    -- so a snapshot named after a slot later than the replay goal is
+    -- necessarily too recent.
+    --
+    -- A snapshot named after the very slot of the replay goal is usually
+    -- fine (this is the common case for the most recent snapshot on a clean
+    -- restart), with one oddity: if the block at the replay goal is an EBB,
+    -- the snapshot could instead be for the EBB's successor block, which
+    -- shares its slot with the EBB but is not in the immutable db. The
+    -- snapshot name alone cannot distinguish the two cases, so we
+    -- conservatively discard such snapshots; EBBs are rare enough for this
+    -- not to matter.
+    snapshotTooRecent :: DiskSnapshot -> Bool
+    snapshotTooRecent s = case pointSlot replayGoal of
+      Origin -> True
+      At p -> case replayGoalIsEBB of
+        IsEBB -> dsNumber s >= unSlotNo p
+        IsNotEBB -> dsNumber s > unSlotNo p
 
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
       [DiskSnapshot] ->
-      m (InitLog blk, db, Word64)
+      m (InitLog blk, db)
     tryNewestFirst acc [] = do
       -- We're out of snapshots. Start at genesis
       traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
@@ -618,7 +595,7 @@ initialize
       initDb <- initFromGenesis
 
       traceMarkerIO "Genesis loaded"
-      (db, replayed) <-
+      db <-
         replayStartingWith
           replayTracer''
           cfg
@@ -626,12 +603,9 @@ initialize
           initDb
           (Point Origin)
           dbIface
-      return (acc InitFromGenesis, db, replayed)
+      return (acc InitFromGenesis, db)
     tryNewestFirst acc (s : ss) = do
-      if ( case pointSlot replayGoal of
-             Origin -> True
-             At p -> dsNumber s > unSlotNo p
-         )
+      if snapshotTooRecent s
         then do
           deleteSnapshotIfTemporary snapManager s
           traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal
@@ -668,7 +642,7 @@ initialize
               let pt' = realPointToPoint pt
               traceWith (TraceReplayStartEvent >$< replayTracer) (ReplayFromSnapshot s (ReplayStart pt'))
               let replayTracer'' = decorateReplayTracerWithStart pt' replayTracer'
-              (db, replayed) <-
+              db <-
                 replayStartingWith
                   replayTracer''
                   cfg
@@ -676,7 +650,7 @@ initialize
                   initDb
                   pt'
                   dbIface
-              return (acc (InitFromSnapshot s pt), db, replayed)
+              return (acc (InitFromSnapshot s pt), db)
 
     replayTracer' =
       decorateReplayTracerWithGoal
@@ -695,12 +669,12 @@ replayStartingWith ::
   , HasCallStack
   ) =>
   Tracer m (ReplayStart blk -> ReplayGoal blk -> TraceReplayProgressEvent blk) ->
-  LedgerDbCfg (ExtLedgerState blk) ->
+  LedgerDbCfg ExtLedgerState blk ->
   StreamAPI m blk blk ->
   db ->
   Point blk ->
   InitDB db m blk ->
-  m (db, Word64)
+  m db
 replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
   res <-
     runExceptT $
@@ -708,7 +682,7 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
         stream
         from
         id
-        (initDb, 0)
+        initDb
         push
   case res of
     Left _ ->
@@ -718,23 +692,18 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
           <> " that was in immutable db is gone before we could open ledgerdb"
     Right v -> pure v
  where
-  push ::
-    blk ->
-    (db, Word64) ->
-    m (db, Word64)
-  push blk (!db, !replayed) = do
+  push :: blk -> db -> m db
+  push blk !db = do
     !db' <- initReapplyBlock cfg blk db
 
-    let !replayed' = replayed + 1
-
-        events =
+    let events =
           inspectLedger
             (getExtLedgerCfg (ledgerDbCfg cfg))
             (currentTip db)
             (currentTip db')
 
     traceWith tracer (ReplayedBlock (blockRealPoint blk) events)
-    return (db', replayed')
+    return db'
 
 {-------------------------------------------------------------------------------
   Trace replay events
@@ -802,67 +771,6 @@ data TraceReplayProgressEvent blk
   deriving (Generic, Eq, Show)
 
 {-------------------------------------------------------------------------------
-  Updating ledger tables
--------------------------------------------------------------------------------}
-
--- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
--- update ledger tables to the latest era. For unary blocks this is a no-op, but
--- for the Cardano block, we will need to upgrade all TxOuts in memory.
---
--- No correctness property relies on this, as Consensus can work with TxOuts
--- from multiple eras, but the performance depends on it as otherwise we will be
--- upgrading the TxOuts every time we consult them.
-class CanUpgradeLedgerTables l where
-  upgradeTables ::
-    -- | The original ledger state before the upgrade. This will be the
-    -- tip before applying the block.
-    l mk1 ->
-    -- | The ledger state after the upgrade, which might be in a
-    -- different era than the one above.
-    l mk2 ->
-    -- | The tables we want to maybe upgrade.
-    LedgerTables l ValuesMK ->
-    LedgerTables l ValuesMK
-
-instance
-  CanUpgradeLedgerTables (LedgerState blk) =>
-  CanUpgradeLedgerTables (ExtLedgerState blk)
-  where
-  upgradeTables (ExtLedgerState st0 _) (ExtLedgerState st1 _) =
-    castLedgerTables . upgradeTables st0 st1 . castLedgerTables
-
-instance
-  LedgerTablesAreTrivial l =>
-  CanUpgradeLedgerTables (TrivialLedgerTables l)
-  where
-  upgradeTables _ _ (LedgerTables (ValuesMK mk)) =
-    LedgerTables (ValuesMK (Map.map absurd mk))
-
-{-------------------------------------------------------------------------------
-  LedgerDB constraints
--------------------------------------------------------------------------------}
-
-type LedgerSupportsInMemoryLedgerDB l =
-  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
-
-type LedgerSupportsLMDBLedgerDB l =
-  (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
-
-type LedgerSupportsV1LedgerDB l =
-  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
-
-type LedgerSupportsV2LedgerDB l =
-  (LedgerSupportsInMemoryLedgerDB l, MemPack (TxIn l))
-
-type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
-
-type LedgerSupportsLedgerDB' l blk =
-  ( LedgerSupportsV1LedgerDB l
-  , LedgerSupportsV2LedgerDB l
-  , LedgerDbSerialiseConstraints blk
-  )
-
-{-------------------------------------------------------------------------------
   Pruning
 -------------------------------------------------------------------------------}
 
@@ -880,21 +788,21 @@ data LedgerDbPrune
 -------------------------------------------------------------------------------}
 
 -- | A backend that supports streaming the ledger tables
-class StreamingBackend m backend l where
-  data YieldArgs m backend l
+class StreamingBackend m backend l blk where
+  data YieldArgs m backend l blk
 
-  data SinkArgs m backend l
+  data SinkArgs m backend l blk
 
-  yield :: Proxy backend -> YieldArgs m backend l -> Yield m l
-  releaseYieldArgs :: YieldArgs m backend l -> m ()
+  yield :: Proxy backend -> YieldArgs m backend l blk -> Yield m l blk
+  releaseYieldArgs :: YieldArgs m backend l blk -> m ()
 
-  sink :: Proxy backend -> SinkArgs m backend l -> Sink m l
-  releaseSinkArgs :: SinkArgs m backend l -> m ()
+  sink :: Proxy backend -> SinkArgs m backend l blk -> Sink m l blk
+  releaseSinkArgs :: SinkArgs m backend l blk -> m ()
 
-type Yield m l =
-  l EmptyMK ->
+type Yield m l blk =
+  l blk EmptyMK ->
   ( ( Stream
-        (Of (TxIn l, TxOut l))
+        (Of (TxIn blk, TxOut blk))
         (ExceptT DeserialiseFailure m)
         (Stream (Of ByteString) m (Maybe CRC)) ->
       ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
@@ -902,15 +810,15 @@ type Yield m l =
   ) ->
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
-type Sink m l =
-  l EmptyMK ->
+type Sink m l blk =
+  l blk EmptyMK ->
   Stream
-    (Of (TxIn l, TxOut l))
+    (Of (TxIn blk, TxOut blk))
     (ExceptT DeserialiseFailure m)
     (Stream (Of ByteString) m (Maybe CRC)) ->
   ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
 
-data Decoders l
+data Decoders blk
   = Decoders
-      (forall s. Decoder s (TxIn l))
-      (forall s. Decoder s (TxOut l))
+      (forall s. Decoder s (TxIn blk))
+      (forall s. Decoder s (TxOut blk))

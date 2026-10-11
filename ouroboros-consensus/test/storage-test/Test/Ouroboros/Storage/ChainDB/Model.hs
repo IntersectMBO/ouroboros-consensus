@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -10,6 +9,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Model implementation of the chain DB
@@ -26,6 +26,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , addBlockPromise
   , addBlocks
   , addPerasCert
+  , addPerasVote
   , empty
 
     -- * Queries
@@ -46,7 +47,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , invalid
   , isOpen
   , isValid
-  , maxPerasRoundNo
+  , roundNoOfLatestCertSeen
   , tipBlock
   , tipPoint
   , volatileChain
@@ -80,12 +81,14 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , initLedger
   , reopen
   , updateLoE
+  , perasCertModel
+  , perasVoteModel
   , validChains
   , volatileDbBlocks
   , wipeVolatileDB
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (strictMaybeToMaybe, unNonZero)
 import Codec.Serialise (Serialise, serialise)
 import Control.Monad (unless)
 import Control.Monad.Except (runExcept)
@@ -104,14 +107,18 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff
 import GHC.Generics (Generic)
+import Generics.SOP (All, Top)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.Peras (PerasState (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -119,6 +126,7 @@ import Ouroboros.Consensus.Protocol.MockChainSel
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
+  , AddPerasCertChainSelOutcome (..)
   , BlockComponent (..)
   , ChainDbError (..)
   , IteratorResult (..)
@@ -130,6 +138,8 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
+import Ouroboros.Consensus.Storage.PerasCertDB.API (forgetBoostedBlockStatus)
+import Ouroboros.Consensus.Storage.PerasVoteDB.API (AddPerasVoteResult (..))
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -141,6 +151,8 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 import Ouroboros.Network.Mock.ProducerState (ChainProducerState)
 import qualified Ouroboros.Network.Mock.ProducerState as CPS
 import Test.Cardano.Slotting.TreeDiff ()
+import qualified Test.Ouroboros.Storage.PerasCertDB.Model as PerasCertDBModel
+import qualified Test.Ouroboros.Storage.PerasVoteDB.Model as PerasVoteDBModel
 import Test.Util.Orphans.ToExpr ()
 
 type IteratorId = Int
@@ -151,7 +163,8 @@ data Model blk = Model
   -- ^ The VolatileDB
   , immutableDbChain :: Chain blk
   -- ^ The ImmutableDB
-  , perasCerts :: Map PerasRoundNo (WithArrivalTime (ValidatedPerasCert blk))
+  , perasCertModel :: PerasCertDBModel.Model blk
+  , perasVoteModel :: PerasVoteDBModel.Model blk
   , cps :: CPS.ChainProducerState blk
   , currentLedger :: ExtLedgerState blk EmptyMK
   , initLedger :: ExtLedgerState blk EmptyMK
@@ -177,10 +190,19 @@ deriving instance
   , ToExpr (Chain blk)
   , ToExpr (ChainProducerState blk)
   , ToExpr (ExtLedgerState blk EmptyMK)
+  , Show (PerasCert blk)
+  , Show (PerasVote blk)
+  , StandardHash blk
+  , Show blk
   ) =>
   ToExpr (Model blk)
 
-deriving instance (LedgerSupportsProtocol blk, Show blk) => Show (Model blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , Show blk
+  ) =>
+  Show (Model blk)
 
 {-------------------------------------------------------------------------------
   Queries
@@ -223,11 +245,14 @@ getBlockComponentByPoint blockComponent pt m =
     (`getBlockComponent` blockComponent) <$> getBlockByPoint pt m
 
 getLatestPerasCertOnChainRound ::
-  LedgerSupportsPeras blk =>
   Model blk ->
   Maybe PerasRoundNo
 getLatestPerasCertOnChainRound m = do
-  getLatestPerasCertRound (ledgerState (currentLedger m))
+  strictMaybeToMaybe
+    . latestPerasCertOnChainRound
+    . perasState
+    . currentLedger
+    $ m
 
 hasBlockByPoint ::
   HasHeader blk =>
@@ -252,7 +277,11 @@ getMaxSlotNo = foldMap (MaxSlotNo . blockSlot) . blocks
 -- * After VolatileDB corruption, the whole chain might have more than weight
 --   @k@, but the tip of the ImmutableDB might be buried under significantly
 --   less than weight @k@ worth of blocks.
-maxActualRollback :: HasHeader blk => SecurityParam -> Model blk -> PerasWeight
+maxActualRollback ::
+  ( HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  SecurityParam -> Model blk -> PerasWeight
 maxActualRollback k m =
   foldMap' (weightBoostOfPoint weights)
     . takeWhile (/= immutableTipPoint)
@@ -280,7 +309,9 @@ maxActualRollback k m =
 -- ImmutableDB to know the most recent \"immutable\" block.
 immutableChain ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam ->
   Model blk ->
   Chain blk
@@ -320,7 +351,10 @@ immutableChain k m =
 -- 2. The suffix of the current chain not part of the 'immutableDbChain', i.e.,
 --    the \"ImmutableDB\".
 volatileChain ::
-  (HasHeader a, HasHeader blk) =>
+  ( HasHeader a
+  , HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam ->
   -- | Provided since 'AnchoredFragment' is not a functor
   (blk -> a) ->
@@ -345,7 +379,9 @@ volatileChain k f m =
 -- because the background thread copying blocks to the ImmutableDB might not
 -- have caught up.
 immutableBlockNo ::
-  HasHeader blk =>
+  ( HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam -> Model blk -> WithOrigin BlockNo
 immutableBlockNo k = Chain.headBlockNo . immutableChain k
 
@@ -355,7 +391,9 @@ immutableBlockNo k = Chain.headBlockNo . immutableChain k
 -- This is used for garbage collection of the VolatileDB, which is done in
 -- terms of slot numbers, not in terms of block numbers.
 immutableSlotNo ::
-  HasHeader blk =>
+  ( HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam ->
   Model blk ->
   WithOrigin SlotNo
@@ -388,15 +426,20 @@ isValid = flip getIsValid
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
 
-perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
+perasWeights ::
+  ( StandardHash blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  Model blk -> PerasWeightSnapshot blk
 perasWeights =
-  mkPerasWeightSnapshot
-    . fmap (\cert -> (getPerasCertBoostedBlock cert, getPerasCertBoost cert))
-    . Map.elems
-    . perasCerts
+  PerasCertDBModel.getWeightSnapshot . perasCertModel
 
-maxPerasRoundNo :: Model blk -> Maybe PerasRoundNo
-maxPerasRoundNo m = fst <$> Map.lookupMax (perasCerts m)
+roundNoOfLatestCertSeen ::
+  IsPerasCert (PerasCert blk) blk =>
+  Model blk -> Maybe PerasRoundNo
+roundNoOfLatestCertSeen m =
+  getPerasCertRound . forgetBoostedBlockStatus
+    <$> PerasCertDBModel.getLatestCertSeen (perasCertModel m)
 
 {-------------------------------------------------------------------------------
   Construction
@@ -411,7 +454,8 @@ empty loe initLedger =
   Model
     { volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
-    , perasCerts = Map.empty
+    , perasCertModel = PerasCertDBModel.openDB PerasCertDBModel.initModel
+    , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel defaultPerasParams)
     , cps = CPS.initChainProducerState Chain.Genesis
     , currentLedger = initLedger
     , initLedger = initLedger
@@ -424,7 +468,12 @@ empty loe initLedger =
 
 addBlock ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , StateSupportsPerasEpochContext blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  ) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -453,25 +502,58 @@ addBlock cfg blk m
 
 addPerasCert ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , Ord (PerasCert blk)
+  ) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Model blk ->
-  Model blk
+  (AddPerasCertChainSelOutcome, Model blk)
 addPerasCert cfg cert m
-  -- Do not alter the model when a certificate for that round already exists.
-  | Map.member certRound (perasCerts m) = m
+  | pointSlot (getPerasCertPoint cert) < Chain.headSlot (immutableChain secParam m) =
+      (PerasCertIgnoredTooOld, m)
   | otherwise =
-      chainSelection
-        cfg
-        m{perasCerts = Map.insert certRound cert (perasCerts m)}
+      let (certRes, perasCertModel') = PerasCertDBModel.addCert (perasCertModel m) cert
+       in (PerasCertProcessed certRes, chainSelection cfg m{perasCertModel = perasCertModel'})
  where
-  certRound = getPerasCertRound cert
+  secParam = configSecurityParam cfg
+
+addPerasVote ::
+  forall blk.
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , Ord (PerasVote blk)
+  , Ord (PerasCert blk)
+  , PerasCert blk ~ MockPerasCert blk
+  ) =>
+  TopLevelConfig blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  Model blk ->
+  ((AddPerasVoteResult blk, Maybe AddPerasCertChainSelOutcome), Model blk)
+addPerasVote cfg vote m =
+  case PerasVoteDBModel.addVote vote (perasVoteModel m) of
+    (Right voteRes@(AddedPerasVoteAndGeneratedNewCert freshCert), perasVoteModel') ->
+      let creationTime = getArrivalTime vote
+          certWithArrival = WithArrivalTime creationTime freshCert
+          (certRes, m') = addPerasCert cfg certWithArrival m{perasVoteModel = perasVoteModel'}
+       in ((voteRes, Just certRes), m')
+    (Right voteRes, perasVoteModel') -> ((voteRes, Nothing), m{perasVoteModel = perasVoteModel'})
+    (Left e, _) -> error $ "Unexpected error when adding a vote to the model: " <> show e
 
 chainSelection ::
   forall blk.
-  ( LedgerTablesAreTrivial (ExtLedgerState blk)
+  ( All Top (HardForkIndices blk)
+  , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -480,7 +562,8 @@ chainSelection cfg m =
   Model
     { volatileDbBlocks = volatileDbBlocks m
     , immutableDbChain = immutableDbChain m
-    , perasCerts = perasCerts m
+    , perasCertModel = perasCertModel m
+    , perasVoteModel = perasVoteModel m
     , cps = CPS.switchFork newChain (cps m)
     , currentLedger = newLedger
     , initLedger = initLedger m
@@ -598,7 +681,12 @@ chainSelection cfg m =
         consideredCandidates
 
 addBlocks ::
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   [blk] ->
   Model blk ->
@@ -608,7 +696,13 @@ addBlocks cfg = repeatedly (addBlock cfg)
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
 addBlockPromise ::
   forall m blk.
-  (LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , MonadSTM m
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -629,8 +723,11 @@ addBlockPromise cfg blk m = (result, m')
 -- point.
 updateLoE ::
   forall blk.
-  ( LedgerTablesAreTrivial (ExtLedgerState blk)
+  ( All Top (HardForkIndices blk)
+  , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   AnchoredFragment blk ->
@@ -645,7 +742,9 @@ updateLoE cfg f m = (tipPoint m', m')
 -------------------------------------------------------------------------------}
 
 stream ::
-  GetPrevHash blk =>
+  ( GetPrevHash blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam ->
   StreamFrom blk ->
   StreamTo blk ->
@@ -830,7 +929,12 @@ data ValidatedChain blk
 -- 'invalid' of the given 'Model'.
 validate ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   Chain blk ->
@@ -891,7 +995,12 @@ chains bs = go Chain.Genesis
 
 validChains ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   Map (HeaderHash blk) blk ->
@@ -947,7 +1056,9 @@ successors = Map.unionsWith Map.union . map single
 
 between ::
   forall blk.
-  GetPrevHash blk =>
+  ( GetPrevHash blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam ->
   StreamFrom blk ->
   StreamTo blk ->
@@ -1049,7 +1160,9 @@ between k from to m = do
 -- tip).
 garbageCollectable ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam -> Model blk -> blk -> Bool
 garbageCollectable secParam m b =
   -- Note: we don't use the block number but the slot number, as the
@@ -1065,7 +1178,9 @@ garbageCollectable secParam m b =
 -- case from a block that was never added to the model in the first place.
 garbageCollectablePoint ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam -> Model blk -> RealPoint blk -> Bool
 garbageCollectablePoint secParam m pt
   | Just blk <- getBlock (realPointHash pt) m =
@@ -1078,7 +1193,9 @@ garbageCollectablePoint secParam m pt
 -- garbage collected it.
 garbageCollectableIteratorNext ::
   forall blk.
-  ModelSupportsBlock blk =>
+  ( ModelSupportsBlock blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam -> Model blk -> IteratorId -> Bool
 garbageCollectableIteratorNext secParam m itId =
   case fst (iteratorNext itId GetBlock m) of
@@ -1096,15 +1213,23 @@ garbageCollectableIteratorNext secParam m itId =
 -- used in isolation and is not exported.
 garbageCollect ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam -> Model blk -> Model blk
 garbageCollect secParam m@Model{..} =
   m
     { volatileDbBlocks = Map.filter (not . collectable) volatileDbBlocks
-    -- TODO garbage collection Peras certs?
-    -- See https://github.com/tweag/cardano-peras/issues/121
+    , perasCertModel = case gcSlot of
+        Origin -> perasCertModel
+        NotOrigin slotNo -> PerasCertDBModel.garbageCollect slotNo perasCertModel
+    , perasVoteModel = case gcSlot of
+        Origin -> perasVoteModel
+        NotOrigin slotNo -> PerasVoteDBModel.garbageCollect slotNo perasVoteModel
     }
  where
+  gcSlot = immutableSlotNo secParam m
+
   -- TODO what about iterators that will stream garbage collected blocks?
 
   collectable :: blk -> Bool
@@ -1122,7 +1247,9 @@ data ShouldGarbageCollect = GarbageCollect | DoNotGarbageCollect
 -- Idempotent.
 copyToImmutableDB ::
   forall blk.
-  HasHeader blk =>
+  ( HasHeader blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SecurityParam -> ShouldGarbageCollect -> Model blk -> Model blk
 copyToImmutableDB secParam shouldCollectGarbage m =
   garbageCollectIf shouldCollectGarbage $
@@ -1146,7 +1273,12 @@ reopen m = m{isOpen = True}
 -- see https://github.com/tweag/cardano-peras/issues/122
 wipeVolatileDB ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   (Point blk, Model blk)
@@ -1156,7 +1288,8 @@ wipeVolatileDB cfg m =
   m' =
     (closeDB m)
       { volatileDbBlocks = Map.empty
-      , perasCerts = Map.empty
+      , perasCertModel = PerasCertDBModel.openDB PerasCertDBModel.initModel
+      , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel defaultPerasParams)
       , cps = CPS.switchFork newChain (cps m)
       , currentLedger = newLedger
       , invalid = Map.empty

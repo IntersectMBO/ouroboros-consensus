@@ -1,7 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ParallelListComp #-}
@@ -55,9 +52,9 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
-import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..))
+import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..), MempoolMeasure (..))
 import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
-import Ouroboros.Consensus.Mempool.TxSeq as TxSeq
+import Ouroboros.Consensus.Mempool.TxSeq as TxSeq hiding (take)
 import Ouroboros.Consensus.Mock.Ledger hiding (TxId)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
@@ -87,8 +84,11 @@ tests =
             "snapshotTxs == snapshotTxsAfter zeroTicketNo"
             prop_Mempool_snapshotTxs_snapshotTxsAfter
         , testProperty
-            "snapshotPartition: zero eb capacity takes nothing"
+            "snapshotPartition: zero endorser-block capacity takes nothing"
             prop_Mempool_snapshotPartition_zeroEbCapacity
+        , testProperty
+            "snapshotPartition: block part is the greatest prefix within capacity"
+            prop_Mempool_snapshotPartition_blockPrefix
         , testProperty "valid added txs == getTxs" prop_Mempool_addTxs_getTxs
         , testProperty "addTxs [..] == forM [..] addTxs" prop_Mempool_semigroup_addTxs
         , testProperty "result of addTxs" prop_Mempool_addTxs_result
@@ -118,21 +118,46 @@ prop_Mempool_snapshotTxs_snapshotTxsAfter setup =
     MempoolSnapshot{snapshotTxs, snapshotTxsAfter} <- atomically getSnapshot
     return $ snapshotTxs === snapshotTxsAfter zeroTicketNo
 
--- | A zero endorser-block capacity must take no transactions
--- ('ebCapacityTxMeasure'), and blocks without endorser blocks (like
--- 'SimpleBlock') have a zero capacity. A zero block limit puts the whole
--- mempool in front of the endorser-block split, so this fails if that split
--- takes everything instead of nothing — which would make the forge, on an
--- invalid forged block, drop the entire mempool.
+-- | A zero endorser-block capacity takes no transactions. A zero block limit
+-- leaves the whole mempool for the endorser-block split, so this fails if that
+-- split takes everything instead of nothing.
 prop_Mempool_snapshotPartition_zeroEbCapacity :: TestSetupWithTxs -> Property
 prop_Mempool_snapshotPartition_zeroEbCapacity setup =
   withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
     _ <- addTxs mempool (allTxs setup)
     MempoolSnapshot{snapshotPartition} <- atomically $ getSnapshot mempool
-    let (_rbTxs, _rbSize, ebTxs, _ebSize) = snapshotPartition Measure.zero Measure.zero
+    let (_blockTxs, _blockSize, ebTxs, _ebSize) = snapshotPartition Measure.zero Measure.zero
     return $
-      counterexample ("endorser-block slice not empty: " <> condense (map txForgetValidated ebTxs)) $
+      counterexample ("endorser-block part not empty: " <> condense (map txForgetValidated ebTxs)) $
         null ebTxs
+
+-- | With a zero endorser-block capacity, the block part of 'snapshotPartition'
+-- is the greatest prefix of 'snapshotTxs' whose summed measure fits the block
+-- capacity, and its size is that sum. This is what the forge selects.
+prop_Mempool_snapshotPartition_blockPrefix :: TestSetupWithTxs -> Property
+prop_Mempool_snapshotPartition_blockPrefix setup =
+  forAll (choose (0, 120 :: Word32)) $ \percent ->
+    withTestMempool (testSetup setup) $ \TestMempool{mempool} -> do
+      _ <- addTxs mempool (allTxs setup)
+      MempoolSnapshot{snapshotTxs, snapshotPartition} <- atomically $ getSnapshot mempool
+      let measures = [m | (_, _, m) <- snapshotTxs]
+          TxMeasure (IgnoringOverflow (ByteSize32 totalBytes)) _ = List.foldl' Measure.plus Measure.zero measures
+          capacity =
+            TxMeasure
+              ( IgnoringOverflow
+                  (ByteSize32 (fromIntegral (fromIntegral totalBytes * fromIntegral percent `div` (100 :: Word64))))
+              )
+              TrivialTxMeasurePhase2
+          prefixLength =
+            length $ takeWhile (Measure.<= capacity) $ drop 1 $ scanl Measure.plus Measure.zero measures
+          expectedTxs = map (txForgetValidated . prjTx) (take prefixLength snapshotTxs)
+          expectedSize = List.foldl' Measure.plus Measure.zero (take prefixLength measures)
+          (blockTxs, blockSize, ebTxs, _ebSize) = snapshotPartition capacity Measure.zero
+      return $
+        counterexample ("capacity: " <> show capacity) $
+          map txForgetValidated blockTxs === expectedTxs
+            .&&. mmTxMeasure blockSize === expectedSize
+            .&&. null ebTxs
 
 -- | Test that all valid transactions added to a 'Mempool' can be retrieved
 -- afterward.
@@ -257,7 +282,8 @@ prop_Mempool_semigroup_removeTxs (TestSetupWithTxsInMempoolToRemove testSetup tx
 prop_Mempool_getCapacity :: MempoolCapTestSetup -> Property
 prop_Mempool_getCapacity mcts =
   withTestMempool testSetup $ \TestMempool{mempool} -> do
-    IgnoringOverflow actualCapacity <- atomically $ getCapacity mempool
+    TxMeasure (IgnoringOverflow actualCapacity) TrivialTxMeasurePhase2 <-
+      atomically $ getCapacity mempool
     pure $ actualCapacity === expectedCapacity
  where
   MempoolCapacityBytesOverride testCapacity = testMempoolCapOverride testSetup
@@ -340,7 +366,7 @@ prop_Mempool_TraceRemovedTxs setup =
   cfg = testLedgerCfg setup
 
   isRemoveTxsEvent :: TraceEventMempool TestBlock -> Maybe [(TestTx, TestTxError)]
-  isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just (map (first txForgetValidated) txs)
+  isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just txs
   isRemoveTxsEvent _ = Nothing
 
   expectedToBeRemoved :: LedgerState TestBlock ValuesMK -> [TestTx] -> [(TestTx, TestTxError)]
@@ -567,10 +593,11 @@ instance Arbitrary TestSetupWithTxs where
             }
     let mempoolCap :: TheMeasure
         mempoolCap =
-          computeMempoolCapacity
-            testLedgerConfigNoSizeLimits
-            (TickedSimpleLedgerState ledger)
-            (testMempoolCapOverride testSetup')
+          tmPhase1 $
+            computeMempoolCapacity
+              testLedgerConfigNoSizeLimits
+              (TickedSimpleLedgerState ledger)
+              (testMempoolCapOverride testSetup')
 
     largeInvalidTx <- genLargeInvalidTx mempoolCap
     let txs' = (largeInvalidTx, False) : txs
@@ -766,7 +793,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
                           ReadOnlyForker
                             { roforkerClose = pure ()
                             , roforkerReadTables =
-                                pure . (projectLedgerTables st `restrictValues'`)
+                                pure . ltliftA2 restrictValuesMK (projectLedgerTables st)
                             , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
                             , roforkerGetLedgerState = pure $ forgetLedgerTables st
                             , roforkerReadStatistics = pure $ Statistics 0

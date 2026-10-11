@@ -12,6 +12,6 @@ import Test.Util.SupportedNetworkProtocolVersion
 
 tests :: TestTree
 tests =
-  testCase "Cardano exhaustive network protocol versions" $
-    exhaustiveSupportedNetworkProtocolVersions
+  testCase "Cardano contiguous network protocol versions" $
+    contiguousSupportedNetworkProtocolVersions
       (Proxy @(CardanoBlock StandardCrypto))

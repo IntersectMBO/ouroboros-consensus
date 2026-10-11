@@ -9,7 +9,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( AlonzoMeasure (..)
-  , ConwayMeasure (..)
   , fromExUnits
   )
 import Test.Cardano.Ledger.Alonzo.Binary.Twiddle ()
@@ -24,18 +23,14 @@ tests =
     ]
 
 -- | 'Measure.<=' and @'pointWiseExUnits' (<=)@ must agree
-leqCoherence :: Word32 -> Word32 -> ExUnits -> ExUnits -> Property
-leqCoherence w1 w2 eu1 eu2 =
+leqCoherence :: Word32 -> ExUnits -> ExUnits -> Property
+leqCoherence w1 eu1 eu2 =
   actual === expected
  where
-  -- ConwayMeasure is the fullest TxMeasure and mainnet's
   inj eu =
-    ConwayMeasure
-      ( AlonzoMeasure
-          (IgnoringOverflow $ ByteSize32 w1)
-          (fromExUnits eu)
-      )
-      (IgnoringOverflow $ ByteSize32 w2)
+    AlonzoMeasure
+      (IgnoringOverflow $ ByteSize32 w1)
+      (fromExUnits eu)
 
   actual = inj eu1 Measure.<= inj eu2
   expected = pointWiseExUnits (<=) eu1 eu2

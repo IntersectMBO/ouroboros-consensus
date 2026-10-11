@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
@@ -35,6 +36,7 @@ import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad.Trans.Except (except)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import Data.MemPack
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -44,9 +46,10 @@ import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
+import Ouroboros.Consensus.Block.SupportsPeras (pattern PerasEnabled)
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
+import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
@@ -122,6 +125,7 @@ sampleLedgerConfig =
     HardFork.defaultEraParams
       (Consensus.SecurityParam $ knownNonZeroBounded @10)
       (Time.slotLengthFromSec 2)
+      (PerasEnabled ())
 
 {-------------------------------------------------------------------------------
   Payload semantics
@@ -195,10 +199,10 @@ data instance Block.StorageConfig TestBlock = TestBlockStorageConfig
   Ledger tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState TestBlock) = Token
-type instance TxOut (LedgerState TestBlock) = ()
+type instance TxIn TestBlock = Token
+type instance TxOut TestBlock = ()
 
-instance HasLedgerTables (LedgerState TestBlock) where
+instance HasLedgerTables LedgerState TestBlock where
   projectLedgerTables st =
     LedgerTables $ getTestPLDS $ payloadDependentState st
   withLedgerTables st table =
@@ -211,19 +215,18 @@ instance HasLedgerTables (LedgerState TestBlock) where
    where
     TestLedger{payloadDependentState = plds} = st
 
-instance HasLedgerTables (Ticked (LedgerState TestBlock)) where
+instance HasLedgerTables (Ticked LedgerState) TestBlock where
   projectLedgerTables (TickedTestLedger st) =
-    Ledger.castLedgerTables $
-      Ledger.projectLedgerTables st
+    Ledger.projectLedgerTables st
   withLedgerTables (TickedTestLedger st) tables =
-    TickedTestLedger $ Ledger.withLedgerTables st $ Ledger.castLedgerTables tables
+    TickedTestLedger $ Ledger.withLedgerTables st tables
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables = error "Mempool bench TestBlock unused: stowLedgerTables"
   unstowLedgerTables = error "Mempool bench TestBlock unused: unstowLedgerTables"
 
-instance IndexedMemPack (LedgerState TestBlock EmptyMK) () where
-  indexedTypeName _ = typeName @()
+instance IndexedMemPack LedgerState TestBlock () where
+  indexedTypeName _ _ = typeName @()
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
@@ -314,16 +317,25 @@ instance Ledger.LedgerSupportsMempool TestBlock where
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
 
 instance Ledger.TxLimits TestBlock where
-  type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+  type TxMeasurePhase1 TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+  type TxMeasurePhase2 TestBlock = Ledger.TrivialTxMeasurePhase2
 
   txWireSize = fromIntegral . Ledger.unByteSize32 . txSize
 
   -- We tweaked this in such a way that we test the case in which we exceed the
   -- maximum mempool capacity. The value used here depends on 'txInBlockSize'.
   blockCapacityTxMeasure _cfg _st =
-    Ledger.IgnoringOverflow $ Ledger.ByteSize32 20
+    Ledger.TxMeasure (Ledger.IgnoringOverflow $ Ledger.ByteSize32 20) Ledger.TrivialTxMeasurePhase2
 
-  txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize
+  txMeasurePhase1 _cfg _st = pure . Ledger.IgnoringOverflow . txSize
+  txMeasurePhase2 _cfg _st _tx = pure Ledger.TrivialTxMeasurePhase2
+
+  type TxEbMeasure TestBlock = Ledger.TxMeasure TestBlock
+
+  txEbMeasure _ = id
+
+  ebCapacityTxMeasure _cfg _st = Measure.zero
+  mempoolEbReservation _ = id
 
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
   deriving stock Generic

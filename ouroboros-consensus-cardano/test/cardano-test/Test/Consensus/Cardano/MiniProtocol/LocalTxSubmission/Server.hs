@@ -11,8 +11,7 @@ module Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server (tests) wher
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Control.Monad (void)
-import Control.Tracer (Tracer, nullTracer, stdoutTracer)
-import Data.Functor.Contravariant ((>$<))
+import Control.Tracer (Tracer, nullTracer, stdoutTracer, (>$<))
 import Data.SOP.Strict (index_NS)
 import qualified Data.SOP.Telescope as Telescope
 import Network.TypedProtocol.Proofs (connect)
@@ -75,6 +74,7 @@ tests =
           (ShelleySlotLengthInSeconds 1)
           protocolVersionZero
           (hardForkInto era)
+
       let
         eraIndex =
           index_NS

@@ -1,15 +1,13 @@
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -68,7 +66,7 @@ import GHC.Generics (Generic)
 import Language.Haskell.TH (runIO)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (AnnTip)
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
   ( decodeDiskExtLedgerState
   , encodeDiskExtLedgerState
@@ -102,6 +100,7 @@ import Test.QuickCheck.Monadic
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
+import qualified Test.Util.QuickCheck as QC
 import Test.Util.Serialisation.CDDL
 import Test.Util.Serialisation.Examples (Examples (..), Labelled)
 import Test.Util.Serialisation.SomeResult (SomeResult (..))
@@ -175,7 +174,7 @@ roundtripAnd check enc dec checkCddlValid a =
         case mkA' bs of
           Left err -> Left (showByteString bsRem err)
           Right a' ->
-            a == a' ?! pShowNeq a a
+            a == a' ?! pShowNeq a a'
       cddlValid =
         monadicIO $
           run (checkCddlValid $ Lazy.toStrict bs) >>= \case
@@ -416,8 +415,6 @@ instance
       -- This case statement will cause a warning when we add a new top
       -- level query and hence a new QueryVersion. In that case we should
       -- support such top level `Query` constructors in this Arbitrary instance.
-      Query.QueryVersion1 -> genTopLevelQuery1
-      Query.QueryVersion2 -> genTopLevelQuery2
       Query.QueryVersion3 -> genTopLevelQuery3
    where
     mkEntry ::
@@ -428,22 +425,6 @@ instance
     mkEntry qv q = do
       blockV <- arbitrary
       return (WithVersion (qv, blockV) (SomeSecond q))
-
-    genTopLevelQuery1 =
-      let version = Query.QueryVersion1
-       in frequency
-            [ (15, arbitraryBlockQuery version)
-            , (1, mkEntry version GetSystemStart)
-            ]
-
-    genTopLevelQuery2 =
-      let version = Query.QueryVersion2
-       in frequency
-            [ (15, arbitraryBlockQuery version)
-            , (1, mkEntry version GetSystemStart)
-            , (1, mkEntry version GetChainBlockNo)
-            , (1, mkEntry version GetChainPoint)
-            ]
 
     genTopLevelQuery3 =
       let version = Query.QueryVersion3
@@ -661,10 +642,9 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
   , -- Note: Ideally we'd just use 'rt' to test Ledger config, but that would
     -- require an 'Eq' and 'Show' instance for all ledger config types which
     -- we'd like to avoid (as the EpochInfo is a record of functions).
-    adjustQuickCheckTests (const 20) $
-      testProperty "roundtrip (comparing encoding) LedgerConfig" $
-        \(Blind (WithVersion version a)) ->
-          roundtripComparingEncoding @(LedgerConfig blk) (enc version) (dec version) a
+    testProperty "roundtrip (comparing encoding) LedgerConfig" $
+      QC.withNumTests 20 $ \(Blind (WithVersion version a)) ->
+        roundtripComparingEncoding @(LedgerConfig blk) (enc version) (dec version) a
   , rtWith
       @(SomeSecond Query blk)
       @(QueryVersion, BlockNodeToClientVersion blk)
@@ -815,7 +795,7 @@ roundtrip_ConvertRawHash ::
   (StandardHash blk, ConvertRawHash blk) =>
   Proxy blk -> HeaderHash blk -> Property
 roundtrip_ConvertRawHash p h =
-  h === fromShortRawHash p (toShortRawHash p h)
+  Just h === fromShortRawHash p (toShortRawHash p h)
 
 prop_hashSize ::
   ConvertRawHash blk =>
@@ -907,7 +887,13 @@ $( do
  )
 examplesRoundtrip ::
   forall blk.
-  (SerialiseDiskConstraints blk, Eq blk, Show blk, LedgerSupportsProtocol blk) =>
+  ( SerialiseDiskConstraints blk
+  , LedgerSupportsProtocol blk
+  , Eq blk
+  , Show blk
+  , Eq (PerasVotingCommittee blk)
+  , Show (PerasVotingCommittee blk)
+  ) =>
   CodecConfig blk ->
   Examples blk ->
   [TestTree]

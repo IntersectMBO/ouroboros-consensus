@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -19,7 +18,7 @@ import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -33,25 +32,31 @@ protocolInfoMockPBFT ::
   HardFork.EraParams ->
   ProtocolInfo MockPBftBlock
 protocolInfoMockPBFT params eraParams =
-  ProtocolInfo
-    { pInfoConfig =
-        TopLevelConfig
-          { topLevelConfigProtocol =
-              PBftConfig
-                { pbftParams = params
-                }
-          , topLevelConfigLedger = SimpleLedgerConfig ledgerView eraParams defaultMockConfig
-          , topLevelConfigBlock = SimpleBlockConfig
-          , topLevelConfigCodec = SimpleCodecConfig
-          , topLevelConfigStorage = SimpleStorageConfig (pbftSecurityParam params)
-          , topLevelConfigCheckpoints = emptyCheckpointsMap
-          , topLevelConfigVotingKeys = []
-          }
-    , pInfoInitLedger =
-        ExtLedgerState
-          (genesisSimpleLedgerState addrDist)
-          (genesisHeaderState S.empty)
-    }
+  let ledgerConfig = SimpleLedgerConfig ledgerView eraParams defaultMockConfig
+   in ProtocolInfo
+        { pInfoConfig =
+            TopLevelConfig
+              { topLevelConfigProtocol =
+                  PBftConfig
+                    { pbftParams = params
+                    }
+              , topLevelConfigLedger = ledgerConfig
+              , topLevelConfigBlock = SimpleBlockConfig
+              , topLevelConfigCodec = SimpleCodecConfig
+              , topLevelConfigStorage = SimpleStorageConfig (pbftSecurityParam params)
+              , topLevelConfigCheckpoints = emptyCheckpointsMap
+              , topLevelConfigVotingKeys = []
+              }
+        , pInfoInitLedger =
+            let ledgerState = genesisSimpleLedgerState addrDist
+                headerState = genesisHeaderState S.empty
+                perasState = initPerasState ledgerConfig ledgerState headerState
+             in ExtLedgerState
+                  { ledgerState
+                  , headerState
+                  , perasState
+                  }
+        }
  where
   ledgerView :: PBftLedgerView PBftMockCrypto
   ledgerView =
@@ -110,16 +115,6 @@ pbftBlockForging canBeLeader =
             canBeLeader
             slot
             tickedPBftState
-    , forgeBlock = \ForgeBlockArgs{..} ->
-        return $
-          flip (,) Nothing $
-            forgeSimple
-              forgePBftExt
-              fbConfig
-              fbCurrentBlockNo
-              fbCurrentSlotNo
-              fbCurrentTickedLedgerState
-              (map txForgetValidated fbRbTxs)
-              fbIsLeader
+    , forgeBlock = \_leiosArgs fbArgs -> return (forgeSimple forgePBftExt fbArgs, Nothing)
     , finalize = pure ()
     }

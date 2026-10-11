@@ -63,10 +63,6 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import qualified Data.Text as Text
 import Data.Void (Void)
-import LeiosDemoDb
-  ( LeiosDbHandle (..)
-  )
-import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
@@ -132,6 +128,10 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (getLeiosMaxEbTxsSizeFromView)
+import Ouroboros.Consensus.Storage.LeiosDB
+  ( LeiosDbHandle (..)
+  )
+import qualified Ouroboros.Consensus.Storage.LeiosDB as LeiosDb
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -365,6 +365,7 @@ initNodeKernel
     let IS
           { blockFetchInterface
           , fetchClientRegistry
+          , keepAliveRegistry
           , mempool
           , peerSharingRegistry
           , varChainSyncHandles
@@ -378,7 +379,6 @@ initNodeKernel
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
-    keepAliveRegistry <- newKeepAliveRegistry
 
     do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -771,6 +771,7 @@ data InternalState m addrNTN addrNTC blk = IS
         blk
         (BlockFetchClientInterface.MatchedBlock blk)
         m
+  , keepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
   , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
@@ -788,7 +789,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosVoteState :: LeiosVoteState m
   -- ^ Accumulator for Leios votes; assembles certificates once a
   -- point's tally crosses 'minCertificationThreshold'. Source of
-  -- 'fbLeiosVoteState' threaded into 'ForgeBlockArgs'.
+  -- 'fbLeiosVoteState' threaded into 'ForgeBlockLeiosArgs'.
   , leiosMinOfferLead :: Leios.LeiosMinOfferLead
   }
 
@@ -842,6 +843,7 @@ initInternalState
         (mempoolTracer tracers)
 
     fetchClientRegistry <- newFetchClientRegistry
+    keepAliveRegistry <- newKeepAliveRegistry
 
     leiosPeersVars <- LazySTM.newTVarIO Map.empty
     -- Seed 'outstandingPrunedSlot' from the immutable tip: everything at or
@@ -965,7 +967,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     pure (bf, leiosDbReader, leiosDbWriter, rootCCtx)
 
   finalizeForging (bf, leiosDbReader, leiosDbWriter, _) =
-    leiosDbWriter.close >> leiosDbReader.close >> finalize bf
+    LeiosDb.closeWriter leiosDbWriter >> LeiosDb.closeReader leiosDbReader >> finalize bf
 
 {-------------------------------------------------------------------------------
   TxSubmission integration

@@ -1,8 +1,6 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -19,7 +17,7 @@
 module Ouroboros.Consensus.Protocol.TPraos
   ( MaxMajorProtVer (..)
   , TPraos
-  , EitherLeiosF (..)
+  , LeiosOnly (..)
   , TPraosFields (..)
   , TPraosIsLeader (..)
   , TPraosParams (..)
@@ -174,23 +172,27 @@ type TPraosValidateView c = SL.BHeader c
 data TPraos c
 
 -- | TPraos has no Leios fields.
-newtype instance EitherLeiosF (TPraos c) a b = TPraosLeiosLeft a
+newtype instance LeiosOnly (TPraos c) a b = TPraosLacksLeios a
   deriving (Eq, Generic, Show)
 
-deriving anyclass instance NoThunks a => NoThunks (EitherLeiosF (TPraos c) a b)
+deriving anyclass instance NoThunks a => NoThunks (LeiosOnly (TPraos c) a b)
 
-instance Functor (EitherLeiosF (TPraos c) a) where
-  fmap _ (TPraosLeiosLeft a) = TPraosLeiosLeft a
+instance Functor (LeiosOnly (TPraos c) a) where
+  fmap _ (TPraosLacksLeios a) = TPraosLacksLeios a
 
-instance (() ~ a) => Applicative (EitherLeiosF (TPraos c) a) where
-  pure _ = TPraosLeiosLeft ()
-  TPraosLeiosLeft () <*> TPraosLeiosLeft () = TPraosLeiosLeft ()
+instance () ~ a => Applicative (LeiosOnly (TPraos c) a) where
+  pure _ = TPraosLacksLeios ()
+  TPraosLacksLeios () <*> TPraosLacksLeios () = TPraosLacksLeios ()
 
-instance Foldable (EitherLeiosF (TPraos c) a) where
-  foldMap _ (TPraosLeiosLeft _) = mempty
+instance Foldable (LeiosOnly (TPraos c) a) where
+  foldMap _ (TPraosLacksLeios _) = mempty
 
-instance Traversable (EitherLeiosF (TPraos c) a) where
-  traverse _ (TPraosLeiosLeft a) = pure (TPraosLeiosLeft a)
+instance Traversable (LeiosOnly (TPraos c) a) where
+  traverse _ (TPraosLacksLeios a) = pure (TPraosLacksLeios a)
+
+instance TypeSwitch (LeiosOnly (TPraos c)) where
+  typeSwitchL = TPraosLacksLeios (TPraosLacksLeios ())
+  typeSwitchR = TPraosLacksLeios ()
 
 -- | TPraos parameters that are node independent
 data TPraosParams = TPraosParams
@@ -323,6 +325,10 @@ data instance Ticked TPraosState = TickedChainDepState
   { tickedTPraosStateChainDepState :: SL.ChainDepState
   , tickedTPraosStateLedgerView :: SL.TPraosLedgerView
   }
+
+instance ChainDepStateSupportsPeras TPraosState
+
+instance ChainDepStateSupportsPeras (Ticked TPraosState)
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState

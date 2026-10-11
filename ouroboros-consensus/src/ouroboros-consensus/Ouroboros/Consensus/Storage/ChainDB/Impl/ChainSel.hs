@@ -7,7 +7,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 -- | Operations involving chain selection: the initial chain selection and
 -- adding a block.
@@ -20,6 +19,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   ( TentativeHeaderPermission (..)
   , addBlockAsync
   , addPerasCertAsync
+  , addPerasVoteWithAsyncCertHandling
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
@@ -33,6 +33,7 @@ import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
 import Control.Monad (forM_, join, void, when)
 import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Monad.Trans.State.Strict
 import Control.Tracer (Tracer, nullTracer, traceWith, (>$<))
 import Data.Bifunctor (first)
@@ -67,7 +68,7 @@ import LeiosUtils.CallTrace
   )
 import qualified LeiosValidClaims
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
 import qualified Ouroboros.Consensus.Fragment.Diff as Diff
@@ -87,7 +88,8 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
-  , AddPerasCertPromise
+  , AddPerasCertChainSelOutcome (..)
+  , AddPerasCertPromise (..)
   , BlockComponent (..)
   , ChainType (..)
   , LoE (..)
@@ -111,11 +113,11 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB hiding (yield)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasVoteDB.API (AddPerasVoteResult (..), PerasVoteDB (addVote))
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.AnchoredFragment
-import Ouroboros.Consensus.Util.EarlyExit (exitEarly, withEarlyExit_)
 import Ouroboros.Consensus.Util.Enclose (encloseWith)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
@@ -336,12 +338,34 @@ addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
 
 addPerasCertAsync ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ChainDbEnv m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   m (AddPerasCertPromise m)
 addPerasCertAsync CDB{cdbTracer, cdbChainSelQueue} =
   addPerasCertToQueue (TraceAddPerasCertEvent >$< cdbTracer) cdbChainSelQueue
+
+-- | Add a Peras vote to the VoteDB contained in the ChainDB, and if this
+-- results in a new cert being generated, add that cert /asynchronously/ to
+-- the ChainDB as well.
+addPerasVoteWithAsyncCertHandling ::
+  forall m blk.
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
+  ChainDbEnv m blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  m (AddPerasVoteResult blk, Maybe (AddPerasCertPromise m))
+addPerasVoteWithAsyncCertHandling cdb@CDB{cdbPerasVoteDB} vote = do
+  addVoteRes <- join . atomically . addVote cdbPerasVoteDB $ vote
+  case addVoteRes of
+    AddedPerasVoteAndGeneratedNewCert cert -> do
+      let certTime = getArrivalTime vote
+      promise <- addPerasCertAsync cdb (WithArrivalTime (certTime) cert)
+      pure (addVoteRes, Just promise)
+    _ -> pure (addVoteRes, Nothing)
 
 -- | Schedule reprocessing of blocks postponed by the LoE.
 triggerChainSelectionAsync ::
@@ -358,6 +382,7 @@ triggerChainSelectionAsync CDB{cdbTracer, cdbChainSelQueue} =
 chainSelSync ::
   forall m blk.
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
@@ -515,6 +540,7 @@ chainSelAddBlock cdb@CDB{..} _cctx BlockToAdd{blockToAdd = b, ..} = do
 chainSelAddPerasCert ::
   forall m blk.
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
@@ -524,37 +550,41 @@ chainSelAddPerasCert ::
   ) =>
   ChainDbEnv m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
-  StrictTMVar m () ->
+  StrictTMVar m AddPerasCertChainSelOutcome ->
   Electric m ()
 chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
   curChain <- lift $ atomically $ Query.getCurrentChain cdb
   let immTip = AF.castAnchor $ AF.anchor curChain
 
-  withEarlyExit_ $ do
+  certResult <- withEarlyExitId $ do
     -- Ignore the certificate if it boosts a block that is so old that it can't
     -- influence our selection.
     when (pointSlot boostedBlock < AF.anchorToSlotNo immTip) $ do
       lift $ lift $ traceWith tracer $ IgnorePerasCertTooOld certRound boostedBlock immTip
-      exitEarly
+      idExitEarly PerasCertIgnoredTooOld
 
     -- Add the certificate to the PerasCertDB.
-    lift (lift $ PerasCertDB.addCert cdbPerasCertDB cert) >>= \case
-      PerasCertDB.AddedPerasCertToDB -> pure ()
-      -- If it already is in the PerasCertDB, we are done.
-      PerasCertDB.PerasCertAlreadyInDB -> exitEarly
+    certRes <- lift $ lift $ join $ atomically $ PerasCertDB.addCert cdbPerasCertDB cert
+    -- Here:
+    -- \* if the certificate is already in the PerasCertDB, we exit early with that result
+    -- \* if the certificate is newly added to the PerasCertDB, we bind  the result value that we will return in any of the branches below
+    addedCertRes <-
+      case certRes of
+        PerasCertDB.PerasCertAlreadyInDB -> idExitEarly $ PerasCertProcessed PerasCertDB.PerasCertAlreadyInDB
+        PerasCertDB.AddedPerasCertToDB -> pure $ PerasCertProcessed PerasCertDB.AddedPerasCertToDB
 
     -- If the certificate boosts a block on our current chain (including the
     -- anchor), then it just makes our selection even stronger.
     when (AF.withinFragmentBounds (castPoint boostedBlock) curChain) $ do
       lift $ lift $ traceWith tracer $ PerasCertBoostsCurrentChain certRound boostedBlock
-      exitEarly
+      idExitEarly $ addedCertRes
 
     boostedHash <- case pointHash boostedBlock of
       -- If the certificate boosts the Genesis point, then it can not influence
       -- chain selection as all chains contain it.
       GenesisHash -> do
         lift $ lift $ traceWith tracer $ PerasCertBoostsGenesis certRound
-        exitEarly
+        idExitEarly $ addedCertRes
       -- Otherwise, the certificate boosts a block potentially on a (future)
       -- candidate.
       BlockHash boostedHash -> pure boostedHash
@@ -565,7 +595,7 @@ chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
         -- it, the additional weight of the certificate is taken into account.
         Nothing -> do
           lift $ lift $ traceWith tracer $ PerasCertBoostsBlockNotYetReceived certRound boostedBlock
-          exitEarly
+          idExitEarly $ addedCertRes
         Just boostedHdr -> pure boostedHdr
 
     -- Trigger chain selection for the boosted block.
@@ -578,9 +608,10 @@ chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
         Nothing
         MayNotSetTentativeHeader
         noPunishment
+    pure $ addedCertRes
 
   -- Deliver promise indicating that we processed the cert.
-  lift $ atomically $ putTMVar varProcessed ()
+  lift $ atomically $ putTMVar varProcessed certResult
  where
   tracer :: Tracer m (TraceAddPerasCertEvent blk)
   tracer = TraceAddPerasCertEvent >$< cdbTracer
@@ -589,7 +620,15 @@ chainSelAddPerasCert cdb@CDB{..} cert varProcessed = do
   certRound = getPerasCertRound cert
 
   boostedBlock :: Point blk
-  boostedBlock = getPerasCertBoostedBlock cert
+  boostedBlock = getPerasCertPoint cert
+
+  -- \| Run a block that can exit early with a result value.
+  withEarlyExitId :: ExceptT a (Electric m) a -> Electric m a
+  withEarlyExitId = fmap (either id id) . runExceptT
+
+  -- \| Exit early with the given result.
+  idExitEarly :: a -> ExceptT a (Electric m) b
+  idExitEarly = throwE
 
 -- | Reprocess the cert-RBs parked on a now-acquired EB closure.
 --
@@ -1197,7 +1236,7 @@ switchTo ::
   ChainDiff (Header blk) ->
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
-  SuccessForkerAction m (ExtLedgerState blk) blk
+  SuccessForkerAction m ExtLedgerState blk
 switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \validated forker -> do
   traceWith addBlockTracer $
     ChangingSelection $
@@ -1434,7 +1473,7 @@ chainSelection ::
   -- | The candidates
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The continuation to run on succesfully validating a candidate.
-  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m (ExtLedgerState blk) blk) ->
+  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m ExtLedgerState blk) ->
   -- | The (valid) chain diff and corresponding LedgerDB that was selected,
   -- or 'Nothing' if there is no valid chain diff preferred over the current
   -- chain. Its headers carry what validating them revealed; see
@@ -1619,7 +1658,7 @@ validateCandidate ::
   ChainDiff (Header blk) ->
   -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
   NonEmpty (Header blk) ->
-  SuccessForkerAction m (ExtLedgerState blk) blk ->
+  SuccessForkerAction m ExtLedgerState blk ->
   m (ValidationResult blk)
 validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders onSuccess =
   LedgerDB.validateFork
