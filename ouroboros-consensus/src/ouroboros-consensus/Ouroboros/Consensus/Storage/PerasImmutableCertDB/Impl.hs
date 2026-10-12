@@ -60,7 +60,8 @@
 --   for them is added again.
 --
 -- * Adding a certificate for a round that is already stored checks the stored
---   file, and overwrites it should it be unreadable or corrupt.
+--   file; should it be unreadable or corrupt, it is quarantined first and then
+--   replaced as for any quarantined round.
 --
 -- The 'CheckAllOnOpen' policy alternatively reads and integrity-checks every
 -- certificate file on open.
@@ -81,7 +82,8 @@
 -- >  |
 -- >  +-- known ------> 42.cert intact? --yes--> CertAlreadyInImmutableDB
 -- >  |                  | no
--- >  |                  +--> overwrite 42.cert atomically
+-- >  |                  +--> quarantine 42.cert (as in getCertsAfter), then
+-- >  |                       proceed as for quarantined
 -- >  |                       --> ReplacedCorruptCertInImmutableDB
 -- >  |
 -- >  +-- quarantined -> write 42.cert atomically, then delete 42.cert.quarantined
@@ -431,7 +433,13 @@ implAddCert ::
   ValidatedPerasCert blk ->
   m AddPerasImmutableCertResult
 implAddCert env cert = do
-  result <- modifyWithTempRegistry getSt putSt modifyState
+  -- Whether 'modifyState' quarantined a broken stored certificate for this
+  -- round. Quarantining happens on disk right away, so it must survive the
+  -- state rollback that 'putSt' performs on abort or exception; this flag lets
+  -- 'putSt' know about it, as it otherwise only sees the state from before
+  -- 'modifyState' ran.
+  quarantinedVar <- newTVarIO False
+  result <- modifyWithTempRegistry getSt (putSt quarantinedVar) (modifyState quarantinedVar)
   traceWith (picdbTracer env) (AddedCert roundNo result)
   pure result
  where
@@ -443,53 +451,69 @@ implAddCert env cert = do
   -- Holding the 'StrictSVar' makes the check-then-write in 'modifyState'
   -- atomic with respect to concurrent insertions. On abort or exception we
   -- restore the previous state, and 'allocateTemp' removes the uncommitted
-  -- certificate file.
-  putSt :: CertDbState -> ExitCase CertDbState -> m ()
-  putSt before ec =
+  -- certificate file. Should a broken stored certificate have been quarantined
+  -- in the meantime (see 'modifyState'), that is kept, as it already happened
+  -- on disk.
+  putSt :: StrictTVar m Bool -> CertDbState -> ExitCase CertDbState -> m ()
+  putSt quarantinedVar before ec = do
+    quarantinedBroken <- readTVarIO quarantinedVar
     putSVar (picdbState env) $ case ec of
       ExitCaseSuccess after -> after
-      _ -> before
+      _
+        | quarantinedBroken -> quarantineRound roundNo before
+        | otherwise -> before
 
-  modifyState :: ModifyCertDbState m AddPerasImmutableCertResult
-  modifyState = do
+  modifyState :: StrictTVar m Bool -> ModifyCertDbState m AddPerasImmutableCertResult
+  modifyState quarantinedVar = do
+    KnownRounds known <- cdsKnownRounds <$> get
+    if not (Set.member roundNo known)
+      then addCertFile >> pure AddedCertToImmutableDB
+      else
+        lift (lift (readCertFile env roundNo)) >>= \case
+          Right _ -> pure CertAlreadyInImmutableDB
+          Left err -> do
+            -- The stored certificate is broken: quarantine it first, so that
+            -- the round is known to be quarantined should we crash before
+            -- its replacement is in place, and then add it as for any other
+            -- quarantined round.
+            st <- get
+            -- Masked, so that the flag reliably tells 'putSt' whether the
+            -- certificate file was quarantined.
+            st' <- lift $ lift $ mask_ $ do
+              quarantinedSt <- withHasFS env $ \hasFS -> quarantineCert hasFS roundNo st
+              atomically $ writeTVar quarantinedVar True
+              pure quarantinedSt
+            put st'
+            lift $ lift $ traceQuarantinedCert (picdbTracer env) roundNo err
+            addCertFile
+            pure ReplacedCorruptCertInImmutableDB
+
+  -- Store the certificate of a round that is not known (it may be
+  -- quarantined), and register the round as known.
+  addCertFile :: ModifyCertDbState m ()
+  addCertFile = do
     CertDbState
       { cdsKnownRounds = KnownRounds known
       , cdsQuarantinedRounds = QuarantinedRounds quarantined
       } <-
       get
-    if Set.member roundNo known
-      then lift $ lift $ replaceIfBroken
-      else do
+    lift $
+      allocateTemp
+        (writeCertFile env roundNo cert)
+        (\() -> removeCertFile env roundNo >> pure True)
+        (\st' () -> Set.member roundNo (getKnownRounds $ cdsKnownRounds st'))
+    put
+      CertDbState
+        { cdsKnownRounds = KnownRounds $ Set.insert roundNo known
+        , cdsQuarantinedRounds = QuarantinedRounds $ Set.delete roundNo quarantined
+        }
+    -- Release the round from quarantine only once the new certificate
+    -- file is in place: should this fail, the new file is cleaned up and
+    -- the round stays quarantined.
+    when (Set.member roundNo quarantined) $
+      lift $
         lift $
-          allocateTemp
-            (writeCertFile env roundNo cert)
-            (\() -> removeCertFile env roundNo >> pure True)
-            (\st' () -> Set.member roundNo (getKnownRounds $ cdsKnownRounds st'))
-        put
-          CertDbState
-            { cdsKnownRounds = KnownRounds $ Set.insert roundNo known
-            , cdsQuarantinedRounds = QuarantinedRounds $ Set.delete roundNo quarantined
-            }
-        -- Release the round from quarantine only once the new certificate
-        -- file is in place: should this fail, the new file is cleaned up and
-        -- the round stays quarantined.
-        when (Set.member roundNo quarantined) $
-          lift $
-            lift $
-              removeQuarantinedCertFile env roundNo
-        pure AddedCertToImmutableDB
-
-  -- The round is already stored: check the stored file, and overwrite it
-  -- should it be unreadable or corrupt. 'writeCertFile' is atomic, so on
-  -- failure the old file is left as it was, still matching the index; hence
-  -- no 'allocateTemp' here, which would remove it.
-  replaceIfBroken :: m AddPerasImmutableCertResult
-  replaceIfBroken =
-    readCertFile env roundNo >>= \case
-      Right _ -> pure CertAlreadyInImmutableDB
-      Left _ -> do
-        writeCertFile env roundNo cert
-        pure ReplacedCorruptCertInImmutableDB
+          removeQuarantinedCertFile env roundNo
 
 implGetCertsAfter ::
   forall m blk.
@@ -526,7 +550,7 @@ implGetCertsAfter env roundNo maxCerts = do
 --
 -- The file must be checked again under the 'StrictSVar' because, since it was
 -- first found broken, a concurrent 'implAddCert' may have replaced it with an
--- intact one (see 'replaceIfBroken'), or a concurrent reader may have already
+-- intact one, or a concurrent reader may have already
 -- quarantined it.
 quarantineCertIfStillBroken ::
   ( IOLike m
@@ -596,8 +620,7 @@ quarantineCertFile hasFS roundNo = do
   path = fsPathCertFile roundNo
   quarantinedPath = fsPathQuarantinedCertFile roundNo
 
--- | Remove the quarantined file of a certificate, once a new certificate for
--- its round was stored.
+-- | Remove the quarantined file of a certificate.
 removeQuarantinedCertFile ::
   IOLike m =>
   PerasImmutableCertDbEnv m blk ->
