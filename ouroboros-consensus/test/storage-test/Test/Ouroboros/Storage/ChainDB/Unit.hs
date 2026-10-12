@@ -437,7 +437,7 @@ perasImmutableCertArchived :: SystemM TestBlock IO ()
 perasImmutableCertArchived = do
   b1 <- addBlock $ firstBlock 0 (body 0)
   b2 <- addBlock $ mkNextBlock b1 1 (body 0)
-  let cert = mkHistoricalCert 1 b1 1
+  let cert = mkMockPerasCert 1 b1 1
   void $ addTestPerasCert cert
   _b3 <- addBlock $ mkNextBlock b2 2 (body 0)
 
@@ -456,8 +456,8 @@ perasImmutableCertArchived = do
 perasAllCertsForBlockArchived :: SystemM TestBlock IO ()
 perasAllCertsForBlockArchived = do
   b1 <- addBlock $ firstBlock 0 (body 0)
-  let cert1 = mkHistoricalCert 1 b1 1
-      cert2 = mkHistoricalCert 2 b1 1
+  let cert1 = mkMockPerasCert 1 b1 1
+      cert2 = mkMockPerasCert 2 b1 1
   void $ addTestPerasCert cert1
   void $ addTestPerasCert cert2
   b2 <- addBlock $ mkNextBlock b1 1 (body 0)
@@ -481,7 +481,7 @@ perasLosingForkCertNotArchived = do
   -- advance the immutable tip past common. (Fork weight would be 2
   -- blocks plus 1 cert; 3 > k.) For this test we want to avoid that.
   losing <- addBlock $ mkNextBlock common 1 (body 1)
-  outcome <- addTestPerasCert (mkHistoricalCert 1 losing 1)
+  outcome <- addTestPerasCert (mkMockPerasCert 1 losing 1)
   assertEqual
     (API.PerasCertProcessed PerasCertDB.AddedPerasCertToDB)
     outcome
@@ -501,7 +501,7 @@ perasLosingForkCertNotArchived = do
 
   -- Add a cert to boost fork #2 at h1, then write immutable
   -- blocks and the certs boosing them.
-  let honestCert = mkHistoricalCert 2 h1 0
+  let honestCert = mkMockPerasCert 2 h1 0
   void $ addTestPerasCert honestCert
   persistBlks
 
@@ -519,7 +519,7 @@ perasPersistThenGCRetainsCert :: SystemM TestBlock IO ()
 perasPersistThenGCRetainsCert = do
   b1 <- addBlock $ firstBlock 0 (body 0)
   b2 <- addBlock $ mkNextBlock b1 1 (body 0)
-  let cert = mkHistoricalCert 1 b1 1
+  let cert = mkMockPerasCert 1 b1 1
   void $ addTestPerasCert cert
   _b3 <- addBlock $ mkNextBlock b2 2 (body 0)
 
@@ -540,7 +540,7 @@ perasLateCertIgnored = do
   _b4 <- addBlock $ mkNextBlock b3 3 (body 0)
   persistBlks
 
-  outcome <- addTestPerasCert (mkHistoricalCert 1 b1 1)
+  outcome <- addTestPerasCert (mkMockPerasCert 1 b1 1)
   assertEqual
     API.PerasCertIgnoredTooOld
     outcome
@@ -563,7 +563,7 @@ perasHandoffBoundaryCertNotLost = do
   b3 <- addBlock $ mkNextBlock b2 2 (body 0)
   persistBlks
 
-  let cert = mkHistoricalCert 1 b1 1
+  let cert = mkMockPerasCert 1 b1 1
   outcome <- addTestPerasCert cert
 
   _b4 <- addBlock $ mkNextBlock b3 3 (body 0)
@@ -600,7 +600,7 @@ perasConflictingCertAtImmutableTipSlotIgnored = do
   let competingAtImmutableTipSlot = mkNextBlock b1 1 (body 1)
   outcome <-
     addTestPerasCert $
-      mkHistoricalCert 1 competingAtImmutableTipSlot 1
+      mkMockPerasCert 1 competingAtImmutableTipSlot 1
   assertEqual
     API.PerasCertIgnoredTooOld
     outcome
@@ -618,7 +618,7 @@ perasCertBeforeTargetArchived :: SystemM TestBlock IO ()
 perasCertBeforeTargetArchived = do
   parent <- addBlock $ firstBlock 0 (body 0)
   let target = mkNextBlock parent 1 (body 0)
-      cert = mkHistoricalCert 1 target 1
+      cert = mkMockPerasCert 1 target 1
 
   addTestPerasCert cert >>= \case
     API.PerasCertProcessed _ -> pure ()
@@ -690,7 +690,7 @@ perasSparseMultiBlockHandoff (firstCount : remainingCounts) = do
     -> SystemM TestBlock IO ([ValidatedPerasCert TestBlock], Word64)
   addCerts target firstRound count = do
     let certs =
-          [ mkHistoricalCert roundNo target 1
+          [ mkMockPerasCert roundNo target 1
           | roundNo <- take count [firstRound ..]
           ]
     mapM_ (void . addTestPerasCert) certs
@@ -728,7 +728,7 @@ perasBlockCommittedBeforeCertFailure ::
 perasBlockCommittedBeforeCertFailure errorsVar = do
   b1 <- addBlock $ firstBlock 0 (body 0)
   b2 <- addBlock $ mkNextBlock b1 1 (body 0)
-  let cert = mkHistoricalCert 1 b1 1
+  let cert = mkMockPerasCert 1 b1 1
   void $ addTestPerasCert cert
   _b3 <- addBlock $ mkNextBlock b2 2 (body 0)
 
@@ -757,8 +757,8 @@ perasPartialMultiCertHandoff ::
 perasPartialMultiCertHandoff errorsVar = do
   b1 <- addBlock $ firstBlock 0 (body 0)
   b2 <- addBlock $ mkNextBlock b1 1 (body 0)
-  let cert1 = mkHistoricalCert 1 b1 1
-      cert2 = mkHistoricalCert 2 b1 1
+  let cert1 = mkMockPerasCert 1 b1 1
+      cert2 = mkMockPerasCert 2 b1 1
   void $ addTestPerasCert cert1
   void $ addTestPerasCert cert2
   _b3 <- addBlock $ mkNextBlock b2 2 (body 0)
@@ -789,9 +789,9 @@ perasFailureMidMultiBlockHandoff errorsVar = do
   b1 <- addBlock $ firstBlock 0 (body 0)
   b2 <- addBlock $ mkNextBlock b1 1 (body 0)
   b3 <- addBlock $ mkNextBlock b2 2 (body 0)
-  let cert1 = mkHistoricalCert 1 b1 1
-      cert2 = mkHistoricalCert 2 b2 1
-      cert3 = mkHistoricalCert 3 b3 1
+  let cert1 = mkMockPerasCert 1 b1 1
+      cert2 = mkMockPerasCert 2 b2 1
+      cert3 = mkMockPerasCert 3 b3 1
 
   -- Register all three certificates while their targets are still at or
   -- above the logical immutable tip. Extending through b5 first makes b1 and
@@ -833,8 +833,8 @@ perasFailureMidMultiBlockHandoff errorsVar = do
 perasConflictingSameRoundFirstWins :: SystemM TestBlock IO ()
 perasConflictingSameRoundFirstWins = do
   b1 <- addBlock $ firstBlock 0 (body 0)
-  let first = mkHistoricalCert 7 b1 0
-      conflicting = mkHistoricalCert 7 (firstBlock 0 $ body 1) 99
+  let first = mkMockPerasCert 7 b1 0
+      conflicting = mkMockPerasCert 7 (firstBlock 0 $ body 1) 99
 
   addTestPerasCert first
     >>= \outcome ->
@@ -871,7 +871,7 @@ perasUnknownTargetLoses :: SystemM TestBlock IO ()
 perasUnknownTargetLoses = do
   common <- addBlock $ firstBlock 0 (body 0)
   let losing1 = mkNextBlock common 1 (body 1)
-      cert = mkHistoricalCert 1 losing1 1
+      cert = mkMockPerasCert 1 losing1 1
   addTestPerasCert cert
     >>= \outcome ->
       assertEqual
@@ -921,9 +921,9 @@ perasRepeatedForkOscillation = do
   getSelectedTip >>= \tip ->
     assertEqual (blockPoint a4) tip "Longer fork A was not initially selected"
 
-  let certB1 = mkHistoricalCert 1 b1 2
-      certA1 = mkHistoricalCert 2 a1 2
-      certB2 = mkHistoricalCert 3 b2 2
+  let certB1 = mkMockPerasCert 1 b1 2
+      certA1 = mkMockPerasCert 2 a1 2
+      certB2 = mkMockPerasCert 3 b2 2
   void $ addTestPerasCert certB1
   getSelectedTip >>= \tip ->
     assertEqual (blockPoint b3) tip "First B certificate did not switch to fork B"
@@ -961,11 +961,11 @@ perasWeightAdditionDoesNotWrap = do
   getSelectedTip >>= \tip ->
     assertEqual (blockPoint a2) tip "Longer unboosted fork was not selected"
 
-  void $ addTestPerasCert $ mkHistoricalCert 1 b1 (maxBound - 2)
+  void $ addTestPerasCert $ mkMockPerasCert 1 b1 (maxBound - 2)
   getSelectedTip >>= \tip ->
     assertEqual (blockPoint b1) tip "Large boost did not select fork B"
 
-  void $ addTestPerasCert $ mkHistoricalCert 2 b1 3
+  void $ addTestPerasCert $ mkMockPerasCert 2 b1 3
   getSelectedTip >>= \tip ->
     assertEqual
       (blockPoint b1)
@@ -1046,12 +1046,12 @@ getHistoricalCertsAfter roundNo maxCerts = do
         cdbPerasImmutableCertDbArgs (args env)
     PerasImmutableCertDB.getCertsAfter db roundNo maxCerts
 
-mkHistoricalCert ::
+mkMockPerasCert ::
   Word64 ->
   TestBlock ->
   Word64 ->
   ValidatedPerasCert TestBlock
-mkHistoricalCert roundNo target boost =
+mkMockPerasCert roundNo target boost =
   ValidatedPerasCert
     { vpcCert =
         MockPerasCert
@@ -1093,7 +1093,7 @@ perasBoostInducedDensityReduction = do
         tip
         "Without the certificate, the denser fork should be selected"
 
-  let cert = mkHistoricalCert 1 a1 3
+  let cert = mkMockPerasCert 1 a1 3
   void $ addTestPerasCert cert
 
   getSelectedTip
