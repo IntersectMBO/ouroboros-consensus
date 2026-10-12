@@ -23,6 +23,7 @@ import qualified Codec.CBOR.Read as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad.Class.MonadAsync
 import Control.Monad.Class.MonadThrow
+import Control.Monad.Class.MonadTime.SI (DiffTime)
 import Control.Monad.Class.MonadTimer.SI (threadDelay, timeout)
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
@@ -30,10 +31,11 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
 import qualified Data.Map.Strict as Map
+import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
-import Data.Word (Word8)
+import Data.Word (Word16, Word8)
 import Network.TypedProtocol.Codec (Codec)
-import Ouroboros.Consensus.Block (SlotNo (..))
+import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
@@ -98,8 +100,8 @@ tests =
         [ testCase "the node's client keeps its pipeline full, and quits when the node demotes the peer" $
             runSimOrThrow (timeout 100 nodeClientKeepsPipelineFull)
               @?= Just (NodeClientOutcome leiosNotifyPipelineDepth)
-        , testCase "the node's client discards replies and keeps requesting" $
-            runSimOrThrow (timeout 100 nodeClientDiscardsReplies)
+        , testCase "the node's client keeps requesting as replies arrive" $
+            runSimOrThrow (timeout 100 nodeClientRefillsPipeline)
               @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 6))
         , testCase "the node's client disconnects a peer that cancels a request unprompted" $
             runSimOrThrow (timeout 100 nodeClientUnpromptedCancel)
@@ -164,7 +166,7 @@ tests =
             runSimOrThrow (timeout 1000 nodeClientTooOld)
               @?= Just (NodeClientDisconnected AnnouncementTooOld)
         , testCase "the node prunes its clients' state as its immutable tip advances" $
-            runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just ((1, 1, 1), (0, 0, 0))
+            runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just ((1, 1, 1, 1), (0, 0, 0, 0))
         , testCase "the node's client accepts an offer of an endorser block its peer announced" $
             runSimOrThrow (timeout 100 (nodeClientAgainstOffers [MsgLeiosBlockOffer someOfferedPoint 1000]))
               @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
@@ -223,6 +225,45 @@ tests =
             "the node's client disconnects a peer that closure-offers an endorser block older than its immutable tip"
             $ runSimOrThrow (timeout 1000 (nodeClientOfferTooOld (MsgLeiosBlockTxsOffer someOfferedPoint)))
               @?= Just (NodeClientDisconnected OfferTooOld)
+        , testCase "the node's client accepts a vote within its window" $
+            runSimOrThrow
+              (timeout 100 (nodeClientAgainstSchedule [(5, MsgLeiosVotes [voteFor someAnnouncingBlock 0])]))
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
+        , testCase "the node's client accepts votes from different seats in one slot" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstSchedule
+                    [(5, MsgLeiosVotes [voteFor someAnnouncingBlock 0, voteFor someAnnouncingBlock 1])]
+              )
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
+        , testCase "the node's client disconnects a peer that sends an empty MsgLeiosVotes" $
+            runSimOrThrow (timeout 100 (nodeClientAgainstSchedule [(5, MsgLeiosVotes [])]))
+              @?= Just (NodeClientDisconnected VotesEmpty)
+        , testCase "the node's client disconnects a peer that votes for an announcement it never sent" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstSchedule
+                    [(5, MsgLeiosVotes [voteFor (ann 2 (successorLeiosBlock (firstLeiosBlock 0))) 0])]
+              )
+              @?= Just (NodeClientDisconnected VoteWithoutAnnouncement)
+        , testCase "the node's client disconnects a peer that relays two votes from one seat in one slot" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstSchedule
+                    [ (0, MsgLeiosBlockAnnouncement (ltbHeader equivocation))
+                    , (5, MsgLeiosVotes [voteFor someAnnouncingBlock 0])
+                    , (5, MsgLeiosVotes [voteFor equivocation 0])
+                    ]
+              )
+              @?= Just (NodeClientDisconnected VoteRepeated)
+        , testCase "the node's client disconnects a peer that relays a vote too early" $
+            runSimOrThrow
+              (timeout 100 (nodeClientAgainstSchedule [(1.5, MsgLeiosVotes [voteFor someAnnouncingBlock 0])]))
+              @?= Just (NodeClientDisconnected VoteTooEarly)
+        , testCase "the node's client disconnects a peer that relays a vote too late" $
+            runSimOrThrow
+              (timeout 200 (nodeClientAgainstSchedule [(100, MsgLeiosVotes [voteFor someAnnouncingBlock 0])]))
+              @?= Just (NodeClientDisconnected VoteTooLate)
         , testCase "the node's server cancels a peer's outstanding requests when the peer quits" $
             runSimOrThrow (timeout 100 nodeServerCancels) @?= Just (NodeServerOutcome 0)
         , testCase "the node's server disconnects a peer that exceeds the pipelining bound" $
@@ -363,7 +404,12 @@ withNodeForecasting range body = do
         { ltlcHardForkParams =
             HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
         , ltlcForecastRange = range
-        , ltlcLeios = MkLeiosLedgerView{llvMaxEbBodySize = maxEbBodySize}
+        , ltlcLeios =
+            MkLeiosLedgerView
+              { llvMaxEbBodySize = maxEbBodySize
+              , llvAnnouncementPeriod = 1
+              , llvVotePeriod = 4
+              }
         }
 
 -- | The node's LeiosNotify client on the connection.
@@ -403,6 +449,12 @@ data DisconnectReason
   | ClosureOfferWithoutAnnouncement
   | ClosureOfferRepeated
   | OfferTooOld
+  | VotesEmpty
+  | VoteWithoutAnnouncement
+  | VoteRepeated
+  | VoteTooEarly
+  | VoteTooLate
+  | VoteOutsideHorizon
   | OfferOutsideHorizon
   deriving (Eq, Show)
 
@@ -429,6 +481,13 @@ disconnectReason e
       ExnLeiosRepeatedClosureOffer{} -> ClosureOfferRepeated
       ExnLeiosOfferTooOld{} -> OfferTooOld
       ExnLeiosBlockOfferOutsideHorizon{} -> OfferOutsideHorizon
+  | Just (exn :: ExnLeiosNotifyInvalidVotes) <- fromException e = Just $ case exn of
+      ExnLeiosEmptyVotes -> VotesEmpty
+      ExnLeiosVoteWithoutAnnouncement{} -> VoteWithoutAnnouncement
+      ExnLeiosRepeatedVote{} -> VoteRepeated
+      ExnLeiosVoteTooEarly{} -> VoteTooEarly
+      ExnLeiosVoteTooLate{} -> VoteTooLate
+      ExnLeiosVoteOutsideHorizon{} -> VoteOutsideHorizon
   | otherwise = Nothing
 
 -- | Run a peer's server that answers each request with whatever @next@ yields
@@ -483,13 +542,16 @@ nodeClientKeepsPipelineFull :: IOSim s NodeClientOutcome
 nodeClientKeepsPipelineFull = withNode $ \nut ->
   runNodeClientAgainst nut retry leiosNotifyPipelineDepth
 
--- | Six replies free six slots in the pipeline, which the node fills again.
-nodeClientDiscardsReplies :: IOSim s NodeClientOutcome
-nodeClientDiscardsReplies = withNode $ \nut -> do
+-- | Six replies, announcements from six elections, free six slots in the
+-- pipeline, which the node fills again.
+nodeClientRefillsPipeline :: IOSim s NodeClientOutcome
+nodeClientRefillsPipeline = withNode $ \nut -> do
   queue <- newTQueueIO
   atomically $
     mapM_ (writeTQueue queue) $
-      replicate 6 (MsgLeiosVotes [someVote])
+      [ MsgLeiosBlockAnnouncement $ ltbHeader $ setIssuer issuer $ ann 1 $ firstLeiosBlock 0
+      | issuer <- [0 .. 5]
+      ]
   runNodeClientAgainst nut (readTQueue queue) (leiosNotifyPipelineDepth + 6)
 
 nodeClientUnpromptedCancel :: IOSim s NodeClientOutcome
@@ -538,41 +600,96 @@ nodeClientGated = withNodeForecasting 5 $ \nut -> do
     client <- nodeLeiosNotifyClient conn
     atomically client >>= either throwIO (\_ -> pure n)
 
--- | How many elections, body offers and closure offers the client's state holds
--- once one of each is in, and once the immutable tip has passed them.
-nodePrunesClientState :: IOSim s ((Int, Int, Int), (Int, Int, Int))
+-- | How many elections, body offers, closure offers and votes the client's state
+-- holds once one of each is in, and once the immutable tip has passed them.
+nodePrunesClientState :: IOSim s ((Int, Int, Int, Int), (Int, Int, Int, Int))
 nodePrunesClientState = withNode $ \nut -> do
   requests <- newTVarIO 0
   queue <- newTQueueIO
-  atomically $
-    mapM_
-      (writeTQueue queue)
-      [someAnnouncement, MsgLeiosBlockOffer someOfferedPoint 1000, MsgLeiosBlockTxsOffer someOfferedPoint]
   let envPeer =
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
           }
-  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
-    atomically $ readTVar requests >>= check . (> leiosNotifyPipelineDepth + 2)
-    beforePruning <- clientStateSize nut
-    advanceImmutableTip nut
-    afterPruning <- clientStateSize nut
-    pure (beforePruning, afterPruning)
+  withAsync
+    ( feedAt
+        queue
+        [ (0, someAnnouncement)
+        , (0, MsgLeiosBlockOffer someOfferedPoint 1000)
+        , (0, MsgLeiosBlockTxsOffer someOfferedPoint)
+        , -- within the vote's window
+          (5, MsgLeiosVotes [voteFor someAnnouncingBlock 0])
+        ]
+    )
+    $ \_feeder ->
+      withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+        atomically $ readTVar requests >>= check . (> leiosNotifyPipelineDepth + 3)
+        beforePruning <- clientStateSize nut
+        advanceImmutableTip nut
+        afterPruning <- clientStateSize nut
+        pure (beforePruning, afterPruning)
 
--- | How many elections, body offers and closure offers the node's clients
--- remember.
-clientStateSize :: NodeUnderTest (IOSim s) -> IOSim s (Int, Int, Int)
+-- | How many elections, body offers, closure offers and votes the node's
+-- clients remember.
+clientStateSize :: NodeUnderTest (IOSim s) -> IOSim s (Int, Int, Int, Int)
 clientStateSize nut = atomically $ do
   states <- IOLike.readTVar (getLeiosNotifyClientStates (nutKernel nut))
   sizes <- mapM (fmap size . IOLike.readTVar) (Map.elems states)
-  pure (sum [e | (e, _, _) <- sizes], sum [b | (_, b, _) <- sizes], sum [c | (_, _, c) <- sizes])
+  pure
+    ( sum [e | (e, _, _, _) <- sizes]
+    , sum [b | (_, b, _, _) <- sizes]
+    , sum [c | (_, _, c, _) <- sizes]
+    , sum [v | (_, _, _, v) <- sizes]
+    )
  where
   size st =
     ( Map.size (Announcements.live (lnpsAnnouncements st))
     , Set.size (lnpsBodyOffers st)
     , Set.size (lnpsClosureOffers st)
+    , Set.size (lnpsVotes st)
     )
+
+-- | Put each reply in the queue at its time.
+feedAt ::
+  StrictTQueue (IOSim s) (Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle) ->
+  [(DiffTime, Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle)] ->
+  IOSim s ()
+feedAt queue = go 0
+ where
+  go _now [] = pure ()
+  go now ((at, msg) : rest) = do
+    threadDelay (max 0 (at - now))
+    atomically $ writeTQueue queue msg
+    go (max now at) rest
+
+-- | A peer that sends each reply at its time, the announcement of
+-- 'someAnnouncingBlock' first.
+nodeClientAgainstSchedule ::
+  [(DiffTime, Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle)] ->
+  IOSim s NodeClientOutcome
+nodeClientAgainstSchedule schedule = withNode $ \nut -> do
+  queue <- newTQueueIO
+  let msgs = (0, someAnnouncement) : schedule
+  withAsync (feedAt queue msgs) $ \_feeder ->
+    runNodeClientAgainst nut (readTQueue queue) (leiosNotifyPipelineDepth + length msgs)
+
+-- | A vote from this seat for the announcement this block carries.
+voteFor :: LeiosTestBlock -> Word16 -> LeiosVote
+voteFor blk seat = signedVote (MkRbHash (toRawHash (Proxy @LeiosTestBlock) (blockHash blk))) seat
+
+-- | A vote from this seat for this announcing block. The node's LeiosNotify
+-- client does not check a vote's signature, so any key will do.
+signedVote :: RbHash -> Word16 -> LeiosVote
+signedVote rbHash seat =
+  MkLeiosVote rbHash (LeiosSeatId seat) $
+    signDSIGN leiosSignContext rbHash (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
+
+someAnnouncingBlock :: LeiosTestBlock
+someAnnouncingBlock = ann 1 (firstLeiosBlock 0)
+
+-- | Another announcement in the election of 'someAnnouncingBlock'.
+equivocation :: LeiosTestBlock
+equivocation = ann 2 (forkLeiosBlock (firstLeiosBlock 0))
 
 -- | Make the first two slots immutable: k is 10, so twelve blocks do it.
 advanceImmutableTip :: NodeUnderTest (IOSim s) -> IOSim s ()
@@ -620,11 +737,7 @@ maxEbBodySize :: BytesSize
 maxEbBodySize = 5000
 
 someVote :: LeiosVote
-someVote =
-  MkLeiosVote rbHash (LeiosSeatId 0) $
-    signDSIGN leiosSignContext rbHash (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
- where
-  rbHash = MkRbHash (BS.replicate 32 0)
+someVote = signedVote (MkRbHash (BS.replicate 32 0)) 0
 
 newtype NodeServerOutcome = NodeServerOutcome Int
   deriving (Eq, Show)

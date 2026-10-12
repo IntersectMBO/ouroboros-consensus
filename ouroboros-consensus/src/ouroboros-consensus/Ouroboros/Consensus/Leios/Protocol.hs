@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Leios.Protocol
 
 import Control.Monad.Except (Except)
 import Data.ByteString.Short (ShortByteString)
+import Data.Time (NominalDiffTime)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (SlotNo)
@@ -46,6 +47,10 @@ data LeiosAnnouncement = MkLeiosAnnouncement
 data LeiosLedgerView = MkLeiosLedgerView
   { llvMaxEbBodySize :: !BytesSize
   -- ^ the largest endorser block the ledger admits
+  , llvAnnouncementPeriod :: !NominalDiffTime
+  -- ^ L_hdr, the announcement period
+  , llvVotePeriod :: !NominalDiffTime
+  -- ^ L_vote, the voting period
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks

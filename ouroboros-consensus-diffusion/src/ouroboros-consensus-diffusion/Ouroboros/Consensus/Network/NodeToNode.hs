@@ -66,8 +66,9 @@ import Data.Void (Void)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..))
+import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), SystemTime (..))
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -95,6 +96,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState (..)
   , checkLeiosBlockOffer
   , checkLeiosClosureOffer
+  , checkLeiosVotes
   , emptyLeiosNotifyPeerState
   , onLeiosNotifyAnnouncement
   , pruneLeiosNotifyPeerState
@@ -335,6 +337,8 @@ mkHandlers ::
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , LeiosProtocol (BlockProtocol blk)
+  , ConvertRawHash blk
+  , HasHardForkHistory blk
   , Ord addrNTN
   , Hashable addrNTN
   ) =>
@@ -345,6 +349,7 @@ mkHandlers ::
 mkHandlers
   NodeKernelArgs
     { chainSyncFutureCheck
+    , maxClockSkew
     , chainSyncHistoricityCheck
     , keepAliveRng
     , miniProtocolParameters
@@ -503,7 +508,15 @@ mkHandlers
                       Left err -> pure (Left err)
                       Right st' -> Right () <$ writeTVar stateVar st'
                   either throwIO pure res
-                MsgLeiosVotes{} -> pure ()
+                MsgLeiosVotes votes -> do
+                  immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                  now <- systemTimeCurrent systemTime
+                  res <- atomically $ do
+                    st <- readTVar stateVar
+                    case checkLeiosVotes getTopLevelConfig maxClockSkew immLedger now votes st of
+                      Left err -> pure (Left err)
+                      Right st' -> Right () <$ writeTVar stateVar st'
+                  either throwIO pure res
                 MsgCanceled -> pure ()
             )
       , hLeiosNotifyServer = \_version _peer -> do

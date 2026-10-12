@@ -1244,6 +1244,7 @@ library protocol
     ouroboros-network:{framework, tests-lib},
     serialise,
     text,
+    time,
     Win32-network ^>=0.2,
 
 library unstable-protocol-testlib

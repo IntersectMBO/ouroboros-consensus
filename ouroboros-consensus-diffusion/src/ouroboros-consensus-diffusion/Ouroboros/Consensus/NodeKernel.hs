@@ -73,7 +73,8 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
-  ( SomeHeaderInFutureCheck
+  ( ClockSkew
+  , SomeHeaderInFutureCheck
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
@@ -214,6 +215,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , chainDB :: ChainDB m blk
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk
+  , maxClockSkew :: ClockSkew
+  -- ^ The most that an honest peer's clock may differ from ours.
   , chainSyncHistoricityCheck ::
       m GSM.GsmState ->
       HistoricityCheck m blk
@@ -707,7 +710,13 @@ getImmTipSlot kernel =
 -- | Prune every LeiosNotify client's state each time the immutable tip's slot
 -- advances.
 leiosNotifyPruner ::
-  (IOLike m, GetTip (LedgerState blk)) =>
+  ( IOLike m
+  , GetTip (LedgerState blk)
+  , ConvertRawHash blk
+  , GetHeader blk
+  , StandardHash blk
+  , Typeable blk
+  ) =>
   ChainDB m blk ->
   StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->
   m Void

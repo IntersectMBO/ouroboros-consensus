@@ -256,7 +256,7 @@ withNodeUnderTest cfg nodeDBs body = do
               nullTracers
               btime
               nutSystemTime
-              (InFutureCheck.realHeaderInFutureCheck InFutureCheck.defaultClockSkew nutSystemTime)
+              InFutureCheck.defaultClockSkew
               -- With Genesis disabled, there is no historicity cutoff.
               (\_getGsmState -> HistoricityCheck.noCheck)
               chainDB

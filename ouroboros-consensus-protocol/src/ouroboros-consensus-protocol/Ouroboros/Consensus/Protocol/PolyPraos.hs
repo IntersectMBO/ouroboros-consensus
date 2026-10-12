@@ -139,6 +139,7 @@ import Data.Functor.Identity (runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
+import Data.Time.Clock (NominalDiffTime)
 import Data.Typeable (Typeable)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
@@ -729,14 +730,20 @@ leiosAnnouncementPolyPraos b =
 
 -- | 'getLeiosLedgerView' for every Praos.
 getLeiosLedgerViewPolyPraos ::
-  Foldable (WhenLeios proto) =>
+  (Applicative (WhenLeios proto), Foldable (WhenLeios proto)) =>
   Views.PolyPraosLedgerView proto ->
   Maybe LeiosLedgerView
 getLeiosLedgerViewPolyPraos lv =
   foldr
-    (\maxSize _ -> Just MkLeiosLedgerView{llvMaxEbBodySize = maxSize})
+    (\llv _ -> Just llv)
     Nothing
-    (Views.plvMaxEbBodySize lv)
+    ( MkLeiosLedgerView
+        <$> Views.plvMaxEbBodySize lv
+        <*> (seconds <$> Views.plvAnnouncementPeriodLength lv)
+        <*> (seconds <$> Views.plvVotePeriodLength lv)
+    )
+ where
+  seconds (SL.Milliseconds32 ms) = fromIntegral ms / 1000 :: NominalDiffTime
 
 -- | 'validateLeiosAnnouncement' for every Praos.
 --

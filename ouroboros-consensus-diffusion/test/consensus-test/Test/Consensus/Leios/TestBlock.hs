@@ -79,7 +79,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
 import Data.String (fromString)
 import Data.Time.Calendar (fromGregorian)
-import Data.Time.Clock (UTCTime (..))
+import Data.Time.Clock (UTCTime (..), nominalDiffTimeToSeconds, secondsToNominalDiffTime)
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -389,20 +389,28 @@ data LeiosTestLedgerConfig = LeiosTestLedgerConfig
   deriving stock (Show, Generic)
   deriving anyclass NoThunks
 
+-- | The periods go as seconds, since 'NominalDiffTime' has no 'Serialise' instance.
 instance Serialise LeiosTestLedgerConfig where
   encode cfg =
     encode
       ( ltlcHardForkParams cfg
       , ltlcForecastRange cfg
       , llvMaxEbBodySize (ltlcLeios cfg)
+      , nominalDiffTimeToSeconds (llvAnnouncementPeriod (ltlcLeios cfg))
+      , nominalDiffTimeToSeconds (llvVotePeriod (ltlcLeios cfg))
       )
   decode = do
-    (hardForkParams, forecastRange, maxEbBodySize) <- decode
+    (hardForkParams, forecastRange, maxEbBodySize, announcementPeriod, votePeriod) <- decode
     pure
       LeiosTestLedgerConfig
         { ltlcHardForkParams = hardForkParams
         , ltlcForecastRange = forecastRange
-        , ltlcLeios = MkLeiosLedgerView{llvMaxEbBodySize = maxEbBodySize}
+        , ltlcLeios =
+            MkLeiosLedgerView
+              { llvMaxEbBodySize = maxEbBodySize
+              , llvAnnouncementPeriod = secondsToNominalDiffTime announcementPeriod
+              , llvVotePeriod = secondsToNominalDiffTime votePeriod
+              }
         }
 
 type instance LedgerCfg LedgerState LeiosTestBlock = LeiosTestLedgerConfig

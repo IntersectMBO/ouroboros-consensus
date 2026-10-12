@@ -98,17 +98,18 @@ announcementsInSlot slot st =
   (atSlot, _above) =
     Map.spanAntitone (\(MkElId elSlot _poolId) -> elSlot <= slot) atOrAbove
 
--- | Called whenever the ChainDB's immutable tip advances to a new slot
+-- | Called whenever the ChainDB's immutable tip advances to a new slot. Also
+-- returns the announcements it forgets.
 --
 -- NOTE this pruning should happen ~60 s after the immutable tip
 -- advances.  That accommodates clock skew, transmission time, etc
 -- with only an insignificant increase in the stochastic bound on
 -- election count
-pruneAnnouncementsState :: SlotNo -> AnnouncementsState anc -> AnnouncementsState anc
+pruneAnnouncementsState :: SlotNo -> AnnouncementsState anc -> ([anc], AnnouncementsState anc)
 pruneAnnouncementsState immTipSlot st =
-  MkAnnouncementsState{live = live'}
+  (concatMap elStateAnnouncements (Map.elems pruned), MkAnnouncementsState{live = live'})
  where
-  (_pruned, live') = Map.spanAntitone tooOld (live st)
+  (pruned, live') = Map.spanAntitone tooOld (live st)
 
   -- NB strict comparison, so that the immtip's own announcement is
   -- not pruned

@@ -1053,6 +1053,7 @@ runThreadNetwork
                   InFutureCheck.realHeaderInFutureCheck
                     InFutureCheck.defaultClockSkew
                     (OracularClock.finiteSystemTime clock)
+              , maxClockSkew = InFutureCheck.defaultClockSkew
               , chainSyncHistoricityCheck = \_getGsmState -> HistoricityCheck.noCheck
               , blockFetchSize = estimateBlockSize
               , mempoolCapacityOverride = NoMempoolCapacityBytesOverride

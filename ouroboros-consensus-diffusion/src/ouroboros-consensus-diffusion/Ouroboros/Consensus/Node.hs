@@ -594,7 +594,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnTraceConsensus
                   btime
                   systemTime
-                  (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+                  llrnMaxClockSkew
                   historicityCheck
                   chainDB
                   llrnMaxCaughtUpAge
@@ -1022,7 +1022,7 @@ mkNodeKernelArgs ::
   Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk ->
   BlockchainTime m ->
   SystemTime m ->
-  InFutureCheck.SomeHeaderInFutureCheck m blk ->
+  InFutureCheck.ClockSkew ->
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
   NominalDiffTime ->
@@ -1045,7 +1045,7 @@ mkNodeKernelArgs
   tracers
   btime
   systemTime
-  chainSyncFutureCheck
+  maxClockSkew
   chainSyncHistoricityCheck
   chainDB
   maxCaughtUpAge
@@ -1070,7 +1070,9 @@ mkNodeKernelArgs
           , systemTime
           , chainDB
           , initChainDB = nodeInitChainDB
-          , chainSyncFutureCheck
+          , chainSyncFutureCheck =
+              InFutureCheck.realHeaderInFutureCheck maxClockSkew systemTime
+          , maxClockSkew
           , chainSyncHistoricityCheck
           , blockFetchSize = estimateBlockSize
           , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
