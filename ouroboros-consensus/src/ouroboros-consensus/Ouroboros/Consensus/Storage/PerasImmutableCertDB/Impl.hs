@@ -5,6 +5,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -465,33 +466,48 @@ implAddCert env cert = do
 
   modifyState :: StrictTVar m Bool -> ModifyCertDbState m AddPerasImmutableCertResult
   modifyState quarantinedVar = do
-    KnownRounds known <- cdsKnownRounds <$> get
-    if not (Set.member roundNo known)
-      then addCertFile >> pure AddedCertToImmutableDB
-      else
-        lift (lift (readCertFile env roundNo)) >>= \case
-          Right _ -> pure CertAlreadyInImmutableDB
-          Left err -> do
-            -- The stored certificate is broken: quarantine it first, so that
-            -- the round is known to be quarantined should we crash before
-            -- its replacement is in place, and then add it as for any other
-            -- quarantined round.
-            st <- get
-            -- Masked, so that the flag reliably tells 'putSt' whether the
-            -- certificate file was quarantined.
-            st' <- lift $ lift $ mask_ $ do
-              quarantinedSt <- withHasFS env $ \hasFS -> quarantineCert hasFS roundNo st
-              atomically $ writeTVar quarantinedVar True
-              pure quarantinedSt
-            put st'
-            lift $ lift $ traceQuarantinedCert (picdbTracer env) roundNo err
-            addCertFile
-            pure ReplacedCorruptCertInImmutableDB
+    CertDbState
+      { cdsKnownRounds = KnownRounds known
+      , cdsQuarantinedRounds = QuarantinedRounds quarantined
+      } <-
+      get
+    if
+      | Set.member roundNo quarantined ->
+          replaceQuarantinedCert >> pure AddedCertToImmutableDB
+      | not (Set.member roundNo known) ->
+          storeCertFile >> pure AddedCertToImmutableDB
+      | otherwise ->
+          lift (lift (readCertFile env roundNo)) >>= \case
+            Right _ -> pure CertAlreadyInImmutableDB
+            Left err -> do
+              -- The stored certificate is broken: quarantine it first, so that
+              -- the round is known to be quarantined should we crash before
+              -- its replacement is in place, and then add it as for any other
+              -- quarantined round.
+              st <- get
+              -- Masked, so that the flag reliably tells 'putSt' whether the
+              -- certificate file was quarantined.
+              st' <- lift $ lift $ mask_ $ do
+                quarantinedSt <- withHasFS env $ \hasFS -> quarantineCert hasFS roundNo st
+                atomically $ writeTVar quarantinedVar True
+                pure quarantinedSt
+              put st'
+              lift $ lift $ traceQuarantinedCert (picdbTracer env) roundNo err
+              replaceQuarantinedCert
+              pure ReplacedCorruptCertInImmutableDB
 
-  -- Store the certificate of a round that is not known (it may be
-  -- quarantined), and register the round as known.
-  addCertFile :: ModifyCertDbState m ()
-  addCertFile = do
+  -- Store the certificate of a quarantined round, and release the round from
+  -- quarantine only once the new certificate file is in place: should storing
+  -- it fail, the new file is cleaned up and the round stays quarantined.
+  replaceQuarantinedCert :: ModifyCertDbState m ()
+  replaceQuarantinedCert = do
+    storeCertFile
+    lift $ lift $ removeQuarantinedCertFile env roundNo
+
+  -- Store the certificate of a round that is not known, and register the round
+  -- as known (and no longer quarantined).
+  storeCertFile :: ModifyCertDbState m ()
+  storeCertFile = do
     CertDbState
       { cdsKnownRounds = KnownRounds known
       , cdsQuarantinedRounds = QuarantinedRounds quarantined
@@ -507,13 +523,6 @@ implAddCert env cert = do
         { cdsKnownRounds = KnownRounds $ Set.insert roundNo known
         , cdsQuarantinedRounds = QuarantinedRounds $ Set.delete roundNo quarantined
         }
-    -- Release the round from quarantine only once the new certificate
-    -- file is in place: should this fail, the new file is cleaned up and
-    -- the round stays quarantined.
-    when (Set.member roundNo quarantined) $
-      lift $
-        lift $
-          removeQuarantinedCertFile env roundNo
 
 implGetCertsAfter ::
   forall m blk.
