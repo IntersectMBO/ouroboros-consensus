@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -65,6 +66,10 @@ module Ouroboros.Consensus.Protocol.PolyPraos
 
     -- * For testing purposes
   , doValidateKESSignature
+  , doValidateKESSignatureWorker
+  , leiosAnnouncementPolyPraos
+  , validateLeiosAnnouncementPolyPraos
+  , WhetherToUpperBoundOCERT (..)
   , doValidateVRFSignature
   ) where
 
@@ -73,7 +78,7 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
-import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), (⭒))
+import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), strictMaybeToMaybe, (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
@@ -126,7 +131,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (decode, encode))
 import Control.Exception (throw)
 import Control.Monad (unless, when)
-import Control.Monad.Except (Except, runExcept, throwError)
+import Control.Monad.Except (Except, catchError, runExcept, throwError)
 import Data.Coerce (coerce)
 import Data.Foldable (traverse_)
 import Data.Functor.Identity (runIdentity)
@@ -140,6 +145,7 @@ import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), OCINStaleness (..))
 import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -700,6 +706,65 @@ leiosContextFreeHeaderChecks lv b =
           throwError $
             LeiosEbTooBig err announced maxEbBodySize
 
+-- | 'validateViewLeiosAnnouncement' for every Praos.
+leiosAnnouncementPolyPraos ::
+  Foldable (WhenLeios proto) =>
+  Views.PolyPraosValidateView proto c ->
+  Maybe LeiosAnnouncement
+leiosAnnouncementPolyPraos b =
+  foldr (\(_containsCert, mbAnn) _ -> mk <$> strictMaybeToMaybe mbAnn) Nothing (Views.hvLeios b)
+ where
+  mk ann =
+    MkLeiosAnnouncement
+      { announcementElectee = Hash.hashToBytesShort $ SL.unKeyHash $ hashKey $ Views.hvVK b
+      , announcementEbHash =
+          Leios.MkEbHash $ Hash.hashToBytes $ extractHash $ ebReferencesAnnouncementHash ann
+      , announcementEbSize = ebReferencesAnnouncementSize ann
+      }
+
+-- | 'validateLeiosAnnouncement' for every Praos.
+--
+-- The election proof (VRF) and the signature (KES and operational certificate)
+-- are checked in full. The operational certificate counter is not upper
+-- bounded, since a counter ahead of our immutable tip's record is honest lag.
+-- A counter below that record, or no record at all, yields 'StaleOCIN' rather
+-- than a rejection, since that lag can explain either too. The certification
+-- gap check is skipped: it needs the header's predecessor, and an
+-- announcement is checked without one.
+validateLeiosAnnouncementPolyPraos ::
+  ( PolyPraosCrypto proto c
+  , Applicative (WhenLeios proto)
+  , Foldable (WhenLeios proto)
+  , TypeSwitch (LeiosOnly proto)
+  ) =>
+  PraosParams ->
+  Views.PolyPraosValidateView proto c ->
+  Ticked (PolyPraosState proto) ->
+  Except (PolyPraosValidationErr proto c) OCINStaleness
+validateLeiosAnnouncementPolyPraos
+  PraosParams{praosLeaderF, praosMaxKESEvo, praosSlotsPerKESPeriod}
+  b
+  tcs = do
+    leiosContextFreeHeaderChecks lv b
+    validateVRFSignature (praosStateEpochNonce cs) lv praosLeaderF b
+    authenticate `catchError` \case
+      CounterTooSmallOCERT{} -> pure StaleOCIN
+      NoCounterForKeyHashOCERT{} -> pure StaleOCIN
+      err -> throwError err
+   where
+    lv = tickedPraosStateLedgerView tcs
+    cs = tickedPraosStateChainDepState tcs
+    SL.PoolDistr pd _totalActiveStake = Views.plvPoolDistr lv
+    authenticate =
+      FreshOCIN
+        <$ doValidateKESSignatureWorker
+          DoNotUpperBoundOCERT
+          praosMaxKESEvo
+          praosSlotsPerKESPeriod
+          pd
+          (praosStateOCertCounters cs)
+          b
+
 -- | The Leios-specific checks on a header, called by 'updateChainDepState'.
 --
 -- 'leiosContextFreeHeaderChecks' plus the one check that needs the header's
@@ -842,6 +907,20 @@ validateKESSignature
   ocertCounters =
     doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod plvPoolDistr ocertCounters
 
+-- | Whether 'doValidateKESSignatureWorker' enforces the OCERT counter's /upper/
+-- bound, i.e. rejects (with 'CounterOverIncrementedOCERT') a counter more than
+-- one greater than the one we have recorded for this issuer.
+--
+-- Normal header validation enforces it ('UpperBoundOCERT'). Validating a
+-- relayed Leios announcement out-of-context against a (possibly lagging)
+-- immutable tip legitimately sees counters that have run ahead of our recorded
+-- view, so that path skips it ('DoNotUpperBoundOCERT'). The counter's /lower/
+-- bound ('CounterTooSmallOCERT', a revoked key) is enforced either way.
+data WhetherToUpperBoundOCERT
+  = UpperBoundOCERT
+  | DoNotUpperBoundOCERT
+  deriving (Eq, Show)
+
 -- NOTE: This function is much easier to test than 'validateKESSignature' because we don't need to
 -- construct a 'PraosConfig' nor 'LedgerView' to test it.
 doValidateKESSignature ::
@@ -852,7 +931,20 @@ doValidateKESSignature ::
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.PolyPraosValidateView proto c ->
   Except (PolyPraosValidationErr proto c) ()
-doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
+doValidateKESSignature = doValidateKESSignatureWorker UpperBoundOCERT
+
+-- | The worker underlying 'doValidateKESSignature', parameterized by whether to
+-- enforce the OCERT counter's upper bound (see 'WhetherToUpperBoundOCERT').
+doValidateKESSignatureWorker ::
+  PolyPraosCrypto proto c =>
+  WhetherToUpperBoundOCERT ->
+  Word64 ->
+  Word64 ->
+  Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
+  Map (KeyHash SL.BlockIssuer) Word64 ->
+  Views.PolyPraosValidateView proto c ->
+  Except (PolyPraosValidationErr proto c) ()
+doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
   do
     c0 <= kp ?! KESBeforeStartOCERT c0 kp
     kp_ < c0_ + fromIntegral praosMaxKESEvo ?! KESAfterEndOCERT kp c0 praosMaxKESEvo
@@ -871,7 +963,9 @@ doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution o
         throwError $ NoCounterForKeyHashOCERT hk
       Just m -> do
         m <= n ?! CounterTooSmallOCERT m n
-        n <= m + 1 ?! CounterOverIncrementedOCERT m n
+        case whetherToUpperBound of
+          UpperBoundOCERT -> n <= m + 1 ?! CounterOverIncrementedOCERT m n
+          DoNotUpperBoundOCERT -> pure ()
  where
   oc@(OCert vk_hot n c0@(KESPeriod c0_) tau) = Views.hvOCert b
   (VKey vkcold) = Views.hvVK b

@@ -11,7 +11,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( ExnLeiosNotifyUnexpectedCancel (..)
   , LeiosNotifyClientPeerPipelined
   , awaitImmTipCanForecastNow
-  , leiosNotifyClientPeerDiscardingReplies
+  , leiosNotifyClientPeerHandlingReplies
   , leiosNotifyClientPeerPipelined
   , toLeiosNotifyClientPeerPipelined
   ) where
@@ -80,19 +80,19 @@ awaitImmTipCanForecastNow cfg readImmutableLedger readCurrentSlot =
         Right _view -> pure ()
 
 -- | A client that keeps @depth@ requests outstanding until the control message
--- says to terminate, and discards every reply. It sends no request while
--- @gate@ blocks; see 'awaitImmTipCanForecastNow'. It disconnects a peer that
--- cancels a request before the client has sent 'MsgQuit'.
---
--- A temporary stub for the incremental port of @leios-prototype@ to @main@.
-leiosNotifyClientPeerDiscardingReplies ::
+-- says to terminate, passing each reply to @handleReply@. It sends no request
+-- while @gate@ blocks; see 'awaitImmTipCanForecastNow'. It disconnects a peer
+-- that cancels a request before the client has sent 'MsgQuit'.
+leiosNotifyClientPeerHandlingReplies ::
   (PrimMonad m, MonadSTM m, MonadThrow m) =>
   Int ->
   -- | blocks until the client may send requests
   STM m () ->
   ControlMessageSTM m ->
+  -- | throws to disconnect the peer
+  (Message (LeiosNotify point announcement vote) StBusy StIdle -> m ()) ->
   LeiosNotifyClientPeerPipelined point announcement vote m ()
-leiosNotifyClientPeerDiscardingReplies depth gate controlMessageSTM =
+leiosNotifyClientPeerHandlingReplies depth gate controlMessageSTM handleReply =
   toLeiosNotifyClientPeerPipelined $
     leiosNotifyClientPeerPipelined
       ( controlMessageSTM >>= \case
@@ -102,11 +102,8 @@ leiosNotifyClientPeerDiscardingReplies depth gate controlMessageSTM =
           Terminate -> pure (Left ())
       )
       ( pure $ \case
-          MsgLeiosBlockAnnouncement{} -> pure ()
-          MsgLeiosBlockOffer{} -> pure ()
-          MsgLeiosBlockTxsOffer{} -> pure ()
-          MsgLeiosVotes{} -> pure ()
           MsgCanceled -> throwIO MkExnLeiosNotifyUnexpectedCancel
+          msg -> handleReply msg
       )
 
 -- | The peer sent 'MsgCanceled' although the client had not sent 'MsgQuit'.

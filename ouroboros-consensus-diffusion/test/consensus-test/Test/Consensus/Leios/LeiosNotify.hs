@@ -30,8 +30,9 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
 import qualified Data.Map.Strict as Map
+import Data.Word (Word8)
 import Network.TypedProtocol.Codec (Codec)
-import Ouroboros.Consensus.Block (Header, SlotNo (..))
+import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
@@ -41,7 +42,11 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosVote (..)
   , RbHash (..)
   )
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate (maxAnnouncementAgeRecv)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
 import Ouroboros.Consensus.Network.LeiosNotify
@@ -51,6 +56,10 @@ import Ouroboros.Consensus.Network.LeiosNotify
   )
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
+import Ouroboros.Consensus.NodeKernel (getLeiosNotifyClientStates)
+import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (noPunishment)
+import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Channel (Channel, createConnectedBufferedChannels)
 import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (..)
@@ -65,7 +74,7 @@ import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits)
 import Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import Test.Consensus.Leios.Environment
 import Test.Consensus.Leios.NodeUnderTest
-import Test.Consensus.Leios.TestBlock (LeiosTestLedgerConfig (..))
+import Test.Consensus.Leios.TestBlock
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Util.ChainDB (emptyNodeDBs)
@@ -94,6 +103,64 @@ tests =
               @?= Just (NodeClientDisconnected UnexpectedCancel)
         , testCase "the node's client disconnects a peer whose reply is too big" $
             runSimOrThrow (timeout 100 nodeClientOversizedReply) @?= Just (NodeClientDisconnected ExceededSize)
+        , testCase "the node's client sends no request until its immutable tip can forecast to now" $
+            runSimOrThrow (timeout 100 nodeClientGated) @?= Just 0
+        , testCase "the node's client accepts a valid announcement" $
+            runSimOrThrow (timeout 100 (nodeClientAgainstAnnouncements [ann 1 (firstLeiosBlock 0)]))
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 1))
+        , testCase "the node's client accepts two announcements for one election" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstAnnouncements
+                    [ann 1 (firstLeiosBlock 0), ann 2 (forkLeiosBlock (firstLeiosBlock 0))]
+              )
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
+        , testCase "the node's client accepts an announcement whose counter is below its immutable tip's" $
+            runSimOrThrow
+              (timeout 100 (nodeClientAgainstAnnouncements [setCounterBelowImmTips (ann 1 (firstLeiosBlock 0))]))
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 1))
+        , testCase "the node's client counts an announcement whose counter is below its immutable tip's toward its election" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstAnnouncements
+                    [ setCounterBelowImmTips (ann 1 (firstLeiosBlock 0))
+                    , ann 2 (forkLeiosBlock (firstLeiosBlock 0))
+                    , ann 3 (forkLeiosBlock (forkLeiosBlock (firstLeiosBlock 0)))
+                    ]
+              )
+              @?= Just (NodeClientDisconnected AnnouncementThird)
+        , testCase "the node's client disconnects a peer that repeats an announcement" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstAnnouncements [ann 1 (firstLeiosBlock 0), ann 1 (firstLeiosBlock 0)]
+              )
+              @?= Just (NodeClientDisconnected AnnouncementRepeated)
+        , testCase "the node's client disconnects a peer that announces a third time in one election" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstAnnouncements
+                    [ ann 1 (firstLeiosBlock 0)
+                    , ann 2 (forkLeiosBlock (firstLeiosBlock 0))
+                    , ann 3 (forkLeiosBlock (forkLeiosBlock (firstLeiosBlock 0)))
+                    ]
+              )
+              @?= Just (NodeClientDisconnected AnnouncementThird)
+        , testCase "the node's client disconnects a peer that relays a header without an announcement" $
+            runSimOrThrow (timeout 100 (nodeClientAgainstAnnouncements [firstLeiosBlock 0]))
+              @?= Just (NodeClientDisconnected AnnouncementMissing)
+        , testCase "the node's client disconnects a peer that relays an invalid announcing header" $
+            runSimOrThrow
+              (timeout 100 (nodeClientAgainstAnnouncements [setInvalid (ann 1 (firstLeiosBlock 0))]))
+              @?= Just (NodeClientDisconnected AnnouncementInvalid)
+        , testCase "the node's client disconnects a peer that relays a far-future announcement" $
+            runSimOrThrow
+              (timeout 100 (nodeClientAgainstAnnouncements [ann 1 (setSlot 1000 (firstLeiosBlock 0))]))
+              @?= Just (NodeClientDisconnected AnnouncementInFuture)
+        , testCase "the node's client disconnects a peer that relays a too-old announcement" $
+            runSimOrThrow (timeout 1000 nodeClientTooOld)
+              @?= Just (NodeClientDisconnected AnnouncementTooOld)
+        , testCase "the node prunes its clients' state as its immutable tip advances" $
+            runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just (1, 0)
         , testCase "the node's server cancels a peer's outstanding requests when the peer quits" $
             runSimOrThrow (timeout 100 nodeServerCancels) @?= Just (NodeServerOutcome 0)
         , testCase "the node's server disconnects a peer that exceeds the pipelining bound" $
@@ -218,7 +285,11 @@ disconnectedBy server =
 -------------------------------------------------------------------------------}
 
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNode body = do
+withNode = withNodeForecasting 100000
+
+-- | A node whose ledger view forecasts this many slots past its immutable tip.
+withNodeForecasting :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNodeForecasting range body = do
   nodeDBs <- emptyNodeDBs
   withNodeUnderTest cfg nodeDBs body
  where
@@ -229,7 +300,7 @@ withNode body = do
       LeiosTestLedgerConfig
         { ltlcHardForkParams =
             HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
-        , ltlcForecastRange = 100000
+        , ltlcForecastRange = range
         }
 
 -- | The node's LeiosNotify client on the connection.
@@ -253,8 +324,34 @@ data NodeClientOutcome
   | NodeClientDisconnected DisconnectReason
   deriving (Eq, Show)
 
-data DisconnectReason = UnexpectedCancel | ExceededSize | ExceededTime
+data DisconnectReason
+  = UnexpectedCancel
+  | ExceededSize
+  | ExceededTime
+  | AnnouncementMissing
+  | AnnouncementRepeated
+  | AnnouncementThird
+  | AnnouncementInvalid
+  | AnnouncementTooOld
+  | AnnouncementInFuture
   deriving (Eq, Show)
+
+-- | Why the node's client disconnected its peer, if it did so on purpose.
+disconnectReason :: SomeException -> Maybe DisconnectReason
+disconnectReason e
+  | Just MkExnLeiosNotifyUnexpectedCancel <- fromException e = Just UnexpectedCancel
+  | Just (lf :: ProtocolLimitFailure) <- fromException e = Just $ case lf of
+      ExceededSizeLimit{} -> ExceededSize
+      ExceededTimeLimit{} -> ExceededTime
+  | Just (exn :: ExnLeiosNotifyInvalidAnnouncement Blk) <- fromException e = Just $ case exn of
+      ExnLeiosNotifyAnnouncementMissing -> AnnouncementMissing
+      ExnLeiosNotifyInvalidAnnouncement err -> case err of
+        Announcements.ErrRepeat -> AnnouncementRepeated
+        Announcements.ErrThird -> AnnouncementThird
+        Announcements.ErrInvalid{} -> AnnouncementInvalid
+        Announcements.ErrTooOld -> AnnouncementTooOld
+  | Just (_ :: InFutureCheck.HeaderArrivalException) <- fromException e = Just AnnouncementInFuture
+  | otherwise = Nothing
 
 -- | Run a peer's server that answers each request with whatever @next@ yields
 -- next, counting requests.
@@ -300,14 +397,7 @@ runNodeClientAgainst nut next target = do
         atomically client
     case result of
       Right _ -> NodeClientOutcome <$> readTVarIO requests
-      Left e
-        | Just MkExnLeiosNotifyUnexpectedCancel <- fromException e ->
-            pure $ NodeClientDisconnected UnexpectedCancel
-        | Just (ExceededSizeLimit _) <- fromException e ->
-            pure $ NodeClientDisconnected ExceededSize
-        | Just (ExceededTimeLimit _) <- fromException e ->
-            pure $ NodeClientDisconnected ExceededTime
-        | otherwise -> throwIO e
+      Left e -> maybe (throwIO e) (pure . NodeClientDisconnected) (disconnectReason e)
 
 -- | A peer that never has a notification: the node keeps exactly its
 -- pipelining bound of requests outstanding.
@@ -332,6 +422,72 @@ nodeClientUnpromptedCancel = withNode $ \nut ->
 nodeClientOversizedReply :: IOSim s NodeClientOutcome
 nodeClientOversizedReply = withNode $ \nut ->
   runNodeClientAgainst nut (pure (MsgLeiosVotes (replicate 2000 someVote))) maxBound
+
+-- | Announce an endorser block whose hash repeats the given byte 32 times.
+ann :: Word8 -> LeiosTestBlock -> LeiosTestBlock
+ann n = setAnnouncement (MkEbHash (BS.replicate 32 n)) 1000
+
+-- | A peer that relays these headers, one per request.
+nodeClientAgainstAnnouncements :: [LeiosTestBlock] -> IOSim s NodeClientOutcome
+nodeClientAgainstAnnouncements blks = withNode $ \nut -> do
+  queue <- newTQueueIO
+  atomically $ mapM_ (writeTQueue queue . MsgLeiosBlockAnnouncement . ltbHeader) blks
+  runNodeClientAgainst nut (readTQueue queue) (leiosNotifyPipelineDepth + length blks)
+
+-- | The announcement arrives long after its slot: the peer connects only then.
+nodeClientTooOld :: IOSim s NodeClientOutcome
+nodeClientTooOld = withNode $ \nut -> do
+  threadDelay (realToFrac maxAnnouncementAgeRecv + 100)
+  queue <- newTQueueIO
+  atomically $ writeTQueue queue $ MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBlock 0)
+  runNodeClientAgainst nut (readTQueue queue) (leiosNotifyPipelineDepth + 1)
+
+-- | By the time the node connects, the current slot is past what its
+-- immutable tip, still at genesis, can forecast to.
+nodeClientGated :: IOSim s Int
+nodeClientGated = withNodeForecasting 5 $ \nut -> do
+  threadDelay 10
+  requests <- newTVarIO 0
+  let envPeer =
+        EnvPeer
+          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests retry
+          , epLeiosNotifyClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
+    threadDelay 10
+    n <- readTVarIO requests
+    connTerminate conn
+    client <- nodeLeiosNotifyClient conn
+    atomically client >>= either throwIO (\_ -> pure n)
+
+-- | How many elections the client's state holds once the announcement is in,
+-- and once the immutable tip has passed it.
+nodePrunesClientState :: IOSim s (Int, Int)
+nodePrunesClientState = withNode $ \nut -> do
+  requests <- newTVarIO 0
+  queue <- newTQueueIO
+  atomically $ writeTQueue queue $ MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBlock 0)
+  let envPeer =
+        EnvPeer
+          { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests (readTQueue queue)
+          , epLeiosNotifyClient = Nothing
+          }
+  withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
+    atomically $ readTVar requests >>= check . (> leiosNotifyPipelineDepth)
+    beforePruning <- elections nut
+    -- k is 10, so twelve blocks make the first two immutable.
+    threadDelay 20
+    mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) $
+      take 12 $
+        iterate successorLeiosBlock (firstLeiosBlock 1)
+    threadDelay 1
+    afterPruning <- elections nut
+    pure (beforePruning, afterPruning)
+ where
+  elections nut = atomically $ do
+    states <- IOLike.readTVar (getLeiosNotifyClientStates (nutKernel nut))
+    sum
+      <$> mapM (fmap (Map.size . Announcements.live . lnpsAnnouncements) . IOLike.readTVar) (Map.elems states)
 
 somePoint :: LeiosPoint
 somePoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 0))

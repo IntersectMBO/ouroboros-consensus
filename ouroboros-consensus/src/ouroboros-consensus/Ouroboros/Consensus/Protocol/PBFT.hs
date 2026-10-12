@@ -68,6 +68,11 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosProtocol (..)
+  , defaultValidateLeiosAnnouncement
+  , defaultValidateViewLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.Abstract
@@ -288,6 +293,10 @@ data instance Ticked (PBftState c) = TickedPBftState
 instance ChainDepStateSupportsPeras (PBftState c)
 
 instance ChainDepStateSupportsPeras (Ticked (PBftState c))
+
+instance PBftCrypto c => LeiosProtocol (PBft c) where
+  validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
+  validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
 
 instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type ValidationErr (PBft c) = PBftValidationErr c

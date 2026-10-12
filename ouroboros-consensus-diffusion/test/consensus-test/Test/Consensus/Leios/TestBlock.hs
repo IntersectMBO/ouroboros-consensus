@@ -18,13 +18,14 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- | A test block for the Leios node-vs-environment tests.
+-- | A test block whose headers can carry Leios announcements.
 --
 -- Its protocol enforces no leader schedule and checks no crypto, so a test is
--- free to mint any chain shape. A header can be marked invalid, which its
--- protocol then rejects. Its ledger view is forecastable only within a
--- configured range, just like the Cardano ledger's, so a test can reach the
--- forecast horizon on demand.
+-- free to mint any chain shape and any announcement. A header can be marked
+-- invalid, which its protocol then rejects, both in ordinary header validation
+-- and in the out-of-context validation an announcement gets. Its ledger view is
+-- forecastable only within a configured range, just like the Cardano ledger's,
+-- so a test can reach the forecast horizon on demand.
 --
 -- No chain may exceed 'maxLeiosTestChainLength' blocks, since the block hash is
 -- a path from genesis and must fit a fixed size.
@@ -35,10 +36,13 @@ module Test.Consensus.Leios.TestBlock
   , maxLeiosTestChainLength
 
     -- * Building chains
-  , setSlot
   , firstLeiosBlock
   , forkLeiosBlock
+  , setAnnouncement
+  , setCounterBelowImmTips
   , setInvalid
+  , setIssuer
+  , setSlot
   , successorLeiosBlock
 
     -- * Ledger
@@ -56,8 +60,10 @@ module Test.Consensus.Leios.TestBlock
   , singleNodeLeiosTestConfig
   ) where
 
-import Cardano.Binary (DecoderError, fromCBOR, toCBOR)
+import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
+import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR.Dec
+import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), serialise)
 import Control.Monad (guard, replicateM, replicateM_)
@@ -71,6 +77,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
+import Data.String (fromString)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..))
 import Data.Void (Void)
@@ -104,6 +111,8 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Protocol
+import Ouroboros.Consensus.Leios.Types (BytesSize, EbHash, decodeEbHash, encodeEbHash)
 import Ouroboros.Consensus.Node.InitStorage (NodeInitStorage (..))
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -160,11 +169,21 @@ newtype LeiosTestBlock = LeiosTestBlock
 data instance Header LeiosTestBlock = LeiosTestHeader
   { lthHash :: !TestHash
   , lthSlot :: !SlotNo
+  , lthIssuer :: !Word64
+  -- ^ Stands in for the block issuer, so that the election is a real identity.
+  , lthAnnouncement :: !(Maybe (EbHash, BytesSize))
   , lthValidity :: !Validity
   -- ^ Whether the protocol accepts this header; see 'setInvalid'.
+  , lthCounter :: !CounterVsImmTip
+  -- ^ Whether this header's operational certificate counter is below the one
+  -- the immutable tip records for its issuer; see 'setCounterBelowImmTips'.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
+
+data CounterVsImmTip = HeaderCounterNotBelowImmTips | HeaderCounterBelowImmTips
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NoThunks, Serialise)
 
 type instance HeaderHash LeiosTestBlock = TestHash
 
@@ -244,19 +263,35 @@ mkLeiosTestBlock hash slot =
     LeiosTestHeader
       { lthHash = hash
       , lthSlot = slot
+      , lthIssuer = 0
+      , lthAnnouncement = Nothing
       , lthValidity = Valid
+      , lthCounter = HeaderCounterNotBelowImmTips
       }
 
 onHeader :: (Header LeiosTestBlock -> Header LeiosTestBlock) -> LeiosTestBlock -> LeiosTestBlock
 onHeader f = LeiosTestBlock . f . ltbHeader
 
+-- | Announce the endorser block with this hash, claiming this size.
+setAnnouncement :: EbHash -> BytesSize -> LeiosTestBlock -> LeiosTestBlock
+setAnnouncement ebHash size = onHeader $ \hdr -> hdr{lthAnnouncement = Just (ebHash, size)}
+
 -- | Move this block to another slot.
 setSlot :: SlotNo -> LeiosTestBlock -> LeiosTestBlock
 setSlot slot = onHeader $ \hdr -> hdr{lthSlot = slot}
 
+setIssuer :: Word64 -> LeiosTestBlock -> LeiosTestBlock
+setIssuer issuer = onHeader $ \hdr -> hdr{lthIssuer = issuer}
+
 -- | Make the protocol reject this header.
 setInvalid :: LeiosTestBlock -> LeiosTestBlock
 setInvalid = onHeader $ \hdr -> hdr{lthValidity = Invalid}
+
+-- | Put this header's operational certificate counter below the one the
+-- immutable tip records for its issuer, so that its announcement is accepted
+-- but not processed.
+setCounterBelowImmTips :: LeiosTestBlock -> LeiosTestBlock
+setCounterBelowImmTips = onHeader $ \hdr -> hdr{lthCounter = HeaderCounterBelowImmTips}
 
 {-------------------------------------------------------------------------------
   Protocol
@@ -292,6 +327,21 @@ instance ConsensusProtocol LeiosTestProtocol where
   tickChainDepState _ _ _ () = TickedTrivial
   updateChainDepState _ hdr _ _ = checkValidity hdr
   reupdateChainDepState _ _ _ _ = ()
+
+instance LeiosProtocol LeiosTestProtocol where
+  validateViewLeiosAnnouncement _proxy hdr =
+    lthAnnouncement hdr >>= \(ebHash, size) ->
+      pure
+        MkLeiosAnnouncement
+          { announcementElectee = SBS.toShort (BL.toStrict (serialise (lthIssuer hdr)))
+          , announcementEbHash = ebHash
+          , announcementEbSize = size
+          }
+  validateLeiosAnnouncement _cfg hdr _slot _st = do
+    checkValidity hdr
+    pure $ case lthCounter hdr of
+      HeaderCounterNotBelowImmTips -> FreshOCIN
+      HeaderCounterBelowImmTips -> StaleOCIN
 
 checkValidity :: Header LeiosTestBlock -> Except LeiosTestInvalidHeader ()
 checkValidity hdr = case lthValidity hdr of
@@ -525,12 +575,27 @@ instance Serialise (Header LeiosTestBlock) where
   encode LeiosTestHeader{..} =
     encode lthHash
       <> encode lthSlot
+      <> encode lthIssuer
+      <> encodeMaybe encodeAnnouncement lthAnnouncement
       <> encode lthValidity
+      <> encode lthCounter
   decode = do
     lthHash <- decode
     lthSlot <- decode
+    lthIssuer <- decode
+    lthAnnouncement <- decodeMaybe decodeAnnouncement
     lthValidity <- decode
+    lthCounter <- decode
     pure LeiosTestHeader{..}
+
+encodeAnnouncement :: (EbHash, BytesSize) -> Encoding
+encodeAnnouncement (ebHash, size) =
+  CBOR.encodeListLen 2 <> encodeEbHash ebHash <> encode size
+
+decodeAnnouncement :: Decoder s (EbHash, BytesSize)
+decodeAnnouncement = do
+  enforceSize (fromString "Announcement") 2
+  (,) <$> decodeEbHash <*> decode
 
 instance HasBinaryBlockInfo LeiosTestBlock where
   getBinaryBlockInfo blk =
@@ -704,6 +769,7 @@ instance LedgerSupportsPeerSelection LeiosTestBlock where
 
 instance NodeInitStorage LeiosTestBlock where
   nodeCheckIntegrity _ _ = True
+
   -- Only how the ImmutableDB splits its blocks into files depends on this, so
   -- any positive size works. Cardano's is 10k slots, Byron's epoch size, never
   -- changed since; this one is small, so that a short test chain still spans

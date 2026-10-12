@@ -13,6 +13,11 @@ module Ouroboros.Consensus.Mock.Protocol.LeaderSchedule
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosProtocol (..)
+  , defaultValidateLeiosAnnouncement
+  , defaultValidateViewLeiosAnnouncement
+  )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.LeaderSchedule
@@ -34,6 +39,10 @@ data instance ConsensusConfig (WithLeaderSchedule p) = WLSConfig
   , wlsConfigNodeId :: !CoreNodeId
   }
   deriving Generic
+
+instance ConsensusProtocol p => LeiosProtocol (WithLeaderSchedule p) where
+  validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
+  validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
 
 instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
   type TiebreakerView (WithLeaderSchedule p) = TiebreakerView p

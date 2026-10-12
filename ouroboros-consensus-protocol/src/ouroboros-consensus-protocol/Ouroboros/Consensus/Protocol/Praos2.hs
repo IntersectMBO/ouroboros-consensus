@@ -37,7 +37,12 @@ import Data.Proxy (Proxy (Proxy))
 import GHC.Generics (Generic)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (..))
 import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.PolyPraos
+  ( leiosAnnouncementPolyPraos
+  , validateLeiosAnnouncementPolyPraos
+  )
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( HasMaxMajorProtVer (..)
@@ -116,6 +121,11 @@ instance HasMaxMajorProtVer (Praos2 c) where
 {-------------------------------------------------------------------------------
   ConsensusProtocol
 -------------------------------------------------------------------------------}
+
+instance LeiosCrypto c => LeiosProtocol (Praos2 c) where
+  validateViewLeiosAnnouncement _proxy = leiosAnnouncementPolyPraos
+  validateLeiosAnnouncement (LeiosConfig (PraosConfig prms _ei)) b _slot =
+    validateLeiosAnnouncementPolyPraos prms b
 
 instance LeiosCrypto c => ConsensusProtocol (Praos2 c) where
   type ChainDepState (Praos2 c) = PolyPraosState (Praos2 c)

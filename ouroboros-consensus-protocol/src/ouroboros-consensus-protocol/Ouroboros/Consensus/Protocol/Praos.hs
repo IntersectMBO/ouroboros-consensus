@@ -79,6 +79,11 @@ import GHC.Generics (Generic)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosProtocol (..)
+  , defaultValidateLeiosAnnouncement
+  , defaultValidateViewLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -162,6 +167,10 @@ instance HasMaxMajorProtVer (Praos c) where
 {-------------------------------------------------------------------------------
   ConsensusProtocol
 -------------------------------------------------------------------------------}
+
+instance PraosCrypto c => LeiosProtocol (Praos c) where
+  validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
+  validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PolyPraosState (Praos c)

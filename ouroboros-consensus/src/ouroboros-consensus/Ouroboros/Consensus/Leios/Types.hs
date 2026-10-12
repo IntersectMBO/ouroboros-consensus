@@ -29,6 +29,9 @@ module Ouroboros.Consensus.Leios.Types
   , decodeLeiosPoint
   , prettyLeiosPoint
 
+    -- * Elections
+  , ElId (..)
+
     -- * Votes
   , LeiosVote (..)
   , encodeLeiosVote
@@ -64,6 +67,7 @@ import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString.Short (ShortByteString, fromShort)
 import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.Vector.Strict (Vector)
@@ -164,6 +168,29 @@ decodeLeiosPoint = do
 prettyLeiosPoint :: LeiosPoint -> String
 prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
   "(" ++ show slotNo ++ ", " ++ BS8.unpack (BS16.encode bytes) ++ ")"
+
+-- * Elections
+
+-- | The slot number and pool id of an election
+data ElId
+  = -- | The bytes are the hash of the pool's cold verification key
+    MkElId !SlotNo !ShortByteString
+  deriving stock (Eq, Generic)
+  deriving anyclass NoThunks
+
+-- | Renders the pool id as hex rather than as a raw byte string.
+instance Show ElId where
+  showsPrec p (MkElId slot poolId) =
+    showParen (p > 10) $
+      showString "MkElId "
+        . showsPrec 11 slot
+        . showChar ' '
+        . showString (BS8.unpack (BS16.encode (fromShort poolId)))
+
+-- | INVARIANT: lexicographically starts with 'SlotNo'
+instance Ord ElId where
+  compare (MkElId slL idL) (MkElId slR idR) =
+    compare slL slR <> compare idL idR
 
 -- * Votes
 

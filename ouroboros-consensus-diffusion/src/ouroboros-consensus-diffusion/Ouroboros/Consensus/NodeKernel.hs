@@ -47,6 +47,8 @@ import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.Void (Void)
@@ -72,6 +74,10 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   ( SomeHeaderInFutureCheck
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
+  ( LeiosNotifyPeerState
+  , pruneLeiosNotifyPeerState
   )
 import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
@@ -191,6 +197,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Accumulator for tx-submission counters of disconnected peers.
   , getTxDecisionPolicy :: TxDecisionPolicy
   -- ^ Tx-submission decision policy.
+  , getLeiosNotifyClientStates ::
+      StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (LeiosNotifyPeerState blk)))
+  -- ^ The state of each LeiosNotify client, by upstream peer, which
+  -- 'leiosNotifyPruner' prunes.
   }
 
 -- | Arguments required when initializing a node
@@ -373,6 +383,11 @@ initNodeKernel
           keepAliveRegistry
           blockFetchConfiguration
 
+    leiosNotifyClientStates <- newTVarIO Map.empty
+    void $
+      forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
+        leiosNotifyPruner chainDB leiosNotifyClientStates
+
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
@@ -405,6 +420,7 @@ initNodeKernel
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getLeiosNotifyClientStates = leiosNotifyClientStates
         }
    where
     blockForgingController ::
@@ -687,3 +703,24 @@ getImmTipSlot ::
 getImmTipSlot kernel =
   getTipSlot
     <$> ChainDB.getImmutableLedger (getChainDB kernel)
+
+-- | Prune every LeiosNotify client's state each time the immutable tip's slot
+-- advances.
+leiosNotifyPruner ::
+  (IOLike m, GetTip (LedgerState blk)) =>
+  ChainDB m blk ->
+  StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->
+  m Void
+leiosNotifyPruner chainDB statesVar = go (SlotNo 0)
+ where
+  go prunedSlot = do
+    immTipSlot <- atomically $ do
+      immLedger <- ChainDB.getImmutableLedger chainDB
+      case getTipSlot (ledgerState immLedger) of
+        NotOrigin slot
+          | prunedSlot < slot -> do
+              states <- readTVar statesVar
+              mapM_ (\stateVar -> modifyTVar stateVar (pruneLeiosNotifyPeerState slot)) states
+              pure slot
+        _ -> retry
+    go immTipSlot

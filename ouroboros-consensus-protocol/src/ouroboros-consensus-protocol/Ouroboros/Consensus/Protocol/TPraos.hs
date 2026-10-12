@@ -77,6 +77,11 @@ import NoThunks.Class (NoThunks (..))
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosProtocol (..)
+  , defaultValidateLeiosAnnouncement
+  , defaultValidateViewLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -329,6 +334,10 @@ data instance Ticked TPraosState = TickedChainDepState
 instance ChainDepStateSupportsPeras TPraosState
 
 instance ChainDepStateSupportsPeras (Ticked TPraosState)
+
+instance SL.PraosCrypto c => LeiosProtocol (TPraos c) where
+  validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
+  validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState
