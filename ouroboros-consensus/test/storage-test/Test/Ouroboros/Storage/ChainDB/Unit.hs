@@ -144,7 +144,7 @@ tests =
         , testCase "certificate for a losing fork is not archived" $
             runSystemIO perasLosingForkCertNotArchived
         , testCase "persist-and-GC retains the historical certificate" $
-            runSystemIO perasPersistThenGCRetainsCert
+            runSystemIO perasCertPersistsGC
         , testCase "certificate older than the immutable tip is ignored" $
             runSystemIO perasLateCertIgnored
         , testCase "a handoff-boundary certificate is rejected or archived" $
@@ -515,8 +515,8 @@ perasLosingForkCertNotArchived = do
 
 -- | Garbage collection may discard the volatile copy, but not the historical
 -- copy made during persistence.
-perasPersistThenGCRetainsCert :: SystemM TestBlock IO ()
-perasPersistThenGCRetainsCert = do
+perasCertPersistsGC :: SystemM TestBlock IO ()
+perasCertPersistsGC = do
   b1 <- addBlock $ firstBlock 0 (body 0)
   b2 <- addBlock $ mkNextBlock b1 1 (body 0)
   let cert = mkMockPerasCert 1 b1 1
