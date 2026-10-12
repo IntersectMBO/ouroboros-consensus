@@ -218,6 +218,9 @@ library
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
+    Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
@@ -387,6 +390,7 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto-class ^>=2.6,
+    cardano-crypto-leios,
     cardano-diffusion:api,
     cardano-ledger-binary ^>=1.10,
     cardano-ledger-core ^>=1.23,
@@ -433,7 +437,7 @@ library
     these ^>=1.2,
     time,
     transformers,
-    typed-protocols ^>=1.2,
+    typed-protocols:{cborg, typed-protocols} ^>=1.2.2,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -1288,6 +1292,7 @@ library diffusion
   visibility: public
   hs-source-dirs: ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion
   exposed-modules:
+    Ouroboros.Consensus.Network.LeiosNotify
     Ouroboros.Consensus.Network.NodeToClient
     Ouroboros.Consensus.Network.NodeToNode
     Ouroboros.Consensus.Node
@@ -1334,7 +1339,7 @@ library diffusion
     text,
     time,
     transformers,
-    typed-protocols:{stateful, typed-protocols},
+    typed-protocols:{stateful, typed-protocols} ^>=1.2.2,
 
 library unstable-diffusion-testlib
   import: common-lib
@@ -1472,6 +1477,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Leios.LeiosNotify
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.PeerSimulator.BlockFetch
     Test.Consensus.PeerSimulator.ChainSync

@@ -6,6 +6,7 @@ import qualified Test.Consensus.GSM (tests)
 import qualified Test.Consensus.Genesis.TestSuite.SmallKey.Tests (tests)
 import qualified Test.Consensus.Genesis.Tests (tests)
 import qualified Test.Consensus.HardFork.Combinator (tests)
+import qualified Test.Consensus.Leios.LeiosNotify (tests)
 import qualified Test.Consensus.PeerSimulator.Tests (tests)
 import qualified Test.Consensus.PointSchedule.Shrinking.Tests (tests)
 import qualified Test.Consensus.PointSchedule.Tests (tests)
@@ -37,4 +38,5 @@ tests =
     , Test.Consensus.PointSchedule.Tests.tests
     , Test.Consensus.BlockTree.Tests.tests
     , Test.Consensus.Genesis.TestSuite.SmallKey.Tests.tests
+    , Test.Consensus.Leios.LeiosNotify.tests
     ]

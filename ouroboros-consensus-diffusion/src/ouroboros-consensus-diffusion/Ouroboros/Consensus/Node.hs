@@ -714,6 +714,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
         ByteString
         ByteString
         ByteString
+        ByteString
         NodeToNodeInitiatorResult
         ()
     ) ->
@@ -823,6 +824,7 @@ mkNodeToNodeApps ::
     ByteString
     ByteString
     ByteString
+    ByteString
     NodeToNodeInitiatorResult
     ()
 mkNodeToNodeApps
@@ -860,6 +862,7 @@ mkNodeToNodeInitiatorVersions ::
     NTN.Apps
       m
       addrNTN
+      ByteString
       ByteString
       ByteString
       ByteString
@@ -909,6 +912,7 @@ mkNodeToNodeInitiatorResponderVersions ::
     NTN.Apps
       m
       addrNTN
+      ByteString
       ByteString
       ByteString
       ByteString

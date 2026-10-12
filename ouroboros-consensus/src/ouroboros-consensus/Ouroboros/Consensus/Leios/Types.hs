@@ -25,7 +25,14 @@ module Ouroboros.Consensus.Leios.Types
 
     -- * Points
   , LeiosPoint (..)
+  , encodeLeiosPoint
+  , decodeLeiosPoint
   , prettyLeiosPoint
+
+    -- * Votes
+  , LeiosVote (..)
+  , encodeLeiosVote
+  , decodeLeiosVote
 
     -- * Endorser blocks
   , BytesSize
@@ -41,6 +48,8 @@ module Ouroboros.Consensus.Leios.Types
   , minCertificationSlot
   ) where
 
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
+import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -141,9 +150,49 @@ instance SignableRepresentation LeiosPoint where
       encode (pointSlotNo point)
         <> encodeEbHash (pointEbHash point)
 
+encodeLeiosPoint :: LeiosPoint -> Encoding
+encodeLeiosPoint (MkLeiosPoint ebSlot ebHash) =
+  CBOR.encodeListLen 2
+    <> encode ebSlot
+    <> encodeEbHash ebHash
+
+decodeLeiosPoint :: Decoder s LeiosPoint
+decodeLeiosPoint = do
+  CBOR.decodeListLenOf 2
+  MkLeiosPoint <$> decode <*> decodeEbHash
+
 prettyLeiosPoint :: LeiosPoint -> String
 prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
   "(" ++ show slotNo ++ ", " ++ BS8.unpack (BS16.encode bytes) ++ ")"
+
+-- * Votes
+
+-- | A vote for a Leios announcement.
+data LeiosVote = MkLeiosVote
+  { voteAnnouncingRbHash :: !RbHash
+  -- ^ the 'HeaderHash' of the ranking block ('s header) that carries the
+  -- announcement
+  , voteSeatId :: !LeiosSeatId
+  -- ^ the voter's seat in the committee
+  , voteSignature :: !LeiosSignature
+  -- ^ the voter's signature of 'voteAnnouncingRbHash'
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
+
+encodeLeiosVote :: LeiosVote -> Encoding
+encodeLeiosVote (MkLeiosVote rbHash seat signature) =
+  CBOR.encodeListLen 3
+    <> encodeRbHash rbHash
+    <> CBOR.encodeWord16 (leiosSeatIndex seat)
+    <> encodeFixedSized signature
+
+decodeLeiosVote :: Decoder s LeiosVote
+decodeLeiosVote = do
+  CBOR.decodeListLenOf 3
+  MkLeiosVote <$> decodeRbHash <*> (LeiosSeatId <$> CBOR.decodeWord16) <*> decodeFixedSized
 
 -- * Endorser blocks
 

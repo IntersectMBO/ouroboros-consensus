@@ -88,10 +88,12 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type (LeiosNotify)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert (PerasCertDiffusion)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote (PerasVoteDiffusion)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -1186,6 +1188,7 @@ runThreadNetwork
         (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
         (AnyMessage (PerasCertDiffusion blk))
         (AnyMessage (PerasVoteDiffusion blk))
+        (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
         (AnyMessage KeepAlive)
         (AnyMessage (PeerSharing NodeId))
     customNodeToNodeCodecs cfg ntnVersion =
@@ -1211,6 +1214,9 @@ runThreadNetwork
         , cPerasVoteDiffusionCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cPerasVoteDiffusionCodec NTN.identityCodecs
+        , cLeiosNotifyCodec =
+            mapFailureCodec CodecIdFailure $
+              NTN.cLeiosNotifyCodec NTN.identityCodecs
         , cKeepAliveCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cKeepAliveCodec NTN.identityCodecs
@@ -1813,6 +1819,7 @@ type LimitedApp' m addr blk =
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
     (AnyMessage (PerasCertDiffusion blk))
     (AnyMessage (PerasVoteDiffusion blk))
+    (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
     NodeToNodeInitiatorResult
