@@ -296,10 +296,11 @@ sql_next_pinned_eb =
   "SELECT ebHashBytes FROM vol.ebs WHERE status = 1 ORDER BY ebSlot LIMIT ?1"
 
 -- | Whether a GC at slot @?1@ could has any work, i.e.
---   if there are any old volatile EBs or already copied EBs.
+--   if there are any old volatile EBs, already copied EBs or leftover EBs
+--   from an interrupted GC pass.
 sql_gc_has_work :: String
 sql_gc_has_work =
-  "SELECT EXISTS (SELECT 1 FROM ebs WHERE status IN (0, 2) AND ebSlot < ?1)"
+  "SELECT EXISTS (SELECT 1 FROM ebs WHERE status IN (0, 2, 3) AND ebSlot < ?1)"
 
 -- | The markability predicate, shared by 'sql_gc_mark' and
 -- 'sql_gc_stage_marked' so the marked set and the staged set can never
