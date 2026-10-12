@@ -105,7 +105,8 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusio
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
 import Ouroboros.Consensus.Network.LeiosNotify
-  ( leiosNotifyPipelineDepth
+  ( leiosNotifyMiniProtocolNum
+  , leiosNotifyPipelineDepth
   , runLookaheadFixedSenderPeerWithLimits
   )
 import Ouroboros.Consensus.Node.ExitPolicy
@@ -158,6 +159,7 @@ import Ouroboros.Network.Protocol.KeepAlive.Client
 import Ouroboros.Network.Protocol.KeepAlive.Codec
 import Ouroboros.Network.Protocol.KeepAlive.Server
 import Ouroboros.Network.Protocol.KeepAlive.Type
+import Ouroboros.Network.Protocol.Limits (smallByteLimit)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
   ( byteLimitsObjectDiffusion
   , codecObjectDiffusion
@@ -1344,6 +1346,9 @@ initiator featureFlags miniProtocolParameters version versionData Apps{..} =
     )
     version
     versionData
+    <> leiosNotifyProtocols
+      version
+      (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aLeiosNotifyClient version ctx)))
 
 -- | A bi-directional network application.
 --
@@ -1401,3 +1406,41 @@ initiatorAndResponder featureFlags miniProtocolParameters version versionData Ap
     )
     version
     versionData
+    <> leiosNotifyProtocols
+      version
+      ( InitiatorAndResponderProtocol
+          (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
+          (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
+      )
+
+-- | LeiosNotify, to add to a node-to-node bundle, if the version has it.
+--
+-- TODO remove once 'NodeToNodeProtocols' has fields for the Leios mini-protocols.
+leiosNotifyProtocols ::
+  NodeToNodeVersion ->
+  RunMiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c ->
+  OuroborosBundleWithExpandedCtx mode addr PeerTrustable b m a c
+leiosNotifyProtocols version run
+  | version >= NodeToNodeV_16 =
+      mempty
+        { withHot =
+            WithHot
+              [ MiniProtocol
+                  { miniProtocolNum = leiosNotifyMiniProtocolNum
+                  , miniProtocolStart = StartOnDemand
+                  , miniProtocolLimits = leiosNotifyProtocolLimits
+                  , miniProtocolRun = run
+                  }
+              ]
+        }
+  | otherwise = mempty
+
+-- | The ingress queue must hold a reply to every request the client may leave
+-- outstanding, each as large as 'byteLimitsLeiosNotify' allows; the
+-- server's, which only receives requests, needs far less.
+leiosNotifyProtocolLimits :: MiniProtocolLimits
+leiosNotifyProtocolLimits =
+  MiniProtocolLimits
+    { maximumIngressQueue =
+        addSafetyMargin $ leiosNotifyPipelineDepth * fromIntegral smallByteLimit
+    }

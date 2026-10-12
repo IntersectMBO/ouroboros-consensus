@@ -1,0 +1,358 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
+
+-- | One real node, and a mocked environment around it.
+--
+-- The node is built by the node's own 'initNodeKernel' over a ChainDB on a
+-- mocked filesystem, so the code under test is the node's, not a
+-- reimplementation of it. Its block is 'LeiosTestBlock'. It does not forge,
+-- since the test gives it no block forging.
+--
+-- The node's node-to-node applications and the versions it offers them at are
+-- built by the node's own 'mkNodeToNodeApps' and
+-- 'mkNodeToNodeInitiatorResponderVersions', as a running node builds them.
+--
+-- Everything outside the node is the test's: the environment runs the other
+-- end of each of the node's connections itself.
+module Test.Consensus.Leios.NodeUnderTest
+  ( Blk
+  , NodeUnderTest (..)
+  , NodeUnderTestConfig (..)
+  , NodeVersions
+  , PeerAddr (..)
+  , Seeds (..)
+  , decodePeerAddr
+  , encodePeerAddr
+  , nodeVersionData
+  , defaultNodeUnderTestConfig
+  , withNodeUnderTest
+  ) where
+
+import Cardano.Network.Diffusion.Configuration
+  ( defaultChainSyncIdleTimeout
+  , defaultTxSubmissionLogicVersion
+  )
+import Cardano.Network.NodeToNode.Version
+  ( DiffusionMode (..)
+  , NodeToNodeVersion
+  , NodeToNodeVersionData
+  , getLocalPerasSupport
+  )
+import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers (..))
+import Cardano.Network.PeerSelection.PeerTrustable (PeerTrustable)
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
+import Codec.Serialise (Serialise (..))
+import Control.DeepSeq (NFData)
+import Control.Monad.IOSim (IOSim)
+import Control.Monad.State.Strict (evalState, state)
+import Control.ResourceRegistry (ResourceRegistry, withRegistry)
+import Control.Tracer (nullTracer)
+import Data.ByteString.Lazy (ByteString)
+import Data.Hashable (Hashable)
+import Data.Proxy (Proxy (..))
+import qualified Network.Mux as Mux
+import Ouroboros.Consensus.BlockchainTime
+  ( BackoffDelay (..)
+  , BlockchainTime
+  , HardForkBlockchainTimeArgs (..)
+  , SystemTime
+  , hardForkBlockchainTime
+  )
+import Ouroboros.Consensus.BlockchainTime.WallClock.Default (defaultSystemTime)
+import Ouroboros.Consensus.Config
+  ( DiffusionPipeliningSupport (..)
+  , SecurityParam (..)
+  , TopLevelConfig
+  , configLedger
+  )
+import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
+import Ouroboros.Consensus.Node
+  ( mkNodeKernelArgs
+  , mkNodeToNodeApps
+  , mkNodeToNodeInitiatorResponderVersions
+  , nodeKernelArgsEnforceInvariants
+  , openChainDB
+  , stdVersionDataNTN
+  )
+import Ouroboros.Consensus.Node.ExitPolicy (NodeToNodeInitiatorResult)
+import qualified Ouroboros.Consensus.Node.GSM as GSM
+import Ouroboros.Consensus.Node.Genesis
+  ( disableGenesisConfig
+  , mkGenesisNodeKernelArgs
+  )
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+  ( BlockNodeToNodeVersion
+  , supportedNodeToNodeVersions
+  )
+import Ouroboros.Consensus.Node.Tracers (nullTracers)
+import Ouroboros.Consensus.NodeKernel
+  ( NodeKernel
+  , NodeKernelArgs (..)
+  , initNodeKernel
+  )
+import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.ConnectionId (ConnectionId)
+import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
+import Ouroboros.Network.Hashable (mkUnsafeSalt)
+import Ouroboros.Network.Mux (OuroborosBundleWithExpandedCtx)
+import Ouroboros.Network.PeerSelection.Governor.Types
+  ( makePublicPeerSelectionStateVar
+  )
+import Ouroboros.Network.PeerSelection.PeerMetric (newPeerMetric)
+import Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing (..))
+import Ouroboros.Network.Protocol.Handshake.Version (Versions)
+import Ouroboros.Network.TxSubmission.Inbound.V1 (TxSubmissionInitDelay (..))
+import System.FS.API (SomeHasFS (..))
+import System.FS.API.Types (mkFsPath)
+import System.FS.Sim.MockFS (MockFS)
+import System.FS.Sim.STM (simHasFS)
+import System.Random (StdGen, mkStdGen, random, splitGen)
+import Test.Consensus.Leios.TestBlock
+import Test.Util.ChainDB (NodeDBs (..))
+import Test.Util.FS.Subdirectory (subdirectoryHasFS)
+import Test.Util.Orphans.IOLike ()
+
+type Blk = LeiosTestBlock
+
+-- | What a test can vary about the node.
+data NodeUnderTestConfig = NodeUnderTestConfig
+  { nutcSecurityParam :: SecurityParam
+  , nutcLedgerConfig :: LeiosTestLedgerConfig
+  , nutcRandomness :: StdGen
+  -- ^ The root of all the test's randomness; see 'Seeds'.
+  }
+
+defaultNodeUnderTestConfig :: SecurityParam -> LeiosTestLedgerConfig -> NodeUnderTestConfig
+defaultNodeUnderTestConfig nutcSecurityParam nutcLedgerConfig =
+  NodeUnderTestConfig
+    { nutcSecurityParam
+    , nutcLedgerConfig
+    , nutcRandomness = mkStdGen 0
+    }
+
+-- | All the randomness of a Leios node-vs-environment test.
+data Seeds a = Seeds
+  { seedBlockFetchSalt :: a
+  , seedEnvPeerSharing :: a
+  , seedGsmAntiThunderingHerd :: a
+  , seedKeepAliveAndPeerSharing :: a
+  , seedNodeToNodeApps :: a
+  , seedSnapshotDelay :: a
+  }
+  deriving (Functor, Foldable, Traversable)
+
+-- | Every seed is split off the one generator, as a running node splits its own,
+-- so no two share a stream.
+splitSeeds :: StdGen -> Seeds StdGen
+splitSeeds = evalState (mapM (\() -> state splitGen) (Seeds () () () () () ()))
+
+nodeSeeds :: NodeUnderTestConfig -> Seeds StdGen
+nodeSeeds = splitSeeds . nutcRandomness
+
+-- | The peer address these tests use: a peer is just a number.
+newtype PeerAddr = PeerAddr Int
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (Hashable, NFData, NoThunks)
+
+-- | A running node, and the handles a test needs on it for its gray-box
+-- predicates.
+data NodeUnderTest m = NodeUnderTest
+  { nutChainDB :: ChainDB m Blk
+  , nutTopLevelConfig :: TopLevelConfig Blk
+  , nutKernel :: NodeKernel m PeerAddr (ConnectionId ()) Blk
+  , nutApps ::
+      BlockNodeToNodeVersion Blk ->
+      NTN.Apps
+        m
+        PeerAddr
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        NodeToNodeInitiatorResult
+        ()
+  , nutVersions :: NodeVersions m
+  , nutSeeds :: Seeds StdGen
+  }
+
+-- | The node's node-to-node applications for each version it supports, as it
+-- offers them on a connection where it is both initiator and responder.
+type NodeVersions m =
+  Versions
+    NodeToNodeVersion
+    NodeToNodeVersionData
+    ( OuroborosBundleWithExpandedCtx
+        'Mux.InitiatorResponderMode
+        PeerAddr
+        PeerTrustable
+        ByteString
+        m
+        NodeToNodeInitiatorResult
+        ()
+    )
+
+-- | Run the node over the given mocked filesystems, then shut it down.
+--
+-- As in a node's database directory, the immutable file system holds the
+-- ImmutableDB, and the volatile one holds every other database, each in its own
+-- subdirectory. The ledger and GSM file systems go unused.
+withNodeUnderTest ::
+  NodeUnderTestConfig ->
+  NodeDBs (StrictTMVar (IOSim s) MockFS) ->
+  (NodeUnderTest (IOSim s) -> IOSim s a) ->
+  IOSim s a
+withNodeUnderTest cfg nodeDBs body = do
+  -- What a node with Genesis disabled, the default, runs with.
+  (genesisArgs, updateChainDbArgs) <- mkGenesisNodeKernelArgs disableGenesisConfig
+  let seeds = nodeSeeds cfg
+  -- The ChainDB and the node each get their own resource registry. The node's
+  -- registry is nested inside the ChainDB's, and the body runs inside both. So
+  -- on the way out, the body finishes first, then the node's threads stop, and
+  -- only then does the ChainDB close.
+  withRegistry $ \dbRegistry -> do
+    bracket
+      ( fst
+          <$> openChainDB
+            dbRegistry
+            (topLevelConfigOf cfg)
+            (leiosTestInitExtLedger (nutcLedgerConfig cfg))
+            (mountedIn (nodeDBsImm nodeDBs))
+            (mountedIn (nodeDBsVol nodeDBs))
+            (seedSnapshotDelay seeds)
+            (fst (mkInMemoryArgs ()))
+            ChainDB.defaultArgs
+            updateChainDbArgs
+      )
+      ChainDB.closeDB
+      $ \chainDB -> withRegistry $ \kernelRegistry -> do
+        btime <- mkBlockchainTime cfg kernelRegistry chainDB
+        publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+        kernelArgs <-
+          nodeKernelArgsEnforceInvariants
+            <$> mkNodeKernelArgs
+              kernelRegistry
+              (mkUnsafeSalt (fst (random (seedBlockFetchSalt seeds))))
+              (seedGsmAntiThunderingHerd seeds)
+              (seedKeepAliveAndPeerSharing seeds)
+              (topLevelConfigOf cfg)
+              mempty
+              nullTracers
+              btime
+              nutSystemTime
+              (InFutureCheck.realHeaderInFutureCheck InFutureCheck.defaultClockSkew nutSystemTime)
+              -- With Genesis disabled, there is no historicity cutoff.
+              (\_getGsmState -> HistoricityCheck.noCheck)
+              chainDB
+              -- How long the node stays caught up at least, which does not
+              -- matter, since it never leaves.
+              0
+              -- The node starts caught up, as one that was caught up when it
+              -- last shut down does, and never judges its selection too old, so
+              -- it stays caught up however far the simulated clock runs ahead of
+              -- the test's chain.
+              Nothing
+              GSM.MarkerFileView
+                { GSM.touchMarkerFile = pure ()
+                , GSM.removeMarkerFile = pure ()
+                , GSM.hasMarkerFile = pure True
+                }
+              (pure DontUseBootstrapPeers)
+              publicPeerSelectionStateVar
+              genesisArgs
+              DiffusionPipeliningOn
+              Nothing
+              NoTxSubmissionInitDelay
+        kernel <- initNodeKernel kernelArgs
+        peerMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
+        let apps =
+              mkNodeToNodeApps
+                (seedNodeToNodeApps seeds)
+                NTN.nullTracers
+                defaultChainSyncIdleTimeout
+                disableGenesisConfig
+                defaultTxSubmissionLogicVersion
+                kernelArgs
+                kernel
+                peerMetrics
+                (const encodePeerAddr)
+                (const decodePeerAddr)
+        body
+          NodeUnderTest
+            { nutChainDB = chainDB
+            , nutTopLevelConfig = topLevelConfigOf cfg
+            , nutKernel = kernel
+            , nutApps = apps
+            , nutVersions =
+                mkNodeToNodeInitiatorResponderVersions
+                  (featureFlags kernelArgs)
+                  (miniProtocolParameters kernelArgs)
+                  nodeVersionData
+                  (supportedNodeToNodeVersions (Proxy @Blk))
+                  apps
+            , nutSeeds = seeds
+            }
+
+-- | The version data a relay offers: it accepts inbound connections and shares
+-- peers.
+nodeVersionData :: NodeToNodeVersion -> NodeToNodeVersionData
+nodeVersionData version =
+  stdVersionDataNTN
+    (getNetworkMagic LeiosTestBlockConfig)
+    InitiatorAndResponderDiffusionMode
+    PeerSharingEnabled
+    (getLocalPerasSupport mempty version)
+
+encodePeerAddr :: PeerAddr -> CBOR.Encoding
+encodePeerAddr (PeerAddr n) = encode n
+
+decodePeerAddr :: CBOR.Decoder s PeerAddr
+decodePeerAddr = PeerAddr <$> decode
+
+-- | The node's slot clock, derived from the ledger as a real node's is.
+mkBlockchainTime ::
+  NodeUnderTestConfig ->
+  ResourceRegistry (IOSim s) ->
+  ChainDB (IOSim s) Blk ->
+  IOSim s (BlockchainTime (IOSim s))
+mkBlockchainTime cfg registry chainDB =
+  hardForkBlockchainTime
+    HardForkBlockchainTimeArgs
+      { hfbtBackoffDelay = pure (BackoffDelay 1)
+      , hfbtGetLedgerState = ledgerState <$> ChainDB.getCurrentLedger chainDB
+      , hfbtLedgerConfig = configLedger (topLevelConfigOf cfg)
+      , hfbtRegistry = registry
+      , hfbtSystemTime = nutSystemTime
+      , hfbtTracer = nullTracer
+      , hfbtMaxClockRewind = 0
+      }
+
+topLevelConfigOf :: NodeUnderTestConfig -> TopLevelConfig Blk
+topLevelConfigOf NodeUnderTestConfig{nutcSecurityParam, nutcLedgerConfig} =
+  singleNodeLeiosTestConfig nutcLedgerConfig nutcSecurityParam
+
+-- | A node's database directory, mounting each database in its own
+-- subdirectory as 'stdMkChainDbHasFS' does, but on a mock file system.
+mountedIn :: StrictTMVar (IOSim s) MockFS -> ChainDB.RelativeMountPoint -> SomeHasFS (IOSim s)
+mountedIn mockFS (ChainDB.RelativeMountPoint path) =
+  SomeHasFS $ subdirectoryHasFS (mkFsPath [path]) (simHasFS mockFS)
+
+-- | The node's wall clock, from its block's system start, as a running node's.
+nutSystemTime :: SystemTime (IOSim s)
+nutSystemTime = defaultSystemTime (getSystemStart LeiosTestBlockConfig) nullTracer
