@@ -19,6 +19,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   , byteLimitsLeiosNotify
   , codecLeiosNotify
   , codecLeiosNotifyId
+  , maxLeiosVotesPerMessage
   , timeLimitsLeiosNotify
   ) where
 
@@ -26,7 +27,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, when)
 import Control.Monad.Class.MonadST (MonadST)
 import Data.ByteString.Lazy (ByteString)
 import Data.Kind (Type)
@@ -135,6 +136,8 @@ instance Protocol (LeiosNotify point announcement vote) where
       !point ->
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosVotes ::
+      -- At most 'maxLeiosVotesPerMessage'; the codec rejects more.
+      --
       -- TODO: non-empty
       [vote] ->
       Message (LeiosNotify point announcement vote) StBusy StIdle
@@ -172,6 +175,13 @@ deriving instance
   Show (Message (LeiosNotify point announcement vote) from to)
 
 -----
+
+-- | The most votes one 'MsgLeiosVotes' may carry.
+--
+-- It keeps every reply small: sixteen votes encode to about 1.4 kB, no more
+-- than an announcing header.
+maxLeiosVotesPerMessage :: Int
+maxLeiosVotesPerMessage = 16
 
 byteLimitsLeiosNotify ::
   (bytes -> Word) ->
@@ -315,6 +325,12 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
        where
         decodeVotes = do
           n <- CBOR.decodeListLen
+          when (n > maxLeiosVotesPerMessage) $
+            fail $
+              printf
+                "codecLeiosNotify: %d votes, more than %d"
+                n
+                maxLeiosVotesPerMessage
           replicateM n decodeV
       (SingQuit, 1, 5) ->
         return $ SomeMessage MsgDone

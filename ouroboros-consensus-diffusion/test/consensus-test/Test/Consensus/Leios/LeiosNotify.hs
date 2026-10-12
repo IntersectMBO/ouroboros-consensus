@@ -70,6 +70,7 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (..)
   , runPipelinedPeerWithLimits
   )
+import Ouroboros.Network.Driver.Simple (DecoderFailure)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , TemperatureBundle (..)
@@ -106,8 +107,6 @@ tests =
         , testCase "the node's client disconnects a peer that cancels a request unprompted" $
             runSimOrThrow (timeout 100 nodeClientUnpromptedCancel)
               @?= Just (NodeClientDisconnected UnexpectedCancel)
-        , testCase "the node's client disconnects a peer whose reply is too big" $
-            runSimOrThrow (timeout 100 nodeClientOversizedReply) @?= Just (NodeClientDisconnected ExceededSize)
         , testCase "the node's client sends no request until its immutable tip can forecast to now" $
             runSimOrThrow (timeout 100 nodeClientGated) @?= Just 0
         , testCase "the node's client accepts a valid announcement" $
@@ -264,6 +263,20 @@ tests =
             runSimOrThrow
               (timeout 200 (nodeClientAgainstSchedule [(100, MsgLeiosVotes [voteFor someAnnouncingBlock 0])]))
               @?= Just (NodeClientDisconnected VoteTooLate)
+        , testCase "the node's client disconnects a peer whose votes message holds more than the most votes" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstSchedule
+                    [(5, MsgLeiosVotes [voteFor someAnnouncingBlock seat | seat <- [0 .. 16]])]
+              )
+              @?= Just (NodeClientDisconnected Undecodable)
+        , testCase "the node's client accepts a votes message holding the most votes" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstSchedule
+                    [(5, MsgLeiosVotes [voteFor someAnnouncingBlock seat | seat <- [0 .. 15]])]
+              )
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
         , testCase "the node's server cancels a peer's outstanding requests when the peer quits" $
             runSimOrThrow (timeout 100 nodeServerCancels) @?= Just (NodeServerOutcome 0)
         , testCase "the node's server disconnects a peer that exceeds the pipelining bound" $
@@ -437,6 +450,7 @@ data DisconnectReason
   = UnexpectedCancel
   | ExceededSize
   | ExceededTime
+  | Undecodable
   | AnnouncementMissing
   | AnnouncementRepeated
   | AnnouncementThird
@@ -462,6 +476,7 @@ data DisconnectReason
 disconnectReason :: SomeException -> Maybe DisconnectReason
 disconnectReason e
   | Just MkExnLeiosNotifyUnexpectedCancel <- fromException e = Just UnexpectedCancel
+  | Just (_ :: DecoderFailure) <- fromException e = Just Undecodable
   | Just (lf :: ProtocolLimitFailure) <- fromException e = Just $ case lf of
       ExceededSizeLimit{} -> ExceededSize
       ExceededTimeLimit{} -> ExceededTime
@@ -557,11 +572,6 @@ nodeClientRefillsPipeline = withNode $ \nut -> do
 nodeClientUnpromptedCancel :: IOSim s NodeClientOutcome
 nodeClientUnpromptedCancel = withNode $ \nut ->
   runNodeClientAgainst nut (pure MsgCanceled) maxBound
-
--- | A single reply larger than the byte limit allows.
-nodeClientOversizedReply :: IOSim s NodeClientOutcome
-nodeClientOversizedReply = withNode $ \nut ->
-  runNodeClientAgainst nut (pure (MsgLeiosVotes (replicate 2000 someVote))) maxBound
 
 -- | Announce an endorser block whose hash repeats the given byte 32 times.
 ann :: Word8 -> LeiosTestBlock -> LeiosTestBlock
@@ -735,9 +745,6 @@ someOfferedPoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 1))
 
 maxEbBodySize :: BytesSize
 maxEbBodySize = 5000
-
-someVote :: LeiosVote
-someVote = signedVote (MkRbHash (BS.replicate 32 0)) 0
 
 newtype NodeServerOutcome = NodeServerOutcome Int
   deriving (Eq, Show)
