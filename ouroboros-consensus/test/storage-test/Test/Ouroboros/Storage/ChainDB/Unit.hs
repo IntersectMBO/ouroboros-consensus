@@ -138,7 +138,7 @@ tests =
     , testGroup
         "PerasImmutableCertDB handoff"
         [ testCase "canonical certificate is archived" $
-            runSystemIO perasCanonicalCertArchived
+            runSystemIO perasImmutableCertArchived
         , testCase "all certificates for one immutable block are archived" $
             runSystemIO perasAllCertsForBlockArchived
         , testCase "certificate for a losing fork is not archived" $
@@ -433,8 +433,8 @@ updateLedgerSnapshots_WipeVolatileDB_withoutSnapshot = do
 
 -- | A certificate known while its target is volatile is copied once that
 -- target becomes part of the canonical immutable chain.
-perasCanonicalCertArchived :: SystemM TestBlock IO ()
-perasCanonicalCertArchived = do
+perasImmutableCertArchived :: SystemM TestBlock IO ()
+perasImmutableCertArchived = do
   b1 <- addBlock $ firstBlock 0 (body 0)
   b2 <- addBlock $ mkNextBlock b1 1 (body 0)
   let cert = mkHistoricalCert 1 b1 1
@@ -499,16 +499,17 @@ perasLosingForkCertNotArchived = do
     assertEqual (blockPoint h3) tip
     "The certified fork should have been displaced but was not"
 
+  -- Add a cert to boost fork #2 at h1, then write immutable
+  -- blocks and the certs boosing them.
   let honestCert = mkHistoricalCert 2 h1 0
   void $ addTestPerasCert honestCert
-
   persistBlks
 
   archived <- getHistoricalCertsAfter (PerasRoundNo 0) 10
   assertEqual
     [honestCert]
     archived
-    "The handoff must archive the selected fork's cert, but not the losing fork's"
+    "The handoff must archive the selected fork's cert and not the losing fork's"
  where
   body forkNo = TestBody forkNo True Nothing
 
