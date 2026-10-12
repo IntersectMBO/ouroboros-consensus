@@ -20,6 +20,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   , codecLeiosNotify
   , codecLeiosNotifyId
   , maxLeiosVotesPerMessage
+  , maxLeiosNotifyReplyBytes
   , timeLimitsLeiosNotify
   ) where
 
@@ -183,12 +184,21 @@ deriving instance
 maxLeiosVotesPerMessage :: Int
 maxLeiosVotesPerMessage = 16
 
+-- | The most bytes one reply may take: sixteen votes encode to about 1.4 kB,
+-- an announcing header to about 0.9 kB, and an offer to tens of bytes.
+--
+-- An announcing header is also bounded by the ledger's maximum header size,
+-- 1100 bytes on mainnet; raising that parameter past this would need this
+-- raised too.
+maxLeiosNotifyReplyBytes :: Word
+maxLeiosNotifyReplyBytes = 1536
+
 byteLimitsLeiosNotify ::
   (bytes -> Word) ->
   ProtocolSizeLimits (LeiosNotify point announcement vote) bytes
 byteLimitsLeiosNotify = ProtocolSizeLimits $ \case
   SingIdle -> smallByteLimit
-  SingBusy -> smallByteLimit
+  SingBusy -> maxLeiosNotifyReplyBytes
   SingQuit -> smallByteLimit
   st@SingDone -> notActiveState st
 

@@ -112,6 +112,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   , byteLimitsLeiosNotify
   , codecLeiosNotify
   , codecLeiosNotifyId
+  , maxLeiosNotifyReplyBytes
   , timeLimitsLeiosNotify
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound (objectDiffusionInbound)
@@ -175,7 +176,6 @@ import Ouroboros.Network.Protocol.KeepAlive.Client
 import Ouroboros.Network.Protocol.KeepAlive.Codec
 import Ouroboros.Network.Protocol.KeepAlive.Server
 import Ouroboros.Network.Protocol.KeepAlive.Type
-import Ouroboros.Network.Protocol.Limits (smallByteLimit)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
   ( byteLimitsObjectDiffusion
   , codecObjectDiffusion
@@ -1511,11 +1511,11 @@ leiosNotifyProtocols version run
   | otherwise = mempty
 
 -- | The ingress queue must hold a reply to every request the client may leave
--- outstanding, each as large as 'byteLimitsLeiosNotify' allows; the
+-- outstanding, each as large as 'maxLeiosNotifyReplyBytes' allows; the
 -- server's, which only receives requests, needs far less.
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits =
   MiniProtocolLimits
     { maximumIngressQueue =
-        addSafetyMargin $ leiosNotifyPipelineDepth * fromIntegral smallByteLimit
+        addSafetyMargin $ leiosNotifyPipelineDepth * fromIntegral maxLeiosNotifyReplyBytes
     }
