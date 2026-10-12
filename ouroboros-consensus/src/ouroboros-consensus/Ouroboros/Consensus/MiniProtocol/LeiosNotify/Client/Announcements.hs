@@ -179,12 +179,12 @@ data AnnouncementVerdict invalidity validated
     VerdictTooOld
   | -- | Reject: the announcement is invalid; raised as 'ErrInvalid'
     VerdictInvalid !invalidity
-  | -- | Accept from the peer, but neither process nor relay the announcement
+  | -- | Accept from the peer, but do not process the announcement
     --
     -- Currently only a stale-OCIN announcement (see
     -- 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate.validateAnnouncementHeader').
     VerdictIgnore
-  | -- | Accept, process, and relay
+  | -- | Accept, and process the announcement
     VerdictProcess !validated
 
 onAnnouncement ::
@@ -196,11 +196,7 @@ onAnnouncement ::
   -- The peer is disconnected only for a rejecting verdict; both accepting
   -- verdicts also update its per-peer dedup state.
   (anc -> m (AnnouncementVerdict invalidity validated)) ->
-  -- | How this central logic should react to a new announcement from
-  -- this peer
-  --
-  -- ASSUMPTION: this is often a no-op (except maybe tracing), because
-  -- the same announcement has already been received from other peers.
+  -- | How to process a new announcement from this peer
   (anc -> validated -> m ()) ->
   AnnouncementsState anc ->
   anc ->

@@ -26,6 +26,7 @@ import Control.Monad (foldM, when)
 import Control.Monad.Except (runExcept, runExceptT)
 import Control.Tracer (nullTracer)
 import Data.Bifunctor (first)
+import Data.Foldable (foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
