@@ -474,19 +474,41 @@ perasAllCertsForBlockArchived = do
 -- because some other block became immutable.
 perasLosingForkCertNotArchived :: SystemM TestBlock IO ()
 perasLosingForkCertNotArchived = do
-  p <- addBlock $ firstBlock 0 (body 0)
-  losing <- addBlock $ mkNextBlock p 1 (body 1)
-  void $ addTestPerasCert (mkHistoricalCert 1 losing 1)
+  common <- addBlock $ firstBlock 0 (body 0)
 
-  h1 <- addBlock $ mkNextBlock p 2 (body 2)
+  -- Fork #1: Add a block and boost it with a peras certificate. The
+  -- rollback window is 2, so adding another block to this fork would
+  -- advance the immutable tip past common. (Fork weight would be 2
+  -- blocks plus 1 cert; 3 > k.) For this test we want to avoid that.
+  losing <- addBlock $ mkNextBlock common 1 (body 1)
+  outcome <- addTestPerasCert (mkHistoricalCert 1 losing 1)
+  assertEqual
+    (API.PerasCertProcessed PerasCertDB.AddedPerasCertToDB)
+    outcome
+    "The losing-fork cert should have been accepted but was not"
+  getSelectedTip >>= \tip ->
+    assertEqual (blockPoint losing) tip
+    "The certified fork should have been selected but was not"
+
+  -- Fork #2: Add enough blocks to outweigh fork #1, even with the
+  -- boost.
+  h1 <- addBlock $ mkNextBlock common 2 (body 2)
   h2 <- addBlock $ mkNextBlock h1 3 (body 2)
   h3 <- addBlock $ mkNextBlock h2 4 (body 2)
-  _h4 <- addBlock $ mkNextBlock h3 5 (body 2)
+  getSelectedTip >>= \tip ->
+    assertEqual (blockPoint h3) tip
+    "The certified fork should have been displaced but was not"
+
+  let honestCert = mkHistoricalCert 2 h1 0
+  void $ addTestPerasCert honestCert
 
   persistBlks
 
   archived <- getHistoricalCertsAfter (PerasRoundNo 0) 10
-  assertEqual [] archived "A certificate for the losing fork was archived"
+  assertEqual
+    [honestCert]
+    archived
+    "The handoff must archive the selected fork's cert, but not the losing fork's"
  where
   body forkNo = TestBody forkNo True Nothing
 
