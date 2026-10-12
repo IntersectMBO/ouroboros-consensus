@@ -30,14 +30,17 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Word (Word8)
 import Network.TypedProtocol.Codec (Codec)
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types
-  ( EbHash (..)
+  ( BytesSize
+  , EbHash (..)
   , LeiosPoint (..)
   , LeiosVote (..)
   , RbHash (..)
@@ -119,7 +122,8 @@ tests =
             runSimOrThrow
               (timeout 100 (nodeClientAgainstAnnouncements [setCounterBelowImmTips (ann 1 (firstLeiosBlock 0))]))
               @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 1))
-        , testCase "the node's client counts an announcement whose counter is below its immutable tip's toward its election" $
+        , testCase
+            "the node's client counts an announcement whose counter is below its immutable tip's toward its election" $
             runSimOrThrow
               ( timeout 100 $
                   nodeClientAgainstAnnouncements
@@ -160,7 +164,36 @@ tests =
             runSimOrThrow (timeout 1000 nodeClientTooOld)
               @?= Just (NodeClientDisconnected AnnouncementTooOld)
         , testCase "the node prunes its clients' state as its immutable tip advances" $
-            runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just (1, 0)
+            runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just ((1, 1), (0, 0))
+        , testCase "the node's client accepts an offer of an endorser block its peer announced" $
+            runSimOrThrow (timeout 100 (nodeClientAgainstOffers [MsgLeiosBlockOffer someOfferedPoint 1000]))
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
+        , testCase "the node's client disconnects a peer that offers an endorser block it never announced" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstOffers
+                    [MsgLeiosBlockOffer (MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 2))) 1000]
+              )
+              @?= Just (NodeClientDisconnected OfferWithoutAnnouncement)
+        , testCase "the node's client disconnects a peer that repeats a body offer" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstOffers
+                    [MsgLeiosBlockOffer someOfferedPoint 1000, MsgLeiosBlockOffer someOfferedPoint 1000]
+              )
+              @?= Just (NodeClientDisconnected OfferRepeated)
+        , testCase "the node's client disconnects a peer that offers an empty endorser block" $
+            runSimOrThrow (timeout 100 (nodeClientAgainstOffers [MsgLeiosBlockOffer someOfferedPoint 0]))
+              @?= Just (NodeClientDisconnected OfferBadSize)
+        , testCase
+            "the node's client disconnects a peer that offers an endorser block bigger than the ledger allows"
+            $ runSimOrThrow
+              (timeout 100 (nodeClientAgainstOffers [MsgLeiosBlockOffer someOfferedPoint (maxEbBodySize + 1)]))
+              @?= Just (NodeClientDisconnected OfferBadSize)
+        , testCase
+            "the node's client disconnects a peer that offers an endorser block older than its immutable tip"
+            $ runSimOrThrow (timeout 1000 nodeClientOfferTooOld)
+              @?= Just (NodeClientDisconnected OfferTooOld)
         , testCase "the node's server cancels a peer's outstanding requests when the peer quits" $
             runSimOrThrow (timeout 100 nodeServerCancels) @?= Just (NodeServerOutcome 0)
         , testCase "the node's server disconnects a peer that exceeds the pipelining bound" $
@@ -301,6 +334,7 @@ withNodeForecasting range body = do
         { ltlcHardForkParams =
             HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
         , ltlcForecastRange = range
+        , ltlcLeios = MkLeiosLedgerView{llvMaxEbBodySize = maxEbBodySize}
         }
 
 -- | The node's LeiosNotify client on the connection.
@@ -334,6 +368,11 @@ data DisconnectReason
   | AnnouncementInvalid
   | AnnouncementTooOld
   | AnnouncementInFuture
+  | OfferWithoutAnnouncement
+  | OfferBadSize
+  | OfferRepeated
+  | OfferTooOld
+  | OfferOutsideHorizon
   deriving (Eq, Show)
 
 -- | Why the node's client disconnected its peer, if it did so on purpose.
@@ -351,6 +390,12 @@ disconnectReason e
         Announcements.ErrInvalid{} -> AnnouncementInvalid
         Announcements.ErrTooOld -> AnnouncementTooOld
   | Just (_ :: InFutureCheck.HeaderArrivalException) <- fromException e = Just AnnouncementInFuture
+  | Just (exn :: ExnLeiosNotifyInvalidOffer) <- fromException e = Just $ case exn of
+      ExnLeiosBlockOfferWithoutAnnouncement{} -> OfferWithoutAnnouncement
+      ExnLeiosBlockOfferBadSize{} -> OfferBadSize
+      ExnLeiosRepeatedBlockOffer{} -> OfferRepeated
+      ExnLeiosOfferTooOld{} -> OfferTooOld
+      ExnLeiosBlockOfferOutsideHorizon{} -> OfferOutsideHorizon
   | otherwise = Nothing
 
 -- | Run a peer's server that answers each request with whatever @next@ yields
@@ -460,34 +505,77 @@ nodeClientGated = withNodeForecasting 5 $ \nut -> do
     client <- nodeLeiosNotifyClient conn
     atomically client >>= either throwIO (\_ -> pure n)
 
--- | How many elections the client's state holds once the announcement is in,
--- and once the immutable tip has passed it.
-nodePrunesClientState :: IOSim s (Int, Int)
+-- | How many elections and offers the client's state holds once an
+-- announcement and an offer are in, and once the immutable tip has passed them.
+nodePrunesClientState :: IOSim s ((Int, Int), (Int, Int))
 nodePrunesClientState = withNode $ \nut -> do
   requests <- newTVarIO 0
   queue <- newTQueueIO
-  atomically $ writeTQueue queue $ MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBlock 0)
+  atomically $ mapM_ (writeTQueue queue) [someAnnouncement, MsgLeiosBlockOffer someOfferedPoint 1000]
   let envPeer =
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
-    atomically $ readTVar requests >>= check . (> leiosNotifyPipelineDepth)
-    beforePruning <- elections nut
-    -- k is 10, so twelve blocks make the first two immutable.
-    threadDelay 20
-    mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) $
-      take 12 $
-        iterate successorLeiosBlock (firstLeiosBlock 1)
-    threadDelay 1
-    afterPruning <- elections nut
+    atomically $ readTVar requests >>= check . (> leiosNotifyPipelineDepth + 1)
+    beforePruning <- clientStateSize nut
+    advanceImmutableTip nut
+    afterPruning <- clientStateSize nut
     pure (beforePruning, afterPruning)
+
+-- | How many elections and body offers the node's clients remember.
+clientStateSize :: NodeUnderTest (IOSim s) -> IOSim s (Int, Int)
+clientStateSize nut = atomically $ do
+  states <- IOLike.readTVar (getLeiosNotifyClientStates (nutKernel nut))
+  sizes <- mapM (fmap size . IOLike.readTVar) (Map.elems states)
+  pure (sum (map fst sizes), sum (map snd sizes))
  where
-  elections nut = atomically $ do
-    states <- IOLike.readTVar (getLeiosNotifyClientStates (nutKernel nut))
-    sum
-      <$> mapM (fmap (Map.size . Announcements.live . lnpsAnnouncements) . IOLike.readTVar) (Map.elems states)
+  size st = (Map.size (Announcements.live (lnpsAnnouncements st)), Set.size (lnpsBodyOffers st))
+
+-- | Make the first two slots immutable: k is 10, so twelve blocks do it.
+advanceImmutableTip :: NodeUnderTest (IOSim s) -> IOSim s ()
+advanceImmutableTip nut = do
+  threadDelay 20
+  mapM_ (ChainDB.addBlock_ (nutChainDB nut) noPunishment) $
+    take 12 $
+      iterate successorLeiosBlock (firstLeiosBlock 1)
+  threadDelay 1
+
+-- | The peer offers an endorser block it announced, but only once the
+-- immutable tip has passed it.
+nodeClientOfferTooOld :: IOSim s NodeClientOutcome
+nodeClientOfferTooOld = withNode $ \nut -> do
+  queue <- newTQueueIO
+  atomically $ writeTQueue queue someAnnouncement
+  announced <- newEmptyTMVarIO
+  let feed = do
+        atomically $ readTMVar announced
+        advanceImmutableTip nut
+        atomically $ writeTQueue queue $ MsgLeiosBlockOffer someOfferedPoint 1000
+      next = do
+        msg <- readTQueue queue
+        _ <- tryPutTMVar announced ()
+        pure msg
+  withAsync feed $ \_feeder -> runNodeClientAgainst nut next maxBound
+
+-- | A peer that announces 'someOfferedPoint', then sends these.
+nodeClientAgainstOffers ::
+  [Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle] -> IOSim s NodeClientOutcome
+nodeClientAgainstOffers msgs = withNode $ \nut -> do
+  queue <- newTQueueIO
+  atomically $ mapM_ (writeTQueue queue) (someAnnouncement : msgs)
+  runNodeClientAgainst nut (readTQueue queue) (leiosNotifyPipelineDepth + 1 + length msgs)
+
+someAnnouncement :: Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle
+someAnnouncement = MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBlock 0)
+
+-- | The endorser block 'someAnnouncement' announces.
+someOfferedPoint :: LeiosPoint
+someOfferedPoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 1))
+
+maxEbBodySize :: BytesSize
+maxEbBodySize = 5000
 
 somePoint :: LeiosPoint
 somePoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 0))

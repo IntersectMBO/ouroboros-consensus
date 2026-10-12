@@ -7,8 +7,10 @@
 -- carry.
 module Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
+  , LeiosLedgerView (..)
   , LeiosProtocol (..)
   , OCINStaleness (..)
+  , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
   , defaultValidateViewLeiosAnnouncement
   ) where
@@ -32,6 +34,18 @@ data LeiosAnnouncement = MkLeiosAnnouncement
   , announcementEbHash :: !EbHash
   , announcementEbSize :: !BytesSize
   -- ^ the announced endorser block's size, which nothing trusts
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+-- | The Leios parameters a ledger view carries.
+--
+-- TODO Once this record holds all of @PolyPraosLedgerView@'s Leios fields,
+-- @PolyPraosLedgerView@ could contain it as a single @WhenLeios@ field instead
+-- of carrying each Leios parameter separately.
+data LeiosLedgerView = MkLeiosLedgerView
+  { llvMaxEbBodySize :: !BytesSize
+  -- ^ the largest endorser block the ledger admits
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
@@ -63,6 +77,10 @@ class ConsensusProtocol p => LeiosProtocol p where
     Ticked (ChainDepState p) ->
     Except (ValidationErr p) OCINStaleness
 
+  -- | The Leios parameters this ledger view carries, or 'Nothing' if the
+  -- protocol has no Leios.
+  getLeiosLedgerView :: proxy p -> LedgerView p -> Maybe LeiosLedgerView
+
 -- | 'validateViewLeiosAnnouncement' for a protocol whose headers never carry an
 -- announcement.
 defaultValidateViewLeiosAnnouncement :: proxy p -> ValidateView p -> Maybe LeiosAnnouncement
@@ -77,3 +95,7 @@ defaultValidateLeiosAnnouncement ::
   Ticked (ChainDepState p) ->
   Except (ValidationErr p) OCINStaleness
 defaultValidateLeiosAnnouncement _cfg _view _slot _st = pure FreshOCIN
+
+-- | 'getLeiosLedgerView' for a protocol that has no Leios.
+defaultGetLeiosLedgerView :: proxy p -> LedgerView p -> Maybe LeiosLedgerView
+defaultGetLeiosLedgerView _proxy _view = Nothing

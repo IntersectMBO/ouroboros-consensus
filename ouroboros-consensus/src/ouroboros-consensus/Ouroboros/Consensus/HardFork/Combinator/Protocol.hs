@@ -480,6 +480,17 @@ instance (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) => LeiosProtoco
       K (Maybe LeiosAnnouncement) blk
     era (WrapValidateView v) = K $ validateViewLeiosAnnouncement (Proxy @(BlockProtocol blk)) v
   validateLeiosAnnouncement = validateAnnouncement
+  getLeiosLedgerView _proxy view =
+    hcollapse $
+      hcmap (Proxy @SingleEraBlockAndLeiosProtocol) era $
+        State.tip (hardForkLedgerViewPerEra view)
+   where
+    era ::
+      forall blk.
+      SingleEraBlockAndLeiosProtocol blk =>
+      WrapLedgerView blk ->
+      K (Maybe LeiosLedgerView) blk
+    era (WrapLedgerView v) = K $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) v
 
 -- | Like 'update'.
 validateAnnouncement ::

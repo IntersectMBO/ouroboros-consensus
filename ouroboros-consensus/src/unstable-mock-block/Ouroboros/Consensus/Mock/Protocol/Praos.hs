@@ -79,6 +79,7 @@ import Numeric.Natural
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosProtocol (..)
+  , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
   , defaultValidateViewLeiosAnnouncement
   )
@@ -464,6 +465,7 @@ data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState
 instance PraosCrypto c => LeiosProtocol (Praos c) where
   validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   protocolSecurityParam = praosSecurityParam . praosParams

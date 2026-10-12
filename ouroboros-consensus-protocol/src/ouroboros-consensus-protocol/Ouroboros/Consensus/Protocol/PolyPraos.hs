@@ -68,6 +68,7 @@ module Ouroboros.Consensus.Protocol.PolyPraos
   , doValidateKESSignature
   , doValidateKESSignatureWorker
   , leiosAnnouncementPolyPraos
+  , getLeiosLedgerViewPolyPraos
   , validateLeiosAnnouncementPolyPraos
   , WhetherToUpperBoundOCERT (..)
   , doValidateVRFSignature
@@ -145,7 +146,11 @@ import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
 import qualified Ouroboros.Consensus.HardFork.History as History
-import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..), OCINStaleness (..))
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosAnnouncement (..)
+  , LeiosLedgerView (..)
+  , OCINStaleness (..)
+  )
 import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -721,6 +726,17 @@ leiosAnnouncementPolyPraos b =
           Leios.MkEbHash $ Hash.hashToBytes $ extractHash $ ebReferencesAnnouncementHash ann
       , announcementEbSize = ebReferencesAnnouncementSize ann
       }
+
+-- | 'getLeiosLedgerView' for every Praos.
+getLeiosLedgerViewPolyPraos ::
+  Foldable (WhenLeios proto) =>
+  Views.PolyPraosLedgerView proto ->
+  Maybe LeiosLedgerView
+getLeiosLedgerViewPolyPraos lv =
+  foldr
+    (\maxSize _ -> Just MkLeiosLedgerView{llvMaxEbBodySize = maxSize})
+    Nothing
+    (Views.plvMaxEbBodySize lv)
 
 -- | 'validateLeiosAnnouncement' for every Praos.
 --

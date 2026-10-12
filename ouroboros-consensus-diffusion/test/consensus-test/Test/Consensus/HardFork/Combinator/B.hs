@@ -72,6 +72,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosProtocol (..)
+  , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
   , defaultValidateViewLeiosAnnouncement
   )
@@ -121,6 +122,7 @@ data instance ConsensusConfig ProtocolB = CfgB
 instance LeiosProtocol ProtocolB where
   validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance ConsensusProtocol ProtocolB where
   type ChainDepState ProtocolB = ()

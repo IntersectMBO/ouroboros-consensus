@@ -9,23 +9,34 @@
 -- judges that peer's replies against it.
 module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( ExnLeiosNotifyInvalidAnnouncement (..)
+  , ExnLeiosNotifyInvalidOffer (..)
+  , checkLeiosBlockOffer
   , LeiosNotifyPeerState (..)
   , emptyLeiosNotifyPeerState
   , onLeiosNotifyAnnouncement
   , pruneLeiosNotifyPeerState
   ) where
 
-import Control.Monad.Except (runExceptT)
+import Control.Monad.Except (runExcept, runExceptT)
 import Control.Tracer (nullTracer)
+import Data.Bifunctor (first)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (SystemTime)
-import Ouroboros.Consensus.Config (TopLevelConfig)
+import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
+import Ouroboros.Consensus.Forecast (OutsideForecastRange, forecastFor)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
-import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol, ledgerViewForecastAt)
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosAnnouncement (..)
+  , LeiosLedgerView (..)
+  , LeiosProtocol (..)
+  )
+import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate
@@ -40,6 +51,9 @@ data LeiosNotifyPeerState blk = MkLeiosNotifyPeerState
   -- ^ The slot the state has been pruned up to.
   , lnpsAnnouncements :: !(Announcements.AnnouncementsState (AnnouncingHeader blk))
   -- ^ What this peer has announced, for dedup and equivocation counting.
+  , lnpsBodyOffers :: !(Set LeiosPoint)
+  -- ^ Which endorser blocks this peer has offered the body of, so that
+  -- repeating an offer costs it the connection.
   }
   deriving
     NoThunks
@@ -50,6 +64,7 @@ emptyLeiosNotifyPeerState =
   MkLeiosNotifyPeerState
     { lnpsPruneSlot = SlotNo 0
     , lnpsAnnouncements = Announcements.emptyAnnouncementsState
+    , lnpsBodyOffers = Set.empty
     }
 
 -- | Forget everything about elections before the given slot, which is the
@@ -60,8 +75,87 @@ pruneLeiosNotifyPeerState immTipSlot st
       MkLeiosNotifyPeerState
         { lnpsPruneSlot = immTipSlot
         , lnpsAnnouncements = Announcements.pruneAnnouncementsState immTipSlot (lnpsAnnouncements st)
+        , lnpsBodyOffers =
+            -- 'LeiosPoint' orders slot-first, so the pruned points are a prefix.
+            Set.dropWhileAntitone (\p -> pointSlotNo p < immTipSlot) (lnpsBodyOffers st)
         }
   | otherwise = st
+
+-- | Thrown when a peer's offer over LeiosNotify is one an honest peer would not
+-- send; the ensuing thread death disconnects it.
+--
+-- Without these checks, peers could send bogus offers, and there are infinitely
+-- many of those.
+data ExnLeiosNotifyInvalidOffer
+  = -- | A body offer of an endorser block this peer never announced, with the
+    -- size it claimed.
+    ExnLeiosBlockOfferWithoutAnnouncement !LeiosPoint !BytesSize
+  | -- | A body offer claiming no bytes, or more bytes than the ledger lets an
+    -- endorser block in that slot have: the offered point, the size it claimed,
+    -- and the bound.
+    ExnLeiosBlockOfferBadSize !LeiosPoint !BytesSize !BytesSize
+  | -- | A second body offer of an endorser block.
+    ExnLeiosRepeatedBlockOffer !LeiosPoint
+  | -- | An offer below the slot this peer's state has been pruned to, which is
+    -- therefore unanswerable on its own terms: the offered point, and that slot.
+    --
+    -- TODO When the honest server offers endorser blocks, explain why it never
+    -- trips this, eg because it offers one only while it is at least a minimum
+    -- lead younger than its own immutable tip.
+    ExnLeiosOfferTooOld !LeiosPoint !SlotNo
+  | -- | A body offer whose slot the immutable tip cannot forecast to. Its
+    -- announcement was validated by such a forecast, from an older immutable
+    -- tip, so this should never happen.
+    ExnLeiosBlockOfferOutsideHorizon !LeiosPoint !OutsideForecastRange
+  deriving Show
+
+instance Exception ExnLeiosNotifyInvalidOffer
+
+-- | Accept a peer's 'MsgLeiosBlockOffer', or say why the peer must go.
+--
+-- A peer may offer only an endorser block it has itself announced. That is
+-- what stops an offer from being an independent way to make us track an
+-- endorser block, outside the two-per-election cap on announcements.
+--
+-- Only the point is held to the announcements; the size is free, within the
+-- ledger's bound. An offer claims to hold a body, and whoever holds a body
+-- knows its size, so a peer may well state a size that no announcement we
+-- received claimed.
+checkLeiosBlockOffer ::
+  forall blk.
+  (LedgerSupportsProtocol blk, LeiosProtocol (BlockProtocol blk)) =>
+  TopLevelConfig blk ->
+  -- | the immutable tip's ledger state
+  ExtLedgerState blk EmptyMK ->
+  LeiosPoint ->
+  BytesSize ->
+  LeiosNotifyPeerState blk ->
+  Either ExnLeiosNotifyInvalidOffer (LeiosNotifyPeerState blk)
+checkLeiosBlockOffer cfg immLedger point claimed st
+  | pointSlotNo point < lnpsPruneSlot st =
+      Left $ ExnLeiosOfferTooOld point (lnpsPruneSlot st)
+  | Set.member point (lnpsBodyOffers st) =
+      Left $ ExnLeiosRepeatedBlockOffer point
+  | not (announcedIt point st) =
+      Left $ ExnLeiosBlockOfferWithoutAnnouncement point claimed
+  | otherwise = do
+      view <-
+        first (ExnLeiosBlockOfferOutsideHorizon point) $
+          runExcept $
+            forecastFor
+              (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger))
+              (pointSlotNo point)
+      let bound = maybe 0 llvMaxEbBodySize $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) view
+      if claimed == 0 || claimed > bound
+        then Left $ ExnLeiosBlockOfferBadSize point claimed bound
+        else Right st{lnpsBodyOffers = Set.insert point (lnpsBodyOffers st)}
+
+-- | Whether this peer has announced this endorser block.
+announcedIt :: LeiosPoint -> LeiosNotifyPeerState blk -> Bool
+announcedIt point st =
+  any
+    (\ancHdr -> announcementEbHash (ancAnnouncement ancHdr) == pointEbHash point)
+    (Announcements.announcementsInSlot (pointSlotNo point) (lnpsAnnouncements st))
 
 -- | Thrown when a peer's 'MsgLeiosBlockAnnouncement' is one an honest peer
 -- would not send; the ensuing thread death disconnects it.

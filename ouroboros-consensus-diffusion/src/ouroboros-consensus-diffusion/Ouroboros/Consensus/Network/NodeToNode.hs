@@ -93,6 +93,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState (..)
+  , checkLeiosBlockOffer
   , emptyLeiosNotifyPeerState
   , onLeiosNotifyAnnouncement
   , pruneLeiosNotifyPeerState
@@ -486,7 +487,14 @@ mkHandlers
                   atomically $ do
                     pruneSlot <- lnpsPruneSlot <$> readTVar stateVar
                     writeTVar stateVar $! pruneLeiosNotifyPeerState pruneSlot st'
-                MsgLeiosBlockOffer{} -> pure ()
+                MsgLeiosBlockOffer point claimed -> do
+                  immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                  res <- atomically $ do
+                    st <- readTVar stateVar
+                    case checkLeiosBlockOffer getTopLevelConfig immLedger point claimed st of
+                      Left err -> pure (Left err)
+                      Right st' -> Right () <$ writeTVar stateVar st'
+                  either throwIO pure res
                 MsgLeiosBlockTxsOffer{} -> pure ()
                 MsgLeiosVotes{} -> pure ()
                 MsgCanceled -> pure ()

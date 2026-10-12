@@ -315,7 +315,7 @@ instance ConsensusProtocol LeiosTestProtocol where
   type ChainDepState LeiosTestProtocol = ()
   type IsLeader LeiosTestProtocol = ()
   type CanBeLeader LeiosTestProtocol = ()
-  type LedgerView LeiosTestProtocol = ()
+  type LedgerView LeiosTestProtocol = LeiosLedgerView
   type ValidationErr LeiosTestProtocol = LeiosTestInvalidHeader
   type ValidateView LeiosTestProtocol = Header LeiosTestBlock
 
@@ -342,6 +342,7 @@ instance LeiosProtocol LeiosTestProtocol where
     pure $ case lthCounter hdr of
       HeaderCounterNotBelowImmTips -> FreshOCIN
       HeaderCounterBelowImmTips -> StaleOCIN
+  getLeiosLedgerView _proxy = Just
 
 checkValidity :: Header LeiosTestBlock -> Except LeiosTestInvalidHeader ()
 checkValidity hdr = case lthValidity hdr of
@@ -382,9 +383,27 @@ data LeiosTestBlockError
 data LeiosTestLedgerConfig = LeiosTestLedgerConfig
   { ltlcHardForkParams :: !HardFork.EraParams
   , ltlcForecastRange :: !SlotNo
+  , ltlcLeios :: !LeiosLedgerView
+  -- ^ the ledger view, the same in every slot
   }
   deriving stock (Show, Generic)
-  deriving anyclass (NoThunks, Serialise)
+  deriving anyclass NoThunks
+
+instance Serialise LeiosTestLedgerConfig where
+  encode cfg =
+    encode
+      ( ltlcHardForkParams cfg
+      , ltlcForecastRange cfg
+      , llvMaxEbBodySize (ltlcLeios cfg)
+      )
+  decode = do
+    (hardForkParams, forecastRange, maxEbBodySize) <- decode
+    pure
+      LeiosTestLedgerConfig
+        { ltlcHardForkParams = hardForkParams
+        , ltlcForecastRange = forecastRange
+        , ltlcLeios = MkLeiosLedgerView{llvMaxEbBodySize = maxEbBodySize}
+        }
 
 type instance LedgerCfg LedgerState LeiosTestBlock = LeiosTestLedgerConfig
 
@@ -472,9 +491,9 @@ instance BasicEnvelopeValidation LeiosTestBlock
 instance ValidateEnvelope LeiosTestBlock
 
 instance LedgerSupportsProtocol LeiosTestBlock where
-  protocolLedgerView _cfg _st = ()
+  protocolLedgerView cfg _st = ltlcLeios cfg
   ledgerViewForecastAt cfg st =
-    constantForecastInRange (Just (ltlcForecastRange cfg)) () (getTipSlot st)
+    constantForecastInRange (Just (ltlcForecastRange cfg)) (ltlcLeios cfg) (getTipSlot st)
 
 instance LedgerStateSupportsPeras (LedgerState LeiosTestBlock)
 
