@@ -40,6 +40,7 @@ module Ouroboros.Consensus.Protocol.Abstract
   ) where
 
 import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
+import Cardano.Ledger.Core (TranslationContext)
 import Cardano.Slotting.Slot (WithOrigin (At))
 import Control.Monad.Except
 import Data.Function (on)
@@ -212,18 +213,35 @@ class
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
 
--- | Translate across protocols
-class TranslateProto protoFrom protoTo where
+-- | Translate across protocols, at the boundary into the ledger era @eraTo@
+--
+-- TODO Indexing on @eraTo@ leaks a ledger-era, hence 'ShelleyBlock'-level,
+-- concept into this protocol-level module; see the same TODO on
+-- @ForecastToPolyPraosLedgerView@.
+class TranslateProto protoFrom protoTo eraTo where
   -- | Translate the ledger view.
+  --
+  -- Whatever the new view has that the old one lacks comes from the translation
+  -- context of @eraTo@, ie the data the ledger itself uses to translate its
+  -- state into @eraTo@.
   translateLedgerView ::
-    Proxy (protoFrom, protoTo) -> LedgerView protoFrom -> LedgerView protoTo
+    Proxy (protoFrom, protoTo, eraTo) ->
+    TranslationContext eraTo ->
+    LedgerView protoFrom ->
+    LedgerView protoTo
 
+  -- | Translate the chain-dependent state.
+  --
+  -- NOTE Unlike 'translateLedgerView', this takes no context. Should a protocol
+  -- need some to set up its chain-dependent state at the boundary,
+  -- 'ConsensusConfig' @protoTo@ is one option, since the hard fork combinator
+  -- already has it at hand here.
   translateChainDepState ::
-    Proxy (protoFrom, protoTo) -> ChainDepState protoFrom -> ChainDepState protoTo
+    Proxy (protoFrom, protoTo, eraTo) -> ChainDepState protoFrom -> ChainDepState protoTo
 
 -- | Degenerate instance - we may always translate from a protocol to itself.
-instance TranslateProto singleProto singleProto where
-  translateLedgerView _ = id
+instance TranslateProto singleProto singleProto eraTo where
+  translateLedgerView _prx _ctx = id
   translateChainDepState _ = id
 
 -- | The chain order of some type; in the Consensus layer, this will always be

@@ -235,7 +235,7 @@ fromShelleyLedgerExamplesPraos = fromShelleyLedgerExamplesPolyPraos translatePra
 fromShelleyLedgerExamplesPolyPraos ::
   forall proto era.
   ( ShelleyCompatible proto era
-  , TranslateProto (TPraos StandardCrypto) proto
+  , TranslateProto (TPraos StandardCrypto) proto era
   ) =>
   -- | Rebuild the example's TPraos header as this protocol's header
   (SL.BHeader StandardCrypto -> ShelleyProtocolHeader proto) ->
@@ -365,7 +365,7 @@ fromShelleyLedgerExamplesPolyPraos
         , shelleyLedgerTables = emptyLedgerTables
         }
     chainDepState =
-      translateChainDepState (Proxy @(TPraos StandardCrypto, proto)) $
+      translateChainDepState (Proxy @(TPraos StandardCrypto, proto, era)) $
         TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
       let headerState = genesisHeaderState chainDepState
@@ -399,9 +399,8 @@ praosHeaderBodyFromTPraos bhBody =
     }
 
 fromShelleyLedgerExamplesPraos2 ::
-  ShelleyCompatible (Praos2 StandardCrypto) era =>
-  ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
-  Examples (ShelleyBlock (Praos2 StandardCrypto) era)
+  ProtocolLedgerExamples (SL.BHeader StandardCrypto) DijkstraEra ->
+  Examples (ShelleyBlock (Praos2 StandardCrypto) DijkstraEra)
 fromShelleyLedgerExamplesPraos2 =
   fromShelleyLedgerExamplesPolyPraos translateLeiosHeader
 

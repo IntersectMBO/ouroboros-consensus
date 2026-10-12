@@ -210,8 +210,8 @@ instance Views.ForecastToPolyPraosLedgerView (Praos c) era where
 -- - They share the same ADDRHASH algorithm
 -- - They share the same DSIGN verification keys
 -- - They share the same VRF verification keys
-instance TranslateProto (TPraos c) (Praos c) where
-  translateLedgerView _ SL.TPraosLedgerView{SL.tplvPoolDistr, SL.tplvChainChecks} =
+instance TranslateProto (TPraos c) (Praos c) era where
+  translateLedgerView _prx _ctx SL.TPraosLedgerView{SL.tplvPoolDistr, SL.tplvChainChecks} =
     Views.PraosLedgerView
       { Views.plvPoolDistr = tplvPoolDistr
       , Views.plvMaxHeaderSize = SL.ccMaxBHSize tplvChainChecks

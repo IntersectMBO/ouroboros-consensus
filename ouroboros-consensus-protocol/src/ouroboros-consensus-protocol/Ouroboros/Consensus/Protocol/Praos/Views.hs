@@ -105,6 +105,12 @@ deriving instance
 -- A method rather than one shared function because only the protocols with
 -- Leios may demand more of their era than 'SL.EraForecast', and knowing
 -- @proto@ alone cannot supply that @era@ dictionary.
+--
+-- TODO Indexing on @era@ leaks a ledger-era, hence 'ShelleyBlock'-level, concept
+-- into this protocol-level module: a protocol should not need to know which era
+-- it runs in. It is a compromise, since the forecast it reads is itself indexed
+-- by era. We might instead move this class, and any like it, down into the
+-- 'ShelleyBlock' layer, where protocol and era are paired anyway.
 type ForecastToPolyPraosLedgerView :: Type -> Type -> Constraint
 class ForecastToPolyPraosLedgerView proto era where
   forecastToPolyPraosLedgerView ::
