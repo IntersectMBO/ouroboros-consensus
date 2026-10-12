@@ -329,6 +329,40 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
           , wcMarkCopiedStmt = markCopiedStmt
           } = serve
          where
+          -- The write worker takes care of tow types of jobs: queued jobs (values of `WriteJob`)
+          -- and maintenance jobs.
+          -- We prioritise queued jobs first: writes arrive in bursts, and the quiet in
+          -- between is the time to do maintenance. But a burst can go on for as
+          -- long as it likes, so 'maxJobsBetweenMaintenance' prevents maintenance starvation.
+          serve = do
+            mJob <- atomically $ do
+              served <- readTVar jobsServedVar
+              if served >= maxJobsBetweenMaintenance
+                then
+                  -- we've served enough queued jobs, time to do maintenance
+                  pure Nothing
+                else
+                  tryReadTBQueue queue >>= \case
+                    Nothing ->
+                      -- no queue jobs: do maintenance
+                      pure Nothing
+                    Just job -> do
+                      -- do a queued job
+                      writeTVar jobsServedVar (served + 1)
+                      pure (Just job)
+            case mJob of
+              -- do a normal queue job
+              Just job -> do
+                stop <- runJob job
+                traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
+                unless stop serve
+              -- do maintenance
+              Nothing -> do
+                quiet <- stepMaintenance
+                atomically $ writeTVar jobsServedVar 0
+                when quiet blockUntilWork
+                serve
+
           runJob :: WriteJob -> IO Bool
           runJob = \case
             Shutdown resultVar -> do
@@ -372,30 +406,6 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
                 gcMark sweepDoorbell volDb gcStmts slot
               pure False
 
-          -- Queued jobs first: writes arrive in bursts, and the quiet in
-          -- between is what maintenance is for. But a burst can go on for as
-          -- long as it likes, so 'maxJobsBetweenMaintenance' of them is the
-          -- most that may pass before maintenance gets its turn regardless.
-          serve = do
-            mJob <- atomically $ do
-              served <- readTVar jobsServedVar
-              if served >= maxJobsBetweenMaintenance
-                then pure Nothing
-                else
-                  tryReadTBQueue queue >>= \case
-                    Nothing -> pure Nothing
-                    Just job -> Just job <$ writeTVar jobsServedVar (served + 1)
-            case mJob of
-              Just job -> do
-                stop <- runJob job
-                traceWith tracer $ TraceLeiosDbWriteJobDone (describeJob job)
-                unless stop serve
-              Nothing -> do
-                quiet <- stepMaintenance
-                atomically $ writeTVar jobsServedVar 0
-                when quiet blockUntilWork
-                serve
-
           -- Nothing queued and no sweep outstanding: wait for either.
           blockUntilWork = IO.atomically $ do
             noJobs <- isEmptyTBQueue queue
@@ -414,6 +424,7 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
               atomically $ writeTVar sweepStateVar SweepIdle
               pure True
            where
+            -- TODO: SweepIdle and SweepEbs seem redundant. Consider merging them.
             step =
               readTVarIO sweepStateVar >>= \case
                 SweepIdle -> do
