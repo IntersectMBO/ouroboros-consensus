@@ -11,6 +11,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( ExnLeiosNotifyInvalidAnnouncement (..)
   , ExnLeiosNotifyInvalidOffer (..)
   , checkLeiosBlockOffer
+  , checkLeiosClosureOffer
   , LeiosNotifyPeerState (..)
   , emptyLeiosNotifyPeerState
   , onLeiosNotifyAnnouncement
@@ -54,6 +55,8 @@ data LeiosNotifyPeerState blk = MkLeiosNotifyPeerState
   , lnpsBodyOffers :: !(Set LeiosPoint)
   -- ^ Which endorser blocks this peer has offered the body of, so that
   -- repeating an offer costs it the connection.
+  , lnpsClosureOffers :: !(Set LeiosPoint)
+  -- ^ Likewise, which it has offered the transaction closure of.
   }
   deriving
     NoThunks
@@ -65,6 +68,7 @@ emptyLeiosNotifyPeerState =
     { lnpsPruneSlot = SlotNo 0
     , lnpsAnnouncements = Announcements.emptyAnnouncementsState
     , lnpsBodyOffers = Set.empty
+    , lnpsClosureOffers = Set.empty
     }
 
 -- | Forget everything about elections before the given slot, which is the
@@ -78,6 +82,8 @@ pruneLeiosNotifyPeerState immTipSlot st
         , lnpsBodyOffers =
             -- 'LeiosPoint' orders slot-first, so the pruned points are a prefix.
             Set.dropWhileAntitone (\p -> pointSlotNo p < immTipSlot) (lnpsBodyOffers st)
+        , lnpsClosureOffers =
+            Set.dropWhileAntitone (\p -> pointSlotNo p < immTipSlot) (lnpsClosureOffers st)
         }
   | otherwise = st
 
@@ -96,6 +102,10 @@ data ExnLeiosNotifyInvalidOffer
     ExnLeiosBlockOfferBadSize !LeiosPoint !BytesSize !BytesSize
   | -- | A second body offer of an endorser block.
     ExnLeiosRepeatedBlockOffer !LeiosPoint
+  | -- | A closure offer of an endorser block this peer never announced.
+    ExnLeiosClosureOfferWithoutAnnouncement !LeiosPoint
+  | -- | A second closure offer of an endorser block.
+    ExnLeiosRepeatedClosureOffer !LeiosPoint
   | -- | An offer below the slot this peer's state has been pruned to, which is
     -- therefore unanswerable on its own terms: the offered point, and that slot.
     --
@@ -149,6 +159,26 @@ checkLeiosBlockOffer cfg immLedger point claimed st
       if claimed == 0 || claimed > bound
         then Left $ ExnLeiosBlockOfferBadSize point claimed bound
         else Right st{lnpsBodyOffers = Set.insert point (lnpsBodyOffers st)}
+
+-- | Accept a peer's 'MsgLeiosBlockTxsOffer', or say why the peer must go.
+--
+-- Held to the same announcement as the body offer and otherwise independent of
+-- it: either may arrive first, or alone. So a LeiosNotify server never has to
+-- track what it has already offered a peer in order to synthesise a body offer
+-- ahead of a closure offer.
+checkLeiosClosureOffer ::
+  LeiosPoint ->
+  LeiosNotifyPeerState blk ->
+  Either ExnLeiosNotifyInvalidOffer (LeiosNotifyPeerState blk)
+checkLeiosClosureOffer point st
+  | pointSlotNo point < lnpsPruneSlot st =
+      Left $ ExnLeiosOfferTooOld point (lnpsPruneSlot st)
+  | Set.member point (lnpsClosureOffers st) =
+      Left $ ExnLeiosRepeatedClosureOffer point
+  | not (announcedIt point st) =
+      Left $ ExnLeiosClosureOfferWithoutAnnouncement point
+  | otherwise =
+      Right st{lnpsClosureOffers = Set.insert point (lnpsClosureOffers st)}
 
 -- | Whether this peer has announced this endorser block.
 announcedIt :: LeiosPoint -> LeiosNotifyPeerState blk -> Bool

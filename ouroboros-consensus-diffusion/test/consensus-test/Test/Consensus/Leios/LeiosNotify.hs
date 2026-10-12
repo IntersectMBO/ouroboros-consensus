@@ -123,8 +123,8 @@ tests =
               (timeout 100 (nodeClientAgainstAnnouncements [setCounterBelowImmTips (ann 1 (firstLeiosBlock 0))]))
               @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 1))
         , testCase
-            "the node's client counts an announcement whose counter is below its immutable tip's toward its election" $
-            runSimOrThrow
+            "the node's client counts an announcement whose counter is below its immutable tip's toward its election"
+            $ runSimOrThrow
               ( timeout 100 $
                   nodeClientAgainstAnnouncements
                     [ setCounterBelowImmTips (ann 1 (firstLeiosBlock 0))
@@ -164,7 +164,7 @@ tests =
             runSimOrThrow (timeout 1000 nodeClientTooOld)
               @?= Just (NodeClientDisconnected AnnouncementTooOld)
         , testCase "the node prunes its clients' state as its immutable tip advances" $
-            runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just ((1, 1), (0, 0))
+            runSimOrThrow (timeout 1000 nodePrunesClientState) @?= Just ((1, 1, 1), (0, 0, 0))
         , testCase "the node's client accepts an offer of an endorser block its peer announced" $
             runSimOrThrow (timeout 100 (nodeClientAgainstOffers [MsgLeiosBlockOffer someOfferedPoint 1000]))
               @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
@@ -192,7 +192,36 @@ tests =
               @?= Just (NodeClientDisconnected OfferBadSize)
         , testCase
             "the node's client disconnects a peer that offers an endorser block older than its immutable tip"
-            $ runSimOrThrow (timeout 1000 nodeClientOfferTooOld)
+            $ runSimOrThrow (timeout 1000 (nodeClientOfferTooOld (MsgLeiosBlockOffer someOfferedPoint 1000)))
+              @?= Just (NodeClientDisconnected OfferTooOld)
+        , testCase "the node's client accepts a closure offer of an endorser block its peer announced" $
+            runSimOrThrow (timeout 100 (nodeClientAgainstOffers [MsgLeiosBlockTxsOffer someOfferedPoint]))
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
+        , testCase "the node's client accepts a body offer and a closure offer of one endorser block" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstOffers
+                    [MsgLeiosBlockTxsOffer someOfferedPoint, MsgLeiosBlockOffer someOfferedPoint 1000]
+              )
+              @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 3))
+        , testCase
+            "the node's client disconnects a peer that closure-offers an endorser block it never announced"
+            $ runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstOffers
+                    [MsgLeiosBlockTxsOffer (MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 2)))]
+              )
+              @?= Just (NodeClientDisconnected ClosureOfferWithoutAnnouncement)
+        , testCase "the node's client disconnects a peer that repeats a closure offer" $
+            runSimOrThrow
+              ( timeout 100 $
+                  nodeClientAgainstOffers
+                    [MsgLeiosBlockTxsOffer someOfferedPoint, MsgLeiosBlockTxsOffer someOfferedPoint]
+              )
+              @?= Just (NodeClientDisconnected ClosureOfferRepeated)
+        , testCase
+            "the node's client disconnects a peer that closure-offers an endorser block older than its immutable tip"
+            $ runSimOrThrow (timeout 1000 (nodeClientOfferTooOld (MsgLeiosBlockTxsOffer someOfferedPoint)))
               @?= Just (NodeClientDisconnected OfferTooOld)
         , testCase "the node's server cancels a peer's outstanding requests when the peer quits" $
             runSimOrThrow (timeout 100 nodeServerCancels) @?= Just (NodeServerOutcome 0)
@@ -371,6 +400,8 @@ data DisconnectReason
   | OfferWithoutAnnouncement
   | OfferBadSize
   | OfferRepeated
+  | ClosureOfferWithoutAnnouncement
+  | ClosureOfferRepeated
   | OfferTooOld
   | OfferOutsideHorizon
   deriving (Eq, Show)
@@ -394,6 +425,8 @@ disconnectReason e
       ExnLeiosBlockOfferWithoutAnnouncement{} -> OfferWithoutAnnouncement
       ExnLeiosBlockOfferBadSize{} -> OfferBadSize
       ExnLeiosRepeatedBlockOffer{} -> OfferRepeated
+      ExnLeiosClosureOfferWithoutAnnouncement{} -> ClosureOfferWithoutAnnouncement
+      ExnLeiosRepeatedClosureOffer{} -> ClosureOfferRepeated
       ExnLeiosOfferTooOld{} -> OfferTooOld
       ExnLeiosBlockOfferOutsideHorizon{} -> OfferOutsideHorizon
   | otherwise = Nothing
@@ -456,7 +489,7 @@ nodeClientDiscardsReplies = withNode $ \nut -> do
   queue <- newTQueueIO
   atomically $
     mapM_ (writeTQueue queue) $
-      replicate 5 (MsgLeiosBlockTxsOffer somePoint) <> [MsgLeiosVotes [someVote]]
+      replicate 6 (MsgLeiosVotes [someVote])
   runNodeClientAgainst nut (readTQueue queue) (leiosNotifyPipelineDepth + 6)
 
 nodeClientUnpromptedCancel :: IOSim s NodeClientOutcome
@@ -505,33 +538,41 @@ nodeClientGated = withNodeForecasting 5 $ \nut -> do
     client <- nodeLeiosNotifyClient conn
     atomically client >>= either throwIO (\_ -> pure n)
 
--- | How many elections and offers the client's state holds once an
--- announcement and an offer are in, and once the immutable tip has passed them.
-nodePrunesClientState :: IOSim s ((Int, Int), (Int, Int))
+-- | How many elections, body offers and closure offers the client's state holds
+-- once one of each is in, and once the immutable tip has passed them.
+nodePrunesClientState :: IOSim s ((Int, Int, Int), (Int, Int, Int))
 nodePrunesClientState = withNode $ \nut -> do
   requests <- newTVarIO 0
   queue <- newTQueueIO
-  atomically $ mapM_ (writeTQueue queue) [someAnnouncement, MsgLeiosBlockOffer someOfferedPoint 1000]
+  atomically $
+    mapM_
+      (writeTQueue queue)
+      [someAnnouncement, MsgLeiosBlockOffer someOfferedPoint 1000, MsgLeiosBlockTxsOffer someOfferedPoint]
   let envPeer =
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \_conn -> do
-    atomically $ readTVar requests >>= check . (> leiosNotifyPipelineDepth + 1)
+    atomically $ readTVar requests >>= check . (> leiosNotifyPipelineDepth + 2)
     beforePruning <- clientStateSize nut
     advanceImmutableTip nut
     afterPruning <- clientStateSize nut
     pure (beforePruning, afterPruning)
 
--- | How many elections and body offers the node's clients remember.
-clientStateSize :: NodeUnderTest (IOSim s) -> IOSim s (Int, Int)
+-- | How many elections, body offers and closure offers the node's clients
+-- remember.
+clientStateSize :: NodeUnderTest (IOSim s) -> IOSim s (Int, Int, Int)
 clientStateSize nut = atomically $ do
   states <- IOLike.readTVar (getLeiosNotifyClientStates (nutKernel nut))
   sizes <- mapM (fmap size . IOLike.readTVar) (Map.elems states)
-  pure (sum (map fst sizes), sum (map snd sizes))
+  pure (sum [e | (e, _, _) <- sizes], sum [b | (_, b, _) <- sizes], sum [c | (_, _, c) <- sizes])
  where
-  size st = (Map.size (Announcements.live (lnpsAnnouncements st)), Set.size (lnpsBodyOffers st))
+  size st =
+    ( Map.size (Announcements.live (lnpsAnnouncements st))
+    , Set.size (lnpsBodyOffers st)
+    , Set.size (lnpsClosureOffers st)
+    )
 
 -- | Make the first two slots immutable: k is 10, so twelve blocks do it.
 advanceImmutableTip :: NodeUnderTest (IOSim s) -> IOSim s ()
@@ -542,17 +583,18 @@ advanceImmutableTip nut = do
       iterate successorLeiosBlock (firstLeiosBlock 1)
   threadDelay 1
 
--- | The peer offers an endorser block it announced, but only once the
--- immutable tip has passed it.
-nodeClientOfferTooOld :: IOSim s NodeClientOutcome
-nodeClientOfferTooOld = withNode $ \nut -> do
+-- | The peer sends this offer of an endorser block it announced, but only once
+-- the immutable tip has passed it.
+nodeClientOfferTooOld ::
+  Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle -> IOSim s NodeClientOutcome
+nodeClientOfferTooOld offer = withNode $ \nut -> do
   queue <- newTQueueIO
   atomically $ writeTQueue queue someAnnouncement
   announced <- newEmptyTMVarIO
   let feed = do
         atomically $ readTMVar announced
         advanceImmutableTip nut
-        atomically $ writeTQueue queue $ MsgLeiosBlockOffer someOfferedPoint 1000
+        atomically $ writeTQueue queue offer
       next = do
         msg <- readTQueue queue
         _ <- tryPutTMVar announced ()
@@ -576,9 +618,6 @@ someOfferedPoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 1))
 
 maxEbBodySize :: BytesSize
 maxEbBodySize = 5000
-
-somePoint :: LeiosPoint
-somePoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 0))
 
 someVote :: LeiosVote
 someVote =

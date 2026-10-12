@@ -94,6 +94,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState (..)
   , checkLeiosBlockOffer
+  , checkLeiosClosureOffer
   , emptyLeiosNotifyPeerState
   , onLeiosNotifyAnnouncement
   , pruneLeiosNotifyPeerState
@@ -495,7 +496,13 @@ mkHandlers
                       Left err -> pure (Left err)
                       Right st' -> Right () <$ writeTVar stateVar st'
                   either throwIO pure res
-                MsgLeiosBlockTxsOffer{} -> pure ()
+                MsgLeiosBlockTxsOffer point -> do
+                  res <- atomically $ do
+                    st <- readTVar stateVar
+                    case checkLeiosClosureOffer point st of
+                      Left err -> pure (Left err)
+                      Right st' -> Right () <$ writeTVar stateVar st'
+                  either throwIO pure res
                 MsgLeiosVotes{} -> pure ()
                 MsgCanceled -> pure ()
             )
