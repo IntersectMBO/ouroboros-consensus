@@ -20,7 +20,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import qualified Control.Exception as Exception
 import Control.Monad (forM_, replicateM, void)
 import qualified Data.ByteString.Lazy as BSL
-import Data.List (nub, sort)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -648,7 +647,7 @@ propQueryMatchesModel generated =
   ioProperty $
     withFreshDB $ \_args db -> do
       let rounds = generatedRounds generated
-          expected = sort (nub rounds)
+          expected = Set.toAscList (Set.fromList rounds)
       addRoundNos db rounds
       actual <- roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) maxBound
       pure (actual == expected)
@@ -658,7 +657,7 @@ propPagination generated (Positive pageSize) =
   ioProperty $
     withFreshDB $ \_args db -> do
       let rounds = generatedRounds generated
-          expected = sort (nub rounds)
+          expected = Set.toAscList (Set.fromList rounds)
       addRoundNos db rounds
       actual <-
         paginate db (PerasRoundNo 0) (fromIntegral pageSize)
@@ -685,7 +684,7 @@ propQuerySliceMatchesModel generated cursorWord limit =
     withFreshDB $ \_args db -> do
       let rounds = generatedRounds generated
           cursor = PerasRoundNo (fromIntegral cursorWord)
-          candidates = filter (> cursor) (sort (nub rounds))
+          candidates = filter (> cursor) (Set.toAscList $ Set.fromList rounds)
           expected = takeWord64 limit candidates
       addRoundNos db rounds
       actual <- roundsOf <$> DB.getCertsAfter db cursor limit
