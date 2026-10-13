@@ -87,6 +87,7 @@ basePraosSharedBlockForging ::
   , CanBeLeader proto ~ PraosCanBeLeader c
   , CannotForgeError proto ~ PraosCannotForge c
   , Applicative (WhenLeios proto)
+  , Foldable (WhenLeios proto)
   , IOLike m
   ) =>
   -- | The Praos parameters within this protocol's configuration
@@ -113,7 +114,7 @@ basePraosSharedBlockForging
           praosCheckCanForge
             (getPraosParams (configConsensus cfg))
             curSlot
-      , forgeBlock = fmap (\blk -> (blk, Nothing)) . forgeShelleyBlock hotKey canBeLeader
+      , forgeBlock = forgeShelleyBlock hotKey canBeLeader
       , finalize = HotKey.finalize hotKey
       }
 
