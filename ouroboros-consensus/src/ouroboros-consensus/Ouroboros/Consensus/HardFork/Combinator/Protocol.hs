@@ -344,34 +344,33 @@ update
               mismatch
       Right matched ->
         hsequence'
-          . hcizipWith proxySingle (updateEra ei slot) cfgs
+          . hcizipWith
+            proxySingle
+            ( \index cfg x ->
+                Comp $ withExcept (injectValidationErr index) $ updateEra slot cfg x
+            )
+            cfgs
           $ matched
    where
-    cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
+    cfgs =
+      hcmap
+        proxySingle
+        (completeConsensusConfig'' ei)
+        (getPerEraConsensusConfig hardForkConsensusConfigPerEra)
 
 updateEra ::
-  forall xs blk.
-  (SListI xs, SingleEraBlock blk) =>
-  EpochInfo (Except PastHorizonException) ->
+  SingleEraBlock blk =>
   SlotNo ->
-  Index xs blk ->
-  WrapPartialConsensusConfig blk ->
+  WrapConsensusConfig blk ->
   Product WrapValidateView (Ticked :.: WrapChainDepState) blk ->
-  (Except (HardForkValidationErr xs) :.: WrapChainDepState) blk
-updateEra
-  ei
-  slot
-  index
-  cfg
-  (Pair view (Comp chainDepState)) =
-    Comp $
-      withExcept (injectValidationErr index) $
-        fmap WrapChainDepState $
-          updateChainDepState
-            (completeConsensusConfig' ei cfg)
-            (unwrapValidateView view)
-            slot
-            (unwrapTickedChainDepState chainDepState)
+  Except (ValidationErr (BlockProtocol blk)) (WrapChainDepState blk)
+updateEra slot cfg (Pair view (Comp chainDepState)) =
+  fmap WrapChainDepState $
+    updateChainDepState
+      (unwrapConsensusConfig cfg)
+      (unwrapValidateView view)
+      slot
+      (unwrapTickedChainDepState chainDepState)
 
 reupdate ::
   forall xs.
@@ -517,31 +516,30 @@ validateAnnouncement
               mismatch
       Right matched ->
         hcollapse
-          . hcizipWith (Proxy @SingleEraBlockAndLeiosProtocol) (validateAnnouncementEra ei slot) cfgs
+          . hcizipWith
+            (Proxy @SingleEraBlockAndLeiosProtocol)
+            ( \index cfg x ->
+                K $ withExcept (injectValidationErr index) $ validateAnnouncementEra slot cfg x
+            )
+            cfgs
           $ matched
    where
-    cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
+    cfgs =
+      hcmap
+        proxySingle
+        (completeConsensusConfig'' ei)
+        (getPerEraConsensusConfig hardForkConsensusConfigPerEra)
 
 -- | Like 'updateEra'.
 validateAnnouncementEra ::
-  forall xs blk.
-  (SListI xs, SingleEraBlockAndLeiosProtocol blk) =>
-  EpochInfo (Except PastHorizonException) ->
+  SingleEraBlockAndLeiosProtocol blk =>
   SlotNo ->
-  Index xs blk ->
-  WrapPartialConsensusConfig blk ->
+  WrapConsensusConfig blk ->
   Product WrapValidateView (Ticked :.: WrapChainDepState) blk ->
-  K (Except (HardForkValidationErr xs) OCINStaleness) blk
-validateAnnouncementEra
-  ei
-  slot
-  index
-  cfg
-  (Pair view (Comp chainDepState)) =
-    K $
-      withExcept (injectValidationErr index) $
-        validateLeiosAnnouncement
-          (completeConsensusConfig' ei cfg)
-          (unwrapValidateView view)
-          slot
-          (unwrapTickedChainDepState chainDepState)
+  Except (ValidationErr (BlockProtocol blk)) OCINStaleness
+validateAnnouncementEra slot cfg (Pair view (Comp chainDepState)) =
+  validateLeiosAnnouncement
+    (unwrapConsensusConfig cfg)
+    (unwrapValidateView view)
+    slot
+    (unwrapTickedChainDepState chainDepState)
