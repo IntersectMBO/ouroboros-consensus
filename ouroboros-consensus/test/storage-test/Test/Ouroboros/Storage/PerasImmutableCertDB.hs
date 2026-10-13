@@ -126,7 +126,7 @@ tests =
 
 testQuerySemantics :: IO ()
 testQuerySemantics = withFreshDB $ \_args db -> do
-  addRounds db [10, 2, 1, 100]
+  addCertsForRoundNos db [10, 2, 1, 100]
 
   roundsOf <$> DB.getCertsAfter db (PerasRoundNo 2) 2
     >>= (@?= [PerasRoundNo 10, PerasRoundNo 100])
@@ -201,7 +201,7 @@ testCorruptDuplicateReplaced =
 
 testReopenOrder :: IO ()
 testReopenOrder = withFreshDB $ \args db -> do
-  addRounds db [2, 10]
+  addCertsForRoundNos db [2, 10]
 
   roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) 10
     >>= (@?= [PerasRoundNo 2, PerasRoundNo 10])
@@ -258,7 +258,7 @@ testForeignFilesIgnored =
 testMissingFileQuarantined :: IO ()
 testMissingFileQuarantined =
   withFreshDBFS $ \fs args db -> do
-    addRounds db [1, 2]
+    addCertsForRoundNos db [1, 2]
     removeFile (simHasFS fs) (certPath 1)
 
     roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) 10
@@ -274,7 +274,7 @@ testMissingFileQuarantined =
 testCorruptFileQuarantined :: IO ()
 testCorruptFileQuarantined =
   withFreshDBFS $ \fs args db -> do
-    addRounds db [1, 2]
+    addCertsForRoundNos db [1, 2]
     replaceRawFile fs (certPath 1) (BSL.pack [0xde, 0xad, 0xbe, 0xef])
 
     roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) 10
@@ -319,7 +319,7 @@ testTransientReadErrorDoesNotQuarantine =
 testCorruptFileDoesNotShortenPage :: IO ()
 testCorruptFileDoesNotShortenPage =
   withFreshDBFS $ \fs _args db -> do
-    addRounds db [1, 2, 3]
+    addCertsForRoundNos db [1, 2, 3]
     replaceRawFile fs (certPath 1) (BSL.pack [0xde, 0xad, 0xbe, 0xef])
 
     roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) 2
@@ -328,7 +328,7 @@ testCorruptFileDoesNotShortenPage =
 testFileNameRoundMismatch :: IO ()
 testFileNameRoundMismatch =
   withFreshDBFS $ \fs args db -> do
-    addRounds db [1]
+    addCertsForRoundNos db [1]
     renameFile (simHasFS fs) (certPath 1) (certPath 2)
 
     reopened <- DB.openDB args
@@ -356,7 +356,7 @@ testHostileCertificateFile ::
   IO ()
 testHostileCertificateFile policy hostile =
   withFreshDBFS $ \fs args db -> do
-    addRounds db [1, 2]
+    addCertsForRoundNos db [1, 2]
     bytes <- hostileCertFileBytes fs hostile
     replaceRawFile fs (certPath 1) bytes
 
@@ -469,7 +469,7 @@ damageCertFile fs damage roundNo =
 testEagerValidation :: IO ()
 testEagerValidation =
   withFreshDBFS $ \fs args db -> do
-    addRounds db [1, 2]
+    addCertsForRoundNos db [1, 2]
     replaceRawFile fs (certPath 1) (BSL.pack [0xde, 0xad, 0xbe, 0xef])
 
     reopened <-
@@ -485,7 +485,7 @@ testEagerValidation =
 testLazyQuarantineTrace :: IO ()
 testLazyQuarantineTrace =
   withFreshTracedDB $ \fs _args db getTrace -> do
-    addRounds db [1, 2]
+    addCertsForRoundNos db [1, 2]
     replaceRawFile fs (certPath 1) (BSL.pack [0xde, 0xad, 0xbe, 0xef])
 
     quarantineEvents <$> getTrace
@@ -508,7 +508,7 @@ testLazyQuarantineTrace =
 testEagerQuarantineTrace :: IO ()
 testEagerQuarantineTrace =
   withFreshDBFS $ \fs args db -> do
-    addRounds db [1, 2]
+    addCertsForRoundNos db [1, 2]
     replaceRawFile fs (certPath 1) (BSL.pack [0xde, 0xad, 0xbe, 0xef])
 
     (tracer, getTrace) <- recordingTracerIORef
@@ -648,7 +648,7 @@ propQueryMatchesModel generated =
     withFreshDB $ \_args db -> do
       let rounds = generatedRounds generated
           expected = Set.toAscList (Set.fromList rounds)
-      addRoundNos db rounds
+      addCertsForRoundNos db rounds
       actual <- roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) maxBound
       pure (actual == expected)
 
@@ -658,7 +658,7 @@ propPagination generated (Positive pageSize) =
     withFreshDB $ \_args db -> do
       let rounds = generatedRounds generated
           expected = Set.toAscList (Set.fromList rounds)
-      addRoundNos db rounds
+      addCertsForRoundNos db rounds
       actual <-
         paginate db (PerasRoundNo 0) (fromIntegral pageSize)
       pure (roundsOf actual == expected)
@@ -668,7 +668,7 @@ propReopenPreservesQuery generated =
   ioProperty $
     withFreshDB $ \args db -> do
       let rounds = generatedRounds generated
-      addRoundNos db rounds
+      addCertsForRoundNos db rounds
       before <- DB.getCertsAfter db (PerasRoundNo 0) maxBound
       reopened <- DB.openDB args
       after <- DB.getCertsAfter reopened (PerasRoundNo 0) maxBound
@@ -686,7 +686,7 @@ propQuerySliceMatchesModel generated cursorWord limit =
           cursor = PerasRoundNo (fromIntegral cursorWord)
           candidates = filter (> cursor) (Set.toAscList $ Set.fromList rounds)
           expected = takeWord64 limit candidates
-      addRoundNos db rounds
+      addCertsForRoundNos db rounds
       actual <- roundsOf <$> DB.getCertsAfter db cursor limit
       pure $
         counterexample
@@ -703,11 +703,11 @@ propInsertionOrderIndependent generated =
     let rounds = generatedRounds generated
     forward <-
       withFreshDB $ \_args db -> do
-        addRoundNos db rounds
+        addCertsForRoundNos db rounds
         DB.getCertsAfter db (PerasRoundNo 0) maxBound
     backward <-
       withFreshDB $ \_args db -> do
-        addRoundNos db (reverse rounds)
+        addCertsForRoundNos db (reverse rounds)
         DB.getCertsAfter db (PerasRoundNo 0) maxBound
     pure (forward == backward)
 
@@ -715,7 +715,7 @@ propValidationPoliciesAgree :: [Positive Word16] -> Property
 propValidationPoliciesAgree generated =
   ioProperty $
     withFreshDBFS $ \_fs args db -> do
-      addRoundNos db (generatedRounds generated)
+      addCertsForRoundNos db (generatedRounds generated)
       lazy <-
         DB.openDB
           args
@@ -756,7 +756,7 @@ propValidationPoliciesAgreeAfterDamage stored missing corrupt =
                 `Set.difference` missingRounds
                 `Set.difference` corruptRounds
 
-      addRoundNos db (Set.toList storedRounds)
+      addCertsForRoundNos db (Set.toList storedRounds)
       forM_ missingRounds $ \roundNo ->
         removeFile (simHasFS fs) (certPath $ unPerasRoundNo roundNo)
       forM_ corruptRounds $ \roundNo ->
@@ -1030,20 +1030,14 @@ replaceRawFile fs path bytes = do
   removeFile (simHasFS fs) path
   writeRawFile fs path bytes
 
-addRounds ::
-  DB.PerasImmutableCertDB IO TestBlock ->
-  [Word64] ->
-  IO ()
-addRounds db =
-  addRoundNos db . map PerasRoundNo
-
-addRoundNos ::
+addCertsForRoundNos ::
   DB.PerasImmutableCertDB IO TestBlock ->
   [PerasRoundNo] ->
   IO ()
-addRoundNos db =
+addCertsForRoundNos db =
   mapM_ (void . DB.addCert db . mkCert (PerasWeight 1))
 
+-- | Retrieve paginated list of all peras certs after the cursor.
 paginate ::
   DB.PerasImmutableCertDB IO TestBlock ->
   PerasRoundNo ->
