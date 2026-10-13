@@ -265,39 +265,39 @@ encodeLeiosNotify encodeP encodeA encodeV = encode
     Message (LeiosNotify point announcement vote) st0 st1 ->
     CBOR.Encoding
   encode = \case
-    MsgLeiosNotificationRequestNext ->
+    MsgDone ->
       CBOR.encodeListLen 1
         <> CBOR.encodeWord 0
+    MsgQuit ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 1
+    MsgCanceled ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 2
+    MsgLeiosNotificationRequestNext ->
+      CBOR.encodeListLen 1
+        <> CBOR.encodeWord 3
     MsgLeiosBlockAnnouncement x ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 1
+        <> CBOR.encodeWord 4
         <> encodeA x
     MsgLeiosBlockOffer p sz ->
       CBOR.encodeListLen 3
-        <> CBOR.encodeWord 2
+        <> CBOR.encodeWord 5
         <> encodeP p
         <> CBOR.encodeWord32 sz
     MsgLeiosBlockTxsOffer p ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 3
+        <> CBOR.encodeWord 6
         <> encodeP p
     MsgLeiosVotes vs ->
       CBOR.encodeListLen 2
-        <> CBOR.encodeWord 4
+        <> CBOR.encodeWord 7
         <> encodeVotes
      where
       encodeVotes =
         CBOR.encodeListLen (fromIntegral $ NE.length vs)
           <> foldMap encodeV vs
-    MsgDone ->
-      CBOR.encodeListLen 1
-        <> CBOR.encodeWord 5
-    MsgQuit ->
-      CBOR.encodeListLen 1
-        <> CBOR.encodeWord 6
-    MsgCanceled ->
-      CBOR.encodeListLen 1
-        <> CBOR.encodeWord 7
 
 decodeLeiosNotify ::
   forall
@@ -323,26 +323,26 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
     CBOR.Decoder s (Int, SomeMessage st')
   decode stok key = do
     case (stok, key) of
-      (SingIdle, 0) ->
+      (SingQuit, 0) -> fields 1 $ return (SomeMessage MsgDone)
+      (SingIdle, 1) -> fields 1 $ return (SomeMessage MsgQuit)
+      (SingBusy, 2) -> fields 1 $ return (SomeMessage MsgCanceled)
+      (SingIdle, 3) ->
         fields 1 $ return (SomeMessage MsgLeiosNotificationRequestNext)
-      (SingBusy, 1) -> fields 2 $ do
+      (SingBusy, 4) -> fields 2 $ do
         x <- decodeA
         return $ SomeMessage $ MsgLeiosBlockAnnouncement x
-      (SingBusy, 2) -> fields 3 $ do
+      (SingBusy, 5) -> fields 3 $ do
         p <- decodeP
         sz <- CBOR.decodeWord32
         return $ SomeMessage $ MsgLeiosBlockOffer p sz
-      (SingBusy, 3) -> fields 2 $ do
+      (SingBusy, 6) -> fields 2 $ do
         p <- decodeP
         return $ SomeMessage $ MsgLeiosBlockTxsOffer p
-      (SingBusy, 4) -> fields 2 $ do
+      (SingBusy, 7) -> fields 2 $ do
         vs <- decodeListUpTo "MsgLeiosVotes" maxLeiosVotesPerMessage decodeV
         case NE.nonEmpty vs of
           Nothing -> fail "MsgLeiosVotes: no votes"
           Just vs' -> return $ SomeMessage $ MsgLeiosVotes vs'
-      (SingQuit, 5) -> fields 1 $ return (SomeMessage MsgDone)
-      (SingIdle, 6) -> fields 1 $ return (SomeMessage MsgQuit)
-      (SingBusy, 7) -> fields 1 $ return (SomeMessage MsgCanceled)
       (SingDone, _) -> notActiveState stok
       -- failures per protocol state
       (SingIdle, _) -> unexpected

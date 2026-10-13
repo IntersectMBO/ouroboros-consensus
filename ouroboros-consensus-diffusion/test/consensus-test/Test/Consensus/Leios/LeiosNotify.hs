@@ -383,7 +383,7 @@ decodeEmptyVotes :: IOSim s (Either CBOR.DeserialiseFailure (SomeMessage (StBusy
 decodeEmptyVotes = do
   step <- decode codec SingBusy
   runDecoder
-    [CBOR.toLazyByteString (CBOR.encodeListLen 2 <> CBOR.encodeWord 4 <> CBOR.encodeListLen 0)]
+    [CBOR.toLazyByteString (CBOR.encodeListLen 2 <> CBOR.encodeWord 7 <> CBOR.encodeListLen 0)]
     step
 
 -- | The node's codec, except that an announcement is any CBOR bytes rather
@@ -459,7 +459,7 @@ indefinite :: [CBOR.Encoding] -> CBOR.Encoding
 indefinite xs = CBOR.encodeListLenIndef <> mconcat xs <> CBOR.encodeBreak
 
 votesKey :: CBOR.Encoding
-votesKey = CBOR.encodeWord 4
+votesKey = CBOR.encodeWord 7
 
 twoVotes :: [CBOR.Encoding]
 twoVotes = map CBOR.encodeInt [1, 2]

@@ -6,23 +6,23 @@
 ; with that file and with CIP-0164.
 
 leiosNotifyMessage
-  = msgLeiosNotificationRequestNext
+  = msgDone
+  / msgQuit
+  / msgCanceled
+  / msgLeiosNotificationRequestNext
   / msgLeiosBlockAnnouncement
   / msgLeiosBlockOffer
   / msgLeiosBlockTxsOffer
   / msgLeiosVotes
-  / msgDone
-  / msgQuit
-  / msgCanceled
 
-msgLeiosNotificationRequestNext = [0]
-msgLeiosBlockAnnouncement       = [1, announcement]
-msgLeiosBlockOffer              = [2, point, eb_size]
-msgLeiosBlockTxsOffer           = [3, point]
-msgLeiosVotes                   = [4, [1*16 vote]]
-msgDone                         = [5]
-msgQuit                         = [6]
-msgCanceled                     = [7]
+msgDone                         = [0]
+msgQuit                         = [1]
+msgCanceled                     = [2]
+msgLeiosNotificationRequestNext = [3]
+msgLeiosBlockAnnouncement       = [4, announcement]
+msgLeiosBlockOffer              = [5, point, eb_size]
+msgLeiosBlockTxsOffer           = [6, point]
+msgLeiosVotes                   = [7, [1*16 vote]]
 
 ; the announcing ranking block's header, as ChainSync sends it
 announcement = any
@@ -32,6 +32,11 @@ slot = uint .size 8
 eb_hash = bytes .size 32
 eb_size = uint .size 4
 
+; Unlike the blueprint's, a vote names the slot of the ranking block that
+; announced what it votes for.
+;
+; TODO Add the slot to the blueprint's vote, and to CIP-0164's, so that the
+; three agree; then drop this note.
 vote =
   [ slot
   , announcing_rb_hash : bytes .size 32
