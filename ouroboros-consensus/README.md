@@ -25,4 +25,6 @@ It also contains some test-suites and benchmarks:
 
 * `storage-test`: tests the ChainDB implementation
 
+* `leios-storage-test`: tests the LeiosDB implementation
+
 * `mempool-bench`: a benchmark of the time it takes to add transactions to a mempool

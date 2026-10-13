@@ -7,7 +7,7 @@
 -- These tests verify the semantics of the LeiosDbHandle operations for both
 -- InMemory and SQLite implementations. Each test case uses a fresh database
 -- to ensure isolation and serve as an (too optimistic) performance baseline.
-module Test.Ouroboros.Storage.LeiosDB (module Test.Ouroboros.Storage.LeiosDB) where
+module Test.Ouroboros.Storage.LeiosDB (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -32,7 +32,6 @@ import Ouroboros.Consensus.Leios.Types
   , EbHash (..)
   , LeiosEb (..)
   , LeiosPoint (..)
-  , RbHash (..)
   , TxHash (..)
   , encodeLeiosEbSize
   , leiosEbTxs
@@ -224,11 +223,6 @@ mkTestGroups impl =
 genEbHash :: Gen EbHash
 genEbHash = MkEbHash . BS.pack <$> vector 32
 
--- | Generate a random RbHash (32 random bytes).
--- With 256 bits of randomness, collisions are practically impossible.
-genRbHash :: Gen RbHash
-genRbHash = MkRbHash . BS.pack <$> vector 32
-
 -- | Generate a random TxHash (32 random bytes).
 genTxHash :: Gen TxHash
 genTxHash = MkTxHash . BS.pack <$> vector 32
@@ -276,10 +270,6 @@ mkTestTxHash seed = MkTxHash $ BS.pack $ replicate 32 (fromIntegral seed)
 mkTestPoint :: SlotNo -> Word -> LeiosPoint
 mkTestPoint slot seed = MkLeiosPoint slot (mkTestEbHash seed)
 
--- | A dummy announcing RB hash for DB tests that don't care about its value.
-testRbHash :: RbHash
-testRbHash = MkRbHash (BS.replicate 32 7)
-
 -- | Create a test LeiosEb with the given number of transactions.
 mkTestEb :: Int -> LeiosEb
 mkTestEb numTxs =
@@ -320,15 +310,6 @@ milli x = fromIntegral x / 1000
 
 micro :: Integer -> DiffTime
 micro x = fromIntegral x / 1_000_000
-
-showTime :: DiffTime -> String
-showTime t
-  | t < micro 1 = show (s * 1_000_000_000) <> "ns"
-  | t < milli 1 = show (s * 1_000_000) <> "μs"
-  | t < 1 = show (s * 1_000) <> "ms"
-  | otherwise = show t
- where
-  s = realToFrac t :: Double
 
 magnitudeBucket :: (Num a, Ord a) => a -> String
 magnitudeBucket size
