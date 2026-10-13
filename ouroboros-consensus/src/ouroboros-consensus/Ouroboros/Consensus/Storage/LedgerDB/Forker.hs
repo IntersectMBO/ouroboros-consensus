@@ -906,9 +906,10 @@ class ResolveLeiosBlock blk where
     Either (LedgerError blk) (LedgerState blk ValuesMK)
   applyLeiosClosure _ _ st = Right st
 
-  -- | Inline transactions of an EB closure into a 'blk'. The returned 'blk' may be deemed invalid, but
-  -- this is useful nonetheless for some use cases. Returns 'Nothing' when no
-  -- resolution was needed so the caller can reuse the original blk directly.
+  -- | Add the EB's transactions after the block's own, keeping the order.
+  -- The header stays the same, so it no longer matches the new body and the
+  -- block may fail validation. That is fine for the callers that use it.
+  -- By default, the block is returned as it is.
   inlineLeiosClosure :: blk -> [GenTx blk] -> blk
   inlineLeiosClosure blk _ = blk
 
@@ -1001,6 +1002,11 @@ class ResolveLeiosBlock blk where
 
 -- | Resolve and inline EB closure transactions as announced on the previous
 -- header. NOTE: This produces a block that would fail full validation.
+--
+-- Only a CertRB gets the EB's transactions, the same as in 'applyBlock'. A
+-- block without a certificate is returned as it is, even if the block before
+-- it announced an EB: that EB was not certified, so its transactions are not
+-- part of the chain.
 resolveLeiosBlock ::
   forall blk m.
   Monad m =>
@@ -1010,7 +1016,7 @@ resolveLeiosBlock ::
   blk ->
   m blk
 resolveLeiosBlock leiosDb cds b =
-  case announcementLeiosPoint <$> protocolStateLeiosAnnouncement @blk cds of
+  case blockLeiosCert b *> (announcementLeiosPoint <$> protocolStateLeiosAnnouncement @blk cds) of
     Nothing -> pure b
     Just announcedPoint ->
       -- NOTE: This produces a block that would fail full validation.

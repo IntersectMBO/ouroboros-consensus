@@ -518,7 +518,10 @@ instance ResolveLeiosBlock LeiosTestBlock where
       Left err -> Left $ LeiosTestInvalidTx err
       Right st' -> Right st{ltlsState = st'}
 
-  inlineLeiosClosure blk txs = setBody (ltbBody blk){ltbTxs = map unLeiosTestGenTx txs} blk
+  -- Add the EB's txs after the block's own, keeping both.
+  inlineLeiosClosure blk txs =
+    let body = ltbBody blk
+     in setBody body{ltbTxs = ltbTxs body <> map unLeiosTestGenTx txs} blk
 
   leiosClosureTxKeySets = getTransactionKeySets
 
