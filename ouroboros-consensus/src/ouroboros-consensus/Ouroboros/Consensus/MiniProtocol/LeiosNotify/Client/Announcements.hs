@@ -181,7 +181,7 @@ data AnnouncementVerdict invalidity validated
   | -- | Accept from the peer, but do not process the announcement
     --
     -- Currently only a stale-OCIN announcement (see
-    -- 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate.validateAnnouncementHeader').
+    -- 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation.validateAnnouncementHeader').
     VerdictIgnore
   | -- | Accept, and process the announcement
     VerdictProcess !validated

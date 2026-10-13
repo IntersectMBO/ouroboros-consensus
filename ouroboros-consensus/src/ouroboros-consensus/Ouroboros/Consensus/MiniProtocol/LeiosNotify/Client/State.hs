@@ -61,7 +61,7 @@ import Ouroboros.Consensus.Leios.Types
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
-import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
 import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, throwIO)
 

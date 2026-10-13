@@ -70,8 +70,10 @@ import Ouroboros.Consensus.Leios.Types
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( maxAnnouncementAgeRecv
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
-import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate (maxAnnouncementAgeRecv)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
 import Ouroboros.Consensus.Network.LeiosNotify

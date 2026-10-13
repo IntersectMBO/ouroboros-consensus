@@ -19,7 +19,7 @@
 -- For a caught-up node the immutable tip is always within the forecast horizon
 -- of a fresh announcement (by appeal to Praos Chain Growth); a LeiosNotify
 -- client sends no request until then (see 'awaitImmTipCanForecastNow').
-module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate
+module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncementInvalidity (..)
   , AnnouncingHeader (ancAnnouncement, ancElectionId, ancHeader)
   , announcementValidity
