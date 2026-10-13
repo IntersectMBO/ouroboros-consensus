@@ -24,6 +24,7 @@ import qualified Test.Consensus.Genesis.Tests.LoE as LoE
 import qualified Test.Consensus.Genesis.Tests.LoE.CaughtUp as LoE.CaughtUp
 import qualified Test.Consensus.Genesis.Tests.LoP as LoP
 import qualified Test.Consensus.Genesis.Tests.LongRangeAttack as LongRangeAttack
+import qualified Test.Consensus.Genesis.Tests.PerasDensityDisconnect as PerasDensityDisconnect
 import qualified Test.Consensus.Genesis.Tests.Uniform as Uniform
 import Test.Tasty
 import Test.Util.TestBlock (TestBlock)
@@ -31,7 +32,7 @@ import Test.Util.TestBlock (TestBlock)
 tests :: TestTree
 tests =
   testGroup "Genesis tests" $
-    [GDD.tests, LoE.CaughtUp.tests] -- Tests with distinctive mechanisms, not (yet) integrated into a 'TestSuite'
+    [GDD.tests, LoE.CaughtUp.tests, PerasDensityDisconnect.tests] -- Tests with distinctive mechanisms, not (yet) integrated into a 'TestSuite'
       <> toTestTree @TestBlock testSuite
 
 -- | Each value of this type uniquely corresponds to a Genesis test.
