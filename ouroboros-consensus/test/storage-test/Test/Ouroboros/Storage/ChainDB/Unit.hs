@@ -91,7 +91,7 @@ import Test.Util.ChainDB
   ( MinimalChainDbArgs (..)
   , emptyNodeDBs
   , fromMinimalChainDbArgs
-  , nodeDBsPerasImmutableCert
+  , nodeDBsPerasImmCert
   , nodeDBsVol
   )
 import Test.Util.Tracer (recordingTracerTVar)
@@ -1237,7 +1237,7 @@ withTestChainDbEnvWithPerasImmutableErrors
               { PerasImmutableCertDB.picdbaHasFS =
                   SomeHasFS $
                     simErrorHasFS
-                      (nodeDBsPerasImmutableCert nodeDbs)
+                      (nodeDBsPerasImmCert nodeDbs)
                       errorsVar
               }
           args =
