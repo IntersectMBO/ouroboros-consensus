@@ -24,17 +24,18 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   , timeLimitsLeiosNotify
   ) where
 
+import Cardano.Ledger.Binary.Plain (decodeRecordSum)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
-import Control.Monad (replicateM, when)
 import Control.Monad.Class.MonadST (MonadST)
 import Data.ByteString.Lazy (ByteString)
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Proxy (Proxy (..))
+import qualified Data.Text as T
 import Data.Word (Word32)
 import Network.TypedProtocol.Codec.CBOR
   ( ActiveState
@@ -53,6 +54,7 @@ import Network.TypedProtocol.Core
   , Protocol (..)
   , StateAgency
   )
+import Ouroboros.Consensus.Util.CBOR (decodeListUpTo)
 import Ouroboros.Network.Protocol.Limits
   ( ProtocolSizeLimits (..)
   , ProtocolTimeLimits (..)
@@ -239,10 +241,10 @@ codecLeiosNotify encodeP decodeP encodeA decodeA encodeV decodeV =
     StateToken st ->
     forall s.
     CBOR.Decoder s (SomeMessage st)
-  decode stok = do
-    len <- CBOR.decodeListLen
-    key <- CBOR.decodeWord
-    decodeLeiosNotify decodeP decodeA decodeV stok len key
+  decode stok =
+    decodeRecordSum
+      (T.pack $ "LeiosNotify (" <> show stok <> ")")
+      (decodeLeiosNotify decodeP decodeA decodeV stok)
 
 encodeLeiosNotify ::
   forall
@@ -309,61 +311,50 @@ decodeLeiosNotify ::
   (forall s'. CBOR.Decoder s' announcement) ->
   (forall s'. CBOR.Decoder s' vote) ->
   StateToken st ->
-  Int ->
   Word ->
-  CBOR.Decoder s (SomeMessage st)
+  CBOR.Decoder s (Int, SomeMessage st)
 decodeLeiosNotify decodeP decodeA decodeV = decode
  where
   decode ::
     forall (st' :: LeiosNotify point announcement vote).
     ActiveState st' =>
     StateToken st' ->
-    Int ->
     Word ->
-    CBOR.Decoder s (SomeMessage st')
-  decode stok len key = do
-    case (stok, len, key) of
-      (SingIdle, 1, 0) ->
-        return $ SomeMessage MsgLeiosNotificationRequestNext
-      (SingBusy, 2, 1) -> do
+    CBOR.Decoder s (Int, SomeMessage st')
+  decode stok key = do
+    case (stok, key) of
+      (SingIdle, 0) ->
+        fields 1 $ return (SomeMessage MsgLeiosNotificationRequestNext)
+      (SingBusy, 1) -> fields 2 $ do
         x <- decodeA
         return $ SomeMessage $ MsgLeiosBlockAnnouncement x
-      (SingBusy, 3, 2) -> do
+      (SingBusy, 2) -> fields 3 $ do
         p <- decodeP
         sz <- CBOR.decodeWord32
         return $ SomeMessage $ MsgLeiosBlockOffer p sz
-      (SingBusy, 2, 3) -> do
+      (SingBusy, 3) -> fields 2 $ do
         p <- decodeP
         return $ SomeMessage $ MsgLeiosBlockTxsOffer p
-      (SingBusy, 2, 4) -> do
-        vs <- decodeVotes
-        return $ SomeMessage $ MsgLeiosVotes vs
-       where
-        decodeVotes = do
-          n <- CBOR.decodeListLen
-          when (n < 1 || n > maxLeiosVotesPerMessage) $
-            fail $
-              "codecLeiosNotify: " <> show n <> " votes, not in [1, " <> show maxLeiosVotesPerMessage <> "]"
-          (:|) <$> decodeV <*> replicateM (n - 1) decodeV
-      (SingQuit, 1, 5) ->
-        return $ SomeMessage MsgDone
-      (SingIdle, 1, 6) ->
-        return $ SomeMessage MsgQuit
-      (SingBusy, 1, 7) ->
-        return $ SomeMessage MsgCanceled
-      (SingDone, _, _) -> notActiveState stok
+      (SingBusy, 4) -> fields 2 $ do
+        vs <- decodeListUpTo "MsgLeiosVotes" maxLeiosVotesPerMessage decodeV
+        case NE.nonEmpty vs of
+          Nothing -> fail "MsgLeiosVotes: no votes"
+          Just vs' -> return $ SomeMessage $ MsgLeiosVotes vs'
+      (SingQuit, 5) -> fields 1 $ return (SomeMessage MsgDone)
+      (SingIdle, 6) -> fields 1 $ return (SomeMessage MsgQuit)
+      (SingBusy, 7) -> fields 1 $ return (SomeMessage MsgCanceled)
+      (SingDone, _) -> notActiveState stok
       -- failures per protocol state
-      (SingIdle, _, _) ->
-        unexpected
-      (SingBusy, _, _) ->
-        unexpected
-      (SingQuit, _, _) ->
-        unexpected
+      (SingIdle, _) -> unexpected
+      (SingBusy, _) -> unexpected
+      (SingQuit, _) -> unexpected
    where
+    fields :: Int -> CBOR.Decoder s (SomeMessage st') -> CBOR.Decoder s (Int, SomeMessage st')
+    fields n = fmap ((,) n)
+
     unexpected :: forall a. CBOR.Decoder s a
     unexpected =
-      fail $
-        "codecLeiosNotify (" <> show stok <> ") unexpected key and length " <> show (key, len)
+      fail $ "codecLeiosNotify (" <> show stok <> ") unexpected key " <> show key
 
 codecLeiosNotifyId ::
   forall point announcement vote m.

@@ -55,6 +55,7 @@ import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
+import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
 import Codec.CBOR.Decoding (Decoder)
@@ -70,6 +71,7 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.ByteString.Short (ShortByteString, fromShort)
 import Data.Foldable (toList)
 import Data.Function ((&))
+import qualified Data.Text as T
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word32)
@@ -161,9 +163,9 @@ encodeLeiosPoint (MkLeiosPoint ebSlot ebHash) =
     <> encodeEbHash ebHash
 
 decodeLeiosPoint :: Decoder s LeiosPoint
-decodeLeiosPoint = do
-  CBOR.decodeListLenOf 2
-  MkLeiosPoint <$> decode <*> decodeEbHash
+decodeLeiosPoint =
+  decodeRecordNamed (T.pack "LeiosPoint") (const 2) $
+    MkLeiosPoint <$> decode <*> decodeEbHash
 
 prettyLeiosPoint :: LeiosPoint -> String
 prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
@@ -223,9 +225,9 @@ encodeLeiosVote (MkLeiosVote rbHash seat signature) =
     <> encodeFixedSized signature
 
 decodeLeiosVote :: Decoder s LeiosVote
-decodeLeiosVote = do
-  CBOR.decodeListLenOf 3
-  MkLeiosVote <$> decodeRbHash <*> (LeiosSeatId <$> CBOR.decodeWord16) <*> decodeFixedSized
+decodeLeiosVote =
+  decodeRecordNamed (T.pack "LeiosVote") (const 3) $
+    MkLeiosVote <$> decodeRbHash <*> (LeiosSeatId <$> CBOR.decodeWord16) <*> decodeFixedSized
 
 -- * Endorser blocks
 

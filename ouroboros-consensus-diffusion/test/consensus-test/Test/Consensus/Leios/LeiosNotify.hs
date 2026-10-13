@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -12,6 +13,7 @@
 -- node-vs-environment tests.
 module Test.Consensus.Leios.LeiosNotify (tests) where
 
+import Cardano.Binary.FixedSizeCodec (encodeFixedSized)
 import Cardano.Crypto.DSIGN.Class (genKeyDSIGN, signDSIGN)
 import Cardano.Crypto.Leios (LeiosSeatId (..), leiosSignContext)
 import Cardano.Crypto.Seed (mkSeedFromBytes)
@@ -39,7 +41,13 @@ import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Word (Word16, Word8)
-import Network.TypedProtocol.Codec (AnyMessage (..), Codec, CodecF (..), SomeMessage, runDecoder)
+import Network.TypedProtocol.Codec
+  ( AnyMessage (..)
+  , Codec
+  , CodecF (..)
+  , SomeMessage (..)
+  , runDecoder
+  )
 import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
@@ -53,8 +61,10 @@ import Ouroboros.Consensus.Leios.Types
   , RbHash (..)
   , decodeLeiosPoint
   , decodeLeiosVote
+  , encodeEbHash
   , encodeLeiosPoint
   , encodeLeiosVote
+  , encodeRbHash
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
@@ -310,6 +320,33 @@ tests =
         , testCase "the node does not run LeiosNotify before NodeToNodeV_16" $
             runSimOrThrow (timeout 100 (nodeRunsLeiosNotify NodeToNodeV_15)) @?= Just (False, False)
         ]
+    , testGroup
+        "the codec accepts either CBOR list encoding"
+        [ testCase "definite message, indefinite votes" $
+            runSimOrThrow (decodeVotes (definite [votesKey, indefinite twoVotes])) @?= Just [1, 2]
+        , testCase "indefinite message, definite votes" $
+            runSimOrThrow (decodeVotes (indefinite [votesKey, definite twoVotes])) @?= Just [1, 2]
+        , testCase "indefinite message, indefinite votes" $
+            runSimOrThrow (decodeVotes (indefinite [votesKey, indefinite twoVotes])) @?= Just [1, 2]
+        , testCase "rejects indefinite votes past the bound" $
+            runSimOrThrow
+              (decodeVotes (definite [votesKey, indefinite (map CBOR.encodeInt [1 .. 17])]))
+              @?= Nothing
+        , testCase "rejects an indefinite message with an extra field" $
+            runSimOrThrow (decodeVotes (indefinite [votesKey, definite twoVotes, CBOR.encodeInt 0]))
+              @?= Nothing
+        , testCase "rejects empty indefinite votes" $
+            runSimOrThrow (decodeVotes (definite [votesKey, indefinite []])) @?= Nothing
+        , testCase "an indefinite point" $
+            let p = MkLeiosPoint (SlotNo 3) (MkEbHash (BS.replicate 32 7))
+             in decodeWith
+                  decodeLeiosPoint
+                  (indefinite [CBOR.encodeWord64 3, encodeEbHash (MkEbHash (BS.replicate 32 7))])
+                  @?= Just p
+        , testCase "an indefinite vote" $
+            let v = voteFor someAnnouncingBlock 0
+             in decodeWith decodeLeiosVote (indefiniteVote v) @?= Just v
+        ]
     ]
 
 {-------------------------------------------------------------------------------
@@ -379,6 +416,36 @@ prop_nodeCodecMatchesCDDL =
   genVote = signedVote <$> (MkRbHash <$> genHash) <*> arbitrary
 
   genHash = BS.pack <$> vectorOf 32 arbitrary
+
+-- | Decode a 'MsgLeiosVotes'.
+decodeVotes :: CBOR.Encoding -> IOSim s (Maybe [Int])
+decodeVotes enc = do
+  step <- decode codec SingBusy
+  runDecoder [CBOR.toLazyByteString enc] step >>= \case
+    Right (SomeMessage (MsgLeiosVotes vs)) -> pure (Just (NE.toList vs))
+    _ -> pure Nothing
+
+decodeWith :: (forall s. CBOR.Decoder s a) -> CBOR.Encoding -> Maybe a
+decodeWith dec enc =
+  either (const Nothing) (Just . snd) $
+    CBOR.deserialiseFromBytes dec (CBOR.toLazyByteString enc)
+
+indefiniteVote :: LeiosVote -> CBOR.Encoding
+indefiniteVote (MkLeiosVote rbHash seat signature) =
+  indefinite
+    [encodeRbHash rbHash, CBOR.encodeWord16 (leiosSeatIndex seat), encodeFixedSized signature]
+
+definite :: [CBOR.Encoding] -> CBOR.Encoding
+definite xs = CBOR.encodeListLen (fromIntegral $ length xs) <> mconcat xs
+
+indefinite :: [CBOR.Encoding] -> CBOR.Encoding
+indefinite xs = CBOR.encodeListLenIndef <> mconcat xs <> CBOR.encodeBreak
+
+votesKey :: CBOR.Encoding
+votesKey = CBOR.encodeWord 4
+
+twoVotes :: [CBOR.Encoding]
+twoVotes = map CBOR.encodeInt [1, 2]
 
 sizeLimits :: ProtocolSizeLimits (LeiosNotify point announcement vote) BSL.ByteString
 sizeLimits = byteLimitsLeiosNotify (fromIntegral . BSL.length)
