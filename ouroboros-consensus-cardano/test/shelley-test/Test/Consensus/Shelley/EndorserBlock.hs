@@ -38,7 +38,8 @@ tests =
         prop_referencesCapacityFloorsAtZero
     , testProperty
         "the tx size a forged endorser block records does not exceed the tx size the mempool records"
-        prop_dijkstraEbTxSizeBounded
+        -- Few runs: the generator of Dijkstra transactions is slow.
+        (withNumTests 10 prop_dijkstraEbTxSizeBounded)
     ]
 
 genTxHash :: Gen TxHash
