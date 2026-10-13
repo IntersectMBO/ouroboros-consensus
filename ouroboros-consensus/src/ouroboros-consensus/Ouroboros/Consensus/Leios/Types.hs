@@ -92,6 +92,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util.CBOR (decodeMapUpTo)
 
 -- * Hashes
 
@@ -304,16 +305,17 @@ encodeLeiosEb (MkLeiosEb references) =
     (CBOR.encodeMapLen $ fromIntegral $ length references)
     references
 
--- | The inverse of 'encodeLeiosEb'. It rejects an endorser block that names no
--- transaction or more than 'maxTxsPerEb', before decoding any reference.
+-- | The inverse of 'encodeLeiosEb', though it also accepts an indefinite-length
+-- map. It rejects an endorser block that names no transaction or more than
+-- 'maxTxsPerEb'.
 decodeLeiosEb :: Decoder s LeiosEb
 decodeLeiosEb = do
-  n <- CBOR.decodeMapLen
-  when (n < 1 || n > maxTxsPerEb) $
-    fail $
-      "LeiosEb: item count " <> show n <> " not in [1, " <> show maxTxsPerEb <> "]"
-  fmap MkLeiosEb $ V.generateM n $ \_i ->
-    (,) <$> (MkTxHash <$> CBOR.decodeBytes) <*> CBOR.decodeWord32
+  references <-
+    decodeMapUpTo "LeiosEb" maxTxsPerEb $
+      (,) <$> (MkTxHash <$> CBOR.decodeBytes) <*> CBOR.decodeWord32
+  when (null references) $
+    fail "LeiosEb: names no transaction"
+  pure $ MkLeiosEb $ V.fromList references
 
 -- | The widest the framing 'encodeLeiosEb' writes around the references can
 -- get: the map header. CBOR map headers have the same widths as
