@@ -28,13 +28,19 @@ import Ouroboros.Consensus.Ticked (Ticked)
 -- | The announcement a header carries, as its protocol view gives it.
 data LeiosAnnouncement = MkLeiosAnnouncement
   { announcementElectee :: !ShortByteString
-  -- ^ the hash of the elected pool's cold key; with the header's slot, this
-  -- identifies the election. It is untyped bytes because the class is shared by
-  -- every protocol, whose electees differ: Praos's is a 28-byte key hash, a test
-  -- block's whatever identity it chooses.
+  -- ^ the elected pool's identity; with the header's slot, this identifies the
+  -- election. It is untyped bytes because the class is shared by every protocol,
+  -- whose electees differ: Praos's is the pool's key hash, the Blake2b-224 hash
+  -- of its cold verification key; a test block's is whatever identity it
+  -- chooses.
   , announcementEbHash :: !EbHash
   , announcementEbSize :: !BytesSize
   -- ^ the announced endorser block's size, which nothing trusts
+  --
+  -- TODO Nothing reads it yet. A certifying ranking block's ChainSync
+  -- @MsgRollForward@ will be interpreted as an offer of the endorser block it
+  -- certifies, of this size, and Leios voting will confirm that the size is
+  -- accurate.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks

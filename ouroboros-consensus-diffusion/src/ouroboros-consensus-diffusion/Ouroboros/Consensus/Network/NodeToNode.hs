@@ -53,6 +53,7 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
@@ -497,14 +498,14 @@ mkHandlers
                   immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
                   res <- atomically $ do
                     st <- readTVar stateVar
-                    case checkLeiosBlockOffer getTopLevelConfig immLedger point claimed st of
+                    case runExcept (checkLeiosBlockOffer getTopLevelConfig immLedger point claimed st) of
                       Left err -> pure (Left err)
                       Right st' -> Right () <$ writeTVar stateVar st'
                   either throwIO pure res
                 MsgLeiosBlockTxsOffer point -> do
                   res <- atomically $ do
                     st <- readTVar stateVar
-                    case checkLeiosClosureOffer point st of
+                    case runExcept (checkLeiosClosureOffer point st) of
                       Left err -> pure (Left err)
                       Right st' -> Right () <$ writeTVar stateVar st'
                   either throwIO pure res
@@ -513,7 +514,7 @@ mkHandlers
                   now <- systemTimeCurrent systemTime
                   res <- atomically $ do
                     st <- readTVar stateVar
-                    case checkLeiosVotes getTopLevelConfig maxClockSkew immLedger now votes st of
+                    case runExcept (checkLeiosVotes getTopLevelConfig maxClockSkew immLedger now votes st) of
                       Left err -> pure (Left err)
                       Right st' -> Right () <$ writeTVar stateVar st'
                   either throwIO pure res

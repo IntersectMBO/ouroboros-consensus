@@ -30,7 +30,7 @@ module Ouroboros.Consensus.Leios.Types
   , prettyLeiosPoint
 
     -- * Elections
-  , ElId (..)
+  , ElectionId (..)
 
     -- * Votes
   , LeiosVote (..)
@@ -172,24 +172,30 @@ prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
 -- * Elections
 
 -- | The slot number and pool id of an election
-data ElId
-  = -- | The bytes are the hash of the pool's cold verification key
-    MkElId !SlotNo !ShortByteString
+--
+-- This is unrelated to the 'Ouroboros.Consensus.Committee.Crypto.ElectionId'
+-- type family, which identifies an election of a voting committee. We do not
+-- anticipate a module using both.
+data ElectionId
+  = -- | the hash of the pool's cold verification key
+    ElectionId
+      !SlotNo
+      !ShortByteString
   deriving stock (Eq, Generic)
   deriving anyclass NoThunks
 
 -- | Renders the pool id as hex rather than as a raw byte string.
-instance Show ElId where
-  showsPrec p (MkElId slot poolId) =
+instance Show ElectionId where
+  showsPrec p (ElectionId slot poolId) =
     showParen (p > 10) $
-      showString "MkElId "
+      showString "ElectionId "
         . showsPrec 11 slot
         . showChar ' '
         . showString (BS8.unpack (BS16.encode (fromShort poolId)))
 
 -- | INVARIANT: lexicographically starts with 'SlotNo'
-instance Ord ElId where
-  compare (MkElId slL idL) (MkElId slR idR) =
+instance Ord ElectionId where
+  compare (ElectionId slL idL) (ElectionId slR idR) =
     compare slL slR <> compare idL idR
 
 -- * Votes

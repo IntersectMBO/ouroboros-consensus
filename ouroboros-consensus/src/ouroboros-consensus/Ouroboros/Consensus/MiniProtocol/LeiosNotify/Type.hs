@@ -32,6 +32,8 @@ import Control.Monad (replicateM, when)
 import Control.Monad.Class.MonadST (MonadST)
 import Data.ByteString.Lazy (ByteString)
 import Data.Kind (Type)
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import Data.Proxy (Proxy (..))
 import Data.Word (Word32)
 import Network.TypedProtocol.Codec.CBOR
@@ -59,10 +61,16 @@ import Ouroboros.Network.Protocol.Limits
   , waitForever
   )
 import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
-import Text.Printf (printf)
 
 -----
 
+-- | The LeiosNotify mini-protocol's states. CIP-0164 specifies the Leios
+-- mini-protocols: <https://cips.cardano.org/cip/CIP-0164>.
+--
+-- TODO The CIP does not yet have 'MsgQuit' and 'MsgCanceled', from
+-- <https://github.com/IntersectMBO/ouroboros-consensus/pull/2344>. It also now
+-- splits these notifications across LeiosAnnounce, LeiosVotes and
+-- LeiosBlockNotify; reconcile the two.
 type LeiosNotify :: Type -> Type -> Type -> Type
 data LeiosNotify point announcement vote where
   StIdle :: LeiosNotify point announcement vote
@@ -138,9 +146,7 @@ instance Protocol (LeiosNotify point announcement vote) where
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosVotes ::
       -- At most 'maxLeiosVotesPerMessage'; the codec rejects more.
-      --
-      -- TODO: non-empty
-      [vote] ->
+      NonEmpty vote ->
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgDone ::
       Message (LeiosNotify point announcement vote) StQuit StDone
@@ -279,7 +285,7 @@ encodeLeiosNotify encodeP encodeA encodeV = encode
         <> encodeVotes
      where
       encodeVotes =
-        CBOR.encodeListLen (fromIntegral $ length vs)
+        CBOR.encodeListLen (fromIntegral $ NE.length vs)
           <> foldMap encodeV vs
     MsgDone ->
       CBOR.encodeListLen 1
@@ -335,13 +341,10 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
        where
         decodeVotes = do
           n <- CBOR.decodeListLen
-          when (n > maxLeiosVotesPerMessage) $
+          when (n < 1 || n > maxLeiosVotesPerMessage) $
             fail $
-              printf
-                "codecLeiosNotify: %d votes, more than %d"
-                n
-                maxLeiosVotesPerMessage
-          replicateM n decodeV
+              "codecLeiosNotify: " <> show n <> " votes, not in [1, " <> show maxLeiosVotesPerMessage <> "]"
+          (:|) <$> decodeV <*> replicateM (n - 1) decodeV
       (SingQuit, 1, 5) ->
         return $ SomeMessage MsgDone
       (SingIdle, 1, 6) ->
@@ -351,11 +354,16 @@ decodeLeiosNotify decodeP decodeA decodeV = decode
       (SingDone, _, _) -> notActiveState stok
       -- failures per protocol state
       (SingIdle, _, _) ->
-        fail $ printf "codecLeiosNotify (%s) unexpected key (%d, %d)" (show stok) key len
+        unexpected
       (SingBusy, _, _) ->
-        fail $ printf "codecLeiosNotify (%s) unexpected key (%d, %d)" (show stok) key len
+        unexpected
       (SingQuit, _, _) ->
-        fail $ printf "codecLeiosNotify (%s) unexpected key (%d, %d)" (show stok) key len
+        unexpected
+   where
+    unexpected :: forall a. CBOR.Decoder s a
+    unexpected =
+      fail $
+        "codecLeiosNotify (" <> show stok <> ") unexpected key and length " <> show (key, len)
 
 codecLeiosNotifyId ::
   forall point announcement vote m.

@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -20,6 +21,7 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
+import qualified Codec.CBOR.Write as CBOR
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.Monad.Class.MonadAsync
 import Control.Monad.Class.MonadThrow
@@ -29,12 +31,14 @@ import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import Data.Either (isLeft)
 import Data.Foldable (for_)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import Data.Word (Word16, Word8)
-import Network.TypedProtocol.Codec (Codec)
+import Network.TypedProtocol.Codec (Codec, CodecF (..), SomeMessage, runDecoder)
 import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
@@ -95,6 +99,10 @@ tests =
             runSimOrThrow (outstandingCanceled 3) @?= OutstandingOutcome 3 0
         , testCase "the server disconnects a client that exceeds its pipelining bound" $
             runSimOrThrow excessive @?= ExcessiveOutcome Disconnected
+        , testCase "the codec rejects an empty MsgLeiosVotes" $
+            assertBool "decoded" $
+              isLeft $
+                runSimOrThrow decodeEmptyVotes
         ]
     , testGroup
         "node vs environment"
@@ -226,23 +234,23 @@ tests =
               @?= Just (NodeClientDisconnected OfferTooOld)
         , testCase "the node's client accepts a vote within its window" $
             runSimOrThrow
-              (timeout 100 (nodeClientAgainstSchedule [(5, MsgLeiosVotes [voteFor someAnnouncingBlock 0])]))
+              ( timeout
+                  100
+                  (nodeClientAgainstSchedule [(5, MsgLeiosVotes (NE.fromList [voteFor someAnnouncingBlock 0]))])
+              )
               @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
         , testCase "the node's client accepts votes from different seats in one slot" $
             runSimOrThrow
               ( timeout 100 $
                   nodeClientAgainstSchedule
-                    [(5, MsgLeiosVotes [voteFor someAnnouncingBlock 0, voteFor someAnnouncingBlock 1])]
+                    [(5, MsgLeiosVotes (NE.fromList [voteFor someAnnouncingBlock 0, voteFor someAnnouncingBlock 1]))]
               )
               @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
-        , testCase "the node's client disconnects a peer that sends an empty MsgLeiosVotes" $
-            runSimOrThrow (timeout 100 (nodeClientAgainstSchedule [(5, MsgLeiosVotes [])]))
-              @?= Just (NodeClientDisconnected VotesEmpty)
         , testCase "the node's client disconnects a peer that votes for an announcement it never sent" $
             runSimOrThrow
               ( timeout 100 $
                   nodeClientAgainstSchedule
-                    [(5, MsgLeiosVotes [voteFor (ann 2 (successorLeiosBlock (firstLeiosBlock 0))) 0])]
+                    [(5, MsgLeiosVotes (NE.fromList [voteFor (ann 2 (successorLeiosBlock (firstLeiosBlock 0))) 0]))]
               )
               @?= Just (NodeClientDisconnected VoteWithoutAnnouncement)
         , testCase "the node's client disconnects a peer that relays two votes from one seat in one slot" $
@@ -250,31 +258,37 @@ tests =
               ( timeout 100 $
                   nodeClientAgainstSchedule
                     [ (0, MsgLeiosBlockAnnouncement (ltbHeader equivocation))
-                    , (5, MsgLeiosVotes [voteFor someAnnouncingBlock 0])
-                    , (5, MsgLeiosVotes [voteFor equivocation 0])
+                    , (5, MsgLeiosVotes (NE.fromList [voteFor someAnnouncingBlock 0]))
+                    , (5, MsgLeiosVotes (NE.fromList [voteFor equivocation 0]))
                     ]
               )
               @?= Just (NodeClientDisconnected VoteRepeated)
         , testCase "the node's client disconnects a peer that relays a vote too early" $
             runSimOrThrow
-              (timeout 100 (nodeClientAgainstSchedule [(1.5, MsgLeiosVotes [voteFor someAnnouncingBlock 0])]))
+              ( timeout
+                  100
+                  (nodeClientAgainstSchedule [(1.5, MsgLeiosVotes (NE.fromList [voteFor someAnnouncingBlock 0]))])
+              )
               @?= Just (NodeClientDisconnected VoteTooEarly)
         , testCase "the node's client disconnects a peer that relays a vote too late" $
             runSimOrThrow
-              (timeout 200 (nodeClientAgainstSchedule [(100, MsgLeiosVotes [voteFor someAnnouncingBlock 0])]))
+              ( timeout
+                  200
+                  (nodeClientAgainstSchedule [(100, MsgLeiosVotes (NE.fromList [voteFor someAnnouncingBlock 0]))])
+              )
               @?= Just (NodeClientDisconnected VoteTooLate)
         , testCase "the node's client disconnects a peer whose votes message holds more than the most votes" $
             runSimOrThrow
               ( timeout 100 $
                   nodeClientAgainstSchedule
-                    [(5, MsgLeiosVotes [voteFor someAnnouncingBlock seat | seat <- [0 .. 16]])]
+                    [(5, MsgLeiosVotes (NE.fromList [voteFor someAnnouncingBlock seat | seat <- [0 .. 16]]))]
               )
               @?= Just (NodeClientDisconnected Undecodable)
         , testCase "the node's client accepts a votes message holding the most votes" $
             runSimOrThrow
               ( timeout 100 $
                   nodeClientAgainstSchedule
-                    [(5, MsgLeiosVotes [voteFor someAnnouncingBlock seat | seat <- [0 .. 15]])]
+                    [(5, MsgLeiosVotes (NE.fromList [voteFor someAnnouncingBlock seat | seat <- [0 .. 15]]))]
               )
               @?= Just (NodeClientOutcome (leiosNotifyPipelineDepth + 2))
         , testCase "the node's server cancels a peer's outstanding requests when the peer quits" $
@@ -303,6 +317,14 @@ codec =
     CBOR.decodeInt
     CBOR.encodeInt
     CBOR.decodeInt
+
+-- | Decode a 'MsgLeiosVotes' that holds no votes.
+decodeEmptyVotes :: IOSim s (Either CBOR.DeserialiseFailure (SomeMessage (StBusy :: P)))
+decodeEmptyVotes = do
+  step <- decode codec SingBusy
+  runDecoder
+    [CBOR.toLazyByteString (CBOR.encodeListLen 2 <> CBOR.encodeWord 4 <> CBOR.encodeListLen 0)]
+    step
 
 sizeLimits :: ProtocolSizeLimits (LeiosNotify point announcement vote) BSL.ByteString
 sizeLimits = byteLimitsLeiosNotify (fromIntegral . BSL.length)
@@ -463,7 +485,6 @@ data DisconnectReason
   | ClosureOfferWithoutAnnouncement
   | ClosureOfferRepeated
   | OfferTooOld
-  | VotesEmpty
   | VoteWithoutAnnouncement
   | VoteRepeated
   | VoteTooEarly
@@ -497,7 +518,6 @@ disconnectReason e
       ExnLeiosOfferTooOld{} -> OfferTooOld
       ExnLeiosBlockOfferOutsideHorizon{} -> OfferOutsideHorizon
   | Just (exn :: ExnLeiosNotifyInvalidVotes) <- fromException e = Just $ case exn of
-      ExnLeiosEmptyVotes -> VotesEmpty
       ExnLeiosVoteWithoutAnnouncement{} -> VoteWithoutAnnouncement
       ExnLeiosRepeatedVote{} -> VoteRepeated
       ExnLeiosVoteTooEarly{} -> VoteTooEarly
@@ -628,7 +648,7 @@ nodePrunesClientState = withNode $ \nut -> do
         , (0, MsgLeiosBlockOffer someOfferedPoint 1000)
         , (0, MsgLeiosBlockTxsOffer someOfferedPoint)
         , -- within the vote's window
-          (5, MsgLeiosVotes [voteFor someAnnouncingBlock 0])
+          (5, MsgLeiosVotes (NE.fromList [voteFor someAnnouncingBlock 0]))
         ]
     )
     $ \_feeder ->

@@ -151,6 +151,9 @@ data Seeds a = Seeds
   , seedKeepAliveAndPeerSharing :: a
   , seedNodeToNodeApps :: a
   , seedSnapshotDelay :: a
+  -- ^ The ChainDB needs a seed for its snapshot delay whatever its snapshot
+  -- policy, so this one is real, like the rest, rather than a dummy that a test
+  -- might come to depend on.
   }
   deriving (Functor, Foldable, Traversable)
 

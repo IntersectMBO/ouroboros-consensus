@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -33,11 +36,11 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Monad.Except (ExceptT, throwError)
 import Control.Monad.Trans (lift)
-import Control.Tracer (Tracer, traceWith)
-import Data.Functor.Compose (Compose (..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Map.Strict as Strict (Map)
-import Ouroboros.Consensus.Leios.Types (ElId (..))
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Leios.Types (ElectionId (..))
 
 -----
 -- The state of each LeiosNotify client
@@ -47,8 +50,10 @@ import Ouroboros.Consensus.Leios.Types (ElId (..))
 -- announcements part of the client's per-peer state
 data AnnouncementsState anc
   = MkAnnouncementsState
-  { live :: !(Strict.Map ElId (ElState anc))
+  { live :: !(Strict.Map ElectionId (ElState anc))
   }
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 emptyAnnouncementsState :: AnnouncementsState anc
 emptyAnnouncementsState = MkAnnouncementsState Map.empty
@@ -67,6 +72,8 @@ data ElState anc
     --
     -- INVARIANT: they are different announcements
     TwoAnnouncements !anc !anc
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 firstAnnouncement :: ElState anc -> anc
 firstAnnouncement = \case
@@ -86,7 +93,7 @@ elStateAnnouncements = \case
 
 -- | Everything this peer has announced for elections in the given slot.
 --
--- 'ElId' orders slot-first, so those elections are a contiguous range. An
+-- 'ElectionId' orders slot-first, so those elections are a contiguous range. An
 -- endorser block's own slot is its election's slot, so this is what an offer
 -- of that endorser block has to be backed by.
 announcementsInSlot :: SlotNo -> AnnouncementsState anc -> [anc]
@@ -94,9 +101,9 @@ announcementsInSlot slot st =
   concatMap elStateAnnouncements (Map.elems atSlot)
  where
   (_below, atOrAbove) =
-    Map.spanAntitone (\(MkElId elSlot _poolId) -> elSlot < slot) (live st)
+    Map.spanAntitone (\(ElectionId elSlot _poolId) -> elSlot < slot) (live st)
   (atSlot, _above) =
-    Map.spanAntitone (\(MkElId elSlot _poolId) -> elSlot <= slot) atOrAbove
+    Map.spanAntitone (\(ElectionId elSlot _poolId) -> elSlot <= slot) atOrAbove
 
 -- | Called whenever the ChainDB's immutable tip advances to a new slot. Also
 -- returns the announcements it forgets.
@@ -113,7 +120,7 @@ pruneAnnouncementsState immTipSlot st =
 
   -- NB strict comparison, so that the immtip's own announcement is
   -- not pruned
-  tooOld (MkElId elSlot _poolId) = elSlot < immTipSlot
+  tooOld (ElectionId elSlot _poolId) = elSlot < immTipSlot
 
 -- | Behaviors of a LeiosNotify upstream peer's announcement stream
 -- that an honest node rejects
@@ -132,20 +139,18 @@ data ErrAnnouncement invalidity
     ErrTooOld
   deriving Show
 
--- | Returns 'Nothing' if this election was already 'TwoAnnouncements' or if this
+-- | Fails if this election was already 'TwoAnnouncements' or if this
 -- announcement was already received
 extendLive ::
   forall anc invalidity.
   Eq anc =>
-  ElId ->
+  ElectionId ->
   anc ->
   AnnouncementsState anc ->
-  Either (ErrAnnouncement invalidity) (ElState anc, AnnouncementsState anc)
+  Either (ErrAnnouncement invalidity) (AnnouncementsState anc)
 extendLive elId anc st =
-  getCompose $
-    fmap
-      (\live' -> MkAnnouncementsState{live = live'})
-      (Map.alterF (inj . upd) elId (live st))
+  (\live' -> MkAnnouncementsState{live = live'})
+    <$> Map.alterF (fmap Just . upd) elId (live st)
  where
   -- 0 -> 1 ok
   -- 1 -> 2 ok when unequal
@@ -160,15 +165,9 @@ extendLive elId anc st =
           Right $ TwoAnnouncements x anc
     Just TwoAnnouncements{} -> Left ErrThird
 
-  inj :: Functor f => f a -> Compose f ((,) a) (Maybe a)
-  inj = Compose . fmap (\x -> (x, Just x)) -- success is never a delete
-
 -----
 -- The per-peer logic for receiving a MsgLeiosAnnouncement
 -----
-
-data TraceLeiosNotifyPeerEvent anc
-  = TracePeerAnnouncement !(ElState anc)
 
 -- | The verdict of 'onAnnouncement'\'s validation callback
 data AnnouncementVerdict invalidity validated
@@ -189,8 +188,7 @@ data AnnouncementVerdict invalidity validated
 
 onAnnouncement ::
   (Eq anc, Monad m) =>
-  Tracer m (TraceLeiosNotifyPeerEvent anc) ->
-  (anc -> ElId) ->
+  (anc -> ElectionId) ->
   -- | How to validate the announcement
   --
   -- The peer is disconnected only for a rejecting verdict; both accepting
@@ -201,11 +199,10 @@ onAnnouncement ::
   AnnouncementsState anc ->
   anc ->
   ExceptT (ErrAnnouncement invalidity) m (AnnouncementsState anc)
-onAnnouncement tracer getEl validate process st anc = do
-  (elSt, st') <- case extendLive (getEl anc) anc st of
+onAnnouncement getEl validate process st anc = do
+  st' <- case extendLive (getEl anc) anc st of
     Left err -> throwError err
     Right x -> pure x
-  lift $ traceWith tracer $ TracePeerAnnouncement elSt
   -- do the more expensive validation only after the trivial
   -- counting checks
   lift (validate anc) >>= \case

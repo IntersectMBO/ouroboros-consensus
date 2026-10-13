@@ -1,5 +1,9 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -17,7 +21,7 @@
 -- client sends no request until then (see 'awaitImmTipCanForecastNow').
 module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate
   ( AnnouncementInvalidity (..)
-  , AnnouncingHeader (ancAnnouncement, ancElId, ancHeader)
+  , AnnouncingHeader (ancAnnouncement, ancElectionId, ancHeader)
   , announcementValidity
   , maxAnnouncementAgeRecv
   , mkAnnouncingHeader
@@ -25,8 +29,10 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate
   ) where
 
 import Control.Monad (when)
-import Control.Monad.Except (runExcept, throwError, withExcept)
+import Control.Monad.Except (Except, runExcept, throwError, withExcept)
 import Data.Time.Clock (NominalDiffTime)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime
@@ -53,7 +59,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   , ledgerViewForecastAt
   )
 import Ouroboros.Consensus.Leios.Protocol
-import Ouroboros.Consensus.Leios.Types (ElId (..))
+import Ouroboros.Consensus.Leios.Types (ElectionId (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
   ( AnnouncementVerdict (..)
@@ -64,12 +70,15 @@ import Ouroboros.Consensus.Util.IOLike (IOLike, throwIO)
 -- | A header that carries an announcement.
 data AnnouncingHeader blk
   = -- | INVARIANT: 'ancHeader' carries the announcement 'ancAnnouncement', and
-    -- 'ancElId' is its election
+    -- 'ancElectionId' is its election
     UnsafeMkAnnouncingHeader
     { ancHeader :: !(Header blk)
-    , ancElId :: !ElId
+    , ancElectionId :: !ElectionId
     , ancAnnouncement :: !LeiosAnnouncement
     }
+  deriving stock Generic
+
+deriving anyclass instance NoThunks (Header blk) => NoThunks (AnnouncingHeader blk)
 
 instance HasHeader (Header blk) => Eq (AnnouncingHeader blk) where
   a == b = headerHash (ancHeader a) == headerHash (ancHeader b)
@@ -90,7 +99,7 @@ mkAnnouncingHeader cfg hdr = do
   pure $
     UnsafeMkAnnouncingHeader
       hdr
-      (MkElId (blockSlot hdr) (announcementElectee ann))
+      (ElectionId (blockSlot hdr) (announcementElectee ann))
       ann
 
 -- | Reasons a LeiosNotify client would reject its upstream peer's announcement,
@@ -127,16 +136,9 @@ data AnnouncementInvalidity blk
     -- protocol's max header size (see 'validateAnnouncementHeader').
     RbHeaderEnvelopeInvalid !(OtherHeaderEnvelopeError blk)
 
--- | NB 'HeaderInvalid' and 'RbHeaderEnvelopeInvalid' do not render their
--- wrapped errors, so that this instance is unconstrained in @blk@ (avoiding
--- @Show@ constraints on those errors that would have to be threaded through the
--- node). The wrapped values still carry them.
-instance Show (AnnouncementInvalidity blk) where
-  show ai = case ai of
-    OutsideHorizon r -> "OutsideHorizon (" <> show r <> ")"
-    SlotBeforeImmutableTip -> "SlotBeforeImmutableTip"
-    HeaderInvalid{} -> "HeaderInvalid <header-validation-error>"
-    RbHeaderEnvelopeInvalid{} -> "RbHeaderEnvelopeInvalid <envelope-error>"
+deriving stock instance
+  (Show (ValidationErr (BlockProtocol blk)), Show (OtherHeaderEnvelopeError blk)) =>
+  Show (AnnouncementInvalidity blk)
 
 -- | Protocol-level validation of an announced RB 'Header' against the immutable
 -- tip's ledger state (forecast to the header's slot). Envelope check skipped;
@@ -170,7 +172,7 @@ instance Show (AnnouncementInvalidity blk) where
 -- per election; the latter lets them "partition" the network, one clique
 -- certifying a lower OCIN's announcement while the other ignores it. So
 -- elections are keyed merely on @(slot, pool)@ alone (see
--- 'Ouroboros.Consensus.Leios.Types.ElId').
+-- 'Ouroboros.Consensus.Leios.Types.ElectionId').
 --
 -- We do not /promptly/ enforce the counter's /lower/ bound. An OCIN increment
 -- revokes the old opcert immediately for Praos (at header validation/chain
@@ -226,37 +228,36 @@ validateAnnouncementHeader ::
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   AnnouncingHeader blk ->
-  Either (AnnouncementInvalidity blk) OCINStaleness
-validateAnnouncementHeader cfg extLedger ancHdr =
-  runExcept $ do
-    -- 'forecastFor' does not reject a slot below its anchor (the immutable
-    -- tip's slot) — that is a precondition violation, not 'OutsideForecastRange'
-    -- — so guard it explicitly before forecasting.
-    when (NotOrigin slot < getTipSlot (ledgerState extLedger)) $
-      throwError SlotBeforeImmutableTip
-    ledgerView <-
-      withExcept OutsideHorizon $
-        forecastFor
-          (ledgerViewForecastAt (configLedger cfg) (ledgerState extLedger))
-          slot
-    -- Reject an RbHeader bigger than the protocol allows: it is the
-    -- announcement's transmission unit. These checks depend only on the ledger
-    -- view, so they are meaningful out of context, unlike the chain-extension
-    -- checks, which we skip.
-    withExcept RbHeaderEnvelopeInvalid $
-      additionalEnvelopeChecks cfg ledgerView hdr
-    -- Ticks the immutable tip's header state to the announcing slot without
-    -- applying the intervening headers: sound within the forecast horizon, since
-    -- the nonce and stake the VRF/KES checks use are already fixed and stale
-    -- opcert counters only yield 'StaleOCIN', never a false rejection.
-    let tickedHeaderState =
-          tickHeaderState (configConsensus cfg) ledgerView slot (headerState extLedger)
-    withExcept HeaderInvalid $
-      validateLeiosAnnouncement
-        (configConsensus cfg)
-        (validateView (configBlock cfg) hdr)
+  Except (AnnouncementInvalidity blk) OCINStaleness
+validateAnnouncementHeader cfg extLedger ancHdr = do
+  -- 'forecastFor' does not reject a slot below its anchor (the immutable
+  -- tip's slot) — that is a precondition violation, not 'OutsideForecastRange'
+  -- — so guard it explicitly before forecasting.
+  when (NotOrigin slot < getTipSlot (ledgerState extLedger)) $
+    throwError SlotBeforeImmutableTip
+  ledgerView <-
+    withExcept OutsideHorizon $
+      forecastFor
+        (ledgerViewForecastAt (configLedger cfg) (ledgerState extLedger))
         slot
-        (tickedHeaderStateChainDep tickedHeaderState)
+  -- Reject an RbHeader bigger than the protocol allows: it is the
+  -- announcement's transmission unit. These checks depend only on the ledger
+  -- view, so they are meaningful out of context, unlike the chain-extension
+  -- checks, which we skip.
+  withExcept RbHeaderEnvelopeInvalid $
+    additionalEnvelopeChecks cfg ledgerView hdr
+  -- Ticks the immutable tip's header state to the announcing slot without
+  -- applying the intervening headers: sound within the forecast horizon, since
+  -- the nonce and stake the VRF/KES checks use are already fixed and stale
+  -- opcert counters only yield 'StaleOCIN', never a false rejection.
+  let tickedHeaderState =
+        tickHeaderState (configConsensus cfg) ledgerView slot (headerState extLedger)
+  withExcept HeaderInvalid $
+    validateLeiosAnnouncement
+      (configConsensus cfg)
+      (validateView (configBlock cfg) hdr)
+      slot
+      (tickedHeaderStateChainDep tickedHeaderState)
  where
   hdr = ancHeader ancHdr
   slot = blockSlot hdr
@@ -313,7 +314,7 @@ announcementValidity systemTime futureCheck cfg immLedger ancHdr = do
     -- Only this function holds the wall clock, so it owns the too-old check.
     if age > maxAnnouncementAgeRecv
       then VerdictTooOld
-      else case validateAnnouncementHeader cfg immLedger ancHdr of
+      else case runExcept (validateAnnouncementHeader cfg immLedger ancHdr) of
         Left inv -> VerdictInvalid inv
         Right StaleOCIN -> VerdictIgnore
         Right FreshOCIN -> VerdictProcess (onset, age)

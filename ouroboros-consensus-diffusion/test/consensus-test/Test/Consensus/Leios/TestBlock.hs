@@ -78,8 +78,8 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
 import Data.String (fromString)
-import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime (..), nominalDiffTimeToSeconds, secondsToNominalDiffTime)
+import Data.Time.Clock.System (systemEpochDay)
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -555,7 +555,7 @@ instance ConfigSupportsNode LeiosTestBlock where
   -- Where io-sim starts its clock, so that slot 0 begins as a test does. An
   -- earlier date would put the node many slots past its empty chain at the
   -- outset, and a later one would leave its clock not yet started.
-  getSystemStart = const (SystemStart (UTCTime (fromGregorian 1970 1 1) 0))
+  getSystemStart = const (SystemStart (UTCTime systemEpochDay 0))
 
   getNetworkMagic = const (NetworkMagic 42)
 
