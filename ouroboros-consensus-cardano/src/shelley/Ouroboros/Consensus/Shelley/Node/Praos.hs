@@ -16,9 +16,12 @@ module Ouroboros.Consensus.Shelley.Node.Praos
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
+import Control.Exception (assert)
 import qualified Data.Text as T
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config (configConsensus)
+import Ouroboros.Consensus.Config (configConsensus, configLedger)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..))
+import Ouroboros.Consensus.Leios.Types (ForgedLeiosEb (..), encodeLeiosEbSize)
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, ConsensusConfig)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos
@@ -28,7 +31,8 @@ import Ouroboros.Consensus.Protocol.Praos
   , praosCheckCanForge
   )
 import Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader, WhenLeios)
-import Ouroboros.Consensus.Protocol.Praos2 (ConsensusConfig (..), Praos2)
+import Ouroboros.Consensus.Protocol.Praos.Views (PolyPraosLedgerView (..))
+import Ouroboros.Consensus.Protocol.Praos2 (ConsensusConfig (..), LeiosOnly (..), Praos2)
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyBlock
   , ShelleyCompatible
@@ -122,10 +126,28 @@ basePraosSharedBlockForging
 praos2SharedBlockForging ::
   forall m c era.
   ( ShelleyCompatible (Praos2 c) era
+  , LedgerSupportsProtocol (ShelleyBlock (Praos2 c) era)
   , IOLike m
   ) =>
   HotKey.HotKey c m ->
   (SlotNo -> Absolute.KESPeriod) ->
   ShelleyLeaderCredentials c ->
   BlockForging m (ShelleyBlock (Praos2 c) era)
-praos2SharedBlockForging = basePraosSharedBlockForging (praosParams . leiosPraosConfig)
+praos2SharedBlockForging hotKey slotToPeriod credentials =
+  blockForging{forgeBlock = \args -> checkEbSize args <$> forgeBlock blockForging args}
+ where
+  blockForging :: BlockForging m (ShelleyBlock (Praos2 c) era)
+  blockForging =
+    basePraosSharedBlockForging (praosParams . leiosPraosConfig) hotKey slotToPeriod credentials
+
+  checkEbSize ForgeBlockArgs{fbConfig, fbCurrentTickedLedgerState} forged@(_, forgedEb) =
+    -- If a ledger change makes the 'serialize'' bytes of a transaction longer
+    -- than its 'sizeTxF' plus 'perTxOverhead', the endorser block can exceed
+    -- the size that 'txEbMeasureDijkstra' reserved. Header validation then
+    -- rejects the block with 'LeiosEbTooBig'. The assert makes a test fail at
+    -- the forge instead.
+    assert (all fits forgedEb) forged
+   where
+    Praos2HasLeios maxEbBodySize =
+      plvMaxEbBodySize $ protocolLedgerView (configLedger fbConfig) fbCurrentTickedLedgerState
+    fits eb = encodeLeiosEbSize (forgedLeiosEbBody eb) <= maxEbBodySize
