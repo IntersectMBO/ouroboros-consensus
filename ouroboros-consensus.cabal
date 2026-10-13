@@ -1301,6 +1301,7 @@ library diffusion
     Ouroboros.Consensus.Network.LeiosNotify
     Ouroboros.Consensus.Network.NodeToClient
     Ouroboros.Consensus.Network.NodeToNode
+    Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
     Ouroboros.Consensus.Node
     Ouroboros.Consensus.Node.DbLock
     Ouroboros.Consensus.Node.DbMarker

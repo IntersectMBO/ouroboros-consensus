@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -53,7 +52,6 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
@@ -61,13 +59,11 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import Data.Void (Void)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime (BlockchainTime (..), SystemTime (..))
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
@@ -88,32 +84,18 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
-import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
-  ( LeiosNotifyClientPeerPipelined
-  , awaitImmTipCanForecastNow
-  , leiosNotifyClientPeerHandlingReplies
-  )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client (LeiosNotifyClientPeerPipelined)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState (..)
-  , checkLeiosBlockOffer
-  , checkLeiosClosureOffer
-  , checkLeiosVotes
-  , emptyLeiosNotifyPeerState
-  , onLeiosNotifyAnnouncement
-  , pruneLeiosNotifyPeerState
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
   ( LeiosNotifyServerPeerLookahead
-  , WhetherExcessiveRequests (..)
-  , leiosNotifyServerPeerLookahead
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   ( LeiosNotify
-  , Message (..)
   , byteLimitsLeiosNotify
   , codecLeiosNotify
   , codecLeiosNotifyId
-  , maxLeiosNotifyReplyBytes
   , timeLimitsLeiosNotify
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound (objectDiffusionInbound)
@@ -122,10 +104,12 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusionOutbound)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
-import Ouroboros.Consensus.Network.LeiosNotify
-  ( leiosNotifyMiniProtocolNum
-  , leiosNotifyPipelineDepth
-  , runLookaheadFixedSenderPeerWithLimits
+import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
+import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
+  ( leiosNotifyClient
+  , leiosNotifyProtocols
+  , leiosNotifyServer
+  , withLeiosNotifyClientState
   )
 import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -473,70 +457,16 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM _peer stateVar ->
-          leiosNotifyClientPeerHandlingReplies
-            leiosNotifyPipelineDepth
-            ( awaitImmTipCanForecastNow
-                getTopLevelConfig
-                (ChainDB.getImmutableLedger getChainDB)
-                (getCurrentSlot getBlockchainTime)
-            )
+      , hLeiosNotifyClient = \_version controlMessageSTM _peer ->
+          leiosNotifyClient
+            getTopLevelConfig
+            getChainDB
+            getBlockchainTime
+            systemTime
+            chainSyncFutureCheck
+            maxClockSkew
             controlMessageSTM
-            ( \case
-                MsgLeiosBlockAnnouncement hdr -> do
-                  immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
-                  st <- readTVarIO stateVar
-                  st' <-
-                    onLeiosNotifyAnnouncement
-                      systemTime
-                      chainSyncFutureCheck
-                      getTopLevelConfig
-                      immLedger
-                      st
-                      hdr
-                  -- The pruner may have run meanwhile; keep its work.
-                  atomically $ do
-                    pruneSlot <- lnpsPruneSlot <$> readTVar stateVar
-                    writeTVar stateVar $! pruneLeiosNotifyPeerState pruneSlot st'
-                MsgLeiosBlockOffer point claimed -> do
-                  immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
-                  res <- atomically $ do
-                    st <- readTVar stateVar
-                    case runExcept (checkLeiosBlockOffer getTopLevelConfig immLedger point claimed st) of
-                      Left err -> pure (Left err)
-                      Right st' -> Right () <$ writeTVar stateVar st'
-                  either throwIO pure res
-                MsgLeiosBlockTxsOffer point -> do
-                  res <- atomically $ do
-                    st <- readTVar stateVar
-                    case runExcept (checkLeiosClosureOffer point st) of
-                      Left err -> pure (Left err)
-                      Right st' -> Right () <$ writeTVar stateVar st'
-                  either throwIO pure res
-                MsgLeiosVotes votes -> do
-                  immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
-                  now <- systemTimeCurrent systemTime
-                  res <- atomically $ do
-                    st <- readTVar stateVar
-                    case runExcept (checkLeiosVotes getTopLevelConfig maxClockSkew immLedger now votes st) of
-                      Left err -> pure (Left err)
-                      Right st' -> Right () <$ writeTVar stateVar st'
-                  either throwIO pure res
-                MsgCanceled -> pure ()
-            )
-      , hLeiosNotifyServer = \_version _peer -> do
-          requests <- newTVarIO (0 :: Int)
-          leiosNotifyServerPeerLookahead
-            ( atomically $ do
-                n <- readTVar requests
-                if n >= leiosNotifyPipelineDepth
-                  then pure ExcessiveRequests
-                  else do
-                    writeTVar requests (n + 1)
-                    pure NotExcessiveRequests
-            )
-            -- The node never has a notification to send.
-            retry
+      , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer
       }
 
 {-------------------------------------------------------------------------------
@@ -1341,21 +1271,14 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     channel = do
       labelThisThread "LeiosNotifyClient"
       ((), trailing) <-
-        bracket
-          ( atomically $ do
-              stateVar <- newTVar emptyLeiosNotifyPeerState
-              modifyTVar (getLeiosNotifyClientStates kernel) (Map.insert them stateVar)
-              pure stateVar
-          )
-          (\_stateVar -> atomically $ modifyTVar (getLeiosNotifyClientStates kernel) (Map.delete them))
-          $ \stateVar ->
-            runPipelinedPeerWithLimits
-              nullTracer
-              (cLeiosNotifyCodec (mkCodecs version))
-              blLeiosNotify
-              timeLimitsLeiosNotify
-              channel
-              (hLeiosNotifyClient version controlMessageSTM them stateVar)
+        withLeiosNotifyClientState (getLeiosNotifyClientStates kernel) them $ \stateVar ->
+          runPipelinedPeerWithLimits
+            nullTracer
+            (cLeiosNotifyCodec (mkCodecs version))
+            blLeiosNotify
+            timeLimitsLeiosNotify
+            channel
+            (hLeiosNotifyClient version controlMessageSTM them stateVar)
       return (NoInitiatorResult, trailing)
 
   aLeiosNotifyServer ::
@@ -1488,35 +1411,3 @@ initiatorAndResponder featureFlags miniProtocolParameters version versionData Ap
           (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
           (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
       )
-
--- | LeiosNotify, to add to a node-to-node bundle, if the version has it.
---
--- TODO remove once 'NodeToNodeProtocols' has fields for the Leios mini-protocols.
-leiosNotifyProtocols ::
-  NodeToNodeVersion ->
-  RunMiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c ->
-  OuroborosBundleWithExpandedCtx mode addr PeerTrustable b m a c
-leiosNotifyProtocols version run
-  | version >= NodeToNodeV_16 =
-      mempty
-        { withHot =
-            WithHot
-              [ MiniProtocol
-                  { miniProtocolNum = leiosNotifyMiniProtocolNum
-                  , miniProtocolStart = StartOnDemand
-                  , miniProtocolLimits = leiosNotifyProtocolLimits
-                  , miniProtocolRun = run
-                  }
-              ]
-        }
-  | otherwise = mempty
-
--- | The ingress queue must hold a reply to every request the client may leave
--- outstanding, each as large as 'maxLeiosNotifyReplyBytes' allows; the
--- server's, which only receives requests, needs far less.
-leiosNotifyProtocolLimits :: MiniProtocolLimits
-leiosNotifyProtocolLimits =
-  MiniProtocolLimits
-    { maximumIngressQueue =
-        addSafetyMargin $ leiosNotifyPipelineDepth * fromIntegral maxLeiosNotifyReplyBytes
-    }

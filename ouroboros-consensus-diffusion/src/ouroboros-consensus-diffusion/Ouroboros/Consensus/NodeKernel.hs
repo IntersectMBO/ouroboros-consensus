@@ -78,8 +78,8 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ( LeiosNotifyPeerState
-  , pruneLeiosNotifyPeerState
   )
+import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify (leiosNotifyPruner)
 import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.Genesis
@@ -706,30 +706,3 @@ getImmTipSlot ::
 getImmTipSlot kernel =
   getTipSlot
     <$> ChainDB.getImmutableLedger (getChainDB kernel)
-
--- | Prune every LeiosNotify client's state each time the immutable tip's slot
--- advances.
-leiosNotifyPruner ::
-  ( IOLike m
-  , GetTip (LedgerState blk)
-  , ConvertRawHash blk
-  , GetHeader blk
-  , StandardHash blk
-  , Typeable blk
-  ) =>
-  ChainDB m blk ->
-  StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->
-  m Void
-leiosNotifyPruner chainDB statesVar = go (SlotNo 0)
- where
-  go prunedSlot = do
-    immTipSlot <- atomically $ do
-      immLedger <- ChainDB.getImmutableLedger chainDB
-      case getTipSlot (ledgerState immLedger) of
-        NotOrigin slot
-          | prunedSlot < slot -> do
-              states <- readTVar statesVar
-              mapM_ (\stateVar -> modifyTVar stateVar (pruneLeiosNotifyPeerState slot)) states
-              pure slot
-        _ -> retry
-    go immTipSlot
