@@ -57,7 +57,7 @@ import Test.QuickCheck
   , property
   , resize
   , shrinkList
-  , withMaxSuccess
+  , withNumTests
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit ((@?=), assertFailure, testCase)
@@ -106,23 +106,23 @@ tests =
         | fault <- [minBound .. maxBound]
         ]
     , testProperty "query agrees with a sorted-set model" $
-        withMaxSuccess 50 propQueryMatchesModel
+        withNumTests 50 propQueryMatchesModel
     , testProperty "pagination returns every round exactly once" $
-        withMaxSuccess 50 propPagination
+        withNumTests 50 propPagination
     , testProperty "reopening preserves the observable certificate set" $
-        withMaxSuccess 50 propReopenPreservesQuery
+        withNumTests 50 propReopenPreservesQuery
     , testProperty "arbitrary cursor and limit agree with the model" $
-        withMaxSuccess 100 propQuerySliceMatchesModel
+        withNumTests 100 propQuerySliceMatchesModel
     , testProperty "insertion order does not affect observable contents" $
-        withMaxSuccess 50 propInsertionOrderIndependent
+        withNumTests 50 propInsertionOrderIndependent
     , testProperty "validation policies agree on valid files" $
-        withMaxSuccess 50 propValidationPoliciesAgree
+        withNumTests 50 propValidationPoliciesAgree
     , testProperty "generated add/query/reopen sequences agree with the model" $
-        withMaxSuccess 100 propCommandSequence
+        withNumTests 100 propCommandSequence
     , testProperty "validation policies agree after generated file damage" $
-        withMaxSuccess 50 propValidationPoliciesAgreeAfterDamage
+        withNumTests 50 propValidationPoliciesAgreeAfterDamage
     , testProperty "generated abandoned temporary files are quarantined" $
-        withMaxSuccess 50 propGeneratedTempFilesAreQuarantined
+        withNumTests 50 propGeneratedTempFilesAreQuarantined
     ]
 
 testQuerySemantics :: IO ()
