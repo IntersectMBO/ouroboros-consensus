@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -51,7 +52,13 @@ import Ouroboros.Consensus.Leios.Protocol
   , LeiosLedgerView (..)
   , LeiosProtocol (..)
   )
-import Ouroboros.Consensus.Leios.Types (BytesSize, LeiosPoint (..), LeiosVote (..), RbHash (..))
+import Ouroboros.Consensus.Leios.Types
+  ( BytesSize
+  , LeiosPoint (..)
+  , LeiosVote (..)
+  , RbHash (..)
+  , milliseconds32ToNominalDiffTime
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Validate
@@ -380,9 +387,11 @@ checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
         forecastFor
           (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger))
           slot
-    MkLeiosLedgerView{llvAnnouncementPeriod = lHdr, llvVotePeriod = lVote} <-
+    MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod} <-
       maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash slot)) pure $
         getLeiosLedgerView (Proxy @(BlockProtocol blk)) view
+    let lHdr = milliseconds32ToNominalDiffTime llvAnnouncementPeriod
+        lVote = milliseconds32ToNominalDiffTime llvVotePeriod
     when (age < 3 * lHdr - InFutureCheck.unClockSkew skew) $
       throwError (ExnLeiosVoteTooEarly rbHash slot age)
     when (age > 3 * lHdr + lVote + voteLateGrace) $

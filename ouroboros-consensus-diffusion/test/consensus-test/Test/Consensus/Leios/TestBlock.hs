@@ -13,6 +13,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -62,6 +63,15 @@ module Test.Consensus.Leios.TestBlock
 
 import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.BaseTypes (BoundedRational (..), Milliseconds32 (..))
+import Cardano.Ledger.Binary
+  ( DecCBOR (..)
+  , EncCBOR (..)
+  , Version
+  , natVersion
+  , toPlainDecoder
+  , toPlainEncoding
+  )
 import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR.Dec
@@ -80,7 +90,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
 import Data.String (fromString)
-import Data.Time.Clock (UTCTime (..), nominalDiffTimeToSeconds, secondsToNominalDiffTime)
+import Data.Time.Clock (UTCTime (..))
 import Data.Time.Clock.System (systemEpochDay)
 import Data.Void (Void)
 import Data.Word (Word64)
@@ -395,29 +405,57 @@ data LeiosTestLedgerConfig = LeiosTestLedgerConfig
   deriving stock (Show, Generic)
   deriving anyclass NoThunks
 
--- | The periods go as seconds, since 'NominalDiffTime' has no 'Serialise' instance.
 instance Serialise LeiosTestLedgerConfig where
   encode cfg =
-    encode
-      ( ltlcHardForkParams cfg
-      , ltlcForecastRange cfg
-      , llvMaxEbBodySize (ltlcLeios cfg)
-      , nominalDiffTimeToSeconds (llvAnnouncementPeriod (ltlcLeios cfg))
-      , nominalDiffTimeToSeconds (llvVotePeriod (ltlcLeios cfg))
-      )
+    CBOR.encodeListLen 2
+      <> encode
+        ( ltlcHardForkParams cfg
+        , ltlcForecastRange cfg
+        , unboundRational (llvQuorumStakeThreshold llv)
+        ,
+          ( unMilliseconds32 (llvAnnouncementPeriod llv)
+          , unMilliseconds32 (llvVotePeriod llv)
+          , unMilliseconds32 (llvDiffusionPeriod llv)
+          )
+        , (llvMaxEbBodySize llv, llvMaxEbTxsSize llv)
+        )
+      <> toPlainEncoding leiosCodecVersion (encCBOR (llvCommittee llv))
+   where
+    llv = ltlcLeios cfg
   decode = do
-    (hardForkParams, forecastRange, maxEbBodySize, announcementPeriod, votePeriod) <- decode
+    CBOR.Dec.decodeListLenOf 2
+    ( hardForkParams
+      , forecastRange
+      , quorum
+      , (announcementPeriod, votePeriod, diffusionPeriod)
+      , (maxEbBodySize, maxEbTxsSize)
+      ) <-
+      decode
+    committee <- toPlainDecoder Nothing leiosCodecVersion decCBOR
+    quorumStakeThreshold <-
+      maybe (fail "LeiosTestLedgerConfig: quorum out of range") pure $ boundRational quorum
     pure
       LeiosTestLedgerConfig
         { ltlcHardForkParams = hardForkParams
         , ltlcForecastRange = forecastRange
         , ltlcLeios =
             MkLeiosLedgerView
-              { llvMaxEbBodySize = maxEbBodySize
-              , llvAnnouncementPeriod = secondsToNominalDiffTime announcementPeriod
-              , llvVotePeriod = secondsToNominalDiffTime votePeriod
+              { llvCommittee = committee
+              , llvQuorumStakeThreshold = quorumStakeThreshold
+              , llvAnnouncementPeriod = Milliseconds32 announcementPeriod
+              , llvVotePeriod = Milliseconds32 votePeriod
+              , llvDiffusionPeriod = Milliseconds32 diffusionPeriod
+              , llvMaxEbBodySize = maxEbBodySize
+              , llvMaxEbTxsSize = maxEbTxsSize
               }
         }
+
+-- | Dijkstra's protocol version, since Leios arrives in Dijkstra.
+--
+-- The test ledger config uses it to encode the committee, which has only a
+-- versioned codec.
+leiosCodecVersion :: Version
+leiosCodecVersion = natVersion @12
 
 type instance LedgerCfg LedgerState LeiosTestBlock = LeiosTestLedgerConfig
 

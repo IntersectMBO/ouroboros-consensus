@@ -37,7 +37,7 @@ import Data.Proxy (Proxy (Proxy))
 import GHC.Generics (Generic)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol (..))
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), LeiosProtocol (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
   ( getLeiosLedgerViewPolyPraos
@@ -156,20 +156,17 @@ instance Dijkstra.DijkstraEraForecast era => Views.ForecastToPolyPraosLedgerView
       , Views.plvMaxHeaderSize = ccMaxBHSize cc
       , Views.plvMaxBodySize = ccMaxBBSize cc
       , Views.plvProtocolVersion = ccProtocolVersion cc
-      , Views.plvCommittee =
-          Praos2HasLeios $ f ^. Dijkstra.leiosCommitteeForecastL @era @t
-      , Views.plvQuorumStakeThreshold =
-          Praos2HasLeios $ f ^. Dijkstra.leiosQuorumStakeThresholdForecastL @era @t
-      , Views.plvAnnouncementPeriodLength =
-          Praos2HasLeios $ f ^. Dijkstra.leiosAnnouncementPeriodLengthForecastL @era @t
-      , Views.plvVotePeriodLength =
-          Praos2HasLeios $ f ^. Dijkstra.leiosVotePeriodLengthForecastL @era @t
-      , Views.plvDiffusionPeriodLength =
-          Praos2HasLeios $ f ^. Dijkstra.leiosDiffusionPeriodLengthForecastL @era @t
-      , Views.plvMaxEbBodySize =
-          Praos2HasLeios $ f ^. Dijkstra.maxEndorserBlockReferencesSizeForecastL @era @t
-      , Views.plvMaxEbTxsSize =
-          Praos2HasLeios $ f ^. Dijkstra.maxEndorserBlockTxsSizeForecastL @era @t
+      , Views.plvLeios =
+          Praos2HasLeios
+            MkLeiosLedgerView
+              { llvCommittee = f ^. Dijkstra.leiosCommitteeForecastL @era @t
+              , llvQuorumStakeThreshold = f ^. Dijkstra.leiosQuorumStakeThresholdForecastL @era @t
+              , llvAnnouncementPeriod = f ^. Dijkstra.leiosAnnouncementPeriodLengthForecastL @era @t
+              , llvVotePeriod = f ^. Dijkstra.leiosVotePeriodLengthForecastL @era @t
+              , llvDiffusionPeriod = f ^. Dijkstra.leiosDiffusionPeriodLengthForecastL @era @t
+              , llvMaxEbBodySize = f ^. Dijkstra.maxEndorserBlockReferencesSizeForecastL @era @t
+              , llvMaxEbTxsSize = f ^. Dijkstra.maxEndorserBlockTxsSizeForecastL @era @t
+              }
       }
    where
     cc = SL.forecastChainChecks @t @era f
@@ -195,13 +192,17 @@ instance
       , Views.plvMaxHeaderSize = Views.plvMaxHeaderSize lv
       , Views.plvMaxBodySize = Views.plvMaxBodySize lv
       , Views.plvProtocolVersion = Views.plvProtocolVersion lv
-      , Views.plvCommittee = Praos2HasLeios emptyLeiosCommittee
-      , Views.plvQuorumStakeThreshold = Praos2HasLeios (udppLeiosQuorumStakeThreshold upgrade)
-      , Views.plvAnnouncementPeriodLength = Praos2HasLeios (udppLeiosAnnouncementPeriodLength upgrade)
-      , Views.plvVotePeriodLength = Praos2HasLeios (udppLeiosVotePeriodLength upgrade)
-      , Views.plvDiffusionPeriodLength = Praos2HasLeios (udppLeiosDiffusionPeriodLength upgrade)
-      , Views.plvMaxEbBodySize = Praos2HasLeios (udppMaxEndorserBlockReferencesSize upgrade)
-      , Views.plvMaxEbTxsSize = Praos2HasLeios (udppMaxEndorserBlockTxsSize upgrade)
+      , Views.plvLeios =
+          Praos2HasLeios
+            MkLeiosLedgerView
+              { llvCommittee = emptyLeiosCommittee
+              , llvQuorumStakeThreshold = udppLeiosQuorumStakeThreshold upgrade
+              , llvAnnouncementPeriod = udppLeiosAnnouncementPeriodLength upgrade
+              , llvVotePeriod = udppLeiosVotePeriodLength upgrade
+              , llvDiffusionPeriod = udppLeiosDiffusionPeriodLength upgrade
+              , llvMaxEbBodySize = udppMaxEndorserBlockReferencesSize upgrade
+              , llvMaxEbTxsSize = udppMaxEndorserBlockTxsSize upgrade
+              }
       }
 
   translateChainDepState _ st =

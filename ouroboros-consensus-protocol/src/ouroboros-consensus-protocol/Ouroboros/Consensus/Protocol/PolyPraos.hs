@@ -138,7 +138,6 @@ import Data.Functor.Identity (runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
-import Data.Time.Clock (NominalDiffTime)
 import Data.Typeable (Typeable)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
@@ -680,7 +679,7 @@ leiosContextFreeHeaderChecks ::
   Except (PolyPraosValidationErr proto c) ()
 leiosContextFreeHeaderChecks lv b =
   traverse_ check $
-    (,,) <$> typeSwitchR <*> Views.hvLeios b <*> Views.plvMaxEbBodySize lv
+    (,,) <$> typeSwitchR <*> Views.hvLeios b <*> (llvMaxEbBodySize <$> Views.plvLeios lv)
  where
   check (err, (_containsCert, mbAnn), maxEbBodySize) =
     case mbAnn of
@@ -715,20 +714,11 @@ mkLeiosAnnouncement issuer ann =
 
 -- | 'getLeiosLedgerView' for every Praos.
 getLeiosLedgerViewPolyPraos ::
-  (Applicative (WhenLeios proto), Foldable (WhenLeios proto)) =>
+  Foldable (WhenLeios proto) =>
   Views.PolyPraosLedgerView proto ->
   Maybe LeiosLedgerView
 getLeiosLedgerViewPolyPraos lv =
-  foldr
-    (\llv _ -> Just llv)
-    Nothing
-    ( MkLeiosLedgerView
-        <$> Views.plvMaxEbBodySize lv
-        <*> (seconds <$> Views.plvAnnouncementPeriodLength lv)
-        <*> (seconds <$> Views.plvVotePeriodLength lv)
-    )
- where
-  seconds (SL.Milliseconds32 ms) = fromIntegral ms / 1000 :: NominalDiffTime
+  foldr (\llv _ -> Just llv) Nothing (Views.plvLeios lv)
 
 -- | 'validateLeiosAnnouncement' for every Praos.
 --
@@ -793,20 +783,20 @@ leiosHeaderChecks ::
 leiosHeaderChecks praosEpochInfo lv b slot cs = do
   leiosContextFreeHeaderChecks lv b
   traverse_ check $
-    (,,,,,)
+    (,,,)
       <$> typeSwitchR
       <*> Views.hvLeios b
-      <*> Views.plvAnnouncementPeriodLength lv
-      <*> Views.plvVotePeriodLength lv
-      <*> Views.plvDiffusionPeriodLength lv
+      <*> Views.plvLeios lv
       <*> praosStateLeiosAnnouncement cs
  where
   check
     ( err
       , (containsCert, _mbAnn)
-      , announcementPeriod
-      , votePeriod
-      , diffusionPeriod
+      , MkLeiosLedgerView
+          { llvAnnouncementPeriod = announcementPeriod
+          , llvVotePeriod = votePeriod
+          , llvDiffusionPeriod = diffusionPeriod
+          }
       , announcedByPredecessor
       ) =
       when containsCert $

@@ -18,13 +18,14 @@ module Ouroboros.Consensus.Leios.Protocol
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Ledger.BaseTypes (Milliseconds32, UnitInterval)
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import Cardano.Ledger.State (LeiosCommittee)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad.Except (Except)
 import qualified Data.Text as T
-import Data.Time (NominalDiffTime)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (SlotNo)
@@ -60,16 +61,24 @@ decodeLeiosAnnouncement =
 
 -- | The Leios parameters a ledger view carries.
 --
--- TODO Once this record holds all of @PolyPraosLedgerView@'s Leios fields,
--- @PolyPraosLedgerView@ could contain it as a single @WhenLeios@ field instead
--- of carrying each Leios parameter separately.
+-- The periods are kept as durations, since converting one to a count of slots
+-- needs the slot length, which only the consensus config has.
 data LeiosLedgerView = MkLeiosLedgerView
-  { llvMaxEbBodySize :: !BytesSize
-  -- ^ the largest endorser block the ledger admits
-  , llvAnnouncementPeriod :: !NominalDiffTime
+  { llvCommittee :: !LeiosCommittee
+  -- ^ who may vote this epoch, and with what weight
+  , llvQuorumStakeThreshold :: !UnitInterval
+  -- ^ the weight a certificate must accumulate
+  , llvAnnouncementPeriod :: !Milliseconds32
   -- ^ L_hdr, the announcement period
-  , llvVotePeriod :: !NominalDiffTime
+  , llvVotePeriod :: !Milliseconds32
   -- ^ L_vote, the voting period
+  , llvDiffusionPeriod :: !Milliseconds32
+  -- ^ L_diff, the diffusion period
+  , llvMaxEbBodySize :: !BytesSize
+  -- ^ the largest endorser block the ledger admits, not counting its
+  -- transactions
+  , llvMaxEbTxsSize :: !BytesSize
+  -- ^ the largest total size of the transactions an endorser block references
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks

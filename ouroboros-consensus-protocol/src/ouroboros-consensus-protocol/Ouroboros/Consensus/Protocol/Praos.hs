@@ -199,13 +199,7 @@ instance Views.ForecastToPolyPraosLedgerView (Praos c) era where
       , Views.plvMaxHeaderSize = ccMaxBHSize cc
       , Views.plvMaxBodySize = ccMaxBBSize cc
       , Views.plvProtocolVersion = ccProtocolVersion cc
-      , Views.plvCommittee = PraosLacksLeios ()
-      , Views.plvQuorumStakeThreshold = PraosLacksLeios ()
-      , Views.plvAnnouncementPeriodLength = PraosLacksLeios ()
-      , Views.plvVotePeriodLength = PraosLacksLeios ()
-      , Views.plvDiffusionPeriodLength = PraosLacksLeios ()
-      , Views.plvMaxEbBodySize = PraosLacksLeios ()
-      , Views.plvMaxEbTxsSize = PraosLacksLeios ()
+      , Views.plvLeios = PraosLacksLeios ()
       }
    where
     cc = SL.forecastChainChecks @t @era f
@@ -227,13 +221,7 @@ instance TranslateProto (TPraos c) (Praos c) era where
       , Views.plvMaxHeaderSize = SL.ccMaxBHSize tplvChainChecks
       , Views.plvMaxBodySize = SL.ccMaxBBSize tplvChainChecks
       , Views.plvProtocolVersion = SL.ccProtocolVersion tplvChainChecks
-      , Views.plvCommittee = PraosLacksLeios ()
-      , Views.plvQuorumStakeThreshold = PraosLacksLeios ()
-      , Views.plvAnnouncementPeriodLength = PraosLacksLeios ()
-      , Views.plvVotePeriodLength = PraosLacksLeios ()
-      , Views.plvDiffusionPeriodLength = PraosLacksLeios ()
-      , Views.plvMaxEbBodySize = PraosLacksLeios ()
-      , Views.plvMaxEbTxsSize = PraosLacksLeios ()
+      , Views.plvLeios = PraosLacksLeios ()
       }
 
   translateChainDepState _ tpState =

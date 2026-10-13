@@ -17,7 +17,8 @@ import Cardano.Binary.FixedSizeCodec (encodeFixedSized)
 import Cardano.Crypto.DSIGN.Class (genKeyDSIGN, signDSIGN)
 import Cardano.Crypto.Leios (LeiosSeatId (..), leiosSignContext)
 import Cardano.Crypto.Seed (mkSeedFromBytes)
-import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
+import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import qualified Codec.CBOR.Decoding as CBOR
@@ -578,9 +579,13 @@ withNodeForecasting range body = do
         , ltlcForecastRange = range
         , ltlcLeios =
             MkLeiosLedgerView
-              { llvMaxEbBodySize = maxEbBodySize
-              , llvAnnouncementPeriod = 1
-              , llvVotePeriod = 4
+              { llvCommittee = emptyLeiosCommittee
+              , llvQuorumStakeThreshold = maxBound
+              , llvAnnouncementPeriod = Milliseconds32 1000
+              , llvVotePeriod = Milliseconds32 4000
+              , llvDiffusionPeriod = Milliseconds32 1000
+              , llvMaxEbBodySize = maxEbBodySize
+              , llvMaxEbTxsSize = maxEbBodySize
               }
         }
 

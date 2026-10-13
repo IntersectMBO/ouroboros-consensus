@@ -1244,7 +1244,6 @@ library protocol
     ouroboros-network:{framework, tests-lib},
     serialise,
     text,
-    time,
     Win32-network ^>=0.2,
 
 library unstable-protocol-testlib
@@ -1526,6 +1525,7 @@ test-suite consensus-diffusion-test
     cardano-crypto-class:cardano-crypto-class,
     cardano-crypto-leios,
     cardano-diffusion:{api, cardano-diffusion},
+    cardano-ledger-binary,
     cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,

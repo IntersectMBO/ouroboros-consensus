@@ -48,6 +48,7 @@ module Ouroboros.Consensus.Leios.Types
   , leiosReferencesCapacity
 
     -- * Header checks
+  , milliseconds32ToNominalDiffTime
   , minCertificationSlot
   ) where
 
@@ -72,6 +73,7 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Text as T
+import Data.Time (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
 import Data.Word (Word32)
@@ -309,6 +311,10 @@ cborIntBytesSize n
   | otherwise = 5
 
 -- * Header checks
+
+-- | A duration the ledger gives in milliseconds.
+milliseconds32ToNominalDiffTime :: Milliseconds32 -> NominalDiffTime
+milliseconds32ToNominalDiffTime (Milliseconds32 ms) = fromIntegral ms / 1000
 
 -- | The earliest slot at which a block may certify an endorser block announced
 -- in the given slot.
