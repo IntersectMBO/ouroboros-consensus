@@ -47,9 +47,12 @@ import Test.Ouroboros.Storage.TestBlock
   )
 import Test.QuickCheck
   ( Arbitrary (..)
+  , Gen
   , Positive (..)
   , Property
+  , choose
   , counterexample
+  , forAll
   , frequency
   , ioProperty
   , listOf
@@ -98,7 +101,8 @@ tests =
     , testCase "eager validation quarantines corruption on open" testEagerValidation
     , testCase "lazy validation traces quarantine exactly once" testLazyQuarantineTrace
     , testCase "eager validation traces quarantine during open" testEagerQuarantineTrace
-    , testCase "concurrent duplicate adds commit exactly once" testConcurrentDuplicateAdds
+    , testProperty "concurrent duplicate adds commit exactly once" $
+        withNumTests 50 propConcurrentDuplicateAdds
     , testGroup
         "failed adds are atomic across reopen"
         [ testCase (show fault) (testFailedAddAtomic fault)
@@ -544,34 +548,63 @@ testEagerQuarantineTrace =
       >>= (@?= [PerasRoundNo 2])
     getTrace >>= (@?= events)
 
-testConcurrentDuplicateAdds :: IO ()
-testConcurrentDuplicateAdds =
-  withFreshDB $ \args db -> do
-    let cert = mkCert (PerasWeight 3) 7
-        workerCount = 16
-    done <- replicateM workerCount newEmptyMVar
-    forM_ done $ \resultVar ->
-      void $ forkIO $ do
-        result <-
-          Exception.try (DB.addCert db cert) ::
-            IO (Either Exception.SomeException DB.AddPerasImmutableCertResult)
-        putMVar resultVar result
 
-    outcomes <- mapM takeMVar done
-    results <- case sequence outcomes of
-      Left err -> Exception.throwIO err
-      Right rs -> pure rs
 
-    length (filter (== DB.AddedCertToImmutableDB) results)
-      @?= 1
-    length (filter (== DB.CertAlreadyInImmutableDB) results)
-      @?= workerCount - 1
-    DB.getCertsAfter db (PerasRoundNo 0) 10
-      >>= (@?= [cert])
+-- | Concurrent additions of the same certificate commit exactly once.
+--
+-- For generated positive rounds and weights, multiple workers add one shared
+-- certificate. Exactly one add must report an insertion; the others must
+-- report a duplicate. The certificate must be visible exactly once both
+-- before and after reopening the database.
+propConcurrentDuplicateAdds :: Property
+propConcurrentDuplicateAdds =
+  forAll genDuplicateAddsCase $ \(DuplicateAddsCase roundNo weight workerCount) ->
+    ioProperty $ withFreshDB $ \args db -> do
+      -- Have all workers try to insert a new cert at once
+      let cert = mkCert weight roundNo
+          cursor = roundNo - 1
+      done <- replicateM workerCount newEmptyMVar
+      forM_ done $ \resultVar ->
+        void $ forkIO $ do
+          result <-
+            Exception.try (DB.addCert db cert) ::
+              IO (Either Exception.SomeException DB.AddPerasImmutableCertResult)
+          putMVar resultVar result
 
-    reopened <- DB.openDB args
-    DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [cert])
+      -- Ensure no exceptions were thrown
+      outcomes <- mapM takeMVar done
+      results <- case sequence outcomes of
+        Left err -> Exception.throwIO err
+        Right rs -> pure rs
+
+      -- Inspect the workers' reported results
+      length (filter (== DB.AddedCertToImmutableDB) results)
+        @?= 1
+      length (filter (== DB.CertAlreadyInImmutableDB) results)
+        @?= workerCount - 1
+
+      -- Inspect the db state before and after reopening
+      DB.getCertsAfter db cursor 1
+        >>= (@?= [cert])
+      reopened <- DB.openDB args
+      DB.getCertsAfter reopened cursor 1
+        >>= (@?= [cert])
+
+data DuplicateAddsCase
+  = DuplicateAddsCase
+      PerasRoundNo -- ^ Round to insert
+      PerasWeight  -- ^ Certificate weight
+      Int          -- ^ Number of concurrent workers
+  deriving Show
+
+genDuplicateAddsCase :: Gen DuplicateAddsCase
+genDuplicateAddsCase =
+  DuplicateAddsCase
+    <$> genSmallPerasRoundNo
+    <*> genSmallPerasWeight
+    <*> choose (2, 16)
+
+
 
 data AddFault
   = FailOpen
@@ -1080,3 +1113,13 @@ mkCert boost roundNo =
           }
     , vpcCertBoost = boost
     }
+
+genSmallPerasRoundNo :: Gen PerasRoundNo
+genSmallPerasRoundNo = do
+  Positive roundWord <- (arbitrary :: Gen (Positive Word16))
+  pure $ PerasRoundNo (fromIntegral roundWord)
+
+genSmallPerasWeight :: Gen PerasWeight
+genSmallPerasWeight = do
+  Positive weightWord <- (arbitrary :: Gen (Positive Word16))
+  pure $ PerasWeight (fromIntegral weightWord)
