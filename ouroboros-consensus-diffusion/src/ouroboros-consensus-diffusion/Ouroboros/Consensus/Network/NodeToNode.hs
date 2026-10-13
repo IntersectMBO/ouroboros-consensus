@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -94,11 +93,9 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeer
-  , leiosFetchClientPeerIdle
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
   ( LeiosFetchServerPeer
-  , leiosFetchServerPeerRefusing
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   ( LeiosFetch
@@ -128,9 +125,14 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusio
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
 import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
+import Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
+  ( leiosFetchClient
+  , leiosFetchMiniProtocol
+  , leiosFetchServer
+  )
 import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
   ( leiosNotifyClient
-  , leiosNotifyProtocols
+  , leiosNotifyMiniProtocol
   , leiosNotifyServer
   , withLeiosNotifyClientState
   )
@@ -502,13 +504,8 @@ mkHandlers
             maxClockSkew
             controlMessageSTM
       , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer getLeiosNotifyLog
-      , hLeiosFetchClient = \_version controlMessageSTM _peer ->
-          leiosFetchClientPeerIdle $
-            controlMessageSTM >>= \case
-              Continue -> retry
-              Quiesce -> retry
-              Terminate -> pure ()
-      , hLeiosFetchServer = \_version _peer -> leiosFetchServerPeerRefusing
+      , hLeiosFetchClient = \_version controlMessageSTM _peer -> leiosFetchClient controlMessageSTM
+      , hLeiosFetchServer = \_version _peer -> leiosFetchServer
       }
 
 {-------------------------------------------------------------------------------
@@ -1453,9 +1450,10 @@ initiator featureFlags miniProtocolParameters version versionData Apps{..} =
     )
     version
     versionData
-    <> leiosNotifyProtocols
+    <> leiosProtocols
       version
       (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aLeiosNotifyClient version ctx)))
+      (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aLeiosFetchClient version ctx)))
 
 -- | A bi-directional network application.
 --
@@ -1513,9 +1511,32 @@ initiatorAndResponder featureFlags miniProtocolParameters version versionData Ap
     )
     version
     versionData
-    <> leiosNotifyProtocols
+    <> leiosProtocols
       version
       ( InitiatorAndResponderProtocol
           (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
           (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
       )
+      ( InitiatorAndResponderProtocol
+          (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
+          (MiniProtocolCb (\responderCtx -> aLeiosFetchServer version responderCtx))
+      )
+
+-- | The Leios mini-protocols, to add to a node-to-node bundle, if the version
+-- has them.
+--
+-- TODO remove once 'NodeToNodeProtocols' has fields for the Leios mini-protocols.
+leiosProtocols ::
+  NodeToNodeVersion ->
+  -- | LeiosNotify
+  RunMiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c ->
+  -- | LeiosFetch
+  RunMiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c ->
+  OuroborosBundleWithExpandedCtx mode addr PeerTrustable b m a c
+leiosProtocols version runNotify runFetch
+  | version >= NodeToNodeV_16 =
+      mempty
+        { withHot =
+            WithHot [leiosNotifyMiniProtocol runNotify, leiosFetchMiniProtocol runFetch]
+        }
+  | otherwise = mempty

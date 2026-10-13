@@ -416,6 +416,8 @@ runNodeClientAgainst nut next target = do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests next
           , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     client <- nodeLeiosNotifyClient conn
@@ -484,6 +486,8 @@ nodeClientGated = withNodeForecasting 5 $ \nut -> do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests retry
           , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     threadDelay 10
@@ -502,6 +506,8 @@ nodePrunesClientState = withNode $ \nut -> do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer (envLeiosNotifyCodec nut) requests (readTQueue queue)
           , epLeiosNotifyClient = Nothing
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withAsync
     ( feedAt
@@ -636,6 +642,8 @@ nodeServerCancels = withNode $ \nut -> do
         EnvPeer
           { epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient = Just $ runPipelinedClient codec' replies 3 stop
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     threadDelay 10
@@ -658,6 +666,8 @@ nodeServerExcessive = withNode $ \nut -> do
           { epLeiosNotifyServer = runReplyingServer codec' requests retry
           , epLeiosNotifyClient =
               Just $ runPipelinedClient codec' replies (leiosNotifyPipelineDepth + 1) stop
+          , epLeiosFetchServer = refusingLeiosFetchServer nut
+          , epLeiosFetchClient = Nothing
           }
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     server <- nodeLeiosNotifyServer conn
