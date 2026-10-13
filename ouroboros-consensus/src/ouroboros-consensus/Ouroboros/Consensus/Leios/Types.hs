@@ -56,6 +56,7 @@ import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
 import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
+import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import Cardano.Slotting.Slot (SlotNo (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthToMillisec)
 import Codec.CBOR.Decoding (Decoder)
@@ -68,7 +69,6 @@ import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
-import Data.ByteString.Short (ShortByteString, fromShort)
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Text as T
@@ -173,32 +173,19 @@ prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
 
 -- * Elections
 
--- | The slot number and pool id of an election
+-- | A ranking block leadership election: a slot and the pool it elected.
 --
 -- This is unrelated to the 'Ouroboros.Consensus.Committee.Crypto.ElectionId'
 -- type family, which identifies an election of a voting committee. We do not
 -- anticipate a module using both.
-data ElectionId
-  = -- | the hash of the pool's cold verification key
-    ElectionId
-      !SlotNo
-      !ShortByteString
-  deriving stock (Eq, Generic)
+--
+-- The derived 'Ord' orders by slot first, which pruning relies on.
+data ElectionId = ElectionId
+  { electionSlot :: !SlotNo
+  , electionElectee :: !(KeyHash BlockIssuer)
+  }
+  deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass NoThunks
-
--- | Renders the pool id as hex rather than as a raw byte string.
-instance Show ElectionId where
-  showsPrec p (ElectionId slot poolId) =
-    showParen (p > 10) $
-      showString "ElectionId "
-        . showsPrec 11 slot
-        . showChar ' '
-        . showString (BS8.unpack (BS16.encode (fromShort poolId)))
-
--- | INVARIANT: lexicographically starts with 'SlotNo'
-instance Ord ElectionId where
-  compare (ElectionId slL idL) (ElectionId slR idR) =
-    compare slL slR <> compare idL idR
 
 -- * Votes
 

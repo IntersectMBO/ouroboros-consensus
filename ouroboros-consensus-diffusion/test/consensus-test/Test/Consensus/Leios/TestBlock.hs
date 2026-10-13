@@ -61,6 +61,8 @@ module Test.Consensus.Leios.TestBlock
   ) where
 
 import Cardano.Binary (DecoderError, decodeMaybe, encodeMaybe, enforceSize, fromCBOR, toCBOR)
+import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.Keys (KeyHash (..), KeyRole (BlockIssuer))
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR.Dec
 import Codec.CBOR.Encoding (Encoding)
@@ -333,7 +335,7 @@ instance LeiosProtocol LeiosTestProtocol where
     lthAnnouncement hdr >>= \(ebHash, size) ->
       pure
         MkLeiosAnnouncement
-          { announcementElectee = SBS.toShort (BL.toStrict (serialise (lthIssuer hdr)))
+          { announcementElectee = issuerKeyHash (lthIssuer hdr)
           , announcementEbHash = ebHash
           , announcementEbSize = size
           }
@@ -343,6 +345,10 @@ instance LeiosProtocol LeiosTestProtocol where
       HeaderCounterNotBelowImmTips -> FreshOCIN
       HeaderCounterBelowImmTips -> StaleOCIN
   getLeiosLedgerView _proxy = Just
+
+-- | A test issuer's stand-in for the hash of a pool's cold verification key.
+issuerKeyHash :: Word64 -> KeyHash BlockIssuer
+issuerKeyHash = KeyHash . Hash.castHash . Hash.hashWith (BL.toStrict . serialise)
 
 checkValidity :: Header LeiosTestBlock -> Except LeiosTestInvalidHeader ()
 checkValidity hdr = case lthValidity hdr of

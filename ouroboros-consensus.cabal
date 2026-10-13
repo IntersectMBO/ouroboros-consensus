@@ -592,8 +592,8 @@ library unstable-consensus-testlib
     Test.Util.ChunkInfo
     Test.Util.Committee
     Test.Util.Corruption
-    Test.Util.FS.Subdirectory
     Test.Util.FileLock
+    Test.Util.FS.Subdirectory
     Test.Util.HardFork.Future
     Test.Util.HardFork.OracularClock
     Test.Util.Header
@@ -1269,7 +1269,7 @@ library unstable-protocol-testlib
     cardano-protocol,
     cardano-slotting,
     containers,
-    ouroboros-consensus:protocol,
+    ouroboros-consensus:{ouroboros-consensus, protocol},
     QuickCheck,
     text,
 

@@ -7,6 +7,8 @@
 -- carry.
 module Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
+  , decodeLeiosAnnouncement
+  , encodeLeiosAnnouncement
   , LeiosLedgerView (..)
   , LeiosProtocol (..)
   , OCINStaleness (..)
@@ -15,24 +17,26 @@ module Ouroboros.Consensus.Leios.Protocol
   , defaultValidateViewLeiosAnnouncement
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Ledger.Binary.Plain (decodeRecordNamed)
+import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad.Except (Except)
-import Data.ByteString.Short (ShortByteString)
+import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (SlotNo)
-import Ouroboros.Consensus.Leios.Types (BytesSize, EbHash)
+import Ouroboros.Consensus.Leios.Types (BytesSize, EbHash, decodeEbHash, encodeEbHash)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Ticked (Ticked)
 
 -- | The announcement a header carries, as its protocol view gives it.
 data LeiosAnnouncement = MkLeiosAnnouncement
-  { announcementElectee :: !ShortByteString
-  -- ^ the elected pool's identity; with the header's slot, this identifies the
-  -- election. It is untyped bytes because the class is shared by every protocol,
-  -- whose electees differ: Praos's is the pool's key hash, the Blake2b-224 hash
-  -- of its cold verification key; a test block's is whatever identity it
-  -- chooses.
+  { announcementElectee :: !(KeyHash BlockIssuer)
+  -- ^ the hash of the elected pool's cold verification key; with the header's
+  -- slot, this identifies the election
   , announcementEbHash :: !EbHash
   , announcementEbSize :: !BytesSize
   -- ^ the announced endorser block's size
@@ -44,6 +48,15 @@ data LeiosAnnouncement = MkLeiosAnnouncement
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass NoThunks
+
+encodeLeiosAnnouncement :: LeiosAnnouncement -> CBOR.Encoding
+encodeLeiosAnnouncement (MkLeiosAnnouncement electee ebHash ebSize) =
+  CBOR.encodeListLen 3 <> toCBOR electee <> encodeEbHash ebHash <> CBOR.encodeWord32 ebSize
+
+decodeLeiosAnnouncement :: CBOR.Decoder s LeiosAnnouncement
+decodeLeiosAnnouncement =
+  decodeRecordNamed (T.pack "LeiosAnnouncement") (const 3) $
+    MkLeiosAnnouncement <$> fromCBOR <*> decodeEbHash <*> CBOR.decodeWord32
 
 -- | The Leios parameters a ledger view carries.
 --

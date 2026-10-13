@@ -34,7 +34,6 @@ module Ouroboros.Consensus.Protocol.Praos
     -- "Ouroboros.Consensus.Protocol.PolyPraos" existed. They are re-exported only
     -- for that historical reason, so that the modules importing them here did not
     -- need to change.
-  , AnnouncedBy (..)
   , PolyPraosCrypto
   , PolyPraosState (..)
   , PolyPraosValidationErr (..)

@@ -8,7 +8,6 @@ module Test.Consensus.Protocol.Serialisation.Generators () where
 
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
-import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Protocol.Praos.BlockHeader
   ( Header (Header)
   , HeaderBody (HeaderBody)
@@ -24,15 +23,17 @@ import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
+import qualified Data.ByteString as BS
+import Ouroboros.Consensus.Leios.Protocol (LeiosAnnouncement (..))
+import Ouroboros.Consensus.Leios.Types (EbHash (..))
 import Ouroboros.Consensus.Protocol.Praos
-  ( AnnouncedBy (MkAnnouncedBy)
-  , PolyPraosState (PraosState)
+  ( PolyPraosState (PraosState)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Common (pureLeiosOnly)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Crypto.KES ()
-import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
+import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof, vectorOf)
 
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
@@ -73,11 +74,12 @@ instance Praos.PraosCrypto c => Arbitrary (Header c) where
     let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Header hBody hSig
 
-instance Arbitrary AnnouncedBy where
+instance Arbitrary LeiosAnnouncement where
   arbitrary =
-    MkAnnouncedBy
+    MkLeiosAnnouncement
       <$> arbitrary
-      <*> (EbReferencesAnnouncement <$> arbitrary <*> arbitrary)
+      <*> (MkEbHash . BS.pack <$> vectorOf 32 arbitrary)
+      <*> arbitrary
 
 instance
   ( Applicative (Praos.WhenLeios proto)

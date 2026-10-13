@@ -41,8 +41,7 @@
 -- /cumulatively/ do. The type-level DSL used to isolate extension components is
 -- simple and legible; see the 'LeiosOnly' data family, for example.
 module Ouroboros.Consensus.Protocol.PolyPraos
-  ( AnnouncedBy (..)
-  , PolyPraosCrypto
+  ( PolyPraosCrypto
   , PolyPraosState (..)
   , PolyPraosValidationErr (..)
   , PraosCannotForge (..)
@@ -83,7 +82,7 @@ import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), stric
 import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
-import Cardano.Ledger.Hashes (HASH, extractHash, unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (HASH, extractHash)
 import Cardano.Ledger.Keys
   ( DSIGN
   , KeyHash
@@ -151,6 +150,8 @@ import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
   , LeiosLedgerView (..)
   , OCINStaleness (..)
+  , decodeLeiosAnnouncement
+  , encodeLeiosAnnouncement
   )
 import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.Protocol.Abstract
@@ -315,45 +316,23 @@ data PolyPraosState proto = PraosState
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
   , praosStateLeiosAnnouncement ::
-      !(WhenLeios proto (StrictMaybe AnnouncedBy))
+      !(WhenLeios proto (StrictMaybe LeiosAnnouncement))
   -- ^ The announcement carried by the most recently applied header, if any.
   -- A header with no announcement clears it.
   }
   deriving Generic
 
 deriving instance
-  Show (WhenLeios proto (StrictMaybe AnnouncedBy)) => Show (PolyPraosState proto)
+  Show (WhenLeios proto (StrictMaybe LeiosAnnouncement)) => Show (PolyPraosState proto)
 
 deriving instance
-  Eq (WhenLeios proto (StrictMaybe AnnouncedBy)) => Eq (PolyPraosState proto)
+  Eq (WhenLeios proto (StrictMaybe LeiosAnnouncement)) => Eq (PolyPraosState proto)
 
 instance
   ( Typeable proto
-  , NoThunks (WhenLeios proto (StrictMaybe AnnouncedBy))
+  , NoThunks (WhenLeios proto (StrictMaybe LeiosAnnouncement))
   ) =>
   NoThunks (PolyPraosState proto)
-
--- | An endorser block announcement, and the issuer of the header that carried
--- it.
---
--- With that header's slot ('praosStateLastSlot') the issuer identifies the
--- election.
-data AnnouncedBy = MkAnnouncedBy
-  { announcedByIssuer :: !(KeyHash SL.BlockIssuer)
-  , announcedEb :: !EbReferencesAnnouncement
-  }
-  deriving (Generic, Show, Eq, NoThunks)
-
-encodeAnnouncedBy :: AnnouncedBy -> CBOR.Encoding
-encodeAnnouncedBy (MkAnnouncedBy issuer (EbReferencesAnnouncement h sz)) =
-  CBOR.encodeListLen 3 <> toCBOR issuer <> toCBOR (extractHash h) <> toCBOR sz
-
-decodeAnnouncedBy :: CBOR.Decoder s AnnouncedBy
-decodeAnnouncedBy = do
-  enforceSize "AnnouncedBy" 3
-  MkAnnouncedBy
-    <$> fromCBOR
-    <*> (EbReferencesAnnouncement . unsafeMakeSafeHash <$> fromCBOR <*> fromCBOR)
 
 instance SerialisePraosState proto => ToCBOR (PolyPraosState proto) where
   toCBOR = encode
@@ -397,7 +376,7 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
           , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
           , toEraCBOR @ShelleyEra praosStateLabNonce
           , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
-          , foldMap (encodeStrictMaybe encodeAnnouncedBy) praosStateLeiosAnnouncement
+          , foldMap (encodeStrictMaybe encodeLeiosAnnouncement) praosStateLeiosAnnouncement
           ]
      where
       nLeiosFields = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
@@ -423,7 +402,7 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra
         <*> traverse
-          (\() -> decodeStrictMaybe decodeAnnouncedBy)
+          (\() -> decodeStrictMaybe decodeLeiosAnnouncement)
           (pureLeiosOnly @proto ())
 
 data instance Ticked (PolyPraosState proto) = TickedPraosState
@@ -666,7 +645,7 @@ reupdateChainDepStatePolyPraos
           Map.insert hk n $ praosStateOCertCounters cs
       , praosStateLeiosAnnouncement =
           fmap
-            (\(_containsCert, mbAnn) -> MkAnnouncedBy hk <$> mbAnn)
+            (\(_containsCert, mbAnn) -> mkLeiosAnnouncement hk <$> mbAnn)
             (Views.hvLeios b)
       }
    where
@@ -718,15 +697,21 @@ leiosAnnouncementPolyPraos ::
   Views.PolyPraosValidateView proto c ->
   Maybe LeiosAnnouncement
 leiosAnnouncementPolyPraos b =
-  foldr (\(_containsCert, mbAnn) _ -> mk <$> strictMaybeToMaybe mbAnn) Nothing (Views.hvLeios b)
- where
-  mk ann =
-    MkLeiosAnnouncement
-      { announcementElectee = Hash.hashToBytesShort $ SL.unKeyHash $ hashKey $ Views.hvVK b
-      , announcementEbHash =
-          Leios.MkEbHash $ Hash.hashToBytes $ extractHash $ ebReferencesAnnouncementHash ann
-      , announcementEbSize = ebReferencesAnnouncementSize ann
-      }
+  foldr
+    ( \(_containsCert, mbAnn) _ -> mkLeiosAnnouncement (hashKey (Views.hvVK b)) <$> strictMaybeToMaybe mbAnn
+    )
+    Nothing
+    (Views.hvLeios b)
+
+-- | The announcement a header carries, given its issuer.
+mkLeiosAnnouncement :: KeyHash SL.BlockIssuer -> EbReferencesAnnouncement -> LeiosAnnouncement
+mkLeiosAnnouncement issuer ann =
+  MkLeiosAnnouncement
+    { announcementElectee = issuer
+    , announcementEbHash =
+        Leios.MkEbHash $ Hash.hashToBytes $ extractHash $ ebReferencesAnnouncementHash ann
+    , announcementEbSize = ebReferencesAnnouncementSize ann
+    }
 
 -- | 'getLeiosLedgerView' for every Praos.
 getLeiosLedgerViewPolyPraos ::
