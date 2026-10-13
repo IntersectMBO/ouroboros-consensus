@@ -221,6 +221,9 @@ library
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation

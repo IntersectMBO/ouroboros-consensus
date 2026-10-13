@@ -792,6 +792,7 @@ type NodeToNodeApps m addrNTN =
     ByteString
     ByteString
     ByteString
+    ByteString
     NodeToNodeInitiatorResult
     ()
 
