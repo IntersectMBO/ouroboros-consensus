@@ -326,6 +326,7 @@ type NodeCodecs s =
     ByteString
     ByteString
     ByteString
+    ByteString
 
 envCodecs :: NodeUnderTest (IOSim s) -> NodeToNodeVersion -> NodeCodecs s
 envCodecs nut =

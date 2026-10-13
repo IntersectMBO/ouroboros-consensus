@@ -23,6 +23,11 @@ module Ouroboros.Consensus.Leios.Types
   , TxHash (..)
   , prettyTxHash
 
+    -- * Transactions
+  , LeiosTx (..)
+  , encodeLeiosTx
+  , decodeLeiosTx
+
     -- * Points
   , LeiosPoint (..)
   , encodeLeiosPoint
@@ -42,16 +47,20 @@ module Ouroboros.Consensus.Leios.Types
   , LeiosEb (..)
   , leiosEbBodyItems
   , encodeLeiosEb
+  , decodeLeiosEb
   , encodeLeiosEbItemSize
   , encodeLeiosEbMaxFramingSize
   , encodeLeiosEbSize
   , leiosReferencesCapacity
+  , maxLeiosEbBytesSize
+  , maxTxsPerEb
 
     -- * Header checks
   , milliseconds32ToNominalDiffTime
   , minCertificationSlot
   ) where
 
+import Cardano.Binary (decodeNestedCborBytes, encodeNestedCborBytes)
 import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.Leios (LeiosSeatId (..), LeiosSignature)
 import Cardano.Crypto.Util (SignableRepresentation (..))
@@ -67,9 +76,11 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Write (toStrictByteString)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
+import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (toList)
 import Data.Function ((&))
 import qualified Data.Text as T
@@ -137,6 +148,28 @@ instance Show TxHash where
 
 prettyTxHash :: TxHash -> String
 prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
+
+-- * Transactions
+
+-- | A Leios transaction, as the CBOR bytes of the ledger's transaction.
+--
+-- Its codec wraps those bytes as CBOR-in-CBOR, so receiving a transaction does
+-- not decode it.
+--
+-- TODO ChainSel and Leios voting will need a way to actually decode the
+-- transaction: a per-block-type decoder that takes the ledger state resulting
+-- from the announcing ranking block, whose era is the one the endorser block
+-- was announced in.
+newtype LeiosTx = MkLeiosTx {leiosTxBytes :: ByteString}
+  deriving stock (Eq, Show)
+
+instance ShowProxy LeiosTx where showProxy _ = "LeiosTx"
+
+encodeLeiosTx :: LeiosTx -> Encoding
+encodeLeiosTx (MkLeiosTx bytes) = encodeNestedCborBytes (BSL.fromStrict bytes)
+
+decodeLeiosTx :: Decoder s LeiosTx
+decodeLeiosTx = MkLeiosTx <$> decodeNestedCborBytes
 
 -- * Points
 
@@ -271,6 +304,17 @@ encodeLeiosEb (MkLeiosEb references) =
     (CBOR.encodeMapLen $ fromIntegral $ length references)
     references
 
+-- | The inverse of 'encodeLeiosEb'. It rejects an endorser block that names no
+-- transaction or more than 'maxTxsPerEb', before decoding any reference.
+decodeLeiosEb :: Decoder s LeiosEb
+decodeLeiosEb = do
+  n <- CBOR.decodeMapLen
+  when (n < 1 || n > maxTxsPerEb) $
+    fail $
+      "LeiosEb: item count " <> show n <> " not in [1, " <> show maxTxsPerEb <> "]"
+  fmap MkLeiosEb $ V.generateM n $ \_i ->
+    (,) <$> (MkTxHash <$> CBOR.decodeBytes) <*> CBOR.decodeWord32
+
 -- | The widest the framing 'encodeLeiosEb' writes around the references can
 -- get: the map header. CBOR map headers have the same widths as
 -- 'cborIntBytesSize', and the reference count fits 'BytesSize'.
@@ -289,6 +333,30 @@ leiosReferencesCapacity :: BytesSize -> BytesSize
 leiosReferencesCapacity paramLimit = paramLimit - min paramLimit framing
  where
   ByteSize32 framing = encodeLeiosEbMaxFramingSize
+
+-- | The design ceiling on an endorser block's encoding: what the node will
+-- forge, serve and size its buffers for.
+--
+-- TODO Nothing yet keeps the @maxEndorserBlockReferencesSize@ protocol
+-- parameter within it, so a larger value would let an honest peer send an
+-- endorser block that
+-- 'Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type.byteLimitsLeiosFetch'
+-- rejects. Make it the constitution's guardrail on that parameter, and refuse
+-- to run with a parameter above it.
+maxLeiosEbBytesSize :: BytesSize
+maxLeiosEbBytesSize = 600 * 1000
+
+-- | The most transactions an endorser block may name, given
+-- 'maxLeiosEbBytesSize'.
+--
+-- It derives from the design ceiling and not from the protocol parameter,
+-- since the buffers it sizes are allocated before any ledger state is in reach.
+maxTxsPerEb :: Int
+maxTxsPerEb =
+  fromIntegral $ (maxLeiosEbBytesSize - framing) `div` minItemSize
+ where
+  ByteSize32 framing = encodeLeiosEbMaxFramingSize
+  ByteSize32 minItemSize = encodeLeiosEbItemSize (ByteSize32 0)
 
 -- | Compute the size of a 'LeiosEb' in its CBOR encoding.
 encodeLeiosEbSize :: LeiosEb -> BytesSize

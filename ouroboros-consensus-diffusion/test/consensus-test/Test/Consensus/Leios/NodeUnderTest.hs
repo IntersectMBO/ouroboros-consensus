@@ -195,6 +195,7 @@ type NodeApps m =
     ByteString
     ByteString
     ByteString
+    ByteString
     NodeToNodeInitiatorResult
     ()
 
