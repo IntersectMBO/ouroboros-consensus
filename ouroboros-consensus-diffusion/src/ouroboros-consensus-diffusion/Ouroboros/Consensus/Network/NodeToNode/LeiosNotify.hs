@@ -172,8 +172,6 @@ withLeiosNotifyClientState statesVar peer =
 leiosNotifyPruner ::
   ( IOLike m
   , GetTip (LedgerState blk)
-  , ConvertRawHash blk
-  , GetHeader blk
   ) =>
   ChainDB m blk ->
   StrictTVar m (Map peer (StrictTVar m (LeiosNotifyPeerState blk))) ->

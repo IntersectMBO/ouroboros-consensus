@@ -33,7 +33,8 @@ eb_hash = bytes .size 32
 eb_size = uint .size 4
 
 vote =
-  [ announcing_rb_hash : bytes .size 32
+  [ slot
+  , announcing_rb_hash : bytes .size 32
   , voter_id           : uint .size 2
   , vote_signature     : bytes .size 48
   ]

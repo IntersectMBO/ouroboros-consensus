@@ -25,13 +25,10 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   ) where
 
 import Cardano.Crypto.Leios (LeiosSeatId (..))
-import Control.Monad (foldM, when)
+import Control.Monad (foldM, unless, when)
 import Control.Monad.Except (Except, liftEither, runExceptT, throwError, withExcept)
 import Data.Bifunctor (first)
-import qualified Data.Foldable as Foldable
 import Data.List.NonEmpty (NonEmpty)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (NominalDiffTime)
@@ -75,9 +72,6 @@ data LeiosNotifyPeerState blk = MkLeiosNotifyPeerState
   -- repeating an offer costs it the connection.
   , lnpsClosureOffers :: !(Set LeiosPoint)
   -- ^ Likewise, which it has offered the transaction closure of.
-  , lnpsAnnouncedRbHashes :: !(Map RbHash SlotNo)
-  -- ^ The announcing blocks this peer has sent, with their election slots, so
-  -- that its votes can be held to them.
   , lnpsVotes :: !(Set (SlotNo, Word16))
   -- ^ The slots and seats this peer has sent votes for.
   }
@@ -92,7 +86,6 @@ emptyLeiosNotifyPeerState =
     , lnpsAnnouncements = Announcements.emptyAnnouncementsState
     , lnpsBodyOffers = Set.empty
     , lnpsClosureOffers = Set.empty
-    , lnpsAnnouncedRbHashes = Map.empty
     , lnpsVotes = Set.empty
     }
 
@@ -100,7 +93,6 @@ emptyLeiosNotifyPeerState =
 -- immutable tip's.
 pruneLeiosNotifyPeerState ::
   forall blk.
-  (ConvertRawHash blk, GetHeader blk) =>
   SlotNo ->
   LeiosNotifyPeerState blk ->
   LeiosNotifyPeerState blk
@@ -114,16 +106,11 @@ pruneLeiosNotifyPeerState immTipSlot st
             Set.dropWhileAntitone (\p -> pointSlotNo p < immTipSlot) (lnpsBodyOffers st)
         , lnpsClosureOffers =
             Set.dropWhileAntitone (\p -> pointSlotNo p < immTipSlot) (lnpsClosureOffers st)
-        , lnpsAnnouncedRbHashes =
-            Foldable.foldl'
-              (\m anc -> Map.delete (announcingRbHash anc) m)
-              (lnpsAnnouncedRbHashes st)
-              prunedAnnouncements
         , lnpsVotes = Set.dropWhileAntitone (\(slot, _seat) -> slot < immTipSlot) (lnpsVotes st)
         }
   | otherwise = st
  where
-  (prunedAnnouncements, announcements) =
+  (_prunedAnnouncements, announcements) =
     Announcements.pruneAnnouncementsState immTipSlot (lnpsAnnouncements st)
 
 -- | The hash of the announcing block, which votes name.
@@ -266,7 +253,6 @@ onLeiosNotifyAnnouncement ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , ConvertRawHash blk
   , LeiosProtocol (BlockProtocol blk)
   ) =>
   SystemTime m ->
@@ -295,8 +281,6 @@ onLeiosNotifyAnnouncement systemTime futureCheck cfg immLedger st hdr = do
       pure
         st
           { lnpsAnnouncements = announcements
-          , lnpsAnnouncedRbHashes =
-              Map.insert (announcingRbHash anc) (blockSlot hdr) (lnpsAnnouncedRbHashes st)
           }
 
 -- | Thrown when a peer's 'MsgLeiosVotes' holds a vote an honest peer would not
@@ -304,7 +288,11 @@ onLeiosNotifyAnnouncement systemTime futureCheck cfg immLedger st hdr = do
 data ExnLeiosNotifyInvalidVotes
   = -- | A vote for an announcing block this peer never sent us. This also rules
     -- out a vote in an empty slot.
-    ExnLeiosVoteWithoutAnnouncement !RbHash
+    ExnLeiosVoteWithoutAnnouncement
+      -- | the announcing block
+      !RbHash
+      -- | the election slot
+      !SlotNo
   | -- | A second vote from one seat in one slot.
     ExnLeiosRepeatedVote
       -- | the election slot
@@ -353,6 +341,7 @@ instance Exception ExnLeiosNotifyInvalidVotes
 checkLeiosVotes ::
   forall blk.
   ( LedgerSupportsProtocol blk
+  , ConvertRawHash blk
   , HasHardForkHistory blk
   , LeiosProtocol (BlockProtocol blk)
   ) =>
@@ -369,9 +358,12 @@ checkLeiosVotes ::
 checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
  where
   checkOne st vote = do
-    slot <-
-      maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash)) pure $
-        Map.lookup rbHash (lnpsAnnouncedRbHashes st)
+    unless
+      ( any
+          (\anc -> announcingRbHash anc == rbHash)
+          (Announcements.announcementsInSlot slot (lnpsAnnouncements st))
+      )
+      $ throwError (ExnLeiosVoteWithoutAnnouncement rbHash slot)
     when (Set.member (slot, seat) (lnpsVotes st)) $
       throwError (ExnLeiosRepeatedVote slot seat)
     (onset, _slotLength) <-
@@ -389,7 +381,7 @@ checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
           (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger))
           slot
     MkLeiosLedgerView{llvAnnouncementPeriod = lHdr, llvVotePeriod = lVote} <-
-      maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash)) pure $
+      maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash slot)) pure $
         getLeiosLedgerView (Proxy @(BlockProtocol blk)) view
     when (age < 3 * lHdr - InFutureCheck.unClockSkew skew) $
       throwError (ExnLeiosVoteTooEarly rbHash slot age)
@@ -397,6 +389,7 @@ checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
       throwError (ExnLeiosVoteTooLate rbHash slot age)
     pure st{lnpsVotes = Set.insert (slot, seat) (lnpsVotes st)}
    where
+    slot = voteSlot vote
     rbHash = voteAnnouncingRbHash vote
     seat = leiosSeatIndex (voteSeatId vote)
 

@@ -191,7 +191,11 @@ data ElectionId = ElectionId
 
 -- | A vote for a Leios announcement.
 data LeiosVote = MkLeiosVote
-  { voteAnnouncingRbHash :: !RbHash
+  { voteSlot :: !SlotNo
+  -- ^ the slot of the ranking block that carries the announcement, which
+  -- locates the announcement without an index by 'RbHash'; the signature need
+  -- not cover it, since the 'RbHash' determines it
+  , voteAnnouncingRbHash :: !RbHash
   -- ^ the 'HeaderHash' of the ranking block ('s header) that carries the
   -- announcement
   , voteSeatId :: !LeiosSeatId
@@ -205,16 +209,17 @@ data LeiosVote = MkLeiosVote
 instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
 
 encodeLeiosVote :: LeiosVote -> Encoding
-encodeLeiosVote (MkLeiosVote rbHash seat signature) =
-  CBOR.encodeListLen 3
+encodeLeiosVote (MkLeiosVote slot rbHash seat signature) =
+  CBOR.encodeListLen 4
+    <> encode slot
     <> encodeRbHash rbHash
     <> CBOR.encodeWord16 (leiosSeatIndex seat)
     <> encodeFixedSized signature
 
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote =
-  decodeRecordNamed (T.pack "LeiosVote") (const 3) $
-    MkLeiosVote <$> decodeRbHash <*> (LeiosSeatId <$> CBOR.decodeWord16) <*> decodeFixedSized
+  decodeRecordNamed (T.pack "LeiosVote") (const 4) $
+    MkLeiosVote <$> decode <*> decodeRbHash <*> (LeiosSeatId <$> CBOR.decodeWord16) <*> decodeFixedSized
 
 -- * Endorser blocks
 
