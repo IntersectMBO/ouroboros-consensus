@@ -530,8 +530,9 @@ perasCertPersistsGC = do
  where
   body forkNo = TestBody forkNo True Nothing
 
--- | A certificate first received after its target is strictly older than the
--- immutable tip could not have influenced this node's chain selection.
+-- | A certificate first received after its target block is strictly older than the
+-- immutable tip could not have influenced this node's chain selection, and thus is
+-- not persisted to the 'PerasImmutableCertDB'.
 perasLateCertIgnored :: SystemM TestBlock IO ()
 perasLateCertIgnored = do
   b1 <- addBlock $ firstBlock 0 (body 0)
