@@ -257,14 +257,21 @@ testForeignFilesIgnored =
 
 testMissingFileQuarantined :: IO ()
 testMissingFileQuarantined =
-  withFreshDBFS $ \fs args db -> do
+  withFreshTracedDB $ \fs args db getTrace -> do
     addCertsForRoundNos db [1, 2]
     removeFile (simHasFS fs) (certPath 1)
 
+    quarantineEvents <$> getTrace >>= (@?= [])
+
     roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) 10
       >>= (@?= [PerasRoundNo 2])
+    firstEvents <- quarantineEvents <$> getTrace
+    map fst firstEvents @?= [PerasRoundNo 1]
+    -- Assert that the quarantine event happens only once.
     roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) 10
       >>= (@?= [PerasRoundNo 2])
+    quarantineEvents <$> getTrace >>= (@?= firstEvents)
+
     atomically (DB.getQuarantinedRounds db)
       >>= (@?= Set.singleton (PerasRoundNo 1))
     reopened <- DB.openDB args
