@@ -102,10 +102,6 @@ forgeShelleyBlock
     -- 'perTxOverhead'. Otherwise the endorser block can exceed the size that
     -- 'txEbMeasureDijkstra' reserved for it, and header validation rejects the
     -- block with 'LeiosEbTooBig'.
-    --
-    -- TODO: no check enforces this. Add a test that the length stays within
-    -- this bound, and assert that the encoded endorser block fits
-    -- maxEndorserBlockReferencesSize.
     txBytes :: Core.Tx Core.TopTx era -> ByteString
     txBytes = serialize' (SL.eraProtVerLow @era)
 
