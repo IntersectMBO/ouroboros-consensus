@@ -1034,6 +1034,8 @@ replaceRawFile fs path bytes = do
   removeFile (simHasFS fs) path
   writeRawFile fs path bytes
 
+-- | Add a certificate for each round number with boost 1.
+-- Convenient for tests that don't care about the boost value.
 addCertsForRoundNos ::
   DB.PerasImmutableCertDB IO TestBlock ->
   [PerasRoundNo] ->
