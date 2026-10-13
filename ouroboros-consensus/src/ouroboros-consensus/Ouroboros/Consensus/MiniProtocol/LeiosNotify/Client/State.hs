@@ -26,7 +26,7 @@ import Control.Monad (foldM, when)
 import Control.Monad.Except (runExcept, runExceptT)
 import Control.Tracer (nullTracer)
 import Data.Bifunctor (first)
-import Data.Foldable (foldl')
+import qualified Data.Foldable as Foldable
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -109,7 +109,7 @@ pruneLeiosNotifyPeerState immTipSlot st
         , lnpsClosureOffers =
             Set.dropWhileAntitone (\p -> pointSlotNo p < immTipSlot) (lnpsClosureOffers st)
         , lnpsAnnouncedRbHashes =
-            foldl'
+            Foldable.foldl'
               (\m anc -> Map.delete (announcingRbHash anc) m)
               (lnpsAnnouncedRbHashes st)
               prunedAnnouncements
