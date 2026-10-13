@@ -534,13 +534,15 @@ testEagerQuarantineTrace =
           }
 
     events <- getTrace
-    map eventShape events
-      @?= [QuarantinedShape (PerasRoundNo 1), OpenedShape 1 1]
+    case events of
+      [DB.QuarantinedCert roundNo _, DB.OpenedDB known quarantined] -> do
+        roundNo @?= PerasRoundNo 1
+        (known, quarantined) @?= (1, 1)
+      _ -> assertFailure $ "unexpected trace: " <> show events
 
     roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
       >>= (@?= [PerasRoundNo 2])
-    map eventShape <$> getTrace
-      >>= (@?= [QuarantinedShape (PerasRoundNo 1), OpenedShape 1 1])
+    getTrace >>= (@?= events)
 
 testConcurrentDuplicateAdds :: IO ()
 testConcurrentDuplicateAdds =
@@ -637,18 +639,6 @@ errorsFor = \case
       }
  where
   oneError err = Stream.unsafeMkFinite [Just err]
-
-data EventShape
-  = OpenedShape Int Int
-  | QuarantinedShape PerasRoundNo
-  | OtherShape
-  deriving (Eq, Show)
-
-eventShape :: DB.TraceEvent TestBlock -> EventShape
-eventShape = \case
-  DB.OpenedDB known quarantined -> OpenedShape known quarantined
-  DB.QuarantinedCert roundNo _ -> QuarantinedShape roundNo
-  _ -> OtherShape
 
 quarantineEvents :: [DB.TraceEvent TestBlock] -> [(PerasRoundNo, String)]
 quarantineEvents events =
