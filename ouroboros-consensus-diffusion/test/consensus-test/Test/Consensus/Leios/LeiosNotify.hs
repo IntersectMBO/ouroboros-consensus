@@ -37,8 +37,9 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
+import qualified Data.Text as T
 import Data.Word (Word16, Word8)
-import Network.TypedProtocol.Codec (Codec, CodecF (..), SomeMessage, runDecoder)
+import Network.TypedProtocol.Codec (AnyMessage (..), Codec, CodecF (..), SomeMessage, runDecoder)
 import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
@@ -50,6 +51,10 @@ import Ouroboros.Consensus.Leios.Types
   , LeiosPoint (..)
   , LeiosVote (..)
   , RbHash (..)
+  , decodeLeiosPoint
+  , decodeLeiosVote
+  , encodeLeiosPoint
+  , encodeLeiosVote
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
@@ -87,14 +92,15 @@ import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck
 import Test.Util.ChainDB (emptyNodeDBs)
+import Test.Util.Serialisation.CDDL (cddlTest, isCDDLCDisabled)
 
 tests :: TestTree
 tests =
   testGroup
     "LeiosNotify"
-    [ testGroup
-        "client and server"
+    [ testGroup "client and server" $
         [ testCase "the server cancels every outstanding request when the client quits" $
             runSimOrThrow (outstandingCanceled 3) @?= OutstandingOutcome 3 0
         , testCase "the server disconnects a client that exceeds its pipelining bound" $
@@ -104,6 +110,10 @@ tests =
               isLeft $
                 runSimOrThrow decodeEmptyVotes
         ]
+          <> [ testProperty "the node's codec encodes each message as the CDDL specifies" $
+                 prop_nodeCodecMatchesCDDL
+             | not isCDDLCDisabled
+             ]
     , testGroup
         "node vs environment"
         [ testCase "the node's client keeps its pipeline full, and quits when the node demotes the peer" $
@@ -325,6 +335,50 @@ decodeEmptyVotes = do
   runDecoder
     [CBOR.toLazyByteString (CBOR.encodeListLen 2 <> CBOR.encodeWord 4 <> CBOR.encodeListLen 0)]
     step
+
+-- | The node's codec, except that an announcement is any CBOR bytes rather
+-- than a header, as the CDDL leaves it unspecified.
+nodeCodec ::
+  Codec (LeiosNotify LeiosPoint BS.ByteString LeiosVote) CBOR.DeserialiseFailure IO BSL.ByteString
+nodeCodec =
+  codecLeiosNotify
+    encodeLeiosPoint
+    decodeLeiosPoint
+    CBOR.encodeBytes
+    CBOR.decodeBytes
+    encodeLeiosVote
+    decodeLeiosVote
+
+prop_nodeCodecMatchesCDDL :: Property
+prop_nodeCodecMatchesCDDL =
+  forAll genMessage $ \(AnyMessage msg) ->
+    ioProperty $ do
+      result <-
+        cddlTest
+          (pure $ BSL.toStrict $ encode nodeCodec msg)
+          "ouroboros-consensus-cardano/cddl/node-to-node/leiosnotify/leiosNotify.cddl"
+          (T.pack "leiosNotifyMessage")
+      pure $ either (`counterexample` False) (const $ property True) result
+ where
+  genMessage =
+    oneof
+      [ pure $ AnyMessage MsgLeiosNotificationRequestNext
+      , AnyMessage . MsgLeiosBlockAnnouncement . BS.pack <$> arbitrary
+      , fmap AnyMessage $ MsgLeiosBlockOffer <$> genPoint <*> arbitrary
+      , AnyMessage . MsgLeiosBlockTxsOffer <$> genPoint
+      , do
+          n <- choose (1, maxLeiosVotesPerMessage)
+          AnyMessage . MsgLeiosVotes . NE.fromList <$> vectorOf n genVote
+      , pure $ AnyMessage MsgDone
+      , pure $ AnyMessage MsgQuit
+      , pure $ AnyMessage MsgCanceled
+      ]
+
+  genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> (MkEbHash <$> genHash)
+
+  genVote = signedVote <$> (MkRbHash <$> genHash) <*> arbitrary
+
+  genHash = BS.pack <$> vectorOf 32 arbitrary
 
 sizeLimits :: ProtocolSizeLimits (LeiosNotify point announcement vote) BSL.ByteString
 sizeLimits = byteLimitsLeiosNotify (fromIntegral . BSL.length)
