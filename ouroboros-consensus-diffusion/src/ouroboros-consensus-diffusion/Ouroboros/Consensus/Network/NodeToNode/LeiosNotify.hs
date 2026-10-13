@@ -7,13 +7,13 @@
 -- wiring needs to run them.
 module Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
   ( leiosNotifyClient
-  , leiosNotifyProtocols
+  , leiosNotifyMiniProtocol
   , leiosNotifyPruner
   , leiosNotifyServer
   , withLeiosNotifyClientState
   ) where
 
-import Cardano.Network.NodeToNode (NodeToNodeVersion (..), addSafetyMargin)
+import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
 import Control.Monad.Except (Except, runExcept, runExceptT)
 import Data.Map.Strict (Map)
@@ -47,11 +47,9 @@ import Ouroboros.Network.ControlMessage (ControlMessageSTM)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
   , MiniProtocolLimits (..)
-  , OuroborosBundleWithExpandedCtx
+  , MiniProtocolWithExpandedCtx
   , RunMiniProtocolWithExpandedCtx
   , StartOnDemandOrEagerly (..)
-  , WithProtocolTemperature (..)
-  , withHot
   )
 
 -- | The node's LeiosNotify client. It checks each reply against the peer's
@@ -192,27 +190,17 @@ leiosNotifyPruner chainDB statesVar = go (SlotNo 0)
         _ -> retry
     go immTipSlot
 
--- | LeiosNotify, to add to a node-to-node bundle, if the version has it.
---
--- TODO remove once 'NodeToNodeProtocols' has fields for the Leios mini-protocols.
-leiosNotifyProtocols ::
-  NodeToNodeVersion ->
+-- | LeiosNotify as a node-to-node mini-protocol.
+leiosNotifyMiniProtocol ::
   RunMiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c ->
-  OuroborosBundleWithExpandedCtx mode addr PeerTrustable b m a c
-leiosNotifyProtocols version run
-  | version >= NodeToNodeV_16 =
-      mempty
-        { withHot =
-            WithHot
-              [ MiniProtocol
-                  { miniProtocolNum = leiosNotifyMiniProtocolNum
-                  , miniProtocolStart = StartOnDemand
-                  , miniProtocolLimits = leiosNotifyProtocolLimits
-                  , miniProtocolRun = run
-                  }
-              ]
-        }
-  | otherwise = mempty
+  MiniProtocolWithExpandedCtx mode addr PeerTrustable b m a c
+leiosNotifyMiniProtocol run =
+  MiniProtocol
+    { miniProtocolNum = leiosNotifyMiniProtocolNum
+    , miniProtocolStart = StartOnDemand
+    , miniProtocolLimits = leiosNotifyProtocolLimits
+    , miniProtocolRun = run
+    }
 
 -- | The ingress queue must hold a reply to every request the client may leave
 -- outstanding, each as large as 'maxLeiosNotifyReplyBytes' allows; the
