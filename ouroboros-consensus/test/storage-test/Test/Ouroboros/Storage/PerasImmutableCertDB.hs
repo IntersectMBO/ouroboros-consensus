@@ -146,7 +146,7 @@ testQuerySemantics = withFreshDB $ \_args db -> do
 -- no such cursor; this assertion documents the otherwise unreachable entry.
 testRoundZeroReachable :: IO ()
 testRoundZeroReachable = withFreshDB $ \_args db -> do
-  let cert = mkCertWithBoost 0 1
+  let cert = mkCert (PerasWeight 1) 0
 
   DB.addCert db cert
     >>= (@?= DB.AddedCertToImmutableDB)
@@ -155,7 +155,7 @@ testRoundZeroReachable = withFreshDB $ \_args db -> do
 
 testDuplicateRound :: IO ()
 testDuplicateRound = withFreshDB $ \_args db -> do
-  let cert = mkCertWithBoost 7 3
+  let cert = mkCert (PerasWeight 3) 7
 
   DB.addCert db cert
     >>= (@?= DB.AddedCertToImmutableDB)
@@ -171,8 +171,8 @@ testDuplicateRound = withFreshDB $ \_args db -> do
 -- result constructor; either is distinguishable from 'CertAlreadyInImmutableDB'.
 testConflictingRoundReported :: IO ()
 testConflictingRoundReported = withFreshDB $ \_args db -> do
-  let first = mkCertWithBoost 7 3
-      conflicting = mkCertWithBoost 7 99
+  let first = mkCert (PerasWeight 3) 7
+      conflicting = mkCert (PerasWeight 99) 7
 
   DB.addCert db first
     >>= (@?= DB.AddedCertToImmutableDB)
@@ -188,8 +188,8 @@ testConflictingRoundReported = withFreshDB $ \_args db -> do
 testCorruptDuplicateReplaced :: IO ()
 testCorruptDuplicateReplaced =
   withFreshDBFS $ \fs args db -> do
-    let first = mkCertWithBoost 7 3
-        replacement = mkCertWithBoost 7 99
+    let first = mkCert (PerasWeight 3) 7
+        replacement = mkCert (PerasWeight 99) 7
     DB.addCert db first >>= (@?= DB.AddedCertToImmutableDB)
     replaceRawFile fs (certPath 7) (BSL.pack [0xde, 0xad])
     DB.addCert db replacement
@@ -219,7 +219,7 @@ testOpenHandleCoherence =
   withFreshArgs $ \_fs args -> do
     first <- DB.openDB args
     second <- DB.openDB args
-    let cert = mkCertWithBoost 1 1
+    let cert = mkCert (PerasWeight 1) 1
 
     DB.addCert first cert
       >>= (@?= DB.AddedCertToImmutableDB)
@@ -294,7 +294,7 @@ testCorruptFileQuarantined =
 testTransientReadErrorDoesNotQuarantine :: IO ()
 testTransientReadErrorDoesNotQuarantine =
   withFreshErrorDB $ \_fs errorsVar _args db -> do
-    let cert = mkCertWithBoost 1 1
+    let cert = mkCert (PerasWeight 1) 1
         transientErrors =
           emptyErrors
             { hOpenE =
@@ -413,7 +413,7 @@ testQuarantinedRoundCanBeRepaired ::
   IO ()
 testQuarantinedRoundCanBeRepaired policy damage =
   withFreshDBFS $ \fs args db -> do
-    let cert = mkCertWithBoost 7 3
+    let cert = mkCert (PerasWeight 3) 7
         argsWithPolicy =
           args
             { DB.picdbaValidationPolicy = policy
@@ -532,7 +532,7 @@ testEagerQuarantineTrace =
 testConcurrentDuplicateAdds :: IO ()
 testConcurrentDuplicateAdds =
   withFreshDB $ \args db -> do
-    let cert = mkCertWithBoost 7 3
+    let cert = mkCert (PerasWeight 3) 7
         workerCount = 16
     done <- replicateM workerCount newEmptyMVar
     forM_ done $ \resultVar ->
@@ -567,7 +567,7 @@ data AddFault
 testFailedAddAtomic :: AddFault -> IO ()
 testFailedAddAtomic fault =
   withFreshErrorDB $ \fs errorsVar args db -> do
-    let cert = mkCertWithBoost 1 1
+    let cert = mkCert (PerasWeight 1) 1
     result <-
       withErrors errorsVar (errorsFor fault) $
         ( Exception.try (DB.addCert db cert) ::
@@ -867,9 +867,7 @@ propCommandSequence (CommandSequence commands) =
       Add roundWord boostWord -> do
         let roundNo = PerasRoundNo (fromIntegral roundWord)
             cert =
-              mkCertWithBoost
-                (fromIntegral roundWord)
-                (fromIntegral boostWord)
+              mkCert (PerasWeight $ fromIntegral boostWord) roundNo
             expectedResult
               | Map.member roundNo model = DB.CertAlreadyInImmutableDB
               | otherwise = DB.AddedCertToImmutableDB
@@ -1045,7 +1043,7 @@ addRoundNos ::
   [PerasRoundNo] ->
   IO ()
 addRoundNos db =
-  mapM_ (void . DB.addCert db . mkCert)
+  mapM_ (void . DB.addCert db . mkCert (PerasWeight 1))
 
 paginate ::
   DB.PerasImmutableCertDB IO TestBlock ->
@@ -1071,21 +1069,15 @@ smallGeneratedRounds =
 roundsOf :: [ValidatedPerasCert TestBlock] -> [PerasRoundNo]
 roundsOf = map getPerasCertRound
 
-mkCert :: PerasRoundNo -> ValidatedPerasCert TestBlock
-mkCert roundNo =
-  mkCertWithBoost
-    (unPerasRoundNo roundNo)
-    1
-
-mkCertWithBoost :: Word64 -> Word64 -> ValidatedPerasCert TestBlock
-mkCertWithBoost roundNo boost =
+mkCert :: PerasWeight -> PerasRoundNo -> ValidatedPerasCert TestBlock
+mkCert boost roundNo =
   ValidatedPerasCert
     { vpcCert =
         MockPerasCert
-          { mockCertRound = PerasRoundNo roundNo
+          { mockCertRound = roundNo
           , mockCertBlock = GenesisPoint
           , mockCertVoters =
               NESet.fromList (PerasSeatIndex 0 :| [])
           }
-    , vpcCertBoost = PerasWeight boost
+    , vpcCertBoost = boost
     }
