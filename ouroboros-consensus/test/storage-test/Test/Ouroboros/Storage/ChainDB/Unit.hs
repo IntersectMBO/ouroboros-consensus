@@ -513,8 +513,8 @@ perasLosingForkCertNotArchived = do
  where
   body forkNo = TestBody forkNo True Nothing
 
--- | Garbage collection may discard the volatile copy, but not the historical
--- copy made during persistence.
+-- | Garbage collection may discard the volatile copy of a Peras certificate,
+-- but not its historical copy .
 perasCertPersistsGC :: SystemM TestBlock IO ()
 perasCertPersistsGC = do
   b1 <- addBlock $ firstBlock 0 (body 0)
@@ -1067,10 +1067,11 @@ mkMockPerasCert roundNo target boost =
 -- one block tree is ordered differently depending only on whether the node
 -- knows the certificate.
 --
---                 h1 -- h2 -- h3 -- h4    four blocks, no boost
+--                 h1 -- h2 -- h3 -- h4   4 blocks + 0 boost => weight=4
 --                /
--- common --------+
---                \a1* -- a2              two blocks, boost three
+-- common -------+
+--                \
+--                 a1* -- a2              2 blocks + 3 boost => weight=5
 --
 -- The block-only view selects h4. Releasing the certificate for a1 makes the
 -- shorter fork heavier, so ChainDB rolls back to the less dense branch.
