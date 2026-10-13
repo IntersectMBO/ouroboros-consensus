@@ -141,14 +141,14 @@ data ErrAnnouncement invalidity
 
 -- | Fails if this election was already 'TwoAnnouncements' or if this
 -- announcement was already received
-extendLive ::
+insertAnnouncement ::
   forall anc invalidity.
   Eq anc =>
   ElectionId ->
   anc ->
   AnnouncementsState anc ->
   Either (ErrAnnouncement invalidity) (AnnouncementsState anc)
-extendLive elId anc st =
+insertAnnouncement elId anc st =
   (\live' -> MkAnnouncementsState{live = live'})
     <$> Map.alterF (fmap Just . upd) elId (live st)
  where
@@ -200,7 +200,7 @@ onAnnouncement ::
   anc ->
   ExceptT (ErrAnnouncement invalidity) m (AnnouncementsState anc)
 onAnnouncement getEl validate process st anc = do
-  st' <- case extendLive (getEl anc) anc st of
+  st' <- case insertAnnouncement (getEl anc) anc st of
     Left err -> throwError err
     Right x -> pure x
   -- do the more expensive validation only after the trivial
@@ -208,7 +208,7 @@ onAnnouncement getEl validate process st anc = do
   lift (validate anc) >>= \case
     VerdictTooOld -> throwError ErrTooOld
     VerdictInvalid err -> throwError $ ErrInvalid err
-    -- The peer's dedup state was already updated by 'extendLive' above, so just
+    -- The peer's dedup state was already updated by 'insertAnnouncement' above, so just
     -- keep it.
     VerdictIgnore -> pure st'
     VerdictProcess x -> do

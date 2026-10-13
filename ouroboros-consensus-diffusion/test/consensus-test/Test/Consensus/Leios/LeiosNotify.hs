@@ -469,7 +469,7 @@ excessive = do
 disconnectedBy :: IOSim s () -> IOSim s ExcessiveOutcome
 disconnectedBy server =
   try server >>= \case
-    Left MkExnLeiosNotifyExcessiveRequests -> pure $ ExcessiveOutcome Disconnected
+    Left ExnLeiosNotifyExcessiveRequests -> pure $ ExcessiveOutcome Disconnected
     Right () -> pure $ ExcessiveOutcome NotDisconnected
 
 {-------------------------------------------------------------------------------
@@ -550,7 +550,7 @@ data DisconnectReason
 -- | Why the node's client disconnected its peer, if it did so on purpose.
 disconnectReason :: SomeException -> Maybe DisconnectReason
 disconnectReason e
-  | Just MkExnLeiosNotifyUnexpectedCancel <- fromException e = Just UnexpectedCancel
+  | Just ExnLeiosNotifyUnexpectedCancel <- fromException e = Just UnexpectedCancel
   | Just (_ :: DecoderFailure) <- fromException e = Just Undecodable
   | Just (lf :: ProtocolLimitFailure) <- fromException e = Just $ case lf of
       ExceededSizeLimit{} -> ExceededSize
@@ -861,7 +861,7 @@ nodeServerExcessive = withNode $ \nut -> do
   withNodeVsEnvConnection nut (PeerAddr 1) envPeer $ \conn -> do
     server <- nodeLeiosNotifyServer conn
     atomically server >>= \case
-      Left e | Just MkExnLeiosNotifyExcessiveRequests <- fromException e -> pure $ ExcessiveOutcome Disconnected
+      Left e | Just ExnLeiosNotifyExcessiveRequests <- fromException e -> pure $ ExcessiveOutcome Disconnected
       _ -> pure $ ExcessiveOutcome NotDisconnected
 
 -- | Whether the node's initiator bundle, and its initiator-and-responder bundle,

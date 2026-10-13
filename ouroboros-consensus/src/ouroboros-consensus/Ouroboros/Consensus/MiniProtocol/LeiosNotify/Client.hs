@@ -50,7 +50,7 @@ import Ouroboros.Consensus.Util.IOLike
   )
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 
--- | Block until the immutable tip's ledger state can forecast to the current
+-- | Retry until the immutable tip's ledger state can forecast to the current
 -- slot.
 --
 -- A LeiosNotify client judges the replies it receives by forecasting from the
@@ -102,12 +102,12 @@ leiosNotifyClientPeerHandlingReplies depth gate controlMessageSTM handleReply =
           Terminate -> pure (Left ())
       )
       ( pure $ \case
-          MsgCanceled -> throwIO MkExnLeiosNotifyUnexpectedCancel
+          MsgCanceled -> throwIO ExnLeiosNotifyUnexpectedCancel
           msg -> handleReply msg
       )
 
 -- | The peer sent 'MsgCanceled' although the client had not sent 'MsgQuit'.
-data ExnLeiosNotifyUnexpectedCancel = MkExnLeiosNotifyUnexpectedCancel
+data ExnLeiosNotifyUnexpectedCancel = ExnLeiosNotifyUnexpectedCancel
   deriving Show
 
 instance Exception ExnLeiosNotifyUnexpectedCancel

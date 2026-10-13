@@ -1189,9 +1189,9 @@ runThreadNetwork
         (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
         (AnyMessage (PerasCertDiffusion blk))
         (AnyMessage (PerasVoteDiffusion blk))
-        (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
         (AnyMessage KeepAlive)
         (AnyMessage (PeerSharing NodeId))
+        (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
     customNodeToNodeCodecs cfg ntnVersion =
       NTN.Codecs
         { cChainSyncCodec =
@@ -1215,15 +1215,15 @@ runThreadNetwork
         , cPerasVoteDiffusionCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cPerasVoteDiffusionCodec NTN.identityCodecs
-        , cLeiosNotifyCodec =
-            mapFailureCodec CodecIdFailure $
-              NTN.cLeiosNotifyCodec NTN.identityCodecs
         , cKeepAliveCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cKeepAliveCodec NTN.identityCodecs
         , cPeerSharingCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cPeerSharingCodec NTN.identityCodecs
+        , cLeiosNotifyCodec =
+            mapFailureCodec CodecIdFailure $
+              NTN.cLeiosNotifyCodec NTN.identityCodecs
         }
      where
       binaryProtocolCodecs =
@@ -1820,9 +1820,9 @@ type LimitedApp' m addr blk =
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
     (AnyMessage (PerasCertDiffusion blk))
     (AnyMessage (PerasVoteDiffusion blk))
-    (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
+    (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
     NodeToNodeInitiatorResult
     ()
 

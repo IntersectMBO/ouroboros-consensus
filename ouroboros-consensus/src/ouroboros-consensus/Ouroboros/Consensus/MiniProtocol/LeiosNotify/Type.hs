@@ -136,9 +136,9 @@ instance Protocol (LeiosNotify point announcement vote) where
       -- wrong size. This is cheap to do and makes the LeiosFetch logic simpler
       -- to reason about.
       --
-      -- TODO update the CIP/blueprint, which still has this message carrying
-      -- the point alone. Both alternatives change the mini-protocol message or
-      -- its accounting, so the choice belongs in that discussion.
+      -- TODO The blueprint carries the size, and
+      -- <https://github.com/cardano-foundation/CIPs/pull/1296> updates CIP-0164
+      -- to match; confirm once it is merged.
       !Word32 ->
       Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockTxsOffer ::
@@ -185,17 +185,17 @@ deriving instance
 
 -- | The most votes one 'MsgLeiosVotes' may carry.
 --
--- It keeps every reply small: sixteen votes encode to about 1.4 kB, no more
--- than an announcing header.
+-- It keeps every reply within 'maxLeiosNotifyReplyBytes'.
 maxLeiosVotesPerMessage :: Int
 maxLeiosVotesPerMessage = 16
 
--- | The most bytes one reply may take: sixteen votes encode to about 1.4 kB,
--- an announcing header to about 0.9 kB, and an offer to tens of bytes.
+-- | The most bytes one reply may take, 1.5 KiB.
 --
--- An announcing header is also bounded by the ledger's maximum header size,
--- 1100 bytes on mainnet; raising that parameter past this would need this
--- raised too.
+-- A vote encodes to at most 88 bytes, so a 'MsgLeiosVotes' of
+-- 'maxLeiosVotesPerMessage' votes takes at most 1411 bytes. An announcing
+-- header is bounded by the ledger's maximum header size, 1100 bytes on
+-- mainnet; raising that parameter past this would need this raised too. An
+-- offer takes tens of bytes.
 maxLeiosNotifyReplyBytes :: Word
 maxLeiosNotifyReplyBytes = 1536
 

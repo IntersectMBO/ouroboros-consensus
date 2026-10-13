@@ -99,7 +99,7 @@ leiosNotifyServerPeerLookahead incr next = do
       MsgLeiosNotificationRequestNext ->
         Effect $ do
           incr >>= \case
-            ExcessiveRequests -> throwIO MkExnLeiosNotifyExcessiveRequests
+            ExcessiveRequests -> throwIO ExnLeiosNotifyExcessiveRequests
             NotExcessiveRequests -> pure ()
           pure $ busy quitVar Zero
 
@@ -124,7 +124,7 @@ leiosNotifyServerPeerLookahead incr next = do
       MsgLeiosNotificationRequestNext ->
         Effect $ do
           incr >>= \case
-            ExcessiveRequests -> throwIO MkExnLeiosNotifyExcessiveRequests
+            ExcessiveRequests -> throwIO ExnLeiosNotifyExcessiveRequests
             NotExcessiveRequests -> pure ()
           pure $ busy quitVar (Succ n)
 
@@ -146,7 +146,7 @@ leiosNotifyServerPeerLookahead incr next = do
     Zero -> Yield ReflServerAgency MsgDone $ Done ReflNobodyAgency ()
     Succ j -> FlushSender Nothing (drain j)
 
-data ExnLeiosNotifyExcessiveRequests = MkExnLeiosNotifyExcessiveRequests
+data ExnLeiosNotifyExcessiveRequests = ExnLeiosNotifyExcessiveRequests
   deriving Show
 
 instance Exception ExnLeiosNotifyExcessiveRequests

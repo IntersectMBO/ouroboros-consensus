@@ -66,7 +66,7 @@ module Ouroboros.Consensus.Protocol.PolyPraos
 
     -- * For testing purposes
   , doValidateKESSignature
-  , doValidateKESSignatureWorker
+  , doValidateKESSignature'
   , leiosAnnouncementPolyPraos
   , getLeiosLedgerViewPolyPraos
   , validateLeiosAnnouncementPolyPraos
@@ -780,7 +780,7 @@ validateLeiosAnnouncementPolyPraos
     SL.PoolDistr pd _totalActiveStake = Views.plvPoolDistr lv
     authenticate =
       FreshOCIN
-        <$ doValidateKESSignatureWorker
+        <$ doValidateKESSignature'
           DoNotUpperBoundOCERT
           praosMaxKESEvo
           praosSlotsPerKESPeriod
@@ -930,7 +930,7 @@ validateKESSignature
   ocertCounters =
     doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod plvPoolDistr ocertCounters
 
--- | Whether 'doValidateKESSignatureWorker' enforces the OCERT counter's /upper/
+-- | Whether 'doValidateKESSignature'' enforces the OCERT counter's /upper/
 -- bound, i.e. rejects (with 'CounterOverIncrementedOCERT') a counter more than
 -- one greater than the one we have recorded for this issuer.
 --
@@ -954,11 +954,11 @@ doValidateKESSignature ::
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.PolyPraosValidateView proto c ->
   Except (PolyPraosValidationErr proto c) ()
-doValidateKESSignature = doValidateKESSignatureWorker UpperBoundOCERT
+doValidateKESSignature = doValidateKESSignature' UpperBoundOCERT
 
--- | The worker underlying 'doValidateKESSignature', parameterized by whether to
+-- | 'doValidateKESSignature', parameterized by whether to
 -- enforce the OCERT counter's upper bound (see 'WhetherToUpperBoundOCERT').
-doValidateKESSignatureWorker ::
+doValidateKESSignature' ::
   PolyPraosCrypto proto c =>
   WhetherToUpperBoundOCERT ->
   Word64 ->
@@ -967,7 +967,7 @@ doValidateKESSignatureWorker ::
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.PolyPraosValidateView proto c ->
   Except (PolyPraosValidationErr proto c) ()
-doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
+doValidateKESSignature' whetherToUpperBound praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
   do
     c0 <= kp ?! KESBeforeStartOCERT c0 kp
     kp_ < c0_ + fromIntegral praosMaxKESEvo ?! KESAfterEndOCERT kp c0 praosMaxKESEvo

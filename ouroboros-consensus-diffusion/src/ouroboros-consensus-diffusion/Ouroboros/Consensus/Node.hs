@@ -704,19 +704,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
     Cardano.Diffusion.CardanoConsensusArguments addrNTN m ->
     MiniProtocolParameters ->
     ( BlockNodeToNodeVersion blk ->
-      NTN.Apps
-        m
-        addrNTN
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        NodeToNodeInitiatorResult
-        ()
+      NodeToNodeApps m addrNTN
     ) ->
     ( BlockNodeToClientVersion blk ->
       NodeToClientVersion ->
@@ -791,6 +779,22 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   runPredicate :: Predicate a -> a -> Maybe a
   runPredicate (Predicate p) err = if p err then Just err else Nothing
 
+-- | The node-to-node applications, exchanging bytes.
+type NodeToNodeApps m addrNTN =
+  NTN.Apps
+    m
+    addrNTN
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    NodeToNodeInitiatorResult
+    ()
+
 -- | The node's node-to-node applications, for a connection of the given
 -- version.
 mkNodeToNodeApps ::
@@ -814,19 +818,7 @@ mkNodeToNodeApps ::
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
   (NodeToNodeVersion -> forall s. CBOR.Decoder s addrNTN) ->
   BlockNodeToNodeVersion blk ->
-  NTN.Apps
-    m
-    addrNTN
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    NodeToNodeInitiatorResult
-    ()
+  NodeToNodeApps m addrNTN
 mkNodeToNodeApps
   ntnAppsRng
   traceNTN
@@ -859,19 +851,7 @@ mkNodeToNodeInitiatorVersions ::
   (NodeToNodeVersion -> NodeToNodeVersionData) ->
   Map NodeToNodeVersion blockVersion ->
   ( blockVersion ->
-    NTN.Apps
-      m
-      addrNTN
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      NodeToNodeInitiatorResult
-      ()
+    NodeToNodeApps m addrNTN
   ) ->
   Versions
     NodeToNodeVersion
@@ -909,19 +889,7 @@ mkNodeToNodeInitiatorResponderVersions ::
   (NodeToNodeVersion -> NodeToNodeVersionData) ->
   Map NodeToNodeVersion blockVersion ->
   ( blockVersion ->
-    NTN.Apps
-      m
-      addrNTN
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      NodeToNodeInitiatorResult
-      ()
+    NodeToNodeApps m addrNTN
   ) ->
   Versions
     NodeToNodeVersion

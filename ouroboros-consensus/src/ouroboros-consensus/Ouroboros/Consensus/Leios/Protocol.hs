@@ -35,7 +35,7 @@ data LeiosAnnouncement = MkLeiosAnnouncement
   -- chooses.
   , announcementEbHash :: !EbHash
   , announcementEbSize :: !BytesSize
-  -- ^ the announced endorser block's size, which nothing trusts
+  -- ^ the announced endorser block's size
   --
   -- TODO Nothing reads it yet. A certifying ranking block's ChainSync
   -- @MsgRollForward@ will be interpreted as an offer of the endorser block it
