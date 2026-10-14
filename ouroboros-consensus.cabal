@@ -1472,6 +1472,9 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.HardFork.Combinator.Convergence
+    Test.Consensus.HardFork.Combinator.Forge
+    Test.Consensus.HardFork.Combinator.Setup
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.PeerSimulator.BlockFetch
     Test.Consensus.PeerSimulator.ChainSync
@@ -1860,6 +1863,7 @@ test-suite shelley-test
     measures,
     mempack,
     microlens,
+    mtl,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib},
     QuickCheck,
     sop-core,
