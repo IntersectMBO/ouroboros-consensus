@@ -19,6 +19,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
   , Message (..)
   , SingLeiosFetch (..)
   , TxBitmaps
+  , bitmapOffsets
   , byteLimitsLeiosFetch
   , codecLeiosFetch
   , codecLeiosFetchId
@@ -33,8 +34,10 @@ import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
 import Control.Monad (when)
 import Control.Monad.Class.MonadST (MonadST)
+import qualified Data.Bits as Bits
 import Data.ByteString.Lazy (ByteString)
 import Data.Kind (Type)
+import Data.List (unfoldr)
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import qualified Data.Vector.Strict as V
@@ -128,6 +131,18 @@ instance StateTokenI StDone where stateToken = SingDone
 -- the index of a run of 64 transactions and a bitmap of those 64, the most
 -- significant bit naming the first of them.
 type TxBitmaps = [(Word16, Word64)]
+
+-- | The offsets of the transactions the bitmaps name, in the bitmaps' order.
+bitmapOffsets :: TxBitmaps -> [Int]
+bitmapOffsets = unfoldr next
+ where
+  next = \case
+    [] -> Nothing
+    (index, bitmap) : rest
+      | bitmap == 0 -> next rest
+      | otherwise ->
+          let i = Bits.countLeadingZeros bitmap
+           in Just (64 * fromIntegral index + i, (index, Bits.clearBit bitmap (63 - i)) : rest)
 
 instance Protocol (LeiosFetch point eb tx) where
   data Message (LeiosFetch point eb tx) from to where

@@ -1362,6 +1362,7 @@ library diffusion
     time,
     transformers,
     typed-protocols:{stateful, typed-protocols} ^>=1.2.2,
+    vector,
 
 library unstable-diffusion-testlib
   import: common-lib
