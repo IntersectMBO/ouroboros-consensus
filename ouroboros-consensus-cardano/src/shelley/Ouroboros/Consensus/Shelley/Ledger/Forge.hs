@@ -167,9 +167,8 @@ forgeShelleyBlock hotKey cbl ForgeBlockLeiosArgs{fbLeiosTracer} ForgeBlockArgs{.
   -- to put in it; empty mempool ⇒ no EB ⇒ no announcement (matches the original
   -- prototype).
   mkEb :: m (Maybe (ForgedLeiosEb, EbAnnouncement))
-  mkEb = case nonEmpty (fmap extractTx fbEbTxs) of
-    Nothing -> pure Nothing
-    Just ebTxs -> do
+  mkEb = case (Typeable.eqT @era @DijkstraEra, nonEmpty (fmap extractTx fbEbTxs)) of
+    (Just Refl, Just ebTxs) -> do
       let forgedEb = forgeLeiosEb fbCurrentSlotNo ebTxs
           ebHash = hashLeiosEb forgedEb.body
           -- An EB over the codec's message limit never diffuses: peers drop
@@ -194,3 +193,4 @@ forgeShelleyBlock hotKey cbl ForgeBlockLeiosArgs{fbLeiosTracer} ForgeBlockArgs{.
           , mempoolRestMeasure = ByteSize32 0 -- FIXME: use a real number
           }
       pure (Just (forgedEb, ebAnn))
+    _ -> pure Nothing

@@ -413,13 +413,13 @@ validateNewTransaction cfg wti tx txsz origValues st is =
             { isTxs =
                 isTxs
                   :> TxTicket
-                    (ValidatedTxWithDiffs vtx (projectLedgerTables st') leiosHash)
+                    (ValidatedTxWithDiffs vtx (projectLedgerTables st') (leiosHashOf vtx))
                     nextTicketNo
                     (MempoolMeasure txsz (txEbMeasure (Proxy @blk) txsz) dur)
             , isTxKeys = isTxKeys <> getTransactionKeySets tx
             , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
-            , isLeiosTxIndex = strictMaybe id (\h -> Map.insert h vtx) leiosHash isLeiosTxIndex
+            , isLeiosTxIndex = strictMaybe id (\h -> Map.insert h vtx) (leiosHashOf vtx) isLeiosTxIndex
             , isLedgerState = prependMempoolDiffs isLedgerState st'
             , isLastTicketNo = nextTicketNo
             }
@@ -438,7 +438,8 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 
   nextTicketNo = succ isLastTicketNo
 
-  leiosHash = maybeToStrictMaybe (leiosTxHashOfGenTx tx)
+  -- Of the validated tx, since applying it may have flipped its @is_valid@ flag.
+  leiosHashOf = maybeToStrictMaybe . leiosTxHashOfGenTx . txForgetValidated
 
 -- | Revalidate the given transactions against the given ticked ledger state,
 -- producing a new 'InternalState'.
