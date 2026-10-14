@@ -8,8 +8,6 @@
 -- connections against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosNotify.Node (tests) where
 
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
-import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -28,13 +26,8 @@ import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import Data.Word (Word16, Word8)
 import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
-import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.Config (SecurityParam (..))
-import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types
-  ( BytesSize
-  , EbHash (..)
+  ( EbHash (..)
   , LeiosPoint (..)
   , LeiosVote (..)
   , RbHash (..)
@@ -79,7 +72,6 @@ import Test.Consensus.Leios.NodeUnderTest
 import Test.Consensus.Leios.TestBlock
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Util.ChainDB (emptyNodeDBs)
 
 tests :: TestTree
 tests =
@@ -279,35 +271,6 @@ tests =
     , testCase "the node does not run LeiosNotify before NodeToNodeV_16" $
         runSimOrThrow (timeout 100 (nodeRunsLeiosNotify NodeToNodeV_15)) @?= Just (False, False)
     ]
-
-withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNode = withNodeForecasting 100000
-
--- | A node whose ledger view forecasts this many slots past its immutable tip.
-withNodeForecasting :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNodeForecasting range body = do
-  nodeDBs <- emptyNodeDBs
-  withNodeUnderTest cfg nodeDBs body
- where
-  k = SecurityParam $ knownNonZeroBounded @10
-  cfg =
-    defaultNodeUnderTestConfig
-      k
-      LeiosTestLedgerConfig
-        { ltlcHardForkParams =
-            HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
-        , ltlcForecastRange = range
-        , ltlcLeios =
-            MkLeiosLedgerView
-              { llvCommittee = emptyLeiosCommittee
-              , llvQuorumStakeThreshold = maxBound
-              , llvAnnouncementPeriod = Milliseconds32 1000
-              , llvVotePeriod = Milliseconds32 4000
-              , llvDiffusionPeriod = Milliseconds32 1000
-              , llvMaxEbBodySize = maxEbBodySize
-              , llvMaxEbTxsSize = maxEbBodySize
-              }
-        }
 
 -- | The node's LeiosNotify client on the connection.
 nodeLeiosNotifyClient ::
@@ -623,9 +586,6 @@ someAnnouncement = MsgLeiosBlockAnnouncement $ ltbHeader $ ann 1 (firstLeiosBloc
 -- | The endorser block 'someAnnouncement' announces.
 someOfferedPoint :: LeiosPoint
 someOfferedPoint = MkLeiosPoint (SlotNo 1) (MkEbHash (BS.replicate 32 1))
-
-maxEbBodySize :: BytesSize
-maxEbBodySize = 5000
 
 newtype NodeServerOutcome = NodeServerOutcome Int
   deriving (Eq, Show)

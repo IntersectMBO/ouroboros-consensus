@@ -1,14 +1,11 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TypeApplications #-}
 
 -- | Tests of the node's LeiosFetch client and server, over real connections,
 -- against peers run by the Leios node-vs-environment tests.
 module Test.Consensus.Leios.LeiosFetch.Node (tests) where
 
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
-import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.NodeToNode (defaultMiniProtocolParameters)
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -21,10 +18,6 @@ import qualified Data.Map.Strict as Map
 import Network.TypedProtocol.Codec (PeerRole (..))
 import Network.TypedProtocol.Core (IsPipelined (..), ReflRelativeAgency (..))
 import Network.TypedProtocol.Peer (Peer (..))
-import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
-import Ouroboros.Consensus.Config (SecurityParam (..))
-import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Leios.Types (LeiosEb, LeiosPoint (..), LeiosTx)
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
@@ -38,10 +31,8 @@ import Ouroboros.Network.Mux
   )
 import Test.Consensus.Leios.Environment
 import Test.Consensus.Leios.NodeUnderTest
-import Test.Consensus.Leios.TestBlock
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Util.ChainDB (emptyNodeDBs)
 
 tests :: TestTree
 tests =
@@ -114,31 +105,6 @@ nodeRunsLeiosFetch ntnVersion = withNode $ \nut ->
 {-------------------------------------------------------------------------------
   The node, connected to peers run by the test
 -------------------------------------------------------------------------------}
-
-withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
-withNode body = do
-  nodeDBs <- emptyNodeDBs
-  withNodeUnderTest cfg nodeDBs body
- where
-  k = SecurityParam $ knownNonZeroBounded @10
-  cfg =
-    defaultNodeUnderTestConfig
-      k
-      LeiosTestLedgerConfig
-        { ltlcHardForkParams =
-            HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
-        , ltlcForecastRange = 100000
-        , ltlcLeios =
-            MkLeiosLedgerView
-              { llvCommittee = emptyLeiosCommittee
-              , llvQuorumStakeThreshold = maxBound
-              , llvAnnouncementPeriod = Milliseconds32 1000
-              , llvVotePeriod = Milliseconds32 4000
-              , llvDiffusionPeriod = Milliseconds32 1000
-              , llvMaxEbBodySize = 5000
-              , llvMaxEbTxsSize = 5000
-              }
-        }
 
 -- | The node's LeiosFetch server on the connection.
 nodeLeiosFetchServer ::
