@@ -1,5 +1,4 @@
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE TypeApplications #-}
 
 -- | A forged Dijkstra block announces the endorser block that 'forgeBlock'
 -- returns.
@@ -20,8 +19,8 @@ import Cardano.Ledger.Shelley.LedgerState (curPParamsEpochStateL, nesEsL)
 import qualified Cardano.Protocol.Leios.BlockHeader as Leios
 import qualified Cardano.Protocol.TPraos.OCert as SL (KESPeriod (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
+import Control.Monad.Except (runExceptT)
 import Control.Tracer (nullTracer)
-import Data.Maybe (isJust)
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
@@ -75,34 +74,45 @@ tests :: TestTree
 tests =
   testGroup
     "Forge"
-    [ testProperty "a block announces the endorser block it comes with" prop_announcesEb
-    , testProperty "a block without endorser-block transactions announces nothing" prop_noEb
+    [ testGroup
+        "Dijkstra"
+        [ testProperty
+            "Forges and announces an endorser block from the EB transactions"
+            prop_dijkstraForgesAndAnnouncesEb
+        , testProperty
+            "Forges and announces no endorser block without EB transactions"
+            prop_dijkstraForgesAndAnnouncesNoEb
+        ]
     ]
 
-prop_announcesEb :: Property
-prop_announcesEb =
+prop_dijkstraForgesAndAnnouncesEb :: Property
+prop_dijkstraForgesAndAnnouncesEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode ->
     forAll genNumEbTxs $ \numEbTxs -> ioProperty $ do
-      (blk, forgedEb) <- forgeWith coreNode (replicate numEbTxs exampleTx)
-      pure $ case forgedEb of
-        Nothing -> counterexample "no endorser block" False
-        Just ForgedLeiosEb{forgedLeiosEbBody = eb} ->
-          conjoin
-            [ announcement blk
-                === SJust
-                  EbReferencesAnnouncement
-                    { ebReferencesAnnouncementHash = hashLeiosEb eb
-                    , ebReferencesAnnouncementSize = encodeLeiosEbSize eb
-                    }
-            , counterexample "the block does not match its header" $
-                blockMatchesHeader (getHeader blk) blk
-            ]
+      blockForging <- mkDijkstraBlockForging coreNode
+      result <-
+        runExceptT $
+          propForgedMatchesHeader
+            dijkstraEbMatchesHeader
+            blockForging
+            (mkDijkstraForgeArgs coreNode (replicate numEbTxs (validateEbTx exampleTx)))
+      pure $ case result of
+        Left (msg, _) -> counterexample msg False
+        Right (_, forgedEb) -> counterexample "no endorser block" (forgedEb =/= Nothing)
 
-prop_noEb :: Property
-prop_noEb =
+prop_dijkstraForgesAndAnnouncesNoEb :: Property
+prop_dijkstraForgesAndAnnouncesNoEb =
   forAllBlind (genCoreNode (SL.KESPeriod 0)) $ \coreNode -> ioProperty $ do
-    (blk, forgedEb) <- forgeWith coreNode []
-    pure $ (announcement blk, isJust forgedEb) === (SNothing, False)
+    blockForging <- mkDijkstraBlockForging coreNode
+    result <-
+      runExceptT $
+        propForgedMatchesHeader
+          dijkstraEbMatchesHeader
+          blockForging
+          (mkDijkstraForgeArgs coreNode [])
+    pure $ case result of
+      Left (msg, _) -> counterexample msg False
+      Right (_, forgedEb) -> forgedEb === Nothing
 
 -- | A number of endorser-block transactions. 'encodeLeiosEbSize' writes a
 -- longer map header from 24 and from 256 references.
@@ -113,46 +123,49 @@ genNumEbTxs =
     , (3, chooseInt (1, 300))
     ]
 
--- | Forge the block after the example ledger state, with the given endorser
--- block transactions and no ranking block transactions.
-forgeWith ::
+{-------------------------------------------------------------------------------
+  Dijkstra block forging setup
+-------------------------------------------------------------------------------}
+
+-- | Allocate the 'BlockForging' handle for a Dijkstra test node.
+mkDijkstraBlockForging ::
   CoreNode StandardCrypto ->
-  [GenTx StandardDijkstraBlock] ->
-  IO (StandardDijkstraBlock, Maybe ForgedLeiosEb)
-forgeWith coreNode ebTxs = do
+  IO (BlockForging IO StandardDijkstraBlock)
+mkDijkstraBlockForging coreNode = do
   hotKey <-
     instantiatePraosCredentials
       (SL.maxKESEvo globals)
       nullTracer
       (praosCanBeLeaderCredentialsSource canBeLeader)
-  forgeBlock
-    (praos2SharedBlockForging hotKey slotToPeriod credentials)
-    ForgeBlockArgs
-      { fbConfig = topLevelConfig
-      , fbCurrentBlockNo = BlockNo 4
-      , fbCurrentSlotNo = slot
-      , fbPerasCert = Nothing
-      , fbCurrentTickedLedgerState = tickedLedgerState
-      , fbTxs = []
-      , fbEbTxs =
-          [ ShelleyValidatedTx txid $
-              SL.unsafeMakeValidatedTx
-                globals
-                (SL.mkMempoolEnv newEpochState slot)
-                (SL.mkMempoolState newEpochState)
-                tx
-          | ShelleyTx txid tx <- ebTxs
-          ]
-      , fbIsLeader = PraosIsLeader $ Leios.hbrVrfRes (rawHeaderBody (getHeader exampleDijkstraBlock))
-      }
+  pure $ praos2SharedBlockForging hotKey slotToPeriod credentials
+ where
+  credentials = mkLeaderCredentials coreNode
+  canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
+  slotToPeriod (SlotNo slotNo) =
+    SL.KESPeriod $ fromIntegral $ slotNo `div` SL.slotsPerKESPeriod globals
+  globals = shelleyLedgerGlobals (example Examples.exampleLedgerConfig)
+
+-- | Build 'ForgeBlockArgs' for a Dijkstra test. The only variable part across
+-- test cases is 'fbEbTxs'; all other fields are fixed by the example ledger state.
+mkDijkstraForgeArgs ::
+  CoreNode StandardCrypto ->
+  [Validated (GenTx StandardDijkstraBlock)] ->
+  ForgeBlockArgs StandardDijkstraBlock
+mkDijkstraForgeArgs coreNode ebTxs =
+  ForgeBlockArgs
+    { fbConfig = topLevelConfig
+    , fbCurrentBlockNo = BlockNo 4
+    , fbCurrentSlotNo = slot
+    , fbPerasCert = Nothing
+    , fbCurrentTickedLedgerState = tickedLedgerState
+    , fbTxs = []
+    , fbEbTxs = ebTxs
+    , fbIsLeader = PraosIsLeader $ Leios.hbrVrfRes (rawHeaderBody (getHeader exampleDijkstraBlock))
+    }
  where
   slot = SlotNo 10
   credentials = mkLeaderCredentials coreNode
   canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
-
-  slotToPeriod (SlotNo slotNo) =
-    SL.KESPeriod $ fromIntegral $ slotNo `div` SL.slotsPerKESPeriod globals
-
   topLevelConfig =
     TopLevelConfig
       { topLevelConfigProtocol =
@@ -182,11 +195,9 @@ forgeWith coreNode ebTxs = do
             (SecurityParam $ SL.securityParameter globals)
       , topLevelConfigCheckpoints = emptyCheckpointsMap
       }
-
   protVer = newEpochState ^. nesEsL . curPParamsEpochStateL . ppProtocolVersionL
   ledgerConfig = example Examples.exampleLedgerConfig
   globals = shelleyLedgerGlobals ledgerConfig
-
   tickedLedgerState =
     TickedShelleyLedgerState
       { untickedShelleyLedgerTip = shelleyLedgerTip ledgerState
@@ -194,20 +205,66 @@ forgeWith coreNode ebTxs = do
       , tickedShelleyLedgerState = newEpochState
       , tickedShelleyLedgerTables = shelleyLedgerTables ledgerState
       }
-
   -- The 'maxEndorserBlockReferencesSize' of the example parameters is smaller
   -- than the endorser block of the example transaction.
   newEpochState =
     shelleyLedgerState ledgerState
-      & nesEsL . curPParamsEpochStateL . ppMaxEndorserBlockReferencesSizeL .~ 512 * 1024
-
+      & nesEsL
+        . curPParamsEpochStateL
+        . ppMaxEndorserBlockReferencesSizeL
+        .~ 512
+          * 1024
   ledgerState = example Examples.exampleLedgerState
 
-announcement :: StandardDijkstraBlock -> StrictMaybe EbReferencesAnnouncement
-announcement = Leios.hbrEbReferencesAnnouncement . rawHeaderBody . getHeader
+-- | Validate a 'GenTx' for use as an endorser-block transaction.
+validateEbTx ::
+  GenTx StandardDijkstraBlock ->
+  Validated (GenTx StandardDijkstraBlock)
+validateEbTx (ShelleyTx txid tx) =
+  ShelleyValidatedTx txid $
+    SL.unsafeMakeValidatedTx
+      globals
+      (SL.mkMempoolEnv newEpochState (SlotNo 10))
+      (SL.mkMempoolState newEpochState)
+      tx
+ where
+  ledgerConfig = example Examples.exampleLedgerConfig
+  globals = shelleyLedgerGlobals ledgerConfig
+  newEpochState =
+    shelleyLedgerState (example Examples.exampleLedgerState)
+      & nesEsL
+        . curPParamsEpochStateL
+        . ppMaxEndorserBlockReferencesSizeL
+        .~ 512
+          * 1024
+
+{-------------------------------------------------------------------------------
+  Dijkstra-specific EB/header matching
+-------------------------------------------------------------------------------}
+
+-- | Check that a Dijkstra block header's EB announcement is consistent with
+-- the optional endorser block: present and matching when given 'Just', absent
+-- when given 'Nothing'.
+dijkstraEbMatchesHeader :: Header StandardDijkstraBlock -> Maybe ForgedLeiosEb -> Bool
+dijkstraEbMatchesHeader hdr Nothing =
+  announcement' hdr == SNothing
+dijkstraEbMatchesHeader hdr (Just ForgedLeiosEb{forgedLeiosEbBody}) =
+  announcement' hdr
+    == SJust
+      EbReferencesAnnouncement
+        { ebReferencesAnnouncementHash = hashLeiosEb forgedLeiosEbBody
+        , ebReferencesAnnouncementSize = encodeLeiosEbSize forgedLeiosEbBody
+        }
+
+announcement' :: Header StandardDijkstraBlock -> StrictMaybe EbReferencesAnnouncement
+announcement' = Leios.hbrEbReferencesAnnouncement . rawHeaderBody
 
 rawHeaderBody :: Header StandardDijkstraBlock -> Leios.HeaderBodyRaw StandardCrypto
 rawHeaderBody = getMemoRawType . Leios.headerBody . shelleyHeaderRaw
+
+{-------------------------------------------------------------------------------
+  Test data
+-------------------------------------------------------------------------------}
 
 exampleTx :: GenTx StandardDijkstraBlock
 exampleTx = example Examples.exampleGenTx
