@@ -1485,6 +1485,9 @@ test-suite consensus-diffusion-test
     Test.Consensus.HardFork.Combinator.B
     Test.Consensus.Leios.Environment
     Test.Consensus.Leios.LeiosNotify
+    Test.Consensus.Leios.LeiosNotify.Codec
+    Test.Consensus.Leios.LeiosNotify.Node
+    Test.Consensus.Leios.LeiosNotify.Protocol
     Test.Consensus.Leios.NodeUnderTest
     Test.Consensus.Leios.TestBlock
     Test.Consensus.Network.AnchoredFragment.Extras
