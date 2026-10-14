@@ -16,12 +16,13 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , tryReadTChan
   )
 import Control.DeepSeq (force)
-import Control.Exception (bracket)
+import Control.Exception (bracket, try)
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
+import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time.Clock (DiffTime)
@@ -50,6 +51,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , withReader
   , withWriter
   )
+import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import Test.QuickCheck
@@ -58,11 +60,15 @@ import Test.QuickCheck
   , chooseInt
   , conjoin
   , counterexample
+  , elements
   , forAll
   , forAllBlind
   , forAllShrinkShow
+  , frequency
   , ioProperty
+  , listOf
   , shrink
+  , shrinkList
   , sublistOf
   , tabulate
   , vector
@@ -76,7 +82,12 @@ tests :: TestTree
 tests =
   testGroup "LeiosDB" $
     forEachImplementation mkTestGroups
-      <> [ testGroup
+      <> [ testProperty "the two implementations agree on what a reader sees" prop_implementationsAgree
+         , -- InMemory only: on SQLite a failed write also stops the writer, which
+           -- is linked to the thread that opened the database.
+           testCase "InMemory: writing a body for an unwritten point fails, as on SQLite" $
+             withFreshDb InMemory test_ebBodyWithoutPointFails
+         , testGroup
              "truncateLeiosDbAfterSlot"
              [ testCase "drops the EBs announced after the slot, with their bodies" $
                  withFreshSQLiteFile test_truncateDropsEbsAfterSlot
@@ -201,6 +212,10 @@ mkTestGroups impl =
       , testCase "multiple notifications" $ withFreshDb impl test_multipleNotifications
       , testCase "no offerBlockTxs before last update" $ withFreshDb impl test_noOfferBlockTxsBeforeComplete
       , testCase "offerBlockTxs on last update" $ withFreshDb impl test_offerBlockTxs
+      , testCase "a body whose txs are all held completes when it lands" $
+          withFreshDb impl test_bodyOfHeldTxsCompletes
+      , testCase "offerBlockTxs when body arrives after all txs" $
+          withFreshDb impl test_offerBlockTxsWhenBodyArrivesAfterTxs
       , testCase "no re-notification of completed EBs" $ withFreshDb impl test_noReNotifyCompletedEbs
       , testCase "no re-notification when re-inserting an EB's own tx" $
           withFreshDb impl test_noReNotifyOnRelatedTxReinsert
@@ -707,6 +722,66 @@ test_multipleSlotsSameHash db = do
  where
   setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
 
+-- | A body whose transactions another endorser block's closure already holds
+-- completes when it lands, without any transaction being written for it.
+test_bodyOfHeldTxsCompletes :: LeiosDbHandle IO -> IO ()
+test_bodyOfHeldTxsCompletes db = do
+  let pointA = mkTestPoint (SlotNo 1) 1
+      ebA = mkTestEb 3
+      -- the first two of A's transactions
+      pointB = mkTestPoint (SlotNo 2) 2
+      ebB = mkTestEb 2
+      txBytes (_txHash, size) = BS.replicate (fromIntegral size) 0
+  withRW db $ \con -> do
+    rwInsertEbPoint con pointA (encodeLeiosEbSize ebA)
+    void $ rwInsertEbBody con pointA ebA
+    _ <- rwInsertTxs con [(fst tx, txBytes tx) | tx <- V.toList (leiosEbTxs ebA)]
+    rwInsertEbPoint con pointB (encodeLeiosEbSize ebB)
+    completed <- rwInsertEbBody con pointB ebB
+    completed @?= [pointB]
+    closure <- rwLookupEbClosure con (pointEbHash pointB)
+    closure @?= Just [(fst tx, txBytes tx) | tx <- V.toList (leiosEbTxs ebB)]
+
+-- | A body can land after the transactions it references, once another
+-- endorser block's body has referenced them. Its closure is then complete
+-- the moment it lands, so both its notifications follow at once.
+test_offerBlockTxsWhenBodyArrivesAfterTxs :: LeiosDbHandle IO -> IO ()
+test_offerBlockTxsWhenBodyArrivesAfterTxs db = do
+  chan <- subscribeEbNotifications db
+  let pointA = mkTestPoint (SlotNo 1) 1
+      pointB = mkTestPoint (SlotNo 2) 2
+      -- The same transactions under two hashes.
+      eb = mkTestEb 3
+      txs = [(txHash, BS.replicate (fromIntegral size) 0) | (txHash, size) <- V.toList (leiosEbTxs eb)]
+      next =
+        atomically (tryReadTChan chan)
+          >>= maybe (assertFailure "expected a notification") pure
+  withRW db $ \con -> do
+    rwInsertEbPoint con pointA (encodeLeiosEbSize eb)
+    void $ rwInsertEbBody con pointA eb
+    assertOfferBlock pointA =<< next
+    _ <- rwInsertTxs con txs
+    assertOfferBlockTxs pointA =<< next
+    rwInsertEbPoint con pointB (encodeLeiosEbSize eb)
+    void $ rwInsertEbBody con pointB eb
+    assertOfferBlock pointB =<< next
+    assertOfferBlockTxs pointB =<< next
+    atomically (tryReadTChan chan) >>= \case
+      Nothing -> pure ()
+      Just _ -> assertFailure "expected no further notification"
+
+-- | A body can only be written for a point already written, by 'writeEbPoint'
+-- on the announcement path.
+test_ebBodyWithoutPointFails :: LeiosDbHandle IO -> IO ()
+test_ebBodyWithoutPointFails db = withRW db $ \con -> do
+  result <- tryDb $ rwInsertEbBody con (mkTestPoint (SlotNo 1) 1) (mkTestEb 2)
+  case result of
+    Left _ -> pure ()
+    Right _ -> assertFailure "writeEbBody succeeded for a point that was never written"
+ where
+  tryDb :: IO a -> IO (Either LeiosDbException a)
+  tryDb = try
+
 -- * Test utilities
 
 -- | Assert that a notification is AcquiredEb with the expected point.
@@ -936,3 +1011,109 @@ test_deleteDanglingTxs volDbPath _immDbPath db = do
     void $ rwInsertEbBody con probePoint probeEb
     probeClosure <- rwLookupEbClosure con (pointEbHash probePoint)
     probeClosure @?= Nothing
+
+-- * The two implementations agree
+
+-- | A write to the database.
+data Op
+  = OpPoint LeiosPoint
+  | OpBody LeiosPoint
+  | OpTxs [TxHash]
+  deriving Show
+
+-- | What each endorser block's body is, by its hash: the same hash always names
+-- the same body, as it would on the wire.
+type Bodies = Map.Map EbHash LeiosEb
+
+-- | Property: running the same writes against both implementations, a reader
+-- sees the same in each, and each write completes the same endorser blocks.
+--
+-- The node runs on SQLite and its tests run on the in-memory implementation, so
+-- those tests say something about the node only as far as the two agree.
+prop_implementationsAgree :: Property
+prop_implementationsAgree =
+  forAll genBodies $ \bodies ->
+    forAllShrinkShow (genOps bodies) (shrinkList (const [])) show $ \ops ->
+      ioProperty $ do
+        inMemory <- withFreshDb InMemory $ \db -> observe db bodies ops
+        sqlite <- withFreshDb SQLite $ \db -> observe db bodies ops
+        pure $ inMemory === sqlite
+
+-- | Three endorser blocks over a pool of eight transactions, so that they share
+-- some. Sometimes a reference misstates its transaction's size.
+genBodies :: Gen Bodies
+genBodies =
+  fmap Map.fromList $
+    forM [1 .. 3] $ \seed -> do
+      offsets <- chooseInt (1, 4) >>= \n -> replicateM n (chooseInt (1, 8))
+      refs <- forM offsets $ \i -> do
+        let size = fromIntegral (BS.length (poolTxBytes i))
+        misstate <- frequency [(9, pure False), (1, pure True)]
+        pure (mkTestTxHash (fromIntegral i), if misstate then size + 1 else size)
+      pure (mkTestEbHash seed, MkLeiosEb (V.fromList refs))
+
+genOps :: Bodies -> Gen [Op]
+genOps bodies = listOf genOp
+ where
+  genPointOf = MkLeiosPoint <$> (SlotNo . fromIntegral <$> chooseInt (1, 4)) <*> elements (Map.keys bodies)
+  genOp =
+    frequency
+      [ (2, OpPoint <$> genPointOf)
+      , (2, OpBody <$> genPointOf)
+      , (3, OpTxs . map (mkTestTxHash . fromIntegral) <$> sublistOf [1 .. 8 :: Int])
+      ]
+
+-- | A transaction's bytes, by its index in the pool.
+poolTxBytes :: Int -> BS.ByteString
+poolTxBytes i = BS.replicate (10 + i) (fromIntegral i)
+
+-- | Run the writes, then read back everything a reader can see of each
+-- endorser block. The writes meet the preconditions of 'writeEbBody' and
+-- 'writeTxs', and a body is written only once per point, since the node never
+-- does otherwise.
+observe ::
+  LeiosDbHandle IO ->
+  Bodies ->
+  [Op] ->
+  IO
+    ( [CompletedEbs]
+    , [ ( [(TxHash, BytesSize)]
+        , Maybe [(TxHash, BS.ByteString)]
+        , [(Int, TxHash, Maybe BS.ByteString)]
+        )
+      ]
+    )
+observe db bodies ops = withRW db $ \rw -> do
+  completed <- go rw [] [] ops
+  seen <- forM (Map.toList bodies) $ \(ebHash, eb) ->
+    (,,)
+      <$> rwLookupEbBody rw ebHash
+      <*> rwLookupEbClosure rw ebHash
+      <*> rwBatchRetrieveTxs rw ebHash [0 .. V.length (leiosEbTxs eb)]
+  pure (completed, seen)
+ where
+  go _rw _points _bodied [] = pure []
+  go rw points bodied (op : rest) = case op of
+    OpPoint point -> do
+      rwInsertEbPoint rw point (encodeLeiosEbSize (bodies Map.! pointEbHash point))
+      go rw (point : points) bodied rest
+    OpBody point
+      | point `elem` points && point `notElem` bodied -> do
+          done <- rwInsertEbBody rw point (bodies Map.! pointEbHash point)
+          (sortOn show done :) <$> go rw points (point : bodied) rest
+      | otherwise -> go rw points bodied rest
+    OpTxs txHashes -> do
+      let referenced =
+            [ txHash
+            | point <- bodied
+            , (txHash, _size) <- V.toList (leiosEbTxs (bodies Map.! pointEbHash point))
+            ]
+      done <-
+        rwInsertTxs
+          rw
+          [ (txHash, poolTxBytes i)
+          | (i, txHash) <- [(i, mkTestTxHash (fromIntegral i)) | i <- [1 .. 8]]
+          , txHash `elem` txHashes
+          , txHash `elem` referenced
+          ]
+      (sortOn show done :) <$> go rw points bodied rest

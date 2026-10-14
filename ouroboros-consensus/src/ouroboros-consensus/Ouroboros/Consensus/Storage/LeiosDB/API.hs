@@ -111,10 +111,16 @@ data LeiosDbWriter m = LeiosDbWriter
   --
   -- The returned EB is only used for tracing and too broad: it can actually only
   -- be this same EB which got completed.
+  --
+  -- Its point must already have been written, by 'writeEbPoint'.
   , writeTxs ::
       HasCallStack =>
       [(TxHash, ByteString)] -> m (Promise m CompletedEbs)
   -- ^ Persist tx bodies. Returns the EBs whose closure this completed.
+  --
+  -- Some EB body already written must reference each tx, though bodies written
+  -- later may reference it too. The SQLite implementation may garbage-collect a
+  -- tx that no written body references.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LeiosDbWriter" (LeiosDbWriter m)
 
