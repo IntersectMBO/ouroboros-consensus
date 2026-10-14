@@ -143,6 +143,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader, withReader)
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
@@ -343,6 +344,7 @@ data Handlers m addr blk = Handlers
   , hLeiosFetchServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
+      LeiosDbReader m ->
       LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
   }
 
@@ -505,7 +507,7 @@ mkHandlers
             controlMessageSTM
       , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer getLeiosNotifyLog
       , hLeiosFetchClient = \_version controlMessageSTM _peer -> leiosFetchClient controlMessageSTM
-      , hLeiosFetchServer = \_version _peer -> leiosFetchServer
+      , hLeiosFetchServer = \_version _peer reader -> leiosFetchServer reader
       }
 
 {-------------------------------------------------------------------------------
@@ -947,7 +949,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
   Apps{..}
  where
   (chainSyncRng, chainSyncRng') = splitGen rng
-  NodeKernel{getDiffusionPipeliningSupport} = kernel
+  NodeKernel{getDiffusionPipeliningSupport, getLeiosDB} = kernel
 
   aChainSyncClient ::
     NodeToNodeVersion ->
@@ -1396,13 +1398,15 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     ResponderContext{rcConnectionId = them}
     channel = do
       labelThisThread "LeiosFetchServer"
-      runPeerWithLimits
-        nullTracer
-        (cLeiosFetchCodec (mkCodecs version))
-        blLeiosFetch
-        timeLimitsLeiosFetch
-        channel
-        (hLeiosFetchServer version them)
+      -- A reader of its own, since one must not be shared across threads.
+      withReader getLeiosDB $ \reader ->
+        runPeerWithLimits
+          nullTracer
+          (cLeiosFetchCodec (mkCodecs version))
+          blLeiosFetch
+          timeLimitsLeiosFetch
+          channel
+          (hLeiosFetchServer version them reader)
 
 {-------------------------------------------------------------------------------
   Projections from 'Apps'

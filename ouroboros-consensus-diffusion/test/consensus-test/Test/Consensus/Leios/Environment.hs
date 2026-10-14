@@ -55,7 +55,10 @@ import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (Header, Point, pattern BlockPoint, pattern GenesisPoint)
 import Ouroboros.Consensus.Config (configCodec)
 import Ouroboros.Consensus.Leios.Types (LeiosEb, LeiosPoint, LeiosTx, LeiosVote)
-import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server (leiosFetchServerPeerRefusing)
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
+  ( LeiosFetchRequestHandler (..)
+  , leiosFetchServerPeer
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type (LeiosFetch)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type (LeiosNotify)
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum)
@@ -371,4 +374,7 @@ envLeiosFetchCodec nut = NTN.cLeiosFetchCodec (envCodecs nut maxBound)
 -- | A LeiosFetch server that disconnects a client that sends any request.
 refusingLeiosFetchServer :: NodeUnderTest (IOSim s) -> Channel (IOSim s) ByteString -> IOSim s ()
 refusingLeiosFetchServer nut chan =
-  fst <$> runPeer nullTracer (envLeiosFetchCodec nut) chan leiosFetchServerPeerRefusing
+  fst <$> runPeer nullTracer (envLeiosFetchCodec nut) chan (leiosFetchServerPeer refuse)
+ where
+  refuse = MkLeiosFetchRequestHandler $ \_request ->
+    throwIO $ userError "the environment's LeiosFetch server serves nothing"

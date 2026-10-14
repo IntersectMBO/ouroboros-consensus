@@ -5,24 +5,39 @@
 -- | The node's LeiosFetch client and server, and what the node-to-node wiring
 -- needs to run them.
 module Ouroboros.Consensus.Network.NodeToNode.LeiosFetch
-  ( leiosFetchClient
+  ( ExnLeiosInvalidRequest (..)
+  , leiosFetchClient
   , leiosFetchMiniProtocol
   , leiosFetchServer
   ) where
 
 import Cardano.Network.NodeToNode (addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
-import Ouroboros.Consensus.Leios.Types (LeiosEb, LeiosPoint, LeiosTx)
+import Data.Either (partitionEithers)
+import qualified Data.IntMap.Strict as IntMap
+import qualified Data.Vector.Strict as V
+import Ouroboros.Consensus.Leios.Types
+  ( LeiosEb (..)
+  , LeiosPoint (..)
+  , LeiosTx (..)
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
   ( LeiosFetchClientPeer
   , leiosFetchClientPeerIdle
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
-  ( LeiosFetchServerPeer
-  , leiosFetchServerPeerRefusing
+  ( LeiosFetchRequestHandler (..)
+  , LeiosFetchServerPeer
+  , leiosFetchServerPeer
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
+  ( Message (..)
+  , TxBitmaps
+  , bitmapOffsets
   )
 import Ouroboros.Consensus.Network.LeiosFetch (leiosFetchMiniProtocolNum, maxLeiosFetchIngressBytes)
-import Ouroboros.Consensus.Util.IOLike (MonadSTM (..), MonadThrow)
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbReader (..))
+import Ouroboros.Consensus.Util.IOLike (Exception, MonadSTM (..), MonadThrow (..))
 import Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
 import Ouroboros.Network.Mux
   ( MiniProtocol (..)
@@ -45,11 +60,47 @@ leiosFetchClient controlMessageSTM =
       Quiesce -> retry
       Terminate -> pure ()
 
--- | The node's LeiosFetch server, which has nothing to serve yet.
+-- | The node's LeiosFetch server, which serves endorser blocks and their
+-- transactions from the LeiosDB, through the connection's own reader.
 leiosFetchServer ::
   MonadThrow m =>
+  LeiosDbReader m ->
   LeiosFetchServerPeer LeiosPoint LeiosEb LeiosTx m ()
-leiosFetchServer = leiosFetchServerPeerRefusing
+leiosFetchServer reader =
+  leiosFetchServerPeer $ MkLeiosFetchRequestHandler $ \case
+    MsgLeiosBlockRequest point -> MsgLeiosBlock <$> serveEb reader point
+    MsgLeiosBlockTxsRequest point bitmaps -> MsgLeiosBlockTxs <$> serveTxs reader point bitmaps
+
+serveEb :: MonadThrow m => LeiosDbReader m -> LeiosPoint -> m LeiosEb
+serveEb reader point =
+  -- A stored body is never empty.
+  lookupEbBody reader (pointEbHash point) >>= \case
+    [] -> throwIO $ ExnLeiosUnknownBlockRequested point
+    refs -> pure $ MkLeiosEb $ V.fromListN (length refs) refs
+
+serveTxs :: MonadThrow m => LeiosDbReader m -> LeiosPoint -> TxBitmaps -> m (V.Vector LeiosTx)
+serveTxs reader point bitmaps = do
+  rows <- batchRetrieveTxs reader (pointEbHash point) offsets
+  let held = IntMap.fromList [(offset, MkLeiosTx bytes) | (offset, _txHash, Just bytes) <- rows]
+  case partitionEithers [maybe (Left offset) Right (IntMap.lookup offset held) | offset <- offsets] of
+    ([], txs) -> pure $ V.fromListN (length txs) txs
+    (missing, _txs) -> throwIO $ ExnLeiosUnknownTxsRequested point missing
+ where
+  offsets = bitmapOffsets bitmaps
+
+-- | Thrown by the node's LeiosFetch server, which disconnects a client that
+-- requests what the node does not hold.
+--
+-- TODO Disconnect it also for requesting what the node never offered it.
+data ExnLeiosInvalidRequest
+  = -- | An endorser block whose body the node does not hold.
+    ExnLeiosUnknownBlockRequested !LeiosPoint
+  | -- | Offsets into an endorser block that it does not have, or whose
+    -- transactions the node does not hold.
+    ExnLeiosUnknownTxsRequested !LeiosPoint ![Int]
+  deriving Show
+
+instance Exception ExnLeiosInvalidRequest
 
 -- | LeiosFetch as a node-to-node mini-protocol.
 leiosFetchMiniProtocol ::
