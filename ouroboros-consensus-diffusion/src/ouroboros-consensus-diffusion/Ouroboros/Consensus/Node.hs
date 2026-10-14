@@ -105,7 +105,7 @@ import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import qualified LeiosDemoLogic as Leios
-import LeiosDemoTypes (SerializedEbBody)
+import LeiosDemoTypes (ProtVerParity, SerializedEbBody)
 import LeiosTxCache
   ( LeiosTxCache
   , defaultLeiosTxCacheShift
@@ -961,7 +961,7 @@ mkNodeKernelArgs ::
   Maybe Mempool.MempoolTimeoutConfig ->
   TxSubmissionInitDelay ->
   LeiosDbHandle m ->
-  LeiosTxCache m () () SerializedEbBody ->
+  LeiosTxCache m () ProtVerParity SerializedEbBody ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry

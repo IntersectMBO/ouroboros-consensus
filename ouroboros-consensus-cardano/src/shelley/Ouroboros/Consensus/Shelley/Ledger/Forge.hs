@@ -12,6 +12,7 @@
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import Cardano.Crypto.Leios (LeiosCert)
+import Cardano.Ledger.Core (ppProtocolVersionL)
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
   ( BlockBody
@@ -41,9 +42,10 @@ import LeiosDemoTypes
   , forgeLeiosEb
   , hashLeiosEb
   , maxLeiosEbBytesSize
+  , protVerParity
   , toCodecEbAnnouncement
   )
-import Lens.Micro ((&), (.~))
+import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -57,6 +59,10 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
   )
 import Ouroboros.Consensus.Shelley.Ledger.Integrity
+import Ouroboros.Consensus.Shelley.Ledger.Ledger
+  ( Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState)
+  , getPParams
+  )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
@@ -169,7 +175,14 @@ forgeShelleyBlock hotKey cbl ForgeBlockLeiosArgs{fbLeiosTracer} ForgeBlockArgs{.
   mkEb :: m (Maybe (ForgedLeiosEb, EbAnnouncement))
   mkEb = case (Typeable.eqT @era @DijkstraEra, nonEmpty (fmap extractTx fbEbTxs)) of
     (Just Refl, Just ebTxs) -> do
-      let forgedEb = forgeLeiosEb fbCurrentSlotNo ebTxs
+      let forgedEb =
+            forgeLeiosEb
+              fbCurrentSlotNo
+              -- the mempool revalidated them against this very state
+              ( protVerParity
+                  (getPParams (tickedShelleyLedgerState fbCurrentTickedLedgerState) ^. ppProtocolVersionL)
+              )
+              ebTxs
           ebHash = hashLeiosEb forgedEb.body
           -- An EB over the codec's message limit never diffuses: peers drop
           -- the connection and we would not learn why, since we skip

@@ -44,6 +44,7 @@ import LeiosDemoTypes
   , deserializeLeiosTx
   , fromCodecEbAnnouncement
   , hashLeiosTx
+  , protVerParity
   , serializeLeiosTx
   )
 import Lens.Micro ((.~), (^.))
@@ -87,10 +88,12 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
   , Ticked (..)
+  , getPParams
   , shelleyLedgerGlobals
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( GenTx (ShelleyTx)
+  , Validated (ShelleyValidatedTx)
   , mkShelleyTx
   , mkShelleyValidatedTx
   )
@@ -160,6 +163,12 @@ instance
         tx
    where
     innerSt = tickedShelleyLedgerState (stowLedgerTables st)
+
+  leiosProtVerParity _cfg st =
+    protVerParity $ getPParams (tickedShelleyLedgerState st) ^. Core.ppProtocolVersionL
+
+  leiosValidatedTxProtVerParity (ShelleyValidatedTx _ vtx) =
+    protVerParity (SL.getValidatedTxProtocolVersion vtx)
 
   leiosClosureTxKeySets = getTransactionKeySets
 

@@ -69,6 +69,7 @@ import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
   ( LeiosOutstanding
   , LeiosPeerVars
+  , ProtVerParity
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
@@ -275,7 +276,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   -- ^ Node-wide EB-announcement state
   , getLeiosTxCache ::
-      LeiosTxCache m () () Leios.SerializedEbBody
+      LeiosTxCache m () ProtVerParity Leios.SerializedEbBody
   -- ^ Shadow in-memory tx-cache (see 'LeiosTxCache'); maintained but
   -- not yet consulted, so it changes no observable behavior.
   }
@@ -314,7 +315,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   -- (forge loop, leios fetch logic, LeiosNotify / LeiosFetch handlers)
   -- opens its own connection from this handle. 'LeiosDbReader' is
   -- documented as not thread-safe, so connections must not be shared.
-  , leiosTxCache :: LeiosTxCache m () () Leios.SerializedEbBody
+  , leiosTxCache :: LeiosTxCache m () ProtVerParity Leios.SerializedEbBody
   -- ^ The in-memory tx-presence index. Created in "Ouroboros.Consensus.Node"
   -- (before the ChainDB, so the ChainDB GC can prune it just before the LeiosDb)
   -- and threaded through here.
@@ -783,7 +784,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosCentralState ::
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   , leiosTxCache ::
-      LeiosTxCache m () () Leios.SerializedEbBody
+      LeiosTxCache m () ProtVerParity Leios.SerializedEbBody
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m

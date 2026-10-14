@@ -93,6 +93,7 @@ import LeiosDemoTypes
   , LeiosClosureError (..)
   , LeiosExtValidationError (..)
   , LeiosPoint (..)
+  , ProtVerParity
   , RbHash
   , TxHash
   , announcementLeiosPoint
@@ -869,6 +870,17 @@ class ResolveLeiosBlock blk where
     Validated (GenTx blk)
   assumeValidatedClosureTx _ _ _ _ =
     error "assumeValidatedClosureTx: not Leios-enabled for this block type"
+
+  -- | The parity of the protocol version txs are validated under in this
+  -- state; a cached validation under the other parity no longer holds.
+  leiosProtVerParity :: LedgerConfig blk -> TickedLedgerState blk mk -> ProtVerParity
+  leiosProtVerParity _ _ =
+    error "leiosProtVerParity: not Leios-enabled for this block type"
+
+  -- | The parity of the protocol version a mempool tx was validated under.
+  leiosValidatedTxProtVerParity :: Validated (GenTx blk) -> ProtVerParity
+  leiosValidatedTxProtVerParity _ =
+    error "leiosValidatedTxProtVerParity: not Leios-enabled for this block type"
 
   -- | The ledger keys read by a closure tx — what 'forkerReadTables' needs
   -- to load before 'applyLeiosClosure' can run. Leios-enabled instances

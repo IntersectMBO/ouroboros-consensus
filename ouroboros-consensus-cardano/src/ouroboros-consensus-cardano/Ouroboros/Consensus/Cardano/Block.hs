@@ -1654,6 +1654,15 @@ instance
       -- ever reach here (see 'resolveLeiosClosure' above).
       error "assumeValidatedClosureTx: closure tx or ledger state from a non-Dijkstra era"
 
+  leiosProtVerParity cfg st = case matchTickedDijkstra cfg st of
+    Just (dijkstraCfg, dijkstraSt) -> leiosProtVerParity dijkstraCfg dijkstraSt
+    Nothing -> error "leiosProtVerParity: ledger state from a non-Dijkstra era"
+
+  leiosValidatedTxProtVerParity vtx = case vtx of
+    HardForkValidatedGenTx (OneEraValidatedGenTx (TagDijkstra (WrapValidatedGenTx inner))) ->
+      leiosValidatedTxProtVerParity inner
+    _ -> error "leiosValidatedTxProtVerParity: tx from a non-Dijkstra era"
+
   leiosClosureTxKeySets tx = case tx of
     GenTxDijkstra inner ->
       injectLedgerTables

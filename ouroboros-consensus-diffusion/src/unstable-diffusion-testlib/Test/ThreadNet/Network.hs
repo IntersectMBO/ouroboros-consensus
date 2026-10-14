@@ -770,7 +770,7 @@ runThreadNetwork
       CoreNodeId ->
       m
         ( LeiosDB.LeiosDbHandle m
-        , LeiosTxCache m () () LeiosDemoTypes.SerializedEbBody
+        , LeiosTxCache m () LeiosDemoTypes.ProtVerParity LeiosDemoTypes.SerializedEbBody
         , ChainDbArgs Identity m blk
         )
     mkArgs

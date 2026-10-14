@@ -60,8 +60,8 @@ import Cardano.Crypto.Leios
   )
 import Cardano.Crypto.PackedBytes (PackedBytes, packByteString, unpackPinnedBytes)
 import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.BaseTypes (Milliseconds32 (..))
-import Cardano.Ledger.Binary (DecoderError, decodeFullAnnotator)
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), ProtVer (..))
+import Cardano.Ledger.Binary (DecoderError, decodeFullAnnotator, getVersion64)
 import qualified Cardano.Ledger.Binary as Ledger
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Core (PParams, Tx, TxLevel (TopTx), eraProtVerLow)
@@ -1245,6 +1245,18 @@ deserializeLeiosTx =
     (fmap MkDijkstraTx <$> decodeDijkstraTopTxInBlock)
     . BSL.fromStrict
 
+-- | The protocol version a tx was validated under, modulo 2. A tx stays
+-- cached for less than an epoch, so it sees at most one version change, and the
+-- parity tells whether its validation still holds.
+data ProtVerParity = EvenProtVer | OddProtVer
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+protVerParity :: ProtVer -> ProtVerParity
+protVerParity pv
+  | even (getVersion64 (pvMajor pv)) = EvenProtVer
+  | otherwise = OddProtVer
+
 -- * Endorser Block
 
 -- | A newly forged 'LeiosEb' that includes the whole closure of endorsed
@@ -1253,13 +1265,14 @@ data ForgedLeiosEb = ForgedLeiosEb
   { point :: !LeiosPoint
   , body :: !LeiosEb
   , txClosure :: ![(TxHash, ByteString)]
+  , txsValidatedUnder :: !ProtVerParity
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
-forgeLeiosEb :: SlotNo -> NonEmpty (Tx TopTx DijkstraEra) -> ForgedLeiosEb
-forgeLeiosEb slot txs =
-  ForgedLeiosEb{point, body, txClosure}
+forgeLeiosEb :: SlotNo -> ProtVerParity -> NonEmpty (Tx TopTx DijkstraEra) -> ForgedLeiosEb
+forgeLeiosEb slot txsValidatedUnder txs =
+  ForgedLeiosEb{point, body, txClosure, txsValidatedUnder}
  where
   point = MkLeiosPoint slot (hashLeiosEb body)
 

@@ -23,6 +23,7 @@ import LeiosDemoTypes
   ( BytesSize
   , EbHash
   , FetchArrivalBytes
+  , ProtVerParity (..)
   , RbHash (..)
   , TxHash
   , TxLocation
@@ -36,6 +37,7 @@ import Test.Tasty.QuickCheck
   , Property
   , QuickCheckTests (..)
   , chooseInt
+  , elements
   , forAll
   , forAllShrink
   , frequency
@@ -60,7 +62,7 @@ tests =
         testProperty "hash-table handle == pure handle, with evictOlderThan" prop_equivEvict
     ]
 
-type H = LeiosTxCache IO () () TestBody
+type H = LeiosTxCache IO () ProtVerParity TestBody
 
 -- | A body carrying its tx hashes.
 newtype TestBody = TestBody [TxHash]
@@ -85,7 +87,7 @@ data Op
   = OpAnnounce !Word64 !Word8 !Word8
   | OpBody !Word8 ![Word8]
   | OpUnapplied ![Word8]
-  | OpApplied ![Word8]
+  | OpApplied !ProtVerParity ![Word8]
   | OpEvict !Word64
   | OpSetLocs !Word8 ![(Int, Word8)]
   deriving Show
@@ -102,8 +104,8 @@ applyOp h op = case op of
   OpUnapplied ts ->
     arrival
       <$> withLockedInsertUnappliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) (szOf t) ()) z ts)
-  OpApplied ts ->
-    withLockedInsertAppliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) ()) z ts)
+  OpApplied parity ts ->
+    withLockedInsertAppliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) parity) z ts)
       >> pure (Nothing, Nothing)
   OpSetLocs e offTxs ->
     setTxLocations h (ebhOf e) [(off, txhOf t) | (off, t) <- offTxs]
@@ -117,7 +119,7 @@ applyOp h op = case op of
 szOf :: Word8 -> BytesSize
 szOf t = 1 + fromIntegral t
 
-sweepLookup :: H -> [Word8] -> IO [Maybe (Either () ())]
+sweepLookup :: H -> [Word8] -> IO [Maybe (Either () ProtVerParity)]
 sweepLookup h txs = withLookupTx h (\look -> mapM (look . txhOf) txs)
 
 sweepBody :: H -> [Word8] -> IO [Maybe TestBody]
@@ -160,7 +162,7 @@ genOps txDomain = do
       [ (3, OpAnnounce <$> gen 1 300 <*> gen 1 3 <*> gen 1 20)
       , (2, OpBody <$> gen 1 20 <*> listOf genTx)
       , (2, OpUnapplied <$> listOf genTx)
-      , (2, OpApplied <$> listOf genTx)
+      , (2, OpApplied <$> elements [EvenProtVer, OddProtVer] <*> listOf genTx)
       , (3, OpSetLocs <$> gen 1 20 <*> listOf ((,) <$> chooseInt (0, 50) <*> genTx))
       ]
   genTx :: Gen Word8

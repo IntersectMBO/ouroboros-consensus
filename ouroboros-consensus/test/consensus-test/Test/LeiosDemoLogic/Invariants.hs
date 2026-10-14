@@ -680,7 +680,7 @@ applyCmd ::
     (IOSim s)
     (Announcements.CentralState (IOSim s) (PeerId Int) (AnnouncingHeader LeiosTestBlock)) ->
   LeiosDb.LeiosDbWriter (IOSim s) ->
-  LeiosTxCache (IOSim s) () () Leios.SerializedEbBody ->
+  LeiosTxCache (IOSim s) () Leios.ProtVerParity Leios.SerializedEbBody ->
   (MVar (IOSim s) (LeiosOutstanding Int), MVar (IOSim s) ()) ->
   LeiosPeerVars (IOSim s) ->
   PeerId Int ->
@@ -783,7 +783,7 @@ applyCmd centralVar conn txCache kv peerVars peerId = \case
       txCache
       conn
       dummySystemTime
-      (ForgedTxs point eb $ V.fromList $ map leiosTxOf ids)
+      (ForgedTxs point eb (V.fromList $ map leiosTxOf ids) Leios.EvenProtVer)
     pure []
   Decide slot -> do
     outstanding <- readMVar (fst kv)

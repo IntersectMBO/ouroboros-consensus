@@ -132,6 +132,7 @@ import LeiosDemoTypes
   , LeiosEb (..)
   , LeiosPoint (..)
   , LeiosTx (MkLeiosTx)
+  , ProtVerParity (..)
   , RbHash (MkRbHash)
   , TxHash
   , Weight
@@ -523,6 +524,10 @@ instance ResolveLeiosBlock LeiosTestBlock where
   leiosClosureTxKeySets = getTransactionKeySets
 
   assumeValidatedClosureTx _ _ _ = ValidatedLeiosTestGenTx
+
+  -- No protocol versions here: every validation holds.
+  leiosProtVerParity _ _ = EvenProtVer
+  leiosValidatedTxProtVerParity _ = EvenProtVer
 
 -- | The committee lives in the ledger view, which the forecast computes from
 -- the ledger config; the ledger /state/ carries none, so the voting-path

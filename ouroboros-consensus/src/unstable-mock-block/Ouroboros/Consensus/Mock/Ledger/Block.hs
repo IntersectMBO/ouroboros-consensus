@@ -90,7 +90,7 @@ import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.TypeLits (KnownNat)
-import LeiosDemoTypes (LeiosClosureError (..))
+import LeiosDemoTypes (LeiosClosureError (..), ProtVerParity (..))
 import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -159,6 +159,9 @@ instance
       Just txs -> Right $ fmap (fmap (deserialise . Lazy.fromStrict)) txs
 
   assumeValidatedClosureTx _ _ _ = ValidatedSimpleGenTx
+
+  -- No protocol versions here: every validation holds.
+  leiosProtVerParity _ _ = EvenProtVer
 
 instance HasLeiosVoting (SimpleBlock' c ext ext')
 

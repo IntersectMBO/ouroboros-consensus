@@ -179,6 +179,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
   , leiosTxBytesOfGenTx
+  , leiosValidatedTxProtVerParity
   )
 import Ouroboros.Consensus.Storage.LeiosDB
   ( LeiosDbHandle (subscribeEbNotifications)
@@ -945,7 +946,11 @@ mkHandlers
                   systemTime
                   ( Leios.mkMempoolPull
                       (atomically (getLeiosTxIndex getMempool))
-                      (leiosTxBytesOfGenTx . txForgetValidated)
+                      ( \vtx ->
+                          (,)
+                            <$> leiosTxBytesOfGenTx (txForgetValidated vtx)
+                            <*> pure (leiosValidatedTxProtVerParity vtx)
+                      )
                   )
                   (Leios.MkPeerId peer)
                   reqVar
