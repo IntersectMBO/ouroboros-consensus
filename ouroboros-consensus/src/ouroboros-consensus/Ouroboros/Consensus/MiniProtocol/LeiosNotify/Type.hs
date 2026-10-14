@@ -125,6 +125,12 @@ instance StateTokenI StDone where stateToken = SingDone
 
 instance Protocol (LeiosNotify point announcement vote) where
   data Message (LeiosNotify point announcement vote) from to where
+    MsgDone ::
+      Message (LeiosNotify point announcement vote) StQuit StDone
+    MsgQuit ::
+      Message (LeiosNotify point announcement vote) StIdle StQuit
+    MsgCanceled ::
+      Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosNotificationRequestNext ::
       Message (LeiosNotify point announcement vote) StIdle StBusy
     MsgLeiosBlockAnnouncement ::
@@ -148,12 +154,6 @@ instance Protocol (LeiosNotify point announcement vote) where
     MsgLeiosVotes ::
       -- At most 'maxLeiosVotesPerMessage'; the codec rejects more.
       NonEmpty vote ->
-      Message (LeiosNotify point announcement vote) StBusy StIdle
-    MsgDone ::
-      Message (LeiosNotify point announcement vote) StQuit StDone
-    MsgQuit ::
-      Message (LeiosNotify point announcement vote) StIdle StQuit
-    MsgCanceled ::
       Message (LeiosNotify point announcement vote) StBusy StIdle
 
   type StateAgency StIdle = ClientAgency
