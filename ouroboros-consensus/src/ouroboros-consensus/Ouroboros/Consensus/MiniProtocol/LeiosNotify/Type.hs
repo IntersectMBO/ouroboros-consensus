@@ -190,15 +190,15 @@ deriving instance
 maxLeiosVotesPerMessage :: Int
 maxLeiosVotesPerMessage = 16
 
--- | The most bytes one reply may take.
+-- | The most bytes one reply may take, 1.5 KiB.
 --
--- A vote encodes to at most 97 bytes, so a 'MsgLeiosVotes' of
--- 'maxLeiosVotesPerMessage' votes takes at most 1555 bytes. An announcing
+-- A vote encodes to at most 88 bytes, so a 'MsgLeiosVotes' of
+-- 'maxLeiosVotesPerMessage' votes takes at most 1411 bytes. An announcing
 -- header is bounded by the ledger's maximum header size, 1100 bytes on
 -- mainnet; raising that parameter past this would need this raised too. An
 -- offer takes tens of bytes.
 maxLeiosNotifyReplyBytes :: Word
-maxLeiosNotifyReplyBytes = 1600
+maxLeiosNotifyReplyBytes = 1536
 
 byteLimitsLeiosNotify ::
   (bytes -> Word) ->

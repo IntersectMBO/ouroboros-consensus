@@ -49,7 +49,7 @@ import Network.TypedProtocol.Codec
   , SomeMessage (..)
   , runDecoder
   )
-import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash, blockSlot)
+import Ouroboros.Consensus.Block (ConvertRawHash (..), SlotNo (..), blockHash)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.Config (SecurityParam (..))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
@@ -276,18 +276,6 @@ tests =
                     [(5, MsgLeiosVotes (NE.fromList [voteFor (ann 2 (successorLeiosBlock (firstLeiosBlock 0))) 0]))]
               )
               @?= Just (NodeClientDisconnected VoteWithoutAnnouncement)
-        , testCase "the node's client disconnects a peer whose vote names the wrong slot" $
-            runSimOrThrow
-              ( timeout 100 $
-                  nodeClientAgainstSchedule
-                    [
-                      ( 5
-                      , MsgLeiosVotes
-                          (NE.fromList [(voteFor someAnnouncingBlock 0){voteSlot = blockSlot someAnnouncingBlock + 1}])
-                      )
-                    ]
-              )
-              @?= Just (NodeClientDisconnected VoteWithoutAnnouncement)
         , testCase "the node's client disconnects a peer that relays two votes from one seat in one slot" $
             runSimOrThrow
               ( timeout 100 $
@@ -428,7 +416,7 @@ prop_nodeCodecMatchesCDDL =
 
   genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> (MkEbHash <$> genHash)
 
-  genVote = signedVote <$> (SlotNo <$> arbitrary) <*> (MkRbHash <$> genHash) <*> arbitrary
+  genVote = signedVote <$> (MkRbHash <$> genHash) <*> arbitrary
 
   genHash = BS.pack <$> vectorOf 32 arbitrary
 
@@ -446,13 +434,9 @@ decodeWith dec enc =
     CBOR.deserialiseFromBytes dec (CBOR.toLazyByteString enc)
 
 indefiniteVote :: LeiosVote -> CBOR.Encoding
-indefiniteVote (MkLeiosVote slot rbHash seat signature) =
+indefiniteVote (MkLeiosVote rbHash seat signature) =
   indefinite
-    [ CBOR.encodeWord64 (unSlotNo slot)
-    , encodeRbHash rbHash
-    , CBOR.encodeWord16 (leiosSeatIndex seat)
-    , encodeFixedSized signature
-    ]
+    [encodeRbHash rbHash, CBOR.encodeWord16 (leiosSeatIndex seat), encodeFixedSized signature]
 
 definite :: [CBOR.Encoding] -> CBOR.Encoding
 definite xs = CBOR.encodeListLen (fromIntegral $ length xs) <> mconcat xs
@@ -849,13 +833,13 @@ nodeClientAgainstSchedule schedule = withNode $ \nut -> do
 
 -- | A vote from this seat for the announcement this block carries.
 voteFor :: LeiosTestBlock -> Word16 -> LeiosVote
-voteFor blk seat = signedVote (blockSlot blk) (MkRbHash (toRawHash (Proxy @LeiosTestBlock) (blockHash blk))) seat
+voteFor blk seat = signedVote (MkRbHash (toRawHash (Proxy @LeiosTestBlock) (blockHash blk))) seat
 
 -- | A vote from this seat for this announcing block. The node's LeiosNotify
 -- client does not check a vote's signature, so any key will do.
-signedVote :: SlotNo -> RbHash -> Word16 -> LeiosVote
-signedVote slot rbHash seat =
-  MkLeiosVote slot rbHash (LeiosSeatId seat) $
+signedVote :: RbHash -> Word16 -> LeiosVote
+signedVote rbHash seat =
+  MkLeiosVote rbHash (LeiosSeatId seat) $
     signDSIGN leiosSignContext rbHash (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
 
 someAnnouncingBlock :: LeiosTestBlock
