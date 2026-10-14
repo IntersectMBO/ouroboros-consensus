@@ -43,12 +43,38 @@ if os (windows)
 constraints:
   tasty <1.5.4,
 
--- master after https://github.com/IntersectMBO/cardano-ledger/pull/6148
+-- master past PR #695: proofs of possession use the IETF BLS_POP_ DST and the BLS
+-- DSTs take no signing context, as in the leios-prototype nodes.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base
+  tag: c1e1ed8d7ae39c111c73fc5f59ac37ce5933b83c
+  --sha256: sha256-UawlVBgCkU8H6o1k8BHj6pRkZjbHsdVEVIBW0ZFpWkc=
+  subdir:
+    cardano-base
+    cardano-binary
+    cardano-crypto-class
+    cardano-crypto-leios
+    cardano-crypto-praos
+    cardano-slotting
+    cardano-strict-containers
+
+-- https://github.com/IntersectMBO/cardano-keys/pull/14, adapting to the cardano-base above
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-keys
+  tag: f89a91b41ff171dd062a0cae0e93b8b999fedf40
+  --sha256: sha256-UBWBai91SXzC/JQY4FVjXGaf/C0xHcz7+BH13oAT+fY=
+  subdir:
+    cardano-keys
+
+-- master after https://github.com/IntersectMBO/cardano-ledger/pull/6162, built against
+-- the cardano-base above (branch ch1bo/cardano-base-api-changes)
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  --sha256: sha256-e1e3GwjKaFVtWxcJPfGlCKb1WJ8WV30qc//1eCki7BU=
-  tag: 6654c3e5e348aaa735d428fba0973dd17703d9d3
+  --sha256: sha256-UT9kNVG5ArDYuN/Ku0GNlr1a3AJSr7qqLfD6c+1RnHM=
+  tag: 6284697b26863e6bc74dea410751e3ab6c1e4d5e
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api

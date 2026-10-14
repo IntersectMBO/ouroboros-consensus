@@ -21,7 +21,6 @@ import Cardano.Crypto.Leios
   , LeiosSeatId (..)
   , LeiosSigningKey
   , leiosCommitteeSize
-  , leiosSignContext
   , resolveLeiosSeat
   )
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
@@ -440,7 +439,7 @@ validVote :: LeiosVote -> Bool
 validVote MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature} =
   case resolveLeiosSeat committee voteSeatId of
     Just LeiosSeat{seatVKey = SJust vk} ->
-      isRight $ verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature
+      isRight $ verifyDSIGN () vk voteAnnouncingRbHash voteSignature
     _ -> False
 
 announcements :: PeerOutcome -> [Header Blk]
@@ -712,7 +711,7 @@ signedBy sk blk seat =
   MkLeiosVote
     { voteAnnouncingRbHash = rbHash
     , voteSeatId = LeiosSeatId seat
-    , voteSignature = signDSIGN leiosSignContext rbHash sk
+    , voteSignature = signDSIGN () rbHash sk
     }
  where
   rbHash = rbHashOf (ltbHeader blk)

@@ -24,7 +24,6 @@ import Cardano.Crypto.Leios
   ( LeiosCommittee
   , LeiosSeat (..)
   , LeiosSeatId
-  , leiosSignContext
   , resolveLeiosSeat
   )
 import Control.Monad (unless, when)
@@ -127,7 +126,7 @@ validVote :: LeiosCommittee -> LeiosVote -> Bool
 validVote committee MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature} =
   case resolveLeiosSeat committee voteSeatId of
     Just LeiosSeat{seatVKey = SJust vk} ->
-      isRight $ verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature
+      isRight $ verifyDSIGN () vk voteAnnouncingRbHash voteSignature
     _ -> False
 
 {-------------------------------------------------------------------------------
