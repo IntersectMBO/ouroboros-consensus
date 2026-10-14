@@ -654,6 +654,8 @@ testFailedAddAtomic fault =
     FailWrite -> Set.singleton "1.cert.quarantined"
     FailRename -> Set.singleton "1.cert.quarantined"
 
+-- | We're using @FsDeviceFull@ as a representative IO
+-- exception while the operation changes.
 errorsFor :: AddFault -> Errors
 errorsFor = \case
   FailOpen ->
