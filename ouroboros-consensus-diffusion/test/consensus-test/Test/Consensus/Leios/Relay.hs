@@ -5,15 +5,26 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Tests of the node relaying announcements, against peers run by the Leios
--- node-vs-environment tests.
+-- | Tests of the node relaying announcements and votes, against peers run by
+-- the Leios node-vs-environment tests.
 --
 -- Every peer both sends the node a schedule of notifications and records what
--- the node relays to it.
+-- the node relays to it. The node relays a vote only once it has checked it
+-- against the committee, and only after relaying the announcement it is for,
+-- since a peer disconnects a peer that votes for an announcement it never sent.
 module Test.Consensus.Leios.Relay (tests) where
 
+import Cardano.Crypto.DSIGN.Class (signDSIGN, verifyDSIGN)
+import Cardano.Crypto.Leios
+  ( LeiosCommittee
+  , LeiosSeat (..)
+  , LeiosSeatId (..)
+  , LeiosSigningKey
+  , leiosCommitteeSize
+  , leiosSignContext
+  , resolveLeiosSeat
+  )
 import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
-import Cardano.Ledger.State (emptyLeiosCommittee)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( STM
   , StrictTQueue
@@ -34,11 +45,20 @@ import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.Foldable (for_)
+import Data.Either (isRight)
+import Data.Foldable (for_, toList)
 import qualified Data.Foldable as Foldable
+import Data.List (sortOn)
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Proxy (Proxy (..))
+import Data.Ratio ((%))
+import qualified Data.Set as Set
 import Data.Void (Void)
-import Ouroboros.Consensus.Block (Header, SlotNo (..), blockSlot)
+import Data.Word (Word16)
+import Ouroboros.Consensus.Block (ConvertRawHash (..), Header, SlotNo (..), blockHash, blockSlot)
 import Ouroboros.Consensus.BlockchainTime (slotLengthFromSec)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..))
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
@@ -50,7 +70,13 @@ import Ouroboros.Consensus.Leios.AnnounceState
   )
 import Ouroboros.Consensus.Leios.NotifyLog (newNotifyLog, nextNotifyLog, notifyLogStart)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), OCINStaleness (FreshOCIN))
-import Ouroboros.Consensus.Leios.Types (EbHash (..), LeiosPoint, LeiosVote)
+import Ouroboros.Consensus.Leios.Types
+  ( EbHash (..)
+  , LeiosPoint
+  , LeiosVote (..)
+  , RbHash (..)
+  , milliseconds32ToNominalDiffTime
+  )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
   ( leiosNotifyClientPeerPipelined
   , toLeiosNotifyClientPeerPipelined
@@ -62,6 +88,7 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   , maxAnnouncementAgeRecv
   , mkAnnouncingHeader
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State (voteLateGrace)
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
   ( WhetherExcessiveRequests (..)
   , leiosNotifyServerPeerLookahead
@@ -73,15 +100,18 @@ import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
   , timeLimitsLeiosNotify
   )
 import Ouroboros.Consensus.Network.LeiosNotify
-  ( leiosNotifyPipelineDepth
+  ( leiosNotifyMiniProtocolNum
+  , leiosNotifyPipelineDepth
   , runLookaheadFixedSenderPeerWithLimits
   )
 import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.Driver.Limits (runPipelinedPeerWithLimits)
 import Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits)
+import Test.Cardano.Crypto.Leios.Gen (TestSeatType (..), mkCommitteeFromTestSeats)
 import Test.Consensus.Leios.Environment
   ( EnvPeer (..)
   , LeiosNotifyCodec
+  , NodeVsEnvConnection (..)
   , envLeiosNotifyCodec
   , withNodeVsEnvConnection
   )
@@ -102,8 +132,21 @@ import Test.Consensus.Leios.TestBlock
   , setSlot
   , singleNodeLeiosTestConfig
   )
+import Test.QuickCheck
+  ( Gen
+  , Property
+  , choose
+  , conjoin
+  , counterexample
+  , elements
+  , forAllShow
+  , property
+  , sublistOf
+  , (===)
+  )
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
+import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.ChainDB (emptyNodeDBs)
 
 tests :: TestTree
@@ -138,10 +181,195 @@ tests =
         map announcements downs @?= [[ltbHeader someAnnouncingBlock], [ltbHeader someAnnouncingBlock], []]
     , testCase "the node does not relay an announcement of an election pruned while validating it" $
         prunedWhileValidating @?= []
+    , testCase "the node relays a vote to every other peer, after the announcement it is for" $ do
+        (_, downs) <- relay 20 [votedFor0] [0, 0]
+        for_ downs $ \down -> votes down @?= [voteOf someAnnouncingBlock 0]
+    , testCase "the node relays a vote promptly" $ do
+        down <- relayToOne 0 [votedFor0]
+        assertBool ("relayed at " <> show (voteTimes down)) $
+          not (null (voteTimes down)) && all (<= Time 6) (voteTimes down)
+    , testCase "the node relays a vote it hears from two peers once" $ do
+        down <- relayToOne 0 [votedFor0, [announce someAnnouncingBlock, (5.5, vote someAnnouncingBlock 0)]]
+        votes down @?= [voteOf someAnnouncingBlock 0]
+    , testCase "the node relays only the first vote of a seat in an election" $ do
+        down <- relayToOne 0 [votedFor0, [announce equivocation, (5.5, vote equivocation 0)]]
+        votes down @?= [voteOf someAnnouncingBlock 0]
+    , testCase "the node does not relay a badly signed vote, nor disconnect the peer that sent it" $ do
+        (ups, downs) <- relay 20 [withControl [(5, badlySignedVote someAnnouncingBlock 0)]] [0]
+        concatMap votes downs @?= [control]
+        map poNodeClientEnded ups @?= [Nothing]
+    , testCase "the node does not relay a vote from a seat outside the committee" $ do
+        down <- relayToOne 0 [withControl [(5, badlySignedVote someAnnouncingBlock seatOutside)]]
+        votes down @?= [control]
+    , testCase "the node does not relay a vote from a seat without a key" $ do
+        down <-
+          relayToOne
+            0
+            [withControl [(5, vote someAnnouncingBlock seatNoKey), (5, vote someAnnouncingBlock seatBadPoP)]]
+        votes down @?= [control]
+    , testCase "a peer that connects during a vote's window receives the vote" $ do
+        down <- relayToOne 6 [votedFor0]
+        votes down @?= [voteOf someAnnouncingBlock 0]
+    , testCase "a peer that connects once a peer would reject the vote does not receive it" $ do
+        (_, downs) <- relay 100 [votedFor0] [0, 90]
+        map votes downs @?= [[voteOf someAnnouncingBlock 0], []]
+    , testProperty
+        "the node relays exactly the first valid vote of each seat, and only what a peer accepts"
+        $ forAllShow genVotingPeers showVotingPeers prop_relay
     ]
+ where
+  -- seat 0 votes for 'someAnnouncingBlock' 5 seconds in, a second into its
+  -- election's window
+  votedFor0 = [announce someAnnouncingBlock, (5, vote someAnnouncingBlock 0)]
+
+  -- A valid vote sent alongside the ones a test expects the node to hold back,
+  -- so that the test cannot pass merely because the node relays nothing.
+  withControl sends = [announce someAnnouncingBlock] <> sends <> [(6, vote someAnnouncingBlock 1)]
+  control = voteOf someAnnouncingBlock 1
+
+{-------------------------------------------------------------------------------
+  The property
+-------------------------------------------------------------------------------}
+
+-- | Each upstream peer announces, then votes, as the node's client requires of
+-- it: only for announcements it sent, at most once per seat in an election,
+-- within the window. A last peer only listens.
+genVotingPeers :: Gen [[(DiffTime, Notification)]]
+genVotingPeers = do
+  n <- choose (1, 3)
+  sequence (replicate n genUpstream)
+ where
+  genUpstream = do
+    blks <- elements [[someAnnouncingBlock], [equivocation], [someAnnouncingBlock, equivocation]]
+    -- both blocks are in one election, so a seat votes for one of them
+    seats <- sublistOf [0 .. seatOutside]
+    vs <- mapM (genVote blks) seats
+    pure $ map announce blks <> sortOn fst vs
+  genVote blks seat = do
+    blk <- elements blks
+    at <- realToFrac <$> choose (4.1 :: Double, 7.9)
+    -- a seat outside the committee has no key to sign with
+    signed <- if seat < seatOutside then elements [vote, badlySignedVote] else pure badlySignedVote
+    pure (at, signed blk seat)
+
+showVotingPeers :: [[(DiffTime, Notification)]] -> String
+showVotingPeers = unlines . map (unwords . map showSend)
+ where
+  showSend (at, n) = show at <> ":" <> showNotification n
+
+prop_relay :: [[(DiffTime, Notification)]] -> Property
+prop_relay ups =
+  conjoin $
+    [ poNodeClientEnded up === Nothing
+    | up <- upOutcomes
+    ]
+      <> [ counterexample ("peer " <> show i) $ honest (poReceived o)
+         | (i, o) <- zip [1 :: Int ..] outcomes
+         ]
+      <> [ counterexample "relayed votes" $
+             Set.fromList [electionSeat v | v <- votes down] === firstValid
+         ]
+ where
+  (upOutcomes, downOutcomes) = runRelay 20 (map (PeerSpec 0) ups) [0]
+  outcomes = upOutcomes <> downOutcomes
+  down = head downOutcomes
+
+  -- every election and seat of which some peer sent a valid vote
+  firstValid =
+    Set.fromList
+      [ electionSeat v
+      | sends <- ups
+      , (_, NotifyVotes vs) <- sends
+      , v <- toList vs
+      , validVote v
+      ]
+
+  electionSeat v = (announcedSlot Map.! voteAnnouncingRbHash v, leiosSeatIndex (voteSeatId v))
+
+  announcedSlot =
+    Map.fromList
+      [ (rbHashOf hdr, blockSlot hdr)
+      | sends <- ups
+      , (_, NotifyAnnouncement hdr) <- sends
+      ]
+
+{-------------------------------------------------------------------------------
+  Checking what a peer receives
+-------------------------------------------------------------------------------}
+
+-- | Why an honest peer's client would disconnect the node for this stream, if
+-- it would: an announcement must be neither a repeat nor the third of its
+-- election, nor older than 'maxAnnouncementAgeRecv'; a vote must follow the
+-- announcement it is for, be the first of its seat in that election, verify
+-- against the committee, and arrive within its window.
+honest :: [(Time, Notification)] -> Property
+honest received = case honestViolations received of
+  [] -> property True
+  violations -> counterexample (unlines violations) False
+
+honestViolations :: [(Time, Notification)] -> [String]
+honestViolations = snd . Foldable.foldl' step ((Announcements.empty, Map.empty, Set.empty), [])
+ where
+  step ((seen, announced, voted), errs) (at, n) = case n of
+    NotifyAnnouncement hdr -> case mkAnnouncingHeader topLevelConfig hdr of
+      Nothing -> ((seen, announced, voted), errs <> ["not an announcement: " <> show hdr])
+      Just anc -> case Announcements.insert @_ @Void (ancElectionId anc) anc seen of
+        Left err -> ((seen, announced, voted), errs <> [show err <> ": " <> show hdr])
+        Right seen' ->
+          ( (seen', Map.insert (rbHashOf hdr) (blockSlot hdr) announced, voted)
+          , errs
+              <> [ "too old, at " <> show at <> ": " <> show hdr
+                 | toSeconds at - slotStart (blockSlot hdr) > realToFrac maxAnnouncementAgeRecv
+                 ]
+          )
+    NotifyVotes vs -> Foldable.foldl' (checkVote at) ((seen, announced, voted), errs) vs
+    NotifyOther -> ((seen, announced, voted), errs)
+
+  checkVote at ((seen, announced, voted), errs) v = case Map.lookup (voteAnnouncingRbHash v) announced of
+    Nothing ->
+      ((seen, announced, voted), errs <> ["a vote for an announcement not relayed before: " <> show v])
+    Just slot ->
+      ( (seen, announced, Set.insert (slot, seat) voted)
+      , errs
+          <> [ "a second vote of seat " <> show seat <> " in slot " <> show slot
+             | Set.member (slot, seat) voted
+             ]
+          <> ["an invalid vote: " <> show v | not (validVote v)]
+          <> [ "a vote outside its window, at " <> show at
+             | let age = toSeconds at - slotStart slot
+             , age < 3 * lHdr || age > 3 * lHdr + lVote + grace
+             ]
+      )
+   where
+    seat = leiosSeatIndex (voteSeatId v)
+
+  toSeconds (Time t) = realToFrac t :: Double
+  slotStart (SlotNo s) = fromIntegral s -- one-second slots
+  lHdr = realToFrac (milliseconds32ToNominalDiffTime (llvAnnouncementPeriod leiosLedgerView))
+  lVote = realToFrac (milliseconds32ToNominalDiffTime (llvVotePeriod leiosLedgerView))
+  grace = realToFrac voteLateGrace
+
+-- | Whether the vote's seat has a key in the committee, and its signature
+-- verifies under it.
+validVote :: LeiosVote -> Bool
+validVote MkLeiosVote{voteAnnouncingRbHash, voteSeatId, voteSignature} =
+  case resolveLeiosSeat committee voteSeatId of
+    Just LeiosSeat{seatVKey = SJust vk} ->
+      isRight $ verifyDSIGN leiosSignContext vk voteAnnouncingRbHash voteSignature
+    _ -> False
 
 announcements :: PeerOutcome -> [Header Blk]
 announcements o = [hdr | (_, NotifyAnnouncement hdr) <- poReceived o]
+
+votes :: PeerOutcome -> [LeiosVote]
+votes o = concat [toList vs | (_, NotifyVotes vs) <- poReceived o]
+
+-- | The vote of this seat for the announcement this block carries.
+voteOf :: LeiosTestBlock -> Word16 -> LeiosVote
+voteOf blk seat = signedBy (seatKeys !! fromIntegral seat) blk seat
+
+voteTimes :: PeerOutcome -> [Time]
+voteTimes o = [at | (at, NotifyVotes _) <- poReceived o]
 
 {-------------------------------------------------------------------------------
   Running a scenario
@@ -150,9 +378,16 @@ announcements o = [hdr | (_, NotifyAnnouncement hdr) <- poReceived o]
 -- | What a peer sends the node, or what the node relays to a peer.
 data Notification
   = NotifyAnnouncement (Header Blk)
-  | -- | an offer or votes, which these tests neither send nor check
+  | NotifyVotes (NonEmpty LeiosVote)
+  | -- | an offer, which these tests neither send nor check
     NotifyOther
   deriving Show
+
+showNotification :: Notification -> String
+showNotification = \case
+  NotifyAnnouncement hdr -> "announce@" <> show (blockSlot hdr)
+  NotifyVotes vs -> "votes" <> show [(leiosSeatIndex (voteSeatId v), validVote v) | v <- toList vs]
+  NotifyOther -> "other"
 
 -- | A peer: when it connects, and what it sends the node when.
 data PeerSpec = PeerSpec
@@ -160,9 +395,11 @@ data PeerSpec = PeerSpec
   , psSends :: [(DiffTime, Notification)]
   }
 
-newtype PeerOutcome = PeerOutcome
+data PeerOutcome = PeerOutcome
   { poReceived :: [(Time, Notification)]
   -- ^ what the node relayed to the peer, and when
+  , poNodeClientEnded :: Maybe String
+  -- ^ how the node's client of this peer ended, if it did
   }
 
 -- | Run peers against one node until the given time: upstream peers, which
@@ -176,16 +413,22 @@ relay end ups = relayPeers end (map (PeerSpec 0) ups)
 -- | 'relay', with upstream peers that connect when they say.
 relayPeers :: DiffTime -> [PeerSpec] -> [DiffTime] -> IO ([PeerOutcome], [PeerOutcome])
 relayPeers end ups downs = do
-  for_ (zip [1 :: Int ..] outcomes) $ \(i, o) -> case honestViolations (poReceived o) of
+  for_ (zip [1 :: Int ..] (ups' <> downs')) $ \(i, o) -> case honestViolations (poReceived o) of
     [] -> pure ()
     violations -> assertFailure $ "peer " <> show i <> ":\n" <> unlines violations
-  pure $ splitAt (length ups) outcomes
+  pure (ups', downs')
+ where
+  (ups', downs') = runRelay end ups downs
+
+-- | 'relayPeers', without failing for what the node relays.
+runRelay :: DiffTime -> [PeerSpec] -> [DiffTime] -> ([PeerOutcome], [PeerOutcome])
+runRelay end ups downs = splitAt (length ups) $ runSimOrThrow $ withNode $ \nut ->
+  forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
  where
   specs = ups <> [PeerSpec at [] | at <- downs]
-  outcomes = runSimOrThrow $ withNode $ \nut ->
-    forConcurrently (zip [1 ..] specs) $ \(i, spec) -> runPeer nut end (PeerAddr i) spec
 
--- | 'relay' for 20 seconds to one downstream peer connecting at the given time.
+-- | 'relay' for 20 seconds, past every vote's window, to one downstream peer
+-- connecting at the given time.
 relayToOne :: DiffTime -> [[(DiffTime, Notification)]] -> IO PeerOutcome
 relayToOne at ups =
   relay 20 ups [at] >>= \case
@@ -204,10 +447,13 @@ runPeer nut end addr PeerSpec{psConnectAt, psSends} = do
           , epLeiosNotifyClient = Just $ runRecordingClient c received
           }
   withAsync (feedAt queue psSends) $ \_feeder ->
-    withNodeVsEnvConnection nut addr envPeer $ \_conn -> do
+    withNodeVsEnvConnection nut addr envPeer $ \conn -> do
       Time now <- getMonotonicTime
       threadDelay (end - now)
-      PeerOutcome . reverse <$> readTVarIO received
+      ended <- case Map.lookup leiosNotifyMiniProtocolNum (connNodeInitiators conn) of
+        Nothing -> pure (Just "the node runs no LeiosNotify client")
+        Just client -> atomically $ (Just . either show (const "ended") <$> client) `orElse` pure Nothing
+      PeerOutcome <$> (reverse <$> readTVarIO received) <*> pure ended
 
 -- | Put each notification in the queue at its time since the run began.
 feedAt :: StrictTQueue (IOSim s) Notification -> [(DiffTime, Notification)] -> IOSim s ()
@@ -227,7 +473,8 @@ runFeedingServer c next chan = do
   toMessage :: Notification -> Message (LeiosNotify LeiosPoint (Header Blk) LeiosVote) StBusy StIdle
   toMessage = \case
     NotifyAnnouncement hdr -> MsgLeiosBlockAnnouncement hdr
-    NotifyOther -> error "runFeedingServer: the tests send only announcements"
+    NotifyVotes vs -> MsgLeiosVotes vs
+    NotifyOther -> error "runFeedingServer: the tests send no offers"
 
 -- | The peer's client: keep the node's server's pipeline full, and record each
 -- notification it relays.
@@ -254,12 +501,14 @@ runRecordingClient c received chan =
     now <- getMonotonicTime
     let n = case msg of
           MsgLeiosBlockAnnouncement hdr -> NotifyAnnouncement hdr
+          MsgLeiosVotes vs -> NotifyVotes vs
           _ -> NotifyOther
     atomically $ modifyTVar received ((now, n) :)
 
 sizeLimits :: ProtocolSizeLimits (LeiosNotify point announcement vote) BSL.ByteString
 sizeLimits = byteLimitsLeiosNotify (fromIntegral . BSL.length)
 
+-- | A node of the committee 'committee', with the periods of 'leiosLedgerView'.
 withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
 withNode body = do
   nodeDBs <- emptyNodeDBs
@@ -275,44 +524,8 @@ ledgerConfig =
     { ltlcHardForkParams =
         HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
     , ltlcForecastRange = 100000
-    , ltlcLeios =
-        MkLeiosLedgerView
-          { llvCommittee = emptyLeiosCommittee
-          , llvQuorumStakeThreshold = maxBound
-          , llvAnnouncementPeriod = Milliseconds32 1000
-          , llvVotePeriod = Milliseconds32 4000
-          , llvDiffusionPeriod = Milliseconds32 1000
-          , llvMaxEbBodySize = 5000
-          , llvMaxEbTxsSize = 5000
-          }
+    , ltlcLeios = leiosLedgerView
     }
-
-{-------------------------------------------------------------------------------
-  Checking what a peer receives
--------------------------------------------------------------------------------}
-
--- | Why an honest peer's client would disconnect the node for this stream, if
--- it would: an announcement must be neither a repeat nor the third of its
--- election, nor older than 'maxAnnouncementAgeRecv'.
-honestViolations :: [(Time, Notification)] -> [String]
-honestViolations = snd . Foldable.foldl' step (Announcements.empty, [])
- where
-  step (seen, errs) (at, n) = case n of
-    NotifyAnnouncement hdr -> case mkAnnouncingHeader topLevelConfig hdr of
-      Nothing -> (seen, errs <> ["not an announcement: " <> show hdr])
-      Just anc -> case Announcements.insert @_ @Void (ancElectionId anc) anc seen of
-        Left err -> (seen, errs <> [show err <> ": " <> show hdr])
-        Right seen' ->
-          ( seen'
-          , errs
-              <> [ "too old, at " <> show at <> ": " <> show hdr
-                 | toSeconds at - slotStart (blockSlot hdr) > realToFrac maxAnnouncementAgeRecv
-                 ]
-          )
-    NotifyOther -> (seen, errs)
-
-  toSeconds (Time t) = realToFrac t :: Double
-  slotStart (SlotNo s) = fromIntegral s -- one-second slots
 
 topLevelConfig :: TopLevelConfig Blk
 topLevelConfig = singleNodeLeiosTestConfig ledgerConfig k
@@ -345,11 +558,61 @@ prunedWhileValidating = runSimOrThrow $ do
   Fixtures
 -------------------------------------------------------------------------------}
 
+-- | The committee 'committee'. A vote is relayed between 3 s and 7 s after its
+-- election slot began.
+leiosLedgerView :: LeiosLedgerView
+leiosLedgerView =
+  MkLeiosLedgerView
+    { llvCommittee = committee
+    , llvQuorumStakeThreshold = maxBound
+    , llvAnnouncementPeriod = Milliseconds32 1000
+    , llvVotePeriod = Milliseconds32 4000
+    , llvDiffusionPeriod = Milliseconds32 1000
+    , llvMaxEbBodySize = 5000
+    , llvMaxEbTxsSize = 5000
+    }
+
+-- | Three seats with keys, then one without a key and one whose key's proof of
+-- possession does not verify.
+seatKeys :: [LeiosSigningKey]
+committee :: LeiosCommittee
+(seatKeys, committee) =
+  mkCommitteeFromTestSeats [(kind, 1 % 5) | kind <- [WithKey, WithKey, WithKey, NoKey, BadPoP]]
+
+seatNoKey, seatBadPoP, seatOutside :: Word16
+seatNoKey = 3
+seatBadPoP = 4
+seatOutside = fromIntegral (leiosCommitteeSize committee)
+
+-- | The vote of this seat for the announcement this block carries, signed with
+-- the seat's key.
+vote :: LeiosTestBlock -> Word16 -> Notification
+vote blk seat = NotifyVotes (voteOf blk seat :| [])
+
+-- | As 'vote', but signed with a key of no seat.
+badlySignedVote :: LeiosTestBlock -> Word16 -> Notification
+badlySignedVote blk seat = NotifyVotes (signedBy (last seatKeys') blk seat :| [])
+ where
+  (seatKeys', _) = mkCommitteeFromTestSeats [(WithKey, 1) | _ <- [0 .. leiosCommitteeSize committee + 1]]
+
+signedBy :: LeiosSigningKey -> LeiosTestBlock -> Word16 -> LeiosVote
+signedBy sk blk seat =
+  MkLeiosVote
+    { voteAnnouncingRbHash = rbHash
+    , voteSeatId = LeiosSeatId seat
+    , voteSignature = signDSIGN leiosSignContext rbHash sk
+    }
+ where
+  rbHash = rbHashOf (ltbHeader blk)
+
 announce :: LeiosTestBlock -> (DiffTime, Notification)
 announce = announceAt 0
 
 announceAt :: DiffTime -> LeiosTestBlock -> (DiffTime, Notification)
 announceAt at blk = (at, NotifyAnnouncement (ltbHeader blk))
+
+rbHashOf :: Header Blk -> RbHash
+rbHashOf = MkRbHash . toRawHash (Proxy @LeiosTestBlock) . blockHash
 
 -- | Announces an endorser block in slot 1.
 someAnnouncingBlock :: LeiosTestBlock
