@@ -497,9 +497,50 @@ garbageCollectPeras CDB{..} slotNo = do
 -- that are pending to be stored in the 'PerasImmutableCertDB'.
 --
 -- It is written to by the 'gcScheduleRunner' and read from by the
--- 'certStoringRunner'. It is unbounded so that garbage collection never
--- blocks on (slower, on-disk) certificate storage. Its size is nonetheless
--- bounded in practice by the number of certificates collected per GC.
+-- 'certStoringRunner'. Each entry is the batch of certificates collected by a
+-- single garbage collection.
+--
+-- The queue is unbounded, so enqueueing never blocks. This way garbage
+-- collection (of the VolatileDB, the 'PerasCertDB' and the 'PerasVoteDB')
+-- never waits on certificate storage, which writes to disk and is therefore
+-- slower. With a bounded queue, a lagging 'certStoringRunner' would stall the
+-- 'gcScheduleRunner' and let the volatile databases grow.
+--
+-- Its size is not enforced, but it remains small in practice:
+--
+-- * Each batch contains at most one certificate per Peras round (the
+--   'PerasCertDB' stores at most one per round), and only for rounds whose
+--   boosted blocks became collectable since the previous garbage collection.
+--
+-- * Garbage collections are batched by 'scheduleGC', so at most one batch is
+--   enqueued per @gcInterval@, and empty batches are not enqueued.
+--
+-- Hence the queue stays short as long as the 'certStoringRunner' stores
+-- certificates, on average, at least as fast as they are collected (one
+-- small file write per certificate). If storage stalls (e.g. on a very slow
+-- disk), the queue, and hence memory usage, keeps growing.
+--
+-- __Syncing nodes.__ A caught-up node collects roughly one round's worth of
+-- certificates per @gcInterval@, i.e. usually zero or one. A syncing node
+-- that also obtains historical certificates (which the Genesis machinery is
+-- expected to do in the future) copies blocks to the ImmutableDB at sync
+-- speed, so a single @gcInterval@ can cover a very large number of rounds,
+-- and batches can contain thousands of certificates. This is still expected
+-- to be fine:
+--
+-- * The writing rate is tied to the block copying rate: there is at most one
+--   certificate per round, i.e. per many blocks (a round spans many slots), so
+--   storing certificates adds only a fraction of the disk writes already done
+--   by 'copyToImmutableDB'.
+--
+-- * The queue only holds certificates that were held by the 'PerasCertDB'
+--   just before they were collected. While the 'certStoringRunner' keeps up,
+--   the queue does not increase peak memory usage beyond that.
+--
+-- If it does fall behind (e.g. because creating and renaming a file per
+-- certificate is too slow compared to appending blocks), the backlog grows
+-- for as long as the node syncs. Certificates still in the queue when the
+-- node shuts down are lost and not stored in the 'PerasImmutableCertDB'.
 newtype CertStoringQueue m blk
   = CertStoringQueue (TQueue m [WithArrivalTime (ValidatedPerasCert blk)])
 
