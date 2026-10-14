@@ -26,6 +26,10 @@ import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
 import Data.Word (Word16, Word32, Word8, Word64)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , WithArrivalTime (..)
+  )
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB as DB
 import Ouroboros.Consensus.Util.Args (Complete)
@@ -88,14 +92,14 @@ tests =
         "hostile certificate file contents"
         [ testCase (show policy <> "/" <> show hostile) $
             testHostileCertificateFile policy hostile
-        | policy <- [DB.ValidateOnRead, DB.ValidateAllOnOpen]
+        | policy <- [DB.CheckOnRead, DB.CheckAllOnOpen]
         , hostile <- [minBound .. maxBound]
         ]
     , testGroup
         "quarantined rounds can be repaired"
         [ testCase (show policy <> "/" <> show damage) $
             testQuarantinedRoundCanBeRepaired policy damage
-        | policy <- [DB.ValidateOnRead, DB.ValidateAllOnOpen]
+        | policy <- [DB.CheckOnRead, DB.CheckAllOnOpen]
         , damage <- [minBound .. maxBound]
         ]
     , testCase "eager validation quarantines corruption on open" testEagerValidation
@@ -151,7 +155,7 @@ testRoundZeroReachable :: IO ()
 testRoundZeroReachable = withFreshDB $ \_args db -> do
   let cert = mkCert (PerasWeight 1) 0
 
-  DB.addCert db cert
+  addCert db cert
     >>= (@?= DB.AddedCertToImmutableDB)
   DB.getCertsAfter db (PerasRoundNo 0) 1
     >>= (@?= [cert])
@@ -160,9 +164,9 @@ testDuplicateRound :: IO ()
 testDuplicateRound = withFreshDB $ \_args db -> do
   let cert = mkCert (PerasWeight 3) 7
 
-  DB.addCert db cert
+  addCert db cert
     >>= (@?= DB.AddedCertToImmutableDB)
-  DB.addCert db cert
+  addCert db cert
     >>= (@?= DB.CertAlreadyInImmutableDB)
 
   DB.getCertsAfter db (PerasRoundNo 6) 1
@@ -177,10 +181,10 @@ testConflictingRoundReported = withFreshDB $ \_args db -> do
   let first = mkCert (PerasWeight 3) 7
       conflicting = mkCert (PerasWeight 99) 7
 
-  DB.addCert db first
+  addCert db first
     >>= (@?= DB.AddedCertToImmutableDB)
   outcome <-
-    Exception.try (DB.addCert db conflicting) ::
+    Exception.try (addCert db conflicting) ::
       IO (Either Exception.SomeException DB.AddPerasImmutableCertResult)
   case outcome of
     Left _ -> pure ()
@@ -193,9 +197,9 @@ testCorruptDuplicateReplaced =
   withFreshDBFS $ \fs args db -> do
     let first = mkCert (PerasWeight 3) 7
         replacement = mkCert (PerasWeight 99) 7
-    DB.addCert db first >>= (@?= DB.AddedCertToImmutableDB)
+    addCert db first >>= (@?= DB.AddedCertToImmutableDB)
     replaceRawFile fs (certPath 7) (BSL.pack [0xde, 0xad])
-    DB.addCert db replacement
+    addCert db replacement
       >>= (@?= DB.ReplacedCorruptCertInImmutableDB)
     DB.getCertsAfter db (PerasRoundNo 6) 1
       >>= (@?= [replacement])
@@ -224,7 +228,7 @@ testOpenHandleCoherence =
     second <- DB.openDB args
     let cert = mkCert (PerasWeight 1) 1
 
-    DB.addCert first cert
+    addCert first cert
       >>= (@?= DB.AddedCertToImmutableDB)
     DB.getCertsAfter second (PerasRoundNo 0) 10
       >>= (@?= [cert])
@@ -239,7 +243,7 @@ testTempFileCleanup =
       >>= (@?= Set.singleton "17.cert.quarantined")
     DB.getCertsAfter db (PerasRoundNo 0) 10
       >>= (@?= [])
-    atomically (DB.getQuarantinedRounds db)
+    atomically (DB.getMissingRounds db)
       >>= (@?= Set.singleton (PerasRoundNo 17))
 
 testForeignFilesIgnored :: IO ()
@@ -276,10 +280,10 @@ testMissingFileQuarantined =
       >>= (@?= [PerasRoundNo 2])
     quarantineEvents <$> getTrace >>= (@?= firstEvents)
 
-    atomically (DB.getQuarantinedRounds db)
+    atomically (DB.getMissingRounds db)
       >>= (@?= Set.singleton (PerasRoundNo 1))
     reopened <- DB.openDB args
-    atomically (DB.getQuarantinedRounds reopened)
+    atomically (DB.getMissingRounds reopened)
       >>= (@?= Set.singleton (PerasRoundNo 1))
 
 testCorruptFileQuarantined :: IO ()
@@ -299,10 +303,10 @@ testCorruptFileQuarantined =
       >>= (@?= [PerasRoundNo 2])
     quarantineEvents <$> getTrace >>= (@?= firstEvents)
 
-    atomically (DB.getQuarantinedRounds db)
+    atomically (DB.getMissingRounds db)
       >>= (@?= Set.singleton (PerasRoundNo 1))
     reopened <- DB.openDB args
-    atomically (DB.getQuarantinedRounds reopened)
+    atomically (DB.getMissingRounds reopened)
       >>= (@?= Set.singleton (PerasRoundNo 1))
 
 -- | A temporary inability to open a valid file must not turn into durable
@@ -319,7 +323,7 @@ testTransientReadErrorDoesNotQuarantine =
                   [Just FsDeviceFull, Just FsDeviceFull]
             }
 
-    DB.addCert db cert
+    addCert db cert
       >>= (@?= DB.AddedCertToImmutableDB)
     _ <-
       withErrors errorsVar transientErrors $
@@ -352,7 +356,7 @@ testFileNameRoundMismatch =
     reopened <- DB.openDB args
     roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
       >>= (@?= [])
-    atomically (DB.getQuarantinedRounds reopened)
+    atomically (DB.getMissingRounds reopened)
       >>= (@?= Set.singleton (PerasRoundNo 2))
     roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
       >>= (@?= [])
@@ -369,7 +373,7 @@ data HostileCertFile
 -- bytes, and a large malformed payload. In every case the bad round is
 -- quarantined without hiding the following intact certificate.
 testHostileCertificateFile ::
-  DB.PerasImmutableCertDbValidationPolicy ->
+  DB.PerasImmutableCertDbIntegrityCheckPolicy ->
   HostileCertFile ->
   IO ()
 testHostileCertificateFile policy hostile =
@@ -381,11 +385,11 @@ testHostileCertificateFile policy hostile =
     reopened <-
       DB.openDB
         args
-          { DB.picdbaValidationPolicy = policy
+          { DB.picdbaIntegrityCheckPolicy = policy
           }
     roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
       >>= (@?= [PerasRoundNo 2])
-    atomically (DB.getQuarantinedRounds reopened)
+    atomically (DB.getMissingRounds reopened)
       >>= (@?= Set.singleton (PerasRoundNo 1))
     roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
       >>= (@?= [PerasRoundNo 2])
@@ -425,7 +429,7 @@ data CertFileDamage
 -- | Once a bad file has been quarantined, adding a valid certificate for the
 -- same round repairs the database and remains valid after another reopen.
 testQuarantinedRoundCanBeRepaired ::
-  DB.PerasImmutableCertDbValidationPolicy ->
+  DB.PerasImmutableCertDbIntegrityCheckPolicy ->
   CertFileDamage ->
   IO ()
 testQuarantinedRoundCanBeRepaired policy damage =
@@ -433,15 +437,15 @@ testQuarantinedRoundCanBeRepaired policy damage =
     let cert = mkCert (PerasWeight 3) 7
         argsWithPolicy =
           args
-            { DB.picdbaValidationPolicy = policy
+            { DB.picdbaIntegrityCheckPolicy = policy
             }
 
-    DB.addCert db cert
+    addCert db cert
       >>= (@?= DB.AddedCertToImmutableDB)
 
     quarantinedDb <- case (policy, damage) of
       -- Eager validation can discover corruption during open.
-      (DB.ValidateAllOnOpen, CorruptCertFile) -> do
+      (DB.CheckAllOnOpen, CorruptCertFile) -> do
         damageCertFile fs damage 7
         DB.openDB argsWithPolicy
       -- A missing file can only be quarantined after it has been indexed.
@@ -455,14 +459,14 @@ testQuarantinedRoundCanBeRepaired policy damage =
 
     DB.getCertsAfter quarantinedDb (PerasRoundNo 0) 10
       >>= (@?= [])
-    atomically (DB.getQuarantinedRounds quarantinedDb)
+    atomically (DB.getMissingRounds quarantinedDb)
       >>= (@?= Set.singleton (PerasRoundNo 7))
 
-    DB.addCert quarantinedDb cert
+    addCert quarantinedDb cert
       >>= (@?= DB.AddedCertToImmutableDB)
     DB.getCertsAfter quarantinedDb (PerasRoundNo 0) 10
       >>= (@?= [cert])
-    atomically (DB.getQuarantinedRounds quarantinedDb)
+    atomically (DB.getMissingRounds quarantinedDb)
       >>= (@?= Set.empty)
 
     reopened <- DB.openDB argsWithPolicy
@@ -493,11 +497,11 @@ testEagerValidation =
     reopened <-
       DB.openDB
         args
-          { DB.picdbaValidationPolicy = DB.ValidateAllOnOpen
+          { DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
           }
     roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
       >>= (@?= [PerasRoundNo 2])
-    atomically (DB.getQuarantinedRounds reopened)
+    atomically (DB.getMissingRounds reopened)
       >>= (@?= Set.singleton (PerasRoundNo 1))
 
 testLazyQuarantineTrace :: IO ()
@@ -534,7 +538,7 @@ testEagerQuarantineTrace =
       DB.openDB
         args
           { DB.picdbaTracer = tracer
-          , DB.picdbaValidationPolicy = DB.ValidateAllOnOpen
+          , DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
           }
 
     events <- getTrace
@@ -567,7 +571,7 @@ propConcurrentDuplicateAdds =
       forM_ done $ \resultVar ->
         void $ forkIO $ do
           result <-
-            Exception.try (DB.addCert db cert) ::
+            Exception.try (addCert db cert) ::
               IO (Either Exception.SomeException DB.AddPerasImmutableCertResult)
           putMVar resultVar result
 
@@ -618,7 +622,7 @@ testFailedAddAtomic fault =
     let cert = mkCert (PerasWeight 1) 1
     result <-
       withErrors errorsVar (errorsFor fault) $
-        ( Exception.try (DB.addCert db cert) ::
+        ( Exception.try (addCert db cert) ::
             IO (Either FsError DB.AddPerasImmutableCertResult)
         )
     case result of
@@ -635,14 +639,14 @@ testFailedAddAtomic fault =
       >>= (@?= [])
     listDirectory (simErrorHasFS fs errorsVar) (mkFsPath [])
       >>= (@?= expectedFiles)
-    atomically (DB.getQuarantinedRounds reopened)
+    atomically (DB.getMissingRounds reopened)
       >>= (@?= expectedQuarantine)
 
-    DB.addCert reopened cert
+    addCert reopened cert
       >>= (@?= DB.AddedCertToImmutableDB)
     DB.getCertsAfter reopened (PerasRoundNo 0) 10
       >>= (@?= [cert])
-    atomically (DB.getQuarantinedRounds reopened)
+    atomically (DB.getMissingRounds reopened)
       >>= (@?= Set.empty)
  where
   expectedQuarantine = case fault of
@@ -758,12 +762,12 @@ propValidationPoliciesAgree generated =
       lazy <-
         DB.openDB
           args
-            { DB.picdbaValidationPolicy = DB.ValidateOnRead
+            { DB.picdbaIntegrityCheckPolicy = DB.CheckOnRead
             }
       eager <-
         DB.openDB
           args
-            { DB.picdbaValidationPolicy = DB.ValidateAllOnOpen
+            { DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
             }
       lazyCerts <- DB.getCertsAfter lazy (PerasRoundNo 0) maxBound
       eagerCerts <- DB.getCertsAfter eager (PerasRoundNo 0) maxBound
@@ -807,12 +811,12 @@ propValidationPoliciesAgreeAfterDamage stored missing corrupt =
       lazy <-
         DB.openDB
           args
-            { DB.picdbaValidationPolicy = DB.ValidateOnRead
+            { DB.picdbaIntegrityCheckPolicy = DB.CheckOnRead
             }
       eager <-
         DB.openDB
           args
-            { DB.picdbaValidationPolicy = DB.ValidateAllOnOpen
+            { DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
             }
       lazyRounds <- roundsOf <$> DB.getCertsAfter lazy (PerasRoundNo 0) maxBound
       eagerRounds <- roundsOf <$> DB.getCertsAfter eager (PerasRoundNo 0) maxBound
@@ -841,7 +845,7 @@ propGeneratedTempFilesAreQuarantined generated =
       db <- DB.openDB args
       names <- listDirectory (simHasFS fs) (mkFsPath [])
       certs <- DB.getCertsAfter db (PerasRoundNo 0) maxBound
-      quarantined <- atomically (DB.getQuarantinedRounds db)
+      quarantined <- atomically (DB.getMissingRounds db)
       let expectedNames =
             Set.fromList
               [ show (unPerasRoundNo roundNo) <> ".cert.quarantined"
@@ -910,7 +914,7 @@ propCommandSequence (CommandSequence commands) =
               | Map.member roundNo model = DB.CertAlreadyInImmutableDB
               | otherwise = DB.AddedCertToImmutableDB
             model' = Map.insertWith (\_ old -> old) roundNo cert model
-        actualResult <- DB.addCert db cert
+        actualResult <- addCert db cert
         if actualResult == expectedResult
           then go (step + 1) args db model' rest
           else
@@ -1076,7 +1080,13 @@ addCertsForRoundNos ::
   [PerasRoundNo] ->
   IO ()
 addCertsForRoundNos db =
-  mapM_ (void . DB.addCert db . mkCert (PerasWeight 1))
+  mapM_ (void . addCert db . mkCert (PerasWeight 1))
+
+addCert ::
+  DB.PerasImmutableCertDB IO TestBlock ->
+  ValidatedPerasCert TestBlock ->
+  IO DB.AddPerasImmutableCertResult
+addCert db = DB.addCert db . WithArrivalTime (RelativeTime 0)
 
 -- | Retrieve paginated list of all peras certs after the cursor.
 paginate ::

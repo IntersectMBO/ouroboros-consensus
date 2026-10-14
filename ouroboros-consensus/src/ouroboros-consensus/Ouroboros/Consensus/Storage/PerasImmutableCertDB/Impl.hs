@@ -620,7 +620,7 @@ implGetCertsAfter env roundNo maxCerts = do
   collect acc remaining (r : rs) = do
     mCert <- readCertFile env r >>= \case
       Right cert -> pure (Just cert)
-      Left _ -> quarantineCertIfBroken env r
+      Left _ -> quarantineCertIfStillBroken env r
     case mCert of
       Just cert -> collect (cert : acc) (remaining - 1) rs
       Nothing -> collect acc remaining rs
