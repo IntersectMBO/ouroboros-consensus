@@ -67,10 +67,10 @@ forge ::
   ChainDB m blk ->
   Mempool m blk ->
   BlockForging m blk ->
+  (ChainDB m blk -> SlotNo -> m (Maybe (PerasCert blk))) ->
   SlotNo ->
-  Maybe (PerasCert blk) ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging currentSlot mbPerasCert = do
+forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging includePerasCert currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -114,6 +114,8 @@ forge forgeEventTracer forgeStateInfoTracer cfg chainDB mempool blockForging cur
         tickedLedgerState <- getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
+
+        mbPerasCert <- lift $ includePerasCert chainDB currentSlot
 
         (txs, payloadSz, snapSize) <-
           getTransactionsToForge

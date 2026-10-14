@@ -728,12 +728,7 @@ forkBlockForging ::
   m (Thread m Void)
 forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate registry label blockForgingMLabel finalize $ \bf ->
-    knownSlotWatcher btime $ \currentSlot -> do
-      mbPerasCert <-
-        checkPerasCertInclusion
-          (perasCertInclusionTracer tracers)
-          chainDB
-          currentSlot
+    knownSlotWatcher btime $ \currentSlot ->
       withEarlyExit_ $
         forge
           (forgeTracer tracers)
@@ -742,8 +737,8 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           chainDB
           mempool
           bf
+          (checkPerasCertInclusion (perasCertInclusionTracer tracers))
           currentSlot
-          mbPerasCert
  where
   label :: String
   label = "NodeKernel.blockForging"
