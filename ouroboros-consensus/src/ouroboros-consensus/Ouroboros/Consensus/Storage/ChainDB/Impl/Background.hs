@@ -12,6 +12,8 @@
 --
 -- * Copying blocks from the VolatileDB to the ImmutableDB
 -- * Performing and scheduling garbage collections on the VolatileDB
+-- * Storing garbage-collected Peras certificates boosting immutable blocks
+--   in the PerasImmutableCertDB
 -- * Writing snapshots of the LedgerDB to disk and deleting old ones
 -- * Executing scheduled chain selections
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
@@ -28,6 +30,13 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
     -- * Executing garbage collection
   , garbageCollectBlocks
   , garbageCollectPeras
+
+    -- * Storing certificates in the PerasImmutableCertDB
+  , CertStoringQueue
+  , certStoringRunner
+  , enqueueCertsToStore
+  , newCertStoringQueue
+  , storeImmutableCerts
 
     -- * Scheduling garbage collections
   , GcParams (..)
@@ -46,7 +55,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   ) where
 
 import Control.Exception (assert)
-import Control.Monad (forM_, forever, join, void)
+import Control.Monad (forM_, forever, join, void, when)
 import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
@@ -61,6 +70,7 @@ import Data.Void (Void)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime)
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -79,6 +89,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
+import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB.API as PerasImmutableCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
@@ -114,12 +125,18 @@ launchBgTasks cdb@CDB{..} = do
     forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
       ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
 
+  certStoringQueue <- newCertStoringQueue
+  !certStoringThread <-
+    launch "ChainDB.certStoringRunner" $
+      certStoringRunner cdb certStoringQueue
+
   gcSchedule <- newGcSchedule
   !gcThread <-
     launch "ChainDB.gcBlocksAndPerasScheduleRunner" $
       gcScheduleRunner gcSchedule $ \slot -> do
         garbageCollectBlocks cdb slot
-        garbageCollectPeras cdb slot
+        removedCerts <- garbageCollectPeras cdb slot
+        enqueueCertsToStore certStoringQueue removedCerts
 
   !copyToImmutableDBThread <-
     launch "ChainDB.copyToImmutableDBRunner" $
@@ -135,6 +152,7 @@ launchBgTasks cdb@CDB{..} = do
         [ addBlockThread
         , cancelThread ledgerDbMaintenanceThread
         , gcThread
+        , certStoringThread
         , copyToImmutableDBThread
         , snapshotThread
         ]
@@ -148,6 +166,10 @@ launchBgTasks cdb@CDB{..} = do
 
 -- | Copy the blocks older than the immutable tip from the VolatileDB to the
 -- ImmutableDB.
+--
+-- Peras certificates boosting these blocks are /not/ copied here: they are
+-- stored in the 'PerasImmutableCertDB' once they are garbage-collected from
+-- the volatile 'PerasCertDB' (see 'certStoringRunner').
 --
 -- The headers of these blocks can be retrieved by considering headers in
 -- 'cdbChain' that are not also in 'getCurrentChain' (a suffix of 'cdbChain').
@@ -450,15 +472,85 @@ garbageCollectBlocks CDB{..} slotNo = do
 
 -- | Garbage-collect Peras state (certificates and votes) whose target slot is
 -- strictly smaller than the given 'SlotNo'.
+--
+-- Returns the certificates that were garbage-collected from the
+-- 'PerasCertDB', so that the ones boosting immutable blocks can be stored in
+-- the 'PerasImmutableCertDB' (see 'storeImmutableCerts').
 garbageCollectPeras ::
   forall m blk.
   IOLike m =>
   ChainDbEnv m blk ->
   SlotNo ->
-  m ()
+  m [WithArrivalTime (ValidatedPerasCert blk)]
 garbageCollectPeras CDB{..} slotNo = do
-  join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
+  removedCerts <- join . atomically $ PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   join . atomically $ PerasVoteDB.garbageCollect cdbPerasVoteDB slotNo
+  pure removedCerts
+
+{-------------------------------------------------------------------------------
+  Storing certificates in the PerasImmutableCertDB
+-------------------------------------------------------------------------------}
+
+-- | Queue of certificates garbage-collected from the volatile 'PerasCertDB'
+-- that are pending to be stored in the 'PerasImmutableCertDB'.
+--
+-- It is written to by the 'gcScheduleRunner' and read from by the
+-- 'certStoringRunner'. It is unbounded so that garbage collection never
+-- blocks on (slower, on-disk) certificate storage. Its size is nonetheless
+-- bounded in practice by the number of certificates collected per GC.
+newtype CertStoringQueue m blk
+  = CertStoringQueue (TQueue m [WithArrivalTime (ValidatedPerasCert blk)])
+
+newCertStoringQueue :: IOLike m => m (CertStoringQueue m blk)
+newCertStoringQueue = CertStoringQueue <$> newTQueueIO
+
+-- | Enqueue a batch of garbage-collected certificates to be stored. Empty
+-- batches are ignored.
+enqueueCertsToStore ::
+  IOLike m =>
+  CertStoringQueue m blk ->
+  [WithArrivalTime (ValidatedPerasCert blk)] ->
+  m ()
+enqueueCertsToStore _ [] = pure ()
+enqueueCertsToStore (CertStoringQueue queue) certs =
+  atomically $ writeTQueue queue certs
+
+-- | Read batches of garbage-collected certificates from the
+-- 'CertStoringQueue' and store them in the 'PerasImmutableCertDB' using
+-- 'storeImmutableCerts'.
+certStoringRunner ::
+  forall m blk.
+  (IOLike m, IsPerasCert (PerasCert blk) blk, HasCallStack) =>
+  ChainDbEnv m blk ->
+  CertStoringQueue m blk ->
+  m Void
+certStoringRunner cdb (CertStoringQueue queue) = forever $ do
+  certs <- atomically $ readTQueue queue
+  storeImmutableCerts cdb certs
+
+-- | Store the given certificates in the 'PerasImmutableCertDB', filtering out
+-- those boosting blocks that are not in the ImmutableDB (e.g. blocks on forks
+-- that were never selected).
+--
+-- The certificates are expected to have been garbage-collected from the
+-- volatile 'PerasCertDB', i.e., they boost blocks that are older than the
+-- ImmutableDB tip, so the ImmutableDB already contains every boosted block
+-- that is (and will ever be) immutable.
+storeImmutableCerts ::
+  forall m blk.
+  (IOLike m, IsPerasCert (PerasCert blk) blk, HasCallStack) =>
+  ChainDbEnv m blk ->
+  [WithArrivalTime (ValidatedPerasCert blk)] ->
+  m ()
+storeImmutableCerts CDB{cdbImmutableDB, cdbPerasImmutableCertDB} certs =
+  forM_ certs $ \cert ->
+    case pointToWithOriginRealPoint (getPerasCertPoint cert) of
+      Origin -> pure ()
+      NotOrigin pt -> do
+        isImmutable <- ImmutableDB.hasBlock cdbImmutableDB pt
+        when isImmutable $
+          void $
+            PerasImmutableCertDB.addCert cdbPerasImmutableCertDB cert
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections
