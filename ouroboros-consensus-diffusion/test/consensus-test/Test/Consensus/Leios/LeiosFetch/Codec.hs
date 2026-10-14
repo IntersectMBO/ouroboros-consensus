@@ -41,6 +41,7 @@ import Ouroboros.Consensus.Leios.Types
 import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Util.Serialisation.CBOR (definite, definiteMap, indefinite, indefiniteMap)
 
 tests :: TestTree
 tests =
@@ -124,20 +125,6 @@ decodeBlockRequest enc =
   decodeMsg SingIdle enc <&> \case
     Just (SomeMessage (MsgLeiosBlockRequest p)) -> Just p
     _ -> Nothing
-
-definite :: [CBOR.Encoding] -> CBOR.Encoding
-definite xs = CBOR.encodeListLen (fromIntegral $ length xs) <> mconcat xs
-
-indefinite :: [CBOR.Encoding] -> CBOR.Encoding
-indefinite xs = CBOR.encodeListLenIndef <> mconcat xs <> CBOR.encodeBreak
-
--- | A definite-length map of these key-value pairs.
-definiteMap :: [CBOR.Encoding] -> CBOR.Encoding
-definiteMap kvs = CBOR.encodeMapLen (fromIntegral $ length kvs) <> mconcat kvs
-
--- | An indefinite-length map of these key-value pairs.
-indefiniteMap :: [CBOR.Encoding] -> CBOR.Encoding
-indefiniteMap kvs = CBOR.encodeMapLenIndef <> mconcat kvs <> CBOR.encodeBreak
 
 txsRequestKey :: CBOR.Encoding
 txsRequestKey = CBOR.encodeWord 3

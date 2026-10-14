@@ -622,6 +622,7 @@ library unstable-consensus-testlib
     Test.Util.RefEnv
     Test.Util.SanityCheck
     Test.Util.Schedule
+    Test.Util.Serialisation.CBOR
     Test.Util.Serialisation.CDDL
     Test.Util.Serialisation.Examples
     Test.Util.Serialisation.Golden

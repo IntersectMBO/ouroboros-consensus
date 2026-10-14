@@ -30,9 +30,14 @@ module Test.Consensus.Leios.NodeUnderTest
   , encodePeerAddr
   , nodeVersionData
   , defaultNodeUnderTestConfig
+  , maxEbBodySize
+  , withNode
+  , withNodeForecasting
   , withNodeUnderTest
   ) where
 
+import Cardano.Ledger.BaseTypes (Milliseconds32 (..), knownNonZeroBounded)
+import Cardano.Ledger.State (emptyLeiosCommittee)
 import Cardano.Network.Diffusion.Configuration
   ( defaultChainSyncIdleTimeout
   , defaultTxSubmissionLogicVersion
@@ -57,12 +62,14 @@ import Data.ByteString.Lazy (ByteString)
 import Data.Hashable (Hashable)
 import Data.Proxy (Proxy (..))
 import qualified Network.Mux as Mux
+import Ouroboros.Consensus.Block (SlotNo)
 import Ouroboros.Consensus.BlockchainTime
   ( BackoffDelay (..)
   , BlockchainTime
   , HardForkBlockchainTimeArgs (..)
   , SystemTime
   , hardForkBlockchainTime
+  , slotLengthFromSec
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Default (defaultSystemTime)
 import Ouroboros.Consensus.Config
@@ -72,7 +79,10 @@ import Ouroboros.Consensus.Config
   , configLedger
   )
 import Ouroboros.Consensus.Config.SupportsNode (getNetworkMagic, getSystemStart)
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
+import Ouroboros.Consensus.Leios.Types (BytesSize)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -122,7 +132,7 @@ import System.FS.Sim.MockFS (MockFS)
 import System.FS.Sim.STM (simHasFS)
 import System.Random (StdGen, mkStdGen, random, splitGen)
 import Test.Consensus.Leios.TestBlock
-import Test.Util.ChainDB (NodeDBs (..))
+import Test.Util.ChainDB (NodeDBs (..), emptyNodeDBs)
 import Test.Util.FS.Subdirectory (subdirectoryHasFS)
 import Test.Util.Orphans.IOLike ()
 
@@ -315,6 +325,41 @@ withNodeUnderTest cfg nodeDBs body = do
                   apps
             , nutSeeds = seeds
             }
+
+-- | A node whose ledger view forecasts further ahead than any test runs.
+withNode :: (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNode = withNodeForecasting 100000
+
+-- | A node whose ledger view forecasts this many slots past its immutable tip.
+withNodeForecasting :: SlotNo -> (NodeUnderTest (IOSim s) -> IOSim s a) -> IOSim s a
+withNodeForecasting range body = do
+  nodeDBs <- emptyNodeDBs
+  withNodeUnderTest cfg nodeDBs body
+ where
+  k = SecurityParam $ knownNonZeroBounded @10
+  cfg =
+    defaultNodeUnderTestConfig
+      k
+      LeiosTestLedgerConfig
+        { ltlcHardForkParams =
+            HardFork.defaultEraParams k (slotLengthFromSec 1) HardFork.NoPerasEnabled
+        , ltlcForecastRange = range
+        , ltlcLeios =
+            MkLeiosLedgerView
+              { llvCommittee = emptyLeiosCommittee
+              , llvQuorumStakeThreshold = maxBound
+              , llvAnnouncementPeriod = Milliseconds32 1000
+              , llvVotePeriod = Milliseconds32 4000
+              , llvDiffusionPeriod = Milliseconds32 1000
+              , llvMaxEbBodySize = maxEbBodySize
+              , llvMaxEbTxsSize = maxEbBodySize
+              }
+        }
+
+-- | The largest endorser block, and total size of the transactions it
+-- references, that the NUT's ledger admits.
+maxEbBodySize :: BytesSize
+maxEbBodySize = 5000
 
 -- | The version data a relay offers: it accepts inbound connections and shares
 -- peers.
