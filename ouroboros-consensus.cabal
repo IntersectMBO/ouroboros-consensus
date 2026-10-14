@@ -1559,7 +1559,7 @@ test-suite consensus-diffusion-test
     bytestring,
     cardano-binary,
     cardano-crypto-class:cardano-crypto-class,
-    cardano-crypto-leios,
+    cardano-crypto-leios:{cardano-crypto-leios, testlib},
     cardano-diffusion:{api, cardano-diffusion},
     cardano-ledger-binary,
     cardano-ledger-core,
