@@ -936,6 +936,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.PerasCertDB
+    Test.Ouroboros.Storage.PerasImmutableCertDB
     Test.Ouroboros.Storage.PerasCertDB.Model
     Test.Ouroboros.Storage.PerasCertDB.StateMachine
     Test.Ouroboros.Storage.PerasVoteDB
@@ -1467,6 +1468,7 @@ test-suite consensus-diffusion-test
     Test.Consensus.Genesis.Tests.LoE.CaughtUp
     Test.Consensus.Genesis.Tests.LongRangeAttack
     Test.Consensus.Genesis.Tests.LoP
+    Test.Consensus.Genesis.Tests.PerasDensityDisconnect
     Test.Consensus.Genesis.Tests.Uniform
     Test.Consensus.Genesis.TestSuite
     Test.Consensus.Genesis.TestSuite.SmallKey
@@ -1529,6 +1531,7 @@ test-suite consensus-diffusion-test
     monoidal-containers ^>=0.6,
     mtl,
     nothunks,
+    nonempty-containers,
     ouroboros-consensus:{diffusion, ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
     pretty,

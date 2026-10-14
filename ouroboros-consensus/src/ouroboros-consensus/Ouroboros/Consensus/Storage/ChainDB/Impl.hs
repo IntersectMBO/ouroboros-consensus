@@ -353,6 +353,12 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     let testing =
           Internal
             { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
+            , intGetPerasImmutableCertsAfter = \roundNo maxCerts ->
+                getEnv h $ \e ->
+                  PerasImmutableCertDB.getCertsAfter
+                    (cdbPerasImmutableCertDB e)
+                    roundNo
+                    maxCerts
             , intGarbageCollect = \slot -> getEnv h $ \e -> do
                 Background.garbageCollectBlocks e slot
                 -- The background 'certStoringRunner' is usually not running
