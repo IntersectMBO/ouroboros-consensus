@@ -79,9 +79,9 @@ import Numeric.Natural
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosProtocol (..)
+  , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
-  , defaultValidateViewLeiosAnnouncement
   )
 import Ouroboros.Consensus.Mock.Ledger.Stake
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -463,7 +463,7 @@ data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState
   }
 
 instance PraosCrypto c => LeiosProtocol (Praos c) where
-  validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
+  getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
 

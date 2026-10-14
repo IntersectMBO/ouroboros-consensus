@@ -70,9 +70,9 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosProtocol (..)
+  , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
-  , defaultValidateViewLeiosAnnouncement
   )
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -296,7 +296,7 @@ instance ChainDepStateSupportsPeras (PBftState c)
 instance ChainDepStateSupportsPeras (Ticked (PBftState c))
 
 instance PBftCrypto c => LeiosProtocol (PBft c) where
-  validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
+  getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
 

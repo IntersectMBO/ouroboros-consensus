@@ -79,9 +79,9 @@ import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosProtocol (..)
+  , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
-  , defaultValidateViewLeiosAnnouncement
   )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -337,7 +337,7 @@ instance ChainDepStateSupportsPeras TPraosState
 instance ChainDepStateSupportsPeras (Ticked TPraosState)
 
 instance SL.PraosCrypto c => LeiosProtocol (TPraos c) where
-  validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
+  getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
 

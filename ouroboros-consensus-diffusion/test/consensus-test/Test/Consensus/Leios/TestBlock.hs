@@ -341,7 +341,7 @@ instance ConsensusProtocol LeiosTestProtocol where
   reupdateChainDepState _ _ _ _ = ()
 
 instance LeiosProtocol LeiosTestProtocol where
-  validateViewLeiosAnnouncement _proxy hdr =
+  getLeiosAnnouncement _proxy hdr =
     lthAnnouncement hdr >>= \(ebHash, size) ->
       pure
         MkLeiosAnnouncement

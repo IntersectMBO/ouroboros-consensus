@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
@@ -34,8 +35,7 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
-import Control.Monad.Except (ExceptT, throwError)
-import Control.Monad.Trans (lift)
+import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
 import qualified Data.Map.Strict as Strict (Map)
 import GHC.Generics (Generic)
@@ -48,18 +48,15 @@ import Ouroboros.Consensus.Leios.Types (ElectionId (..))
 
 -- | What a single LeiosNotify upstream peer has announced, per election: the
 -- announcements part of the client's per-peer state
-data AnnouncementsState anc
-  = MkAnnouncementsState
-  { live :: !(Strict.Map ElectionId (ElState anc))
-  }
+newtype State anc = MkState {live :: Strict.Map ElectionId (SeenAnnouncements anc)}
   deriving stock Generic
   deriving anyclass NoThunks
 
-emptyAnnouncementsState :: AnnouncementsState anc
-emptyAnnouncementsState = MkAnnouncementsState Map.empty
+empty :: State anc
+empty = MkState Map.empty
 
--- | State maintained within 'AnnouncementsState' for each election
-data ElState anc
+-- | The announcements the peer has sent for one election
+data SeenAnnouncements anc
   = -- | The peer has sent one announcement
     --
     -- INVARIANT: has valid signature and election proof
@@ -72,33 +69,17 @@ data ElState anc
     --
     -- INVARIANT: they are different announcements
     TwoAnnouncements !anc !anc
-  deriving stock Generic
+  deriving stock (Generic, Foldable)
   deriving anyclass NoThunks
-
-firstAnnouncement :: ElState anc -> anc
-firstAnnouncement = \case
-  OneAnnouncement x -> x
-  TwoAnnouncements x1 _x2 -> x1
-
-secondAnnouncement :: ElState anc -> Maybe anc
-secondAnnouncement = \case
-  OneAnnouncement _x -> Nothing
-  TwoAnnouncements _x1 x2 -> Just x2
-
--- | Both of this election's announcements, first one first.
-elStateAnnouncements :: ElState anc -> [anc]
-elStateAnnouncements = \case
-  OneAnnouncement x -> [x]
-  TwoAnnouncements x1 x2 -> [x1, x2]
 
 -- | Everything this peer has announced for elections in the given slot.
 --
 -- 'ElectionId' orders slot-first, so those elections are a contiguous range. An
 -- endorser block's own slot is its election's slot, so this is what an offer
 -- of that endorser block has to be backed by.
-announcementsInSlot :: SlotNo -> AnnouncementsState anc -> [anc]
-announcementsInSlot slot st =
-  concatMap elStateAnnouncements (Map.elems atSlot)
+inSlot :: SlotNo -> State anc -> [anc]
+inSlot slot st =
+  concatMap toList (Map.elems atSlot)
  where
   (_below, atOrAbove) =
     Map.spanAntitone (\(ElectionId elSlot _poolId) -> elSlot < slot) (live st)
@@ -112,9 +93,9 @@ announcementsInSlot slot st =
 -- advances.  That accommodates clock skew, transmission time, etc
 -- with only an insignificant increase in the stochastic bound on
 -- election count
-pruneAnnouncementsState :: SlotNo -> AnnouncementsState anc -> ([anc], AnnouncementsState anc)
-pruneAnnouncementsState immTipSlot st =
-  (concatMap elStateAnnouncements (Map.elems pruned), MkAnnouncementsState{live = live'})
+prune :: SlotNo -> State anc -> ([anc], State anc)
+prune immTipSlot st =
+  (concatMap toList (Map.elems pruned), MkState live')
  where
   (pruned, live') = Map.spanAntitone tooOld (live st)
 
@@ -124,7 +105,7 @@ pruneAnnouncementsState immTipSlot st =
 
 -- | Behaviors of a LeiosNotify upstream peer's announcement stream
 -- that an honest node rejects
-data ErrAnnouncement invalidity
+data Error invalidity
   = -- | The peer had already sent this same announcement before
     ErrRepeat
   | -- | The peer had already sent two announcements for this election
@@ -133,29 +114,26 @@ data ErrAnnouncement invalidity
     ErrInvalid !invalidity
   | -- | This announcement's election is too old (its wall-clock age exceeds
     -- what a client tolerates from an upstream peer). Unlike 'ErrInvalid', this
-    -- verdict depends on the wall clock rather than on the announcement itself,
-    -- so 'onAnnouncement' cannot decide it directly; it is signalled by the
-    -- validation callback returning 'VerdictTooOld' (see 'onAnnouncement').
+    -- verdict depends on the wall clock rather than on the announcement itself.
     ErrTooOld
   deriving Show
 
 -- | Fails if this election was already 'TwoAnnouncements' or if this
 -- announcement was already received
-insertAnnouncement ::
+insert ::
   forall anc invalidity.
   Eq anc =>
   ElectionId ->
   anc ->
-  AnnouncementsState anc ->
-  Either (ErrAnnouncement invalidity) (AnnouncementsState anc)
-insertAnnouncement elId anc st =
-  (\live' -> MkAnnouncementsState{live = live'})
-    <$> Map.alterF (fmap Just . upd) elId (live st)
+  State anc ->
+  Either (Error invalidity) (State anc)
+insert elId anc st =
+  MkState <$> Map.alterF (fmap Just . upd) elId (live st)
  where
   -- 0 -> 1 ok
   -- 1 -> 2 ok when unequal
   -- 2 -> 3 not ok
-  upd :: Maybe (ElState anc) -> Either (ErrAnnouncement x) (ElState anc)
+  upd :: Maybe (SeenAnnouncements anc) -> Either (Error invalidity) (SeenAnnouncements anc)
   upd = \case
     Nothing -> Right $ OneAnnouncement anc
     Just (OneAnnouncement x) ->
@@ -164,53 +142,3 @@ insertAnnouncement elId anc st =
         else
           Right $ TwoAnnouncements x anc
     Just TwoAnnouncements{} -> Left ErrThird
-
------
--- The per-peer logic for receiving a MsgLeiosAnnouncement
------
-
--- | The verdict of 'onAnnouncement'\'s validation callback
-data AnnouncementVerdict invalidity validated
-  = -- | Reject: the election's wall-clock age exceeds what a client tolerates
-    --
-    -- Raised as 'ErrTooOld'. The callback owns this check because only it holds
-    -- the wall clock.
-    VerdictTooOld
-  | -- | Reject: the announcement is invalid; raised as 'ErrInvalid'
-    VerdictInvalid !invalidity
-  | -- | Accept from the peer, but do not process the announcement
-    --
-    -- Currently only a stale-OCIN announcement (see
-    -- 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation.validateAnnouncementHeader').
-    VerdictIgnore
-  | -- | Accept, and process the announcement
-    VerdictProcess !validated
-
-onAnnouncement ::
-  (Eq anc, Monad m) =>
-  (anc -> ElectionId) ->
-  -- | How to validate the announcement
-  --
-  -- The peer is disconnected only for a rejecting verdict; both accepting
-  -- verdicts also update its per-peer dedup state.
-  (anc -> m (AnnouncementVerdict invalidity validated)) ->
-  -- | How to process a new announcement from this peer
-  (anc -> validated -> m ()) ->
-  AnnouncementsState anc ->
-  anc ->
-  ExceptT (ErrAnnouncement invalidity) m (AnnouncementsState anc)
-onAnnouncement getEl validate process st anc = do
-  st' <- case insertAnnouncement (getEl anc) anc st of
-    Left err -> throwError err
-    Right x -> pure x
-  -- do the more expensive validation only after the trivial
-  -- counting checks
-  lift (validate anc) >>= \case
-    VerdictTooOld -> throwError ErrTooOld
-    VerdictInvalid err -> throwError $ ErrInvalid err
-    -- The peer's dedup state was already updated by 'insertAnnouncement' above, so just
-    -- keep it.
-    VerdictIgnore -> pure st'
-    VerdictProcess x -> do
-      lift $ process anc x
-      pure st'

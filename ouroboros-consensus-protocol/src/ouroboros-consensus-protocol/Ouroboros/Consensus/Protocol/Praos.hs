@@ -80,9 +80,9 @@ import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosProtocol (..)
+  , defaultGetLeiosAnnouncement
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
-  , defaultValidateViewLeiosAnnouncement
   )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
@@ -169,7 +169,7 @@ instance HasMaxMajorProtVer (Praos c) where
 -------------------------------------------------------------------------------}
 
 instance PraosCrypto c => LeiosProtocol (Praos c) where
-  validateViewLeiosAnnouncement = defaultValidateViewLeiosAnnouncement
+  getLeiosAnnouncement = defaultGetLeiosAnnouncement
   validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
   getLeiosLedgerView = defaultGetLeiosLedgerView
 

@@ -14,7 +14,7 @@ module Ouroboros.Consensus.Leios.Protocol
   , OCINStaleness (..)
   , defaultGetLeiosLedgerView
   , defaultValidateLeiosAnnouncement
-  , defaultValidateViewLeiosAnnouncement
+  , defaultGetLeiosAnnouncement
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -61,8 +61,8 @@ decodeLeiosAnnouncement =
 
 -- | The Leios parameters a ledger view carries.
 --
--- The periods are kept as durations, since converting one to a count of slots
--- needs the slot length, which only the consensus config has.
+-- The periods are durations, as the protocol parameters define them; they need
+-- not be whole numbers of slots.
 data LeiosLedgerView = MkLeiosLedgerView
   { llvCommittee :: !LeiosCommittee
   -- ^ who may vote this epoch, and with what weight
@@ -93,7 +93,7 @@ data OCINStaleness = FreshOCIN | StaleOCIN
 
 class ConsensusProtocol p => LeiosProtocol p where
   -- | The announcement carried by the header with this view, if any.
-  validateViewLeiosAnnouncement :: proxy p -> ValidateView p -> Maybe LeiosAnnouncement
+  getLeiosAnnouncement :: proxy p -> ValidateView p -> Maybe LeiosAnnouncement
 
   -- | The protocol-level validation of a relayed announcement's header, done
   -- out of context: against the immutable tip's chain-dependent state ticked to
@@ -114,10 +114,10 @@ class ConsensusProtocol p => LeiosProtocol p where
   -- protocol has no Leios.
   getLeiosLedgerView :: proxy p -> LedgerView p -> Maybe LeiosLedgerView
 
--- | 'validateViewLeiosAnnouncement' for a protocol whose headers never carry an
+-- | 'getLeiosAnnouncement' for a protocol whose headers never carry an
 -- announcement.
-defaultValidateViewLeiosAnnouncement :: proxy p -> ValidateView p -> Maybe LeiosAnnouncement
-defaultValidateViewLeiosAnnouncement _proxy _view = Nothing
+defaultGetLeiosAnnouncement :: proxy p -> ValidateView p -> Maybe LeiosAnnouncement
+defaultGetLeiosAnnouncement _proxy _view = Nothing
 
 -- | 'validateLeiosAnnouncement' for a protocol whose headers never carry an
 -- announcement, which is therefore never called.

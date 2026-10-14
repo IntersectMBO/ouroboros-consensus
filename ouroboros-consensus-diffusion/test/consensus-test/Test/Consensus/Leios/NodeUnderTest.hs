@@ -5,7 +5,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | One real node, and a mocked environment around it.
+-- | One real node, the node under test (NUT), and a mocked environment around
+-- it. The @nut@ prefix of names here abbreviates it.
 --
 -- The node is built by the node's own 'initNodeKernel' over a ChainDB on a
 -- mocked filesystem, so the code under test is the node's, not a
@@ -176,24 +177,26 @@ data NodeUnderTest m = NodeUnderTest
   { nutChainDB :: ChainDB m Blk
   , nutTopLevelConfig :: TopLevelConfig Blk
   , nutKernel :: NodeKernel m PeerAddr (ConnectionId ()) Blk
-  , nutApps ::
-      BlockNodeToNodeVersion Blk ->
-      NTN.Apps
-        m
-        PeerAddr
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        NodeToNodeInitiatorResult
-        ()
+  , nutApps :: BlockNodeToNodeVersion Blk -> NodeApps m
   , nutVersions :: NodeVersions m
   , nutSeeds :: Seeds StdGen
   }
+
+-- | The node's node-to-node applications, at every mini-protocol's bytes.
+type NodeApps m =
+  NTN.Apps
+    m
+    PeerAddr
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    NodeToNodeInitiatorResult
+    ()
 
 -- | The node's node-to-node applications for each version it supports, as it
 -- offers them on a connection where it is both initiator and responder.
@@ -258,7 +261,7 @@ withNodeUnderTest cfg nodeDBs body = do
               mempty
               nullTracers
               btime
-              nutSystemTime
+              nodeSystemTime
               InFutureCheck.defaultClockSkew
               -- With Genesis disabled, there is no historicity cutoff.
               (\_getGsmState -> HistoricityCheck.noCheck)
@@ -341,7 +344,7 @@ mkBlockchainTime cfg registry chainDB =
       , hfbtGetLedgerState = ledgerState <$> ChainDB.getCurrentLedger chainDB
       , hfbtLedgerConfig = configLedger (topLevelConfigOf cfg)
       , hfbtRegistry = registry
-      , hfbtSystemTime = nutSystemTime
+      , hfbtSystemTime = nodeSystemTime
       , hfbtTracer = nullTracer
       , hfbtMaxClockRewind = 0
       }
@@ -357,5 +360,5 @@ mountedIn mockFS (ChainDB.RelativeMountPoint path) =
   SomeHasFS $ subdirectoryHasFS (mkFsPath [path]) (simHasFS mockFS)
 
 -- | The node's wall clock, from its block's system start, as a running node's.
-nutSystemTime :: SystemTime (IOSim s)
-nutSystemTime = defaultSystemTime (getSystemStart LeiosTestBlockConfig) nullTracer
+nodeSystemTime :: SystemTime (IOSim s)
+nodeSystemTime = defaultSystemTime (getSystemStart LeiosTestBlockConfig) nullTracer

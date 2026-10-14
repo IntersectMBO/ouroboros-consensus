@@ -25,19 +25,27 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
   , pruneLeiosNotifyPeerState
   ) where
 
-import Cardano.Crypto.Leios (LeiosSeatId (..))
+import Cardano.Crypto.Leios (LeiosSeatId)
 import Control.Monad (foldM, unless, when)
-import Control.Monad.Except (Except, liftEither, runExceptT, throwError, withExcept)
+import Control.Monad.Except (Except, ExceptT, liftEither, throwError, withExcept, withExceptT)
 import Data.Bifunctor (first)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (NominalDiffTime)
 import Data.Typeable (Typeable)
-import Data.Word (Word16)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
+  ( BlockProtocol
+  , ConvertRawHash (..)
+  , GetHeader (..)
+  , Header
+  , Proxy (..)
+  , SlotNo (..)
+  , WithOrigin (NotOrigin)
+  , headerHash
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime, SystemTime, diffRelTime)
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.Forecast (OutsideForecastRange, forecastFor)
@@ -62,8 +70,13 @@ import Ouroboros.Consensus.Leios.Types
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
+  ( AnnouncementInvalidity
+  , AnnouncingHeader (ancAnnouncement, ancElectionId, ancHeader)
+  , announcementValidity
+  , mkAnnouncingHeader
+  )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
-import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, throwIO)
+import Ouroboros.Consensus.Util.IOLike (Exception, IOLike)
 
 -- | What one LeiosNotify client remembers about its upstream peer.
 --
@@ -72,14 +85,14 @@ import Ouroboros.Consensus.Util.IOLike (Exception, IOLike, throwIO)
 data LeiosNotifyPeerState blk = MkLeiosNotifyPeerState
   { lnpsPruneSlot :: !SlotNo
   -- ^ The slot the state has been pruned up to.
-  , lnpsAnnouncements :: !(Announcements.AnnouncementsState (AnnouncingHeader blk))
+  , lnpsAnnouncements :: !(Announcements.State (AnnouncingHeader blk))
   -- ^ What this peer has announced, for dedup and equivocation counting.
   , lnpsBodyOffers :: !(Set LeiosPoint)
   -- ^ Which endorser blocks this peer has offered the body of, so that
   -- repeating an offer costs it the connection.
   , lnpsClosureOffers :: !(Set LeiosPoint)
   -- ^ Likewise, which it has offered the transaction closure of.
-  , lnpsVotes :: !(Set (SlotNo, Word16))
+  , lnpsVotes :: !(Set (SlotNo, LeiosSeatId))
   -- ^ The slots and seats this peer has sent votes for.
   }
   deriving stock Generic
@@ -90,7 +103,7 @@ emptyLeiosNotifyPeerState :: LeiosNotifyPeerState blk
 emptyLeiosNotifyPeerState =
   MkLeiosNotifyPeerState
     { lnpsPruneSlot = SlotNo 0
-    , lnpsAnnouncements = Announcements.emptyAnnouncementsState
+    , lnpsAnnouncements = Announcements.empty
     , lnpsBodyOffers = Set.empty
     , lnpsClosureOffers = Set.empty
     , lnpsVotes = Set.empty
@@ -118,7 +131,7 @@ pruneLeiosNotifyPeerState immTipSlot st
   | otherwise = st
  where
   (_prunedAnnouncements, announcements) =
-    Announcements.pruneAnnouncementsState immTipSlot (lnpsAnnouncements st)
+    Announcements.prune immTipSlot (lnpsAnnouncements st)
 
 -- | The hash of the announcing block, which votes name.
 announcingRbHash ::
@@ -231,7 +244,7 @@ announcedIt :: LeiosPoint -> LeiosNotifyPeerState blk -> Bool
 announcedIt point st =
   any
     (\ancHdr -> announcementEbHash (ancAnnouncement ancHdr) == pointEbHash point)
-    (Announcements.announcementsInSlot (pointSlotNo point) (lnpsAnnouncements st))
+    (Announcements.inSlot (pointSlotNo point) (lnpsAnnouncements st))
 
 -- | Thrown when a peer's 'MsgLeiosBlockAnnouncement' is one an honest peer
 -- would not send; the ensuing thread death disconnects it.
@@ -239,7 +252,7 @@ data ExnLeiosNotifyInvalidAnnouncement blk
   = -- | The header carries no announcement, so it should not have been relayed
     -- as one.
     ExnLeiosNotifyAnnouncementMissing
-  | ExnLeiosNotifyInvalidAnnouncement !(Announcements.ErrAnnouncement (AnnouncementInvalidity blk))
+  | ExnLeiosNotifyInvalidAnnouncement !(Announcements.Error (AnnouncementInvalidity blk))
 
 deriving stock instance
   (Show (ValidationErr (BlockProtocol blk)), Show (OtherHeaderEnvelopeError blk)) =>
@@ -252,8 +265,7 @@ instance
   ) =>
   Exception (ExnLeiosNotifyInvalidAnnouncement blk)
 
--- | Judge a peer's 'MsgLeiosBlockAnnouncement' against what it has announced
--- before, throwing if it is one an honest peer would not send.
+-- | Accept a peer's 'MsgLeiosBlockAnnouncement', or say why the peer must go.
 --
 -- Nothing else in the node processes the announcement yet.
 onLeiosNotifyAnnouncement ::
@@ -269,26 +281,21 @@ onLeiosNotifyAnnouncement ::
   ExtLedgerState blk EmptyMK ->
   LeiosNotifyPeerState blk ->
   Header blk ->
-  m (LeiosNotifyPeerState blk)
+  ExceptT (ExnLeiosNotifyInvalidAnnouncement blk) m (LeiosNotifyPeerState blk)
 onLeiosNotifyAnnouncement systemTime futureCheck cfg immLedger st hdr = do
-  anc <- case mkAnnouncingHeader cfg hdr of
-    Nothing -> throwIO (ExnLeiosNotifyAnnouncementMissing @blk)
-    Just x -> pure x
-  res <-
-    runExceptT $
-      Announcements.onAnnouncement
-        ancElectionId
-        (announcementValidity systemTime futureCheck cfg immLedger)
-        (\_anc _validated -> pure ())
-        (lnpsAnnouncements st)
-        anc
-  case res of
-    Left err -> throwIO (ExnLeiosNotifyInvalidAnnouncement err :: ExnLeiosNotifyInvalidAnnouncement blk)
-    Right announcements ->
-      pure
-        st
-          { lnpsAnnouncements = announcements
-          }
+  anc <- maybe (throwError ExnLeiosNotifyAnnouncementMissing) pure $ mkAnnouncingHeader cfg hdr
+  withExceptT ExnLeiosNotifyInvalidAnnouncement $ do
+    announcements <-
+      liftEither $ Announcements.insert (ancElectionId anc) anc (lnpsAnnouncements st)
+    -- The expensive validation comes after the trivial counting checks. Even a
+    -- 'StaleOCIN' announcement counts against the peer.
+    --
+    -- TODO When the node processes and relays announcements, have
+    -- 'announcementValidity' also return a fresh announcement's slot onset and
+    -- age: the age decides whether to relay it, and the onset dates the
+    -- endorser block's arrival.
+    _staleness <- announcementValidity systemTime futureCheck cfg immLedger anc
+    pure st{lnpsAnnouncements = announcements}
 
 -- | Thrown when a peer's 'MsgLeiosVotes' holds a vote an honest peer would not
 -- send; the ensuing thread death disconnects it.
@@ -305,7 +312,7 @@ data ExnLeiosNotifyInvalidVotes
       -- | the election slot
       !SlotNo
       -- | the seat
-      !Word16
+      !LeiosSeatId
   | -- | A vote too young to have been cast. Votes are cast 3 L_hdr after the
     -- slot began, the time equivocations take to come to light, widened by the
     -- node's maximum clock skew so that an honest peer is never disconnected.
@@ -368,7 +375,7 @@ checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
     unless
       ( any
           (\anc -> announcingRbHash anc == rbHash)
-          (Announcements.announcementsInSlot slot (lnpsAnnouncements st))
+          (Announcements.inSlot slot (lnpsAnnouncements st))
       )
       $ throwError (ExnLeiosVoteWithoutAnnouncement rbHash slot)
     when (Set.member (slot, seat) (lnpsVotes st)) $
@@ -387,6 +394,8 @@ checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
         forecastFor
           (ledgerViewForecastAt (configLedger cfg) (ledgerState immLedger))
           slot
+    -- Without Leios at this slot, the protocol announces nothing there, so no
+    -- vote in it can have an announcement.
     MkLeiosLedgerView{llvAnnouncementPeriod, llvVotePeriod} <-
       maybe (throwError (ExnLeiosVoteWithoutAnnouncement rbHash slot)) pure $
         getLeiosLedgerView (Proxy @(BlockProtocol blk)) view
@@ -400,7 +409,7 @@ checkLeiosVotes cfg skew immLedger now votes st0 = foldM checkOne st0 votes
    where
     slot = voteSlot vote
     rbHash = voteAnnouncingRbHash vote
-    seat = leiosSeatIndex (voteSeatId vote)
+    seat = voteSeatId vote
 
 -- | How much later than 3 L_hdr + L_vote after its election slot began a vote
 -- may arrive: enough for transmission, clock skew, and votes queued behind

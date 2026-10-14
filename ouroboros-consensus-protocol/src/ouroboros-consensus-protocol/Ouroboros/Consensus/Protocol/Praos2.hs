@@ -40,8 +40,8 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), LeiosProtocol (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
-  ( getLeiosLedgerViewPolyPraos
-  , leiosAnnouncementPolyPraos
+  ( getLeiosAnnouncementPolyPraos
+  , getLeiosLedgerViewPolyPraos
   , validateLeiosAnnouncementPolyPraos
   )
 import Ouroboros.Consensus.Protocol.Praos
@@ -124,7 +124,7 @@ instance HasMaxMajorProtVer (Praos2 c) where
 -------------------------------------------------------------------------------}
 
 instance LeiosCrypto c => LeiosProtocol (Praos2 c) where
-  validateViewLeiosAnnouncement _proxy = leiosAnnouncementPolyPraos
+  getLeiosAnnouncement _proxy = getLeiosAnnouncementPolyPraos
   validateLeiosAnnouncement (LeiosConfig (PraosConfig prms _ei)) b _slot =
     validateLeiosAnnouncementPolyPraos prms b
   getLeiosLedgerView _proxy = getLeiosLedgerViewPolyPraos

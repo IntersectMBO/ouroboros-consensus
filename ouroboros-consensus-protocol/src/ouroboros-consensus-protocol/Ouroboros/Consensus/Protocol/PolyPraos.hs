@@ -66,7 +66,7 @@ module Ouroboros.Consensus.Protocol.PolyPraos
     -- * For testing purposes
   , doValidateKESSignature
   , doValidateKESSignature'
-  , leiosAnnouncementPolyPraos
+  , getLeiosAnnouncementPolyPraos
   , getLeiosLedgerViewPolyPraos
   , validateLeiosAnnouncementPolyPraos
   , WhetherToUpperBoundOCERT (..)
@@ -690,12 +690,12 @@ leiosContextFreeHeaderChecks lv b =
           throwError $
             LeiosEbTooBig err announced maxEbBodySize
 
--- | 'validateViewLeiosAnnouncement' for every Praos.
-leiosAnnouncementPolyPraos ::
+-- | 'getLeiosAnnouncement' for every Praos.
+getLeiosAnnouncementPolyPraos ::
   Foldable (WhenLeios proto) =>
   Views.PolyPraosValidateView proto c ->
   Maybe LeiosAnnouncement
-leiosAnnouncementPolyPraos b =
+getLeiosAnnouncementPolyPraos b =
   foldr
     ( \(_containsCert, mbAnn) _ -> mkLeiosAnnouncement (hashKey (Views.hvVK b)) <$> strictMaybeToMaybe mbAnn
     )

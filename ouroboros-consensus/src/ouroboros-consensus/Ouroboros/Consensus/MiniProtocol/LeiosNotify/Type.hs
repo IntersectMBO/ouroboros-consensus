@@ -66,13 +66,12 @@ import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 
 -----
 
--- | The LeiosNotify mini-protocol's states. CIP-0164 specifies the Leios
--- mini-protocols: <https://cips.cardano.org/cip/CIP-0164>.
---
--- TODO The CIP does not yet have 'MsgQuit' and 'MsgCanceled', from
--- <https://github.com/IntersectMBO/ouroboros-consensus/pull/2344>. It also now
--- splits these notifications across LeiosAnnounce, LeiosVotes and
--- LeiosBlockNotify; reconcile the two.
+-- | The LeiosNotify mini-protocol's states, as the cardano-blueprint specifies
+-- them:
+-- <https://cardano-scaling.github.io/cardano-blueprint/network/node-to-node/leios-notify/index.html?leios=on>.
+-- CIP-0164 specifies the Leios mini-protocols,
+-- <https://cips.cardano.org/cip/CIP-0164>; see also
+-- <https://github.com/cardano-foundation/CIPs/pull/1296>.
 type LeiosNotify :: Type -> Type -> Type -> Type
 data LeiosNotify point announcement vote where
   StIdle :: LeiosNotify point announcement vote

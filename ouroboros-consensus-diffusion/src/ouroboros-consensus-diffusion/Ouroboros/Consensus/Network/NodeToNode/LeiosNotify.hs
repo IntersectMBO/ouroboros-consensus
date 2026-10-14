@@ -15,7 +15,7 @@ module Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
 
 import Cardano.Network.NodeToNode (NodeToNodeVersion (..), addSafetyMargin)
 import Cardano.Network.PeerSelection (PeerTrustable)
-import Control.Monad.Except (runExcept)
+import Control.Monad.Except (Except, runExcept, runExceptT)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Void (Void)
@@ -57,6 +57,7 @@ import Ouroboros.Network.Mux
 -- | The node's LeiosNotify client. It checks each reply against the peer's
 -- state, which it updates, and disconnects the peer if a check fails.
 leiosNotifyClient ::
+  forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LeiosProtocol (BlockProtocol blk)
@@ -73,9 +74,9 @@ leiosNotifyClient ::
   StrictTVar m (LeiosNotifyPeerState blk) ->
   LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
 leiosNotifyClient
-  getTopLevelConfig
-  getChainDB
-  getBlockchainTime
+  cfg
+  chainDB
+  btime
   systemTime
   chainSyncFutureCheck
   maxClockSkew
@@ -84,53 +85,52 @@ leiosNotifyClient
     leiosNotifyClientPeerHandlingReplies
       leiosNotifyPipelineDepth
       ( awaitImmTipCanForecastNow
-          getTopLevelConfig
-          (ChainDB.getImmutableLedger getChainDB)
-          (getCurrentSlot getBlockchainTime)
+          cfg
+          (ChainDB.getImmutableLedger chainDB)
+          (getCurrentSlot btime)
       )
       controlMessageSTM
       ( \case
           MsgLeiosBlockAnnouncement hdr -> do
-            immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
-            st <- readTVarIO stateVar
+            (immLedger, st) <-
+              atomically $ (,) <$> ChainDB.getImmutableLedger chainDB <*> readTVar stateVar
             st' <-
-              onLeiosNotifyAnnouncement
-                systemTime
-                chainSyncFutureCheck
-                getTopLevelConfig
-                immLedger
-                st
-                hdr
-            -- The pruner may have run meanwhile; keep its work.
+              either throwIO pure
+                =<< runExceptT
+                  ( onLeiosNotifyAnnouncement
+                      systemTime
+                      chainSyncFutureCheck
+                      cfg
+                      immLedger
+                      st
+                      hdr
+                  )
+            -- The pruner may have run meanwhile; keep its work, so that every entry
+            -- is still at or after 'lnpsPruneSlot'.
             atomically $ do
               pruneSlot <- lnpsPruneSlot <$> readTVar stateVar
               writeTVar stateVar $! pruneLeiosNotifyPeerState pruneSlot st'
-          MsgLeiosBlockOffer point claimed -> do
-            immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
-            res <- atomically $ do
-              st <- readTVar stateVar
-              case runExcept (checkLeiosBlockOffer getTopLevelConfig immLedger point claimed st) of
-                Left err -> pure (Left err)
-                Right st' -> Right () <$ writeTVar stateVar st'
-            either throwIO pure res
-          MsgLeiosBlockTxsOffer point -> do
-            res <- atomically $ do
-              st <- readTVar stateVar
-              case runExcept (checkLeiosClosureOffer point st) of
-                Left err -> pure (Left err)
-                Right st' -> Right () <$ writeTVar stateVar st'
-            either throwIO pure res
+          MsgLeiosBlockOffer point claimed ->
+            atomically $ do
+              immLedger <- ChainDB.getImmutableLedger chainDB
+              checkAndUpdate $ checkLeiosBlockOffer cfg immLedger point claimed
+          MsgLeiosBlockTxsOffer point ->
+            atomically $ checkAndUpdate $ checkLeiosClosureOffer point
           MsgLeiosVotes votes -> do
-            immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
             now <- systemTimeCurrent systemTime
-            res <- atomically $ do
-              st <- readTVar stateVar
-              case runExcept (checkLeiosVotes getTopLevelConfig maxClockSkew immLedger now votes st) of
-                Left err -> pure (Left err)
-                Right st' -> Right () <$ writeTVar stateVar st'
-            either throwIO pure res
+            atomically $ do
+              immLedger <- ChainDB.getImmutableLedger chainDB
+              checkAndUpdate $ checkLeiosVotes cfg maxClockSkew immLedger now votes
           MsgCanceled -> pure ()
       )
+   where
+    checkAndUpdate ::
+      Exception e =>
+      (LeiosNotifyPeerState blk -> Except e (LeiosNotifyPeerState blk)) ->
+      STM m ()
+    checkAndUpdate judge = do
+      st <- readTVar stateVar
+      either throwSTM (writeTVar stateVar) $ runExcept (judge st)
 
 -- | The node's LeiosNotify server.
 leiosNotifyServer ::

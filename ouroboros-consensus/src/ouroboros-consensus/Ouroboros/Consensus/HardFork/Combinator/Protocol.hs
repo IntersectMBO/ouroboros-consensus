@@ -469,7 +469,7 @@ class (SingleEraBlock blk, LeiosProtocol (BlockProtocol blk)) => SingleEraBlockA
 instance (SingleEraBlock blk, LeiosProtocol (BlockProtocol blk)) => SingleEraBlockAndLeiosProtocol blk
 
 instance (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) => LeiosProtocol (HardForkProtocol xs) where
-  validateViewLeiosAnnouncement _proxy (OneEraValidateView view) =
+  getLeiosAnnouncement _proxy (OneEraValidateView view) =
     hcollapse $ hcmap (Proxy @SingleEraBlockAndLeiosProtocol) getOne view
    where
     getOne ::
@@ -477,7 +477,7 @@ instance (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) => LeiosProtoco
       SingleEraBlockAndLeiosProtocol blk =>
       WrapValidateView blk ->
       K (Maybe LeiosAnnouncement) blk
-    getOne (WrapValidateView v) = K $ validateViewLeiosAnnouncement (Proxy @(BlockProtocol blk)) v
+    getOne (WrapValidateView v) = K $ getLeiosAnnouncement (Proxy @(BlockProtocol blk)) v
   validateLeiosAnnouncement = validateAnnouncement
   getLeiosLedgerView _proxy view =
     hcollapse $

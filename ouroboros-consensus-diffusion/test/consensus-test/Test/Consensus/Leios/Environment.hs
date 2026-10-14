@@ -263,21 +263,7 @@ peerVersions =
 
 -- | The peer's answer to the node's initiator with the given number.
 peerResponder ::
-  NTN.Codecs
-    Blk
-    PeerAddr
-    DeserialiseFailure
-    (IOSim s)
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString
-    ByteString ->
+  NodeCodecs s ->
   PeerSharingAPI PeerAddr StdGen (IOSim s) ->
   EnvPeer (IOSim s) ->
   Mx.MiniProtocolNum ->
@@ -323,9 +309,8 @@ quietChainSyncServer = ChainSyncServer $ pure idle
     BlockPoint{} -> False
 
 -- | The codecs the peer speaks, which are the node's.
-envCodecs ::
-  NodeUnderTest (IOSim s) ->
-  NodeToNodeVersion ->
+-- | The node's codecs, at every mini-protocol's bytes.
+type NodeCodecs s =
   NTN.Codecs
     Blk
     PeerAddr
@@ -341,6 +326,8 @@ envCodecs ::
     ByteString
     ByteString
     ByteString
+
+envCodecs :: NodeUnderTest (IOSim s) -> NodeToNodeVersion -> NodeCodecs s
 envCodecs nut =
   NTN.defaultCodecs
     (configCodec (nutTopLevelConfig nut))

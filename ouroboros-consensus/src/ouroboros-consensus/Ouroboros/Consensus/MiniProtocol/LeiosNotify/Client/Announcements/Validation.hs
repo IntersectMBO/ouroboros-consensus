@@ -29,14 +29,15 @@ module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validat
   ) where
 
 import Control.Monad (when)
-import Control.Monad.Except (Except, runExcept, throwError, withExcept)
+import Control.Monad.Except (Except, ExceptT, liftEither, runExcept, throwError, withExcept)
+import Control.Monad.Trans (lift)
+import Data.Bifunctor (first)
 import Data.Time.Clock (NominalDiffTime)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( RelativeTime
-  , SystemTime (..)
+  ( SystemTime (..)
   , diffRelTime
   )
 import Ouroboros.Consensus.Config
@@ -61,9 +62,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Leios.Protocol
 import Ouroboros.Consensus.Leios.Types (ElectionId (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
-  ( AnnouncementVerdict (..)
-  )
+import qualified Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements as Announcements
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
 import Ouroboros.Consensus.Util.IOLike (IOLike, throwIO)
 
@@ -93,7 +92,7 @@ mkAnnouncingHeader ::
   Maybe (AnnouncingHeader blk)
 mkAnnouncingHeader cfg hdr = do
   ann <-
-    validateViewLeiosAnnouncement
+    getLeiosAnnouncement
       (Proxy @(BlockProtocol blk))
       (validateView (configBlock cfg) hdr)
   pure $
@@ -262,7 +261,8 @@ validateAnnouncementHeader cfg extLedger ancHdr = do
   hdr = ancHeader ancHdr
   slot = blockSlot hdr
 
--- | The @validate@ callback for 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.onAnnouncement'.
+-- | Validate a relayed announcement, after the peer's per-election counting
+-- checks have passed.
 --
 -- First apply ChainSync's in-future check to the announced slot's wall-clock
 -- onset (reusing the node's own 'InFutureCheck.SomeHeaderInFutureCheck'):
@@ -271,9 +271,8 @@ validateAnnouncementHeader cfg extLedger ancHdr = do
 -- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
 -- announcement is the peer's fault.
 --
--- If the announcement is valid and 'FreshOCIN', the verdict carries the slot's
--- onset and the announcement's age. If it is valid but 'StaleOCIN', the verdict
--- is 'VerdictIgnore', so that the peer's dedup state still counts it.
+-- A valid announcement may still be 'StaleOCIN', which the peer's dedup state
+-- counts but the node does not process.
 announcementValidity ::
   ( IOLike m
   , LedgerSupportsProtocol blk
@@ -286,13 +285,9 @@ announcementValidity ::
   -- revocation only counts once it cannot be rolled back.
   ExtLedgerState blk EmptyMK ->
   AnnouncingHeader blk ->
-  m
-    ( AnnouncementVerdict
-        (AnnouncementInvalidity blk)
-        (RelativeTime, NominalDiffTime)
-    )
+  ExceptT (Announcements.Error (AnnouncementInvalidity blk)) m OCINStaleness
 announcementValidity systemTime futureCheck cfg immLedger ancHdr = do
-  onset <- case futureCheck of
+  onset <- lift $ case futureCheck of
     InFutureCheck.SomeHeaderInFutureCheck hifc -> do
       arrival <- InFutureCheck.recordHeaderArrival hifc (ancHeader ancHdr)
       judgment <-
@@ -308,19 +303,15 @@ announcementValidity systemTime futureCheck cfg immLedger ancHdr = do
   -- The in-future check has delayed this thread until 'onset' if the
   -- slot was near-future, so 'now' is at or after 'onset' and the age
   -- is non-negative.
-  now <- systemTimeCurrent systemTime
-  let age = diffRelTime now onset
-  pure $
-    -- Only this function holds the wall clock, so it owns the too-old check.
-    if age > maxAnnouncementAgeRecv
-      then VerdictTooOld
-      else case runExcept (validateAnnouncementHeader cfg immLedger ancHdr) of
-        Left inv -> VerdictInvalid inv
-        Right StaleOCIN -> VerdictIgnore
-        Right FreshOCIN -> VerdictProcess (onset, age)
+  now <- lift $ systemTimeCurrent systemTime
+  when (diffRelTime now onset > maxAnnouncementAgeRecv) $
+    throwError Announcements.ErrTooOld
+  liftEither . first Announcements.ErrInvalid . runExcept $
+    validateAnnouncementHeader cfg immLedger ancHdr
 
 -- | Disconnect an upstream peer that relays an announcement whose slot's
--- wall-clock onset is older than this. See 'ErrTooOld'.
+-- wall-clock onset is older than this. See
+-- 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.ErrTooOld'.
 --
 -- Comfortably greater than how long an honest peer relays an announcement, so
 -- that an honest peer is never disconnected on account of transmission time or
