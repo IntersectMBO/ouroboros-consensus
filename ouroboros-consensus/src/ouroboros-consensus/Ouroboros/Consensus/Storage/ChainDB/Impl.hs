@@ -357,8 +357,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                 Background.garbageCollectBlocks e slot
                 -- The background 'certStoringRunner' is usually not running
                 -- in the tests using this, so store the certificates directly.
-                Background.garbageCollectPeras e slot
-                  >>= Background.storeImmutableCerts e
+                void $
+                  Background.garbageCollectPeras e slot
+                    >>= Background.storeImmutableCerts e
                 LedgerDB.garbageCollect (cdbLedgerDB e) slot
             , intTryTakeSnapshot = getEnv h $ \e -> do
                 -- 'tryTakeSnapshot' only enqueues a request for the snapshots;
