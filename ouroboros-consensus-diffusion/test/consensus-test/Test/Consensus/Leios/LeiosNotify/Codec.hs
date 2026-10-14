@@ -14,7 +14,7 @@ import Cardano.Binary (ToCBOR (..))
 import Cardano.Binary.FixedSizeCodec (encodeFixedSized)
 import Cardano.Crypto.DSIGN.Class (genKeyDSIGN, signDSIGN)
 import Cardano.Crypto.Hash (Hash (UnsafeHash))
-import Cardano.Crypto.Leios (LeiosSeatId (..), leiosSignContext)
+import Cardano.Crypto.Leios (LeiosSeatId (..))
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
@@ -120,6 +120,6 @@ signedVote :: RankingBlockHash -> Word16 -> LeiosVote
 signedVote rbHash seat =
   MkLeiosVote rbHash (LeiosSeatId seat) $
     signDSIGN
-      leiosSignContext
+      ()
       rbHash
       (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
