@@ -6,7 +6,7 @@
 module Test.Consensus.Cardano.LeiosNotify (tests) where
 
 import Cardano.Crypto.DSIGN.Class (genKeyDSIGN, signDSIGN)
-import Cardano.Crypto.Leios (LeiosSeatId (..), leiosSignContext)
+import Cardano.Crypto.Leios (LeiosSeatId (..))
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Data.ByteString as BS
@@ -105,6 +105,6 @@ prop_nodeCodecMatchesCDDL =
     seat <- LeiosSeatId <$> arbitrary
     pure $
       MkLeiosVote rbHash seat $
-        signDSIGN leiosSignContext rbHash (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
+        signDSIGN () rbHash (genKeyDSIGN (mkSeedFromBytes (BS.replicate 32 0)))
 
   genHash = BS.pack <$> vectorOf 32 arbitrary
