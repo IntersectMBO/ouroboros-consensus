@@ -503,6 +503,7 @@ test-suite tracing-test
   hs-source-dirs: tracing/test
   main-is: Main.hs
   other-modules:
+    Test.Consensus.Tracing.Dijkstra
     Test.Consensus.Tracing.Golden
     Test.Consensus.Tracing.MetaTrace
 
@@ -517,6 +518,7 @@ test-suite tracing-test
     cardano-ledger-core,
     cardano-ledger-dijkstra,
     cardano-ledger-mary,
+    cardano-ledger-shelley,
     cardano-protocol-tpraos,
     containers,
     filepath,
