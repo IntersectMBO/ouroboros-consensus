@@ -36,8 +36,7 @@ praosState = [withOrigin<slotno>,
               nonce,
               nonce]
 
-; The Praos state, followed by the announcement carried by the most recently
-; applied header, if any.
+; The Praos state, followed by what the next header may certify.
 praos2State = [withOrigin<slotno>,
                {* keyhash => word64},
                nonce,
@@ -46,7 +45,12 @@ praos2State = [withOrigin<slotno>,
                nonce,
                nonce,
                nonce,
-               maybe<announcedBy>]
+               certifiable]
+
+; The announcement carried by the most recently applied header, or why the next
+; header may certify none: 0 if nothing was announced, 1 if it was announced in
+; the previous era.
+certifiable = [0] / [1] / [2, announcedBy]
 
 ; The issuer, followed by the announced endorser block's hash and size.
 announcedBy = [keyhash, hash, word32]
@@ -57,4 +61,4 @@ prtclState = [{* keyhash => word64}, nonce, nonce]
 
 ticknState = [nonce, nonce]
 
-;# import withOrigin, ns8, telescope8, slotno, hash, blockno, keyhash, word32, word64, nonce, maybe from base
+;# import withOrigin, ns8, telescope8, slotno, hash, blockno, keyhash, word32, word64, nonce from base

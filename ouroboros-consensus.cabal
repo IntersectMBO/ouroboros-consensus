@@ -1248,6 +1248,7 @@ library protocol
     ouroboros-consensus,
     ouroboros-network:{framework, tests-lib},
     serialise,
+    strict,
     text,
     Win32-network ^>=0.2,
 
@@ -1275,6 +1276,7 @@ library unstable-protocol-testlib
     containers,
     ouroboros-consensus:{ouroboros-consensus, protocol},
     QuickCheck,
+    strict,
     text,
 
 test-suite protocol-test
@@ -1284,6 +1286,7 @@ test-suite protocol-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Protocol.Praos.SelectView
+    Test.Consensus.Protocol.Praos2
 
   build-depends:
     base,
@@ -1291,9 +1294,10 @@ test-suite protocol-test
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-protocol-tpraos,
     containers,
-    ouroboros-consensus:{ouroboros-consensus, protocol, unstable-consensus-testlib},
+    ouroboros-consensus:{ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-protocol-testlib},
     QuickCheck,
     serialise,
+    strict,
     tasty,
     tasty-quickcheck,
 

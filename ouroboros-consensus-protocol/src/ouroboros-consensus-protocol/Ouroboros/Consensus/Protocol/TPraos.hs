@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -478,6 +479,15 @@ meetsLeaderThreshold
     r =
       maybe 0 SL.individualPoolStake $
         Map.lookup keyHash poolDistr
+
+{-------------------------------------------------------------------------------
+  Translation
+-------------------------------------------------------------------------------}
+
+-- | Crossing between eras that both run this protocol changes nothing.
+instance TranslateProto (TPraos c) (TPraos c) era where
+  translateLedgerView _prx _ctx = id
+  translateChainDepState _ = id
 
 {-------------------------------------------------------------------------------
   CannotForge

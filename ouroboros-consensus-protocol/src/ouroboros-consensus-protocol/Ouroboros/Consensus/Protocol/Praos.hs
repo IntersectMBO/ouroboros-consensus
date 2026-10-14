@@ -205,6 +205,15 @@ instance Views.ForecastToPolyPraosLedgerView (Praos c) era where
     cc = SL.forecastChainChecks @t @era f
 
 {-------------------------------------------------------------------------------
+  Translation
+-------------------------------------------------------------------------------}
+
+-- | Crossing between eras that both run this protocol changes nothing.
+instance TranslateProto (Praos c) (Praos c) era where
+  translateLedgerView _prx _ctx = id
+  translateChainDepState _ = id
+
+{-------------------------------------------------------------------------------
   Translation from transitional Praos
 -------------------------------------------------------------------------------}
 

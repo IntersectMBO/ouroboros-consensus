@@ -239,11 +239,6 @@ class TranslateProto protoFrom protoTo eraTo where
   translateChainDepState ::
     Proxy (protoFrom, protoTo, eraTo) -> ChainDepState protoFrom -> ChainDepState protoTo
 
--- | Degenerate instance - we may always translate from a protocol to itself.
-instance TranslateProto singleProto singleProto eraTo where
-  translateLedgerView _prx _ctx = id
-  translateChainDepState _ = id
-
 -- | The chain order of some type; in the Consensus layer, this will always be
 -- the 'SelectView'/'TiebreakerView' of some 'ConsensusProtocol'. Namely, the
 -- 'ChainOrder' instance of 'SelectView' primarily compares block numbers, but

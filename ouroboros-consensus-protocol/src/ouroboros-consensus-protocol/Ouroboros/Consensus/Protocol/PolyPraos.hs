@@ -70,6 +70,7 @@ module Ouroboros.Consensus.Protocol.PolyPraos
   , getLeiosLedgerViewPolyPraos
   , validateLeiosAnnouncementPolyPraos
   , WhetherToUpperBoundOCERT (..)
+  , WhyNotCertifiable (..)
   , doValidateVRFSignature
   ) where
 
@@ -126,6 +127,7 @@ import Cardano.Slotting.Slot
   , WithOrigin
   , unSlotNo
   )
+import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (decode, encode))
 import Control.Exception (throw)
@@ -137,12 +139,13 @@ import Data.Functor.Identity (runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
+import qualified Data.Strict.Either as Strict
 import Data.Typeable (Typeable)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
-import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
+import Ouroboros.Consensus.Block (WithOrigin (NotOrigin, Origin))
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Leios.Protocol
   ( LeiosAnnouncement (..)
@@ -161,12 +164,7 @@ import Ouroboros.Consensus.Protocol.Praos.Orphans ()
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.Signed (Signed)
 import Ouroboros.Consensus.Ticked (Ticked)
-import Ouroboros.Consensus.Util.CBOR
-  ( decodeStrictMaybe
-  , decodeWithOrigin
-  , encodeStrictMaybe
-  , encodeWithOrigin
-  )
+import Ouroboros.Consensus.Util.CBOR (decodeWithOrigin, encodeWithOrigin)
 
 -- | What a protocol needs of its crypto: the Praos essentials, plus signing
 -- whichever header body it is the protocol for.
@@ -314,21 +312,24 @@ data PolyPraosState proto = PraosState
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
   , praosStateLeiosAnnouncement ::
-      !(WhenLeios proto (StrictMaybe LeiosAnnouncement))
-  -- ^ The announcement carried by the most recently applied header, if any.
-  -- A header with no announcement clears it.
+      !(WhenLeios proto (Strict.Either WhyNotCertifiable LeiosAnnouncement))
+  -- ^ Relevant only to the next header, and only if it sets its cert bit: the
+  -- announcement it may certify, which is the one the most recently applied
+  -- header carried, or why it may certify none.
   }
   deriving Generic
 
 deriving instance
-  Show (WhenLeios proto (StrictMaybe LeiosAnnouncement)) => Show (PolyPraosState proto)
+  Show (WhenLeios proto (Strict.Either WhyNotCertifiable LeiosAnnouncement)) =>
+  Show (PolyPraosState proto)
 
 deriving instance
-  Eq (WhenLeios proto (StrictMaybe LeiosAnnouncement)) => Eq (PolyPraosState proto)
+  Eq (WhenLeios proto (Strict.Either WhyNotCertifiable LeiosAnnouncement)) =>
+  Eq (PolyPraosState proto)
 
 instance
   ( Typeable proto
-  , NoThunks (WhenLeios proto (StrictMaybe LeiosAnnouncement))
+  , NoThunks (WhenLeios proto (Strict.Either WhyNotCertifiable LeiosAnnouncement))
   ) =>
   NoThunks (PolyPraosState proto)
 
@@ -372,7 +373,7 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
         , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
         , toEraCBOR @ShelleyEra praosStateLabNonce
         , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
-        , foldMap (encodeStrictMaybe encodeLeiosAnnouncement) praosStateLeiosAnnouncement
+        , foldMap encodeCertifiable praosStateLeiosAnnouncement
         ]
      where
       nLeiosFields = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
@@ -388,11 +389,35 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
       <*> fromEraCBOR @ShelleyEra
       <*> fromEraCBOR @ShelleyEra
       <*> fromEraCBOR @ShelleyEra
-      <*> traverse
-        (\() -> decodeStrictMaybe decodeLeiosAnnouncement)
-        (pureLeiosOnly @proto ())
+      <*> traverse (\() -> decodeCertifiable) (pureLeiosOnly @proto ())
    where
     nLeiosFields = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
+
+-- | Why the next header may certify no announcement.
+data WhyNotCertifiable
+  = -- | The most recently applied header carried none.
+    NothingAnnounced
+  | -- | It was announced in the previous era, and an endorser block may not be
+    -- certified across an era boundary.
+    AnnouncedInPreviousEra
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+encodeCertifiable :: Strict.Either WhyNotCertifiable LeiosAnnouncement -> CBOR.Encoding
+encodeCertifiable = \case
+  Strict.Left NothingAnnounced -> CBOR.encodeListLen 1 <> CBOR.encodeWord 0
+  Strict.Left AnnouncedInPreviousEra -> CBOR.encodeListLen 1 <> CBOR.encodeWord 1
+  Strict.Right ann -> CBOR.encodeListLen 2 <> CBOR.encodeWord 2 <> encodeLeiosAnnouncement ann
+
+decodeCertifiable :: CBOR.Decoder s (Strict.Either WhyNotCertifiable LeiosAnnouncement)
+decodeCertifiable = do
+  n <- CBOR.decodeListLen
+  tag <- CBOR.decodeWord
+  case (n, tag) of
+    (1, 0) -> pure $ Strict.Left NothingAnnounced
+    (1, 1) -> pure $ Strict.Left AnnouncedInPreviousEra
+    (2, 2) -> Strict.Right <$> decodeLeiosAnnouncement
+    _ -> fail $ "WhyNotCertifiable: unknown tag " <> show tag <> " of length " <> show n
 
 data instance Ticked (PolyPraosState proto) = TickedPraosState
   { tickedPraosStateChainDepState :: PolyPraosState proto
@@ -442,6 +467,13 @@ data PolyPraosValidationErr proto c
     -- block, so there is nothing for the certificate to certify.
     LeiosCertWithoutAnnouncement
       !(VoidUnlessLeios proto ())
+  | -- | The header sets its cert bit, but its predecessor's announcement was
+    -- made in the previous era: an endorser block may not be certified across
+    -- an era boundary.
+    LeiosCertAcrossEraBoundary
+      !(VoidUnlessLeios proto ())
+      !SlotNo -- Slot of the announcing block
+      !SlotNo -- Slot of this header
   | -- | The header sets its cert bit too soon after its predecessor's
     -- announcement: the announcement, voting and diffusion periods have not all
     -- elapsed.
@@ -634,7 +666,12 @@ reupdateChainDepStatePolyPraos
           Map.insert hk n $ praosStateOCertCounters cs
       , praosStateLeiosAnnouncement =
           fmap
-            (\(_containsCert, mbAnn) -> mkLeiosAnnouncement hk <$> mbAnn)
+            ( \(_containsCert, mbAnn) ->
+                maybe
+                  (Strict.Left NothingAnnounced)
+                  (Strict.Right . mkLeiosAnnouncement hk)
+                  (strictMaybeToMaybe mbAnn)
+            )
             (Views.hvLeios b)
       }
    where
@@ -791,7 +828,7 @@ leiosHeaderChecks praosEpochInfo lv b slot cs = do
       ) =
       when containsCert $
         case (announcedByPredecessor, praosStateLastSlot cs) of
-          (SJust{}, NotOrigin announcingSlot) -> do
+          (Strict.Right{}, NotOrigin announcingSlot) -> do
             let earliestAllowed =
                   Leios.minCertificationSlot
                     ( runIdentity $
@@ -806,9 +843,15 @@ leiosHeaderChecks praosEpochInfo lv b slot cs = do
             when (slot < earliestAllowed) $
               throwError $
                 LeiosCertTooYoung err announcingSlot slot earliestAllowed
+          (Strict.Left NothingAnnounced, NotOrigin{}) ->
+            throwError $
+              LeiosCertWithoutAnnouncement err
+          (Strict.Left AnnouncedInPreviousEra, NotOrigin announcingSlot) ->
+            throwError $
+              LeiosCertAcrossEraBoundary err announcingSlot slot
           -- A state that announced an endorser block has necessarily applied a
           -- header, so 'Origin' is the same situation as announcing nothing.
-          _ ->
+          (_, Origin) ->
             throwError $
               LeiosCertWithoutAnnouncement err
 

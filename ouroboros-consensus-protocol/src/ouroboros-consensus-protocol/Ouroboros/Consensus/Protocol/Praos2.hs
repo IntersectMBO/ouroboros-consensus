@@ -22,7 +22,6 @@ module Ouroboros.Consensus.Protocol.Praos2
   , ConsensusConfig (..)
   ) where
 
-import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Ledger.Chain (ChainChecksPParams (..))
 import Cardano.Ledger.Core (TranslationContext)
 import qualified Cardano.Ledger.Dijkstra.Forecast as Dijkstra
@@ -34,13 +33,15 @@ import Cardano.Protocol.Crypto (Crypto, StandardCrypto)
 import qualified Cardano.Protocol.Leios.BlockHeader as LeiosCodec
 import Data.Kind (Type)
 import Data.Proxy (Proxy (Proxy))
+import qualified Data.Strict.Either as Strict
 import GHC.Generics (Generic)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..), LeiosProtocol (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
-  ( getLeiosAnnouncementPolyPraos
+  ( WhyNotCertifiable (..)
+  , getLeiosAnnouncementPolyPraos
   , getLeiosLedgerViewPolyPraos
   , validateLeiosAnnouncementPolyPraos
   )
@@ -178,8 +179,8 @@ instance Dijkstra.DijkstraEraForecast era => Views.ForecastToPolyPraosLedgerView
 -- | Crossing from Praos into Praos with Leios.
 --
 -- Everything carries over unchanged; the Leios fields merely have to be
--- introduced. The announcement starts empty, since no header of the protocol
--- being left could have carried one. The Leios parameters come from the
+-- introduced. Nothing has been announced, since no header of the protocol being
+-- left could have carried an announcement. The Leios parameters come from the
 -- Dijkstra genesis. The committee is empty: none is seated until a stake
 -- snapshot rotation within the new era, beyond any forecast from the old one.
 instance
@@ -215,7 +216,23 @@ instance
       , praosStatePreviousEpochNonce = praosStatePreviousEpochNonce st
       , praosStateLabNonce = praosStateLabNonce st
       , praosStateLastEpochBlockNonce = praosStateLastEpochBlockNonce st
-      , praosStateLeiosAnnouncement = Praos2HasLeios SNothing
+      , praosStateLeiosAnnouncement = Praos2HasLeios (Strict.Left NothingAnnounced)
+      }
+
+-- | Crossing from one era with Leios into another.
+--
+-- Everything carries over unchanged except the announcement: it was made in the
+-- era being left, so it is no longer certifiable, since an endorser block may
+-- not be certified across an era boundary (to keep the design simpler).
+--
+-- Nothing uses this yet: it's dead code until two adjacent eras use 'Praos2'.
+instance TranslateProto (Praos2 c) (Praos2 c) era where
+  translateLedgerView _prx _ctx = id
+  translateChainDepState _ st =
+    st
+      { praosStateLeiosAnnouncement =
+          Strict.either Strict.Left (\_ann -> Strict.Left AnnouncedInPreviousEra)
+            <$> praosStateLeiosAnnouncement st
       }
 
 instance
