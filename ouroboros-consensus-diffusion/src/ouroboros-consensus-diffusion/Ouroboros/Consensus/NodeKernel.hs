@@ -104,6 +104,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
+import Ouroboros.Consensus.Storage.LeiosDB.API (LeiosDbHandle)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -166,6 +167,8 @@ import System.Random (StdGen)
 data NodeKernel m addrNTN addrNTC blk = NodeKernel
   { getChainDB :: ChainDB m blk
   -- ^ The 'ChainDB' of the node
+  , getLeiosDB :: LeiosDbHandle m
+  -- ^ The node's LeiosDB
   , getMempool :: Mempool m blk
   -- ^ The node's mempool
   , getTopLevelConfig :: TopLevelConfig blk
@@ -223,6 +226,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , btime :: BlockchainTime m
   , systemTime :: SystemTime m
   , chainDB :: ChainDB m blk
+  , leiosDB :: LeiosDbHandle m
+  -- ^ Whoever opened it closes it, once the node kernel's threads have stopped.
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk
   , maxClockSkew :: ClockSkew
@@ -264,6 +269,7 @@ initNodeKernel
     , cfg
     , tracers
     , chainDB
+    , leiosDB
     , initChainDB
     , blockFetchConfiguration
     , btime
@@ -420,6 +426,7 @@ initNodeKernel
     return
       NodeKernel
         { getChainDB = chainDB
+        , getLeiosDB = leiosDB
         , getMempool = mempool
         , getTopLevelConfig = cfg
         , getFetchClientRegistry = fetchClientRegistry

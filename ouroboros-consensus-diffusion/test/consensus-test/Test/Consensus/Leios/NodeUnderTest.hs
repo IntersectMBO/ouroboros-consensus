@@ -114,6 +114,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (mkInMemoryArgs)
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.ConnectionId (ConnectionId)
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
@@ -261,6 +262,7 @@ withNodeUnderTest cfg nodeDBs body = do
       $ \chainDB -> withRegistry $ \kernelRegistry -> do
         btime <- mkBlockchainTime cfg kernelRegistry chainDB
         publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+        leiosDB <- newLeiosDBInMemory
         kernelArgs <-
           nodeKernelArgsEnforceInvariants
             <$> mkNodeKernelArgs
@@ -277,6 +279,7 @@ withNodeUnderTest cfg nodeDBs body = do
               -- With Genesis disabled, there is no historicity cutoff.
               (\_getGsmState -> HistoricityCheck.noCheck)
               chainDB
+              leiosDB
               -- How long the node stays caught up at least, which does not
               -- matter, since it never leaves.
               0

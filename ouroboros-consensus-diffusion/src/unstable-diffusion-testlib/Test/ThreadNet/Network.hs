@@ -116,6 +116,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LeiosDB (newLeiosDBInMemory)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -1040,6 +1041,7 @@ runThreadNetwork
           (gsmRng, rng'') = splitGen rng'
           (psRng, chainSyncRng) = splitGen rng''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+      leiosDB <- newLeiosDBInMemory
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
@@ -1049,6 +1051,7 @@ runThreadNetwork
               , btime
               , systemTime
               , chainDB
+              , leiosDB
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
                   InFutureCheck.realHeaderInFutureCheck
