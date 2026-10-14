@@ -57,7 +57,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   ) where
 
 import Control.Exception (assert)
-import Control.Monad (forM_, forever, join, void, when)
+import Control.Monad (forM_, forever, join, void)
 import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
@@ -138,7 +138,10 @@ launchBgTasks cdb@CDB{..} = do
       gcScheduleRunner gcSchedule $ \slot -> do
         garbageCollectBlocks cdb slot
         removedCerts <- garbageCollectPeras cdb slot
-        enqueueCertsToStore certStoringQueue removedCerts
+        enqueueCertsToStore
+          (contramap TraceGCEvent cdbTracer)
+          certStoringQueue
+          removedCerts
 
   !copyToImmutableDBThread <-
     launch "ChainDB.copyToImmutableDBRunner" $
@@ -541,22 +544,32 @@ garbageCollectPeras CDB{..} slotNo = do
 -- certificate is too slow compared to appending blocks), the backlog grows
 -- for as long as the node syncs. Certificates still in the queue when the
 -- node shuts down are lost and not stored in the 'PerasImmutableCertDB'.
-newtype CertStoringQueue m blk
-  = CertStoringQueue (TQueue m [WithArrivalTime (ValidatedPerasCert blk)])
+data CertStoringQueue m blk = CertStoringQueue
+  { csqBatches :: !(TQueue m [WithArrivalTime (ValidatedPerasCert blk)])
+  , csqPending :: !(StrictTVar m Int)
+  -- ^ Number of certificates enqueued and not yet processed, including those
+  -- of the batch being processed. Only used for tracing.
+  }
 
 newCertStoringQueue :: IOLike m => m (CertStoringQueue m blk)
-newCertStoringQueue = CertStoringQueue <$> newTQueueIO
+newCertStoringQueue = CertStoringQueue <$> newTQueueIO <*> newTVarIO 0
 
 -- | Enqueue a batch of garbage-collected certificates to be stored. Empty
 -- batches are ignored.
 enqueueCertsToStore ::
   IOLike m =>
+  Tracer m (TraceGCEvent blk) ->
   CertStoringQueue m blk ->
   [WithArrivalTime (ValidatedPerasCert blk)] ->
   m ()
-enqueueCertsToStore _ [] = pure ()
-enqueueCertsToStore (CertStoringQueue queue) certs =
-  atomically $ writeTQueue queue certs
+enqueueCertsToStore _ _ [] = pure ()
+enqueueCertsToStore tracer CertStoringQueue{csqBatches, csqPending} certs = do
+  pending <- atomically $ do
+    writeTQueue csqBatches certs
+    stateTVar csqPending $ \n -> let n' = n + nbCerts in (n', n')
+  traceWith tracer $ EnqueuedPerasCertsToStore nbCerts pending
+ where
+  nbCerts = length certs
 
 -- | Read batches of garbage-collected certificates from the
 -- 'CertStoringQueue' and store them in the 'PerasImmutableCertDB' using
@@ -567,13 +580,21 @@ certStoringRunner ::
   ChainDbEnv m blk ->
   CertStoringQueue m blk ->
   m Void
-certStoringRunner cdb (CertStoringQueue queue) = forever $ do
-  certs <- atomically $ readTQueue queue
-  storeImmutableCerts cdb certs
+certStoringRunner cdb@CDB{cdbTracer} CertStoringQueue{csqBatches, csqPending} = forever $ do
+  certs <- atomically $ readTQueue csqBatches
+  start <- getMonotonicTime
+  nbStored <- storeImmutableCerts cdb certs
+  end <- getMonotonicTime
+  let nbCerts = length certs
+  pending <- atomically $ stateTVar csqPending $ \n -> let n' = n - nbCerts in (n', n')
+  traceWith cdbTracer $
+    TraceGCEvent $
+      StoredPerasImmutableCerts nbStored (nbCerts - nbStored) (end `diffTime` start) pending
 
 -- | Store the given certificates in the 'PerasImmutableCertDB', filtering out
 -- those boosting blocks that are not in the ImmutableDB (e.g. blocks on forks
--- that were never selected).
+-- that were never selected). Returns the number of certificates that were not
+-- filtered out.
 --
 -- The certificates are expected to have been garbage-collected from the
 -- volatile 'PerasCertDB', i.e., they boost blocks that are older than the
@@ -584,16 +605,19 @@ storeImmutableCerts ::
   (IOLike m, IsPerasCert (PerasCert blk) blk, HasCallStack) =>
   ChainDbEnv m blk ->
   [WithArrivalTime (ValidatedPerasCert blk)] ->
-  m ()
-storeImmutableCerts CDB{cdbImmutableDB, cdbPerasImmutableCertDB} certs =
-  forM_ certs $ \cert ->
+  m Int
+storeImmutableCerts CDB{cdbImmutableDB, cdbPerasImmutableCertDB} =
+  fmap sum . mapM storeCert
+ where
+  storeCert :: WithArrivalTime (ValidatedPerasCert blk) -> m Int
+  storeCert cert =
     case pointToWithOriginRealPoint (getPerasCertPoint cert) of
-      Origin -> pure ()
+      Origin -> pure 0
       NotOrigin pt -> do
         isImmutable <- ImmutableDB.hasBlock cdbImmutableDB pt
-        when isImmutable $
-          void $
-            PerasImmutableCertDB.addCert cdbPerasImmutableCertDB cert
+        if isImmutable
+          then 1 <$ PerasImmutableCertDB.addCert cdbPerasImmutableCertDB cert
+          else pure 0
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections

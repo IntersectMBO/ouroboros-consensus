@@ -985,6 +985,22 @@ benchmark PerasCertDB-bench
     tasty-bench,
     unstable-consensus-testlib,
 
+benchmark PerasImmutableCertDB-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus/bench/PerasImmutableCertDB-bench
+  main-is: Main.hs
+  other-modules:
+  build-depends:
+    base,
+    contra-tracer,
+    fs-api,
+    nonempty-containers,
+    ouroboros-consensus,
+    tasty-bench,
+    temporary,
+    unstable-consensus-testlib,
+
 benchmark txid-eq-ord-instances-bench
   import: common-bench
   type: exitcode-stdio-1.0

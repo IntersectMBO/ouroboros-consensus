@@ -1089,6 +1089,25 @@ data TraceGCEvent blk
     ScheduledGC SlotNo Time
   | -- | A garbage collection for the given 'SlotNo' was performed.
     PerformedGC SlotNo
+  | -- | A batch of garbage-collected Peras certificates was enqueued to be
+    -- stored in the PerasImmutableCertDB.
+    EnqueuedPerasCertsToStore
+      -- | Number of certificates in the batch.
+      Int
+      -- | Number of certificates pending to be stored, including this batch.
+      Int
+  | -- | A batch of garbage-collected Peras certificates was processed by the
+    -- certificate storing thread.
+    StoredPerasImmutableCerts
+      -- | Number of certificates stored in the PerasImmutableCertDB.
+      Int
+      -- | Number of certificates skipped because they do not boost an
+      -- immutable block.
+      Int
+      -- | Time it took to process the batch.
+      DiffTime
+      -- | Number of certificates still pending to be stored.
+      Int
   deriving (Generic, Eq, Show)
 
 data TraceIteratorEvent blk
