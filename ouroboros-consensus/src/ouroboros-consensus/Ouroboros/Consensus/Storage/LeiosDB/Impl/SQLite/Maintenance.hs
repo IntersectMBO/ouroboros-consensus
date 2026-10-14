@@ -19,7 +19,6 @@ module Ouroboros.Consensus.Storage.LeiosDB.Impl.SQLite.Maintenance
 
     -- * GC sweep
   , SweeperConn (..)
-  , SweepState (..)
   , sweepEbBatch
 
     -- * GC batch sizes
@@ -56,6 +55,7 @@ import Control.ResourceRegistry
   )
 import Control.Tracer (Tracer, traceWith)
 import Data.Int (Int64)
+import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
@@ -280,18 +280,19 @@ sqlGarbageCollect writeQueue gcSlot =
 -- | The MARK phase of GC mark-and-sweep:
 --   - mark for GC (@status = 3@) every EB hash all of whose announcements are older
 --     than the given slot and not pinned (@status = 1@);
---   - ask for a sweep.
+--   - request a sweep pass, or extend the one in progress.
 --
 -- Runs on the writer. It does not do much work, but rather primes the state
--- for the writer's own sweep steps (see 'startWriter').
+-- for the writer's own sweep steps (see 'startWriter'): the writer evicts the
+-- marked EBs one batch per turn, so an insert waits for a batch at most.
 gcMark ::
   HasCallStack =>
-  StrictTVar IO Bool ->
+  StrictTVar IO (Maybe Int) ->
   DB.Database ->
   GcStmts ->
   SlotNo ->
   IO ()
-gcMark sweepDoorbell db gcStmts gcSlot = do
+gcMark activeGcSweepStateVar db gcStmts gcSlot = do
   let GcStmts{gsHasWork, gsMarkEbForGC} = gcStmts
   -- check if GC has any work to do
   hasWork <-
@@ -299,15 +300,17 @@ gcMark sweepDoorbell db gcStmts gcSlot = do
       dbBindInt64 gsHasWork 1 slot
       (/= 0) <$> readSingleInt64 gsHasWork
   when hasWork $ do
+    -- mark EBs that are ready to be garbage collected
     nEbsMarked <-
       dbWithWriteTransactionRaw db $ do
         useStmt gsMarkEbForGC $ do
           dbBindInt64 gsMarkEbForGC 1 slot
           dbStep1Safe gsMarkEbForGC
         DB.changes db
+    -- request a sweep pass by setting activeGcSweepStateVar to Just
     when (nEbsMarked > 0) $
       atomically $
-        writeTVar sweepDoorbell True
+        modifyTVar activeGcSweepStateVar (Just . fromMaybe 0)
  where
   slot = fromIntegral (unSlotNo gcSlot)
 
@@ -345,17 +348,6 @@ sweepEbBatch conn batchSize = do
         -- last, so 'DB.changes' counts the evicted 'ebs' rows
         execJson swEvictEbs evictableEbsJson
         DB.changes swDb
-
--- | How far a sweep pass has got. The writer advances it one batch per turn
--- rather than running a pass to completion, so an insert waits for a batch at
--- most.
-data SweepState
-  = SweepIdle
-  | -- | Evicting GC-marked EBs.
-    SweepEbs
-      -- | EBs evicted so far
-      !Int
-  deriving Eq
 
 -- * Stats
 

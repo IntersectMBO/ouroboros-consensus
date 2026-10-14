@@ -60,6 +60,7 @@ import Control.ResourceRegistry
 import Control.Tracer (Tracer, traceWith)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
+import Data.Maybe (isJust)
 import qualified Database.SQLite3.Direct as DB
 import qualified GHC.Conc as IO (atomically)
 import qualified GHC.Stack
@@ -146,11 +147,11 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
   statsVar <- newTVarIO =<< initialStats volLeiosDbPath immLeiosDbPath
   -- start a thread to sample the sizes of the LeiosDB
   samplerThread <- startVolatileStatsSampler registry tracer statsVar volLeiosDbPath
-  -- Both start set, so a restart picks up whatever the last run left
-  -- pinned or marked; the copier and the writer clear them once they find
-  -- nothing.
+  -- This variable signals the copier thread to wake up and copy the rows
+  -- from the volatile to the immutable LeiosDB partition.
+  -- It starts set, so that on a node restart we continue a potentially
+  -- interrupted copy pass.
   copierDoorbell <- newTVarIO True
-  sweepDoorbell <- newTVarIO True
 
   -- the volatile partition writer thread
   writeQueue <-
@@ -159,7 +160,6 @@ newLeiosDBSQLiteWithGcBatchSize registry tracer volLeiosDbPath immLeiosDbPath gc
       tracer
       statsVar
       notificationChan
-      sweepDoorbell
       gcBatchSize
       volLeiosDbPath
       immLeiosDbPath
@@ -303,17 +303,21 @@ startWriter ::
   Tracer IO TraceLeiosDb ->
   StrictTVar IO LeiosDbStats ->
   StrictTChan IO LeiosEbNotification ->
-  StrictTVar IO Bool ->
   Int64 ->
   FilePath ->
   FilePath ->
   IO WriteQueue
-startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize volPath immPath = do
+startWriter registry tracer statsVar notificationChan gcBatchSize volPath immPath = do
   queue <- newTBQueueIO writerQueueDepth
   sealedVar <- newTVarIO Nothing
   -- Set by a served 'Shutdown', whose awaiter gets the outcome of the close.
   shutdownVar <- newIORef Nothing
-  sweepStateVar <- newTVarIO SweepIdle
+  -- This variable signals the maintenance routine to start or continue a GC sweep pass.
+  -- It also keeps the state of the GC sweep pass.
+  -- 'Nothing' when no sweep is in-progress; 'Just' the EBs evicted so far
+  -- while a pass is in progress. Starts requested, to continue a sweep pass
+  -- potentially interrupted by a node restart.
+  activeGcSweepStateVar <- newTVarIO (Just 0)
   jobsServedVar <- newTVarIO (0 :: Int)
   let notify = atomically . writeTChan notificationChan
 
@@ -403,39 +407,33 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
               pure False
             GcMark slot resultVar -> do
               publishMaintenance volDb immDb resultVar $
-                gcMark sweepDoorbell volDb gcStmts slot
+                gcMark activeGcSweepStateVar volDb gcStmts slot
               pure False
 
           -- Nothing queued and no sweep outstanding: wait for either.
           blockUntilWork = IO.atomically $ do
             noJobs <- isEmptyTBQueue queue
-            rung <- readTVar sweepDoorbell
-            check (not noJobs || rung)
+            sweep <- readTVar activeGcSweepStateVar
+            check (not noJobs || isJust sweep)
 
           -- Advance a sweep by one batch; 'True' when there was nothing to do.
           -- A failure here is the maintenance's problem, not the writer's:
           -- trace it, roll back anything left open, and let the next GC tick
-          -- bring the work back.
+          -- bring the work back. Hence 'catch' rather than 'bracket': the
+          -- exception must stop here, not take the writer down, and the
+          -- cleanup is for failure only.
           stepMaintenance =
             step `catch` \(e :: LeiosDbException) -> do
               _ <- DB.exec volDb "ROLLBACK"
               _ <- DB.exec immDb "ROLLBACK"
               traceWith tracer $ TraceLeiosDbGCError (displayException e)
-              atomically $ writeTVar sweepStateVar SweepIdle
+              atomically $ writeTVar activeGcSweepStateVar Nothing
               pure True
            where
-            -- TODO: SweepIdle and SweepEbs seem redundant. Consider merging them.
             step =
-              readTVarIO sweepStateVar >>= \case
-                SweepIdle -> do
-                  asked <- atomically $ do
-                    rung <- readTVar sweepDoorbell
-                    when rung $ do
-                      writeTVar sweepDoorbell False
-                      writeTVar sweepStateVar (SweepEbs 0)
-                    pure rung
-                  pure (not asked)
-                SweepEbs nEbs -> do
+              readTVarIO activeGcSweepStateVar >>= \case
+                Nothing -> pure True
+                Just nEbs -> do
                   evicted <- sweepEbBatch sweeperConn gcBatchSize
                   if evicted == 0
                     then do
@@ -443,10 +441,10 @@ startWriter registry tracer statsVar notificationChan sweepDoorbell gcBatchSize 
                         -- Flush the WAL only after real work.
                         dbExec volDb "PRAGMA wal_checkpoint(PASSIVE);"
                         traceWith tracer $ TraceLeiosDbEvicted nEbs
-                      atomically $ writeTVar sweepStateVar SweepIdle
+                      atomically $ writeTVar activeGcSweepStateVar Nothing
                     else do
                       bumpVolatileStatsVar statsVar (negate evicted)
-                      atomically $ writeTVar sweepStateVar (SweepEbs (nEbs + evicted))
+                      atomically $ writeTVar activeGcSweepStateVar (Just (nEbs + evicted))
                   pure False
 
       -- Seal, then fail what was already queued: nothing can be queued after
