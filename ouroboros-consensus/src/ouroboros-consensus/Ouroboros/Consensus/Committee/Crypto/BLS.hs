@@ -55,17 +55,15 @@ import Cardano.Binary (FromCBOR, ToCBOR)
 import Cardano.Binary.FixedSizeCodec (rawDecodeFixedSized, rawEncodeFixedSized)
 import Cardano.Crypto.DSIGN
   ( BLS12381MinSigDSIGN
-  , BLS12381SignContext
   , DSIGNAggregatable (..)
   , DSIGNAlgorithm (..)
   , SigDSIGN (..)
   , VerKeyDSIGN (..)
-  , blsSignContextAug
-  , minSigPoPDST
   )
 import Cardano.Crypto.EllipticCurve.BLS12_381 (blsIsInf, blsMSM)
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Crypto.Util (SignableRepresentation, bytesToNatural)
+import Cardano.Crypto.DSIGN.BLS12381 (PossessionProofDSIGN (..), SigDSIGN (..))
+import Cardano.Crypto.Util (SignableRepresentation (..), bytesToNatural)
 import Cardano.Ledger.Hashes (HASH, KeyHash (..), StakePool)
 import Cardano.Ledger.State (BlsKey (..))
 import Control.Monad (when)
@@ -211,30 +209,22 @@ rawProofOfPossession ::
   PossessionProofDSIGN BLS12381MinSigDSIGN
 rawProofOfPossession = unProofOfPossession
 
--- | Role-separated BLS contexts for  signatures
+-- | Role-separated BLS domain tags for signatures.
+--
+-- cardano-base fixes the DSTs internally and takes no signing context, so the
+-- tag is prepended to the signed bytes; BLS augmentation hashes @aug || msg@,
+-- so this signs exactly what an augmented context did.
 class HasBLSContext (r :: KeyRole) where
-  blsCtx :: Proxy r -> KeyScope -> BLS12381SignContext
+  blsCtx :: Proxy r -> KeyScope -> ByteString
 
 instance HasBLSContext SIGN where
-  blsCtx _ keyScope =
-    minSigPoPDST
-      { blsSignContextAug =
-          Just ("VOTE:" <> keyScope <> ":V0")
-      }
+  blsCtx _ keyScope = "VOTE:" <> keyScope <> ":V0"
 
 instance HasBLSContext VRF where
-  blsCtx _ keyScope =
-    minSigPoPDST
-      { blsSignContextAug =
-          Just ("VRF:" <> keyScope <> ":V0")
-      }
+  blsCtx _ keyScope = "VRF:" <> keyScope <> ":V0"
 
 instance HasBLSContext POP where
-  blsCtx _ keyScope =
-    minSigPoPDST
-      { blsSignContextAug =
-          Just ("POP:" <> keyScope <> ":V0")
-      }
+  blsCtx _ keyScope = "POP:" <> keyScope <> ":V0"
 
 -- | Sign a message with a  private key, producing a  signature
 signWithRole ::
@@ -249,8 +239,8 @@ signWithRole sk msg =
   Signature
     { unSignature =
         signDSIGN
-          (blsCtx (Proxy @r) (privateKeyScope sk))
-          msg
+          ()
+          (blsCtx (Proxy @r) (privateKeyScope sk) <> getSignableRepresentation msg)
           (unPrivateKey sk)
     }
 
@@ -266,9 +256,9 @@ verifyWithRole ::
   Either String ()
 verifyWithRole pk msg (Signature sig) =
   verifyDSIGN
-    (blsCtx (Proxy @r) (publicKeyScope pk))
+    ()
     (unPublicKey pk)
-    msg
+    (blsCtx (Proxy @r) (publicKeyScope pk) <> getSignableRepresentation msg)
     sig
 
 -- | Create a proof of possession signature for a  private key
@@ -279,14 +269,15 @@ createProofOfPossession ::
 createProofOfPossession sk stakePoolHash =
   ProofOfPossession
     { unProofOfPossession =
-        createPossessionProofDSIGN
-          extCtx
-          (unPrivateKey sk)
+        -- Not 'createPossessionProofDSIGN': this proof is bound to the pool
+        -- and role, so it signs @tag || pool || vk@ like the augmented
+        -- context of cardano-crypto-class 2.6.0.0 did.
+        let SigBLS12381 sig = signDSIGN () (aug <> vkBytes) (unPrivateKey sk)
+         in PossessionProofBLS12381 sig
     }
  where
-  poolBytes = Hash.hashToBytes (unKeyHash stakePoolHash)
-  baseCtx = blsCtx (Proxy @POP) (privateKeyScope sk)
-  extCtx = baseCtx{blsSignContextAug = blsSignContextAug baseCtx <> Just poolBytes}
+  aug = blsCtx (Proxy @POP) (privateKeyScope sk) <> Hash.hashToBytes (unKeyHash stakePoolHash)
+  vkBytes = rawEncodeFixedSized (deriveVerKeyDSIGN (unPrivateKey sk))
 
 -- | Verify a proof of possession signature for a public key
 verifyProofOfPossession ::
@@ -295,14 +286,10 @@ verifyProofOfPossession ::
   ProofOfPossession ->
   Either String ()
 verifyProofOfPossession pk stakePoolHash pop =
-  verifyPossessionProofDSIGN
-    extCtx
-    (unPublicKey pk)
-    (unProofOfPossession pop)
+  verifyDSIGN () (unPublicKey pk) (aug <> rawEncodeFixedSized (unPublicKey pk)) (SigBLS12381 popSig)
  where
-  poolBytes = Hash.hashToBytes (unKeyHash stakePoolHash)
-  baseCtx = blsCtx (Proxy @POP) (publicKeyScope pk)
-  extCtx = baseCtx{blsSignContextAug = blsSignContextAug baseCtx <> Just poolBytes}
+  PossessionProofBLS12381 popSig = unProofOfPossession pop
+  aug = blsCtx (Proxy @POP) (publicKeyScope pk) <> Hash.hashToBytes (unKeyHash stakePoolHash)
 
 -- * Aggregate keys and signatures
 
