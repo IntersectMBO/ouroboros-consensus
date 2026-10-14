@@ -23,6 +23,8 @@ module Ouroboros.Consensus.Util.CBOR
 
     -- * Encoding/decoding containers
   , decodeList
+  , decodeListUpTo
+  , decodeMapUpTo
   , decodeMaybe
   , decodeSeq
   , decodeWithOrigin
@@ -334,6 +336,33 @@ decodeList dec = do
   case mn of
     Nothing -> CBOR.D.decodeSequenceLenIndef (flip (:)) [] reverse dec
     Just n -> CBOR.D.decodeSequenceLenN (flip (:)) [] reverse n dec
+
+-- | Like 'decodeList', but fails on a list of more than @maxLen@ elements:
+-- before decoding any element if its length is definite, else on reaching the
+-- one past @maxLen@. The failure names the list with @name@.
+decodeListUpTo :: String -> Int -> CBOR.D.Decoder s a -> CBOR.D.Decoder s [a]
+decodeListUpTo name maxLen dec = CBOR.D.decodeListLenOrIndef >>= decodeElemsUpTo name maxLen dec
+
+-- | Like 'decodeListUpTo', but for a map; @dec@ decodes one key and its value.
+decodeMapUpTo :: String -> Int -> CBOR.D.Decoder s a -> CBOR.D.Decoder s [a]
+decodeMapUpTo name maxLen dec = CBOR.D.decodeMapLenOrIndef >>= decodeElemsUpTo name maxLen dec
+
+decodeElemsUpTo :: String -> Int -> CBOR.D.Decoder s a -> Maybe Int -> CBOR.D.Decoder s [a]
+decodeElemsUpTo name maxLen dec mn =
+  case mn of
+    Nothing -> go 0 []
+    Just n
+      | n > maxLen -> tooLong
+      | otherwise -> replicateM n dec
+ where
+  tooLong :: forall s' b. CBOR.D.Decoder s' b
+  tooLong = fail $ name <> ": more than " <> show maxLen <> " elements"
+  go !k acc = CBOR.D.decodeBreakOr >>= step
+   where
+    step done
+      | done = pure (reverse acc)
+      | k >= maxLen = tooLong
+      | otherwise = dec >>= \x -> go (k + 1 :: Int) (x : acc)
 
 encodeSeq :: (a -> CBOR.E.Encoding) -> StrictSeq a -> CBOR.E.Encoding
 encodeSeq f = encodeList f . toList

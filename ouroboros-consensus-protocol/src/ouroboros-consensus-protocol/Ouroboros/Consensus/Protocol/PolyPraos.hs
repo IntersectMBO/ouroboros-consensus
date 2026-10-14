@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -40,8 +41,7 @@
 -- /cumulatively/ do. The type-level DSL used to isolate extension components is
 -- simple and legible; see the 'LeiosOnly' data family, for example.
 module Ouroboros.Consensus.Protocol.PolyPraos
-  ( AnnouncedBy (..)
-  , PolyPraosCrypto
+  ( PolyPraosCrypto
   , PolyPraosState (..)
   , PolyPraosValidationErr (..)
   , PraosCannotForge (..)
@@ -65,6 +65,11 @@ module Ouroboros.Consensus.Protocol.PolyPraos
 
     -- * For testing purposes
   , doValidateKESSignature
+  , doValidateKESSignature'
+  , getLeiosAnnouncementPolyPraos
+  , getLeiosLedgerViewPolyPraos
+  , validateLeiosAnnouncementPolyPraos
+  , WhetherToUpperBoundOCERT (..)
   , doValidateVRFSignature
   ) where
 
@@ -73,11 +78,11 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
-import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), (⭒))
+import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), strictMaybeToMaybe, (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Block (EbReferencesAnnouncement (..))
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
-import Cardano.Ledger.Hashes (HASH, extractHash, unsafeMakeSafeHash)
+import Cardano.Ledger.Hashes (HASH, extractHash)
 import Cardano.Ledger.Keys
   ( DSIGN
   , KeyHash
@@ -126,7 +131,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (decode, encode))
 import Control.Exception (throw)
 import Control.Monad (unless, when)
-import Control.Monad.Except (Except, runExcept, throwError)
+import Control.Monad.Except (Except, catchError, runExcept, throwError)
 import Data.Coerce (coerce)
 import Data.Foldable (traverse_)
 import Data.Functor.Identity (runIdentity)
@@ -140,6 +145,13 @@ import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosAnnouncement (..)
+  , LeiosLedgerView (..)
+  , OCINStaleness (..)
+  , decodeLeiosAnnouncement
+  , encodeLeiosAnnouncement
+  )
 import qualified Ouroboros.Consensus.Leios.Types as Leios
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -303,45 +315,23 @@ data PolyPraosState proto = PraosState
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
   , praosStateLeiosAnnouncement ::
-      !(WhenLeios proto (StrictMaybe AnnouncedBy))
+      !(WhenLeios proto (StrictMaybe LeiosAnnouncement))
   -- ^ The announcement carried by the most recently applied header, if any.
   -- A header with no announcement clears it.
   }
   deriving Generic
 
 deriving instance
-  Show (WhenLeios proto (StrictMaybe AnnouncedBy)) => Show (PolyPraosState proto)
+  Show (WhenLeios proto (StrictMaybe LeiosAnnouncement)) => Show (PolyPraosState proto)
 
 deriving instance
-  Eq (WhenLeios proto (StrictMaybe AnnouncedBy)) => Eq (PolyPraosState proto)
+  Eq (WhenLeios proto (StrictMaybe LeiosAnnouncement)) => Eq (PolyPraosState proto)
 
 instance
   ( Typeable proto
-  , NoThunks (WhenLeios proto (StrictMaybe AnnouncedBy))
+  , NoThunks (WhenLeios proto (StrictMaybe LeiosAnnouncement))
   ) =>
   NoThunks (PolyPraosState proto)
-
--- | An endorser block announcement, and the issuer of the header that carried
--- it.
---
--- With that header's slot ('praosStateLastSlot') the issuer identifies the
--- election.
-data AnnouncedBy = MkAnnouncedBy
-  { announcedByIssuer :: !(KeyHash SL.BlockIssuer)
-  , announcedEb :: !EbReferencesAnnouncement
-  }
-  deriving (Generic, Show, Eq, NoThunks)
-
-encodeAnnouncedBy :: AnnouncedBy -> CBOR.Encoding
-encodeAnnouncedBy (MkAnnouncedBy issuer (EbReferencesAnnouncement h sz)) =
-  CBOR.encodeListLen 3 <> toCBOR issuer <> toCBOR (extractHash h) <> toCBOR sz
-
-decodeAnnouncedBy :: CBOR.Decoder s AnnouncedBy
-decodeAnnouncedBy = do
-  enforceSize "AnnouncedBy" 3
-  MkAnnouncedBy
-    <$> fromCBOR
-    <*> (EbReferencesAnnouncement . unsafeMakeSafeHash <$> fromCBOR <*> fromCBOR)
 
 instance SerialisePraosState proto => ToCBOR (PolyPraosState proto) where
   toCBOR = encode
@@ -385,7 +375,7 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
           , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
           , toEraCBOR @ShelleyEra praosStateLabNonce
           , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
-          , foldMap (encodeStrictMaybe encodeAnnouncedBy) praosStateLeiosAnnouncement
+          , foldMap (encodeStrictMaybe encodeLeiosAnnouncement) praosStateLeiosAnnouncement
           ]
      where
       nLeiosFields = foldr (\() _ -> 1) 0 (pureLeiosOnly @proto ())
@@ -411,7 +401,7 @@ instance SerialisePraosState proto => Serialise (PolyPraosState proto) where
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra
         <*> traverse
-          (\() -> decodeStrictMaybe decodeAnnouncedBy)
+          (\() -> decodeStrictMaybe decodeLeiosAnnouncement)
           (pureLeiosOnly @proto ())
 
 data instance Ticked (PolyPraosState proto) = TickedPraosState
@@ -654,7 +644,7 @@ reupdateChainDepStatePolyPraos
           Map.insert hk n $ praosStateOCertCounters cs
       , praosStateLeiosAnnouncement =
           fmap
-            (\(_containsCert, mbAnn) -> MkAnnouncedBy hk <$> mbAnn)
+            (\(_containsCert, mbAnn) -> mkLeiosAnnouncement hk <$> mbAnn)
             (Views.hvLeios b)
       }
    where
@@ -689,7 +679,7 @@ leiosContextFreeHeaderChecks ::
   Except (PolyPraosValidationErr proto c) ()
 leiosContextFreeHeaderChecks lv b =
   traverse_ check $
-    (,,) <$> typeSwitchR <*> Views.hvLeios b <*> Views.plvMaxEbBodySize lv
+    (,,) <$> typeSwitchR <*> Views.hvLeios b <*> (llvMaxEbBodySize <$> Views.plvLeios lv)
  where
   check (err, (_containsCert, mbAnn), maxEbBodySize) =
     case mbAnn of
@@ -699,6 +689,79 @@ leiosContextFreeHeaderChecks lv b =
         when (announced > maxEbBodySize) $
           throwError $
             LeiosEbTooBig err announced maxEbBodySize
+
+-- | 'getLeiosAnnouncement' for every Praos.
+getLeiosAnnouncementPolyPraos ::
+  Foldable (WhenLeios proto) =>
+  Views.PolyPraosValidateView proto c ->
+  Maybe LeiosAnnouncement
+getLeiosAnnouncementPolyPraos b =
+  foldr
+    ( \(_containsCert, mbAnn) _ -> mkLeiosAnnouncement (hashKey (Views.hvVK b)) <$> strictMaybeToMaybe mbAnn
+    )
+    Nothing
+    (Views.hvLeios b)
+
+-- | The announcement a header carries, given its issuer.
+mkLeiosAnnouncement :: KeyHash SL.BlockIssuer -> EbReferencesAnnouncement -> LeiosAnnouncement
+mkLeiosAnnouncement issuer ann =
+  MkLeiosAnnouncement
+    { announcementElectee = issuer
+    , announcementEbHash =
+        Leios.MkEbHash $ Hash.hashToBytes $ extractHash $ ebReferencesAnnouncementHash ann
+    , announcementEbSize = ebReferencesAnnouncementSize ann
+    }
+
+-- | 'getLeiosLedgerView' for every Praos.
+getLeiosLedgerViewPolyPraos ::
+  Foldable (WhenLeios proto) =>
+  Views.PolyPraosLedgerView proto ->
+  Maybe LeiosLedgerView
+getLeiosLedgerViewPolyPraos lv =
+  foldr (\llv _ -> Just llv) Nothing (Views.plvLeios lv)
+
+-- | 'validateLeiosAnnouncement' for every Praos.
+--
+-- The election proof (VRF) and the signature (KES and operational certificate)
+-- are checked in full. The operational certificate counter is not upper
+-- bounded, since a counter ahead of our immutable tip's record is honest lag.
+-- A counter below that record, or no record at all, yields 'StaleOCIN' rather
+-- than a rejection, since that lag can explain either too. The certification
+-- gap check is skipped: it needs the header's predecessor, and an
+-- announcement is checked without one.
+validateLeiosAnnouncementPolyPraos ::
+  ( PolyPraosCrypto proto c
+  , Applicative (WhenLeios proto)
+  , Foldable (WhenLeios proto)
+  , TypeSwitch (LeiosOnly proto)
+  ) =>
+  PraosParams ->
+  Views.PolyPraosValidateView proto c ->
+  Ticked (PolyPraosState proto) ->
+  Except (PolyPraosValidationErr proto c) OCINStaleness
+validateLeiosAnnouncementPolyPraos
+  PraosParams{praosLeaderF, praosMaxKESEvo, praosSlotsPerKESPeriod}
+  b
+  tcs = do
+    leiosContextFreeHeaderChecks lv b
+    validateVRFSignature (praosStateEpochNonce cs) lv praosLeaderF b
+    authenticate `catchError` \case
+      CounterTooSmallOCERT{} -> pure StaleOCIN
+      NoCounterForKeyHashOCERT{} -> pure StaleOCIN
+      err -> throwError err
+   where
+    lv = tickedPraosStateLedgerView tcs
+    cs = tickedPraosStateChainDepState tcs
+    SL.PoolDistr pd _totalActiveStake = Views.plvPoolDistr lv
+    authenticate =
+      FreshOCIN
+        <$ doValidateKESSignature'
+          DoNotUpperBoundOCERT
+          praosMaxKESEvo
+          praosSlotsPerKESPeriod
+          pd
+          (praosStateOCertCounters cs)
+          b
 
 -- | The Leios-specific checks on a header, called by 'updateChainDepState'.
 --
@@ -720,20 +783,20 @@ leiosHeaderChecks ::
 leiosHeaderChecks praosEpochInfo lv b slot cs = do
   leiosContextFreeHeaderChecks lv b
   traverse_ check $
-    (,,,,,)
+    (,,,)
       <$> typeSwitchR
       <*> Views.hvLeios b
-      <*> Views.plvAnnouncementPeriodLength lv
-      <*> Views.plvVotePeriodLength lv
-      <*> Views.plvDiffusionPeriodLength lv
+      <*> Views.plvLeios lv
       <*> praosStateLeiosAnnouncement cs
  where
   check
     ( err
       , (containsCert, _mbAnn)
-      , announcementPeriod
-      , votePeriod
-      , diffusionPeriod
+      , MkLeiosLedgerView
+          { llvAnnouncementPeriod = announcementPeriod
+          , llvVotePeriod = votePeriod
+          , llvDiffusionPeriod = diffusionPeriod
+          }
       , announcedByPredecessor
       ) =
       when containsCert $
@@ -842,6 +905,20 @@ validateKESSignature
   ocertCounters =
     doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod plvPoolDistr ocertCounters
 
+-- | Whether 'doValidateKESSignature'' enforces the OCERT counter's /upper/
+-- bound, i.e. rejects (with 'CounterOverIncrementedOCERT') a counter more than
+-- one greater than the one we have recorded for this issuer.
+--
+-- Normal header validation enforces it ('UpperBoundOCERT'). Validating a
+-- relayed Leios announcement out-of-context against a (possibly lagging)
+-- immutable tip legitimately sees counters that have run ahead of our recorded
+-- view, so that path skips it ('DoNotUpperBoundOCERT'). The counter's /lower/
+-- bound ('CounterTooSmallOCERT', a revoked key) is enforced either way.
+data WhetherToUpperBoundOCERT
+  = UpperBoundOCERT
+  | DoNotUpperBoundOCERT
+  deriving (Eq, Show)
+
 -- NOTE: This function is much easier to test than 'validateKESSignature' because we don't need to
 -- construct a 'PraosConfig' nor 'LedgerView' to test it.
 doValidateKESSignature ::
@@ -852,7 +929,20 @@ doValidateKESSignature ::
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.PolyPraosValidateView proto c ->
   Except (PolyPraosValidationErr proto c) ()
-doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
+doValidateKESSignature = doValidateKESSignature' UpperBoundOCERT
+
+-- | 'doValidateKESSignature', parameterized by whether to
+-- enforce the OCERT counter's upper bound (see 'WhetherToUpperBoundOCERT').
+doValidateKESSignature' ::
+  PolyPraosCrypto proto c =>
+  WhetherToUpperBoundOCERT ->
+  Word64 ->
+  Word64 ->
+  Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
+  Map (KeyHash SL.BlockIssuer) Word64 ->
+  Views.PolyPraosValidateView proto c ->
+  Except (PolyPraosValidationErr proto c) ()
+doValidateKESSignature' whetherToUpperBound praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
   do
     c0 <= kp ?! KESBeforeStartOCERT c0 kp
     kp_ < c0_ + fromIntegral praosMaxKESEvo ?! KESAfterEndOCERT kp c0 praosMaxKESEvo
@@ -871,7 +961,9 @@ doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution o
         throwError $ NoCounterForKeyHashOCERT hk
       Just m -> do
         m <= n ?! CounterTooSmallOCERT m n
-        n <= m + 1 ?! CounterOverIncrementedOCERT m n
+        case whetherToUpperBound of
+          UpperBoundOCERT -> n <= m + 1 ?! CounterOverIncrementedOCERT m n
+          DoNotUpperBoundOCERT -> pure ()
  where
   oc@(OCert vk_hot n c0@(KESPeriod c0_) tau) = Views.hvOCert b
   (VKey vkcold) = Views.hvVK b

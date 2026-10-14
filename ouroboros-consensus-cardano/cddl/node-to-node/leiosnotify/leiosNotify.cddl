@@ -1,0 +1,41 @@
+; The messages of the LeiosNotify mini-protocol, as the cardano-blueprint's
+; network/node-to-node/leios-notify/messages.cddl has them, except that a
+; MsgLeiosVotes holds at most sixteen votes, which the blueprint does not bound.
+;
+; TODO Bound the votes in the blueprint too; then drop this file in favour of
+; the blueprint's.
+
+leiosNotifyMessage
+  = msgDone
+  / msgQuit
+  / msgCanceled
+  / msgLeiosNotificationRequestNext
+  / msgLeiosBlockAnnouncement
+  / msgLeiosBlockOffer
+  / msgLeiosBlockTxsOffer
+  / msgLeiosVotes
+
+msgDone                         = [0]
+msgQuit                         = [1]
+msgCanceled                     = [2]
+msgLeiosNotificationRequestNext = [3]
+msgLeiosBlockAnnouncement       = [4, announcement]
+msgLeiosBlockOffer              = [5, point, eb_size]
+msgLeiosBlockTxsOffer           = [6, point]
+msgLeiosVotes                   = [7, [1*16 vote]]
+
+; the announcing ranking block's header, as ChainSync sends it
+announcement = header.header
+
+point = [slot, eb_hash]
+slot = uint .size 8
+eb_hash = bytes .size 32
+eb_size = uint .size 4
+
+vote =
+  [ announcing_rb_hash : bytes .size 32
+  , voter_id           : uint .size 2
+  , vote_signature     : bytes .size 48
+  ]
+
+;# import header as header

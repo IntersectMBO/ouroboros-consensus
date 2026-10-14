@@ -77,6 +77,12 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class (NoThunks (..))
 import Numeric.Natural
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosProtocol (..)
+  , defaultGetLeiosAnnouncement
+  , defaultGetLeiosLedgerView
+  , defaultValidateLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Mock.Ledger.Stake
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.Abstract
@@ -455,6 +461,11 @@ data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState
   , untickedPraosChainDepState :: PraosChainDepState c
   -- ^ The unticked chain dependent state, containing the full history.
   }
+
+instance PraosCrypto c => LeiosProtocol (Praos c) where
+  getLeiosAnnouncement = defaultGetLeiosAnnouncement
+  validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   protocolSecurityParam = praosSecurityParam . praosParams

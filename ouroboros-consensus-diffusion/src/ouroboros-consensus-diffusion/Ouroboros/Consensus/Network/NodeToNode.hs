@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -64,21 +65,52 @@ import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Protocol (LeiosProtocol)
+import Ouroboros.Consensus.Leios.Types
+  ( LeiosPoint
+  , LeiosVote
+  , decodeLeiosPoint
+  , decodeLeiosVote
+  , encodeLeiosPoint
+  , encodeLeiosVote
+  )
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncStateView (..)
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client (LeiosNotifyClientPeerPipelined)
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
+  ( LeiosNotifyPeerState (..)
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Server
+  ( LeiosNotifyServerPeerLookahead
+  )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
+  ( LeiosNotify
+  , byteLimitsLeiosNotify
+  , codecLeiosNotify
+  , codecLeiosNotifyId
+  , timeLimitsLeiosNotify
+  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound (objectDiffusionInbound)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Outbound (objectDiffusionOutbound)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
+import Ouroboros.Consensus.Network.LeiosNotify (runLookaheadFixedSenderPeerWithLimits)
+import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify
+  ( leiosNotifyClient
+  , leiosNotifyProtocols
+  , leiosNotifyServer
+  , withLeiosNotifyClientState
+  )
 import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -268,6 +300,16 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ConnectionId addr ->
       PeerSharingServer addr m
+  , hLeiosNotifyClient ::
+      NodeToNodeVersion ->
+      ControlMessageSTM m ->
+      ConnectionId addr ->
+      StrictTVar m (LeiosNotifyPeerState blk) ->
+      LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
+  , hLeiosNotifyServer ::
+      NodeToNodeVersion ->
+      ConnectionId addr ->
+      m (LeiosNotifyServerPeerLookahead LeiosPoint (Header blk) LeiosVote m)
   }
 
 mkHandlers ::
@@ -279,6 +321,9 @@ mkHandlers ::
   , BlockSupportsPeras blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , LeiosProtocol (BlockProtocol blk)
+  , ConvertRawHash blk
+  , HasHardForkHistory blk
   , Ord addrNTN
   , Hashable addrNTN
   ) =>
@@ -289,6 +334,7 @@ mkHandlers ::
 mkHandlers
   NodeKernelArgs
     { chainSyncFutureCheck
+    , maxClockSkew
     , chainSyncHistoricityCheck
     , keepAliveRng
     , miniProtocolParameters
@@ -303,6 +349,7 @@ mkHandlers
     , getTracers = tracers
     , getPeerSharingAPI
     , getGsmState
+    , getBlockchainTime
     }
   txSubmissionLogicVersion =
     Handlers
@@ -410,6 +457,16 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
+      , hLeiosNotifyClient = \_version controlMessageSTM _peer ->
+          leiosNotifyClient
+            getTopLevelConfig
+            getChainDB
+            getBlockchainTime
+            systemTime
+            chainSyncFutureCheck
+            maxClockSkew
+            controlMessageSTM
+      , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer
       }
 
 {-------------------------------------------------------------------------------
@@ -417,7 +474,7 @@ mkHandlers
 -------------------------------------------------------------------------------}
 
 -- | Node-to-node protocol codecs needed to run 'Handlers'.
-data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bPVD bKA bPS = Codecs
+data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bPVD bKA bPS bLN = Codecs
   { cChainSyncCodec :: Codec (ChainSync (Header blk) (Point blk) (Tip blk)) e m bCS
   , cChainSyncCodecSerialised ::
       Codec (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk)) e m bSCS
@@ -429,6 +486,7 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bPCD bPVD bKA bPS = Codecs
   , cPerasVoteDiffusionCodec :: Codec (PerasVoteDiffusion blk) e m bPVD
   , cKeepAliveCodec :: Codec KeepAlive e m bKA
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
+  , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint (Header blk) LeiosVote) e m bLN
   }
 
 -- | Protocol codecs for the node-to-node protocols
@@ -447,6 +505,7 @@ defaultCodecs ::
     addr
     DeserialiseFailure
     m
+    ByteString
     ByteString
     ByteString
     ByteString
@@ -506,6 +565,14 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
           dec
     , cKeepAliveCodec = codecKeepAlive_v2
     , cPeerSharingCodec = codecPeerSharing (encAddr nodeToNodeVersion) (decAddr nodeToNodeVersion)
+    , cLeiosNotifyCodec =
+        codecLeiosNotify
+          encodeLeiosPoint
+          decodeLeiosPoint
+          enc
+          dec
+          encodeLeiosVote
+          decodeLeiosVote
     }
  where
   enc :: SerialiseNodeToNode blk a => a -> Encoding
@@ -531,6 +598,7 @@ identityCodecs ::
     (AnyMessage (PerasVoteDiffusion blk))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
+    (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
 identityCodecs =
   Codecs
     { cChainSyncCodec = codecChainSyncId
@@ -542,6 +610,7 @@ identityCodecs =
     , cPerasVoteDiffusionCodec = codecObjectDiffusionId
     , cKeepAliveCodec = codecKeepAliveId
     , cPeerSharingCodec = codecPeerSharingId
+    , cLeiosNotifyCodec = codecLeiosNotifyId
     }
 
 {-------------------------------------------------------------------------------
@@ -650,7 +719,7 @@ type ServerApp m addr bytes a =
 -- | Applications for the node-to-node protocols
 --
 -- See 'Network.Mux.Types.MuxApplication'
-data Apps m addr bCS bBF bTX bPCD bPVD bKA bPS a b = Apps
+data Apps m addr bCS bBF bTX bPCD bPVD bKA bPS bLN a b = Apps
   { aChainSyncClient :: ClientApp m addr bCS a
   -- ^ Start a chain sync client that communicates with the given upstream
   -- node.
@@ -682,6 +751,10 @@ data Apps m addr bCS bBF bTX bPCD bPVD bKA bPS a b = Apps
   -- ^ Start a peer-sharing client.
   , aPeerSharingServer :: ServerApp m addr bPS b
   -- ^ Start a peer-sharing server.
+  , aLeiosNotifyClient :: ClientApp m addr bLN a
+  -- ^ Start a LeiosNotify client.
+  , aLeiosNotifyServer :: ServerApp m addr bLN b
+  -- ^ Start a LeiosNotify server.
   }
 
 -- | Per mini-protocol byte limits;  For each mini-protocol they provide
@@ -689,7 +762,7 @@ data Apps m addr bCS bBF bTX bPCD bPVD bKA bPS a b = Apps
 --
 -- They don't depend on the instantiation of the protocol parameters (which
 -- block type is used, etc.), hence the use of 'RankNTypes'.
-data ByteLimits bCS bBF bTX bPCD bPVD bKA bPS = ByteLimits
+data ByteLimits bCS bBF bTX bPCD bPVD bKA bPS bLN = ByteLimits
   { blChainSync ::
       forall header point tip.
       ProtocolSizeLimits
@@ -724,9 +797,14 @@ data ByteLimits bCS bBF bTX bPCD bPVD bKA bPS = ByteLimits
       ProtocolSizeLimits
         (PeerSharing addr)
         bPS
+  , blLeiosNotify ::
+      forall point announcement vote.
+      ProtocolSizeLimits
+        (LeiosNotify point announcement vote)
+        bLN
   }
 
-noByteLimits :: ByteLimits bCS bBF bTX bPCD bPVD bKA bPS
+noByteLimits :: ByteLimits bCS bBF bTX bPCD bPVD bKA bPS bLN
 noByteLimits =
   ByteLimits
     { blChainSync = byteLimitsChainSync (const 0)
@@ -736,10 +814,19 @@ noByteLimits =
     , blPerasVoteDiffusion = byteLimitsObjectDiffusion (const 0)
     , blKeepAlive = byteLimitsKeepAlive (const 0)
     , blPeerSharing = byteLimitsPeerSharing (const 0)
+    , blLeiosNotify = byteLimitsLeiosNotify (const 0)
     }
 
 byteLimits ::
-  ByteLimits ByteString ByteString ByteString ByteString ByteString ByteString ByteString
+  ByteLimits
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
 byteLimits =
   ByteLimits
     { blChainSync = byteLimitsChainSync size
@@ -749,6 +836,7 @@ byteLimits =
     , blPerasVoteDiffusion = byteLimitsObjectDiffusion size
     , blKeepAlive = byteLimitsKeepAlive size
     , blPeerSharing = byteLimitsPeerSharing size
+    , blLeiosNotify = byteLimitsLeiosNotify size
     }
  where
   size :: ByteString -> Word
@@ -758,7 +846,7 @@ byteLimits =
 
 -- | Construct the 'NetworkApplication' for the node-to-node protocols
 mkApps ::
-  forall m addrNTN addrNTC blk e bCS bBF bTX bPCD bPVD bKA bPS.
+  forall m addrNTN addrNTC blk e bCS bBF bTX bPCD bPVD bKA bPS bLN.
   ( IOLike m
   , MonadTimer m
   , Ord addrNTN
@@ -781,8 +869,8 @@ mkApps ::
   NodeKernel m addrNTN addrNTC blk ->
   StdGen ->
   Tracers m addrNTN blk e ->
-  (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bPCD bPVD bKA bPS) ->
-  ByteLimits bCS bBF bTX bPCD bPVD bKA bPS ->
+  (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bPCD bPVD bKA bPS bLN) ->
+  ByteLimits bCS bBF bTX bPCD bPVD bKA bPS bLN ->
   -- Chain-Sync timeouts for chain-sync client (using `Header blk`) as well as
   -- the server (`SerialisedHeader blk`).
   (forall header. PeerTrustable -> ProtocolTimeLimitsWithRnd (ChainSync header (Point blk) (Tip blk))) ->
@@ -790,7 +878,7 @@ mkApps ::
   CsClient.CSJConfig ->
   ReportPeerMetrics m (ConnectionId addrNTN) ->
   Handlers m addrNTN blk ->
-  Apps m addrNTN bCS bBF bTX bPCD bPVD bKA bPS NodeToNodeInitiatorResult ()
+  Apps m addrNTN bCS bBF bTX bPCD bPVD bKA bPS bLN NodeToNodeInitiatorResult ()
 mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
   Apps{..}
  where
@@ -1169,6 +1257,48 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       $ peerSharingServerPeer
       $ hPeerSharingServer version them
 
+  aLeiosNotifyClient ::
+    NodeToNodeVersion ->
+    ExpandedInitiatorContext addrNTN PeerTrustable m ->
+    Channel m bLN ->
+    m (NodeToNodeInitiatorResult, Maybe bLN)
+  aLeiosNotifyClient
+    version
+    ExpandedInitiatorContext
+      { eicConnectionId = them
+      , eicControlMessage = controlMessageSTM
+      }
+    channel = do
+      labelThisThread "LeiosNotifyClient"
+      ((), trailing) <-
+        withLeiosNotifyClientState (getLeiosNotifyClientStates kernel) them $ \stateVar ->
+          runPipelinedPeerWithLimits
+            nullTracer
+            (cLeiosNotifyCodec (mkCodecs version))
+            blLeiosNotify
+            timeLimitsLeiosNotify
+            channel
+            (hLeiosNotifyClient version controlMessageSTM them stateVar)
+      return (NoInitiatorResult, trailing)
+
+  aLeiosNotifyServer ::
+    NodeToNodeVersion ->
+    ResponderContext addrNTN ->
+    Channel m bLN ->
+    m ((), Maybe bLN)
+  aLeiosNotifyServer
+    version
+    ResponderContext{rcConnectionId = them}
+    channel = do
+      labelThisThread "LeiosNotifyServer"
+      runLookaheadFixedSenderPeerWithLimits
+        nullTracer
+        (cLeiosNotifyCodec (mkCodecs version))
+        blLeiosNotify
+        timeLimitsLeiosNotify
+        channel
+        =<< hLeiosNotifyServer version them
+
 {-------------------------------------------------------------------------------
   Projections from 'Apps'
 -------------------------------------------------------------------------------}
@@ -1184,7 +1314,7 @@ initiator ::
   MiniProtocolParameters ->
   NodeToNodeVersion ->
   NodeToNodeVersionData ->
-  Apps m addr b b b b b b b a c ->
+  Apps m addr b b b b b b b b a c ->
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr PeerTrustable b m a Void
 initiator featureFlags miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
@@ -1215,6 +1345,9 @@ initiator featureFlags miniProtocolParameters version versionData Apps{..} =
     )
     version
     versionData
+    <> leiosNotifyProtocols
+      version
+      (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aLeiosNotifyClient version ctx)))
 
 -- | A bi-directional network application.
 --
@@ -1226,7 +1359,7 @@ initiatorAndResponder ::
   MiniProtocolParameters ->
   NodeToNodeVersion ->
   NodeToNodeVersionData ->
-  Apps m addr b b b b b b b a c ->
+  Apps m addr b b b b b b b b a c ->
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr PeerTrustable b m a c
 initiatorAndResponder featureFlags miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
@@ -1272,3 +1405,9 @@ initiatorAndResponder featureFlags miniProtocolParameters version versionData Ap
     )
     version
     versionData
+    <> leiosNotifyProtocols
+      version
+      ( InitiatorAndResponderProtocol
+          (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
+          (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
+      )

@@ -34,7 +34,6 @@ module Ouroboros.Consensus.Protocol.Praos
     -- "Ouroboros.Consensus.Protocol.PolyPraos" existed. They are re-exported only
     -- for that historical reason, so that the modules importing them here did not
     -- need to change.
-  , AnnouncedBy (..)
   , PolyPraosCrypto
   , PolyPraosState (..)
   , PolyPraosValidationErr (..)
@@ -79,6 +78,12 @@ import GHC.Generics (Generic)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosProtocol (..)
+  , defaultGetLeiosAnnouncement
+  , defaultGetLeiosLedgerView
+  , defaultValidateLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PolyPraos
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -163,6 +168,11 @@ instance HasMaxMajorProtVer (Praos c) where
   ConsensusProtocol
 -------------------------------------------------------------------------------}
 
+instance PraosCrypto c => LeiosProtocol (Praos c) where
+  getLeiosAnnouncement = defaultGetLeiosAnnouncement
+  validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  getLeiosLedgerView = defaultGetLeiosLedgerView
+
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PolyPraosState (Praos c)
   type IsLeader (Praos c) = PraosIsLeader c
@@ -189,13 +199,7 @@ instance Views.ForecastToPolyPraosLedgerView (Praos c) era where
       , Views.plvMaxHeaderSize = ccMaxBHSize cc
       , Views.plvMaxBodySize = ccMaxBBSize cc
       , Views.plvProtocolVersion = ccProtocolVersion cc
-      , Views.plvCommittee = PraosLacksLeios ()
-      , Views.plvQuorumStakeThreshold = PraosLacksLeios ()
-      , Views.plvAnnouncementPeriodLength = PraosLacksLeios ()
-      , Views.plvVotePeriodLength = PraosLacksLeios ()
-      , Views.plvDiffusionPeriodLength = PraosLacksLeios ()
-      , Views.plvMaxEbBodySize = PraosLacksLeios ()
-      , Views.plvMaxEbTxsSize = PraosLacksLeios ()
+      , Views.plvLeios = PraosLacksLeios ()
       }
    where
     cc = SL.forecastChainChecks @t @era f
@@ -217,13 +221,7 @@ instance TranslateProto (TPraos c) (Praos c) era where
       , Views.plvMaxHeaderSize = SL.ccMaxBHSize tplvChainChecks
       , Views.plvMaxBodySize = SL.ccMaxBBSize tplvChainChecks
       , Views.plvProtocolVersion = SL.ccProtocolVersion tplvChainChecks
-      , Views.plvCommittee = PraosLacksLeios ()
-      , Views.plvQuorumStakeThreshold = PraosLacksLeios ()
-      , Views.plvAnnouncementPeriodLength = PraosLacksLeios ()
-      , Views.plvVotePeriodLength = PraosLacksLeios ()
-      , Views.plvDiffusionPeriodLength = PraosLacksLeios ()
-      , Views.plvMaxEbBodySize = PraosLacksLeios ()
-      , Views.plvMaxEbTxsSize = PraosLacksLeios ()
+      , Views.plvLeios = PraosLacksLeios ()
       }
 
   translateChainDepState _ tpState =

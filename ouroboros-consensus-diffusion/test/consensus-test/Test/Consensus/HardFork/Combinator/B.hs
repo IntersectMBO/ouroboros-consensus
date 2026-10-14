@@ -70,6 +70,12 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosProtocol (..)
+  , defaultGetLeiosAnnouncement
+  , defaultGetLeiosLedgerView
+  , defaultValidateLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -112,6 +118,11 @@ data instance ConsensusConfig ProtocolB = CfgB
   , cfgB_leadInSlots :: Set SlotNo
   }
   deriving NoThunks via OnlyCheckWhnfNamed "CfgB" (ConsensusConfig ProtocolB)
+
+instance LeiosProtocol ProtocolB where
+  getLeiosAnnouncement = defaultGetLeiosAnnouncement
+  validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance ConsensusProtocol ProtocolB where
   type ChainDepState ProtocolB = ()

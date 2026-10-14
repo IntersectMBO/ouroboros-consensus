@@ -38,6 +38,12 @@ import Data.Typeable
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Leios.Protocol
+  ( LeiosProtocol (..)
+  , defaultGetLeiosAnnouncement
+  , defaultGetLeiosLedgerView
+  , defaultValidateLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..), NodeId (..))
 import Ouroboros.Consensus.Protocol.Abstract
@@ -124,6 +130,11 @@ data instance ConsensusConfig (Bft c) = BftConfig
   , bftVerKeys :: !(Map NodeId (VerKeyDSIGN (BftDSIGN c)))
   }
   deriving Generic
+
+instance BftCrypto c => LeiosProtocol (Bft c) where
+  getLeiosAnnouncement = defaultGetLeiosAnnouncement
+  validateLeiosAnnouncement = defaultValidateLeiosAnnouncement
+  getLeiosLedgerView = defaultGetLeiosLedgerView
 
 instance BftCrypto c => ConsensusProtocol (Bft c) where
   type ValidationErr (Bft c) = BftValidationErr

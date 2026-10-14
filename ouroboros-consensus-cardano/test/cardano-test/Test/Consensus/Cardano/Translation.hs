@@ -68,6 +68,7 @@ import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView (..))
 import Ouroboros.Consensus.Protocol.Praos
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.Praos2 (LeiosOnly (Praos2HasLeios), Praos2)
@@ -335,12 +336,16 @@ prop_conwayToDijkstraForecast ts =
     )
   leiosParameters
     Views.PraosLedgerView
-      { Views.plvMaxEbBodySize = Praos2HasLeios maxEbBodySize
-      , Views.plvMaxEbTxsSize = Praos2HasLeios maxEbTxsSize
-      , Views.plvAnnouncementPeriodLength = Praos2HasLeios announcementPeriodLength
-      , Views.plvVotePeriodLength = Praos2HasLeios votePeriodLength
-      , Views.plvDiffusionPeriodLength = Praos2HasLeios diffusionPeriodLength
-      , Views.plvQuorumStakeThreshold = Praos2HasLeios quorumStakeThreshold
+      { Views.plvLeios =
+        Praos2HasLeios
+          MkLeiosLedgerView
+            { llvMaxEbBodySize = maxEbBodySize
+            , llvMaxEbTxsSize = maxEbTxsSize
+            , llvAnnouncementPeriod = announcementPeriodLength
+            , llvVotePeriod = votePeriodLength
+            , llvDiffusionPeriod = diffusionPeriodLength
+            , llvQuorumStakeThreshold = quorumStakeThreshold
+            }
       } =
       ( maxEbBodySize
       , maxEbTxsSize

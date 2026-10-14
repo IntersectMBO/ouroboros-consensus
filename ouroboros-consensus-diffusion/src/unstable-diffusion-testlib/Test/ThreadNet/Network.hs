@@ -88,10 +88,12 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Types (LeiosPoint, LeiosVote)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type (LeiosNotify)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert (PerasCertDiffusion)
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote (PerasVoteDiffusion)
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -1051,6 +1053,7 @@ runThreadNetwork
                   InFutureCheck.realHeaderInFutureCheck
                     InFutureCheck.defaultClockSkew
                     (OracularClock.finiteSystemTime clock)
+              , maxClockSkew = InFutureCheck.defaultClockSkew
               , chainSyncHistoricityCheck = \_getGsmState -> HistoricityCheck.noCheck
               , blockFetchSize = estimateBlockSize
               , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
@@ -1188,6 +1191,7 @@ runThreadNetwork
         (AnyMessage (PerasVoteDiffusion blk))
         (AnyMessage KeepAlive)
         (AnyMessage (PeerSharing NodeId))
+        (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
     customNodeToNodeCodecs cfg ntnVersion =
       NTN.Codecs
         { cChainSyncCodec =
@@ -1217,6 +1221,9 @@ runThreadNetwork
         , cPeerSharingCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cPeerSharingCodec NTN.identityCodecs
+        , cLeiosNotifyCodec =
+            mapFailureCodec CodecIdFailure $
+              NTN.cLeiosNotifyCodec NTN.identityCodecs
         }
      where
       binaryProtocolCodecs =
@@ -1815,6 +1822,7 @@ type LimitedApp' m addr blk =
     (AnyMessage (PerasVoteDiffusion blk))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
+    (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
     NodeToNodeInitiatorResult
     ()
 

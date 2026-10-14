@@ -27,6 +27,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
   , HardForkLedgerView
   , HardForkLedgerView_ (..)
 
+    -- * Leios
+  , SingleEraBlockAndLeiosProtocol
+
     -- * Type family instances
   , Ticked (..)
   ) where
@@ -63,6 +66,7 @@ import Ouroboros.Consensus.HardFork.Combinator.State
   )
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
+import Ouroboros.Consensus.Leios.Protocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util ((.:))
@@ -340,34 +344,33 @@ update
               mismatch
       Right matched ->
         hsequence'
-          . hcizipWith proxySingle (updateEra ei slot) cfgs
+          . hcizipWith
+            proxySingle
+            ( \index cfg x ->
+                Comp $ withExcept (injectValidationErr index) $ updateEra slot cfg x
+            )
+            cfgs
           $ matched
    where
-    cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
+    cfgs =
+      hcmap
+        proxySingle
+        (completeConsensusConfig'' ei)
+        (getPerEraConsensusConfig hardForkConsensusConfigPerEra)
 
 updateEra ::
-  forall xs blk.
-  (SListI xs, SingleEraBlock blk) =>
-  EpochInfo (Except PastHorizonException) ->
+  SingleEraBlock blk =>
   SlotNo ->
-  Index xs blk ->
-  WrapPartialConsensusConfig blk ->
+  WrapConsensusConfig blk ->
   Product WrapValidateView (Ticked :.: WrapChainDepState) blk ->
-  (Except (HardForkValidationErr xs) :.: WrapChainDepState) blk
-updateEra
-  ei
-  slot
-  index
-  cfg
-  (Pair view (Comp chainDepState)) =
-    Comp $
-      withExcept (injectValidationErr index) $
-        fmap WrapChainDepState $
-          updateChainDepState
-            (completeConsensusConfig' ei cfg)
-            (unwrapValidateView view)
-            slot
-            (unwrapTickedChainDepState chainDepState)
+  Except (ValidationErr (BlockProtocol blk)) (WrapChainDepState blk)
+updateEra slot cfg (Pair view (Comp chainDepState)) =
+  fmap WrapChainDepState $
+    updateChainDepState
+      (unwrapConsensusConfig cfg)
+      (unwrapValidateView view)
+      slot
+      (unwrapTickedChainDepState chainDepState)
 
 reupdate ::
   forall xs.
@@ -453,3 +456,90 @@ injectValidationErr index =
 deriving instance CanHardFork xs => Eq (HardForkValidationErr xs)
 deriving instance CanHardFork xs => Show (HardForkValidationErr xs)
 deriving instance CanHardFork xs => NoThunks (HardForkValidationErr xs)
+
+{-------------------------------------------------------------------------------
+  Leios
+-------------------------------------------------------------------------------}
+
+-- | Just the conjunction of 'SingleEraBlock' and 'LeiosProtocol' of the block's
+-- protocol, as one class, so that 'All' and the SOP combinators can require
+-- both.
+class (SingleEraBlock blk, LeiosProtocol (BlockProtocol blk)) => SingleEraBlockAndLeiosProtocol blk
+
+instance (SingleEraBlock blk, LeiosProtocol (BlockProtocol blk)) => SingleEraBlockAndLeiosProtocol blk
+
+instance (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) => LeiosProtocol (HardForkProtocol xs) where
+  getLeiosAnnouncement _proxy (OneEraValidateView view) =
+    hcollapse $ hcmap (Proxy @SingleEraBlockAndLeiosProtocol) getOne view
+   where
+    getOne ::
+      forall blk.
+      SingleEraBlockAndLeiosProtocol blk =>
+      WrapValidateView blk ->
+      K (Maybe LeiosAnnouncement) blk
+    getOne (WrapValidateView v) = K $ getLeiosAnnouncement (Proxy @(BlockProtocol blk)) v
+  validateLeiosAnnouncement = validateAnnouncement
+  getLeiosLedgerView _proxy view =
+    hcollapse $
+      hcmap (Proxy @SingleEraBlockAndLeiosProtocol) getOne $
+        State.tip (hardForkLedgerViewPerEra view)
+   where
+    getOne ::
+      forall blk.
+      SingleEraBlockAndLeiosProtocol blk =>
+      WrapLedgerView blk ->
+      K (Maybe LeiosLedgerView) blk
+    getOne (WrapLedgerView v) = K $ getLeiosLedgerView (Proxy @(BlockProtocol blk)) v
+
+-- | Like 'update'.
+validateAnnouncement ::
+  forall xs.
+  (CanHardFork xs, All SingleEraBlockAndLeiosProtocol xs) =>
+  ConsensusConfig (HardForkProtocol xs) ->
+  OneEraValidateView xs ->
+  SlotNo ->
+  Ticked (HardForkChainDepState xs) ->
+  Except (HardForkValidationErr xs) OCINStaleness
+validateAnnouncement
+  HardForkConsensusConfig{..}
+  (OneEraValidateView view)
+  slot
+  (TickedHardForkChainDepState chainDepState ei) =
+    case State.match view chainDepState of
+      Left mismatch ->
+        throwError $
+          HardForkValidationErrWrongEra . MismatchEraInfo $
+            Match.bihcmap
+              proxySingle
+              singleEraInfo
+              (LedgerEraInfo . chainDepStateInfo . State.currentState)
+              mismatch
+      Right matched ->
+        hcollapse
+          . hcizipWith
+            (Proxy @SingleEraBlockAndLeiosProtocol)
+            ( \index cfg x ->
+                K $ withExcept (injectValidationErr index) $ validateAnnouncementEra slot cfg x
+            )
+            cfgs
+          $ matched
+   where
+    cfgs =
+      hcmap
+        proxySingle
+        (completeConsensusConfig'' ei)
+        (getPerEraConsensusConfig hardForkConsensusConfigPerEra)
+
+-- | Like 'updateEra'.
+validateAnnouncementEra ::
+  SingleEraBlockAndLeiosProtocol blk =>
+  SlotNo ->
+  WrapConsensusConfig blk ->
+  Product WrapValidateView (Ticked :.: WrapChainDepState) blk ->
+  Except (ValidationErr (BlockProtocol blk)) OCINStaleness
+validateAnnouncementEra slot cfg (Pair view (Comp chainDepState)) =
+  validateLeiosAnnouncement
+    (unwrapConsensusConfig cfg)
+    (unwrapValidateView view)
+    slot
+    (unwrapTickedChainDepState chainDepState)

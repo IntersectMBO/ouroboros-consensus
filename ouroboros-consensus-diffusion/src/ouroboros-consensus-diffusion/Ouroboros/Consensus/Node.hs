@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -18,6 +19,9 @@
 module Ouroboros.Consensus.Node
   ( run
   , runWith
+  , mkNodeToNodeApps
+  , mkNodeToNodeInitiatorVersions
+  , mkNodeToNodeInitiatorResponderVersions
 
     -- * Standard arguments
   , StdRunNodeArgs (..)
@@ -104,6 +108,8 @@ import Data.Maybe (fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
+import Data.Void (Void)
+import qualified Network.Mux as Mux
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -156,6 +162,7 @@ import Ouroboros.Network.BlockFetch
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import Ouroboros.Network.Magic
+import Ouroboros.Network.Mux (OuroborosBundleWithExpandedCtx)
 import Ouroboros.Network.PeerSelection.Governor.Types
   ( PublicPeerSelectionState
   )
@@ -174,6 +181,7 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   , encodeRemoteAddress
   )
 import Ouroboros.Network.PerasSupport (PerasSupport (..))
+import Ouroboros.Network.Protocol.Handshake.Version (Versions)
 import Ouroboros.Network.RethrowPolicy
 import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
@@ -586,7 +594,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnTraceConsensus
                   btime
                   systemTime
-                  (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+                  llrnMaxClockSkew
                   historicityCheck
                   chainDB
                   llrnMaxCaughtUpAge
@@ -641,7 +649,18 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     }
 
             stdGen <- StrictSTM.newTVarIO peerSelectionRng
-            let ntnApps = mkNodeToNodeApps nodeKernelArgs nodeKernel churnMetrics encAddrNtN decAddrNtN
+            let ntnApps =
+                  mkNodeToNodeApps
+                    ntnAppsRng
+                    rnTraceNTN
+                    llrnChainSyncIdleTimeout
+                    llrnGenesisConfig
+                    rnTxSubmissionLogicVersion
+                    nodeKernelArgs
+                    nodeKernel
+                    churnMetrics
+                    encAddrNtN
+                    decAddrNtN
                 ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
                 apps =
                   mkDiffusionApplications
@@ -667,38 +686,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
   codecConfig :: CodecConfig blk
   !codecConfig = configCodec cfg
 
-  mkNodeToNodeApps ::
-    NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
-    NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
-    PeerMetrics m addrNTN ->
-    (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
-    (NodeToNodeVersion -> forall s. CBOR.Decoder s addrNTN) ->
-    BlockNodeToNodeVersion blk ->
-    NTN.Apps
-      m
-      addrNTN
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      ByteString
-      NodeToNodeInitiatorResult
-      ()
-  mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
-    NTN.mkApps
-      nodeKernel
-      ntnAppsRng
-      rnTraceNTN
-      (NTN.defaultCodecs codecConfig version encAddrNTN decAddrNTN)
-      NTN.byteLimits
-      (timeLimitsChainSync llrnChainSyncIdleTimeout)
-      (gcChainSyncLoPBucketConfig llrnGenesisConfig)
-      (gcCSJConfig llrnGenesisConfig)
-      (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-      (NTN.mkHandlers nodeKernelArgs nodeKernel rnTxSubmissionLogicVersion)
-
   mkNodeToClientApps ::
     NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
     NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
@@ -717,18 +704,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
     Cardano.Diffusion.CardanoConsensusArguments addrNTN m ->
     MiniProtocolParameters ->
     ( BlockNodeToNodeVersion blk ->
-      NTN.Apps
-        m
-        addrNTN
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        ByteString
-        NodeToNodeInitiatorResult
-        ()
+      NodeToNodeApps m addrNTN
     ) ->
     ( BlockNodeToClientVersion blk ->
       NodeToClientVersion ->
@@ -764,31 +740,19 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       apps =
         Diffusion.Applications
           { Diffusion.daApplicationInitiatorMode =
-              combineVersions
-                [ simpleSingletonVersions
-                    version
-                    (llrnVersionDataNTN version)
-                    ( \versionData ->
-                        NTN.initiator llrnFeatureFlags miniProtocolParams version versionData
-                        -- Initiator side won't start responder side of Peer
-                        -- Sharing protocol so we give a dummy implementation
-                        -- here.
-                        $
-                          ntnApps blockVersion
-                    )
-                | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
-                ]
+              mkNodeToNodeInitiatorVersions
+                llrnFeatureFlags
+                miniProtocolParams
+                llrnVersionDataNTN
+                llrnNodeToNodeVersions
+                ntnApps
           , Diffusion.daApplicationInitiatorResponderMode =
-              combineVersions
-                [ simpleSingletonVersions
-                    version
-                    (llrnVersionDataNTN version)
-                    ( \versionData ->
-                        NTN.initiatorAndResponder llrnFeatureFlags miniProtocolParams version versionData $
-                          ntnApps blockVersion
-                    )
-                | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
-                ]
+              mkNodeToNodeInitiatorResponderVersions
+                llrnFeatureFlags
+                miniProtocolParams
+                llrnVersionDataNTN
+                llrnNodeToNodeVersions
+                ntnApps
           , Diffusion.daLocalResponderApplication =
               combineVersions
                 [ simpleSingletonVersions
@@ -814,6 +778,142 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
   runPredicate :: Predicate a -> a -> Maybe a
   runPredicate (Predicate p) err = if p err then Just err else Nothing
+
+-- | The node-to-node applications, exchanging bytes.
+type NodeToNodeApps m addrNTN =
+  NTN.Apps
+    m
+    addrNTN
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    ByteString
+    NodeToNodeInitiatorResult
+    ()
+
+-- | The node's node-to-node applications, for a connection of the given
+-- version.
+mkNodeToNodeApps ::
+  forall m addrNTN addrNTC blk.
+  ( RunNode blk
+  , IOLike m
+  , MonadTime m
+  , MonadTimer m
+  , Ord addrNTN
+  , Hashable addrNTN
+  , Show addrNTN
+  ) =>
+  StdGen ->
+  NTN.Tracers m addrNTN blk DeserialiseFailure ->
+  ChainSyncIdleTimeout ->
+  GenesisConfig ->
+  TxSubmissionLogicVersion ->
+  NodeKernelArgs m addrNTN addrNTC blk ->
+  NodeKernel m addrNTN addrNTC blk ->
+  PeerMetrics m addrNTN ->
+  (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
+  (NodeToNodeVersion -> forall s. CBOR.Decoder s addrNTN) ->
+  BlockNodeToNodeVersion blk ->
+  NodeToNodeApps m addrNTN
+mkNodeToNodeApps
+  ntnAppsRng
+  traceNTN
+  chainSyncIdleTimeout
+  genesisConfig
+  txSubmissionLogicVersion
+  nodeKernelArgs
+  nodeKernel
+  peerMetrics
+  encAddrNTN
+  decAddrNTN
+  version =
+    NTN.mkApps
+      nodeKernel
+      ntnAppsRng
+      traceNTN
+      (NTN.defaultCodecs (configCodec (getTopLevelConfig nodeKernel)) version encAddrNTN decAddrNTN)
+      NTN.byteLimits
+      (timeLimitsChainSync chainSyncIdleTimeout)
+      (gcChainSyncLoPBucketConfig genesisConfig)
+      (gcCSJConfig genesisConfig)
+      (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel txSubmissionLogicVersion)
+
+-- | The node's node-to-node applications for each version it supports, on
+-- connections where it is only the initiator.
+mkNodeToNodeInitiatorVersions ::
+  Set CardanoFeatureFlag ->
+  MiniProtocolParameters ->
+  (NodeToNodeVersion -> NodeToNodeVersionData) ->
+  Map NodeToNodeVersion blockVersion ->
+  ( blockVersion ->
+    NodeToNodeApps m addrNTN
+  ) ->
+  Versions
+    NodeToNodeVersion
+    NodeToNodeVersionData
+    ( OuroborosBundleWithExpandedCtx
+        'Mux.InitiatorMode
+        addrNTN
+        PeerTrustable
+        ByteString
+        m
+        NodeToNodeInitiatorResult
+        Void
+    )
+mkNodeToNodeInitiatorVersions featureFlags miniProtocolParams versionDataNTN nodeToNodeVersions ntnApps =
+  combineVersions
+    [ simpleSingletonVersions
+        version
+        (versionDataNTN version)
+        ( \versionData ->
+            NTN.initiator featureFlags miniProtocolParams version versionData
+            -- Initiator side won't start responder side of Peer
+            -- Sharing protocol so we give a dummy implementation
+            -- here.
+            $
+              ntnApps blockVersion
+        )
+    | (version, blockVersion) <- Map.toList nodeToNodeVersions
+    ]
+
+-- | The node's node-to-node applications for each version it supports, on
+-- connections where it is both initiator and responder.
+mkNodeToNodeInitiatorResponderVersions ::
+  Set CardanoFeatureFlag ->
+  MiniProtocolParameters ->
+  (NodeToNodeVersion -> NodeToNodeVersionData) ->
+  Map NodeToNodeVersion blockVersion ->
+  ( blockVersion ->
+    NodeToNodeApps m addrNTN
+  ) ->
+  Versions
+    NodeToNodeVersion
+    NodeToNodeVersionData
+    ( OuroborosBundleWithExpandedCtx
+        'Mux.InitiatorResponderMode
+        addrNTN
+        PeerTrustable
+        ByteString
+        m
+        NodeToNodeInitiatorResult
+        ()
+    )
+mkNodeToNodeInitiatorResponderVersions featureFlags miniProtocolParams versionDataNTN nodeToNodeVersions ntnApps =
+  combineVersions
+    [ simpleSingletonVersions
+        version
+        (versionDataNTN version)
+        ( \versionData ->
+            NTN.initiatorAndResponder featureFlags miniProtocolParams version versionData $
+              ntnApps blockVersion
+        )
+    | (version, blockVersion) <- Map.toList nodeToNodeVersions
+    ]
 
 -- | Check the DB marker, lock the DB and look for the clean shutdown marker.
 --
@@ -890,7 +990,7 @@ mkNodeKernelArgs ::
   Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk ->
   BlockchainTime m ->
   SystemTime m ->
-  InFutureCheck.SomeHeaderInFutureCheck m blk ->
+  InFutureCheck.ClockSkew ->
   (m GSM.GsmState -> HistoricityCheck m blk) ->
   ChainDB m blk ->
   NominalDiffTime ->
@@ -913,7 +1013,7 @@ mkNodeKernelArgs
   tracers
   btime
   systemTime
-  chainSyncFutureCheck
+  maxClockSkew
   chainSyncHistoricityCheck
   chainDB
   maxCaughtUpAge
@@ -938,7 +1038,9 @@ mkNodeKernelArgs
           , systemTime
           , chainDB
           , initChainDB = nodeInitChainDB
-          , chainSyncFutureCheck
+          , chainSyncFutureCheck =
+              InFutureCheck.realHeaderInFutureCheck maxClockSkew systemTime
+          , maxClockSkew
           , chainSyncHistoricityCheck
           , blockFetchSize = estimateBlockSize
           , mempoolCapacityOverride = NoMempoolCapacityBytesOverride

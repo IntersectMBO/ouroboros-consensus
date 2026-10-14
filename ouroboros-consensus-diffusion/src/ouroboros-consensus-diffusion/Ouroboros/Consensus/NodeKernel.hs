@@ -47,6 +47,8 @@ import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.Void (Void)
@@ -71,8 +73,13 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
   )
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
-  ( SomeHeaderInFutureCheck
+  ( ClockSkew
+  , SomeHeaderInFutureCheck
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.State
+  ( LeiosNotifyPeerState
+  )
+import Ouroboros.Consensus.Network.NodeToNode.LeiosNotify (leiosNotifyPruner)
 import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.Genesis
@@ -191,6 +198,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Accumulator for tx-submission counters of disconnected peers.
   , getTxDecisionPolicy :: TxDecisionPolicy
   -- ^ Tx-submission decision policy.
+  , getLeiosNotifyClientStates ::
+      StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (LeiosNotifyPeerState blk)))
+  -- ^ The state of each LeiosNotify client, by upstream peer, which
+  -- 'leiosNotifyPruner' prunes.
   }
 
 -- | Arguments required when initializing a node
@@ -204,6 +215,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , chainDB :: ChainDB m blk
   , initChainDB :: StorageConfig blk -> InitChainDB m blk -> m ()
   , chainSyncFutureCheck :: SomeHeaderInFutureCheck m blk
+  , maxClockSkew :: ClockSkew
+  -- ^ The most that an honest peer's clock may differ from ours.
   , chainSyncHistoricityCheck ::
       m GSM.GsmState ->
       HistoricityCheck m blk
@@ -373,6 +386,11 @@ initNodeKernel
           keepAliveRegistry
           blockFetchConfiguration
 
+    leiosNotifyClientStates <- newTVarIO Map.empty
+    void $
+      forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
+        leiosNotifyPruner chainDB leiosNotifyClientStates
+
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
         txCountersThreadV2
@@ -405,6 +423,7 @@ initNodeKernel
         , getSharedTxStateVar = sharedTxStateVar
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
+        , getLeiosNotifyClientStates = leiosNotifyClientStates
         }
    where
     blockForgingController ::
