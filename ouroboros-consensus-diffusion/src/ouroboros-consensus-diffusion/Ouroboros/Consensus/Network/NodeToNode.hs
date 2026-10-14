@@ -504,7 +504,10 @@ mkHandlers
             controlMessageSTM
       , hLeiosNotifyServer = \_version _peer -> leiosNotifyServer
       , hLeiosFetchClient = \_version controlMessageSTM _peer -> leiosFetchClient controlMessageSTM
-      , hLeiosFetchServer = \_version _peer reader -> leiosFetchServer reader
+      , hLeiosFetchServer = \_version peer reader ->
+          leiosFetchServer
+            (contramap (TraceLabelPeer peer) (Node.leiosFetchServerTracer tracers))
+            reader
       }
 
 {-------------------------------------------------------------------------------

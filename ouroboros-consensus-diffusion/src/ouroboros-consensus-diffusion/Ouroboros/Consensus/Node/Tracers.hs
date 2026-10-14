@@ -42,6 +42,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CS
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   ( TraceChainSyncServerEvent
   )
+import Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace (TraceLeiosFetchServerEvent)
 import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
@@ -79,6 +80,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockFetchDecisionTracer :: f (TraceDecisionEvent remotePeer (Header blk))
   , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
+  , leiosFetchServerTracer :: f (TraceLabelPeer remotePeer TraceLeiosFetchServerEvent)
   , txInboundTracer ::
       f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)))
   , txOutboundTracer ::
@@ -124,6 +126,7 @@ instance
       , blockFetchDecisionTracer = f blockFetchDecisionTracer
       , blockFetchClientTracer = f blockFetchClientTracer
       , blockFetchServerTracer = f blockFetchServerTracer
+      , leiosFetchServerTracer = f leiosFetchServerTracer
       , txInboundTracer = f txInboundTracer
       , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
@@ -169,6 +172,7 @@ nullTracers =
     , blockFetchDecisionTracer = nullTracer
     , blockFetchClientTracer = nullTracer
     , blockFetchServerTracer = nullTracer
+    , leiosFetchServerTracer = nullTracer
     , txInboundTracer = nullTracer
     , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
@@ -224,6 +228,7 @@ showTracers tr =
     , blockFetchDecisionTracer = show >$< tr
     , blockFetchClientTracer = show >$< tr
     , blockFetchServerTracer = show >$< tr
+    , leiosFetchServerTracer = show >$< tr
     , txInboundTracer = show >$< tr
     , txOutboundTracer = show >$< tr
     , localTxSubmissionServerTracer = show >$< tr

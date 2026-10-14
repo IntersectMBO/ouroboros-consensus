@@ -221,6 +221,7 @@ library
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Client
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Server
+    Ouroboros.Consensus.MiniProtocol.LeiosFetch.Trace
     Ouroboros.Consensus.MiniProtocol.LeiosFetch.Type
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client
     Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements
@@ -472,6 +473,7 @@ library tracing
     Ouroboros.Consensus.Tracing.Formatting
     Ouroboros.Consensus.Tracing.HasIssuer
     Ouroboros.Consensus.Tracing.KESInfo
+    Ouroboros.Consensus.Tracing.LeiosFetch
 
   build-depends:
     aeson,
