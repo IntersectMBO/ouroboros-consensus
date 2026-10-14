@@ -2,12 +2,16 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2026-06-18T04:19:00Z";
-  tool = name: version: other:
-    final.haskell-nix.tool "ghc914" name ({
-      version = version;
-      index-state = tool-index-state;
-    } // other);
+  tool-index-state = "2026-10-09T08:40:45Z";
+  tool =
+    name: version: other:
+    final.haskell-nix.tool "ghc914" name (
+      {
+        version = version;
+        index-state = tool-index-state;
+      }
+      // other
+    );
 in
 {
   inherit tool-index-state;
@@ -43,22 +47,25 @@ in
   set-git-rev =
     drv:
     let
-      patched-drv = final.buildPackages.runCommand "${drv.name}-with-git-rev"
-        {
-          inherit (drv) meta passthru;
-          nativeBuildInputs = lib.optionals final.stdenv.hostPlatform.isDarwin
-            [ final.darwin.signingUtils ];
-        }
-        (''
-          mkdir -p $out
-          cp --no-preserve=timestamps --recursive ${drv}/* $out/
-          chmod -R +w $out/bin
-          ${final.pkgsBuildBuild.haskellBuildUtils}/bin/set-git-rev ${lib.escapeShellArg inputs.self.rev} $out/bin/*
-        '' + lib.optionalString final.stdenv.hostPlatform.isDarwin ''
-          for exe in $out/bin/*; do
-            signIfRequired "$exe"
-          done
-        '');
+      patched-drv =
+        final.buildPackages.runCommand "${drv.name}-with-git-rev"
+          {
+            inherit (drv) meta passthru;
+            nativeBuildInputs = lib.optionals final.stdenv.hostPlatform.isDarwin [ final.darwin.signingUtils ];
+          }
+          (
+            ''
+              mkdir -p $out
+              cp --no-preserve=timestamps --recursive ${drv}/* $out/
+              chmod -R +w $out/bin
+              ${final.pkgsBuildBuild.haskellBuildUtils}/bin/set-git-rev ${lib.escapeShellArg inputs.self.rev} $out/bin/*
+            ''
+            + lib.optionalString final.stdenv.hostPlatform.isDarwin ''
+              for exe in $out/bin/*; do
+                signIfRequired "$exe"
+              done
+            ''
+          );
     in
     if inputs.self ? rev then patched-drv else drv;
 }
