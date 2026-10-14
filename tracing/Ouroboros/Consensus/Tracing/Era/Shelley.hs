@@ -2067,7 +2067,7 @@ instance
 
 instance
   Ledger.Crypto crypto =>
-  LogFormatting (Praos.PraosValidationErr crypto)
+  LogFormatting (Praos.PolyPraosValidationErr proto crypto)
   where
   forMachine _ err' =
     case err' of
@@ -2142,6 +2142,26 @@ instance
         mconcat
           [ "kind" .= String "NoCounterForKeyHashOCERT"
           , "stakePoolKeyHash" .= stakePoolKeyHash
+          ]
+      Praos.LeiosCertWithoutAnnouncement _ why predecessorSlot slot ->
+        mconcat
+          [ "kind" .= String "LeiosCertWithoutAnnouncement"
+          , "why" .= textShow why
+          , "predecessorSlot" .= withOriginToMaybe predecessorSlot
+          , "slot" .= slot
+          ]
+      Praos.LeiosCertTooYoung _ announcingSlot slot earliestSlot ->
+        mconcat
+          [ "kind" .= String "LeiosCertTooYoung"
+          , "announcingSlot" .= announcingSlot
+          , "slot" .= slot
+          , "earliestSlot" .= earliestSlot
+          ]
+      Praos.LeiosEbTooBig _ size maxSize ->
+        mconcat
+          [ "kind" .= String "LeiosEbTooBig"
+          , "size" .= size
+          , "maxSize" .= maxSize
           ]
 
 instance LogFormatting (Praos.PraosCannotForge crypto) where
