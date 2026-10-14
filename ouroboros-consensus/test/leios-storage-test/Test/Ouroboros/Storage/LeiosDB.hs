@@ -15,11 +15,12 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , readTChan
   , tryReadTChan
   )
+import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
 import Control.Exception (bracket, try)
 import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
-import Control.Tracer (nullTracer)
+import Control.Tracer (Tracer (..), emit, nullTracer)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
 import Data.List (sortOn)
@@ -44,6 +45,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
   , LeiosDbWriter (..)
   , LeiosEbNotification (..)
   , Promise (..)
+  , TraceLeiosDb (..)
   , deleteDanglingTxs
   , newLeiosDBInMemory
   , truncateLeiosDbAfterSlot
@@ -54,6 +56,7 @@ import Ouroboros.Consensus.Storage.LeiosDB
 import Ouroboros.Consensus.Storage.LeiosDB.Exception (LeiosDbException)
 import System.Directory (doesFileExist, removeDirectoryRecursive)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
+import qualified System.Timeout as Timeout
 import Test.QuickCheck
   ( Gen
   , Property
@@ -75,7 +78,7 @@ import Test.QuickCheck
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
@@ -98,6 +101,10 @@ tests =
              "deleteDanglingTxs"
              [ testCase "keeps the txs an EB references" $
                  withFreshSQLiteFile test_deleteDanglingTxs
+             ]
+         , testGroup
+             "close"
+             [ testCase "returns while an EB stays pinned" test_closeWithPinnedEb
              ]
          , testGroup
              "file initialisation (SQLite)"
@@ -1011,6 +1018,35 @@ test_deleteDanglingTxs volDbPath _immDbPath db = do
     void $ rwInsertEbBody con probePoint probeEb
     probeClosure <- rwLookupEbClosure con (pointEbHash probePoint)
     probeClosure @?= Nothing
+
+-- | A pinned EB whose tx closure never arrives cannot be copied, so the
+-- copier keeps retrying it for as long as the database is open. 'close' must
+-- still return.
+test_closeWithPinnedEb :: Assertion
+test_closeWithPinnedEb =
+  withTempLeiosDbPaths $ \volDbPath immDbPath -> do
+    copyFailed <- newEmptyMVar
+    let
+      -- The copier traces one of these per pass that cannot retire the pin.
+      -- Waiting for the first one leaves the copier on the retry path, which
+      -- is the case a stop check on the idle wait alone does not reach.
+      tracer = Tracer . emit $ \case
+        TraceLeiosDbCopyError{} -> void $ tryPutMVar copyFailed ()
+        _ -> pure ()
+      point = mkTestPoint 5 1
+    closed <-
+      Timeout.timeout closeTimeoutMicros $
+        withLeiosDBSQLite tracer volDbPath immDbPath $ \db -> do
+          -- The body never lands, so the closure stays incomplete and every
+          -- attempt to copy this EB fails.
+          withRW db $ \con -> rwInsertEbPoint con point (encodeLeiosEbSize (mkTestEb 2))
+          leiosDbPromoteToImmutable db [point]
+          takeMVar copyFailed
+    case closed of
+      Nothing -> assertFailure "close did not return while an EB stayed pinned"
+      Just () -> pure ()
+ where
+  closeTimeoutMicros = 30_000_000
 
 -- * The two implementations agree
 
