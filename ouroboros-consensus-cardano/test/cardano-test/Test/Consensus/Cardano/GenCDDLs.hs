@@ -57,12 +57,16 @@ withCDDLs f =
 
             ntnTxId <- cddlc "ouroboros-consensus-cardano/cddl/node-to-node/txsubmission2/txId.cddl"
             BS.writeFile "ntntxid.cddl" . cddlSpec $ ntnTxId
+
+            ntnLeiosNotify <- cddlc "ouroboros-consensus-cardano/cddl/node-to-node/leiosnotify/leiosNotify.cddl"
+            BS.writeFile "ntnleiosnotify.cddl" . cddlSpec $ ntnLeiosNotify
         )
         ( \() -> do
             D.removeFile "ntnblock.cddl"
             D.removeFile "ntnheader.cddl"
             D.removeFile "ntntx.cddl"
             D.removeFile "ntntxid.cddl"
+            D.removeFile "ntnleiosnotify.cddl"
         )
         (\_ -> f)
 
@@ -111,7 +115,9 @@ setupCDDLCEnv = do
   let local_paths =
         map
           (localDataDir F.</>)
-          ["ouroboros-consensus-cardano/cddl"] -- Directories with other cddls that we import should go here
+          [ "ouroboros-consensus-cardano/cddl"
+          , "ouroboros-consensus-cardano/cddl/node-to-node/chainsync"
+          ] -- Directories with other cddls that we import should go here
       include_path =
         mconcat $
           L.intersperse ":" $

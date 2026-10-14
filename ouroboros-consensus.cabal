@@ -1954,6 +1954,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden
+    Test.Consensus.Cardano.LeiosNotify
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
     Test.Consensus.Cardano.Serialisation
@@ -1972,6 +1973,8 @@ test-suite cardano-test
     base,
     base16-bytestring,
     bytestring,
+    cardano-crypto-class,
+    cardano-crypto-leios,
     cardano-ledger-allegra:testlib,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
@@ -2008,6 +2011,7 @@ test-suite cardano-test
     tasty-hunit,
     tasty-quickcheck,
     temporary,
+    text,
     typed-protocols,
     unstable-byron-testlib,
     unstable-cardano-testlib,

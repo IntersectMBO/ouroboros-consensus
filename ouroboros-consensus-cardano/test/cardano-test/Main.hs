@@ -5,6 +5,7 @@ import qualified Test.Consensus.Cardano.Capacity (tests)
 import qualified Test.Consensus.Cardano.DiffusionPipelining
 import Test.Consensus.Cardano.GenCDDLs
 import qualified Test.Consensus.Cardano.Golden
+import qualified Test.Consensus.Cardano.LeiosNotify
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
 import qualified Test.Consensus.Cardano.Serialisation (tests)
 import qualified Test.Consensus.Cardano.Show ()
@@ -37,6 +38,7 @@ tests =
         testGroup
           "Serialisation"
           [ Test.Consensus.Cardano.Golden.tests
+          , Test.Consensus.Cardano.LeiosNotify.tests
           , Test.Consensus.Cardano.Serialisation.tests
           ]
     , Test.Consensus.Cardano.SupportedNetworkProtocolVersion.tests

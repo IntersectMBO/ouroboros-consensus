@@ -4,8 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 
--- | Tests of LeiosNotify's codec: the node's against the CDDL, and the bounds
--- and CBOR encodings it accepts.
+-- | Tests of LeiosNotify's codec: the bounds and CBOR encodings it accepts.
 module Test.Consensus.Leios.LeiosNotify.Codec
   ( signedVote
   , tests
@@ -21,15 +20,11 @@ import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
 import Data.Either (isLeft)
 import qualified Data.List.NonEmpty as NE
-import qualified Data.Text as T
 import Data.Word (Word16)
 import Network.TypedProtocol.Codec
-  ( AnyMessage (..)
-  , Codec
-  , CodecF (..)
+  ( CodecF (..)
   , SomeMessage (..)
   , runDecoder
   )
@@ -42,16 +37,12 @@ import Ouroboros.Consensus.Leios.Types
   , decodeLeiosPoint
   , decodeLeiosVote
   , encodeEbHash
-  , encodeLeiosPoint
-  , encodeLeiosVote
   , encodeRbHash
   )
 import Ouroboros.Consensus.MiniProtocol.LeiosNotify.Type
 import Test.Consensus.Leios.LeiosNotify.Protocol (P, codec)
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Tasty.QuickCheck
-import Test.Util.Serialisation.CDDL (cddlTest, isCDDLCDisabled)
 
 tests :: TestTree
 tests =
@@ -61,10 +52,6 @@ tests =
           isLeft $
             runSimOrThrow decodeEmptyVotes
     ]
-      <> [ testProperty "the node's codec encodes each message as the CDDL specifies" $
-             prop_nodeCodecMatchesCDDL
-         | not isCDDLCDisabled
-         ]
       <> [ testGroup
              "the codec accepts either CBOR list encoding"
              [ testCase "definite message, indefinite votes" $
@@ -101,50 +88,6 @@ decodeEmptyVotes = do
   runDecoder
     [CBOR.toLazyByteString (CBOR.encodeListLen 2 <> CBOR.encodeWord 7 <> CBOR.encodeListLen 0)]
     step
-
--- | The node's codec, except that an announcement is any CBOR bytes rather
--- than a header, as the CDDL leaves it unspecified.
-nodeCodec ::
-  Codec (LeiosNotify LeiosPoint BS.ByteString LeiosVote) CBOR.DeserialiseFailure IO BSL.ByteString
-nodeCodec =
-  codecLeiosNotify
-    encodeLeiosPoint
-    decodeLeiosPoint
-    CBOR.encodeBytes
-    CBOR.decodeBytes
-    encodeLeiosVote
-    decodeLeiosVote
-
-prop_nodeCodecMatchesCDDL :: Property
-prop_nodeCodecMatchesCDDL =
-  forAll genMessage $ \(AnyMessage msg) ->
-    ioProperty $ do
-      result <-
-        cddlTest
-          (pure $ BSL.toStrict $ encode nodeCodec msg)
-          "ouroboros-consensus-cardano/cddl/node-to-node/leiosnotify/leiosNotify.cddl"
-          (T.pack "leiosNotifyMessage")
-      pure $ either (`counterexample` False) (const $ property True) result
- where
-  genMessage =
-    oneof
-      [ pure $ AnyMessage MsgLeiosNotificationRequestNext
-      , AnyMessage . MsgLeiosBlockAnnouncement . BS.pack <$> arbitrary
-      , fmap AnyMessage $ MsgLeiosBlockOffer <$> genPoint <*> arbitrary
-      , AnyMessage . MsgLeiosBlockTxsOffer <$> genPoint
-      , do
-          n <- choose (1, maxLeiosVotesPerMessage)
-          AnyMessage . MsgLeiosVotes . NE.fromList <$> vectorOf n genVote
-      , pure $ AnyMessage MsgDone
-      , pure $ AnyMessage MsgQuit
-      , pure $ AnyMessage MsgCanceled
-      ]
-
-  genPoint = MkLeiosPoint <$> (SlotNo <$> arbitrary) <*> (MkEbHash <$> genHash)
-
-  genVote = signedVote <$> (MkRbHash <$> genHash) <*> arbitrary
-
-  genHash = BS.pack <$> vectorOf 32 arbitrary
 
 -- | Decode a 'MsgLeiosVotes'.
 decodeVotes :: CBOR.Encoding -> IOSim s (Maybe [Int])
