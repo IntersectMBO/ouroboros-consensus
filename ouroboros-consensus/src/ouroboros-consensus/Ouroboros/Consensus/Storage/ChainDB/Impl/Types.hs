@@ -419,6 +419,9 @@ data Internal m blk = Internal
   --
   -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
   -- returned. This can be used for a garbage collection on the VolatileDB.
+  , intGetPerasImmutableCertsAfter ::
+      PerasRoundNo -> Word64 -> m [ValidatedPerasCert blk]
+  -- ^ Query the open historical certificate database in tests.
   , intGarbageCollect :: SlotNo -> m ()
   -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
   , intTryTakeSnapshot :: m ()

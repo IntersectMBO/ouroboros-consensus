@@ -24,7 +24,7 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Set.NonEmpty as NESet
-import Data.Word (Word16, Word32, Word8, Word64)
+import Data.Word (Word16, Word32, Word64, Word8)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
@@ -35,6 +35,7 @@ import qualified Ouroboros.Consensus.Storage.PerasImmutableCertDB as DB
 import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import System.FS.API.Lazy
+import System.FS.CRC (CRC (..), computeCRC)
 import System.FS.Sim.Error
   ( Errors (..)
   , emptyErrors
@@ -42,9 +43,8 @@ import System.FS.Sim.Error
   , withErrors
   )
 import qualified System.FS.Sim.MockFS as MockFS
-import qualified System.FS.Sim.Stream as Stream
 import System.FS.Sim.STM (simHasFS)
-import System.FS.CRC (CRC (..), computeCRC)
+import qualified System.FS.Sim.Stream as Stream
 import Test.Ouroboros.Storage.TestBlock
   ( CodecConfig (TestBlockCodecConfig)
   , TestBlock
@@ -66,7 +66,7 @@ import Test.QuickCheck
   , withNumTests
   )
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit ((@?=), assertFailure, testCase)
+import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Tracer (recordingTracerIORef)
 
@@ -80,12 +80,13 @@ tests =
     , testCase "a corrupt stored duplicate is replaced" testCorruptDuplicateReplaced
     , testCase "reopening preserves numeric round order" testReopenOrder
     , testCase "conflicting certificates are not ordinary duplicates" testConflictingRoundReported
-    , testCase "concurrently open handles observe committed additions" testOpenHandleCoherence
     , testCase "reopening removes abandoned temporary files" testTempFileCleanup
     , testCase "non-certificate directory entries are not served" testForeignFilesIgnored
     , testCase "a missing file is quarantined on read" testMissingFileQuarantined
     , testCase "a corrupt file is quarantined on read" testCorruptFileQuarantined
-    , testCase "transient read errors do not quarantine intact certificates" testTransientReadErrorDoesNotQuarantine
+    , testCase
+        "transient read errors do not quarantine intact certificates"
+        testTransientReadErrorDoesNotQuarantine
     , testCase "corruption does not shorten a page" testCorruptFileDoesNotShortenPage
     , testCase "filename round must match encoded certificate round" testFileNameRoundMismatch
     , testGroup
@@ -176,6 +177,8 @@ testDuplicateRound = withFreshDB $ \_args db -> do
 -- invariant and must not be silently reported as an ordinary idempotent add.
 -- A future implementation may reject the conflict by exception or by a new
 -- result constructor; either is distinguishable from 'CertAlreadyInImmutableDB'.
+-- TODO: Review whether the storage API or the protocol layer owns detection of
+-- conflicting valid certificates. The current API deliberately keeps the first.
 testConflictingRoundReported :: IO ()
 testConflictingRoundReported = withFreshDB $ \_args db -> do
   let first = mkCert (PerasWeight 3) 7
@@ -203,9 +206,9 @@ testCorruptDuplicateReplaced =
       >>= (@?= DB.ReplacedCorruptCertInImmutableDB)
     DB.getCertsAfter db (PerasRoundNo 6) 1
       >>= (@?= [replacement])
-    reopened <- DB.openDB args
-    DB.getCertsAfter reopened (PerasRoundNo 6) 1
-      >>= (@?= [replacement])
+    withReopenedDB args db $ \reopened ->
+      DB.getCertsAfter reopened (PerasRoundNo 6) 1
+        >>= (@?= [replacement])
 
 testReopenOrder :: IO ()
 testReopenOrder = withFreshDB $ \args db -> do
@@ -214,37 +217,21 @@ testReopenOrder = withFreshDB $ \args db -> do
   roundsOf <$> DB.getCertsAfter db (PerasRoundNo 0) 10
     >>= (@?= [PerasRoundNo 2, PerasRoundNo 10])
 
-  reopened <- DB.openDB args
-  roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
-    >>= (@?= [PerasRoundNo 2, PerasRoundNo 10])
-
--- | If multiple open handles are supported, they must share a coherent view of
--- committed writes. An alternative fix is to reject the second open with an
--- exclusive database lock and adapt this test to assert that contract.
-testOpenHandleCoherence :: IO ()
-testOpenHandleCoherence =
-  withFreshArgs $ \_fs args -> do
-    first <- DB.openDB args
-    second <- DB.openDB args
-    let cert = mkCert (PerasWeight 1) 1
-
-    addCert first cert
-      >>= (@?= DB.AddedCertToImmutableDB)
-    DB.getCertsAfter second (PerasRoundNo 0) 10
-      >>= (@?= [cert])
+  withReopenedDB args db $ \reopened ->
+    roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
+      >>= (@?= [PerasRoundNo 2, PerasRoundNo 10])
 
 testTempFileCleanup :: IO ()
 testTempFileCleanup =
   withFreshArgs $ \fs args -> do
     writeRawFile fs (mkFsPath ["17.cert.tmp"]) (BSL.pack [0, 1, 2])
-    db <- DB.openDB args
-
-    listDirectory (simHasFS fs) (mkFsPath [])
-      >>= (@?= Set.singleton "17.cert.quarantined")
-    DB.getCertsAfter db (PerasRoundNo 0) 10
-      >>= (@?= [])
-    atomically (DB.getMissingRounds db)
-      >>= (@?= Set.singleton (PerasRoundNo 17))
+    withOpenDB args $ \db -> do
+      listDirectory (simHasFS fs) (mkFsPath [])
+        >>= (@?= Set.singleton "17.cert.quarantined")
+      DB.getCertsAfter db (PerasRoundNo 0) 10
+        >>= (@?= [])
+      atomically (DB.getMissingRounds db)
+        >>= (@?= Set.singleton (PerasRoundNo 17))
 
 testForeignFilesIgnored :: IO ()
 testForeignFilesIgnored =
@@ -259,9 +246,9 @@ testForeignFilesIgnored =
       $ \name ->
         writeRawFile fs (mkFsPath [name]) (BSL.pack [0])
 
-    db <- DB.openDB args
-    DB.getCertsAfter db (PerasRoundNo 0) 10
-      >>= (@?= [])
+    withOpenDB args $ \db ->
+      DB.getCertsAfter db (PerasRoundNo 0) 10
+        >>= (@?= [])
 
 testMissingFileQuarantined :: IO ()
 testMissingFileQuarantined =
@@ -282,9 +269,9 @@ testMissingFileQuarantined =
 
     atomically (DB.getMissingRounds db)
       >>= (@?= Set.singleton (PerasRoundNo 1))
-    reopened <- DB.openDB args
-    atomically (DB.getMissingRounds reopened)
-      >>= (@?= Set.singleton (PerasRoundNo 1))
+    withReopenedDB args db $ \reopened ->
+      atomically (DB.getMissingRounds reopened)
+        >>= (@?= Set.singleton (PerasRoundNo 1))
 
 testCorruptFileQuarantined :: IO ()
 testCorruptFileQuarantined =
@@ -305,13 +292,15 @@ testCorruptFileQuarantined =
 
     atomically (DB.getMissingRounds db)
       >>= (@?= Set.singleton (PerasRoundNo 1))
-    reopened <- DB.openDB args
-    atomically (DB.getMissingRounds reopened)
-      >>= (@?= Set.singleton (PerasRoundNo 1))
+    withReopenedDB args db $ \reopened ->
+      atomically (DB.getMissingRounds reopened)
+        >>= (@?= Set.singleton (PerasRoundNo 1))
 
 -- | A temporary inability to open a valid file must not turn into durable
 -- quarantine. Two failures are injected because the current implementation
 -- retries the read while holding its state lock before quarantining.
+-- TODO: Review whether transient filesystem errors should leave the certificate
+-- indexed for a later retry instead of quarantining an intact file.
 testTransientReadErrorDoesNotQuarantine :: IO ()
 testTransientReadErrorDoesNotQuarantine =
   withFreshErrorDB $ \_fs errorsVar _args db -> do
@@ -353,13 +342,13 @@ testFileNameRoundMismatch =
     addCertsForRoundNos db [1]
     renameFile (simHasFS fs) (certPath 1) (certPath 2)
 
-    reopened <- DB.openDB args
-    roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [])
-    atomically (DB.getMissingRounds reopened)
-      >>= (@?= Set.singleton (PerasRoundNo 2))
-    roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [])
+    withReopenedDB args db $ \reopened -> do
+      roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
+        >>= (@?= [])
+      atomically (DB.getMissingRounds reopened)
+        >>= (@?= Set.singleton (PerasRoundNo 2))
+      roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
+        >>= (@?= [])
 
 data HostileCertFile
   = TruncatedCRC
@@ -382,17 +371,16 @@ testHostileCertificateFile policy hostile =
     bytes <- hostileCertFileBytes fs hostile
     replaceRawFile fs (certPath 1) bytes
 
-    reopened <-
-      DB.openDB
-        args
-          { DB.picdbaIntegrityCheckPolicy = policy
-          }
-    roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [PerasRoundNo 2])
-    atomically (DB.getMissingRounds reopened)
-      >>= (@?= Set.singleton (PerasRoundNo 1))
-    roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [PerasRoundNo 2])
+    withReopenedDB
+      args{DB.picdbaIntegrityCheckPolicy = policy}
+      db
+      $ \reopened -> do
+        roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
+          >>= (@?= [PerasRoundNo 2])
+        atomically (DB.getMissingRounds reopened)
+          >>= (@?= Set.singleton (PerasRoundNo 1))
+        roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
+          >>= (@?= [PerasRoundNo 2])
 
 hostileCertFileBytes ::
   StrictTMVar IO MockFS.MockFS ->
@@ -443,35 +431,35 @@ testQuarantinedRoundCanBeRepaired policy damage =
     addCert db cert
       >>= (@?= DB.AddedCertToImmutableDB)
 
-    quarantinedDb <- case (policy, damage) of
-      -- Eager validation can discover corruption during open.
-      (DB.CheckAllOnOpen, CorruptCertFile) -> do
-        damageCertFile fs damage 7
-        DB.openDB argsWithPolicy
-      -- A missing file can only be quarantined after it has been indexed.
-      -- Lazy validation likewise discovers either kind of damage on query.
-      _ -> do
-        opened <- DB.openDB argsWithPolicy
-        damageCertFile fs damage 7
-        DB.getCertsAfter opened (PerasRoundNo 0) 10
-          >>= (@?= [])
-        pure opened
+    -- Eager validation can discover corruption during open. A missing file
+    -- must instead be removed after open so that its round has been indexed.
+    case (policy, damage) of
+      (DB.CheckAllOnOpen, CorruptCertFile) -> damageCertFile fs damage 7
+      _ -> pure ()
 
-    DB.getCertsAfter quarantinedDb (PerasRoundNo 0) 10
-      >>= (@?= [])
-    atomically (DB.getMissingRounds quarantinedDb)
-      >>= (@?= Set.singleton (PerasRoundNo 7))
+    withReopenedDB argsWithPolicy db $ \quarantinedDb -> do
+      case (policy, damage) of
+        (DB.CheckAllOnOpen, CorruptCertFile) -> pure ()
+        _ -> do
+          damageCertFile fs damage 7
+          DB.getCertsAfter quarantinedDb (PerasRoundNo 0) 10
+            >>= (@?= [])
 
-    addCert quarantinedDb cert
-      >>= (@?= DB.AddedCertToImmutableDB)
-    DB.getCertsAfter quarantinedDb (PerasRoundNo 0) 10
-      >>= (@?= [cert])
-    atomically (DB.getMissingRounds quarantinedDb)
-      >>= (@?= Set.empty)
+      DB.getCertsAfter quarantinedDb (PerasRoundNo 0) 10
+        >>= (@?= [])
+      atomically (DB.getMissingRounds quarantinedDb)
+        >>= (@?= Set.singleton (PerasRoundNo 7))
 
-    reopened <- DB.openDB argsWithPolicy
-    DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [cert])
+      addCert quarantinedDb cert
+        >>= (@?= DB.AddedCertToImmutableDB)
+      DB.getCertsAfter quarantinedDb (PerasRoundNo 0) 10
+        >>= (@?= [cert])
+      atomically (DB.getMissingRounds quarantinedDb)
+        >>= (@?= Set.empty)
+
+      withReopenedDB argsWithPolicy quarantinedDb $ \reopened ->
+        DB.getCertsAfter reopened (PerasRoundNo 0) 10
+          >>= (@?= [cert])
 
 damageCertFile ::
   StrictTMVar IO MockFS.MockFS ->
@@ -494,15 +482,14 @@ testEagerValidation =
     addCertsForRoundNos db [1, 2]
     replaceRawFile fs (certPath 1) (BSL.pack [0xde, 0xad, 0xbe, 0xef])
 
-    reopened <-
-      DB.openDB
-        args
-          { DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
-          }
-    roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [PerasRoundNo 2])
-    atomically (DB.getMissingRounds reopened)
-      >>= (@?= Set.singleton (PerasRoundNo 1))
+    withReopenedDB
+      args{DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen}
+      db
+      $ \reopened -> do
+        roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
+          >>= (@?= [PerasRoundNo 2])
+        atomically (DB.getMissingRounds reopened)
+          >>= (@?= Set.singleton (PerasRoundNo 1))
 
 testLazyQuarantineTrace :: IO ()
 testLazyQuarantineTrace =
@@ -534,25 +521,23 @@ testEagerQuarantineTrace =
     replaceRawFile fs (certPath 1) (BSL.pack [0xde, 0xad, 0xbe, 0xef])
 
     (tracer, getTrace) <- recordingTracerIORef
-    reopened <-
-      DB.openDB
-        args
-          { DB.picdbaTracer = tracer
-          , DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
-          }
+    withReopenedDB
+      args
+        { DB.picdbaTracer = tracer
+        , DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
+        }
+      db
+      $ \reopened -> do
+        events <- getTrace
+        case events of
+          [DB.QuarantinedCert roundNo _, DB.OpenedDB known quarantined] -> do
+            roundNo @?= PerasRoundNo 1
+            (known, quarantined) @?= (1, 1)
+          _ -> assertFailure $ "unexpected trace: " <> show events
 
-    events <- getTrace
-    case events of
-      [DB.QuarantinedCert roundNo _, DB.OpenedDB known quarantined] -> do
-        roundNo @?= PerasRoundNo 1
-        (known, quarantined) @?= (1, 1)
-      _ -> assertFailure $ "unexpected trace: " <> show events
-
-    roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [PerasRoundNo 2])
-    getTrace >>= (@?= events)
-
-
+        roundsOf <$> DB.getCertsAfter reopened (PerasRoundNo 0) 10
+          >>= (@?= [PerasRoundNo 2])
+        getTrace >>= (@?= events)
 
 -- | Concurrent additions of the same certificate commit exactly once.
 --
@@ -590,15 +575,18 @@ propConcurrentDuplicateAdds =
       -- Inspect the db state before and after reopening
       DB.getCertsAfter db cursor 1
         >>= (@?= [cert])
-      reopened <- DB.openDB args
-      DB.getCertsAfter reopened cursor 1
-        >>= (@?= [cert])
+      withReopenedDB args db $ \reopened ->
+        DB.getCertsAfter reopened cursor 1
+          >>= (@?= [cert])
 
 data DuplicateAddsCase
   = DuplicateAddsCase
-      PerasRoundNo -- ^ Round to insert
-      PerasWeight  -- ^ Certificate weight
-      Int          -- ^ Number of concurrent workers
+      -- | Round to insert
+      PerasRoundNo
+      -- | Certificate weight
+      PerasWeight
+      -- | Number of concurrent workers
+      Int
   deriving Show
 
 genDuplicateAddsCase :: Gen DuplicateAddsCase
@@ -607,8 +595,6 @@ genDuplicateAddsCase =
     <$> genSmallPerasRoundNo
     <*> genSmallPerasWeight
     <*> choose (2, 16)
-
-
 
 data AddFault
   = FailOpen
@@ -634,20 +620,20 @@ testFailedAddAtomic fault =
 
     -- A failed write can leave a temporary file. Opening records that round
     -- in quarantine; a failure before opening the file leaves no marker.
-    reopened <- DB.openDB args
-    DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [])
-    listDirectory (simErrorHasFS fs errorsVar) (mkFsPath [])
-      >>= (@?= expectedFiles)
-    atomically (DB.getMissingRounds reopened)
-      >>= (@?= expectedQuarantine)
+    withReopenedDB args db $ \reopened -> do
+      DB.getCertsAfter reopened (PerasRoundNo 0) 10
+        >>= (@?= [])
+      listDirectory (simErrorHasFS fs errorsVar) (mkFsPath [])
+        >>= (@?= expectedFiles)
+      atomically (DB.getMissingRounds reopened)
+        >>= (@?= expectedQuarantine)
 
-    addCert reopened cert
-      >>= (@?= DB.AddedCertToImmutableDB)
-    DB.getCertsAfter reopened (PerasRoundNo 0) 10
-      >>= (@?= [cert])
-    atomically (DB.getMissingRounds reopened)
-      >>= (@?= Set.empty)
+      addCert reopened cert
+        >>= (@?= DB.AddedCertToImmutableDB)
+      DB.getCertsAfter reopened (PerasRoundNo 0) 10
+        >>= (@?= [cert])
+      atomically (DB.getMissingRounds reopened)
+        >>= (@?= Set.empty)
  where
   expectedQuarantine = case fault of
     FailOpen -> Set.empty
@@ -713,9 +699,9 @@ propReopenPreservesQuery generated =
       let rounds = generatedRounds generated
       addCertsForRoundNos db rounds
       before <- DB.getCertsAfter db (PerasRoundNo 0) maxBound
-      reopened <- DB.openDB args
-      after <- DB.getCertsAfter reopened (PerasRoundNo 0) maxBound
-      pure (before == after)
+      withReopenedDB args db $ \reopened -> do
+        after <- DB.getCertsAfter reopened (PerasRoundNo 0) maxBound
+        pure (before == after)
 
 propQuerySliceMatchesModel ::
   [Positive Word16] ->
@@ -733,10 +719,14 @@ propQuerySliceMatchesModel generated cursorWord limit =
       actual <- roundsOf <$> DB.getCertsAfter db cursor limit
       pure $
         counterexample
-          ( "cursor: " <> show cursor
-              <> "\nlimit: " <> show limit
-              <> "\nexpected: " <> show expected
-              <> "\nactual: " <> show actual
+          ( "cursor: "
+              <> show cursor
+              <> "\nlimit: "
+              <> show limit
+              <> "\nexpected: "
+              <> show expected
+              <> "\nactual: "
+              <> show actual
           )
           (actual == expected)
 
@@ -759,18 +749,15 @@ propValidationPoliciesAgree generated =
   ioProperty $
     withFreshDBFS $ \_fs args db -> do
       addCertsForRoundNos db (generatedRounds generated)
-      lazy <-
-        DB.openDB
-          args
-            { DB.picdbaIntegrityCheckPolicy = DB.CheckOnRead
-            }
-      eager <-
-        DB.openDB
-          args
-            { DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
-            }
-      lazyCerts <- DB.getCertsAfter lazy (PerasRoundNo 0) maxBound
-      eagerCerts <- DB.getCertsAfter eager (PerasRoundNo 0) maxBound
+      lazyCerts <-
+        withReopenedDB
+          args{DB.picdbaIntegrityCheckPolicy = DB.CheckOnRead}
+          db
+          $ \lazy -> DB.getCertsAfter lazy (PerasRoundNo 0) maxBound
+      eagerCerts <-
+        withOpenDB
+          args{DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen}
+          $ \eager -> DB.getCertsAfter eager (PerasRoundNo 0) maxBound
       pure (lazyCerts == eagerCerts)
 
 propValidationPoliciesAgreeAfterDamage ::
@@ -779,26 +766,46 @@ propValidationPoliciesAgreeAfterDamage ::
   [Positive Word8] ->
   Property
 propValidationPoliciesAgreeAfterDamage stored missing corrupt =
-  ioProperty $
-    withFreshDBFS $ \fs args db -> do
-      let storedRounds = Set.fromList (smallGeneratedRounds stored)
-          missingRounds =
-            Set.intersection
-              storedRounds
-              (Set.fromList $ smallGeneratedRounds missing)
-          corruptRounds =
-            Set.difference
-              ( Set.intersection
-                  storedRounds
-                  (Set.fromList $ smallGeneratedRounds corrupt)
-              )
-              missingRounds
-          expected =
-            Set.toAscList $
-              storedRounds
-                `Set.difference` missingRounds
-                `Set.difference` corruptRounds
+  ioProperty $ do
+    lazyRounds <- runPolicy DB.CheckOnRead
+    eagerRounds <- runPolicy DB.CheckAllOnOpen
+    pure $
+      counterexample
+        ( "stored: "
+            <> show storedRounds
+            <> "\nmissing: "
+            <> show missingRounds
+            <> "\ncorrupt: "
+            <> show corruptRounds
+            <> "\nexpected: "
+            <> show expected
+            <> "\nlazy: "
+            <> show lazyRounds
+            <> "\neager: "
+            <> show eagerRounds
+        )
+        (lazyRounds == expected && eagerRounds == expected)
+ where
+  storedRounds = Set.fromList (smallGeneratedRounds stored)
+  missingRounds =
+    Set.intersection
+      storedRounds
+      (Set.fromList $ smallGeneratedRounds missing)
+  corruptRounds =
+    Set.difference
+      ( Set.intersection
+          storedRounds
+          (Set.fromList $ smallGeneratedRounds corrupt)
+      )
+      missingRounds
+  expected =
+    Set.toAscList $
+      storedRounds
+        `Set.difference` missingRounds
+        `Set.difference` corruptRounds
 
+  runPolicy policy =
+    withFreshDBFS $ \fs args db -> do
       addCertsForRoundNos db (Set.toList storedRounds)
       forM_ missingRounds $ \roundNo ->
         removeFile (simHasFS fs) (certPath $ unPerasRoundNo roundNo)
@@ -808,28 +815,10 @@ propValidationPoliciesAgreeAfterDamage stored missing corrupt =
           (certPath $ unPerasRoundNo roundNo)
           (BSL.pack [0xde, 0xad, 0xbe, 0xef])
 
-      lazy <-
-        DB.openDB
-          args
-            { DB.picdbaIntegrityCheckPolicy = DB.CheckOnRead
-            }
-      eager <-
-        DB.openDB
-          args
-            { DB.picdbaIntegrityCheckPolicy = DB.CheckAllOnOpen
-            }
-      lazyRounds <- roundsOf <$> DB.getCertsAfter lazy (PerasRoundNo 0) maxBound
-      eagerRounds <- roundsOf <$> DB.getCertsAfter eager (PerasRoundNo 0) maxBound
-      pure $
-        counterexample
-          ( "stored: " <> show storedRounds
-              <> "\nmissing: " <> show missingRounds
-              <> "\ncorrupt: " <> show corruptRounds
-              <> "\nexpected: " <> show expected
-              <> "\nlazy: " <> show lazyRounds
-              <> "\neager: " <> show eagerRounds
-          )
-          (lazyRounds == expected && eagerRounds == expected)
+      withReopenedDB
+        args{DB.picdbaIntegrityCheckPolicy = policy}
+        db
+        $ \opened -> roundsOf <$> DB.getCertsAfter opened (PerasRoundNo 0) maxBound
 
 propGeneratedTempFilesAreQuarantined :: [Positive Word8] -> Property
 propGeneratedTempFilesAreQuarantined generated =
@@ -842,23 +831,27 @@ propGeneratedTempFilesAreQuarantined generated =
           (certTempPath $ unPerasRoundNo roundNo)
           (BSL.pack [0, 1, 2])
 
-      db <- DB.openDB args
-      names <- listDirectory (simHasFS fs) (mkFsPath [])
-      certs <- DB.getCertsAfter db (PerasRoundNo 0) maxBound
-      quarantined <- atomically (DB.getMissingRounds db)
-      let expectedNames =
-            Set.fromList
-              [ show (unPerasRoundNo roundNo) <> ".cert.quarantined"
-              | roundNo <- Set.toList rounds
-              ]
-      pure $
-        counterexample
-          ( "rounds: " <> show rounds
-              <> "\nremaining entries: " <> show names
-              <> "\ncertificates: " <> show certs
-              <> "\nquarantined: " <> show quarantined
-          )
-          (names == expectedNames && null certs && quarantined == rounds)
+      withOpenDB args $ \db -> do
+        names <- listDirectory (simHasFS fs) (mkFsPath [])
+        certs <- DB.getCertsAfter db (PerasRoundNo 0) maxBound
+        quarantined <- atomically (DB.getMissingRounds db)
+        let expectedNames =
+              Set.fromList
+                [ show (unPerasRoundNo roundNo) <> ".cert.quarantined"
+                | roundNo <- Set.toList rounds
+                ]
+        pure $
+          counterexample
+            ( "rounds: "
+                <> show rounds
+                <> "\nremaining entries: "
+                <> show names
+                <> "\ncertificates: "
+                <> show certs
+                <> "\nquarantined: "
+                <> show quarantined
+            )
+            (names == expectedNames && null certs && quarantined == rounds)
 
 data Command
   = Add Word16 Word16
@@ -896,13 +889,13 @@ propCommandSequence (CommandSequence commands) =
     withFreshDB $ \args db ->
       go 0 args db Map.empty commands
  where
-  go
-    :: Int
-    -> Complete DB.PerasImmutableCertDbArgs IO TestBlock
-    -> DB.PerasImmutableCertDB IO TestBlock
-    -> Map.Map PerasRoundNo (ValidatedPerasCert TestBlock)
-    -> [Command]
-    -> IO Property
+  go ::
+    Int ->
+    Complete DB.PerasImmutableCertDbArgs IO TestBlock ->
+    DB.PerasImmutableCertDB IO TestBlock ->
+    Map.Map PerasRoundNo (ValidatedPerasCert TestBlock) ->
+    [Command] ->
+    IO Property
   go _ _ _ _ [] = pure (property True)
   go step args db model (command : rest) =
     case command of
@@ -927,7 +920,8 @@ propCommandSequence (CommandSequence commands) =
         let cursor = PerasRoundNo (fromIntegral cursorWord)
             limit = fromIntegral limitWord
             expected =
-              take (fromIntegral limitWord)
+              take
+                (fromIntegral limitWord)
                 [ cert
                 | (roundNo, cert) <- Map.toAscList model
                 , roundNo > cursor
@@ -937,17 +931,21 @@ propCommandSequence (CommandSequence commands) =
           then go (step + 1) args db model rest
           else mismatch step command expected actual
       Reopen -> do
-        reopened <- DB.openDB args
-        go (step + 1) args reopened model rest
+        withReopenedDB args db $ \reopened ->
+          go (step + 1) args reopened model rest
 
   mismatch :: (Show expected, Show actual) => Int -> Command -> expected -> actual -> IO Property
   mismatch step command expected actual =
     pure $
       counterexample
-        ( "step: " <> show step
-            <> "\ncommand: " <> show command
-            <> "\nexpected: " <> show expected
-            <> "\nactual: " <> show actual
+        ( "step: "
+            <> show step
+            <> "\ncommand: "
+            <> show command
+            <> "\nexpected: "
+            <> show expected
+            <> "\nactual: "
+            <> show actual
         )
         (property False)
 
@@ -975,9 +973,9 @@ withFreshDBFS ::
   ) ->
   IO a
 withFreshDBFS action =
-  withFreshArgs $ \fs args -> do
-    db <- DB.openDB args
-    action fs args db
+  withFreshArgs $ \fs args ->
+    withOpenDB args $ \db ->
+      action fs args db
 
 withFreshTracedDB ::
   ( StrictTMVar IO MockFS.MockFS ->
@@ -997,8 +995,8 @@ withFreshTracedDB action = do
           , DB.picdbaHasFS = SomeHasFS (simHasFS fs)
           , DB.picdbaTracer = tracer
           }
-  db <- DB.openDB args
-  action fs args db getTrace
+  withOpenDB args $ \db ->
+    action fs args db getTrace
 
 withFreshErrorDB ::
   ( StrictTMVar IO MockFS.MockFS ->
@@ -1017,8 +1015,8 @@ withFreshErrorDB action = do
           { DB.picdbaCodecConfig = TestBlockCodecConfig
           , DB.picdbaHasFS = SomeHasFS (simErrorHasFS fs errorsVar)
           }
-  db <- DB.openDB args
-  action fs errorsVar args db
+  withOpenDB args $ \db ->
+    action fs errorsVar args db
 
 withFreshArgs ::
   ( StrictTMVar IO MockFS.MockFS ->
@@ -1035,6 +1033,21 @@ withFreshArgs action = do
           , DB.picdbaHasFS = SomeHasFS (simHasFS fs)
           }
   action fs args
+
+withOpenDB ::
+  Complete DB.PerasImmutableCertDbArgs IO TestBlock ->
+  (DB.PerasImmutableCertDB IO TestBlock -> IO a) ->
+  IO a
+withOpenDB args = Exception.bracket (DB.openDB args) DB.closeDB
+
+withReopenedDB ::
+  Complete DB.PerasImmutableCertDbArgs IO TestBlock ->
+  DB.PerasImmutableCertDB IO TestBlock ->
+  (DB.PerasImmutableCertDB IO TestBlock -> IO a) ->
+  IO a
+withReopenedDB args current action = do
+  DB.closeDB current
+  withOpenDB args action
 
 certPath :: Word64 -> FsPath
 certPath roundNo =
