@@ -22,8 +22,10 @@
 module Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.Validation
   ( AnnouncementInvalidity (..)
   , AnnouncingHeader (ancAnnouncement, ancElectionId, ancHeader)
+  , ValidAnnouncement (..)
   , announcementValidity
   , maxAnnouncementAgeRecv
+  , maxAnnouncementAgeSend
   , mkAnnouncingHeader
   , validateAnnouncementHeader
   ) where
@@ -37,7 +39,8 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( SystemTime (..)
+  ( RelativeTime
+  , SystemTime (..)
   , diffRelTime
   )
 import Ouroboros.Consensus.Config
@@ -285,7 +288,7 @@ announcementValidity ::
   -- revocation only counts once it cannot be rolled back.
   ExtLedgerState blk EmptyMK ->
   AnnouncingHeader blk ->
-  ExceptT (Announcements.Error (AnnouncementInvalidity blk)) m OCINStaleness
+  ExceptT (Announcements.Error (AnnouncementInvalidity blk)) m ValidAnnouncement
 announcementValidity systemTime futureCheck cfg immLedger ancHdr = do
   onset <- lift $ case futureCheck of
     InFutureCheck.SomeHeaderInFutureCheck hifc -> do
@@ -304,18 +307,45 @@ announcementValidity systemTime futureCheck cfg immLedger ancHdr = do
   -- slot was near-future, so 'now' is at or after 'onset' and the age
   -- is non-negative.
   now <- lift $ systemTimeCurrent systemTime
-  when (diffRelTime now onset > maxAnnouncementAgeRecv) $
+  let age = diffRelTime now onset
+  when (age > maxAnnouncementAgeRecv) $
     throwError Announcements.ErrTooOld
-  liftEither . first Announcements.ErrInvalid . runExcept $
-    validateAnnouncementHeader cfg immLedger ancHdr
+  staleness <-
+    liftEither . first Announcements.ErrInvalid . runExcept $
+      validateAnnouncementHeader cfg immLedger ancHdr
+  pure
+    MkValidAnnouncement
+      { announcementOnset = onset
+      , announcementAge = age
+      , announcementStaleness = staleness
+      }
+
+-- | What 'announcementValidity' learns about a valid announcement.
+data ValidAnnouncement = MkValidAnnouncement
+  { announcementOnset :: !RelativeTime
+  -- ^ The wall-clock onset of the election's slot.
+  , announcementAge :: !NominalDiffTime
+  -- ^ How long after that onset the announcement arrived.
+  , announcementStaleness :: !OCINStaleness
+  }
+
+-- | Do not relay an announcement whose slot's wall-clock onset is older than
+-- this.
+--
+-- Comfortably less than 'maxAnnouncementAgeRecv', so that an announcement an
+-- honest node relays just before this bound still arrives within its
+-- downstream peer's larger bound, even after transmission time and clock skew.
+--
+-- TODO magic number; should be a config/RunNode option
+maxAnnouncementAgeSend :: NominalDiffTime
+maxAnnouncementAgeSend = 300 -- 5 minutes
 
 -- | Disconnect an upstream peer that relays an announcement whose slot's
 -- wall-clock onset is older than this. See
 -- 'Ouroboros.Consensus.MiniProtocol.LeiosNotify.Client.Announcements.ErrTooOld'.
 --
--- Comfortably greater than how long an honest peer relays an announcement, so
--- that an honest peer is never disconnected on account of transmission time or
--- clock skew.
+-- Comfortably greater than 'maxAnnouncementAgeSend', so that an honest peer is
+-- never disconnected on account of transmission time or clock skew.
 --
 -- TODO magic number; should be a config/RunNode option... or even a protocol
 -- parameter?

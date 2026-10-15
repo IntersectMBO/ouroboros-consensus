@@ -61,6 +61,12 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Leios.AnnounceState (AnnounceState, newAnnounceState)
+import Ouroboros.Consensus.Leios.NotifyLog
+  ( NotifyLog
+  , newNotifyLog
+  , notifyLogPruner
+  )
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -202,6 +208,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
       StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (LeiosNotifyPeerState blk)))
   -- ^ The state of each LeiosNotify client, by upstream peer, which
   -- 'leiosNotifyPruner' prunes.
+  , getLeiosAnnounceState :: AnnounceState m blk
+  -- ^ The announcements the node has accepted, from whichever peer.
+  , getLeiosNotifyLog :: NotifyLog m blk
+  -- ^ What the node relays to its downstream peers over LeiosNotify.
   }
 
 -- | Arguments required when initializing a node
@@ -263,6 +273,7 @@ initNodeKernel
     , genesisArgs
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
+    , systemTime
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -386,10 +397,15 @@ initNodeKernel
           keepAliveRegistry
           blockFetchConfiguration
 
+    leiosNotifyLog <- newNotifyLog
+    leiosAnnounceState <- newAnnounceState leiosNotifyLog
     leiosNotifyClientStates <- newTVarIO Map.empty
     void $
       forkLinkedThread registry "NodeKernel.leiosNotifyPruner" $
-        leiosNotifyPruner chainDB leiosNotifyClientStates
+        leiosNotifyPruner chainDB leiosAnnounceState leiosNotifyClientStates
+    void $
+      forkLinkedThread registry "NodeKernel.notifyLogPruner" $
+        notifyLogPruner systemTime leiosNotifyLog
 
     void $
       forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
@@ -424,6 +440,8 @@ initNodeKernel
         , getTxCountersVar = txCountersVar
         , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
         , getLeiosNotifyClientStates = leiosNotifyClientStates
+        , getLeiosAnnounceState = leiosAnnounceState
+        , getLeiosNotifyLog = leiosNotifyLog
         }
    where
     blockForgingController ::
