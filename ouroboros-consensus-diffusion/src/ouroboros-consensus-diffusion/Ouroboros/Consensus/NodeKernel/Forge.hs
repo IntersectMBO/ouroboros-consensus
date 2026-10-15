@@ -517,8 +517,6 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasC
       tickedLedgerState
       (roforkerReadTables forker)
 
-  -- The endorser-block capacity is zero, so the endorser-block part of the
-  -- partition is empty and the ranking-block part is the whole selection.
   let
     certSize = toMempoolMeasure <$> mbPerasCert
     (txs, payloadSz, ebTxs, ebMeasure) =
@@ -526,7 +524,7 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasC
         mempoolSnapshot
         certSize
         (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
-        Measure.zero
+        (ebCapacityTxMeasure (configLedger cfg) tickedLedgerState)
 
     toMempoolMeasure ::
       ( TxLimits blk
@@ -545,11 +543,6 @@ getTransactionsToForge cfg mempool currentSlot tickedLedgerState forker mbPerasC
         , mmDiffTime = Measure.zero
         }
 
-  -- Only a transaction with a zero 'txEbMeasure' fits a zero capacity, and
-  -- the 'txEbMeasure' INVARIANT forbids a zero result.
-  unless (null ebTxs) $
-    throwIO $
-      userError "getTransactionsToForge: non-empty endorser-block part for a zero capacity"
   -- NB respect the capacity of the ledger state we're extending,
   -- which is /not/ 'snapshotLedgerState'
 
