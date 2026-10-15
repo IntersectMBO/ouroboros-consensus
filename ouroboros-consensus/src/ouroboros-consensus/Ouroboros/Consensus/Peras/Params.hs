@@ -272,8 +272,8 @@ orUnsafeEnv def var =
 -- * Era-dependent default values
 
 -- | Default value for 'PerasRoundLength' in the Dijkstra eras.
-dijkstraPerasRoundLength :: PerasEnabled PerasRoundLength
-dijkstraPerasRoundLength = PerasEnabled (PerasRoundLength 90)
+dijkstraPerasRoundLength :: PerasRoundLength
+dijkstraPerasRoundLength = PerasRoundLength 90
 
 -- | Maximum size of a Peras certificate in bytes, for the Dijkstra eras.
 -- Maximum block size is 90_112 bytes in mainnet as of 2026-08-06. Taking half that
