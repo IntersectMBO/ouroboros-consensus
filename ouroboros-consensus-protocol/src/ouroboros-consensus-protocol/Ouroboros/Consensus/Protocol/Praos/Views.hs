@@ -28,7 +28,8 @@ import Cardano.Slotting.Slot (SlotNo)
 import Data.Kind (Constraint, Type)
 import Data.Word (Word16, Word32)
 import Ouroboros.Consensus.Leios.Protocol (LeiosLedgerView)
-import Ouroboros.Consensus.Protocol.Praos.Common (ShelleyProtocolHeader, WhenLeios)
+import Ouroboros.Consensus.Peras.Protocol (PerasLedgerView)
+import Ouroboros.Consensus.Protocol.Praos.Common (ShelleyProtocolHeader, WhenLeios, WhenPeras)
 import Ouroboros.Consensus.Protocol.Signed (Signed)
 
 {-------------------------------------------------------------------------------
@@ -77,10 +78,14 @@ data PolyPraosLedgerView proto = PraosLedgerView
   , plvLeios :: !(WhenLeios proto LeiosLedgerView)
   -- ^ The committee, quorum threshold, periods and endorser block size bounds
   -- that Leios needs, present only when the protocol has Leios
+  , plvPeras :: !(WhenPeras proto PerasLedgerView)
+  -- ^ On-chain Peras protocol parameters
   }
 
 deriving instance
-  Show (WhenLeios proto LeiosLedgerView) =>
+  ( Show (WhenLeios proto LeiosLedgerView)
+  , Show (WhenPeras proto PerasLedgerView)
+  ) =>
   Show (PolyPraosLedgerView proto)
 
 -- | How a protocol reads an era's forecast.
